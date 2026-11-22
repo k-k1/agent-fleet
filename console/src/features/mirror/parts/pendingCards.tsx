@@ -316,7 +316,7 @@ export function TypingRow({
     <div className="mirror-typing" aria-label={typing ? tr("mirror.typing", { name: agentName }) : undefined}>
       {typing && (
         <>
-          <span className="mt-who">{agentName}</span>
+          <span className="mt-typing-who">{agentName}</span>
           <span className="typing-dots">
             <i />
             <i />

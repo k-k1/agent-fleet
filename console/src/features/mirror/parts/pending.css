@@ -115,7 +115,7 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   gap: 8px;
   padding: 9px 16px 12px;
 }
-.mirror-typing .mt-who {
+.mirror-typing .mt-typing-who {
   font-weight: 600;
   font-size: 12px;
 }

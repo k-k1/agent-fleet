@@ -66,8 +66,6 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
   border-radius: 6px;
   background: var(--bar);
 }
-.mirror-marks-head { display: flex; align-items: center; padding: 0; }
-.mirror-marks.open .mirror-marks-head { border-bottom: 1px solid var(--border); }
 .mirror-marks-toggle {
   min-width: 0; flex: 1; display: flex; align-items: center; gap: 6px;
   padding: 6px 10px; border: 0; border-radius: 5px; background: transparent;

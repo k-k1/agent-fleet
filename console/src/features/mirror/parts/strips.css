@@ -109,6 +109,9 @@
 /* The collapsed summary's file name (and the mark strip's author count): it gives up its
    width first, so the counters stay readable on a narrow split pane. The mark strip shares
    these rules instead of redeclaring them in marks.css. */
+/* The mark strip's header band (the toggle inside it is in marks.css). */
+.mirror-marks-head { display: flex; align-items: center; padding: 0; }
+.mirror-marks-head.mirror-marks-head-open { border-bottom: 1px solid var(--border); }
 .mirror-files-head .mfl-lead,
 .mirror-marks-head .mfl-lead {
   min-width: 0;

@@ -37,4 +37,4 @@
 .inbox-session-attached { display: flex; flex-direction: column; gap: 4px; }
 .inbox-recipe-editor, .inbox-session-editor { display: flex; flex-direction: column; gap: 8px; }
 .inbox-recipe-hints { display: flex; flex-wrap: wrap; gap: 8px; }
-.inbox-recipe-hints .ui-field { flex: 1 1 120px; }
+.inbox-recipe-hints > * { flex: 1 1 120px; }

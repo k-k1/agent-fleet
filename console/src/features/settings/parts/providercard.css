@@ -308,6 +308,14 @@
   font-size: 12px;
 }
 
+/* The badge's only element child is the brand mark (the monogram is bare text); it is sized in px rather than inheriting the 11px monogram size:
+   .brandicon is 1em, and 11px in a 26px tile reads as a speck. It still paints in
+   currentColor, so it takes the same per-fill label colour the two letters had. */
+.p-badge > * {
+  width: 16px;
+  height: 16px;
+}
+
 /* Subversion — the project's own logo blue. Light enough for the default near-black
    monogram (7:1 measured against #0c0c0c). */
 .p-badge.pb-svn { background: #809cc9; }

@@ -26,7 +26,7 @@ export function AdminDialog() {
       onClose={closeAdmin}
       className="settings-modal admin-modal"
     >
-      <div className="ui-modal-body">
+      <div className="ui-modal-body settings-modal-body">
         <AdminTab />
       </div>
     </Modal>

@@ -661,7 +661,7 @@ function RtkChart({ buckets, mode }: { buckets: RtkGainBucket[]; mode: RtkMode }
         </div>
         {hover != null && buckets[hover] && (
           <div
-            className={"ux-tip" + (hover > buckets.length / 2 ? " right" : "")}
+            className={"ux-tip" + (hover > buckets.length / 2 ? " ux-tip-right" : "")}
             style={{ left: `${((hover + 0.5) / Math.max(1, buckets.length)) * 100}%` }}
             role="status"
           >
@@ -892,7 +892,7 @@ function StackChart({ stack, by, metric, bucket }: ChartProps) {
         </div>
         {hover != null && rows[hover] && (
           <div
-            className={"ux-tip" + (hover > rows.length / 2 ? " right" : "")}
+            className={"ux-tip" + (hover > rows.length / 2 ? " ux-tip-right" : "")}
             style={{ left: `${((hover + 0.5) / Math.max(1, rows.length)) * 100}%` }}
             role="status"
           >

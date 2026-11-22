@@ -91,6 +91,10 @@ and "load older history" states
      (tokens.css). */
   --sel-accent: var(--topbar-accent);
 }
+/* In a group the actions own the right alignment themselves. */
+.view-head-actions .mirror-toggle {
+  margin-left: 0;
+}
 /* The head's action cluster is .view-head-actions (ui/ui.css) — it was declared
    identically here and in terminal.css. */
 /* Each terminal/chat segment is an icon + label; center them with a small gap

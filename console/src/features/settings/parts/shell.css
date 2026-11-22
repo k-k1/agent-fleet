@@ -118,11 +118,11 @@
   max-height: 90vh;
 }
 
-.settings-modal .ui-modal-head {
+.settings-modal > header {
   background: var(--topbar-bg);
 }
 
-.settings-modal .ui-modal-body {
+.settings-modal .settings-modal-body {
   flex: 1;
   min-height: 0;
   display: flex;
@@ -530,7 +530,7 @@
   max-height: 92vh;
 }
 
-.admin-modal .ui-modal-title {
+.admin-modal > header > h3 {
   display: flex;
   align-items: center;
   gap: 8px;

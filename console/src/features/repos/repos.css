@@ -1735,7 +1735,7 @@
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px 12px;
 }
-.gitflow-prefixes .ui-field {
+.gitflow-prefixes > * {
   min-width: 0;
 }
 .gitflow-cmd,
