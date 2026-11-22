@@ -53,6 +53,16 @@ Below the list, "**Scheduled sessions**" shows the sessions schedules started, n
 
 The conversation of a session it ran carries a **Scheduled** or **Manual fire** badge, so it is not mixed up with what you typed.
 
+## A schedule the operator registers waits for your approval
+
+A schedule created from a session, which includes the Fleet Operator's, does not run until you approve it. Until then it does not run at its set time, does not wake a stopped workspace, and **Run now** is disabled. A schedule keeps running without anyone watching, so you see it first.
+
+1. The row shows the **Awaiting approval** badge and a **Review & approve** button
+2. Press it. The details open: check the prompt and the time
+3. Press **Approve** in the details. The next run is worked out from that moment
+
+After approval, a session that changes what the schedule runs (the prompt, label, time, target, delivery, policies or the query gate) puts it back on hold. Pausing, resuming and an update that changes nothing do not. Editing a schedule yourself in the Console does not put it on hold, but it does not approve a schedule that is already on hold either: approve it as above. The operator tells you when what it registered is waiting.
+
 ## Change what it does
 
 Open **Details / edit** from the row's ⋯ menu.
