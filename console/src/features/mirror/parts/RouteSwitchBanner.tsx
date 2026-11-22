@@ -15,6 +15,7 @@ import { useTenantStore } from "../../../core/store/tenant.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr, useT } from "../../../lib/i18n/index.ts";
 import { resumeClock } from "../../../lib/sessionview.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 import type { Session } from "../../../types/session.ts";
 
 /** GET /api/sessions/{name}/route-switch: what a switch would do now (wire: routeSwitchPreview). */
@@ -172,11 +173,7 @@ function Band({ session, state }: { session: Session; state?: string }) {
   useEffect(() => {
     if (!limited) setRead(null);
   }, [limited]);
-  useEffect(() => {
-    if (!watching) return;
-    const id = setInterval(() => setTick((n) => n + 1), REFRESH_MS);
-    return () => clearInterval(id);
-  }, [watching]);
+  useInterval(() => setTick((n) => n + 1), watching ? REFRESH_MS : null);
   useEffect(() => {
     if (!watching) return;
     let live = true;

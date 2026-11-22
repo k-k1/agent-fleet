@@ -7,6 +7,7 @@
 // the reason in the tooltip.
 import { useEffect, useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
+import { useInterval } from "../../lib/useInterval.ts";
 import { sessionSpend } from "../../core/api/client.ts";
 import type { SessionSpend } from "../../core/api/client.ts";
 import { useSessionUI } from "../sessions/ui.ts";
@@ -28,20 +29,25 @@ export function SpendChip({ s }: SpendChipProps) {
 
   useEffect(() => {
     let live = true;
-    const load = () =>
-      void sessionSpend(s.name)
-        .then((r) => {
-          if (live && r && !r.error) setSpend(r);
-        })
-        .catch(() => {});
-    load();
-    // A stopped session's spend does not move; one read is enough until it runs again.
-    const id = s.alive ? window.setInterval(load, SPEND_POLL_MS) : 0;
+    void sessionSpend(s.name)
+      .then((r) => {
+        if (live && r && !r.error) setSpend(r);
+      })
+      .catch(() => {});
     return () => {
       live = false;
-      if (id) window.clearInterval(id);
     };
   }, [s.name, s.alive, s.spendCapUsd]);
+  // A stopped session's spend does not move; one read is enough until it runs again.
+  useInterval(
+    () =>
+      void sessionSpend(s.name)
+        .then((r) => {
+          if (r && !r.error) setSpend(r);
+        })
+        .catch(() => {}),
+    s.alive ? SPEND_POLL_MS : null,
+  );
 
   if (!spend) return null;
   const cap = spend.spendCapUsd ?? 0;

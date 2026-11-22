@@ -10,6 +10,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { movePreview } from "../../sessions/moveApi.ts";
 import { offeredTargets, orderByQuota, quotaState, type MovePreview } from "../../sessions/move.ts";
@@ -40,10 +41,7 @@ function LimitBand({ session }: { session: Session }) {
   // Bumped on a timer: the quota of a target resets (or runs out) while the source stays limited,
   // and a first read that failed would otherwise never be retried.
   const [tick, setTick] = useState(0);
-  useEffect(() => {
-    const id = setInterval(() => setTick((n) => n + 1), REFRESH_MS);
-    return () => clearInterval(id);
-  }, []);
+  useInterval(() => setTick((n) => n + 1), REFRESH_MS);
   useEffect(() => {
     let alive = true;
     movePreview(name)

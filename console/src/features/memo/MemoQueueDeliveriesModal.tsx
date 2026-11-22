@@ -16,6 +16,7 @@ import { confirmReturnRun } from "./runReturn.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
+import { useInterval } from "../../lib/useInterval.ts";
 import { openSessionChat } from "../sessions/open.ts";
 import type { MemoDelivery, MemoQueue, MemoTidyBlocked, MemoTidyRunsWire } from "../../types/memo.ts";
 import { memoQueueDeliveries, memoTidyRuns, memoTidyUndo } from "./api.ts";
@@ -160,14 +161,13 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
     alive.current = true;
     // Opened by a slot refusal, the effect above already reads.
     if (!slotsAtOpen.current) void load();
-    const id = setInterval(() => {
-      if (!document.hidden) void load();
-    }, POLL_MS);
     return () => {
       alive.current = false;
-      clearInterval(id);
     };
   }, [load]);
+  useInterval(() => {
+    if (!document.hidden) void load();
+  }, POLL_MS);
 
   const returnRun = async (d: MemoDelivery) => {
     if (returning) return;
