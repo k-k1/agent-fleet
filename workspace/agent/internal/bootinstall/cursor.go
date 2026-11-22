@@ -61,6 +61,7 @@ func (e Env) cursorShare() string {
 func resolveReal(p string) (string, error) {
 	rest := strings.Split(p, "/")
 	res := "/"
+	missing := false
 	for hops := 0; len(rest) > 0; {
 		c := rest[0]
 		rest = rest[1:]
@@ -68,6 +69,9 @@ func resolveReal(p string) (string, error) {
 		case "", ".":
 			continue
 		case "..":
+			if missing {
+				return "", errNotDirPath // the OS fails here; it never steps back onto an existing path
+			}
 			res = filepath.Dir(res)
 			continue
 		}
@@ -75,7 +79,7 @@ func resolveReal(p string) (string, error) {
 		st, err := os.Lstat(next)
 		switch {
 		case errors.Is(err, fs.ErrNotExist):
-			res = next
+			res, missing = next, true
 		case err != nil:
 			return "", err
 		case st.Mode()&os.ModeSymlink != 0:
@@ -90,12 +94,18 @@ func resolveReal(p string) (string, error) {
 				res = "/"
 			}
 			rest = append(strings.Split(t, "/"), rest...)
+		case !st.IsDir():
+			return "", errNotDirPath
 		default:
 			res = next
 		}
 	}
 	return res, nil
 }
+
+// errNotDirPath: the path cannot be walked as a chain of directories (a file in the middle, or
+// ".." after a missing component), so the OS would refuse it and it names nothing of ours.
+var errNotDirPath = errors.New("not a directory path")
 
 // aliasVersion is the version an `agent` alias at path points at when it is cursor's own: the
 // target, resolved from the alias's directory, must be exactly <share>/<version>/cursor-agent.
@@ -112,10 +122,16 @@ func (e Env) aliasVersion(alias, target string) (string, bool, error) {
 		return "", false, nil
 	}
 	verDir, err := resolveReal(target[:i])
+	if errors.Is(err, errNotDirPath) {
+		return "", false, nil
+	}
 	if err != nil {
 		return "", false, err
 	}
 	share, err := resolveReal(e.cursorShare())
+	if errors.Is(err, errNotDirPath) {
+		return "", false, nil
+	}
 	if err != nil {
 		return "", false, err
 	}

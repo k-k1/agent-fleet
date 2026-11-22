@@ -1051,3 +1051,22 @@ func TestCursorUnpackRetriesWhenTheFirstTempNameIsTaken(t *testing.T) {
 		t.Errorf("index.js: %v", err)
 	}
 }
+
+func TestCursorAliasThroughFileOrMissingComponentThenDotDotIsNotOurs(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	vol := filepath.Join(f.home, "volume")
+	os.MkdirAll(vol, 0o755)
+	versions := filepath.Dir(f.tree("x"))
+	moved := filepath.Join(vol, "versions")
+	os.Rename(versions, moved)
+	os.Symlink(moved, versions)
+	os.WriteFile(filepath.Join(vol, "marker"), []byte("x"), 0o644)
+	alias := filepath.Join(f.home, ".local", "bin", "agent")
+	for name, mid := range map[string]string{"regular file": "marker", "missing": "nothere"} {
+		target := vol + "/" + mid + "/../versions/9.9/cursor-agent"
+		if _, ok, err := f.env.aliasVersion(alias, target); ok || err != nil {
+			t.Errorf("%s: read as ours (ok=%v err=%v)", name, ok, err)
+		}
+	}
+}
