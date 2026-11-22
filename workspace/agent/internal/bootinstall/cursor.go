@@ -53,29 +53,76 @@ func (e Env) cursorShare() string {
 	return filepath.Join(e.Home, ".local", "share", "cursor-agent", "versions")
 }
 
-// realPath resolves symlinks when the path exists and cleans it otherwise.
-func realPath(p string) string {
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		return r
+// resolveReal resolves p (absolute) to a real path the way the OS would, component by component:
+// ".." applies to the already-resolved directory, never to a link's name. A component that does
+// not exist is kept as written (it cannot be a link), so a path through a missing old version
+// directory still resolves under its real, existing ancestor. Any other failed look is an error
+// and is never hidden behind the textual path.
+func resolveReal(p string) (string, error) {
+	rest := strings.Split(p, "/")
+	res := "/"
+	for hops := 0; len(rest) > 0; {
+		c := rest[0]
+		rest = rest[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			res = filepath.Dir(res)
+			continue
+		}
+		next := filepath.Join(res, c)
+		st, err := os.Lstat(next)
+		switch {
+		case errors.Is(err, fs.ErrNotExist):
+			res = next
+		case err != nil:
+			return "", err
+		case st.Mode()&os.ModeSymlink != 0:
+			if hops++; hops > 40 {
+				return "", fmt.Errorf("too many links resolving %s", p)
+			}
+			t, err := os.Readlink(next)
+			if err != nil {
+				return "", err
+			}
+			if filepath.IsAbs(t) {
+				res = "/"
+			}
+			rest = append(strings.Split(t, "/"), rest...)
+		default:
+			res = next
+		}
 	}
-	return filepath.Clean(p)
+	return res, nil
 }
 
 // aliasVersion is the version an `agent` alias at path points at when it is cursor's own: the
-// target, resolved from the alias's real directory, must be exactly <share>/<version>/cursor-agent.
-// Another tool's `agent` (even one whose path contains cursor-agent/versions/) is not. Both sides
-// are compared as real paths: a ~/.local/bin that is itself a link into another tree must not make
-// that tree's relative alias read as this install's.
-func (e Env) aliasVersion(alias, target string) (string, bool) {
+// target, resolved from the alias's directory, must be exactly <share>/<version>/cursor-agent.
+// Another tool's `agent` (even one whose path contains cursor-agent/versions/) is not. The
+// directories on both sides are resolved as real paths, in OS order: a ~/.local/bin that is itself
+// a link into another tree must not make that tree's relative alias read as this install's, and a
+// versions root that is a link must not disown an alias whose old version directory is gone.
+func (e Env) aliasVersion(alias, target string) (string, bool, error) {
 	if !filepath.IsAbs(target) {
-		target = filepath.Join(realPath(filepath.Dir(alias)), target)
+		target = filepath.Dir(alias) + "/" + target
 	}
-	target = filepath.Clean(target)
-	verDir := realPath(filepath.Dir(target))
-	if filepath.Base(target) != cursorTool || filepath.Dir(verDir) != realPath(e.cursorShare()) {
-		return "", false
+	i := strings.LastIndex(target, "/")
+	if target[i+1:] != cursorTool {
+		return "", false, nil
 	}
-	return filepath.Base(verDir), true
+	verDir, err := resolveReal(target[:i])
+	if err != nil {
+		return "", false, err
+	}
+	share, err := resolveReal(e.cursorShare())
+	if err != nil {
+		return "", false, err
+	}
+	if filepath.Dir(verDir) != share {
+		return "", false, nil
+	}
+	return filepath.Base(verDir), true, nil
 }
 
 // cursorAliasVersion is aliasVersion for the alias file on disk. Only "not there" and "not a
@@ -96,8 +143,7 @@ func (e Env) cursorAliasVersion(alias string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	v, ok := e.aliasVersion(alias, t)
-	return v, ok, nil
+	return e.aliasVersion(alias, t)
 }
 
 // cursorVersionInLink reads the version the way the shell's greedy sed did: the last
@@ -461,11 +507,11 @@ func untarStrip1(archive, dest string) error {
 			var tmpName string
 			var w *os.File
 			for n := 0; ; n++ {
-				var rnd [6]byte
-				if _, err := rand.Read(rnd[:]); err != nil {
+				name, err := unpackTmpName()
+				if err != nil {
 					return err
 				}
-				tmpName = filepath.Join(filepath.Dir(rel), ".af-w"+hex.EncodeToString(rnd[:]))
+				tmpName = filepath.Join(filepath.Dir(rel), name)
 				w, err = root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 				if err == nil {
 					break
@@ -559,11 +605,27 @@ func checkLinksInside(dest string, root *os.Root) error {
 		if err != nil {
 			return fmt.Errorf("unsafe link in archive: %s: %v", rel, err)
 		}
-		if _, err := root.Stat(filepath.Dir(rel) + "/" + filepath.Dir(t)); err != nil {
+		// The raw path is split, not cleaned: Clean would drop ".." before the OS resolves the
+		// links in front of it. A trailing "." or ".." cannot be a missing final element.
+		full := strings.TrimRight(filepath.Dir(rel)+"/"+t, "/")
+		i := strings.LastIndex(full, "/")
+		if last := full[i+1:]; last == "." || last == ".." {
+			return fmt.Errorf("unsafe link in archive: %s -> %s", rel, t)
+		}
+		if st, err := root.Stat(full[:i]); err != nil || !st.IsDir() {
 			return fmt.Errorf("unsafe link in archive: %s -> %s: %v", rel, t, err)
 		}
 		return nil
 	})
+}
+
+// unpackTmpName is a seam for tests: the candidate name of a file's temporary sibling.
+var unpackTmpName = func() (string, error) {
+	var rnd [6]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return "", err
+	}
+	return ".af-w" + hex.EncodeToString(rnd[:]), nil
 }
 
 // lstatAlias is a seam for tests: the look at the agent alias.
@@ -921,7 +983,8 @@ func (e Env) cursorMarkerValid(m cursorMarker) bool {
 			}
 			// The alias is only ever restored to a state that was cursor's own.
 			if isAlias {
-				if _, ok := e.aliasVersion(l.Path, string(l.Target)); !ok {
+				// An unresolvable path is not provably ours: the marker is left for a retry.
+				if _, ok, err := e.aliasVersion(l.Path, string(l.Target)); err != nil || !ok {
 					return false
 				}
 			}
