@@ -73,6 +73,8 @@ export const memo = {
   "memo.selected_n": "{count} 件を選択中",
   "memo.clear_selection": "選択を解除",
   "memo.send_title": "メモを送信",
+  "memo.send_keep": "送信後もメモを残す",
+  "memo.send_keep_queue": "キューはこのメッセージを引き続き実行します。",
   "memo.content_label": "内容",
   "memo.content_hint": "送信前に自由に編集できます",
   "memo.target_label": "送信先",

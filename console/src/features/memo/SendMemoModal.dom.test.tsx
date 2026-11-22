@@ -5,8 +5,8 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const memoFlush = vi.fn(async (_s: string, ids: string[], _text: string) => ({ sent: ids.length }));
-vi.mock("./api.ts", () => ({ memoFlush: (s: string, ids: string[], text: string) => memoFlush(s, ids, text) }));
+const memoFlush = vi.fn(async (_s: string, ids: string[], _text: string, _keep?: boolean) => ({ sent: ids.length }));
+vi.mock("./api.ts", () => ({ memoFlush: (s: string, ids: string[], text: string, keep?: boolean) => memoFlush(s, ids, text, keep) }));
 vi.mock("../chat/api.ts", () => ({ assistantList: async () => ({ assistants: [] }), chatCreate: vi.fn() }));
 
 import { SendMemoModal } from "./SendMemoModal.tsx";
@@ -41,6 +41,7 @@ afterEach(() => {
   root = null;
   host = null;
   memoFlush.mockClear();
+  localStorage.clear();
 });
 
 describe("SendMemoModal with a taken-in memo", () => {
@@ -62,5 +63,42 @@ describe("SendMemoModal with a taken-in memo", () => {
     const send = [...document.querySelectorAll("footer button")].at(-1) as HTMLButtonElement;
     await act(async () => send.click());
     expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["a", "b"]]);
+  });
+});
+
+describe("SendMemoModal keep option", () => {
+  const sendBtn = () => [...document.querySelectorAll("footer button")].at(-1) as HTMLButtonElement;
+  const keepBox = () => document.querySelector<HTMLInputElement>(".memo-send-keep input")!;
+
+  it("is off by default and sends without keep", async () => {
+    await render([memo({ id: "a" })]);
+    expect(keepBox().checked).toBe(false);
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls[0][3]).toBe(false);
+  });
+
+  it("sends keep and remembers the choice for the next dialog", async () => {
+    await render([memo({ id: "a" })]);
+    await act(async () => keepBox().click());
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls[0][3]).toBe(true);
+    act(() => root?.unmount());
+    host?.remove();
+    await render([memo({ id: "a" })]);
+    expect(keepBox().checked).toBe(true);
+  });
+
+  it("notes that the queue still runs a kept queue message", async () => {
+    await render([memo({ id: "q", state: "pending" })]);
+    expect(document.body.textContent).not.toContain("キューはこのメッセージを引き続き実行します。");
+    await act(async () => keepBox().click());
+    expect(document.body.textContent).toContain("キューはこのメッセージを引き続き実行します。");
+  });
+
+  it("passes keep to every send of a mixed selection", async () => {
+    await render([memo({ id: "own" }), memo({ id: "taken", origin: { itemId: "i1", sender: "a" } })]);
+    await act(async () => keepBox().click());
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls.map((c) => c[3])).toEqual([true, true]);
   });
 });

@@ -947,6 +947,52 @@ func TestMemoQueueFlushReservesWhatItSends(t *testing.T) {
 	})
 }
 
+// A flush with keep sends the text and settles without stamping: a note stays unsent, a queue
+// message stays waiting, and during the send the reservation still refuses a second flush.
+func TestMemoFlushKeepSendsWithoutStamping(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		h := e.useHookAgent()
+		console := memoFaceClient{"console", e}
+
+		_, note := console.create(textMemo("r", "plain", "kept note"))
+		_, queued := console.create(textMemo("r", "q", "kept queue message"))
+		before := e.memoRow(queued.ID)
+		var again int
+		h.onTurn = func() {
+			again = e.do("a", "POST", "/api/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{note.ID}}).Code
+		}
+		r := e.do("a", "POST", "/api/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{note.ID, queued.ID}, "keep": true})
+		if r.Code != http.StatusOK {
+			t.Fatalf("keep flush: %d %s", r.Code, r.Body.String())
+		}
+		if again != http.StatusConflict {
+			t.Fatalf("a concurrent flush of a kept row during the send: %d, want 409", again)
+		}
+		if len(h.prompts) < 1 || !strings.Contains(h.prompts[0], "kept note") {
+			t.Fatalf("prompts %q", h.prompts)
+		}
+		for _, id := range []string{note.ID, queued.ID} {
+			got := e.memoRow(id)
+			if got.SentAt != "" || got.SendToken != "" || got.State == store.MemoStateDelivered {
+				t.Fatalf("kept row %s was stamped or still reserved: %+v", id, got)
+			}
+		}
+		if got := e.memoRow(queued.ID); got.State != before.State {
+			t.Fatalf("a kept queue message changed state %q -> %q", before.State, got.State)
+		}
+
+		// Without keep the same note is stamped, as before.
+		h.onTurn = nil
+		if r := e.do("a", "POST", "/api/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{note.ID}}); r.Code != http.StatusOK {
+			t.Fatalf("plain flush: %d", r.Code)
+		}
+		if got := e.memoRow(note.ID); got.SentAt == "" {
+			t.Fatalf("a flush without keep must stamp sent_at: %+v", got)
+		}
+	})
+}
+
 // A send the Agent refuses leaves every row as it was: a note unsent, a pending message
 // pending under its release, a held one held, and no reservation behind.
 func TestMemoQueueRefusedFlushLeavesRowsAsTheyWere(t *testing.T) {
@@ -1278,7 +1324,7 @@ func TestMemoQueueSettleDeliversOnlyTheSentText(t *testing.T) {
 		}
 		sent := e.memoRow(m.ID)
 		sent.Body = "A, the text that was sent"
-		if err := memoSettleSend(context.Background(), e.st, e.members["a"], "t1", []store.Memo{sent}, nil, store.NowTS()); err != nil {
+		if err := memoSettleSend(context.Background(), e.st, e.members["a"], "t1", []store.Memo{sent}, nil, store.NowTS(), false); err != nil {
 			t.Fatal(err)
 		}
 		if got := e.memoRow(m.ID); got.State != store.MemoStateHeld || got.SentAt != "" || got.SendToken != "" {
