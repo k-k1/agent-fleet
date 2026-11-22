@@ -55,10 +55,12 @@ interface FieldsProps {
   onChange: (v: RecipeDraft) => void;
   /** The category's own agent, said in the empty choice. */
   categoryAgent: string;
+  /** The note is being moved out of every auto-run category: its own setting is dropped. */
+  dropped?: boolean;
 }
 
 /** The editor row: agent (default "category setting"), model and effort. */
-export function MemoRecipeFields({ value, onChange, categoryAgent }: FieldsProps) {
+export function MemoRecipeFields({ value, onChange, categoryAgent, dropped }: FieldsProps) {
   const tr = useT();
   const running = useWorkspaceStore((st) => st.state) === "running";
   const catalog = useMemberCatalog(running);
@@ -103,7 +105,7 @@ export function MemoRecipeFields({ value, onChange, categoryAgent }: FieldsProps
           ))}
         </datalist>
       </div>
-      <div className="memo-edit-hint">{tr("memo.recipe_hint")}</div>
+      <div className="memo-edit-hint">{tr(dropped ? "memo.recipe_dropped" : "memo.recipe_hint")}</div>
     </fieldset>
   );
 }

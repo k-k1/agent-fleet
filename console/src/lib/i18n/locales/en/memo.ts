@@ -157,6 +157,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.recipe_model_ph": "Empty: the category setting",
   "memo.recipe_effort_ph": "Empty: the category setting",
   "memo.recipe_hint": "Leave a field empty to use the category's auto-run setting. A memo that names another agent does not take the category's model or effort. Memos with different settings run in separate sessions.",
+  "memo.recipe_dropped": "Moving this memo out of the auto-run categories drops its own setting; it is not saved.",
   "memo.recipe_badge_title": "This memo runs with its own agent, model or effort instead of the category setting: {value}",
   "memo.recipe_route": "route {route}",
   "memo.held_recipe_invalid": "Back for your approval: the agent, model or effort set on this memo cannot start a run under this category's current settings. Change it (or clear it to use the category setting), then approve it again.",

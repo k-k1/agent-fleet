@@ -155,6 +155,7 @@ export const memo = {
   "memo.recipe_model_ph": "空欄: カテゴリの設定",
   "memo.recipe_effort_ph": "空欄: カテゴリの設定",
   "memo.recipe_hint": "空欄の項目はカテゴリの自動実行の設定を使います。別のエージェントを選ぶと、カテゴリのモデルと effort は引き継ぎません。設定が違うメモは別のセッションで実行されます。",
+  "memo.recipe_dropped": "このメモを自動実行のカテゴリの外へ移すと、専用の設定は外れます（保存されません）。",
   "memo.recipe_badge_title": "このメモは、カテゴリの設定ではなく専用のエージェント・モデル・effort で実行します: {value}",
   "memo.recipe_route": "ルート {route}",
   "memo.held_recipe_invalid": "承認待ちに戻しました: このメモに設定したエージェント・モデル・effort では、このカテゴリの今の設定で実行を始められません。設定を直す（または空にしてカテゴリの設定に戻す）と、もう一度承認できます。",

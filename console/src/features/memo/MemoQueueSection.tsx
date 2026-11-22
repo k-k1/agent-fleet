@@ -1145,6 +1145,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       onEdit={() => setEditing(m.id)}
                       onCancelEdit={() => setEditing(null)}
                       onSave={(body, category, clearRef, after, startAfter, recipe) => void saveEdit(m, body, category, clearRef, after, startAfter, recipe)}
+                      isQueueCategory={(name) => !!cats.find((c) => c.repo === m.repo && c.name === name)?.queue}
                       recipeAgent={isQueue && (m.state === "held" || m.state === "pending") ? (queue?.agentKind ?? "") : undefined}
                       afterChoices={isQueue && (m.state === "held" || m.state === "pending") ? afterChoices(g.memos, m) : undefined}
                       onOpenTidyRuns={
@@ -1665,6 +1666,8 @@ interface MemoRowProps {
   /** The category's own agent when the note may carry a run recipe of its own (a held or waiting note
    *  of an auto-run category; "" when its settings are not read); absent elsewhere. */
   recipeAgent?: string;
+  /** Whether a category name (as typed in the edit) is an auto-run category of this note's repo. */
+  isQueueCategory?: (name: string) => boolean;
   /** The notes of its auto-run category it may wait for; absent outside one, or once it has run. */
   afterChoices?: { id: string; label: string }[];
   /** Opens the run history of this note's category; absent outside an auto-run category. */
@@ -1729,10 +1732,16 @@ function MemoRow(props: MemoRowProps) {
       return;
     }
     // Only the recipe fields the member changed, so a text edit never rewrites them.
-    const recipeChange = props.recipeAgent === undefined ? {} : recipePatch(recipeDraftOf(m), recipe);
+    // A move out of every auto-run category drops the recipe at the Control Plane, and a recipe sent
+    // there would be refused, so it is not sent.
+    const recipeChange = props.recipeAgent === undefined || !recipeApplies ? {} : recipePatch(recipeBase, recipe);
     props.onSave(body, cat, clearRef, afterChanged(), startAfter, Object.keys(recipeChange).length > 0 ? recipeChange : undefined);
   };
+  // The recipe as it was when the edit began is the baseline: a refresh that brings another device's
+  // change must neither be overwritten by a save of the text nor discard what is being typed.
   const [recipe, setRecipe] = useState<RecipeDraft>(() => recipeDraftOf(m));
+  const [recipeBase, setRecipeBase] = useState<RecipeDraft>(() => recipeDraftOf(m));
+  const recipeApplies = props.isQueueCategory ? props.isQueueCategory(cat.trim()) : true;
   const taRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextarea(taRef, body);
 
@@ -1742,7 +1751,6 @@ function MemoRow(props: MemoRowProps) {
       setCat(currentCat);
       setClearRef(false);
       setAfter(m.after ?? []);
-      setRecipe(recipeDraftOf(m));
       requestAnimationFrame(() => {
         const ta = taRef.current;
         if (ta) {
@@ -1762,6 +1770,8 @@ function MemoRow(props: MemoRowProps) {
     setStart(startAfterInputValue(m.startAfter, zone));
     setStartBase(startAfterInputValue(m.startAfter, zone));
     setStartBad(false);
+    setRecipe(recipeDraftOf(m));
+    setRecipeBase(recipeDraftOf(m));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the start of an edit resets it
   }, [editing]);
 
@@ -1824,7 +1834,7 @@ function MemoRow(props: MemoRowProps) {
             </Button>
           </div>
           {props.recipeAgent !== undefined && (
-            <MemoRecipeFields value={recipe} onChange={setRecipe} categoryAgent={props.recipeAgent} />
+            <MemoRecipeFields value={recipe} onChange={setRecipe} categoryAgent={props.recipeAgent} dropped={!recipeApplies} />
           )}
           {afterOptions && (
             <fieldset className="memo-edit-after">

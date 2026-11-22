@@ -145,6 +145,43 @@ describe("a note with its own run recipe", () => {
     expect(memoUpdate).toHaveBeenLastCalledWith("a", { body: "own job", category: "inbox", model: "", effort: "high" });
   });
 
+  it("keeps the recipe it began with as the baseline when a refresh brings another device's change", async () => {
+    const { useMemoStore } = await import("./store.ts");
+    servedMemos = [aMemo({ id: "a", body: "own job", state: "pending" })];
+    await renderSection();
+    await openEditor("own job");
+    // Another device sets a model while this edit is open; the list is read again.
+    servedMemos = [aMemo({ id: "a", body: "own job", state: "pending", model: "theirs" })];
+    await act(async () => useMemoStore.getState().bump());
+    await settle();
+    await click(btn(editRow(), t("memo.save")));
+    // A text-only save must not clear what the other device set.
+    expect(memoUpdate).toHaveBeenLastCalledWith("a", { body: "own job", category: "inbox" });
+  });
+
+  it("does not drop a recipe being typed when the refresh brings a new text", async () => {
+    const { useMemoStore } = await import("./store.ts");
+    servedMemos = [aMemo({ id: "a", body: "own job", state: "pending" })];
+    await renderSection();
+    await openEditor("own job");
+    await typeInto(recipeInputs()[0], "gpt-typed");
+    servedMemos = [aMemo({ id: "a", body: "own job edited elsewhere", state: "pending" })];
+    await act(async () => useMemoStore.getState().bump());
+    await settle();
+    expect(recipeInputs()[0].value).toBe("gpt-typed");
+  });
+
+  it("sends no recipe when the note is moved out of the auto-run categories, and says so", async () => {
+    servedMemos = [aMemo({ id: "a", body: "own job", state: "pending" })];
+    await renderSection();
+    await openEditor("own job");
+    await typeInto(recipeInputs()[0], "gpt-typed");
+    await typeInto(editRow().querySelector<HTMLInputElement>(".memo-edit-cat")!, "plain");
+    expect(editRow().textContent).toContain(t("memo.recipe_dropped"));
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("a", { body: "own job", category: "plain" });
+  });
+
   it("offers no recipe row on a note outside an auto-run category", async () => {
     servedCats = [{ ...queueCat, queue: false }];
     servedMemos = [aMemo({ id: "a", body: "plain note" })];

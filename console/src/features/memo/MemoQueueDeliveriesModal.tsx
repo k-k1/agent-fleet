@@ -28,8 +28,7 @@ import {
   deferWords,
   deliveryStateKey,
   firstTurnWords,
-  hasRecipe,
-  recipeKey,
+  runRecipes,
   heldNames,
   heldWords,
   readDeliveries,
@@ -71,17 +70,7 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
-  // The distinct own recipes among a run's messages (one badge each).
-  const recipesOf = (ids: string[]): Memo[] => {
-    const seen = new Set<string>();
-    const out: Memo[] = [];
-    for (const m of messages ?? []) {
-      if (!ids.includes(m.id) || !hasRecipe(m) || seen.has(recipeKey(m))) continue;
-      seen.add(recipeKey(m));
-      out.push(m);
-    }
-    return out;
-  };
+  const recipesOf = (d: MemoDelivery): Memo[] => runRecipes(messages ?? [], d);
   const sessions = useSessionsStore((s) => s.sessions);
   // The run whose notes are being returned to the queue.
   const [returning, setReturning] = useState("");
@@ -298,7 +287,7 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                     </span>
                   )}
                   <span className="memo-d-tag">{tr(d.auto ? "memo.d_auto" : "memo.d_manual")}</span>
-                  {recipesOf(d.messageIds).map((m) => (
+                  {recipesOf(d).map((m) => (
                     <MemoRecipeBadge key={m.id} memo={m} className="memo-d-tag memo-d-recipe" />
                   ))}
                   {why && (

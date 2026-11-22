@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { Memo, MemoQueue } from "../../types/memo.ts";
 import {
+  runRecipes,
   runOpenPRs,
   canReturnRun,
   deferWords,
@@ -485,5 +486,28 @@ describe("follow-ups of an approved note (ADR 0137, addendum 2026-11-20)", () =>
     expect(continuationHeldKey("continuation_whatever")).toBe("memo.cont_r_other");
     expect(continuationHeldKey("deferred")).toBeNull();
     expect(continuationHeldKey(undefined)).toBeNull();
+  });
+});
+
+describe("runRecipes", () => {
+  const m = (id: string, over: Partial<Memo> = {}): Memo => ({
+    id, repo: "", category: "c", kind: "text", body: id, refPath: "", position: 0, createdAt: "", sentAt: "", ...over,
+  });
+  it("lists each distinct own recipe of the messages still bound to the run", () => {
+    const d = { id: "d1", messageIds: ["a", "b", "c"] };
+    const got = runRecipes(
+      [
+        m("a", { deliveryId: "d1", agentKind: "codex", model: "x" }),
+        m("b", { deliveryId: "d1", agentKind: "codex", model: "x" }),
+        m("c", { deliveryId: "d1" }),
+      ],
+      d,
+    );
+    expect(got.map((x) => x.id)).toEqual(["a"]);
+  });
+  it("shows nothing for a message returned to the queue and edited since", () => {
+    // The run took "a"; it came back (no delivery any more) and its model was changed afterwards.
+    expect(runRecipes([m("a", { state: "pending", model: "new" })], { id: "d1", messageIds: ["a"] })).toEqual([]);
+    expect(runRecipes([m("a", { deliveryId: "d2", model: "new" })], { id: "d1", messageIds: ["a"] })).toEqual([]);
   });
 });

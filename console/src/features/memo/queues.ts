@@ -337,6 +337,20 @@ export const recipeKey = (m: Pick<Memo, "agentKind" | "model" | "effort" | "rout
   return hasRecipe(m) ? [r.agentKind, r.model, r.effort, r.route].join("\x00") : "";
 };
 
+/** The distinct own recipes among the messages a run took, one message each. Only a message still
+ *  bound to that run counts: one returned to the queue may have been edited since, and its current
+ *  recipe says nothing about what the run used. */
+export function runRecipes(messages: readonly Memo[], d: Pick<MemoDelivery, "id" | "messageIds">): Memo[] {
+  const seen = new Set<string>();
+  const out: Memo[] = [];
+  for (const m of messages) {
+    if (m.deliveryId !== d.id || !d.messageIds.includes(m.id) || !hasRecipe(m) || seen.has(recipeKey(m))) continue;
+    seen.add(recipeKey(m));
+    out.push(m);
+  }
+  return out;
+}
+
 /** The parts of a recipe worth a badge, in reading order: agent, model, effort, route. */
 export function recipeParts(m: Pick<Memo, "agentKind" | "model" | "effort" | "route">): string[] {
   const r = memoRecipe(m);
