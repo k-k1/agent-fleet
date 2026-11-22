@@ -304,7 +304,7 @@ func (r *memoQueueRunner) houseKeep(ctx context.Context, w *memoQueueWork, live 
 		}
 		return
 	}
-	if q.Draining && w.pending.Count == 0 {
+	if q.Draining && w.pending.Held == 0 {
 		if err := r.mgr.store.SetMemoQueueDraining(ctx, q.CategoryID, false); err != nil {
 			log.Printf("memo queue: queue %s: end draining: %v", q.CategoryID, err)
 		}
@@ -686,6 +686,9 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 func pendingOf(rows []store.Memo, eligible func(store.Memo) bool, now time.Time) store.QueuePending {
 	var p store.QueuePending
 	for _, m := range rows {
+		if m.State == store.MemoStatePending {
+			p.Held++
+		}
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
 			continue
 		}

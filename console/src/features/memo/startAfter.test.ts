@@ -29,6 +29,12 @@ describe("the start time input", () => {
     expect(startAfterInputValue("2026-03-08T09:00:00.000Z")).toBe("2026-03-08T05:00");
   });
 
+  it("reads and writes in an explicit zone when given one", () => {
+    setFormatPrefs("en-US", "Asia/Tokyo");
+    expect(startAfterFromInput("2026-12-04T09:00", "America/New_York")).toBe("2026-12-04T14:00:00.000Z");
+    expect(startAfterInputValue("2026-12-04T14:00:00.000Z", "America/New_York")).toBe("2026-12-04T09:00");
+  });
+
   it("refuses a wall time the clocks skip, and takes the later of one they repeat", () => {
     setFormatPrefs("en-US", "America/New_York");
     // 2026-03-08 02:00-02:59 does not exist there.

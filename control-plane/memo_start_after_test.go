@@ -248,9 +248,51 @@ func TestMemoStartAfterStatsSkipAHandSend(t *testing.T) {
 			at, at, memoContentHash(row), store.NowTS(), m.ID); err != nil {
 			t.Fatal(err)
 		}
-		sql, goSide := e.statsOf(q)
-		if sql.Scheduled != 0 || sql.NextAt != "" || goSide.Scheduled != 0 || goSide.NextAt != "" {
-			t.Fatalf("stats sql %+v go %+v", sql, goSide)
+		// Before its time and after it, the row in flight is neither blocked, nor timed, nor
+		// claimable, and "Run now" says nothing waits; it still keeps a drain going.
+		for _, phase := range []string{"before", "after"} {
+			if phase == "after" {
+				row.StartAfter = store.DeliveryTS(time.Now().Add(-time.Minute))
+				if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET start_after=?, release_start_after=?, release_hash=? WHERE id=?`,
+					row.StartAfter, row.StartAfter, memoContentHash(row), m.ID); err != nil {
+					t.Fatal(err)
+				}
+			}
+			sql, goSide := e.statsOf(q)
+			if sql.Held != 1 || goSide.Held != 1 || sql.Count != 0 || goSide.Count != 0 || sql.Eligible != 0 || goSide.Eligible != 0 ||
+				sql.Scheduled != 0 || sql.NextAt != "" || goSide.Scheduled != 0 || goSide.NextAt != "" {
+				t.Fatalf("%s: stats sql %+v go %+v", phase, sql, goSide)
+			}
+			if fb := e.queueFireBlock(q); fb == nil || fb.Reason != waitNothing {
+				t.Fatalf("%s: fireBlock %+v", phase, fb)
+			}
+		}
+	})
+}
+
+// A draining queue whose one pending message is in a hand send stays draining: the send may fail
+// and put the row back, and a threshold queue would then wait for a threshold it already passed.
+// It ends once nothing is pending at all.
+func TestMemoDrainHeldByAHandSend(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, q := e.autoQueue("app", "impl", map[string]any{"openAfter": 5}, 0)
+		m := e.pending("app", "impl", "one")
+		if err := e.st.SetMemoQueueDraining(context.Background(), q, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET send_token='t', send_started_at=? WHERE id=?`, store.NowTS(), m.ID); err != nil {
+			t.Fatal(err)
+		}
+		e.autoTick(time.Now())
+		if !e.queueRow(q).Draining {
+			t.Fatal("draining ended while a hand send held the only pending message")
+		}
+		if _, err := e.st.DB().ExecContext(context.Background(), `DELETE FROM memo WHERE id=?`, m.ID); err != nil {
+			t.Fatal(err)
+		}
+		e.autoTick(time.Now())
+		if e.queueRow(q).Draining {
+			t.Fatal("still draining with nothing pending")
 		}
 	})
 }

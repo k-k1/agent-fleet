@@ -491,6 +491,10 @@ func (s *SQL) ListMemoQueues(ctx context.Context, membershipID string) ([]MemoQu
 // QueuePending is what a queue has waiting: how many pending messages, the creation time of the
 // oldest, and the latest time any of them was created or released.
 type QueuePending struct {
+	// Held is every pending message, a hand send or a delivery in flight included: what keeps a
+	// drain going, since a hand send that fails puts its row back. Count and the rest are only the
+	// ones a claim could take, as pendingOf counts them.
+	Held  int
 	Count int
 	// Eligible is how many of them may be claimed now: no prerequisite, or every prerequisite
 	// satisfied (MemoAfterSatisfiedSQL). Count, blocked ones included, keeps a drain going, and
@@ -534,14 +538,16 @@ func (s *SQL) ListMemberQueuePendingStats(ctx context.Context, membershipID stri
 
 func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (map[string]QueuePending, error) {
 	now := DeliveryTS(time.Now())
-	eligible := memoNotBeforeSQL + ` AND ` + memoEligibleSQL
+	// Every count but Held is over the rows the claim looks at (memoClaimableSQL), as pendingOf's.
+	claimable := memoClaimableSQL + ` AND `
+	eligible := claimable + memoNotBeforeSQL + ` AND ` + memoEligibleSQL
 	head := []any{now, now, now, now, now, now, now, now, now, now}
-	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN `+eligible+` THEN 1 ELSE 0 END),
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN `+memoClaimableSQL+` THEN 1 ELSE 0 END), SUM(CASE WHEN `+eligible+` THEN 1 ELSE 0 END),
 		  SUM(CASE WHEN m.ref_key<>'' AND `+eligible+` THEN 1 ELSE 0 END),
 		  SUM(CASE WHEN m.provenance='curator' AND `+eligible+` THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at),
-		  SUM(CASE WHEN `+memoClaimableSQL+` AND m.not_before>? THEN 1 ELSE 0 END),
-		  SUM(CASE WHEN `+memoClaimableSQL+` AND m.not_before<=? AND m.start_after>? THEN 1 ELSE 0 END),
-		  COALESCE(MIN(CASE WHEN `+memoClaimableSQL+` AND `+memoWaitUntilSQL+`>? THEN `+memoWaitUntilSQL+` END), '')
+		  SUM(CASE WHEN `+claimable+`m.not_before>? THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN `+claimable+`m.not_before<=? AND m.start_after>? THEN 1 ELSE 0 END),
+		  COALESCE(MIN(CASE WHEN `+claimable+memoWaitUntilSQL+`>? THEN `+memoWaitUntilSQL+` END), '')
 		FROM memo m
 		JOIN memo_category c ON c.membership_id=m.membership_id AND c.repo=m.repo AND c.name=m.category
 		JOIN memo_queue q ON q.category_id=c.id
@@ -555,7 +561,7 @@ func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (
 		var id string
 		var p QueuePending
 		var maxCreated, maxReleased string
-		if err := rows.Scan(&id, &p.Count, &p.Eligible, &p.Refs, &p.Curators, &p.Oldest, &maxCreated, &maxReleased, &p.Deferred, &p.Scheduled, &p.NextAt); err != nil {
+		if err := rows.Scan(&id, &p.Held, &p.Count, &p.Eligible, &p.Refs, &p.Curators, &p.Oldest, &maxCreated, &maxReleased, &p.Deferred, &p.Scheduled, &p.NextAt); err != nil {
 			return nil, err
 		}
 		p.Latest = maxCreated

@@ -32,7 +32,7 @@ const { MemoReleaseCard } = await import("./MemoReleaseCard.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
-const { fmtDateTime } = await import("../../lib/intl.ts");
+const { fmtStartAfter } = await import("./queues.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -113,7 +113,7 @@ describe("a note with a start time", () => {
       aMemo({ id: "b", body: "past job", state: "pending", position: 1, startAfter: "2020-01-01T00:00:00.000000Z" }),
     ];
     await renderSection();
-    expect(rowOf("later job").querySelector(".memo-scheduled")?.textContent).toBe(t("memo.start_until", { at: fmtDateTime(START) }));
+    expect(rowOf("later job").querySelector(".memo-scheduled")?.textContent).toBe(t("memo.start_until", { at: fmtStartAfter(START) }));
     expect(rowOf("past job").querySelector(".memo-scheduled")).toBeNull();
   });
 
@@ -150,6 +150,32 @@ describe("a note with a start time", () => {
     await settle();
     await click(btn(editRow(), t("memo.save")));
     expect(memoUpdate).toHaveBeenLastCalledWith("a", { body: "job", category: "inbox" });
+  });
+
+  it("keeps the zone it opened with when the setting changes before the save", async () => {
+    setFormatPrefs("en-US", "America/New_York");
+    servedMemos = [aMemo({ id: "a", body: "job", state: "pending" })];
+    await renderSection();
+    await openEditor("job");
+    await typeInto(startInput(), "2099-12-04T09:00");
+    setFormatPrefs("en-US", "Asia/Tokyo");
+    await click(btn(editRow(), t("memo.save")));
+    // 09:00 in New York, as the member typed it, not 09:00 in Tokyo.
+    expect(memoUpdate).toHaveBeenLastCalledWith("a", { body: "job", category: "inbox", startAfter: "2099-12-04T14:00:00.000Z" });
+  });
+
+  it("tells apart the two instants of a wall time the clocks repeat", async () => {
+    setFormatPrefs("en-US", "America/New_York");
+    servedMemos = [
+      aMemo({ id: "a", body: "first", state: "pending", startAfter: "2099-11-01T05:30:00.000000Z" }),
+      aMemo({ id: "b", body: "second", state: "pending", position: 1, startAfter: "2099-11-01T06:30:00.000000Z" }),
+    ];
+    await renderSection();
+    const first = rowOf("first").querySelector(".memo-scheduled")!.textContent;
+    const second = rowOf("second").querySelector(".memo-scheduled")!.textContent;
+    expect(first).toContain("EDT");
+    expect(second).toContain("EST");
+    expect(first).not.toBe(second);
   });
 
   it("refuses a wall time the clocks skip, and saves nothing", async () => {
@@ -192,6 +218,6 @@ describe("the approval card", () => {
         />,
       );
     });
-    expect(document.querySelector(".memo-release-after")?.textContent).toBe(t("memo.start_until", { at: fmtDateTime(START) }));
+    expect(document.querySelector(".memo-release-after")?.textContent).toBe(t("memo.start_until", { at: fmtStartAfter(START) }));
   });
 });

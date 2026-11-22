@@ -414,7 +414,8 @@ func memoStartAfterProblem(args json.RawMessage, answer string, now time.Time) s
 	if json.Unmarshal([]byte(answer), &out) != nil {
 		return ""
 	}
-	if got, err := time.Parse(time.RFC3339Nano, out.StartAfter); err == nil && got.Equal(want) {
+	// The Control Plane keeps microseconds and drops the rest, so the comparison does the same.
+	if got, err := time.Parse(time.RFC3339Nano, out.StartAfter); err == nil && got.Equal(want.Truncate(time.Microsecond)) {
 		return ""
 	}
 	if out.Existing {

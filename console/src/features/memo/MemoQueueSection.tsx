@@ -61,8 +61,8 @@ import { memoReference } from "./reference.ts";
 import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import { tidySelection } from "./tidyOps.ts";
-import { fmtDateTime } from "../../lib/intl.ts";
-import { afterChoices, afterItemMessage, continuationHeldKey, afterItemWords, deferredUntil, scheduledUntil, startAfterFromInput, startAfterInputValue, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
+import { effectiveTimeZone, fmtDateTime } from "../../lib/intl.ts";
+import { afterChoices, afterItemMessage, continuationHeldKey, afterItemWords, deferredUntil, scheduledUntil, fmtStartAfter, startAfterFromInput, startAfterInputValue, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -1571,7 +1571,10 @@ function MemoRow(props: MemoRowProps) {
   // The start time as the datetime-local input holds it, a wall time of the member's time zone, and
   // what it held when the edit began: a list refresh that brings a time set elsewhere must not read
   // as the member clearing it.
-  const [start, setStart] = useState(startAfterInputValue(m.startAfter));
+  // The zone is fixed when the edit begins, so a change of the setting meanwhile cannot move the
+  // instant the field shows.
+  const [startZone, setStartZone] = useState(effectiveTimeZone);
+  const [start, setStart] = useState(() => startAfterInputValue(m.startAfter, startZone));
   const [startBase, setStartBase] = useState(start);
   const [startBad, setStartBad] = useState(false);
   const ref = memoReference(m);
@@ -1594,7 +1597,7 @@ function MemoRow(props: MemoRowProps) {
   // Sent only when the member changed the field, so an untouched one never re-sends a stored time
   // (which may have passed, and the Control Plane would then clear it) nor clears one set elsewhere.
   const save = () => {
-    const startAfter = start === startBase ? undefined : startAfterFromInput(start);
+    const startAfter = start === startBase ? undefined : startAfterFromInput(start, startZone);
     if (startAfter === null) {
       setStartBad(true);
       return;
@@ -1610,8 +1613,10 @@ function MemoRow(props: MemoRowProps) {
       setCat(currentCat);
       setClearRef(false);
       setAfter(m.after ?? []);
-      setStart(startAfterInputValue(m.startAfter));
-      setStartBase(startAfterInputValue(m.startAfter));
+      const zone = effectiveTimeZone();
+      setStartZone(zone);
+      setStart(startAfterInputValue(m.startAfter, zone));
+      setStartBase(startAfterInputValue(m.startAfter, zone));
       setStartBad(false);
       requestAnimationFrame(() => {
         const ta = taRef.current;
@@ -1907,7 +1912,7 @@ function MemoRow(props: MemoRowProps) {
             ))}
           </div>
         )}
-        {scheduledUntil(m) && <div className="memo-scheduled">{tr("memo.start_until", { at: fmtDateTime(scheduledUntil(m)!) })}</div>}
+        {scheduledUntil(m) && <div className="memo-scheduled">{tr("memo.start_until", { at: fmtStartAfter(scheduledUntil(m)!) })}</div>}
         {deferredUntil(m) && (
           <div className="memo-deferred" title={(m.deferReasons ?? []).at(-1)?.reason || undefined}>
             {tr("memo.defer_until", { at: fmtDateTime(deferredUntil(m)!) })}

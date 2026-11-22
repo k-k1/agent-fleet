@@ -15,8 +15,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
 import { memoReference } from "./reference.ts";
-import { continuationHeldKey, scheduledUntil, tidyMarks } from "./queues.ts";
-import { fmtDateTime } from "../../lib/intl.ts";
+import { continuationHeldKey, fmtStartAfter, scheduledUntil, tidyMarks } from "./queues.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import type { Memo } from "../../types/memo.ts";
 import type { ReleaseCard } from "./queues.ts";
@@ -96,7 +95,7 @@ export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edite
                 )}
                 {/* So is its start time: the release keeps it. */}
                 {scheduledUntil(m) && (
-                  <div className="memo-release-after">{tr("memo.start_until", { at: fmtDateTime(scheduledUntil(m)!) })}</div>
+                  <div className="memo-release-after">{tr("memo.start_until", { at: fmtStartAfter(scheduledUntil(m)!) })}</div>
                 )}
                 {(m.attachments?.length ?? 0) > 0 && (
                   <div className="memo-release-atts">

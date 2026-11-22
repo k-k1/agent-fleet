@@ -7,7 +7,7 @@
 // so the owner can change a word with one line.
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import type { Session } from "../../types/session.ts";
-import { browserTimeZone, isValidTimeZone, zoneOffsetMinutes, zonedParts } from "../../lib/intl.ts";
+import { browserTimeZone, effectiveTimeZone, fmtDateTime, isValidTimeZone } from "../../lib/intl.ts";
 import type {
   Memo,
   MemoAfterItem,
@@ -987,19 +987,51 @@ export function scheduledUntil(m: Pick<Memo, "state" | "startAfter">, now: numbe
 
 const pad2 = (n: number) => String(n).padStart(2, "0");
 
-/** A stored start time as a datetime-local input's value ("YYYY-MM-DDTHH:MM"), in the member's
- *  effective time zone, not the browser's. "" for none. */
-export function startAfterInputValue(iso: string | undefined): string {
-  const p = iso ? zonedParts(iso) : null;
-  return p ? `${String(p.year).padStart(4, "0")}-${pad2(p.month)}-${pad2(p.day)}T${pad2(p.hour)}:${pad2(p.minute)}` : "";
+const wallFormats = new Map<string, Intl.DateTimeFormat>();
+/** The wall time of an instant in zone, as "YYYY-MM-DDTHH:MM" with Latin digits; "" for no date. The
+ *  zone is explicit: the editor reads and writes in the zone it opened with, whatever the setting
+ *  becomes while it is open. */
+function wallIn(ms: number, zone: string): string {
+  if (Number.isNaN(ms)) return "";
+  let f = wallFormats.get(zone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      numberingSystem: "latn",
+      calendar: "gregory",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      hourCycle: "h23",
+    });
+    wallFormats.set(zone, f);
+  }
+  const p: Record<string, number> = {};
+  for (const x of f.formatToParts(ms)) if (x.type !== "literal") p[x.type] = parseInt(x.value, 10);
+  return `${String(p.year).padStart(4, "0")}-${pad2(p.month)}-${pad2(p.day)}T${pad2(p.hour % 24)}:${pad2(p.minute)}`;
 }
 
-/** A datetime-local value, read as a wall time of the member's effective time zone, as the RFC 3339
- *  time (UTC) the Control Plane takes. "" for an empty value (no start time); null for one that is
- *  not a time of that zone: unreadable, or skipped by a DST change (02:30 on the morning the clocks
- *  go forward). A wall time a DST change repeats is read as its later instant: the note waits for
- *  the second 01:30, never runs before what the member may have meant. */
-export function startAfterFromInput(local: string): string | null {
+/** The offset of zone at an instant, in minutes east of UTC. */
+function offsetIn(ms: number, zone: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(wallIn(ms, zone));
+  if (!m) return 0;
+  return Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - Math.floor(ms / 60000) * 60000) / 60000);
+}
+
+/** A stored start time as a datetime-local input's value ("YYYY-MM-DDTHH:MM") in zone (the member's
+ *  effective one by default, not the browser's). "" for none. */
+export function startAfterInputValue(iso: string | undefined, zone: string = effectiveTimeZone()): string {
+  return iso ? wallIn(Date.parse(iso), zone) : "";
+}
+
+/** A datetime-local value, read as a wall time of zone (the member's effective one by default), as
+ *  the RFC 3339 time (UTC) the Control Plane takes. "" for an empty value (no start time); null for
+ *  one that is not a time of that zone: unreadable, or skipped by a DST change (02:30 on the morning
+ *  the clocks go forward). A wall time a DST change repeats is read as its later instant: the note
+ *  waits for the second 01:30, never runs before what the member may have meant. */
+export function startAfterFromInput(local: string, zone: string = effectiveTimeZone()): string | null {
   if (local === "") return "";
   const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(local);
   if (!m) return null;
@@ -1008,7 +1040,13 @@ export function startAfterFromInput(local: string): string | null {
   // counts only when it reads back as the same wall time.
   const day = 86400000;
   const fits = [wall - day, wall, wall + day]
-    .map((at) => wall - zoneOffsetMinutes(at) * 60000)
-    .filter((t) => startAfterInputValue(new Date(t).toISOString()) === local);
+    .map((at) => wall - offsetIn(at, zone) * 60000)
+    .filter((t) => wallIn(t, zone) === local);
   return fits.length === 0 ? null : new Date(Math.max(...fits)).toISOString();
+}
+
+/** A start time as the row and the approval card show it: with the zone's short name, so the two
+ *  instants of a wall time a DST change repeats read differently. */
+export function fmtStartAfter(iso: string): string {
+  return fmtDateTime(iso, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZoneName: "short" });
 }

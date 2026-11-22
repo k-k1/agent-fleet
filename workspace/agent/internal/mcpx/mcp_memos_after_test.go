@@ -42,6 +42,13 @@ func TestMemoWriteResultStartAfter(t *testing.T) {
 	if p := problem(future, `{"id":"m1","startAfter":"2026-12-04T00:00:00.000000Z"}`); p != "" {
 		t.Errorf("the same instant was reported: %s", p)
 	}
+	nanos := `{"kind":"text","startAfter":"2026-12-04T09:00:00.123456789+09:00"}`
+	if p := problem(nanos, `{"id":"m1","startAfter":"2026-12-04T00:00:00.123456Z"}`); p != "" {
+		t.Errorf("a time past microseconds, kept to microseconds, was reported: %s", p)
+	}
+	if p := problem(nanos, `{"id":"m0","existing":true,"startAfter":"2026-12-04T00:00:00.123456Z"}`); p != "" {
+		t.Errorf("an existing note with the same time to microseconds was reported: %s", p)
+	}
 	if !strings.Contains(problem(future, `{"id":"m1","startAfter":"2026-12-05T00:00:00.000000Z"}`), "different start time") {
 		t.Error("a different time was not reported")
 	}
