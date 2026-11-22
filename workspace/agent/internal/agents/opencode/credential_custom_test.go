@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -21,42 +20,45 @@ func withCustomConn(t *testing.T, c *secrets.CustomAPIConn) {
 	}
 }
 
-// Without a stored connection custom-api is exactly what it was: no binding, never on an
-// approved endpoint.
-func TestCustomAPIWithoutStoredConn(t *testing.T) {
-	withCustomConn(t, nil)
-	l := resolveModel("mine/some-model", nil, UsageZen, oauthState{}, nil)
-	if l.Route != routes.RouteCustomAPI || l.Binding != "" {
-		t.Fatalf("launch = %+v", l)
+// The production reader, on a real store: a store without the key (an older file) reads as no
+// connection, and a stored one is read back under its JSON name and bound.
+func TestCustomAPIFromTheStore(t *testing.T) {
+	isolatedHome(t)
+	t.Setenv("AF_SECRET_KEY", "")
+	if _, ok := customConn(); ok {
+		t.Fatal("a connection read from an empty store")
 	}
-	p := routepolicy.Policy{Restricted: true, Endpoints: []string{"10.0.0.5"}, EndpointRoutes: []string{routes.RouteCustomAPI}}
-	if p.Allows(routes.RouteCustomAPI) {
-		t.Fatal("custom-api allowed on an approved endpoint with no stored connection")
+	if l := resolveModel("mine/m", nil, UsageZen, oauthState{}, nil); l.Route != routes.RouteCustomAPI || l.Binding != "" {
+		t.Fatalf("launch without a stored connection = %+v", l)
+	}
+	if err := secrets.Update(func(d *secrets.Data) error {
+		d.CustomAPI = &secrets.CustomAPIConn{Provider: "mine", URL: "http://10.0.0.5:8080/v1", APIKey: "k"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	c, ok := customConn()
+	if !ok || c.Provider != "mine" || c.URL != "http://10.0.0.5:8080/v1" {
+		t.Fatalf("stored connection read back as %+v ok=%v", c, ok)
+	}
+	want := credbind.Endpoint(routes.RouteCustomAPI, c.URL, "k")
+	if l := resolveModel("mine/m", nil, UsageZen, oauthState{}, nil); l.Binding != want {
+		t.Fatalf("binding = %q, want %q", l.Binding, want)
+	}
+	if l := resolveModel("other/m", nil, UsageZen, oauthState{}, nil); l.Binding != "" {
+		t.Fatalf("another provider bound: %+v", l)
 	}
 }
 
-func TestCustomAPIOnStoredConn(t *testing.T) {
+func TestCustomAPIBinding(t *testing.T) {
 	withCustomConn(t, &secrets.CustomAPIConn{Provider: "mine", URL: "http://10.0.0.5:8080/v1", APIKey: "k"})
 	l := resolveModel("mine/some-model", nil, UsageZen, oauthState{}, nil)
 	if want := credbind.Endpoint(routes.RouteCustomAPI, "http://10.0.0.5:8080/v1", "k"); l.Binding == "" || l.Binding != want {
 		t.Fatalf("binding = %q, want %q", l.Binding, want)
 	}
-	if o := resolveModel("other/some-model", nil, UsageZen, oauthState{}, nil); o.Binding != "" {
-		t.Fatalf("another custom provider got the stored connection's binding: %+v", o)
-	}
-	// Repointing the URL or replacing the key is another connection.
+	// Repointing the URL is another connection.
 	withCustomConn(t, &secrets.CustomAPIConn{Provider: "mine", URL: "http://10.0.0.6:8080/v1", APIKey: "k"})
 	if r := resolveModel("mine/m", nil, UsageZen, oauthState{}, nil); r.Binding == l.Binding {
 		t.Fatal("binding did not change with the URL")
-	}
-
-	on := routepolicy.Policy{Restricted: true, Endpoints: []string{"10.0.0.5"}, EndpointRoutes: []string{routes.RouteCustomAPI}}
-	withCustomConn(t, &secrets.CustomAPIConn{Provider: "mine", URL: "http://10.0.0.5:8080/v1"})
-	if !on.Allows(routes.RouteCustomAPI) {
-		t.Fatal("custom-api refused on an approved endpoint")
-	}
-	withCustomConn(t, &secrets.CustomAPIConn{Provider: "mine", URL: "http://10.9.9.9:8080/v1"})
-	if on.Allows(routes.RouteCustomAPI) {
-		t.Fatal("custom-api allowed on an unapproved endpoint")
 	}
 }

@@ -8,7 +8,6 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -160,16 +159,10 @@ func customBinding(provider string) string {
 	return ""
 }
 
-// The stored custom provider's endpoint is a per-connection route: under a restriction it is
-// allowed only while its host is an approved self-hosted endpoint (ADR 0138 §2).
-func init() {
-	routepolicy.RegisterEndpoint(routes.RouteCustomAPI, func() string {
-		if c, ok := customConn(); ok {
-			return routepolicy.HostOf(c.URL)
-		}
-		return ""
-	})
-}
+// The endpoint is deliberately not registered with routepolicy.RegisterEndpoint yet: that approval
+// is judged per route, so it would also approve a model on any other custom provider, and the
+// reader would take a store read into the model-list path. It lands with the pin that ties an
+// approval to this provider's URL.
 
 // resolveOpencodeAI resolves a model on opencode.ai's own providers. Who pays is proven only
 // when exactly one payer can be: the Zen/Go key alone (the account known to be signed out), or
