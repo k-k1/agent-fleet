@@ -471,3 +471,8 @@
   opacity: 1;
   color: var(--fg);
 }
+/* Pop-out tab: the pane fills what the title bar (panes.css) leaves. */
+.app-shell.popout .app-main {
+  flex: 1;
+  min-height: 0;
+}

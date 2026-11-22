@@ -528,13 +528,9 @@ body.row-resizing {
 }
 
 /* ── Pop-out tab (detaching a pane into its own tab) — minimal chrome ──────
-   The shell is just a thin title bar + .app-main (flex column, App.tsx popout
-   branch). The pane fills the rest; the ordinal grip / dimming never apply
+   The shell is just a thin title bar + the main area (App.tsx popout branch;
+   its sizing rule lives in app.css). The ordinal grip / dimming never apply
    (single pane). */
-.app-shell.popout .app-main {
-  flex: 1;
-  min-height: 0;
-}
 .popout-titlebar {
   display: flex;
   align-items: center;
