@@ -322,7 +322,7 @@ func (f *engineFleet) buy(ctx context.Context, c engineClass) (string, string, e
 		// top-level `SsmAccessDenied` P0 measured when the role could not resolve the AMI
 		// parameter. An authorization failure is about the DEPLOYMENT and stops the walk; the
 		// rest are not verdicts about this offer, so the next row gets its own chance.
-		log.Printf("%s: buying %s (%s) failed: %v", f.logKey(), c.ID, c.buy(), err)
+		log.Printf("%s: buying %s (%s) failed: %v", f.logKey(), c.ID, c.BuyOption(), err)
 		if engineFleetDenied(err) {
 			return "", "", engineFleetOutcome{engineFleetRefused, engineOfferUnusable}
 		}
@@ -334,7 +334,7 @@ func (f *engineFleet) buy(ctx context.Context, c engineClass) (string, string, e
 		// the launch template's own and lands at launch (measured, P0). That is what lets a
 		// restarted CP find this box at all (ADR 0045 decision 29).
 		typ := engineFleetInstanceType(out)
-		log.Printf("%s: offer %s (%s) bought %s (%s)", f.logKey(), c.ID, c.buy(), id, typ)
+		log.Printf("%s: offer %s (%s) bought %s (%s)", f.logKey(), c.ID, c.BuyOption(), id, typ)
 		return id, typ, engineFleetOutcome{}
 	}
 	codes := make([]string, 0, len(out.Errors))
@@ -357,7 +357,7 @@ func (f *engineFleet) buy(ctx context.Context, c engineClass) (string, string, e
 		log.Printf("%s: offer %s answered with no known fleet error code: %s",
 			f.logKey(), c.ID, strings.Join(messages, " | "))
 	default:
-		log.Printf("%s: offer %s (%s) bought nothing: %s", f.logKey(), c.ID, c.buy(), strings.Join(messages, " | "))
+		log.Printf("%s: offer %s (%s) bought nothing: %s", f.logKey(), c.ID, c.BuyOption(), strings.Join(messages, " | "))
 	}
 	return "", "", verdict
 }
@@ -382,7 +382,7 @@ func (f *engineFleet) request(c engineClass) *ec2.CreateFleetInput {
 				InstanceType: ec2types.InstanceType(t),
 				SubnetId:     aws.String(subnet),
 			}
-			if c.buy() == engineBuyOnDemand {
+			if c.BuyOption() == engineBuyOnDemand {
 				o.Priority = aws.Float64(priority)
 			}
 			overrides = append(overrides, o)
@@ -406,7 +406,7 @@ func (f *engineFleet) request(c engineClass) *ec2.CreateFleetInput {
 			Tags:         f.tags(c),
 		}},
 	}
-	if c.buy() == engineBuySpot {
+	if c.BuyOption() == engineBuySpot {
 		in.TargetCapacitySpecification.DefaultTargetCapacityType = ec2types.DefaultTargetCapacityTypeSpot
 		in.SpotOptions = &ec2types.SpotOptionsRequest{
 			AllocationStrategy: ec2types.SpotAllocationStrategyPriceCapacityOptimized,
@@ -440,7 +440,7 @@ func (f *engineFleet) tags(c engineClass) []ec2types.Tag {
 		{Key: aws.String(runtime.EC2TagPool), Value: aws.String(f.pool)},
 		{Key: aws.String(runtime.EC2TagRole), Value: aws.String(engineRoleAttr(f.key))},
 		{Key: aws.String(engineTagOffer), Value: aws.String(c.ID)},
-		{Key: aws.String(engineTagBuy), Value: aws.String(c.buy())},
+		{Key: aws.String(engineTagBuy), Value: aws.String(c.BuyOption())},
 		{Key: aws.String(engineTagManagedBy), Value: aws.String(engineManagedBy)},
 		{Key: aws.String("Name"), Value: aws.String("af-engine-" + f.key)},
 	}

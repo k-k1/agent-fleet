@@ -257,7 +257,7 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 func engineClassRow(c engineClass) map[string]any {
 	row := map[string]any{
 		"id":       c.ID,
-		"label":    c.label(),
+		"label":    c.DisplayLabel(),
 		"vram_mib": c.VramMiB,
 		"types":    c.Types,
 	}
@@ -272,7 +272,7 @@ func engineClassRow(c engineClass) map[string]any {
 // what an ADR 0074 ladder means, and the panel has to be able to say so.
 func engineOfferRow(c engineClass) map[string]any {
 	row := engineClassRow(c)
-	row["buy"] = c.buy()
+	row["buy"] = c.BuyOption()
 	return row
 }
 

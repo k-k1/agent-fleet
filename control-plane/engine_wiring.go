@@ -10,6 +10,7 @@ type (
 	engineDef       = engine.Def
 	engineTable     = engine.Table
 	engineIngestDef = engine.IngestDef
+	engineClass     = engine.Class
 )
 
 const (
@@ -23,6 +24,36 @@ const (
 	engineAPIImages = engine.APIImages
 
 	engineOfferBudgetDefault = engine.OfferBudgetDefault
+
+	engineBuyOnDemand = engine.BuyOnDemand
+	engineBuySpot     = engine.BuySpot
+
+	engineVramDeclared  = engine.VramDeclared
+	engineVramFloor     = engine.VramFloor
+	engineVramWeightsKV = engine.VramWeightsKV
+	engineVramUnknown   = engine.VramUnknown
 )
 
 func imageProviderServable(d engineDef) bool { return engine.ImageProviderServable(d) }
+
+func parseEngineClasses(spec string) []engineClass { return engine.ParseClasses(spec) }
+
+func engineClassByID(list []engineClass, id string) (engineClass, bool) {
+	return engine.ClassByID(list, id)
+}
+
+func engineVramStrength(source string) int { return engine.VramStrength(source) }
+
+func engineClassFits(c engineClass, needMiB int) bool { return engine.ClassFits(c, needMiB) }
+
+func engineClassSettingKey(key string) string { return engine.ClassSettingKey(key) }
+
+func engineSpotSettingKey(key string) string { return engine.SpotSettingKey(key) }
+
+func engineClassesEqual(a, b []engineClass) bool { return engine.ClassesEqual(a, b) }
+
+func engineClassesHaveSpot(list []engineClass) bool { return engine.ClassesHaveSpot(list) }
+
+func engineClassHasType(c engineClass, instanceType string) bool {
+	return engine.ClassHasType(c, instanceType)
+}
