@@ -140,10 +140,6 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// env rides LaunchPlan.Env → `tmux new-session -e` (reaches the pane process;
 	// verified on tmux 3.3a) so the keys never appear in the command string /
 	// /proc/*/cmdline / pane_start_command.
-	// Terminal launches carry no provider pin, so the approved custom endpoint is not served here.
-	if err := customManagedOnlyErr(m, false); err != nil {
-		return agents.LaunchPlan{}, err
-	}
 	ocSid := session.UUID(m.Dir, m.Name)
 	spec := CurrentLaunch()
 	if err := PrepareStart(spec); err != nil {

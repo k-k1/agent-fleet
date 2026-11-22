@@ -224,7 +224,9 @@ func TestHandleSessionDriverRefusesTheTargetLaunchBeforeStopping(t *testing.T) {
 	logPath := fakeTmux(t)
 	defer agentreg.SwapForTest(session.KindOpencode, refusingGuard{agentreg.Of(session.KindOpencode)})()
 	const name = "driver_guard"
+	t.Setenv("HOME", t.TempDir())
 	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged})
+	holdPeerMessage(t, name)
 
 	rec := postDriver(t, name, `{"driver":"tui"}`)
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "launch_refused") {
@@ -235,5 +237,8 @@ func TestHandleSessionDriverRefusesTheTargetLaunchBeforeStopping(t *testing.T) {
 	}
 	if m, _ := session.ReadMeta(name); m.DriverKind() != session.DriverManaged {
 		t.Fatalf("driver changed on refusal: %q", m.Driver)
+	}
+	if n := agents.HeldCount(name); n != 1 {
+		t.Fatalf("held input after a refused switch = %d, want 1", n)
 	}
 }

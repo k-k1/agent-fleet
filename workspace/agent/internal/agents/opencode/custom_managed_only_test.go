@@ -125,3 +125,24 @@ func TestCustomManagedOnlyAtTheEntryPoints(t *testing.T) {
 		t.Errorf("unrestricted: %v", err)
 	}
 }
+
+// The Bedrock route's process gets XDG_CONFIG_HOME pinned to the HOME root, so a conflicting file
+// under an inherited root must not stop it: only the shared serve and headless runs check that root.
+func TestBedrockChecksOnlyTheHomeRoot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	other := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", other)
+	f := filepath.Join(other, "opencode", "opencode.json")
+	if err := os.MkdirAll(filepath.Dir(f), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(f, []byte(`{"enabled_providers":["anthropic"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ref := configConflict(homeConfigFiles()); ref != nil {
+		t.Errorf("a foreign-root file stopped the Bedrock route: %+v", ref)
+	}
+	if !slices.Contains(globalConfigFiles(), f) {
+		t.Errorf("the serve's file list lacks %s", f)
+	}
+}
