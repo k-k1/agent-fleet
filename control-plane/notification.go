@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -110,6 +111,9 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 	return n
 }
 
+// maxOutboxBody bounds the /notifications response the CP will read.
+const maxOutboxBody = 4 << 20
+
 // drainAgentOutbox pulls the Agent's notification outbox into the store and acks it.
 //
 // It deliberately takes no *resolved, because it is also called just before a workspace
@@ -136,7 +140,10 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 	var body struct {
 		Notifications []agentNotification `json:"notifications"`
 	}
-	if json.NewDecoder(resp.Body).Decode(&body) != nil {
+	// Capped: this runs on a timer for every running workspace, and the Agent bounds the
+	// entry count but not an entry's size. An oversized body is dropped before anything is
+	// stored or acked, so the entries stay in the outbox.
+	if json.NewDecoder(io.LimitReader(resp.Body, maxOutboxBody)).Decode(&body) != nil {
 		return "offline"
 	}
 	acked := make([]string, 0, len(body.Notifications))

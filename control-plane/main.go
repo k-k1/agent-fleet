@@ -552,7 +552,9 @@ func main() {
 
 	// Drain each running workspace's notification outbox on a timer so a question reaches the
 	// Web Push sender with no Console open. Only when AF_WEB_PUSH is on; with it off nothing runs.
-	if pushsrv.Enabled() {
+	// A sender that failed to start (bad VAPID key) leaves mgr.push nil and the notification
+	// hook unset: draining then would ack events nobody can ever push.
+	if mgr.push != nil {
 		iv := envx.DurationOr(os.Getenv("AF_NOTIFICATION_DRAIN_INTERVAL"), 15*time.Second)
 		go newNotificationDrainer(mgr, iv).run(context.Background())
 		log.Printf("notification-drain: draining running workspaces every %s", iv)
