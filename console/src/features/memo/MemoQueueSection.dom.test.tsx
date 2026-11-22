@@ -398,7 +398,7 @@ describe("repository group + button", () => {
       ),
       "app block",
     );
-    expect(block.querySelector(".memo-cat-rename")).not.toBe(null);
+    expect(block.querySelector("input.memo-cat-rename")).not.toBe(null);
   });
 
   it("sends each group's own repo", async () => {

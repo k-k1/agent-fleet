@@ -858,18 +858,18 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // A single menu, opened either at the cursor (context menu) or anchored under the
   // ⋯ button. Delete lives here so touch users get a deliberate two-step delete
   // instead of a one-tap trash button (mirrors the chat assistant rows).
-  const [memoMenu, setMemoMenu] = useState<{ x: number; y: number; m: Memo; anchor?: DOMRect } | null>(null);
+  const [memoMenu, setMemoMenu] = useState<{ x: number; y: number; m: Memo; anchor?: DOMRect; onStopChain?: () => void } | null>(null);
   const memoMenuRef = useRef<HTMLUListElement>(null);
-  const openMemoMenu = (e: RMouseEvent, m: Memo) => {
+  const openMemoMenu = (e: RMouseEvent, m: Memo, onStopChain?: () => void) => {
     e.preventDefault();
     e.stopPropagation();
-    setMemoMenu({ x: e.clientX, y: e.clientY, m });
+    setMemoMenu({ x: e.clientX, y: e.clientY, m, onStopChain });
   };
-  const openMemoMenuBtn = (e: RMouseEvent, m: Memo) => {
+  const openMemoMenuBtn = (e: RMouseEvent, m: Memo, onStopChain?: () => void) => {
     e.preventDefault();
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
-    setMemoMenu({ x: r.left, y: r.bottom + 2, m, anchor: r });
+    setMemoMenu({ x: r.left, y: r.bottom + 2, m, anchor: r, onStopChain });
   };
   useDismiss(memoMenuRef, !!memoMenu, () => setMemoMenu(null));
   useMenuRoving(memoMenuRef, !!memoMenu);
@@ -1091,6 +1091,12 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   const collapsed = !!collapsedCats[dropKey];
                   const queue = cat ? queueByCat.get(cat.id) : undefined;
                   const isQueue = !!queue || !!cat?.queue;
+                  // A root has no chain id: it can be stopped before its first follow-up exists, while the
+                  // category allows follow-ups and the note a person or the switch approved points at a work item.
+                  const stopChainOf = (m: Memo) =>
+                    m.chainId || (isQueue && (queue?.continuationMax ?? 0) > 0 && memoReference(m) && !(m.releasedBy && m.releasedBy !== "setting"))
+                      ? () => void stopChain(m)
+                      : undefined;
                   // Delivered and replaced notes are history, not work: a queue folds them into one line so the
                   // waiting ones lead. "Needs a look" (unconfirmed) stays in the list because it wants a decision.
                   // A note being edited stays visible: folding it would unmount the draft.
@@ -1139,15 +1145,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           : undefined
                       }
                       continuationMax={queue?.continuationMax}
-                      onStopChain={
-                        // A root has no chain id: it can be stopped before its first follow-up exists, while the
-                        // category allows follow-ups and the note a person or the switch approved points at a work item.
-                        m.chainId || (isQueue && (queue?.continuationMax ?? 0) > 0 && memoReference(m) && !(m.releasedBy && m.releasedBy !== "setting"))
-                          ? () => void stopChain(m)
-                          : undefined
-                      }
-                      onOpenMenu={(e) => openMemoMenu(e, m)}
-                      onOpenKebab={(e) => openMemoMenuBtn(e, m)}
+                      onOpenMenu={(e) => openMemoMenu(e, m, stopChainOf(m))}
+                      onOpenKebab={(e) => openMemoMenuBtn(e, m, stopChainOf(m))}
                       onDragStart={(e) => {
                         dragMemo.current = m.id;
                         // Also carry the memo's text so a drop onto a session composer
@@ -1496,6 +1495,21 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   <Icon name="copy" /> {tr("memo.copy")}
                 </button>
               </li>
+              {memoMenu.onStopChain && (memoMenu.m.state === "pending" || memoMenu.m.state === "delivered") && (
+                <li>
+                  <button
+                    type="button"
+                    className="ui-menu-item memo-cat-menu-item memo-menu-stopchain"
+                    onClick={() => runMemoMenu(memoMenu.onStopChain!)}
+                  >
+                    <Icon name="debug-stop" />
+                    <span className="memo-cat-menu-txt">
+                      {tr("memo.continuation_stop")}
+                      <span className="memo-cat-menu-why">{tr("memo.continuation_stop_title")}</span>
+                    </span>
+                  </button>
+                </li>
+              )}
               <li className="ui-menu-sep" aria-hidden="true" />
               <li>
                 <button type="button" className="ui-menu-item danger" onClick={() => runMemoMenu(() => void remove(memoMenu.m.id))}>
@@ -1640,8 +1654,6 @@ interface MemoRowProps {
   onOpenTidyRuns?: () => void;
   /** The category's follow-up allowance, for "follow-up K of M". */
   continuationMax?: number;
-  /** Stops the chain a follow-up belongs to; absent on a note that is in none. */
-  onStopChain?: () => void;
   onOpenMenu: (e: RMouseEvent) => void;
   onOpenKebab: (e: RMouseEvent) => void;
   onDragStart: (e: RDragEvent) => void;
@@ -1893,19 +1905,6 @@ function MemoRow(props: MemoRowProps) {
               ? tr("memo.continuation_badge_of", { seq: m.chainSeq!, max: props.continuationMax! })
               : tr("memo.continuation_badge", { seq: m.chainSeq! })}
         </span>
-      )}
-      {props.onStopChain && (m.state === "pending" || m.state === "delivered") && (
-        <button
-          type="button"
-          className="linkish"
-          title={tr("memo.continuation_stop_title")}
-          onClick={(e) => {
-            e.stopPropagation();
-            props.onStopChain!();
-          }}
-        >
-          {tr("memo.continuation_stop")}
-        </button>
       )}
       {releasedByTidy(m) && (
         <span className="memo-qorigin" title={tr("memo.released_by_tidy_title")}>

@@ -24,6 +24,7 @@ const memoUpdateMock = vi.fn(async (_id: string, _patch: unknown) => ({}));
 const memoQueueDeliveryEnd = vi.fn();
 const memoQueueDeliveryReturn = vi.fn();
 const memoQueueDeliveries = vi.fn(async (_id: string) => servedDeliveries);
+const memoStopChain = vi.fn(async (_id: string) => ({}));
 const memoQueueList = vi.fn(async () => {
   if (queuesFail) throw new Error("down");
   return servedQueues;
@@ -44,6 +45,7 @@ vi.mock("./api.ts", () => ({
   memoPasteImage: async () => ({ status: 500 }),
   memoImageGC: async () => ({}),
   memoQueueList: () => memoQueueList(),
+  memoStopChain: (id: string) => memoStopChain(id),
   memoRelease: (items: unknown) => memoRelease(items),
   memoQueuePut: (id: string, body: unknown) => memoQueuePut(id, body),
   memoQueueDelete: (id: string) => memoQueueDelete(id),
@@ -62,7 +64,7 @@ vi.mock("../sessions/open.ts", () => ({ openSessionChat: (n: string) => openSess
 const { MemoQueueSection } = await import("./MemoQueueSection.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
-const { t } = await import("../../lib/i18n/index.ts");
+const { t, setLocale } = await import("../../lib/i18n/index.ts");
 const { fmtDateTime } = await import("../../lib/intl.ts");
 const { errText } = await import("../../core/api/client.ts");
 const { deliveryStateKey } = await import("./queues.ts");
@@ -181,7 +183,7 @@ beforeEach(() => {
   servedQueues = { tenantEnabled: true, queues: [aQueue()] };
   queuesFail = false;
   servedDeliveries = [];
-  for (const m of [memoCategoryUpdateMock, memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueDeliveryReturn, memoQueueList, openSessionChat]) m.mockClear();
+  for (const m of [memoCategoryUpdateMock, memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueDeliveryReturn, memoQueueList, memoStopChain, openSessionChat]) m.mockClear();
   memoRelease.mockResolvedValue({ released: [], stale: [] });
   memoQueuePut.mockResolvedValue(aQueue());
   memoQueueDelete.mockResolvedValue({ ok: true });
@@ -1898,5 +1900,55 @@ describe("the category head", () => {
     expect(memoCategoryUpdateMock).toHaveBeenCalledWith("c2", { position: 0 });
     expect(memoCategoryUpdateMock).toHaveBeenCalledWith("c1", { position: 1 });
     expect(fold()).toEqual(before);
+  });
+});
+
+describe("Stop chain in the memo menu", () => {
+  const rowMenuBtn = () => must(document.querySelector<HTMLElement>(".memo-row .memo-menu-btn"), "row menu button");
+  const stopItem = () => document.querySelector<HTMLElement>(".ui-menu .memo-menu-stopchain");
+  const chained = (over: Partial<Memo> = {}) =>
+    aMemo({ id: "f1", state: "pending", releasedBy: "continuation", chainId: "ch1", chainSeq: 1, ...over });
+
+  for (const lang of ["en", "ja"] as const) {
+    describe(lang, () => {
+      beforeEach(() => setLocale(lang));
+      afterEach(() => setLocale("en"));
+
+      it("is a menu item, not a row button, and calls memoStopChain with the memo id", async () => {
+        servedQueues = { tenantEnabled: true, queues: [aQueue({ continuationMax: 4 })] };
+        servedMemos = [chained()];
+        await render();
+        expect(document.querySelector(".memo-row")?.textContent).not.toContain(t("memo.continuation_stop"));
+        // The continuation badge stays in the row.
+        expect(document.querySelector(".memo-row")?.textContent).toContain(t("memo.continuation_badge_of", { seq: 1, max: 4 }));
+        await click(rowMenuBtn());
+        const item = must(stopItem(), "stop chain item");
+        expect(item.textContent).toContain(t("memo.continuation_stop"));
+        expect(item.querySelector(".memo-cat-menu-why")?.textContent).toBe(t("memo.continuation_stop_title"));
+        await click(item);
+        expect(memoStopChain).toHaveBeenCalledWith("f1");
+        expect(document.querySelector(".ui-menu")).toBeNull();
+      });
+    });
+  }
+
+  it("is also in the right-click menu", async () => {
+    servedMemos = [chained()];
+    await render();
+    await act(async () => {
+      must(document.querySelector(".memo-row"), "row").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    expect(stopItem()).not.toBeNull();
+  });
+
+  it("is absent on a memo that is in no chain, and on one in neither state", async () => {
+    servedMemos = [aMemo({ id: "plain", state: "pending" }), chained({ id: "done", state: "unconfirmed" })];
+    await render();
+    for (const btn of document.querySelectorAll<HTMLElement>(".memo-row .memo-menu-btn")) {
+      await click(btn);
+      expect(stopItem()).toBeNull();
+      await click(btn);
+    }
+    expect(memoStopChain).not.toHaveBeenCalled();
   });
 });
