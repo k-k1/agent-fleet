@@ -64,6 +64,21 @@ func keyRoutes() map[string]string {
 	return out
 }
 
+// policyView is one reading of everything a launch decision rests on. The serve's start takes it
+// once and builds its file check, its inline pin and its generation from it, so an update of the
+// connection between those steps cannot approve one URL and pin another.
+type policyView struct {
+	keys   map[string]string
+	pref   string
+	acct   oauthState
+	custom *secrets.CustomAPIConn
+}
+
+func readView() policyView {
+	k, p, a, c := credentialView()
+	return policyView{k, p, a, c}
+}
+
 // credentialView is what the resolution reads: the stored keys, the billing choice, the
 // opencode.ai account as last seen (no daemon round trip) and the custom provider's connection
 // (nil without one), all from one store read. A seam for tests.
@@ -180,7 +195,10 @@ func resolveModel(model string, keys map[string]string, pref string, acct oauthS
 		if prov != strings.TrimSpace(c.Provider) {
 			return routes.Launch{}
 		}
-		return routes.Launch{Route: routes.RouteCustomAPI, Binding: credbind.Endpoint(routes.RouteCustomAPI, c.URL, c.APIKey)}
+		// The binding is of the endpoint alone: the stored key is not handed to the process (the
+		// provider's own configuration supplies it), so a binding that covered it would claim a
+		// credential nothing here proves.
+		return routes.Launch{Route: routes.RouteCustomAPI, Binding: credbind.Endpoint(routes.RouteCustomAPI, c.URL, "")}
 	}
 	return routes.Launch{Route: routes.RouteCustomAPI}
 }

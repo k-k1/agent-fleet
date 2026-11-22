@@ -35,9 +35,11 @@ import (
 func policyRestriction() (routepolicy.Policy, bool) { return routepolicy.Hiding() }
 
 // keyAllowed reports whether a key stored (or inherited) under env may reach opencode under p:
-// some route it opens is allowed.
+// some route it opens is allowed. A route allowed only because its endpoint is approved
+// (AllowsAt with no host) does not count: a generic key name opens custom-api, and approving one
+// host must not release every such name into the process.
 func keyAllowed(p routepolicy.Policy, env string) bool {
-	return slices.ContainsFunc(keyEnvRoutes(env), p.Allows)
+	return slices.ContainsFunc(keyEnvRoutes(env), func(r string) bool { return p.AllowsAt(r, "") })
 }
 
 // providerKeyEnvs are every variable opencode reads a provider key from that af knows a route
@@ -114,11 +116,15 @@ func allowedServeProviders(p routepolicy.Policy, keys map[string]string, pref st
 // inherited provider variables the policy forbids removed, the config sources that could replace
 // the pin unset, and the inline pin added. ok is false while nothing is restricted.
 func servePolicyEnv(base []string) (env []string, ok bool) {
+	return servePolicyEnvFrom(base, readView())
+}
+
+func servePolicyEnvFrom(base []string, v policyView) (env []string, ok bool) {
 	p, restricted := policyRestriction()
 	if !restricted {
 		return base, false
 	}
-	keys, pref, acct, custom := credentialView()
+	keys, pref, acct, custom := v.keys, v.pref, v.acct, v.custom
 	engines := engineProviderIDs()
 	cfg, _ := json.Marshal(pinConfig(map[string]any{}, p, keys, pref, acct, engines, custom))
 	env = withoutEnv(base, append(forbiddenInheritedKeys(p), routeUnset...)...)
@@ -139,7 +145,8 @@ func RunPolicyEnv(env []string, dir string) ([]string, error) {
 	if !restricted {
 		return env, nil
 	}
-	if err := policyConfigErr(append(globalConfigFiles(), projectConfigFiles(session.Meta{Dir: dir})...)); err != nil {
+	v := readView()
+	if err := policyConfigErrFrom(append(globalConfigFiles(), projectConfigFiles(session.Meta{Dir: dir})...), v); err != nil {
 		return nil, err
 	}
 	cfg := map[string]any{}
@@ -148,8 +155,7 @@ func RunPolicyEnv(env []string, dir string) ([]string, error) {
 			return nil, fmt.Errorf("%w: its inline configuration cannot be read, so its providers cannot be pinned", ErrPolicyConfig)
 		}
 	}
-	keys, pref, acct, custom := credentialView()
-	pinConfig(cfg, p, keys, pref, acct, engineProviderIDs(), custom)
+	pinConfig(cfg, p, v.keys, v.pref, v.acct, engineProviderIDs(), v.custom)
 	b, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, err
@@ -158,10 +164,11 @@ func RunPolicyEnv(env []string, dir string) ([]string, error) {
 	return append(out, routeConfigKey+"="+string(b)), nil
 }
 
-// allowedCustom is the custom provider's connection when the policy allows its route now (its host
-// is an approved endpoint), nil otherwise.
+// allowedCustom is the custom provider's connection when the policy allows its route on the host of
+// this very snapshot (approved endpoint, or the route allowed outright), nil otherwise. It judges
+// the snapshot's URL, not the registered reader's current one, so what is approved is what is pinned.
 func allowedCustom(p routepolicy.Policy, engines []string, custom *secrets.CustomAPIConn) *secrets.CustomAPIConn {
-	if c := customConn(custom, engines); c != nil && p.Allows(routes.RouteCustomAPI) {
+	if c := customConn(custom, engines); c != nil && p.AllowsAt(routes.RouteCustomAPI, routepolicy.HostOf(c.URL)) {
 		return c
 	}
 	return nil
@@ -195,8 +202,62 @@ func pinConfig(cfg map[string]any, p routepolicy.Policy, keys map[string]string,
 		m[k] = v
 		return v
 	}
-	sub(sub(sub(cfg, "provider"), strings.TrimSpace(c.Provider)), "options")["baseURL"] = strings.TrimSpace(c.URL)
+	id := strings.TrimSpace(c.Provider)
+	// A base URL the run's own configuration carries for this provider (on a model or a variant, in
+	// either provider block) would win over the provider-level pin: drop it.
+	for _, block := range []string{"provider", "providers"} {
+		if m, ok := cfg[block].(map[string]any); ok {
+			stripBaseURL(m[id])
+		}
+	}
+	sub(sub(sub(cfg, "provider"), id), "options")["baseURL"] = strings.TrimSpace(c.URL)
 	return cfg
+}
+
+// stripBaseURL removes every base URL key below v.
+func stripBaseURL(v any) {
+	switch x := v.(type) {
+	case map[string]any:
+		for k, e := range x {
+			if strings.EqualFold(k, "baseURL") {
+				delete(x, k)
+				continue
+			}
+			stripBaseURL(e)
+		}
+	case []any:
+		for _, e := range x {
+			stripBaseURL(e)
+		}
+	}
+}
+
+// hasBaseURL reports whether a base URL key appears anywhere in raw: on the provider, a model, a
+// variant, whichever block shape (provider or providers) the file uses.
+func hasBaseURL(raw json.RawMessage) bool {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return false
+	}
+	var walk func(any) bool
+	walk = func(v any) bool {
+		switch x := v.(type) {
+		case map[string]any:
+			for k, e := range x {
+				if strings.EqualFold(k, "baseURL") || walk(e) {
+					return true
+				}
+			}
+		case []any:
+			for _, e := range x {
+				if walk(e) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(v)
 }
 
 // customPinDigest identifies the custom pin for the credential generation: a changed URL or
@@ -247,7 +308,7 @@ func pinConflict(files []string, customProvider string) (file, key string) {
 		if v, ok := top["policies"]; ok && providerPolicy(v) {
 			return f, "policies (provider.use)"
 		}
-		if customProvider != "" && overridesBaseURL(top["provider"], customProvider) {
+		if customProvider != "" && overridesBaseURL(top, customProvider) {
 			return f, "provider." + customProvider + ".options.baseURL"
 		}
 		var exp map[string]json.RawMessage
@@ -260,23 +321,24 @@ func pinConflict(files []string, customProvider string) (file, key string) {
 	return "", ""
 }
 
-// overridesBaseURL reports whether a config's provider block sets a base URL for provider id: the
-// inline pin's URL is the one an approval covers, so a file may not move it.
-func overridesBaseURL(v json.RawMessage, id string) bool {
-	var providers map[string]struct {
-		Options map[string]json.RawMessage `json:"options"`
-	}
-	if len(v) == 0 || json.Unmarshal(v, &providers) != nil {
-		return false
-	}
-	for k, pv := range providers {
-		if k != id {
+// overridesBaseURL reports whether a config sets a base URL anywhere under provider id, in the
+// provider block or the providers block: the inline pin's URL is the one an approval covers, so a
+// file may not move it, on the provider or on a model of it.
+func overridesBaseURL(top map[string]json.RawMessage, id string) bool {
+	for _, block := range []string{"provider", "providers"} {
+		raw, ok := top[block]
+		if !ok {
 			continue
 		}
-		for ok := range pv.Options {
-			if strings.EqualFold(ok, "baseURL") {
+		var byID map[string]json.RawMessage
+		if json.Unmarshal(raw, &byID) != nil {
+			if hasBaseURL(raw) { // another shape: judged whole, the safe direction
 				return true
 			}
+			continue
+		}
+		if sub, ok := byID[id]; ok && hasBaseURL(sub) {
+			return true
 		}
 	}
 	return false
@@ -288,13 +350,18 @@ var ErrPolicyConfig = fmt.Errorf("opencode cannot run under the credential polic
 
 // policyConfigErr is the refusal of running opencode on files under a restriction, nil when none
 // conflicts or nothing is restricted.
-func policyConfigErr(files []string) error {
-	if _, restricted := policyRestriction(); !restricted {
+func policyConfigErr(files []string) error { return policyConfigErrFrom(files, readView()) }
+
+// policyConfigErrFrom is policyConfigErr on a given view. The URL check covers only the provider
+// the pin actually sets: a stored connection the policy does not approve pins nothing, so it must
+// not stop another route's launch.
+func policyConfigErrFrom(files []string, v policyView) error {
+	p, restricted := policyRestriction()
+	if !restricted {
 		return nil
 	}
-	_, _, _, custom := credentialView()
 	pin := ""
-	if c := customConn(custom, engineProviderIDs()); c != nil {
+	if c := allowedCustom(p, engineProviderIDs(), v.custom); c != nil {
 		pin = strings.TrimSpace(c.Provider)
 	}
 	if f, k := pinConflict(files, pin); f != "" {

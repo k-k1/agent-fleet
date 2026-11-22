@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
@@ -33,7 +34,7 @@ func useCustom(t *testing.T, c *secrets.CustomAPIConn) {
 // connection the launch is what it was.
 func TestCustomLaunchIsTiedToTheProvider(t *testing.T) {
 	got := resolveModel("mine/m", nil, UsageZen, oauthState{}, nil, selfHosted)
-	want := routes.Launch{Route: routes.RouteCustomAPI, Binding: credbind.Endpoint(routes.RouteCustomAPI, selfHosted.URL, "k")}
+	want := routes.Launch{Route: routes.RouteCustomAPI, Binding: credbind.Endpoint(routes.RouteCustomAPI, selfHosted.URL, "")}
 	if got != want || got.Binding == "" {
 		t.Errorf("own provider: %+v, want %+v", got, want)
 	}
@@ -158,5 +159,68 @@ func TestCustomEndpointHostIsRegistered(t *testing.T) {
 	useCustom(t, nil)
 	if p.Allows(routes.RouteCustomAPI) {
 		t.Error("no connection allowed")
+	}
+}
+
+// A stored connection the policy does not approve pins nothing, so its URL in a config file must
+// not stop the launch of an allowed route.
+func TestUnapprovedConnectionDoesNotBlockOtherRoutes(t *testing.T) {
+	useIsolationPolicy(t, openRouterOnly)
+	useCustom(t, selfHosted)
+	f := filepath.Join(t.TempDir(), "opencode.json")
+	if err := os.WriteFile(f, []byte(`{"provider":{"mine":{"options":{"baseURL":"https://x.example"}}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := policyConfigErr([]string{f}); err != nil {
+		t.Errorf("refused: %v", err)
+	}
+}
+
+// Approval and pin come from one snapshot: when the connection moved to an unapproved URL after
+// the registered reader last looked (credentialView still answers the approved one), the pin is
+// judged on the snapshot's URL and nothing is pinned or approved.
+func TestPinIsJudgedOnTheSnapshotURL(t *testing.T) {
+	useIsolationPolicy(t, approvedCustom())
+	useCustom(t, selfHosted) // the reader a registered callback sees
+	snap := policyView{pref: UsageZen, custom: &secrets.CustomAPIConn{Provider: "mine", URL: "https://evil.example/v1"}}
+	env, _ := servePolicyEnvFrom(nil, snap)
+	if enabled, cfg := runPin(t, env); len(enabled) != 0 || cfg["provider"] != nil {
+		t.Errorf("pinned an unapproved snapshot URL: %v %v", enabled, cfg)
+	}
+	if g := credentialGenFrom(snap); g == credentialGenFrom(policyView{pref: UsageZen, custom: selfHosted}) {
+		t.Error("generation does not follow the snapshot")
+	}
+}
+
+// A run's own inline base URL for the pinned provider, on a model or in providers, is dropped.
+func TestInlinePinDropsOtherBaseURLs(t *testing.T) {
+	useIsolationPolicy(t, approvedCustom())
+	useCustom(t, selfHosted)
+	own := `{"provider":{"mine":{"models":{"m":{"options":{"baseURL":"https://evil.example"}}}}},"providers":{"mine":{"settings":{"baseURL":"https://evil.example"}}}}`
+	out, err := RunPolicyEnv([]string{routeConfigKey + "=" + own}, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := envValue(out, routeConfigKey)
+	if strings.Count(v, "evil.example") != 0 || !strings.Contains(v, selfHosted.URL) {
+		t.Errorf("inline config = %s", v)
+	}
+}
+
+// Approving one host releases no generic key name: a key under an unrecognised name opens
+// custom-api, and only an outright allowance of the route admits it.
+func TestApprovedEndpointReleasesNoGenericKey(t *testing.T) {
+	p := approvedCustom()
+	useIsolationPolicy(t, p)
+	useCustom(t, selfHosted)
+	if keyAllowed(p, "SOME_OTHER_KEY") {
+		t.Error("generic key allowed by an endpoint approval")
+	}
+	if ref := agents.CredentialEntryRefusalAt("", keyEnvRoutes("SOME_OTHER_KEY")...); ref == nil {
+		t.Error("generic key entry accepted")
+	}
+	open := routepolicy.Policy{Revision: 6, Restricted: true, Allowed: []string{routes.RouteCustomAPI}}
+	if !keyAllowed(open, "SOME_OTHER_KEY") {
+		t.Error("control: route allowed outright must admit its keys")
 	}
 }
