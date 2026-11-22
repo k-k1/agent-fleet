@@ -11,6 +11,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 var openRouterOnly = routepolicy.Policy{Revision: 3, Restricted: true, Allowed: []string{routes.RouteOpenRouterAPI}}
@@ -41,8 +42,8 @@ func TestRunPolicyEnvIsolatesAStandaloneRun(t *testing.T) {
 	t.Setenv("AF_SECRET_KEY", "")
 	oldView := credentialView
 	t.Cleanup(func() { credentialView = oldView })
-	credentialView = func() (map[string]string, string, oauthState) {
-		return map[string]string{"OPENROUTER_API_KEY": "or"}, UsageZen, oauthState{known: true, connected: true}
+	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
+		return map[string]string{"OPENROUTER_API_KEY": "or"}, UsageZen, oauthState{known: true, connected: true}, nil
 	}
 	own := `{"model":"openrouter/x","experimental":{"policies":[{"action":"tool.use","resource":"shell:*","effect":"deny"}]}}`
 	base := []string{"PATH=/bin", "OPENROUTER_API_KEY=or", opencodeKeyEnv + "=inherited", "ANTHROPIC_API_KEY=inherited",

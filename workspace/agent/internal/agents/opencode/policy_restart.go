@@ -49,8 +49,10 @@ func credentialGen() string {
 	if !restricted {
 		return openGen
 	}
-	keys, pref, acct := credentialView()
-	parts := []string{"pin:" + strings.Join(allowedServeProviders(p, keys, pref, acct, engineProviderIDs()), ","),
+	keys, pref, acct, custom := credentialView()
+	engines := engineProviderIDs()
+	parts := []string{"pin:" + strings.Join(serveProviders(p, keys, pref, acct, engines, custom), ","),
+		"custom:" + customPinDigest(p, engines, custom),
 		"engine:" + strconv.FormatBool(p.Allows(routes.RouteAFEngineLLM))}
 	fp := func(v string) string { sum := sha256.Sum256([]byte(v)); return hex.EncodeToString(sum[:6]) }
 	for name, v := range keys {

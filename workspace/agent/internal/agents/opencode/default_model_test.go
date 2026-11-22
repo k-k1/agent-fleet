@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -19,7 +20,9 @@ func TestDefaultModelLaunchStaysUnresolved(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
 	oldView := credentialView
 	t.Cleanup(func() { credentialView = oldView })
-	credentialView = func() (map[string]string, string, oauthState) { return nil, UsageZen, oauthState{known: true} }
+	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
+		return nil, UsageZen, oauthState{known: true}, nil
+	}
 	m := session.Meta{Name: "s", Kind: session.KindOpencode, Dir: t.TempDir()}
 	cfg := []byte(`{"model":"opencode/a-free"}`)
 	if err := os.WriteFile(filepath.Join(m.Dir, "opencode.json"), cfg, 0o600); err != nil {

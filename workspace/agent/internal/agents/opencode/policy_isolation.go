@@ -1,6 +1,8 @@
 package opencode
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -115,10 +118,9 @@ func servePolicyEnv(base []string) (env []string, ok bool) {
 	if !restricted {
 		return base, false
 	}
-	keys, pref, acct := credentialView()
-	cfg, _ := json.Marshal(map[string]any{
-		"enabled_providers": nonNil(allowedServeProviders(p, keys, pref, acct, engineProviderIDs())),
-	})
+	keys, pref, acct, custom := credentialView()
+	engines := engineProviderIDs()
+	cfg, _ := json.Marshal(pinConfig(map[string]any{}, p, keys, pref, acct, engines, custom))
 	env = withoutEnv(base, append(forbiddenInheritedKeys(p), routeUnset...)...)
 	env = withoutEnv(env, routeConfigKey)
 	return append(env, routeConfigKey+"="+string(cfg)), true
@@ -146,14 +148,67 @@ func RunPolicyEnv(env []string, dir string) ([]string, error) {
 			return nil, fmt.Errorf("%w: its inline configuration cannot be read, so its providers cannot be pinned", ErrPolicyConfig)
 		}
 	}
-	keys, pref, acct := credentialView()
-	cfg["enabled_providers"] = nonNil(allowedServeProviders(p, keys, pref, acct, engineProviderIDs()))
+	keys, pref, acct, custom := credentialView()
+	pinConfig(cfg, p, keys, pref, acct, engineProviderIDs(), custom)
 	b, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, err
 	}
 	out := withoutEnv(env, append(forbiddenInheritedKeys(p), append(routeUnset, routeConfigKey)...)...)
 	return append(out, routeConfigKey+"="+string(b)), nil
+}
+
+// allowedCustom is the custom provider's connection when the policy allows its route now (its host
+// is an approved endpoint), nil otherwise.
+func allowedCustom(p routepolicy.Policy, engines []string, custom *secrets.CustomAPIConn) *secrets.CustomAPIConn {
+	if c := customConn(custom, engines); c != nil && p.Allows(routes.RouteCustomAPI) {
+		return c
+	}
+	return nil
+}
+
+// serveProviders is allowedServeProviders plus the custom provider while its endpoint is approved.
+func serveProviders(p routepolicy.Policy, keys map[string]string, pref string, acct oauthState, engines []string, custom *secrets.CustomAPIConn) []string {
+	out := allowedServeProviders(p, keys, pref, acct, engines)
+	if c := allowedCustom(p, engines, custom); c != nil {
+		out = append(out, strings.TrimSpace(c.Provider))
+		slices.Sort(out)
+		out = slices.Compact(out)
+	}
+	return out
+}
+
+// pinConfig sets the pin into an inline configuration: enabled_providers, and for an approved
+// custom provider its base URL (provider.<id>.options.baseURL), so a call on it goes to the host
+// the policy approved. It returns cfg.
+func pinConfig(cfg map[string]any, p routepolicy.Policy, keys map[string]string, pref string, acct oauthState, engines []string, custom *secrets.CustomAPIConn) map[string]any {
+	cfg["enabled_providers"] = nonNil(serveProviders(p, keys, pref, acct, engines, custom))
+	c := allowedCustom(p, engines, custom)
+	if c == nil {
+		return cfg
+	}
+	sub := func(m map[string]any, k string) map[string]any {
+		if v, ok := m[k].(map[string]any); ok {
+			return v
+		}
+		v := map[string]any{}
+		m[k] = v
+		return v
+	}
+	sub(sub(sub(cfg, "provider"), strings.TrimSpace(c.Provider)), "options")["baseURL"] = strings.TrimSpace(c.URL)
+	return cfg
+}
+
+// customPinDigest identifies the custom pin for the credential generation: a changed URL or
+// provider is another pin, so the serve is restarted onto it. The key is not part of it (it is not
+// in the configuration).
+func customPinDigest(p routepolicy.Policy, engines []string, custom *secrets.CustomAPIConn) string {
+	c := allowedCustom(p, engines, custom)
+	if c == nil {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(strings.TrimSpace(c.Provider) + "\x00" + strings.TrimSpace(c.URL)))
+	return hex.EncodeToString(sum[:6])
 }
 
 func nonNil(s []string) []string {
@@ -166,7 +221,7 @@ func nonNil(s []string) []string {
 // pinConflict names the first config file among files, and its key, that would replace or widen
 // an inline enabled_providers: an enabled_providers of its own, or a policies rule that can reach
 // provider.use. A file that cannot be parsed is judged by whether one of the keys appears in it.
-func pinConflict(files []string) (file, key string) {
+func pinConflict(files []string, customProvider string) (file, key string) {
 	set := func(v json.RawMessage) bool { return len(v) > 0 && string(v) != "null" }
 	for _, f := range files {
 		b, err := os.ReadFile(f)
@@ -175,7 +230,11 @@ func pinConflict(files []string) (file, key string) {
 		}
 		var top map[string]json.RawMessage
 		if json.Unmarshal(stripJSONC(b), &top) != nil {
-			for _, k := range []string{"enabled_providers", "policies"} {
+			ks := []string{"enabled_providers", "policies"}
+			if customProvider != "" {
+				ks = append(ks, "baseURL", "baseUrl")
+			}
+			for _, k := range ks {
 				if strings.Contains(string(b), `"`+k+`"`) {
 					return f, k
 				}
@@ -188,6 +247,9 @@ func pinConflict(files []string) (file, key string) {
 		if v, ok := top["policies"]; ok && providerPolicy(v) {
 			return f, "policies (provider.use)"
 		}
+		if customProvider != "" && overridesBaseURL(top["provider"], customProvider) {
+			return f, "provider." + customProvider + ".options.baseURL"
+		}
 		var exp map[string]json.RawMessage
 		if v, ok := top["experimental"]; ok && json.Unmarshal(v, &exp) == nil {
 			if pv, ok := exp["policies"]; ok && providerPolicy(pv) {
@@ -196,6 +258,28 @@ func pinConflict(files []string) (file, key string) {
 		}
 	}
 	return "", ""
+}
+
+// overridesBaseURL reports whether a config's provider block sets a base URL for provider id: the
+// inline pin's URL is the one an approval covers, so a file may not move it.
+func overridesBaseURL(v json.RawMessage, id string) bool {
+	var providers map[string]struct {
+		Options map[string]json.RawMessage `json:"options"`
+	}
+	if len(v) == 0 || json.Unmarshal(v, &providers) != nil {
+		return false
+	}
+	for k, pv := range providers {
+		if k != id {
+			continue
+		}
+		for ok := range pv.Options {
+			if strings.EqualFold(ok, "baseURL") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // ErrPolicyConfig marks opencode made unavailable by a config file that would override the
@@ -208,7 +292,12 @@ func policyConfigErr(files []string) error {
 	if _, restricted := policyRestriction(); !restricted {
 		return nil
 	}
-	if f, k := pinConflict(files); f != "" {
+	_, _, _, custom := credentialView()
+	pin := ""
+	if c := customConn(custom, engineProviderIDs()); c != nil {
+		pin = strings.TrimSpace(c.Provider)
+	}
+	if f, k := pinConflict(files, pin); f != "" {
 		return fmt.Errorf("%w: %s sets %s, which would widen the providers the policy allows; remove it", ErrPolicyConfig, f, k)
 	}
 	return nil

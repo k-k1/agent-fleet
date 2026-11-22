@@ -7,6 +7,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 func TestResolveModel(t *testing.T) {
@@ -48,13 +49,13 @@ func TestResolveModel(t *testing.T) {
 		"default model":      {"", keys, UsageOwn, out, routes.Launch{}},
 		"billing off":        {"anthropic/claude-x", keys, UsageOff, out, routes.Launch{}},
 	} {
-		if got := resolveModel(tc.model, tc.keys, tc.pref, tc.acct, engines); got != tc.want {
+		if got := resolveModel(tc.model, tc.keys, tc.pref, tc.acct, engines, nil); got != tc.want {
 			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
 		}
 	}
 	// Another sign-in is another credential id.
 	other := oauthState{known: true, connected: true, id: "cred-2"}
-	if a, b := resolveModel("opencode/m", nil, UsageZen, acct, nil), resolveModel("opencode/m", nil, UsageZen, other, nil); a.Binding == b.Binding {
+	if a, b := resolveModel("opencode/m", nil, UsageZen, acct, nil, nil), resolveModel("opencode/m", nil, UsageZen, other, nil, nil); a.Binding == b.Binding {
 		t.Error("another account kept the binding")
 	}
 }
@@ -96,7 +97,7 @@ func TestOAuthCachedIsCurrentOnly(t *testing.T) {
 		oauthCache, oauthAt = st, at
 		oauthMu.Unlock()
 	}
-	resolve := func() routes.Launch { return resolveModel("opencode/m", nil, UsageZen, oauthCached(), nil) }
+	resolve := func() routes.Launch { return resolveModel("opencode/m", nil, UsageZen, oauthCached(), nil, nil) }
 	accountA := routes.Launch{Route: routes.RouteOpencodeAccount, Binding: credbind.Account(routes.RouteOpencodeAccount, "cred-A")}
 
 	seed(oauthState{known: true, connected: true, id: "cred-A"}, time.Now())
@@ -117,7 +118,7 @@ func TestOAuthCachedIsCurrentOnly(t *testing.T) {
 	}
 	// Signed out -> signed in: an old signed-out view must not prove "only the key pays".
 	seed(oauthState{known: true}, time.Now().Add(-2*oauthStatusTTL))
-	if got := resolveModel("opencode/m", map[string]string{opencodeKeyEnv: "k"}, UsageZen, oauthCached(), nil); got != (routes.Launch{}) {
+	if got := resolveModel("opencode/m", map[string]string{opencodeKeyEnv: "k"}, UsageZen, oauthCached(), nil, nil); got != (routes.Launch{}) {
 		t.Errorf("expired signed-out view with a key: %+v, want unknown", got)
 	}
 	// A refresh in flight holds the lock over the daemon call: unknown, not a wait.
@@ -137,7 +138,9 @@ func TestModelRoutes(t *testing.T) {
 	old := credentialView
 	t.Cleanup(func() { credentialView = old })
 	pref := UsageZen
-	credentialView = func() (map[string]string, string, oauthState) { return nil, pref, oauthState{} }
+	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
+		return nil, pref, oauthState{}, nil
+	}
 	a := agentImpl{}
 	want := func(name, model string, routes ...string) {
 		t.Helper()
@@ -171,9 +174,11 @@ func TestUnprovenPayerStillListsModelRoutes(t *testing.T) {
 		"key beside a signed-in account": {map[string]string{"OPENCODE_API_KEY": "oc-1"}, oauthState{known: true, connected: true, id: "c"}},
 		"account state unknown":          {nil, oauthState{}},
 	} {
-		credentialView = func() (map[string]string, string, oauthState) { return v.keys, UsageZen, v.acct }
-		keys, pref, acct := credentialView()
-		if l := resolveModel("opencode/m", keys, pref, acct, nil); l != (routes.Launch{}) {
+		credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
+			return v.keys, UsageZen, v.acct, nil
+		}
+		keys, pref, acct, _ := credentialView()
+		if l := resolveModel("opencode/m", keys, pref, acct, nil, nil); l != (routes.Launch{}) {
 			t.Errorf("%s: resolved %+v, want nothing", name, l)
 		}
 		if got := (agentImpl{}).ModelRoutes("opencode/m"); !slices.Equal(got, []string{routes.RouteOpencodeZen, routes.RouteOpencodeAccount}) {
