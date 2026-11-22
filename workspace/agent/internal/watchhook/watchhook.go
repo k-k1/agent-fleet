@@ -549,7 +549,7 @@ func (m *Manager) removeAtForge(ctx context.Context, h Hook) (bool, string) {
 	st, _, err := m.forge(ctx, cred, h.Source, http.MethodDelete, del, nil, nil)
 	if err != nil || (st != http.StatusNoContent && st != http.StatusNotFound) {
 		if h.Source == Bitbucket && st == http.StatusForbidden {
-			manual = "the token needs the delete:webhook:bitbucket scope (or delete the webhook by hand in the repository settings): " + manual
+			manual = "the credential may lack the delete:webhook:bitbucket scope (token) or the Webhooks permission (OAuth), or admin rights on the repository; " + manual
 		}
 		return false, fmt.Sprintf("%s did not delete the webhook (HTTP %d): %s", h.Source, st, manual)
 	}

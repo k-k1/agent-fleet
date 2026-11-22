@@ -25,7 +25,7 @@ OAuth のトークンは呼び出しのたびに確かめられ、期限が近�
 
 **⚙設定 →「課題管理」** で Jira を接続します。手順は [課題管理サービスを接続する](issue-tracker.ja.md#jira-を接続する) にあります。
 
-- 接続は OAuth でも API トークンでもかまいません
+- 接続は OAuth でも API トークンでもかまいません。API トークンは classic のもの（「Create API token」）にしてください。スコープ付きのトークンは拒否されます
 - Jira Cloud（`….atlassian.net`）だけです。Jira Data Center は[自分で設定します](#jira-data-center-を使う)
 
 ## エージェントに頼む

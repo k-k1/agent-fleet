@@ -459,3 +459,25 @@ func TestJiraPutSiteDuringConcurrentWrites(t *testing.T) {
 		})
 	}
 }
+
+// The classic-token advice belongs to the token path only: an OAuth 401/403 must not tell the
+// member to create a classic API token.
+func TestJiraRejectionHintByAuthKind(t *testing.T) {
+	for _, st := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(st)
+		}))
+		_, err := jiraAccount(&secrets.JiraCreds{Site: srv.URL, Email: "a@example.com", Token: "t"})
+		if err == nil || !strings.Contains(err.Error(), "classic") {
+			t.Errorf("token %d: %v", st, err)
+		}
+		old := jirax.CloudAPIBase
+		jirax.CloudAPIBase = srv.URL
+		_, err = jiraAccount(&secrets.JiraCreds{AuthKind: "oauth", CloudID: "c1", AccessToken: "a"})
+		jirax.CloudAPIBase = old
+		if err == nil || strings.Contains(err.Error(), "classic") {
+			t.Errorf("oauth %d: %v", st, err)
+		}
+		srv.Close()
+	}
+}
