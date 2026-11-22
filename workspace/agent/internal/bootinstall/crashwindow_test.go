@@ -794,3 +794,73 @@ func TestSelfUpdateCursorStampsThePublishedTree(t *testing.T) {
 		t.Fatalf("no token in the published tree: %v %q", err, b)
 	}
 }
+
+// The previous tree was put back but a link could not be (an unwritable ~/.local/bin): the retry
+// does not take the restored tree for a manual install, and fixes the link.
+func TestCursorRecoverRetriesLinksAfterTheTreeWasRestored(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	old := dir + ".af-old.4242"
+	prev := filepath.Join(f.versions(), "1.0.0", "cursor-agent")
+	f.write(t, prev, "#!/bin/sh\necho 1.0.0\n")
+	f.write(t, filepath.Join(old, "cursor-agent"), "#!/bin/sh\necho 1.0.0-slot\n")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "#!/bin/sh\necho cand\n")
+	f.write(t, filepath.Join(dir, cursorIDFile), "tok")
+	os.MkdirAll(filepath.Dir(f.local("agent")), 0o755)
+	f.link(t, "agent", filepath.Join(dir, "cursor-agent"))
+	yes := true
+	m := cursorMarker{Dir: dir, Old: old, Tree: true, HadTree: &yes, ID: "tok", Links: []cursorLinkState{
+		{Path: f.local("agent"), Kind: "symlink", Target: []byte(prev)},
+		{Path: f.local("cursor-agent"), Kind: "none"}}}
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Dir(f.local("agent"))
+	os.Chmod(bin, 0o555)
+	defer os.Chmod(bin, 0o755)
+	if err := f.env.cursorRecover(); err == nil {
+		t.Skip("the directory stayed writable (running as root?)")
+	}
+	os.Chmod(bin, 0o755)
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if tg, _ := os.Readlink(f.local("agent")); tg != prev {
+		t.Fatalf("agent -> %q, want %q", tg, prev)
+	}
+}
+
+// An installer's read-only (0555) staged tree still gets its token, and keeps its mode.
+func TestStampTreeKeepsAReadOnlyRoot(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tree")
+	os.Mkdir(p, 0o755)
+	os.Chmod(p, 0o555)
+	defer os.Chmod(p, 0o755)
+	if _, err := stampTree(p); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o555 {
+		t.Fatalf("mode %v", fi.Mode().Perm())
+	}
+}
+
+// The slot at Dir is a regular file (the update died before moving it): recovery settles and
+// leaves it, it does not wait on a token it cannot read.
+func TestCursorRecoverSlotIsARegularFile(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, dir, "file in the slot")
+	yes := true
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.5", Tree: true, HadTree: &yes, ID: "tok",
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "none"}}}
+	os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755)
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if f.read(dir) != "file in the slot" {
+		t.Fatal("the slot was changed")
+	}
+}

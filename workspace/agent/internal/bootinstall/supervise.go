@@ -50,9 +50,17 @@ func supervise(npm string, args []string) int {
 	werr := cmd.Wait()
 	// Nothing npm started may outlive it: kill what is left, wait for it to be gone.
 	// Re-listed each round: a child that forks between a listing and the kill is caught by the next.
+	// A single /proc listing can miss a child forked while it was read, so the group counts as
+	// empty only after several empty listings in a row; every round kills what it sees.
 	pgid := syscall.Getpgrp()
-	for deadline := time.Now().Add(superviseGrace); len(groupMembers(pgid)) > 0 && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-		killGroupMembers(pgid)
+	empty := 0
+	for deadline := time.Now().Add(superviseGrace); empty < 3 && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		if m := groupMembers(pgid); len(m) > 0 {
+			empty = 0
+			killGroupMembers(pgid)
+		} else {
+			empty++
+		}
 	}
 	if werr == nil {
 		return 0

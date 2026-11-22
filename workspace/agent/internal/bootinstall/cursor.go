@@ -994,6 +994,9 @@ type cursorMarker struct {
 	// by hand after an interruption is never touched. Empty in a marker written before it existed
 	// (Dir is then acted on as before).
 	ID string `json:"id,omitempty"`
+	// Restored: recovery already put the previous tree back, so the tree at Dir is no longer
+	// the candidate and carries no token; only the links are left to retry.
+	Restored bool `json:"restored,omitempty"`
 }
 
 // cursorIDFile is the token's name inside the staged tree.
@@ -1006,6 +1009,14 @@ func stampTree(p string) (string, error) {
 		return "", err
 	}
 	id := hex.EncodeToString(b[:])
+	// An installer may finish the tree read-only (0555): give the root owner-write for the one
+	// file, then put the mode back before it is published.
+	if fi, err := os.Stat(p); err == nil && fi.Mode().Perm()&0o200 == 0 {
+		if err := os.Chmod(p, fi.Mode().Perm()|0o200); err != nil {
+			return "", err
+		}
+		defer os.Chmod(p, fi.Mode().Perm())
+	}
 	// Exclusive and not following links: an unpacked file of the same name must fail the update, not
 	// be written through.
 	f, err := os.OpenFile(filepath.Join(p, cursorIDFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
@@ -1032,7 +1043,7 @@ func (m cursorMarker) dirOwner(p string) (owner string, err error) {
 	}
 	f, err := os.OpenFile(filepath.Join(p, cursorIDFile), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ELOOP) {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENOTDIR) {
 			return "foreign", nil
 		}
 		return "unknown", err
@@ -1170,7 +1181,7 @@ func (e Env) cursorRecover() error {
 	}
 	var errs []error
 	foreign := false
-	if m.Tree {
+	if m.Tree && !m.Restored {
 		if _, derr := os.Lstat(m.Dir); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
 			// Not knowing what is at Dir must not read as "empty" or "ours": retry at the next start.
 			return fmt.Errorf("cursor: cannot look at %s: %v", m.Dir, derr)
@@ -1210,16 +1221,32 @@ func (e Env) cursorRecover() error {
 			errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", m.Old, lerr))
 		}
 	}
+	if m.Tree && !m.Restored && !foreign && len(errs) == 0 {
+		// The tree is settled; if a link below fails, the retry must not mistake the restored
+		// previous tree (it has no token) for someone else's.
+		m.Restored = true
+		if err := e.cursorWriteMarker(m); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	for _, l := range m.Links {
 		if foreign {
 			// The manual install owns Dir and the links it made; only a regular file this
 			// update moved aside is ours, and it goes back only to an empty place.
 			if l.Kind == "file" {
-				if _, kerr := os.Lstat(l.Keep); kerr == nil {
-					if _, perr := os.Lstat(l.Path); errors.Is(perr, fs.ErrNotExist) {
-						if err := os.Rename(l.Keep, l.Path); err != nil {
-							errs = append(errs, fmt.Errorf("cursor: the previous %s is left at %s: %v", l.Path, l.Keep, err))
-						}
+				_, kerr := os.Lstat(l.Keep)
+				_, perr := os.Lstat(l.Path)
+				switch {
+				case kerr != nil && !errors.Is(kerr, fs.ErrNotExist):
+					errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Keep, kerr))
+				case perr != nil && !errors.Is(perr, fs.ErrNotExist):
+					errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Path, perr))
+				case kerr == nil && perr != nil:
+					// A hard link never replaces what a manual installer put there meanwhile.
+					if err := os.Link(l.Keep, l.Path); err != nil && !errors.Is(err, fs.ErrExist) {
+						errs = append(errs, fmt.Errorf("cursor: the previous %s is left at %s: %v", l.Path, l.Keep, err))
+					} else if err == nil {
+						os.Remove(l.Keep)
 					}
 				}
 			}
