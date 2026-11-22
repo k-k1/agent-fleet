@@ -187,3 +187,12 @@ func exactLogs(id string) ([]string, error) {
 	}
 	return out, nil
 }
+
+// clearPointForkMarker removes the marker and reports a failure other than "already gone".
+// SidStore.Remove and Read both swallow errors, so one permission fault would look like success.
+func clearPointForkMarker(sid string) error {
+	if err := os.Remove(pointForkPending.Path(sid)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}

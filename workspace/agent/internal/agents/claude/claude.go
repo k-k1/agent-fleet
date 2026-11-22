@@ -196,9 +196,8 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		// A marker left behind would make a later resume of this slot look like a first launch and
 		// override a mode the user switched to, so a failed removal fails the launch (it is retried
 		// as a first launch, which is what the marker records).
-		pointForkPending.Remove(sid)
-		if pointForkPending.Read(sid) != "" {
-			return agents.LaunchPlan{}, fmt.Errorf("could not clear the point-fork first-launch marker for %s", sid)
+		if err := clearPointForkMarker(sid); err != nil {
+			return agents.LaunchPlan{}, fmt.Errorf("could not clear the point-fork first-launch marker: %w", err)
 		}
 	}
 	return agents.LaunchPlan{

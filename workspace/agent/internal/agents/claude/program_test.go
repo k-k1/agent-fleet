@@ -348,6 +348,10 @@ func TestBuildLaunchPointForkRetryAfterFailureStaysManual(t *testing.T) {
 	if !JSONLResumable(sid) {
 		t.Fatal("the failed launch should have left the branch transcript behind")
 	}
+	before, err := os.ReadFile(rawJSONLPaths(sid)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(conflict); err != nil {
 		t.Fatal(err)
 	}
@@ -357,8 +361,11 @@ func TestBuildLaunchPointForkRetryAfterFailureStaysManual(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if !strings.Contains(retry.Program, "claude --resume ") || !strings.Contains(retry.Program, "--permission-mode default") {
+	if !strings.Contains(retry.Program, "claude --resume "+session.ShellQuote(sid)+" ") || strings.Contains(retry.Program, "--fork-session") || !strings.Contains(retry.Program, "--permission-mode default") {
 		t.Errorf("retried first launch lost manual mode: %q", retry.Program)
+	}
+	if after, err := os.ReadFile(rawJSONLPaths(sid)[0]); err != nil || string(after) != string(before) {
+		t.Errorf("the retry must reuse the first transcript unchanged (err=%v)", err)
 	}
 	next, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
 	if err != nil {
@@ -403,5 +410,30 @@ func TestBuildLaunchPointForkStartsManualOnlyOnce(t *testing.T) {
 	}
 	if !strings.Contains(second.Program, "claude --resume ") || strings.Contains(second.Program, "--permission-mode default") {
 		t.Errorf("a later launch must be a plain resume keeping the recorded mode: %q", second.Program)
+	}
+}
+
+// A marker that cannot be removed must be reported even when the same fault hides it from Read.
+func TestClearPointForkMarkerReportsUnremovable(t *testing.T) {
+	isolateSlot(t)
+	const sid = "33333333-3333-4333-8333-333333333333"
+	if err := clearPointForkMarker(sid); err != nil {
+		t.Fatalf("absent marker: %v", err)
+	}
+	pointForkPending.Write(sid, "1")
+	dir := filepath.Dir(pointForkPending.Path(sid))
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	if err := clearPointForkMarker(sid); err == nil {
+		t.Error("an unremovable marker was reported as cleared")
+	}
+	_ = os.Chmod(dir, 0o755)
+	if err := clearPointForkMarker(sid); err != nil || pointForkPending.Read(sid) != "" {
+		t.Errorf("marker not cleared: %v", err)
 	}
 }
