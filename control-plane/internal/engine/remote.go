@@ -1,6 +1,6 @@
-package main
+package engine
 
-// engine_remote.go — borrowing another Agent Fleet's engines (ADR 0079).
+// remote.go — borrowing another Agent Fleet's engines (ADR 0079).
 //
 // A `remote` row is an `external` row with one difference: there is somebody on the other end who
 // can START the engine. Everything in this file exists because of that one difference, and the
@@ -13,7 +13,7 @@ package main
 // OpenAI-compatible endpoint.
 //
 // 🔴 The consequence is that rows appear on the first successful catalogue fetch rather than at
-// boot, so this file is a POLL that adopts rows (engineRegistry.adopt) as well as a client. ADR
+// boot, so this file is a POLL that adopts rows (RemoteHost.Adopt) as well as a client. ADR
 // 0077 P1 built the adopting half; its driver reads an SSM parameter and could not be reused.
 
 import (
@@ -27,7 +27,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// engineRemotePollInterval is how often the far catalogue is re-read.
+// remotePollInterval is how often the far catalogue is re-read.
 //
 // Two minutes rather than the Agent's ten. The cadences were the same because the reasoning was
 // "an administrator's toggle is minutes-scale", but they are not the same KIND of wait: the
@@ -37,17 +37,17 @@ import (
 // about three minutes to reach a session here, and that was a lucky draw from a span whose worst
 // case was this interval plus the Agent's TTL. Each tick is still one GET of one small JSON to
 // one URL, so the cost of the change is 720 requests a day against a wait nobody can explain.
-const engineRemotePollInterval = 2 * time.Minute
+const remotePollInterval = 2 * time.Minute
 
-// engineRemoteTokenRenewAhead is how long before expiry a far session token is replaced. The TTL
+// remoteTokenRenewAhead is how long before expiry a far session token is replaced. The TTL
 // the far side mints is 30 days (internal/engine/token.go), so this is generous by three orders of
 // magnitude and exists only so that a token never expires mid-request.
-const engineRemoteTokenRenewAhead = 24 * time.Hour
+const remoteTokenRenewAhead = 24 * time.Hour
 
-// engineRemotes is the one far deployment this CP borrows from, and the per-role handles hanging
+// Remotes is the one far deployment this CP borrows from, and the per-role handles hanging
 // off it. nil — the normal case — means nothing is borrowed, and every method here tolerates that
 // so the call sites in engines.go do not each need a guard.
-type engineRemotes struct {
+type Remotes struct {
 	// base is the far fleet's URL with no path: https://af.example.com. The path under it is the
 	// far side's to declare, and it states it in the token answer's `base_url` (decision 4).
 	base string
@@ -57,22 +57,21 @@ type engineRemotes struct {
 	// keys is AF_REMOTE_ENGINE_KEYS: which roles to borrow. Empty borrows every role the far
 	// fleet offers, which is the answer for an operator who just wants what is there.
 	keys []string
-	// mgr is who the workspaces are asked from when a mirror moves and every running one has to
-	// be told (applyCatalogRow). nil in the unit tests, where the fan-out itself is stubbed.
-	mgr *manager
+	// client carries both far-side calls; main hands in the gateway's own upstream client.
+	client HTTPDoer
 
 	mu    sync.Mutex
-	byKey map[string]*engineRemote
+	byKey map[string]*Remote
 
 	// polling counts the goroutine run starts, so a test can wait for it to be gone before the
 	// next test swaps the log output.
 	polling sync.WaitGroup
 }
 
-// engineRemote is one borrowed role: its mirrored catalogue, the far side's own base path for it,
+// Remote is one borrowed role: its mirrored catalogue, the far side's own base path for it,
 // and the session tokens minted against it.
-type engineRemote struct {
-	parent *engineRemotes
+type Remote struct {
+	parent *Remotes
 	key    string
 
 	mu sync.Mutex
@@ -83,7 +82,7 @@ type engineRemote struct {
 	loaded bool
 	// sig is the fingerprint of that mirror, so the poll can tell "the far side answered again"
 	// from "the far side answers something else now" — only the second is worth waking every
-	// running workspace for (engineMirrorSignature).
+	// running workspace for (MirrorSignature).
 	sig string
 	// warmModel is the id the FAR deployment last saw its engine answer with, as its catalogue
 	// reports it. It is the only honest answer to "is this warm" available here: probing would be
@@ -102,21 +101,21 @@ type engineRemote struct {
 	// tokens are the far session tokens, per LOCAL session name (decision 8). The far usage rows
 	// then carry the borrower's session, which is the only way an operator there can tell one
 	// borrower's spending from another's.
-	tokens map[string]engineRemoteToken
+	tokens map[string]remoteToken
 }
 
-// engineRemoteToken is one minted far session token and when it stops being usable.
-type engineRemoteToken struct {
+// remoteToken is one minted far session token and when it stops being usable.
+type remoteToken struct {
 	token   string
 	expires time.Time
 }
 
-// newEngineRemotes reads the operator's declaration. nil when nothing is borrowed, which is what
+// NewRemotes reads the operator's declaration. nil when nothing is borrowed, which is what
 // keeps every deployment that does not use this feature on exactly the path it had before.
 //
 // Read once, at startup, like AF_COMFY_URL: an environment variable cannot change under a running
 // process, so pointing at a different fleet is a Control Plane restart.
-func newEngineRemotes(mgr *manager) *engineRemotes {
+func NewRemotes(client HTTPDoer) *Remotes {
 	base := strings.TrimRight(strings.TrimSpace(envx.Or("AF_REMOTE_ENGINE_URL", "")), "/")
 	token := strings.TrimSpace(envx.Or("AF_REMOTE_ENGINE_TOKEN", ""))
 	if base == "" || token == "" {
@@ -133,11 +132,55 @@ func newEngineRemotes(mgr *manager) *engineRemotes {
 			keys = append(keys, k)
 		}
 	}
-	return &engineRemotes{base: base, token: token, keys: keys, mgr: mgr, byKey: map[string]*engineRemote{}}
+	return NewRemotesFor(base, token, keys, client)
 }
 
-// wants reports whether this role is one the operator asked to borrow.
-func (r *engineRemotes) wants(key string) bool {
+// NewRemotesFor builds the borrowing config from an already-read declaration.
+func NewRemotesFor(base, token string, keys []string, client HTTPDoer) *Remotes {
+	return &Remotes{base: base, token: token, keys: keys, client: client, byKey: map[string]*Remote{}}
+}
+
+// NewRemote is a handle with no parent deployment: a mirror that can be read and a token cache
+// that can never be filled.
+func NewRemote(key string) *Remote {
+	return &Remote{key: key, tokens: map[string]remoteToken{}}
+}
+
+// Base is the far fleet's URL, with no path and no trailing slash.
+func (r *Remotes) Base() string {
+	if r == nil {
+		return ""
+	}
+	return r.base
+}
+
+// WaitPolling blocks until every poll goroutine Run started has returned.
+func (r *Remotes) WaitPolling() {
+	if r != nil {
+		r.polling.Wait()
+	}
+}
+
+// Parent is the deployment this handle borrows from; nil for a handle built by NewRemote.
+func (e *Remote) Parent() *Remotes {
+	if e == nil {
+		return nil
+	}
+	return e.parent
+}
+
+// SeedMirror installs rows as the loaded mirror without a fetch.
+func (e *Remote) SeedMirror(rows []store.EngineModel) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	e.rows, e.loaded = rows, true
+	e.mu.Unlock()
+}
+
+// Wants reports whether this role is one the operator asked to borrow.
+func (r *Remotes) Wants(key string) bool {
 	if r == nil {
 		return false
 	}
@@ -152,9 +195,9 @@ func (r *engineRemotes) wants(key string) bool {
 	return false
 }
 
-// forKey returns the handle for one borrowed role, creating it on first use. The handle outlives
+// ForKey returns the handle for one borrowed role, creating it on first use. The handle outlives
 // any single catalogue fetch: the row built from it holds it, and the poll refreshes it in place.
-func (r *engineRemotes) forKey(key string) *engineRemote {
+func (r *Remotes) ForKey(key string) *Remote {
 	if r == nil {
 		return nil
 	}
@@ -163,12 +206,12 @@ func (r *engineRemotes) forKey(key string) *engineRemote {
 	if e := r.byKey[key]; e != nil {
 		return e
 	}
-	e := &engineRemote{parent: r, key: key, tokens: map[string]engineRemoteToken{}}
+	e := &Remote{parent: r, key: key, tokens: map[string]remoteToken{}}
 	r.byKey[key] = e
 	return e
 }
 
-// catalogSource is what engineCatalog reads this role's rows through instead of the database
+// CatalogSource is what engineCatalog reads this role's rows through instead of the database
 // (ADR 0079 decision 7).
 //
 // 🔴 It answers an EMPTY LIST and never a nil source, before the first fetch as much as after a
@@ -179,7 +222,7 @@ func (r *engineRemotes) forKey(key string) *engineRemote {
 // row reading the local database — or nothing — and `hasModels` would answer true for a catalogue
 // that holds nothing. newEngineRegistry refuses such a row outright; this is the second lock, so
 // that a future call site cannot reintroduce the failure by forgetting.
-func (e *engineRemote) catalogSource() func(context.Context) ([]store.EngineModel, error) {
+func (e *Remote) CatalogSource() func(context.Context) ([]store.EngineModel, error) {
 	if e == nil {
 		return func(context.Context) ([]store.EngineModel, error) { return []store.EngineModel{}, nil }
 	}
@@ -193,8 +236,8 @@ func (e *engineRemote) catalogSource() func(context.Context) ([]store.EngineMode
 	}
 }
 
-// warm is what the far deployment last observed about its own engine (decision 10).
-func (e *engineRemote) warm() bool {
+// Warm is what the far deployment last observed about its own engine (decision 10).
+func (e *Remote) Warm() bool {
 	if e == nil {
 		return false
 	}
@@ -203,10 +246,10 @@ func (e *engineRemote) warm() bool {
 	return e.warmModel != ""
 }
 
-// upstreamBase is the far gateway's own prefix for this role, as it stated it. Empty until the
+// UpstreamBase is the far gateway's own prefix for this role, as it stated it. Empty until the
 // first token exchange has happened, and an empty one is what dial refuses to build a URL from
 // rather than guessing `/engine/<key>/v1`.
-func (e *engineRemote) upstreamBase() string {
+func (e *Remote) UpstreamBase() string {
 	if e == nil {
 		return ""
 	}
@@ -226,41 +269,41 @@ func logRemoteMisconfigured(base, token string) {
 	log.Printf("engines: borrowing is declared but %s is unset - no engine is borrowed (both are required; ADR 0079 decision 2)", missing)
 }
 
-// run starts the poll that both discovers borrowed rows and refreshes their mirrors. Nil-safe, so
-// newEngineRegistry calls it unconditionally.
+// Run starts the poll that both discovers borrowed rows and refreshes their mirrors. Nil-safe, so
+// the registry builder calls it unconditionally.
 //
 // The FIRST tick happens at once rather than after the interval: a CP that has just started should
 // offer the borrowed models as soon as the far fleet can be reached, and ten minutes of an empty
 // launch menu reads as a broken deployment.
-func (r *engineRemotes) run(ctx context.Context, reg *engineRegistry) {
-	if r == nil || reg == nil {
+func (r *Remotes) Run(ctx context.Context, host RemoteHost) {
+	if r == nil || host == nil {
 		return
 	}
 	r.polling.Add(1)
 	go func() {
 		defer r.polling.Done()
-		t := time.NewTicker(engineRemotePollInterval)
+		t := time.NewTicker(remotePollInterval)
 		defer t.Stop()
-		r.refreshAll(ctx, reg)
+		r.RefreshAll(ctx, host)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-t.C:
-				r.refreshAll(ctx, reg)
+				r.RefreshAll(ctx, host)
 			}
 		}
 	}()
 }
 
-// refreshAll reads the far catalogue once and brings the registry up to date with it: rows that
+// RefreshAll reads the far catalogue once and brings the registry up to date with it: rows that
 // are not served yet are adopted, and rows that are get a fresh mirror.
 //
 // A failed fetch keeps every previous answer. That is load-bearing rather than tidy: an empty
 // catalogue means "this engine has nothing to serve", so a transient error would take a borrowed
 // engine out of the launch menu and answer 503 to whoever was using it.
-func (r *engineRemotes) refreshAll(ctx context.Context, reg *engineRegistry) {
-	if r == nil || reg == nil {
+func (r *Remotes) RefreshAll(ctx context.Context, host RemoteHost) {
+	if r == nil || host == nil {
 		return
 	}
 	rows, err := r.fetchCatalog(ctx)
@@ -272,16 +315,16 @@ func (r *engineRemotes) refreshAll(ctx context.Context, reg *engineRegistry) {
 		return
 	}
 	for _, row := range rows {
-		if !r.wants(row.Key) {
+		if !r.Wants(row.Key) {
 			continue
 		}
-		r.forKey(row.Key).setNegativeAlways(row.NegativeAlways)
-		r.applyCatalogRow(ctx, reg, row)
+		r.ForKey(row.Key).SetNegativeAlways(row.NegativeAlways)
+		r.applyCatalogRow(ctx, host, row)
 	}
 }
 
-// setNegativeAlways records the far administrator's exclusion list for this role.
-func (e *engineRemote) setNegativeAlways(v string) {
+// SetNegativeAlways records the far administrator's exclusion list for this role.
+func (e *Remote) SetNegativeAlways(v string) {
 	if e == nil {
 		return
 	}
@@ -290,8 +333,8 @@ func (e *engineRemote) setNegativeAlways(v string) {
 	e.mu.Unlock()
 }
 
-// negativeAlways is that list, or "" when the far side declares none.
-func (e *engineRemote) negativeAlways() string {
+// NegativeAlways is that list, or "" when the far side declares none.
+func (e *Remote) NegativeAlways() string {
 	if e == nil {
 		return ""
 	}

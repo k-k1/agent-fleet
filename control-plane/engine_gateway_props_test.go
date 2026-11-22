@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/engine"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -287,7 +288,7 @@ func TestEnginePropsWarmEngineRelaysUpstream(t *testing.T) {
 // "llm"): composing the target from the LOCAL key would happen to land on the right path when
 // the two spellings coincide, which is exactly what let a guess pass as "read from the far
 // side" before this test forced them apart. base_url is the only place the far key is stated
-// (engine_remote_token.go:81-83) — never eng.def.Key, which is this deployment's own.
+// (internal/engine/remote_token.go:81-83) — never eng.def.Key, which is this deployment's own.
 func TestEnginePropsBorrowedRowAsksTheFarGatewaysOwnRoute(t *testing.T) {
 	mgr, signKey, mid := enginePropsFixture(t)
 
@@ -314,8 +315,8 @@ func TestEnginePropsBorrowedRowAsksTheFarGatewaysOwnRoute(t *testing.T) {
 	}))
 	defer far.Close()
 
-	remotes := &engineRemotes{base: far.URL, token: "afei_borrower", byKey: map[string]*engineRemote{}}
-	rem := remotes.forKey("llm")
+	remotes := engine.NewRemotesFor(far.URL, "afei_borrower", nil, engineClient)
+	rem := remotes.ForKey("llm")
 	eng := &engineRuntimeState{
 		def: engineDef{
 			Key: "llm", API: engineAPIChat, Provider: "llamacpp",
@@ -562,8 +563,8 @@ func TestEnginePropsBorrowedRowNeverAugmentedLocally(t *testing.T) {
 	}))
 	defer far.Close()
 
-	remotes := &engineRemotes{base: far.URL, token: "afei_borrower", byKey: map[string]*engineRemote{}}
-	rem := remotes.forKey("llm")
+	remotes := engine.NewRemotesFor(far.URL, "afei_borrower", nil, engineClient)
+	rem := remotes.ForKey("llm")
 	eng := &engineRuntimeState{
 		def: engineDef{
 			Key: "llm", API: engineAPIChat, Provider: "llamacpp",

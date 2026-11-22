@@ -701,18 +701,18 @@ func (g engineGateway) props(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// The bound covers the mint too, not just the GET: a borrowed row's bearer is a round trip
-	// to the far deployment (engine_remote.go's sessionToken), and this route's whole reason to
+	// to the far deployment (internal/engine/remote_token.go's SessionToken), and this route's whole reason to
 	// exist — never holding the way a generation request does — is only half kept if a slow far
 	// mint can still sit outside it.
 	ctx, cancel := context.WithTimeout(r.Context(), enginePropsTimeout)
 	defer cancel()
 
 	// The bearer, then the target — in that order, matching dial(): a BORROWED row's session
-	// token mint is also what learns the far side's own base path (engine_remote_token.go), so
+	// token mint is also what learns the far side's own base path (internal/engine/remote_token.go), so
 	// the target has to be built after it, not before.
 	bearer := eng.apiKey
 	if eng.def.Remote() {
-		far, err := eng.remote.sessionToken(ctx, claims.Session)
+		far, err := eng.remote.SessionToken(ctx, claims.Session)
 		if err != nil {
 			writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_unavailable", err.Error()})
 			return
@@ -818,7 +818,7 @@ type enginePropsModelWindow struct {
 //     carries (total_slots, model_path, ...), which a caller may still want verbatim. Adding one
 //     key keeps that promise for the rest of the body and costs the reader one extra field.
 //
-// A BORROWED row is never augmented here: eng.remote.upstreamBase() is the FAR deployment's own
+// A BORROWED row is never augmented here: eng.remote.UpstreamBase() is the FAR deployment's own
 // /v1/, and reading it directly from THIS process would mean dialing the far gateway's serve() —
 // exactly the demand-record-and-wake path this whole route exists to avoid (a far engine's
 // demand and lifecycle belong to the far deployment, not to a caller borrowing its row). A
@@ -924,15 +924,15 @@ func enginePropsLiveModelWindows(ctx context.Context, eng *engineRuntimeState, b
 // rule applies here exactly as it does in engineUpstreamTarget): what is upstream is another
 // fleet's gateway, not an engine, and this deployment does not get to invent its route layout —
 // which includes the KEY: eng.def.Key is this deployment's own spelling for the role and is
-// never asserted to be the far side's. eng.remote.upstreamBase() is the far side's own
-// `/engine/<their-key>/v1`, READ from its token answer (engine_remote_token.go:81-83) and never
+// never asserted to be the far side's. eng.remote.UpstreamBase() is the far side's own
+// `/engine/<their-key>/v1`, READ from its token answer (internal/engine/remote_token.go:81-83) and never
 // composed here; its /props sits one segment up, so this drops the trailing /v1 that same string
 // carries rather than guessing a path out of the local key. Empty means the far side has not been
 // asked yet (or answered without a base_url), and an unknown one is an error rather than a guess.
 func enginePropsTarget(eng *engineRuntimeState) (string, error) {
 	base := strings.TrimRight(eng.def.URL, "/")
 	if eng.def.Remote() {
-		far := strings.TrimRight(eng.remote.upstreamBase(), "/")
+		far := strings.TrimRight(eng.remote.UpstreamBase(), "/")
 		if far == "" {
 			return "", fmt.Errorf("%s has not said where its %s engine lives (no base_url on its token answer)",
 				base, eng.def.Key)
@@ -1421,7 +1421,7 @@ func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *htt
 	// same answer and the URL below is built from it.
 	bearer := eng.apiKey
 	if eng.def.Remote() {
-		tok, err := eng.remote.sessionToken(ctx, claims.Session)
+		tok, err := eng.remote.SessionToken(ctx, claims.Session)
 		if err != nil {
 			return upstreamStart{err: engineRelayErr(ctx, eng, err)}
 		}
@@ -1499,7 +1499,7 @@ func engineUpstreamTarget(eng *engineRuntimeState, r *http.Request) (string, err
 	base := strings.TrimRight(eng.def.URL, "/")
 	middle := engineUpstreamPrefix(eng.def.Provider)
 	if eng.def.Remote() {
-		far := strings.TrimRight(eng.remote.upstreamBase(), "/")
+		far := strings.TrimRight(eng.remote.UpstreamBase(), "/")
 		if far == "" {
 			return "", fmt.Errorf("%s has not said where its %s engine lives (no base_url on its token answer)",
 				base, eng.def.Key)

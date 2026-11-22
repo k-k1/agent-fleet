@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/engine"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -144,7 +145,7 @@ func newTestRemotes(t *testing.T, base, keys string) *engineRemotes {
 	t.Setenv("AF_REMOTE_ENGINE_URL", base)
 	t.Setenv("AF_REMOTE_ENGINE_TOKEN", "afei_borrower-membership")
 	t.Setenv("AF_REMOTE_ENGINE_KEYS", keys)
-	r := newEngineRemotes(nil)
+	r := newEngineRemotes()
 	if r == nil {
 		t.Fatal("newEngineRemotes read a complete declaration as nothing borrowed")
 	}
@@ -162,8 +163,8 @@ func newTestRemoteRegistry(rem *engineRemotes) *engineRegistry {
 	reg.build = func(d engineDef) *engineRuntimeState {
 		st := &engineRuntimeState{def: d, catalog: newEngineCatalog(nil, d.Key)}
 		if d.Remote() {
-			st.remote = rem.forKey(d.Key)
-			st.catalog.source = st.remote.catalogSource()
+			st.remote = rem.ForKey(d.Key)
+			st.catalog.source = st.remote.CatalogSource()
 		}
 		return st
 	}
@@ -175,7 +176,7 @@ func newTestRemoteRegistry(rem *engineRemotes) *engineRegistry {
 // request would see.
 func mirrorOf(t *testing.T, e *engineRuntimeState) []store.EngineModel {
 	t.Helper()
-	src := e.remote.catalogSource()
+	src := e.remote.CatalogSource()
 	if src == nil {
 		t.Fatal("a borrowed row has no catalogue source: hasModels then answers true for a " +
 			"catalogue nothing can read, and serve 404s every named model")
@@ -210,7 +211,7 @@ func TestRemoteMirrorReadsTheFarCatalogue(t *testing.T) {
 	rem := newTestRemotes(t, srv.URL, "")
 	reg := newTestRemoteRegistry(rem)
 
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 
 	// Both roles are borrowed, with the api and provider the FAR administrator declared: a
 	// guess here posts a ComfyUI graph at an OpenAI-compatible endpoint.
@@ -339,7 +340,7 @@ func TestRemoteMirrorLorasAreNotModels(t *testing.T) {
 	rem := newTestRemotes(t, srv.URL, "")
 	reg := newTestRemoteRegistry(rem)
 
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 
 	e := reg.get("image")
 	if e == nil {
@@ -374,7 +375,7 @@ func TestRemoteRowIsAdoptedOnceTheFarFleetAnswers(t *testing.T) {
 
 	var buf bytes.Buffer
 	done := captureLog(&buf)
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 	done()
 	if len(reg.byKey) != 0 {
 		t.Fatalf("a failed fetch produced rows: %v", reg.byKey)
@@ -384,7 +385,7 @@ func TestRemoteRowIsAdoptedOnceTheFarFleetAnswers(t *testing.T) {
 	}
 
 	far.answers(http.StatusOK, farCatalogBody(t, farImageEngine(t)))
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 
 	e := reg.get("image")
 	if e == nil {
@@ -461,7 +462,7 @@ func waitForBorrowedRow(t *testing.T, reg *engineRegistry, key string) *engineRu
 // interval).
 func awaitRemotePollExit(t *testing.T, e *engineRuntimeState) {
 	t.Helper()
-	t.Cleanup(e.remote.parent.polling.Wait)
+	t.Cleanup(e.remote.Parent().WaitPolling)
 }
 
 // --- decision 7: what a second fetch may and may not change -----------------------
@@ -476,7 +477,7 @@ func TestRemoteMirrorEmptiesWhenTheFarRoleIsSwitchedOff(t *testing.T) {
 	rem := newTestRemotes(t, srv.URL, "")
 	reg := newTestRemoteRegistry(rem)
 
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 	e := reg.get("image")
 	if e == nil || len(mirrorOf(t, e)) != 2 {
 		t.Fatalf("the first fetch did not mirror the role: %v", reg.byKey)
@@ -488,7 +489,7 @@ func TestRemoteMirrorEmptiesWhenTheFarRoleIsSwitchedOff(t *testing.T) {
 	}
 
 	far.answers(http.StatusOK, `{"engines":[]}`)
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 
 	// The row stays. Removing a live row is not something the registry supports, and it does not
 	// need to: an empty catalogue is already refused with `engine_unavailable`.
@@ -518,7 +519,7 @@ func TestRemoteMirrorSurvivesAFailedFetch(t *testing.T) {
 	far, srv := newFarFleet(t, farCatalogBody(t, farImageEngine(t)))
 	rem := newTestRemotes(t, srv.URL, "")
 	reg := newTestRemoteRegistry(rem)
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 	e := reg.get("image")
 	if e == nil {
 		t.Fatalf("rows = %v", reg.byKey)
@@ -532,7 +533,7 @@ func TestRemoteMirrorSurvivesAFailedFetch(t *testing.T) {
 		{http.StatusOK, "<html>a proxy said no</html>"}, // something that is not a catalogue
 	} {
 		far.answers(broken.status, broken.body)
-		rem.refreshAll(ctx, reg)
+		rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 		if rows := mirrorOf(t, e); len(rows) != 2 {
 			t.Fatalf("after %d the mirror is %+v, want the previous answer kept", broken.status, rows)
 		}
@@ -559,7 +560,7 @@ func TestRemoteCatalogueDoesNotReplaceALocalRow(t *testing.T) {
 
 	var buf bytes.Buffer
 	done := captureLog(&buf)
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 	done()
 
 	if reg.get("image") != local {
@@ -573,7 +574,7 @@ func TestRemoteCatalogueDoesNotReplaceALocalRow(t *testing.T) {
 	}
 	// Not even mirrored: nothing reads it, and a mirror kept for a role somebody else serves is
 	// a second answer to "what does this engine offer".
-	if rows, _ := rem.forKey("image").catalogSource()(ctx); len(rows) != 0 {
+	if rows, _ := rem.ForKey("image").CatalogSource()(ctx); len(rows) != 0 {
 		t.Errorf("a mirror was kept for the local role: %+v", rows)
 	}
 	if !strings.Contains(buf.String(), "already served by a managed row") {
@@ -595,7 +596,7 @@ func TestRemoteCatalogueRefusesARowWithNoAPI(t *testing.T) {
 	rem := newTestRemotes(t, srv.URL, "")
 	reg := newTestRemoteRegistry(rem)
 
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 
 	if len(reg.byKey) != 0 {
 		t.Errorf("rows = %v, want nothing taken on from a declaration that names no api", reg.byKey)
@@ -610,7 +611,7 @@ func TestRemoteCatalogueBorrowsOnlyTheDeclaredKeys(t *testing.T) {
 	rem := newTestRemotes(t, srv.URL, " image ")
 	reg := newTestRemoteRegistry(rem)
 
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 
 	if reg.get("image") == nil {
 		t.Error("the declared role was not borrowed")
@@ -677,25 +678,25 @@ func TestBorrowedCatalogueChangeTellsTheWorkspaces(t *testing.T) {
 	rem := newTestRemotes(t, srv.URL, "")
 	reg := newTestRemoteRegistry(rem)
 
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 	settle(t, 1, "adopting a role nobody had")
 
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 	settle(t, 0, "the same catalogue twice")
 
 	far.answers(http.StatusOK, farCatalogBody(t, farImageEngineWith(t, "sdxl-base", "sdxl-base", "anima", "krea2")))
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 	settle(t, 1, "a checkpoint enabled on the far fleet")
 
 	// Only the loaded model moved. It changes a hint in a tool description and nothing a session
 	// may ASK for, and it moves every time anyone over there generates with another checkpoint.
 	far.answers(http.StatusOK, farCatalogBody(t, farImageEngineWith(t, "anima", "sdxl-base", "anima", "krea2")))
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 	settle(t, 0, "a far engine that loaded a different checkpoint")
 
 	// And the withdrawal direction: a session holding the old list must be told too.
 	far.answers(http.StatusOK, farCatalogBody(t, farImageEngineWith(t, "anima", "sdxl-base", "anima")))
-	rem.refreshAll(ctx, reg)
+	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 	settle(t, 1, "a checkpoint withdrawn on the far fleet")
 }
 
@@ -706,12 +707,12 @@ func TestBorrowedCatalogueChangeTellsTheWorkspaces(t *testing.T) {
 func TestMirrorSignatureIgnoresRowOrder(t *testing.T) {
 	a := store.EngineModel{Role: "image", ID: "anima", Enabled: true}
 	b := store.EngineModel{Role: "image", ID: "krea2", Enabled: true}
-	if engineMirrorSignature([]store.EngineModel{a, b}) != engineMirrorSignature([]store.EngineModel{b, a}) {
+	if engine.MirrorSignature([]store.EngineModel{a, b}) != engine.MirrorSignature([]store.EngineModel{b, a}) {
 		t.Error("the same two rows in the other order fingerprint differently")
 	}
 	c := b
 	c.Selected = true
-	if engineMirrorSignature([]store.EngineModel{a, b}) == engineMirrorSignature([]store.EngineModel{a, c}) {
+	if engine.MirrorSignature([]store.EngineModel{a, b}) == engine.MirrorSignature([]store.EngineModel{a, c}) {
 		t.Error("which checkpoint is the default fingerprints the same either way")
 	}
 }

@@ -147,9 +147,8 @@ func (c *engineCatalog) hasModels(ctx context.Context) bool {
 	return false
 }
 
-// engineModelKindLora is the one kind that is an accessory rather than a model. It is checked
-// by name in several places, so the string is here once.
-const engineModelKindLora = "lora"
+// engineModelKindLora (an alias, engine_wiring.go) is the one kind that is an accessory rather
+// than a model. It is checked by name in several places, so the string is here once.
 
 func engineModelIsLora(m store.EngineModel) bool {
 	return strings.EqualFold(strings.TrimSpace(m.Kind), engineModelKindLora)
