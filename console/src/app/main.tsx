@@ -6,6 +6,7 @@ import { ToastProvider } from "../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../ui/ConfirmProvider.tsx";
 import { PaneHoverProvider } from "../lib/panehover.tsx";
 import { wireViewport } from "./viewport.ts";
+import { listenPushOpen } from "../lib/sessionDeepLink.ts";
 import { registerShareSW } from "../features/memo/share.ts";
 import { consumePopoutBoot } from "../features/panes/popout.ts";
 import "@vscode/codicons/dist/codicon.css";
@@ -45,6 +46,7 @@ consumePopoutBoot();
 // Install the Web Share Target service worker so the installed PWA can receive shares
 // from Android's share sheet into the memo queue (docs/log/21 image attachments). Best-effort.
 registerShareSW();
+listenPushOpen();
 
 createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

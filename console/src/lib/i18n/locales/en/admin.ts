@@ -1290,4 +1290,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.prov_source_region": "Region",
   "admin.prov_source_models": "Models it may use (one per line, or comma-separated)",
   "admin.prov_source_active": "Use this source",
+  "tenant.push_title": "Push notifications",
+  "tenant.push_note": "A push carries the session name and what happened. The push services (Apple, Google, Mozilla) relay it, so a question's wording stays out unless you allow it here.",
+  "tenant.push_include_text": "Include the question text in push notifications",
 };

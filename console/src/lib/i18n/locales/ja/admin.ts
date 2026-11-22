@@ -1286,4 +1286,7 @@ export const admin = {
   "admin.prov_source_region": "リージョン",
   "admin.prov_source_models": "使ってよいモデル（1 行に 1 つ、またはカンマ区切り）",
   "admin.prov_source_active": "この接続元を使う",
+  "tenant.push_title": "プッシュ通知",
+  "tenant.push_note": "プッシュにはセッション名と何が起きたかだけを載せます。Apple・Google・Mozilla のプッシュサービスを経由するため、質問の文面は、ここで許可しない限り含めません。",
+  "tenant.push_include_text": "プッシュ通知に質問の文面を含める",
 };

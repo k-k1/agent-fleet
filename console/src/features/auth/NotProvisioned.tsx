@@ -18,6 +18,7 @@
 // Use ui/Button: .primary / .ghost only have styling inside the settings modal (scoped by
 // :where(.settings-modal) in settings.css), and this page is outside it, so a bare
 // <button className="primary"> would render with the browser default look.
+import { releasePushForSignOut } from "../push/webPush.ts";
 import { Button } from "../../ui/Button.tsx";
 import { rel, clearLocalState } from "../../core/api/client.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
@@ -56,8 +57,12 @@ export function NotProvisioned() {
               onClick={() => {
                 // Same sign-out order as TopBar: drop local state first, then go to the CP,
                 // so the next account on this browser never sees the previous person's state.
-                clearLocalState();
-                location.assign(rel("oauth2/logout"));
+                void releasePushForSignOut()
+                  .catch(() => {})
+                  .then(() => {
+                    clearLocalState();
+                    location.assign(rel("oauth2/logout"));
+                  });
               }}
             >
               {tr("notprov.switch_account")}

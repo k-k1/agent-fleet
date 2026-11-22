@@ -21,7 +21,12 @@ export function consumeSessionDeepLink(): void {
   } catch {
     return;
   }
-  if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(name)) return;
+  openSessionByName(name);
+}
+
+/** Opens a session's pane once it is in the list (a workspace still coming up is waited for). */
+export function openSessionByName(name: string): void {
+  if (!/^[A-Za-z0-9_-]{1,40}$/.test(name)) return;
   let tries = 0;
   const tick = () => {
     const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
@@ -33,4 +38,15 @@ export function consumeSessionDeepLink(): void {
     if (++tries < 90) setTimeout(tick, 1000);
   };
   tick();
+}
+
+/** A tapped push notification asks an already open Console to open its session (public/sw.js). */
+export function listenPushOpen(): void {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.type !== "af-open-session") return;
+    // Acknowledge first: the worker opens a new window when no page answers.
+    e.ports?.[0]?.postMessage("ok");
+    if (typeof e.data.session === "string" && e.data.session) openSessionByName(e.data.session);
+  });
 }

@@ -95,6 +95,11 @@ export const getTenantBoost = (slug: string): Promise<Reply<BoostPolicy> | null>
 export const putTenantBoost = (slug: string, body: object): Promise<Reply<BoostPolicy> | null> =>
   rawApiJSON(`api/admin/tenants/${T(slug)}/boost`, "PUT", body);
 
+export const getTenantPushSettings = (slug: string): Promise<Reply<{ includeText: boolean }> | null> =>
+  rawApi(`api/admin/tenants/${T(slug)}/push-settings`);
+export const putTenantPushSettings = (slug: string, body: { includeText: boolean }): Promise<Reply<{ includeText: boolean }> | null> =>
+  rawApiJSON(`api/admin/tenants/${T(slug)}/push-settings`, "PUT", body);
+
 export const getTenantMemberDefaults = (slug: string): Promise<Reply<TenantMemberDefaultsView> | null> =>
   rawApi(`api/admin/tenants/${T(slug)}/member-defaults`);
 export const putTenantMemberDefaults = (slug: string, body: unknown): Promise<Reply<TenantMemberDefaultsView> | null> =>
