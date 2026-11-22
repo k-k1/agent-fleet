@@ -193,9 +193,32 @@ func TestServePinSurvivesALiftedRestriction(t *testing.T) {
 	}
 	judged := readView() // unrestricted
 	useIsolationPolicy(t, approvedCustom())
-	cur := readView()
+	pinned.customPin = customPinDigest(readView().p, readView().engines, readView().custom)
+	if pinned.customPin == "" {
+		t.Fatal("the restricted view carries no custom pin")
+	}
 	if err := pinned.servePinMatches(judged); !errors.Is(err, ErrServePolicyMoved) {
 		t.Errorf("restriction arrived after the judgement: err = %v, want ErrServePolicyMoved", err)
 	}
-	_ = cur
+}
+
+// Unrestricted before and after, only the policy's spelling differing (the first policy a
+// Workspace receives, a nil Allowed normalised to empty), the run goes ahead.
+func TestRunPinUnrestrictedSpellingChangeIsNotAMove(t *testing.T) {
+	isolateConfig(t)
+	s := routepolicy.Open(filepath.Join(t.TempDir(), "rp.json"), "") // nothing received yet
+	old := routepolicy.Active
+	routepolicy.Active = func() *routepolicy.Store { return s }
+	t.Cleanup(func() { routepolicy.WaitListeners(); reconcileInflight.Wait(); routepolicy.Active = old })
+	useCustom(t, selfHosted)
+	pin := PinRun("mine/m")
+	if _, err := s.Accept(routepolicy.Policy{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pin.Env([]string{"A=1"}, t.TempDir()); err != nil {
+		t.Errorf("err = %v, want the run to go ahead", err)
+	}
+	if _, err := (RunPin{}).Env(nil, t.TempDir()); err == nil {
+		t.Error("the zero pin was let through")
+	}
 }

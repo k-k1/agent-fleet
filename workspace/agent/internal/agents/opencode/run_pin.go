@@ -48,9 +48,10 @@ func (r RunPin) Env(env []string, dir string) ([]string, error) {
 	// The reading is only good for the policy it was taken under: a policy accepted since (one that
 	// allows the stored endpoint's host but not the run's own file settings) would be judged
 	// against an older isolation, so the run is refused and the caller retries on the new one.
-	// The whole policy is compared, not its revision: a store completes a stale restriction's
+	// Under a restriction the whole policy is compared, not its revision (unrestricted either way, only
+	// the policy's spelling can differ and nothing is isolated): a store completes a stale restriction's
 	// endpoints under the same revision, which changes what is allowed without moving it.
-	if p, restricted := policyRestriction(); restricted != r.view.restricted || !reflect.DeepEqual(p, r.view.p) {
+	if p, restricted := policyRestriction(); restricted != r.view.restricted || restricted && !reflect.DeepEqual(p, r.view.p) {
 		return nil, fmt.Errorf("%w: the credential policy changed while the call was being prepared; try again", ErrPolicyConfig)
 	}
 	if err := r.checkBinding(); err != nil {
