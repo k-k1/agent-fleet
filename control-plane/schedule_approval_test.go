@@ -146,6 +146,10 @@ func TestScheduleTokenSameTimingPatchKeepsNextRunAndApproval(t *testing.T) {
 	var d scheduleDTO
 	_ = json.Unmarshal(doTokenJSON(api.create, mv, "POST", approvalBody, "").Body.Bytes(), &d)
 	doJSON(api.approve, mv, "POST", "", d.ID)
+	// A fixed far-future next_run: a recomputed one would be now+3600s, whatever second it runs in.
+	if err := api.store.SetScheduleEnabled(ctx, d.ID, mv.MembershipID, true, "2099-01-01T00:00:00Z", store.NowTS()); err != nil {
+		t.Fatal(err)
+	}
 	before, _, _ := api.store.GetSchedule(ctx, d.ID)
 	rr := doTokenJSON(api.update, mv, "PATCH", `{"spec_kind":"interval","spec":"3600"}`, d.ID)
 	if rr.Code != 200 {
