@@ -54,13 +54,13 @@ func (c goldenCP) MemoList(_ context.Context, _ string) (any, error) {
 	return map[string]any{"ok": true}, nil
 }
 
-func (c goldenCP) MemoCreate(_ context.Context, _ store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef, after []string) (any, error) {
-	c.record("MEMO-CREATE", connection, repo, category, kind, body, refPath, ref, after)
+func (c goldenCP) MemoCreate(_ context.Context, _ store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef, after []string, startAfter string) (any, error) {
+	c.record("MEMO-CREATE", connection, repo, category, kind, body, refPath, ref, after, startAfter)
 	return map[string]any{"ok": true}, nil
 }
 
-func (c goldenCP) MemoUpdate(_ context.Context, _, id string, repo, category, body, refPath *string, position *int, ref *MemoRef, after *[]string) (any, error) {
-	c.record("MEMO-UPDATE", id, repo, category, body, refPath, position, ref, after)
+func (c goldenCP) MemoUpdate(_ context.Context, _, id string, repo, category, body, refPath *string, position *int, ref *MemoRef, after *[]string, startAfter *string) (any, error) {
+	c.record("MEMO-UPDATE", id, repo, category, body, refPath, position, ref, after, startAfter)
 	return map[string]any{"ok": true}, nil
 }
 

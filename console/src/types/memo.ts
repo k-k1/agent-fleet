@@ -80,6 +80,9 @@ export interface Memo {
    *  how many times it was handed back since it was last approved or returned, and those hand-backs
    *  with the sessions' reasons (the Console's list only). */
   notBefore?: string;
+  /** The earliest time the note may run (ADR 0137, addendum 2026-11-22): set by whoever wrote it,
+   *  part of what an approval covers, and kept by it. Absent for none. */
+  startAfter?: string;
   deferCount?: number;
   deferReasons?: MemoDeferEntry[];
 }
@@ -146,6 +149,8 @@ export interface MemoPatch {
   reference?: MemoReference | Record<string, never>;
   /** Absent leaves the notes it waits for as they are, a list replaces them, [] clears them. */
   after?: string[];
+  /** Absent leaves the start time as it is, an RFC 3339 time with an offset sets it, "" clears it. */
+  startAfter?: string;
   position?: number;
 }
 
@@ -237,6 +242,7 @@ export type MemoWaitingReason =
   | "no_tidy"
   | "prerequisites"
   | "deferred"
+  | "scheduled"
   /** Only a fireBlock: no note waits to run. */
   | "nothing_waiting";
 
@@ -244,7 +250,7 @@ export interface MemoQueueWaiting {
   reason: MemoWaitingReason;
   /** RFC 3339: when the Control Plane will act, only when it is known. */
   until?: string;
-  detail?: { needed?: number; waiting?: number; agentKind?: string; by?: "category" | "member"; blocked?: number; deferred?: number };
+  detail?: { needed?: number; waiting?: number; agentKind?: string; by?: "category" | "member"; blocked?: number; deferred?: number; scheduled?: number };
 }
 
 /** The PUT body: a PUT replaces the whole row, so every setting is sent, and nothing read-only. */

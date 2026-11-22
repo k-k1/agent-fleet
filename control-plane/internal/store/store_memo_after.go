@@ -61,8 +61,18 @@ const memoEligibleSQL = `(m.after_ids='' OR (SELECT COUNT(*) FROM memo p WHERE p
 	  AND p.repo=m.repo AND p.category=m.category AND m.after_ids LIKE '%"' || p.id || '"%' AND ` + memoPrereqSatisfiedSQL + `)
 	  = LENGTH(m.after_ids) - LENGTH(REPLACE(m.after_ids, ',', '')) + 1)`
 
-// memoNotBeforeSQL holds for a row m that waits for no not_before at ? (a DeliveryTS): a message
-// handed back (ADR 0137, addendum 2026-11-19, part B) is eligible only once its time has passed.
-// memoafter.Deferred says the same in Go. not_before is written in DeliveryTS's fixed width, so
-// the text order is the time order.
-const memoNotBeforeSQL = `(m.not_before='' OR m.not_before<=?)`
+// memoNotBeforeSQL holds for a row m that waits for no time at ? (a DeliveryTS, given twice): a
+// message handed back (ADR 0137, addendum 2026-11-19, part B) is eligible only once its not_before
+// has passed, and one that carries a start time (addendum 2026-11-22) once its start_after has.
+// memoafter.Waits says the same in Go. Both are written in DeliveryTS's fixed width, so the text
+// order is the time order.
+const memoNotBeforeSQL = `((m.not_before='' OR m.not_before<=?) AND (m.start_after='' OR m.start_after<=?))`
+
+// memoClaimableSQL holds for a pending row m that no hand send or delivery holds: the rows pendingOf
+// and the claim look at. The statistics count only those, so a row in a hand send neither reads as
+// blocked or as the next one to run, nor enables "Run now" for a claim that would skip it.
+const memoClaimableSQL = `(m.sent_at='' AND m.send_token='' AND m.delivery_id='')`
+
+// memoWaitUntilSQL is the later of a row m's two times: the time it becomes claimable when either
+// is still ahead. An empty one sorts below every stamp.
+const memoWaitUntilSQL = `(CASE WHEN m.not_before>m.start_after THEN m.not_before ELSE m.start_after END)`

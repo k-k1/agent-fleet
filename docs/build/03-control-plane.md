@@ -457,6 +457,16 @@ Memos you accumulate and send to a session in one go (the tables are
   nothing_to_return`; it stamps `returned_at`. A memo carries `notBefore` and `deferCount`, and `deferReasons` only
   on `GET /api/memos` (never the token face or `/mcp`, so a session's reason reaches no later session); a delivery
   carries `defer {reason, notBefore, at, result}`, `returnBlocked` and `returnedAt`.
+- **Start time (`startAfter`)** (ADR 0137, addendum 2026-11-22, #4777; `internal/memoafter/startafter.go`). `memo.start_after`
+  (fixed-width UTC, `""` for none, migration 0152 / pg 0137) is the earliest time a message may be claimed. Unlike
+  `not_before` it is content: create and update take it on every face (REST `startAfter`, `add_memo` /
+  `update_memo` `startAfter`; RFC 3339 with an offset, else `400 memo_start_after_invalid`; a past time clears it; at
+  most 60 days ahead; on an update absent = keep, `""` = clear), it is appended to `memoContentHash` only when set,
+  it is copied to `release_start_after` under a CHECK, and a release keeps it. The claim waits for both times
+  (`memoafter.Waits`, `store.memoNotBeforeSQL`); the waiting reason is `scheduled` with `until` when every pending
+  message waits for its start time and none was handed back, and `detail.scheduled` counts them. A tidy run keeps
+  such a message; a message that leaves every queue drops it. The Agent's relay reports a create or update whose
+  future time is missing from the answer as not kept (an older Control Plane).
 
 - **Typed references** ([decisions/0137](../decisions/0137-message-queues.md) §4, step 3, Control Plane half). A message
   may carry a pointer to a work item, never a copy of it. This is the contract the Agent (step 3b, built) and the Console

@@ -304,7 +304,7 @@ func (r *memoQueueRunner) houseKeep(ctx context.Context, w *memoQueueWork, live 
 		}
 		return
 	}
-	if q.Draining && w.pending.Count == 0 {
+	if q.Draining && w.pending.Held == 0 {
 		if err := r.mgr.store.SetMemoQueueDraining(ctx, q.CategoryID, false); err != nil {
 			log.Printf("memo queue: queue %s: end draining: %v", q.CategoryID, err)
 		}
@@ -503,7 +503,7 @@ func openCheck(q store.MemoQueue, pending store.QueuePending, now time.Time) (op
 		// prerequisites holds no place in it (ADR 0137, addendum 2026-11-19).
 		if pending.Eligible < q.OpenAfter {
 			return false, false, &memoWaiting{Reason: waitBelowThreshold,
-				Detail: &memoWaitingDetail{Needed: q.OpenAfter, Waiting: pending.Eligible, Blocked: pending.Count - pending.Eligible - pending.Deferred, Deferred: pending.Deferred}}
+				Detail: &memoWaitingDetail{Needed: q.OpenAfter, Waiting: pending.Eligible, Blocked: pending.Count - pending.Eligible - pending.Deferred - pending.Scheduled, Deferred: pending.Deferred, Scheduled: pending.Scheduled}}
 		}
 		if !quietSince(pending.Latest, now) {
 			w := &memoWaiting{Reason: waitQuietMinute}
@@ -686,14 +686,21 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 func pendingOf(rows []store.Memo, eligible func(store.Memo) bool, now time.Time) store.QueuePending {
 	var p store.QueuePending
 	for _, m := range rows {
+		if m.State == store.MemoStatePending {
+			p.Held++
+		}
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
 			continue
 		}
 		p.Count++
-		if memoafter.Deferred(m, now) {
-			p.Deferred++
-			if p.NextAt == "" || m.NotBefore < p.NextAt {
-				p.NextAt = m.NotBefore
+		if memoafter.Waits(m, now) {
+			if memoafter.Deferred(m, now) {
+				p.Deferred++
+			} else {
+				p.Scheduled++
+			}
+			if at := memoafter.WaitUntil(m); p.NextAt == "" || at < p.NextAt {
+				p.NextAt = at
 			}
 		}
 		// Refs and Curators count only what a claim could take, as the statistics' SQL does.
@@ -978,6 +985,8 @@ const (
 	waitPrerequisites = "prerequisites"
 	// waitDeferred: every message waiting was handed back by its run and waits for its not_before.
 	waitDeferred = "deferred"
+	// waitScheduled: every message waiting carries a start time that has not come yet.
+	waitScheduled = "scheduled"
 	// waitNothing is only ever a fireBlock: no message is waiting, so a press has nothing to take.
 	waitNothing = "nothing_waiting"
 )
@@ -1003,6 +1012,9 @@ type memoWaitingDetail struct {
 	// Deferred is how many pending messages wait for the time their run handed them back to, for
 	// below_threshold, prerequisites and deferred.
 	Deferred int `json:"deferred,omitempty"`
+	// Scheduled is how many pending messages wait for their start time (and were not handed back),
+	// for below_threshold, prerequisites, deferred and scheduled.
+	Scheduled int `json:"scheduled,omitempty"`
 }
 
 // untilOf rounds a part of a second up: "until" is never earlier than the moment the dispatcher acts.
@@ -1140,20 +1152,25 @@ func memoQueueWaiting(tx store.MemoWaitOps, q store.MemoQueue, tenantOn bool, pe
 }
 
 // memoNoneEligible is the reason when messages wait and none of them may be claimed now, nil
-// otherwise: every one was handed back and waits for its time (the earliest is when the dispatcher
-// acts), or some wait for prerequisites and the detail counts both.
+// otherwise: every one waits for a time (the earliest is when the dispatcher acts), deferred when
+// any of them was handed back and scheduled when all carry a start time, or some wait for
+// prerequisites and the detail counts each.
 func memoNoneEligible(pending store.QueuePending) *memoWaiting {
 	if pending.Eligible != 0 {
 		return nil
 	}
-	if pending.Deferred == pending.Count {
-		w := &memoWaiting{Reason: waitDeferred, Detail: &memoWaitingDetail{Deferred: pending.Deferred}}
+	timed := pending.Deferred + pending.Scheduled
+	if timed == pending.Count {
+		w := &memoWaiting{Reason: waitDeferred, Detail: &memoWaitingDetail{Deferred: pending.Deferred, Scheduled: pending.Scheduled}}
+		if pending.Deferred == 0 {
+			w.Reason = waitScheduled
+		}
 		if t, err := time.Parse("2006-01-02T15:04:05.000000Z", pending.NextAt); err == nil {
 			w.Until = untilOf(t)
 		}
 		return w
 	}
-	return &memoWaiting{Reason: waitPrerequisites, Detail: &memoWaitingDetail{Blocked: pending.Count - pending.Deferred, Deferred: pending.Deferred}}
+	return &memoWaiting{Reason: waitPrerequisites, Detail: &memoWaitingDetail{Blocked: pending.Count - timed, Deferred: pending.Deferred, Scheduled: pending.Scheduled}}
 }
 
 // memoPlaceWaiting is waitNoPlace when the queue has no slot for a run (its own or the member's),
@@ -1425,9 +1442,9 @@ func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []sto
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
 			continue
 		}
-		// A message handed back waits for its time, not for a PR: it neither asks for a wake nor
-		// keeps one from the messages that do.
-		if memoafter.Deferred(m, now) {
+		// A message handed back or carrying a start time waits for its time, not for a PR: it
+		// neither asks for a wake nor keeps one from the messages that do.
+		if memoafter.Waits(m, now) {
 			continue
 		}
 		waiting = true

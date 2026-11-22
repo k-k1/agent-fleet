@@ -500,8 +500,9 @@ func Verdict(items []Item) (eligible bool, failed *Item) {
 // claimed now. A read that fails makes a message not eligible: it is never fired on a doubt.
 func EligibleIn(lk Lookup) func(store.Memo) bool {
 	return func(m store.Memo) bool {
-		// A message handed back waits for its not_before as well (part B of the addendum).
-		if Deferred(m, lk.Now) {
+		// A message handed back waits for its not_before as well (part B of the addendum), and one
+		// that carries a start time for its start_after (addendum 2026-11-22).
+		if Waits(m, lk.Now) {
 			return false
 		}
 		if m.AfterIDs == "" {
@@ -516,18 +517,38 @@ func EligibleIn(lk Lookup) func(store.Memo) bool {
 	}
 }
 
-// Deferred reports whether m was handed back and its not_before has not passed at now. The
-// statistics' SQL (store.memoNotBeforeSQL) says the same.
+// Deferred reports whether m was handed back and its not_before has not passed at now.
 func Deferred(m store.Memo, now time.Time) bool {
 	return m.NotBefore != "" && m.NotBefore > store.DeliveryTS(now)
 }
 
+// Scheduled reports whether m carries a start time that has not passed at now.
+func Scheduled(m store.Memo, now time.Time) bool {
+	return m.StartAfter != "" && m.StartAfter > store.DeliveryTS(now)
+}
+
+// Waits reports whether m may not be claimed at now for a time it waits for, either one. The
+// statistics' SQL (store.memoNotBeforeSQL) says the same.
+func Waits(m store.Memo, now time.Time) bool {
+	return Deferred(m, now) || Scheduled(m, now)
+}
+
+// WaitUntil is the time m becomes claimable as far as its times go: the later of its not_before
+// and its start_after, "" for neither.
+func WaitUntil(m store.Memo) string {
+	if m.NotBefore > m.StartAfter {
+		return m.NotBefore
+	}
+	return m.StartAfter
+}
+
 // Linked is the set of ids of a bucket that have or are a prerequisite, that wait for a
-// not_before, or that are a continuation: a tidy run only keeps them (ADR 0137 section 8, as the addendum amends it).
+// not_before or a start time, or that are a continuation: a tidy run only keeps them (ADR 0137
+// section 8, as the addenda amend it). A merge would drop or widen a start time.
 func Linked(rows []store.Memo) map[string]bool {
 	out := map[string]bool{}
 	for _, r := range rows {
-		if r.NotBefore != "" || r.ChainID != "" {
+		if r.NotBefore != "" || r.StartAfter != "" || r.ChainID != "" {
 			// A continuation is kept whole too: a merge or a move would make a message the
 			// member's release of the chain does not cover (ADR 0137, addendum 2026-11-20).
 			out[r.ID] = true

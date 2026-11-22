@@ -7,7 +7,7 @@
 // so the owner can change a word with one line.
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import type { Session } from "../../types/session.ts";
-import { browserTimeZone, isValidTimeZone } from "../../lib/intl.ts";
+import { browserTimeZone, effectiveTimeZone, fmtDateTime, isValidTimeZone } from "../../lib/intl.ts";
 import type {
   Memo,
   MemoAfterItem,
@@ -64,6 +64,7 @@ const WAITING_REASONS: readonly string[] = [
   "no_tidy",
   "prerequisites",
   "deferred",
+  "scheduled",
   "nothing_waiting",
 ] satisfies MemoWaitingReason[];
 
@@ -82,6 +83,7 @@ function readWaiting(v: unknown): MemoQueueWaiting | undefined {
       by: d.by === "member" ? "member" : "category",
       blocked: num(d.blocked, 0),
       deferred: num(d.deferred, 0),
+      scheduled: num(d.scheduled, 0),
     },
   };
 }
@@ -200,6 +202,11 @@ export function waitingWords(
     case "window_closed":
       return when ? { key: "memo.waiting_window_closed_at", params: when } : { key: "memo.waiting_window_closed" };
     case "below_threshold":
+      if (w.detail?.scheduled)
+        return {
+          key: w.detail.blocked ? "memo.waiting_below_threshold_blocked_timed" : "memo.waiting_below_threshold_timed",
+          params: { needed: w.detail.needed ?? 0, count: w.detail.waiting ?? 0, blocked: w.detail.blocked ?? 0, timed: w.detail.scheduled + (w.detail.deferred ?? 0) },
+        };
       if (w.detail?.deferred)
         return {
           key: w.detail?.blocked ? "memo.waiting_below_threshold_blocked_deferred" : "memo.waiting_below_threshold_deferred",
@@ -221,13 +228,27 @@ export function waitingWords(
     case "tidying":
       return { key: "memo.waiting_tidying" };
     case "prerequisites":
+      if (w.detail?.scheduled)
+        return {
+          key: "memo.waiting_prerequisites_timed",
+          params: { count: w.detail.blocked ?? 0, timed: w.detail.scheduled + (w.detail.deferred ?? 0) },
+        };
       return w.detail?.deferred
         ? { key: "memo.waiting_prerequisites_deferred", params: { count: w.detail?.blocked ?? 0, deferred: w.detail.deferred } }
         : { key: "memo.waiting_prerequisites", params: { count: w.detail?.blocked ?? 0 } };
     case "deferred":
+      // Some of them carry a start time instead: the next time may be one of theirs.
+      if (w.detail?.scheduled)
+        return when
+          ? { key: "memo.waiting_timed_at", params: { ...when, count: w.detail.scheduled + (w.detail.deferred ?? 0) } }
+          : { key: "memo.waiting_timed", params: { count: w.detail.scheduled + (w.detail.deferred ?? 0) } };
       return when
         ? { key: "memo.waiting_deferred_at", params: { ...when, count: w.detail?.deferred ?? 0 } }
         : { key: "memo.waiting_deferred", params: { count: w.detail?.deferred ?? 0 } };
+    case "scheduled":
+      return when
+        ? { key: "memo.waiting_scheduled_at", params: { ...when, count: w.detail?.scheduled ?? 0 } }
+        : { key: "memo.waiting_scheduled", params: { count: w.detail?.scheduled ?? 0 } };
   }
 }
 
@@ -952,4 +973,80 @@ export function runOpenPRs(session: Pick<Session, "pr" | "links"> | undefined): 
     if ((l.state === "open" || l.state === "draft" || l.state === "merged") && l.key && !out.some((k) => l.key.endsWith(k))) out.push(l.key);
   }
   return out;
+}
+
+// ---- a start time a note carries (ADR 0137, addendum 2026-11-22) ------------------------------
+
+/** The start time of a note of a queue while it is still ahead, else null. A held note shows it too:
+ *  approving the note approves the time. */
+export function scheduledUntil(m: Pick<Memo, "state" | "startAfter">, now: number = Date.now()): string | null {
+  if ((m.state !== "pending" && m.state !== "held") || !m.startAfter) return null;
+  const t = Date.parse(m.startAfter);
+  return Number.isNaN(t) || t <= now ? null : m.startAfter;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+const wallFormats = new Map<string, Intl.DateTimeFormat>();
+/** The wall time of an instant in zone, as "YYYY-MM-DDTHH:MM" with Latin digits; "" for no date. The
+ *  zone is explicit: the editor reads and writes in the zone it opened with, whatever the setting
+ *  becomes while it is open. */
+function wallIn(ms: number, zone: string): string {
+  if (Number.isNaN(ms)) return "";
+  let f = wallFormats.get(zone);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-US", {
+      timeZone: zone,
+      numberingSystem: "latn",
+      calendar: "gregory",
+      year: "numeric",
+      month: "numeric",
+      day: "numeric",
+      hour: "numeric",
+      minute: "numeric",
+      hourCycle: "h23",
+    });
+    wallFormats.set(zone, f);
+  }
+  const p: Record<string, number> = {};
+  for (const x of f.formatToParts(ms)) if (x.type !== "literal") p[x.type] = parseInt(x.value, 10);
+  return `${String(p.year).padStart(4, "0")}-${pad2(p.month)}-${pad2(p.day)}T${pad2(p.hour % 24)}:${pad2(p.minute)}`;
+}
+
+/** The offset of zone at an instant, in minutes east of UTC. */
+function offsetIn(ms: number, zone: string): number {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(wallIn(ms, zone));
+  if (!m) return 0;
+  return Math.round((Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]) - Math.floor(ms / 60000) * 60000) / 60000);
+}
+
+/** A stored start time as a datetime-local input's value ("YYYY-MM-DDTHH:MM") in zone (the member's
+ *  effective one by default, not the browser's). "" for none. */
+export function startAfterInputValue(iso: string | undefined, zone: string = effectiveTimeZone()): string {
+  return iso ? wallIn(Date.parse(iso), zone) : "";
+}
+
+/** A datetime-local value, read as a wall time of zone (the member's effective one by default), as
+ *  the RFC 3339 time (UTC) the Control Plane takes. "" for an empty value (no start time); null for
+ *  one that is not a time of that zone: unreadable, or skipped by a DST change (02:30 on the morning
+ *  the clocks go forward). A wall time a DST change repeats is read as its later instant: the note
+ *  waits for the second 01:30, never runs before what the member may have meant. */
+export function startAfterFromInput(local: string, zone: string = effectiveTimeZone()): string | null {
+  if (local === "") return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(local);
+  if (!m) return null;
+  const wall = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  // The offsets a day either side cover both sides of any change near this wall time; a candidate
+  // counts only when it reads back as the same wall time.
+  const day = 86400000;
+  const fits = [wall - day, wall, wall + day]
+    .map((at) => wall - offsetIn(at, zone) * 60000)
+    .filter((t) => wallIn(t, zone) === local);
+  return fits.length === 0 ? null : new Date(Math.max(...fits)).toISOString();
+}
+
+/** A start time as the row and the approval card show it: with the zone's short name, so the two
+ *  instants of a wall time a DST change repeats read differently. */
+export function fmtStartAfter(iso: string): string {
+  return fmtDateTime(iso, { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23", timeZoneName: "short" });
 }

@@ -250,6 +250,7 @@ const (
 	errCodeMemoRefInvalid          = "memo_ref_invalid"
 	errCodeMemoRefDuplicate        = "memo_ref_duplicate"
 	errCodeMemoAfterInvalid        = "memo_after_invalid"
+	errCodeMemoStartAfterInvalid   = "memo_start_after_invalid"
 	errCodeMemoTidyNotUndoable     = "memo_tidy_not_undoable"
 	errCodeMemoTidyStale           = "memo_tidy_stale"
 	errCodeMemoTidyInvalid         = "memo_tidy_invalid"

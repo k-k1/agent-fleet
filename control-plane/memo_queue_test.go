@@ -135,7 +135,7 @@ func (c memoFaceClient) create(body map[string]any) (int, memoDTO) {
 	c.e.t.Helper()
 	if c.name == "mcp" {
 		s := func(k string) string { v, _ := body[k].(string); return v }
-		out, err := cpDeps{c.e.mgr}.MemoCreate(context.Background(), c.mv(), "conn-1", s("repo"), s("category"), s("kind"), s("body"), s("refPath"), mcpRefOf(body["reference"]), mcpAfterOf(body["after"]))
+		out, err := cpDeps{c.e.mgr}.MemoCreate(context.Background(), c.mv(), "conn-1", s("repo"), s("category"), s("kind"), s("body"), s("refPath"), mcpRefOf(body["reference"]), mcpAfterOf(body["after"]), s("startAfter"))
 		if err != nil {
 			return mcpStatus(err), memoDTO{}
 		}
@@ -163,7 +163,7 @@ func (c memoFaceClient) update(id string, patch map[string]any) (int, memoDTO) {
 		if v, ok := patch["position"].(int); ok {
 			pos = &v
 		}
-		out, err := cpDeps{c.e.mgr}.MemoUpdate(context.Background(), c.e.members["a"], id, sp("repo"), sp("category"), sp("body"), sp("refPath"), pos, mcpRefOf(patch["reference"]), mcpAfterPtrOf(patch["after"]))
+		out, err := cpDeps{c.e.mgr}.MemoUpdate(context.Background(), c.e.members["a"], id, sp("repo"), sp("category"), sp("body"), sp("refPath"), pos, mcpRefOf(patch["reference"]), mcpAfterPtrOf(patch["after"]), sp("startAfter"))
 		if err != nil {
 			return mcpStatus(err), memoDTO{}
 		}
