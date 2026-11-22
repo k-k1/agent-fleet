@@ -150,7 +150,7 @@ func (agentImpl) CheckRoute(ctx context.Context, sel agents.RouteSelection, mode
 		return ref
 	}
 	// The project's files are judged where the working copy is known (the launch).
-	return configConflict(globalConfigFiles())
+	return configConflict(homeConfigFiles())
 }
 
 // BindRoute implements agents.RouteBinder: the gateway binds the selection to the profile's
@@ -184,7 +184,7 @@ func (agentImpl) RouteHeld(m session.Meta) *agents.RouteRefusal {
 	if m.Route == nil {
 		return nil
 	}
-	return configConflict(append(globalConfigFiles(), projectConfigFiles(m)...))
+	return configConflict(append(homeConfigFiles(), projectConfigFiles(m)...))
 }
 
 // routeUnset is what the route's pane must not inherit: other config sources that could widen
@@ -250,7 +250,7 @@ func buildRouteLaunch(spec LaunchSpec, m session.Meta, ocSid string) (agents.Lau
 	if err != nil {
 		return agents.LaunchPlan{}, err
 	}
-	if ref := configConflict(append(globalConfigFiles(), projectConfigFiles(m)...)); ref != nil {
+	if ref := configConflict(append(homeConfigFiles(), projectConfigFiles(m)...)); ref != nil {
 		return agents.LaunchPlan{}, ref
 	}
 	var extra map[string]any
@@ -279,14 +279,39 @@ func buildRouteLaunch(spec LaunchSpec, m session.Meta, ocSid string) (agents.Lau
 // configFileNames are the config files opencode reads in a directory (config.json is not: measured).
 var configFileNames = []string{"opencode.json", "opencode.jsonc"}
 
-// globalConfigFiles are the member's own config files.
+// homeConfigFiles are the member's config files under the HOME-based directory af writes. The
+// Bedrock route checks these only: its process gets XDG_CONFIG_HOME pinned to that root
+// (routeEnv), so a file under an inherited root is never read by it.
+func homeConfigFiles() []string { return configFilesIn(paths.OpencodeConfigDir()) }
+
+// globalConfigFiles are the files a process that inherits the agent's environment may read: those
+// of homeConfigFiles and, when XDG_CONFIG_HOME points elsewhere, the directory opencode then
+// reads instead, so a file there cannot widen the pin unseen. The shared serve and the headless
+// runs use it.
 func globalConfigFiles() []string {
-	dir := paths.OpencodeConfigDir()
+	out := homeConfigFiles()
+	if x := foreignConfigRoot(); x != "" {
+		out = append(out, configFilesIn(filepath.Join(x, "opencode"))...)
+	}
+	return out
+}
+
+func configFilesIn(dir string) []string {
 	out := make([]string, 0, len(configFileNames))
 	for _, n := range configFileNames {
 		out = append(out, filepath.Join(dir, n))
 	}
 	return out
+}
+
+// foreignConfigRoot is the inherited XDG_CONFIG_HOME when it is not the root af's own writers
+// and the Bedrock route use (HOME/.config), "" otherwise.
+func foreignConfigRoot() string {
+	x := os.Getenv("XDG_CONFIG_HOME")
+	if x == "" || filepath.Clean(x) == filepath.Dir(paths.OpencodeConfigDir()) {
+		return ""
+	}
+	return filepath.Clean(x)
 }
 
 // projectConfigFiles are the config files of the session's working directory and every directory

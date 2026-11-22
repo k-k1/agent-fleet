@@ -5,6 +5,7 @@ package sessionx
 // exclusion refusal while busy are both verified over a tmux stub.
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agentreg"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -202,4 +205,40 @@ func fakeLoadedListServer(t *testing.T, loaded ...string) string {
 	}))
 	t.Cleanup(srv.Close)
 	return "ws" + strings.TrimPrefix(srv.URL, "http")
+}
+
+// refusingGuard is an agent that refuses a launch on Terminal (and only there) through
+// agents.LaunchGuard, so a guard handed the source driver instead of the target lets the switch by.
+type refusingGuard struct{ agents.Agent }
+
+func (refusingGuard) LaunchRefusal(m session.Meta) error {
+	if m.DriverKind() == session.DriverTUI {
+		return errors.New("not on Terminal")
+	}
+	return nil
+}
+
+// A switch whose target launch the agent would refuse is refused before the old runtime is
+// stopped: the tmux session is not killed, the held input is kept and the meta stays.
+func TestHandleSessionDriverRefusesTheTargetLaunchBeforeStopping(t *testing.T) {
+	logPath := fakeTmux(t)
+	defer agentreg.SwapForTest(session.KindOpencode, refusingGuard{agentreg.Of(session.KindOpencode)})()
+	const name = "driver_guard"
+	t.Setenv("HOME", t.TempDir())
+	session.WriteMeta(session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindOpencode, Driver: session.DriverManaged})
+	holdPeerMessage(t, name)
+
+	rec := postDriver(t, name, `{"driver":"tui"}`)
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "launch_refused") {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if log, _ := os.ReadFile(logPath); strings.Contains(string(log), "kill-session") {
+		t.Fatalf("a refused switch must leave the runtime alone, tmux log=%q", log)
+	}
+	if m, _ := session.ReadMeta(name); m.DriverKind() != session.DriverManaged {
+		t.Fatalf("driver changed on refusal: %q", m.Driver)
+	}
+	if n := agents.HeldCount(name); n != 1 {
+		t.Fatalf("held input after a refused switch = %d, want 1", n)
+	}
 }

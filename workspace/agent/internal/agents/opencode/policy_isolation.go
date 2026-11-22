@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -366,6 +368,40 @@ func policyConfigErrFrom(files []string, v policyView) error {
 	}
 	if f, k := pinConflict(files, pin); f != "" {
 		return fmt.Errorf("%w: %s sets %s, which would widen the providers the policy allows; remove it", ErrPolicyConfig, f, k)
+	}
+	return nil
+}
+
+// customManagedOnlyErr refuses a launch of m on the approved custom endpoint everywhere but a
+// Managed session on the shared serve with the pinned config root. Only that serve carries the
+// inline pin (enabled_providers and the provider's base URL) and has its config files checked; a
+// Terminal pane, a private route server or a standalone server starts without it. A process whose
+// config root is not the pinned one (foreignConfigRoot) is refused too, for the custom provider
+// only: the serve still checks that root's files (globalConfigFiles), but the approval is of the
+// pinned root. managed is true for a launch through the shared serve's driver. Nil while nothing
+// is restricted, while the endpoint is not approved, or for any other provider.
+func customManagedOnlyErr(m session.Meta, managed bool) error {
+	return customManagedOnlyErrFrom(m, managed, readView(), foreignConfigRoot())
+}
+
+func customManagedOnlyErrFrom(m session.Meta, managed bool, v policyView, foreignRoot string) error {
+	if !v.restricted {
+		return nil
+	}
+	c := allowedCustom(v.p, v.engines, v.custom)
+	if c == nil {
+		return nil
+	}
+	prov, _, ok := splitModel(m.Model)
+	if !ok || prov != strings.TrimSpace(c.Provider) {
+		return nil
+	}
+	switch {
+	case !managed:
+		return fmt.Errorf("%w: the approved custom endpoint (custom-api) is available to Managed sessions only; this launch has no provider pin", ErrPolicyConfig)
+	case foreignRoot != "":
+		return fmt.Errorf("%w: the approved custom endpoint (custom-api) needs the opencode config root to be %s, not XDG_CONFIG_HOME=%s",
+			ErrPolicyConfig, filepath.Dir(paths.OpencodeConfigDir()), foreignRoot)
 	}
 	return nil
 }

@@ -188,6 +188,14 @@ type RouteWatcher interface {
 	RouteHeld(m session.Meta) *RouteRefusal
 }
 
+// LaunchGuard is an optional capability of an Agent: a refusal of launching m on the driver it
+// names (m.Driver), judged before anything of a running session is stopped. An execution-method
+// switch asks it for the target driver, so a launch the target would refuse leaves the session
+// as it was. The launch itself still checks (a race).
+type LaunchGuard interface {
+	LaunchRefusal(m session.Meta) error
+}
+
 // RouteSwitcher is an optional capability of a RouteAdapter (ADR 0128 decision 10): the harness
 // declares the metered route a session on a subscription route may be moved to when the
 // subscription stops on a window. The caller has already established that there is limit

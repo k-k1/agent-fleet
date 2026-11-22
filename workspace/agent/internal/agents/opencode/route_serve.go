@@ -198,7 +198,7 @@ func startRouteServe(m session.Meta) (string, int, error) {
 			agents.RevokeRouteToken(token)
 		}
 	}()
-	if ref := configConflict(append(globalConfigFiles(), projectConfigFiles(m)...)); ref != nil {
+	if ref := configConflict(append(homeConfigFiles(), projectConfigFiles(m)...)); ref != nil {
 		return "", 0, ref
 	}
 	spec := CurrentLaunch()

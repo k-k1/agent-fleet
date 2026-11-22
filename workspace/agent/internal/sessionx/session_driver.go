@@ -146,6 +146,22 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
+	// The launch the target driver would refuse is refused now, not after the old runtime is
+	// stopped and its held input dropped.
+	if g, ok := agentreg.Lookup(NormalizeKind(m.Kind)); ok {
+		if lg, ok := g.(agents.LaunchGuard); ok {
+			mt := m
+			if target == session.DriverManaged {
+				mt.Driver = session.DriverManaged
+			} else {
+				mt.Driver = ""
+			}
+			if err := lg.LaunchRefusal(mt); err != nil {
+				httpx.WriteErr(w, http.StatusConflict, "launch_refused", err.Error())
+				return
+			}
+		}
+	}
 	// stop: bring the old driver down (single-writer exclusion, §2 — never leave two
 	// writers on one thread). The old runtime's route token goes with it; the relaunch mints
 	// its own.
