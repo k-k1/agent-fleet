@@ -152,6 +152,87 @@ describe("Clear finished runs", () => {
     expect(document.body.querySelector("[data-delete-modal]")!.getAttribute("data-delete-modal")).toBe("base@wip-o");
   });
 
+  it("opens the delete dialog without waiting for the archive calls to settle", async () => {
+    let release: (v: { ok: boolean }) => void = () => {};
+    rawCall.mockImplementation(() => new Promise((r) => (release = r)));
+    await act(async () => host.querySelector<HTMLButtonElement>(".autorun-clear")!.click());
+    await flush();
+    // rev-old's archive is still pending, yet the copy of the merged run is on offer.
+    expect(rawCall.mock.calls.map((c) => c[0])).toEqual(["api/sessions/rev-old/archive"]);
+    expect(document.body.querySelector("[data-delete-modal]")!.getAttribute("data-delete-modal")).toBe("base@wip-o");
+    expect(host.querySelector<HTMLButtonElement>(".autorun-clear")!.disabled).toBe(true);
+    await act(async () => release({ ok: true }));
+    await flush();
+    expect(host.querySelector<HTMLButtonElement>(".autorun-clear")!.disabled).toBe(false);
+  });
+
+  it("archives at most three runs at once, each run child-first, and a failure keeps only its own ancestors", async () => {
+    const old = (n: string, extra: Partial<Session>) => sess(n, { alive: false, repo: "base", createdAt: "2026-11-01T00:00:00Z", ...extra });
+    const many: Session[] = [];
+    for (const i of [1, 2, 3, 4]) {
+      many.push(old(`r${i}`, { origin: "queue" }), old(`c${i}`, { origin: "session", originSession: `r${i}` }));
+    }
+    const refresh = vi.fn(async () => {});
+    useSessionsStore.setState({ sessions: many, refresh } as never);
+    await flush();
+    const pending = new Map<string, (v: { ok: boolean; json?: () => Promise<unknown> }) => void>();
+    const order: string[] = [];
+    let inflight = 0;
+    let max = 0;
+    rawCall.mockImplementation((u: string) => {
+      const name = u.split("/")[2];
+      order.push(name);
+      max = Math.max(max, ++inflight);
+      return new Promise((r) =>
+        pending.set(name, (v) => {
+          inflight--;
+          r(v);
+        }),
+      );
+    });
+    const settle = async (name: string, ok: boolean) => {
+      await act(async () => pending.get(name)!({ ok, json: async () => ({}) }));
+      await flush();
+    };
+    await act(async () => host.querySelector<HTMLButtonElement>(".autorun-clear")!.click());
+    await flush();
+    // Three runs start (in the list's order); the fourth waits for a free slot.
+    expect(order).toHaveLength(3);
+    expect(order.every((n) => n.startsWith("c"))).toBe(true);
+    const [first, second, third] = order;
+    const waiting = ["c1", "c2", "c3", "c4"].find((n) => !order.includes(n))!;
+    const run = (c: string) => c.replace("c", "r");
+    await settle(second, false); // its run must stay: the child failed
+    expect(order).toEqual([first, second, third, waiting]);
+    await settle(first, true);
+    expect(order).toContain(run(first));
+    for (const n of [run(first), third, waiting]) await settle(n, true);
+    expect(order).toContain(run(third));
+    expect(order).toContain(run(waiting));
+    // The last two parents are still in flight, so the refresh has not run.
+    expect(refresh).not.toHaveBeenCalled();
+    for (const n of [run(third), run(waiting)]) await settle(n, true);
+    expect(order).not.toContain(run(second));
+    expect(max).toBe(3);
+    for (const c of [first, third, waiting]) expect(order.indexOf(c)).toBeLessThan(order.indexOf(run(c)));
+    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(host.querySelector<HTMLButtonElement>(".autorun-clear")!.disabled).toBe(false);
+  });
+
+  it("leaves the sessions inside a listed copy to the dialog", async () => {
+    useSessionsStore.setState({
+      sessions: [
+        ...useSessionsStore.getState().sessions,
+        sess("rev-in", { origin: "session", originSession: "run-old", alive: false, repo: "base@wip-o", createdAt: "2026-11-02T00:00:00Z" }),
+      ],
+    } as never);
+    await flush();
+    await act(async () => host.querySelector<HTMLButtonElement>(".autorun-clear")!.click());
+    await flush();
+    expect(rawCall.mock.calls.map((c) => c[0])).toEqual(["api/sessions/rev-old/archive"]);
+    expect(document.body.querySelector("[data-delete-modal]")!.getAttribute("data-delete-modal")).toBe("base@wip-o");
+  });
+
   it("does not offer a worktree a member's session entered while the confirmation was open", async () => {
     confirm.mockImplementationOnce(async () => {
       useSessionsStore.setState({

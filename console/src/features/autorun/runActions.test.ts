@@ -177,14 +177,17 @@ describe("planClearFinished", () => {
     expect(runWorktreeNode(rs.find((r) => r.root.name === "a")!, repos, tree.filter((s) => s.name !== "bc"))!.repo.name).toBe("base@wip-a");
   });
 
-  it("archives a child elsewhere first and offers the worktree once it is gone", () => {
+  it("offers the worktree at once when the run's other sessions elsewhere are planned for archive", () => {
     const tree = [
       sess("r", { origin: "queue", alive: false, repo: "base@wip-a", pr: { number: 1, state: "merged", url: "u" }, createdAt: "2026-11-01T00:00:00Z" }),
       sess("c", { origin: "session", originSession: "r", alive: false, repo: "base", createdAt: "2026-11-02T00:00:00Z" }),
     ];
     const p = planClearFinished(runsOf(tree, ["r"]), tree, repos);
     expect(p.archive.map((g) => g.map((s) => s.name))).toEqual([["c"]]);
-    expect(p.nodes).toEqual([]);
+    expect(p.nodes.map((n) => n.repo.name)).toEqual(["base@wip-a"]);
+    // A locked child stays listed, so it is not planned and the copy is not offered.
+    const locked = tree.map((s) => (s.name === "c" ? { ...s, locked: true } : s));
+    expect(planClearFinished(runsOf(locked, ["r"]), locked, repos).nodes).toEqual([]);
   });
 
   it("names the ancestors of a session, for keeping them after a failure", () => {
