@@ -152,7 +152,8 @@ A module-wide or `-race -count=3` run on this shared host times out under load (
   far from them can still break them:
   - `workspace/agent/internal/statemig`: `TestEveryStateStoreIsInEntries`
   - both module roots: `TestWireMapGolden`, `TestMainFilesAllowlist`
-  - `workspace/agent` root: `TestRouteCatalogSnapshot`
+  - `workspace/agent` root: `TestRouteCatalogSnapshot`, and `TestEveryTestBinaryIsGuarded`
+    when you add a package with tests (each needs a `TestMain` that calls `testguard.Run`)
   - both module roots, when routes change: `TestRouteTableGolden` (a `-run` on the root
     package would otherwise skip it)
 
