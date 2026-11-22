@@ -3,6 +3,7 @@
 // every few seconds while a request is pending. A request shows as a card in its session's
 // mirror when that mirror is on screen, and as a sticky toast otherwise.
 import { useEffect, useMemo, useRef } from "react";
+import { useInterval } from "../../lib/useInterval.ts";
 import { dismissToast, toast } from "../../ui/toast.ts";
 import { useNotificationStore } from "../notifications/store.ts";
 import { AwsConfirmCard } from "./AwsConfirmCard.tsx";
@@ -54,11 +55,7 @@ export function AwsConfirmHost() {
   }, [toasted]);
 
   const polling = requests.length > 0;
-  useEffect(() => {
-    if (!polling) return;
-    const t = window.setInterval(() => void refresh(), POLL_MS);
-    return () => clearInterval(t);
-  }, [polling, refresh]);
+  useInterval(() => void refresh(), polling ? POLL_MS : null);
 
   return null;
 }

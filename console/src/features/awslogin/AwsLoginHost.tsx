@@ -9,6 +9,7 @@
 // aws-sso-expiring notification arrives (the Agent checks with its five-minute Settings poll),
 // and once a minute only while such a toast is up, so a re-login withdraws it.
 import { useEffect, useMemo, useRef } from "react";
+import { useInterval } from "../../lib/useInterval.ts";
 import { dismissToast, toast } from "../../ui/toast.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
@@ -140,11 +141,7 @@ export function AwsLoginHost() {
   }, [visible, hide]);
 
   const polling = visible.length > 0;
-  useEffect(() => {
-    if (!polling) return;
-    const t = window.setInterval(() => void refresh(), POLL_MS);
-    return () => clearInterval(t);
-  }, [polling, refresh]);
+  useInterval(() => void refresh(), polling ? POLL_MS : null);
 
   // Keyed by the request: a notification for another request can switch the open modal, and
   // the new one must not inherit the old attempt, its code or its poll.
@@ -203,11 +200,7 @@ function AwsExpiryWarnings() {
   }, [visible, hideExpiry]);
 
   const polling = visible.length > 0;
-  useEffect(() => {
-    if (!polling) return;
-    const t = window.setInterval(() => void refreshExpiry(), EXPIRY_POLL_MS);
-    return () => clearInterval(t);
-  }, [polling, refreshExpiry]);
+  useInterval(() => void refreshExpiry(), polling ? EXPIRY_POLL_MS : null);
 
   // Not tied to the warning list: a login in progress must survive the old end passing.
   return profileModal ? (

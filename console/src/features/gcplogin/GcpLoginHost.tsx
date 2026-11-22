@@ -5,6 +5,7 @@
 // notification arrives (whose payload it never reads), and every few seconds only while a
 // toast is up.
 import { useEffect, useMemo, useRef } from "react";
+import { useInterval } from "../../lib/useInterval.ts";
 import { dismissToast, toast } from "../../ui/toast.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useNotificationStore } from "../notifications/store.ts";
@@ -90,11 +91,7 @@ export function GcpLoginHost() {
   }, [visible, hide]);
 
   const polling = visible.length > 0;
-  useEffect(() => {
-    if (!polling) return;
-    const t = window.setInterval(() => void refresh(), POLL_MS);
-    return () => clearInterval(t);
-  }, [polling, refresh]);
+  useInterval(() => void refresh(), polling ? POLL_MS : null);
 
   // Keyed by the request: a notification for another request can switch the open modal, and
   // the new one must not inherit the old attempt, its link or its code field. The profile
