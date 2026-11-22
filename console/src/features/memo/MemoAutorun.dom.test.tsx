@@ -1973,6 +1973,16 @@ describe("Stop chain in the memo menu", () => {
     expect(stopItem()).toBeNull();
   });
 
+  it("shows the item with the menuitem role when a refresh brings an open memo into reach", async () => {
+    servedMemos = [chained({ state: "unconfirmed" })];
+    await render();
+    await click(rowMenuBtn());
+    expect(stopItem()).toBeNull();
+    servedMemos = [chained()];
+    await bump();
+    expect(must(stopItem(), "stop chain item").getAttribute("role")).toBe("menuitem");
+  });
+
   it("drops the item when a refresh moves the open memo out of reach", async () => {
     servedMemos = [chained()];
     await render();

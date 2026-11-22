@@ -1508,6 +1508,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   <button
                     type="button"
                     className="ui-menu-item memo-cat-menu-item memo-menu-stopchain"
+                    // Set here: useMenuRoving tags only the items present when the menu opened, and this one can appear later.
+                    role="menuitem"
                     onClick={() => runMemoMenu(() => void stopChain(menuLive))}
                   >
                     <Icon name="debug-stop" />
