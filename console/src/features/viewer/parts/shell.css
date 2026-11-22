@@ -24,15 +24,3 @@
   background: var(--viewer-bg, var(--bg));
   position: relative;
 }
-
-.mt-toolrun.open > .mt-toolrun-head {
-  opacity: 0.7;
-}
-/* Expanded traces sit indented under the head, aligned past the chevron. */
-.mt-toolrun-body {
-  margin: 0.1em 0 0.2em 14px;
-}
-.mt-toolrun-body .mt-tool {
-  margin: 0.15em 0;
-}
-

@@ -133,3 +133,10 @@ button.mt-toolrun-head:hover {
   opacity: 1;
   background: color-mix(in srgb, var(--chat-accent) 12%, transparent);
 }
+.mt-toolrun.open > .mt-toolrun-head {
+  opacity: 0.7;
+}
+/* Expanded traces sit indented under the head, aligned past the chevron. */
+.mt-toolrun-body {
+  margin: 0.1em 0 0.2em 14px;
+}

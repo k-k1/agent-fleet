@@ -1,6 +1,20 @@
 /* Phase 2 text/code editor. The CodeMirror tree stays mounted while view mode is
    selected so its in-memory undo history is not discarded. `hidden` removes only
    the inactive shell from layout; no editor content enters layout persistence. */
+.file-viewer-shell,
+.file-editor-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.file-viewer-shell[hidden],
+.file-editor-shell[hidden] {
+  display: none;
+}
 .file-surfaces {
   flex: 1;
   min-height: 0;

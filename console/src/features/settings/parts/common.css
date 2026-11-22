@@ -365,14 +365,6 @@
   white-space: nowrap;
 }
 
-.flow {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-  flex-basis: 100%;
-}
-
 
 .ssm-list {
   list-style: none;
@@ -780,4 +772,12 @@ button.ssm-row-action.danger:hover:not(:disabled) {
   content: "✓";
   color: var(--accent);
   font-weight: 700;
+}
+
+/* The single card embedded in member details (docs/log/67 §67.15). The personal view
+   splits the period field and the numbers into separate cards whose borders create the
+   gap; this is one card, so without spacing a large amount sticks to the date input and
+   becomes unreadable (measured). */
+.member-cost .usage-toolbar {
+  margin-bottom: 16px;
 }

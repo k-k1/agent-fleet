@@ -42,26 +42,6 @@
   align-items: center;
 }
 
-.file-viewer-shell,
-.file-editor-shell {
-  flex: 1;
-  min-height: 0;
-  min-width: 0;
-  position: relative;
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-}
-.file-viewer-shell[hidden],
-.file-editor-shell[hidden] {
-  display: none;
-}
-.file-viewer-shell > .codeview-wrap,
-.file-viewer-shell > .md-scroll,
-.file-viewer-shell > .filebody {
-  flex: 1;
-  min-height: 0;
-}
 .file-editor-cm {
   flex: 1;
   min-height: 0;

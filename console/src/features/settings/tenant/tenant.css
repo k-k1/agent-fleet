@@ -252,6 +252,35 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Per-service breakdown. Uptime rows have a bar (.ur-bar) filling the middle, but this
+   table has only two columns (name and amount), so the amount has to be pushed to the
+   right edge or it looks like it is floating. */
+.cloud-cost .usage-row.cc-svc {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.cloud-cost .usage-row.cc-svc .ur-key {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cloud-cost .usage-row.cc-svc .ur-hrs {
+  flex: 0 0 auto;
+  margin-left: auto;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Indented so an open disclosure reads as detail OF the list above rather than a second list
+   of the same rank - the two carry the same money and would otherwise look additive. */
+.cloud-cost .cc-roles .usage-rows {
+  padding-left: 14px;
+  border-left: 2px solid var(--border, #2a2f3a);
+}
+
 /* all-sessions overview */
 .as-search {
   flex: 1 1 200px;

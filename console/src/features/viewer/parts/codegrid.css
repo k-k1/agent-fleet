@@ -1,3 +1,16 @@
+.codeview-wrap {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+.codeview {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  overflow: auto;
+  background: transparent; /* inherit the .fileview tint (--viewer-bg) */
+}
 /* One CSS-grid row per logical line: [line-number gutter | code]. Because both cells
    share a row, a soft-wrapped code cell grows the row and its line number (top-aligned
    in the sticky first column) grows with it — fixing the gutter drift that happened when
