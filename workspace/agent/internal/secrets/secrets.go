@@ -190,8 +190,9 @@ type LcppConn struct {
 // only a model on that provider is on this endpoint. Nothing writes it yet: until the Agent also
 // pins the URL in the inline configuration and refuses a config file that overrides it, an
 // approval of this endpoint would not hold, so no writer may be added before that pin, nor the
-// endpoint registered with the route policy. A writer must also use Update: a stale Load then Save
-// elsewhere (the Grafana connection's) would otherwise drop this field.
+// endpoint registered with the route policy. A stale Load then Save elsewhere (the Grafana
+// connection's) drops this field, so the writer's PR moves those read-modify-write paths to Update
+// (or has Save carry the current CustomAPI over).
 type CustomAPIConn struct {
 	Provider string `json:"provider"`
 	URL      string `json:"url"`

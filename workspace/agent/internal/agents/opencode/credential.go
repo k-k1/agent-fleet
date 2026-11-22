@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
-	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
@@ -136,33 +135,13 @@ func resolveModel(model string, keys map[string]string, pref string, acct oauthS
 		// AWS credential chain decides, which cannot be told.
 		return routes.Launch{}
 	}
-	return routes.Launch{Route: routes.RouteCustomAPI, Binding: customBinding(prov)}
+	return routes.Launch{Route: routes.RouteCustomAPI}
 }
 
-// customConn is the stored custom provider connection, ok=false without a usable one. A seam for
-// tests.
-var customConn = func() (secrets.CustomAPIConn, bool) {
-	s, err := secrets.Load()
-	if err != nil || s.CustomAPI == nil || strings.TrimSpace(s.CustomAPI.URL) == "" || strings.TrimSpace(s.CustomAPI.Provider) == "" {
-		return secrets.CustomAPIConn{}, false
-	}
-	return *s.CustomAPI, true
-}
-
-// customBinding is the binding of a call on provider when it is the stored custom provider: the
-// endpoint and key together, so repointing the URL or replacing the key is another connection.
-// Any other custom provider (one only a config file defines) has no binding, as before.
-func customBinding(provider string) string {
-	if c, ok := customConn(); ok && c.Provider == provider {
-		return credbind.Endpoint(routes.RouteCustomAPI, c.URL, c.APIKey)
-	}
-	return ""
-}
-
-// The endpoint is deliberately not registered with routepolicy.RegisterEndpoint yet: that approval
-// is judged per route, so it would also approve a model on any other custom provider, and the
-// reader would take a store read into the model-list path. It lands with the pin that ties an
-// approval to this provider's URL.
+// A launch on a custom provider still records no binding. The stored custom provider connection
+// (secrets.CustomAPIConn) is not read here: a second store read on this path would sit outside the
+// one snapshot credentialView takes. The endpoint binding and the endpoint registration come
+// together with the URL pin, reading the connection from that snapshot.
 
 // resolveOpencodeAI resolves a model on opencode.ai's own providers. Who pays is proven only
 // when exactly one payer can be: the Zen/Go key alone (the account known to be signed out), or
