@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -301,7 +302,19 @@ func NPM(e Env) int {
 	}
 	// The plan above was read before the lock: a self-update that held it meanwhile may have
 	// installed, repinned or parked these CLIs. Decide again from what is on disk now.
-	specs, wanted = e.npmRecheck(wanted)
+	// Decide every pin again (a self-update that held the lock may have moved a CLI that was fine
+	// before), and keep what the earlier plan owed unless the disk now shows it settled.
+	_, fresh := e.npmPlan()
+	_, kept := e.npmRecheck(wanted)
+	wanted = wanted[:0:0]
+	specs = nil
+	for _, c := range npmCLIs {
+		if !slices.Contains(fresh, c.Name) && !slices.Contains(kept, c.Name) {
+			continue
+		}
+		wanted = append(wanted, c.Name)
+		specs = append(specs, c.Pkg+"@"+e.Pins[c.Name])
+	}
 	e.npmNoteSkips(wanted)
 	if len(specs) == 0 {
 		fmt.Fprintln(e.Stdout, "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)")
@@ -493,7 +506,9 @@ func (e Env) npmVerifyReadOnly(clis []string, present bool) int {
 			continue
 		}
 		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s in ~/.local does not run; not repairing it without the lock (cannot open %s: %v)\n", c, e.npmLockPath(), e.npmLockErr)
-		e.note(c, statusFailed, ReasonOther)
+		if e.lastStatus(c) != statusFailed {
+			e.note(c, statusFailed, ReasonOther) // an earlier failure's reason (no_space) stays the last line
+		}
 		rc = ExitFailed
 	}
 	return rc

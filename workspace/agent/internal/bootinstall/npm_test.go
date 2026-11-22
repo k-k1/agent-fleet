@@ -617,3 +617,29 @@ func TestNPMRecordsEachSkipOnce(t *testing.T) {
 		t.Fatalf("skipped recorded %d times: %q", n, f.statusText())
 	}
 }
+
+func TestNPMRecheckAddsACLIThatDriftedWhileWaitingForTheLock(t *testing.T) {
+	f := newNPM(t, map[string]string{"claude": "1.0.0", "codex": "3.0.0"})
+	f.put("claude", "#!/bin/sh\necho 1\n") // at the pin on the first look
+	f.stub("ls.json", `{"dependencies":{"@anthropic-ai/claude-code":{"version":"1.0.0"}}}`)
+	f.env.Repin = true
+	// A self-update that held the lock moved claude off the pin; codex still needs installing.
+	f.env.afterNPMLock = func() {
+		f.stub("ls.json", `{"dependencies":{"@anthropic-ai/claude-code":{"version":"9.9.9"}}}`)
+	}
+	NPM(f.env)
+	if log := f.npmLog(); !strings.Contains(log, "@anthropic-ai/claude-code@1.0.0") || !strings.Contains(log, "@openai/codex@3.0.0") {
+		t.Fatalf("npm asked for %q", log)
+	}
+}
+
+func TestNPMVerifyReadOnlyKeepsAnEarlierNoSpaceReason(t *testing.T) {
+	f := newNPM(t, allPins)
+	f.put("claude", brokenCLI)
+	f.env.note("claude", statusFailed, ReasonNoSpace)
+	breakLock(t, f.env.npmLockPath())
+	f.env.NPMVerify([]string{"claude"}, true)
+	if !strings.HasSuffix(f.statusText(), "claude\tfailed\tno_space\n") {
+		t.Fatalf("status=%q", f.statusText())
+	}
+}

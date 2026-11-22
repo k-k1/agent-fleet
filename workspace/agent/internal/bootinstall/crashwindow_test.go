@@ -599,3 +599,21 @@ func TestUnopenableLockLeavesRecoveryStateAlone(t *testing.T) {
 		check("selfUpdateCursor")
 	})
 }
+
+func TestSelfUpdateNPMWithUnopenableLockStartsNothing(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "") // no marker: only the lock check can stop the update
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	if err := os.MkdirAll(f.env.npmLockPath(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.env.selfUpdateNPM()
+	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+		t.Fatal("npm install ran without the lock")
+	}
+	if got := f.read(filepath.Join(tree, "VERSION")); got != "1.0.0" {
+		t.Fatalf("tree changed: %q", got)
+	}
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+		t.Fatalf("link moved: %q %v", out, err)
+	}
+}
