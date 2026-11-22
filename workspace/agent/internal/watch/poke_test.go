@@ -155,3 +155,23 @@ func TestIsActionsPokeKeyIsAsStrictAsTheControlPlane(t *testing.T) {
 		}
 	}
 }
+
+func TestPokedReadCarriesThePokeTimeAndOnlyOnce(t *testing.T) {
+	e, src, c := pokeEngine(t, Hint{After: 10 * time.Minute})
+	if !src.pokedSince.IsZero() {
+		t.Fatalf("a scheduled read claimed a poke: %v", src.pokedSince)
+	}
+	c.add(time.Minute)
+	e.Poke("fake", "fake:o/r#1")
+	pokeAt := c.now()
+	c.add(pokeMinGap)
+	e.Tick(context.Background())
+	if src.polls != 2 || !src.pokedSince.Equal(pokeAt) {
+		t.Fatalf("polls=%d pokedSince=%v, want the poke time %v", src.polls, src.pokedSince, pokeAt)
+	}
+	c.add(11 * time.Minute)
+	e.Tick(context.Background())
+	if src.polls != 3 || !src.pokedSince.IsZero() {
+		t.Fatalf("polls=%d pokedSince=%v: the poke time outlived its read", src.polls, src.pokedSince)
+	}
+}

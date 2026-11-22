@@ -80,6 +80,10 @@ type SubjectState struct {
 	Gone    int    `json:"gone,omitempty"`
 	LastErr string `json:"last_err,omitempty"`
 	Settled bool   `json:"settled,omitempty"`
+	// PokedAt is when a webhook poke last brought this subject's read forward and no read has
+	// followed it yet. The read carries it (PokedSince) so a source behind a cache does not answer
+	// with an entry from before the delivery.
+	PokedAt time.Time `json:"poked_at,omitempty"`
 }
 
 // maxPollsPerTick bounds the reads of one tick. After a restart every subject is due at once;
@@ -545,6 +549,7 @@ func (e *Engine) Tick(ctx context.Context) {
 		dirty = true
 	}
 	due := e.dueLocked(now)
+	dueAt := now
 	e.mu.Unlock()
 	for _, o := range ended {
 		e.sink.Forget(o)
@@ -577,6 +582,9 @@ func (e *Engine) Tick(ctx context.Context) {
 			continue
 		}
 		pctx, cancel := context.WithTimeout(ctx, e.pollTimeout)
+		if !d.pokedAt.IsZero() {
+			pctx = WithPokedSince(pctx, d.pokedAt)
+		}
 		evs, cur, hint, err := src.Poll(pctx, d.id, d.cursor, d.want)
 		cancel()
 		if err != nil && ctx.Err() != nil {
@@ -630,6 +638,9 @@ func (e *Engine) Tick(ctx context.Context) {
 		}
 		dirty = true
 		ss.LastPoll = now.UTC()
+		if !ss.PokedAt.After(dueAt) {
+			ss.PokedAt = time.Time{} // a poke that landed during the read stays for the next one
+		}
 		if p.err != nil {
 			ss.Fails++
 			ss.LastErr = p.err.Error()
@@ -1085,6 +1096,8 @@ type dueSubject struct {
 	source string
 	cursor json.RawMessage
 	want   []string
+	// pokedAt is SubjectState.PokedAt at the time the subject came due.
+	pokedAt time.Time
 }
 
 // dueLocked lists the subjects whose next read has come, least recently read first so one busy
@@ -1111,7 +1124,7 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 				continue
 			}
 		}
-		out = append(out, dueSubject{id, src, ss.Cursor, want[id]})
+		out = append(out, dueSubject{id, src, ss.Cursor, want[id], ss.PokedAt})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := e.state.Subjects[out[i].id].LastPoll, e.state.Subjects[out[j].id].LastPoll

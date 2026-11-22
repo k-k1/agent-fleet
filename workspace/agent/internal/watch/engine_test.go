@@ -16,6 +16,8 @@ type fakeSource struct {
 	err    error
 	polls  int
 	want   []string
+	// pokedSince is what the last Poll's context said about a poke (the zero time for none).
+	pokedSince time.Time
 }
 
 func (f *fakeSource) Kind() string { return "fake" }
@@ -28,9 +30,10 @@ func (f *fakeSource) Resolve(_ context.Context, ref, _ string) (Resolved, error)
 	}
 	return Resolved{Subject: SubjectID("fake:" + ref)}, nil
 }
-func (f *fakeSource) Poll(_ context.Context, id SubjectID, cur json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error) {
+func (f *fakeSource) Poll(ctx context.Context, id SubjectID, cur json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error) {
 	f.polls++
 	f.want = want
+	f.pokedSince = PokedSince(ctx)
 	return f.events, cur, f.hint, f.err
 }
 

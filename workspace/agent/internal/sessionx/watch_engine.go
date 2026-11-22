@@ -140,7 +140,7 @@ func StartWatchEngine() {
 // (ADR 0133 rule 6.2).
 func watchThreads(ctx context.Context, repo string, number int) (int, error) {
 	k := branchpr.Key{Repo: repo, Number: number}
-	got, err := sessionPRs.Fetch(ctx, []branchpr.Key{k})
+	got, err := sessionPRs.FetchSince(ctx, []branchpr.Key{k}, watch.PokedSince(ctx))
 	switch {
 	case branchpr.ErrNotConnected(err):
 		return 0, &watch.ErrRefused{Reason: "GitHub is not connected (Settings > Connections)"}
@@ -162,7 +162,8 @@ func watchThreads(ctx context.Context, repo string, number int) (int, error) {
 // and the list's rows share one answer and one budget.
 func watchBitbucketPR(ctx context.Context, repo string, number int) (*branchpr.PR, error) {
 	k := branchpr.Key{Repo: repo, Number: number}
-	got, err := sessionBBPRs.Fetch(ctx, []branchpr.Key{k})
+	// A read a poke brought forward must not use an entry cached before the delivery.
+	got, err := sessionBBPRs.FetchSince(ctx, []branchpr.Key{k}, watch.PokedSince(ctx))
 	if err != nil {
 		return nil, err
 	}

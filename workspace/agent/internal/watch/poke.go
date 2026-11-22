@@ -1,6 +1,7 @@
 package watch
 
 import (
+	"context"
 	"sort"
 	"time"
 )
@@ -65,17 +66,33 @@ func (e *Engine) PokeMatching(source string, match func(SubjectID) bool) bool {
 			continue
 		}
 		at := e.now()
+		ss.PokedAt = at
+		e.state.Subjects[subject] = ss
+		changed = true
 		if next := ss.LastPoll.Add(pokeMinGap); next.After(at) {
 			at = next
 		}
 		if at.Before(ss.NextPoll) {
 			ss.NextPoll = at
 			e.state.Subjects[subject] = ss
-			changed = true
 		}
 	}
 	if changed {
 		e.save()
 	}
 	return len(held) > 0
+}
+
+type pokedSinceKey struct{}
+
+// WithPokedSince marks a read as one a poke brought forward: the source must not answer from
+// anything it learned before t.
+func WithPokedSince(ctx context.Context, t time.Time) context.Context {
+	return context.WithValue(ctx, pokedSinceKey{}, t)
+}
+
+// PokedSince is the time of the poke that caused this read, or the zero time for a scheduled one.
+func PokedSince(ctx context.Context) time.Time {
+	t, _ := ctx.Value(pokedSinceKey{}).(time.Time)
+	return t
 }
