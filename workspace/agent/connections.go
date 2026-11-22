@@ -13,9 +13,11 @@ import (
 	"log"
 	"maps"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -608,27 +610,23 @@ func handlePutGrafanaConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnURLScheme, "URL must start with http(s)://")
 		return
 	}
-	s, err := secrets.Load()
-	if err != nil {
+	var status map[string]any
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Grafana = &secrets.GrafanaCreds{URL: url, Token: token}
+		status = grafanaStatus(s)
+		return nil
+	}); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	s.Grafana = &secrets.GrafanaCreds{URL: url, Token: token}
-	if err := s.Save(); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
-	}
-	httpx.WriteJSON(w, http.StatusOK, grafanaStatus(s))
+	httpx.WriteJSON(w, http.StatusOK, status)
 }
 
 func handleDeleteGrafanaConn(w http.ResponseWriter, r *http.Request) {
-	s, err := secrets.Load()
-	if err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
-		return
-	}
-	s.Grafana = nil
-	if err := s.Save(); err != nil {
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.Grafana = nil
+		return nil
+	}); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
@@ -1515,4 +1513,124 @@ func handleUnusableRemove(w http.ResponseWriter, r *http.Request) {
 	left, _ := unusableCredentials(r.Context())
 	out.Count, out.Token = len(left), offerUnusable(left)
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// The member's custom opencode provider endpoint (route custom-api). The URL stored here is what
+// the route policy judges and what the Agent pins in opencode's inline configuration, so it is
+// the only place a member sets it; under a restriction it is Managed-only (ADR 0138 §2).
+
+type customAPIConnReq struct {
+	Provider string `json:"provider"`
+	URL      string `json:"url"`
+	APIKey   string `json:"apiKey"`
+}
+
+// customProviderID is the shape of an opencode provider id: it becomes a key in the configuration
+// and the prefix of a model id ("<provider>/<model>"), so it carries no "/" or whitespace.
+var customProviderID = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
+// normalizeCustomAPIURL validates the endpoint's base URL: http(s) with a host, no credentials,
+// query or fragment. A trailing "/" is dropped; a "/v1" mount is kept, since it is part of the
+// base URL opencode is given.
+func normalizeCustomAPIURL(raw string) (string, error) {
+	trimmed := strings.TrimRight(strings.TrimSpace(raw), "/")
+	if trimmed == "" {
+		return "", errors.New("enter the endpoint URL")
+	}
+	u, err := url.Parse(trimmed)
+	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return "", errors.New("URL must start with http(s)://")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery || strings.ContainsAny(trimmed, "?#") {
+		return "", errors.New("URL must not carry credentials, a query or a fragment")
+	}
+	// The host judged here must be the host opencode reads: a port outside 1-65535 or a bracketed
+	// name that is not an IP literal parses in Go but not in a WHATWG URL parser.
+	if p := u.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
+			return "", errors.New("URL port must be 1-65535")
+		}
+	}
+	if strings.HasPrefix(u.Host, "[") {
+		if a, err := netip.ParseAddr(u.Hostname()); err != nil || !a.Is6() || a.Zone() != "" {
+			return "", errors.New("URL host in brackets must be an IPv6 address without a zone")
+		}
+	}
+	return trimmed, nil
+}
+
+// customAPIStatus is the connection as the Console may see it: never the API key.
+func customAPIStatus(s *secrets.Data) customAPIStatusWire {
+	if c := s.CustomAPI; c != nil && c.URL != "" {
+		return customAPIStatusWire{Connected: true, Provider: c.Provider, URL: c.URL}
+	}
+	return customAPIStatusWire{}
+}
+
+// customAPIStatusWire is the PUT response; it never carries the API key.
+type customAPIStatusWire struct {
+	Connected bool   `json:"connected"`
+	Provider  string `json:"provider,omitempty"`
+	URL       string `json:"url,omitempty"`
+}
+
+func handlePutCustomAPIConn(w http.ResponseWriter, r *http.Request) {
+	var req customAPIConnReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	provider := strings.TrimSpace(req.Provider)
+	if !customProviderID.MatchString(provider) {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnCustomAPIFields, "enter the provider id (letters, digits, '.', '_' or '-')")
+		return
+	}
+	normalized, err := normalizeCustomAPIURL(req.URL)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnURLScheme, err.Error())
+		return
+	}
+	conn := &secrets.CustomAPIConn{Provider: provider, URL: normalized, APIKey: strings.TrimSpace(req.APIKey)}
+	if !opencode.CustomConnUsable(conn) {
+		httpx.WriteErr(w, http.StatusBadRequest, errCodeConnCustomAPIFields, "that provider id belongs to a built-in route; choose another")
+		return
+	}
+	// Not added while the policy forbids the route: under a restriction, unless the host is an
+	// approved self-hosted endpoint.
+	if ref := agents.CredentialEntryRefusalAt(routepolicy.HostOf(normalized), routes.RouteCustomAPI); ref != nil {
+		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+		return
+	}
+	var status customAPIStatusWire
+	var refused *agents.RouteRefusal
+	if err := secrets.Update(func(s *secrets.Data) error {
+		// Judged again under the store's lock: the first check can be stale by the time the lock
+		// is won, and a policy that moved on must not have a connection stored under it.
+		if refused = agents.CredentialEntryRefusalAt(routepolicy.HostOf(normalized), routes.RouteCustomAPI); refused != nil {
+			return errors.New("refused")
+		}
+		s.CustomAPI = conn
+		status = customAPIStatus(s)
+		return nil
+	}); err != nil {
+		if refused != nil {
+			httpx.WriteErr(w, refused.Status, refused.Code, refused.Message)
+			return
+		}
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, status)
+}
+
+func handleDeleteCustomAPIConn(w http.ResponseWriter, r *http.Request) {
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.CustomAPI = nil
+		return nil
+	}); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, struct {
+		Disconnected string `json:"disconnected"`
+	}{"custom-api"})
 }

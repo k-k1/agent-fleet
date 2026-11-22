@@ -770,6 +770,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /connections/lcpp", handlePutLcppConn)
 	mux.HandleFunc("DELETE /connections/lcpp", handleDeleteLcppConn)
 	mux.HandleFunc("POST /connections/lcpp/check", handleCheckLcppConn)
+	mux.HandleFunc("PUT /connections/custom-api", handlePutCustomAPIConn)
+	mux.HandleFunc("DELETE /connections/custom-api", handleDeleteCustomAPIConn)
 	mux.HandleFunc("POST /connections/claude/start", claude.HandleStart)
 	mux.HandleFunc("POST /connections/claude/complete", claude.HandleComplete)
 	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)

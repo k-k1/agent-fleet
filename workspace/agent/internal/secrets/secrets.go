@@ -187,12 +187,9 @@ type LcppConn struct {
 // CustomAPIConn is the one place the member's custom opencode provider (route custom-api) has its
 // base URL held by the Agent, so the route policy can judge the host a call goes to (ADR 0138 §2,
 // "Endpoint approval"). Provider is the provider id the URL belongs to in opencode's configuration;
-// only a model on that provider is on this endpoint. Nothing writes it yet: until the Agent also
-// pins the URL in the inline configuration and refuses a config file that overrides it, an
-// approval of this endpoint would not hold, so no writer may be added before that pin, nor the
-// endpoint registered with the route policy. A stale Load then Save elsewhere (the Grafana
-// connection's) drops this field, so the writer's PR moves those read-modify-write paths to Update
-// (or has Save carry the current CustomAPI over).
+// only a model on that provider is on this endpoint. PUT/DELETE /connections/custom-api write it
+// through Update; Save leaves a connection its caller did not change to the stored one, so a stale
+// Load then Save elsewhere cannot put an old URL back.
 type CustomAPIConn struct {
 	Provider string `json:"provider"`
 	URL      string `json:"url"`
@@ -487,6 +484,9 @@ type Data struct {
 	// they are meaningful only when ghBaseSet is true.
 	jiraBase *JiraCreds
 	bbBase   *BitbucketCreds
+	// customBase is the custom provider's connection as this snapshot was loaded: Save leaves a
+	// connection the caller did not touch to whatever the store holds now.
+	customBase *CustomAPIConn
 	// ghBase is the GitHub entry as this snapshot was loaded (or last saved); ghBaseSet is
 	// false for a Data that did not come from the store. Save uses it to tell "the caller
 	// left the GitHub connection alone" from "the caller changed it".
@@ -895,6 +895,15 @@ func (s *Data) Save() error {
 			s.Jira = keepRotated(s.Jira, s.jiraBase, cur.Jira, jiraTokens, setJiraTokens)
 			s.Bitbucket = keepRotated(s.Bitbucket, s.bbBase, cur.Bitbucket, bbTokens, setBBTokens)
 		}
+		// A snapshot loaded before the custom connection was written or removed must not put the
+		// old one back: the route policy's approval is of the stored URL. The baseline moves with
+		// the adopted value, so a retry after a failed write still reads it as untouched. A Data
+		// that never came from Load has a nil baseline and keeps the stored connection too unless
+		// it sets one.
+		if reflect.DeepEqual(s.CustomAPI, s.customBase) {
+			s.CustomAPI = cur.CustomAPI
+			s.customBase = cloneCustom(cur.CustomAPI)
+		}
 		if err := s.save(); err != nil {
 			return err
 		}
@@ -909,6 +918,15 @@ func (s *Data) Save() error {
 // compares against.
 func (s *Data) setOAuthBase() {
 	s.jiraBase, s.bbBase = cloneJira(s.Jira), cloneBB(s.Bitbucket)
+	s.customBase = cloneCustom(s.CustomAPI)
+}
+
+func cloneCustom(c *CustomAPIConn) *CustomAPIConn {
+	if c == nil {
+		return nil
+	}
+	n := *c
+	return &n
 }
 
 func cloneJira(c *JiraCreds) *JiraCreds {

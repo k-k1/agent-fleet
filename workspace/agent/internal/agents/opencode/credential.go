@@ -125,6 +125,13 @@ func customConn(c *secrets.CustomAPIConn, engines []string) *secrets.CustomAPICo
 	return c
 }
 
+// CustomConnUsable reports whether c would be honoured as the custom provider's connection: it
+// names a provider id no other route owns, and a URL. The writer uses it so a connection that
+// every reader would ignore is refused at entry instead of stored silently.
+func CustomConnUsable(c *secrets.CustomAPIConn) bool {
+	return customConn(c, engineProviderIDs()) != nil
+}
+
 // The custom provider's endpoint is a per-connection route: under a restriction it is allowed only
 // while its host is an approved self-hosted endpoint (ADR 0138 §2). Approval is per route, so a
 // launch on any other custom provider must not resolve to the route (resolveModel).

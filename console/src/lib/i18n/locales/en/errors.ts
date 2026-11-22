@@ -193,6 +193,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.conn_jira_fields_required": "Enter the Jira account email and API token.",
   "err.conn_url_scheme": "The URL must start with http(s)://.",
   "err.conn_lcpp_url_required": "Enter the connection URL.",
+  "err.conn_custom_api_fields": "Enter a valid provider id that no built-in route uses.",
   "err.conn_aws_profile_required": "Specify an AWS profile.",
   "err.conn_sso_region_missing": "No SSO region found (check the SSM profile configuration).",
   "err.conn_discord_token_required": "Enter a Discord bot token.",
