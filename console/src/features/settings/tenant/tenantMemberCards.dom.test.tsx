@@ -65,7 +65,7 @@ async function mount() {
 }
 
 const cards = () => Array.from(document.querySelectorAll<HTMLButtonElement>(".member-card"));
-const titles = () => cards().map((c) => c.querySelector(".mc-title")?.textContent);
+const titles = () => cards().map((c) => c.querySelector(".mcard-title")?.textContent);
 const badge = (c: Element) => c.querySelector(".member-state")?.textContent;
 
 beforeEach(() => setLocale("en"));
@@ -82,7 +82,7 @@ afterEach(() => {
 describe("member cards", () => {
   it("says each state in words, not by colour alone", async () => {
     await mount();
-    const byTitle = new Map(cards().map((c) => [c.querySelector(".mc-title")?.textContent, badge(c)]));
+    const byTitle = new Map(cards().map((c) => [c.querySelector(".mcard-title")?.textContent, badge(c)]));
     expect(byTitle.get("alice@x.com")).toBe(en["admin.roster_state_running"]);
     expect(byTitle.get("bob@x.com")).toBe(en["admin.roster_state_stopped"]);
     expect(byTitle.get("carol@x.com")).toBe(en["admin.roster_state_auto_stopped"]);
@@ -126,7 +126,7 @@ describe("member cards", () => {
 
   it("shows sessions against the limit with the numbers as text, and last active on a stopped card", async () => {
     await mount();
-    const card = (t: string) => cards().find((c) => c.querySelector(".mc-title")?.textContent === t)!;
+    const card = (t: string) => cards().find((c) => c.querySelector(".mcard-title")?.textContent === t)!;
     const alice = card("alice@x.com");
     expect(alice.querySelector(".mc-sess-text")?.textContent).toBe("3 live / 5 total (limit 4)");
     const bar = alice.querySelector<HTMLElement>(".mc-bar")!;
@@ -147,7 +147,7 @@ describe("member cards", () => {
 
   it("draws the disk as a gauge with its numbers, its age on a stopped card, and tolerates missing fields", async () => {
     await mount();
-    const card = (t: string) => cards().find((c) => c.querySelector(".mc-title")?.textContent === t)!;
+    const card = (t: string) => cards().find((c) => c.querySelector(".mcard-title")?.textContent === t)!;
     const gina = card("gina@x.com");
     expect(gina.querySelector(".mc-disk-text")?.textContent).toBe("Disk 19.0 / 20.0 GiB (95%)");
     expect(gina.querySelector(".mc-disk")?.classList.contains("error")).toBe(true);
