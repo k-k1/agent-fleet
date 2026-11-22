@@ -77,6 +77,9 @@ func runCLI(t *testing.T, env []string, dir, model string, first <-chan recvHit)
 	}
 	cancel()
 	<-done
+	if !got {
+		t.Logf("opencode output (no call reached the receiver): %.1500s", out.String())
+	}
 	return h, got
 }
 

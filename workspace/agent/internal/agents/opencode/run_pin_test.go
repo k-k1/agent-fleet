@@ -2,6 +2,7 @@ package opencode
 
 import (
 	"errors"
+	"path/filepath"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
@@ -12,6 +13,14 @@ import (
 
 var movedHost = &secrets.CustomAPIConn{Provider: "mine", URL: "https://llm.internal.example/v2", APIKey: "k"}
 
+// isolateConfig points the test process's HOME and XDG config root at an empty directory: Env
+// inspects the global config files, and a developer's own enabled_providers must not fail it.
+func isolateConfig(t *testing.T) {
+	t.Helper()
+	home := isolatedHome(t)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+}
+
 func pinnedBaseURL(t *testing.T, env []string) string {
 	t.Helper()
 	_, cfg := runPin(t, env)
@@ -21,6 +30,7 @@ func pinnedBaseURL(t *testing.T, env []string) string {
 // The recorded binding and the pinned URL come from one reading: a connection updated after the
 // reading changes neither, so a call recorded under URL A never goes to the approved URL B.
 func TestRunPinKeepsBindingAndURLOnOneReading(t *testing.T) {
+	isolateConfig(t)
 	useIsolationPolicy(t, approvedCustom())
 	useCustom(t, selfHosted)
 	pin := PinRun("mine/m")
@@ -50,6 +60,7 @@ func TestRunPinKeepsBindingAndURLOnOneReading(t *testing.T) {
 // A launch recorded for one endpoint is refused against a pin of another, and a reading that was
 // never taken pins nothing.
 func TestRunPinRefusesAMismatchedBinding(t *testing.T) {
+	isolateConfig(t)
 	useIsolationPolicy(t, approvedCustom())
 	useCustom(t, selfHosted)
 	pin := PinRun("mine/m")
@@ -97,6 +108,7 @@ func TestServePinMatchesTheJudgedView(t *testing.T) {
 // While nothing is restricted the launch record is what ModelLaunch gives (stored keys, billing
 // choice, engines), and the environment passes through unchanged.
 func TestRunPinUnrestrictedLaunchIsModelLaunch(t *testing.T) {
+	isolateConfig(t)
 	useIsolationPolicy(t, routepolicy.Policy{})
 	old := credentialView
 	t.Cleanup(func() { credentialView = old })
@@ -120,6 +132,7 @@ func TestRunPinUnrestrictedLaunchIsModelLaunch(t *testing.T) {
 // A pin taken before a policy was accepted is refused afterwards: the stored endpoint's host may
 // now be allowed while the run's own settings were never judged against the new restriction.
 func TestRunPinRefusedWhenThePolicyMoved(t *testing.T) {
+	isolateConfig(t)
 	useIsolationPolicy(t, routepolicy.Policy{})
 	useCustom(t, selfHosted)
 	pin := PinRun("mine/m")
@@ -135,6 +148,7 @@ func TestRunPinRefusedWhenThePolicyMoved(t *testing.T) {
 // A run that already has a v2 `providers` block for the provider gets the pin there too (that
 // block takes the route over from the v1 one); a run without one gets none added.
 func TestRunPinCarriesTheURLInAnExistingV2Block(t *testing.T) {
+	isolateConfig(t)
 	useIsolationPolicy(t, approvedCustom())
 	useCustom(t, selfHosted)
 	env, err := PinRun("mine/m").Env([]string{routeConfigKey + `={"providers":{"mine":{"settings":{"baseURL":"https://evil.example","apiKey":"x"}}}}`}, t.TempDir())
@@ -150,4 +164,38 @@ func TestRunPinCarriesTheURLInAnExistingV2Block(t *testing.T) {
 	if _, cfg = runPin(t, env); cfg["providers"] != nil {
 		t.Errorf("a v2 block was added: %v", cfg["providers"])
 	}
+}
+
+// The same revision with other effective values (a store completing a stale restriction's
+// endpoints) is a moved policy too.
+func TestRunPinRefusedWhenTheSameRevisionIsCompleted(t *testing.T) {
+	isolateConfig(t)
+	stale := routepolicy.Policy{Revision: 5, Restricted: true, Allowed: []string{}}
+	useIsolationPolicy(t, stale)
+	useCustom(t, selfHosted)
+	pin := PinRun("mine/m")
+	useIsolationPolicy(t, approvedCustom()) // revision 5, endpoints now present
+	if _, err := pin.Env(nil, t.TempDir()); !errors.Is(err, ErrPolicyConfig) {
+		t.Errorf("err = %v, want ErrPolicyConfig", err)
+	}
+}
+
+// A serve that kept its pin past a lifted restriction serves every model on the next resume; a
+// restriction that arrives between the judgement and Ensure is still caught.
+func TestServePinSurvivesALiftedRestriction(t *testing.T) {
+	isolateConfig(t)
+	useCustom(t, selfHosted)
+	pinned := &Supervisor{up: true, credGen: "g", customPin: "abc123"}
+
+	useIsolationPolicy(t, routepolicy.Policy{})
+	if err := pinned.servePinMatches(readView()); err != nil {
+		t.Errorf("unrestricted resume on a pinned serve refused: %v", err)
+	}
+	judged := readView() // unrestricted
+	useIsolationPolicy(t, approvedCustom())
+	cur := readView()
+	if err := pinned.servePinMatches(judged); !errors.Is(err, ErrServePolicyMoved) {
+		t.Errorf("restriction arrived after the judgement: err = %v, want ErrServePolicyMoved", err)
+	}
+	_ = cur
 }

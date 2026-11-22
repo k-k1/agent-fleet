@@ -200,6 +200,11 @@ func init() { routepolicy.OnChange(func(p routepolicy.Policy) { supervisor.onPol
 // or provider change that restarts the serve never refuses a turn. An adopted daemon (credGen "")
 // has an unknown environment and is not judged here.
 func (s *Supervisor) servePinMatches(v policyView) error {
+	if _, restricted := policyRestriction(); !v.restricted && !restricted {
+		// Nothing restricted then or now: a serve that kept its pin past a lifted restriction
+		// is reused (Ensure's own rule), and its pin binds no call.
+		return nil
+	}
 	s.mu.Lock()
 	up, gen, pin := s.up, s.credGen, s.customPin
 	s.mu.Unlock()
