@@ -75,6 +75,12 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	if out, err := tmuxx.Cmd(args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
+	// The pane is up: the launch is no longer retryable as a first launch.
+	if plan.OnStarted != nil {
+		if err := plan.OnStarted(); err != nil {
+			log.Printf("session %s: post-start launch bookkeeping: %v", m.Name, err)
+		}
+	}
 	// Record pane output even when no browser is attached. The helper owns the
 	// size cap; failure here must not prevent the actual session from starting.
 	if pane := tmuxx.SessionPaneID(session.TmuxName(m.Name)); pane != "" {

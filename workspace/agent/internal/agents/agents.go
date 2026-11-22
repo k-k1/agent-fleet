@@ -154,6 +154,11 @@ type LaunchPlan struct {
 	// caller records them for the mirror; nil for a launch that has nothing to say, which
 	// is every kind but the ones that name a notice below.
 	Notices []string
+	// OnStarted, when set, runs once after the pane has actually started. A launch that
+	// leaves state meaning "first launch not finished" clears it here rather than while the
+	// plan is built: a failure between the two (tmux new-session) must leave the state for
+	// the retry. A failure is the caller's to log; the pane is already running.
+	OnStarted func() error
 }
 
 // Notice keys a LaunchPlan can carry. The Console owns the wording per key.

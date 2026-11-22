@@ -535,6 +535,10 @@ var valueFlags = map[string]bool{
 	"--output-format": true, "--input-format": true, "--setting-sources": true,
 	"--permission-prompt-tool": true, "--max-turns": true, "--max-budget-usd": true,
 	"--debug-file": true, "--plugin-dir": true,
+	"--system-prompt-file": true, "--append-system-prompt-file": true,
+	"--plugin-url": true, "--json-schema": true, "--permission-prompts": true,
+	"--autocompact": true, "--environment": true, "--system-prompt-snapshot": true,
+	"--remote-control-session-name-prefix": true,
 }
 
 // hasPermissionModeFlag reports whether the launch flags already choose a permission mode, as
