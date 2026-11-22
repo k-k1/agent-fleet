@@ -249,4 +249,40 @@ describe("ScheduleDetailModal approval of a held schedule (#4631)", () => {
     await flush();
     expect(document.body.textContent).toContain(t("sched.approve_changed"));
   });
+
+  it("does not send an approval while the form has unsaved edits", async () => {
+    await render("claude", { approval_pending: true, generation: 4 });
+    const ta = document.querySelector("#sched-prompt") as HTMLTextAreaElement;
+    const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(ta, "an edited prompt");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(approveBtn()!.disabled).toBe(true);
+    await act(async () => approveBtn()!.click());
+    expect(scheduleApprove).not.toHaveBeenCalled();
+  });
+
+  it("treats not_pending (approved in another tab) like a changed schedule", async () => {
+    vi.mocked(scheduleApprove).mockResolvedValue({ error: { code: "not_pending", message: "x" } } as never);
+    await render("claude", { approval_pending: true, generation: 3 });
+    await act(async () => approveBtn()!.click());
+    await flush();
+    expect(document.body.textContent).toContain(t("sched.approve_changed"));
+  });
+
+  it("shows the conversation an assistant schedule runs in, explicit target first then the owner", async () => {
+    await render("claude", { approval_pending: true, generation: 1, session_mode: "assistant", owner_conv: "aowner1" });
+    expect(document.body.textContent).toContain("aowner1");
+    act(() => root?.unmount());
+    root = createRoot(host);
+    await render("claude", { approval_pending: true, generation: 1, session_mode: "assistant", owner_conv: "aowner1", reuse_target: "atarget2" });
+    expect(document.body.textContent).toContain("atarget2");
+    expect(document.body.textContent).not.toContain("aowner1");
+  });
+
+  it("hides the stored next run while the schedule is held", async () => {
+    await render("claude", { approval_pending: true, generation: 1, next_run: "2026-01-01T00:00:00Z", next_run_local: "2026-01-01 09:00" });
+    expect(document.body.textContent).not.toContain("2026-01-01 09:00");
+  });
 });

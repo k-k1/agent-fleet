@@ -216,7 +216,8 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
         return;
       }
       const err = (res as { error?: { code?: string } })?.error;
-      const changed = typeof err === "object" && err?.code === "schedule_changed";
+      // not_pending: another tab approved it first, so this modal is stale in the same way.
+      const changed = typeof err === "object" && (err?.code === "schedule_changed" || err?.code === "not_pending");
       toast(changed ? t("sched.approve_changed") : errText(err as never) || t("sched.action_failed"), { kind: "warn" });
       if (changed) onClose();
     } catch {
@@ -538,9 +539,12 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
                 <ReadRow label={tr("sched.f_missing")} value={s.missing_target_policy} />
               </>
             )}
+            {s.session_mode === "assistant" && (
+              <ReadRow label={tr("sched.f_assistant_conv")} value={s.reuse_target || s.owner_conv} />
+            )}
             <ReadRow label={tr("sched.f_repo")} value={s.repo} />
             {s.worktree && <ReadRow label={tr("sched.f_worktree")} value={s.worktree} />}
-            <ReadRow label={tr("sched.f_next")} value={s.enabled ? nextRunDetail(s) : tr("sched.paused_tag")} />
+            <ReadRow label={tr("sched.f_next")} value={s.approval_pending ? tr("sched.held_tag") : s.enabled ? nextRunDetail(s) : tr("sched.paused_tag")} />
             <ReadRow label={tr("sched.f_last_status")} value={s.last_status} />
             <ReadRow label={tr("sched.f_updated")} value={s.updated_at} />
           </dl>

@@ -575,4 +575,18 @@ describe("SchedulesSection held schedules (#4631)", () => {
     expect(ok.textContent).not.toContain(t("sched.held_tag"));
     expect(ok.querySelector(".sched-approve-btn")).toBeNull();
   });
+
+  it("keeps Enter on the review button from toggling the run history", async () => {
+    scheduleList.mockResolvedValue([{ ...sched, id: "sch_held", approval_pending: true, generation: 2 }]);
+    await render();
+    const btn = host.querySelector<HTMLButtonElement>(".sched-approve-btn")!;
+    const main = host.querySelector(".sched-main")!;
+    const ev = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+    await act(async () => {
+      btn.dispatchEvent(ev);
+    });
+    // The row's own key handler preventDefaults Enter to toggle the history: it must not see this one.
+    expect(ev.defaultPrevented).toBe(false);
+    expect(main.getAttribute("aria-expanded")).toBe("false");
+  });
 });

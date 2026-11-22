@@ -201,6 +201,8 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
               e.stopPropagation();
               onDetail(s);
             }}
+            onKeyDown={(e) => e.stopPropagation()}
+
           >
             {tr("sched.review_approve")}
           </button>

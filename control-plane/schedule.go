@@ -574,12 +574,14 @@ func (a scheduleAPI) approve(w http.ResponseWriter, r *http.Request, mv store.Me
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "generation (the version being approved) is required"})
 		return
 	}
-	if !sch.ApprovalPending {
-		writeAPIErr(w, &apiError{http.StatusConflict, "not_pending", "schedule is not waiting for approval"})
-		return
-	}
+	// Generation first: an approval made in another tab bumps it, and the stale modal then gets the
+	// same "changed" answer as for an edit rather than a bare not_pending.
 	if *body.Generation != sch.Generation {
 		writeAPIErr(w, &apiError{http.StatusConflict, "schedule_changed", "schedule changed since you opened it; review the new version"})
+		return
+	}
+	if !sch.ApprovalPending {
+		writeAPIErr(w, &apiError{http.StatusConflict, "not_pending", "schedule is not waiting for approval"})
 		return
 	}
 	next := ""

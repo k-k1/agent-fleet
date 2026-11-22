@@ -46,6 +46,7 @@ export const schedules: Record<keyof typeof jaSchedules, string> = {
   "sched.detail_title": "Schedule: {name}",
   "sched.detail_readonly": "Change the fields below via the operator chat",
   "sched.saved": "Schedule updated",
+  "sched.f_assistant_conv": "Target conversation",
   "sched.held_tag": "Awaiting approval",
   "sched.held_note": "A session registered or changed this schedule. It does not run, and does not wake a stopped workspace, until you review and approve it.",
   "sched.review_approve": "Review & approve",

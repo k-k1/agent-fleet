@@ -277,3 +277,26 @@ func TestScheduleApproveRouteThroughTheMux(t *testing.T) {
 		t.Fatal("owner approval did not clear the hold")
 	}
 }
+
+// The store-level guard on its own: the handler's pre-check cannot be what stops a stale approval
+// when an edit lands between its read and the UPDATE (#4834).
+func TestStoreApproveScheduleIsConditionalOnGeneration(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	var d scheduleDTO
+	_ = json.Unmarshal(doTokenJSON(api.create, mv, "POST", approvalBody, "").Body.Bytes(), &d)
+	seen := d.Generation
+	if rr := doTokenJSON(api.update, mv, "PATCH", `{"prompt":"edited after the read"}`, d.ID); rr.Code != 200 {
+		t.Fatal(rr.Body.String())
+	}
+	ok, err := api.store.ApproveSchedule(ctx, d.ID, mv.MembershipID, seen, "2099-01-01T00:00:00Z", store.NowTS())
+	if err != nil || ok {
+		t.Fatalf("stale approve: ok=%v err=%v", ok, err)
+	}
+	got, _, _ := api.store.GetSchedule(ctx, d.ID)
+	if !got.ApprovalPending || got.Prompt != "edited after the read" || got.NextRun == "2099-01-01T00:00:00Z" {
+		t.Fatalf("stale approval changed the row: %+v", got)
+	}
+	if ok, err := api.store.ApproveSchedule(ctx, d.ID, mv.MembershipID, got.Generation, "2099-01-01T00:00:00Z", store.NowTS()); err != nil || !ok {
+		t.Fatalf("current approve: ok=%v err=%v", ok, err)
+	}
+}
