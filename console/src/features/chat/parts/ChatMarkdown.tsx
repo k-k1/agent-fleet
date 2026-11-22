@@ -40,7 +40,7 @@ export function StreamingMarkdown({ text, highlight }: { text: string; highlight
     [],
   );
   // Live karaoke (docs/log/19): each ~120ms re-render rebuilds the bubble DOM and wipes any
-  // highlight, so we (re)apply .tts-active after every render, driven by `highlight` (the
+  // highlight, so we (re)apply .chat-tts-active after every render, driven by `highlight` (the
   // sentence the TTS just started). We locate the sentence's block by matching its
   // (whitespace-stripped) text against the rendered blocks — the same block set the
   // completed-turn karaoke walks (collectBlocks). Not found → keep the current highlight
@@ -49,7 +49,7 @@ export function StreamingMarkdown({ text, highlight }: { text: string; highlight
     const wrap = wrapRef.current;
     if (!wrap) return;
     if (!highlight) {
-      litRef.current?.classList.remove("tts-active");
+      litRef.current?.classList.remove("chat-tts-active");
       litRef.current = null;
       litNeedleRef.current = "";
       return;
@@ -61,15 +61,15 @@ export function StreamingMarkdown({ text, highlight }: { text: string; highlight
     if (!target) return; // not found → keep the current highlight (no flicker at boundaries)
     // Re-apply the class every render (the DOM was rebuilt), but only scroll when the spoken
     // sentence actually changed — otherwise the ~120ms re-renders would spam smooth-scroll.
-    if (litRef.current && litRef.current !== target) litRef.current.classList.remove("tts-active");
-    target.classList.add("tts-active");
+    if (litRef.current && litRef.current !== target) litRef.current.classList.remove("chat-tts-active");
+    target.classList.add("chat-tts-active");
     litRef.current = target;
     if (litNeedleRef.current !== needle) {
       litNeedleRef.current = needle;
       target.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   }, [shown, highlight]);
-  useEffect(() => () => litRef.current?.classList.remove("tts-active"), []);
+  useEffect(() => () => litRef.current?.classList.remove("chat-tts-active"), []);
   return (
     <div ref={wrapRef}>
       <ChatMarkdown source={shown} breaks streaming />

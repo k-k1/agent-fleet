@@ -1464,13 +1464,14 @@ export const memoImageGC = (keep: string[]): Promise<Response> =>
 // Flush concatenates the selected memos (by id) into one message, sends it once to
 // the session, and stamps them sent. `text`, when given, is sent verbatim instead of the
 // server-composed message (the send modal lets the user edit it first). Returns
-// {sent, sentAt, ids} or {error}.
+// {sent, sentAt, ids} or {error}. `keep` sends without stamping: the memos stay unsent.
 export const memoFlush = (
   sessionName: string,
   ids: string[],
   text?: string,
+  keep?: boolean,
 ): Promise<{ sent?: number; sentAt?: string; ids?: string[]; error?: ApiError }> =>
-  apiJSON("api/memos/flush", "POST", { sessionName, ids, ...(text ? { text } : {}) });
+  apiJSON("api/memos/flush", "POST", { sessionName, ids, ...(text ? { text } : {}), ...(keep ? { keep: true } : {}) });
 
 // First-class categories (docs/log/21 UI overhaul): add empty, rename (cascades onto memos),
 // reorder by drag. Membership-scoped like the memos.

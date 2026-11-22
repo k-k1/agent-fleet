@@ -12,9 +12,8 @@ package main
 // are not: a removed version is downloaded again only with access to services.gradle.org, so
 // they are manual-only and not a candidate for any automatic policy (gradlecache).
 //
-// Manual only, never on a timer (docs/log/116): the only cleanup offered is "all of it", and
-// when that happens is the person's call. (npm cannot evict by age; Go can by mtime, which is
-// the open question of #4560, docs/log/137.)
+// Manual only, never on a timer (docs/log/116), with one exception: go-build is trimmed by last
+// use when home runs low (internal/gocachetrim, #4560). npm cannot evict by age; Go can, by mtime.
 //
 // The walk touches hundreds of thousands of files, so it runs only when the Console asks
 // (a button, not on opening the tab) and the answer is held briefly.
@@ -29,6 +28,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gocachetrim"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gradlecache"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -221,6 +221,8 @@ type toolCacheUsage struct {
 	// Truncated = a walk hit its entry cap; the figures are lower bounds.
 	Truncated  bool   `json:"truncated,omitempty"`
 	MeasuredAt string `json:"measured_at"`
+	// GoTrim is the last automatic go-build trim since the Agent started; absent when none ran.
+	GoTrim *gocachetrim.Result `json:"go_trim,omitempty"`
 }
 
 const (
@@ -248,7 +250,7 @@ func handleToolCacheUsage(w http.ResponseWriter, r *http.Request) {
 }
 
 func measureToolCaches(now time.Time) *toolCacheUsage {
-	u := &toolCacheUsage{MeasuredAt: now.UTC().Format(time.RFC3339), Caches: []toolCacheRow{}}
+	u := &toolCacheUsage{MeasuredAt: now.UTC().Format(time.RFC3339), Caches: []toolCacheRow{}, GoTrim: gocachetrim.Last()}
 	for _, c := range toolCaches {
 		dir := c.dir()
 		if _, err := os.Stat(dir); err != nil {
@@ -412,4 +414,10 @@ func emptyGradlePlan(p gradlecache.Plan) (bytes int64, files int, err error) {
 		}
 	}
 	return bytes, files, err
+}
+
+// goBuildCacheDir is where the go-build row lives, for the automatic trim.
+func goBuildCacheDir() string {
+	c, _ := findToolCache("go-build")
+	return c.dir()
 }

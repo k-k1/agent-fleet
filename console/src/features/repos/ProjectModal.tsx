@@ -195,7 +195,7 @@ function ProjectMcpSection({ repo, snap, onApplied }: ProjectMcpSectionProps) {
                     {snap.files.map((f) => {
                       const s = serverIn(f, name);
                       return (
-                        <td key={f.path} className={"pmcp-cell" + (s ? " present" : "")}>
+                        <td key={f.path} className={"pmcp-cell" + (s ? " is-present" : "")}>
                           {s ? (
                             <button
                               type="button"

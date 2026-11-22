@@ -48,7 +48,7 @@
 }
 /* Options carrying a preview stack in one column: a mockup is only comparable at the
    card's full width, and two of them side by side in a 220px column are unreadable. */
-.mq-options.wide {
+.mq-options.is-wide {
   grid-template-columns: 1fr;
 }
 .mq-opt {

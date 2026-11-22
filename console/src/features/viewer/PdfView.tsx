@@ -694,7 +694,7 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
 
   if (failure) {
     return (
-      <div className="pdfview is-failed">
+      <div className="pdfview pdf-failed">
         <p className="muted">
           {failure === "password"
             ? tr("view.pdf.password")

@@ -15,7 +15,7 @@ import type { ChatStep } from "../../../types/chat.ts";
 // AssistantTurn renders one completed assistant reply and its footer. It owns a ref to the
 // bubble body so the footer's read control can karaoke-read the RENDERED Markdown (docs/log/24):
 // readTurn (features/mirror/turnTts) walks the .markdown DOM into blocks, speaks it sentence
-// by sentence, and highlights the block whose sentence is playing (.tts-active) with scroll
+// by sentence, and highlights the block whose sentence is playing (.chat-tts-active) with scroll
 // follow — the same engine the mirror/ReaderView use. Live streaming stays plain (the bubble
 // re-renders every ~120ms, which would wipe any DOM highlight); karaoke is offered only once
 // the turn is complete, i.e. here.
@@ -50,7 +50,7 @@ export function AssistantTurn({
   useEffect(() => {
     const body = bodyRef.current;
     if (!body || !highlight) {
-      autoLitRef.current?.classList.remove("tts-active");
+      autoLitRef.current?.classList.remove("chat-tts-active");
       autoLitRef.current = null;
       return;
     }
@@ -59,12 +59,12 @@ export function AssistantTurn({
     if (!needle) return;
     const target = collectBlocks(body).find((b) => norm(b.textContent || "").includes(needle));
     if (!target) return;
-    if (autoLitRef.current && autoLitRef.current !== target) autoLitRef.current.classList.remove("tts-active");
-    target.classList.add("tts-active");
+    if (autoLitRef.current && autoLitRef.current !== target) autoLitRef.current.classList.remove("chat-tts-active");
+    target.classList.add("chat-tts-active");
     autoLitRef.current = target;
     target.scrollIntoView({ block: "nearest", behavior: "smooth" });
   }, [highlight]);
-  useEffect(() => () => autoLitRef.current?.classList.remove("tts-active"), []);
+  useEffect(() => () => autoLitRef.current?.classList.remove("chat-tts-active"), []);
 
   // Stop this bubble's reading if the pane/component goes away mid-read.
   useEffect(() => () => handleRef.current?.stop("replaced"), []);
@@ -78,7 +78,7 @@ export function AssistantTurn({
     const h = readTurn(body, t("chat.label"), fromBlock, () => {
       handleRef.current = null;
       setState("idle");
-    }, voice);
+    }, voice, "", "chat-tts-active");
     if (h) {
       handleRef.current = h;
       setState("playing");

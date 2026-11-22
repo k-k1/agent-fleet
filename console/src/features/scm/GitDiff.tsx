@@ -174,7 +174,7 @@ export function Diff({
   }
   const files = splitDiffFiles(text);
   return (
-    <div className={"diff-files" + (wrap ? " wrap" : "")}>
+    <div className={"diff-files" + (wrap ? " is-wrap" : "")}>
       {files.map((f, i) => (
         <FileDiff key={(f.path || "") + i} file={f} fold={fold} />
       ))}

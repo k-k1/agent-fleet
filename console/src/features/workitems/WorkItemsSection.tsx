@@ -107,7 +107,7 @@ const WorkItemRow = memo(function WorkItemRow({ item, started, startedName, unif
     // inside it are controls of their own, so each stops propagation before acting; otherwise
     // one press would open two things.
     <div
-      className={"wi-row" + (item.state === "done" ? " done" : "") + (unread ? " unread" : "")}
+      className={"wi-row" + (item.state === "done" ? " done" : "") + (unread ? " is-unread" : "")}
       role="button"
       tabIndex={0}
       aria-label={label}

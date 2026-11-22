@@ -164,7 +164,7 @@ export interface TurnReadHandle {
   stop(reason?: TtsStopReason): void;
 }
 
-const ACTIVE = "tts-active";
+const ACTIVE = "tts-active"; // default highlight class; chat passes its own so the two surfaces never share a global name
 
 // readTurn narrates body from block fromBlock on, karaoke-highlighting and scrolling to the block
 // the currently playing sentence belongs to. onEnd is called exactly once, with a reason, whether
@@ -177,6 +177,7 @@ export function readTurn(
   onEnd: (reason: TtsEndReason) => void,
   voice?: Partial<TtsOptions>, // per-session voice overrides (sessionVoiceOpts) and the like
   sessionName = "", // originating session name, for the left rail's "playing" icon
+  activeClass = ACTIVE, // class put on the block being spoken
 ): TurnReadHandle | null {
   const code: CodeReadOpts = { abbrev: getSettings().ttsAbbrevCode, dict: effectiveDict() };
   const blocks = collectBlocks(body);
@@ -200,10 +201,10 @@ export function readTurn(
   let lit: HTMLElement | null = null;
   const light = (el: HTMLElement | null) => {
     if (lit === el) return;
-    lit?.classList.remove(ACTIVE);
+    lit?.classList.remove(activeClass);
     lit = el;
     if (el) {
-      el.classList.add(ACTIVE);
+      el.classList.add(activeClass);
       el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   };

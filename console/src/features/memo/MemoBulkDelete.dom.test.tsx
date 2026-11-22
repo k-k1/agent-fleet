@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Memo, MemoCategory } from "../../types/memo.ts";
+import { headMenuItem } from "./catMenuTest.ts";
 
 let servedMemos: Memo[] = [];
 const refuse = new Set<string>();
@@ -41,6 +42,7 @@ vi.mock("./api.ts", () => ({
 vi.mock("./share.ts", () => ({ consumeShare: async () => null, registerShareSW: () => {} }));
 
 const { MemoQueueSection } = await import("./MemoQueueSection.tsx");
+const { t } = await import("../../lib/i18n/index.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 
@@ -211,5 +213,47 @@ describe("deleting the selected memos", () => {
     await click(q(".memo-cat-check"));
     // The pending note is now selected too; the hidden pick is not dropped by that click.
     expect(q(".memo-selbar-n").textContent).toContain("2");
+  });
+
+  describe("Clear finished memos", () => {
+    it("deletes delivered and replaced memos only, after a confirmation naming the count", async () => {
+      await render();
+      await click(headMenuItem({ cls: "memo-cat-menu-clear" }));
+      expect(q(".ui-confirm-body").textContent).toContain("2");
+      await click(q(".ui-confirm-actions .ui-btn-danger"));
+      expect(memoDelete.mock.calls.map((c) => c[0]).sort()).toEqual(["d1", "r1"]);
+    });
+
+    it("does nothing when cancelled", async () => {
+      await render();
+      await click(headMenuItem({ cls: "memo-cat-menu-clear" }));
+      await click(q(".ui-confirm-actions .ui-btn:not(.ui-btn-danger)"));
+      expect(memoDelete).not.toHaveBeenCalled();
+    });
+
+    it("keeps a finished memo that another memo still waits for", async () => {
+      servedMemos = servedMemos.map((m) => (m.id === "p1" ? { ...m, after: ["d1"] } : m));
+      await render();
+      await click(headMenuItem({ cls: "memo-cat-menu-clear" }));
+      expect(q(".ui-confirm-body").textContent).toContain(t("memo.clear_finished_kept", { count: 1 }));
+      await click(q(".ui-confirm-actions .ui-btn-danger"));
+      expect(memoDelete.mock.calls.map((c) => c[0])).toEqual(["r1"]);
+    });
+
+    it("disables the item when every finished memo is awaited", async () => {
+      servedMemos = servedMemos.map((m) => (m.id === "p1" ? { ...m, after: ["d1", "r1"] } : m));
+      await render();
+      expect(headMenuItem({ cls: "memo-cat-menu-clear" }).getAttribute("aria-disabled")).toBe("true");
+    });
+
+    it("is disabled when nothing is finished", async () => {
+      servedMemos = servedMemos.filter((m) => m.id === "p1" || m.id === "c1x");
+      await render();
+      const it = headMenuItem({ cls: "memo-cat-menu-clear" });
+      expect(it.getAttribute("aria-disabled")).toBe("true");
+      await click(it);
+      expect(document.querySelector(".ui-confirm-body")).toBeNull();
+      expect(memoDelete).not.toHaveBeenCalled();
+    });
   });
 });

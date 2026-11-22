@@ -116,7 +116,7 @@
   border-radius: 6px;
   background: color-mix(in srgb, var(--fg) 5%, transparent);
 }
-.mt-plan-comment.sent {
+.mt-plan-comment.plan-sent {
   opacity: 0.55;
 }
 .mt-plan-comment-n {

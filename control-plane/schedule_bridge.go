@@ -10,6 +10,7 @@ package main
 // -> membership (never client-supplied), so there is no cross-membership access.
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -89,6 +90,16 @@ func (a scheduleAPI) withScheduleToken(h func(http.ResponseWriter, *http.Request
 			writeAPIErr(w, aerr)
 			return
 		}
-		h(w, r, mv)
+		h(w, r.WithContext(context.WithValue(r.Context(), scheduleTokenFaceKey{}, true)), mv)
 	}
+}
+
+type scheduleTokenFaceKey struct{}
+
+// viaScheduleToken reports whether the request came in on the AF_SCHEDULE_TOKEN face, which every
+// process of the workspace holds: the operator's tool and any session alike. The Console face
+// (/api/schedules, the member's own login) never sets it.
+func viaScheduleToken(r *http.Request) bool {
+	v, _ := r.Context().Value(scheduleTokenFaceKey{}).(bool)
+	return v
 }

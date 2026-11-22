@@ -1712,11 +1712,14 @@ describe("the category head", () => {
     expect(document.querySelector(".memo-cat-menu")).toBeNull();
     await click(must(head().querySelector(".memo-cat-more"), "more"));
     const labels = [...document.querySelectorAll(".memo-cat-menu .ui-menu-item")].map((e) => e.textContent ?? "");
-    expect(labels).toHaveLength(6);
+    expect(labels).toHaveLength(7);
     expect(labels[0]).toContain(t("common.send"));
     expect(labels[1]).toContain(t("memo.cat_menu_run"));
     expect(labels[4]).toContain(t("memo.rename_category_item"));
-    expect(labels[5]).toContain(t("memo.delete_category"));
+    expect(labels[5]).toContain(t("memo.clear_finished"));
+    expect(labels[6]).toContain(t("memo.delete_category"));
+    // The rename input's class styles a bordered text field: the menu item must not carry it.
+    expect(document.querySelector(".memo-cat-menu .memo-cat-rename")).toBeNull();
   });
 
   it("opens the same menu on right-click and on Shift+F10, and does not fold the category", async () => {
@@ -1753,6 +1756,23 @@ describe("the category head", () => {
       [...document.querySelectorAll<HTMLElement>(".memo-cat")].find((g) => g.querySelector(".memo-cat-name")?.textContent === name)?.querySelector(".memo-cat-n")?.textContent;
     expect(n("inbox-q")).toBe("1");
     expect(n("plain")).toBe("2");
+  });
+
+  it("offers Clear finished memos in an auto-run category only", async () => {
+    servedCats = [aCat({ queue: true }), aCat({ id: "c2", name: "plain", position: 1 })];
+    servedMemos = [aMemo({ id: "d", state: "delivered" }), aMemo({ id: "p1", category: "plain" })];
+    await render();
+    const menuOf = async (name: string) => {
+      const g = [...document.querySelectorAll<HTMLElement>(".memo-cat")].find((x) => x.querySelector(".memo-cat-name")?.textContent === name);
+      await click(must(g?.querySelector(".memo-cat-more"), "more"));
+      const has = document.querySelector(".memo-cat-menu .memo-cat-menu-clear") !== null;
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      return has;
+    };
+    expect(await menuOf("inbox-q")).toBe(true);
+    expect(await menuOf("plain")).toBe(false);
   });
 
   it("is the drag handle of a named category, folds on click, and the uncategorised bucket is not draggable", async () => {

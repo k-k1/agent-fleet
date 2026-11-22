@@ -1019,7 +1019,7 @@ export function QuestionBlock({
               )}
             </div>
             {qn.question && <div className="mq-text">{shownQs[qi]?.question || qn.question}</div>}
-            <div className={"mq-options" + (wide ? " wide" : "")}>
+            <div className={"mq-options" + (wide ? " is-wide" : "")}>
               {opts.map((o, oi) => {
                 const sel = chosenSet.has(o.label);
                 const od = shownQs[qi]?.options?.[oi] ?? o;
@@ -1191,7 +1191,7 @@ export function PlanBlock({
       {comments.length > 0 && (
         <ol className="mt-plan-comments">
           {comments.map((c, i) => (
-            <li key={c.id} className={"mt-plan-comment" + (c.sentAt ? " sent" : "")}>
+            <li key={c.id} className={"mt-plan-comment" + (c.sentAt ? " plan-sent" : "")}>
               <span className="mt-plan-comment-n">{i + 1}</span>
               <span className="mt-plan-comment-main">
                 <span className="mt-plan-comment-quote">{c.quote}</span>

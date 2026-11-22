@@ -40,6 +40,25 @@ function appendImagePaths(text: string, memos: Memo[]): string {
   return text + "\n\n" + FILE_PROMPT + " " + paths.join(" ");
 }
 
+const KEEP_KEY = "af.memo-send-keep";
+
+/** The last "Keep the memos after sending" choice of this browser; off when none is stored. */
+function loadKeep(): boolean {
+  try {
+    return localStorage.getItem(KEEP_KEY) === "true";
+  } catch {
+    return false; // private mode: the preference is auxiliary
+  }
+}
+
+function saveKeep(v: boolean) {
+  try {
+    localStorage.setItem(KEEP_KEY, String(v));
+  } catch {
+    // storage unavailable or full: the send itself must not be affected
+  }
+}
+
 type Target = { type: "session"; name: string } | { type: "new" } | { type: "assistant"; id: string };
 
 interface SendMemoModalProps {
@@ -65,6 +84,11 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
   const [text, setText] = useState(() => composeMemoMessage(mixed ? own : memos));
   const [target, setTarget] = useState<Target | null>(null);
   const [busy, setBusy] = useState(false);
+  const [keepChoice, setKeepChoice] = useState(loadKeep);
+  // A memo that was already sent keeps its old sent_at when kept and would be swept on that
+  // date, so keep is offered for unsent selections only (the server refuses it too).
+  const hasSent = memos.some((m) => !!m.sentAt);
+  const keep = keepChoice && !hasSent;
 
   useEffect(() => {
     assistantList()
@@ -105,15 +129,17 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
     const outText = appendImagePaths(text, memos);
     try {
       if (target.type === "session") {
+        // Only a send to a running session consumes memos, so only there is the choice made.
+        saveKeep(keepChoice);
         let res: { sent?: number; error?: unknown } = { sent: 0 };
         if (!mixed) {
-          res = await memoFlush(target.name, ids, outText);
+          res = await memoFlush(target.name, ids, outText, keep);
         } else {
           // The member's own memos as edited, then each taken-in memo as a message of its
           // own; the server composes those and heads them with their origin.
           let sent = 0;
           if (own.length > 0) {
-            const r = await memoFlush(target.name, own.map((m) => m.id), appendImagePaths(text, own));
+            const r = await memoFlush(target.name, own.map((m) => m.id), appendImagePaths(text, own), keep);
             if (r.error) {
               toast(errText(r.error as never) || t("common.send_failed"));
               return;
@@ -121,7 +147,7 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
             sent += r.sent ?? own.length;
           }
           for (const o of origins) {
-            const r = await memoFlush(target.name, [o.id], "");
+            const r = await memoFlush(target.name, [o.id], "", keep);
             if (r.error) {
               toast(errText(r.error as never) || t("common.send_failed"));
               onSent();
@@ -257,6 +283,16 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
             <div className="ui-field-hint memo-origin-hint" role="note">
               {tr("inbox.memo_send_separately", { n: String(origins.length) })}
             </div>
+          )}
+          {target?.type === "session" && (
+            <label className="memo-send-keep">
+              <input type="checkbox" checked={keep} disabled={busy || hasSent} onChange={(e) => setKeepChoice(e.target.checked)} />
+              {tr("memo.send_keep")}
+            </label>
+          )}
+          {target?.type === "session" && hasSent && <div className="ui-field-hint">{tr("memo.send_keep_sent")}</div>}
+          {target?.type === "session" && keep && memos.some((m) => m.state) && (
+            <div className="ui-field-hint">{tr("memo.send_keep_queue")}</div>
           )}
           <div className="ui-field-hint">
             {isNew ? tr("memo.new_hint") : target?.type === "assistant" ? tr("memo.assistant_hint") : ""}

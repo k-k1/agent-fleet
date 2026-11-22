@@ -295,7 +295,7 @@
 /* The thumbnail standing in for an original that is still downloading. Blurred on purpose:
    an upscaled 512 px copy is soft either way, and saying so is better than looking like a
    bad render. The transition runs on the swap, so the picture visibly sharpens. */
-.imgview-img.placeholder {
+.imgview-img.is-placeholder {
   filter: blur(2px);
 }
 .imgview-img {

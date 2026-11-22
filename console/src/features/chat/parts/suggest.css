@@ -47,17 +47,17 @@
 }
 /* v2: LLM-generated suggestions lean on the accent colour to tell them apart from learned
    ones. */
-.chat-suggest-chip.llm {
+.chat-suggest-chip.is-llm {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--bg));
 }
 /* Pinned (always shown) suggestions. Same treatment as in mirror. */
-.chat-suggest-chip.pinned {
+.chat-suggest-chip.is-pinned {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
 /* The suggestion currently placed in the input by Tab completion (same treatment as in
    mirror; the input's focus is never moved). */
-.chat-suggest-chip.cycling {
+.chat-suggest-chip.is-cycling {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 22%, var(--bg));
 }

@@ -27,9 +27,18 @@ import (
 type scheduleAPI struct {
 	memberAuth
 	store store.ScheduleStore
+	// holdTokenWrites holds a schedule written on the schedule-token face until the member
+	// approves it (#4631). Off in production until the Console can show and approve held rows:
+	// a held schedule nobody can approve would silently stop every operator-made schedule.
+	holdTokenWrites bool
 }
 
-func newScheduleAPI(m *manager) scheduleAPI { return scheduleAPI{memberAuth{m}, m.store} }
+func newScheduleAPI(m *manager) scheduleAPI {
+	return scheduleAPI{memberAuth: memberAuth{m}, store: m.store}
+}
+
+// scheduleHeldNotice is what a token-face answer says about a schedule waiting for approval.
+const scheduleHeldNotice = "このスケジュールはメンバーの承認待ちです。Console で承認されるまで実行されません。"
 
 // scheduleDTO is the wire shape for a schedule (create input + list/get output). Snake
 // case matches the MCP tool args, forwarded verbatim as the request body.
@@ -74,14 +83,17 @@ type scheduleDTO struct {
 	// report; the output always names the resolved list.
 	DeliverTo []string `json:"deliver_to"`
 	// Silent lets an answer that is exactly scheduleSilentSentinel deliver nothing.
-	Silent       bool   `json:"silent"`
-	Enabled      bool   `json:"enabled"`
-	NextRun      string `json:"next_run,omitempty"`
-	NextRunLocal string `json:"next_run_local,omitempty"` // next_run rendered in the schedule's tz
-	LastRun      string `json:"last_run,omitempty"`
-	LastStatus   string `json:"last_status,omitempty"`
-	CreatedAt    string `json:"created_at,omitempty"`
-	UpdatedAt    string `json:"updated_at,omitempty"`
+	Silent  bool `json:"silent"`
+	Enabled bool `json:"enabled"`
+	// ApprovalPending is true while a schedule a session wrote waits for the member's approval:
+	// it does not fire until then (#4631).
+	ApprovalPending bool   `json:"approval_pending,omitempty"`
+	NextRun         string `json:"next_run,omitempty"`
+	NextRunLocal    string `json:"next_run_local,omitempty"` // next_run rendered in the schedule's tz
+	LastRun         string `json:"last_run,omitempty"`
+	LastStatus      string `json:"last_status,omitempty"`
+	CreatedAt       string `json:"created_at,omitempty"`
+	UpdatedAt       string `json:"updated_at,omitempty"`
 	// Warning is set on a create/run_now response when the scheduler goroutine is not
 	// running on this deployment — the schedule is stored but will never fire until an
 	// operator enables it (AF_SCHEDULER_INTERVAL). Empty otherwise. The operator relays it.
@@ -111,7 +123,7 @@ func scheduleToDTO(s store.Schedule) scheduleDTO {
 		Rotation: s.Rotation, MissingTargetPolicy: s.MissingTargetPolicy,
 		ReuseSession: s.ReuseSession, ReuseRunCount: s.ReuseRunCount,
 		OwnerConv: s.OwnerConv, Report: s.Report, StopAfterRun: s.StopAfterRun,
-		DeliverTo: scheduleTargets(s.DeliverTo), Silent: s.Silent, Enabled: s.Enabled, NextRun: s.NextRun, LastRun: s.LastRun,
+		DeliverTo: scheduleTargets(s.DeliverTo), Silent: s.Silent, Enabled: s.Enabled, ApprovalPending: s.ApprovalPending, NextRun: s.NextRun, LastRun: s.LastRun,
 		LastStatus: s.LastStatus, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
 		Gate: scheduleGateToDTO(s),
 	}
@@ -404,6 +416,7 @@ func (a scheduleAPI) create(w http.ResponseWriter, r *http.Request, mv store.Mem
 		return
 	}
 	s.ID = "sch_" + store.NewID()
+	s.ApprovalPending = a.holdTokenWrites && viaScheduleToken(r)
 	s.Enabled = true
 	s.NextRun = next
 	s.CreatedAt = store.NowTS()
@@ -412,7 +425,11 @@ func (a scheduleAPI) create(w http.ResponseWriter, r *http.Request, mv store.Mem
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusCreated, withSchedulerWarning(scheduleToDTO(s)))
+	d := withSchedulerWarning(scheduleToDTO(s))
+	if s.ApprovalPending {
+		d.Warning = scheduleHeldNotice
+	}
+	writeJSON(w, http.StatusCreated, d)
 }
 
 // update patches a schedule. Nil pointer fields are left unchanged; when the spec or tz
@@ -430,12 +447,19 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 		return
 	}
 	oldReuseTarget, oldSessionMode := sch.ReuseTarget, sch.SessionMode
+	before := sch
 	specChanged, aerr := p.apply(&sch)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
 	applyScheduleDefaults(&sch)
+	// A re-sent identical timing must not move an approved next fire (#4631): only a token-face
+	// write under the hold is judged, so the Console and the default keep recomputing as before.
+	if specChanged && a.holdTokenWrites && viaScheduleToken(r) &&
+		before.SpecKind == sch.SpecKind && before.Spec == sch.Spec && before.TZ == sch.TZ {
+		specChanged = false
+	}
 	// Re-pin (P6): an edited reuse_target / session_mode must actually take effect.
 	// The adopted-session ledger otherwise keeps pointing at the old session for as
 	// long as it lives, and fires never move to the new target.
@@ -477,6 +501,9 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 		}
 		sch.NextRun = next
 	}
+	if a.holdTokenWrites && viaScheduleToken(r) && (before.GateKind != sch.GateKind || before.GateSpec != sch.GateSpec || scheduleRunShapeChanged(before, sch)) {
+		sch.ApprovalPending = true
+	}
 	sch.UpdatedAt = store.NowTS()
 	if err := a.store.UpdateSchedule(r.Context(), sch); err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -497,7 +524,61 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 		}
 		sch.ReuseSession, sch.ReuseStartedAt, sch.ReuseRunCount = "", "", 0
 	}
-	writeJSON(w, http.StatusOK, scheduleToDTO(sch))
+	d := scheduleToDTO(sch)
+	if sch.ApprovalPending {
+		d.Warning = scheduleHeldNotice
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+// scheduleRunShapeChanged reports whether an edit changed anything a fire does or when it fires:
+// prompt, timing, target, delivery, and the policies that alter whether or how a fire starts.
+// The member approved that whole shape, so a session changing any of it puts the schedule back on
+// hold (#4631). spec_label is included because a prompt may reference it as a template value, and
+// silent because it appends to the instruction.
+func scheduleRunShapeChanged(a, b store.Schedule) bool {
+	return a.Prompt != b.Prompt || a.SpecKind != b.SpecKind || a.Spec != b.Spec || a.TZ != b.TZ ||
+		a.SpecLabel != b.SpecLabel || a.WakePolicy != b.WakePolicy || a.OverlapPolicy != b.OverlapPolicy ||
+		a.AgentKind != b.AgentKind || a.Model != b.Model || a.Route != b.Route || a.RouteConnection != b.RouteConnection ||
+		a.Repo != b.Repo || a.Worktree != b.Worktree || a.NewBranch != b.NewBranch ||
+		a.SessionMode != b.SessionMode || a.ReuseTarget != b.ReuseTarget ||
+		a.Rotation != b.Rotation || a.MissingTargetPolicy != b.MissingTargetPolicy ||
+		a.Report != b.Report || a.StopAfterRun != b.StopAfterRun || a.Silent != b.Silent || a.DeliverTo != b.DeliverTo
+}
+
+// approve is the member's approval of a held schedule (Console face only). It re-arms next_run
+// from the stored timing when the schedule is enabled.
+func (a scheduleAPI) approve(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
+	id := r.PathValue("id")
+	sch, aerr := a.getOwned(r, id, mv)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if !sch.ApprovalPending {
+		writeAPIErr(w, &apiError{http.StatusConflict, "not_pending", "schedule is not waiting for approval"})
+		return
+	}
+	next := ""
+	if sch.Enabled {
+		if sch.SpecKind == "once" {
+			if t, perr := parseOnce(sch.Spec); perr == nil && !t.After(time.Now().UTC()) {
+				writeAPIErr(w, &apiError{http.StatusBadRequest, "once_in_past",
+					"この once スケジュールは指定時刻を過ぎています。承認せず、新しく作成してください"})
+				return
+			}
+		}
+		var err error
+		if next, err = initialNextRun(sch, time.Now().UTC()); err != nil {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", err.Error()})
+			return
+		}
+	}
+	if _, err := a.store.ApproveSchedule(r.Context(), id, mv.MembershipID, next, store.NowTS()); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	a.writeOne(w, r, id, mv)
 }
 
 func (a scheduleAPI) delete(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
@@ -567,6 +648,10 @@ func (a scheduleAPI) runNow(w http.ResponseWriter, r *http.Request, mv store.Mem
 	sch, aerr := a.getOwned(r, id, mv)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
+		return
+	}
+	if sch.ApprovalPending {
+		writeAPIErr(w, &apiError{http.StatusConflict, "approval_pending", "schedule is waiting for the member's approval"})
 		return
 	}
 	if !sch.Enabled {
