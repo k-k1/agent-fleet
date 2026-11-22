@@ -122,6 +122,32 @@ describe("SharedSessionView handoff poll guards (#4786)", () => {
   });
 });
 
+describe("SharedSessionView handoff poll beat", () => {
+  it("keeps the original period after a swap and the tick reads the new session", async () => {
+    vi.useFakeTimers();
+    try {
+      host = document.createElement("div");
+      document.body.append(host);
+      root = createRoot(host);
+      const view = (id: string) => (
+        <ConfirmProvider>
+          <SharedSessionView sharedSessionId={id} />
+        </ConfirmProvider>
+      );
+      const reads = (id: string) => api.mock.calls.filter((c) => String(c[0]).includes(`${id}/handoff-proposals`)).length;
+      await act(async () => root!.render(view("catalog-old")));
+      await act(async () => void vi.advanceTimersByTime(2500));
+      await act(async () => root!.render(view("catalog-new")));
+      expect(reads("catalog-new")).toBe(1);
+      await act(async () => void vi.advanceTimersByTime(2500)); // the original 5 s period ends
+      expect(reads("catalog-new")).toBe(2);
+      expect(reads("catalog-old")).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("SharedSessionView handoff proposals", () => {
   it("shows the proposal title and prompt", async () => {
     const el = await render();

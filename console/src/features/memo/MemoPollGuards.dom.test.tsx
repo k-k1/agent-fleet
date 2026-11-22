@@ -69,43 +69,50 @@ const aMemo = (id: string, body: string): Memo => ({
 });
 const queue = (categoryId: string) => ({ tenantEnabled: true, queues: [{ categoryId }] });
 
+const mount = () =>
+  act(async () =>
+    root.render(
+      <ToastProvider>
+        <ConfirmProvider>
+          <MemoQueueSection />
+        </ConfirmProvider>
+      </ToastProvider>,
+    ),
+  );
+
 describe("MemoQueueSection poll guards", () => {
-  it("drops the list and queue settings read under the previous tenant", async () => {
+  it("drops the list and queue settings of the previous tenant while the new tenant's read is still out", async () => {
     await act(async () => useTenantStore.setState({ tenant: "A" } as never));
-    await act(async () =>
-      root.render(
-        <ToastProvider>
-          <ConfirmProvider>
-            <MemoQueueSection />
-          </ConfirmProvider>
-        </ToastProvider>,
-      ),
-    );
+    await mount();
     await act(async () => useTenantStore.setState({ tenant: "B" } as never));
     expect(memoReads).toHaveLength(2);
     expect(queueReads).toHaveLength(2);
-    await act(async () => memoReads[1]!.resolve([aMemo("b", "memo of B")]));
-    await act(async () => queueReads[1]!.resolve(queue("catB")));
+    // Only the generation can tell A's answers apart here: B has not landed, so neither the list
+    // sequence nor the settings cache floor has moved.
     await act(async () => memoReads[0]!.resolve([aMemo("a", "memo of A")]));
     await act(async () => queueReads[0]!.resolve(queue("catA")));
-    expect(host.textContent).toContain("memo of B");
     expect(host.textContent).not.toContain("memo of A");
+    expect(useQueueSettingsCache.getState().queues).toEqual([]);
+    await act(async () => memoReads[1]!.resolve([aMemo("b", "memo of B")]));
+    await act(async () => queueReads[1]!.resolve(queue("catB")));
+    expect(host.textContent).toContain("memo of B");
     expect(useQueueSettingsCache.getState().queues.map((q) => q.categoryId)).toEqual(["catB"]);
   });
 
-  it("polls with the inputs of the latest render after a switch", async () => {
-    await act(async () =>
-      root.render(
-        <ToastProvider>
-          <ConfirmProvider>
-            <MemoQueueSection />
-          </ConfirmProvider>
-        </ToastProvider>,
-      ),
-    );
+  it("keeps polling on the original beat after a switch, with the new tenant's inputs", async () => {
+    await mount();
+    await act(async () => void vi.advanceTimersByTime(5000));
     await act(async () => useTenantStore.setState({ tenant: "B" } as never));
     expect(memoReads).toHaveLength(2);
-    await act(async () => void vi.advanceTimersByTime(10000));
+    await act(async () => void vi.advanceTimersByTime(5000)); // the original period ends here
     expect(memoReads).toHaveLength(3);
+    expect(queueReads).toHaveLength(3);
+    await act(async () => memoReads[2]!.resolve([aMemo("b", "memo of B")]));
+    await act(async () => queueReads[2]!.resolve(queue("catB")));
+    expect(useQueueSettingsCache.getState().tenant.startsWith("B")).toBe(true);
+    // The switch's own read answers late with older content: it must not roll the tick's list back.
+    await act(async () => memoReads[1]!.resolve([aMemo("b0", "stale memo of B")]));
+    expect(host.textContent).toContain("memo of B");
+    expect(host.textContent).not.toContain("stale memo of B");
   });
 });
