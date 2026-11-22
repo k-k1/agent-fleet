@@ -542,6 +542,10 @@ npm_wa() {
 NPM_RECOVER_WA="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
 if [ -x "$NPM_RECOVER_WA" ]; then
   "$NPM_RECOVER_WA" boot-install npm-recover || echo "[entrypoint] WARN: npm boot-install npm-recover exited $? (continuing)"
+elif [ -e "$HOME/.local/.af-npm-update" ]; then
+  # Without the Agent nothing can settle the backups the marker records; the OFF branch
+  # (its npm uninstall) must not run over a tree that is mid-update.
+  echo "[entrypoint] WARN: the Agent binary is missing; the backups of an earlier npm update are not settled"
 fi
 # Lean detection: claude is not baked and versions.json has a pin for it → lean variant.
 # In lean, the start-time update in the CLAUDE_INSTALL block below is suppressed too, to keep
@@ -752,7 +756,9 @@ else
   # Returning lean to the pin is the boot-install REPIN's job above.
   # The 4 npm CLIs: remove the ~/.local shadow only when the baked pin (/usr/local) exists,
   # so PATH falls back to it at once (never in lean, where ~/.local is the pin itself).
-  if [ -x /usr/local/bin/claude ]; then
+  if [ -e "$HOME/.local/.af-npm-update" ]; then
+    echo "[entrypoint] WARN: an earlier npm update's marker is still present; not uninstalling the npm CLIs in ~/.local"
+  elif [ -x /usr/local/bin/claude ]; then
     npm uninstall -g --prefix "$HOME/.local" \
       @anthropic-ai/claude-code opencode-ai @opencode/cli @openai/codex @github/copilot >/dev/null 2>&1 || true
   fi

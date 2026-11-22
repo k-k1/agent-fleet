@@ -455,6 +455,9 @@ type npmAside struct{ cli, orig, bak string }
 
 const npmBakSuffix = ".af-bak"
 
+// npmMarkerDiscardLine opens the marker's second group (see npmWriteMarkerDiscard).
+const npmMarkerDiscardLine = "accepted"
+
 // npmMarker records one self-update's backups: a first line "pending" or "accepted", then the
 // names of the CLIs whose trees were moved aside. Paths are never stored: recovery rebuilds a CLI's
 // tree and bin link from its name (npmAsidesOf), so a corrupt marker cannot point a restore or a
@@ -465,7 +468,18 @@ const npmBakSuffix = ".af-bak"
 func (e Env) npmMarker() string { return filepath.Join(e.Home, ".local", ".af-npm-update") }
 
 func (e Env) npmWriteMarker(state string, clis []string) error {
+	return e.npmWriteMarkerDiscard(state, clis, nil)
+}
+
+// npmWriteMarkerDiscard is npmWriteMarker for a pending marker that also records accepted CLIs
+// whose backups could not be deleted: after a line "accepted" come their names. Recovery puts the
+// first group back and deletes the second; leaving them unrecorded would make the next
+// npmMoveAside refuse on the name collision for good.
+func (e Env) npmWriteMarkerDiscard(state string, clis, discard []string) error {
 	body := state + "\n" + strings.Join(clis, "\n") + "\n"
+	if len(discard) > 0 {
+		body += npmMarkerDiscardLine + "\n" + strings.Join(discard, "\n") + "\n"
+	}
 	// An exclusive temp file beside the marker: a fixed name could be the member's own file or a link.
 	f, err := os.CreateTemp(filepath.Dir(e.npmMarker()), ".af-npm-update.tmp.")
 	if err != nil {
@@ -493,25 +507,44 @@ func (e Env) npmWriteMarker(state string, clis []string) error {
 // home (that one path only: the other side was never recorded and is not ours). ok is false when
 // there is no marker; bad is true when it is present but not one we wrote.
 func (e Env) npmReadMarker() (state string, entries []string, ok, bad bool) {
+	state, entries, _, ok, bad = e.npmReadMarkerFull()
+	return
+}
+
+// npmReadMarkerFull is npmReadMarker plus the entries of the discard group, which only a pending
+// marker may carry; any other marker with that line is not one we wrote.
+func (e Env) npmReadMarkerFull() (state string, entries, discard []string, ok, bad bool) {
 	b, err := os.ReadFile(e.npmMarker())
 	if err != nil {
-		return "", nil, false, false
+		return "", nil, nil, false, false
 	}
 	lines := strings.Split(strings.TrimSpace(string(b)), "\n")
 	state = lines[0]
 	if state != "pending" && state != "accepted" {
-		return state, nil, true, true
+		return state, nil, nil, true, true
 	}
+	inDiscard := false
 	for _, l := range lines[1:] {
 		if l == "" {
 			continue
 		}
-		if e.npmEntryCLI(l) == "" {
-			return state, nil, true, true
+		if l == npmMarkerDiscardLine {
+			if state != "pending" || inDiscard {
+				return state, nil, nil, true, true
+			}
+			inDiscard = true
+			continue
 		}
-		entries = append(entries, l)
+		if e.npmEntryCLI(l) == "" {
+			return state, nil, nil, true, true
+		}
+		if inDiscard {
+			discard = append(discard, l)
+		} else {
+			entries = append(entries, l)
+		}
 	}
-	return state, entries, true, false
+	return state, entries, discard, true, false
 }
 
 // npmEntryCLI is the CLI a marker entry belongs to ("" for an entry we do not understand).
@@ -620,7 +653,7 @@ func (e Env) npmRecoverAside(keepAccepted bool) {
 		return
 	}
 	defer release()
-	state, clis, ok, bad := e.npmReadMarker()
+	state, clis, discard, ok, bad := e.npmReadMarkerFull()
 	if !ok {
 		return
 	}
@@ -637,8 +670,12 @@ func (e Env) npmRecoverAside(keepAccepted bool) {
 		if !npmDiscardAside(all) {
 			return // something stayed behind: keep the marker so the next start sweeps it again
 		}
-	} else if !e.npmRestoreAside(all) {
-		return // a backup could not be put back: keep the marker so the next start tries again
+	} else {
+		// The discard group holds accepted CLIs whose backups the update could not delete.
+		restored := e.npmRestoreAside(all)
+		if !npmDiscardAside(e.npmAsidesOf(discard)) || !restored {
+			return // something stayed behind: keep the marker so the next start tries again
+		}
 	}
 	os.Remove(e.npmMarker())
 }
@@ -781,6 +818,23 @@ func npmDiscardAside(moved []npmAside) bool {
 		}
 	}
 	return gone
+}
+
+// npmSettleAside is the recovery that runs before any later npm write. An accepted update's
+// backups are deleted only after the verify pass has looked at the new copies: a kill between the
+// marker and that pass must not cost the previous copies of one that does not run.
+func (e Env) npmSettleAside() {
+	e, release, ok := e.lockNPM()
+	if !ok {
+		e.npmBusy("recovery of an earlier agent CLI update")
+		return
+	}
+	defer release()
+	if state, _, mok, mbad := e.npmReadMarker(); mok && !mbad && state == "accepted" {
+		e.NPMVerifyPresentStep()
+		return
+	}
+	e.npmRecoverAside(false)
 }
 
 // NPMVerifyPresentStep is the entrypoint's final pass: it recovers what a killed update left but

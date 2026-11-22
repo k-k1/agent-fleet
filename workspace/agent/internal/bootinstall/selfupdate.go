@@ -169,7 +169,7 @@ func (e Env) selfUpdateNPM() {
 		return
 	}
 	defer release()
-	e.npmRecoverAside(false)
+	e.npmSettleAside()
 	if _, err := os.Lstat(e.npmMarker()); err == nil {
 		// Recovery could not settle the earlier update's backups: starting another one would
 		// overwrite their record. The installed copies stay.

@@ -253,6 +253,10 @@ awk '/^NPM_RECOVER_WA=/{on=1} on{print} on&&/^fi$/{exit}' "$ENTRY" >"$T/recover.
 want='NPM_RECOVER_WA="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
 if [ -x "$NPM_RECOVER_WA" ]; then
   "$NPM_RECOVER_WA" boot-install npm-recover || echo "[entrypoint] WARN: npm boot-install npm-recover exited $? (continuing)"
+elif [ -e "$HOME/.local/.af-npm-update" ]; then
+  # Without the Agent nothing can settle the backups the marker records; the OFF branch
+  # (its npm uninstall) must not run over a tree that is mid-update.
+  echo "[entrypoint] WARN: the Agent binary is missing; the backups of an earlier npm update are not settled"
 fi'
 [ "$(cat "$T/recover.sh")" = "$want" ] || fail "npm-recover: the stanza in entrypoint.sh changed"
 prev_code() { awk '/^[ \t]*#/ || /^[ \t]*$/ { next } /^NPM_RECOVER_WA=/ { print last; exit } { last=$0 }' "$1"; }
@@ -264,6 +268,11 @@ esac
 BI_AGENT_BIN="$T/bin/workspace-agent" bash -c 'set -e; . "$1"' _ "$T/recover.sh" >"$T/out" 2>&1 || fail "npm-recover: the stanza failed"
 grep -qx 'workspace-agent boot-install npm-recover' "$STUB_WA_LOG" || fail "npm-recover: the stanza did not call the Agent"
 BI_AGENT_BIN="$T/none" bash -c 'set -e; . "$1"; echo STARTED' _ "$T/recover.sh" >"$T/out" 2>&1; has STARTED || fail "npm-recover: a missing Agent ended the start"
+# A missing Agent with an unsettled marker is said out loud, and the OFF branch's uninstall holds.
+mkdir -p "$T/mh/.local"; : >"$T/mh/.local/.af-npm-update"
+HOME="$T/mh" BI_AGENT_BIN="$T/none" bash -c 'set -e; . "$1"; echo STARTED' _ "$T/recover.sh" >"$T/out" 2>&1
+has 'are not settled' || fail "npm-recover: no WARN for a missing Agent with a marker"
+awk '/marker is still present; not uninstalling/{w=NR} /npm uninstall -g/{u=NR} END{exit !(w && u && w<u)}' "$ENTRY" || fail "npm uninstall: not held while a marker is present"
 # Where it sits: before the OFF branch's uninstall and before the lean block's installs.
 awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} /^LEAN_CLIS=0/{l=NR} END{exit !(r && u && l && r<l && l<u)}' "$ENTRY" || fail "npm-recover: not before the lean block and the OFF branch's uninstall"
 # The shell no longer carries an npm install or a verify of its own.

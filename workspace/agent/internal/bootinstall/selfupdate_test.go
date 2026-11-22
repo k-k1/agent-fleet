@@ -489,8 +489,10 @@ func TestSelfUpdateNPMSkipsWhileAnEarlierUpdateIsUnsettled(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(parent, 0o755) })
 	f.env.selfUpdateNPM()
-	if got := f.read(f.env.npmMarker()); got != "accepted\nclaude\n" {
-		t.Fatalf("marker rewritten: %q", got)
+	// The verify pass that now precedes the discard may turn the marker into a pending one (the
+	// copy cannot be probed behind the locked parent); either way the record and backup stay.
+	if _, err := os.Lstat(f.env.npmMarker()); err != nil {
+		t.Fatalf("marker dropped: %v", err)
 	}
 	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
 		t.Fatal("npm ran over unsettled backups")
@@ -1258,5 +1260,58 @@ func TestSelfUpdateNPMFailedInstallHoldsOnlyTheCLIThatDidNotGoBack(t *testing.T)
 	}
 	if f.env.lastStatus("codex") == statusFailed {
 		t.Fatal("codex was recorded failed although its previous copy is back")
+	}
+}
+
+func TestNPMMarkerDiscardGroupIsRestoredAndSwept(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	claude := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, filepath.Join(claude+npmBakSuffix, "VERSION"), "1.0.0")
+	opencode := f.plantNPMTree(t, "@opencode/cli", "opencode", "2.0.0")
+	f.write(t, filepath.Join(opencode+npmBakSuffix, "VERSION"), "1.0.0")
+	if err := f.env.npmWriteMarkerDiscard("pending", []string{"claude"}, []string{"opencode"}); err != nil {
+		t.Fatal(err)
+	}
+	state, entries, discard, ok, bad := f.env.npmReadMarkerFull()
+	if !ok || bad || state != "pending" || len(entries) != 1 || len(discard) != 1 || discard[0] != "opencode" {
+		t.Fatalf("marker = %q %v %v ok=%v bad=%v", state, entries, discard, ok, bad)
+	}
+	f.env.npmRecoverAside(false)
+	if f.read(filepath.Join(claude, "VERSION")) != "1.0.0" {
+		t.Fatal("the pending CLI was not restored")
+	}
+	if _, err := os.Lstat(opencode + npmBakSuffix); err == nil {
+		t.Fatal("the discard group's backup was not deleted")
+	}
+	if f.read(filepath.Join(opencode, "VERSION")) != "2.0.0" {
+		t.Fatal("the accepted copy was replaced by its backup")
+	}
+	if _, err := os.Lstat(f.env.npmMarker()); err == nil {
+		t.Fatal("marker left after both groups settled")
+	}
+}
+
+func TestNPMMarkerDiscardGroupOnlyInPending(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	for _, body := range []string{"accepted\nclaude\naccepted\nopencode\n", "pending\nclaude\naccepted\nopencode\naccepted\ncodex\n"} {
+		f.write(t, f.env.npmMarker(), body)
+		if _, _, _, ok, bad := f.env.npmReadMarkerFull(); !ok || !bad {
+			t.Fatalf("%q: not refused", body)
+		}
+	}
+}
+
+func TestNPMSettleAsideVerifiesAnAcceptedUpdateBeforeDiscarding(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, filepath.Join(tree, "cli.sh"), "#!/bin/sh\nexit 1\n") // killed before the final verify: the new copy is broken
+	f.write(t, filepath.Join(tree+npmBakSuffix, "cli.sh"), "#!/bin/sh\necho 1.0.0\n")
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
+	f.env.npmSettleAside()
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+		t.Fatalf("previous copy not back: %q %v\n%s", out, err, f.out)
+	}
+	if _, err := os.Lstat(f.env.npmMarker()); err == nil {
+		t.Fatal("marker left after settling")
 	}
 }
