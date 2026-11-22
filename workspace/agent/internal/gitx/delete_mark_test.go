@@ -4,7 +4,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"testing"
 	"time"
 )
@@ -74,17 +73,19 @@ func TestRemoveWorktreeSharesTheParentLockAndPruneWaits(t *testing.T) {
 		gitT(t, parent, "worktree", "add", "-q", "-b", n, wt, "main")
 		wts = append(wts, wt)
 	}
-	arrived, release := make(chan string, 2), make(chan struct{})
+	arrived, release, pruneStarted := make(chan string, 2), make(chan struct{}), make(chan struct{}, 8)
 	t.Cleanup(SetDeleteStepHook(func(step, dir string) {
-		if step == "git-remove" {
+		switch step {
+		case "git-remove": // fired once the read lock is held
 			arrived <- dir
 			<-release
+		case "prune": // fired once the write lock is held, before git runs
+			pruneStarted <- struct{}{}
 		}
 	}))
-	var wg sync.WaitGroup
+	errs := make(chan error, 2)
 	for _, wt := range wts {
-		wg.Add(1)
-		go func() { defer wg.Done(); _, _ = removeWorktree(parent, wt) }()
+		go func() { _, err := removeWorktree(parent, wt); errs <- err }()
 	}
 	for i := 0; i < 2; i++ {
 		select {
@@ -94,20 +95,28 @@ func TestRemoveWorktreeSharesTheParentLockAndPruneWaits(t *testing.T) {
 			t.Fatalf("only %d removes held the parent lock together", i)
 		}
 	}
-	pruned := make(chan struct{})
-	go func() { pruneWorktrees(parent); close(pruned) }()
+	go pruneWorktrees(parent)
 	select {
-	case <-pruned:
+	case <-pruneStarted:
 		close(release)
-		t.Fatal("prune ran while removes were in flight")
+		t.Fatal("prune took the write lock while removes were in flight")
 	case <-time.After(300 * time.Millisecond):
 	}
 	close(release)
-	wg.Wait()
 	select {
-	case <-pruned:
+	case <-pruneStarted:
 	case <-time.After(10 * time.Second):
 		t.Fatal("prune never ran after the removes ended")
+	}
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-errs:
+			if err != nil {
+				t.Errorf("remove: %v", err)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatal("a remove never finished")
+		}
 	}
 }
 

@@ -23,7 +23,12 @@ var deleteMarks = struct {
 	mu sync.Mutex
 	// m maps a working copy being deleted to its base clone ("" for a clone or a plain folder).
 	m map[string]string
-}{m: map[string]string{}}
+	// sessions maps a copy being deleted to the names of the sessions living in it, taken inside
+	// the gate with the same string match the delete settles them by. A session is matched by name,
+	// so a path that reaches the copy through a symlink (inside it or outside it), or that no
+	// longer resolves once the folder is gone, cannot make a lock slip past.
+	sessions map[string][]string
+}{m: map[string]string{}, sessions: map[string][]string{}}
 
 // markKey is the identity a mark is compared by: the real path, the way the lock ledger
 // (sessionx.AbsPath) and git itself identify a working copy. A symlink to a worktree, or a
@@ -52,7 +57,7 @@ func markKey(p string) string {
 // is: those deletes must not overlap, because the base clone's worktree registry has to stay
 // consistent under LinkedWorktreeCount. Call it inside the deletion gate. end clears the mark
 // and is safe to call more than once.
-func BeginDelete(dir, parent string) (end func(), ok bool, why string) {
+func BeginDelete(dir, parent string, sessions ...string) (end func(), ok bool, why string) {
 	dir, parent = markKey(dir), markKeyOrEmpty(parent)
 	deleteMarks.mu.Lock()
 	defer deleteMarks.mu.Unlock()
@@ -70,11 +75,13 @@ func BeginDelete(dir, parent string) (end func(), ok bool, why string) {
 		}
 	}
 	deleteMarks.m[dir] = parent
+	deleteMarks.sessions[dir] = sessions
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			deleteMarks.mu.Lock()
 			delete(deleteMarks.m, dir)
+			delete(deleteMarks.sessions, dir)
 			deleteMarks.mu.Unlock()
 		})
 	}, true, ""
@@ -96,9 +103,28 @@ func UnderDeletion(p string) bool {
 	p = markKey(p)
 	deleteMarks.mu.Lock()
 	defer deleteMarks.mu.Unlock()
+	return underMarkLocked(p)
+}
+
+// underMarkLocked is UnderDeletion for a canonical path, with deleteMarks.mu held.
+func underMarkLocked(p string) bool {
 	for d := range deleteMarks.m {
 		if p == d || strings.HasPrefix(p, d+string(filepath.Separator)) {
 			return true
+		}
+	}
+	return false
+}
+
+// SessionUnderDeletion reports whether the session is one a delete in flight is settling.
+func SessionUnderDeletion(name string) bool {
+	deleteMarks.mu.Lock()
+	defer deleteMarks.mu.Unlock()
+	for _, names := range deleteMarks.sessions {
+		for _, n := range names {
+			if n == name {
+				return true
+			}
 		}
 	}
 	return false
@@ -115,7 +141,9 @@ func DeleteTouches(dir, parent string) bool {
 	dir, parent = markKey(dir), markKeyOrEmpty(parent)
 	deleteMarks.mu.Lock()
 	defer deleteMarks.mu.Unlock()
-	if _, busy := deleteMarks.m[dir]; busy {
+	// Inside a copy being deleted: a base clone reached through a symlink into the delete's target
+	// would lose its registry under a worktree created now.
+	if underMarkLocked(dir) || (parent != "" && underMarkLocked(parent)) {
 		return true
 	}
 	if parent == "" {

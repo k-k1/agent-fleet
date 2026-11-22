@@ -2101,18 +2101,12 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	tm.step("gate", func() {
 		withDeletionGate(func() {
 			tm.step("guards", func() {
-				// Everything the guards and the mark rely on is read here, inside the gate: a
-				// delete that finished while this one waited has taken the folder, and this one
-				// answers 404 as it always did instead of "deleting" a path that is gone.
-				if _, ok := RepoAnyDirFromPath(w, r); !ok {
-					return
-				}
 				svn = !IsGitRepo(dir) && isSvnRepo(dir)
 				linked = !svn && IsLinkedWorktree(dir)
 				if linked {
 					parent = WorktreeParent(dir)
 				}
-				end = decideDeleteRepo(w, dir, parent, linked)
+				end = decideDeleteRepo(w, r, dir, parent, linked)
 			})
 		})
 	})
@@ -2125,7 +2119,7 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 
 // decideDeleteRepo is the part of a delete that runs inside the gate. It returns the function
 // that clears the mark, or nil after answering the refusal itself.
-func decideDeleteRepo(w http.ResponseWriter, dir, parent string, linked bool) (end func()) {
+func decideDeleteRepo(w http.ResponseWriter, r *http.Request, dir, parent string, linked bool) (end func()) {
 	// An import in flight is writing into this very folder; deleting it underneath
 	// leaves the git/svn process writing into a removed tree. Cancel the job first
 	// (DELETE /repos/jobs/{id}) — then the folder is an ordinary working copy again.
@@ -2161,12 +2155,39 @@ func decideDeleteRepo(w http.ResponseWriter, dir, parent string, linked bool) (e
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", "cannot resolve worktree parent")
 		return nil
 	}
-	end, ok, why := BeginDelete(dir, parent)
+	fireDeleteHook("pre-mark", dir)
+	end, ok, why := BeginDelete(dir, parent, sessionNamesUnder(dir)...)
 	if !ok {
 		httpx.WriteErr(w, http.StatusConflict, errCodeDeleteInProgress, why)
 		return nil
 	}
+	// Existence is read only once the mark is held: a delete of this same copy that finished
+	// before the mark was taken has taken the folder with it, and this one answers 404 as it did
+	// before the gate was narrowed. Read before the mark, that delete could finish in between and
+	// both would answer 200. (The kind of copy was read before the mark; a gone folder reads as
+	// neither, which the recheck then turns into the 404.)
+	if _, ok := RepoAnyDirFromPath(w, r); !ok {
+		end()
+		return nil
+	}
 	return end
+}
+
+// sessionNamesUnder lists the sessions whose working folder is dir or lies under it, by the same
+// string match shelveSessionsUnder settles them by, and also by real path.
+func sessionNamesUnder(dir string) []string {
+	real := markKey(dir)
+	var out []string
+	for _, m := range session.ListMetas() {
+		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) || underPath(markKey(m.Dir), real) {
+			out = append(out, m.Name)
+		}
+	}
+	return out
+}
+
+func underPath(p, dir string) bool {
+	return p == dir || strings.HasPrefix(p, dir+string(filepath.Separator))
 }
 
 // deleteRepoMarked is the rest of a delete, outside the gate, with dir marked as being deleted.

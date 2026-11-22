@@ -95,5 +95,6 @@ func pruneWorktrees(parent string) {
 	l := parentLock(parent)
 	l.Lock()
 	defer l.Unlock()
+	fireDeleteHook("prune", parent)
 	_ = Cmd(parent, "worktree", "prune").Run()
 }
