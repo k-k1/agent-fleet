@@ -80,3 +80,43 @@ func TestWatchBitbucketPRAfterAPokeSkipsTheCachedAnswer(t *testing.T) {
 		t.Fatalf("poked read = %+v, %v, calls=%d: answered from the cache", pr, err, calls.Load())
 	}
 }
+
+// A single 404 right after a cached "open" must not be confirmed by the cached nil it left
+// behind: the engine's confirming read asks past the time of the read that said "gone".
+func TestWatchBitbucketPRGoneIsConfirmedByARealRequest(t *testing.T) {
+	var calls atomic.Int32
+	var status atomic.Int32
+	status.Store(http.StatusOK)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		if s := int(status.Load()); s != http.StatusOK {
+			w.WriteHeader(s)
+			return
+		}
+		fmt.Fprint(w, `{"id":4,"title":"t","state":"OPEN","links":{"html":{"href":"https://bitbucket.org/w/r/pull-requests/4"}}}`)
+	}))
+	defer srv.Close()
+	c := branchpr.NewBitbucket(func() (string, error) { return "Bearer t", nil })
+	c.Endpoint = srv.URL
+	old := sessionBBPRs
+	sessionBBPRs = c
+	defer func() { sessionBBPRs = old }()
+
+	if pr, err := watchBitbucketPR(context.Background(), "w/r", 4); err != nil || pr == nil {
+		t.Fatalf("first read = %+v, %v", pr, err)
+	}
+	time.Sleep(2 * time.Millisecond)
+	status.Store(http.StatusNotFound)
+	poked := watch.WithPokedSince(context.Background(), time.Now())
+	if pr, err := watchBitbucketPR(poked, "w/r", 4); pr != nil || err != nil {
+		t.Fatalf("the 404 read = %+v, %v, want gone", pr, err)
+	}
+	readAt := time.Now()
+	time.Sleep(2 * time.Millisecond)
+	status.Store(http.StatusOK)
+	n := calls.Load()
+	pr, err := watchBitbucketPR(watch.WithPokedSince(context.Background(), readAt), "w/r", 4)
+	if err != nil || pr == nil || calls.Load() == n {
+		t.Fatalf("confirming read = %+v, %v, calls %d -> %d: the cached gone answer was reused", pr, err, n, calls.Load())
+	}
+}

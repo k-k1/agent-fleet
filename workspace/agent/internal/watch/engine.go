@@ -549,7 +549,6 @@ func (e *Engine) Tick(ctx context.Context) {
 		dirty = true
 	}
 	due := e.dueLocked(now)
-	dueAt := now
 	e.mu.Unlock()
 	for _, o := range ended {
 		e.sink.Forget(o)
@@ -562,6 +561,8 @@ func (e *Engine) Tick(ctx context.Context) {
 		cursor json.RawMessage
 		hint   Hint
 		err    error
+		// poked is the poke time the read was given (zero for none).
+		poked time.Time
 	}
 	var results []polled
 	batches := map[string][]dueSubject{}
@@ -582,15 +583,15 @@ func (e *Engine) Tick(ctx context.Context) {
 			continue
 		}
 		pctx, cancel := context.WithTimeout(ctx, e.pollTimeout)
-		if !d.pokedAt.IsZero() {
-			pctx = WithPokedSince(pctx, d.pokedAt)
+		if !d.freshSince.IsZero() {
+			pctx = WithPokedSince(pctx, d.freshSince)
 		}
 		evs, cur, hint, err := src.Poll(pctx, d.id, d.cursor, d.want)
 		cancel()
 		if err != nil && ctx.Err() != nil {
 			break // cut off by the tick's deadline, not the provider's fault: no backoff
 		}
-		results = append(results, polled{d.id, evs, cur, hint, err})
+		results = append(results, polled{d.id, evs, cur, hint, err, d.pokedAt})
 	}
 	// A batch source reads up to MaxBatch subjects in one call, least recently read first (the
 	// order of due).
@@ -624,7 +625,7 @@ func (e *Engine) Tick(ctx context.Context) {
 				if !ok {
 					r = PollResult{Subject: d.id, Err: errors.New("the source did not answer for this subject")}
 				}
-				results = append(results, polled{d.id, r.Events, r.Cursor, r.Hint, r.Err})
+				results = append(results, polled{d.id, r.Events, r.Cursor, r.Hint, r.Err, d.pokedAt})
 			}
 		}
 	}
@@ -638,8 +639,12 @@ func (e *Engine) Tick(ctx context.Context) {
 		}
 		dirty = true
 		ss.LastPoll = now.UTC()
-		if !ss.PokedAt.After(dueAt) {
-			ss.PokedAt = time.Time{} // a poke that landed during the read stays for the next one
+		// The poke time is consumed only by a read that served it: a failed read, or one the
+		// source says could not refresh what the poke was about, keeps it for the retry, and a
+		// poke that landed during the read (a different time) is never consumed by it.
+		newerPoke := !ss.PokedAt.IsZero() && !ss.PokedAt.Equal(p.poked)
+		if p.err == nil && !p.hint.PokeUnserved && !newerPoke {
+			ss.PokedAt = time.Time{}
 		}
 		if p.err != nil {
 			ss.Fails++
@@ -667,6 +672,9 @@ func (e *Engine) Tick(ctx context.Context) {
 		after := p.hint.After
 		if after <= 0 {
 			after = time.Minute
+		}
+		if newerPoke {
+			after = min(after, pokeMinGap)
 		}
 		ss.NextPoll = now.Add(after)
 		e.state.Subjects[p.id] = ss
@@ -1098,6 +1106,10 @@ type dueSubject struct {
 	want   []string
 	// pokedAt is SubjectState.PokedAt at the time the subject came due.
 	pokedAt time.Time
+	// freshSince is the bound a source's cache must beat: the poke time, or after a "gone"
+	// answer the time of that read, so the confirming read is a real request and not the
+	// cached answer that was just given.
+	freshSince time.Time
 }
 
 // dueLocked lists the subjects whose next read has come, least recently read first so one busy
@@ -1124,7 +1136,11 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 				continue
 			}
 		}
-		out = append(out, dueSubject{id, src, ss.Cursor, want[id], ss.PokedAt})
+		fresh := ss.PokedAt
+		if ss.Gone > 0 && ss.LastPoll.After(fresh) {
+			fresh = ss.LastPoll
+		}
+		out = append(out, dueSubject{id, src, ss.Cursor, want[id], ss.PokedAt, fresh})
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := e.state.Subjects[out[i].id].LastPoll, e.state.Subjects[out[j].id].LastPoll

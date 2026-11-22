@@ -243,6 +243,7 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &cur)
 	}
+	unserved := false // a poked read whose thread count could not be refreshed
 	// The pull request itself missing or unreadable is ErrGone (the Actions source's definition:
 	// 404, 403 that is not a rate limit, 410; a 5xx or a rate limit never is). The other reads
 	// stay plain errors: a 404 on a head SHA's checks is a force-push, not a vanished PR.
@@ -339,6 +340,7 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 			// round. A failure that persists fails the whole read, so it shows in
 			// list_watches and backs off instead of going silent.
 			cur.ThreadFails++
+			unserved = !PokedSince(ctx).IsZero()
 			if cur.ThreadFails >= ghThreadFailLimit {
 				return nil, raw, Hint{}, fmt.Errorf("unresolved review threads could not be read %d times: %w", cur.ThreadFails, err)
 			}
@@ -369,7 +371,7 @@ func (g *GitHub) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 
 done:
 	out, _ := json.Marshal(cur)
-	hint := Hint{After: ghOpenAfter}
+	hint := Hint{After: ghOpenAfter, PokeUnserved: unserved}
 	if busy {
 		hint.After = ghBusyAfter
 	}

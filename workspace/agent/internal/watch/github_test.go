@@ -562,3 +562,22 @@ func TestAPullRequestThatVanishedEndsItsWatchThroughTheEngine(t *testing.T) {
 		t.Fatalf("told %v notices %v", sink.told, sink.notices)
 	}
 }
+
+// A poked read whose thread count failed still succeeds for the REST data, but must tell the
+// engine to keep the poke time for the next read.
+func TestGitHubThreadsFailureOnAPokedReadKeepsThePoke(t *testing.T) {
+	f := newFakeGitHub()
+	f.bodies[pullPath] = openPull(boolp(false), "dirty")
+	f.bodies[runsPath] = map[string]any{"total_count": 0, "check_runs": []any{}}
+	f.bodies[statusPath] = map[string]any{"total_count": 0, "statuses": []any{}}
+	f.bodies[reviewsPath] = []any{}
+	g := newTestGitHub(t, f)
+	g.Threads = func(context.Context, string, int) (int, error) { return 0, errors.New("graphql down") }
+	poked := WithPokedSince(context.Background(), time.Now())
+	if _, _, h, err := g.Poll(poked, "github:o/r#7", nil, []string{"pr.*"}); err != nil || !h.PokeUnserved {
+		t.Fatalf("poked read: err=%v PokeUnserved=%v", err, h.PokeUnserved)
+	}
+	if _, _, h, err := g.Poll(context.Background(), "github:o/r#7", nil, []string{"pr.*"}); err != nil || h.PokeUnserved {
+		t.Fatalf("scheduled read: err=%v PokeUnserved=%v", err, h.PokeUnserved)
+	}
+}

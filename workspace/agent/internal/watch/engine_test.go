@@ -18,6 +18,7 @@ type fakeSource struct {
 	want   []string
 	// pokedSince is what the last Poll's context said about a poke (the zero time for none).
 	pokedSince time.Time
+	onPoll     func()
 }
 
 func (f *fakeSource) Kind() string { return "fake" }
@@ -34,6 +35,9 @@ func (f *fakeSource) Poll(ctx context.Context, id SubjectID, cur json.RawMessage
 	f.polls++
 	f.want = want
 	f.pokedSince = PokedSince(ctx)
+	if f.onPoll != nil {
+		f.onPoll()
+	}
 	return f.events, cur, f.hint, f.err
 }
 

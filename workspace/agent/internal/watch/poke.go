@@ -62,13 +62,16 @@ func (e *Engine) PokeMatching(source string, match func(SubjectID) bool) bool {
 	changed := false
 	for subject := range held {
 		ss, ok := e.state.Subjects[subject]
-		if !ok || ss.Fails > 0 {
+		if !ok {
 			continue
 		}
 		at := e.now()
-		ss.PokedAt = at
+		ss.PokedAt = at // kept in backoff too: the retry must not use an answer from before it
 		e.state.Subjects[subject] = ss
 		changed = true
+		if ss.Fails > 0 {
+			continue
+		}
 		if next := ss.LastPoll.Add(pokeMinGap); next.After(at) {
 			at = next
 		}
