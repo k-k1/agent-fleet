@@ -59,9 +59,11 @@ interface Props {
   s: ScheduleDTO;
   onClose: () => void;
   onSaved: (dto: ScheduleDTO) => void;
+  /** The CP refused an approval because the schedule moved on: the caller re-reads the list. */
+  onStale?: () => void;
 }
 
-export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
+export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   const tr = useT();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -219,7 +221,10 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
       // not_pending: another tab approved it first, so this modal is stale in the same way.
       const changed = typeof err === "object" && (err?.code === "schedule_changed" || err?.code === "not_pending");
       toast(changed ? t("sched.approve_changed") : errText(err as never) || t("sched.action_failed"), { kind: "warn" });
-      if (changed) onClose();
+      if (changed) {
+        onStale?.();
+        onClose();
+      }
     } catch {
       toast(t("sched.action_failed"), { kind: "warn" });
     } finally {
@@ -538,6 +543,9 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
                 <ReadRow label={tr("sched.f_rotation")} value={s.rotation} />
                 <ReadRow label={tr("sched.f_missing")} value={s.missing_target_policy} />
               </>
+            )}
+            {s.approval_pending && s.session_mode !== "assistant" && s.report && scheduleTargets(s).includes("operator") && (
+              <ReadRow label={tr("sched.f_report_conv")} value={s.owner_conv} />
             )}
             {s.session_mode === "assistant" && (
               <ReadRow label={tr("sched.f_assistant_conv")} value={s.reuse_target || s.owner_conv} />

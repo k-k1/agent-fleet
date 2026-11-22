@@ -300,3 +300,22 @@ func TestStoreApproveScheduleIsConditionalOnGeneration(t *testing.T) {
 		t.Fatalf("current approve: ok=%v err=%v", ok, err)
 	}
 }
+
+// A stale modal after an approval in another tab: the original generation is "changed", the
+// current one is "not pending". Each order of the two checks fails one of these (#4631).
+func TestScheduleApproveAnswersChangedBeforeNotPending(t *testing.T) {
+	api, _, mv := newSchedAPITest(t)
+	var d scheduleDTO
+	_ = json.Unmarshal(doTokenJSON(api.create, mv, "POST", approvalBody, "").Body.Bytes(), &d)
+	if rr := approveCurrent(api, mv, d.ID); rr.Code != 200 {
+		t.Fatal(rr.Body.String())
+	}
+	stale := doJSON(api.approve, mv, "POST", fmt.Sprintf(`{"generation":%d}`, d.Generation), d.ID)
+	if stale.Code != http.StatusConflict || !strings.Contains(stale.Body.String(), "schedule_changed") {
+		t.Fatalf("original generation: %d %s", stale.Code, stale.Body.String())
+	}
+	cur := approveCurrent(api, mv, d.ID)
+	if cur.Code != http.StatusConflict || !strings.Contains(cur.Body.String(), "not_pending") {
+		t.Fatalf("current generation: %d %s", cur.Code, cur.Body.String())
+	}
+}

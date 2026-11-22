@@ -44,6 +44,7 @@ export const schedules = {
   "sched.detail_title": "スケジュール: {name}",
   "sched.detail_readonly": "以下の項目はオペレーター会話で変更してください",
   "sched.saved": "スケジュールを更新しました",
+  "sched.f_report_conv": "完了報告の届く会話",
   "sched.f_assistant_conv": "投入先の会話",
   "sched.held_tag": "承認待ち",
   "sched.held_note": "セッションが登録・変更したスケジュールです。内容を確認して承認するまで実行されず、停止中のワークスペースも起こしません。",

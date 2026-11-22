@@ -683,6 +683,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
         <ScheduleDetailModal
           s={detail}
           onClose={() => setDetail(null)}
+          onStale={() => setReloadTick((n) => n + 1)}
           onSaved={(dto) => {
             applyDTO(dto);
             setDetail(null);
