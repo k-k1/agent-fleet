@@ -253,6 +253,9 @@ const PREFS = {
   // missing-key answer: it only reads this user's transcripts, which a session's shell can
   // already open. The Console's own search (the palette's conversations mode) ignores it.
   sessionSearch: agentDefaulted(true), // opt-out (ADR 0110) — read-only, and the Agent treats a missing key as on
+  // Automatic trim of the Go build cache by last use when home runs low (#4560, Settings > Machine). Default true, like the
+  // Agent's own missing-key answer (uiprefs.GoCacheAutoTrim): it only deletes entries Go rebuilds, and a full home stops every build.
+  goCacheAutoTrim: agentDefaulted(true), // opt-out (#4560) — deletes only entries Go rebuilds on demand
   // AF-owned agent memory for sessions (ADR 0108): whether the session-side MCP server offers the
   // memory_* tools, and whether the Agent answers them. Default FALSE, like the Agent's own
   // missing-key answer: what one session saves is read by every kind in later sessions, so it is

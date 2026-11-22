@@ -114,6 +114,28 @@ describe("ReclaimModal", () => {
     expect(confirmBtn().textContent).toContain("7.0 GB");
   });
 
+  it("shows what the automatic go-build trim last freed, and nothing when none ran", async () => {
+    expect(document.body.querySelector("[data-testid=reclaim-go-trim]")).toBeNull();
+    act(() => root.unmount());
+    host.remove();
+    document.body.innerHTML = "";
+    toolCaches = { caches: [], go_trim: { at: "2026-11-23T01:02:03Z", bytes: 6 * GiB, files: 1234 } };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root.render(
+        <ToastProvider>
+          <ReclaimModal onClose={onClose} onChanged={onChanged} />
+        </ToastProvider>,
+      );
+    });
+    await flush();
+    const note = document.body.querySelector("[data-testid=reclaim-go-trim]");
+    expect(note?.textContent).toContain("6.0 GB");
+    expect(note?.textContent).toContain("1234 files");
+  });
+
   it("goes through the existing worktree and tool-cache calls on confirm, and spends the walk", async () => {
     store.publishWalk({ measured_at: new Date().toISOString(), categories: [], repos: [{ bytes: 1, regenerable: GiB }] });
     expect(store.reclaimEstimate()).toBe(GiB);
