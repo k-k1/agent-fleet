@@ -316,6 +316,47 @@ export function continuationHeldKey(reason: string | undefined): MsgKey | null {
 }
 const CONTINUATION_REASONS = ["origin", "delivery", "batch", "given", "reference", "root", "off", "used", "limit", "stopped"] as const;
 
+/** The words for a held reason that is not about a prerequisite: today only a run recipe the
+ *  category's settings cannot create a run with (`recipe_invalid`). Null for any other reason. */
+export function heldRecipeKey(reason: string | undefined): MsgKey | null {
+  return reason === "recipe_invalid" ? "memo.held_recipe_invalid" : null;
+}
+
+/** The run recipe a message asks for; every field "" when it follows the category's setting. */
+export function memoRecipe(m: Pick<Memo, "agentKind" | "model" | "effort" | "route">) {
+  return { agentKind: m.agentKind ?? "", model: m.model ?? "", effort: m.effort ?? "", route: m.route ?? "" };
+}
+
+/** True when the message overrides any field of the category's setting. */
+export const hasRecipe = (m: Pick<Memo, "agentKind" | "model" | "effort" | "route">): boolean => Object.values(memoRecipe(m)).some((v) => v !== "");
+
+/** Equal for two messages exactly when the Control Plane's stored recipes are equal (it compares
+ *  the canonical encoding; this is the same fields, so the tidy preview groups as it applies). */
+export const recipeKey = (m: Pick<Memo, "agentKind" | "model" | "effort" | "route">): string => {
+  const r = memoRecipe(m);
+  return hasRecipe(m) ? [r.agentKind, r.model, r.effort, r.route].join("\x00") : "";
+};
+
+/** The distinct own recipes among the messages a run took, one message each. Only a message still
+ *  bound to that run counts: one returned to the queue may have been edited since, and its current
+ *  recipe says nothing about what the run used. */
+export function runRecipes(messages: readonly Memo[], d: Pick<MemoDelivery, "id" | "messageIds">): Memo[] {
+  const seen = new Set<string>();
+  const out: Memo[] = [];
+  for (const m of messages) {
+    if (m.deliveryId !== d.id || !d.messageIds.includes(m.id) || !hasRecipe(m) || seen.has(recipeKey(m))) continue;
+    seen.add(recipeKey(m));
+    out.push(m);
+  }
+  return out;
+}
+
+/** The parts of a recipe worth a badge, in reading order: agent, model, effort, route. */
+export function recipeParts(m: Pick<Memo, "agentKind" | "model" | "effort" | "route">): string[] {
+  const r = memoRecipe(m);
+  return [r.agentKind, r.model, r.effort, r.route].filter((v) => v !== "");
+}
+
 /** The PR number of a key "owner/repo#N", with its # ("#N"), else the key. */
 const prNumberOf = (key: string) => {
   const i = key.lastIndexOf("#");

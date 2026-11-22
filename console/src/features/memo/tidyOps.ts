@@ -8,6 +8,7 @@
 // whole approval.
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import type { Memo, MemoCategory } from "../../types/memo.ts";
+import { recipeKey } from "./queues.ts";
 
 // The Control Plane's bounds (control-plane/internal/memotidy). One place here, as there.
 export const TIDY_LIMITS = {
@@ -86,6 +87,9 @@ export const isPlainText = (m: Memo): boolean =>
 const originKey = (m: Memo): string =>
   [m.provenance === "curator" ? m.sourceProvenance || "" : m.provenance || "workspace", m.producer || "", m.producerOrigin || ""].join("\x00");
 
+// The stored recipe is part of the Control Plane's group: notes with different ones are never merged.
+const groupKey = (m: Memo): string => originKey(m) + "\x01" + recipeKey(m);
+
 /** True when the selection holds both waiting and approval-pending notes. */
 export const mixesStates = (memos: readonly Memo[]): boolean => new Set(memos.map((m) => m.state)).size > 1;
 
@@ -132,7 +136,7 @@ export function tidyDestinations(own: MemoCategory, listedIds: readonly string[]
 export function buildOpsPrompt(memos: readonly Memo[], dests: readonly TidyDest[]): string {
   const groups = new Map<string, number>();
   const items = memos.map((m) => {
-    const key = originKey(m) + "\x00" + m.state;
+    const key = groupKey(m) + "\x00" + m.state;
     if (!groups.has(key)) groups.set(key, groups.size);
     return {
       id: m.id,
@@ -245,6 +249,7 @@ export type LeftOutWhy =
   | "split_count"
   | "not_plain"
   | "other_origin"
+  | "other_recipe"
   | "mixed_states"
   | "bad_text"
   | "growth"
@@ -261,6 +266,7 @@ export const LEFT_OUT_WORDS: Record<LeftOutWhy, MsgKey> = {
   split_count: "memo.tidyop_out_split_count",
   not_plain: "memo.tidyop_out_not_plain",
   other_origin: "memo.tidyop_out_origin",
+  other_recipe: "memo.tidyop_out_recipe",
   mixed_states: "memo.tidyop_out_states",
   bad_text: "memo.tidyop_out_text",
   growth: "memo.tidyop_out_growth",
@@ -369,6 +375,10 @@ export function reviewOps(
       }
       if (new Set(notes.map(originKey)).size > 1) {
         out(op, "other_origin");
+        continue;
+      }
+      if (new Set(notes.map(recipeKey)).size > 1) {
+        out(op, "other_recipe");
         continue;
       }
       if (new Set(notes.map((n) => n.state)).size > 1) {

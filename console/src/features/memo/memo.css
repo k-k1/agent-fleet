@@ -1461,3 +1461,29 @@ button.memo-reflink-key {
     display: none;
   }
 }
+
+.memo-edit-recipe {
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 6px;
+  padding: 4px 8px;
+  margin: 0;
+  font-size: 11px;
+}
+.memo-edit-recipe legend {
+  padding: 0 4px;
+  color: var(--muted);
+}
+.memo-edit-recipe-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.memo-edit-recipe-row input {
+  flex: 1 1 100px;
+  min-width: 0;
+}
+.memo-release-recipe {
+  display: inline-block;
+  font-size: 11px;
+  color: var(--muted);
+}

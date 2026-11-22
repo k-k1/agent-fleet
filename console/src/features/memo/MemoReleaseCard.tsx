@@ -15,7 +15,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
 import { memoReference } from "./reference.ts";
-import { continuationHeldKey, fmtStartAfter, scheduledUntil, tidyMarks } from "./queues.ts";
+import { MemoRecipeBadge } from "./MemoRecipe.tsx";
+import { continuationHeldKey, heldRecipeKey, fmtStartAfter, scheduledUntil, tidyMarks } from "./queues.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import type { Memo } from "../../types/memo.ts";
 import type { ReleaseCard } from "./queues.ts";
@@ -84,6 +85,9 @@ export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edite
                 {continuationHeldKey(m.heldReason?.reason) && (
                   <div className="memo-release-tidy">{tr("memo.continuation_held", { why: tr(continuationHeldKey(m.heldReason?.reason)!) })}</div>
                 )}
+                {heldRecipeKey(m.heldReason?.reason) && <div className="memo-release-tidy">{tr(heldRecipeKey(m.heldReason?.reason)!)}</div>}
+                {/* The recipe is hashed with the content, so an approval covers it and the card shows it. */}
+                <MemoRecipeBadge memo={m} className="memo-release-recipe" />
                 {(releaseRowText(m) || (m.kind !== "file" && !ref)) && (
                   <div className="memo-release-text">{releaseRowText(m) || "—"}</div>
                 )}

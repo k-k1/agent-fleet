@@ -18,8 +18,9 @@ import { errText } from "../../core/api/client.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
 import { useInterval } from "../../lib/useInterval.ts";
 import { openSessionChat } from "../sessions/open.ts";
-import type { MemoDelivery, MemoQueue, MemoTidyBlocked, MemoTidyRunsWire } from "../../types/memo.ts";
+import type { Memo, MemoDelivery, MemoQueue, MemoTidyBlocked, MemoTidyRunsWire } from "../../types/memo.ts";
 import { memoQueueDeliveries, memoTidyRuns, memoTidyUndo } from "./api.ts";
+import { MemoRecipeBadge } from "./MemoRecipe.tsx";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import {
   canReturnRun,
@@ -27,6 +28,7 @@ import {
   deferWords,
   deliveryStateKey,
   firstTurnWords,
+  runRecipes,
   heldNames,
   heldWords,
   readDeliveries,
@@ -47,6 +49,9 @@ interface Props {
   queue: MemoQueue | undefined;
   /** How many messages are waiting to run now. */
   waiting: number;
+  /** The category's messages as the list holds them: a run shows the recipe of its own messages
+   *  that do not follow the category's setting. A run whose messages left the list shows none. */
+  messages?: Memo[];
   onClose: () => void;
   /** Messages went back to the queue (a run was returned): the memo section refetches. */
   onFired: () => void;
@@ -61,10 +66,11 @@ interface Props {
   onResume: () => Promise<boolean>;
 }
 
-export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, waiting, onClose, onFired, onUndone, focusRun, onResume, slotsFull = false }: Props) {
+export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, waiting, messages, onClose, onFired, onUndone, focusRun, onResume, slotsFull = false }: Props) {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
+  const recipesOf = (d: MemoDelivery): Memo[] => runRecipes(messages ?? [], d);
   const sessions = useSessionsStore((s) => s.sessions);
   // The run whose notes are being returned to the queue.
   const [returning, setReturning] = useState("");
@@ -281,6 +287,9 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                     </span>
                   )}
                   <span className="memo-d-tag">{tr(d.auto ? "memo.d_auto" : "memo.d_manual")}</span>
+                  {recipesOf(d).map((m) => (
+                    <MemoRecipeBadge key={m.id} memo={m} className="memo-d-tag memo-d-recipe" />
+                  ))}
                   {why && (
                     <span className="memo-d-held" title={d.heldSeenAt ? tr("memo.d_held_seen", { at: at(d.heldSeenAt) }) : undefined}>
                       {tr("memo.d_held", { why: names ? tr("memo.d_held_wakers_named", { names }) : tr(why) })}
