@@ -22,7 +22,11 @@ export function TtsAdminView() {
     try {
       const d = await getTts();
       if (!isOk(d)) {
-        setErr(d ? errText(d.error) : tr("admin.load_error"));
+        if (d) setErr(errText(d.error));
+        else {
+          setData(null);
+          setErr(tr("admin.load_error"));
+        }
         return;
       }
       setErr("");

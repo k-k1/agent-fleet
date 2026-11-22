@@ -18,7 +18,8 @@ vi.mock("../../../core/api/client.ts", () => ({
   errText: (e: { message?: string }) => e?.message || "",
   rel: (p: string) => p,
 }));
-vi.mock("../../chat/ttsDict.ts", () => ({ setTenantDict: () => {} }));
+const setTenantDict = vi.fn();
+vi.mock("../../chat/ttsDict.ts", () => ({ setTenantDict: (...a: unknown[]) => setTenantDict(...a) }));
 
 import { TtsAdminView } from "./adminTts.tsx";
 
@@ -63,6 +64,7 @@ const click = async (el: HTMLElement | undefined) => {
 beforeEach(() => {
   api.mockReset();
   apiJSON.mockReset();
+  setTenantDict.mockReset();
   vi.useFakeTimers({ shouldAdvanceTime: true });
 });
 afterEach(() => {
@@ -102,5 +104,30 @@ describe("TtsAdminView", () => {
     await mount();
     expect(seg("オンデマンド")).toBeUndefined();
     expect(seg("常時稼働")!.className).toContain("active");
+  });
+
+  it("treats a null body from the dictionary PUT as saved, as before: applies it here and clears dirty", async () => {
+    api.mockResolvedValue(status("ondemand", "running", true));
+    apiJSON.mockResolvedValue(null);
+    await mount();
+    const area = host!.querySelector("textarea.ds-userdict") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(area, "foo=bar");
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const save = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === "保存") as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+    await click(save);
+    expect(setTenantDict).toHaveBeenCalledWith("foo=bar");
+  });
+
+  it("discards the old state when a re-read answers a null body", async () => {
+    api.mockResolvedValueOnce(status("ondemand", "starting")).mockResolvedValue(null);
+    await mount();
+    expect(seg("オンデマンド")).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5100);
+    });
+    expect(seg("オンデマンド")).toBeFalsy();
   });
 });

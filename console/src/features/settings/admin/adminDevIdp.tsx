@@ -32,7 +32,12 @@ export function DevIdpAdminView() {
     try {
       const d = await getDevIdp();
       if (!isOk(d)) {
-        setErr(d ? errText(d.error) : tr("admin.load_error"));
+        if (d) setErr(errText(d.error));
+        else {
+          // A null body is a failed read that also discards what was on screen.
+          setData(null);
+          setErr(tr("admin.load_error"));
+        }
         return false;
       }
       setErr("");

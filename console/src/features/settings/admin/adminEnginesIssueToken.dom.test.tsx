@@ -185,6 +185,16 @@ describe("issuing a borrowing token (ADR 0079 decision 3)", () => {
     expect(text()).toContain("借用トークンを発行して見せる");
   });
 
+  it("takes the previous member's token off the screen when the next issue answers a null body", async () => {
+    await mount(superAnswer);
+    await issue(ISSUED);
+    await click(btn("表示"));
+    expect(text()).toContain(TOKEN);
+    await issue(null, TENANT, "someone-else");
+    expect(text()).not.toContain(TOKEN);
+    expect(btn("トークンをコピー")).toBeFalsy();
+  });
+
   it("lists what the token opens, and that it is only that", async () => {
     await mount(superAnswer);
     await issue(ISSUED);

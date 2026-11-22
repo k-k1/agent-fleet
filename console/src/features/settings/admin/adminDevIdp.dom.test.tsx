@@ -156,4 +156,15 @@ describe("DevIdpAdminView", () => {
     expect(box().disabled).toBe(true);
     expect(text()).not.toContain("https://af.example.com/dev-idp");
   });
+
+  it("drops what was on screen when the re-read after a lost response answers a null body", async () => {
+    api.mockResolvedValueOnce(status()).mockResolvedValue(null);
+    apiJSON.mockRejectedValue(new TypeError("network"));
+    await mount();
+    await act(async () => {
+      box().click();
+    });
+    expect(box().disabled).toBe(true);
+    expect(text()).not.toContain("https://af.example.com/dev-idp");
+  });
 });
