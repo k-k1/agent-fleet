@@ -795,9 +795,9 @@ func TestSelfUpdateCursorStampsThePublishedTree(t *testing.T) {
 	}
 }
 
-// The previous tree was put back but a link could not be (an unwritable ~/.local/bin): the retry
-// does not take the restored tree for a manual install, and fixes the link.
-func TestCursorRecoverRetriesLinksAfterTheTreeWasRestored(t *testing.T) {
+// A link could not be put back (an unwritable ~/.local/bin): the tree is left as the candidate
+// with its token, so the retry still owns it and fixes the link, then restores the tree.
+func TestCursorRecoverRetriesLinksBeforeRestoringTheTree(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
 	old := dir + ".af-old.4242"
@@ -828,6 +828,45 @@ func TestCursorRecoverRetriesLinksAfterTheTreeWasRestored(t *testing.T) {
 	if tg, _ := os.Readlink(f.local("agent")); tg != prev {
 		t.Fatalf("agent -> %q, want %q", tg, prev)
 	}
+	if !strings.Contains(f.read(filepath.Join(dir, "cursor-agent")), "1.0.0-slot") {
+		t.Fatal("the previous tree was not restored on the retry")
+	}
+}
+
+// A moved-aside directory (any kind of file, not only a regular one) goes back to an empty place
+// beside a foreign tree, and a place that is in use is left alone.
+func TestCursorRecoverForeignTreeRestoresAKeptDirectoryNotOverAnything(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "manual")
+	os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755)
+	keep := f.local("cursor-agent") + ".af-prev.3"
+	f.write(t, filepath.Join(keep, "inner"), "kept dir")
+	yes := true
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.3", Tree: true, HadTree: &yes, ID: "tok",
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "file", Keep: keep}}}
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if f.read(filepath.Join(f.local("cursor-agent"), "inner")) != "kept dir" {
+		t.Fatal("the directory did not come back")
+	}
+	// In use: the manual installer's launcher stays, the kept item stays too.
+	os.RemoveAll(f.local("cursor-agent"))
+	f.write(t, f.local("cursor-agent"), "mine")
+	f.write(t, filepath.Join(keep, "inner"), "kept dir")
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if f.read(f.local("cursor-agent")) != "mine" {
+		t.Fatal("a launcher in use was overwritten")
+	}
 }
 
 // An installer's read-only (0555) staged tree still gets its token, and keeps its mode.
@@ -839,8 +878,20 @@ func TestStampTreeKeepsAReadOnlyRoot(t *testing.T) {
 	if _, err := stampTree(p); err != nil {
 		t.Fatal(err)
 	}
-	if fi, _ := os.Stat(p); fi.Mode().Perm() != 0o555 {
-		t.Fatalf("mode %v", fi.Mode().Perm())
+	if fi, _ := os.Stat(p); fi.Mode() != os.ModeDir|0o555 {
+		t.Fatalf("mode %v", fi.Mode())
+	}
+	// setgid survives too.
+	q := filepath.Join(t.TempDir(), "sg")
+	os.Mkdir(q, 0o755)
+	os.Chmod(q, 0o555|os.ModeSetgid)
+	defer os.Chmod(q, 0o755)
+	want, _ := os.Stat(q)
+	if _, err := stampTree(q); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.Stat(q); got.Mode() != want.Mode() {
+		t.Fatalf("mode %v, want %v", got.Mode(), want.Mode())
 	}
 }
 

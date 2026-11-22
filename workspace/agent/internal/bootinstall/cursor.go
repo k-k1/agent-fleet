@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"unicode/utf8"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/installx"
 )
 
@@ -994,34 +996,39 @@ type cursorMarker struct {
 	// by hand after an interruption is never touched. Empty in a marker written before it existed
 	// (Dir is then acted on as before).
 	ID string `json:"id,omitempty"`
-	// Restored: recovery already put the previous tree back, so the tree at Dir is no longer
-	// the candidate and carries no token; only the links are left to retry.
-	Restored bool `json:"restored,omitempty"`
 }
 
 // cursorIDFile is the token's name inside the staged tree.
 const cursorIDFile = ".af-update-id"
 
 // stampTree writes a fresh token into the staged tree at p and returns it.
-func stampTree(p string) (string, error) {
+func stampTree(p string) (id string, err error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
 	}
-	id := hex.EncodeToString(b[:])
+	id = hex.EncodeToString(b[:])
 	// An installer may finish the tree read-only (0555): give the root owner-write for the one
-	// file, then put the mode back before it is published.
-	if fi, err := os.Stat(p); err == nil && fi.Mode().Perm()&0o200 == 0 {
-		if err := os.Chmod(p, fi.Mode().Perm()|0o200); err != nil {
+	// file and restore the exact mode (setgid and sticky bits included) before it is published.
+	fi, serr := os.Stat(p)
+	if serr != nil {
+		return "", serr
+	}
+	if fi.Mode().Perm()&0o200 == 0 {
+		if err := os.Chmod(p, fi.Mode()|0o200); err != nil {
 			return "", err
 		}
-		defer os.Chmod(p, fi.Mode().Perm())
+		defer func() {
+			if rerr := os.Chmod(p, fi.Mode()); rerr != nil && err == nil {
+				id, err = "", rerr
+			}
+		}()
 	}
 	// Exclusive and not following links: an unpacked file of the same name must fail the update, not
 	// be written through.
-	f, err := os.OpenFile(filepath.Join(p, cursorIDFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
-	if err != nil {
-		return "", err
+	f, oerr := os.OpenFile(filepath.Join(p, cursorIDFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
+	if oerr != nil {
+		return "", oerr
 	}
 	_, werr := f.WriteString(id)
 	if cerr := f.Close(); werr == nil {
@@ -1181,54 +1188,26 @@ func (e Env) cursorRecover() error {
 	}
 	var errs []error
 	foreign := false
-	if m.Tree && !m.Restored {
+	if m.Tree {
 		if _, derr := os.Lstat(m.Dir); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
 			// Not knowing what is at Dir must not read as "empty" or "ours": retry at the next start.
 			return fmt.Errorf("cursor: cannot look at %s: %v", m.Dir, derr)
-		} else if owner, oerr := m.dirOwner(m.Dir); derr == nil && oerr != nil {
-			return fmt.Errorf("cursor: cannot read the update token in %s: %v", m.Dir, oerr)
-		} else if derr == nil && owner == "foreign" {
-			// Someone installed this version by hand after the interruption: it owns Dir and its
-			// launchers. Neither remove it, nor put the previous tree (the same version) over it, nor
-			// repoint its links; a kept previous tree stays where it is.
-			foreign = true
-			fmt.Fprintf(e.Stderr, "cursor: %s is not the tree this update staged; leaving it and its launchers (any previous tree stays at %s)\n", m.Dir, m.Old)
-		} else if _, lerr := os.Lstat(m.Old); lerr == nil {
-			// The candidate is moved aside whole before the old tree goes back: removing it in
-			// place can fail on a read-only subtree and would leave it at the final path.
-			bad := fmt.Sprintf("%s.af-bad.%d", m.Dir, os.Getpid())
-			removeTree(bad)
-			moved := true
-			if _, derr := os.Lstat(m.Dir); derr == nil {
-				if rerr := os.Rename(m.Dir, bad); rerr != nil {
-					moved = false
-					errs = append(errs, fmt.Errorf("cursor: cannot move %s aside; the previous tree is left at %s: %v", m.Dir, m.Old, rerr))
-				}
+		} else if derr == nil {
+			owner, oerr := m.dirOwner(m.Dir)
+			if oerr != nil {
+				return fmt.Errorf("cursor: cannot read the update token in %s: %v", m.Dir, oerr)
 			}
-			if moved {
-				if rerr := restoreTree(m.Old, m.Dir); rerr != nil {
-					errs = append(errs, fmt.Errorf("cursor: the previous tree is left at %s: %v", m.Old, rerr))
-				} else {
-					removeTree(bad)
-				}
+			if owner == "foreign" {
+				// Someone installed this version by hand after the interruption: it owns Dir and its
+				// launchers. Neither remove it, nor put the previous tree (the same version) over it,
+				// nor repoint its links; a kept previous tree stays where it is.
+				foreign = true
+				fmt.Fprintf(e.Stderr, "cursor: %s is not the tree this update staged; leaving it and its launchers (any previous tree stays at %s)\n", m.Dir, m.Old)
 			}
-		} else if !*m.HadTree && errors.Is(lerr, fs.ErrNotExist) {
-			removeTree(m.Dir) // only the candidate this update published was ever there
-			if _, derr := os.Lstat(m.Dir); !errors.Is(derr, fs.ErrNotExist) {
-				errs = append(errs, fmt.Errorf("cursor: cannot remove the unverified tree %s", m.Dir))
-			}
-		} else if !errors.Is(lerr, fs.ErrNotExist) {
-			errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", m.Old, lerr))
 		}
 	}
-	if m.Tree && !m.Restored && !foreign && len(errs) == 0 {
-		// The tree is settled; if a link below fails, the retry must not mistake the restored
-		// previous tree (it has no token) for someone else's.
-		m.Restored = true
-		if err := e.cursorWriteMarker(m); err != nil {
-			errs = append(errs, err)
-		}
-	}
+	// Links first, the tree last: the candidate keeps its token until every link is back, so a
+	// retry after a failed link still knows the tree at Dir is ours.
 	for _, l := range m.Links {
 		if foreign {
 			// The manual install owns Dir and the links it made; only a regular file this
@@ -1242,11 +1221,10 @@ func (e Env) cursorRecover() error {
 				case perr != nil && !errors.Is(perr, fs.ErrNotExist):
 					errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Path, perr))
 				case kerr == nil && perr != nil:
-					// A hard link never replaces what a manual installer put there meanwhile.
-					if err := os.Link(l.Keep, l.Path); err != nil && !errors.Is(err, fs.ErrExist) {
+					// NOREPLACE: never overwrite what a manual installer put there meanwhile; a
+					// rename also takes a directory or any other kind of file.
+					if err := unix.Renameat2(unix.AT_FDCWD, l.Keep, unix.AT_FDCWD, l.Path, unix.RENAME_NOREPLACE); err != nil && !errors.Is(err, fs.ErrExist) {
 						errs = append(errs, fmt.Errorf("cursor: the previous %s is left at %s: %v", l.Path, l.Keep, err))
-					} else if err == nil {
-						os.Remove(l.Keep)
 					}
 				}
 			}
@@ -1280,6 +1258,36 @@ func (e Env) cursorRecover() error {
 			case rerr != nil && !errors.Is(rerr, fs.ErrNotExist) && !errors.Is(rerr, syscall.EINVAL):
 				errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Path, rerr))
 			}
+		}
+	}
+	// Not while a link is still unrestored: the candidate keeps its token for the retry.
+	if m.Tree && !foreign && len(errs) == 0 {
+		if _, lerr := os.Lstat(m.Old); lerr == nil {
+			// The candidate is moved aside whole before the old tree goes back: removing it in
+			// place can fail on a read-only subtree and would leave it at the final path.
+			bad := fmt.Sprintf("%s.af-bad.%d", m.Dir, os.Getpid())
+			removeTree(bad)
+			moved := true
+			if _, derr := os.Lstat(m.Dir); derr == nil {
+				if rerr := os.Rename(m.Dir, bad); rerr != nil {
+					moved = false
+					errs = append(errs, fmt.Errorf("cursor: cannot move %s aside; the previous tree is left at %s: %v", m.Dir, m.Old, rerr))
+				}
+			}
+			if moved {
+				if rerr := restoreTree(m.Old, m.Dir); rerr != nil {
+					errs = append(errs, fmt.Errorf("cursor: the previous tree is left at %s: %v", m.Old, rerr))
+				} else {
+					removeTree(bad)
+				}
+			}
+		} else if !*m.HadTree && errors.Is(lerr, fs.ErrNotExist) {
+			removeTree(m.Dir) // only the candidate this update published was ever there
+			if _, derr := os.Lstat(m.Dir); !errors.Is(derr, fs.ErrNotExist) {
+				errs = append(errs, fmt.Errorf("cursor: cannot remove the unverified tree %s", m.Dir))
+			}
+		} else if !errors.Is(lerr, fs.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", m.Old, lerr))
 		}
 	}
 	if len(errs) > 0 {
