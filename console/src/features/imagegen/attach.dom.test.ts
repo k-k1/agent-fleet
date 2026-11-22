@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 const calls: string[] = [];
 let putStatus = 200;
 let created: Record<string, unknown> = { name: "snew001" };
+let createGate: Promise<void> | null = null;
 let current: { title: string; updated_at: string } | null = null;
 vi.mock("../../core/api/client.ts", () => ({
   raw: async (path: string, init?: { method?: string }) => {
@@ -15,6 +16,7 @@ vi.mock("../../core/api/client.ts", () => ({
   },
   apiJSON: async (path: string, method: string, body: { studio?: string }) => {
     calls.push(`${method} ${path} studio=${body.studio}`);
+    if (createGate) await createGate;
     return created;
   },
   errText: () => "",
@@ -52,7 +54,15 @@ describe("switching the studio's agent", () => {
 
   it("refetches the repo list after a worktree create, and not for an in-place one", async () => {
     repoRefresh.mockClear();
-    await attachAgent({ studioId: "st1", draft: () => ({}), opts: { dir: "/r", kind: "codex", driver: "managed", worktree: true } as never });
+    let release!: () => void;
+    createGate = new Promise<void>((r) => (release = r));
+    const pending = attachAgent({ studioId: "st1", draft: () => ({}), opts: { dir: "/r", kind: "codex", driver: "managed", worktree: true } as never });
+    await new Promise((r) => setTimeout(r, 20));
+    // The create has not answered: a refetch now would still read the placeholder.
+    expect(repoRefresh).not.toHaveBeenCalled();
+    release();
+    await pending;
+    createGate = null;
     expect(repoRefresh).toHaveBeenCalledTimes(1);
     await attachAgent({ studioId: "st1", draft: () => ({}), opts: { dir: "/r", kind: "codex", driver: "managed", worktree: false } as never });
     expect(repoRefresh).toHaveBeenCalledTimes(1);

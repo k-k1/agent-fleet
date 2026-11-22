@@ -768,13 +768,15 @@ func (c *createRun) publish(m session.Meta) bool {
 // session" record gitx wrote at creation, and never names a session that does not exist. A failed
 // write only leaves the copy "no session", which clients never treat as proof.
 //
-// WriteMeta reports no failure, so the meta is read back first: naming a session whose meta never
-// reached disk would make a copy's creator one that is listed nowhere.
+// WriteMeta reports no failure, so the meta file is looked for first: naming a session whose meta
+// never reached disk would make a copy's creator one that is listed nowhere. Only a file that is
+// absent skips the write; any other stat error proceeds, as before the check, so a transient read
+// fault cannot leave the copy "no session" for good.
 func (c *createRun) recordCreator() {
 	if c.createdWorktree == "" {
 		return
 	}
-	if _, ok := session.ReadMeta(c.name); !ok {
+	if _, err := os.Stat(session.MetaPath(c.name)); os.IsNotExist(err) {
 		log.Printf("not recording %s as creator of %s: its meta is not on disk", c.name, c.createdWorktree)
 		return
 	}
