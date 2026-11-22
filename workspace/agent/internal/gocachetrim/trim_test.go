@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // fakeGoCache builds a cache tree: entries (dir/name, age, size) plus the top-level files.
@@ -359,5 +361,57 @@ func TestTrimDoesNotFollowAParentSwappedBeforeOpen(t *testing.T) {
 	g.pass()
 	if !exists(victim) {
 		t.Fatal("a swapped parent directory was followed")
+	}
+}
+
+// The cache directory exchanged for another real directory (no link anywhere) between the
+// check and the open is refused by the identity check.
+func TestTrimRefusesADirectoryExchangedBeforeOpen(t *testing.T) {
+	now := time.Now()
+	day := 24 * time.Hour
+	dir := fakeGoCache(t, now, map[string]time.Duration{"ab/a-a": 9 * day})
+	other := filepath.Join(filepath.Dir(dir), "other-go-build")
+	victim := filepath.Join(other, "ab", "a-a")
+	_ = os.MkdirAll(filepath.Dir(victim), 0o755)
+	_ = os.WriteFile(victim, []byte("keep"), 0o644)
+	_ = os.Chtimes(victim, now.Add(-9*day), now.Add(-9*day))
+	g := trimmerFor(dir, now, 1000, 50000, true)
+	g.beforeOpen = func(real string) {
+		_ = os.Rename(real, real+".moved")
+		_ = os.Rename(other, real)
+	}
+	g.pass()
+	if !exists(filepath.Join(dir, "ab", "a-a")) {
+		t.Fatal("a directory exchanged before the open was trimmed")
+	}
+}
+
+// Where openat2 is unavailable the trim still works, and a swap is still refused.
+func TestTrimFallsBackWhenOpenat2IsUnavailable(t *testing.T) {
+	orig := openat2Fn
+	openat2Fn = func(int, string, *unix.OpenHow) (int, error) { return -1, unix.ENOSYS }
+	defer func() { openat2Fn = orig }()
+	now := time.Now()
+	day := 24 * time.Hour
+	dir := fakeGoCache(t, now, map[string]time.Duration{"ab/a-a": 9 * day})
+	if _, trimmed, _ := trimmerFor(dir, now, 1000, 50000, true).pass(); !trimmed || exists(filepath.Join(dir, "ab", "a-a")) {
+		t.Fatal("the trim must work without openat2")
+	}
+	// A parent swapped for a link is caught by the identity check in the fallback.
+	dir = fakeGoCache(t, now, map[string]time.Duration{"ab/a-a": 9 * day})
+	other := t.TempDir()
+	victim := filepath.Join(other, "go-build", "ab", "a-a")
+	_ = os.MkdirAll(filepath.Dir(victim), 0o755)
+	_ = os.WriteFile(victim, []byte("keep"), 0o644)
+	_ = os.Chtimes(victim, now.Add(-9*day), now.Add(-9*day))
+	g := trimmerFor(dir, now, 1000, 50000, true)
+	g.beforeOpen = func(real string) {
+		parent := filepath.Dir(real)
+		_ = os.Rename(parent, parent+".moved")
+		_ = os.Symlink(other, parent)
+	}
+	g.pass()
+	if !exists(victim) {
+		t.Fatal("the fallback followed a swapped parent")
 	}
 }

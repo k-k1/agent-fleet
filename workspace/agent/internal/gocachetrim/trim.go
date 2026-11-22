@@ -137,6 +137,29 @@ func statNoFollow(dir *os.File, name string) (st unix.Stat_t, err error) {
 	return st, err
 }
 
+// openat2Fn is unix.Openat2; a var so a test can make it fail the way an old kernel or a
+// seccomp profile does.
+var openat2Fn = unix.Openat2
+
+// openRoot opens the cache directory. real has no links in it (EvalSymlinks), so
+// RESOLVE_NO_SYMLINKS refuses a link at ANY element, not just the last. Where openat2 is
+// unavailable (kernel before 5.6, or a seccomp profile that denies it) it falls back to an
+// O_NOFOLLOW open, which covers only the last element; the identity check in pass() then
+// catches a swapped parent.
+func openRoot(real string) (*os.File, error) {
+	fd, err := openat2Fn(unix.AT_FDCWD, real, &unix.OpenHow{
+		Flags:   unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC,
+		Resolve: unix.RESOLVE_NO_SYMLINKS,
+	})
+	if err == unix.ENOSYS || err == unix.EPERM {
+		return openDirNoFollow(unix.AT_FDCWD, real)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), real), nil
+}
+
 func isRegular(st unix.Stat_t) bool { return st.Mode&unix.S_IFMT == unix.S_IFREG }
 
 // pass runs one check and, when home is low, one trim. done=false means it could not reach the
@@ -159,22 +182,25 @@ func (g trimmer) pass() (res Result, trimmed, done bool) {
 	if err != nil || !sameVolumeFn(real, paths.HomeDir()) {
 		return res, false, true
 	}
+	// What was checked is what gets opened: the directory's identity is taken now and compared
+	// with the opened descriptor, so a directory exchanged for another one (no link involved)
+	// between the check and the open is refused as well.
+	var want unix.Stat_t
+	if unix.Stat(real, &want) != nil {
+		return res, false, true
+	}
 	if g.beforeOpen != nil {
 		g.beforeOpen(real)
 	}
-	// real has no links in it (EvalSymlinks), so RESOLVE_NO_SYMLINKS refuses a link at ANY
-	// element, not just the last one: a parent such as ~/.cache swapped for a link is caught too.
-	rfd, err := unix.Openat2(unix.AT_FDCWD, real, &unix.OpenHow{
-		Flags:   unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC,
-		Resolve: unix.RESOLVE_NO_SYMLINKS,
-	})
+	root, err := openRoot(real)
 	if err != nil {
+		log.Printf("go-build: cannot open the cache directory for trimming: %v", err)
 		return res, false, true
 	}
-	root := os.NewFile(uintptr(rfd), real)
 	defer root.Close()
 	var home, rst unix.Stat_t
-	if unix.Stat(paths.HomeDir(), &home) != nil || unix.Fstat(int(root.Fd()), &rst) != nil || home.Dev != rst.Dev {
+	if unix.Stat(paths.HomeDir(), &home) != nil || unix.Fstat(int(root.Fd()), &rst) != nil ||
+		home.Dev != rst.Dev || want.Dev != rst.Dev || want.Ino != rst.Ino {
 		return res, false, true
 	}
 	target := int64(toFrac * float64(total))
