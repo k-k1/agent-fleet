@@ -40,7 +40,7 @@ import (
 const engineRemotePollInterval = 2 * time.Minute
 
 // engineRemoteTokenRenewAhead is how long before expiry a far session token is replaced. The TTL
-// the far side mints is 30 days (engine_token.go), so this is generous by three orders of
+// the far side mints is 30 days (internal/engine/token.go), so this is generous by three orders of
 // magnitude and exists only so that a token never expires mid-request.
 const engineRemoteTokenRenewAhead = 24 * time.Hour
 

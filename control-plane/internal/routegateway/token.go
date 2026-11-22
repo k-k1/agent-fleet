@@ -3,7 +3,7 @@ package routegateway
 // The CP route token of ADR 0129 D2 (G3): what the Agent presents to
 // the CP route gateway on a provided route's behalf.
 //
-// Two tokens, the engine pair's split (engine_token.go):
+// Two tokens, the engine pair's split (internal/engine/token.go):
 //
 //   - The ISSUING token (afri_) is per membership, deterministic, injected into the Workspace at
 //     start only when the CP runs with AF_PROVIDED_ROUTES=1, and good for nothing but buying the

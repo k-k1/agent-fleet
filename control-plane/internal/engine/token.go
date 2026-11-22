@@ -1,6 +1,6 @@
-package main
+package engine
 
-// engine_token.go — the credential a Workspace presents to /engine/* (ADR 0071 decision 4,
+// token.go — the credential a Workspace presents to /engine/* (ADR 0071 decision 4,
 // open question 2).
 //
 // Two tokens, and the split is the whole point.
@@ -36,20 +36,21 @@ import (
 	"time"
 )
 
-func engineSignKey(master32 []byte) []byte {
+// SignKey derives the token signing key from the 32-byte master secret.
+func SignKey(master32 []byte) []byte {
 	mac := hmac.New(sha256.New, master32)
 	mac.Write([]byte("af-engine-token-sign/v1"))
 	return mac.Sum(nil)
 }
 
-// mintEngineIssueToken returns the per-membership issuing token. Deterministic, so
+// MintIssueToken returns the per-membership issuing token. Deterministic, so
 // re-injecting it on every container start is idempotent.
-func mintEngineIssueToken(signKey []byte, membershipID string) string {
+func MintIssueToken(signKey []byte, membershipID string) string {
 	body := base64.RawURLEncoding.EncodeToString([]byte(membershipID))
-	return "afei_" + body + "." + engineTag(signKey, "issue", membershipID)
+	return "afei_" + body + "." + tag(signKey, "issue", membershipID)
 }
 
-func verifyEngineIssueToken(signKey []byte, token string) (membershipID string, ok bool) {
+func VerifyIssueToken(signKey []byte, token string) (membershipID string, ok bool) {
 	body, hasPrefix := strings.CutPrefix(strings.TrimSpace(token), "afei_")
 	if !hasPrefix {
 		return "", false
@@ -63,13 +64,13 @@ func verifyEngineIssueToken(signKey []byte, token string) (membershipID string, 
 		return "", false
 	}
 	mid := string(idRaw)
-	if !hmac.Equal([]byte(body[dot+1:]), []byte(engineTag(signKey, "issue", mid))) {
+	if !hmac.Equal([]byte(body[dot+1:]), []byte(tag(signKey, "issue", mid))) {
 		return "", false
 	}
 	return mid, true
 }
 
-// engineSessionTokenTTL is how long a minted token stays valid. It is NOT tied to a session's
+// SessionTokenTTL is how long a minted token stays valid. It is NOT tied to a session's
 // own lifetime: nothing revokes a token when a session ends, so the clock is the only bound
 // there is.
 //
@@ -82,68 +83,68 @@ func verifyEngineIssueToken(signKey []byte, token string) (membershipID string, 
 // the design: this value is readable by a model, and it opens `engine:<key>` and nothing else
 // — no git, no MCP, no memos — for a bounded time, against a PAT that opens all of them
 // forever.
-var engineSessionTokenTTL = 30 * 24 * time.Hour
+const SessionTokenTTL = 30 * 24 * time.Hour
 
-// mintEngineSessionToken returns a token bound to one membership, one session and one
+// MintSessionToken returns a token bound to one membership, one session and one
 // engine key, expiring at exp.
-func mintEngineSessionToken(signKey []byte, membershipID, session, key string, exp time.Time) string {
-	claims := engineClaimString(membershipID, session, key, exp.Unix())
-	return "afe_" + base64.RawURLEncoding.EncodeToString([]byte(claims)) + "." + engineTag(signKey, "session", claims)
+func MintSessionToken(signKey []byte, membershipID, session, key string, exp time.Time) string {
+	claims := claimString(membershipID, session, key, exp.Unix())
+	return "afe_" + base64.RawURLEncoding.EncodeToString([]byte(claims)) + "." + tag(signKey, "session", claims)
 }
 
-// engineSessionClaims is what a verified session token says about its bearer. Nothing here
+// SessionClaims is what a verified session token says about its bearer. Nothing here
 // is trusted beyond the tag: tenant and role come from a live store lookup by the caller.
-type engineSessionClaims struct {
+type SessionClaims struct {
 	MembershipID string
 	Session      string
 	Key          string // the engine this token opens, and only this one
 	Expires      time.Time
 }
 
-// verifyEngineSessionToken checks the tag and the expiry. An expired token is refused here
+// VerifySessionToken checks the tag and the expiry. An expired token is refused here
 // rather than by the caller — "the tag was fine, somebody else should have checked the
 // clock" is how an expiry becomes decorative.
-func verifyEngineSessionToken(signKey []byte, token string, now time.Time) (engineSessionClaims, bool) {
+func VerifySessionToken(signKey []byte, token string, now time.Time) (SessionClaims, bool) {
 	body, hasPrefix := strings.CutPrefix(strings.TrimSpace(token), "afe_")
 	if !hasPrefix {
-		return engineSessionClaims{}, false
+		return SessionClaims{}, false
 	}
 	dot := strings.LastIndexByte(body, '.')
 	if dot < 0 {
-		return engineSessionClaims{}, false
+		return SessionClaims{}, false
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(body[:dot])
 	if err != nil {
-		return engineSessionClaims{}, false
+		return SessionClaims{}, false
 	}
 	claims := string(raw)
-	if !hmac.Equal([]byte(body[dot+1:]), []byte(engineTag(signKey, "session", claims))) {
-		return engineSessionClaims{}, false
+	if !hmac.Equal([]byte(body[dot+1:]), []byte(tag(signKey, "session", claims))) {
+		return SessionClaims{}, false
 	}
 	parts := strings.Split(claims, "\x00")
 	if len(parts) != 4 {
-		return engineSessionClaims{}, false
+		return SessionClaims{}, false
 	}
 	secs, err := strconv.ParseInt(parts[3], 10, 64)
 	if err != nil || secs <= 0 {
-		return engineSessionClaims{}, false
+		return SessionClaims{}, false
 	}
 	exp := time.Unix(secs, 0)
 	if !now.Before(exp) {
-		return engineSessionClaims{}, false
+		return SessionClaims{}, false
 	}
-	return engineSessionClaims{MembershipID: parts[0], Session: parts[1], Key: parts[2], Expires: exp}, true
+	return SessionClaims{MembershipID: parts[0], Session: parts[1], Key: parts[2], Expires: exp}, true
 }
 
-// engineClaimString joins the claims with NUL, which cannot occur in any of them, so no
+// claimString joins the claims with NUL, which cannot occur in any of them, so no
 // membership id and session name can be re-cut into a different pair.
-func engineClaimString(membershipID, session, key string, exp int64) string {
+func claimString(membershipID, session, key string, exp int64) string {
 	return strings.Join([]string{membershipID, session, key, strconv.FormatInt(exp, 10)}, "\x00")
 }
 
-// engineTag binds the tag to the token KIND as well as to its body, so an issuing token can
+// tag binds the tag to the token KIND as well as to its body, so an issuing token can
 // never be replayed as a session token or the other way round.
-func engineTag(signKey []byte, kind, body string) string {
+func tag(signKey []byte, kind, body string) string {
 	mac := hmac.New(sha256.New, signKey)
 	mac.Write([]byte(kind))
 	mac.Write([]byte{0})
@@ -151,9 +152,9 @@ func engineTag(signKey []byte, kind, body string) string {
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
 }
 
-// engineSessionMembership reads the membership id a session token names, without trusting it:
-// the tag is checked under the epoch that id has (engineGateway.verifyEngineSession).
-func engineSessionMembership(token string) (string, bool) {
+// SessionMembership reads the membership id a session token names, without trusting it:
+// the tag is checked under the epoch that id has (engineGateway.verifyEngineSession in package main).
+func SessionMembership(token string) (string, bool) {
 	body, ok := strings.CutPrefix(strings.TrimSpace(token), "afe_")
 	if !ok {
 		return "", false

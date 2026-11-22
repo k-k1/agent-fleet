@@ -11,15 +11,18 @@ import (
 )
 
 type (
-	engineDef          = engine.Def
-	engineTable        = engine.Table
-	engineIngestDef    = engine.IngestDef
-	engineClass        = engine.Class
-	engineOfferAttempt = engine.OfferAttempt
-	engineOfferRun     = engine.OfferRun
+	engineDef           = engine.Def
+	engineTable         = engine.Table
+	engineIngestDef     = engine.IngestDef
+	engineClass         = engine.Class
+	engineOfferAttempt  = engine.OfferAttempt
+	engineOfferRun      = engine.OfferRun
+	engineSessionClaims = engine.SessionClaims
 )
 
 const (
+	engineSessionTokenTTL = engine.SessionTokenTTL
+
 	engineOriginEnv   = engine.OriginEnv
 	engineOriginPanel = engine.OriginPanel
 
@@ -79,3 +82,23 @@ func engineClassesHaveSpot(list []engineClass) bool { return engine.ClassesHaveS
 func engineClassHasType(c engineClass, instanceType string) bool {
 	return engine.ClassHasType(c, instanceType)
 }
+
+func engineSignKey(master32 []byte) []byte { return engine.SignKey(master32) }
+
+func mintEngineIssueToken(signKey []byte, membershipID string) string {
+	return engine.MintIssueToken(signKey, membershipID)
+}
+
+func verifyEngineIssueToken(signKey []byte, token string) (string, bool) {
+	return engine.VerifyIssueToken(signKey, token)
+}
+
+func mintEngineSessionToken(signKey []byte, membershipID, session, key string, exp time.Time) string {
+	return engine.MintSessionToken(signKey, membershipID, session, key, exp)
+}
+
+func verifyEngineSessionToken(signKey []byte, token string, now time.Time) (engineSessionClaims, bool) {
+	return engine.VerifySessionToken(signKey, token, now)
+}
+
+func engineSessionMembership(token string) (string, bool) { return engine.SessionMembership(token) }
