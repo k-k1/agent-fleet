@@ -8,7 +8,15 @@
 // change list's layout (memoryChanges.tsx) on purpose.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, apiJSON, errDetail, isTransientErr } from "../../../core/api/client.ts";
+import { errDetail, isTransientErr } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import {
+  decideConsolProposal,
+  getConsolProposal,
+  getConsolProposals,
+  getConsolStatus,
+  runConsolidation,
+} from "./memoryApi.ts";
 import { useMemoryStore } from "../../memory/store.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -25,7 +33,6 @@ import type {
   ConsolStatus,
 } from "./memoryTypes.ts";
 
-const BASE = "api/agents/memory-consolidation";
 const RUN_POLL_MS = 3000;
 
 /** Go's Duration.String ("3h0m0s", "1m30.5s", "500ms") in milliseconds; 0 when it is not one. */
@@ -142,16 +149,16 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
     setErr(false);
   }, [tenant]);
   const load = useCallback(async (signal: AbortSignal) => {
-    const res = await api(BASE);
+    const res = await getConsolStatus();
     if (signal.aborted) return true;
     // Right after a start the Agent answers 5xx for a moment: retried, never settled as a failure.
     if (isTransientErr(res)) return false;
-    if (res?.error) {
+    if (!isOk(res)) {
       setErr(true);
       return true;
     }
     setErr(false);
-    setSt(res as ConsolStatus);
+    setSt(res);
     return true;
   }, []);
   useRetryLoad(async (signal) => (active ? load(signal) : true), [reload, active, tenant, load]);
@@ -200,8 +207,8 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
     setStarting(true);
     try {
       // No id to repeat in the query: the CP audit row for this write has no target.
-      const res = await apiJSON(`${BASE}/run`, "POST", all ? { all: true } : {});
-      if (res?.error) toast(refusalText(tr, res.error.code, errDetail(res.error)));
+      const res = await runConsolidation(all);
+      if (!isOk(res)) toast(refusalText(tr, res.error.code, errDetail(res.error)));
       else toast(tr("mem.cs_run_started"), { kind: "success" });
     } catch {
       // The request may or may not have reached the Agent: the re-read below shows which.
@@ -304,11 +311,11 @@ export function ProposalDetail({
     let live = true;
     setView(null);
     setErr("");
-    api(`${BASE}/proposal?id=${encodeURIComponent(id)}`)
+    getConsolProposal(id)
       .then((r) => {
         if (!live) return;
-        if (r?.error) setErr(refusalText(tr, r.error.code, errDetail(r.error)));
-        else setView(r as ConsolProposalView);
+        if (!isOk(r)) setErr(refusalText(tr, r.error.code, errDetail(r.error)));
+        else setView(r);
       })
       .catch(() => live && setErr(tr("mem.cs_load_failed")));
     return () => {
@@ -317,8 +324,7 @@ export function ProposalDetail({
   }, [id, version, tr]);
 
   // The id goes in the query as well as the body: the CP audit ledger reads the URL only.
-  const send = (verb: "approve" | "reject" | "retry") =>
-    apiJSON(`${BASE}/proposals/${verb}?proposal=${encodeURIComponent(id)}`, "POST", { id });
+  const send = (verb: "approve" | "reject" | "retry") => decideConsolProposal(verb, id);
 
   // After any refusal the proposal is re-read: a decided or expired one must not keep its buttons.
   const refused = async (code: string | undefined, fallback: string) => {
@@ -353,7 +359,7 @@ export function ProposalDetail({
     setBusy(true);
     try {
       const res = await send(verb);
-      if (res?.error) return await refused(res.error.code, errDetail(res.error));
+      if (!isOk(res)) return await refused(res.error.code, errDetail(res.error));
       toast(verb === "approve" ? tr("mem.cs_done_approve") : verb === "reject" ? tr("mem.cs_done_reject") : tr("mem.cs_done_retry"), {
         kind: "success",
       });
@@ -446,14 +452,13 @@ export function ProposalsPanel({ reload, onChanged }: { reload: number; onChange
   const [sel, setSel] = useState("");
   const [version, setVersion] = useState(0);
 
-  const load = useCallback(async (signal: AbortSignal) => {
-    const res = await api(`${BASE}/proposals`);
+  useRetryLoad(async (signal) => {
+    const res = await getConsolProposals();
     if (signal.aborted) return true;
-    setLoadErr(res?.error ? errDetail(res.error) : "");
-    setList(res?.error ? [] : (res?.proposals ?? []));
+    setLoadErr(isOk(res) ? "" : errDetail(res.error));
+    setList(isOk(res) ? (res.proposals ?? []) : []);
     return true;
-  }, []);
-  useRetryLoad(load, [reload, version]);
+  }, [reload, version]);
 
   const shown = useMemo(() => (list ?? []).filter((p) => matchesFilter(p.status, filter)), [list, filter]);
   useEffect(() => {

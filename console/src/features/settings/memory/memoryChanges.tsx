@@ -6,9 +6,11 @@
 // Only the newest change of a memory offers the way back; the Agent refuses an older one
 // anyway, because undoing it would silently drop what came after.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
-import { useRetryLoad } from "../../../lib/retryLoad.ts";
+import { useEffect, useRef, useState } from "react";
+import { errDetail, errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { useApiLoad, useApiOnce } from "../parts/useApiLoad.ts";
+import { getMemoryChangeDiff, getMemoryChanges, revertMemoryChange, revertReviewRun } from "./memoryApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Diff } from "../../scm/GitDiff.tsx";
@@ -72,16 +74,13 @@ export function ExternalMemorySwitch() {
 export function ChangeDiffBody({ commit }: { commit: string }) {
   const tr = useT();
   const [diff, setDiff] = useState<ChangeDiff | null>(null);
-  useEffect(() => {
-    let live = true;
-    setDiff(null);
-    api("api/agents/memory/entries/diff?commit=" + encodeURIComponent(commit))
-      .then((d) => live && setDiff(d?.error ? { diff: "" } : d))
-      .catch(() => live && setDiff({ diff: "" }));
-    return () => {
-      live = false;
-    };
-  }, [commit]);
+  useEffect(() => setDiff(null), [commit]);
+  useApiOnce(
+    () => getMemoryChangeDiff(commit),
+    (d) => setDiff(isOk(d) ? d : { diff: "" }),
+    () => setDiff({ diff: "" }),
+    [commit],
+  );
   if (diff === null) return <pre className="diff muted">{tr("common.loading")}</pre>;
   if (diff.withheld)
     return (
@@ -98,10 +97,6 @@ export function ChangeDiffBody({ commit }: { commit: string }) {
     );
   return <Diff text={diff.diff} embedded wrap />;
 }
-
-// The ids go in the query as well as the body: the CP audit ledger reads the URL only, never the body.
-const revertRun = (run: string) =>
-  apiJSON("api/agents/memory-review/runs/revert?run=" + encodeURIComponent(run), "POST", { run });
 
 /** Rows per page of the Changes view. */
 const PAGE = 100;
@@ -126,40 +121,37 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
   // What "revert this run" did, kept on screen: a conflict is the member's to look at.
   const [runReport, setRunReport] = useState<RunRevertReport | null>(null);
 
-  const load = useCallback(async (signal: AbortSignal) => {
-    const res = await api(`api/agents/memory/entries/changes?limit=${PAGE}`);
-    if (signal.aborted) return true;
-    if (isTransientErr(res)) return false;
-    gen.current++;
-    setMoreBusy(false);
-    setMoreErr(false);
-    setNext(res?.error ? "" : (res?.next ?? ""));
-    // A failed read is said, not shown as an empty history.
-    setLoadErr(res?.error ? errText(res.error) : "");
-    setChanges(res?.error ? [] : (res?.changes ?? []));
-    setWithheld(res?.error ? 0 : (res?.withheld ?? 0));
-    return true;
-  }, []);
-  useRetryLoad(load, [reload, mine]);
+  useApiLoad(
+    () => getMemoryChanges(PAGE),
+    (res) => {
+      gen.current++;
+      setMoreBusy(false);
+      setMoreErr(false);
+      setNext(isOk(res) ? (res.next ?? "") : "");
+      // A failed read is said, not shown as an empty history.
+      setLoadErr(isOk(res) ? "" : errText(res.error));
+      setChanges(isOk(res) ? (res.changes ?? []) : []);
+      setWithheld(isOk(res) ? (res.withheld ?? 0) : 0);
+    },
+    [reload, mine],
+  );
 
   // The next page is a commit cursor, so a change published meanwhile cannot repeat or skip a row.
   const loadOlder = async () => {
     const g = gen.current;
     setMoreBusy(true);
     setMoreErr(false);
-    const res = await api(`api/agents/memory/entries/changes?limit=${PAGE}&before=${encodeURIComponent(next)}`).catch(
-      () => ({ error: true }),
-    );
+    const res = await getMemoryChanges(PAGE, next).catch(() => null);
     if (g !== gen.current) return;
     setMoreBusy(false);
-    if (res?.error) return setMoreErr(true);
-    const older: MemoryChange[] = res?.changes ?? [];
+    if (!isOk(res)) return setMoreErr(true);
+    const older: MemoryChange[] = res.changes ?? [];
     setChanges((prev) => {
       const have = new Set((prev ?? []).map((c) => c.commit));
       return [...(prev ?? []), ...older.filter((c) => !have.has(c.commit))];
     });
-    setWithheld((n) => n + (res?.withheld ?? 0));
-    setNext(res?.next ?? "");
+    setWithheld((n) => n + (res.withheld ?? 0));
+    setNext(res.next ?? "");
   };
 
   useEffect(() => {
@@ -175,12 +167,7 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
     c.authorKind === "member" ? tr("mem.af_by_member") : `${c.authorKind} · ${c.authorSession}`;
 
   // The commit also goes in the query: the CP audit ledger reads the URL only, never the body.
-  const send = (c: MemoryChange, forget: boolean, ack: boolean) =>
-    apiJSON("api/agents/memory/entries/revert?commit=" + encodeURIComponent(c.commit), "POST", {
-      commit: c.commit,
-      forget,
-      ack,
-    });
+  const send = (c: MemoryChange, forget: boolean, ack: boolean) => revertMemoryChange(c.commit, forget, ack);
 
   const act = async (c: MemoryChange, forget: boolean) => {
     const ok = await askConfirm({
@@ -193,7 +180,7 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
     setBusy(true);
     try {
       let res = await send(c, forget, false);
-      if (res?.error?.code === "memory_secret_detected") {
+      if (res.error?.code === "memory_secret_detected") {
         // The earlier text trips the scan now. Only the member may let it through, and only
         // for this one request (ADR 0108 decision 9).
         const findings: SecretFinding[] = res.findings ?? [];
@@ -217,7 +204,7 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
         if (!pass) return;
         res = await send(c, forget, true);
       }
-      if (res?.error) {
+      if (res.error) {
         toast(errDetail(res.error));
         return;
       }
@@ -253,12 +240,12 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
     if (!ok) return;
     setBusy(true);
     try {
-      const res = await revertRun(c.reviewRun);
-      if (res?.error) {
+      const res = await revertReviewRun(c.reviewRun);
+      if (!isOk(res)) {
         toast(errDetail(res.error));
         return;
       }
-      setRunReport(res as RunRevertReport);
+      setRunReport(res);
       setMine((n) => n + 1);
       onChanged();
     } catch {

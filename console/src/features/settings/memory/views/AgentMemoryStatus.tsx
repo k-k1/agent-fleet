@@ -4,7 +4,9 @@
 // here is new API. A read that fails leaves its figure out rather than showing a wrong zero.
 
 import { useCallback, useEffect, useState } from "react";
-import { api, isTransientErr } from "../../../../core/api/client.ts";
+import { isTransientErr } from "../../../../core/api/client.ts";
+import { isOk } from "../../api.ts";
+import { getAutoSync, getMemoryChanges, listMemoryEntries } from "../memoryApi.ts";
 import { useRetryLoad } from "../../../../lib/retryLoad.ts";
 import { useSettings } from "../../../../lib/settings.ts";
 import { useT } from "../../../../lib/i18n/index.ts";
@@ -54,15 +56,15 @@ export function AgentMemoryStatus({
       // Nothing to ask while stopped; the deps re-run this once the workspace is up.
       if (!running) return true;
       const [list, changes, sync] = await Promise.all([
-        api("api/agents/memory/entries/list"),
-        api("api/agents/memory/entries/changes?limit=1"),
-        api("api/agents/memory/auto-sync"),
+        listMemoryEntries(),
+        getMemoryChanges(1),
+        getAutoSync(),
       ]);
       if (signal.aborted) return true;
       if (isTransientErr(list) || isTransientErr(changes) || isTransientErr(sync)) return false;
-      const entries: MemoryListed[] | null = list?.error ? null : (list?.entries ?? []);
-      const st = sync?.error ? undefined : (sync as AutoSyncStatus);
-      const last: MemoryChange | undefined = changes?.error ? undefined : changes?.changes?.[0];
+      const entries: MemoryListed[] | null = isOk(list) ? (list.entries ?? []) : null;
+      const st = isOk(sync) ? sync : undefined;
+      const last: MemoryChange | undefined = isOk(changes) ? changes.changes?.[0] : undefined;
       setFig({
         count: entries ? entries.length : null,
         projects: entries ? new Set(entries.flatMap((m) => (m.project ? [m.project.id] : []))).size : null,

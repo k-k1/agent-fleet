@@ -9,8 +9,10 @@
 // the preview says so before the member confirms. Applying needs the Agent Fleet memory switch on.
 
 import { useCallback, useRef, useState } from "react";
-import { api, apiJSON, errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
-import { useRetryLoad } from "../../../lib/retryLoad.ts";
+import { errDetail, errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { useApiLoad } from "../parts/useApiLoad.ts";
+import { applyMuseImport, getMuseImportPreview, getMuseImportSources } from "./memoryApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
@@ -18,7 +20,7 @@ import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { useSettings } from "../../../lib/settings.ts";
 import { WizardFrame, GroupedPreview, Findings, type WizardStep } from "./memoryWizard.tsx";
 import { IMPORT_BATCH } from "./memoryClaudeImport.tsx";
-import type { ClaudeImportResult, MuseImportItem, MuseImportPreview, MuseImportSource, MuseImportStatus, MuseScope } from "./memoryTypes.ts";
+import type { MuseImportItem, MuseImportPreview, MuseImportSource, MuseImportStatus, MuseScope } from "./memoryTypes.ts";
 
 const STATUSES: MuseImportStatus[] = ["new", "update", "unchanged", "diverged", "forgotten", "secret", "invalid"];
 // An unknown reason from a newer Agent is printed raw rather than breaking the row.
@@ -48,16 +50,15 @@ export function MuseImportPanel({ reload, onChanged, onClose }: { reload: number
     setResult(msg);
   };
 
-  const load = useCallback(async (signal: AbortSignal) => {
-    const res = await api("api/agents/memory/muse-import");
-    if (signal.aborted) return true;
-    if (isTransientErr(res)) return false;
-    setLoadErr(res?.error ? errText(res.error) : "");
-    setSources(res?.error ? [] : (res?.sources ?? []));
-    setWithheld(res?.error ? 0 : (res?.withheld ?? 0));
-    return true;
-  }, []);
-  useRetryLoad(load, [reload, again]);
+  useApiLoad(
+    getMuseImportSources,
+    (res) => {
+      setLoadErr(isOk(res) ? "" : errText(res.error));
+      setSources(isOk(res) ? (res.sources ?? []) : []);
+      setWithheld(isOk(res) ? (res.withheld ?? 0) : 0);
+    },
+    [reload, again],
+  );
 
   // Only the latest request may answer, or the confirm would pair one project with another dir.
   const previewSeq = useRef(0);
@@ -70,13 +71,13 @@ export function MuseImportPanel({ reload, onChanged, onClose }: { reload: number
     // The personal scope is not even read until the member has said it goes to the user scope.
     if (scope === "personal" && !user) return;
     const q = scope === "project" ? "dir=" + encodeURIComponent(d) : "scope=" + scope + "&dir=" + encodeURIComponent(d);
-    const res = await api("api/agents/memory/muse-import/preview?" + q + (scope === "personal" ? "&into=user" : ""));
+    const res = await getMuseImportPreview(q + (scope === "personal" ? "&into=user" : ""));
     if (seq !== previewSeq.current) return;
-    if (res?.error) {
+    if (!isOk(res)) {
       setPreviewErr(errDetail(res.error));
       return;
     }
-    setPreview(res as MuseImportPreview);
+    setPreview(res);
   }, []);
 
   const pick = (k: string) => {
@@ -106,18 +107,18 @@ export function MuseImportPanel({ reload, onChanged, onClose }: { reload: number
       for (let at = 0; at < todo.length; at += IMPORT_BATCH) {
         const items = todo.slice(at, at + IMPORT_BATCH).map((i) => ({ name: i.name, sourceHash: i.sourceHash }));
         // The project id also goes in the query: the CP audit ledger reads the URL only.
-        const res = await apiJSON("api/agents/memory/muse-import?project=" + encodeURIComponent(project), "POST", {
+        const res = await applyMuseImport(project, {
           scope: preview.scope,
           project,
           dir: preview.dir,
           ...(toUser ? { into: "user" } : {}),
           items,
         });
-        if (res?.error) {
+        if (!isOk(res)) {
           notify(errDetail(res.error));
           return;
         }
-        for (const r of (res?.results ?? []) as ClaudeImportResult[]) {
+        for (const r of res.results ?? []) {
           if (r.result === "skipped") skipped++;
           else imported++;
         }

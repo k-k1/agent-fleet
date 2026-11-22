@@ -13,7 +13,9 @@
 // ask there are no counts, and the Agent reconciles when it starts.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { actAutoSync, getAutoSync, getAutoSyncPreview, wakeAutoSync } from "./memoryApi.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { PreviewSection } from "./memoryWizard.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -42,8 +44,8 @@ export function useFlipAgentMemory(): (next: boolean) => Promise<boolean> {
       const to = next ? "on" : "off";
       let preview: AutoSyncPreview | null = null;
       if (running) {
-        const res = await api("api/agents/memory/auto-sync/preview?to=" + to);
-        if (!res?.error) preview = res as AutoSyncPreview;
+        const res = await getAutoSyncPreview(to);
+        if (isOk(res)) preview = res;
       }
       const t = preview?.totals ?? {};
       const detail: string[] = [];
@@ -90,8 +92,8 @@ export function useFlipAgentMemory(): (next: boolean) => Promise<boolean> {
         // The ui-pref reaches the Agent on its own (and wakes the run there). This call is the
         // member's confirmation reaching the audit ledger, and it starts the run without waiting
         // for the next settings sync.
-        const res = await apiJSON("api/agents/memory/auto-sync?action=wake&to=" + to, "POST", { action: "wake" });
-        if (res?.error) toast(errDetail(res.error));
+        const res = await wakeAutoSync(to);
+        if (!isOk(res)) toast(errDetail(res.error));
       }
       return true;
     },
@@ -119,8 +121,9 @@ export function AutoSyncPanel() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const res = await api("api/agents/memory/auto-sync");
-    if (alive.current && !res?.error) setSt(res as AutoSyncStatus);
+    const res = await getAutoSync();
+    if (alive.current && isOk(res)) setSt(res);
+    // The reply as it came, error included: the poll below reads `want` / `settled` off it.
     return res as AutoSyncStatus | undefined;
   }, []);
 
@@ -145,8 +148,8 @@ export function AutoSyncPanel() {
   const act = async (action: "retry" | "abandon") => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/agents/memory/auto-sync?action=" + action, "POST", { action });
-      if (res?.error) toast(errDetail(res.error));
+      const res = await actAutoSync(action);
+      if (!isOk(res)) toast(errDetail(res.error));
       await refresh();
     } finally {
       setBusy(false);

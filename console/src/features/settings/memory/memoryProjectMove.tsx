@@ -6,13 +6,15 @@
 // project id in the query for the audit ledger; each change can be undone in the list above.
 
 import { useCallback, useRef, useState } from "react";
-import { api, apiJSON, errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
-import { useRetryLoad } from "../../../lib/retryLoad.ts";
+import { errDetail, errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { useApiLoad } from "../parts/useApiLoad.ts";
+import { getMemoryProjects, getProjectMovePreview, moveMemoryProject } from "./memoryApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { WizardFrame, GroupedPreview, type WizardStep } from "./memoryWizard.tsx";
-import type { MoveCollision, MoveItem, MovePreview, MoveResultItem, MoveStatus, ProjectRow } from "./memoryTypes.ts";
+import type { MoveCollision, MoveItem, MovePreview, MoveStatus, ProjectRow } from "./memoryTypes.ts";
 
 /** The Agent's per-request cap (agentMemMoveBatch). */
 export const MOVE_BATCH = 50;
@@ -43,15 +45,14 @@ export function ProjectMovePanel({ reload, onChanged, onClose }: { reload: numbe
     setResult(msg);
   };
 
-  const load = useCallback(async (signal: AbortSignal) => {
-    const res = await api("api/agents/memory/entries/projects");
-    if (signal.aborted) return true;
-    if (isTransientErr(res)) return false;
-    setLoadErr(res?.error ? errText(res.error) : "");
-    setRows(res?.error ? [] : (res?.projects ?? []));
-    return true;
-  }, []);
-  useRetryLoad(load, [reload, again]);
+  useApiLoad(
+    getMemoryProjects,
+    (res) => {
+      setLoadErr(isOk(res) ? "" : errText(res.error));
+      setRows(isOk(res) ? (res.projects ?? []) : []);
+    },
+    [reload, again],
+  );
 
   // Only the latest request may answer: a slow preview for an earlier choice must not replace the
   // one shown, or the confirm would pair one project with another's names.
@@ -62,13 +63,13 @@ export function ProjectMovePanel({ reload, onChanged, onClose }: { reload: numbe
     setPreviewErr("");
     if (!f || !t) return;
     const q = `from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}` + (p ? `&collision=${p}` : "");
-    const res = await api("api/agents/memory/entries/project-move-preview?" + q);
+    const res = await getProjectMovePreview(q);
     if (n !== seq.current) return;
-    if (res?.error) {
+    if (!isOk(res)) {
       setPreviewErr(errDetail(res.error));
       return;
     }
-    setPreview(res as MovePreview);
+    setPreview(res);
   }, []);
 
   const choose = (f: string, t: string, p: MoveCollision | "") => {
@@ -100,22 +101,17 @@ export function ProjectMovePanel({ reload, onChanged, onClose }: { reload: numbe
         const items = todo
           .slice(at, at + MOVE_BATCH)
           .map((i) => ({ name: i.name, newName: i.newName, status: i.status, revision: i.revision }));
-        const res = await apiJSON("api/agents/memory/entries/project-move?project=" + encodeURIComponent(from), "POST", {
-          from,
-          to,
-          collision: policy,
-          items,
-        });
-        for (const r of (res?.results ?? []) as MoveResultItem[]) {
+        const res = await moveMemoryProject(from, { from, to, collision: policy, items });
+        for (const r of res.results ?? []) {
           if (r.result === "skipped") counts.skipped++;
           else if (r.result === "moved" || r.result === "merged" || r.result === "renamed") counts.moved++;
         }
-        if (res?.error) {
+        if (res.error) {
           // A move that broke off still says what it did: finished ones are counted, the one it
           // stopped at has its copy in both projects, and the rest were not tried.
           // Not tried: what the Agent says it left in this batch, and every later batch not sent.
-          const results = (res.results ?? []) as MoveResultItem[];
-          const pending = ((res.pending as string[] | undefined) ?? []).length + Math.max(0, todo.length - (at + MOVE_BATCH));
+          const results = res.results ?? [];
+          const pending = (res.pending ?? []).length + Math.max(0, todo.length - (at + MOVE_BATCH));
           const stopped = results.find((r) => r.name === res.stopped);
           // Only a partial one has its copy in both projects; a failed one was never written.
           const key = stopped?.result === "partial" ? "mem.pm_stopped" : "mem.pm_stopped_failed";

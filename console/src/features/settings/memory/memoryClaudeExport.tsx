@@ -8,15 +8,16 @@
 // after the member turned the switch off.
 
 import { useCallback, useRef, useState } from "react";
-import { api, apiJSON, errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
-import { useRetryLoad } from "../../../lib/retryLoad.ts";
+import { errDetail, errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { useApiLoad } from "../parts/useApiLoad.ts";
+import { applyClaudeExport, getClaudeExportPreview, getClaudeExportSources } from "./memoryApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { WizardFrame, GroupedPreview, Findings, type WizardStep } from "./memoryWizard.tsx";
 import type {
   ClaudeExportPreview,
-  ClaudeExportResult,
   ClaudeExportSource,
   ClaudeExportStatus,
 } from "./memoryTypes.ts";
@@ -52,15 +53,14 @@ export function ClaudeExportPanel({ reload, onClose }: { reload: number; onClose
     setResult(msg);
   };
 
-  const load = useCallback(async (signal: AbortSignal) => {
-    const res = await api("api/agents/memory/claude-export");
-    if (signal.aborted) return true;
-    if (isTransientErr(res)) return false;
-    setLoadErr(res?.error ? errText(res.error) : "");
-    setSources(res?.error ? [] : (res?.projects ?? []));
-    return true;
-  }, []);
-  useRetryLoad(load, [reload, again]);
+  useApiLoad(
+    getClaudeExportSources,
+    (res) => {
+      setLoadErr(isOk(res) ? "" : errText(res.error));
+      setSources(isOk(res) ? (res.projects ?? []) : []);
+    },
+    [reload, again],
+  );
 
   // Only the latest request may answer: a slow preview for a project picked earlier must not
   // replace the one shown, or the token would be paired with another project.
@@ -71,13 +71,13 @@ export function ClaudeExportPanel({ reload, onClose }: { reload: number; onClose
     setPreviewErr("");
     setOverwrite(new Set());
     if (!id) return;
-    const res = await api("api/agents/memory/claude-export/preview?project=" + encodeURIComponent(id));
+    const res = await getClaudeExportPreview(id);
     if (seq !== seqRef.current) return;
-    if (res?.error) {
+    if (!isOk(res)) {
       setPreviewErr(errDetail(res.error));
       return;
     }
-    setPreview(res as ClaudeExportPreview);
+    setPreview(res);
   }, []);
 
   const pick = (id: string) => {
@@ -103,22 +103,22 @@ export function ClaudeExportPanel({ reload, onClose }: { reload: number; onClose
     setKept([]);
     try {
       // The project id also goes in the query: the CP audit ledger reads the URL only.
-      const res = await apiJSON("api/agents/memory/claude-export?project=" + encodeURIComponent(project), "POST", {
+      const res = await applyClaudeExport(project, {
         project,
         token: preview.token,
         overwrite: [...overwrite],
       });
-      if (res?.error) {
+      if (!isOk(res)) {
         notify(errDetail(res.error));
         return;
       }
-      const results = (res?.results ?? []) as ClaudeExportResult[];
+      const results = res.results ?? [];
       const done = results.filter((r) => r.result !== "skipped").length;
       const skipped = results.length - done;
-      const indexFailed = res?.index === "failed";
+      const indexFailed = res.index === "failed";
       setKept([
         ...results.map((r) => r.kept ?? ""),
-        (res?.indexKept as string | undefined) ?? "",
+        res.indexKept ?? "",
       ].filter(Boolean));
       notify(tr(skipped ? "mem.ce_done_skipped" : "mem.ce_done", { n: done, skipped }) + (indexFailed ? " " + tr("mem.ce_index_failed") : ""), {
         kind: skipped || indexFailed ? undefined : "success",

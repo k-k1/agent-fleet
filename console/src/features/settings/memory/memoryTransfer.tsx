@@ -1,5 +1,7 @@
 import { useRef, useState } from "react";
-import { apiJSON, errDetail, raw } from "../../../core/api/client.ts";
+import { errDetail, raw } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { applyMemoryImport } from "./memoryApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -165,16 +167,12 @@ export function TransferSection({
     setBusy(true);
     try {
       // importId also goes in the query: the CP audit ledger takes its target from the URL only.
-      const res = await apiJSON(
-        "api/agents/memory/import/apply?importId=" + encodeURIComponent(preview.importId),
-        "POST",
-        {
-          importId: preview.importId,
-          mode,
-          scope: { projects: pickedProjects, kinds: pickedKinds },
-        },
-      );
-      if (res?.error) {
+      const res = await applyMemoryImport(preview.importId, {
+        importId: preview.importId,
+        mode,
+        scope: { projects: pickedProjects, kinds: pickedKinds },
+      });
+      if (!isOk(res)) {
         toast(errDetail(res.error));
         return;
       }

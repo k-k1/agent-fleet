@@ -1,5 +1,6 @@
-import { useEffect } from "react";
-import { api } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { useApiOnce } from "../parts/useApiLoad.ts";
+import { getMemoryTree } from "./memoryApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { humanSize } from "../../../lib/filemeta.ts";
 import type { TreeKind, TreeProject } from "./memoryTypes.ts";
@@ -38,20 +39,15 @@ export function RestorePanel({
   const tr = useT();
   const { rev, all, picked, tree } = state;
 
-  useEffect(() => {
-    let live = true;
-    api("api/agents/memory/tree?rev=" + encodeURIComponent(rev))
-      .then((d) => {
-        if (!live || d?.error) return;
-        patch({ tree: { kinds: d.kinds ?? [], projects: d.projects ?? [] } });
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-    // Refetch only when rev changes; a change of selection must not trigger one.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rev]);
+  // Refetch only when rev changes; a change of selection must not trigger one.
+  useApiOnce(
+    () => getMemoryTree(rev),
+    (d) => {
+      if (isOk(d)) patch({ tree: { kinds: d.kinds ?? [], projects: d.projects ?? [] } });
+    },
+    () => {},
+    [rev],
+  );
 
   const toggle = (key: string) => patch({ picked: { ...picked, [key]: !picked[key] } });
   // A root with no per-project granularity (codex) can only be selected whole.
