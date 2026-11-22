@@ -35,6 +35,7 @@ What people running Agent Fleet on their own infrastructure want to do, one task
 | [Expose it to the internet](run/public-internet.md) | Know what gets through when probes arrive, and narrow the entry |
 | [Tell deployments apart](run/deployment-label.md) | Give each deployment a colour and a label |
 | [Use idle stop and force-stop](run/idle-stop.md) | Set the auto-stop times, stop workspaces that will not stop, pause the deployment |
+| [Switch on Web Push](run/web-push.md) | Turn on push notifications to members' phones, with the environment variables and the hosts to open |
 
 ## Sign-in
 
