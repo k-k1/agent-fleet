@@ -52,6 +52,9 @@ type Hint struct {
 	// Settled marks a subject that will not change on its own any more (a merged PR); the
 	// engine keeps reading it rarely, because a closed PR can be reopened.
 	Settled bool
+	// PokeUnserved says the read could not refresh what a poke was about (it still succeeded
+	// for the rest), so the engine keeps the poke time for the next read.
+	PokeUnserved bool
 }
 
 // Resolved is what Resolve made of a reference.
