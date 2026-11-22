@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Model-id lint, the Console half (issue #1084; the Go half is scripts/model-id-lint). Fails on
 // a model-id-shaped string or template literal in src/ outside the fallback registry,
-// src/lib/modelFallbacks.ts. Model ids move every few weeks, and a fallback pinned somewhere
+// src/features/settings/agents/modelFallbacks.ts. Model ids move every few weeks, and a fallback pinned somewhere
 // nobody owns keeps naming a retired model long after the catalog has moved on; the registry
 // records who owns each pinned id and why discovery cannot supply it.
 //
@@ -36,7 +36,7 @@ const SRC = join(HERE, "..", "src");
 const PATTERNS = join(HERE, "..", "..", "scripts", "model-id-lint", "patterns.txt");
 
 // Relative to src/. The one file allowed to spell a model id.
-const REGISTRY = new Set(["lib/modelFallbacks.ts"]);
+const REGISTRY = new Set(["features/settings/agents/modelFallbacks.ts"]);
 
 const ALLOW = "model-id-lint:allow";
 const ALLOW_FILE = "model-id-lint:allow-file";
@@ -188,7 +188,7 @@ function selfTest(pattern) {
   const { findings, errors } = scan("features/x.ts", src, pattern);
   const got = findings.map((f) => `${f.line}:${f.status}`).join(",");
   const want = "2:violation,3:violation,7:allowed";
-  const reg = scan("lib/modelFallbacks.ts", `export const A = "gpt-5.4-mini";`, pattern).findings;
+  const reg = scan("features/settings/agents/modelFallbacks.ts", `export const A = "gpt-5.4-mini";`, pattern).findings;
   const bare = scan("features/y.ts", `// ${ALLOW}\nconst x = "gpt-5.4-mini";`, pattern);
   const failures = [];
   if (errors.length || got !== want) failures.push(`planted source: got ${got} ${errors}, want ${want}`);
@@ -234,7 +234,7 @@ function main() {
   for (const e of errors) console.error(`✖ ${e}`);
   if (bad.length || errors.length) {
     for (const f of bad) console.error(`src/${fmt(f)}`);
-    console.error(`\n✖ ${bad.length} model-id-shaped literal(s) outside src/lib/modelFallbacks.ts.`);
+    console.error(`\n✖ ${bad.length} model-id-shaped literal(s) outside src/features/settings/agents/modelFallbacks.ts.`);
     console.error(`  Move the id into the registry, or mark a literal that chooses no model with // ${ALLOW} <reason>.`);
     process.exit(1);
   }
