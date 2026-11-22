@@ -171,6 +171,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
         <div className="sched-info">
           <div className="sched-name" title={scheduleTitle(s)}>
             {scheduleTitle(s)}
+            {s.approval_pending && <span className="sched-badge sched-badge-held">{tr("sched.held_tag")}</span>}
             {paused && <span className="sched-badge">{tr("sched.paused_tag")}</span>}
           </div>
           <div className="sched-sub">
@@ -178,7 +179,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
             {s.agent_kind && <span className="sched-kind">{s.agent_kind}</span>}
           </div>
           <div className="sched-times">
-            {!paused && s.next_run_local && (
+            {!paused && !s.approval_pending && s.next_run_local && (
               <span className="sched-next" title={`${tr("sched.next_run")}: ${s.next_run_local}`}>
                 <Icon name="arrow-small-right" /> {nextRunText(s)}
               </span>
@@ -190,6 +191,22 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
             )}
           </div>
         </div>
+        {/* A held schedule never runs until approved: the review opens the details the member approves. */}
+        {s.approval_pending && (
+          <button
+            type="button"
+            className="sched-approve-btn"
+            disabled={rowBusy}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDetail(s);
+            }}
+            onKeyDown={(e) => e.stopPropagation()}
+
+          >
+            {tr("sched.review_approve")}
+          </button>
+        )}
         {/* Chevron hints the row expands; the ⋯ menu carries the manage actions. */}
         <Icon name={runsOpen ? "chevron-down" : "chevron-right"} className="sched-caret" />
         <div className="sched-menu-wrap" ref={menuWrapRef} onClick={(e) => e.stopPropagation()}>
@@ -215,7 +232,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
                 <button
                   type="button"
                   className="ui-menu-item"
-                  disabled={rowBusy || paused}
+                  disabled={rowBusy || paused || !!s.approval_pending}
                   onClick={() => runAction(onRunNow)}
                 >
                   <Icon name="play" /> {tr("sched.run_now")}
@@ -666,6 +683,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
         <ScheduleDetailModal
           s={detail}
           onClose={() => setDetail(null)}
+          onStale={() => setReloadTick((n) => n + 1)}
           onSaved={(dto) => {
             applyDTO(dto);
             setDetail(null);
