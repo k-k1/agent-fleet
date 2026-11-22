@@ -37,7 +37,7 @@
   background: var(--btn);
   color: var(--fg);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 10px;
   cursor: pointer;
   display: inline-flex;
@@ -70,7 +70,7 @@
   border-radius: 6px;
   padding: 3px 6px;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .uc-lab {
   white-space: nowrap;
@@ -86,7 +86,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   white-space: nowrap;
 }
 
@@ -96,18 +96,20 @@
   align-items: center;
   gap: 6px;
 }
-.usage-chip {
+/* Colours, radius and size differ from the .ui-chip defaults; the compound selector outranks
+   ui.css regardless of stylesheet order, and the hover rule keeps the border from changing. */
+.ui-chip.usage-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  border: 1px solid var(--btn-border);
+  border-color: var(--btn-border);
   border-radius: 999px;
   background: var(--sel-bg);
-  color: var(--fg);
-  font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 2px 8px;
-  cursor: pointer;
+}
+.ui-chip.usage-chip:hover {
+  border-color: var(--btn-border);
 }
 .usage-chip .codicon {
   opacity: 0.7;
@@ -178,7 +180,7 @@
 }
 .usage-card h4 {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
 }
 .uc-head-actions {
@@ -189,11 +191,11 @@
 }
 .uc-sub {
   margin: 0 0 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .usage-warn {
   color: var(--warn);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 /* rtk savings card — one card at the end for a different source than the ledger (the in-container
@@ -214,7 +216,7 @@
   white-space: nowrap;
 }
 .rtk-gain-headline .muted {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-variant-numeric: normal;
 }
 .rtk-gain-meter {
@@ -270,7 +272,7 @@
   flex-direction: column;
   justify-content: space-between;
   text-align: right;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted2);
   font-variant-numeric: tabular-nums;
 }
@@ -345,7 +347,7 @@
   filter: brightness(1.12);
 }
 .ux-tick {
-  font-size: 10px;
+  font-size: var(--fs-10);
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
 }
@@ -368,7 +370,7 @@
   transform: translateX(-100%);
 }
 .uxt-head {
-  font-size: 11px;
+  font-size: var(--fs-11);
   font-weight: 600;
   margin-bottom: 4px;
 }
@@ -376,7 +378,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   line-height: 1.6;
 }
 /* The legend represents areas (bar/area charts) so it uses squares; inside the tooltip the key is
@@ -426,7 +428,7 @@
   border-radius: 999px;
   padding: 1px 7px 1px 4px;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--fg);
   cursor: pointer;
 }
@@ -469,7 +471,7 @@
   border-radius: 4px;
   padding: 1px 3px;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--fg);
   cursor: pointer;
   text-align: left;
@@ -523,7 +525,7 @@
 .usage-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 .usage-table th,
 .usage-table td {
