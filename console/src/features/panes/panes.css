@@ -25,7 +25,9 @@
   --pane-ctl-w: calc(16px + var(--pane-ctl-n, 2) * 24px);
 }
 
-.pane > .pane-empty {
+.pane > .pane-blank {
+  font-size: 12px;
+  line-height: 1.5;
   flex: 1;
   display: grid;
   place-items: center;
@@ -73,7 +75,7 @@
    its rows every frame. Measured on a stuttering Console: 19.2s of a 20s profile in
    Recalculate style, forced reflows eating ~all of every click/rAF handler. Firefox
    was unaffected, which is what made it look like a browser bug rather than ours. */
-.pane.tabbed > :not(.pane-tabs, .pane-grip, .pane-controls, .pane-find, .drop-indicator, .pane-empty) {
+.pane.tabbed > :not(.pane-tabs, .pane-grip, .pane-controls, .pane-find, .drop-indicator, .pane-blank) {
   margin-top: 32px;
   height: calc(100% - 32px);
 }
