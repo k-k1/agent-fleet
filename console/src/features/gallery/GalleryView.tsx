@@ -33,6 +33,8 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { isBusySession } from "../files/sessionRefresh.ts";
 import { REVALIDATE_GAP_MS, WORKING_TICK_MS } from "../files/refreshPolicy.ts";
+import { useReadGuard, type ReadTicket } from "../../lib/readGuard.ts";
+import { useInterval } from "../../lib/useInterval.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
@@ -226,6 +228,10 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
    *  size must not re-run the mount effect as if the folder had changed. */
   const tileRef = useRef(tile);
   tileRef.current = tile;
+  /** Every read of the listing takes a ticket here. Reset with the folder, so a read started for
+   *  the folder being left never lands in the next one; within a folder, an answer older than
+   *  one already landed is dropped, cache write included. */
+  const guard = useReadGuard();
 
   // Change of folder, done DURING the render rather than in an effect (React's "adjust state
   // when a prop changes"). An effect runs after the browser has painted, and that paint would
@@ -239,6 +245,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
   // picture that really did arrive since lights up.
   if (shownPath.current !== key) {
     shownPath.current = key;
+    guard.reset();
     const cached = readGallery(key);
     setEntries(cached?.entries ?? null);
     setTruncated(!!cached?.truncated);
@@ -297,14 +304,14 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
    * Returns true when settled, which is what the mount effect's backoff wants.
    */
   const load = useCallback(
-    async (signal: AbortSignal, initial: boolean): Promise<boolean> => {
+    async (tk: ReadTicket, initial: boolean): Promise<boolean> => {
       // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
       // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
       // it the first look at a fresh folder trickles in card by card.
-      const r = await fetchGalleryListing(path, thumbEdge(tileRef.current), signal, flat);
-      if (signal.aborted) return true;
+      const r = await fetchGalleryListing(path, thumbEdge(tileRef.current), () => tk.land(), flat);
+      if (!tk.current()) return true;
       if (!r.ok) {
-        if (r.hard && initial) {
+        if (r.hard && initial && tk.land()) {
           forgetGallery(key);
           namesRef.current = null;
           shownRef.current = false;
@@ -316,6 +323,8 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
         if (!r.retry) setStale(false);
         return !r.retry;
       }
+      // Claimed inside fetchGalleryListing; a newer read may have landed since.
+      if (!tk.fresh()) return true;
       const next = r.entries;
       const names = new Set(next.map((e) => e?.name).filter(Boolean) as string[]);
       // What a re-read ADDED, so the reader sees a generation land. A first read adds
@@ -346,23 +355,23 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
   // but its agent is not yet answering, which is exactly when a pane opened from a session
   // menu mounts.
   useEffect(() => {
-    const ac = new AbortController();
+    let stopped = false;
     let timer = 0;
     let tries = 0;
     const run = () => {
-      load(ac.signal, true)
+      load(guard.begin(), true)
         .then((done) => {
-          if (ac.signal.aborted || done) return;
+          if (stopped || done) return;
           timer = window.setTimeout(run, Math.min(5000, 700 * 2 ** Math.min(tries++, 3)));
         })
         .catch(() => {});
     };
     run();
     return () => {
-      ac.abort();
+      stopped = true;
       window.clearTimeout(timer);
     };
-  }, [load]);
+  }, [load, guard]);
 
   useEffect(() => () => window.clearTimeout(freshTimer.current), []);
 
@@ -380,10 +389,9 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
   const refresh = useCallback(
     (force = false) => {
       if (!force && (!running || document.hidden)) return;
-      const ac = new AbortController();
-      void load(ac.signal, false);
+      void load(guard.begin(), false);
     },
-    [load, running],
+    [load, running, guard],
   );
 
   // The workspace-wide files tick (start/stop, an upload, a clone). Skipped on the tick the
@@ -415,12 +423,10 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
   // Someone watching while a session runs. Generating an image takes minutes, so the
   // end-of-turn signal is far too late for this surface and this slow tick is what makes
   // pictures appear on their own. The timer exists only while something is running and
-  // only while this view is mounted, so it is not a resident poller.
-  useEffect(() => {
-    if (!anyBusy || !running) return;
-    const id = window.setInterval(() => refresh(), WORKING_TICK_MS);
-    return () => window.clearInterval(id);
-  }, [anyBusy, running, refresh]);
+  // only while this view is mounted, so it is not a resident poller. A change of folder does not
+  // restart the period; the guard keeps a tick that races the new folder's first read from
+  // landing the old folder's listing or an older answer over a newer one.
+  useInterval(() => refresh(), anyBusy && running ? WORKING_TICK_MS : null);
 
   // An opener asked for one picture (the left rail's context menu on an image). Enlarge it
   // once the listing is in, then take the request out of the pane content: it has been
