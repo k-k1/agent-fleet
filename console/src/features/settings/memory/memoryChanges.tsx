@@ -77,7 +77,7 @@ export function ChangeDiffBody({ commit }: { commit: string }) {
   useEffect(() => setDiff(null), [commit]);
   useApiOnce(
     () => getMemoryChangeDiff(commit),
-    (d) => setDiff(isOk(d) ? d : { diff: "" }),
+    (d) => setDiff(d === null ? null : isOk(d) ? d : { diff: "" }),
     () => setDiff({ diff: "" }),
     [commit],
   );
@@ -241,6 +241,7 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
     setBusy(true);
     try {
       const res = await revertReviewRun(c.reviewRun);
+      if (res === null) return;
       if (!isOk(res)) {
         toast(errDetail(res.error));
         return;

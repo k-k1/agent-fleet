@@ -109,7 +109,7 @@ export function MemorySnapshotsTab() {
       ]);
       if (signal.aborted) return true;
       if (isTransientErr(r) || isTransientErr(s)) return false;
-      if (!isOk(r)) {
+      if (r !== null && !isOk(r)) {
         // A failed roots request is a failed History too: leaving `snaps` null would read "Loading…" for good.
         const msg = errText(r.error);
         setErr(msg);
@@ -187,6 +187,7 @@ export function MemorySnapshotsTab() {
     setBusy(true);
     try {
       const res = await takeMemorySnapshot();
+      if (res === null) return; // no result to act on: neither a success nor a refusal
       if (!isOk(res)) {
         toast(errDetail(res.error));
         return;
@@ -238,6 +239,7 @@ export function MemorySnapshotsTab() {
       // rev also goes in the query: the CP audit ledger takes its target from the URL only
       // and never reads the body. The body is what actually drives the operation.
       const res = await restoreMemory(rev, body);
+      if (res === null) return; // no result to act on: the panel stays open
       if (!isOk(res)) {
         toast(errDetail(res.error));
         return;

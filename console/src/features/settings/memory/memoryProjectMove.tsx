@@ -65,6 +65,7 @@ export function ProjectMovePanel({ reload, onChanged, onClose }: { reload: numbe
     const q = `from=${encodeURIComponent(f)}&to=${encodeURIComponent(t)}` + (p ? `&collision=${p}` : "");
     const res = await getProjectMovePreview(q);
     if (n !== seq.current) return;
+    if (res === null) return; // unknown answer: the preview stays unloaded
     if (!isOk(res)) {
       setPreviewErr(errDetail(res.error));
       return;

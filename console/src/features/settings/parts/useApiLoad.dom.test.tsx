@@ -2,7 +2,7 @@
 // retried and never surfaced, a superseded answer is dropped, a reply reaches the caller whole,
 // and each answer reaches the callback of the render that asked for it.
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { act } from "react";
+import { act, Suspense } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useApiLoad, useApiOnce } from "./useApiLoad.ts";
 
@@ -32,6 +32,51 @@ function Once({ id, fetch, onReply, onFail = () => {} }: Props) {
   useApiOnce(fetch ? () => fetch(id) as never : null, (r) => onReply(id, r as AnyReply), onFail, [id]);
   return null;
 }
+
+// A render that calls the hook and then suspends is never committed: the read that is already out
+// belongs to the committed render (A), so its answer must reach A's callback, not the suspended B's.
+let gate: Promise<void> | null = null;
+function SuspendingLoad(p: Props) {
+  Load(p);
+  if (gate && p.id === "B") throw gate;
+  return null;
+}
+function SuspendingOnce(p: Props) {
+  Once(p);
+  if (gate && p.id === "B") throw gate;
+  return null;
+}
+describe.each([
+  ["useApiLoad", SuspendingLoad],
+  ["useApiOnce", SuspendingOnce],
+])("%s with a suspended render", (_n, Probe) => {
+  it("reports the answer to the committed render's callback", async () => {
+    const pending: Record<string, (v: AnyReply) => void> = {};
+    const fetch = (id: string) => new Promise<AnyReply>((r) => (pending[id] = r));
+    const seen = vi.fn();
+    let open!: () => void;
+    gate = new Promise<void>((r) => (open = r));
+    const root = await mount(
+      <Suspense fallback={null}>
+        <Probe id="A" fetch={fetch} onReply={seen} />
+      </Suspense>,
+    );
+    await act(async () =>
+      root.render(
+        <Suspense fallback={null}>
+          <Probe id="B" fetch={fetch} onReply={seen} />
+        </Suspense>,
+      ),
+    );
+    pending.A?.({ from: "A" });
+    await flush();
+    open();
+    gate = null;
+    await flush();
+    expect(seen).toHaveBeenCalledWith("A", { from: "A" });
+    expect(seen).not.toHaveBeenCalledWith("B", { from: "A" });
+  });
+});
 
 // Both hooks: a read for deps A answers late, deps have moved to B — only B's answer is reported.
 describe.each([
@@ -103,8 +148,13 @@ describe("useApiOnce", () => {
     const onReply = vi.fn();
     await mount(<Once id="a" fetch={fetch} onReply={onReply} />);
     await flush();
+    vi.useFakeTimers();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(onReply).toHaveBeenCalledTimes(1);
+    expect(onReply).toHaveBeenCalledWith("a", { error: { code: "http_502", message: "x" } });
   });
 
   it("calls onFail when the request rejects, or when onReply throws", async () => {

@@ -122,7 +122,7 @@ export function AutoSyncPanel() {
 
   const refresh = useCallback(async () => {
     const res = await getAutoSync();
-    if (alive.current && isOk(res)) setSt(res);
+    if (alive.current && (res === null || isOk(res))) setSt(res);
     // The reply as it came, error included: the poll below reads `want` / `settled` off it.
     return res as AutoSyncStatus | undefined;
   }, []);

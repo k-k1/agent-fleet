@@ -39,9 +39,11 @@ import type {
   TreeProject,
 } from "./memoryTypes.ts";
 
-// A JSON `null` body is not an error: the call sites this replaced read `res?.error` and
-// `res?.field`, so null meant an empty success. Fold it to {} here, once, so `isOk` and the
-// callers can read `res.error` / `res.field` without a nullish check.
+// A JSON `null` body is not an error, and it is not an empty object either. Where the caller
+// only reads optional fields (lists, acks, extra refusal data) it meant "empty success", so those
+// wrappers fold it to {} here. Where the caller needs a whole object (a preview, a status, a
+// commit result) the answer is unknown, so the wrapper keeps null and says so in its type: the
+// caller leaves its "not loaded" / "no result" state alone, as it did before the typed wrappers.
 const api = (path: string): Promise<never> => rawApi(path).then((r) => (r ?? {}) as never);
 const apiJSON = (path: string, method: string, body?: unknown): Promise<never> =>
   rawApiJSON(path, method, body).then((r) => (r ?? {}) as never);
@@ -60,7 +62,7 @@ export type CommitReply = { committed?: boolean; written?: string[]; deleted?: s
 export type SnapshotsReply = { snapshots?: Snapshot[] };
 export type TreeReply = { kinds?: TreeKind[]; projects?: TreeProject[] };
 
-export const getMemoryRoots = (): Promise<Reply<RootsPayload>> => api("api/agents/memory/roots");
+export const getMemoryRoots = (): Promise<Reply<RootsPayload> | null> => rawApi("api/agents/memory/roots");
 export const getMemorySnapshots = (limit: number, before?: string): Promise<Reply<SnapshotsReply>> =>
   api(
     before === undefined
@@ -69,33 +71,33 @@ export const getMemorySnapshots = (limit: number, before?: string): Promise<Repl
   );
 export const getMemoryDiff = (to: string): Promise<Reply<{ diff?: string }>> =>
   api("api/agents/memory/diff?to=" + encodeURIComponent(to));
-export const getMemoryTree = (rev: string): Promise<Reply<TreeReply>> =>
-  api("api/agents/memory/tree?rev=" + encodeURIComponent(rev));
-export const putMemorySettings = (auto: boolean): Promise<Reply<{ auto?: boolean; autoLocked?: boolean }>> =>
-  apiJSON("api/agents/memory/settings", "PUT", { auto });
-export const takeMemorySnapshot = (): Promise<Reply<{ committed?: boolean }>> =>
-  apiJSON("api/agents/memory/snapshots", "POST", { trigger: "manual" });
+export const getMemoryTree = (rev: string): Promise<Reply<TreeReply> | null> =>
+  rawApi("api/agents/memory/tree?rev=" + encodeURIComponent(rev));
+export const putMemorySettings = (auto: boolean): Promise<Reply<{ auto?: boolean; autoLocked?: boolean }> | null> =>
+  rawApiJSON("api/agents/memory/settings", "PUT", { auto });
+export const takeMemorySnapshot = (): Promise<Reply<{ committed?: boolean }> | null> =>
+  rawApiJSON("api/agents/memory/snapshots", "POST", { trigger: "manual" });
 export const restoreMemory = (
   rev: string,
   body: { rev: string; scope: { all?: boolean; kinds?: string[]; projects?: string[] } },
-): Promise<Reply<CommitReply>> =>
-  apiJSON("api/agents/memory/restore?rev=" + encodeURIComponent(rev), "POST", body);
+): Promise<Reply<CommitReply> | null> =>
+  rawApiJSON("api/agents/memory/restore?rev=" + encodeURIComponent(rev), "POST", body);
 
 // --- Transfer (import/export of the whole store) -------------------------------------------
 export const applyMemoryImport = (
   importId: string,
   body: { importId: string; mode: "replace" | "migrate"; scope: { projects: string[]; kinds: string[] } },
-): Promise<Reply<CommitReply & { adopted?: boolean }>> =>
-  apiJSON("api/agents/memory/import/apply?importId=" + encodeURIComponent(importId), "POST", body);
+): Promise<Reply<CommitReply & { adopted?: boolean }> | null> =>
+  rawApiJSON("api/agents/memory/import/apply?importId=" + encodeURIComponent(importId), "POST", body);
 
 /** Fleet-wide codex memories switch; the write lives in codex's own config through /codex/settings. */
 export const putCodexMemories = (memories: boolean): Promise<Reply<Ack>> =>
   apiJSON("api/codex/settings", "PUT", { memories });
 
 // --- Auto-sync -----------------------------------------------------------------------------
-export const getAutoSync = (): Promise<Reply<AutoSyncStatus>> => api("api/agents/memory/auto-sync");
-export const getAutoSyncPreview = (to: "on" | "off"): Promise<Reply<AutoSyncPreview>> =>
-  api("api/agents/memory/auto-sync/preview?to=" + to);
+export const getAutoSync = (): Promise<Reply<AutoSyncStatus> | null> => rawApi("api/agents/memory/auto-sync");
+export const getAutoSyncPreview = (to: "on" | "off"): Promise<Reply<AutoSyncPreview> | null> =>
+  rawApi("api/agents/memory/auto-sync/preview?to=" + to);
 export const wakeAutoSync = (to: "on" | "off"): Promise<Reply<Ack>> =>
   apiJSON("api/agents/memory/auto-sync?action=wake&to=" + to, "POST", { action: "wake" });
 export const actAutoSync = (action: "retry" | "abandon"): Promise<Reply<Ack>> =>
@@ -112,16 +114,16 @@ export const getMemoryChanges = (limit: number, before?: string): Promise<Reply<
       ? `api/agents/memory/entries/changes?limit=${limit}`
       : `api/agents/memory/entries/changes?limit=${limit}&before=${encodeURIComponent(before)}`,
   );
-export const getMemoryChangeDiff = (commit: string): Promise<Reply<ChangeDiff>> =>
-  api("api/agents/memory/entries/diff?commit=" + encodeURIComponent(commit));
+export const getMemoryChangeDiff = (commit: string): Promise<Reply<ChangeDiff> | null> =>
+  rawApi("api/agents/memory/entries/diff?commit=" + encodeURIComponent(commit));
 export const revertMemoryChange = (
   commit: string,
   forget: boolean,
   ack: boolean,
 ): Promise<WithError<{ findings: SecretFinding[] }>> =>
   apiJSON("api/agents/memory/entries/revert?commit=" + encodeURIComponent(commit), "POST", { commit, forget, ack });
-export const revertReviewRun = (run: string): Promise<Reply<RunRevertReport>> =>
-  apiJSON("api/agents/memory-review/runs/revert?run=" + encodeURIComponent(run), "POST", { run });
+export const revertReviewRun = (run: string): Promise<Reply<RunRevertReport> | null> =>
+  rawApiJSON("api/agents/memory-review/runs/revert?run=" + encodeURIComponent(run), "POST", { run });
 export const getPurgePreview = (
   scope: string,
   project: string,
@@ -138,8 +140,8 @@ export const purgeMemory = (
 
 export const getMemoryProjects = (): Promise<Reply<{ projects?: ProjectRow[] }>> =>
   api("api/agents/memory/entries/projects");
-export const getProjectMovePreview = (query: string): Promise<Reply<MovePreview>> =>
-  api("api/agents/memory/entries/project-move-preview?" + query);
+export const getProjectMovePreview = (query: string): Promise<Reply<MovePreview> | null> =>
+  rawApi("api/agents/memory/entries/project-move-preview?" + query);
 /** A move that broke off still reports what it did: `results` and the `pending` / `stopped` names ride on the error. */
 export type MoveReply = { results?: MoveResultItem[]; pending?: string[]; stopped?: string };
 export const moveMemoryProject = (
@@ -158,8 +160,8 @@ export const getMemoryLint = (query: string): Promise<Reply<Partial<LintReport>>
 // --- Claude / Muse / bundle import and Claude export ----------------------------------------
 export const getClaudeImportSources = (): Promise<Reply<{ sources?: ClaudeImportSource[]; withheld?: number }>> =>
   api("api/agents/memory/claude-import");
-export const getClaudeImportPreview = (slug: string): Promise<Reply<ClaudeImportPreview>> =>
-  api("api/agents/memory/claude-import/preview?slug=" + encodeURIComponent(slug));
+export const getClaudeImportPreview = (slug: string): Promise<Reply<ClaudeImportPreview> | null> =>
+  rawApi("api/agents/memory/claude-import/preview?slug=" + encodeURIComponent(slug));
 export const applyClaudeImport = (
   project: string,
   body: { project: string; slug: string; items: unknown[] },
@@ -168,16 +170,16 @@ export const applyClaudeImport = (
 
 export const getMuseImportSources = (): Promise<Reply<{ sources?: MuseImportSource[]; withheld?: number }>> =>
   api("api/agents/memory/muse-import");
-export const getMuseImportPreview = (query: string): Promise<Reply<MuseImportPreview>> =>
-  api("api/agents/memory/muse-import/preview?" + query);
+export const getMuseImportPreview = (query: string): Promise<Reply<MuseImportPreview> | null> =>
+  rawApi("api/agents/memory/muse-import/preview?" + query);
 export const applyMuseImport = (
   project: string,
   body: Record<string, unknown>,
 ): Promise<Reply<{ results?: ClaudeImportResult[] }>> =>
   apiJSON("api/agents/memory/muse-import?project=" + encodeURIComponent(project), "POST", body);
 
-export const getBundlePreview = (importId: string): Promise<Reply<BundlePreview>> =>
-  api("api/agents/memory/af-import/preview?importId=" + encodeURIComponent(importId));
+export const getBundlePreview = (importId: string): Promise<Reply<BundlePreview> | null> =>
+  rawApi("api/agents/memory/af-import/preview?importId=" + encodeURIComponent(importId));
 export const applyBundleImport = (
   importId: string,
   body: { importId: string; items: unknown[] },
@@ -186,8 +188,8 @@ export const applyBundleImport = (
 
 export const getClaudeExportSources = (): Promise<Reply<{ projects?: ClaudeExportSource[] }>> =>
   api("api/agents/memory/claude-export");
-export const getClaudeExportPreview = (project: string): Promise<Reply<ClaudeExportPreview>> =>
-  api("api/agents/memory/claude-export/preview?project=" + encodeURIComponent(project));
+export const getClaudeExportPreview = (project: string): Promise<Reply<ClaudeExportPreview> | null> =>
+  rawApi("api/agents/memory/claude-export/preview?project=" + encodeURIComponent(project));
 export const applyClaudeExport = (
   project: string,
   body: { project: string; token: string; overwrite: string[] },
@@ -196,11 +198,11 @@ export const applyClaudeExport = (
 
 // --- Consolidation proposals ---------------------------------------------------------------
 const CONSOL = "api/agents/memory-consolidation";
-export const getConsolStatus = (): Promise<Reply<ConsolStatus>> => api(CONSOL);
+export const getConsolStatus = (): Promise<Reply<ConsolStatus> | null> => rawApi(CONSOL);
 export const getConsolProposals = (): Promise<Reply<{ proposals?: ConsolProposal[] }>> =>
   api(`${CONSOL}/proposals`);
-export const getConsolProposal = (id: string): Promise<Reply<ConsolProposalView>> =>
-  api(`${CONSOL}/proposal?id=${encodeURIComponent(id)}`);
+export const getConsolProposal = (id: string): Promise<Reply<ConsolProposalView> | null> =>
+  rawApi(`${CONSOL}/proposal?id=${encodeURIComponent(id)}`);
 export const runConsolidation = (all: boolean): Promise<Reply<Ack>> =>
   apiJSON(`${CONSOL}/run`, "POST", all ? { all: true } : {});
 export const decideConsolProposal = (verb: "approve" | "reject" | "retry", id: string): Promise<Reply<Ack>> =>

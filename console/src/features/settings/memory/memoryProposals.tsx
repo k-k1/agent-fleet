@@ -153,7 +153,7 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
     if (signal.aborted) return true;
     // Right after a start the Agent answers 5xx for a moment: retried, never settled as a failure.
     if (isTransientErr(res)) return false;
-    if (!isOk(res)) {
+    if (res !== null && !isOk(res)) {
       setErr(true);
       return true;
     }
@@ -314,7 +314,7 @@ export function ProposalDetail({
     getConsolProposal(id)
       .then((r) => {
         if (!live) return;
-        if (!isOk(r)) setErr(refusalText(tr, r.error.code, errDetail(r.error)));
+        if (r !== null && !isOk(r)) setErr(refusalText(tr, r.error.code, errDetail(r.error)));
         else setView(r);
       })
       .catch(() => live && setErr(tr("mem.cs_load_failed")));

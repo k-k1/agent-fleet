@@ -269,4 +269,17 @@ describe("ProjectMovePanel", () => {
     await flush();
     expect(applyButton().textContent).toContain("120");
   });
+
+  it("leaves the preview unloaded when the Agent answers a JSON null body", async () => {
+    api.mockImplementation((path: string) =>
+      Promise.resolve(path.startsWith("api/agents/memory/entries/project-move-preview") ? null : { projects: rows }),
+    );
+    await mount();
+    await pick(selects()[0], "old-0123456789ab");
+    await pick(selects()[1], "new-0123456789ab");
+    await flush();
+    expect(document.body.textContent).not.toContain("undefined");
+    expect(selects().length).toBe(2); // the panel survived: no throw, pickers still there
+    expect(document.body.textContent).not.toContain("0 memories");
+  });
 });

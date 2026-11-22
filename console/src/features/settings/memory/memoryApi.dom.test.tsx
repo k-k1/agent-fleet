@@ -9,7 +9,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   api: (...a: unknown[]) => api(...a),
   apiJSON: (...a: unknown[]) => apiJSON(...a),
 }));
-const { getMemorySnapshots, getConsolProposals, moveMemoryProject, revertMemoryChange, putCodexMemories } =
+const { getMemoryTree, getProjectMovePreview, restoreMemory, getMemorySnapshots, getConsolProposals, moveMemoryProject, revertMemoryChange, putCodexMemories } =
   await import("./memoryApi.ts");
 
 describe("memoryApi null bodies", () => {
@@ -23,6 +23,13 @@ describe("memoryApi null bodies", () => {
     expect(await moveMemoryProject("p", { from: "p", to: "q", collision: "skip", items: [] })).toEqual({});
     expect(await revertMemoryChange("c", false, false)).toEqual({});
     expect(await putCodexMemories(true)).toEqual({});
+  });
+  it("keeps null where the caller needs the whole object (previews, commit results)", async () => {
+    api.mockResolvedValue(null);
+    apiJSON.mockResolvedValue(null);
+    expect(await getProjectMovePreview("from=a&to=b")).toBeNull();
+    expect(await getMemoryTree("r")).toBeNull();
+    expect(await restoreMemory("r", { rev: "r", scope: { all: true } })).toBeNull();
   });
   it("keeps the extra fields of a refusal", async () => {
     const r = { error: { code: "x", message: "m" }, results: [{ name: "n" }], stopped: "n" };

@@ -81,7 +81,7 @@ export function BundleAfPanel({
   useApiLoad(
     () => getBundlePreview(importId),
     (res) => {
-      setLoadErr(isOk(res) ? "" : errText(res.error));
+      setLoadErr(res === null || isOk(res) ? "" : errText(res.error));
       setShown(isOk(res) ? { owner: ownerKey, preview: res } : null);
     },
     [importId, again, ownerKey],

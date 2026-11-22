@@ -172,6 +172,7 @@ export function TransferSection({
         mode,
         scope: { projects: pickedProjects, kinds: pickedKinds },
       });
+      if (res === null) return; // no result to act on: the preview stays open
       if (!isOk(res)) {
         toast(errDetail(res.error));
         return;

@@ -73,6 +73,7 @@ export function ClaudeExportPanel({ reload, onClose }: { reload: number; onClose
     if (!id) return;
     const res = await getClaudeExportPreview(id);
     if (seq !== seqRef.current) return;
+    if (res === null) return; // unknown answer: the preview stays unloaded
     if (!isOk(res)) {
       setPreviewErr(errDetail(res.error));
       return;

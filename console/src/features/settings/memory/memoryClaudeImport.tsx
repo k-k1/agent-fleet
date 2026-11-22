@@ -71,6 +71,7 @@ export function ClaudeImportPanel({ reload, onChanged, onClose }: { reload: numb
     if (!s) return;
     const res = await getClaudeImportPreview(s);
     if (seq !== previewSeq.current) return;
+    if (res === null) return; // unknown answer: the preview stays unloaded
     if (!isOk(res)) {
       setPreviewErr(errDetail(res.error));
       return;

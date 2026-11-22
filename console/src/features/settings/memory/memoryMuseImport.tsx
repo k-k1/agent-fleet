@@ -73,6 +73,7 @@ export function MuseImportPanel({ reload, onChanged, onClose }: { reload: number
     const q = scope === "project" ? "dir=" + encodeURIComponent(d) : "scope=" + scope + "&dir=" + encodeURIComponent(d);
     const res = await getMuseImportPreview(q + (scope === "personal" ? "&into=user" : ""));
     if (seq !== previewSeq.current) return;
+    if (res === null) return; // unknown answer: the preview stays unloaded
     if (!isOk(res)) {
       setPreviewErr(errDetail(res.error));
       return;
