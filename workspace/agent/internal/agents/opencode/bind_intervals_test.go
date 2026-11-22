@@ -442,3 +442,47 @@ func TestBindingGapWhileUnreadableCoversKnownLives(t *testing.T) {
 		t.Errorf("a known life after a gap taken while unreadable = %q, want none", got)
 	}
 }
+
+// A restart whose first read of the evidence file fails, on a wall clock set back behind an older
+// life: the older life stays unproven once the file is readable again, though the gap itself was
+// recorded with the set-back clock. The state survives a second restart.
+func TestBindingUnknownGapRetiresOlderLivesAfterClockSetBack(t *testing.T) {
+	bindT(t)
+	start(5000, 1, "A")
+	acct(5100, acctOut, 1)
+	// Agent restart: nothing is known in this process, the file cannot be read, the clock is at 600.
+	gapsMem = nil
+	seenMaxAt.Store(0)
+	p := bindIntervalsPath()
+	good, _ := os.ReadFile(p)
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	start(600, 2, "B") // not recorded: a gap bounded by the set-back clock
+	_ = os.Remove(p)
+	if err := os.WriteFile(p, good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b := daemonBinder(); b == nil {
+		t.Fatal("no binder once the file is readable")
+	} else if got := b(routes.RouteOpencodeZen, false, 5500); got != "" {
+		t.Errorf("a call of the older life stamped after the set-back clock = %q, want none", got)
+	}
+	// Resolved once: a life that starts later is bound, and a restart keeps the older one retired.
+	start(9000, 3, "C")
+	acct(9100, acctOut, 3)
+	gapsMem = nil
+	b := daemonBinder()
+	if b == nil {
+		t.Fatal("no binder")
+	}
+	if got := b(routes.RouteOpencodeZen, false, 5500); got != "" {
+		t.Errorf("after a restart = %q, want none", got)
+	}
+	if got := b(routes.RouteOpencodeZen, false, 10000); got == "" {
+		t.Error("a life after the resolution is bound")
+	}
+}
