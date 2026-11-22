@@ -185,6 +185,26 @@ describe("memoryEntryIO", () => {
     expect(other.read.content).toBe(spaced("x"));
   });
 
+  it("does not lower the counter of the sent text when another read of it at a later counter answered first", async () => {
+    const io = memoryEntryIO(target, () => {});
+    const file = entryFile("k", { ...body, body: "x" });
+    const sentText = spaced("x  \n");
+    apiJSON.mockResolvedValueOnce({ error: { code: "memory_snapshot_failed", message: "x" } });
+    await io.save("k", sentText, file.revision);
+    // The recovery read is in flight while another pane reads the same text (restored) at a later counter.
+    let answer: (v: unknown) => void = () => {};
+    api.mockReturnValueOnce(new Promise((r) => { answer = r; }));
+    const recovery = io.load("k");
+    api.mockResolvedValueOnce({ ...body, body: "x  \n", revision: 8, kinds: ["claude"] });
+    await memoryEntryIO(target, () => {}).load("k");
+    answer({ ...body, body: "x", revision: 4, kinds: ["claude"] });
+    const read = await recovery;
+    expect(read.content).toBe(sentText);
+    apiJSON.mockResolvedValue({ revision: 9 });
+    await io.save("k", sentText, read.revision);
+    expect(apiJSON.mock.calls[1][2]).toMatchObject({ revision: 8 });
+  });
+
   it("carries the live counter into a resave when another writer stored the text the save started from", async () => {
     const { io, file, sentText, read } = await lostAnswer({ revision: 9, kinds: ["codex"] });
     expect(read.content).toBe(spaced("x"));
