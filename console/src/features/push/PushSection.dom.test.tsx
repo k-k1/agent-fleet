@@ -10,7 +10,7 @@ let matches = true;
 const puts: string[][] = [];
 vi.mock("./pushApi.ts", async (orig) => ({
   ...(await orig<typeof import("./pushApi.ts")>()),
-  getPushKey: () => Promise.resolve(key),
+  probePushKey: () => Promise.resolve(key),
   getPushOff: () => (prefsGate ? prefsGate.then(() => off) : Promise.resolve(off)),
   putPushOff: (o: string[]) => {
     puts.push(o);

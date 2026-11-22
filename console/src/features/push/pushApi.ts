@@ -33,15 +33,6 @@ export async function probePushKey(): Promise<string | null> {
   return typeof j?.publicKey === "string" && j.publicKey ? j.publicKey : null;
 }
 
-/** probePushKey that reads a transient failure as "no key" (UI that simply hides itself). */
-export async function getPushKey(): Promise<string | null> {
-  try {
-    return await probePushKey();
-  } catch {
-    return null;
-  }
-}
-
 export async function listPushDevices(): Promise<PushDevice[]> {
   const r = await raw("api/push/subscriptions");
   if (!r.ok) throw new Error(String(r.status));

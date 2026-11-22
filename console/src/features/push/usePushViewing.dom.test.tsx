@@ -88,6 +88,21 @@ describe("usePushViewing", () => {
     await flush();
     expect(calls.map((c) => `${c.tenant}:${c.session}`)).toEqual(["t1:sess-one", "t1:", "t2:sess-one"]);
   });
+  it("drops an on-screen report that the screen outgrew while an earlier POST was slow", async () => {
+    let release!: () => void;
+    postGate = new Promise<void>((r) => (release = r));
+    render(<Host />);
+    await flush();
+    // The first report (gated) is in flight; a second beat queues behind it, then the tab hides.
+    act(() => void vi.advanceTimersByTime(VIEWING_BEAT_MS));
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    release();
+    await flush();
+    await flush();
+    // "sess-one" once (the in-flight one), the queued on-screen duplicate never goes out, then the clear.
+    expect(calls.map((c) => c.session)).toEqual(["sess-one", ""]);
+  });
   it("pins every report to the tenant it was made for", async () => {
     render(<Host />);
     await flush();

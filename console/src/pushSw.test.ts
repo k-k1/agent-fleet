@@ -126,6 +126,28 @@ describe("notificationclick hand-off", () => {
   }, 5000);
 });
 
+describe("candidate order", () => {
+  it("asks the app's own page before crowding previews under the same scope", async () => {
+    const mk = (url: string, answers: boolean, log: string[]) => ({
+      url,
+      postMessage: (_m: unknown, ports: MessagePort[]) => {
+        log.push(url);
+        if (answers) ports[0].postMessage("ok");
+      },
+      focus: async () => {},
+    });
+    const log: string[] = [];
+    const previews = [1, 2, 3, 4].map((n) => mk(`https://console.test/preview/${n}`, false, log));
+    const app = mk("https://console.test/", true, log);
+    const sw = loadSw("en", [...previews, app]);
+    let p: Promise<unknown> = Promise.resolve();
+    sw.listeners.notificationclick({ notification: { close() {}, data: { session: "abc" } }, waitUntil: (x: Promise<unknown>) => (p = x) });
+    await p;
+    expect(log[0]).toBe("https://console.test/");
+    expect(sw.opened).toEqual([]);
+  }, 8000);
+});
+
 describe("focus failure", () => {
   it("falls back to opening the session when the answering page cannot be focused", async () => {
     const win = {

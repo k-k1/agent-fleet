@@ -145,12 +145,10 @@ export async function releasePushForSignOut(timeoutMs = 2500): Promise<void> {
     // One retry for a read that failed: reading nothing must not be taken for "no subscription".
     const sub = (await readSubscription().catch(() => readSubscription().catch(() => undefined))) ?? null;
     if (!sub) return;
-    try {
-      await releasePushEndpoint(sub.toJSON(), ctl.signal);
-    } catch {
-      /* offline or slow: the unsubscribe below still ends delivery */
-    }
-    await sub.unsubscribe().catch(() => {});
+    // Both start now, side by side: a CP call that outlasts the deadline must not postpone ending
+    // the browser's own subscription until after the page has navigated away.
+    const json = sub.toJSON();
+    await Promise.allSettled([releasePushEndpoint(json, ctl.signal), sub.unsubscribe()]);
   })();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<void>((res) => {

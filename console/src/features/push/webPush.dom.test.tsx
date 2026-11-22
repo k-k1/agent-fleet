@@ -96,6 +96,12 @@ describe("web push device lifecycle", () => {
     expect(Date.now() - t0).toBeLessThan(1500);
     sub.unsubscribe = () => (unsubscribed++, Promise.resolve(true));
   });
+  it("sign-out ends the browser subscription even when the CP call outlasts the deadline", async () => {
+    const api = await import("./pushApi.ts");
+    vi.spyOn(api, "releasePushEndpoint").mockImplementation(() => new Promise(() => {}));
+    await releasePushForSignOut(50);
+    expect(unsubscribed).toBe(1);
+  });
   it("sign-out is bounded when the release call never answers", async () => {
     const api = await import("./pushApi.ts");
     vi.spyOn(api, "releasePushEndpoint").mockImplementation(() => new Promise(() => {}));

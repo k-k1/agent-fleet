@@ -3,7 +3,6 @@ import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import {
   PUSH_KINDS,
-  getPushKey,
   getPushOff,
   listPushDevices,
   putPushOff,
@@ -11,6 +10,7 @@ import {
   type PushDevice,
   type PushKind,
 } from "./pushApi.ts";
+import { usePushKey } from "./usePushKey.ts";
 import { currentSubscription, disablePush, enablePush, pushSupport, subscriptionMatchesKey, thisDeviceId } from "./webPush.ts";
 
 const KIND_LABEL = {
@@ -27,7 +27,7 @@ export function PushSection() {
   const tr = useT();
   const toast = useToast();
   // The CP's key, loaded when the section opens so the enable click can ask for permission at once.
-  const [key, setKey] = useState<string | null | undefined>(undefined);
+  const key = usePushKey();
   const [here, setHere] = useState(false);
   // A subscription made with a key the CP no longer uses: shown as off with a hint, re-enabling replaces it.
   const [stale, setStale] = useState(false);
@@ -66,19 +66,10 @@ export function PushSection() {
   }, [key, loadDevices]);
 
   useEffect(() => {
-    let alive = true;
-    void getPushKey().then((k) => {
-      if (!alive) return;
-      setKey(k);
-      if (k) {
-        void loadDevices(k);
-        void loadPrefs();
-      }
-    });
-    return () => {
-      alive = false;
-    };
-  }, [loadDevices, loadPrefs]);
+    if (!key) return;
+    void loadDevices(key);
+    void loadPrefs();
+  }, [key, loadDevices, loadPrefs]);
 
   if (!key) return null;
 

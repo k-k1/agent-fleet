@@ -150,9 +150,15 @@ self.addEventListener("notificationclick", (event) => {
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       // Only a page running the Console answers the hand-off (a /login or preview page under the
       // same scope never does), so ask each and take the first that acknowledges.
-      // At most three candidates, each waiting 1.5 s: a long search would let the tap's permission
+      // A bounded search (five candidates, 3 s): a long one would let the tap's permission
       // to focus or open a window lapse.
-      for (const win of wins.filter((c) => c.url.startsWith(scope)).slice(0, 3)) {
+      // The app's own page (the scope root) goes first, so previews or other pages under the same
+      // origin cannot crowd it out of the short list; the whole search has a deadline.
+      const mine = wins.filter((c) => c.url.startsWith(scope));
+      mine.sort((a, b) => Number(isRoot(b.url, scope)) - Number(isRoot(a.url, scope)));
+      const until = Date.now() + 3000;
+      for (const win of mine.slice(0, 5)) {
+        if (Date.now() > until) break;
         if (await handOff(win, session)) {
           // A page that answered but cannot be focused (closing, navigating away) is not a hit.
           if (await win.focus().then(() => true, () => false)) return;
@@ -166,6 +172,11 @@ self.addEventListener("notificationclick", (event) => {
 // handOff asks an open page to open the session and resolves true only when that page acknowledges
 // (listenPushOpen in the app), so a tap never lands on a page that cannot act on it. With no
 // session there is nothing to hand over: any Console page that answers is enough.
+function isRoot(url, scope) {
+  const u = new URL(url);
+  return u.origin + u.pathname === scope || u.pathname === new URL(scope).pathname + "index.html";
+}
+
 function handOff(win, session) {
   return new Promise((resolve) => {
     const ch = new MessageChannel();

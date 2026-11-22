@@ -6,7 +6,7 @@ let key: string | null = "k";
 let putFails = false;
 const puts: unknown[] = [];
 const toasts: string[] = [];
-vi.mock("../../push/pushApi.ts", () => ({ getPushKey: () => Promise.resolve(key) }));
+vi.mock("../../push/pushApi.ts", () => ({ probePushKey: () => Promise.resolve(key) }));
 vi.mock("./tenantApi.ts", () => ({
   getTenantPushSettings: () => Promise.resolve({ tenant: "acme", includeText: false }),
   putTenantPushSettings: (slug: string, body: unknown) => {
