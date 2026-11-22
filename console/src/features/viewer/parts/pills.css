@@ -28,9 +28,6 @@
   cursor: default;
 }
 
-
-}
-
 /* Selection-driven control groups (ui/SelectionFloat.tsx). The floating case keeps each caller's
    own group class (.sel-pill-group, .tmark-pill); what is declared here is the docked case a
    COARSE pointer gets, because the browser's native selection menu (Copy / Share / Select all)
