@@ -139,13 +139,13 @@ export function StudioAgent({
   return (
     <div className="igen-agent">
       <div className="igen-agent-head">
-        <span className={"igen-chip " + kindColorClasses(agentOf(meta.kind).cssClass)}>
+        <span className={"ui-chip igen-chip " + kindColorClasses(agentOf(meta.kind).cssClass)}>
           <Icon name={agentOf(meta.kind).icon} /> {kindDisplayName(meta.kind)}
         </span>
         {/* The narrow pane keeps the head to one line (imagegen.css): these two chips go, and
             "replace" is its icon — every line here is one less line of conversation. */}
-        {meta.model && <span className="igen-chip igen-chip-extra">{meta.model}</span>}
-        <span className="igen-chip igen-chip-extra">{tr(managed ? "imggen.attach_driver_managed" : "imggen.attach_driver_tui")}</span>
+        {meta.model && <span className="ui-chip igen-chip igen-chip-extra">{meta.model}</span>}
+        <span className="ui-chip igen-chip igen-chip-extra">{tr(managed ? "imggen.attach_driver_managed" : "imggen.attach_driver_tui")}</span>
         <span className="igen-agent-spacer" />
         <button
           type="button"

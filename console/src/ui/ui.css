@@ -1380,3 +1380,19 @@
 .ui-badge-ok { --badge: var(--ok); --badge-mix: 16%; }
 .ui-badge-warn { --badge: var(--warn); --badge-mix: 16%; }
 .ui-badge-accent { --badge: var(--accent, var(--ok)); --badge-mix: 16%; }
+
+/* ---- Chip ---- */
+/* Pill-shaped token or toggle. Feature classes add layout or state only (.fixed, aria-pressed). */
+.ui-chip {
+  font: inherit;
+  font-size: var(--fs-11);
+  padding: 1px 7px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--chip-bg, transparent);
+  color: var(--fg);
+  cursor: pointer;
+}
+.ui-chip:hover {
+  border-color: var(--accent, var(--fg));
+}

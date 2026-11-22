@@ -99,7 +99,7 @@
 
 .igen-tab {
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 3px 10px;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -149,7 +149,7 @@
 }
 
 .igen-persona {
-  font-size: 12px;
+  font-size: var(--fs-12);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -269,7 +269,7 @@
 }
 
 .igen-hl-note {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--accent);
 }
 
@@ -327,13 +327,13 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .igen-log-seq,
 .igen-log-time {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 
 .igen-log-who.agent {
@@ -341,7 +341,7 @@
 }
 
 .igen-log-state {
-  font-size: 11px;
+  font-size: var(--fs-11);
   padding: 0 6px;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -360,7 +360,7 @@
 .igen-log-changes {
   margin: 2px 0 0 18px;
   padding: 0;
-  font-size: 11px;
+  font-size: var(--fs-11);
   font-family: var(--mono, monospace);
   color: var(--muted);
 }
@@ -372,7 +372,7 @@
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent);
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .igen-callcard-head {
@@ -411,7 +411,7 @@
 
 .igen-memo > summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .igen-memo-doc {
@@ -428,20 +428,20 @@
 }
 
 .igen-memo-path {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   overflow-wrap: anywhere;
 }
 
 .igen-memo-cap {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 
 .igen-memo-text {
   margin: 0;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   white-space: pre-wrap;
   max-height: 160px;
   overflow: auto;
@@ -474,7 +474,7 @@
 .igen-memo-input {
   flex: 1;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 6px;
   border: 1px solid var(--border);
   border-radius: 4px;
@@ -486,7 +486,7 @@
 .igen-attach-blocked {
   margin: 4px 0 0 16px;
   padding: 0;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 
@@ -508,7 +508,7 @@
 }
 
 .igen-attach-last-label {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 
@@ -542,7 +542,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   white-space: nowrap;
 }
 
@@ -567,7 +567,7 @@
 }
 
 .igen-engine-hint {
-  font-size: 11px;
+  font-size: var(--fs-11);
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -595,12 +595,12 @@
 }
 
 .igen-label {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 
 .igen-hint {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   /* Reasons ("flux1 does not read this", the batch_size warning) run long; they wrap rather
      than truncate, because a truncated reason is the same as no reason. */
@@ -608,12 +608,12 @@
 }
 
 .igen-err {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--err);
 }
 
 .igen-warn {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--warn, #d29922);
 }
 
@@ -669,23 +669,8 @@
 }
 
 .igen-chips-cap {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
-}
-
-.igen-chip {
-  font: inherit;
-  font-size: 11px;
-  padding: 1px 7px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--chip-bg, transparent);
-  color: var(--fg);
-  cursor: pointer;
-}
-
-.igen-chip:hover {
-  border-color: var(--accent, var(--fg));
 }
 
 /* A fixed chip is the administrator's word, not a control: no pointer, no hover affordance,
@@ -702,12 +687,12 @@
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 6px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .igen-family > summary {
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 
@@ -736,7 +721,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   min-width: 0;
 }
 
@@ -755,7 +740,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 
@@ -765,7 +750,7 @@
 
 .igen-advanced > summary {
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 
@@ -817,7 +802,7 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 10px;
   border-radius: 14px;
 }
@@ -879,7 +864,7 @@
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   min-width: 0;
 }
 
@@ -894,7 +879,7 @@
   border-radius: 4px;
   padding: 10px;
   text-align: center;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   cursor: pointer;
   display: flex;
@@ -931,7 +916,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 
@@ -941,7 +926,7 @@
 .igen-results h3,
 .igen-queue-head h3 {
   margin: 0 0 4px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
 }
 
@@ -955,7 +940,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   min-width: 0;
 }
 
@@ -997,12 +982,12 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 
 .igen-seed {
   font-family: var(--mono, monospace);
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 
 /* ── queue ──────────────────────────────────────────────────────────── */
@@ -1023,7 +1008,7 @@
 }
 
 .igen-badge {
-  font-size: 10px;
+  font-size: var(--fs-10);
   padding: 0 5px;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -1044,7 +1029,7 @@
   border-radius: 4px;
   padding: 6px 8px;
   margin-bottom: 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .igen-qrow.paused {
@@ -1098,7 +1083,7 @@
 
 .igen-eta,
 .igen-phase {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 
@@ -1115,7 +1100,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   min-width: 0;
 }
 
@@ -1142,7 +1127,7 @@
 
 .igen-proposal h4 {
   margin: 6px 0 2px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 
@@ -1151,7 +1136,7 @@
   word-break: break-word;
   margin: 0;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   background: var(--code-bg, rgba(127, 127, 127, 0.08));
   padding: 6px 8px;
   border-radius: 4px;
@@ -1163,7 +1148,7 @@
   align-items: center;
   gap: 6px;
   padding: 10px 12px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--warn);
   border-top: 1px solid var(--border);
 }
@@ -1258,11 +1243,11 @@
 }
 
 .igen-draftbar-prompt {
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 
 .igen-draftbar-model {
-  font-size: 11px;
+  font-size: var(--fs-11);
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -1292,7 +1277,7 @@
 }
 
 .igen-tab-badge {
-  font-size: 10px;
+  font-size: var(--fs-10);
   line-height: 1;
   padding: 2px 5px;
   border-radius: 8px;
@@ -1332,7 +1317,7 @@
 .igen-queue-done > summary {
   cursor: pointer;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 0;
 }
 
@@ -1352,7 +1337,7 @@
   gap: 8px;
   margin: 6px 12px 0;
   padding: 4px 6px 4px 10px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   border: 1px solid var(--border);
   border-left: 3px solid var(--ok);
   border-radius: 6px;
@@ -1535,7 +1520,7 @@
   padding: 6px 8px;
   border: 1px solid var(--warn, #d29922);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 .igen-mask-entry {
@@ -1549,7 +1534,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 /* Phones: the dialog takes the visible viewport (--app-h / --app-top follow the on-screen
