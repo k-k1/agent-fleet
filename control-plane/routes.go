@@ -717,6 +717,7 @@ func registerScheduleRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/schedules", scheduleMember(s, s.list))
 	mux.HandleFunc("GET /api/schedules/{id}/runs", scheduleMember(s, s.runs))
 	mux.HandleFunc("PATCH /api/schedules/{id}", scheduleMember(s, s.update))
+	mux.HandleFunc("POST /api/schedules/{id}/approve", scheduleMember(s, s.approve))
 	mux.HandleFunc("POST /api/schedules/{id}/pause", scheduleMember(s, s.pause))
 	mux.HandleFunc("POST /api/schedules/{id}/resume", scheduleMember(s, s.resume))
 	mux.HandleFunc("POST /api/schedules/{id}/run-now", scheduleMember(s, s.runNow))

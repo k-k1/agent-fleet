@@ -69,6 +69,10 @@ type Schedule struct {
 	// (issue #1087); a re-invite resumes it. Cleared by any change the owner makes. Not
 	// part of the schedule DTO.
 	HeldByRemoval bool
+	// ApprovalPending marks a schedule a session wrote through the schedule token (#4631) that
+	// the member has not approved yet. ListDueSchedules skips it, so it never fires and never
+	// wakes a stopped workspace. Only ApproveSchedule clears it.
+	ApprovalPending bool
 	// Gate (ADR 0021 addendum 2026-11-10). GateKind is "" (no gate) or "work_items"; GateSpec is
 	// the JSON the kind reads. The rest is the gate's ledger: the fingerprint it last fired on and
 	// when, the 24 hour fire window the daily cap counts in, and the last evaluation (what the
@@ -121,6 +125,9 @@ type ScheduleStore interface {
 	// and the recomputed next_run, disabling the row (enabled=0) when next_run is ""
 	// (a spent "once"). The scheduler is the only caller, so no membership scoping.
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
+	// ApproveSchedule clears approval_pending and sets next_run (the member's act). approved=false
+	// means the row was not pending, so a repeated approval changes nothing.
+	ApproveSchedule(ctx context.Context, id, membershipID, nextRun, updatedAt string) (approved bool, err error)
 	// HoldScheduleForRemoval / ResumeScheduleHeldByRemoval are the two halves of member
 	// removal (issue #1087): the scheduler pauses a slot that came due while the owner
 	// was inactive, and a re-invite resumes it. Both are conditional single statements —
@@ -190,18 +197,18 @@ const scheduleCols = `SELECT id, membership_id, tenant_id, owner_conv, spec_kind
 	reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy,
 	manual_fire_pending, report, stop_after_run, held_by_removal, deliver_to, silent,
 	route, route_connection, gate_kind, gate_spec, gate_fired_fingerprint, gate_fired_at,
-	gate_window_start, gate_window_count, gate_last_eval_at, gate_last_verdict FROM schedule`
+	gate_window_start, gate_window_count, gate_last_eval_at, gate_last_verdict, approval_pending FROM schedule`
 
 func scanSchedule(row scanner) (Schedule, error) {
 	var s Schedule
-	var newBranch, enabled, manualFire, report, stopAfterRun, held, silent int
+	var newBranch, enabled, manualFire, report, stopAfterRun, held, silent, pending int
 	err := row.Scan(&s.ID, &s.MembershipID, &s.TenantID, &s.OwnerConv, &s.SpecKind, &s.Spec, &s.SpecLabel, &s.TZ,
 		&s.WakePolicy, &s.SessionMode, &s.ReuseTarget, &s.AgentKind, &s.Model, &s.Repo, &s.Worktree, &newBranch, &s.Prompt,
 		&s.OverlapPolicy, &enabled, &s.NextRun, &s.LastRun, &s.LastStatus, &s.CreatedAt, &s.UpdatedAt,
 		&s.ReuseSession, &s.ReuseStartedAt, &s.ReuseRunCount, &s.Rotation, &s.MissingTargetPolicy,
 		&manualFire, &report, &stopAfterRun, &held, &s.DeliverTo, &silent, &s.Route, &s.RouteConnection,
 		&s.GateKind, &s.GateSpec, &s.GateFiredFingerprint, &s.GateFiredAt, &s.GateWindowStart,
-		&s.GateWindowCount, &s.GateLastEvalAt, &s.GateLastVerdict)
+		&s.GateWindowCount, &s.GateLastEvalAt, &s.GateLastVerdict, &pending)
 	s.NewBranch = newBranch != 0
 	s.Enabled = enabled != 0
 	s.ManualFirePending = manualFire != 0
@@ -209,6 +216,7 @@ func scanSchedule(row scanner) (Schedule, error) {
 	s.StopAfterRun = stopAfterRun != 0
 	s.HeldByRemoval = held != 0
 	s.Silent = silent != 0
+	s.ApprovalPending = pending != 0
 	return s, err
 }
 
@@ -218,13 +226,13 @@ func (s *SQL) CreateSchedule(ctx context.Context, sc Schedule) error {
 		   wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 		   overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 		   reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy, report,
-		   stop_after_run, deliver_to, silent, route, route_connection, gate_kind, gate_spec)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   stop_after_run, deliver_to, silent, route, route_connection, gate_kind, gate_spec, approval_pending)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sc.ID, sc.MembershipID, sc.TenantID, sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ,
 		sc.WakePolicy, sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.LastRun, sc.LastStatus, sc.CreatedAt, sc.UpdatedAt,
 		sc.ReuseSession, sc.ReuseStartedAt, sc.ReuseRunCount, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec)
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, b2i(sc.ApprovalPending))
 	return err
 }
 
@@ -253,12 +261,12 @@ func (s *SQL) ListSchedules(ctx context.Context, membershipID string) ([]Schedul
 	return out, rows.Err()
 }
 
-// ListDueSchedules returns enabled rows with a non-empty next_run at or before
+// ListDueSchedules returns enabled, approved rows with a non-empty next_run at or before
 // nowRFC. The empty-string guard matters: next_run=” (a paused/spent schedule)
 // must never look due, and ” sorts before any real RFC3339 stamp.
 func (s *SQL) ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error) {
 	rows, err := s.db.QueryContext(ctx,
-		scheduleCols+` WHERE enabled=1 AND next_run!='' AND next_run<=? ORDER BY next_run`, nowRFC)
+		scheduleCols+` WHERE enabled=1 AND approval_pending=0 AND next_run!='' AND next_run<=? ORDER BY next_run`, nowRFC)
 	if err != nil {
 		return nil, err
 	}
@@ -280,12 +288,13 @@ func (s *SQL) UpdateSchedule(ctx context.Context, sc Schedule) error {
 		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
 		   session_mode=?, reuse_target=?, agent_kind=?, model=?, repo=?, worktree=?, new_branch=?, prompt=?,
 		   overlap_policy=?, enabled=?, next_run=?, updated_at=?, rotation=?, missing_target_policy=?, report=?,
-		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, gate_kind=?, gate_spec=?, held_by_removal=0
+		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, gate_kind=?, gate_spec=?, held_by_removal=0, approval_pending=?,
+		   manual_fire_pending=CASE WHEN ?=1 THEN 0 ELSE manual_fire_pending END
 		 WHERE id=? AND membership_id=?`,
 		sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ, sc.WakePolicy,
 		sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.UpdatedAt, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, sc.ID, sc.MembershipID)
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, b2i(sc.ApprovalPending), b2i(sc.ApprovalPending), sc.ID, sc.MembershipID)
 	return err
 }
 
@@ -306,6 +315,20 @@ func (s *SQL) SetScheduleEnabled(ctx context.Context, id, membershipID string, e
 		`UPDATE schedule SET enabled=?, next_run=?, updated_at=?, held_by_removal=0 WHERE id=? AND membership_id=?`,
 		b2i(enabled), nextRun, updatedAt, id, membershipID)
 	return err
+}
+
+// ApproveSchedule is the member's approval of a held schedule: one conditional write, so a second
+// approval (or one racing an edit that put the row back on hold) is a no-op rather than a re-arm.
+func (s *SQL) ApproveSchedule(ctx context.Context, id, membershipID, nextRun, updatedAt string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE schedule SET approval_pending=0, next_run=?, updated_at=?
+		 WHERE id=? AND membership_id=? AND approval_pending=1`,
+		nextRun, updatedAt, id, membershipID)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
 }
 
 func (s *SQL) DeleteSchedule(ctx context.Context, id, membershipID string) error {
