@@ -79,8 +79,8 @@ func TestScheduleTokenEditPutsApprovedBackOnHold(t *testing.T) {
 	_ = json.Unmarshal(doTokenJSON(api.create, mv, "POST", approvalBody, "").Body.Bytes(), &d)
 	doJSON(api.approve, mv, "POST", "", d.ID)
 
-	// A label edit does not change what runs.
-	if rr := doTokenJSON(api.update, mv, "PATCH", `{"spec_label":"x"}`, d.ID); rr.Code != 200 || strings.Contains(rr.Body.String(), "approval_pending") {
+	// An edit that changes nothing does not hold.
+	if rr := doTokenJSON(api.update, mv, "PATCH", `{"prompt":"p"}`, d.ID); rr.Code != 200 || strings.Contains(rr.Body.String(), "approval_pending") {
 		t.Fatalf("label edit held it: %d %s", rr.Code, rr.Body.String())
 	}
 	// The member's own edit of the prompt does not hold either.
@@ -90,8 +90,9 @@ func TestScheduleTokenEditPutsApprovedBackOnHold(t *testing.T) {
 	if len(dueIDs(t, api, ctx)) != 1 {
 		t.Fatal("schedule should still be due")
 	}
-	for _, patch := range []string{`{"prompt":"new"}`, `{"spec":"7200"}`, `{"model":"m"}`} {
-		api2, _, _ := newSchedAPITest(t)
+	for _, patch := range []string{`{"prompt":"new"}`, `{"spec":"7200"}`, `{"model":"m"}`, `{"spec_label":"x"}`,
+		`{"silent":true}`, `{"wake_policy":"skip"}`, `{"overlap_policy":"queue"}`, `{"deliver_to":["notifications"]}`} {
+		api2, ctx2, _ := newSchedAPITest(t)
 		api2.holdTokenWrites = true
 		var e scheduleDTO
 		_ = json.Unmarshal(doTokenJSON(api2.create, mv, "POST", approvalBody, "").Body.Bytes(), &e)
@@ -99,6 +100,15 @@ func TestScheduleTokenEditPutsApprovedBackOnHold(t *testing.T) {
 		rr := doTokenJSON(api2.update, mv, "PATCH", patch, e.ID)
 		if rr.Code != 200 || !strings.Contains(rr.Body.String(), `"approval_pending":true`) {
 			t.Fatalf("%s did not hold: %d %s", patch, rr.Code, rr.Body.String())
+		}
+		if got := dueIDs(t, api2, ctx2); len(got) != 0 {
+			t.Fatalf("%s: held row is still due: %v", patch, got)
+		}
+		if ar := doJSON(api2.approve, mv, "POST", "", e.ID); ar.Code != 200 {
+			t.Fatalf("%s: re-approve %d %s", patch, ar.Code, ar.Body.String())
+		}
+		if got := dueIDs(t, api2, ctx2); len(got) != 1 {
+			t.Fatalf("%s: approved row not due: %v", patch, got)
 		}
 	}
 }
@@ -111,5 +121,21 @@ func TestScheduleTokenWritesAreNotHeldByDefault(t *testing.T) {
 	}
 	if len(dueIDs(t, api, ctx)) != 1 {
 		t.Fatal("default must stay today's behaviour")
+	}
+}
+
+func TestScheduleHoldClearsPendingRunNow(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	api.holdTokenWrites = true
+	var d scheduleDTO
+	_ = json.Unmarshal(doTokenJSON(api.create, mv, "POST", approvalBody, "").Body.Bytes(), &d)
+	doJSON(api.approve, mv, "POST", "", d.ID)
+	if rr := doJSON(api.runNow, mv, "POST", "", d.ID); rr.Code != 200 {
+		t.Fatalf("run-now %d", rr.Code)
+	}
+	doTokenJSON(api.update, mv, "PATCH", `{"prompt":"changed"}`, d.ID)
+	sch, _, _ := api.store.GetSchedule(ctx, d.ID)
+	if !sch.ApprovalPending || sch.ManualFirePending {
+		t.Fatalf("pending=%v manual=%v", sch.ApprovalPending, sch.ManualFirePending)
 	}
 }

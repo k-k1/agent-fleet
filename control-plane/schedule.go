@@ -525,15 +525,19 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 	writeJSON(w, http.StatusOK, d)
 }
 
-// scheduleRunShapeChanged reports whether an edit changed what a fire does or when it fires: the
-// prompt, the timing, or the target (agent, model, route, repo, session mode). Those are what the
-// member approved, so a session changing one puts the schedule back on hold (#4631). Labels,
-// report and overlap settings do not widen what runs.
+// scheduleRunShapeChanged reports whether an edit changed anything a fire does or when it fires:
+// prompt, timing, target, delivery, and the policies that alter whether or how a fire starts.
+// The member approved that whole shape, so a session changing any of it puts the schedule back on
+// hold (#4631). spec_label is included because a prompt may reference it as a template value, and
+// silent because it appends to the instruction.
 func scheduleRunShapeChanged(a, b store.Schedule) bool {
 	return a.Prompt != b.Prompt || a.SpecKind != b.SpecKind || a.Spec != b.Spec || a.TZ != b.TZ ||
+		a.SpecLabel != b.SpecLabel || a.WakePolicy != b.WakePolicy || a.OverlapPolicy != b.OverlapPolicy ||
 		a.AgentKind != b.AgentKind || a.Model != b.Model || a.Route != b.Route || a.RouteConnection != b.RouteConnection ||
 		a.Repo != b.Repo || a.Worktree != b.Worktree || a.NewBranch != b.NewBranch ||
-		a.SessionMode != b.SessionMode || a.ReuseTarget != b.ReuseTarget
+		a.SessionMode != b.SessionMode || a.ReuseTarget != b.ReuseTarget ||
+		a.Rotation != b.Rotation || a.MissingTargetPolicy != b.MissingTargetPolicy ||
+		a.Report != b.Report || a.StopAfterRun != b.StopAfterRun || a.Silent != b.Silent || a.DeliverTo != b.DeliverTo
 }
 
 // approve is the member's approval of a held schedule (Console face only). It re-arms next_run

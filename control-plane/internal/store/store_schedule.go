@@ -288,12 +288,13 @@ func (s *SQL) UpdateSchedule(ctx context.Context, sc Schedule) error {
 		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
 		   session_mode=?, reuse_target=?, agent_kind=?, model=?, repo=?, worktree=?, new_branch=?, prompt=?,
 		   overlap_policy=?, enabled=?, next_run=?, updated_at=?, rotation=?, missing_target_policy=?, report=?,
-		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, gate_kind=?, gate_spec=?, held_by_removal=0, approval_pending=?
+		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, gate_kind=?, gate_spec=?, held_by_removal=0, approval_pending=?,
+		   manual_fire_pending=CASE WHEN ?=1 THEN 0 ELSE manual_fire_pending END
 		 WHERE id=? AND membership_id=?`,
 		sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ, sc.WakePolicy,
 		sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.UpdatedAt, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, b2i(sc.ApprovalPending), sc.ID, sc.MembershipID)
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, b2i(sc.ApprovalPending), b2i(sc.ApprovalPending), sc.ID, sc.MembershipID)
 	return err
 }
 
