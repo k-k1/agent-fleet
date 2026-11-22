@@ -29,6 +29,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/gitfsck"
 	"github.com/k-k1/agent-fleet/control-plane/internal/identitycheck"
+	"github.com/k-k1/agent-fleet/control-plane/internal/pushsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 	"github.com/k-k1/agent-fleet/control-plane/internal/writegate"
@@ -282,6 +283,7 @@ func main() {
 		log.Fatalf("route policy: %v", err)
 	}
 	mgr.store = st
+	mgr.push = pushsrv.New(st)
 	mgr.initGitDataGuard()
 	logOrphanGitRepos(ctx, st, mgr.dataRoot)
 	if len(mgr.master32) > 0 && mgr.custodian != nil {

@@ -47,11 +47,27 @@ func scanNotification(row scanner) (Notification, error) {
 }
 
 func (s *SQL) InsertNotification(ctx context.Context, n Notification) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(membership_id, event_id) DO NOTHING`, n.EventID, n.MembershipID,
 		n.Kind, n.TargetType, n.TargetID, n.TargetKind, n.DisplayName, n.Payload, n.CreatedAt, n.SeenAt)
-	return err
+	if err != nil {
+		return err
+	}
+	// Only a row this call created is announced: the Agent's outbox is re-sent until acked, and
+	// a duplicate must not push the member's phone a second time.
+	if fn := s.onNotification; fn != nil {
+		if rows, rerr := res.RowsAffected(); rerr == nil && rows > 0 {
+			fn(n)
+		}
+	}
+	return nil
 }
+
+// SetNotificationHook registers fn to be called, after the insert has committed, for every
+// notification row InsertNotification creates. fn must return quickly (hand the work to a
+// goroutine): it runs on the inserting caller. Call it once at start-up, before the store is
+// shared; it is not synchronised.
+func (s *SQL) SetNotificationHook(fn func(Notification)) { s.onNotification = fn }
 
 func (s *SQL) ListNotifications(ctx context.Context, membershipID, retainAfter string, limit int) ([]Notification, error) {
 	rows, err := s.db.QueryContext(ctx, notificationCols+` WHERE membership_id=? AND created_at>=? ORDER BY seq DESC LIMIT ?`, membershipID, retainAfter, limit)
