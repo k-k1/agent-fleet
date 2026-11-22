@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -130,18 +130,22 @@ func TestGrafanaWritersKeepCustomAPIConn(t *testing.T) {
 // waited behind another writer must not store a host the policy stopped approving meanwhile.
 func TestPutCustomAPIConnRechecksPolicyUnderTheStoreLock(t *testing.T) {
 	memberHome(t)
-	policy := func(hosts ...string) routepolicy.Policy {
-		return routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteAnthropicAPI},
+	policy := func(rev int64, hosts ...string) routepolicy.Policy {
+		return routepolicy.Policy{Revision: rev, Restricted: true, Allowed: []string{routes.RouteAnthropicAPI},
 			EndpointRoutes: []string{routes.RouteCustomAPI}, Endpoints: hosts}
 	}
-	useHidingPolicy(t, policy("a.example.test", "b.example.test"))
+	useHidingPolicy(t, policy(2, "a.example.test", "b.example.test"))
+	store := routepolicy.Active()
+	// The store is read the same number of times by the first check and by the recheck, so a
+	// solo PUT's reads, halved, say when the first check is over.
+	var reads atomic.Int64
+	routepolicy.Active = func() *routepolicy.Store { reads.Add(1); return store }
 	if w := customAPIPut("mine", "https://a.example.test/v1", ""); w.Code != http.StatusOK {
 		t.Fatalf("seed: %d %s", w.Code, w.Body)
 	}
-	narrowed := routepolicy.Open(filepath.Join(t.TempDir(), "rp2.json"), "")
-	if _, err := narrowed.Accept(policy("a.example.test")); err != nil {
-		t.Fatal(err)
-	}
+	perCheck := reads.Load() / 2
+	reads.Store(0)
+
 	held, release := make(chan struct{}), make(chan struct{})
 	go func() {
 		_ = secrets.Update(func(*secrets.Data) error { close(held); <-release; return nil })
@@ -149,8 +153,13 @@ func TestPutCustomAPIConnRechecksPolicyUnderTheStoreLock(t *testing.T) {
 	<-held
 	done := make(chan *httptest.ResponseRecorder)
 	go func() { done <- customAPIPut("mine", "https://b.example.test/v1", "") }()
-	time.Sleep(300 * time.Millisecond) // the PUT has passed its first check and waits for the lock
-	routepolicy.Active = func() *routepolicy.Store { return narrowed }
+	for reads.Load() < perCheck {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond) // margin for the last read to be used; a miss only makes the test less sensitive
+	if _, err := store.Accept(policy(3, "a.example.test")); err != nil {
+		t.Fatal(err)
+	}
 	close(release)
 	if w := <-done; w.Code != http.StatusForbidden {
 		t.Fatalf("PUT after the policy narrowed: %d %s", w.Code, w.Body)
