@@ -1941,6 +1941,49 @@ describe("Stop chain in the memo menu", () => {
     expect(stopItem()).not.toBeNull();
   });
 
+  it("is offered on a delivered memo too", async () => {
+    servedMemos = [chained({ state: "delivered" })];
+    await render();
+    // Delivered notes are folded into one line until it is opened.
+    await click(must(document.querySelector(".memo-sent-fold"), "history fold"));
+    await click(rowMenuBtn());
+    await click(must(stopItem(), "stop chain item"));
+    expect(memoStopChain).toHaveBeenCalledWith("f1");
+  });
+
+  it("is offered on a root that has no chain id yet, while the category allows follow-ups", async () => {
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ continuationMax: 4 })] };
+    servedMemos = [aMemo({ id: "root", state: "pending", reference: { provider: "github", key: "o/r#1", url: "" } })];
+    await render();
+    await click(rowMenuBtn());
+    await click(must(stopItem(), "stop chain item"));
+    expect(memoStopChain).toHaveBeenCalledWith("root");
+  });
+
+  it("is absent on a root when the category allows no follow-ups, or the note has no work item", async () => {
+    const ref = { provider: "github", key: "o/r#1", url: "" };
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ continuationMax: 0 })] };
+    servedMemos = [aMemo({ id: "root", state: "pending", reference: ref })];
+    await render();
+    await click(rowMenuBtn());
+    expect(stopItem()).toBeNull();
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ continuationMax: 4 })] };
+    servedMemos = [aMemo({ id: "root", state: "pending" })];
+    await bump();
+    expect(stopItem()).toBeNull();
+  });
+
+  it("drops the item when a refresh moves the open memo out of reach", async () => {
+    servedMemos = [chained()];
+    await render();
+    await click(rowMenuBtn());
+    expect(stopItem()).not.toBeNull();
+    servedMemos = [chained({ state: "unconfirmed" })];
+    await bump();
+    expect(document.querySelector(".ui-menu")).not.toBeNull();
+    expect(stopItem()).toBeNull();
+  });
+
   it("is absent on a memo that is in no chain, and on one in neither state", async () => {
     servedMemos = [aMemo({ id: "plain", state: "pending" }), chained({ id: "done", state: "unconfirmed" })];
     await render();
