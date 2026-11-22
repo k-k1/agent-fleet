@@ -96,9 +96,9 @@
   align-items: center;
   gap: 6px;
 }
-/* Colours, radius and size differ from the .ui-chip defaults; the compound selector outranks
+/* Colours, radius and size differ from the .ui-chip defaults; the descendant selector outranks
    ui.css regardless of stylesheet order, and the hover rule keeps the border from changing. */
-.ui-chip.usage-chip {
+.usage-chips .usage-chip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -108,7 +108,7 @@
   font-size: var(--fs-12);
   padding: 2px 8px;
 }
-.ui-chip.usage-chip:hover {
+.usage-chips .usage-chip:hover {
   border-color: var(--btn-border);
 }
 .usage-chip .codicon {

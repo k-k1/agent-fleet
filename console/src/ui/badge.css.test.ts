@@ -73,14 +73,14 @@ describe(".ui-chip primitive", () => {
 describe(".usage-chip on .ui-chip", () => {
   const usage = strip(readFileSync(path.resolve(__dirname, "../features/usage/usage.css"), "utf8"));
   it("keeps the look the standalone .usage-chip had", () => {
-    const r = rule(usage, ".ui-chip.usage-chip");
+    const r = rule(usage, ".usage-chips .usage-chip");
     expect(r).toContain("border-color: var(--btn-border)");
     expect(r).toContain("border-radius: 999px");
     expect(r).toContain("background: var(--sel-bg)");
     expect(r).toContain("font-size: var(--fs-12)");
     expect(r).toContain("padding: 2px 8px");
     expect(r).toContain("gap: 5px");
-    expect(rule(usage, ".ui-chip.usage-chip:hover")).toBe("border-color: var(--btn-border);");
+    expect(rule(usage, ".usage-chips .usage-chip:hover")).toBe("border-color: var(--btn-border);");
   });
   it("the call site carries ui-chip and no px font-size literal of 10..13 is left", () => {
     const src = readFileSync(path.resolve(__dirname, "../features/usage/UsageView.tsx"), "utf8");
