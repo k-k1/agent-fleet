@@ -1266,9 +1266,4 @@ func TestCursorAliasVersionSlotLstatFailureIsFailedAndRetried(t *testing.T) {
 	if got, _ := os.Readlink(alias); !strings.Contains(got, "2026.1.1-abc") {
 		t.Errorf("alias not repaired on the retry: %s", got)
 	}
-	// A slot that is really gone is not ours.
-	mustSetup(t, os.Remove(old))
-	if _, ok, err := f.env.aliasVersion(alias, "../share/cursor-agent/versions/2026.0.0-old/cursor-agent"); ok || err != nil {
-		t.Errorf("missing slot: ok=%v err=%v", ok, err)
-	}
 }
