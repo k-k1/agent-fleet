@@ -110,6 +110,14 @@ describe("tenant branch rules", () => {
     expect(alertText()).toBe("");
   });
 
+  it("drops the editor when a save answers a JSON null, as the unguarded read did", async () => {
+    await mount();
+    apiJSON.mockResolvedValue(null);
+    await click(saveButton());
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("textarea")).toBeNull();
+  });
+
   it("stops text that is not a JSON list before the request", async () => {
     await mount();
     await typeInto(box(), "{ not json");

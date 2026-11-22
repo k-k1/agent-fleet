@@ -23,7 +23,8 @@ const writes: [string, () => Promise<unknown>, unknown[]][] = [
   ["putTenantExternalMemory", () => A.putTenantExternalMemory("a/b", true), [TT + "/external-memory", "PUT", { enabled: true }]],
   ["putTenantMcpOAuth", () => A.putTenantMcpOAuth("a/b", true), [TT + "/mcp-oauth", "PUT", { enabled: true }]],
   ["putTenantBranchRules", () => A.putTenantBranchRules("a/b", [{ x: 1 }]), [TT + "/branch-rules", "PUT", { rules: [{ x: 1 }] }]],
-  ["putTenantEngineAccess", () => A.putTenantEngineAccess("a/b", "/llm", { on: 1 }), [TT + "/engine-access/llm", "PUT", { on: 1 }]],
+  ["putTenantEngineAccess role", () => A.putTenantEngineAccess("a/b", "", { on: 1 }), [TT + "/engine-access", "PUT", { on: 1 }]],
+  ["putTenantEngineAccess members", () => A.putTenantEngineAccess("a/b", "/members", { on: 1 }), [TT + "/engine-access/members", "PUT", { on: 1 }]],
   ["putTenantNetwork", () => A.putTenantNetwork("a/b", "10.0.0.0/8"), [TT + "/network", "PUT", { allowed_cidrs: "10.0.0.0/8" }]],
   ["putTenantMachine", () => A.putTenantMachine("a/b", "g"), [TT + "/slot-class", "PUT", { slot_class: "g" }]],
   ["putTenantBoost", () => A.putTenantBoost("a/b", { enabled: true }), [TT + "/boost", "PUT", { enabled: true }]],
@@ -67,6 +68,19 @@ describe("tenant wrappers send what the components used to", () => {
   it("reads and the pool's api()-based writes hit the literal paths", async () => {
     const ctl = new AbortController();
     await A.getTenantMembers("a/b");
+    await A.getTenantEngineAccess("a/b");
+    await A.getTenantMachine("a/b");
+    await A.getTenantBoost("a/b");
+    await A.getTenantNetwork("a/b");
+    await A.getTenantBranchRules("a/b");
+    await A.getTenantMcpOAuth("a/b");
+    await A.getTenantMemberDefaults("a/b");
+    await A.getTenantGitOAuth("a/b");
+    await A.getTenantWatchSources("a/b");
+    await A.getTenantMemoQueues("a/b");
+    await A.getTenantExternalMemory("a/b");
+    await A.getTenantRoutePolicy("a/b");
+    await A.getProvided("p");
     await A.getTenantIdps("a/b");
     await A.getAllIdps();
     await A.getDeploymentProviders();
@@ -80,6 +94,19 @@ describe("tenant wrappers send what the components used to", () => {
     await A.setPoolSlotReserved("i/1", false);
     expect(api.mock.calls).toEqual([
       [TT + "/members"],
+      [TT + "/engine-access"],
+      [TT + "/slot-class"],
+      [TT + "/boost"],
+      [TT + "/network"],
+      [TT + "/branch-rules"],
+      [TT + "/mcp-oauth"],
+      [TT + "/member-defaults"],
+      [TT + "/git-oauth"],
+      [TT + "/watch-sources"],
+      [TT + "/memo-queues"],
+      [TT + "/external-memory"],
+      [TT + "/route-policy"],
+      ["p"],
       [TT + "/idp"],
       ["api/admin/idp"],
       ["api/admin/providers"],
@@ -101,10 +128,13 @@ describe("tenant wrappers send what the components used to", () => {
     expect(await A.putTenantLimits("a/b", {})).toBeNull();
     expect(await A.getTenantBranchRules("a/b")).toBeNull();
     await expect(A.getTenantMembers("a/b")).rejects.toThrow();
-    await expect(A.getTenantMcpOAuth("a/b")).rejects.toThrow();
-    await expect(A.putTenantMcpOAuth("a/b", true)).rejects.toThrow();
-    await expect(A.putTenantBranchRules("a/b", [])).rejects.toThrow();
-    await expect(A.putTenantMemberDefaults("a/b", {})).rejects.toThrow();
+    // The ones whose caller stores the reply before reading it stay nullable; assertBody throws.
+    expect(await A.getTenantMcpOAuth("a/b")).toBeNull();
+    expect(await A.putTenantMcpOAuth("a/b", true)).toBeNull();
+    expect(await A.putTenantBranchRules("a/b", [])).toBeNull();
+    expect(await A.putTenantMemberDefaults("a/b", {})).toBeNull();
+    expect(() => A.assertBody(null)).toThrow();
+    expect(() => A.assertBody({})).not.toThrow();
   });
 
   it("hands an error body through unchanged", async () => {

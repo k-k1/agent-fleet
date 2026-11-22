@@ -4,9 +4,10 @@
 //
 // A JSON `null` body is neither an error nor an empty object. A wrapper whose caller guarded the
 // reply (`res?.error`, `d && !d.error`) keeps `| null` in its type and the caller keeps that
-// handling. A wrapper whose caller dereferenced the reply inside a try/catch (so a null body
-// surfaced as its "failed" message) goes through `needBody`, which rejects on null and so lands
-// in the same catch.
+// handling. A caller that dereferenced the reply inside a try/catch (so a null body surfaced as
+// its "failed" message, after it had already stored the null) does the same: store the reply,
+// then `assertBody` to throw into that catch. getTenantMembers has no state to store first and
+// rejects on null through `needBody`.
 import { api as rawApi, apiJSON as rawApiJSON, type ApiError } from "../../../core/api/client.ts";
 import type { Reply } from "../api.ts";
 import type { HomeResize, Member } from "../parts/adminShared.ts";
@@ -37,6 +38,11 @@ const needBody = <T>(p: Promise<T | null>): Promise<T> =>
 /** A body the caller only parses (parseTenantPolicy, parseProvidedTenant take `unknown`) and reads `error` from. */
 export type Loose = Record<string, unknown> & { error?: ApiError };
 
+/** Throws on a null body: the old `res.field` read that landed in the caller's catch. */
+export function assertBody<V>(r: V | null): asserts r is V {
+  if (r === null) throw new TypeError("empty reply body");
+}
+
 const T = (slug: string) => encodeURIComponent(slug);
 
 // --- Tenant roster and the per-tenant switches -------------------------------------------------
@@ -58,15 +64,15 @@ export const putTenantExternalMemory = (slug: string, enabled: boolean): Promise
   rawApiJSON(`api/admin/tenants/${T(slug)}/external-memory`, "PUT", { enabled });
 
 export type McpOAuthView = { enabled: boolean; served: boolean };
-export const getTenantMcpOAuth = (slug: string): Promise<Reply<McpOAuthView>> =>
-  needBody(rawApi(`api/admin/tenants/${T(slug)}/mcp-oauth`));
-export const putTenantMcpOAuth = (slug: string, enabled: boolean): Promise<Reply<McpOAuthView>> =>
-  needBody(rawApiJSON(`api/admin/tenants/${T(slug)}/mcp-oauth`, "PUT", { enabled }));
+export const getTenantMcpOAuth = (slug: string): Promise<Reply<McpOAuthView> | null> =>
+  rawApi(`api/admin/tenants/${T(slug)}/mcp-oauth`);
+export const putTenantMcpOAuth = (slug: string, enabled: boolean): Promise<Reply<McpOAuthView> | null> =>
+  rawApiJSON(`api/admin/tenants/${T(slug)}/mcp-oauth`, "PUT", { enabled });
 
 export const getTenantBranchRules = (slug: string): Promise<Reply<TenantBranchRules> | null> =>
   rawApi(`api/admin/tenants/${T(slug)}/branch-rules`);
-export const putTenantBranchRules = (slug: string, rules: unknown[]): Promise<Reply<TenantBranchRules>> =>
-  needBody(rawApiJSON(`api/admin/tenants/${T(slug)}/branch-rules`, "PUT", { rules }));
+export const putTenantBranchRules = (slug: string, rules: unknown[]): Promise<Reply<TenantBranchRules> | null> =>
+  rawApiJSON(`api/admin/tenants/${T(slug)}/branch-rules`, "PUT", { rules });
 
 export const getTenantEngineAccess = (slug: string): Promise<Reply<EngineAccessView> | null> =>
   rawApi(`api/admin/tenants/${T(slug)}/engine-access`);
@@ -91,8 +97,8 @@ export const putTenantBoost = (slug: string, body: object): Promise<Reply<BoostP
 
 export const getTenantMemberDefaults = (slug: string): Promise<Reply<TenantMemberDefaultsView> | null> =>
   rawApi(`api/admin/tenants/${T(slug)}/member-defaults`);
-export const putTenantMemberDefaults = (slug: string, body: unknown): Promise<Reply<TenantMemberDefaultsView>> =>
-  needBody(rawApiJSON(`api/admin/tenants/${T(slug)}/member-defaults`, "PUT", body));
+export const putTenantMemberDefaults = (slug: string, body: unknown): Promise<Reply<TenantMemberDefaultsView> | null> =>
+  rawApiJSON(`api/admin/tenants/${T(slug)}/member-defaults`, "PUT", body);
 
 export const getTenantGitOAuth = (slug: string): Promise<Reply<{ providers?: GitOAuthApp[] }> | null> =>
   rawApi(`api/admin/tenants/${T(slug)}/git-oauth`);

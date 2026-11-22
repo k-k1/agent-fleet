@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
-import { getTenantMemberDefaults, putTenantMemberDefaults } from "./tenantApi.ts";
+import { assertBody, getTenantMemberDefaults, putTenantMemberDefaults } from "./tenantApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { MEMBER_DEFAULT_AGENTS, agentOf } from "../../../agents/registry.ts";
@@ -97,11 +97,12 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
     setError("");
     try {
       const res = await putTenantMemberDefaults(slug, defaultsBody(agent, { ...launch, budget_usd: budget }, repos, ops));
-      if (!isOk(res)) {
+      if (res && !isOk(res)) {
         setError(errDetail(res.error));
         return;
       }
       setView(res);
+      assertBody(res);
       if (res.defaults) fill(res.defaults);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);

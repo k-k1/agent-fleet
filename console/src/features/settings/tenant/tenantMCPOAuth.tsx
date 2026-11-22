@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
-import { getTenantMcpOAuth, putTenantMcpOAuth, type McpOAuthView } from "./tenantApi.ts";
+import { assertBody, getTenantMcpOAuth, putTenantMcpOAuth, type McpOAuthView } from "./tenantApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -18,11 +18,12 @@ export function TenantMCPOAuthView({ slug }: { slug: string }) {
     let current = true;
     getTenantMcpOAuth(slug).then((res) => {
       if (!current) return;
-      if (!isOk(res)) {
+      if (res && !isOk(res)) {
         setError(errText(res.error));
         return;
       }
       setView(res);
+      assertBody(res);
       setEnabled(res.enabled);
     }).catch(() => {
       if (current) setError(tr("tenant.mcp_oauth_load_failed"));
@@ -42,11 +43,12 @@ export function TenantMCPOAuthView({ slug }: { slug: string }) {
     setBusy(true);
     try {
       const res = await putTenantMcpOAuth(slug, enabled);
-      if (!isOk(res)) {
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }
       setView(res);
+      assertBody(res);
       setEnabled(res.enabled);
       toast(tr("admin.saved"));
     } catch {

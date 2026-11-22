@@ -57,6 +57,15 @@ afterEach(() => {
 });
 
 describe("TenantMemberDefaultsPanel", () => {
+  it("drops the editor when a save answers a JSON null, as the unguarded read did", async () => {
+    api.mockResolvedValue({ tenant: "acme", defaults: { agent: "codex" } });
+    await mount();
+    apiJSON.mockResolvedValue(null);
+    await act(async () => button(t("common.save")).click());
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("select")).toBeNull();
+  });
+
   it("loads the stored agent and saves the chosen one", async () => {
     api.mockResolvedValue({ tenant: "acme", defaults: { agent: "codex" } });
     await mount();
