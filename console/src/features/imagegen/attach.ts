@@ -14,6 +14,7 @@ import { t } from "../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { bindStudio, createStudio, getStudio, patchStudio, studioPersona, type StudioDraft, type StudioPatch } from "./api.ts";
 import type { AttachOpts } from "./parts/AttachAgentModal.tsx";
+import { useReposStore } from "../repos/store.ts";
 
 export interface AttachResult {
   /** The studio, whether or not the session came up. */
@@ -96,6 +97,9 @@ export async function attachAgent(p: {
     return { studioId, error: t("err.network") };
   }
   if (!res || res.error || !res.name) return { studioId, error: res?.error ? errDetail(res.error) : t("imggen.attach_failed") };
+  // The create just named the worktree's creator; a repo list read before it still carries the
+  // "created, no session" placeholder until the next poll.
+  if (o.worktree) void useReposStore.getState().refresh();
   // A new worktree is named by the Agent, so the default title above names the row the member
   // started from, and two studios cut from one row read the same in the picker. The create
   // answers with the working copy the agent actually got.

@@ -20,6 +20,8 @@ vi.mock("../../core/api/client.ts", () => ({
   errText: () => "",
   errDetail: () => "",
 }));
+const repoRefresh = vi.fn(async () => true);
+vi.mock("../repos/store.ts", () => ({ useReposStore: { getState: () => ({ refresh: repoRefresh }) } }));
 vi.mock("./api.ts", () => ({
   bindStudio: async (id: string, session: string) => {
     calls.push(`bind ${id} "${session}"`);
@@ -46,6 +48,14 @@ describe("switching the studio's agent", () => {
     });
     expect(r).toEqual({ studioId: "st1", session: "snew001" });
     expect(calls).toEqual(['bind st1 ""', "POST api/sessions/sold001/halt", "POST api/sessions studio=st1"]);
+  });
+
+  it("refetches the repo list after a worktree create, and not for an in-place one", async () => {
+    repoRefresh.mockClear();
+    await attachAgent({ studioId: "st1", draft: () => ({}), opts: { dir: "/r", kind: "codex", driver: "managed", worktree: true } as never });
+    expect(repoRefresh).toHaveBeenCalledTimes(1);
+    await attachAgent({ studioId: "st1", draft: () => ({}), opts: { dir: "/r", kind: "codex", driver: "managed", worktree: false } as never });
+    expect(repoRefresh).toHaveBeenCalledTimes(1);
   });
 });
 
