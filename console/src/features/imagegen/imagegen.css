@@ -223,7 +223,7 @@
     flex: 1 1 0;
     min-width: 0;
   }
-  .igen-enginebar-band .igen-head-model .ds-select {
+  .igen-enginebar-band .igen-head-model select {
     min-width: 0;
     max-width: none;
     width: 100%;
@@ -639,9 +639,9 @@
 /* A native select sizes itself to its widest option and ignores the track's 1fr without
    this, so the last column of the knob grid spills past the pane's edge (seen in the
    headless shot: `scheduler` ran under the results column). */
-.igen-grid .ds-select,
+.igen-grid select,
 .igen-grid .ds-input,
-.igen-form .ds-select,
+.igen-form select,
 .igen-form .ds-input {
   min-width: 0;
   max-width: 100%;
