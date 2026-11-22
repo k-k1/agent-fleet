@@ -95,7 +95,8 @@ func TestRemoveWorktreeSharesTheParentLockAndPruneWaits(t *testing.T) {
 			t.Fatalf("only %d removes held the parent lock together", i)
 		}
 	}
-	go pruneWorktrees(parent)
+	pruneDone := make(chan struct{})
+	go func() { pruneWorktrees(parent); close(pruneDone) }()
 	select {
 	case <-pruneStarted:
 		close(release)
@@ -107,6 +108,11 @@ func TestRemoveWorktreeSharesTheParentLockAndPruneWaits(t *testing.T) {
 	case <-pruneStarted:
 	case <-time.After(10 * time.Second):
 		t.Fatal("prune never ran after the removes ended")
+	}
+	select {
+	case <-pruneDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("prune never finished")
 	}
 	for i := 0; i < 2; i++ {
 		select {

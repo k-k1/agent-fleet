@@ -28,7 +28,10 @@ var deleteMarks = struct {
 	// so a path that reaches the copy through a symlink (inside it or outside it), or that no
 	// longer resolves once the folder is gone, cannot make a lock slip past.
 	sessions map[string][]string
-}{m: map[string]string{}, sessions: map[string][]string{}}
+	// raw maps a copy being deleted to the path the delete request named it by, which is what a
+	// session's own Meta.Dir is matched against (string prefix) the way the delete's guards do.
+	raw map[string]string
+}{m: map[string]string{}, sessions: map[string][]string{}, raw: map[string]string{}}
 
 // markKey is the identity a mark is compared by: the real path, the way the lock ledger
 // (sessionx.AbsPath) and git itself identify a working copy. A symlink to a worktree, or a
@@ -58,6 +61,7 @@ func markKey(p string) string {
 // consistent under LinkedWorktreeCount. Call it inside the deletion gate. end clears the mark
 // and is safe to call more than once.
 func BeginDelete(dir, parent string, sessions ...string) (end func(), ok bool, why string) {
+	rawDir := filepath.Clean(dir)
 	dir, parent = markKey(dir), markKeyOrEmpty(parent)
 	deleteMarks.mu.Lock()
 	defer deleteMarks.mu.Unlock()
@@ -76,12 +80,14 @@ func BeginDelete(dir, parent string, sessions ...string) (end func(), ok bool, w
 	}
 	deleteMarks.m[dir] = parent
 	deleteMarks.sessions[dir] = sessions
+	deleteMarks.raw[dir] = rawDir
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			deleteMarks.mu.Lock()
 			delete(deleteMarks.m, dir)
 			delete(deleteMarks.sessions, dir)
+			delete(deleteMarks.raw, dir)
 			deleteMarks.mu.Unlock()
 		})
 	}, true, ""
@@ -116,10 +122,20 @@ func underMarkLocked(p string) bool {
 	return false
 }
 
-// SessionUnderDeletion reports whether the session is one a delete in flight is settling.
-func SessionUnderDeletion(name string) bool {
+// SessionUnderDeletion reports whether the session is one a delete in flight is settling: one
+// recorded by name when the delete decided, or one whose own Meta.Dir (dir, as stored) lies under
+// the path the delete was asked for, so a session that came back after the names were taken
+// (restored from the trash on its own) is covered too.
+func SessionUnderDeletion(name, dir string) bool {
 	deleteMarks.mu.Lock()
 	defer deleteMarks.mu.Unlock()
+	if dir = filepath.Clean(dir); dir != "." {
+		for _, raw := range deleteMarks.raw {
+			if underPath(dir, raw) {
+				return true
+			}
+		}
+	}
 	for _, names := range deleteMarks.sessions {
 		for _, n := range names {
 			if n == name {

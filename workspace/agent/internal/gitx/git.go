@@ -2156,21 +2156,27 @@ func decideDeleteRepo(w http.ResponseWriter, r *http.Request, dir, parent string
 		return nil
 	}
 	fireDeleteHook("pre-mark", dir)
-	end, ok, why := BeginDelete(dir, parent, sessionNamesUnder(dir)...)
+	release, ok, why := BeginDelete(dir, parent, sessionNamesUnder(dir)...)
 	if !ok {
 		httpx.WriteErr(w, http.StatusConflict, errCodeDeleteInProgress, why)
 		return nil
 	}
+	handedOver := false
+	defer func() {
+		if !handedOver { // a panic below must not leave the mark behind
+			release()
+		}
+	}()
 	// Existence is read only once the mark is held: a delete of this same copy that finished
 	// before the mark was taken has taken the folder with it, and this one answers 404 as it did
 	// before the gate was narrowed. Read before the mark, that delete could finish in between and
 	// both would answer 200. (The kind of copy was read before the mark; a gone folder reads as
 	// neither, which the recheck then turns into the 404.)
 	if _, ok := RepoAnyDirFromPath(w, r); !ok {
-		end()
 		return nil
 	}
-	return end
+	handedOver = true
+	return release
 }
 
 // sessionNamesUnder lists the sessions whose working folder is dir or lies under it, by the same

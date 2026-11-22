@@ -899,8 +899,11 @@ func TestLockDuringADeleteIsRefusedAndTheCopyIsDeleted(t *testing.T) {
 			t.Fatalf("%s %s during a delete = %d %s, want 409 delete_in_progress", method, path, code, raw)
 		}
 	}
+	// A session that came back after the delete decided (restored from the trash on its own, so
+	// its name is not in the mark) and lives behind the link: matched by its stored path.
+	session.WriteMeta(session.Meta{Name: "late001", Dir: filepath.Join(wt1, "out", "sub"), Kind: session.KindCodex})
 	lock := map[string]any{"locked": true}
-	for _, path := range []string{"/repos/app@one/lock", "/repos/alias-one/lock", "/sessions/inwt001/lock", "/sessions/inwt002/lock", "/sessions/inwt003/lock"} {
+	for _, path := range []string{"/repos/app@one/lock", "/repos/alias-one/lock", "/sessions/inwt001/lock", "/sessions/inwt002/lock", "/sessions/inwt003/lock", "/sessions/late001/lock"} {
 		want409("POST", path, lock)
 	}
 	// The same copy, also by another name, cannot be deleted twice at once; its base clone cannot
@@ -915,7 +918,7 @@ func TestLockDuringADeleteIsRefusedAndTheCopyIsDeleted(t *testing.T) {
 	if session.DirExists(wt1) || sessionx.RepoLocked(wt1) {
 		t.Fatal("the worktree is still there, or a lock was recorded for it")
 	}
-	for _, n := range []string{"inwt001", "inwt002", "inwt003"} {
+	for _, n := range []string{"inwt001", "inwt002", "inwt003", "late001"} {
 		if m, ok := session.ReadMeta(n); ok && m.Locked {
 			t.Fatalf("session %s was locked although its copy was deleted", n)
 		}
@@ -1034,12 +1037,13 @@ func TestSecondDeleteThatSeesTheFirstFinishInsideTheGateIs404(t *testing.T) {
 	srv := httptest.NewServer(trashMux())
 	defer srv.Close()
 
-	releaseA, bAtMark, goB := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	releaseA, bAtMark, goB, aInRemove := make(chan struct{}), make(chan struct{}), make(chan struct{}), make(chan struct{})
 	defer releaseOnce(releaseA)
 	var marks atomic.Int32
 	t.Cleanup(gitx.SetDeleteStepHook(func(step, d string) {
 		switch step {
 		case "remove":
+			close(aInRemove)
 			<-releaseA
 		case "pre-mark":
 			if marks.Add(1) == 2 { // the second delete, holding the gate
@@ -1050,8 +1054,13 @@ func TestSecondDeleteThatSeesTheFirstFinishInsideTheGateIs404(t *testing.T) {
 	}))
 	aCode := make(chan int, 1)
 	go func() { c, _ := codeWithin(srv, "DELETE", "/repos/solo", nil); aCode <- c }()
-	for gitx.UnderDeletion(dir) == false { // A holds its mark
-		time.Sleep(5 * time.Millisecond)
+	select { // A holds its mark once it is in its removal
+	case <-aInRemove:
+	case c := <-aCode:
+		t.Fatalf("delete A ended with %d before it reached its removal", c)
+	case <-time.After(10 * time.Second):
+		releaseOnce(releaseA)
+		t.Fatal("delete A never reached its removal")
 	}
 	bCode := make(chan int, 1)
 	go func() { c, _ := codeWithin(srv, "DELETE", "/repos/solo", nil); bCode <- c }()
@@ -1149,3 +1158,37 @@ func TestRecreateUnderABaseCloneInsideADeleteTargetIsRefused(t *testing.T) {
 	releaseOnce(release)
 	<-done
 }
+
+// A panic while the second delete answers its 404 (the response writer failing) must not leave the
+// mark it had just taken: net/http recovers the panic and the same path is deletable again.
+func TestMarkIsNotLeakedWhenTheAnswerPanics(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	dir := filepath.Join(home, "repos", "solo")
+	gitInit(t, dir)
+	t.Cleanup(gitx.SetDeleteStepHook(func(step, d string) {
+		if step == "pre-gate" {
+			_ = os.RemoveAll(d) // the copy goes between the first existence check and the mark
+		}
+	}))
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /repos/{name}", func(w http.ResponseWriter, r *http.Request) {
+		defer func() { _ = recover() }()
+		gitx.HandleDeleteRepo(panicWriter{w}, r)
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	_, _ = codeWithin(srv, "DELETE", "/repos/solo", nil)
+	if gitx.UnderDeletion(dir) {
+		t.Fatal("the mark outlived a delete whose answer panicked")
+	}
+}
+
+type panicWriter struct{ http.ResponseWriter }
+
+func (panicWriter) WriteHeader(int)           { panic("writer failed") }
+func (panicWriter) Write([]byte) (int, error) { panic("writer failed") }

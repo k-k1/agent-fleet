@@ -146,7 +146,7 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	if gitx.UnderDeletion(m.Dir) || gitx.SessionUnderDeletion(name) {
+	if gitx.UnderDeletion(m.Dir) || gitx.SessionUnderDeletion(name, m.Dir) {
 		httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(),
 			"the working copy of this session is being deleted, so it cannot be locked now")
 		return
