@@ -263,4 +263,17 @@ describe("作業コピー削除モーダル", () => {
     expect(intro).toContain("3");
     for (const n of names) expect(intro).not.toContain(n);
   });
+
+  it("sibling copies: only the ticked ones are archived and deleted, each after its own sessions", async () => {
+    await render([node(repo("app@a")), node(repo("app@b"))], [sess("s1", "app@a"), sess("s2", "app@b")]);
+    await click(rowFor("app@a"));
+    await click(runButton());
+    expect(sent()).toEqual(["POST api/sessions/s2/archive", "DELETE api/repos/app%40b"]);
+  });
+
+  it("a single entry in `nodes` keeps the single-copy wording", async () => {
+    await render([node(repo("app@a"))], []);
+    const intro = document.querySelector(".wcdel-intro")!.textContent!;
+    expect(intro).toContain("app@a");
+  });
 });
