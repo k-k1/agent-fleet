@@ -22,8 +22,10 @@ export interface EditorResolutionPanelProps {
    *  revision 0); the choice left is to accept it. Default true. */
   canResaveStored?: boolean;
   /** Offered with the unavailable-remote answer when the memory the save was for exists but cannot
-   *  be matched to it: opens that memory. Replaces the generic text with `existingText`. */
+   *  be matched to it: opens that memory. */
   onOpenExisting?: () => void;
+  /** Replaces the generic unavailable text; shown whether or not `onOpenExisting` is offered, so a
+   *  surface that cannot open the memory still explains the state. */
   existingText?: string;
   /** Replaces the "sent content is live" sentence for a store that is not a file. */
   sentLiveText?: string;
@@ -78,7 +80,7 @@ export function EditorResolutionPanel(props: EditorResolutionPanelProps) {
           ? (props.sentLiveText ?? tr("editor.unknown.sent_live"))
           : observation?.kind === "old_base_live"
             ? tr("editor.unknown.old_base")
-            : (props.onOpenExisting && props.existingText) || tr("editor.unknown.unavailable")}
+            : props.existingText || tr("editor.unknown.unavailable")}
       </p>
       <div className="file-editor-actions">
         {observation?.kind === "sent_live" && (

@@ -160,6 +160,7 @@ export const memory = {
   "mem.br_discard_conflict_body": "「{name}」は別の場所で更新され、最新の本文を読み込めないため、編集内容を統合できません。破棄すると入力した本文は消えます。",
   "mem.br_open_existing": "既存のメモを開く",
   "mem.br_exists_unverified": "同じ名前のメモが同じ本文を保持していますが、今回の保存で書かれたものかどうか判別できません。開いて確認するか、本文をコピーしてください。",
+  "mem.br_exists_unverified_popout": "同じ名前のメモが同じ本文を保持していますが、今回の保存で書かれたものかどうか判別できません。この最小ポップアウトでは下書きの横に開けないため、「展開」でフル Console に展開して確認するか、本文をコピーしてください。",
   "mem.br_unknown_sent_live": "送信した本文は現在のメモに反映されていますが、耐久性は確認できません。",
   "mem.br_cancel": "キャンセル",
   "mem.br_saved": "{name} を保存しました。",

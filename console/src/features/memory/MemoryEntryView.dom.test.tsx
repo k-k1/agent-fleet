@@ -748,6 +748,9 @@ describe("MemoryEntryView", () => {
           api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? { ...stored, revision: 2 } : {}));
           await lost();
           expect(button(t("mem.br_open_existing"))).toBeUndefined();
+          // The state is still explained, pointing at Expand or Copy rather than the generic retry text.
+          expect(document.body.textContent).toContain(t("mem.br_exists_unverified_popout"));
+          expect(document.body.textContent).not.toContain(t("editor.unknown.unavailable"));
           expect(button(t("editor.unknown.resave_old"))).toBeUndefined();
           expect(button(t("editor.copy_mine"))).toBeDefined();
           expect(pane().content).toMatchObject({ name: "" });
