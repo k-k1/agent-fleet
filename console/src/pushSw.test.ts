@@ -2,7 +2,7 @@
 // goes, and that adding them did not make the worker intercept ordinary requests.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 type Fn = (e: any) => void;
 
@@ -146,6 +146,27 @@ describe("candidate order", () => {
     expect(log[0]).toBe("https://console.test/");
     expect(sw.opened).toEqual([]);
   }, 8000);
+});
+
+describe("hung focus", () => {
+  it("falls back to opening the session when an acknowledging page never settles focus()", async () => {
+    vi.useFakeTimers();
+    try {
+      const win = {
+        url: "https://console.test/",
+        postMessage: (_m: unknown, ports: MessagePort[]) => ports[0].postMessage("ok"),
+        focus: () => new Promise(() => {}),
+      };
+      const sw = loadSw("en", [win]);
+      let p: Promise<unknown> = Promise.resolve();
+      sw.listeners.notificationclick({ notification: { close() {}, data: { session: "abc" } }, waitUntil: (x: Promise<unknown>) => (p = x) });
+      await vi.advanceTimersByTimeAsync(3100);
+      await p;
+      expect(sw.opened).toEqual(["https://console.test/?session=abc"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("focus failure", () => {

@@ -18,17 +18,31 @@ export function TenantPushView({ slug }: { slug: string }) {
   // Only a deployment with Web Push shows the switch; the setting itself is stored either way.
   const pushOn = !!usePushKey();
 
-  const load = useCallback(async () => {
+  // Read once Web Push is known to be on, and again after a transient failure: the same gateway
+  // outage that hid the key would otherwise leave the switch absent until the screen is reopened.
+  const load = useCallback(async (): Promise<boolean> => {
     try {
       const d = await getTenantPushSettings(slug);
       if (d && isOk(d)) setIncludeText(!!d.includeText);
+      return true;
     } catch {
-      /* transient; the panel stays hidden */
+      return false;
     }
   }, [slug]);
   useEffect(() => {
-    void load();
-  }, [load]);
+    if (!pushOn) return;
+    let alive = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const go = () =>
+      void load().then((ok) => {
+        if (!ok && alive) timer = setTimeout(go, 15_000);
+      });
+    go();
+    return () => {
+      alive = false;
+      if (timer) clearTimeout(timer);
+    };
+  }, [pushOn, load]);
 
   if (includeText === null || !pushOn) return null;
 

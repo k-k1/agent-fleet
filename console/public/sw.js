@@ -156,14 +156,21 @@ self.addEventListener("notificationclick", (event) => {
       // origin cannot crowd it out of the short list; the whole search has a deadline.
       const mine = wins.filter((c) => c.url.startsWith(scope));
       mine.sort((a, b) => Number(isRoot(b.url, scope)) - Number(isRoot(a.url, scope)));
-      const until = Date.now() + 3000;
-      for (const win of mine.slice(0, 5)) {
-        if (Date.now() > until) break;
-        if (await handOff(win, session)) {
-          // A page that answered but cannot be focused (closing, navigating away) is not a hit.
-          if (await win.focus().then(() => true, () => false)) return;
+      const search = async () => {
+        for (const win of mine.slice(0, 5)) {
+          if (await handOff(win, session)) {
+            // A page that answered but cannot be focused (closing, navigating away) is not a hit.
+            if (await win.focus().then(() => true, () => false)) return true;
+          }
         }
-      }
+        return false;
+      };
+      // One deadline over the whole search, focus() included: a page whose event loop stopped after
+      // acknowledging would otherwise hold the tap until the permission to open a window lapses.
+      let timer;
+      const found = await Promise.race([search(), new Promise((r) => (timer = setTimeout(() => r(false), 3000)))]);
+      clearTimeout(timer);
+      if (found) return;
       await self.clients.openWindow(session ? `${scope}?session=${encodeURIComponent(session)}` : scope);
     })(),
   );
