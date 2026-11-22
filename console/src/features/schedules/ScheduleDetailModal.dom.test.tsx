@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-vi.mock("./api.ts", () => ({ scheduleUpdate: vi.fn() }));
+vi.mock("./api.ts", () => ({ scheduleUpdate: vi.fn(), scheduleApprove: vi.fn() }));
 
 // The live kind catalogue (GET /agents/kinds): every kind allowed unless a test narrows it.
 const ALL = ["claude", "codex", "opencode", "copilot", "cursor", "kiro", "agy", "muse", "lcpp", "shell", "ssm"];
@@ -31,7 +31,7 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { ScheduleDetailModal } = await import("./ScheduleDetailModal.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
-const { scheduleUpdate } = await import("./api.ts");
+const { scheduleUpdate, scheduleApprove } = await import("./api.ts");
 const { t } = await import("../../lib/i18n/index.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { getSettings, setSettings } = await import("../../lib/settings.ts");
@@ -45,13 +45,17 @@ const flush = async () => {
   for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
 };
 
+const onCloseSpy = vi.fn();
+const onStaleSpy = vi.fn();
+
 async function render(agentKind?: string, extra: Record<string, unknown> = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
         <ScheduleDetailModal
           s={{ ...base, agent_kind: agentKind, ...extra } as never}
-          onClose={() => {}}
+          onClose={onCloseSpy}
+          onStale={onStaleSpy}
           onSaved={() => {}}
         />
       </ToastProvider>,
@@ -220,3 +224,95 @@ describe("ScheduleDetailModal under the credential policy", () => {
   });
 });
 
+
+describe("ScheduleDetailModal approval of a held schedule (#4631)", () => {
+  const approveBtn = () =>
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === t("sched.approve")) as HTMLButtonElement | undefined;
+
+  beforeEach(() => vi.mocked(scheduleApprove).mockReset());
+
+  it("shows no approve action for a schedule nobody holds", async () => {
+    await render("claude");
+    expect(approveBtn()).toBeUndefined();
+    expect(document.querySelector(".sched-held-note")).toBeNull();
+  });
+
+  it("approves the generation the modal opened on", async () => {
+    vi.mocked(scheduleApprove).mockResolvedValue({ ...base, id: "sch_1" } as never);
+    await render("claude", { approval_pending: true, generation: 7 });
+    expect(document.querySelector(".sched-held-note")).not.toBeNull();
+    await act(async () => approveBtn()!.click());
+    await flush();
+    expect(scheduleApprove).toHaveBeenCalledWith("sch_1", 7);
+  });
+
+  it("tells the member the schedule changed when the CP refuses a stale generation", async () => {
+    vi.mocked(scheduleApprove).mockResolvedValue({ error: { code: "schedule_changed", message: "x" } } as never);
+    await render("claude", { approval_pending: true, generation: 3 });
+    await act(async () => approveBtn()!.click());
+    await flush();
+    expect(document.body.textContent).toContain(t("sched.approve_changed"));
+  });
+
+  it("does not send an approval while the form has unsaved edits", async () => {
+    await render("claude", { approval_pending: true, generation: 4 });
+    const ta = document.querySelector("#sched-prompt") as HTMLTextAreaElement;
+    const set = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      set.call(ta, "an edited prompt");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(approveBtn()!.disabled).toBe(true);
+    await act(async () => approveBtn()!.click());
+    expect(scheduleApprove).not.toHaveBeenCalled();
+  });
+
+  it("treats not_pending (approved in another tab) like a changed schedule", async () => {
+    vi.mocked(scheduleApprove).mockResolvedValue({ error: { code: "not_pending", message: "x" } } as never);
+    await render("claude", { approval_pending: true, generation: 3 });
+    await act(async () => approveBtn()!.click());
+    await flush();
+    expect(document.body.textContent).toContain(t("sched.approve_changed"));
+  });
+
+  it("shows the conversation an assistant schedule runs in, explicit target first then the owner", async () => {
+    await render("claude", { approval_pending: true, generation: 1, session_mode: "assistant", owner_conv: "aowner1" });
+    expect(document.body.textContent).toContain("aowner1");
+    act(() => root?.unmount());
+    root = createRoot(host);
+    await render("claude", { approval_pending: true, generation: 1, session_mode: "assistant", owner_conv: "aowner1", reuse_target: "atarget2" });
+    expect(document.body.textContent).toContain("atarget2");
+    expect(document.body.textContent).not.toContain("aowner1");
+  });
+
+  it("hides the stored next run while the schedule is held", async () => {
+    await render("claude", { approval_pending: true, generation: 1, next_run: "2026-01-01T00:00:00Z", next_run_local: "2026-01-01 09:00" });
+    expect(document.body.textContent).not.toContain("2026-01-01 09:00");
+  });
+
+  it("re-reads the list and closes when the CP says the schedule moved on", async () => {
+    onCloseSpy.mockClear();
+    onStaleSpy.mockClear();
+    vi.mocked(scheduleApprove).mockResolvedValue({ error: { code: "schedule_changed", message: "x" } } as never);
+    await render("claude", { approval_pending: true, generation: 3 });
+    await act(async () => approveBtn()!.click());
+    await flush();
+    expect(onStaleSpy).toHaveBeenCalledTimes(1);
+    expect(onCloseSpy).toHaveBeenCalled();
+  });
+
+  it("names the conversation the completion report goes to only when it can go there", async () => {
+    const held = { approval_pending: true, generation: 1, owner_conv: "aownerx", session_mode: "new" };
+    await render("claude", { ...held, report: true, deliver_to: ["operator"] });
+    expect(document.body.textContent).toContain(t("sched.f_report_conv"));
+    expect(document.body.textContent).toContain("aownerx");
+    act(() => root?.unmount());
+    root = createRoot(host);
+    await render("claude", { ...held, report: true, deliver_to: ["notifications"] });
+    expect(document.body.textContent).not.toContain(t("sched.f_report_conv"));
+    act(() => root?.unmount());
+    root = createRoot(host);
+    await render("claude", { ...held, report: false });
+    expect(document.body.textContent).not.toContain(t("sched.f_report_conv"));
+  });
+});

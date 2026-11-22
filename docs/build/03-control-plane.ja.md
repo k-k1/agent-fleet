@@ -373,7 +373,7 @@ Workspace を起こさない。
   と返す（古い Control Plane）。
 
 - **実行レシピ（`agentKind`・`model`・`effort`・`route`）**（ADR 0137 の付記 2026-11-23、#4845、`internal/memorecipe`）。
-  `memo.recipe`（正規化した JSON。なしは `""`。migration 0155 / pg 0140）がカテゴリの実行設定を項目ごとに上書きする
+  `memo.recipe`（正規化した JSON。なしは `""`。migration 0156 / pg 0141）がカテゴリの実行設定を項目ごとに上書きする
   （別のエージェントを指定したメッセージは、カテゴリのモデル・effort・route を引き継がない。支出上限はカテゴリのまま）。
   作成と更新はどの面でも受ける（REST、`add_memo` / `update_memo`。キュー設定と同じ検査で、外れたら
   `400 memo_recipe_invalid`。キューのないメモへの指定も同じ。更新では省略で据え置き、`""` で外す）。設定したときだけ

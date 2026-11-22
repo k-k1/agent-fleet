@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
 
 // Schedule is one operator-authored scheduled task (docs/log/38 + ADR0021). It lives
@@ -73,6 +74,11 @@ type Schedule struct {
 	// the member has not approved yet. ListDueSchedules skips it, so it never fires and never
 	// wakes a stopped workspace. Only ApproveSchedule clears it.
 	ApprovalPending bool
+	// Generation counts the writes that change what the member approved or whether it runs: a
+	// config edit, pause/resume and an approval each bump it. A write that read the row first
+	// (PATCH) or a member who looked at a version (approve) carries the generation it saw, and
+	// the write is refused when it moved (#4834). Scheduler bookkeeping (fire ledger) does not bump it.
+	Generation int
 	// Gate (ADR 0021 addendum 2026-11-10). GateKind is "" (no gate) or "work_items"; GateSpec is
 	// the JSON the kind reads. The rest is the gate's ledger: the fingerprint it last fired on and
 	// when, the 24 hour fire window the daily cap counts in, and the last evaluation (what the
@@ -115,6 +121,8 @@ type ScheduleStore interface {
 	// ListDueSchedules returns enabled schedules whose next_run is non-empty and at
 	// or before nowRFC (an RFC3339 UTC cutoff; RFC3339 sorts chronologically).
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
+	// UpdateSchedule writes the row only if its generation is still s.Generation (the one the caller
+	// read), else ErrScheduleChanged. It bumps the generation.
 	UpdateSchedule(ctx context.Context, s Schedule) error
 	SetScheduleEnabled(ctx context.Context, id, membershipID string, enabled bool, nextRun, updatedAt string) error
 	// MarkManualFirePending is run-now: it sets next_run so the ticker fires immediately and
@@ -127,7 +135,8 @@ type ScheduleStore interface {
 	RecordScheduleFire(ctx context.Context, id, lastRun, lastStatus, nextRun string, enabled bool, updatedAt string) error
 	// ApproveSchedule clears approval_pending and sets next_run (the member's act). approved=false
 	// means the row was not pending, so a repeated approval changes nothing.
-	ApproveSchedule(ctx context.Context, id, membershipID, nextRun, updatedAt string) (approved bool, err error)
+	// ApproveSchedule only approves the version the member saw: generation must still match.
+	ApproveSchedule(ctx context.Context, id, membershipID string, generation int, nextRun, updatedAt string) (approved bool, err error)
 	// HoldScheduleForRemoval / ResumeScheduleHeldByRemoval are the two halves of member
 	// removal (issue #1087): the scheduler pauses a slot that came due while the owner
 	// was inactive, and a re-invite resumes it. Both are conditional single statements —
@@ -197,7 +206,7 @@ const scheduleCols = `SELECT id, membership_id, tenant_id, owner_conv, spec_kind
 	reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy,
 	manual_fire_pending, report, stop_after_run, held_by_removal, deliver_to, silent,
 	route, route_connection, gate_kind, gate_spec, gate_fired_fingerprint, gate_fired_at,
-	gate_window_start, gate_window_count, gate_last_eval_at, gate_last_verdict, approval_pending FROM schedule`
+	gate_window_start, gate_window_count, gate_last_eval_at, gate_last_verdict, approval_pending, generation FROM schedule`
 
 func scanSchedule(row scanner) (Schedule, error) {
 	var s Schedule
@@ -208,7 +217,7 @@ func scanSchedule(row scanner) (Schedule, error) {
 		&s.ReuseSession, &s.ReuseStartedAt, &s.ReuseRunCount, &s.Rotation, &s.MissingTargetPolicy,
 		&manualFire, &report, &stopAfterRun, &held, &s.DeliverTo, &silent, &s.Route, &s.RouteConnection,
 		&s.GateKind, &s.GateSpec, &s.GateFiredFingerprint, &s.GateFiredAt, &s.GateWindowStart,
-		&s.GateWindowCount, &s.GateLastEvalAt, &s.GateLastVerdict, &pending)
+		&s.GateWindowCount, &s.GateLastEvalAt, &s.GateLastVerdict, &pending, &s.Generation)
 	s.NewBranch = newBranch != 0
 	s.Enabled = enabled != 0
 	s.ManualFirePending = manualFire != 0
@@ -282,20 +291,30 @@ func (s *SQL) ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, 
 	return out, rows.Err()
 }
 
+// ErrScheduleChanged is returned by UpdateSchedule when another write moved the row's generation
+// after the caller read it.
+var ErrScheduleChanged = errors.New("schedule changed since it was read")
+
 func (s *SQL) UpdateSchedule(ctx context.Context, sc Schedule) error {
 	// membership_id in the WHERE so a member can only update their own row.
-	_, err := s.db.ExecContext(ctx,
+	res, err := s.db.ExecContext(ctx,
 		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
 		   session_mode=?, reuse_target=?, agent_kind=?, model=?, repo=?, worktree=?, new_branch=?, prompt=?,
 		   overlap_policy=?, enabled=?, next_run=?, updated_at=?, rotation=?, missing_target_policy=?, report=?,
-		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, gate_kind=?, gate_spec=?, held_by_removal=0, approval_pending=?,
+		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, gate_kind=?, gate_spec=?, held_by_removal=0, approval_pending=?, generation=generation+1,
 		   manual_fire_pending=CASE WHEN ?=1 THEN 0 ELSE manual_fire_pending END
-		 WHERE id=? AND membership_id=?`,
+		 WHERE id=? AND membership_id=? AND generation=?`,
 		sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ, sc.WakePolicy,
 		sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.UpdatedAt, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, b2i(sc.ApprovalPending), b2i(sc.ApprovalPending), sc.ID, sc.MembershipID)
-	return err
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, b2i(sc.ApprovalPending), b2i(sc.ApprovalPending), sc.ID, sc.MembershipID, sc.Generation)
+	if err != nil {
+		return err
+	}
+	if n, err := res.RowsAffected(); err == nil && n == 0 {
+		return ErrScheduleChanged
+	}
+	return nil
 }
 
 // SetScheduleReuse persists the reuse ledger (P6) after a reuse fire: which long-lived
@@ -312,18 +331,18 @@ func (s *SQL) SetScheduleReuse(ctx context.Context, id, reuseSession, reuseStart
 
 func (s *SQL) SetScheduleEnabled(ctx context.Context, id, membershipID string, enabled bool, nextRun, updatedAt string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE schedule SET enabled=?, next_run=?, updated_at=?, held_by_removal=0 WHERE id=? AND membership_id=?`,
+		`UPDATE schedule SET enabled=?, next_run=?, updated_at=?, held_by_removal=0, generation=generation+1 WHERE id=? AND membership_id=?`,
 		b2i(enabled), nextRun, updatedAt, id, membershipID)
 	return err
 }
 
 // ApproveSchedule is the member's approval of a held schedule: one conditional write, so a second
 // approval (or one racing an edit that put the row back on hold) is a no-op rather than a re-arm.
-func (s *SQL) ApproveSchedule(ctx context.Context, id, membershipID, nextRun, updatedAt string) (bool, error) {
+func (s *SQL) ApproveSchedule(ctx context.Context, id, membershipID string, generation int, nextRun, updatedAt string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`UPDATE schedule SET approval_pending=0, next_run=?, updated_at=?
-		 WHERE id=? AND membership_id=? AND approval_pending=1`,
-		nextRun, updatedAt, id, membershipID)
+		`UPDATE schedule SET approval_pending=0, next_run=?, updated_at=?, generation=generation+1
+		 WHERE id=? AND membership_id=? AND approval_pending=1 AND generation=?`,
+		nextRun, updatedAt, id, membershipID, generation)
 	if err != nil {
 		return false, err
 	}

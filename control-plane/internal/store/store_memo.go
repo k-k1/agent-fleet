@@ -207,7 +207,7 @@ func heldReasonOf(m Memo) string {
 }
 
 // releasedContent is what the release_* columns hold: the content of a pending message, and
-// nothing otherwise. The CHECKs of migrations 0131, 0138, 0144, 0152 and 0155 require it for every pending row.
+// nothing otherwise. The CHECKs of migrations 0131, 0138, 0144, 0152 and 0156 require it for every pending row.
 func releasedContent(m Memo) [12]string {
 	if m.State != MemoStatePending {
 		return [12]string{}

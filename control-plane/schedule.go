@@ -13,6 +13,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -28,13 +29,14 @@ type scheduleAPI struct {
 	memberAuth
 	store store.ScheduleStore
 	// holdTokenWrites holds a schedule written on the schedule-token face until the member
-	// approves it (#4631). Off in production until the Console can show and approve held rows:
-	// a held schedule nobody can approve would silently stop every operator-made schedule.
+	// approves it in the Console (#4631). The token is shared by every process of the workspace, so
+	// the Fleet Operator's schedules are held too: nothing tells it apart from a session without a
+	// credential the sessions cannot read.
 	holdTokenWrites bool
 }
 
 func newScheduleAPI(m *manager) scheduleAPI {
-	return scheduleAPI{memberAuth: memberAuth{m}, store: m.store}
+	return scheduleAPI{memberAuth: memberAuth{m}, store: m.store, holdTokenWrites: true}
 }
 
 // scheduleHeldNotice is what a token-face answer says about a schedule waiting for approval.
@@ -87,13 +89,16 @@ type scheduleDTO struct {
 	Enabled bool `json:"enabled"`
 	// ApprovalPending is true while a schedule a session wrote waits for the member's approval:
 	// it does not fire until then (#4631).
-	ApprovalPending bool   `json:"approval_pending,omitempty"`
-	NextRun         string `json:"next_run,omitempty"`
-	NextRunLocal    string `json:"next_run_local,omitempty"` // next_run rendered in the schedule's tz
-	LastRun         string `json:"last_run,omitempty"`
-	LastStatus      string `json:"last_status,omitempty"`
-	CreatedAt       string `json:"created_at,omitempty"`
-	UpdatedAt       string `json:"updated_at,omitempty"`
+	ApprovalPending bool `json:"approval_pending,omitempty"`
+	// Generation is the version the Console sends back on approve, so approving a version the member
+	// did not see (an edit landed in between) is refused with 409 (#4834).
+	Generation   int    `json:"generation"`
+	NextRun      string `json:"next_run,omitempty"`
+	NextRunLocal string `json:"next_run_local,omitempty"` // next_run rendered in the schedule's tz
+	LastRun      string `json:"last_run,omitempty"`
+	LastStatus   string `json:"last_status,omitempty"`
+	CreatedAt    string `json:"created_at,omitempty"`
+	UpdatedAt    string `json:"updated_at,omitempty"`
 	// Warning is set on a create/run_now response when the scheduler goroutine is not
 	// running on this deployment — the schedule is stored but will never fire until an
 	// operator enables it (AF_SCHEDULER_INTERVAL). Empty otherwise. The operator relays it.
@@ -123,7 +128,7 @@ func scheduleToDTO(s store.Schedule) scheduleDTO {
 		Rotation: s.Rotation, MissingTargetPolicy: s.MissingTargetPolicy,
 		ReuseSession: s.ReuseSession, ReuseRunCount: s.ReuseRunCount,
 		OwnerConv: s.OwnerConv, Report: s.Report, StopAfterRun: s.StopAfterRun,
-		DeliverTo: scheduleTargets(s.DeliverTo), Silent: s.Silent, Enabled: s.Enabled, ApprovalPending: s.ApprovalPending, NextRun: s.NextRun, LastRun: s.LastRun,
+		DeliverTo: scheduleTargets(s.DeliverTo), Silent: s.Silent, Enabled: s.Enabled, ApprovalPending: s.ApprovalPending, Generation: s.Generation, NextRun: s.NextRun, LastRun: s.LastRun,
 		LastStatus: s.LastStatus, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
 		Gate: scheduleGateToDTO(s),
 	}
@@ -506,9 +511,14 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 	}
 	sch.UpdatedAt = store.NowTS()
 	if err := a.store.UpdateSchedule(r.Context(), sch); err != nil {
+		if errors.Is(err, store.ErrScheduleChanged) {
+			writeAPIErr(w, &apiError{http.StatusConflict, "schedule_changed", "schedule was changed by another request; read it again and retry"})
+			return
+		}
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	sch.Generation++
 	if resetGate {
 		if err := a.mgr.store.ResetScheduleGateLedger(r.Context(), sch.ID, sch.MembershipID); err != nil {
 			writeAPIErr(w, internalErr(err))
@@ -555,6 +565,21 @@ func (a scheduleAPI) approve(w http.ResponseWriter, r *http.Request, mv store.Me
 		writeAPIErr(w, aerr)
 		return
 	}
+	// The member approves the version they looked at: without its generation an edit that landed
+	// after they opened the row would be approved unseen (#4834).
+	var body struct {
+		Generation *int `json:"generation"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&body); err != nil || body.Generation == nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "generation (the version being approved) is required"})
+		return
+	}
+	// Generation first: an approval made in another tab bumps it, and the stale modal then gets the
+	// same "changed" answer as for an edit rather than a bare not_pending.
+	if *body.Generation != sch.Generation {
+		writeAPIErr(w, &apiError{http.StatusConflict, "schedule_changed", "schedule changed since you opened it; review the new version"})
+		return
+	}
 	if !sch.ApprovalPending {
 		writeAPIErr(w, &apiError{http.StatusConflict, "not_pending", "schedule is not waiting for approval"})
 		return
@@ -574,8 +599,13 @@ func (a scheduleAPI) approve(w http.ResponseWriter, r *http.Request, mv store.Me
 			return
 		}
 	}
-	if _, err := a.store.ApproveSchedule(r.Context(), id, mv.MembershipID, next, store.NowTS()); err != nil {
+	ok, err := a.store.ApproveSchedule(r.Context(), id, mv.MembershipID, sch.Generation, next, store.NowTS())
+	if err != nil {
 		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok {
+		writeAPIErr(w, &apiError{http.StatusConflict, "schedule_changed", "schedule changed since you opened it; review the new version"})
 		return
 	}
 	a.writeOne(w, r, id, mv)

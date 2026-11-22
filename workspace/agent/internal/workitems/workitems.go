@@ -100,6 +100,12 @@ type workItemOut struct {
 
 	// nodeID is GitHub's global ID, the key the enrichment call looks rows up by. Not on the wire.
 	nodeID string
+	// srcHash and dstHash are a Bitbucket pull request's source and destination commit ids as the
+	// list read them: the cache key of its status enrichment. Not on the wire.
+	srcHash, dstHash string
+	// bbAuth is the Authorization header the Bitbucket list was read with; the status reads reuse it
+	// so enrichment never starts a token refresh of its own.
+	bbAuth string
 }
 
 // gitHubLabel is one entry of a GitHub issue's or pull request's `labels` array.
@@ -163,7 +169,19 @@ func HandleWorkItemsFetch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
-	for _, q := range in.Queries {
+	items, errs, truncs = fetchWorkItems(s, in.Queries)
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "errors": errs, "truncated": truncs})
+}
+
+// fetchWorkItems resolves every query, then enriches the Bitbucket rows once over all of them:
+// the status budget, the rate-limit stop and the deadline are per refresh, not per query.
+func fetchWorkItems(s *secrets.Data, queries []workItemQueryIn) ([]workItemOut, []workItemErrOut, []workItemTruncOut) {
+	started := time.Now()
+	seq := bitbucketNextRefresh()
+	items := []workItemOut{}
+	errs := []workItemErrOut{}
+	truncs := []workItemTruncOut{}
+	for _, q := range queries {
 		rows, total, err := fetchWorkItemQuery(s, q)
 		if err != nil {
 			errs = append(errs, workItemErrOut{QueryID: q.ID, Message: err.Error()})
@@ -174,7 +192,8 @@ func HandleWorkItemsFetch(w http.ResponseWriter, r *http.Request) {
 			truncs = append(truncs, workItemTruncOut{QueryID: q.ID, Total: total})
 		}
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "errors": errs, "truncated": truncs})
+	bitbucketEnrichItems(s, items, started, seq)
+	return items, errs, truncs
 }
 
 // workItemFetchCap is the page size asked of the provider a query names.

@@ -469,7 +469,7 @@ Memos you accumulate and send to a session in one go (the tables are
   future time is missing from the answer as not kept (an older Control Plane).
 
 - **Run recipe (`agentKind`, `model`, `effort`, `route`)** (ADR 0137, addendum 2026-11-23, #4845; `internal/memorecipe`).
-  `memo.recipe` (canonical JSON, `""` for none, migration 0155 / pg 0140) overrides the category's run settings field by
+  `memo.recipe` (canonical JSON, `""` for none, migration 0156 / pg 0141) overrides the category's run settings field by
   field (a message naming another agent inherits none of the category's model, effort or route; the spend cap stays the
   category's). Create and update take it on every face (REST, `add_memo` / `update_memo`; validated as the queue settings
   are, else `400 memo_recipe_invalid`, also for a note outside every queue; on an update absent = keep, `""` = clear). It

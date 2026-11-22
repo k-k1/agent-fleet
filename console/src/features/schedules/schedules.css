@@ -375,3 +375,27 @@
 .sched-sess-dot.run-wait { background: var(--warn, #d29922); opacity: 1; }
 .sched-sess-ended { font-size: 12px; opacity: 0.8; }
 .sched-sess-anchor { display: flex; padding: 3px 10px; opacity: 0.6; }
+
+/* A schedule a session wrote waits for the member's approval (#4631). */
+.sched-badge-held {
+  background: var(--warn-bg, var(--panel));
+  color: var(--warn, var(--fg));
+}
+.sched-approve-btn {
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--warn, var(--border));
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.sched-held-note {
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  border-radius: 4px;
+  border: 1px solid var(--warn, var(--border));
+  font-size: 12px;
+}

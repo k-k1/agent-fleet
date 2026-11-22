@@ -14,7 +14,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { t, useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
-import { scheduleUpdate } from "./api.ts";
+import { scheduleApprove, scheduleUpdate } from "./api.ts";
 import {
   DELIVERY_TARGETS,
   type ScheduleDTO,
@@ -59,9 +59,11 @@ interface Props {
   s: ScheduleDTO;
   onClose: () => void;
   onSaved: (dto: ScheduleDTO) => void;
+  /** The CP refused an approval because the schedule moved on: the caller re-reads the list. */
+  onStale?: () => void;
 }
 
-export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
+export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   const tr = useT();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -202,6 +204,34 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
     }
   };
 
+  // The member approves exactly the version this modal opened on (its generation), and never with
+  // unsaved edits in the form: what they read must be what they approve.
+  const approve = async () => {
+    if (busy || dirty) return;
+    setBusy(true);
+    try {
+      const res = await scheduleApprove(s.id, s.generation ?? 0);
+      if (res && typeof res === "object" && "id" in res) {
+        onSaved(res as ScheduleDTO);
+        toast(t("sched.approved"), { kind: "success" });
+        onClose();
+        return;
+      }
+      const err = (res as { error?: { code?: string } })?.error;
+      // not_pending: another tab approved it first, so this modal is stale in the same way.
+      const changed = typeof err === "object" && (err?.code === "schedule_changed" || err?.code === "not_pending");
+      toast(changed ? t("sched.approve_changed") : errText(err as never) || t("sched.action_failed"), { kind: "warn" });
+      if (changed) {
+        onStale?.();
+        onClose();
+      }
+    } catch {
+      toast(t("sched.action_failed"), { kind: "warn" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const specHint =
     specKind === "interval"
       ? tr("sched.spec_hint_interval")
@@ -222,6 +252,11 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
       lockClose={busy}
     >
       <div className="ui-modal-body">
+        {s.approval_pending && (
+          <div className="sched-held-note" role="note">
+            {tr("sched.held_note")}
+          </div>
+        )}
         <div className="ui-field">
           <label className="ui-field-label" htmlFor="sched-label">
             {tr("sched.f_label")}
@@ -509,9 +544,15 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
                 <ReadRow label={tr("sched.f_missing")} value={s.missing_target_policy} />
               </>
             )}
+            {s.approval_pending && s.session_mode !== "assistant" && s.report && scheduleTargets(s).includes("operator") && (
+              <ReadRow label={tr("sched.f_report_conv")} value={s.owner_conv} />
+            )}
+            {s.session_mode === "assistant" && (
+              <ReadRow label={tr("sched.f_assistant_conv")} value={s.reuse_target || s.owner_conv} />
+            )}
             <ReadRow label={tr("sched.f_repo")} value={s.repo} />
             {s.worktree && <ReadRow label={tr("sched.f_worktree")} value={s.worktree} />}
-            <ReadRow label={tr("sched.f_next")} value={s.enabled ? nextRunDetail(s) : tr("sched.paused_tag")} />
+            <ReadRow label={tr("sched.f_next")} value={s.approval_pending ? tr("sched.held_tag") : s.enabled ? nextRunDetail(s) : tr("sched.paused_tag")} />
             <ReadRow label={tr("sched.f_last_status")} value={s.last_status} />
             <ReadRow label={tr("sched.f_updated")} value={s.updated_at} />
           </dl>
@@ -522,7 +563,18 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
         <Button variant="ghost" onClick={onClose} type="button">
           {tr("common.cancel")}
         </Button>
-        <Button variant="primary" disabled={!canSave} type="submit">
+        {s.approval_pending && (
+          <Button
+            variant="primary"
+            disabled={busy || dirty}
+            type="button"
+            title={dirty ? tr("sched.approve_save_first") : undefined}
+            onClick={() => void approve()}
+          >
+            {tr("sched.approve")}
+          </Button>
+        )}
+        <Button variant={s.approval_pending ? "ghost" : "primary"} disabled={!canSave} type="submit">
           {tr("common.save")}
         </Button>
       </footer>
