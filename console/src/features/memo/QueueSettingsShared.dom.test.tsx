@@ -4,6 +4,7 @@
 // the old row.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
+import { headMenuItem } from "./catMenuTest.ts";
 import { createRoot, type Root } from "react-dom/client";
 import type { Memo, MemoCategory } from "../../types/memo.ts";
 
@@ -105,6 +106,7 @@ async function setValue(el: HTMLInputElement, v: string): Promise<void> {
   });
 }
 const gear = (host: HTMLElement, cls: string) => {
+  if (cls === ".memo-cat-act") return headMenuItem({ label: t("memo.autorun_settings") });
   const el = host.querySelector<HTMLElement>(`${cls}[aria-label="${t("memo.autorun_settings")}"]`);
   if (!el) throw new Error("no gear in " + cls);
   return el;

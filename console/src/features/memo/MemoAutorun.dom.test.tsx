@@ -3,6 +3,7 @@
 // the settings dialog (tenant switch off, validation) and the deliveries with "Run now".
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
+import { headMenuItem } from "./catMenuTest.ts";
 import { createRoot, type Root } from "react-dom/client";
 import type { Memo, MemoCategory } from "../../types/memo.ts";
 
@@ -156,7 +157,11 @@ async function setValue(el: HTMLInputElement | HTMLTextAreaElement, v: string): 
   });
 }
 const byLabel = (label: string) =>
-  must(document.querySelector<HTMLElement>(`[aria-label="${label}"]`), `button ${label}`);
+  must(
+    document.querySelector<HTMLElement>(`[aria-label="${label}"]`) ??
+      (label === t("memo.autorun_settings") || label === t("memo.autorun_deliveries") ? headMenuItem({ label }) : null),
+    `button ${label}`,
+  );
 const dialog = () => must(document.querySelector<HTMLElement>(".memo-q-modal"), "dialog");
 const bump = async () => {
   const { useMemoStore } = await import("./store.ts");
@@ -502,7 +507,8 @@ describe("the release card", () => {
 describe("the settings dialog", () => {
   const openSettings = async () => click(byLabel(t("memo.autorun_settings")));
 
-  const gearByReason = (reason: string) => must(document.querySelector<HTMLButtonElement>(`.memo-cat-act[aria-label="${reason}"]`), "gear");
+  // The reason is on the item's second line; each test asserts it.
+  const gearByReason = (_reason: string) => headMenuItem({ label: t("memo.autorun_settings") }) as HTMLButtonElement;
 
   it("marks the gear unavailable with the reason while the tenant blocks new setups", async () => {
     servedQueues = { tenantEnabled: false, queues: [] };
@@ -512,12 +518,13 @@ describe("the settings dialog", () => {
     // Not natively disabled: it must stay focusable so the reason reaches keyboard users.
     expect(gear.disabled).toBe(false);
     expect(gear.getAttribute("aria-disabled")).toBe("true");
-    expect(gear.title).toBe(t("memo.q_tenant_off"));
+    expect(gear.textContent).toContain(t("memo.q_tenant_off"));
     const head = must(document.querySelector(".memo-cat-head"), "head");
     const expanded = head.querySelector("[aria-expanded]")?.getAttribute("aria-expanded");
     await click(gear);
     expect(document.querySelector("[role=dialog]")).toBeNull();
-    expect(document.querySelector(".ui-toast-msg")?.textContent).toBe(t("memo.q_tenant_off"));
+    // The reason is on the item itself, so a press says nothing more.
+    expect(document.querySelector(".ui-toast-msg")).toBeNull();
     expect(head.querySelector("[aria-expanded]")?.getAttribute("aria-expanded")).toBe(expanded);
   });
 
@@ -527,7 +534,7 @@ describe("the settings dialog", () => {
     await render();
     const gear = byLabel(t("memo.autorun_settings"));
     expect(gear.getAttribute("aria-disabled")).toBeNull();
-    expect(gear.title).toBe(t("memo.autorun_settings"));
+    expect(gear.textContent).toContain(t("memo.autorun_settings"));
   });
 
   it("does not open the dialog, nor call it a tenant block, while the settings are unread", async () => {
@@ -539,7 +546,7 @@ describe("the settings dialog", () => {
     await click(gear);
     // Opening it would edit a draft built from defaults and a save would overwrite the real setting.
     expect(document.querySelector(".memo-q-modal")).toBeNull();
-    expect(document.querySelector(".ui-toast-msg")?.textContent).toBe(t("memo.q_unread"));
+    expect(document.querySelector(".ui-toast-msg")).toBeNull();
     expect(memoQueuePut).not.toHaveBeenCalled();
   });
 
@@ -547,7 +554,7 @@ describe("the settings dialog", () => {
     queuesFail = true;
     servedCats = [aCat({ queue: true })];
     await render();
-    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.q_unread")}"]`)).not.toBeNull();
+    expect(headMenuItem({ label: t("memo.autorun_settings") }).textContent).toContain(t("memo.q_unread"));
     queuesFail = false;
     servedQueues = { tenantEnabled: true, queues: [aQueue({ instruction: "saved text" })] };
     await bump();
@@ -565,10 +572,10 @@ describe("the settings dialog", () => {
     servedQueues = { tenantEnabled: false, queues: [] };
     servedCats = [aCat({})];
     await render();
-    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.q_tenant_off")}"]`)).not.toBeNull();
+    expect(headMenuItem({ label: t("memo.autorun_settings") }).textContent).toContain(t("memo.q_tenant_off"));
     queuesFail = true;
     await switchTo("b");
-    expect(document.querySelector(`.memo-cat-act[aria-label="${t("memo.q_unread")}"]`)).not.toBeNull();
+    expect(headMenuItem({ label: t("memo.autorun_settings") }).textContent).toContain(t("memo.q_unread"));
     await switchTo("");
   });
 
@@ -676,12 +683,12 @@ describe("deliveries and Run now", () => {
   });
 
   describe("Run now on the category head", () => {
-    const fireBtn = () => must(document.querySelector<HTMLElement>(".memo-cat-run"), "Run now");
+    const fireBtn = () => headMenuItem({ cls: "memo-cat-run" });
     it("starts a run when a waiting memo can start and nothing blocks it", async () => {
       servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
       await render();
       expect(fireBtn().getAttribute("aria-disabled")).toBeNull();
-      expect(fireBtn().title).toBe(t("memo.d_fire_title"));
+      expect(fireBtn().textContent).toContain(t("memo.cat_menu_run"));
       await click(fireBtn());
       expect(memoQueueFire).toHaveBeenCalledWith("c1");
       expect(document.body.textContent).toContain(t("memo.d_fire_started"));
@@ -692,7 +699,7 @@ describe("deliveries and Run now", () => {
       servedQueues = { tenantEnabled: true, queues: [aQueue({ fireBlock })] };
       await render();
       expect(fireBtn().getAttribute("aria-disabled")).toBe("true");
-      expect(fireBtn().title).toBe(t("memo.d_fire_blocked", { why: reason }));
+      expect(fireBtn().textContent).toContain(reason);
       await click(fireBtn());
       expect(memoQueueFire).not.toHaveBeenCalled();
     };
@@ -700,7 +707,7 @@ describe("deliveries and Run now", () => {
       servedQueues = { tenantEnabled: true, queues: [aQueue({ fireBlock: { reason: "nothing_waiting" } })] };
       await render();
       expect(fireBtn().getAttribute("aria-disabled")).toBe("true");
-      expect(fireBtn().title).toBe(t("memo.d_fire_blocked", { why: t("memo.d_fire_none") }));
+      expect(fireBtn().textContent).toContain(t("memo.d_fire_none"));
     });
     it("follows the queue list, not the memo list: an older Control Plane or a lagging memo read leaves it enabled", async () => {
       servedMemos = []; // the memo read has not seen the new note yet
@@ -723,7 +730,7 @@ describe("deliveries and Run now", () => {
       servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
       servedQueues = { tenantEnabled: true, queues: [aQueue({ fireBlock: { reason: "prerequisites", detail: { blocked: 1 } } })] };
       await render();
-      const caret = must(fireBtn().closest(".memo-cat-head")?.querySelector<HTMLElement>(".memo-cat-caret"), "category caret");
+      const caret = must(document.querySelector<HTMLElement>(".memo-cat-head .memo-cat-caret"), "category caret");
       const before = caret.getAttribute("aria-expanded");
       expect(before).toBe("true");
       await click(fireBtn());
@@ -803,7 +810,7 @@ describe("deliveries and Run now", () => {
   });
 
   describe("when Run now is refused", () => {
-    const pressFire = async () => click(must(document.querySelector<HTMLElement>(".memo-cat-run"), "Run now"));
+    const pressFire = async () => click(headMenuItem({ cls: "memo-cat-run" }));
     const noSlot = { error: { code: "memo_queue_no_slot", message: "every slot of this queue is taken (2 of 2)" } };
     const run = (id: string, state: string, session: string, heldBy = "", heldWakers: unknown[] = []) => ({
       id, state, outcome: state === "closed" ? "clean" : "", session, messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "", heldBy, heldWakers,
@@ -860,7 +867,7 @@ describe("deliveries and Run now", () => {
       await click(byLabel(t("memo.autorun_deliveries")));
       expect(dialog().querySelector(".memo-d-slots-full")).toBeNull();
       servedDeliveries = [run("d1", "open", "run-1", "person")]; // took the slot after the history was read
-      await click(must(document.querySelector<HTMLElement>(".memo-cat-run"), "Run now"));
+      await click(headMenuItem({ cls: "memo-cat-run" }));
       expect(dialog().querySelector(".memo-d-slots-full")?.textContent).toContain(t("memo.d_slots_holder", { name: "run-1", why: t("memo.d_held_person") }));
     });
 
@@ -871,7 +878,7 @@ describe("deliveries and Run now", () => {
       await render();
       await click(byLabel(t("memo.autorun_deliveries")));
       servedDeliveries = { error: { code: "x" } };
-      await click(must(document.querySelector<HTMLElement>(".memo-cat-run"), "Run now"));
+      await click(headMenuItem({ cls: "memo-cat-run" }));
       const note = must(dialog().querySelector<HTMLElement>(".memo-d-slots-full"), "notice");
       expect(note.textContent).toBe(t("memo.d_load_failed"));
     });
@@ -1122,7 +1129,7 @@ describe("a workspace that cannot run by itself yet", () => {
     expect(document.querySelector(".memo-q-noreport")?.textContent).toBe(t("memo.no_report_notice"));
     await click(byLabel(t("memo.autorun_deliveries")));
     expect(dialog().querySelector(".memo-q-noreport")?.textContent).toBe(t("memo.no_report_notice"));
-    expect(document.querySelector(".memo-cat-run")?.getAttribute("aria-disabled")).toBeNull();
+    expect(headMenuItem({ cls: "memo-cat-run" }).getAttribute("aria-disabled")).toBeNull();
   });
 
   it("stays quiet while auto-run is off, since nothing waits to run by itself", async () => {
@@ -1321,7 +1328,7 @@ describe("a refused Run now shows the catalogue line alone (#4208)", () => {
     servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
     memoQueueFire.mockResolvedValue({ error: { code: "memo_queue_no_slot", message: "every slot of this queue is taken (1 of 1)" } });
     await render();
-    await click(must(document.querySelector<HTMLElement>(".memo-cat-run"), "Run now"));
+    await click(headMenuItem({ cls: "memo-cat-run" }));
     expect(document.body.textContent).toContain(t("err.memo_queue_no_slot"));
     expect(document.body.textContent).not.toContain("every slot of this queue");
   });
@@ -1688,5 +1695,78 @@ describe("inline run list under a category", () => {
     expect(document.querySelectorAll(".memo-run")).toHaveLength(5);
     await click(must(document.querySelector(".memo-runs-all"), "show all"));
     expect(dialog().querySelectorAll(".memo-d-row")).toHaveLength(7);
+  });
+});
+
+describe("the category head", () => {
+  const head = () => must(document.querySelector<HTMLElement>(".memo-cat-head"), "head");
+
+  it("keeps the caret, checkbox, name, count, one badge, + and ⋯; the actions are in the menu", async () => {
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ paused: true })] };
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    await render();
+    expect(head().querySelectorAll(".memo-cat-act, .memo-cat-run, .memo-cat-send, .memo-cat-del, .memo-cat-grip")).toHaveLength(0);
+    expect(head().querySelectorAll(".memo-q-badge")).toHaveLength(1);
+    expect(head().querySelector(".memo-q-badge")?.getAttribute("aria-label")).toBe(t("memo.autorun_badge_paused"));
+    expect(document.querySelector(".memo-cat-menu")).toBeNull();
+    await click(must(head().querySelector(".memo-cat-more"), "more"));
+    const labels = [...document.querySelectorAll(".memo-cat-menu .ui-menu-item")].map((e) => e.textContent ?? "");
+    expect(labels).toHaveLength(6);
+    expect(labels[0]).toContain(t("common.send"));
+    expect(labels[1]).toContain(t("memo.cat_menu_run"));
+    expect(labels[4]).toContain(t("memo.rename_category_item"));
+    expect(labels[5]).toContain(t("memo.delete_category"));
+  });
+
+  it("opens the same menu on right-click and on Shift+F10, and does not fold the category", async () => {
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    await render();
+    const expanded = () => head().querySelector("[aria-expanded]")?.getAttribute("aria-expanded");
+    const before = expanded();
+    await act(async () => {
+      head().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    });
+    expect(document.querySelector(".memo-cat-menu")).not.toBeNull();
+    expect(expanded()).toBe(before);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(document.querySelector(".memo-cat-menu")).toBeNull();
+    await act(async () => {
+      head().dispatchEvent(new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true }));
+    });
+    expect(document.querySelector(".memo-cat-menu")).not.toBeNull();
+  });
+
+  it("counts only the waiting memos of an auto-run category, and every memo of a plain one", async () => {
+    servedCats = [aCat({ queue: true }), aCat({ id: "c2", name: "plain", position: 1 })];
+    servedMemos = [
+      aMemo({ id: "w", state: "pending", provenance: "member" }),
+      aMemo({ id: "d", state: "delivered" }),
+      aMemo({ id: "s", state: "superseded" }),
+      aMemo({ id: "p1", category: "plain" }),
+      aMemo({ id: "p2", category: "plain" }),
+    ];
+    await render();
+    const n = (name: string) =>
+      [...document.querySelectorAll<HTMLElement>(".memo-cat")].find((g) => g.querySelector(".memo-cat-name")?.textContent === name)?.querySelector(".memo-cat-n")?.textContent;
+    expect(n("inbox-q")).toBe("1");
+    expect(n("plain")).toBe("2");
+  });
+
+  it("is the drag handle of a named category, folds on click, and the uncategorised bucket is not draggable", async () => {
+    servedCats = [aCat({})];
+    servedMemos = [aMemo({ id: "a" }), aMemo({ id: "u", category: "" })];
+    await render();
+    const heads = [...document.querySelectorAll<HTMLElement>(".memo-cat-head")];
+    expect(heads).toHaveLength(2);
+    const named = heads.find((h) => h.querySelector(".memo-cat-name")?.textContent === "inbox-q")!;
+    const loose = heads.find((h) => h !== named)!;
+    expect(named.draggable).toBe(true);
+    expect(loose.draggable).toBe(false);
+    const expanded = () => named.querySelector("[aria-expanded]")?.getAttribute("aria-expanded");
+    const before = expanded();
+    await click(named);
+    expect(expanded()).not.toBe(before);
   });
 });
