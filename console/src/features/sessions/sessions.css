@@ -366,7 +366,7 @@
   line-height: 16px;
   color: var(--muted);
 }
-.sess-move-line.pending {
+.sess-move-line.sess-move-pending {
   color: var(--warn, #e0a030);
 }
 .sess-move-line > .codicon {
@@ -884,7 +884,7 @@
 .clean-subtitle { margin: 0; color: var(--muted); font-size: 12px; }
 .clean-tabs { display: flex; align-items: center; gap: 4px; border-bottom: 1px solid var(--border); }
 .clean-tab { appearance: none; background: none; border: none; border-bottom: 2px solid transparent; color: var(--muted); padding: 6px 10px; cursor: pointer; font: inherit; }
-.clean-tab.is-active { color: var(--fg); border-bottom-color: var(--accent); }
+.clean-tab.clean-tab-active { color: var(--fg); border-bottom-color: var(--accent); }
 .clean-tabs-spacer { flex: 1; }
 .clean-body { max-height: min(60vh, 520px); overflow-y: auto; }
 .clean-empty { padding: 28px 8px; text-align: center; color: var(--muted); }

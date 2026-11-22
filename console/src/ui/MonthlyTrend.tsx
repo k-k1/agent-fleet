@@ -41,7 +41,7 @@ export function MonthlyTrend({
       </p>
       <div className="mt-rows">
         {rows.map((r) => {
-          const cls = "mt-row" + (r.partial ? " partial" : "") + (r.noCoverage ? " nodata" : "");
+          const cls = "mt-row" + (r.partial ? " mt-row-partial" : "") + (r.noCoverage ? " nodata" : "");
           return (
             <div key={r.month} className={cls} data-month={r.month}>
               <span className="mt-month mono">{r.month}</span>

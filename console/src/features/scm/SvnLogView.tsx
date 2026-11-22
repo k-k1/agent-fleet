@@ -148,7 +148,7 @@ export function SvnLogView({ repo, path = "", headerActions }: { repo: string; p
                       {tr("svn.log_newer")}
                     </span>
                   )}
-                  {side === "current" && <span className="svnlog-tag current">{tr("svn.log_current")}</span>}
+                  {side === "current" && <span className="svnlog-tag svnlog-tag-current">{tr("svn.log_current")}</span>}
                   <span className="svnlog-meta">
                     {r.author || tr("svn.log_no_author")} · {revDay(r.date)}
                     {r.paths.length > 0 ? ` · ${actionSummary(r.paths)}` : ""}

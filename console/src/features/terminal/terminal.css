@@ -318,7 +318,7 @@
   border-radius: 10px;
 }
 /* Both required steps done and no track chosen yet → the choice IS the next step. */
-.onboard-tiles.hot .onboard-tile {
+.onboard-tiles.onboard-tiles-hot .onboard-tile {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }

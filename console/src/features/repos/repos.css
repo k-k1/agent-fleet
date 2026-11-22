@@ -115,7 +115,7 @@
 }
 /* Selected/current row — the old design: accent text, no fill (the ● prefix
    inherits the accent, matching the old console). */
-.branch-item.current {
+.branch-item.branch-item-current {
   color: var(--accent);
   cursor: default;
 }
@@ -362,7 +362,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.repo-job.running .repo-job-head > .codicon {
+.repo-job.repo-job-running .repo-job-head > .codicon {
   color: var(--accent);
 }
 .repo-job.settled .codicon-warning {

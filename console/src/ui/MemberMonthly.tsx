@@ -120,7 +120,7 @@ export function MemberMonthlyTable({
                   {showTenant && m.tenant && <span className="muted"> {m.tenant}</span>}
                 </td>
                 {m.months.map((c) => (
-                  <td key={c.month} className={"mm-cell mono" + (c.partial ? " partial" : "")} data-month={c.month}>
+                  <td key={c.month} className={"mm-cell mono" + (c.partial ? " mm-cell-partial" : "")} data-month={c.month}>
                     {c.noCoverage ? (
                       <span className="muted" title={tr("monthly.no_coverage_hint")}>
                         {tr("monthly.no_coverage")}

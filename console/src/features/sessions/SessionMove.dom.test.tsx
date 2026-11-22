@@ -83,7 +83,7 @@ describe("the row of a moved source", () => {
 
   it("opens the move dialog from a pending move's row", async () => {
     await renderRow(src({ moving: "t9" }));
-    expect(host.querySelector(".sess-move-line.pending")?.textContent).toContain(t("srow.moving_to", { target: "移動先" }));
+    expect(host.querySelector(".sess-move-line.sess-move-pending")?.textContent).toContain(t("srow.moving_to", { target: "移動先" }));
     await act(async () => host.querySelector<HTMLElement>(".sess-move-link")!.click());
     expect(useSessionUI.getState().move?.name).toBe("s1");
     expect(opened).toEqual([]);

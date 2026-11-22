@@ -479,11 +479,11 @@ button.mv-path:focus-visible {
   color: var(--accent);
 }
 
-.mu-chart.is-warn {
+.mu-chart.mu-warn {
   color: var(--warn);
 }
 
-.mu-chart.is-crit {
+.mu-chart.mu-crit {
   color: var(--err);
 }
 
@@ -684,7 +684,7 @@ button.mv-path:focus-visible {
   color: var(--muted);
 }
 
-.db-url-mode.is-active {
+.db-url-mode.db-url-mode-active {
   background: var(--accent);
   color: var(--on-accent);
 }

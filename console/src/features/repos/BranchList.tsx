@@ -88,7 +88,7 @@ export function BranchList({ branches, selected, onPick, busy, disableActive, au
               <li key={(b.remote ? "r:" : "l:") + b.name} className="branch-row">
                 <button
                   type="button"
-                  className={"branch-item" + (active ? " current" : "") + (holder ? " occupied" : "")}
+                  className={"branch-item" + (active ? " branch-item-current" : "") + (holder ? " occupied" : "")}
                   disabled={!!busy || (active && disableActive) || (!!holder && !onOpenWorktree)}
                   onClick={() => (holder ? onOpenWorktree?.(holder, b) : onPick(b.name, b))}
                   title={holder ? tr("rp.branch_in_use_title", { folder: holder }) : b.date || ""}

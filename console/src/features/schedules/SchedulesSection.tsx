@@ -146,7 +146,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
   };
 
   return (
-    <div className={"sched-row" + (paused ? " paused" : "")} data-sched-id={s.id}>
+    <div className={"sched-row" + (paused ? " sched-paused" : "")} data-sched-id={s.id}>
       {/* Clicking the row body toggles the run history; the ⋯ menu holds the actions. */}
       <div
         className="sched-main"

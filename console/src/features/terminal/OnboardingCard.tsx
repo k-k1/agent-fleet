@@ -206,7 +206,7 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
         ))}
       </ol>
       <div className="onboard-div">{tr("onb.which_start")}</div>
-      <div className={"onboard-tiles" + (tilesHot ? " hot" : "")}>
+      <div className={"onboard-tiles" + (tilesHot ? " onboard-tiles-hot" : "")}>
         <div className="onboard-tile">
           <span className="onboard-tile-ic">
             <Icon name="comment-discussion" />

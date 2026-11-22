@@ -59,7 +59,7 @@ export function JobList({ rows, queuePaused, queued, queueMax, now, onGroupOp, o
       <header className="igen-queue-head">
         <h3>{tr("imggen.queue")}</h3>
         {queueMax > 0 && <span className="igen-hint">{tr("imggen.queue_cap", { n: queued, max: queueMax })}</span>}
-        {queuePaused && <span className="igen-badge paused">{tr("imggen.queue_paused")}</span>}
+        {queuePaused && <span className="igen-badge igen-paused">{tr("imggen.queue_paused")}</span>}
         <span className="igen-spacer" />
         <button
           type="button"
@@ -130,7 +130,7 @@ function QueueRow({
   const pausedMin = row.group?.paused_at ? Math.floor((now - Date.parse(row.group.paused_at)) / 60_000) : 0;
 
   return (
-    <div className={"igen-qrow" + (paused ? " paused" : "") + (other ? " other" : "")}>
+    <div className={"igen-qrow" + (paused ? " igen-paused" : "") + (other ? " other" : "")}>
       <div className="igen-qrow-head">
         {other && (
           <span className="igen-badge other">

@@ -198,7 +198,7 @@ describe("stop and discard the queue", () => {
     await mount();
     const more = $(".mirror-stop-more");
     expect(more).toBeTruthy();
-    expect(more!.classList.contains("hot")).toBe(false);
+    expect(more!.classList.contains("mirror-stop-hot")).toBe(false);
     await click(more);
     await click($(".mirror-stop-menu .ui-menu-item"));
     expect(turnBodies).toEqual([T.interrupt_discard_queue_nothing_queued.request]);
@@ -208,7 +208,7 @@ describe("stop and discard the queue", () => {
     messages = { status: "working", messages: [], ...M.working };
     await mount();
     const more = $(".mirror-stop-more")!;
-    expect(more.classList.contains("hot")).toBe(true);
+    expect(more.classList.contains("mirror-stop-hot")).toBe(true);
     expect(more.textContent).toContain("3");
   });
 
@@ -226,7 +226,7 @@ describe("stop and discard the queue", () => {
     expect($(".mq-cancel")).toBeTruthy(); // the card is up
     expect($(".mirror-stop")).toBeTruthy();
     expect($(".mirror-stop-more")).toBeTruthy();
-    expect($(".mirror-stop-more")!.classList.contains("hot")).toBe(false);
+    expect($(".mirror-stop-more")!.classList.contains("mirror-stop-hot")).toBe(false);
   });
 
   it("shows the queue behind a question with its actions, and emphasises the brake", async () => {
@@ -238,7 +238,7 @@ describe("stop and discard the queue", () => {
     expect($$(".mirror-turn.user")).toHaveLength(3);
     expect($$(".mt-queue-remove")).toHaveLength(2);
     const more = $(".mirror-stop-more")!;
-    expect(more.classList.contains("hot")).toBe(true);
+    expect(more.classList.contains("mirror-stop-hot")).toBe(true);
     expect(more.textContent).toContain("3");
   });
 
