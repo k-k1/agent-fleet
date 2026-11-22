@@ -308,6 +308,10 @@ const bindLockFile = "opencode-binding-intervals.lock"
 // bindIntervalsMu first. When the lock cannot be taken the section runs unlocked, which is what a
 // single process always did; it is not a reason to turn binding off.
 //
+// Limit: when the wait runs out the section goes on unlocked, so a holder stopped between creating
+// a trim temp file and renaming it can still overwrite an event appended meanwhile (the same race
+// main has). Closing it needs a different fallback contract, not a longer wait.
+//
 // Limit: this only orders Agent processes that share the home. A hand-made `opencode auth login`
 // changes the account without passing through any Agent, so no lock can see it; bindings after one
 // rest on the next account reading.
@@ -336,7 +340,8 @@ func lockBindFiles() func() {
 		}
 		// A holder that is stopped (not dead) never releases; blocking here would stall the
 		// Supervisor and every OAuth call behind it, which main never did.
-		if err != syscall.EWOULDBLOCK && err != syscall.EINTR || time.Now().After(deadline) {
+		left := time.Until(deadline)
+		if err != syscall.EWOULDBLOCK && err != syscall.EINTR || left <= 0 {
 			log.Printf("opencode: binding lock not taken: %v", err)
 			_ = f.Close()
 			return func() {}
@@ -344,7 +349,7 @@ func lockBindFiles() func() {
 		if bindLockRetry != nil {
 			bindLockRetry()
 		}
-		time.Sleep(10 * time.Millisecond)
+		time.Sleep(min(10*time.Millisecond, left))
 	}
 	return func() {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
