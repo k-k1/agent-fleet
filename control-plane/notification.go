@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strings"
@@ -110,6 +111,96 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 	return n
 }
 
+// The bounds on one /notifications response, vars only so a test can lower them. The Agent
+// returns at most 100 entries but does not bound an entry's size, and the drain runs on a timer
+// for every workspace, so the CP stops reading at a byte count and an entry count far above
+// anything a healthy Agent sends. Entries read whole before a bound is hit are stored and
+// acked; the rest stays queued for the next drain.
+var (
+	maxOutboxBody    int64 = 64 << 20
+	maxOutboxEntries       = 200
+)
+
+// boundedReader is io.LimitReader that remembers it stopped the read, so a body cut by the
+// bound can be told from one the Agent cut short.
+type boundedReader struct {
+	r   io.Reader
+	n   int64
+	hit bool
+}
+
+func (b *boundedReader) Read(p []byte) (int, error) {
+	if b.n <= 0 {
+		b.hit = true
+		return 0, io.EOF
+	}
+	if int64(len(p)) > b.n {
+		p = p[:b.n]
+	}
+	n, err := b.r.Read(p)
+	b.n -= int64(n)
+	return n, err
+}
+
+// readOutboxEntries decodes {"notifications":[...]} entry by entry. A null or empty list is an
+// empty success (the Agent sends null for an empty outbox). The body must be complete: a
+// connection cut mid-body is not ok and yields nothing. Only a bound (bytes or entries) may
+// end the read early; then the entries read whole are returned with more=true, and the caller
+// asks again after acking them.
+func readOutboxEntries(r io.Reader, limit int64) (entries []agentNotification, more, ok bool) {
+	br := &boundedReader{r: r, n: limit}
+	dec := json.NewDecoder(br)
+	cut := func() ([]agentNotification, bool, bool) {
+		if br.hit && len(entries) > 0 {
+			return entries, true, true
+		}
+		return nil, false, false
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, false, false
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return cut()
+		}
+		if key != "notifications" {
+			var skip json.RawMessage
+			if dec.Decode(&skip) != nil {
+				return cut()
+			}
+			continue
+		}
+		t, err := dec.Token()
+		if err != nil {
+			return cut()
+		}
+		if t == nil {
+			continue
+		}
+		if t != json.Delim('[') {
+			return nil, false, false
+		}
+		for dec.More() {
+			if len(entries) >= maxOutboxEntries {
+				return entries, true, true
+			}
+			var in agentNotification
+			if dec.Decode(&in) != nil {
+				return cut()
+			}
+			entries = append(entries, in)
+		}
+		if t, err := dec.Token(); err != nil || t != json.Delim(']') {
+			return cut()
+		}
+	}
+	if t, err := dec.Token(); err != nil || t != json.Delim('}') {
+		return cut()
+	}
+	return entries, false, true
+}
+
 // drainAgentOutbox pulls the Agent's notification outbox into the store and acks it.
 //
 // It deliberately takes no *resolved, because it is also called just before a workspace
@@ -118,32 +209,55 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 // until somebody woke the workspace again — the stop-for-cost decision swallowing the one
 // notification that announces it.
 func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string) string {
+	state, prevFirst := "offline", ""
+	for round := 0; round < maxDrainRounds; round++ {
+		var more bool
+		var first string
+		state, more, first = drainAgentOutboxOnce(ctx, st, rt, membershipID)
+		// The same first id again means the Agent did not drop what it was told to: asking
+		// more would only repeat the work.
+		if state != "ready" || !more || ctx.Err() != nil || first == prevFirst {
+			break
+		}
+		prevFirst = first
+	}
+	return state
+}
+
+// maxDrainRounds bounds how many times one drain asks again after a response cut by a bound.
+const maxDrainRounds = 8
+
+// drainAgentOutboxOnce reads one response. more is true when a bound cut it and the entries
+// read were stored and the Agent answered the ack with a 2xx, so asking again can make
+// progress. first is the id of the first entry read.
+func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string) (state string, more bool, first string) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
 	if tok := rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
-		return "offline"
+		return "offline", false, ""
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return "unsupported"
+		return "unsupported", false, ""
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "offline"
+		return "offline", false, ""
 	}
-	var body struct {
-		Notifications []agentNotification `json:"notifications"`
+	// Bounded by maxOutboxBody / maxOutboxEntries; see there. An unreadable first entry stores
+	// nothing, so a single entry past the byte bound stays queued.
+	entries, more, ok := readOutboxEntries(resp.Body, maxOutboxBody)
+	resp.Body.Close() // before the ack, so one connection is not held across both requests
+	if !ok {
+		return "offline", false, ""
 	}
-	if json.NewDecoder(resp.Body).Decode(&body) != nil {
-		return "offline"
-	}
-	acked := make([]string, 0, len(body.Notifications))
-	for _, in := range body.Notifications {
+	acked := make([]string, 0, len(entries))
+	for _, in := range entries {
 		n := agentNotificationRow(in, membershipID)
 		if err := st.InsertNotification(ctx, n); err != nil {
-			return "offline"
+			return "offline", false, ""
 		}
 		acked = append(acked, in.ID)
 	}
@@ -154,11 +268,19 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 		if tok := rt.Token(); tok != "" {
 			req.Header.Set("Authorization", "Bearer "+tok)
 		}
-		if ackResp, err := agentHTTPClient.Do(req); err == nil {
-			ackResp.Body.Close()
+		ackResp, err := agentHTTPClient.Do(req)
+		if err != nil {
+			return "ready", false, acked[0]
+		}
+		ackResp.Body.Close()
+		if ackResp.StatusCode/100 != 2 {
+			return "ready", false, acked[0]
 		}
 	}
-	return "ready"
+	if len(acked) == 0 {
+		return "ready", false, ""
+	}
+	return "ready", more, acked[0]
 }
 
 // listPayload composes the GET /api/notifications body (drain the Agent's
