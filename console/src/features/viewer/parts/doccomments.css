@@ -104,7 +104,7 @@
   gap: 7px;
   font-size: 12px;
 }
-.doc-comment.sent {
+.doc-comment.is-sent {
   opacity: 0.55;
 }
 .doc-comment-n {

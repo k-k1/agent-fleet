@@ -67,9 +67,9 @@ export function ChatSuggestRow({
               type="button"
               className={
                 "chat-suggest-chip" +
-                (sg.llm ? " llm" : "") +
-                (isQuickReplyPinned(pinnedList, sg.text) ? " pinned" : "") +
-                (sg.text === cycledText ? " cycling" : "") // the candidate Tab has put in the box
+                (sg.llm ? " is-llm" : "") +
+                (isQuickReplyPinned(pinnedList, sg.text) ? " is-pinned" : "") +
+                (sg.text === cycledText ? " is-cycling" : "") // the candidate Tab has put in the box
               }
               aria-current={sg.text === cycledText ? "true" : undefined}
               title={tr("mirror.suggest_hint")}

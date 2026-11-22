@@ -204,11 +204,11 @@
 }
 
 /* Pinned (always shown) — marked with an accent-leaning border plus 📌, as on the chip. */
-.qr-item.pinned {
+.qr-item.qr-pinned {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
 
-.qr-item.pinned .qr-pin {
+.qr-item.qr-pinned .qr-pin {
   color: var(--accent);
 }
 

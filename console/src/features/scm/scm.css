@@ -486,11 +486,11 @@
 .dl-text {
   white-space: pre;
 }
-.diff-files.wrap .dl-text {
+.diff-files.is-wrap .dl-text {
   white-space: pre-wrap;
   word-break: break-all;
 }
-.diff-files.wrap .diff-body .dl {
+.diff-files.is-wrap .diff-body .dl {
   min-width: 0;
 }
 .diff-body .dl.add {

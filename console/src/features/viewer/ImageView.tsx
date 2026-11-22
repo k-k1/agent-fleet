@@ -232,7 +232,7 @@ export function ImageView({ src, alt, placeholder, onLoad, onZoom, ref }: ImageV
       onPointerCancel={endPointer}
     >
       <img
-        className={"imgview-img" + (full ? "" : " placeholder")}
+        className={"imgview-img" + (full ? "" : " is-placeholder")}
         src={full ? src : placeholder}
         alt={alt}
         draggable={false}

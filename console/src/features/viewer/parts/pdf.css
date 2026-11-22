@@ -10,7 +10,7 @@
   flex-direction: column;
   overflow: hidden;
 }
-.pdfview.is-failed {
+.pdfview.pdf-failed {
   align-items: center;
   justify-content: center;
   font: 12px var(--mono);

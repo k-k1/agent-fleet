@@ -175,7 +175,7 @@ test("comments on a plan awaiting approval: if they do not arrive, keep the butt
   // retyped.
   await expect(card.locator(".mt-plan-comment-sent")).toHaveCount(0);
   await expect(send).toContainText("（1）");
-  await expect(card.locator(".mt-plan-comment.sent")).toHaveCount(0);
+  await expect(card.locator(".mt-plan-comment.plan-sent")).toHaveCount(0);
   // Sending free text while the approval dialog is open is the silent-approval path. Pin that
   // free text is only ever sent as a fallback after plan-respond refused.
   expect(calls.map((c) => c.path)).toEqual([
