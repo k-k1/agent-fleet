@@ -1,12 +1,15 @@
 // Agent Fleet Console service worker — deliberately minimal (docs/log/21 image attachments).
 //
-// Its ONLY job is the Web Share Target: receive a POST share from Android's 共有シート,
+// Its jobs are the Web Share Target and Web Push (the handlers at the bottom). The share part: receive a POST share from Android's 共有シート,
 // stash the payload in CacheStorage, and redirect into the app so the memo composer can
 // pick it up (src/features/memo/share.ts reads the stash directly and uploads the
 // images). It does NOT cache the app shell or intercept ordinary requests — anything
 // that isn't the share POST falls through to the network untouched, so SSE/streaming,
 // WebSockets and the build's version-manifest cache-busting keep working exactly as
 // before the SW existed.
+//
+// Web Push (#4750): the `push` and `notificationclick` handlers below only show a notification and
+// open the Console. They add no fetch handling, so the no-caching rule above still holds.
 //
 // The stash keys are origin-absolute and identical in the SW and the window (both read
 // self/location.origin), so the app reads them straight from CacheStorage without
@@ -83,3 +86,73 @@ async function handleShare(req) {
     return Response.redirect(home, 303);
   }
 }
+
+// --- Web Push ---------------------------------------------------------------------------------
+// The payload is minimal by design (pushsrv.pushPayload): {v, kind, session, name, text?}. The
+// wording is rendered here from kind, in the browser's language, so the push service never sees
+// it. A payload that does not parse still shows a generic notification: a push the browser
+// receives must show something (userVisibleOnly), and silence would let it revoke the permission.
+const PUSH_TEXT = {
+  ja: {
+    question: "質問があります",
+    "plan-approval": "プランの承認待ちです",
+    "permission-request": "権限の許可待ちです",
+    "answer-ready": "ターンが終わりました",
+    other: "セッションが待っています",
+  },
+  en: {
+    question: "A question is waiting",
+    "plan-approval": "A plan is waiting for approval",
+    "permission-request": "A permission request is waiting",
+    "answer-ready": "A turn has finished",
+    other: "A session needs you",
+  },
+};
+const SESSION_NAME = /^[a-z0-9][a-z0-9-]{2,39}$/;
+
+function pushLines(data) {
+  const lang = /^ja/i.test(self.navigator.language || "") ? "ja" : "en";
+  const table = PUSH_TEXT[lang];
+  const kind = data && typeof data.kind === "string" && table[data.kind] ? data.kind : "other";
+  const name = data && typeof data.name === "string" ? data.name : "";
+  const text = data && typeof data.text === "string" ? data.text : "";
+  return { title: name || "Agent Fleet", body: text || table[kind], kind };
+}
+
+self.addEventListener("push", (event) => {
+  let data = null;
+  try {
+    data = event.data ? event.data.json() : null;
+  } catch {
+    data = null;
+  }
+  const { title, body } = pushLines(data);
+  const session = data && typeof data.session === "string" && SESSION_NAME.test(data.session) ? data.session : "";
+  event.waitUntil(
+    self.registration.showNotification(title, {
+      body,
+      // One notification per session and kind: a repeat replaces the earlier one instead of stacking.
+      tag: session ? `af-${session}-${(data && data.kind) || ""}` : undefined,
+      data: { session },
+    }),
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const session = (event.notification.data && event.notification.data.session) || "";
+  const scope = self.registration.scope;
+  event.waitUntil(
+    (async () => {
+      const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const win = wins.find((c) => c.url.startsWith(scope)) || wins[0];
+      if (win) {
+        // An open Console opens the session itself (listenPushOpen in the app); navigating would reload it.
+        if (session) win.postMessage({ type: "af-open-session", session });
+        await win.focus();
+        return;
+      }
+      await self.clients.openWindow(session ? `${scope}?session=${encodeURIComponent(session)}` : scope);
+    })(),
+  );
+});

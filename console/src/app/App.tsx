@@ -41,6 +41,7 @@ import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.ts
 import { NotProvisioned } from "../features/auth/NotProvisioned.tsx";
 import { WsStartingDialog } from "./WsStartingDialog.tsx";
 import { useSigninStart } from "../features/home/signinStart.ts";
+import { usePushViewing } from "../features/push/usePushViewing.ts";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { startRepoJobsPolling, useRepoJobsStore } from "../features/repos/jobs.ts";
@@ -541,6 +542,8 @@ export function App() {
   // suppresses them: the main console tab already fires the same notifications,
   // so a satellite tab would just duplicate every ping.
   useSessionNotifications(notificationSource === "unsupported" && popout !== "popout");
+  // Tells the CP which session is on screen so a phone is not pushed for it (#4750 decision 2).
+  usePushViewing(booted);
 
   // With no membership yet (not invited), land on a screen that says so rather than
   // opening the Console (docs/log/61 §61.10.2, P7-2). Invite-only is the default for a new

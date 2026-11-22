@@ -7,6 +7,7 @@ import { useTtsStore, toggleTtsPlayback } from "../core/store/tts.ts";
 import { useSettingsUI } from "../features/settings/store.ts";
 import { useHostUpdate } from "../features/settings/hostUpdate.ts";
 import { useDeploymentVersion, imageLabel } from "../features/settings/deploymentVersion.ts";
+import { releasePushForSignOut } from "../features/push/webPush.ts";
 import { rel, clearLocalState } from "../core/api/client.ts";
 import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES, PANE_LAYOUTS } from "../lib/settings.ts";
 import { useT } from "../lib/i18n/index.ts";
@@ -430,8 +431,11 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                       className="acct-item"
                       role="menuitem"
                       onClick={() => {
-                        void confirmDirtyNavigation("logout").then((proceed) => {
+                        void confirmDirtyNavigation("logout").then(async (proceed) => {
                           if (!proceed) return;
+                          // Stop pushes to this browser while the session still authorizes it
+                          // (bounded; the unsubscribe also happens locally).
+                          await releasePushForSignOut().catch(() => {});
                           // Drop all client-side state BEFORE bouncing to the CP logout,
                           // so a different account on this browser can't see the prior
                           // user's layout / drafts / tenant selection.

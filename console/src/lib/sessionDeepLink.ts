@@ -21,6 +21,11 @@ export function consumeSessionDeepLink(): void {
   } catch {
     return;
   }
+  openSessionByName(name);
+}
+
+/** Opens a session's pane once it is in the list (a workspace still coming up is waited for). */
+export function openSessionByName(name: string): void {
   if (!/^[a-z0-9][a-z0-9-]{2,39}$/.test(name)) return;
   let tries = 0;
   const tick = () => {
@@ -33,4 +38,12 @@ export function consumeSessionDeepLink(): void {
     if (++tries < 90) setTimeout(tick, 1000);
   };
   tick();
+}
+
+/** A tapped push notification asks an already open Console to open its session (public/sw.js). */
+export function listenPushOpen(): void {
+  if (!("serviceWorker" in navigator)) return;
+  navigator.serviceWorker.addEventListener("message", (e) => {
+    if (e.data?.type === "af-open-session" && typeof e.data.session === "string") openSessionByName(e.data.session);
+  });
 }

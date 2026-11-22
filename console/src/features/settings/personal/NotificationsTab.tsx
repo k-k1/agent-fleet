@@ -7,6 +7,7 @@ import { useConnections } from "../parts/useConnections.ts";
 import { useSettingsUI } from "../store.ts";
 import { OnOff, Row } from "../parts/controls.tsx";
 import { getLocale, useT } from "../../../lib/i18n/index.ts";
+import { PushSection } from "../../push/PushSection.tsx";
 import { NotificationTable } from "./NotificationTable.tsx";
 
 // NotificationsTab — notification preferences. The top section is the notification table
@@ -70,6 +71,8 @@ export function NotificationsTab() {
         <NotificationTable />
         <p className="muted ds-note">{tr("noti.table_note")}</p>
       </section>
+
+      <PushSection />
 
       <section className="ds-group">
         <h4 className="ds-title">{tr("noti.svc_title")}</h4>

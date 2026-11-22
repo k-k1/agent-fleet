@@ -31,6 +31,7 @@ import { TenantLimitBoardView } from "../../limits/TenantLimitBoardView.tsx";
 import { TenantBranchRulesView } from "./tenantBranchRules.tsx";
 import { TenantMemberDefaultsPanel } from "./tenantMemberDefaults.tsx";
 import { TenantGitOAuthView } from "./tenantGitOAuth.tsx";
+import { TenantPushView } from "./tenantPush.tsx";
 import { TenantMachineView } from "./tenantMachine.tsx";
 import { TenantBoostView } from "./tenantBoost.tsx";
 import { TenantEngineAccessView } from "./tenantEngineAccess.tsx";
@@ -548,6 +549,7 @@ export function TenantScopeBody({
         )}
         <TenantMachineView key={slug} slug={slug} />
         <TenantBoostView key={"boost-" + slug} slug={slug} />
+        <TenantPushView key={"push-" + slug} slug={slug} />
         {/* Delete goes last: a destructive action never sits above the two everyday views. */}
         {isSuper && onDeleted && <TenantDeletePanel slug={slug} onDeleted={onDeleted} />}
       </>
