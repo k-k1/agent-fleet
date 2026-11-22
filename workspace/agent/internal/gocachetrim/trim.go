@@ -23,6 +23,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -71,7 +73,9 @@ type trimmer struct {
 	free    func() (free, total uint64, ok bool)
 	enabled func() bool
 	now     func() time.Time
-	// beforeRemove is a test seam: it runs between the survey and each removal.
+	// Test seams: beforeOpen runs between resolving the cache directory and opening it,
+	// beforeRemove between the survey and each removal.
+	beforeOpen   func(real string)
 	beforeRemove func(rel string)
 }
 
@@ -107,14 +111,42 @@ func sameVolume(a, b string) bool {
 	return sa.Dev == sb.Dev
 }
 
-type goCacheEntry struct {
-	rel  string // relative to the cache directory
-	size int64
+// entry is one candidate file: its directory is held open by descriptor, so the file is judged
+// and removed relative to that directory whatever happens to the path meanwhile.
+type entry struct {
+	dir  *os.File
+	name string
 	mod  time.Time
 }
 
+func (e entry) rel() string { return filepath.Join(filepath.Base(e.dir.Name()), e.name) }
+
+// openDirNoFollow opens name under dirfd (AT_FDCWD semantics when dirfd is unix.AT_FDCWD) as a
+// directory, refusing a symlink as its last element.
+func openDirNoFollow(dirfd int, name string) (*os.File, error) {
+	fd, err := unix.Openat(dirfd, name, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	if err != nil {
+		return nil, err
+	}
+	return os.NewFile(uintptr(fd), name), nil
+}
+
+// statNoFollow is fstatat(dir, name, AT_SYMLINK_NOFOLLOW): a link is reported as a link.
+func statNoFollow(dir *os.File, name string) (st unix.Stat_t, err error) {
+	err = unix.Fstatat(int(dir.Fd()), name, &st, unix.AT_SYMLINK_NOFOLLOW)
+	return st, err
+}
+
+func isRegular(st unix.Stat_t) bool { return st.Mode&unix.S_IFMT == unix.S_IFREG }
+
 // pass runs one check and, when home is low, one trim. done=false means it could not reach the
 // target (nothing old enough, or an error), so the caller waits longer before trying again.
+//
+// Nothing is reached by path after the cache directory is opened: the directory and each
+// two-hex-digit directory are opened with O_NOFOLLOW and every stat and unlink is relative to
+// those descriptors, so a path swapped for a link (to anywhere, including inside the cache)
+// cannot redirect a delete. One window is left: Go can refresh an entry's mtime between the
+// last check and the unlink. Go cannot be made to wait for this; the price is one rebuild.
 func (g trimmer) pass() (res Result, trimmed, done bool) {
 	if !g.enabled() {
 		return res, false, true
@@ -123,72 +155,71 @@ func (g trimmer) pass() (res Result, trimmed, done bool) {
 	if !ok || float64(free) >= belowFrac*float64(total) {
 		return res, false, true
 	}
-	dir := g.dir()
-	real, err := filepath.EvalSymlinks(dir)
+	real, err := filepath.EvalSymlinks(g.dir())
 	if err != nil || !sameVolumeFn(real, paths.HomeDir()) {
+		return res, false, true
+	}
+	if g.beforeOpen != nil {
+		g.beforeOpen(real)
+	}
+	root, err := openDirNoFollow(unix.AT_FDCWD, real)
+	if err != nil {
+		return res, false, true
+	}
+	defer root.Close()
+	var home, rst unix.Stat_t
+	if unix.Stat(paths.HomeDir(), &home) != nil || unix.Fstat(int(root.Fd()), &rst) != nil || home.Dev != rst.Dev {
 		return res, false, true
 	}
 	target := int64(toFrac * float64(total))
 	cutoff := g.now().Add(-minAge)
 
-	// Every file operation goes through an os.Root on the cache directory: it refuses a path
-	// that leaves the root through a symlink, so a two-hex-digit directory swapped for a link
-	// between the survey and the removal cannot send a delete outside the cache.
-	root, err := os.OpenRoot(real)
-	if err != nil {
-		return res, false, true
-	}
-	defer root.Close()
-
-	var old []goCacheEntry
-	tops, _ := os.ReadDir(real)
+	var old []entry
+	tops, _ := root.ReadDir(-1)
 	for _, top := range tops {
-		if !top.IsDir() || !isHex2(top.Name()) {
-			continue // README, trim.txt, a link, anything Go did not put in an entry directory
+		if !isHex2(top.Name()) {
+			continue // README, trim.txt, anything Go did not put in an entry directory
 		}
-		files, _ := os.ReadDir(filepath.Join(real, top.Name()))
-		for _, f := range files {
-			info, err := f.Info()
-			if err != nil || !info.Mode().IsRegular() || !info.ModTime().Before(cutoff) {
+		dir, err := openDirNoFollow(int(root.Fd()), top.Name())
+		if err != nil {
+			continue // not a directory, or a link
+		}
+		defer dir.Close()
+		names, _ := dir.Readdirnames(-1)
+		for _, n := range names {
+			st, err := statNoFollow(dir, n)
+			if err != nil || !isRegular(st) || !time.Unix(st.Mtim.Unix()).Before(cutoff) {
 				continue
 			}
-			old = append(old, goCacheEntry{filepath.Join(top.Name(), f.Name()), info.Size(), info.ModTime()})
+			old = append(old, entry{dir, n, time.Unix(st.Mtim.Unix())})
 		}
 	}
 	sort.Slice(old, func(i, j int) bool { return old[i].mod.Before(old[j].mod) })
 
-	// need is an estimate from the sizes removed so far; it is checked against the real free
-	// space each time it is reached, because an unlinked file that is hard-linked elsewhere or
-	// still open frees nothing.
-	need := target - int64(free)
-	var freed int64
-	done = need <= 0
+	// The real free space is read after every removal (one statfs), never estimated from file
+	// sizes: blocks round sizes up, and a file that is hard-linked elsewhere or still open frees
+	// nothing.
 	for _, e := range old {
-		if done {
-			break
-		}
 		if g.beforeRemove != nil {
-			g.beforeRemove(e.rel)
+			g.beforeRemove(e.rel())
 		}
 		// Go refreshes the mtime when it uses an entry, possibly after the survey: look again.
-		fi, err := root.Lstat(e.rel)
-		if err != nil || !fi.Mode().IsRegular() || !fi.ModTime().Before(cutoff) {
+		st, err := statNoFollow(e.dir, e.name)
+		if err != nil || !isRegular(st) || !time.Unix(st.Mtim.Unix()).Before(cutoff) {
 			continue
 		}
-		if root.Remove(e.rel) != nil {
+		if unix.Unlinkat(int(e.dir.Fd()), e.name, 0) != nil {
 			continue
 		}
-		freed += fi.Size()
-		res.Bytes += fi.Size()
+		res.Bytes += st.Size
 		res.Files++
-		if freed >= need {
-			if f, _, ok := g.free(); ok && int64(f) >= target {
-				done = true
-			} else if ok {
-				need, freed = target-int64(f), 0
-			} else {
-				done = true
-			}
+		f, _, ok := g.free()
+		if !ok {
+			break // no evidence the target was reached: stop and back off
+		}
+		if int64(f) >= target {
+			done = true
+			break
 		}
 	}
 	res.At = g.now().UTC().Format(time.RFC3339)

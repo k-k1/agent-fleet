@@ -166,7 +166,7 @@ func TestTrimNeverDeletesThroughASwappedDirectory(t *testing.T) {
 	g := trimmerFor(dir, now, 1000, 50000, true)
 	g.beforeRemove = func(rel string) {
 		if rel == filepath.Join("ab", "a-a") {
-			_ = os.RemoveAll(filepath.Join(dir, "ab"))
+			_ = os.Rename(filepath.Join(dir, "ab"), filepath.Join(dir, "ab.moved"))
 			_ = os.Symlink(outside, filepath.Join(dir, "ab"))
 		}
 	}
@@ -258,5 +258,83 @@ func TestRunStopsWhenAskedTo(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not stop")
+	}
+}
+
+// A swap to a link that points INSIDE the cache ("." here) must not make a top-level file the
+// target of an entry's delete.
+func TestTrimNeverReachesTopLevelFilesThroughAnInwardLink(t *testing.T) {
+	now := time.Now()
+	day := 24 * time.Hour
+	dir := fakeGoCache(t, now, map[string]time.Duration{"README": 9 * day, "trim.txt": 9 * day, "ab/README": 9 * day, "ab/trim.txt": 8 * day})
+	g := trimmerFor(dir, now, 1000, 50000, true)
+	g.beforeRemove = func(rel string) {
+		if rel == filepath.Join("ab", "README") {
+			_ = os.Rename(filepath.Join(dir, "ab"), filepath.Join(dir, "ab.moved"))
+			_ = os.Symlink(".", filepath.Join(dir, "ab"))
+		}
+	}
+	g.pass()
+	if !exists(filepath.Join(dir, "README")) || !exists(filepath.Join(dir, "trim.txt")) {
+		t.Fatal("a top-level file was deleted through a swapped directory")
+	}
+}
+
+// The cache directory replaced by a link between resolving and opening it must not be followed.
+func TestTrimDoesNotFollowACacheDirectorySwappedBeforeOpen(t *testing.T) {
+	now := time.Now()
+	day := 24 * time.Hour
+	dir := fakeGoCache(t, now, map[string]time.Duration{"ab/a-a": 9 * day})
+	outside := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(outside, "ab"), 0o755)
+	victim := filepath.Join(outside, "ab", "a-a")
+	_ = os.WriteFile(victim, []byte("keep"), 0o644)
+	_ = os.Chtimes(victim, now.Add(-9*day), now.Add(-9*day))
+	g := trimmerFor(dir, now, 1000, 50000, true)
+	g.beforeOpen = func(real string) {
+		_ = os.Rename(real, real+".moved")
+		_ = os.Symlink(outside, real)
+	}
+	g.pass()
+	if !exists(victim) {
+		t.Fatal("a swapped cache directory was followed")
+	}
+}
+
+// Blocks round file sizes up, so the space that comes back can exceed the summed sizes: the
+// pass stops at the real target and leaves the rest.
+func TestTrimStopsAtTheRealTargetWhenMoreSpaceReturnsThanTheFileSizes(t *testing.T) {
+	now := time.Now()
+	day := 24 * time.Hour
+	dir := fakeGoCache(t, now, map[string]time.Duration{"ab/a-a": 9 * day, "ab/b-a": 8 * day, "ab/c-a": 7 * day})
+	g := trimmerFor(dir, now, 7000, 50000, true) // target 10000
+	g.free = func() (uint64, uint64, bool) {
+		return 7000 + 4096*uint64(3-countFiles(dir)), 50000, true // 4 KiB back per file
+	}
+	res, _, done := g.pass()
+	if !done || res.Files != 1 {
+		t.Fatalf("one removal returns 4096 B, past the target: want 1 file and done, got res=%+v done=%v", res, done)
+	}
+}
+
+func countFiles(dir string) (n int) {
+	files, _ := filepath.Glob(filepath.Join(dir, "*", "*"))
+	return len(files)
+}
+
+// One failed free-space read after a removal is no evidence the target was reached.
+func TestTrimBacksOffWhenFreeSpaceCannotBeReadAfterARemoval(t *testing.T) {
+	now := time.Now()
+	day := 24 * time.Hour
+	dir := fakeGoCache(t, now, map[string]time.Duration{"ab/a-a": 9 * day, "ab/b-a": 8 * day})
+	g := trimmerFor(dir, now, 1000, 50000, true)
+	calls := 0
+	g.free = func() (uint64, uint64, bool) {
+		calls++
+		return 1000, 50000, calls == 1 // the first read passes the threshold check, the next fails
+	}
+	res, trimmed, done := g.pass()
+	if done || !trimmed || res.Files != 1 {
+		t.Fatalf("want one file removed then a stop with done=false, got res=%+v done=%v", res, done)
 	}
 }
