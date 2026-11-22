@@ -316,7 +316,11 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
       // old counter is the save not having landed, and anything else is another writer's.
       if (last && last.raw !== file.content && last.stored === file.content && answered.revision === last.revision + 1 && sameKinds(answered.kinds ?? [], last.kinds)) {
         const revision = revisionOf(last.raw);
-        remember(key, revision, { revision: (res as MemoryBody).revision, kinds: (res as MemoryBody).kinds ?? [], type: (res as MemoryBody).type ?? "" }, true);
+        // Monotonic like the branch below: another pane may have read this very text at a later
+        // counter while this read was in flight, and lowering it ends the next save in a 409.
+        if (answered.revision > (known.get(key)?.get(revision)?.revision ?? 0)) {
+          remember(key, revision, { revision: answered.revision, kinds: answered.kinds ?? [], type: answered.type ?? "" }, true);
+        }
         file = { ...file, content: last.raw, size: last.raw.length, revision };
       } else if (last && file.revision === last.base && (answered.revision !== last.revision || !sameKinds(answered.kinds ?? [], last.kinds)) && answered.revision > (known.get(key)?.get(file.revision)?.revision ?? 0)) {
         // Another writer stored the text the save started from, at a later counter: the save did not
