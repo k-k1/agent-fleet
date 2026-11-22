@@ -654,3 +654,35 @@ func TestDrainAgentOutboxTruncatedBodyIsOffline(t *testing.T) {
 		t.Fatalf("truncated body stored %d rows and acked %d times", len(rows), acks.Load())
 	}
 }
+
+// Asking again after a bound-cut response needs the ack to have been accepted and to have
+// moved the outbox: a 503, or a 204 that drops nothing, ends the drain after one fetch (a
+// second fetch would repeat the same work).
+func TestDrainAgentOutboxDoesNotReaskWithoutProgress(t *testing.T) {
+	old := maxOutboxEntries
+	maxOutboxEntries = 1
+	defer func() { maxOutboxEntries = old }()
+	for _, tc := range []struct {
+		name   string
+		status int
+		want   int32 // GETs
+	}{{"ack refused", http.StatusServiceUnavailable, 1}, {"ack accepted but nothing dropped", http.StatusNoContent, 2}} {
+		t.Run(tc.name, func(t *testing.T) {
+			st, mem := drainFixture(t)
+			var gets atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/notifications/ack" {
+					w.WriteHeader(tc.status)
+					return
+				}
+				gets.Add(1)
+				_, _ = w.Write([]byte(`{"notifications":[{"id":"a","kind":"question","sessionName":"s"},{"id":"b","kind":"question","sessionName":"s"}]}`))
+			}))
+			defer srv.Close()
+			drainAgentOutbox(context.Background(), st, drainFakeRT{state: "running", endpoint: srv.URL}, mem)
+			if got := gets.Load(); got != tc.want {
+				t.Fatalf("%d fetches, want %d", got, tc.want)
+			}
+		})
+	}
+}

@@ -209,13 +209,17 @@ func readOutboxEntries(r io.Reader, limit int64) (entries []agentNotification, m
 // until somebody woke the workspace again — the stop-for-cost decision swallowing the one
 // notification that announces it.
 func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string) string {
-	state := "offline"
+	state, prevFirst := "offline", ""
 	for round := 0; round < maxDrainRounds; round++ {
 		var more bool
-		state, more = drainAgentOutboxOnce(ctx, st, rt, membershipID)
-		if state != "ready" || !more || ctx.Err() != nil {
+		var first string
+		state, more, first = drainAgentOutboxOnce(ctx, st, rt, membershipID)
+		// The same first id again means the Agent did not drop what it was told to: asking
+		// more would only repeat the work.
+		if state != "ready" || !more || ctx.Err() != nil || first == prevFirst {
 			break
 		}
+		prevFirst = first
 	}
 	return state
 }
@@ -224,35 +228,36 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 const maxDrainRounds = 8
 
 // drainAgentOutboxOnce reads one response. more is true when a bound cut it and the entries
-// read were stored and acked, so asking again makes progress.
-func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string) (string, bool) {
+// read were stored and the Agent answered the ack with a 2xx, so asking again can make
+// progress. first is the id of the first entry read.
+func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string) (state string, more bool, first string) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
 	if tok := rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
-		return "offline", false
+		return "offline", false, ""
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return "unsupported", false
+		return "unsupported", false, ""
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "offline", false
+		return "offline", false, ""
 	}
 	// Bounded by maxOutboxBody / maxOutboxEntries; see there. An unreadable first entry stores
 	// nothing, so a single entry past the byte bound stays queued.
 	entries, more, ok := readOutboxEntries(resp.Body, maxOutboxBody)
 	resp.Body.Close() // before the ack, so one connection is not held across both requests
 	if !ok {
-		return "offline", false
+		return "offline", false, ""
 	}
 	acked := make([]string, 0, len(entries))
 	for _, in := range entries {
 		n := agentNotificationRow(in, membershipID)
 		if err := st.InsertNotification(ctx, n); err != nil {
-			return "offline", false
+			return "offline", false, ""
 		}
 		acked = append(acked, in.ID)
 	}
@@ -265,11 +270,17 @@ func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt ru
 		}
 		ackResp, err := agentHTTPClient.Do(req)
 		if err != nil {
-			return "ready", false
+			return "ready", false, acked[0]
 		}
 		ackResp.Body.Close()
+		if ackResp.StatusCode/100 != 2 {
+			return "ready", false, acked[0]
+		}
 	}
-	return "ready", more && len(acked) > 0
+	if len(acked) == 0 {
+		return "ready", false, ""
+	}
+	return "ready", more, acked[0]
 }
 
 // listPayload composes the GET /api/notifications body (drain the Agent's
