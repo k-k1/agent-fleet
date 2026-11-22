@@ -49,6 +49,18 @@ In a Terminal (CLI) session or a shell, a row of keys sits under the terminal.
 - They are sent without bringing up the soft keyboard
 - Swipe vertically on the terminal with one finger to go back through past output. In an app that uses the whole screen, such as vim, it scrolls that app
 
+## Install it and get push notifications
+
+Add the Console to your home screen and it opens like an app. It can also push a notification when a session needs you, with the Console closed.
+
+1. Open the Console in the phone's browser and sign in
+2. **iPhone / iPad**: in Safari, press the Share button and choose **Add to Home Screen**, then open the Console from the new icon. Push notifications work only when the Console is opened from that icon, on iOS 16.4 or later
+3. **Android**: in Chrome, open the menu and choose **Install app** (or **Add to Home screen**)
+4. In the Console, open **⚙ Settings → "Notifications"** and turn on "**Push notifications on this device**". Allow notifications when asked
+
+The step-by-step setting, the kinds that can be pushed and how to remove a device are in [Get notified](../settings/notifications.md#get-push-notifications-on-your-phone).
+The section is not shown on a deployment where the administrator has not switched Web Push on.
+
 ## The bar and notifications
 
 - On a narrow screen, Split down and Close all move from the workspace action bar into its **⋯** menu
@@ -59,5 +71,6 @@ In a Terminal (CLI) session or a shell, a row of keys sits under the terminal.
 ## Related
 
 - [Find your way around the screen](console-tour.md)
+- [Get notified](../settings/notifications.md): push notifications to a phone
 - [Reply to a session](../sessions/reply.md)
 - [Use the terminal](../files/terminal.md): copy and paste in the terminal

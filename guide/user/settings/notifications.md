@@ -17,6 +17,7 @@ For each kind of notification, choose whether it raises a red dot, shows an OS n
 | Allow desktop notifications in the browser | A change you are not watching shows up as an OS notification |
 | Set the switches for each kind of notification | What happens when that kind arrives changes |
 | Open the bell at the top of the screen | The notification center lists the last 7 days of notifications |
+| Turn on push on a phone or computer | A question or a finished turn reaches that device with the Console closed |
 
 ## Set up notifications
 
@@ -59,6 +60,34 @@ Open **⚙ Settings → "Notifications"**. The "**What each notification does**"
 
 "Needs your answer", "Handoffs", "Cloud sign-in" and "Budget stops" wait for a person to act. The unread dot of these four cannot be turned off.
 
+## Get push notifications on your phone
+
+Push notifications reach a phone or computer when the Console is closed. They appear in the **"Push to this device"** section of **⚙ Settings → "Notifications"**.
+The section is shown only on a deployment where the administrator has switched Web Push on ([Switch on Web Push](../../operate/run/web-push.md)).
+
+1. On an iPhone or iPad, first add the Console to the Home Screen and open it from there ([Use it on a phone](../start/phone.md#install-it-and-get-push-notifications)). Other browsers need no installation
+2. Turn on "**Push notifications on this device**" and allow notifications when the browser asks. If the browser has blocked them, allow them in its site settings first
+3. Under "**Send a push for**", choose what you are pushed for
+
+| Switch | Pushed when |
+|---|---|
+| A question is waiting | A session asks you a question |
+| A plan is waiting for approval | A session needs you to approve a plan |
+| A permission request is waiting | A session asks for a permission |
+| A turn has finished | A session finished its turn and waits for you |
+
+- The choices are saved on the server, so they apply to all your devices. Turning this device on or off affects this device only
+- Tapping a push opens that session in the Console
+- A session you are looking at in the Console on another device is not pushed. The Console reports what is on screen about every 20 seconds, and a report counts for 45 seconds
+- By default a push carries only the session name and what happened. A tenant administrator can allow the question's text too (see below)
+- "**Devices**" lists every device that receives push. **Remove** stops push to that device. Signing out of the Console also stops it on that browser
+- If a device says it was set up before the server's push key changed, turn it off and on again
+
+### Allow the question text (tenant administrators)
+
+The push services of Apple, Google and Mozilla relay every push, so the text of a question stays out of it by default.
+A tenant administrator can allow it under **Tenant settings → "Limits & idle" → "Push notifications"** by turning on "**Include the question text in push notifications**". The text is cut short, and the setting applies to every member of the tenant.
+
 ## Be told by voice
 
 With "**Session voice notifications**" on, a session you are not watching that returns a reply or a confirmation is announced briefly by voice, with its name.
@@ -91,6 +120,13 @@ How the red dot clears is in [Read a session's state](../sessions/status.md#the-
 - Check that "OS notification" is on for that row
 - A session shown in the pane you are working in gets no notification
 
+### Push notifications do not arrive
+
+- No "Push to this device" section: Web Push is off on this deployment. Ask the deployment administrator
+- On an iPhone, push works only when the Console is opened from the Home Screen icon, on iOS 16.4 or later
+- Check that "Push notifications on this device" is on, that the kind is on, and that the device is listed under "Devices"
+- A session shown on another device of yours is not pushed. Close it there or move it off the screen; the report expires 45 seconds after the last one. A push held back meanwhile is not sent later, so only the next notification reaches you
+
 ### Voice notifications stay silent
 
 - Check that "Session voice notifications" is on, and so is "Read aloud" on that row
@@ -101,4 +137,5 @@ How the red dot clears is in [Read a session's state](../sessions/status.md#the-
 - [Read a session's state](../sessions/status.md): row marks and the red dot
 - [Connect Discord and Slack](../integrations/chat-bridge.md)
 - [Use read-aloud](read-aloud.md)
+- [Use it on a phone](../start/phone.md)
 - [Change the display and your account](display.md)
