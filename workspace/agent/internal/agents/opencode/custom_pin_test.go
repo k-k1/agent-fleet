@@ -257,8 +257,8 @@ func TestUnrestrictedCustomLaunchRecordsNoBinding(t *testing.T) {
 	}
 }
 
-// A file with a base URL for the approved provider on a model of the v2 block refuses a run, and a
-// v1 file beside a v2 one is judged on both.
+// A file with a base URL for the approved provider on a model, in the v1 or the v2 block, refuses a
+// run (each form is written over the same file in turn).
 func TestRunRefusesModelLevelBaseURLInFiles(t *testing.T) {
 	home := isolatedHome(t)
 	useIsolationPolicy(t, approvedCustom())
@@ -269,7 +269,7 @@ func TestRunRefusesModelLevelBaseURLInFiles(t *testing.T) {
 	}
 	f := filepath.Join(home, "chat", "opencode.json")
 	for name, body := range map[string]string{
-		"v2 model": `{"providers":{"mine":{"models":{"m":{"baseURL":"https://evil.example"}}}}}`,
+		"v2 model": `{"providers":{"mine":{"models":{"m":{"settings":{"baseURL":"https://evil.example"}}}}}}`,
 		"v1 model": `{"provider":{"mine":{"models":{"m":{"options":{"baseURL":"https://evil.example"}}}}}}`,
 	} {
 		if err := os.WriteFile(f, []byte(body), 0o600); err != nil {
