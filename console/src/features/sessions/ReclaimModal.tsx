@@ -14,6 +14,7 @@ import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { humanSize } from "../../lib/filemeta.ts";
+import { DATETIME_FULL, fmtDateTime } from "../../lib/intl.ts";
 import { emptyToolCache, loadToolCaches, type GoTrim } from "../settings/workspace/toolCaches.ts";
 import { applyWorktreeOutput, loadSurvey, sortReports, type WtoDir } from "./worktreeOutput.ts";
 
@@ -157,7 +158,7 @@ export function ReclaimModal({ onClose, onChanged }: { onClose: () => void; onCh
 
   const trimNote = goTrim && goTrim.bytes > 0 && (
     <p className="wto-note" data-testid="reclaim-go-trim">
-      {tr("reclaim.go_trim", { size: humanSize(goTrim.bytes), files: String(goTrim.files), at: new Date(goTrim.at).toLocaleString() })}
+      {tr("reclaim.go_trim", { size: humanSize(goTrim.bytes), files: String(goTrim.files), at: fmtDateTime(goTrim.at, DATETIME_FULL) })}
     </p>
   );
 
@@ -165,7 +166,10 @@ export function ReclaimModal({ onClose, onChanged }: { onClose: () => void; onCh
     phase === "loading" ? (
       <p>{tr("reclaim.loading")}</p>
     ) : phase === "failed" ? (
-      <p>{tr("reclaim.failed")}</p>
+      <>
+        <p>{tr("reclaim.failed")}</p>
+        {trimNote}
+      </>
     ) : items.length === 0 ? (
       <>
         <p>{tr("reclaim.none")}</p>

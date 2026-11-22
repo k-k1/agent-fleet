@@ -10,6 +10,7 @@ interface Call {
 }
 let calls: Call[] = [];
 let toolCaches: unknown;
+let noWorktrees = false; // the survey finds nothing to list
 let extraDir = false; // a directory that appears after the list was drawn
 let cacheDelete: (name: string) => { status: number; body: unknown };
 
@@ -29,7 +30,7 @@ const fetchMock = vi.fn(async (url: string, opts?: RequestInit) => {
   let status = 200;
   let body: unknown = {};
   if (u.includes("api/cleanup/worktree-output") && method === "GET") {
-    body = { dormant_days: 7, worktrees: [wt("a", 2 * GiB), wt("b", GiB, "empty"), wt("c", GiB)], measured_at: "x" };
+    body = { dormant_days: 7, worktrees: noWorktrees ? [] : [wt("a", 2 * GiB), wt("b", GiB, "empty"), wt("c", GiB)], measured_at: "x" };
   } else if (u.includes("api/cleanup/worktree-output")) {
     const name = new URL(u, "http://x").searchParams.get("worktree")!;
     body = wt(name, name === "a" ? 2 * GiB : GiB);
@@ -73,6 +74,7 @@ beforeEach(async () => {
   setLocale("en");
   calls = [];
   extraDir = false;
+  noWorktrees = false;
   onClose.mockClear();
   onChanged.mockClear();
   store.__test.reset();
@@ -119,6 +121,7 @@ describe("ReclaimModal", () => {
     act(() => root.unmount());
     host.remove();
     document.body.innerHTML = "";
+    noWorktrees = true;
     toolCaches = { caches: [], go_trim: { at: "2026-11-23T01:02:03Z", bytes: 6 * GiB, files: 1234 } };
     host = document.createElement("div");
     document.body.appendChild(host);
@@ -134,6 +137,8 @@ describe("ReclaimModal", () => {
     const note = document.body.querySelector("[data-testid=reclaim-go-trim]");
     expect(note?.textContent).toContain("6.0 GB");
     expect(note?.textContent).toContain("1234 files");
+    expect(note?.textContent).toContain("2026"); // formatted through the Console's date settings
+    expect(document.body.textContent).toContain("Nothing regenerable can be removed");
   });
 
   it("goes through the existing worktree and tool-cache calls on confirm, and spends the walk", async () => {
