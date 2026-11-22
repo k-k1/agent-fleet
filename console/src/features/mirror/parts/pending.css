@@ -188,7 +188,7 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   padding: 2px 5px;
   color: var(--muted);
 }
-.mirror-stop-more.hot {
+.mirror-stop-more.mirror-stop-hot {
   color: var(--err);
   border-color: color-mix(in srgb, var(--err) 55%, transparent);
   background: color-mix(in srgb, var(--err) 10%, transparent);

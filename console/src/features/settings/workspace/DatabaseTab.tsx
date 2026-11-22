@@ -240,13 +240,13 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
               <div className="db-engine-url">
                 <span className="db-url-toggle">
                   <button
-                    className={"db-url-mode" + (urlMode === "socket" ? " is-active" : "")}
+                    className={"db-url-mode" + (urlMode === "socket" ? " db-url-mode-active" : "")}
                     onClick={() => setUrlMode("socket")}
                   >
                     {tr("env.db_url_socket")}
                   </button>
                   <button
-                    className={"db-url-mode" + (urlMode === "tcp" ? " is-active" : "")}
+                    className={"db-url-mode" + (urlMode === "tcp" ? " db-url-mode-active" : "")}
                     onClick={() => setUrlMode("tcp")}
                   >
                     {tr("env.db_url_tcp")}

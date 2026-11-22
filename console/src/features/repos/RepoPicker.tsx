@@ -224,7 +224,7 @@ export function RepoPicker({ onChange }: RepoPickerProps) {
                         <li key={r.full_name}>
                           <button
                             type="button"
-                            className={"branch-item" + (active ? " current" : "")}
+                            className={"branch-item" + (active ? " branch-item-current" : "")}
                             onClick={() => pickRepo(r.full_name)}
                             title={r.full_name}
                           >

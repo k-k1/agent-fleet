@@ -16,8 +16,8 @@
 }
 /* A pause stops future fires: the dimming covers the schedule and its history, not the sessions
    under it, which are running or waiting regardless. */
-.sched-row.paused > .sched-main,
-.sched-row.paused > .sched-runs {
+.sched-row.sched-paused > .sched-main,
+.sched-row.sched-paused > .sched-runs {
   opacity: 0.62;
 }
 

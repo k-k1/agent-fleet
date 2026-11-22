@@ -147,7 +147,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
         "proj-node" +
         (open ? "" : " collapsed") +
         (r.worktree ? " wt" : " base") +
-        (n.spine ? " lineage" : "")
+        (n.spine ? " proj-lineage" : "")
       }
       // The spine reads this; a node without a family leaves the default accent alone.
       style={n.spine ? ({ "--proj-lineage": n.spine } as CSSProperties) : undefined}

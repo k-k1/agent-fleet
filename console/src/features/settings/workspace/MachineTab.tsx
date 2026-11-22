@@ -190,7 +190,7 @@ function UsageSection({ memMax, vcpu, own, boostable }: { memMax: number; vcpu: 
   const memPct = memCeil && last.memUsed != null ? (last.memUsed / memCeil) * 100 : null;
   const diskPct = last.diskTotal && last.diskUsed != null ? (last.diskUsed / last.diskTotal) * 100 : null;
   const lvl = (pct: number | null, warn: number, crit: number) =>
-    pct == null ? "" : pct >= crit ? " is-crit" : pct >= warn ? " is-warn" : "";
+    pct == null ? "" : pct >= crit ? " mu-crit" : pct >= warn ? " mu-warn" : "";
 
   return (
     <section className="ds-group">

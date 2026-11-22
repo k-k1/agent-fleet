@@ -54,7 +54,7 @@ export function StopControl({
         <button
           type="button"
           ref={moreRef}
-          className={"ghost mirror-stop-more" + (hot ? " hot" : "")}
+          className={"ghost mirror-stop-more" + (hot ? " mirror-stop-hot" : "")}
           title={tr("mirror.stop_more")}
           aria-label={tr("mirror.stop_more")}
           aria-haspopup="menu"

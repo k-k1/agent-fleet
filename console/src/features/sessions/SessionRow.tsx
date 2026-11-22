@@ -288,7 +288,7 @@ function SessionMoveLine({ s, running, readOnly }: { s: Session; running: boolea
   const text = tr(moved ? "srow.moved_to" : "srow.moving_to", { target: label });
   const act = moved ? () => openSessionByName(target) : running && !readOnly ? () => openMove(s) : null;
   return (
-    <div className={"sess-move-line" + (moved ? " moved" : " pending")}>
+    <div className={"sess-move-line" + (moved ? " moved" : " sess-move-pending")}>
       <Icon name={moved ? "arrow-right" : "warning"} />
       {act ? (
         <button type="button" className="sess-move-link" title={tr(moved ? "srow.moved_to_hint" : "srow.moving_to_hint")} onClick={act}>

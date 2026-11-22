@@ -199,13 +199,13 @@
   margin-left: 1px;
   padding-left: 4px;
 }
-.cgraph-ref.ref-head.current {
+.cgraph-ref.ref-head.cgraph-ref-current {
   background: var(--accent);
   border-color: transparent;
   color: var(--on-accent);
   font-weight: 600;
 }
-.cgraph-ref.ref-head.current .cgraph-ref-sync {
+.cgraph-ref.ref-head.cgraph-ref-current .cgraph-ref-sync {
   border-left-color: color-mix(in srgb, var(--on-accent) 40%, transparent);
 }
 /* Tag chips ride the theme's warn hue. The old literal #d6a13a was a dark-theme amber
@@ -591,7 +591,7 @@
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 45%, transparent);
 }
-.svnlog-tag.current {
+.svnlog-tag.svnlog-tag-current {
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 45%, transparent);
 }

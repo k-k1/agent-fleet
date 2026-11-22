@@ -51,7 +51,7 @@ export function RepoJobRow({ job }: { job: RepoJob }) {
   };
 
   return (
-    <li className={"repo-job" + (running ? " running" : " settled")}>
+    <li className={"repo-job" + (running ? " repo-job-running" : " settled")}>
       <div className="repo-job-head">
         {running ? (
           <Icon name="loading" spin />

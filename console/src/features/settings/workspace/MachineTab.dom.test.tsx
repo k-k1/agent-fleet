@@ -283,7 +283,7 @@ describe("MachineView", () => {
     expect(text).toContain("ホームディスク");
     expect(text).not.toContain("ディスク全体");
     const bar = [...host!.querySelectorAll(".mu-chart")].find((el) => el.querySelector(".mu-bar"))!;
-    expect(bar.className).toContain("is-crit");
+    expect(bar.className).toContain("mu-crit");
   });
 
   it("breaks down what Agent Fleet stores and opens the cleanup in place of Settings", async () => {

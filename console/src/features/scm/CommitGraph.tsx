@@ -184,7 +184,7 @@ function RefBadge({ chip, current }: { chip: RefChip; current?: string }) {
           ? tr("scm.ref_synced", { name: chip.name, remotes: chip.remotes.map((r) => `${r}/${chip.name}`).join(", ") })
           : tr("scm.ref_local", { name: chip.name });
   return (
-    <span className={"cgraph-ref ref-" + chip.type + (isCurrent ? " current" : "")} title={title}>
+    <span className={"cgraph-ref ref-" + chip.type + (isCurrent ? " cgraph-ref-current" : "")} title={title}>
       <Icon name={icon} className="cgraph-ref-ic" />
       <span className="cgraph-ref-name">{chip.name}</span>
       {chip.remotes.length > 0 && (

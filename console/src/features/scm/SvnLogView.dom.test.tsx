@@ -82,7 +82,7 @@ describe("SvnLogView", () => {
     expect(api.mock.calls[0][0]).toBe("api/repos/docs/svn-log?limit=50");
     expect(rows().map((r) => r.querySelector(".svnlog-rev")?.textContent)).toEqual(["r12", "r10", "r9"]);
     expect(rows()[0].querySelector(".svnlog-tag.newer")).not.toBeNull();
-    expect(rows()[1].querySelector(".svnlog-tag.current")).not.toBeNull();
+    expect(rows()[1].querySelector(".svnlog-tag.svnlog-tag-current")).not.toBeNull();
     expect(rows()[2].querySelector(".svnlog-tag")).toBeNull();
     expect(host!.querySelector(".svnlog-more")).toBeNull();
 

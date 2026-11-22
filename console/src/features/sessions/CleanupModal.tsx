@@ -542,7 +542,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
           <button
             role="tab"
             aria-selected={tab === "candidates"}
-            className={"clean-tab" + (tab === "candidates" ? " is-active" : "")}
+            className={"clean-tab" + (tab === "candidates" ? " clean-tab-active" : "")}
             onClick={() => setTab("candidates")}
           >
             {tr("clean.tab_candidates")}
@@ -550,7 +550,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
           <button
             role="tab"
             aria-selected={tab === "archives"}
-            className={"clean-tab" + (tab === "archives" ? " is-active" : "")}
+            className={"clean-tab" + (tab === "archives" ? " clean-tab-active" : "")}
             onClick={() => setTab("archives")}
           >
             {tr("clean.tab_archives")}

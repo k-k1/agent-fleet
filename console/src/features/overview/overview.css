@@ -106,7 +106,7 @@
   color: var(--fg);
 }
 .ovw-card:hover,
-.ovw-card.hover {
+.ovw-card.ovw-card-hover {
   border-color: var(--accent);
 }
 .ovw-card:focus-visible {
@@ -136,7 +136,7 @@
   text-decoration: line-through;
 }
 /* Spawn lineage (ADR 0073): the family's colour as a left spine, as on the rail row. */
-.ovw-card.lineage {
+.ovw-card.ovw-card-lineage {
   border-left: 3px solid var(--sess-lineage);
 }
 .ovw-head {
@@ -166,7 +166,7 @@
 }
 .ovw-card:hover .ovw-menu-btn,
 .ovw-card:focus-within .ovw-menu-btn,
-.ovw-card.hover .ovw-menu-btn {
+.ovw-card.ovw-card-hover .ovw-menu-btn {
   opacity: 1;
   pointer-events: auto;
 }

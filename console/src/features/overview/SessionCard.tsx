@@ -133,10 +133,10 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         "ovw-card " +
         st.cls +
         (open ? " open" : "") +
-        (hl ? " hover" : "") +
+        (hl ? " ovw-card-hover" : "") +
         (s.alive ? "" : " stopped") +
         (inert ? " dead" : "") +
-        (lineage ? " lineage" : "")
+        (lineage ? " ovw-card-lineage" : "")
       }
       style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
       role="button"
