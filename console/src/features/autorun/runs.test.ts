@@ -179,3 +179,13 @@ describe("a run's category", () => {
     expect(cat([sess("r", { origin: "queue" })])).toBe("");
   });
 });
+
+describe("buildRuns tie-break", () => {
+  const a = sess("run-a", { origin: "queue", createdAt: "2026-11-22T18:39:31+09:00", alive: false });
+  const b = sess("run-b", { origin: "queue", createdAt: "2026-11-22T18:39:31+09:00", alive: false });
+  it("orders roots sharing a createdAt the same way for either input order", () => {
+    const one = buildRuns([a, b], new Map()).map((r) => r.root.name);
+    const two = buildRuns([b, a], new Map()).map((r) => r.root.name);
+    expect(one).toEqual(two);
+  });
+});

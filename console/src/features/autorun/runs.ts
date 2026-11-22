@@ -77,7 +77,10 @@ export function itemLabel(key: string): string {
 // watching) is not what the run is about.
 const startedLink = (links: SessionWorkLink[] | undefined): SessionWorkLink | null => links?.find((l) => l.role === "started") ?? null;
 
-const byCreated = (a: Session, b: Session) => (a.createdAt || "").localeCompare(b.createdAt || "");
+// createdAt has one-second precision and the queue starts runs in the same tick, so name
+// breaks ties; without it equal keys keep the server's arbitrary order and rows swap on refresh.
+const byCreated = (a: Session, b: Session) =>
+  (a.createdAt || "").localeCompare(b.createdAt || "") || a.name.localeCompare(b.name);
 const ms = (iso: string | undefined): number => (iso ? Date.parse(iso) : NaN);
 const OPEN = new Set(["claimed", "sending", "open"]);
 /** A session waiting for the member: its live state, or the question it was stopped on. */
