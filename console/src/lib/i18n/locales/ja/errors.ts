@@ -502,6 +502,7 @@ export const errors = {
   "err.memo_ref_duplicate": "この項目は、この自動実行のカテゴリにすでに入っています。",
   "err.memo_after_invalid": "前提のメモを指定できません。同じ自動実行のカテゴリにあり、このメモより前にあるメモだけを前提にできます。",
   "err.memo_start_after_invalid": "この開始日時は使えません。60 日先までの日時を指定してください。",
+  "err.memo_recipe_invalid": "このメモのエージェント・モデル・effort・ルートは使えません。値と、メモが自動実行カテゴリにあることを確かめてください。",
   "err.session_retired": "このセッションは自動実行によって停止されています。先にセッションを開始してから、もう一度送ってください。",
   // ADR 0138 M2 P8: the credential policy's refusals on the Model access pages.
   "err.invalid_route_policy": "制限に Control Plane が受け付けない値があります。",

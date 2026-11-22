@@ -506,6 +506,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memo_ref_duplicate": "This item is already in this auto-run category.",
   "err.memo_after_invalid": "These prerequisites cannot be used. A prerequisite must be a note of the same auto-run category that comes before this one.",
   "err.memo_start_after_invalid": "This start time cannot be used. Give a date and time no more than 60 days ahead.",
+  "err.memo_recipe_invalid": "This agent, model, effort or route cannot be used for a memo. Check the value, and that the memo is in an auto-run category.",
   "err.session_retired": "Auto-run stopped this session. Start the session first, then send again.",
   // ADR 0138 M2 P8: the credential policy's refusals on the Model access pages.
   "err.invalid_route_policy": "The restriction has a value the Control Plane does not accept.",

@@ -206,7 +206,7 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext, accept bool, via memoV
 	}
 	if prev.State == store.MemoStatePending {
 		switch {
-		case memoAcceptedBySetting(next, via, accept):
+		case memoAcceptedBySetting(next, via, accept) && prev.Recipe == next.Recipe:
 			// The switch already accepts that such a session could have added this text as a
 			// new message, so a change of it keeps the state and records the release again.
 			next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = memoContentHash(next), memoNow(), store.MemoReleasedBySetting
@@ -1048,4 +1048,23 @@ func memoRecipeCheck(r memorecipe.Recipe, queueKind string) *apiError {
 		}
 	}
 	return nil
+}
+
+// memoRecipeEffectiveProblem says why a message that carries a recipe cannot run with it under the
+// category's settings now, "" when it can or when it carries none. Held with this reason, it waits
+// for a person instead of being claimed again and again.
+func memoRecipeEffectiveProblem(q store.MemoQueue, m store.Memo) string {
+	if m.Recipe == "" {
+		return ""
+	}
+	e := memorecipe.Effective(q, m)
+	if err := agentkinds.CheckCreateKind(e.AgentKind); err != nil {
+		return "recipe_invalid"
+	}
+	if e.Route != "" {
+		if _, err := agentroutes.CheckCreateRoute(e.AgentKind, &agentroutes.Selection{Route: e.Route}); err != nil {
+			return "recipe_invalid"
+		}
+	}
+	return ""
 }

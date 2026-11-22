@@ -246,7 +246,7 @@ func (r *memoQueueRunner) reserveTidy(tx store.MemoTxOps, cur store.MemoQueue, c
 			break
 		}
 		bytesUsed += size
-		it := memoTidyItemOf(cur, m)
+		it := memoTidyItemOf(m)
 		g, ok := groups[it.Group]
 		if !ok {
 			g = len(groups)

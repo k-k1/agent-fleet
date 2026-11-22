@@ -398,14 +398,29 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 			}
 			continue
 		}
+		// A recipe the run could not be created with (a route another agent does not take, after
+		// a move or a change of the category's agent) sends the message back to a person.
+		if why := memoRecipeEffectiveProblem(q, m); why != "" {
+			m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStateHeld, "", "", ""
+			raw, _ := json.Marshal(memoafter.HeldReason{Reason: why, At: now})
+			m.HeldReason = string(raw)
+			if err := tx.WriteMemo(m); err != nil {
+				return none, nil, err
+			}
+			continue
+		}
+		// A message with another recipe is skipped before anything else is asked of it: it waits for
+		// its own run and must not stop this one.
+		rc := memorecipe.Effective(q, m)
+		if len(batch) > 0 && rc != batchRecipe {
+			continue
+		}
 		if why := memoDeliveryItemProblem(m); why != "" {
 			return none, &apiError{http.StatusConflict, errCodeMemoQueueItemInvalid,
 				fmt.Sprintf("message %s cannot be sent to a session: %s", m.ID, why)}, nil
 		}
-		if rc := memorecipe.Effective(q, m); len(batch) == 0 {
+		if len(batch) == 0 {
 			batchRecipe = rc
-		} else if rc != batchRecipe {
-			continue
 		}
 		batch = append(batch, m)
 	}
@@ -1820,7 +1835,9 @@ func (r *memoQueueRunner) closeOpen(ctx context.Context, d store.MemoDelivery, o
 
 // memoSendPlan is what a claimed delivery sends: the queue, its category and the messages.
 type memoSendPlan struct {
-	q        store.MemoQueue
+	q store.MemoQueue
+	// base is the category's own settings, q with the batch's recipe laid over them.
+	base     store.MemoQueue
 	c        store.MemoCategory
 	messages []store.Memo
 }
@@ -1845,6 +1862,14 @@ func (r *memoQueueRunner) send(ctx context.Context, d store.MemoDelivery) {
 	if len(plan.messages) == 0 {
 		notSent("no message is claimed by it")
 		return
+	}
+	// The batch was formed under the settings of that moment: if the category's defaults changed
+	// since, the messages may no longer share a recipe, and none is sent until they are grouped again.
+	for _, m := range plan.messages[1:] {
+		if memorecipe.Effective(plan.base, m) != memorecipe.Effective(plan.base, plan.messages[0]) {
+			notSent("the batch no longer shares one recipe")
+			return
+		}
 	}
 	kind := scheduleInjectKind(plan.q.AgentKind)
 	if err := agentkinds.CheckCreateKind(kind); err != nil {
@@ -2050,7 +2075,7 @@ func (r *memoQueueRunner) plan(ctx context.Context, d store.MemoDelivery) (memoS
 		if err != nil || !ok {
 			return err
 		}
-		p.q, p.c = q, c
+		p.q, p.base, p.c = q, q, c
 		rows, err := tx.ListMemosIn(c.Repo, c.Name)
 		if err != nil {
 			return err

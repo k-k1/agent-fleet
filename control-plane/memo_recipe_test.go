@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -322,5 +323,189 @@ func TestMemoRecipeContinuationInherits(t *testing.T) {
 		if r := memorecipe.Of(own); own.State != store.MemoStatePending || r.Effort != "low" || r.Model != "" {
 			t.Fatalf("own recipe: %+v", own)
 		}
+	})
+}
+
+// With the queue's accept-from-own-sessions switch on, a session's change of a released message's
+// recipe still sends it back to held: the switch accepted the message that was released, not the
+// settings a later edit chose. A change of the text alone keeps the switch's release.
+func TestMemoRecipeEditUnderTheSwitchGoesBackToHeld(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("app", "impl", map[string]any{"acceptOwnSessions": true})
+		body := textMemo("app", "impl", "from a session")
+		body["producer"], body["producerOrigin"] = "run-1", "user"
+		rec := e.memoTokenDo("a", "POST", "/internal/memos", body)
+		m := decode[memoDTO](t, rec)
+		if rec.Code != http.StatusCreated || m.State != store.MemoStatePending {
+			t.Fatalf("create: %d %+v", rec.Code, m)
+		}
+		rec = e.memoTokenDo("a", "PATCH", "/internal/memos/"+m.ID, map[string]any{"body": "reworded"})
+		if got := decode[memoDTO](t, rec); got.State != store.MemoStatePending {
+			t.Fatalf("a text edit lost the switch's release: %+v", got)
+		}
+		rec = e.memoTokenDo("a", "PATCH", "/internal/memos/"+m.ID, map[string]any{"effort": "max"})
+		if got := decode[memoDTO](t, rec); rec.Code != http.StatusOK || got.State != store.MemoStateHeld || got.Effort != "max" {
+			t.Fatalf("a recipe change kept the release: %d %+v", rec.Code, got)
+		}
+		e.assertPendingReleaseMatches()
+	})
+}
+
+// A held message with a recipe is released with its current hash (a stale card is refused), and a
+// claim that is returned, or a delivery that is not sent, puts it back pending under the CHECK.
+func TestMemoRecipeReleaseAndReturn(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"maxActive": 2})
+		body := textMemo("app", "impl", "held one")
+		body["producer"], body["producerOrigin"] = "run-1", "queue"
+		body["effort"], body["route"] = "low", "anthropic-subscription"
+		rec := e.memoTokenDo("a", "POST", "/internal/memos", body)
+		m := decode[memoDTO](t, rec)
+		if rec.Code != http.StatusCreated || m.State != store.MemoStateHeld {
+			t.Fatalf("create: %d %+v", rec.Code, m)
+		}
+		stale := m.ContentHash
+		if rec := e.do("a", "PATCH", "/api/memos/"+m.ID, map[string]any{"effort": "high"}); rec.Code != http.StatusOK {
+			t.Fatalf("patch: %d %s", rec.Code, rec.Body.String())
+		}
+		release := func(hash string) int {
+			return e.do("a", "POST", "/api/memos/release", map[string]any{"items": []map[string]any{{"id": m.ID, "contentHash": hash}}}).Code
+		}
+		if code := release(stale); code == http.StatusOK && e.memoRow(m.ID).State == store.MemoStatePending {
+			t.Fatal("a stale card released the message")
+		}
+		cur := e.listed(m.ID)
+		if code := release(cur.ContentHash); code != http.StatusOK || e.memoRow(m.ID).State != store.MemoStatePending {
+			t.Fatalf("release: %d %+v", code, e.memoRow(m.ID))
+		}
+		agent := e.useQueueAgent("")
+		d := e.fired(q)
+		if !sameIDs(d.MessageIDs, m.ID) {
+			t.Fatalf("batch %v", d.MessageIDs)
+		}
+		// The queue is renamed while the delivery is claimed: the returned row is pending again and
+		// still equal to its release.
+		if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error { return tx.ReturnDeliveryMessages(d.ID) }); err != nil {
+			t.Fatalf("return: %v", err)
+		}
+		if row := e.memoRow(m.ID); row.State != store.MemoStatePending || row.ReleaseHash != memoContentHash(row) {
+			t.Fatalf("returned row %+v", row)
+		}
+		e.assertPendingReleaseMatches()
+		// A message with a route is sent with it.
+		d2 := e.fired(q)
+		e.tick(e.runner(), time.Now())
+		sent := false
+		for _, c := range agent.creates {
+			if qd, _ := c["queue_delivery"].(map[string]any); qd["id"] == d2.ID {
+				r, _ := c["route"].(map[string]any)
+				sent = r["route"] == "anthropic-subscription" && c["effort"] == "high"
+			}
+		}
+		if !sent {
+			t.Fatalf("the create did not carry the route: %v", agent.creates)
+		}
+	})
+}
+
+// A change of the category's defaults between the claim and the send, which would split a batch
+// that shared a recipe, sends nothing: the messages go back and are grouped again.
+func TestMemoRecipeBatchSplitByASettingsChangeIsNotSent(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"batch": 5, "effort": "high"})
+		a := e.pending("app", "impl", "a")
+		time.Sleep(1100 * time.Millisecond)
+		b := decode[memoDTO](t, e.recipeMemo("app", "impl", "b", map[string]any{"effort": "high"}))
+		agent := e.useQueueAgent("")
+		d := e.fired(q)
+		if !sameIDs(d.MessageIDs, a.ID, b.ID) {
+			t.Fatalf("batch %v", d.MessageIDs)
+		}
+		e.queueWith("app", "impl", map[string]any{"batch": 5, "effort": "low"})
+		e.tick(e.runner(), time.Now())
+		if agent.createCount() != 0 {
+			t.Fatalf("a split batch was sent: %v", agent.creates)
+		}
+		for _, id := range []string{a.ID, b.ID} {
+			if row := e.memoRow(id); row.State != store.MemoStatePending || row.DeliveryID != "" {
+				t.Fatalf("%s not returned: %+v", id, row)
+			}
+		}
+	})
+}
+
+// A message another recipe's problem cannot stop this run: the oversized message with a different
+// recipe is skipped before its text is checked.
+func TestMemoRecipeOtherRecipeIsSkippedBeforeItsTextIsChecked(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"batch": 5, "maxActive": 3})
+		a := e.pending("app", "impl", "a")
+		time.Sleep(1100 * time.Millisecond)
+		b := decode[memoDTO](t, e.recipeMemo("app", "impl", "b", map[string]any{"effort": "low"}))
+		big := strings.Repeat("x", memoDeliveryItemBodyMax+1)
+		row := e.memoRow(b.ID)
+		row.Body = big
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET body=?, release_body=?, release_hash=? WHERE id=?`, big, big, memoContentHash(row), b.ID); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(1100 * time.Millisecond)
+		c := e.pending("app", "impl", "c")
+		d := e.fired(q)
+		if !sameIDs(d.MessageIDs, a.ID, c.ID) {
+			t.Fatalf("batch %v", d.MessageIDs)
+		}
+	})
+}
+
+// A recipe the run could not be created with (a route another agent does not take) holds the
+// message for a person, with a reason, instead of being claimed again and again.
+func TestMemoRecipeInvalidAtTheClaimHoldsTheMessage(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{})
+		m := decode[memoDTO](t, e.recipeMemo("app", "impl", "m", map[string]any{"route": "anthropic-subscription"}))
+		e.queueWith("app", "impl", map[string]any{"agentKind": "codex"})
+		if rec := e.fire(q); rec.Code != http.StatusConflict {
+			t.Fatalf("fire: %d %s", rec.Code, rec.Body.String())
+		}
+		row := e.memoRow(m.ID)
+		if row.State != store.MemoStateHeld || !strings.Contains(row.HeldReason, "recipe_invalid") {
+			t.Fatalf("row %+v", row)
+		}
+	})
+}
+
+// A move out of every queue by a tidy run drops the recipe, and the undo puts it back. Messages
+// that ask for different recipes are never merged, even when they would run the same.
+func TestMemoRecipeTidyMoveOutAndExplicitMerge(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.category("r", "q")
+		plain := e.category("r", "plain")
+		e.tidyQueue(q)
+		mk := func(body, effort string) store.Memo {
+			m := store.Memo{ID: store.NewID(), MembershipID: e.members["a"], Repo: "r", Category: "q", Kind: "text", Body: body,
+				CreatedAt: store.NowTS(), State: store.MemoStatePending, Provenance: "member", Recipe: memorecipe.Recipe{Effort: effort}.Encode()}
+			m.ReleaseHash, m.ReleasedAt = memoContentHash(m), store.NowTS()
+			if err := e.st.CreateMemo(context.Background(), m); err != nil {
+				t.Fatal(err)
+			}
+			return e.memoRow(m.ID)
+		}
+		a, b := mk("one", "high"), mk("two", "")
+		out, err := memoTidyApply(context.Background(), e.st, memoTidyApplyIn{MembershipID: e.members["a"], QueueID: q, Trigger: store.TidyTriggerManual,
+			Input: tidyItems(a, b), Ops: []memotidy.Op{merge("both", a.ID, b.ID)}})
+		if err != nil || out.Run.State != store.TidyRunDropped {
+			t.Fatalf("an explicit and an omitted recipe merged: %v %+v", err, out.Run)
+		}
+		out = e.tidyApply(q, store.TidyTriggerManual, []store.Memo{a}, []string{plain}, move(a.ID, plain))
+		if got := e.memoRow(a.ID); got.Recipe != "" || got.State != "" {
+			t.Fatalf("moved out: %+v", got)
+		}
+		if rec := e.undo(out.Run.ID); rec.Code != http.StatusOK {
+			t.Fatalf("undo: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := e.memoRow(a.ID); got.Recipe != a.Recipe || got.Category != "q" {
+			t.Fatalf("undone: %+v", got)
+		}
+		e.assertPendingReleaseMatches()
 	})
 }

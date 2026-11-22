@@ -347,7 +347,7 @@ func TestMemoTidyNoMergeAcrossGroups(t *testing.T) {
 	for i := range rows {
 		for j := i + 1; j < len(rows); j++ {
 			pairs++
-			r := memotidy.Validate(memotidy.Request{Self: "self", Items: []memotidy.Item{memoTidyItemOf(store.MemoQueue{}, rows[i]), memoTidyItemOf(store.MemoQueue{}, rows[j])},
+			r := memotidy.Validate(memotidy.Request{Self: "self", Items: []memotidy.Item{memoTidyItemOf(rows[i]), memoTidyItemOf(rows[j])},
 				Ops: []memotidy.Op{merge("x", rows[i].ID, rows[j].ID)}})
 			same := groupOf(rows[i]) == groupOf(rows[j])
 			if same && r != nil || !same && (r == nil || r.Code != memotidy.CodeMixedGroup) {
