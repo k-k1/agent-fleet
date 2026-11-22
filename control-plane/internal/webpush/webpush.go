@@ -24,10 +24,12 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -224,6 +226,26 @@ func NewSender(keys *Keys, subject string) *Sender {
 	}}
 }
 
+// classify names a transport failure without any text from the error.
+func classify(err error) string {
+	var dns *net.DNSError
+	var ne net.Error
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	case errors.As(err, &dns):
+		return "dns"
+	case errors.As(err, &ne) && ne.Timeout():
+		return "timeout"
+	case errors.Is(err, syscall.ECONNREFUSED), errors.Is(err, syscall.ECONNRESET):
+		return "connection"
+	}
+	if strings.Contains(err.Error(), "Location") {
+		return "bad redirect"
+	}
+	return "transport error"
+}
+
 // Options of one message. TTL is how long the service may hold it for an offline device.
 type Options struct {
 	TTL     time.Duration
@@ -263,13 +285,10 @@ func (s *Sender) Send(ctx context.Context, sub Subscription, payload []byte, o O
 	}
 	resp, err := s.HTTP.Do(req)
 	if err != nil {
-		// *url.Error prints the whole request URL, and the endpoint is a bearer URL for the
-		// member's browser; keep only the cause.
-		var ue *url.Error
-		if errors.As(err, &ue) {
-			err = ue.Err
-		}
-		return fmt.Errorf("webpush: request failed: %w", err)
+		// Neither *url.Error nor net/http's inner errors can be printed: both may carry the
+		// endpoint or a redirect's Location, and the endpoint is a bearer URL for the member's
+		// browser. Only a class leaves this function.
+		return errors.New("webpush: request failed: " + classify(err))
 	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))

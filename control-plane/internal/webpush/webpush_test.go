@@ -260,7 +260,7 @@ func TestSendErrorHasNoURL(t *testing.T) {
 	s.HTTP = &http.Client{Transport: failingTransport{}}
 	sub, _, _ := newSub(t, "https://fcm.googleapis.com/fcm/send/SECRET-TOKEN?q=1")
 	err := s.Send(context.Background(), sub, []byte("x"), Options{})
-	if err == nil || strings.Contains(err.Error(), "SECRET-TOKEN") || !strings.Contains(err.Error(), "connection reset") {
+	if err == nil || strings.Contains(err.Error(), "SECRET-TOKEN") || !strings.Contains(err.Error(), "request failed") {
 		t.Fatalf("err = %v", err)
 	}
 }

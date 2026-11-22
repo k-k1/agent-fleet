@@ -86,6 +86,9 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 	if err := st.TouchPushSubscription(ctx, a, ep, "2026-01-02T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
+	if rows, _ = st.ListPushSubscriptions(ctx, b); rows[0].LastOKAt != "" {
+		t.Fatalf("a stale touch reached the new owner's row: %+v", rows)
+	}
 	if err := st.TouchPushSubscription(ctx, b, ep, "2026-01-01T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +104,13 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 1 {
 		t.Fatalf("a stale delete removed the new owner's row: %+v", rows)
 	}
+	if err := st.ReleasePushEndpoint(ctx, ep); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 0 {
+		t.Fatalf("release left %+v", rows)
+	}
+	_ = st.UpsertPushSubscription(ctx, sub)
 	if err := st.DeletePushSubscriptionByEndpoint(ctx, b, ep); err != nil {
 		t.Fatal(err)
 	}

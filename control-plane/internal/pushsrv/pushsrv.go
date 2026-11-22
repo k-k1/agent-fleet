@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strings"
 	"sync"
@@ -41,6 +42,8 @@ const (
 	pushSendTimeout = 20 * time.Second
 	// pushMaxInFlight caps concurrent sends CP-wide, and pushMaxPerMember the devices one member
 	// may register, so a burst of notifications cannot fan out without bound.
+	// pushSlotWait is how long a send waits for a slot; a message queued longer is stale for a phone.
+	pushSlotWait     = 30 * time.Second
 	pushMaxInFlight  = 32
 	pushMaxPerMember = 20
 	// A question that waits an hour is stale for a phone; the service drops it after that.
@@ -53,17 +56,18 @@ type Service struct {
 	pubKey string
 	// check vets an endpoint against the allowed push services; a field so tests can point the
 	// service at a local TLS server.
-	check   func(string) error
-	timeout time.Duration
-	slots   chan struct{}
+	check    func(string) error
+	timeout  time.Duration
+	slotWait time.Duration
+	slots    chan struct{}
 }
 
 // validSubject accepts mailto:<addr with @> or an https URL with a host: services that check the
 // contact reject anything else, and only at the first push.
 func validSubject(s string) bool {
 	if rest, ok := strings.CutPrefix(s, "mailto:"); ok {
-		user, host, found := strings.Cut(rest, "@")
-		return found && user != "" && host != ""
+		a, err := mail.ParseAddress(rest)
+		return err == nil && a.Address == rest
 	}
 	u, err := url.Parse(s)
 	return err == nil && u.Scheme == "https" && u.Hostname() != ""
@@ -94,7 +98,7 @@ func New(st *store.SQL) *Service {
 		}
 	}
 	p := &Service{store: st, sender: webpush.NewSender(keys, subject), pubKey: keys.PublicKey(),
-		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slots: make(chan struct{}, pushMaxInFlight)}
+		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, slots: make(chan struct{}, pushMaxInFlight)}
 	st.SetNotificationHook(p.onNotification)
 	log.Printf("web push enabled")
 	return p
@@ -117,16 +121,16 @@ func (p *Service) onNotification(n store.Notification) {
 		return
 	}
 	go func() {
-		// Each device gets its own deadline in deliver; this one only bounds the list read and
-		// the wait for a free slot.
-		ctx, cancel := context.WithTimeout(context.Background(), 2*p.timeout)
-		defer cancel()
-		p.deliver(ctx, n)
+		p.deliver(context.Background(), n)
 	}()
 }
 
+// deliver has three separate budgets so that none eats another's: the list read, the wait for a
+// free slot (slotWait), and each send once it holds a slot (timeout, started after the wait).
 func (p *Service) deliver(ctx context.Context, n store.Notification) {
-	subs, err := p.store.ListPushSubscriptions(ctx, n.MembershipID)
+	lctx, lcancel := context.WithTimeout(ctx, p.timeout)
+	subs, err := p.store.ListPushSubscriptions(lctx, n.MembershipID)
+	lcancel()
 	if err != nil || len(subs) == 0 {
 		if err != nil {
 			log.Printf("web push: list subscriptions: %v", err)
@@ -146,10 +150,13 @@ func (p *Service) deliver(ctx context.Context, n store.Notification) {
 		wg.Add(1)
 		go func(s store.PushSubscription) {
 			defer wg.Done()
+			wait := time.NewTimer(p.slotWait)
 			select {
 			case p.slots <- struct{}{}:
+				wait.Stop()
 				defer func() { <-p.slots }()
-			case <-ctx.Done():
+			case <-wait.C:
+				log.Printf("web push: no free send slot for %s within %s; dropped", s.ID, p.slotWait)
 				return
 			}
 			sctx, cancel := context.WithTimeout(ctx, p.timeout)
@@ -285,6 +292,10 @@ func (p *Service) Subscribe(w http.ResponseWriter, r *http.Request, membershipID
 			held = held || s.Endpoint == in.Endpoint
 		}
 		if !held {
+			// The browser still presents a subscription of its own, so it has left its previous
+			// member: stop delivering that member's notifications to it even though this member
+			// has no room (otherwise a switch at the cap would keep the old association).
+			_ = p.store.ReleasePushEndpoint(r.Context(), in.Endpoint)
 			writeErr(w, http.StatusConflict, "too_many_devices", "too many registered devices; remove one first")
 			return
 		}

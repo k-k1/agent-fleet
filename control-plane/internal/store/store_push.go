@@ -30,6 +30,8 @@ type PushSubscriptionStore interface {
 	// scoped to the membership the send was made for: a row that moved to another member while
 	// the send was in flight is not that subscription any more and must survive a stale result.
 	DeletePushSubscriptionByEndpoint(ctx context.Context, membershipID, endpoint string) error
+	// ReleasePushEndpoint drops the row for endpoint whoever holds it.
+	ReleasePushEndpoint(ctx context.Context, endpoint string) error
 	TouchPushSubscription(ctx context.Context, membershipID, endpoint, at string) error
 }
 
@@ -82,5 +84,10 @@ func (s *SQL) DeletePushSubscriptionByEndpoint(ctx context.Context, membershipID
 
 func (s *SQL) TouchPushSubscription(ctx context.Context, membershipID, endpoint, at string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE push_subscription SET last_ok_at=? WHERE membership_id=? AND endpoint=?`, at, membershipID, endpoint)
+	return err
+}
+
+func (s *SQL) ReleasePushEndpoint(ctx context.Context, endpoint string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE endpoint=?`, endpoint)
 	return err
 }

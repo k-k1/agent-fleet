@@ -77,6 +77,17 @@ func (m *memStore) DeletePushSubscriptionByEndpoint(_ context.Context, _, ep str
 	}
 	return nil
 }
+func (m *memStore) ReleasePushEndpoint(ctx context.Context, ep string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, s := range m.subs {
+		if s.Endpoint == ep {
+			m.subs = append(m.subs[:i], m.subs[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
 func (m *memStore) TouchPushSubscription(_ context.Context, _, ep, at string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -153,7 +164,7 @@ func newFixture(t *testing.T) *fixture {
 		check: func(e string) error {
 			return webpush.CheckEndpoint(strings.Replace(e, f.srv.URL, "https://fcm.googleapis.com", 1), webpush.DefaultEndpointHosts)
 		},
-		timeout: 5 * time.Second, slots: make(chan struct{}, pushMaxInFlight)}
+		timeout: 5 * time.Second, slotWait: 2 * time.Second, slots: make(chan struct{}, pushMaxInFlight)}
 	return f
 }
 
@@ -308,6 +319,16 @@ func TestDeviceCap(t *testing.T) {
 		t.Fatalf("over the cap: %d", c)
 	}
 	rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1")
+	// A browser that switches to a member with no room is still released from the previous one.
+	f.st.subs = append(f.st.subs, store.PushSubscription{MembershipID: "m0", Endpoint: f.srv.URL + "/new"})
+	if c := post(f.srv.URL + "/new"); c != 409 {
+		t.Fatalf("over the cap: %d", c)
+	}
+	for _, s := range f.st.subs {
+		if s.MembershipID == "m0" {
+			t.Fatal("the previous owner still holds the endpoint after a switch at the cap")
+		}
+	}
 	if c := post(rows[0].Endpoint); c != 201 { // re-registering a held endpoint is not a new device
 		t.Fatalf("refresh at the cap: %d", c)
 	}
@@ -315,7 +336,7 @@ func TestDeviceCap(t *testing.T) {
 
 func TestValidSubject(t *testing.T) {
 	for s, want := range map[string]bool{"mailto:ops@example.invalid": true, "https://example.invalid/contact": true,
-		"mailto:": false, "mailto:@x": false, "https://": false, "http://example.invalid": false, "": false} {
+		"mailto:": false, "mailto:ops@@example.invalid": false, "mailto:@x": false, "https://": false, "http://example.invalid": false, "": false} {
 		if validSubject(s) != want {
 			t.Errorf("%q: want %v", s, want)
 		}
@@ -361,5 +382,47 @@ func TestAPI(t *testing.T) {
 	var off *Service
 	if w := do(func(w http.ResponseWriter, r *http.Request) { off.List(w, r, "m1") }, "GET", ""); w.Code != 503 {
 		t.Fatalf("nil service: %d", w.Code)
+	}
+}
+
+// A wait for a slot must not shorten the send that follows it (the two budgets are separate).
+func TestSlotWaitDoesNotShortenTheSend(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	f.svc.slotWait = 3 * time.Second
+	f.svc.timeout = 3 * time.Second
+	for i := 0; i < pushMaxInFlight; i++ {
+		f.svc.slots <- struct{}{}
+	}
+	go func() {
+		time.Sleep(1500 * time.Millisecond)
+		<-f.svc.slots
+	}()
+	f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(2500 * time.Millisecond) // 1.5 s wait + 2.5 s send > the 3 s a shared deadline would give
+		f.mu.Lock()
+		f.bodies = append(f.bodies, nil)
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	})
+	f.svc.deliver(context.Background(), note("question"))
+	if f.count() != 1 {
+		t.Fatal("the send was cut short by time spent waiting for a slot")
+	}
+}
+
+func TestBadRedirectLeavesNoToken(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "https://x.invalid/\x7f%zz?token=SECRET-TOKEN")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	})
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	f.svc.deliver(context.Background(), note("question"))
+	if buf.Len() == 0 || strings.Contains(buf.String(), "SECRET-TOKEN") || !strings.Contains(buf.String(), "bad redirect") {
+		t.Fatalf("log: %q", buf.String())
 	}
 }
