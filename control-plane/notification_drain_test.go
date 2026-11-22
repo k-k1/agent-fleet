@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -50,6 +52,7 @@ func TestNotificationDrainerDrainWorkspace(t *testing.T) {
 	st.SetNotificationHook(func(store.Notification) { announced.Add(1) })
 
 	var gets, acks atomic.Int32
+	var ackBody atomic.Value
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/notifications":
@@ -57,6 +60,8 @@ func TestNotificationDrainerDrainWorkspace(t *testing.T) {
 			_, _ = w.Write([]byte(`{"notifications":[{"id":"e1","kind":"question","sessionName":"s1","sessionKind":"claude","displayName":"S","createdAt":"2026-11-23T00:00:00Z"}]}`))
 		case "/notifications/ack":
 			acks.Add(1)
+			b, _ := io.ReadAll(r.Body)
+			ackBody.Store(string(b))
 		}
 	}))
 	defer srv.Close()
@@ -71,6 +76,13 @@ func TestNotificationDrainerDrainWorkspace(t *testing.T) {
 	}
 	if announced.Load() != 1 || acks.Load() != 1 {
 		t.Fatalf("announced=%d acks=%d, want 1 and 1", announced.Load(), acks.Load())
+	}
+	if got, _ := ackBody.Load().(string); got != `{"ids":["e1"]}` {
+		t.Fatalf("ack body = %q", got)
+	}
+	rows, err := st.ListNotifications(ctx, mem.ID, "2000-01-01T00:00:00Z", 10)
+	if err != nil || len(rows) != 1 || rows[0].MembershipID != mem.ID || rows[0].EventID != "agent:e1" {
+		t.Fatalf("stored rows for the member = %+v, %v", rows, err)
 	}
 	// The same event arriving again (an unacked re-send, or a Console drain) is not announced twice.
 	d.drainWorkspace(ctx, drainFakeRT{state: "running", endpoint: srv.URL}, mem.ID)
@@ -226,40 +238,6 @@ func TestNotificationDrainerSweep(t *testing.T) {
 	}
 }
 
-// run starts the timer loop and stops on cancel.
-func TestNotificationDrainerRunTicksAndStops(t *testing.T) {
-	st := newDrainStore(t)
-	var ticks atomic.Int32
-	d := &notificationDrainer{store: countingTenantStore{Store: st, n: &ticks}, interval: 5 * time.Millisecond,
-		runtimeOf: func(store.Workspace) runtime.Runtime { return nil }}
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { d.run(ctx); close(done) }()
-	deadline := time.Now().Add(5 * time.Second)
-	for ticks.Load() < 2 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if ticks.Load() < 2 {
-		t.Fatal("run did not sweep on its timer")
-	}
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("run did not stop on cancel")
-	}
-}
-
-type countingTenantStore struct {
-	store.Store
-	n *atomic.Int32
-}
-
-func (c countingTenantStore) ListTenants(ctx context.Context) ([]store.Tenant, error) {
-	c.n.Add(1)
-	return c.Store.ListTenants(ctx)
-}
-
 // An oversized /notifications body is neither stored nor acked, so the entries stay queued.
 func TestDrainAgentOutboxRejectsOversizedBody(t *testing.T) {
 	ctx := context.Background()
@@ -290,5 +268,244 @@ func TestDrainAgentOutboxRejectsOversizedBody(t *testing.T) {
 	}
 	if announced.Load() != 0 || acks.Load() != 0 {
 		t.Fatalf("oversized body was stored (%d) or acked (%d)", announced.Load(), acks.Load())
+	}
+}
+
+// seedSubscribed makes n running, subscribed workspaces in one tenant.
+func seedSubscribed(t *testing.T, st *store.SQL, n int) []store.Workspace {
+	t.Helper()
+	ctx := context.Background()
+	tn, err := st.EnsureDefaultTenant(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []store.Workspace
+	for i := 0; i < n; i++ {
+		email := "u" + string(rune('a'+i)) + "@example.com"
+		id, err := st.UpsertIdentity(ctx, email, email, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := st.EnsureMembership(ctx, id.ID, tn.ID, "member")
+		if err != nil {
+			t.Fatal(err)
+		}
+		ws := store.Workspace{ID: store.NewID(), TenantID: tn.ID, MembershipID: m.ID,
+			ContainerName: "c" + string(rune('a'+i)), Network: "n", DataDir: "/d" + string(rune('a'+i)), AgentPort: "1", AgentToken: "x", State: "running"}
+		if err := st.CreateWorkspace(ctx, ws); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.UpsertPushSubscription(ctx, store.PushSubscription{MembershipID: m.ID,
+			Endpoint: "https://fcm.googleapis.com/fcm/send/" + m.ID, P256dh: "k", Auth: "a"}); err != nil {
+			t.Fatal(err)
+		}
+		out = append(out, ws)
+	}
+	return out
+}
+
+// With every slot held by an Agent that does not answer, exactly notificationDrainParallel
+// workspaces are asked and the rest wait; releasing the gate lets all of them through.
+func TestNotificationDrainerHoldsAtMostParallelSlots(t *testing.T) {
+	st := newDrainStore(t)
+	wss := seedSubscribed(t, st, notificationDrainParallel+3)
+	gate := make(chan struct{})
+	var inflight, total atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/notifications" {
+			return
+		}
+		inflight.Add(1)
+		total.Add(1)
+		<-gate
+		inflight.Add(-1)
+		_, _ = w.Write([]byte(`{"notifications":[]}`))
+	}))
+	defer srv.Close()
+	d := &notificationDrainer{store: st, interval: time.Hour, drainTimeout: 20 * time.Second,
+		runtimeOf: func(store.Workspace) runtime.Runtime { return drainFakeRT{state: "running", endpoint: srv.URL} }}
+	done := make(chan struct{})
+	go func() { d.sweep(context.Background()); close(done) }()
+	waitFor(t, "all slots held", func() bool { return inflight.Load() == notificationDrainParallel })
+	time.Sleep(150 * time.Millisecond) // a fifth request would have arrived by now
+	if got := total.Load(); got != notificationDrainParallel {
+		t.Fatalf("%d workspaces asked while all slots were held, want %d", got, notificationDrainParallel)
+	}
+	close(gate)
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("sweep did not finish")
+	}
+	if got := total.Load(); int(got) != len(wss) {
+		t.Fatalf("%d workspaces asked in the end, want %d", got, len(wss))
+	}
+}
+
+// An Agent that never answers is cut off at the drain timeout and the other workspaces are
+// still drained.
+func TestNotificationDrainerHungAgentDoesNotBlockOthers(t *testing.T) {
+	st := newDrainStore(t)
+	wss := seedSubscribed(t, st, 3)
+	var announced atomic.Int32
+	st.SetNotificationHook(func(store.Notification) { announced.Add(1) })
+	hung := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer hung.Close()
+	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/notifications" {
+			_, _ = w.Write([]byte(`{"notifications":[{"id":"` + r.Header.Get("X-Test") + `","kind":"question","sessionName":"s","displayName":"S"}]}`))
+		}
+	}))
+	defer ok.Close()
+	d := &notificationDrainer{store: st, interval: time.Hour, drainTimeout: 200 * time.Millisecond,
+		runtimeOf: func(ws store.Workspace) runtime.Runtime {
+			if ws.ID == wss[0].ID {
+				return drainFakeRT{state: "running", endpoint: hung.URL}
+			}
+			return drainFakeRT{state: "running", endpoint: ok.URL}
+		}}
+	start := time.Now()
+	d.sweep(context.Background())
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("sweep took %s: the hung Agent was not cut off", time.Since(start))
+	}
+	if announced.Load() != 2 {
+		t.Fatalf("announced %d, want 2 (the two healthy workspaces)", announced.Load())
+	}
+}
+
+// The timer loop never starts a sweep before the previous one has returned.
+func TestNotificationDrainerRunDoesNotOverlapSweeps(t *testing.T) {
+	st := newDrainStore(t)
+	release := make(chan struct{})
+	var calls atomic.Int32
+	d := &notificationDrainer{store: blockingTenantStore{Store: st, n: &calls, release: release}, interval: 5 * time.Millisecond,
+		runtimeOf: func(store.Workspace) runtime.Runtime { return nil }}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { d.run(ctx); close(done) }()
+	waitFor(t, "first sweep started", func() bool { return calls.Load() == 1 })
+	time.Sleep(100 * time.Millisecond) // twenty ticks while the first sweep is stuck
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("%d sweeps started while the first had not returned", got)
+	}
+	close(release)
+	waitFor(t, "second sweep started", func() bool { return calls.Load() >= 2 })
+	cancel()
+	<-done
+}
+
+type blockingTenantStore struct {
+	store.Store
+	n       *atomic.Int32
+	release chan struct{}
+}
+
+func (b blockingTenantStore) ListTenants(ctx context.Context) ([]store.Tenant, error) {
+	if b.n.Add(1) == 1 {
+		<-b.release
+	}
+	return b.Store.ListTenants(ctx)
+}
+
+// A stalled read gives up at the query timeout instead of freezing the sweep.
+func TestNotificationDrainerStalledQueryTimesOut(t *testing.T) {
+	st := newDrainStore(t)
+	d := &notificationDrainer{store: stalledTenantStore{Store: st}, queryTimeout: 100 * time.Millisecond}
+	start := time.Now()
+	d.sweep(context.Background())
+	if time.Since(start) > 5*time.Second {
+		t.Fatalf("sweep took %s", time.Since(start))
+	}
+}
+
+type stalledTenantStore struct{ store.Store }
+
+func (stalledTenantStore) ListTenants(ctx context.Context) ([]store.Tenant, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+type pruneStore struct {
+	store.Store
+	cutoffs []string
+	fail    bool
+}
+
+func (p *pruneStore) SweepNotifications(_ context.Context, cutoff string) error {
+	p.cutoffs = append(p.cutoffs, cutoff)
+	if p.fail {
+		return context.DeadlineExceeded
+	}
+	return nil
+}
+
+// Pruning uses the notification retention cutoff, runs at most hourly after a success, and is
+// retried soon after a failure.
+func TestNotificationDrainerPrune(t *testing.T) {
+	ps := &pruneStore{Store: newDrainStore(t), fail: true}
+	d := &notificationDrainer{store: ps}
+	d.sweep(context.Background())
+	d.sweep(context.Background())
+	if len(ps.cutoffs) != 1 {
+		t.Fatalf("a failed prune was retried at once: %d calls", len(ps.cutoffs))
+	}
+	if d.nextPrune.After(time.Now().Add(2 * notificationPruneRetry)) {
+		t.Fatalf("after a failure the next prune is %s away, want about %s", time.Until(d.nextPrune), notificationPruneRetry)
+	}
+	ps.fail = false
+	d.nextPrune = time.Time{}
+	d.sweep(context.Background())
+	d.sweep(context.Background())
+	if len(ps.cutoffs) != 2 {
+		t.Fatalf("a successful prune ran again within the hour: %d calls", len(ps.cutoffs))
+	}
+	if c := ps.cutoffs[1]; c > notificationCutoff() || c < time.Now().Add(-30*24*time.Hour).UTC().Format(time.RFC3339) {
+		t.Fatalf("prune cutoff %q is not the retention cutoff", c)
+	}
+}
+
+func TestStartNotificationDrainNeedsASender(t *testing.T) {
+	if startNotificationDrain(context.Background(), &manager{}, time.Hour) {
+		t.Fatal("the drain started without a push sender")
+	}
+}
+
+// Entries are folded up one at a time under a byte cap: those read whole are stored and acked
+// and the rest stays queued for the next drain.
+func TestDrainAgentOutboxTakesWhatFitsUnderTheCap(t *testing.T) {
+	ctx := context.Background()
+	st := newDrainStore(t)
+	var acked atomic.Value
+	big := strings.Repeat("x", 1<<20)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/notifications/ack" {
+			b, _ := io.ReadAll(r.Body)
+			acked.Store(string(b))
+			return
+		}
+		_, _ = w.Write([]byte(`{"notifications":[`))
+		for i := 0; i < 12; i++ { // 12 MiB in all, over maxOutboxBody
+			if i > 0 {
+				_, _ = w.Write([]byte(","))
+			}
+			_, _ = w.Write([]byte(`{"id":"e` + string(rune('a'+i)) + `","kind":"question","sessionName":"s","displayName":"` + big + `"}`))
+		}
+		_, _ = w.Write([]byte(`]}`))
+	}))
+	defer srv.Close()
+	tn, _ := st.EnsureDefaultTenant(ctx)
+	id, _ := st.UpsertIdentity(ctx, "a@example.com", "a", "")
+	m, _ := st.EnsureMembership(ctx, id.ID, tn.ID, "member")
+	if got := drainAgentOutbox(ctx, st, drainFakeRT{state: "running", endpoint: srv.URL}, m.ID); got != "ready" {
+		t.Fatalf("drain = %q", got)
+	}
+	rows, _ := st.ListNotifications(ctx, m.ID, "2000-01-01T00:00:00Z", 50)
+	if len(rows) == 0 || len(rows) >= 12 {
+		t.Fatalf("stored %d entries, want some but not all 12", len(rows))
+	}
+	ids, _ := acked.Load().(string)
+	if strings.Count(ids, `"e`) != len(rows) {
+		t.Fatalf("acked %q for %d stored rows", ids, len(rows))
 	}
 }

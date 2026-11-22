@@ -111,8 +111,45 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 	return n
 }
 
-// maxOutboxBody bounds the /notifications response the CP will read.
-const maxOutboxBody = 4 << 20
+// maxOutboxBody bounds how much of one /notifications response the CP reads. The Agent caps
+// the entry count but not an entry's size, and the drain runs on a timer for every workspace.
+const maxOutboxBody = 8 << 20
+
+// readOutboxEntries decodes {"notifications":[...]} entry by entry and returns the entries it
+// read whole. ok is false when the body is not that shape or nothing could be read from a
+// non-empty list; a read cut off by the byte cap or a decode error after some entries is not
+// an error, the rest comes on the next drain.
+func readOutboxEntries(r io.Reader) (entries []agentNotification, ok bool) {
+	dec := json.NewDecoder(r)
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, false
+	}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return entries, len(entries) > 0
+		}
+		if key != "notifications" {
+			var skip json.RawMessage
+			if dec.Decode(&skip) != nil {
+				return entries, len(entries) > 0
+			}
+			continue
+		}
+		if t, err := dec.Token(); err != nil || t != json.Delim('[') {
+			return nil, false
+		}
+		for dec.More() {
+			var in agentNotification
+			if dec.Decode(&in) != nil {
+				return entries, len(entries) > 0
+			}
+			entries = append(entries, in)
+		}
+		return entries, true
+	}
+	return entries, true
+}
 
 // drainAgentOutbox pulls the Agent's notification outbox into the store and acks it.
 //
@@ -137,17 +174,15 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 	if resp.StatusCode != http.StatusOK {
 		return "offline"
 	}
-	var body struct {
-		Notifications []agentNotification `json:"notifications"`
-	}
-	// Capped: this runs on a timer for every running workspace, and the Agent bounds the
-	// entry count but not an entry's size. An oversized body is dropped before anything is
-	// stored or acked, so the entries stay in the outbox.
-	if json.NewDecoder(io.LimitReader(resp.Body, maxOutboxBody)).Decode(&body) != nil {
+	// At most maxOutboxBody bytes are read per drain, and entries are taken one at a time, so
+	// an outbox holding more than that is folded up over several drains: what was read whole is
+	// stored and acked, the rest stays queued. An unreadable first entry stores nothing.
+	entries, ok := readOutboxEntries(io.LimitReader(resp.Body, maxOutboxBody))
+	if !ok {
 		return "offline"
 	}
-	acked := make([]string, 0, len(body.Notifications))
-	for _, in := range body.Notifications {
+	acked := make([]string, 0, len(entries))
+	for _, in := range entries {
 		n := agentNotificationRow(in, membershipID)
 		if err := st.InsertNotification(ctx, n); err != nil {
 			return "offline"
