@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -147,22 +148,41 @@ func TestPutCustomAPIConnRechecksPolicyUnderTheStoreLock(t *testing.T) {
 	reads.Store(0)
 
 	held, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	unlock := func() { releaseOnce.Do(func() { close(release) }) }
+	holderDone := make(chan error, 1)
 	go func() {
-		_ = secrets.Update(func(*secrets.Data) error { close(held); <-release; return nil })
+		holderDone <- secrets.Update(func(*secrets.Data) error { close(held); <-release; return nil })
 	}()
-	<-held
-	done := make(chan *httptest.ResponseRecorder)
+	defer func() { unlock(); <-holderDone }()
+	select {
+	case <-held:
+	case err := <-holderDone:
+		t.Fatalf("lock holder did not start: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("lock holder did not start")
+	}
+	done := make(chan *httptest.ResponseRecorder, 1)
 	go func() { done <- customAPIPut("mine", "https://b.example.test/v1", "") }()
+	deadline := time.Now().Add(10 * time.Second)
 	for reads.Load() < perCheck {
+		if time.Now().After(deadline) {
+			t.Fatal("the PUT never reached its first policy check")
+		}
 		time.Sleep(5 * time.Millisecond)
 	}
 	time.Sleep(50 * time.Millisecond) // margin for the last read to be used; a miss only makes the test less sensitive
 	if _, err := store.Accept(policy(3, "a.example.test")); err != nil {
 		t.Fatal(err)
 	}
-	close(release)
-	if w := <-done; w.Code != http.StatusForbidden {
-		t.Fatalf("PUT after the policy narrowed: %d %s", w.Code, w.Body)
+	unlock()
+	select {
+	case w := <-done:
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("PUT after the policy narrowed: %d %s", w.Code, w.Body)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the PUT did not finish")
 	}
 	if s, _ := secrets.Load(); s.CustomAPI == nil || s.CustomAPI.URL != "https://a.example.test/v1" {
 		t.Fatalf("stored connection changed: %+v", s.CustomAPI)
