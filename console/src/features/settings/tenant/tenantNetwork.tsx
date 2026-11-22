@@ -11,12 +11,14 @@
 // the ALB and is rejected after the session has been validated. It only covers "someone holding
 // valid credentials touches data from a place that is not allowed" (decision 1).
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getTenantNetwork, putTenantNetwork } from "./tenantApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
-interface NetworkView {
+export interface NetworkView {
   allowed_cidrs?: string;
   your_ip?: string;
   proxy_hops?: number;
@@ -34,8 +36,8 @@ export function TenantNetworkView({ slug }: { slug: string }) {
 
   const load = useCallback(async () => {
     try {
-      const d = await api(`api/admin/tenants/${encodeURIComponent(slug)}/network`);
-      if (d && !d.error) {
+      const d = await getTenantNetwork(slug);
+      if (isOk(d)) {
         setView(d);
         setCidrs(d.allowed_cidrs || "");
       }
@@ -50,17 +52,15 @@ export function TenantNetworkView({ slug }: { slug: string }) {
   const save = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/network`, "PUT", {
-        allowed_cidrs: cidrs,
-      });
-      if (res?.error) {
+      const res = await putTenantNetwork(slug, cidrs);
+      if (res && !isOk(res)) {
         // Show the server's wording verbatim: a lockout refusal is only actionable once it
         // says "your address is 203.0.113.9 and it is not in this list".
         toast(errText(res.error));
         return;
       }
       // Write back the normalised result (192.0.2.7/24 is stored as 192.0.2.0/24).
-      setCidrs(res?.allowed_cidrs || "");
+      setCidrs((isOk(res) && res.allowed_cidrs) || "");
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);
       load();

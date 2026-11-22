@@ -13,7 +13,9 @@
 // writing the same endpoint, so the two surfaces cannot disagree. The mode stays here only: it is
 // a tenant-wide choice and has no place on one person's page.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getTenantEngineAccess, putTenantEngineAccess } from "./tenantApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
@@ -33,7 +35,7 @@ interface MemberGrant {
   grants: EngineRole[];
 }
 
-interface EngineAccessView {
+export interface EngineAccessView {
   roles: RoleView[];
   members: MemberGrant[];
 }
@@ -51,24 +53,23 @@ function useEngineAccess(slug: string) {
   // as a broken screen); the member panel ignores it and simply stays absent.
   const [failed, setFailed] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const base = `api/admin/tenants/${encodeURIComponent(slug)}/engine-access`;
 
   const load = useCallback(async () => {
     try {
-      const d = await api(base);
+      const d = await getTenantEngineAccess(slug);
       // Shape-checked rather than trusted: a CP older than #1215 answers this path with
       // something else, and the member detail page must not break over a panel it can omit.
-      if (d && !d.error && Array.isArray(d.roles) && Array.isArray(d.members)) {
+      if (isOk(d) && Array.isArray(d.roles) && Array.isArray(d.members)) {
         setView(d);
         setFailed(null);
       } else {
-        setFailed(d?.error ? errText(d.error) : tr("tenant.engine_access_load_failed"));
+        setFailed(d && !isOk(d) ? errText(d.error) : tr("tenant.engine_access_load_failed"));
       }
     } catch {
       // Transient: a panel already drawn keeps its last values; a first read says it failed.
       setFailed(tr("tenant.engine_access_load_failed"));
     }
-  }, [base, tr]);
+  }, [slug, tr]);
   useEffect(() => {
     load();
   }, [load]);
@@ -76,8 +77,8 @@ function useEngineAccess(slug: string) {
   const put = async (path: string, body: object) => {
     setBusy(true);
     try {
-      const res = await apiJSON(base + path, "PUT", body);
-      if (res?.error) {
+      const res = await putTenantEngineAccess(slug, path, body);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }

@@ -2,7 +2,9 @@
 // first-run card names. Tenants pay for different agents, so a new member is pointed at the
 // one their team uses instead of being asked to choose. It names, never restricts.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { assertBody, getTenantMemberDefaults, putTenantMemberDefaults } from "./tenantApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { MEMBER_DEFAULT_AGENTS, agentOf } from "../../../agents/registry.ts";
@@ -61,7 +63,6 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
   const [loadFailed, setLoadFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
-  const path = `api/admin/tenants/${encodeURIComponent(slug)}/member-defaults`;
   const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
   // A failed load says so and offers a retry: a panel stuck on "loading" gives the admin nothing
@@ -69,19 +70,19 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
   const load = useCallback(async () => {
     setLoadFailed(false);
     try {
-      const d = await api(path);
-      if (d && !d.error && d.defaults) {
+      const d = await getTenantMemberDefaults(slug);
+      if (isOk(d) && d.defaults) {
         setView(d);
         fill(d.defaults);
         setError("");
         return;
       }
-      setError(d?.error ? errDetail(d.error) : tr("tenant.member_defaults_load_failed", { error: "" }));
+      setError(d && !isOk(d) ? errDetail(d.error) : tr("tenant.member_defaults_load_failed", { error: "" }));
     } catch (e) {
       setError(tr("tenant.member_defaults_load_failed", { error: message(e) }));
     }
     setLoadFailed(true);
-  }, [path]);
+  }, [slug]);
   useEffect(() => {
     load();
   }, [load]);
@@ -95,12 +96,13 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
     setBusy(true);
     setError("");
     try {
-      const res = await apiJSON(path, "PUT", defaultsBody(agent, { ...launch, budget_usd: budget }, repos, ops));
-      if (res?.error) {
+      const res = await putTenantMemberDefaults(slug, defaultsBody(agent, { ...launch, budget_usd: budget }, repos, ops));
+      if (res && !isOk(res)) {
         setError(errDetail(res.error));
         return;
       }
       setView(res);
+      assertBody(res);
       if (res.defaults) fill(res.defaults);
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);

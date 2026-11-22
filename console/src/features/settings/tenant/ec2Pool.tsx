@@ -12,7 +12,16 @@
 // Other runtimes have no notion of a pool. An empty table would read as "every slot is gone" on
 // a Fargate deployment, so there the whole tab is omitted (in AdminTab).
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, apiJSON, errText, type ApiError } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import {
+  forcePoolSlotStop,
+  getEc2PoolStatus,
+  reserveOutdatedSlots,
+  returnPoolSlot,
+  setPoolSlotReserved,
+  terminatePoolSlot,
+} from "./tenantApi.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -162,7 +171,7 @@ type Slot = {
   wedged_rung?: "observing" | "releasing" | "blocked" | "released" | "";
 };
 /** The reply to a force-stop (#2449). */
-type ForceStopReply = {
+export type ForceStopReply = {
   instance_id: string;
   cancelled_commands: number;
   cancel_failed: number;
@@ -172,7 +181,7 @@ type ForceStopReply = {
   /** 202: accepted, still running on the Control Plane. */
   in_progress?: boolean;
 };
-type BulkReply = {
+export type BulkReply = {
   reserved?: { instance_id: string }[];
   skipped?: { instance_id: string; code: string; message: string }[];
 };
@@ -252,8 +261,8 @@ export function PoolView() {
 
   const poll = useCallback(async () => {
     try {
-      const d = await api("api/admin/ec2-pool");
-      if (d?.error) {
+      const d = await getEc2PoolStatus();
+      if (d && !isOk(d)) {
         setErr(errText(d.error));
         return;
       }
@@ -278,9 +287,9 @@ export function PoolView() {
   const terminate = async (s: Slot) => {
     setBusy(true);
     setKillErr("");
-    const d = await api("api/admin/ec2-pool/slots/" + encodeURIComponent(s.instance_id), { method: "DELETE" });
+    const d = await terminatePoolSlot(s.instance_id);
     setBusy(false);
-    if (d?.error) {
+    if (d && !isOk(d)) {
       setKillErr(tr("pool.terminate_failed", { msg: errText(d.error) }));
       return;
     }
@@ -293,13 +302,9 @@ export function PoolView() {
   const returnToPool = async (s: Slot) => {
     setBusy(true);
     setReturnErr("");
-    const d = await apiJSON(
-      "api/admin/ec2-pool/slots/" + encodeURIComponent(s.instance_id) + "/return",
-      "POST",
-      { token: s.quarantine_token },
-    );
+    const d = await returnPoolSlot(s.instance_id, s.quarantine_token);
     setBusy(false);
-    if (d?.error) {
+    if (d && !isOk(d)) {
       setReturnErr(tr("pool.return_failed", { msg: errText(d.error) }));
       poll();
       return;
@@ -311,13 +316,9 @@ export function PoolView() {
   const forceStop = async (s: Slot) => {
     setBusy(true);
     setStopErr("");
-    const d: ForceStopReply & { error?: ApiError } = await apiJSON(
-      "api/admin/ec2-pool/slots/" + encodeURIComponent(s.instance_id) + "/force-stop",
-      "POST",
-      stopOverride ? { override_healthy: true } : {},
-    );
+    const d = await forcePoolSlotStop(s.instance_id, stopOverride);
     setBusy(false);
-    if (d?.error) {
+    if (d && !isOk(d)) {
       setStopErr(tr("pool.force_stop_failed", { msg: errText(d.error) }));
       // The server's gate is the sweeper's predicates, which the row cannot show (a slot that
       // is registered but SSM-online, one still booting, a stale wedged badge, a read that
@@ -337,11 +338,9 @@ export function PoolView() {
   const setReserved = async (s: Slot, reserve: boolean) => {
     setReserving(s.instance_id);
     setReserveErr("");
-    const d = await api("api/admin/ec2-pool/slots/" + encodeURIComponent(s.instance_id) + "/replace", {
-      method: reserve ? "PUT" : "DELETE",
-    });
+    const d = await setPoolSlotReserved(s.instance_id, reserve);
     setReserving("");
-    if (d?.error) {
+    if (d && !isOk(d)) {
       setReserveErr(tr("pool.reserve_failed", { id: s.instance_id, msg: errText(d.error) }));
       return;
     }
@@ -353,15 +352,13 @@ export function PoolView() {
   const reserveBulk = async (list: Slot[]) => {
     setBusy(true);
     setBulkErr("");
-    const d: BulkReply & { error?: ApiError } = await apiJSON("api/admin/ec2-pool/reserve-outdated", "POST", {
-      instance_ids: list.map((s) => s.instance_id),
-    });
+    const d = await reserveOutdatedSlots(list.map((s) => s.instance_id));
     setBusy(false);
-    if (d?.error) {
+    if (d && !isOk(d)) {
       setBulkErr(tr("pool.reserve_failed", { id: String(list.length), msg: errText(d.error) }));
       return;
     }
-    const skipped = d?.skipped || [];
+    const skipped = (isOk(d) && d.skipped) || [];
     if (skipped.length) {
       setBulkErr(
         tr("pool.reserve_bulk_skipped", {

@@ -61,6 +61,16 @@ describe("tenant watch sources switch", () => {
     expect(radio(0).getAttribute("aria-checked")).toBe("true");
   });
 
+  it("takes the requested value when the PUT answers a JSON null", async () => {
+    apiJSON.mockResolvedValue(null);
+    await mount();
+    await act(async () => {
+      radio(0).click();
+    });
+    expect(toast).not.toHaveBeenCalled();
+    expect(radio(0).getAttribute("aria-checked")).toBe("true");
+  });
+
   it("keeps the shown state and toasts when the server refuses", async () => {
     apiJSON.mockResolvedValue({ error: { message: "forbidden" } });
     await mount();

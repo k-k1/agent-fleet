@@ -6,7 +6,9 @@
 // screen shows that answer verbatim and keeps the text as typed. Rules advise and never refuse
 // (decision 8), which is why there is no enforce switch here.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { assertBody, getTenantBranchRules, putTenantBranchRules } from "./tenantApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
@@ -50,7 +52,6 @@ export function TenantBranchRulesView({ slug }: { slug: string }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
-  const path = `api/admin/tenants/${encodeURIComponent(slug)}/branch-rules`;
 
   const [loadFailed, setLoadFailed] = useState(false);
   const failText = (
@@ -63,15 +64,15 @@ export function TenantBranchRulesView({ slug }: { slug: string }) {
   const load = useCallback(async () => {
     setLoadFailed(false);
     try {
-      const d = await api(path);
-      if (d && !d.error && Array.isArray(d.rules)) {
+      const d = await getTenantBranchRules(slug);
+      if (isOk(d) && Array.isArray(d.rules)) {
         setView(d);
         setText(pretty(d.rules));
         setError("");
         return;
       }
       setError(
-        d?.error
+        d && !isOk(d)
           ? errDetail(d.error)
           : tr("tenant.branch_rules_load_failed", { error: "" }),
       );
@@ -79,7 +80,7 @@ export function TenantBranchRulesView({ slug }: { slug: string }) {
       setError(failText("tenant.branch_rules_load_failed", e));
     }
     setLoadFailed(true);
-  }, [path]);
+  }, [slug]);
   useEffect(() => {
     load();
   }, [load]);
@@ -105,14 +106,15 @@ export function TenantBranchRulesView({ slug }: { slug: string }) {
     setBusy(true);
     setError("");
     try {
-      const res = await apiJSON(path, "PUT", { rules });
-      if (res?.error) {
+      const res = await putTenantBranchRules(slug, rules);
+      if (res && !isOk(res)) {
         // The server names the rule and the field ("rule 2: base "a..b" is not a branch name",
         // `unknown field "prefixes"`); errDetail keeps that message after a generic code's text.
         setError(errDetail(res.error));
         return;
       }
       setView(res);
+      assertBody(res);
       setText(pretty(res.rules || []));
       setSaved(true);
       setTimeout(() => setSaved(false), 1500);

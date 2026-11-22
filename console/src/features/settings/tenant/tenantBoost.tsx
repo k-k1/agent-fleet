@@ -5,14 +5,16 @@
 // The rung choices are read from the deployment's own sizing profile, not typed: a boost can only
 // reach a rung the deployment declares, and the CP refuses any other value.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { getWorkspaceSizing, isOk } from "../api.ts";
+import { getTenantBoost, putTenantBoost } from "./tenantApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtGbHint, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import type { WsSizing } from "../parts/adminShared.ts";
 
-interface BoostPolicy {
+export interface BoostPolicy {
   enabled: boolean;
   max_mem_mib: number;
   monthly_hours: number;
@@ -33,17 +35,16 @@ export function TenantBoostView({ slug }: { slug: string }) {
   const [rungs, setRungs] = useState<number[]>([]);
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
-  const base = `api/admin/tenants/${encodeURIComponent(slug)}/boost`;
 
   const load = useCallback(async () => {
     try {
-      const [d, sz] = await Promise.all([api(base), api("api/admin/workspace-sizing")]);
-      if (d && !d.error) setView(d);
-      setRungs(declaredRungs({ ...WS_SIZING_FALLBACK, ...(sz && !sz.error ? sz : {}) }));
+      const [d, sz] = await Promise.all([getTenantBoost(slug), getWorkspaceSizing()]);
+      if (isOk(d)) setView(d);
+      setRungs(declaredRungs({ ...WS_SIZING_FALLBACK, ...(isOk(sz) ? sz : {}) }));
     } catch {
       /* transient; the panel keeps its last values */
     }
-  }, [base]);
+  }, [slug]);
   useEffect(() => {
     void load();
   }, [load]);
@@ -55,8 +56,8 @@ export function TenantBoostView({ slug }: { slug: string }) {
     const want = { enabled: view.enabled, max_mem_mib: view.max_mem_mib, monthly_hours: view.monthly_hours, ...next };
     setBusy(true);
     try {
-      const res = await apiJSON(base, "PUT", want);
-      if (res?.error) {
+      const res = await putTenantBoost(slug, want);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }

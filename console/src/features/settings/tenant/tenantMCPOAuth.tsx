@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { assertBody, getTenantMcpOAuth, putTenantMcpOAuth, type McpOAuthView } from "./tenantApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -8,19 +10,20 @@ export function TenantMCPOAuthView({ slug }: { slug: string }) {
   const tr = useT();
   const confirm = useConfirm();
   const toast = useToast();
-  const [view, setView] = useState<{ enabled: boolean; served: boolean } | null>(null);
+  const [view, setView] = useState<McpOAuthView | null>(null);
   const [enabled, setEnabled] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     let current = true;
-    api(`api/admin/tenants/${encodeURIComponent(slug)}/mcp-oauth`).then((res) => {
+    getTenantMcpOAuth(slug).then((res) => {
       if (!current) return;
-      if (res?.error) {
+      if (res && !isOk(res)) {
         setError(errText(res.error));
         return;
       }
       setView(res);
+      assertBody(res);
       setEnabled(res.enabled);
     }).catch(() => {
       if (current) setError(tr("tenant.mcp_oauth_load_failed"));
@@ -39,12 +42,13 @@ export function TenantMCPOAuthView({ slug }: { slug: string }) {
     }
     setBusy(true);
     try {
-      const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/mcp-oauth`, "PUT", { enabled });
-      if (res?.error) {
+      const res = await putTenantMcpOAuth(slug, enabled);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }
       setView(res);
+      assertBody(res);
       setEnabled(res.enabled);
       toast(tr("admin.saved"));
     } catch {

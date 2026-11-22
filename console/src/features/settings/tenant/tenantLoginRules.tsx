@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getDeploymentProviders, putTenantLogin } from "./tenantApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -32,10 +34,10 @@ export function useDeploymentProviders(): DeployProvider[] | "error" | null {
   const [rows, setRows] = useState<DeployProvider[] | "error" | null>(null);
   useEffect(() => {
     let live = true;
-    api("api/admin/providers")
+    getDeploymentProviders()
       .then((res) => {
         if (!live) return;
-        setRows(Array.isArray(res?.providers) ? res.providers : "error");
+        setRows(isOk(res) && Array.isArray(res.providers) ? res.providers : "error");
       })
       // A dropped connection arrives as a rejection; api() only synthesizes a value for
       // non-JSON responses.
@@ -184,7 +186,7 @@ export function TenantLoginRules({
   }, [slug, tenant]);
 
   const save = async () => {
-    const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/login`, "PUT", {
+    const res = await putTenantLogin(slug, {
       // This PUT replaces all four columns. The two method columns now belong to another
       // surface (the two toggles on sign-in methods), so send back exactly what was read:
       // omitting them overwrites with empty and silently opens a restricted tenant wide.
@@ -193,7 +195,7 @@ export function TenantLoginRules({
       auto_join_domains: autoJoin.trim(),
       allowed_domains: domains.trim(),
     });
-    if (res?.error) {
+    if (res && !isOk(res)) {
       toast(errText(res.error));
       return;
     }

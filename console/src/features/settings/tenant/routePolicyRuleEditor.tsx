@@ -6,7 +6,8 @@
 // can read why and fix the one value rather than start again. A toast would vanish, and a reload
 // would throw the edits away.
 import { useState } from "react";
-import { apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { putRoutePolicyRule } from "./tenantApi.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { useReportDirty } from "../parts/dirtyScope.tsx";
 import { PRESET_KEYS, applyPreset, presetAvailable, exceeds, matchCeiling, stoppedBy } from "./routePolicyCeiling.ts";
@@ -514,7 +515,7 @@ function ServerRows({
 /** putRule saves one layer's rule on the revision it was loaded at: the CP's PUT answers 409
  *  route_policy_stale when the layer has moved since (If-Match, the layer's own revision). */
 export const putRule = (path: string, body: RouteRule, revision: number): Promise<unknown> =>
-  apiJSON(path, "PUT", body, { "If-Match": `"${revision}"` });
+  putRoutePolicyRule(path, body, revision);
 
 /** RuleEditor edits one layer's rule. save sends the body and answers the API result; a result
  *  with an error is shown and the edits kept. Re-key it on the loaded revision so a fresh load

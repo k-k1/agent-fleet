@@ -15,8 +15,22 @@
 //	  Cannot be undone   ruled off below it: clean home, delete backups, remove, discard,
 //	                     delete.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, errText, type ApiError } from "../../../core/api/client.ts";
-import { getWorkspaceSizing, isOk, type MemberStats, type Reply } from "../api.ts";
+import { errText, type ApiError } from "../../../core/api/client.ts";
+import { getWorkspaceSizing, isOk, type ErrorReply, type MemberStats } from "../api.ts";
+import {
+  cleanMemberHome,
+  deleteMemberHomeBackups,
+  deleteMemberRow as deleteMemberRowCall,
+  destroyMemberWorkspace,
+  getMemberHomeBackups,
+  getMemberSessions,
+  getMemberStats,
+  putMembershipRole,
+  putUserLimits,
+  removeMembership,
+  rotateMemberGitToken,
+  stopMemberWorkspace,
+} from "./tenantApi.ts";
 import type { Session } from "../../../types/session.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
@@ -36,9 +50,12 @@ import { bootFailures, bootSkipped, diskFigureNote, homeFullFigures, memberStopA
 import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 
+// What a request that got no answer at all looks like to the handlers below.
+const networkFailure = (): ErrorReply => ({ error: { code: "network" } });
+
 // GET …/home-backups: the copies of a member's home kept outside it, and whether the home
 // itself still exists (control-plane runtime.HomeBackups).
-interface HomeBackupsView {
+export interface HomeBackupsView {
   count: number;
   newest?: string;
   home_exists?: boolean;
@@ -127,18 +144,17 @@ export function MemberView({
   const sessSer = useRef("");
 
   const key = member.user_key;
-  const base = `api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}`;
 
   // fetchBackups asks the CP and never throws: an answer, or why there is none.
   const fetchBackups = useCallback(async (): Promise<{ backups?: HomeBackupsView; error?: ApiError }> => {
     try {
-      const d = await api(`${base}/home-backups`);
-      if (d && !d.error) return { backups: { count: d.count ?? 0, newest: d.newest, home_exists: d.home_exists === true } };
+      const d = await getMemberHomeBackups(slug, key);
+      if (isOk(d)) return { backups: { count: d.count ?? 0, newest: d.newest, home_exists: d.home_exists === true } };
       return { error: d?.error ?? { code: "unknown" } };
     } catch {
       return { error: { code: "network" } };
     }
-  }, [base]);
+  }, [slug, key]);
   const loadBackups = useCallback(async () => {
     if (!homeBackups) return;
     const r = await fetchBackups();
@@ -175,7 +191,7 @@ export function MemberView({
   const poll = useCallback(async () => {
     const readStats = async () => {
       try {
-        const s: Reply<MemberStats> = await api(`${base}/stats`);
+        const s = await getMemberStats(slug, key);
         const st: MemberStats = isOk(s) ? s : { running: false };
         const stSer = JSON.stringify(st);
         if (stSer !== statsSer.current) {
@@ -189,8 +205,8 @@ export function MemberView({
     };
     const readSessions = async () => {
       try {
-        const ss = await api(`${base}/sessions`);
-        const list = ss && ss.sessions ? ss.sessions : [];
+        const ss = await getMemberSessions(slug, key);
+        const list = isOk(ss) && ss.sessions ? ss.sessions : [];
         const ssSer = JSON.stringify(list);
         if (ssSer !== sessSer.current) {
           sessSer.current = ssSer;
@@ -201,7 +217,7 @@ export function MemberView({
       }
     };
     await Promise.all([readStats(), readSessions()]);
-  }, [base]);
+  }, [slug, key]);
 
   // Deployment-wide and immutable while the Console runs, so it is read once per open
   // member rather than on the 4s poll.
@@ -307,12 +323,10 @@ export function MemberView({
   const stop = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/admin/stop-workspace", "POST", { tenant_slug: slug, user_key: key }).catch(
-        () => ({ error: { code: "network" } }),
-      );
+      const res = await stopMemberWorkspace(slug, key).catch(networkFailure);
       // A refusal (another lifecycle operation holds the workspace) stopped nothing: say so
       // and keep the dialog, rather than closing it as if the workspace were stopping.
-      if (res?.error) {
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         poll();
         return;
@@ -329,10 +343,8 @@ export function MemberView({
   const rotateGitToken = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/admin/rotate-git-token", "POST", { tenant_slug: slug, user_key: key }).catch(
-        () => ({ error: { code: "network" } }),
-      );
-      if (res?.error) {
+      const res = await rotateMemberGitToken(slug, key).catch(networkFailure);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }
@@ -344,7 +356,7 @@ export function MemberView({
         failed: tr("admin.rotate_git_failed"),
         disabled: tr("admin.rotate_git_disabled"),
       };
-      toast(outcome[res?.workspace] ?? tr("admin.rotate_git_not_running"));
+      toast(outcome[(isOk(res) ? res.workspace : undefined) ?? ""] ?? tr("admin.rotate_git_not_running"));
     } finally {
       setBusy(false);
     }
@@ -352,14 +364,12 @@ export function MemberView({
   const cleanHome = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/admin/clean-home", "POST", { tenant_slug: slug, user_key: key }).catch(
-        () => ({ error: { code: "network" } }),
-      );
+      const res = await cleanMemberHome(slug, key).catch(networkFailure);
       // A refusal (not available here, another operation in progress) wiped nothing, and
       // closing the dialog as if it had is how an offboarding gets recorded as done. A
       // request that got no answer may have gone either way — the CP finishes an erase it
       // has started — so the member's state is read again rather than guessed.
-      if (res?.error) {
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         if (res.error.code === "network") {
           poll();
@@ -371,7 +381,7 @@ export function MemberView({
       setConfirmClean(false);
       // On Fargate the erase is a task that takes minutes: the CP answers once the workspace
       // is stopped and records the outcome in the audit log, so say that rather than "done".
-      if (res?.pending) toast(tr("admin.clean_home_started"));
+      if (isOk(res) && res.pending) toast(tr("admin.clean_home_started"));
       poll();
       onChanged();
       void loadBackups();
@@ -384,22 +394,22 @@ export function MemberView({
   const deleteBackups = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON(`${base}/home-backups`, "DELETE", {}).catch(() => ({ error: { code: "network" } }));
-      if (res?.error) {
+      const res = await deleteMemberHomeBackups(slug, key).catch(networkFailure);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         // Some copies may be gone even so; show what is left rather than the old count.
         void loadBackups();
         return;
       }
       setConfirmDeleteBackups(false);
-      toast(tCount("admin.delete_backups_done", res?.deleted ?? 0));
+      toast(tCount("admin.delete_backups_done", (isOk(res) ? res.deleted : undefined) ?? 0));
       void loadBackups();
     } finally {
       setBusy(false);
     }
   };
   const saveLimit = async () => {
-    const res = await apiJSON("api/admin/user-limits", "PUT", {
+    const res = await putUserLimits({
       user_key: key,
       tenant_slug: slug,
       max_sessions: +limit || 0,
@@ -410,6 +420,8 @@ export function MemberView({
       disk_gb: Math.round(+diskGb || 0),
       slot_class: slotClass,
     });
+    // The reply is not checked for an error: an error body just leaves these fields unread.
+    const limits = isOk(res) ? res : null;
     setSavedLimits({
       max_sessions: +limit || 0,
       mem_limit: Math.round(+memMb || 0) * 1048576,
@@ -418,10 +430,10 @@ export function MemberView({
       // The stored id, not slot_class_effective: this editor edits what is STORED, and
       // the substitution (when there is one) is reported separately rather than
       // silently rewritten into the control.
-      slot_class: typeof res?.slot_class === "string" ? res.slot_class : slotClass,
-      slot_class_effective: typeof res?.slot_class_effective === "string" ? res.slot_class_effective : undefined,
+      slot_class: typeof limits?.slot_class === "string" ? limits.slot_class : slotClass,
+      slot_class_effective: typeof limits?.slot_class_effective === "string" ? limits.slot_class_effective : undefined,
     });
-    setResize(res?.home_resize ?? null);
+    setResize(limits?.home_resize ?? null);
     setLimitOpen(false);
     poll(); // mem_max reflects the new cap after the next start; refresh sessions/stats
     onChanged();
@@ -435,13 +447,13 @@ export function MemberView({
   const removeMember = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/admin/memberships", "DELETE", { tenant_slug: slug, user_key: key, purge });
-      if (res?.error) {
+      const res = await removeMembership(slug, key, purge);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }
       setConfirmRemove(false);
-      if (res?.pending) toast(tr("admin.remove_purge_started"));
+      if (isOk(res) && res.pending) toast(tr("admin.remove_purge_started"));
       onRemoved();
     } finally {
       setBusy(false);
@@ -456,15 +468,15 @@ export function MemberView({
   const destroyWorkspace = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/admin/workspaces", "DELETE", { tenant_slug: slug, user_key: key });
-      if (res?.error) {
+      const res = await destroyMemberWorkspace(slug, key);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }
       setConfirmDestroy(false);
       // pending: removing the EFS home is a Fargate task; the outcome goes to the audit log.
-      if (res?.pending) toast(tr("admin.destroy_started"));
-      if (res?.leftovers?.length) toast(tr("admin.destroy_leftovers", { list: res.leftovers.join(", ") }));
+      if (isOk(res) && res.pending) toast(tr("admin.destroy_started"));
+      if (isOk(res) && res.leftovers?.length) toast(tr("admin.destroy_leftovers", { list: res.leftovers.join(", ") }));
       // The detail holds a snapshot of the member (has_workspace included), so going back to the
       // list and reloading is what lets the next open offer "Delete member for good".
       onRemoved();
@@ -482,12 +494,8 @@ export function MemberView({
   const deleteMemberRow = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON(
-        `api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}`,
-        "DELETE",
-        {},
-      );
-      if (res?.error) {
+      const res = await deleteMemberRowCall(slug, key);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }
@@ -500,7 +508,7 @@ export function MemberView({
   const setRoleTo = async (newRole: string) => {
     setBusy(true);
     try {
-      await apiJSON("api/admin/membership-role", "PUT", { user_key: key, tenant_slug: slug, role: newRole });
+      await putMembershipRole(slug, key, newRole);
       setMemberRole(newRole);
       setConfirmGrant(false);
       onChanged();

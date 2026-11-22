@@ -14,14 +14,16 @@
 // there is nothing to choose. Offering a one-option choice is asking a question with one
 // possible answer.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getTenantMachine, putTenantMachine } from "./tenantApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtGbHint } from "../parts/adminShared.ts";
 import type { WsSlotClass } from "../parts/adminShared.ts";
 
-interface MachineView {
+export interface MachineView {
   slot_class?: string;
   classes?: WsSlotClass[];
   default_slot_class?: string;
@@ -38,8 +40,8 @@ export function TenantMachineView({ slug }: { slug: string }) {
 
   const load = useCallback(async () => {
     try {
-      const d = await api(`api/admin/tenants/${encodeURIComponent(slug)}/slot-class`);
-      if (d && !d.error) {
+      const d = await getTenantMachine(slug);
+      if (isOk(d)) {
         setView(d);
         setPick(d.slot_class || "");
       }
@@ -58,10 +60,8 @@ export function TenantMachineView({ slug }: { slug: string }) {
   const save = async (want: string) => {
     setBusy(true);
     try {
-      const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/slot-class`, "PUT", {
-        slot_class: want,
-      });
-      if (res?.error) {
+      const res = await putTenantMachine(slug, want);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }

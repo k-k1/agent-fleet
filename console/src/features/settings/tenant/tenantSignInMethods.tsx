@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import {
+  deleteTenantIdp,
+  getAllIdps,
+  getTenantIdps,
+  putTenantLogin,
+  saveTenantIdp,
+  setTenantIdpStatus,
+} from "./tenantApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -88,13 +97,12 @@ export function TenantSignInMethods({
   const [form, setForm] = useState<TenantIdP | null>(null);
   const [busy, setBusy] = useState(false);
   const [confirmDel, setConfirmDel] = useState<TenantIdP | null>(null);
-  const base = `api/admin/tenants/${encodeURIComponent(slug)}/idp`;
   const deployment = useDeploymentProviders();
 
   const load = useCallback(async () => {
-    const res = await api(base);
-    setRows(res?.providers || []);
-  }, [base]);
+    const res = await getTenantIdps(slug);
+    setRows((isOk(res) && res.providers) || []);
+  }, [slug]);
   useEffect(() => {
     load();
   }, [load]);
@@ -119,10 +127,8 @@ export function TenantSignInMethods({
         allowed_orgs: (form.allowed_orgs || "").trim(),
         link_claim: (form.link_claim || "").trim(),
       };
-      const res = form.id
-        ? await apiJSON(`${base}/${encodeURIComponent(form.id)}`, "PUT", body)
-        : await apiJSON(base, "POST", body);
-      if (res?.error) {
+      const res = await saveTenantIdp(slug, form.id, body);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }
@@ -143,8 +149,7 @@ export function TenantSignInMethods({
   const setStatus = async (row: TenantIdP, status: string, confirm?: boolean) => {
     setBusy(true);
     try {
-      const q = confirm ? "?confirm=1" : "";
-      const res = await apiJSON(`${base}/${encodeURIComponent(row.id)}/status${q}`, "POST", { status });
+      const res = await setTenantIdpStatus(slug, row.id, status, confirm);
       if (res?.error?.code === "tenant_idp_last_method_for_members") {
         // Only the server knows the count. Take the number and put it into our own wording
         // rather than showing the CP's sentence: the display language is the Console's.
@@ -165,8 +170,8 @@ export function TenantSignInMethods({
   const remove = async (row: TenantIdP) => {
     setBusy(true);
     try {
-      const res = await apiJSON(`${base}/${encodeURIComponent(row.id)}`, "DELETE");
-      if (res?.error) {
+      const res = await deleteTenantIdp(slug, row.id);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }
@@ -206,7 +211,7 @@ export function TenantSignInMethods({
     const next = toggleRule(knownIds, tenant.allowed_providers, tenant.hidden_providers, id, field, value);
     setBusy(true);
     try {
-      const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/login`, "PUT", {
+      const res = await putTenantLogin(slug, {
         ...next,
         // This PUT replaces all four columns. This view does not own the two domain columns, so
         // it echoes back what it read: omitting them overwrites them with empty and the invite
@@ -214,7 +219,7 @@ export function TenantSignInMethods({
         auto_join_domains: (tenant.auto_join_domains || "").trim(),
         allowed_domains: (tenant.allowed_domains || "").trim(),
       });
-      if (res?.error) {
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }
@@ -598,8 +603,8 @@ export function SignInMethodRegister() {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const res = await api("api/admin/idp");
-    setRows(res?.providers || []);
+    const res = await getAllIdps();
+    setRows((isOk(res) && res.providers) || []);
   }, []);
   useEffect(() => {
     load();
@@ -614,11 +619,7 @@ export function SignInMethodRegister() {
     if (!row.tenant_slug) return;
     setBusy(true);
     try {
-      const res = await apiJSON(
-        `api/admin/tenants/${encodeURIComponent(row.tenant_slug)}/idp/${encodeURIComponent(row.id)}/status`,
-        "POST",
-        { status },
-      );
+      const res = await setTenantIdpStatus(row.tenant_slug, row.id, status);
       if (res?.error) {
         toast(errText(res.error));
         return;
