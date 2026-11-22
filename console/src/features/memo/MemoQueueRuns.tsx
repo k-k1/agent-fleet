@@ -4,6 +4,7 @@
 // expanded, so a collapsed category reads nothing and the memo section's own poll stays free of
 // deliveries.
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useInterval } from "../../lib/useInterval.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
@@ -46,14 +47,13 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
   useEffect(() => {
     alive.current = true;
     void load();
-    const id = setInterval(() => {
-      if (!document.hidden) void load();
-    }, POLL_MS);
     return () => {
       alive.current = false;
-      clearInterval(id);
     };
   }, [load]);
+  useInterval(() => {
+    if (!document.hidden) void load();
+  }, POLL_MS);
 
   // Ends an open run after a confirmation (it stops the run's session). The server is idempotent,
   // so a second press or a run the tick already closed answers the same; the list is re-read after.
