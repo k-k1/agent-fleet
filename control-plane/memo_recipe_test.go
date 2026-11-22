@@ -559,6 +559,13 @@ func TestMemoRecipeInvalidDoesNotOpenAThreshold(t *testing.T) {
 		ok1 := e.pending("app", "impl", "valid")
 		bad := decode[memoDTO](t, e.recipeMemo("app", "impl", "bad", map[string]any{"route": "anthropic-subscription"}))
 		e.queueWith("app", "impl", map[string]any{"enabled": true, "openAfter": 2, "batch": 5, "agentKind": "codex"})
+		// The change of the category's agent held the message that can no longer run, at once.
+		if row := e.memoRow(bad.ID); row.State != store.MemoStateHeld {
+			t.Fatalf("the invalid message is %s after the settings change", row.State)
+		}
+		if w := e.queueWaiting(q); w == nil || w.Reason != waitBelowThreshold || w.Detail == nil || w.Detail.Waiting != 1 || w.Detail.Needed != 2 {
+			t.Fatalf("the list before any tick: %+v", w)
+		}
 		agent := e.useQueueAgent("")
 		agent.mu.Lock()
 		agent.report = true

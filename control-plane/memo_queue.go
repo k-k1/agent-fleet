@@ -735,6 +735,17 @@ func (a memoAPI) putQueue(w http.ResponseWriter, r *http.Request, _ store.Identi
 		if err := tx.PutQueue(q); err != nil {
 			return err
 		}
+		if existed {
+			// New defaults may leave a message's recipe unable to create a run: it is held now, so the
+			// list's counts (SQL) agree at once with what a fire would claim.
+			rows, err := tx.ListMemosIn(c.Repo, c.Name)
+			if err != nil {
+				return err
+			}
+			if _, err := memoHoldInvalidRecipes(tx, q, rows); err != nil {
+				return err
+			}
+		}
 		out = memoQueueToDTO(q, c)
 		return nil
 	})
