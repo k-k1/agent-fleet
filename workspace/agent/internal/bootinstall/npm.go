@@ -75,12 +75,38 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 	ctx, cancel := context.WithTimeout(context.Background(), npmInstallTimeout)
 	defer cancel()
 	args := append([]string{"install", "-g", "--prefix", filepath.Join(e.Home, ".local")}, specs...)
+	se := &tailWriter{max: 64 << 10}
+	if e.npmLockFile != nil {
+		// A supervisor holds the lock until npm's whole process group is gone, so a kill of this
+		// process, or a postinstall child started with default child_process options (which does
+		// not inherit the lock), cannot leave a writer running unlocked. /proc/self/exe is the
+		// binary running now, even if its path was replaced or removed since it started.
+		sup := append([]string{"boot-install", superviseStep, e.npmBin()}, args...)
+		cmd := exec.CommandContext(ctx, "/proc/self/exe", sup...)
+		cmd.ExtraFiles = []*os.File{e.npmLockFile}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		cmd.WaitDelay = time.Second
+		cmd.Stderr = se
+		if err = cmd.Start(); err == nil {
+			err = cmd.Wait()
+			// Group kill and wait, as for a direct npm: nothing may write once this returns, and a
+			// supervisor killed alone takes npm (same group) down with it.
+			pgid := cmd.Process.Pid
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			if !waitGroupGone(pgid, superviseGrace) && err == nil {
+				err = errors.New("npm's process group did not stop")
+			}
+			if errors.Is(err, exec.ErrWaitDelay) {
+				err = nil
+			}
+			return se.String(), err
+		}
+		// The supervisor could not be started at all: nothing ran, so run npm directly.
+		err = nil
+	}
 	cmd := exec.CommandContext(ctx, e.npmBin(), args...)
 	if e.npmLockFile != nil {
-		// npm inherits the lock's open file description: if only this process is killed, npm
-		// itself keeps the lock until it exits, and a recovery on the next start finds the lock
-		// taken instead of restoring a backup under npm's feet. A child npm spawns with the
-		// default child_process options does not inherit it.
 		cmd.ExtraFiles = []*os.File{e.npmLockFile}
 	}
 	// Postinstall scripts may outlive npm: kill the whole group at the deadline so none keeps
@@ -88,7 +114,6 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
-	se := &tailWriter{max: 64 << 10}
 	cmd.Stderr = se
 	err = cmd.Run()
 	// Whatever npm answered, nothing it started may outlive it: Wait prefers the exit error over

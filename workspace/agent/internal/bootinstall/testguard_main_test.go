@@ -9,4 +9,7 @@ import (
 
 // TestMain keeps every test of this package off the workspace's live tmux server, HOME and
 // Agent (testguard).
-func TestMain(m *testing.M) { os.Exit(testguard.Run(m, nil)) }
+func TestMain(m *testing.M) {
+	MaybeSupervise(os.Args[1:])
+	os.Exit(testguard.Run(m, nil))
+}

@@ -3,6 +3,7 @@ package bootinstall
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -615,5 +616,348 @@ func TestSelfUpdateNPMWithUnopenableLockStartsNothing(t *testing.T) {
 	}
 	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
 		t.Fatalf("link moved: %q %v", out, err)
+	}
+}
+
+// A first cursor update killed before it published its tree, then the user installs that same
+// version by hand: recovery must neither delete the user's tree nor its launcher.
+func TestCursorRecoverLeavesAForeignTreeAndItsLauncher(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "#!/bin/sh\necho manual\n")
+	os.MkdirAll(filepath.Join(f.home, ".local", "bin"), 0o755)
+	f.link(t, "cursor-agent", filepath.Join(dir, "cursor-agent"))
+	no := false
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.1", Tree: true, HadTree: &no, ID: "staged-token",
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "none"}}}
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.read(filepath.Join(dir, "cursor-agent")), "manual") {
+		t.Fatal("the user's tree was deleted")
+	}
+	if out, err := exec.Command(f.local("cursor-agent")).Output(); err != nil || !strings.Contains(string(out), "manual") {
+		t.Fatalf("the user's launcher no longer starts their tree: %v %q", err, out)
+	}
+	if _, err := os.Lstat(f.env.cursorMarkerPath()); err == nil {
+		t.Fatal("the marker stayed")
+	}
+	// The same marker with the tree's own token does delete it.
+	f.write(t, filepath.Join(dir, cursorIDFile), "staged-token")
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(dir); err == nil {
+		t.Fatal("the staged tree stayed")
+	}
+}
+
+// A real interrupted update journals the token, and it is the staged tree's own file (so it
+// survives the rename and a remount, unlike an inode).
+func TestCursorMarkerCarriesTheStagedTreeToken(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "v")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "x")
+	id, err := stampTree(dir)
+	if err != nil || id == "" {
+		t.Fatal(err)
+	}
+	moved := dir + "-moved"
+	if err := os.Rename(dir, moved); err != nil {
+		t.Fatal(err)
+	}
+	m := cursorMarker{ID: id}
+	own := func(m cursorMarker, p string) string { o, _ := m.dirOwner(p); return o }
+	if own(m, moved) != "ours" || own(m, f.versions()) != "foreign" {
+		t.Fatal("the token does not identify the staged tree")
+	}
+	if own(cursorMarker{}, f.versions()) != "ours" {
+		t.Fatal("a marker without a token must keep the old behaviour")
+	}
+}
+
+// Only the supervisor holds the lock here (npm closes its copy at once and the caller drops its
+// own), and it is still refused to a second holder until npm and its straggler are gone.
+func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	ready, release := filepath.Join(f.home, "ready"), filepath.Join(f.home, "release")
+	pidf := filepath.Join(f.home, "straggler.pid")
+	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf(
+		"#!/bin/sh\nexec 3>&-\n(exec /bin/sleep 30) &\necho $! >%q\n: >%q\nwhile [ ! -e %q ]; do /bin/sleep 0.05; done\n", pidf, ready, release))
+	e, rel, ok := f.env.lockNPM()
+	if !ok {
+		t.Fatal("lock not taken")
+	}
+	done := make(chan error, 1)
+	go func() {
+		se, err := e.npmInstall([]string{"x"})
+		if err != nil {
+			err = fmt.Errorf("%v: %s", err, se)
+		}
+		done <- err
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for !exists(ready) {
+		if time.Now().After(deadline) {
+			t.Fatal("npm never started")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	rel() // the caller's own hold goes, as a killed caller's would
+	e.npmLockFile.Close()
+	if _, _, busy := probeLock(f.env.npmLockPath()); !busy {
+		t.Fatal("the lock was free while npm's group still ran")
+	}
+	os.WriteFile(release, nil, 0o644)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, busy := probeLock(f.env.npmLockPath()); busy {
+		t.Fatal("the lock stayed after the group was gone")
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(f.read(pidf)))
+	if pid > 0 {
+		if b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); len(b) > 0 && !strings.Contains(string(b), ") Z") {
+			t.Fatal("npm's straggler outlived the install")
+		}
+	}
+}
+
+// A missing npm and a failing npm are both reported from the supervisor as main reports them.
+func TestNPMSupervisorReportsStartErrorsAndExitCodes(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	e, rel, ok := f.env.lockNPM()
+	if !ok {
+		t.Fatal("lock not taken")
+	}
+	defer rel()
+	good := e.NPM
+	e.NPM = filepath.Join(f.home, "no-such-npm")
+	se, err := e.npmInstall([]string{"x"})
+	if err == nil || !strings.Contains(se, "no-such-npm") {
+		t.Fatalf("start error lost: %v %q", err, se)
+	}
+	e.NPM = good
+	f.write(t, filepath.Join(f.npmDir, "npm"), "#!/bin/sh\necho boom >&2\nexit 7\n")
+	se, err = e.npmInstall([]string{"x"})
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 7 || !strings.Contains(se, "boom") {
+		t.Fatalf("exit code or stderr lost: %v %q", err, se)
+	}
+}
+
+func probeLock(path string) (*os.File, bool, bool) {
+	fl, busy, _ := flockPath(path)
+	if fl != nil {
+		fl.Close()
+	}
+	return fl, false, busy
+}
+
+func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+
+// After a foreign tree is found, a regular file this update moved aside still goes back to its
+// empty place, and never over something that is there.
+func TestCursorRecoverForeignTreeStillRestoresAMovedAsideFile(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "#!/bin/sh\necho restored-tree\n") // no token
+	os.MkdirAll(filepath.Join(f.home, ".local", "bin"), 0o755)
+	keep := f.local("cursor-agent") + ".af-prev.9"
+	f.write(t, keep, "#!/bin/sh\necho realfile\n")
+	yes := true
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.9", Tree: true, HadTree: &yes, ID: "t",
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "file", Keep: keep}}}
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.read(f.local("cursor-agent")), "realfile") {
+		t.Fatal("the moved-aside launcher did not come back")
+	}
+}
+
+// A real update stamps the tree it publishes, and the stamp is what the marker is matched to.
+func TestSelfUpdateCursorStampsThePublishedTree(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", cursorInstaller)
+	f.env.selfUpdateCursor(context.Background())
+	b, err := os.ReadFile(filepath.Join(f.versions(), "2026.2.0-abc123", cursorIDFile))
+	if err != nil || len(b) != 32 {
+		t.Fatalf("no token in the published tree: %v %q", err, b)
+	}
+}
+
+// A link could not be put back (an unwritable ~/.local/bin): the tree is left as the candidate
+// with its token, so the retry still owns it and fixes the link, then restores the tree.
+func TestCursorRecoverRetriesLinksBeforeRestoringTheTree(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	old := dir + ".af-old.4242"
+	prev := filepath.Join(f.versions(), "1.0.0", "cursor-agent")
+	f.write(t, prev, "#!/bin/sh\necho 1.0.0\n")
+	f.write(t, filepath.Join(old, "cursor-agent"), "#!/bin/sh\necho 1.0.0-slot\n")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "#!/bin/sh\necho cand\n")
+	f.write(t, filepath.Join(dir, cursorIDFile), "tok")
+	os.MkdirAll(filepath.Dir(f.local("agent")), 0o755)
+	f.link(t, "agent", filepath.Join(dir, "cursor-agent"))
+	yes := true
+	m := cursorMarker{Dir: dir, Old: old, Tree: true, HadTree: &yes, ID: "tok", Links: []cursorLinkState{
+		{Path: f.local("agent"), Kind: "symlink", Target: []byte(prev)},
+		{Path: f.local("cursor-agent"), Kind: "none"}}}
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Dir(f.local("agent"))
+	os.Chmod(bin, 0o555)
+	defer os.Chmod(bin, 0o755)
+	if err := f.env.cursorRecover(); err == nil {
+		t.Skip("the directory stayed writable (running as root?)")
+	}
+	os.Chmod(bin, 0o755)
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if tg, _ := os.Readlink(f.local("agent")); tg != prev {
+		t.Fatalf("agent -> %q, want %q", tg, prev)
+	}
+	if !strings.Contains(f.read(filepath.Join(dir, "cursor-agent")), "1.0.0-slot") {
+		t.Fatal("the previous tree was not restored on the retry")
+	}
+}
+
+// A moved-aside directory (any kind of file, not only a regular one) goes back to an empty place
+// beside a foreign tree, and a place that is in use is left alone.
+func TestCursorRecoverForeignTreeRestoresAKeptDirectoryNotOverAnything(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "manual")
+	os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755)
+	keep := f.local("cursor-agent") + ".af-prev.3"
+	f.write(t, filepath.Join(keep, "inner"), "kept dir")
+	yes := true
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.3", Tree: true, HadTree: &yes, ID: "tok",
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "file", Keep: keep}}}
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if f.read(filepath.Join(f.local("cursor-agent"), "inner")) != "kept dir" {
+		t.Fatal("the directory did not come back")
+	}
+	// In use: the manual installer's launcher stays, the kept item stays too.
+	os.RemoveAll(f.local("cursor-agent"))
+	f.write(t, f.local("cursor-agent"), "mine")
+	f.write(t, filepath.Join(keep, "inner"), "kept dir")
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if f.read(f.local("cursor-agent")) != "mine" {
+		t.Fatal("a launcher in use was overwritten")
+	}
+}
+
+// An installer's read-only (0555) staged tree still gets its token, and keeps its mode.
+func TestStampTreeKeepsAReadOnlyRoot(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "tree")
+	os.Mkdir(p, 0o755)
+	os.Chmod(p, 0o555)
+	defer os.Chmod(p, 0o755)
+	if _, err := stampTree(p); err != nil {
+		t.Fatal(err)
+	}
+	if fi, _ := os.Stat(p); fi.Mode() != os.ModeDir|0o555 {
+		t.Fatalf("mode %v", fi.Mode())
+	}
+	// setgid survives too.
+	q := filepath.Join(t.TempDir(), "sg")
+	os.Mkdir(q, 0o755)
+	os.Chmod(q, 0o555|os.ModeSetgid)
+	defer os.Chmod(q, 0o755)
+	want, _ := os.Stat(q)
+	if _, err := stampTree(q); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := os.Stat(q); got.Mode() != want.Mode() {
+		t.Fatalf("mode %v, want %v", got.Mode(), want.Mode())
+	}
+}
+
+// The slot at Dir is a regular file (the update died before moving it): recovery settles and
+// leaves it, it does not wait on a token it cannot read.
+func TestCursorRecoverSlotIsARegularFile(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, dir, "file in the slot")
+	yes := true
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.5", Tree: true, HadTree: &yes, ID: "tok",
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "none"}}}
+	os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755)
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if f.read(dir) != "file in the slot" {
+		t.Fatal("the slot was changed")
+	}
+}
+
+// A filesystem that refuses RENAME_NOREPLACE (EINVAL on NFS/EFS): a kept regular file still goes
+// back through a hard link, a kept directory stays put without failing the recovery, and a place
+// in use is never overwritten.
+func TestCursorRecoverForeignTreeWithoutNoReplaceRename(t *testing.T) {
+	old := renameNoReplace
+	renameNoReplace = func(string, string) error { return syscall.EINVAL }
+	defer func() { renameNoReplace = old }()
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "manual")
+	os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755)
+	keep := f.local("cursor-agent") + ".af-prev.3"
+	yes := true
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.3", Tree: true, HadTree: &yes, ID: "tok",
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "file", Keep: keep}}}
+	run := func() {
+		t.Helper()
+		if err := f.env.cursorWriteMarker(m); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.env.cursorRecover(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.write(t, keep, "realfile")
+	run()
+	if f.read(f.local("cursor-agent")) != "realfile" {
+		t.Fatal("the file did not come back through the fallback")
+	}
+	os.Remove(f.local("cursor-agent"))
+	f.write(t, filepath.Join(keep, "inner"), "kept dir")
+	os.Remove(keep)
+	f.write(t, filepath.Join(keep, "inner"), "kept dir")
+	run()
+	if f.read(filepath.Join(keep, "inner")) != "kept dir" {
+		t.Fatal("the kept directory was not preserved")
+	}
+	f.write(t, f.local("cursor-agent"), "mine")
+	os.RemoveAll(keep)
+	f.write(t, keep, "realfile")
+	run()
+	if f.read(f.local("cursor-agent")) != "mine" {
+		t.Fatal("a place in use was overwritten")
 	}
 }

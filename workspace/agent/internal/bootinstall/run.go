@@ -11,6 +11,7 @@ import (
 // pass; --present limits it to CLIs with a ~/.local copy). Exit 1 is a failed install, 3 a skip
 // for lack of space (the entrypoint then holds back its other downloads), 2 a usage error.
 func Run(args []string) {
+	MaybeSupervise(append([]string{"boot-install"}, args...))
 	repin, present, discard := false, false, false
 	var names []string
 	for _, a := range args {
