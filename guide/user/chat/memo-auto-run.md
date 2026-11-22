@@ -41,9 +41,9 @@ Auto-run is not a [schedule](../fleet/schedules.md). A schedule runs a fixed pro
 | Field | What it holds |
 |---|---|
 | Instruction | What a session that receives this category's memos follows, every time. It is required to turn auto-run on, and holds up to 16 KB. The memos follow it as data |
-| Agent | The agent that runs the memos. It starts as claude. As with schedules, you choose among the agents that can run unattended ([Agents reference](../../ref/agents.md)) |
-| Model | Empty means the agent's default |
-| Effort | Empty means the default. low, medium, high, xhigh and max are offered |
+| Agent | The agent that runs the memos, unless a memo names its own ([below](#run-a-memo-with-its-own-agent-model-or-effort)). It starts as claude. As with schedules, you choose among the agents that can run unattended ([Agents reference](../../ref/agents.md)) |
+| Model | Empty means the agent's default. A memo may name its own |
+| Effort | Empty means the default. A memo may name its own. low, medium, high, xhigh and max are offered |
 | Spend limit (USD) | A limit for each run, from 0 to 10,000. 0 means no limit. It starts at 0 |
 | Run each time in a new worktree | When on, each run works in a new worktree of the category's repository. On to begin with. It has no effect on a category without a repository |
 | Accept notes from sessions I started without approval | When on, a memo added by a session you started yourself is "Waiting to run" at once, with no approval. Off to begin with. See [Skip the approval for your own sessions](#skip-the-approval-for-your-own-sessions) before turning it on |
@@ -114,6 +114,19 @@ On an issue, a ticket or a pull request, you can add a link to it, with a note o
 - The memo reaches the session as it does today, with the item's key and URL beside it. The item's text is not sent: the session reads it with `gh`, `jira` or `bkt`, as a session started from the item does
 - When one run holds exactly one link, the session is linked to that item, as when you start from it. With none, or two or more, no link is made
 - In that case, when the category runs each time in a new worktree, the branch is named by the repository's [branch naming rules](../sessions/from-issues.md#branch-names), as for a session started from the item (by default `feature/<number>`). When a branch of that name already exists, the session works on it instead of creating a new one. When another working copy holds that branch, or the rules give no name, the session gets a temporary branch
+
+### Run a memo with its own agent, model or effort
+
+The agent, model and effort in the category's auto-run settings are the **default**. A memo may name its own, so work that is easy and work that is hard need not share one setting.
+
+- **Set it.** In the memo's edit view, the "**Runs with**" row has an agent, a model and an effort. "Category setting" and an empty field mean "use the category's". A session can set the same three with `add_memo` and `update_memo` (an empty value clears one); the Console API takes `agentKind`, `model`, `effort` and `route`. The Console has no route field, but the badge shows one if it is set
+- **What runs.** The effective recipe of a memo is its own value for each field, and the category's for every field it leaves empty. If a memo names another agent than the category's, it does not take the category's model, effort or route, because they belong to the other agent. The spend limit is always the category's
+- **Checked as the settings are.** The agent must exist and be allowed to run unattended, and the model, effort and route must suit it. A value that fails is refused with an error and never dropped. A memo outside every auto-run category cannot carry one, and moving a memo out of the auto-run categories drops it
+- **Memos with different recipes do not share a session.** A run takes the waiting memos oldest first, and the first one fixes the recipe of that run. A memo whose effective recipe differs waits for its own run. Two memos that spell out the same effective recipe go together. A tidy never merges memos whose recipes differ, and a memo it splits keeps its source's recipe
+- **A continuation inherits it.** A follow-up (`continuation: true`) takes the recipe of the memo it continues, unless it names a recipe of its own, which replaces the inherited one whole
+- **A session may set it, and you approve it.** The recipe is part of what you approve: a memo a session adds shows it on the approval card, and a session that changes it on a memo you approved sends the memo back to "Waits for approval". When you change it yourself, your approval is recorded again
+- **You can see it.** A memo with its own recipe shows a badge such as `opus · high` on its row, on the approval card and in the run history. A memo without one shows nothing new. The run history shows the recipe of the memos still bound to that run
+- **When it cannot start.** If the memo's recipe can no longer create a run (for example after the category's agent changed, so the route no longer fits), the memo goes back to "Waits for approval" with the reason "the agent, model or effort set on this memo cannot start a run". Change it, or clear it to use the category setting, and approve again
 
 ### Make a memo wait for another
 
