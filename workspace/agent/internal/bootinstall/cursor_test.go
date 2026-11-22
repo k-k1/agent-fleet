@@ -1181,3 +1181,15 @@ func TestCursorUnreadableMarkerPathFailsWithoutTheLock(t *testing.T) {
 		t.Fatalf("rc=%d out=%s", rc, f.out)
 	}
 }
+
+func TestCursorUnopenableLockNeedingDownloadWithLowSpaceIsNoSpace(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "") // no pinned tree: a download would be needed
+	f.env.FreeMiB = func(string) (int64, bool) { return 350, true }
+	os.MkdirAll(f.env.cursorLockPath(), 0o755)
+	if rc := Cursor(t.Context(), f.env); rc != ExitNoSpace {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if !strings.Contains(f.statusText(), "cursor\tfailed\tno_space\n") || f.hits.Load() != 0 {
+		t.Fatalf("status=%q hits=%d", f.statusText(), f.hits.Load())
+	}
+}

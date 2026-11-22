@@ -214,8 +214,7 @@ func (e Env) npmNoteSkips(wanted []string) {
 // is on disk now shows it settled (present and, with Repin, at the pin, or parked for a restore).
 // An unreadable or empty `npm ls` is not evidence of that: the earlier answer stands, as it
 // would without a re-read.
-func (e Env) npmRecheck(wanted []string) (specs, kept []string) {
-	var cur map[string]string
+func (e Env) npmRecheck(wanted []string, cur map[string]string) (specs, kept []string) {
 	for _, name := range wanted {
 		var c struct{ Name, Pkg string }
 		for _, k := range npmCLIs {
@@ -247,8 +246,7 @@ func (e Env) npmRecheck(wanted []string) (specs, kept []string) {
 // npmPlan is the pinned installs this start owes: the specs to hand npm and the CLI names they
 // stand for. It reads the marker, the presence of each CLI and (with Repin) the installed
 // versions, so it is asked again once the lock is held.
-func (e Env) npmPlan() (specs, wanted []string) {
-	var cur map[string]string
+func (e Env) npmPlan(cur map[string]string) (specs, wanted []string) {
 	for _, c := range npmCLIs {
 		pin := e.Pins[c.Name]
 		if pin == "" {
@@ -281,7 +279,7 @@ func (e Env) npmPlan() (specs, wanted []string) {
 // NPM installs the pinned npm CLIs into ~/.local that are missing or (with Repin) drifted from
 // the pin, in one npm run, then verifies each. It returns the process exit code.
 func NPM(e Env) int {
-	specs, wanted := e.npmPlan()
+	specs, wanted := e.npmPlan(nil)
 	if len(specs) == 0 {
 		e.npmNoteSkips(nil)
 		fmt.Fprintln(e.Stdout, "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)")
@@ -304,8 +302,16 @@ func NPM(e Env) int {
 	// installed, repinned or parked these CLIs. Decide again from what is on disk now.
 	// Decide every pin again (a self-update that held the lock may have moved a CLI that was fine
 	// before), and keep what the earlier plan owed unless the disk now shows it settled.
-	_, fresh := e.npmPlan()
-	_, kept := e.npmRecheck(wanted)
+	// One `npm ls` for both: a second one that failed must not undo what the first showed settled.
+	var cur map[string]string
+	if e.Repin {
+		cur = e.npmVersions()
+	}
+	if cur == nil {
+		cur = map[string]string{}
+	}
+	_, fresh := e.npmPlan(cur)
+	_, kept := e.npmRecheck(wanted, cur)
 	wanted = wanted[:0:0]
 	specs = nil
 	for _, c := range npmCLIs {

@@ -643,3 +643,22 @@ func TestNPMVerifyReadOnlyKeepsAnEarlierNoSpaceReason(t *testing.T) {
 		t.Fatalf("status=%q", f.statusText())
 	}
 }
+
+func TestNPMRecheckAsksNpmLsOnceUnderTheLock(t *testing.T) {
+	f := newNPM(t, map[string]string{"codex": "3.0.0"})
+	f.put("codex", "#!/bin/sh\necho 1\n")
+	// ls answers while $D/lsleft is absent or positive; each answer under the lock spends one.
+	f.stub("npm", strings.Replace(npmStub, "ls) [ -f \"$D/ls.json\" ] && cat \"$D/ls.json\"; exit 0 ;;",
+		`ls) if [ -f "$D/lsleft" ]; then n=$(cat "$D/lsleft"); [ "$n" -gt 0 ] || exit 0; echo $((n-1)) >"$D/lsleft"; fi; cat "$D/ls.json"; exit 0 ;;`, 1))
+	os.Chmod(filepath.Join(f.dir, "npm"), 0o755)
+	f.stub("ls.json", `{"dependencies":{"@openai/codex":{"version":"2.0.0"}}}`)
+	f.env.Repin = true
+	f.env.afterNPMLock = func() {
+		// A concurrent self-update installed the pin; only the first ls under the lock will say so.
+		f.stub("ls.json", `{"dependencies":{"@openai/codex":{"version":"3.0.0"}}}`)
+		f.stub("lsleft", "1\n")
+	}
+	if rc := NPM(f.env); rc != ExitOK || f.npmLog() != "" {
+		t.Fatalf("rc=%d reinstall after the pin was seen: %q out=%s", rc, f.npmLog(), f.out)
+	}
+}
