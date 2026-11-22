@@ -126,6 +126,23 @@ describe("notificationclick hand-off", () => {
   }, 5000);
 });
 
+describe("focus failure", () => {
+  it("falls back to opening the session when the answering page cannot be focused", async () => {
+    const win = {
+      url: "https://console.test/",
+      postMessage: (_m: unknown, ports: MessagePort[]) => ports[0].postMessage("ok"),
+      focus: async () => {
+        throw new Error("gone");
+      },
+    };
+    const sw = loadSw("en", [win]);
+    let p: Promise<unknown> = Promise.resolve();
+    sw.listeners.notificationclick({ notification: { close() {}, data: { session: "abc" } }, waitUntil: (x: Promise<unknown>) => (p = x) });
+    await p;
+    expect(sw.opened).toEqual(["https://console.test/?session=abc"]);
+  });
+});
+
 describe("payload shapes", () => {
   it("keeps a capitalised / underscored session name the Agent allows", async () => {
     const sw = loadSw();

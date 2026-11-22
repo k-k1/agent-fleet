@@ -150,10 +150,12 @@ self.addEventListener("notificationclick", (event) => {
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       // Only a page running the Console answers the hand-off (a /login or preview page under the
       // same scope never does), so ask each and take the first that acknowledges.
-      for (const win of wins.filter((c) => c.url.startsWith(scope))) {
+      // At most three candidates, each waiting 1.5 s: a long search would let the tap's permission
+      // to focus or open a window lapse.
+      for (const win of wins.filter((c) => c.url.startsWith(scope)).slice(0, 3)) {
         if (await handOff(win, session)) {
-          await win.focus().catch(() => {});
-          return;
+          // A page that answered but cannot be focused (closing, navigating away) is not a hit.
+          if (await win.focus().then(() => true, () => false)) return;
         }
       }
       await self.clients.openWindow(session ? `${scope}?session=${encodeURIComponent(session)}` : scope);

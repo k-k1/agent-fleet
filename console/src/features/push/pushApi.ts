@@ -21,7 +21,13 @@ export type PushKind = (typeof PUSH_KINDS)[number];
  */
 export async function probePushKey(): Promise<string | null> {
   const r = await raw("api/push/config");
-  if (r.status === 503 || (r.status >= 400 && r.status < 500)) return null;
+  if (r.status >= 400 && r.status < 500) return null;
+  // Only the CP's own "not configured" answer is definite; a gateway's bare 503 during a restart is not.
+  if (r.status === 503) {
+    const code = await r.json().then((j) => j?.error?.code, () => "");
+    if (code === "push_unavailable") return null;
+    throw new Error("503");
+  }
   if (!r.ok) throw new Error(String(r.status));
   const j = await r.json();
   return typeof j?.publicKey === "string" && j.publicKey ? j.publicKey : null;
@@ -80,6 +86,8 @@ export async function postViewing(device: string, session: string, tenant?: stri
     method: "POST",
     headers: { "Content-Type": "application/json", ...(tenant ? { "X-AF-Tenant": tenant } : {}) },
     body: JSON.stringify({ device, session }),
+    // A POST that never answers must not hold the reports queued behind it.
+    signal: AbortSignal.timeout(10_000),
   });
 }
 

@@ -13,7 +13,9 @@ vi.mock("./pushApi.ts", () => ({
     calls.push({ device, session, tenant } as any);
   },
 }));
-vi.mock("../../core/api/client.ts", () => ({ getTenant: () => "t1" }));
+let tenantNow = "t1";
+vi.mock("../../core/api/client.ts", () => ({ getTenant: () => tenantNow }));
+vi.mock("../../core/store/tenant.ts", () => ({ useTenantStore: (sel: (s: any) => unknown) => sel({ tenant: tenantNow }) }));
 let session = "sess-one";
 vi.mock("../../layout/store.ts", () => ({ useLayoutStore: (sel: (s: any) => unknown) => sel({ layout: {} }) }));
 vi.mock("../../layout/ops.ts", () => ({ activePane: () => (session ? { session } : null) }));
@@ -40,6 +42,7 @@ describe("usePushViewing", () => {
     calls.length = 0;
     key = "k";
     probeFails = 0;
+    tenantNow = "t1";
     postGate = null;
     session = "sess-one";
     vi.spyOn(document, "hasFocus").mockReturnValue(true);
@@ -74,6 +77,16 @@ describe("usePushViewing", () => {
     await flush();
     await flush();
     expect(calls.map((c) => c.session)).toEqual(["sess-one", ""]);
+  });
+  it("on a tenant switch clears the old tenant and reports to the new one, even for a same-named session", async () => {
+    const host = document.createElement("div");
+    root = createRoot(host);
+    act(() => root!.render(<Host />));
+    await flush();
+    tenantNow = "t2";
+    act(() => root!.render(<Host key="again" />));
+    await flush();
+    expect(calls.map((c) => `${c.tenant}:${c.session}`)).toEqual(["t1:sess-one", "t1:", "t2:sess-one"]);
   });
   it("pins every report to the tenant it was made for", async () => {
     render(<Host />);

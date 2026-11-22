@@ -59,6 +59,24 @@ describe("web push device lifecycle", () => {
     expect(unsubscribed).toBe(1);
     expect(subscribed).toBe(1);
   });
+  it("a failed release of the old row stops the key swap and keeps the old subscription", async () => {
+    sub.options.applicationServerKey = keyBytes("AgAB");
+    const api = await import("./pushApi.ts");
+    vi.spyOn(api, "releasePushEndpoint").mockRejectedValueOnce(new Error("500"));
+    await expect(enablePush("AQAB")).rejects.toThrow("500");
+    expect(unsubscribed).toBe(0);
+    expect(subscribed).toBe(0);
+  });
+  it("sign-out retries a subscription read that failed once, and still releases", async () => {
+    let n = 0;
+    const reg = {
+      pushManager: { getSubscription: () => (++n === 1 ? Promise.reject(new Error("flaky")) : Promise.resolve(sub)) },
+    };
+    Object.defineProperty(navigator, "serviceWorker", { value: { getRegistration: () => Promise.resolve(reg) }, configurable: true });
+    await releasePushForSignOut();
+    expect(released).toEqual([sub.toJSON()]);
+    expect(unsubscribed).toBe(1);
+  });
   it("a current subscription is reused, not recreated", async () => {
     expect(await enablePush("AQAB")).toBe("ok");
     expect(subscribed).toBe(0);

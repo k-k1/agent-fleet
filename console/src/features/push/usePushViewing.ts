@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { getTenant } from "../../core/api/client.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
 import { postViewing, probePushKey } from "./pushApi.ts";
@@ -48,6 +49,8 @@ const onScreen = () => document.visibilityState === "visible" && document.hasFoc
 export function usePushViewing(enabled = true): void {
   const layout = useLayoutStore((s) => s.layout);
   const session = activePane(layout)?.session ?? "";
+  // A tenant switch re-runs the effect: the old tenant gets its clearing report, the new one its own.
+  const activeTenant = useTenantStore((s) => s.tenant);
   useEffect(() => {
     if (!enabled) return;
     const tenant = getTenant();
@@ -92,5 +95,5 @@ export function usePushViewing(enabled = true): void {
       }
       if (sent) post("", tenant);
     };
-  }, [enabled, session]);
+  }, [enabled, session, activeTenant]);
 }

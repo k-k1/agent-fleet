@@ -30,6 +30,13 @@ export async function currentSubscription(): Promise<PushSubscription | null> {
   }
 }
 
+/** Like currentSubscription, but a failed read rejects instead of reading as "none". */
+async function readSubscription(): Promise<PushSubscription | null> {
+  if (pushSupport() !== "ok") return null;
+  const reg = await navigator.serviceWorker.getRegistration();
+  return (await reg?.pushManager.getSubscription()) ?? null;
+}
+
 export const thisDeviceId = (): string => {
   try {
     return localStorage.getItem(ID_KEY) || "";
@@ -98,7 +105,8 @@ export async function enablePush(key: string | null): Promise<EnableResult> {
   if (sub && !subscriptionMatchesKey(sub, key)) {
     // Made with a key the CP no longer sends with (rotation): its pushes would be refused, so end
     // it on both sides first (the old row also frees a slot at the device cap) and start over.
-    await releasePushEndpoint(sub.toJSON()).catch(() => {});
+    // The CP row goes first and its failure stops the swap: the old keys are needed to retry.
+    await releasePushEndpoint(sub.toJSON());
     await sub.unsubscribe().catch(() => {});
     forgetDeviceId();
     sub = null;
@@ -134,7 +142,8 @@ export async function disablePush(): Promise<void> {
 export async function releasePushForSignOut(timeoutMs = 2500): Promise<void> {
   const ctl = new AbortController();
   const work = (async () => {
-    const sub = await currentSubscription();
+    // One retry for a read that failed: reading nothing must not be taken for "no subscription".
+    const sub = (await readSubscription().catch(() => readSubscription().catch(() => undefined))) ?? null;
     if (!sub) return;
     try {
       await releasePushEndpoint(sub.toJSON(), ctl.signal);

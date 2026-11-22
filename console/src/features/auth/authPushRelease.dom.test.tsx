@@ -5,10 +5,11 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const order: string[] = [];
+let gate: Promise<void> = Promise.resolve();
 vi.mock("../push/webPush.ts", () => ({
   releasePushForSignOut: () => {
     order.push("release");
-    return Promise.resolve();
+    return gate;
   },
 }));
 vi.mock("../editor/dirtyRegistry.ts", () => ({ confirmDirtyNavigation: () => Promise.resolve(true) }));
@@ -40,5 +41,21 @@ describe("re-login after the session expired", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
     expect(order).toEqual(["release", "relogin"]);
+  });
+  it("does not head to the login page until the release has finished", async () => {
+    let open!: () => void;
+    gate = new Promise<void>((r) => (open = r));
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    act(() => root!.render(<AuthExpiredModal />));
+    const btn = [...document.querySelectorAll("button")].find((b) => b.className.includes("primary"))!;
+    await act(async () => {
+      btn.click();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(order).toEqual(["release"]);
+    open();
+    await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+    expect(order).toEqual(["release", "relogin"]);
+    gate = Promise.resolve();
   });
 });
