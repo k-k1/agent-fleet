@@ -360,7 +360,7 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
   const sessions = useSessionsStore((s) => s.sessions);
   const repos = useReposStore((s) => s.repos);
   const closeSessionPanes = useLayoutStore((s) => s.closeSessionPanes);
-  const [del, setDel] = useState<ReturnType<typeof planClearFinished>["node"]>(null);
+  const [del, setDel] = useState<RepoTreeNode[] | null>(null);
   const [busy, setBusy] = useState(false);
   const runsRef = useRef(runs);
   runsRef.current = runs;
@@ -369,7 +369,7 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
   const latest = () => planClearFinished(runsRef.current, useSessionsStore.getState().sessions, useReposStore.getState().repos);
   const nothing = useMemo(() => {
     const p = planClearFinished(runs, sessions, repos);
-    return p.archive.length === 0 && !p.node;
+    return p.archive.length === 0 && p.nodes.length === 0;
   }, [runs, sessions, repos]);
   const click = async () => {
     if (busy) return;
@@ -412,14 +412,14 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
       if (archived > 0 && failed === 0) toast(tr("autorun.cleared", { count: archived }), { kind: "success" });
     }
     // Planned again from what the list says now, after the archive settled.
-    const node = latest().node;
-    if (node) setDel(node);
+    const nodes = latest().nodes;
+    if (nodes.length > 0) setDel(nodes);
   };
   return (
     <>
       <IconButton icon={busy ? "loading" : "clear-all"} spin={busy} className="autorun-clear" label={tr("autorun.clear")} disabled={nothing || busy} onClick={() => void click()} />
       {del && (
-        <DeleteCopyModal node={del} onClose={() => setDel(null)} onDeleted={(count) => toast(tr("rp.del.done", { count }), { kind: "success" })} />
+        <DeleteCopyModal nodes={del} onClose={() => setDel(null)} onDeleted={(count) => toast(tr("rp.del.done", { count }), { kind: "success" })} />
       )}
     </>
   );

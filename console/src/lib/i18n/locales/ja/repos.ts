@@ -334,6 +334,8 @@ export const repos = {
   // その下に並べている作業コピーを 1 回で片付ける。
   "rp.del.intro_tree":
     "\"{name}\" と、その下にある作業コピー {count} 件です。中の停止済みセッションはアーカイブしてから削除します（履歴・リモートはそのまま残ります）。",
+  "rp.del.intro_flat":
+    "互いに無関係な作業コピー {count} 件です。中の停止済みセッションはアーカイブしてから削除します（履歴・リモートはそのまま残ります）。",
   "rp.del.grade_safe": "安全",
   "rp.del.grade_review": "要確認",
   "rp.del.grade_blocked": "不可",

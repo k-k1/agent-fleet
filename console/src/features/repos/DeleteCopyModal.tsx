@@ -64,7 +64,10 @@ interface RowResult {
 
 interface DeleteCopyModalProps {
   /** The right-clicked copy and the subtree the rail nests under it. */
-  node: RepoTreeNode;
+  node?: RepoTreeNode;
+  /** Unrelated copies offered together (Clear finished runs): each is planned at depth 0, none is
+   *  the parent of another. Takes precedence over `node`. */
+  nodes?: RepoTreeNode[];
   onClose: () => void;
   /** Fired only when the run cleared EVERY selected row and the dialog closes itself —
    *  that is the one moment the outcome is not readable on screen, so it is the one that
@@ -72,13 +75,17 @@ interface DeleteCopyModalProps {
   onDeleted?: (count: number) => void;
 }
 
-export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalProps) {
+export function DeleteCopyModal({ node, nodes, onClose, onDeleted }: DeleteCopyModalProps) {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const closeSessionPanes = useLayoutStore((s) => s.closeSessionPanes);
   // Frozen at open: the sessions list is polled every 4s, and rows appearing or being
   // re-graded under the pointer is how a tick lands on a row the user never read.
-  const plans = useMemo(() => planTree(node, sessions), [node]); // eslint-disable-line react-hooks/exhaustive-deps
+  const plans = useMemo(() => {
+    const seen = new Set<string>();
+    return (nodes ?? (node ? [node] : [])).flatMap((n) => planTree(n, sessions, 0, seen));
+  }, [node, nodes]); // eslint-disable-line react-hooks/exhaustive-deps
+  const flat = !!nodes && nodes.length > 1;
   const [selected, setSelected] = useState<Set<string>>(() => defaultSelection(plans));
   const [withStop, setWithStop] = useState(false);
   const [withBranches, setWithBranches] = useState(false);
@@ -230,7 +237,9 @@ export function DeleteCopyModal({ node, onClose, onDeleted }: DeleteCopyModalPro
     <Modal title={tr("rp.delete_workcopy_title")} onClose={onClose} lockClose={busy} className="wcdel-modal">
       <div className="ui-modal-body">
         <p className="wcdel-intro">
-          {plans.length > 1
+          {flat
+            ? tr("rp.del.intro_flat", { count: plans.length })
+            : plans.length > 1
             ? tr("rp.del.intro_tree", { name: plans[0].repo.name, count: plans.length - 1 })
             : tr("rp.delete_workcopy_body", { name: plans[0].repo.name })}
         </p>
