@@ -454,6 +454,12 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 		return
 	}
 	applyScheduleDefaults(&sch)
+	// A re-sent identical timing must not move an approved next fire (#4631): only a token-face
+	// write under the hold is judged, so the Console and the default keep recomputing as before.
+	if specChanged && a.holdTokenWrites && viaScheduleToken(r) &&
+		before.SpecKind == sch.SpecKind && before.Spec == sch.Spec && before.TZ == sch.TZ {
+		specChanged = false
+	}
 	// Re-pin (P6): an edited reuse_target / session_mode must actually take effect.
 	// The adopted-session ledger otherwise keeps pointing at the old session for as
 	// long as it lives, and fires never move to the new target.
@@ -495,7 +501,7 @@ func (a scheduleAPI) update(w http.ResponseWriter, r *http.Request, mv store.Mem
 		}
 		sch.NextRun = next
 	}
-	if a.holdTokenWrites && viaScheduleToken(r) && (p.Gate != nil || scheduleRunShapeChanged(before, sch)) {
+	if a.holdTokenWrites && viaScheduleToken(r) && (before.GateKind != sch.GateKind || before.GateSpec != sch.GateSpec || scheduleRunShapeChanged(before, sch)) {
 		sch.ApprovalPending = true
 	}
 	sch.UpdatedAt = store.NowTS()

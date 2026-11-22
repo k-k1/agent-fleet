@@ -139,3 +139,20 @@ func TestScheduleHoldClearsPendingRunNow(t *testing.T) {
 		t.Fatalf("pending=%v manual=%v", sch.ApprovalPending, sch.ManualFirePending)
 	}
 }
+
+func TestScheduleTokenSameTimingPatchKeepsNextRunAndApproval(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	api.holdTokenWrites = true
+	var d scheduleDTO
+	_ = json.Unmarshal(doTokenJSON(api.create, mv, "POST", approvalBody, "").Body.Bytes(), &d)
+	doJSON(api.approve, mv, "POST", "", d.ID)
+	before, _, _ := api.store.GetSchedule(ctx, d.ID)
+	rr := doTokenJSON(api.update, mv, "PATCH", `{"spec_kind":"interval","spec":"3600"}`, d.ID)
+	if rr.Code != 200 {
+		t.Fatalf("%d %s", rr.Code, rr.Body.String())
+	}
+	after, _, _ := api.store.GetSchedule(ctx, d.ID)
+	if after.ApprovalPending || after.NextRun != before.NextRun {
+		t.Fatalf("pending=%v next %s -> %s", after.ApprovalPending, before.NextRun, after.NextRun)
+	}
+}
