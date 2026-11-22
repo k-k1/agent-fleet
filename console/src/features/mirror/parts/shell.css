@@ -79,12 +79,6 @@ and "load older history" states
 :where(.mirrorview, .shared-view) button.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 85%, #fff);
 }
-/* The chat head runs the session name a half-pixel larger than the terminal head
-   does (shared look with the sessions rail). The rest of the chip is shared —
-   panes/PaneSessionChip.tsx, .pane-session-name in terminal.css. */
-:where(.mirrorview) .pane-session-name {
-  font-size: 12.5px;
-}
 /* ---- Markdown mirror (case-A: read-mostly view of a claude session) ---- */
 /* Right-align the terminal/mirror switch in the view-head, left of the pane
    control cluster (the head already reserves 84px on the right for it). */
@@ -159,4 +153,16 @@ and "load older history" states
   font-size: 12.5px;
   padding: 4px 14px;
   border-radius: 999px;
+}
+
+/* The shared-session surface. Its background falls back in the same order as the mirror
+   (.mirrorview): the display setting for the shared-session background (「共有セッションの背景」,
+   received inline as --chat-bg), then the file viewer surface, then the theme default. */
+.shared-view {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--chat-bg, var(--viewer-bg, var(--bg)));
+  color: var(--fg);
 }

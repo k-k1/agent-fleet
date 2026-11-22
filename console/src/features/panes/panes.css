@@ -568,3 +568,10 @@ body.row-resizing {
 .popout-dot.question { background: var(--warn); }
 .popout-dot.bg { background: var(--warn); }
 .popout-dot.off { background: var(--muted2); }
+
+/* The chat head runs the session name a half-pixel larger than the terminal head
+   does (shared look with the sessions rail). The rest of the chip is shared —
+   panes/PaneSessionChip.tsx, .pane-session-name in terminal.css. */
+:where(.mirrorview) .pane-session-name {
+  font-size: 12.5px;
+}

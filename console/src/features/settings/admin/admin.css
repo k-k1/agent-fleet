@@ -1711,9 +1711,6 @@ a.engines-model-source:hover {
 .engine-complete-files select { grid-column: 1 / -1; width: 100%; min-width: 0; color: var(--fg); }
 .engine-complete-key { min-width: 0; overflow-wrap: anywhere; }
 
-/* The bucket. Orphans are tinted rather than badged alone: the whole reason this list exists is
-   that an object nobody declares was invisible while it went on costing money. */
-.engine-ledger { margin-top: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 .engine-ledger-head { display: flex; align-items: baseline; gap: 8px; }
 .engine-ledger-head span { font-size: 11px; }
 .engine-ledger-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px; }

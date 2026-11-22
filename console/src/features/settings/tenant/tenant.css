@@ -1422,3 +1422,103 @@
   color: var(--muted, #8a94a6);
   padding: 4px 0;
 }
+
+/* Cloud cost (docs/log/67 + ADR 0048).
+   Deliberately reuses the uptime surface (.usage-rows / .usage-toolbar, settings.css):
+   identical row shapes read as "the same kind of table", so the only difference that
+   registers is the unit. Add only cost-specific elements here. */
+
+.cloud-cost .cc-lede {
+  margin: 0 0 12px;
+}
+
+/* Headline amount. The label must sit below the amount: that this is directly
+   attributable cost rather than "your cost" goes unread unless it falls in the same
+   glance as the number. */
+.cloud-cost .cc-headline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+}
+.cloud-cost .cc-total {
+  font-size: 1.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+.cloud-cost .cc-total-lab {
+  font-size: 0.82rem;
+}
+
+/* Caveats. Directly below the number, not as a footnote. */
+.cloud-cost .cc-notes {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 14px;
+}
+.cloud-cost .cc-notes p {
+  margin: 0;
+  font-size: 0.82rem;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Daily bars. Not enough of a chart to warrant SVG, so plain flex is enough. */
+.cloud-cost .cc-days {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 96px;
+  margin: 4px 0 18px;
+  padding-bottom: 16px;
+  position: relative;
+}
+.cloud-cost .cc-day {
+  flex: 1 1 0;
+  min-width: 6px;
+  height: 100%;
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+}
+.cloud-cost .cc-day-fill {
+  width: 100%;
+  min-height: 2px;
+  background: var(--accent, #4c8bf5);
+  border-radius: 2px 2px 0 0;
+}
+/* An unsettled day can still move. The weaker fill says "do not read this with the
+   same weight as a settled day". */
+.cloud-cost .cc-day.est .cc-day-fill {
+  opacity: 0.55;
+  background-image: repeating-linear-gradient(
+    45deg,
+    transparent,
+    transparent 3px,
+    rgba(255, 255, 255, 0.35) 3px,
+    rgba(255, 255, 255, 0.35) 6px
+  );
+}
+.cloud-cost .cc-day-lab {
+  position: absolute;
+  bottom: -16px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+/* Date labels overlap as the day count grows. The numbers are in the tooltip, so drop
+   the labels when the pane is narrow. */
+@media (max-width: 720px) {
+  .cloud-cost .cc-day-lab {
+    display: none;
+  }
+}
+
+.cloud-cost .cc-sub {
+  margin: 18px 0 8px;
+  font-size: 0.9rem;
+}

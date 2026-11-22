@@ -308,18 +308,6 @@ button.ws-usage-btn:hover {
   background: color-mix(in srgb, var(--fg) 12%, transparent);
   overflow: hidden;
 }
-.wu-bar-fill {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: var(--accent);
-}
-.wu-bar-fill.warn {
-  background: var(--warn);
-}
-.wu-bar-fill.crit {
-  background: var(--err);
-}
 .wu-reset {
   font-size: 11px;
 }
