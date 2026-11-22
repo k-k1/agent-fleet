@@ -413,7 +413,7 @@ func offerIDs(list []engineClass) string {
 
 func offerTrailResults(e *engineRuntimeState) string {
 	parts := make([]string, 0, 4)
-	for _, a := range e.offers.attempts() {
+	for _, a := range e.offers.Attempts() {
 		parts = append(parts, a.ID+"="+a.Result)
 	}
 	return strings.Join(parts, ",")
@@ -935,7 +935,7 @@ func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
 		if got := offerTrailResults(e); got != "spotA=quota,l4=active" {
 			t.Fatalf("trail = %q, want the second Spot row skipped entirely", got)
 		}
-		cur, _ := e.offers.current()
+		cur, _ := e.offers.Current()
 		if cur.BuyOption() != engineBuyOnDemand {
 			t.Fatalf("moved to a %s offer after a quota error", cur.BuyOption())
 		}
@@ -1065,7 +1065,7 @@ func TestTheDesiredCountOnlyFollowsARegisteredBox(t *testing.T) {
 	if got := api.desiredWrites(); len(got) != 0 {
 		t.Fatalf("desired writes = %v while no box had registered; that is a task ECS would have to place itself", got)
 	}
-	if !e.offers.startInFlight() {
+	if !e.offers.StartInFlight() {
 		t.Fatal("the run does not know a box is on its way; a second start path would buy another")
 	}
 
@@ -1160,7 +1160,7 @@ func TestABoxThatNeverRegistersIsEndedAndTheNextOfferTried(t *testing.T) {
 	api := &offerECS{}
 	e := newOfferTestEngine(t, api, fleet, twoOffers, st)
 	clk := time.Now()
-	e.offers.now = func() time.Time { return clk }
+	e.offers.SetClock(func() time.Time { return clk })
 
 	tickIntoAStart(t, e, st)
 	if len(fleet.creates) != 1 || len(fleet.terminated) != 0 {
@@ -1218,7 +1218,7 @@ func TestTheBoxIsEndedOnceTheServiceIsStoppedAndEmpty(t *testing.T) {
 	api.boxes["i-77"] = offerBox{role: "engine-image"}
 	api.mu.Unlock()
 	e.ecs.invalidateBox()
-	e.offers.dropBox() // the start is over; this is what the desired-count write leaves behind
+	e.offers.DropBox() // the start is over; this is what the desired-count write leaves behind
 
 	e.sweepBoxes(t.Context(), engineServiceView{state: "stopped"})
 
@@ -1428,13 +1428,13 @@ func TestTheOfferBudgetIsCarriedLive(t *testing.T) {
 	ssmc := &fakePendingSSM{value: row(900)}
 	r := newEngineTableReloader(ssmc, "/af-ws/engines", reg, "")
 
-	if got := e.offers.budget(); got != engineOfferBudgetDefault {
+	if got := e.offers.Budget(); got != engineOfferBudgetDefault {
 		t.Fatalf("the fixture starts at %s, want the default", got)
 	}
 	if !r.tick(t.Context()) {
 		t.Fatal("a table with a new offer budget changed nothing")
 	}
-	if got := e.offers.budget(); got != 900*time.Second {
+	if got := e.offers.Budget(); got != 900*time.Second {
 		t.Fatalf("budget = %s after the reload, want 900s", got)
 	}
 	// Positive control for the poll: the same reloader on an unchanged value reports no change,
@@ -1470,7 +1470,7 @@ func TestASuccessfulStartEndsTheWalkSoTheBoxCanLeave(t *testing.T) {
 		t.Fatalf("desired writes = %v, want the start to have finished", got)
 	}
 	// 🔴 The claim: the walk is over the moment the count is written.
-	if e.offers.startInFlight() {
+	if e.offers.StartInFlight() {
 		t.Fatal("the run still says a start is in flight after the desired count was written")
 	}
 
@@ -1493,7 +1493,7 @@ func TestASuccessfulStartEndsTheWalkSoTheBoxCanLeave(t *testing.T) {
 	api2 := &offerECS{boxes: map[string]offerBox{"i-78": {role: "engine-image"}}}
 	e2 := newOfferTestEngine(t, api2, fleet2, twoOffers, st)
 	tickIntoAStart(t, e2, st)
-	if !e2.offers.startInFlight() {
+	if !e2.offers.StartInFlight() {
 		t.Fatal("the control fixture has no box in flight")
 	}
 	e2.sweepBoxes(t.Context(), engineServiceView{state: "stopped"})
@@ -1624,7 +1624,7 @@ func TestModeOnWhileRunningKeepsTheTrail(t *testing.T) {
 	api.desired, api.running = 0, 0
 	api.mu.Unlock()
 	e.ecs.invalidate()
-	e.offers.dropBox()
+	e.offers.DropBox()
 	if ok, why := e.startGate(t.Context()); !ok {
 		t.Fatalf("the gate refused a start on a stopped engine (%s)", why)
 	}
@@ -1731,7 +1731,7 @@ func TestAnInterruptionRebuildsFromTheTopWithoutWritingTheDesiredCount(t *testin
 	api.register("i-2", "engine-image", "g6.xlarge")
 	e.ecs.invalidateBox()
 	e.ctrl.tick(t.Context())
-	if e.offers.startInFlight() {
+	if e.offers.StartInFlight() {
 		t.Error("the rebuild's walk never ended; the departure sweep would stand down for ever")
 	}
 	if got := api.desiredWrites(); len(got) != writes {
@@ -1859,7 +1859,7 @@ func TestARebuildAbandonedByAStopEndsItsBox(t *testing.T) {
 
 	interrupt(t, e, api, fleet, "i-1")
 	e.ctrl.tick(t.Context())
-	if len(fleet.creates) != 2 || !e.offers.rebuilding() {
+	if len(fleet.creates) != 2 || !e.offers.Rebuilding() {
 		t.Fatalf("the rebuild did not start: %d purchase(s)", len(fleet.creates))
 	}
 
@@ -1877,7 +1877,7 @@ func TestARebuildAbandonedByAStopEndsItsBox(t *testing.T) {
 	if len(fleet.terminated) != 1 || fleet.terminated[0] != "i-2" {
 		t.Fatalf("terminated = %v, want the replacement box ended", fleet.terminated)
 	}
-	if e.offers.startInFlight() {
+	if e.offers.StartInFlight() {
 		t.Error("the abandoned walk is still in flight; the departure sweep would stand down")
 	}
 }

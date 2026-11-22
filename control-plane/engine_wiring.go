@@ -4,13 +4,19 @@ package main
 // The declared half of the engine table moved there with exported names; main keeps its
 // historical unexported ones so the engine call sites and tests do not change.
 
-import "github.com/k-k1/agent-fleet/control-plane/internal/engine"
+import (
+	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/engine"
+)
 
 type (
-	engineDef       = engine.Def
-	engineTable     = engine.Table
-	engineIngestDef = engine.IngestDef
-	engineClass     = engine.Class
+	engineDef          = engine.Def
+	engineTable        = engine.Table
+	engineIngestDef    = engine.IngestDef
+	engineClass        = engine.Class
+	engineOfferAttempt = engine.OfferAttempt
+	engineOfferRun     = engine.OfferRun
 )
 
 const (
@@ -25,6 +31,14 @@ const (
 
 	engineOfferBudgetDefault = engine.OfferBudgetDefault
 
+	engineOfferActive        = engine.OfferActive
+	engineOfferUnfulfillable = engine.OfferUnfulfillable
+	engineOfferInsufficient  = engine.OfferInsufficient
+	engineOfferQuota         = engine.OfferQuota
+	engineOfferBudget        = engine.OfferBudget
+	engineOfferInterrupted   = engine.OfferInterrupted
+	engineOfferUnusable      = engine.OfferUnusable
+
 	engineBuyOnDemand = engine.BuyOnDemand
 	engineBuySpot     = engine.BuySpot
 
@@ -33,6 +47,14 @@ const (
 	engineVramWeightsKV = engine.VramWeightsKV
 	engineVramUnknown   = engine.VramUnknown
 )
+
+var (
+	errEngineBoxRegistering = engine.ErrBoxRegistering
+	errEngineOffersSpent    = engine.ErrOffersSpent
+	errEngineFleetRefused   = engine.ErrFleetRefused
+)
+
+func newEngineOfferRun(budget time.Duration) *engineOfferRun { return engine.NewOfferRun(budget) }
 
 func imageProviderServable(d engineDef) bool { return engine.ImageProviderServable(d) }
 

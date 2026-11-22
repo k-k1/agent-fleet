@@ -255,7 +255,7 @@ func (e *engineRuntimeState) startGate(ctx context.Context) (bool, string) {
 	if e == nil || len(e.classList()) == 0 {
 		return true, ""
 	}
-	if e.offers.startInFlight() {
+	if e.offers.StartInFlight() {
 		return true, ""
 	}
 	// Already up, or on its way. Read from the service rather than from what this process
@@ -274,7 +274,7 @@ func (e *engineRuntimeState) startGate(ctx context.Context) (bool, string) {
 		e.noteNoOffer(ctx)
 		return false, engineReasonNoOffer
 	}
-	e.offers.begin(cands)
+	e.offers.Begin(cands)
 	if b, on := e.ecs.box(ctx); on && b.instanceType != "" && !engineClassHasType(cands[0], b.instanceType) {
 		if e.swapWaitExpired() {
 			log.Printf("engines: %s: a %s box is still registered after %s; starting on the old class anyway",
