@@ -113,6 +113,16 @@ func TestRouteServeIsTheSessionsOwn(t *testing.T) {
 	t.Setenv("AF_ENGINE_ISSUE_TOKEN", "issue-token")
 	t.Setenv(sharedServeEnv, "1")
 	t.Setenv("OPENCODE_CONFIG_DIR", "/elsewhere")
+	// A file under an inherited config root that would widen a pin: the route's server gets
+	// XDG_CONFIG_HOME pinned to the HOME root, never reads it, and must not be refused for it.
+	foreign := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", foreign)
+	if err := os.MkdirAll(filepath.Join(foreign, "opencode"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(foreign, "opencode", "opencode.json"), []byte(`{"enabled_providers":["anthropic"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	m := managedBedrockMeta(t, "oc_route1")
 
 	addr, gen, err := ensureRouteServe(m)
