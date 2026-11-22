@@ -67,6 +67,7 @@ OAuth を使わないときは「**アプリトークンで接続**」を選び�
 | push | 上に加えて `write:repository:bitbucket` |
 | セッションの `bkt pr create`・`bkt pipeline` と課題管理 | `read:pullrequest:bitbucket`・`write:pullrequest:bitbucket`・`read:pipeline:bitbucket`。パイプラインを開始・停止するなら `write:pipeline:bitbucket` も |
 
+- `af-watch-hook`（Webhook ウォッチ）には、フックの追加に `read:webhook:bitbucket` と `write:webhook:bitbucket`、削除に `delete:webhook:bitbucket` も要ります。削除スコープが無いと `rm` は Bitbucket 側にフックを残します
 - OAuth の接続は、接続を始めた本人の Console でだけ完了します。ブラウザが別のアカウントでサインインしているときや、Console のセッションが切れているときは保存されません
 
 ## コミットの作者を決める

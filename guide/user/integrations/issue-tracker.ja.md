@@ -39,7 +39,7 @@ Jira を接続してクエリを保存すると、左ペインの「**課題管�
 | OAuth で接続 | 別のタブで Atlassian の画面が開きます。承認すると、カードが **接続済み** に変わります |
 | API トークンで接続 | サイトの URL（`https://….atlassian.net`）、Atlassian アカウントのメール、API トークンを入れて「**接続**」を押します |
 
-- API トークンは、Atlassian のアカウント設定で発行します
+- API トークンは、Atlassian のアカウント設定で「Create API token」から発行します。「Create API token with scopes」で作ったトークンは「Jira rejected the credentials」で拒否されます（Agent Fleet はサイトの URL に接続し、そこは classic トークンしか受け付けません）
 - 「OAuth で接続」が押せないときは、テナントに Jira の OAuth アプリが登録されていません。テナント管理者に頼むか、API トークンで接続してください
 - 1 回の承認で複数のサイトに入れるときは、カードの「**対象のサイト**」で、課題があるサイトを選びます
 - 接続をやめるときは、カードの「**切断**」を押します。保存された認証情報はワークスペースから削除されます

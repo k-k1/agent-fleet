@@ -319,6 +319,10 @@ func jiraMyself(c *secrets.JiraCreds) (jiraMe, error) {
 	switch {
 	case status == http.StatusOK:
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		if c.AuthKind != "oauth" {
+			// Scoped tokens only work through api.atlassian.com, which this path does not use.
+			return me, fmt.Errorf("Jira rejected the credentials. If this is a token made with \"Create API token with scopes\", create a classic one with \"Create API token\" instead")
+		}
 		return me, fmt.Errorf("Jira rejected the credentials")
 	case status == http.StatusNotFound:
 		// A 404 usually means the host exists but is not a Jira, or the URL is wrong.

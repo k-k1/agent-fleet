@@ -70,6 +70,8 @@ func TestJiraConnectVerifiesBeforeSaving(t *testing.T) {
 	// part is exercised directly here.
 	if _, err := jiraAccount(&secrets.JiraCreds{Site: bad.URL, Email: "a@example.com", Token: "t"}); err == nil {
 		t.Error("bad credentials were accepted")
+	} else if !strings.Contains(err.Error(), "classic") {
+		t.Errorf("token 401 does not point at a classic token: %v", err)
 	}
 	name, err := jiraAccount(&secrets.JiraCreds{Site: ok.URL, Email: "a@example.com", Token: "t"})
 	if err != nil || name != "山田 太郎" {
@@ -455,5 +457,27 @@ func TestJiraPutSiteDuringConcurrentWrites(t *testing.T) {
 				t.Errorf("site URL = %q, want the stored row's %q", s.Jira.Site, want)
 			}
 		})
+	}
+}
+
+// The classic-token advice belongs to the token path only: an OAuth 401/403 must not tell the
+// member to create a classic API token.
+func TestJiraRejectionHintByAuthKind(t *testing.T) {
+	for _, st := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(st)
+		}))
+		_, err := jiraAccount(&secrets.JiraCreds{Site: srv.URL, Email: "a@example.com", Token: "t"})
+		if err == nil || !strings.Contains(err.Error(), "classic") {
+			t.Errorf("token %d: %v", st, err)
+		}
+		old := jirax.CloudAPIBase
+		jirax.CloudAPIBase = srv.URL
+		_, err = jiraAccount(&secrets.JiraCreds{AuthKind: "oauth", CloudID: "c1", AccessToken: "a"})
+		jirax.CloudAPIBase = old
+		if err == nil || strings.Contains(err.Error(), "classic") {
+			t.Errorf("oauth %d: %v", st, err)
+		}
+		srv.Close()
 	}
 }

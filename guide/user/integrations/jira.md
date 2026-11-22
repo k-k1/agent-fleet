@@ -25,7 +25,7 @@ command to teach them. An OAuth token is checked on every call and renewed befor
 
 Connect Jira in **⚙ Settings → "Issue tracker"**. The steps are in [Connect an issue tracker](issue-tracker.md#connect-jira).
 
-- Either OAuth or an API token will do
+- Either OAuth or an API token will do. An API token must be a classic one ("Create API token"); a scoped token is rejected
 - Only Jira Cloud (`….atlassian.net`). Jira Data Center is [set up yourself](#use-jira-data-center)
 
 ## Ask an agent

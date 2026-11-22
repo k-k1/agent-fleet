@@ -25,7 +25,8 @@ Usage:
 add uses your own GitHub / Bitbucket connection (Settings > Connections), which needs admin rights
 on the repository. It creates the hook at the Control Plane, installs it at the forge and deletes
 the Control Plane hook again if the install fails. The hook's secret is passed to the forge and
-never shown or stored. Running add again for a repository that has a hook changes nothing.
+never shown or stored. On Bitbucket a token needs read:webhook:bitbucket and write:webhook:bitbucket
+for add and delete:webhook:bitbucket for rm. Running add again for a repository that has a hook changes nothing.
 Without a hook a private repository's watches stay on polling.
 `
 
@@ -123,7 +124,12 @@ func Main(c *Client, args []string, out, errw io.Writer) int {
 			fmt.Fprintf(out, "hook %s already exists for %s. %s\n", res.ID, res.Repo, res.Note)
 			return 0
 		}
-		fmt.Fprintf(out, "hook %s installed at %s for %s (pull request, review, comment and check events). Watches on this repository's pull requests are now poked.\n", res.ID, res.Source, res.Repo)
+		events := "pull request, review, comment and check events"
+		if res.Source == Bitbucket {
+			// bitbucketEvents subscribes pullrequest:* only; checks stay on polling there.
+			events = "pull request, review and comment events (check results are not pushed by Bitbucket hooks; pr.checks watches keep polling)"
+		}
+		fmt.Fprintf(out, "hook %s installed at %s for %s (%s). Watches on this repository's pull requests are now poked.\n", res.ID, res.Source, res.Repo, events)
 		return 0
 	case "rm":
 		if len(args) != 2 {

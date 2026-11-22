@@ -1239,6 +1239,7 @@ export const tools = {
   "git.bb_token_hint_write": " も追加。ユーザー名には正規の Atlassian アカウントのメールアドレスを使用します。",
   "git.bb_token_hint_pr": " はセッションでの bkt pr create・bkt pipeline と課題管理レールに要ります（clone / push には要りません）。パイプラインの開始・停止もするなら ",
   "git.bb_token_hint_pr_end": " も追加。",
+  "git.bb_token_hint_webhook": " は af-watch-hook の add（read と write）と rm（delete）に要ります。Webhook ウォッチを使うときだけ必要です。",
   "git.bb_err_scopeless": "Bitbucket がトークンを拒否しました。スコープ付き API トークン（アプリで Bitbucket を選択）を作成し、ユーザー名には Atlassian アカウントのメールアドレスを使用してください。",
   "git.bb_err_no_repo_read": "トークンに read:repository:bitbucket スコープがありません。スコープ付きで作り直してください。",
   "git.bb_warn_no_write": "接続しました。ただし push には write:repository:bitbucket スコープが必要です（現在のトークンには未付与）。",

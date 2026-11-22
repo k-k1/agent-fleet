@@ -297,6 +297,20 @@ func TestRemoveStillRetiresTheControlPlaneHookWhenTheForgeRefuses(t *testing.T) 
 	}
 }
 
+func TestRemoveBitbucketDelete403WarnsAboutTheScopeOnce(t *testing.T) {
+	e := newEnv(t)
+	res, _ := e.m.Add(context.Background(), "bitbucket", "ws/repo")
+	e.listing = `{"values":[{"uuid":"{abc}","url":"` + res.URL + `"}]}`
+	e.delSt = 403
+	rm, err := e.m.Remove(context.Background(), res.ID)
+	if err != nil || rm.ForgeRemoved || len(e.cp.hooks) != 0 {
+		t.Fatalf("%+v %v hooks=%v", rm, err, e.cp.hooks)
+	}
+	if !strings.Contains(rm.Warning, "delete:webhook:bitbucket") || strings.Count(rm.Warning, res.URL) != 1 {
+		t.Fatalf("warning: %q", rm.Warning)
+	}
+}
+
 func TestRemoveUnknownHookIs404(t *testing.T) {
 	e := newEnv(t)
 	_, err := e.m.Remove(context.Background(), "nope")
@@ -330,6 +344,23 @@ func TestCLIAgainstHandlers(t *testing.T) {
 	if rc := Main(c, []string{"add", "github", "acme/priv"}, &out, &errw); rc != 0 {
 		t.Fatalf("add rc=%d %s", rc, errw.String())
 	}
+	if !strings.Contains(out.String(), "check events") {
+		t.Fatalf("github success line lost its check events: %q", out.String())
+	}
+	out.Reset()
+	if rc := Main(c, []string{"add", "bitbucket", "acme/bb"}, &out, &errw); rc != 0 {
+		t.Fatalf("bitbucket add rc=%d %s", rc, errw.String())
+	}
+	if strings.Contains(out.String(), "and check events") || !strings.Contains(out.String(), "polling") {
+		t.Fatalf("bitbucket success line claims check events: %q", out.String())
+	}
+	e.status, e.msg = 403, "nope"
+	errw.Reset()
+	if rc := Main(c, []string{"add", "bitbucket", "acme/bb2"}, &out, &errw); rc != 1 || !strings.Contains(errw.String(), "write:webhook:bitbucket") || !strings.Contains(errw.String(), "delete:webhook:bitbucket") {
+		t.Fatalf("bitbucket refusal lacks scopes rc=%d %q", rc, errw.String())
+	}
+	e.status, e.msg = 201, ""
+	out.Reset()
 	if strings.Contains(out.String()+errw.String(), testSecret) {
 		t.Fatal("secret printed")
 	}

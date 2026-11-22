@@ -372,7 +372,7 @@ func denied(source, repo string, status int, b []byte) *Error {
 	default:
 		return userErr(http.StatusForbidden, "forge_denied",
 			"Bitbucket refused (HTTP %d%s): the connected credential cannot create webhooks on %s, or the repository does not exist. "+
-				"It needs the Webhooks scope (read and write) and admin rights on the repository. "+
+				"It needs the read:webhook:bitbucket and write:webhook:bitbucket scopes (OAuth: Webhooks Read and write) and admin rights on the repository. Removing the hook later also needs delete:webhook:bitbucket. "+
 				"No hook was left behind. Ask a repository admin, or use the long poll.",
 			status, detail, repo)
 	}
@@ -506,7 +506,7 @@ func (m *Manager) findAtForge(ctx context.Context, cred Cred, h Hook) (deleteURL
 				return "", false, "could not list the repository's webhooks (" + err.Error() + ")"
 			}
 			if status != http.StatusOK {
-				return "", false, fmt.Sprintf("Bitbucket refused to list the webhooks (HTTP %d: the credential needs the Webhooks scope and admin rights on %s)", status, h.Repo)
+				return "", false, fmt.Sprintf("Bitbucket refused to list the webhooks (HTTP %d: the credential needs the read:webhook:bitbucket scope and admin rights on %s)", status, h.Repo)
 			}
 			var list struct {
 				Values []struct {
@@ -548,6 +548,9 @@ func (m *Manager) removeAtForge(ctx context.Context, h Hook) (bool, string) {
 	}
 	st, _, err := m.forge(ctx, cred, h.Source, http.MethodDelete, del, nil, nil)
 	if err != nil || (st != http.StatusNoContent && st != http.StatusNotFound) {
+		if h.Source == Bitbucket && st == http.StatusForbidden {
+			manual = "the credential may lack the delete:webhook:bitbucket scope (token) or the Webhooks permission (OAuth), or admin rights on the repository; " + manual
+		}
 		return false, fmt.Sprintf("%s did not delete the webhook (HTTP %d): %s", h.Source, st, manual)
 	}
 	return true, ""

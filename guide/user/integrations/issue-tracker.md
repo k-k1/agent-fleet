@@ -39,7 +39,7 @@ There are two ways to connect.
 | Connect with OAuth | An Atlassian page opens in another tab. Once you approve, the card turns **Connected** |
 | Use an API token | Enter the site URL (`https://….atlassian.net`), your Atlassian account email and an API token, then press "**Connect**" |
 
-- Create the API token in your Atlassian account settings
+- Create the API token in your Atlassian account settings with "Create API token". A token made with "Create API token with scopes" is rejected ("Jira rejected the credentials"); Agent Fleet talks to the site URL, which only accepts classic tokens
 - If "Connect with OAuth" cannot be pressed, the tenant has no Jira OAuth app registered. Ask a tenant administrator, or connect with an API token
 - If one approval covers several sites, pick the one that holds your issues under "**Site**" on the card
 - To stop using the connection, press "**Disconnect**" on the card. The stored credentials are removed from the workspace
