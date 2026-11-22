@@ -18,6 +18,7 @@ vi.mock("./api.ts", () => ({
   scheduleRunNow: vi.fn(),
   scheduleDelete: vi.fn(),
   scheduleUpdate: vi.fn(),
+  scheduleApprove: vi.fn(),
 }));
 // The conversation list is only needed to resolve working-set slugs — keep it off the network.
 vi.mock("../chat/api.ts", () => ({ chatList: vi.fn(async () => ({ conversations: [] })) }));
@@ -556,5 +557,22 @@ describe("SchedulesSection poll guards", () => {
     expect(failed()).toBe(true);
     await act(async () => first.resolve([sched]));
     expect(failed()).toBe(true);
+  });
+});
+
+describe("SchedulesSection held schedules (#4631)", () => {
+  it("marks a held row, offers the review action and hides its next run", async () => {
+    scheduleList.mockResolvedValue([
+      { ...sched, id: "sch_held", approval_pending: true, generation: 2, next_run_local: "tomorrow 09:00" },
+      { ...sched, id: "sch_ok" },
+    ]);
+    await render();
+    const held = host.querySelector('[data-sched-id="sch_held"]')!;
+    const ok = host.querySelector('[data-sched-id="sch_ok"]')!;
+    expect(held.textContent).toContain(t("sched.held_tag"));
+    expect(held.querySelector(".sched-approve-btn")).not.toBeNull();
+    expect(held.querySelector(".sched-next")).toBeNull();
+    expect(ok.textContent).not.toContain(t("sched.held_tag"));
+    expect(ok.querySelector(".sched-approve-btn")).toBeNull();
   });
 });

@@ -14,7 +14,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { t, useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
-import { scheduleUpdate } from "./api.ts";
+import { scheduleApprove, scheduleUpdate } from "./api.ts";
 import {
   DELIVERY_TARGETS,
   type ScheduleDTO,
@@ -202,6 +202,30 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
     }
   };
 
+  // The member approves exactly the version this modal opened on (its generation), and never with
+  // unsaved edits in the form: what they read must be what they approve.
+  const approve = async () => {
+    if (busy || dirty) return;
+    setBusy(true);
+    try {
+      const res = await scheduleApprove(s.id, s.generation ?? 0);
+      if (res && typeof res === "object" && "id" in res) {
+        onSaved(res as ScheduleDTO);
+        toast(t("sched.approved"), { kind: "success" });
+        onClose();
+        return;
+      }
+      const err = (res as { error?: { code?: string } })?.error;
+      const changed = typeof err === "object" && err?.code === "schedule_changed";
+      toast(changed ? t("sched.approve_changed") : errText(err as never) || t("sched.action_failed"), { kind: "warn" });
+      if (changed) onClose();
+    } catch {
+      toast(t("sched.action_failed"), { kind: "warn" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const specHint =
     specKind === "interval"
       ? tr("sched.spec_hint_interval")
@@ -222,6 +246,11 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
       lockClose={busy}
     >
       <div className="ui-modal-body">
+        {s.approval_pending && (
+          <div className="sched-held-note" role="note">
+            {tr("sched.held_note")}
+          </div>
+        )}
         <div className="ui-field">
           <label className="ui-field-label" htmlFor="sched-label">
             {tr("sched.f_label")}
@@ -522,7 +551,18 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
         <Button variant="ghost" onClick={onClose} type="button">
           {tr("common.cancel")}
         </Button>
-        <Button variant="primary" disabled={!canSave} type="submit">
+        {s.approval_pending && (
+          <Button
+            variant="primary"
+            disabled={busy || dirty}
+            type="button"
+            title={dirty ? tr("sched.approve_save_first") : undefined}
+            onClick={() => void approve()}
+          >
+            {tr("sched.approve")}
+          </Button>
+        )}
+        <Button variant={s.approval_pending ? "ghost" : "primary"} disabled={!canSave} type="submit">
           {tr("common.save")}
         </Button>
       </footer>

@@ -23,6 +23,13 @@ export function scheduleRuns(id: string): Promise<{ schedule_id: string; runs: S
   return api(`api/schedules/${q(id)}/runs`);
 }
 
+// Approve the version of a held schedule the member is looking at. The CP refuses (409
+// schedule_changed) when the row has changed since, so an edit that landed after the member opened
+// it is never approved unseen.
+export function scheduleApprove(id: string, generation: number): Promise<ScheduleDTO | { error?: unknown }> {
+  return apiJSON(`api/schedules/${q(id)}/approve`, "POST", { generation });
+}
+
 export function schedulePause(id: string): Promise<ScheduleDTO | { error?: unknown }> {
   return apiJSON(`api/schedules/${q(id)}/pause`, "POST");
 }

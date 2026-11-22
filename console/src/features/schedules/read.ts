@@ -47,6 +47,11 @@ export interface ScheduleDTO {
   // last_verdict are output only; the CP ignores them on a patch.
   gate?: ScheduleGate;
   enabled: boolean;
+  /** A session wrote this schedule (or changed what the member approved): it does not run until the
+   * member approves it (#4631). */
+  approval_pending?: boolean;
+  /** The version of the row; approve sends back the one the member looked at (#4834). */
+  generation?: number;
   next_run?: string;
   next_run_local?: string;
   last_run?: string;

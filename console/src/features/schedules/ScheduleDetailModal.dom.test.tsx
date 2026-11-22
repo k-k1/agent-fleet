@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-vi.mock("./api.ts", () => ({ scheduleUpdate: vi.fn() }));
+vi.mock("./api.ts", () => ({ scheduleUpdate: vi.fn(), scheduleApprove: vi.fn() }));
 
 // The live kind catalogue (GET /agents/kinds): every kind allowed unless a test narrows it.
 const ALL = ["claude", "codex", "opencode", "copilot", "cursor", "kiro", "agy", "muse", "lcpp", "shell", "ssm"];
@@ -31,7 +31,7 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { ScheduleDetailModal } = await import("./ScheduleDetailModal.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
-const { scheduleUpdate } = await import("./api.ts");
+const { scheduleUpdate, scheduleApprove } = await import("./api.ts");
 const { t } = await import("../../lib/i18n/index.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { getSettings, setSettings } = await import("../../lib/settings.ts");
@@ -220,3 +220,33 @@ describe("ScheduleDetailModal under the credential policy", () => {
   });
 });
 
+
+describe("ScheduleDetailModal approval of a held schedule (#4631)", () => {
+  const approveBtn = () =>
+    Array.from(document.querySelectorAll("button")).find((b) => b.textContent === t("sched.approve")) as HTMLButtonElement | undefined;
+
+  beforeEach(() => vi.mocked(scheduleApprove).mockReset());
+
+  it("shows no approve action for a schedule nobody holds", async () => {
+    await render("claude");
+    expect(approveBtn()).toBeUndefined();
+    expect(document.querySelector(".sched-held-note")).toBeNull();
+  });
+
+  it("approves the generation the modal opened on", async () => {
+    vi.mocked(scheduleApprove).mockResolvedValue({ ...base, id: "sch_1" } as never);
+    await render("claude", { approval_pending: true, generation: 7 });
+    expect(document.querySelector(".sched-held-note")).not.toBeNull();
+    await act(async () => approveBtn()!.click());
+    await flush();
+    expect(scheduleApprove).toHaveBeenCalledWith("sch_1", 7);
+  });
+
+  it("tells the member the schedule changed when the CP refuses a stale generation", async () => {
+    vi.mocked(scheduleApprove).mockResolvedValue({ error: { code: "schedule_changed", message: "x" } } as never);
+    await render("claude", { approval_pending: true, generation: 3 });
+    await act(async () => approveBtn()!.click());
+    await flush();
+    expect(document.body.textContent).toContain(t("sched.approve_changed"));
+  });
+});
