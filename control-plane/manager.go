@@ -12,6 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
 	"github.com/k-k1/agent-fleet/control-plane/internal/errref"
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
+	"github.com/k-k1/agent-fleet/control-plane/internal/pushsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -24,6 +25,8 @@ import (
 // (MetadataStore) is the source of truth; `rts` is an in-memory cache of built
 // runtimes keyed by membership id. The Agent contract is unchanged.
 type manager struct {
+	// push is the Web Push sender (push.go); nil unless AF_WEB_PUSH=true and configured.
+	push *pushsrv.Service
 	// gitDataRefusal is the 503 message of the internal git feature while the data root is
 	// not durable but the deployment requires it (data_durable.go); "" = feature on.
 	gitDataRefusal string

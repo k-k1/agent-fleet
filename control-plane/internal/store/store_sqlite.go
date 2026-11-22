@@ -31,6 +31,7 @@ type SQL struct {
 	// afterMCPOAuthSpend, when set by a test, runs right after ConsumeMCPOAuthToken's spending
 	// statement, so a test can land a rival caller in that window. Nil in production.
 	afterMCPOAuthSpend func()
+	onNotification     func(Notification) // SetNotificationHook
 }
 
 // OpenSQLite opens the DB with the server-app pragmas (WAL + busy_timeout +

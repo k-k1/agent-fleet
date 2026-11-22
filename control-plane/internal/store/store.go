@@ -47,6 +47,7 @@ type Store interface {
 	MemoStore
 	WorkItemStore
 	NotificationStore
+	PushSubscriptionStore
 	ScheduleStore
 	MCPServerStore
 	SessionShareStore

@@ -1,0 +1,289 @@
+package pushsrv
+
+import (
+	"bytes"
+	"context"
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/ecdh"
+	"crypto/hkdf"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"github.com/k-k1/agent-fleet/control-plane/internal/webpush"
+)
+
+var b64 = base64.RawURLEncoding
+
+type memStore struct {
+	mu   sync.Mutex
+	subs []store.PushSubscription
+}
+
+func (m *memStore) UpsertPushSubscription(_ context.Context, p store.PushSubscription) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p.ID = store.PushSubscriptionID(p.Endpoint)
+	for i, s := range m.subs {
+		if s.Endpoint == p.Endpoint {
+			m.subs[i] = p
+			return nil
+		}
+	}
+	m.subs = append(m.subs, p)
+	return nil
+}
+func (m *memStore) ListPushSubscriptions(_ context.Context, mid string) ([]store.PushSubscription, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []store.PushSubscription
+	for _, s := range m.subs {
+		if s.MembershipID == mid {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+func (m *memStore) DeletePushSubscription(_ context.Context, mid, id string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, s := range m.subs {
+		if s.MembershipID == mid && s.ID == id {
+			m.subs = append(m.subs[:i], m.subs[i+1:]...)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+func (m *memStore) DeletePushSubscriptionByEndpoint(_ context.Context, ep string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, s := range m.subs {
+		if s.Endpoint == ep {
+			m.subs = append(m.subs[:i], m.subs[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+func (m *memStore) TouchPushSubscription(_ context.Context, ep, at string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i, s := range m.subs {
+		if s.Endpoint == ep {
+			m.subs[i].LastOKAt = at
+		}
+	}
+	return nil
+}
+
+// device is a browser: a subscription and the keys to read what the push service relays.
+type device struct {
+	priv *ecdh.PrivateKey
+	auth []byte
+}
+
+func newDevice(t *testing.T) (device, string, string) {
+	priv, _ := ecdh.P256().GenerateKey(rand.Reader)
+	auth := make([]byte, 16)
+	_, _ = rand.Read(auth)
+	return device{priv, auth}, b64.EncodeToString(priv.PublicKey().Bytes()), b64.EncodeToString(auth)
+}
+
+// open is the user agent's half of RFC 8291.
+func (d device) open(t *testing.T, body []byte) string {
+	t.Helper()
+	salt, asPubRaw := body[:16], body[21:21+int(body[20])]
+	asPub, err := ecdh.P256().NewPublicKey(asPubRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, _ := d.priv.ECDH(asPub)
+	prkKey, _ := hkdf.Extract(sha256.New, secret, d.auth)
+	info := append(append([]byte("WebPush: info\x00"), d.priv.PublicKey().Bytes()...), asPubRaw...)
+	ikm, _ := hkdf.Expand(sha256.New, prkKey, string(info), 32)
+	prk, _ := hkdf.Extract(sha256.New, ikm, salt)
+	cek, _ := hkdf.Expand(sha256.New, prk, "Content-Encoding: aes128gcm\x00", 16)
+	nonce, _ := hkdf.Expand(sha256.New, prk, "Content-Encoding: nonce\x00", 12)
+	block, _ := aes.NewCipher(cek)
+	gcm, _ := cipher.NewGCM(block)
+	pt, err := gcm.Open(nil, nonce, body[21+len(asPubRaw):], nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(bytes.TrimSuffix(pt, []byte{2}))
+}
+
+type fixture struct {
+	svc    *Service
+	st     *memStore
+	srv    *httptest.Server
+	mu     sync.Mutex
+	bodies [][]byte
+	status int
+}
+
+func newFixture(t *testing.T) *fixture {
+	f := &fixture{st: &memStore{}, status: http.StatusCreated}
+	f.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		f.mu.Lock()
+		f.bodies = append(f.bodies, b)
+		st := f.status
+		f.mu.Unlock()
+		w.WriteHeader(st)
+	}))
+	t.Cleanup(f.srv.Close)
+	keys, _, _ := webpush.GenerateKeys()
+	sender := webpush.NewSender(keys, "mailto:ops@example.invalid")
+	sender.HTTP = f.srv.Client()
+	sender.HTTP.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	f.svc = &Service{store: f.st, sender: sender, pubKey: keys.PublicKey(),
+		check: func(e string) error {
+			return webpush.CheckEndpoint(strings.Replace(e, f.srv.URL, "https://fcm.googleapis.com", 1), webpush.DefaultEndpointHosts)
+		},
+		timeout: 5 * time.Second}
+	return f
+}
+
+func (f *fixture) subscribe(t *testing.T, mid string) device {
+	d, p256, auth := newDevice(t)
+	if err := f.st.UpsertPushSubscription(context.Background(), store.PushSubscription{MembershipID: mid,
+		Endpoint: f.srv.URL + "/p/" + p256[:8], P256dh: p256, Auth: auth}); err != nil {
+		t.Fatal(err)
+	}
+	return d
+}
+
+func (f *fixture) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.bodies)
+}
+
+func note(kind string) store.Notification {
+	return store.Notification{EventID: "e", MembershipID: "m1", Kind: kind, TargetType: "session", TargetID: "s1",
+		DisplayName: "My session", Payload: `{"question":"SECRET TEXT"}`}
+}
+
+func TestDeliverIsMinimal(t *testing.T) {
+	f := newFixture(t)
+	d := f.subscribe(t, "m1")
+	f.svc.deliver(context.Background(), note("question"))
+	if f.count() != 1 {
+		t.Fatalf("pushes: %d", f.count())
+	}
+	got := d.open(t, f.bodies[0])
+	if got != `{"v":1,"kind":"question","session":"s1","name":"My session"}` {
+		t.Fatalf("payload %s", got)
+	}
+	if strings.Contains(got, "SECRET") {
+		t.Fatal("the question text reached the push service")
+	}
+}
+
+func TestOnNotificationFilters(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	for _, n := range []store.Notification{
+		note("schedule-run"), // a kind that stays in the center
+		func() store.Notification { n := note("question"); n.TargetType = "workspace"; return n }(),
+		func() store.Notification { n := note("question"); n.TargetID = ""; return n }(),
+	} {
+		f.svc.onNotification(n)
+	}
+	f.svc.onNotification(store.Notification{MembershipID: "other", Kind: "question", TargetType: "session", TargetID: "s"})
+	time.Sleep(150 * time.Millisecond)
+	if f.count() != 0 {
+		t.Fatalf("pushed %d messages that must not be pushed", f.count())
+	}
+	for _, k := range []string{"question", "plan-approval", "permission-request", "answer-ready"} {
+		f.svc.onNotification(note(k))
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for f.count() < 4 && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if f.count() != 4 {
+		t.Fatalf("pushed %d of 4 kinds", f.count())
+	}
+}
+
+func TestGoneSubscriptionIsDeletedButFailureIsKept(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	f.status = http.StatusInternalServerError
+	f.svc.deliver(context.Background(), note("question"))
+	if rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(rows) != 1 {
+		t.Fatal("a 5xx dropped the subscription")
+	}
+	f.status = http.StatusGone
+	f.svc.deliver(context.Background(), note("question"))
+	if rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(rows) != 0 {
+		t.Fatal("a 410 left the subscription")
+	}
+}
+
+func TestEndpointOutsideAllowlistIsDroppedNotPosted(t *testing.T) {
+	f := newFixture(t)
+	f.svc.check = func(string) error { return io.ErrUnexpectedEOF }
+	f.subscribe(t, "m1")
+	f.svc.deliver(context.Background(), note("question"))
+	if f.count() != 0 {
+		t.Fatal("posted to an endpoint the allowlist refuses")
+	}
+	if rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(rows) != 0 {
+		t.Fatal("refused endpoint kept")
+	}
+}
+
+func TestAPI(t *testing.T) {
+	f := newFixture(t)
+	do := func(h func(http.ResponseWriter, *http.Request), method, body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		h(w, httptest.NewRequest(method, "/", strings.NewReader(body)))
+		return w
+	}
+	_, p256, auth := newDevice(t)
+	good := `{"endpoint":"` + f.srv.URL + `/x","keys":{"p256dh":"` + p256 + `","auth":"` + auth + `"}}`
+	sub := func(mid, body string) *httptest.ResponseRecorder {
+		return do(func(w http.ResponseWriter, r *http.Request) { f.svc.Subscribe(w, r, mid) }, "POST", body)
+	}
+	if w := sub("m1", good); w.Code != 201 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	for _, bad := range []string{`{`, `{"endpoint":"http://x/","keys":{}}`,
+		`{"endpoint":"` + f.srv.URL + `/y","keys":{"p256dh":"AAAA","auth":"AAAA"}}`} {
+		if w := sub("m1", bad); w.Code != 400 {
+			t.Fatalf("%s: %d", bad, w.Code)
+		}
+	}
+	w := do(func(w http.ResponseWriter, r *http.Request) { f.svc.List(w, r, "m1") }, "GET", "")
+	if w.Code != 200 || strings.Contains(w.Body.String(), "endpoint") || strings.Contains(w.Body.String(), auth) {
+		t.Fatalf("list leaks a secret: %d %s", w.Code, w.Body)
+	}
+	id := store.PushSubscriptionID(f.srv.URL + "/x")
+	rm := func(mid string) int {
+		return do(func(w http.ResponseWriter, r *http.Request) { f.svc.Remove(w, r, mid, id) }, "DELETE", "").Code
+	}
+	if rm("m2") != 404 {
+		t.Fatal("another member removed it")
+	}
+	if rm("m1") != 204 {
+		t.Fatal("owner could not remove it")
+	}
+
+	var off *Service
+	if w := do(func(w http.ResponseWriter, r *http.Request) { off.List(w, r, "m1") }, "GET", ""); w.Code != 503 {
+		t.Fatalf("nil service: %d", w.Code)
+	}
+}
