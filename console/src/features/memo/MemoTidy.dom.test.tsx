@@ -241,14 +241,14 @@ describe("the marks on the memo list", () => {
     expect(document.querySelector(".memo-row")?.textContent).toContain(t("memo.accepted_by_setting"));
     expect(document.querySelector(".memo-row")?.textContent).not.toContain(t("memo.released_by_tidy"));
   });
-  it("shows a replaced note read-only: no select box, no edit or send in its menu, a link to the history", async () => {
+  it("shows a replaced note read-only: selectable for bulk delete, no edit or send in its menu, a link to the history", async () => {
     servedMemos = [aMemo({ id: "s", state: "superseded", sentAt: "2026-11-17T01:00:00Z", tidyRunId: "run1", body: "old" })];
     servedRuns = { runs: [aRun()], usedToday: 1, dailyCap: 10 };
     await render();
     await openFold();
     const row = must(document.querySelector<HTMLElement>(".memo-row"), "row");
     expect(row.textContent).toContain(t("memo.state_superseded"));
-    expect(must(row.querySelector<HTMLInputElement>("input[type=checkbox]"), "check").disabled).toBe(true);
+    expect(must(row.querySelector<HTMLInputElement>("input[type=checkbox]"), "check").disabled).toBe(false);
     await click(must(row.querySelector(".memo-menu-btn"), "kebab"));
     const menu = [...document.querySelectorAll(".ui-menu .ui-menu-item")].map((b) => b.textContent);
     expect(menu.some((x) => x?.includes(t("memo.edit")))).toBe(false);
