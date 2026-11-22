@@ -28,6 +28,7 @@ import { resetMemoryRevisions } from "./memoryEntryIO.ts";
 import { clearEditorSlotsForTests } from "../editor/useFileEditor.ts";
 import { clearDirtyRegistryForTests, confirmDirtyNavigation, currentDirtyGuardRequest, dirtyPaneIds, discardDirtyGuardRequest, saveDirtyGuardRequest } from "../editor/dirtyRegistry.ts";
 import { memoryEntryContent } from "./openEntry.ts";
+import { setPopoutMode } from "../../lib/popoutMode.ts";
 import { useMemoryStore } from "./store.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { allViews, freshLayout } from "../../layout/ops.ts";
@@ -703,8 +704,6 @@ describe("MemoryEntryView", () => {
 
       it.each([
         ["other text", { body: "someone else" }],
-        ["an earlier revision", { revision: 2 }],
-        ["kinds it was not sent with", { kinds: ["claude"] }],
       ])("offers a resave but not acceptance when a memory of that name holds %s, and Cancel leaves it be", async (_why, patch) => {
         api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? { ...stored, ...patch } : {}));
         await lost();
@@ -718,6 +717,44 @@ describe("MemoryEntryView", () => {
         expect(dirtyPaneIds()).toEqual([]);
         expect(apiJSON).not.toHaveBeenCalled();
         expect(allViews(useLayoutStore.getState().layout).some((v) => v.content.kind === "memoryEntry")).toBe(false);
+      });
+
+      it.each([
+        ["a later counter (a re-created forgotten name)", { revision: 2 }],
+        ["kinds it was not sent with", { kinds: ["claude"] }],
+      ])("leaves the outcome unknown, with no resave, when the name holds the sent text at %s, and offers to open it", async (_why, patch) => {
+        api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? { ...stored, ...patch } : {}));
+        await lost();
+        expect(dirtyPaneIds()).toEqual([pane().id]);
+        expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
+        expect(button(t("editor.unknown.resave_old"))).toBeUndefined();
+        expect(button(t("editor.unknown.resave"))).toBeUndefined();
+        const draftPane = pane().id;
+        const version = useMemoryStore.getState().version;
+        await act(async () => button(t("mem.br_open_existing"))!.click());
+        await flush();
+        const views = allViews(useLayoutStore.getState().layout).filter((v) => v.content.kind === "memoryEntry");
+        // Beside the draft, never over it: the draft's pane keeps its target and its guard.
+        expect(views.some((v) => v.id !== draftPane && v.content.kind === "memoryEntry" && v.content.name === "house-rules")).toBe(true);
+        expect(views.find((v) => v.id === draftPane)!.content).toMatchObject({ name: "" });
+        expect(dirtyPaneIds()).toEqual([draftPane]);
+        // A pane already showing that name re-reads.
+        expect(useMemoryStore.getState().version).toBeGreaterThan(version);
+      });
+
+      it("does not offer to open the existing memory in a minimal pop-out, where it would replace the draft", async () => {
+        setPopoutMode("popout");
+        try {
+          api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? { ...stored, revision: 2 } : {}));
+          await lost();
+          expect(button(t("mem.br_open_existing"))).toBeUndefined();
+          expect(button(t("editor.unknown.resave_old"))).toBeUndefined();
+          expect(button(t("editor.copy_mine"))).toBeDefined();
+          expect(pane().content).toMatchObject({ name: "" });
+          expect(dirtyPaneIds()).toEqual([pane().id]);
+        } finally {
+          setPopoutMode(null);
+        }
       });
 
       it("keeps the outcome unconfirmed while the memory cannot be read, and lands once the read answers", async () => {

@@ -225,6 +225,9 @@ export function isMemoryBody(res: unknown, scope: string, name: string): res is 
 // A request that never answers would hold the pane in `saving` (or its recovery read in flight)
 // for good. Aborted, a save throws and reads as an unknown outcome, which the recovery read then
 // settles; an aborted read is an unavailable remote the member can retry.
+/** The recovery read of a new memory found its name holding the text sent, at a counter that does
+ *  not say whether the save wrote it. The view offers to open the existing memory. */
+export const EXISTS_UNVERIFIED = "memory_exists_unverified";
 export const READ_TIMEOUT_MS = 20_000;
 export const SAVE_TIMEOUT_MS = 30_000;
 async function timed(ms: number, send: (signal: AbortSignal) => Promise<any>): Promise<any> { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -272,9 +275,14 @@ export function memoryEntryIO(target: EntryTarget, onRefused: (r: EntryRefusal |
         if (!isMemoryBody(res, scope, last.name)) throw new Error("load_failed");
         const b = res as MemoryBody;
         const found = encodeEntry({ description: b.description, type: b.type || "feedback", body: b.body ?? "" });
-        // Revision 1 with no kinds is what a first save of this text leaves; anything else is a
-        // memory that was there before, whatever its text.
-        if (found !== last.stored || b.revision !== 1 || (b.kinds ?? []).length > 0) return blankNewFile(key);
+        // Another text is a definite "not ours".
+        if (found !== last.stored) return blankNewFile(key);
+        // Revision 1 with no kinds is what a first save of this text leaves. The same text at a
+        // later counter (a forgotten name keeps counting, so a save that re-created it lands at 2 or
+        // more) is either that save or a memory that was there before: with nothing to match on the
+        // outcome stays unknown, never the blank, which would offer a resave the store refuses as a
+        // duplicate name.
+        if (b.revision !== 1 || (b.kinds ?? []).length > 0) throw new Error(EXISTS_UNVERIFIED);
         // Stored as sent: the buffer's text is reported as the remote, which the panel offers to accept
         // (the view lands the pane when it is).
         return { ...blankNewFile(key), content: last.raw, size: last.raw.length, revision: revisionOf(last.raw) };

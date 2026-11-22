@@ -26,7 +26,9 @@ export function memoryEntryContent(m: MemoryEntryTarget, gone = false): Extract<
   };
 }
 
-export function openMemoryEntry(m: MemoryEntryTarget, opts: { gone?: boolean } = {}): void {
+/** `inNew`: never take over the active pane. A caller whose own pane holds unsaved work opens the
+ *  memory beside it; the active-pane route would swap this very pane's content under the buffer. */
+export function openMemoryEntry(m: MemoryEntryTarget, opts: { gone?: boolean; inNew?: boolean } = {}): void {
   // Settings is a modal over the layout: left open it would hide the pane this call opens.
   useSettingsUI.getState().closeSettings();
   const content = memoryEntryContent(m, !!opts.gone);
@@ -44,5 +46,6 @@ export function openMemoryEntry(m: MemoryEntryTarget, opts: { gone?: boolean } =
     st.selectTab(existing.id);
     return;
   }
-  st.openTarget({ content });
+  if (opts.inNew) st.openTargetInNew({ content });
+  else st.openTarget({ content });
 }

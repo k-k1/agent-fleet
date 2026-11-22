@@ -39,10 +39,11 @@ import { MemoryHistory, useAllChanges } from "../settings/memory/memoryHistory.t
 import { PurgeHistoryDialog, type PurgeTarget } from "../settings/memory/memoryPurge.tsx";
 import type { MemoryBody, MemoryChange, SecretFinding } from "../settings/memory/memoryTypes.ts";
 import type { PaneContent } from "../../layout/types.ts";
-import { memoryEntryContent } from "./openEntry.ts";
+import { popoutMode } from "../../lib/popoutMode.ts";
+import { memoryEntryContent, openMemoryEntry } from "./openEntry.ts";
 import { openMemoryView } from "./open.ts";
 import { useMemoryStore } from "./store.ts";
-import { isEditingPane, pruneEditingPanes, setEditingPane, subscribeEditing, blankNewFile, clearPending, clearRefusal, decodeEntry, encodeEntry, entryFile, entryKey, isMemoryBody, memoryEntryIO, newEntryKey, refusalOf, subscribeRefusal, type EntryFields, type EntryRefusal } from "./memoryEntryIO.ts";
+import { EXISTS_UNVERIFIED, isEditingPane, pruneEditingPanes, setEditingPane, subscribeEditing, blankNewFile, clearPending, clearRefusal, decodeEntry, encodeEntry, entryFile, entryKey, isMemoryBody, memoryEntryIO, newEntryKey, refusalOf, subscribeRefusal, type EntryFields, type EntryRefusal } from "./memoryEntryIO.ts";
 
 // Edit mode is kept only for a pane that is still open on the memory it was set for: a closed pane
 // can have its id given to a new one.
@@ -706,6 +707,20 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           onClose={() => useLayoutStore.getState().closePane(paneId)}
           canResaveStored={!isNew}
           sentLiveText={tr("mem.br_unknown_sent_live")}
+          onOpenExisting={
+            isNew && popoutMode() !== "popout" && model.unknownObservation?.kind === "unavailable" && model.unknownObservation.message.includes(EXISTS_UNVERIFIED)
+              ? () => {
+                  const sentName = (decodeEntry(model.saveSnapshot?.content ?? model.content).name ?? "").trim();
+                  if (!sentName) return;
+                  // (Not offered in a minimal pop-out: its one pane would be replaced, hiding the draft.)
+                  // Beside this pane, never over it: it holds the draft the member may still copy.
+                  // The bump re-reads a pane already showing that name, whose body may predate it.
+                  openMemoryEntry({ scope, project: { id: project, display: projectName }, name: sentName }, { inNew: true });
+                  bump();
+                }
+              : undefined
+          }
+          existingText={tr("mem.br_exists_unverified")}
         />
       )}
       {purging && <PurgeHistoryDialog target={purging} onClose={() => setPurging(null)} onDone={bump} />}
