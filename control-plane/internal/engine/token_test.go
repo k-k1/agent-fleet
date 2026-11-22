@@ -45,3 +45,26 @@ func TestTagBindsTokenKind(t *testing.T) {
 		t.Fatal("tag does not depend on the token kind")
 	}
 }
+
+// Vectors produced by the pre-move implementation (engine_token.go in package main). Tokens
+// already injected into running Workspaces must keep verifying, and minting must keep emitting
+// the same bytes; a round trip alone cannot catch a symmetric change to the tag input.
+func TestTokenWireCompatibility(t *testing.T) {
+	key := SignKey([]byte("0123456789abcdef0123456789abcdef"))
+	const issue = "afei_bTE.ScSTU7sgWF_6zatkiS5UCg"
+	const session = "afe_bTEAczEAazEAMTgwMDAwMzYwMA.iQb6mqSEDprMDxhDnVx7og"
+	exp := time.Unix(1_800_003_600, 0)
+	if got := MintIssueToken(key, "m1"); got != issue {
+		t.Fatalf("issue token = %q", got)
+	}
+	if got := MintSessionToken(key, "m1", "s1", "k1", exp); got != session {
+		t.Fatalf("session token = %q", got)
+	}
+	if mid, ok := VerifyIssueToken(key, issue); !ok || mid != "m1" {
+		t.Fatalf("legacy issue token refused: %q %v", mid, ok)
+	}
+	c, ok := VerifySessionToken(key, session, exp.Add(-time.Second))
+	if !ok || c.MembershipID != "m1" || c.Session != "s1" || c.Key != "k1" || !c.Expires.Equal(exp) {
+		t.Fatalf("legacy session token: %+v %v", c, ok)
+	}
+}

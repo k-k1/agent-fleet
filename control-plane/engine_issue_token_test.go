@@ -131,7 +131,7 @@ func TestEngineIssueTokenAnswerSaysHowToRevokeIt(t *testing.T) {
 	}
 }
 
-// Deterministic by construction (engine_token.go:47). Pinned because it is a property somebody
+// Deterministic by construction (engine.MintIssueToken). Pinned because it is a property somebody
 // will one day read as a bug: asking twice does NOT rotate the credential, and a route that
 // looked like it minted a fresh one each time would be lying about revocation.
 func TestEngineIssueTokenIsDeterministic(t *testing.T) {

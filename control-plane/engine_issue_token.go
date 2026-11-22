@@ -6,7 +6,7 @@ package main
 //
 // Why this route exists at all. Decision 3 makes the credential a purpose-made membership's
 // issuing token, and the review (R9) then found that the procedure does not close: the token
-// is derived deterministically (engine_token.go:47) and injected into that membership's own
+// is derived deterministically (engine.MintIssueToken) and injected into that membership's own
 // workspace container and nowhere else (workspace_lifecycle.go:401). No admin route starts
 // another member's workspace and none opens a session inside one — the admin surface is stop,
 // clean-home, destroy and read-only lists — so the only way to READ it was to sign in AS that
