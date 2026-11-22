@@ -32,18 +32,6 @@
 .scmview > .view-head {
   padding-right: calc(var(--pane-ctl-w, 56px) + 28px);
 }
-.view-title {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-weight: 600;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.view-title .codicon {
-  color: var(--accent);
-}
 
 .scm-branch {
   display: inline-flex;

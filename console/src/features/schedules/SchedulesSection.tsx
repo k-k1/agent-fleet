@@ -164,7 +164,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
           setMenuOpen(true);
         }}
       >
-        <span className={"sched-dot tone-" + tone} title={s.last_status || tr("sched.never_run")}>
+        <span className={"sched-dot sched-tone-" + tone} title={s.last_status || tr("sched.never_run")}>
           <Icon name={statusIcon(s.last_status)} />
         </span>
         <div className="sched-info">
@@ -289,11 +289,11 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
                       : undefined
                   }
                 >
-                  <span className={"sched-dot tone-" + statusTone(run.status)}>
+                  <span className={"sched-dot sched-tone-" + statusTone(run.status)}>
                     <Icon name={statusIcon(run.status)} />
                   </span>
                   <span className="sched-run-time">{shortLocal(run.fired_at)}</span>
-                  <span className={"sched-run-label tone-" + statusTone(run.status)} title={run.detail || run.status}>
+                  <span className={"sched-run-label sched-tone-" + statusTone(run.status)} title={run.detail || run.status}>
                     {tr(runStatusLabelKey(run.status))}
                   </span>
                   <span className={"sched-run-trigger" + (manual ? " manual" : "")}>

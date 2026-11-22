@@ -334,7 +334,7 @@ function UptimeTile({ s }: { s: UptimeSummary }) {
           <span
             key={d.day}
             role="listitem"
-            className={"uh-cell " + (d.state === "unobserved" ? "uh-unobserved" : d.state === "stopped" ? "uh-stopped" : "uh-lv-" + d.level)}
+            className={"uh-cell glance-cell " + (d.state === "unobserved" ? "uh-unobserved" : d.state === "stopped" ? "uh-stopped" : "uh-lv-" + d.level)}
             aria-label={`${d.day} ${d.state === "running" ? dur(d.runningSecs, tr) : stateText(d.state)}`}
             title={`${d.day} ${d.state === "running" ? dur(d.runningSecs, tr) : stateText(d.state)}`}
           />

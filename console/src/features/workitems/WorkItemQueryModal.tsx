@@ -342,7 +342,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
                 <span>{tr("wi.bb_intent")}</span>
                 <div className="wi-qchecks" role="group" aria-label={tr("wi.bb_intent")}>
                   {BB_INTENTS.map((it) => (
-                    <label key={it} className="ssm-check">
+                    <label key={it} className="ssm-check wi-qcheck">
                       <input type="checkbox" checked={bbIntents.includes(it)} onChange={() => toggleIntent(it)} />
                       <span className="wi-qcheck-name">{tr(BB_LABEL[it])}</span>
                       <span className="wi-qcheck-desc">{tr(BB_DESC[it])}</span>

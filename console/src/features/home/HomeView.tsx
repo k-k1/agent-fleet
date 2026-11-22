@@ -61,7 +61,7 @@ export function HomeView({ embedded = false, headerActions }: HomeViewProps) {
   const setup = useSetupState();
 
   const cards = (list: Session[]) => (
-    <div className="ovw-grid" role="list">
+    <div className="ovw-grid home-grid" role="list">
       {list.map((s) => (
         <SessionCard
           key={s.name}

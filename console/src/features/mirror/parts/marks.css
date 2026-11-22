@@ -36,15 +36,6 @@ mark.tmark-a5 { --tmark-author: var(--mark-author-5); }
   padding: 6px; border: 1px solid var(--border); border-radius: 8px;
   background: var(--panel); box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
 }
-.tmark-swatch {
-  width: 22px; height: 22px; padding: 0; border-radius: 5px; cursor: pointer;
-  border: 1px solid color-mix(in srgb, var(--fg) 25%, transparent);
-}
-.tmark-swatch.tmark-yellow { background: var(--mark-yellow); }
-.tmark-swatch.tmark-green { background: var(--mark-green); }
-.tmark-swatch.tmark-blue { background: var(--mark-blue); }
-.tmark-swatch.tmark-pink { background: var(--mark-pink); }
-.tmark-swatch:hover { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 /* Card shown when an existing mark is clicked (who, when, quote, delete). */
 .tmark-card {

@@ -46,16 +46,16 @@
   line-height: 1;
   display: inline-flex;
 }
-.sched-dot.tone-ok {
+.sched-dot.sched-tone-ok {
   color: var(--ok);
 }
-.sched-dot.tone-warn {
+.sched-dot.sched-tone-warn {
   color: var(--warn);
 }
-.sched-dot.tone-danger {
+.sched-dot.sched-tone-danger {
   color: var(--err);
 }
-.sched-dot.tone-muted {
+.sched-dot.sched-tone-muted {
   color: var(--muted);
 }
 
@@ -243,16 +243,16 @@
   flex: 0 0 auto;
   font-weight: 600;
 }
-.sched-run-label.tone-ok {
+.sched-run-label.sched-tone-ok {
   color: var(--ok);
 }
-.sched-run-label.tone-warn {
+.sched-run-label.sched-tone-warn {
   color: var(--warn);
 }
-.sched-run-label.tone-danger {
+.sched-run-label.sched-tone-danger {
   color: var(--err);
 }
-.sched-run-label.tone-muted {
+.sched-run-label.sched-tone-muted {
   color: var(--muted);
 }
 /* Trigger badge — distinguishes a manual run-now (accent) from a scheduled fire (muted). */

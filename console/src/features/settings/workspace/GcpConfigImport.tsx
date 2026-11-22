@@ -181,7 +181,7 @@ export function GcpConfigImport({ onClose, onImported }: { onClose: () => void; 
               aria-label={tr("gcp.imp_paste")}
               onChange={(e) => setText(e.target.value)}
             />
-            <label className="ssm-fld">
+            <label className="ssm-fld aws-import-fld">
               <span>{tr("gcp.imp_name")}</span>
               <input className="cinput" value={pasteName} aria-label={tr("gcp.imp_name")} onChange={(e) => setPasteName(e.target.value.trim())} />
             </label>
@@ -271,7 +271,7 @@ function Row({ tr, r, e, edit, busy }: { tr: Tr; r: GcpImportRow; e: GcpRowEdit;
       <div className="aws-import-status">{status}</div>
       {editable && r.status !== "exists" && (
         <div className="ssm-fgrid">
-          <label className="ssm-fld">
+          <label className="ssm-fld aws-import-fld">
             <span>{tr("gcp.imp_label")}</span>
             <input className="cinput" value={e.label ?? r.display ?? ""} disabled={busy} onChange={(ev) => edit(r.index, { label: ev.target.value })} />
           </label>
