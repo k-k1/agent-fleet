@@ -46,3 +46,21 @@ describe(".ui-badge primitive", () => {
     expect(safetyBadgeClass("keep")).toBe("ui-badge");
   });
 });
+
+describe(".ui-chip primitive", () => {
+  it("keeps the size, padding, radius and colours of the old .igen-chip", () => {
+    const r = rule(ui, ".ui-chip");
+    expect(r).toContain("font-size: var(--fs-11)");
+    expect(r).toContain("padding: 1px 7px");
+    expect(r).toContain("border-radius: 10px");
+    expect(r).toContain("border: 1px solid var(--border)");
+    expect(r).toContain("background: var(--chip-bg, transparent)");
+    expect(rule(ui, ".ui-chip:hover")).toBe("border-color: var(--accent, var(--fg));");
+  });
+  it("every igen-chip call site also carries ui-chip", () => {
+    for (const f of ["GenerateForm.tsx", "StudioAgent.tsx"]) {
+      const src = readFileSync(path.resolve(__dirname, "../features/imagegen/parts", f), "utf8");
+      expect(src.match(/igen-chip(?![-\w])/g)?.length).toBe(src.match(/ui-chip igen-chip(?![-\w])/g)?.length);
+    }
+  });
+});

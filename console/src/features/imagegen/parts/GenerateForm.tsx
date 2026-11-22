@@ -237,7 +237,7 @@ export function GenerateForm({
             <button
               key={w}
               type="button"
-              className="igen-chip"
+              className="ui-chip igen-chip"
               title={tr("imggen.trigger_add", { word: w })}
               onClick={() => append(w)}
             >
@@ -263,12 +263,12 @@ export function GenerateForm({
       {(model?.negative || alwaysNegative) && reads("negative") && (
         <div className="igen-chips igen-fixed">
           {model?.negative && (
-            <span className="igen-chip fixed" title={tr("imggen.negative_row")}>
+            <span className="ui-chip igen-chip fixed" title={tr("imggen.negative_row")}>
               <Icon name="lock" /> {model.negative}
             </span>
           )}
           {alwaysNegative && (
-            <span className="igen-chip fixed" title={tr("imggen.negative_always")}>
+            <span className="ui-chip igen-chip fixed" title={tr("imggen.negative_always")}>
               <Icon name="lock" /> {alwaysNegative}
             </span>
           )}
@@ -701,7 +701,7 @@ function FamilyCardBlock({ model, onQuality }: { model: ImagegenModel; onQuality
             <div className="igen-chips">
               <span className="igen-chips-cap">{tr("imggen.family_quality")}</span>
               {card.quality.map((q) => (
-                <button key={q} type="button" className="igen-chip" onClick={() => onQuality(q)}>
+                <button key={q} type="button" className="ui-chip igen-chip" onClick={() => onQuality(q)}>
                   {q}
                 </button>
               ))}
@@ -870,14 +870,14 @@ function SizeField({
         {badge}
       </span>
       <div className="igen-size-chips">
-        <button type="button" className="igen-chip" aria-pressed={!cur} disabled={disabled} onClick={() => onChange("")}>
+        <button type="button" className="ui-chip igen-chip" aria-pressed={!cur} disabled={disabled} onClick={() => onChange("")}>
           {tr("imggen.model_default")}
         </button>
         {SIZE_SHAPES.filter((k) => groups[k].length > 0 || curShape === k).map((k) => (
           <button
             key={k}
             type="button"
-            className="igen-chip"
+            className="ui-chip igen-chip"
             aria-pressed={curShape === k}
             disabled={disabled}
             onClick={() => pick(k)}
