@@ -338,7 +338,7 @@ export function UsageView() {
             <button
               key={f.dim + ":" + f.value}
               type="button"
-              className="usage-chip"
+              className="ui-chip usage-chip"
               onClick={() => toggleFilter(f.dim, f.value)}
               title={tr("usage.filter_remove")}
             >
