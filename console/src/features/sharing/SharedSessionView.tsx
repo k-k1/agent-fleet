@@ -1,3 +1,4 @@
+import { useInterval } from "../../lib/useInterval.ts";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
@@ -266,30 +267,39 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   // the mirror's useHandoffProposals). Riding on the transcript poll would make the CP do two
   // round trips to the owner's Agent every time, doubling the cost of reading a shared history.
   // While the owner's Workspace is stopped they are not fetched, same as the transcript.
+  //
+  // gen is bumped on every session swap and on unmount, so a read for the previous session never
+  // lands; a read lands only if it started after the last one that did, so a slow older answer
+  // cannot overwrite a newer one while answers slower than the period still show.
+  const handoffGen = useRef(0);
+  const handoffSeq = useRef(0);
+  const handoffApplied = useRef(0);
+  const loadHandoffs = async () => {
+    const g = handoffGen.current;
+    const n = ++handoffSeq.current;
+    const current = useSharedSessionsStore.getState().sessions.find((x) => x.id === sharedSessionId);
+    if (current && current.workspaceState !== "running") return;
+    marksReloadRef.current();
+    const d = await api(`${path}/handoff-proposals`).catch(() => null);
+    if (g !== handoffGen.current || n < handoffApplied.current || !d || d.error) return; // a transient failure must not clear the visible cards
+    handoffApplied.current = n;
+    const next = JSON.stringify(Array.isArray(d.proposals) ? d.proposals : []);
+    // Unchanged content leaves state alone. Storing a fresh array every time repaints the whole
+    // transcript every 5 seconds and runs the tail-following layout effect below for nothing.
+    if (next === seen.current) return;
+    seen.current = next;
+    setHandoffs(JSON.parse(next) as Proposal[]);
+  };
   useEffect(() => {
-    let live = true;
+    handoffGen.current++;
     seen.current = "";
     setHandoffs([]); // a pane swaps sessions in place, so never flash the previous one's proposals
-    const load = async () => {
-      const current = useSharedSessionsStore.getState().sessions.find((x) => x.id === sharedSessionId);
-      if (current && current.workspaceState !== "running") return;
-      marksReloadRef.current();
-      const d = await api(`${path}/handoff-proposals`).catch(() => null);
-      if (!live || !d || d.error) return; // a transient failure must not clear the visible cards
-      const next = JSON.stringify(Array.isArray(d.proposals) ? d.proposals : []);
-      // Unchanged content leaves state alone. Storing a fresh array every time repaints the whole
-      // transcript every 5 seconds and runs the tail-following layout effect below for nothing.
-      if (next === seen.current) return;
-      seen.current = next;
-      setHandoffs(JSON.parse(next) as Proposal[]);
-    };
-    void load();
-    const timer = window.setInterval(() => void load(), POLL_HANDOFF);
+    void loadHandoffs();
     return () => {
-      live = false;
-      window.clearInterval(timer);
+      handoffGen.current++;
     };
   }, [sharedSessionId, path]);
+  useInterval(() => void loadHandoffs(), POLL_HANDOFF);
 
   // Remembering the reading position (scrollMark, the mirror's mechanism used as is).
   //

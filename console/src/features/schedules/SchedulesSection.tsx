@@ -10,6 +10,7 @@
 // row shows the outcome (succeeded/failed/skipped), whether it was a manual run-now or a scheduled
 // fire, and opens the session that fire drove.
 import { createPortal } from "react-dom";
+import { useInterval } from "../../lib/useInterval.ts";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -385,42 +386,54 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // Refetch on mount / tenant switch / retry, and poll while mounted (CP is pull-only —
   // no push). A failed fetch keeps the rows already on screen and surfaces the reason: it
   // must never read as "there are no schedules" (readScheduleList).
-  useEffect(() => {
-    let alive = true;
-    const load = () =>
-      scheduleList()
-        .then((res) => {
-          if (!alive) return;
-          const { items: arr, error } = readScheduleList(res);
-          if (!arr) {
-            setLoadErr(errText(error) || t("sched.load_failed"));
-            setFirstReadDone(true);
-            return;
-          }
-          setLoadErr("");
-          const ser = JSON.stringify(arr);
-          if (ser !== serRef.current) {
-            serRef.current = ser;
-            setItems(arr);
-          }
-          setLoaded(true);
-          setLoadedFor(tenant);
+  //
+  // gen is bumped on every refetch trigger and on unmount, so a read started under an older
+  // tenant never lands; a read lands only if it started after the last one that did, so a slow
+  // older answer cannot overwrite a newer one while answers slower than the period still show.
+  const gen = useRef(0);
+  const seq = useRef(0);
+  const applied = useRef(0);
+  const load = () => {
+    const g = gen.current;
+    const n = ++seq.current;
+    return scheduleList()
+      .then((res) => {
+        if (g !== gen.current || n < applied.current) return;
+        const { items: arr, error } = readScheduleList(res);
+        if (!arr) {
+          applied.current = n;
+          setLoadErr(errText(error) || t("sched.load_failed"));
           setFirstReadDone(true);
-        })
-        .catch(() => {
-          // Thrown = the network dropped (api() resolves CP errors instead).
-          if (alive) {
-            setLoadErr(t("sched.load_failed"));
-            setFirstReadDone(true);
-          }
-        });
-    load();
-    const id = setInterval(load, POLL_MS);
+          return;
+        }
+        applied.current = n;
+        setLoadErr("");
+        const ser = JSON.stringify(arr);
+        if (ser !== serRef.current) {
+          serRef.current = ser;
+          setItems(arr);
+        }
+        setLoaded(true);
+        setLoadedFor(tenant);
+        setFirstReadDone(true);
+      })
+      .catch(() => {
+        // Thrown = the network dropped (api() resolves CP errors instead).
+        if (g === gen.current && n >= applied.current) {
+          applied.current = n;
+          setLoadErr(t("sched.load_failed"));
+          setFirstReadDone(true);
+        }
+      });
+  };
+  useEffect(() => {
+    gen.current++;
+    void load();
     return () => {
-      alive = false;
-      clearInterval(id);
+      gen.current++;
     };
   }, [tenant, reloadTick]);
+  useInterval(() => void load(), POLL_MS);
 
   const sorted = useMemo(() => sortSchedules(items), [items]);
   const scoped = useMemo(() => (wset ? sorted.filter((s) => scheduleInSet(wset, s, wctx)) : sorted), [sorted, wset, wctx]);

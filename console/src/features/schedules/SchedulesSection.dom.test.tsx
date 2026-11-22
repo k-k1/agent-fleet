@@ -512,3 +512,49 @@ describe("SchedulesSection scheduled sessions before the schedule list has loade
     }
   });
 });
+
+// Poll ordering on useInterval (#4786): a slow older read must not overwrite a newer one, and an
+// answer slower than the period must still show.
+describe("SchedulesSection poll guards", () => {
+  const defer = () => {
+    let resolve!: (v: unknown) => void;
+    const p = new Promise((r) => (resolve = r));
+    return { p, resolve };
+  };
+
+  it("keeps the newest read when the slow initial read lands after a poll", async () => {
+    vi.useFakeTimers();
+    const first = defer();
+    const second = defer();
+    scheduleList.mockReturnValueOnce(first.p).mockReturnValueOnce(second.p);
+    await render();
+    await act(async () => void vi.advanceTimersByTime(15000));
+    expect(scheduleList).toHaveBeenCalledTimes(2);
+    await act(async () => second.resolve([{ ...sched, id: "sch_new", spec_label: "newer" }]));
+    await act(async () => first.resolve([{ ...sched, id: "sch_old", spec_label: "older" }]));
+    expect(text()).toContain("newer");
+    expect(text()).not.toContain("older");
+  });
+
+  it("still shows an answer that takes longer than the poll period", async () => {
+    vi.useFakeTimers();
+    const first = defer();
+    scheduleList.mockReturnValueOnce(first.p).mockReturnValue(new Promise(() => {}));
+    await render();
+    await act(async () => void vi.advanceTimersByTime(15000));
+    expect(scheduleList).toHaveBeenCalledTimes(2); // the tick fired while the first read is still out
+    await act(async () => first.resolve([sched]));
+    expect(text()).toContain("morning review");
+  });
+
+  it("keeps a newer failure on screen when the older read succeeds afterwards", async () => {
+    vi.useFakeTimers();
+    const first = defer();
+    scheduleList.mockReturnValueOnce(first.p).mockResolvedValueOnce({ error: { code: "http_502", message: "bad gateway" } });
+    await render();
+    await act(async () => void vi.advanceTimersByTime(15000));
+    expect(failed()).toBe(true);
+    await act(async () => first.resolve([sched]));
+    expect(failed()).toBe(true);
+  });
+});
