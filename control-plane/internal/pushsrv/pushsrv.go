@@ -158,12 +158,15 @@ func (p *Service) onNotification(n store.Notification) {
 // kind must not be one the member turned off, and the session must not be on screen in an active
 // Console. Every doubt resolves to "send": a lost question costs more than a redundant buzz.
 func (p *Service) deliver(ctx context.Context, n store.Notification) {
-	lctx, lcancel := context.WithTimeout(ctx, p.timeout)
-	defer lcancel()
+	// Each read has its own deadline: one that stalls until its deadline must not leave the next
+	// read (the subscription list) with an expired context.
+	read := func() (context.Context, context.CancelFunc) { return context.WithTimeout(ctx, p.timeout) }
 	if p.view.on(n.MembershipID, n.TargetID, time.Now()) {
 		return
 	}
-	active, includeText, err := p.store.PushDeliveryContext(lctx, n.MembershipID)
+	cctx, ccancel := read()
+	active, includeText, err := p.store.PushDeliveryContext(cctx, n.MembershipID)
+	ccancel()
 	if err != nil {
 		log.Printf("web push: delivery context: %v", err)
 		active, includeText = true, false
@@ -171,12 +174,17 @@ func (p *Service) deliver(ctx context.Context, n store.Notification) {
 	if !active {
 		return
 	}
-	if off, err := p.store.GetPushOffKinds(lctx, n.MembershipID); err != nil {
+	octx, ocancel := read()
+	off, err := p.store.GetPushOffKinds(octx, n.MembershipID)
+	ocancel()
+	if err != nil {
 		log.Printf("web push: preferences: %v", err)
 	} else if slices.Contains(off, n.Kind) {
 		return
 	}
+	lctx, lcancel := read()
 	subs, err := p.store.ListPushSubscriptions(lctx, n.MembershipID)
+	lcancel()
 	if err != nil || len(subs) == 0 {
 		if err != nil {
 			log.Printf("web push: list subscriptions: %v", err)
@@ -184,12 +192,15 @@ func (p *Service) deliver(ctx context.Context, n store.Notification) {
 		return
 	}
 	pl := pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName}
-	if includeText && n.Kind == "question" {
-		pl.Text = questionText(n.Payload)
-	}
 	body, _ := json.Marshal(pl)
-	// One goroutine per device with its own deadline: a device whose push service hangs must not
-	// eat the budget of the ones behind it. p.slots bounds the sends in flight CP-wide.
+	if includeText && n.Kind == "question" {
+		// The text is optional, the question is not: JSON escaping can make 140 runes several
+		// times longer, so a text that would push the payload past what can be encrypted is dropped.
+		pl.Text = questionText(n.Payload)
+		if withText, _ := json.Marshal(pl); len(withText) <= webpush.MaxPayload {
+			body = withText
+		}
+	}
 	var wg sync.WaitGroup
 	for _, s := range subs {
 		// An endpoint the allowlist refuses is skipped, not deleted: a missing AF_WEB_PUSH_ENDPOINT_HOSTS

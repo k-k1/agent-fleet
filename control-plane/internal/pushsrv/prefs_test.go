@@ -172,3 +172,70 @@ func TestReleaseNeedsTheSubscriptionsKeys(t *testing.T) {
 		t.Fatal("pushed after release")
 	}
 }
+
+func TestOneDeviceClearingKeepsTheOthersSuppression(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	now := time.Now()
+	f.svc.view.set("m1", "phone", "s1", now)
+	f.svc.view.set("m1", "desk", "s1", now)
+	f.svc.view.set("m1", "phone", "", now)
+	f.svc.deliver(context.Background(), note("question"))
+	if f.count() != 0 {
+		t.Fatal("clearing one device lifted the other device's suppression")
+	}
+}
+
+func TestViewingIsBounded(t *testing.T) {
+	v := newViewing()
+	now := time.Now()
+	for i := 0; i < 1000; i++ {
+		v.set("m1", string(rune('a'+i%26))+string(rune('A'+i/26%26))+string(rune('0'+i/676)), "s", now)
+	}
+	if n := len(v.byMember["m1"]); n > maxViewDevices {
+		t.Fatalf("%d devices on record for one member", n)
+	}
+	// A member who stopped reporting is reclaimed by someone else's report after the TTL.
+	v.set("gone", "d", "s", now)
+	v.set("other", "d", "s", now.Add(viewTTL+sweepEvery+time.Second))
+	if _, ok := v.byMember["gone"]; ok {
+		t.Fatal("an abandoned member's expired entry was never reclaimed")
+	}
+}
+
+func TestOversizedTextIsDroppedNotTheQuestion(t *testing.T) {
+	f := newFixture(t)
+	d := f.subscribe(t, "m1")
+	f.st.includeTxt = true
+	n := note("question")
+	n.DisplayName = strings.Repeat("a", 3600)
+	n.Payload = `{"questions":[{"question":"` + strings.Repeat("<", 140) + `"}]}`
+	f.svc.deliver(context.Background(), n)
+	if f.count() != 1 {
+		t.Fatal("the push was lost to an over-long text")
+	}
+	if got := d.open(t, f.bodies[0]); strings.Contains(got, `"text"`) {
+		t.Fatal("text kept past the payload limit")
+	}
+}
+
+type slowCtxStore struct{ *memStore }
+
+func (slowCtxStore) PushDeliveryContext(ctx context.Context, _ string) (bool, bool, error) {
+	<-ctx.Done()
+	return false, false, ctx.Err()
+}
+
+func TestStalledSettingsReadStillDeliversWithoutText(t *testing.T) {
+	f := newFixture(t)
+	d := f.subscribe(t, "m1")
+	f.svc.store = slowCtxStore{f.st}
+	f.svc.timeout = 300 * time.Millisecond
+	f.svc.deliver(context.Background(), note("question"))
+	if f.count() != 1 {
+		t.Fatal("a stalled settings read cost the member the notification")
+	}
+	if got := d.open(t, f.bodies[0]); strings.Contains(got, `"text"`) {
+		t.Fatal("text sent although the setting could not be read")
+	}
+}
