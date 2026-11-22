@@ -65,6 +65,14 @@ describe("answered question card text", () => {
     expect(rule(".mq-opt:disabled:not(.selected):not(.checked) .mq-mark")).toMatch(/color:\s*var\(--muted\)/);
   });
 
+  it("an inert checked option differs from a live checked one by border and tint", () => {
+    const body = rule(".mq-opt.checked:disabled");
+    expect(body).toMatch(/border-color:/);
+    expect(body).toMatch(/background:/);
+    expect(body).not.toMatch(/(?<![\w-])color:/);
+    expect(mixPct(".mq-opt.checked:disabled")).toBeLessThan(mixPct(".mq-opt.checked"));
+  });
+
   it("colours answered descriptions with tokens: --muted, --fg once picked", () => {
     expect(rule(".mt-question.answered .mq-opt-desc")).toMatch(/color:\s*var\(--muted\)/);
     expect(rule(".mt-question.answered .mq-opt.selected .mq-opt-desc")).toMatch(/color:\s*var\(--fg\)/);

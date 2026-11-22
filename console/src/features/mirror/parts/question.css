@@ -162,6 +162,12 @@
   border-color: var(--chat-accent);
   background: color-mix(in srgb, var(--chat-accent) 12%, var(--bg));
 }
+/* Checked but inert (a send in flight): keep the accent, soften the border and tint so it reads as
+   not clickable. Border and background only, never the text. */
+.mq-opt.checked:disabled {
+  border-color: color-mix(in srgb, var(--chat-accent) 50%, var(--border));
+  background: color-mix(in srgb, var(--chat-accent) 6%, var(--bg));
+}
 /* The leading radio/checkbox marker (◉/○, ☑/☐, ✔). */
 .mq-mark {
   flex: none;
