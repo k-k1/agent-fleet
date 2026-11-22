@@ -274,7 +274,7 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	recordBranchPRs(sessions, linkedAt)
 	recordInferredLinks(sessions, dirBranch, linkedAt)
 	// Stable order: newest first by creation time.
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
+	sortSessionsNewestFirst(sessions)
 	// repoJobs and imageJobs are the only channels telling the CP "no session, but the
 	// workspace IS busy" (docs/log/78). An import takes minutes to hours while GET polling
 	// deliberately does not count as activity, so without this idle-stop kills a running
@@ -1583,6 +1583,18 @@ func RestoreSession(name string) (session.Meta, bool) {
 	return m, true
 }
 
+// sortSessionsNewestFirst orders newest first. CreatedAt has one-second precision and the
+// queue starts several sessions per tick, so Name breaks ties; without it equal keys come
+// back in gather order, which differs between polls.
+func sortSessionsNewestFirst(sessions []session.Session) {
+	sort.SliceStable(sessions, func(i, j int) bool {
+		if sessions[i].CreatedAt != sessions[j].CreatedAt {
+			return sessions[i].CreatedAt > sessions[j].CreatedAt
+		}
+		return sessions[i].Name < sessions[j].Name
+	})
+}
+
 // HandleListArchived returns archived sessions (for the restore modal) as slim rows built from
 // the meta (wireArchivedRow), not the full live wire.
 func HandleListArchived(w http.ResponseWriter, r *http.Request) {
@@ -1592,7 +1604,7 @@ func HandleListArchived(w http.ResponseWriter, r *http.Request) {
 			sessions = append(sessions, wireArchivedRow(m))
 		}
 	}
-	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
+	sortSessionsNewestFirst(sessions)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
