@@ -1,4 +1,5 @@
 import { useEffect, useMemo } from "react";
+import { useInterval } from "../../lib/useInterval.ts";
 import { ensureWorkItems, POLL_MS, useWorkItemStore } from "../workitems/store.ts";
 import { refIndex, type RefIndex } from "./refSearch.ts";
 
@@ -16,7 +17,6 @@ export function useLedgerWhile(active: boolean): void {
   useEffect(() => {
     if (!active || loaded) return;
     void ensureWorkItems();
-    const id = setInterval(() => void ensureWorkItems(), POLL_MS + 1000);
-    return () => clearInterval(id);
   }, [active, loaded]);
+  useInterval(() => void ensureWorkItems(), active && !loaded ? POLL_MS + 1000 : null);
 }
