@@ -509,3 +509,151 @@ func TestMemoRecipeTidyMoveOutAndExplicitMerge(t *testing.T) {
 		e.assertPendingReleaseMatches()
 	})
 }
+
+// The person's return and a session's hand-back of a delivered message put it back pending under
+// the release_recipe CHECK, whatever the release copy held while the message was delivered (a
+// rename of the category clears the copies of a row that is not pending).
+func TestMemoRecipeReturnAndDeferRestoreTheReleaseCopy(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{})
+		for _, person := range []bool{true, false} {
+			m := decode[memoDTO](t, e.recipeMemo("app", "impl", "one", map[string]any{"effort": "low", "model": "m1"}))
+			if m.State != store.MemoStatePending {
+				t.Fatalf("create: %+v", m)
+			}
+			d := e.contRun(q, "run-1", store.DeliveryOpen, m.ID)
+			if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET release_recipe='' WHERE id=?`, m.ID); err != nil {
+				t.Fatal(err)
+			}
+			err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error {
+				res, err := tx.ReturnDelivered(d, store.MemoReturn{Person: person, Hash: memoContentHash, At: memoNow(),
+					NotBefore: store.DeliveryTS(time.Now().Add(time.Hour))})
+				if err == nil && len(res.Pending) != 1 {
+					t.Errorf("person=%v: result %+v", person, res)
+				}
+				return err
+			})
+			if err != nil {
+				t.Fatalf("person=%v: %v", person, err)
+			}
+			row := e.memoRow(m.ID)
+			if row.State != store.MemoStatePending || row.Recipe == "" {
+				t.Fatalf("person=%v: returned row %+v", person, row)
+			}
+			var rel string
+			if err := e.st.DB().QueryRowContext(context.Background(), `SELECT release_recipe FROM memo WHERE id=?`, m.ID).Scan(&rel); err != nil || rel != row.Recipe {
+				t.Fatalf("person=%v: release_recipe %q (%v), want %q", person, rel, err, row.Recipe)
+			}
+		}
+	})
+}
+
+// A pending message the claim would hold for its recipe does not count towards an open threshold:
+// with openAfter 2 and one valid message, nothing fires; the next valid message opens the queue.
+func TestMemoRecipeInvalidDoesNotOpenAThreshold(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("app", "impl", map[string]any{"enabled": true, "openAfter": 2, "batch": 5})
+		ok1 := e.pending("app", "impl", "valid")
+		bad := decode[memoDTO](t, e.recipeMemo("app", "impl", "bad", map[string]any{"route": "anthropic-subscription"}))
+		e.queueWith("app", "impl", map[string]any{"enabled": true, "openAfter": 2, "batch": 5, "agentKind": "codex"})
+		agent := e.useQueueAgent("")
+		agent.mu.Lock()
+		agent.report = true
+		agent.mu.Unlock()
+		later := time.Now().Add(10 * time.Minute)
+		e.autoTick(later)
+		if agent.createCount() != 0 || e.memoRow(ok1.ID).State != store.MemoStatePending {
+			t.Fatalf("one valid message opened a threshold of two: creates %d, %+v (bad %s)", agent.createCount(), e.memoRow(ok1.ID), bad.ID)
+		}
+		ok2 := e.pending("app", "impl", "second valid")
+		e.autoTick(later.Add(10 * time.Minute))
+		if agent.createCount() != 1 {
+			t.Fatalf("two valid messages did not open it: %d creates (second %s)", agent.createCount(), ok2.ID)
+		}
+	})
+}
+
+// With the category's default effort high, an explicit "high" and an omitted effort are not merged
+// (the merge would drop the explicit choice), and a message that names another agent gets none of
+// the category's route while the category's own messages keep it.
+func TestMemoRecipeExplicitIsKeptAndRouteIsNotInherited(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"batch": 5, "maxActive": 3, "effort": "high", "route": "anthropic-subscription"})
+		x := decode[memoDTO](t, e.recipeMemo("app", "impl", "x", map[string]any{"agentKind": "codex"}))
+		time.Sleep(1100 * time.Millisecond)
+		y := e.pending("app", "impl", "y")
+		agent := e.useQueueAgent("")
+		d1, d2 := e.fired(q), e.fired(q)
+		e.tick(e.runner(), time.Now())
+		for _, c := range agent.creates {
+			qd, _ := c["queue_delivery"].(map[string]any)
+			r, hasRoute := c["route"].(map[string]any)
+			switch qd["id"] {
+			case d1.ID:
+				if hasRoute || c["kind"] != "codex" {
+					t.Errorf("codex create kept the category's route: %v", c)
+				}
+			case d2.ID:
+				if !hasRoute || r["route"] != "anthropic-subscription" || c["kind"] != "claude" {
+					t.Errorf("claude create lost the route: %v", c)
+				}
+			}
+		}
+		_, _ = x, y
+	})
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.category("r", "q")
+		e.tidyQueue(q)
+		if rec := e.do("a", "PUT", "/api/memo-queues/"+q, map[string]any{"instruction": "do it", "tidy": true, "effort": "high"}); rec.Code != http.StatusOK {
+			t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+		}
+		mk := func(body, effort string) store.Memo {
+			m := store.Memo{ID: store.NewID(), MembershipID: e.members["a"], Repo: "r", Category: "q", Kind: "text", Body: body,
+				CreatedAt: store.NowTS(), State: store.MemoStatePending, Provenance: "member", Recipe: memorecipe.Recipe{Effort: effort}.Encode()}
+			m.ReleaseHash, m.ReleasedAt = memoContentHash(m), store.NowTS()
+			if err := e.st.CreateMemo(context.Background(), m); err != nil {
+				t.Fatal(err)
+			}
+			return e.memoRow(m.ID)
+		}
+		a, b := mk("one", "high"), mk("two", "")
+		for _, rows := range [][]store.Memo{{a, b}, {b, a}} {
+			out, err := memoTidyApply(context.Background(), e.st, memoTidyApplyIn{MembershipID: e.members["a"], QueueID: q, Trigger: store.TidyTriggerManual,
+				Input: tidyItems(rows...), Ops: []memotidy.Op{merge("both", rows[0].ID, rows[1].ID)}})
+			if err != nil || out.Run.State != store.TidyRunDropped || out.Run.Reason != memotidy.CodeMixedGroup {
+				t.Fatalf("an explicit and an omitted effort under a default of the same value merged: %v %+v", err, out.Run)
+			}
+		}
+	})
+}
+
+// An undo whose home category is no longer a queue leaves a plain note with no recipe, even when
+// the row carried one in the queue it was moved to.
+func TestMemoRecipeUndoIntoAPlainHomeCarriesNoRecipe(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		home, dest := e.category("r", "home"), e.category("r", "dest")
+		e.queue(dest)
+		e.tidyQueue(home, dest)
+		m := store.Memo{ID: store.NewID(), MembershipID: e.members["a"], Repo: "r", Category: "home", Kind: "text", Body: "x",
+			CreatedAt: store.NowTS(), State: store.MemoStatePending, Provenance: "member", Recipe: memorecipe.Recipe{Effort: "low"}.Encode()}
+		m.ReleaseHash, m.ReleasedAt = memoContentHash(m), store.NowTS()
+		if err := e.st.CreateMemo(context.Background(), m); err != nil {
+			t.Fatal(err)
+		}
+		row := e.memoRow(m.ID)
+		out := e.tidyApply(home, store.TidyTriggerManual, []store.Memo{row}, []string{dest}, move(m.ID, dest))
+		if got := e.memoRow(m.ID); got.Category != "dest" || got.Recipe == "" {
+			t.Fatalf("moved: %+v", got)
+		}
+		// The home loses its auto-run settings, then the run is undone.
+		if rec := e.do("a", "DELETE", "/api/memo-queues/"+home, nil); rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+			t.Fatalf("delete settings: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := e.undo(out.Run.ID); rec.Code != http.StatusOK {
+			t.Fatalf("undo: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := e.memoRow(m.ID); got.Category != "home" || got.Recipe != "" || got.State != "" {
+			t.Fatalf("undone into a plain home: %+v", got)
+		}
+	})
+}

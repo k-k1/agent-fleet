@@ -1068,3 +1068,12 @@ func memoRecipeEffectiveProblem(q store.MemoQueue, m store.Memo) string {
 	}
 	return ""
 }
+
+// memoRecipeEligible narrows an eligibility test to the messages whose recipe the run could be
+// created with: one the claim would hold for a person must not count towards an open threshold or
+// start a drain by itself.
+func memoRecipeEligible(q store.MemoQueue, eligible func(store.Memo) bool) func(store.Memo) bool {
+	return func(m store.Memo) bool {
+		return eligible(m) && memoRecipeEffectiveProblem(q, m) == ""
+	}
+}
