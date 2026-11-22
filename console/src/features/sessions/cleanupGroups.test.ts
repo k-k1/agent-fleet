@@ -84,3 +84,13 @@ describe("rowLabel", () => {
     expect(rowLabel(sess("左ペイン更新の遅延", "agent-fleet@wip-a"))).toBe("左ペイン更新の遅延");
   });
 });
+
+describe("safetyBadgeClass", () => {
+  it("maps each grade to its tone and leaves unknown grades muted", async () => {
+    const { safetyBadgeClass } = await import("./cleanupGroups.ts");
+    expect(safetyBadgeClass("safe")).toBe("ui-badge ui-badge-ok");
+    expect(safetyBadgeClass("review")).toBe("ui-badge ui-badge-warn");
+    expect(safetyBadgeClass("regenerable")).toBe("ui-badge ui-badge-accent");
+    expect(safetyBadgeClass("keep")).toBe("ui-badge");
+  });
+});

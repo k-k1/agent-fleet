@@ -1354,3 +1354,29 @@
 .mirror-send-menu .ui-menu-item {
   justify-content: space-between;
 }
+
+/* ---- Font-size tokens and the badge primitive ----
+   The scale is the sizes the features already hard-code (counted across every .css:
+   12px x480, 11px x407, 13px x110, 10px x76); a token has the same value as the literal it
+   replaces, so adopting one is never a visual change. Features move over one at a time. */
+:root {
+  --fs-10: 10px;
+  --fs-11: 11px;
+  --fs-12: 12px;
+  --fs-13: 13px;
+}
+/* A small tinted pill. The tone modifier sets --badge; the fill is that colour mixed into
+   transparent so it follows the theme. Without a modifier it reads as muted. */
+.ui-badge {
+  --badge: var(--muted);
+  --badge-mix: 14%;
+  font-size: var(--fs-10);
+  padding: 1px 6px;
+  border-radius: 9px;
+  white-space: nowrap;
+  color: var(--badge);
+  background: color-mix(in srgb, var(--badge) var(--badge-mix), transparent);
+}
+.ui-badge-ok { --badge: var(--ok); --badge-mix: 16%; }
+.ui-badge-warn { --badge: var(--warn); --badge-mix: 16%; }
+.ui-badge-accent { --badge: var(--accent, var(--ok)); --badge-mix: 16%; }

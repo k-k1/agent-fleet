@@ -135,3 +135,7 @@ export function groupCandidates(items: CleanupCandidate[]): CleanupRepoGroup[] {
   repos.sort((a, b) => (!a.repo ? 1 : !b.repo ? -1 : compareText(a.repo, b.repo)));
   return repos;
 }
+
+/** The ui.css badge classes for a safety grade (safe / review / regenerable / keep). */
+export const safetyBadgeClass = (grade: string): string =>
+  "ui-badge" + (grade === "safe" ? " ui-badge-ok" : grade === "review" ? " ui-badge-warn" : grade === "regenerable" ? " ui-badge-accent" : "");
