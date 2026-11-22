@@ -254,7 +254,7 @@ func HandlePutConn(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_key", "key is required")
 		return
 	}
-	if ref := agents.CredentialEntryRefusal(keyEnvRoutes(env)...); ref != nil {
+	if ref := agents.CredentialEntryRefusalAt("", keyEnvRoutes(env)...); ref != nil {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}

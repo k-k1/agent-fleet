@@ -886,6 +886,41 @@ func TestProviderKeysEntry(t *testing.T) {
 	}
 }
 
+// Approving a custom provider's host does not bring unrelated stored key names back into either
+// list: a name the Agent has no route for opens custom-api, and only an outright allowance of that
+// route lists it (D14a). Known keys of an allowed route stay.
+func TestApprovedCustomEndpointListsNoGenericKey(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	if err := secrets.Update(func(d *secrets.Data) error {
+		d.Opencode = map[string]string{"ANTHROPIC_API_KEY": "sk-ant-secret", "SOME_OTHER_KEY": "other-secret"}
+		d.CustomAPI = &secrets.CustomAPIConn{Provider: "mine", URL: "https://llm.corp.example/v1"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	p := routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteAnthropicAPI},
+		Endpoints: []string{"llm.corp.example"}, EndpointRoutes: []string{routes.RouteCustomAPI}}
+	if !p.Allows(routes.RouteCustomAPI) {
+		t.Fatal("control: the approved host does not allow custom-api, so the case proves nothing")
+	}
+	useHidingPolicy(t, p)
+	for name, raw := range map[string]json.RawMessage{
+		"provider_keys": connectionsMap(t)["provider_keys"],
+		"opencode":      connectionsMap(t)[session.KindOpencode],
+	} {
+		var e struct {
+			Envs []string `json:"envs"`
+		}
+		if err := json.Unmarshal(raw, &e); err != nil {
+			t.Fatalf("%s: %v: %s", name, err, raw)
+		}
+		if !slices.Equal(e.Envs, []string{"ANTHROPIC_API_KEY"}) {
+			t.Errorf("%s lists %v, want only ANTHROPIC_API_KEY", name, e.Envs)
+		}
+	}
+}
+
 // A harness the member switched off offers no models either (the member layer): the picker gets
 // nothing, with a reason that names the member's own switch, not the policy. Switched on again it
 // offers its menu.

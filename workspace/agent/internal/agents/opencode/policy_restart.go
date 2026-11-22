@@ -44,13 +44,17 @@ var ErrServeUnverified = errors.New("opencode is unavailable under the credentia
 // engine is allowed. It is computed from those sources, not from a daemon's environment, so the
 // start and every later check agree; the engine's token, minted per call, is left out. It reads
 // local state only: Ensure asks it under its lock.
-func credentialGen() string {
-	p, restricted := policyRestriction()
+func credentialGen() string { return credentialGenFrom(readView()) }
+
+func credentialGenFrom(v policyView) string {
+	p, restricted := v.p, v.restricted
 	if !restricted {
 		return openGen
 	}
-	keys, pref, acct := credentialView()
-	parts := []string{"pin:" + strings.Join(allowedServeProviders(p, keys, pref, acct, engineProviderIDs()), ","),
+	keys, pref, acct, custom := v.keys, v.pref, v.acct, v.custom
+	engines := v.engines
+	parts := []string{"pin:" + strings.Join(serveProviders(p, keys, pref, acct, engines, custom), ","),
+		"custom:" + customPinDigest(p, engines, custom),
 		"engine:" + strconv.FormatBool(p.Allows(routes.RouteAFEngineLLM))}
 	fp := func(v string) string { sum := sha256.Sum256([]byte(v)); return hex.EncodeToString(sum[:6]) }
 	for name, v := range keys {

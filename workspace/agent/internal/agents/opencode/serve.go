@@ -387,11 +387,12 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		"OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
 	// Under a restriction the serve runs isolated (policy_isolation.go): no config file may
 	// override its provider pin, and it gets only the keys and providers the policy allows.
-	if err := policyConfigErr(globalConfigFiles()); err != nil {
+	view := readView() // one reading: the file check, the pin and the generation agree on the connection
+	if err := policyConfigErrFrom(globalConfigFiles(), view); err != nil {
 		return "", 0, err
 	}
-	cmd.Env, _ = servePolicyEnv(cmd.Env)
-	credGen := credentialGen()
+	cmd.Env, _ = servePolicyEnvFrom(cmd.Env, view)
+	credGen := credentialGenFrom(view)
 	if sharedWanted {
 		// Tells the plugins this is af's shared server: no AF_SESSION_SID here, sessions are told
 		// apart by metadata, and shell commands wait for their environment (agent-fleet-shared.js).
@@ -409,6 +410,16 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	for time.Now().Before(deadline) {
 		time.Sleep(200 * time.Millisecond)
 		if healthy(addr) {
+			// The candidate was built from a policy read before the file check and the spawn. A
+			// policy accepted meanwhile finds no daemon up (onPolicyChange) and restarts nothing, so
+			// the generation is compared with the current one before the daemon is published: one
+			// that no longer matches is not adopted, and the caller retries on the current policy.
+			if credGen != credentialGen() {
+				_ = cmd.Process.Kill()
+				_ = cmd.Wait()
+				tail.Release()
+				return "", 0, ErrServePolicyMoved
+			}
 			started = true
 			// The environment is fixed for this process's life. Recorded only once the daemon
 			// answers and this process is still running: one that exited (the port was taken) did
@@ -455,6 +466,10 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	tail.Release()
 	return "", 0, err
 }
+
+// ErrServePolicyMoved: the credential policy changed while the shared serve was starting, so the
+// daemon started for the old one was stopped instead of published; the caller retries.
+var ErrServePolicyMoved = errors.New("the credential policy changed while opencode was starting; try again")
 
 // armIdleWatchLocked starts the "fold up on zero demand" watcher, at most one at a time.
 // The caller must hold s.mu.

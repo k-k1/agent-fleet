@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -39,6 +41,10 @@ var providerKeys = map[string]struct{ route, key string }{
 // keys of this store by the routes they open.
 func KeyEnvRoutes(env string) []string { return keyEnvRoutes(env) }
 
+// KeyListed reports whether a key stored under env may be listed, entered and injected under p:
+// some route it opens is allowed outright, an endpoint approval not counting (keyAllowed).
+func KeyListed(p routepolicy.Policy, env string) bool { return keyAllowed(p, env) }
+
 // KeyEnvOpencode is the opencode.ai Zen/Go key's name: it belongs to opencode.ai's own card, not
 // to a provider's.
 const KeyEnvOpencode = opencodeKeyEnv
@@ -62,13 +68,74 @@ func keyRoutes() map[string]string {
 	return out
 }
 
-// credentialView is what the resolution reads: the stored keys, the billing choice and the
-// opencode.ai account as last seen (no daemon round trip). A seam for tests.
-var credentialView = func() (keys map[string]string, pref string, account oauthState) {
-	if s, err := secrets.Load(); err == nil {
-		keys = s.Opencode
+// policyView is one reading of everything a launch decision rests on. The serve's start takes it
+// once and builds its file check, its inline pin and its generation from it, so an update of the
+// connection between those steps cannot approve one URL and pin another.
+//
+// The held policy and the engine provider ids are part of it, and the credential store is read only
+// while something is restricted: without a restriction the launch path must not wait on the store.
+type policyView struct {
+	p          routepolicy.Policy
+	restricted bool
+	engines    []string
+	keys       map[string]string
+	pref       string
+	acct       oauthState
+	custom     *secrets.CustomAPIConn
+}
+
+func readView() policyView {
+	p, restricted := policyRestriction()
+	v := policyView{p: p, restricted: restricted}
+	if restricted {
+		v.engines = engineProviderIDs()
+		v.keys, v.pref, v.acct, v.custom = credentialView()
 	}
-	return keys, UsagePref(), oauthCached()
+	return v
+}
+
+// credentialView is what the resolution reads: the stored keys, the billing choice, the
+// opencode.ai account as last seen (no daemon round trip) and the custom provider's connection
+// (nil without one), all from one store read. A seam for tests.
+var credentialView = func() (keys map[string]string, pref string, account oauthState, custom *secrets.CustomAPIConn) {
+	if s, err := secrets.Load(); err == nil {
+		keys, custom = s.Opencode, s.CustomAPI
+	}
+	return keys, UsagePref(), oauthCached(), custom
+}
+
+// reservedProviders are provider ids a custom connection may not take: each already has a route of
+// its own, so pinning a URL under one would redirect that route's calls.
+func reservedProviders(engines []string) []string {
+	out := append([]string{"opencode", "opencode-go", bedrockProvider}, engines...)
+	for id := range providerKeys {
+		out = append(out, id)
+	}
+	return out
+}
+
+// customConn is the custom provider's connection as far as the policy may rely on it: nil unless
+// it names a provider id no other route owns and a URL. Every reader (binding, endpoint host,
+// inline pin, config-file refusal) goes through it, so they agree on whether a connection exists.
+func customConn(c *secrets.CustomAPIConn, engines []string) *secrets.CustomAPIConn {
+	if c == nil || strings.TrimSpace(c.Provider) == "" || strings.TrimSpace(c.URL) == "" ||
+		slices.Contains(reservedProviders(engines), strings.TrimSpace(c.Provider)) {
+		return nil
+	}
+	return c
+}
+
+// The custom provider's endpoint is a per-connection route: under a restriction it is allowed only
+// while its host is an approved self-hosted endpoint (ADR 0138 §2). Approval is per route, so a
+// launch on any other custom provider must not resolve to the route (resolveModel).
+func init() {
+	routepolicy.RegisterEndpoint(routes.RouteCustomAPI, func() string {
+		_, _, _, c := credentialView()
+		if c = customConn(c, engineProviderIDs()); c != nil {
+			return routepolicy.HostOf(c.URL)
+		}
+		return ""
+	})
 }
 
 // ResolveLaunch implements agents.CredentialResolver: the route of the model the session is
@@ -79,15 +146,15 @@ var credentialView = func() (keys map[string]string, pref string, account oauthS
 // configured model that is unavailable or disabled, and an agent's own model (JSON or Markdown,
 // global or project) overrides it, so nothing read at launch proves which model will run.
 func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
-	keys, pref, acct := credentialView()
-	return resolveModel(m.Model, keys, pref, acct, engineProviderIDs())
+	keys, pref, acct, custom := credentialView()
+	return resolveModel(m.Model, keys, pref, acct, engineProviderIDs(), custom)
 }
 
 // ModelLaunch is ResolveLaunch for an opencode run outside any session (the assistant chat and the
 // one-shots), on model.
 func ModelLaunch(model string) routes.Launch {
-	keys, pref, acct := credentialView()
-	return resolveModel(model, keys, pref, acct, engineProviderIDs())
+	keys, pref, acct, custom := credentialView()
+	return resolveModel(model, keys, pref, acct, engineProviderIDs(), custom)
 }
 
 // ModelRoutes implements agents.ModelRouteLister for opencode.ai's own providers: Zen (or Go) by
@@ -98,7 +165,7 @@ func ModelLaunch(model string) routes.Launch {
 // forbid-all over their single catalogued route would be unsound.
 func (agentImpl) ModelRoutes(model string) []string {
 	prov, _, ok := splitModel(model)
-	_, pref, _ := credentialView()
+	_, pref, _, _ := credentialView()
 	if !ok || pref == UsageOff || pref == UsageOwn {
 		return nil
 	}
@@ -111,7 +178,7 @@ func (agentImpl) ModelRoutes(model string) []string {
 	return nil
 }
 
-func resolveModel(model string, keys map[string]string, pref string, acct oauthState, engines []string) routes.Launch {
+func resolveModel(model string, keys map[string]string, pref string, acct oauthState, engines []string, custom *secrets.CustomAPIConn) routes.Launch {
 	prov, _, ok := splitModel(model)
 	if !ok || pref == UsageOff {
 		return routes.Launch{}
@@ -135,13 +202,28 @@ func resolveModel(model string, keys map[string]string, pref string, acct oauthS
 		// AWS credential chain decides, which cannot be told.
 		return routes.Launch{}
 	}
+	// A custom provider. Unrestricted, the URL is not pinned, so no binding claims it: the route
+	// alone is recorded, as before. Under a restriction with a stored connection (customConn, from
+	// the credentialView snapshot) only the provider the URL belongs to is on that endpoint; any
+	// other custom provider resolves to nothing, since the route's approval is of the one host.
+	p, restricted := policyRestriction()
+	if !restricted {
+		return routes.Launch{Route: routes.RouteCustomAPI}
+	}
+	if c := customConn(custom, engines); c != nil {
+		if prov != strings.TrimSpace(c.Provider) {
+			return routes.Launch{}
+		}
+		if allowedCustom(p, engines, custom) == nil {
+			return routes.Launch{Route: routes.RouteCustomAPI}
+		}
+		// The binding is of the endpoint alone: the stored key is not handed to the process (the
+		// provider's own configuration supplies it), so a binding that covered it would claim a
+		// credential nothing here proves.
+		return routes.Launch{Route: routes.RouteCustomAPI, Binding: credbind.Endpoint(routes.RouteCustomAPI, c.URL, "")}
+	}
 	return routes.Launch{Route: routes.RouteCustomAPI}
 }
-
-// A launch on a custom provider still records no binding. The stored custom provider connection
-// (secrets.CustomAPIConn) is not read here: a second store read on this path would sit outside the
-// one snapshot credentialView takes. The endpoint binding and the endpoint registration come
-// together with the URL pin, reading the connection from that snapshot.
 
 // resolveOpencodeAI resolves a model on opencode.ai's own providers. Who pays is proven only
 // when exactly one payer can be: the Zen/Go key alone (the account known to be signed out), or
@@ -210,7 +292,7 @@ func engineProviderIDs() []string {
 // login, the billing choice and the engine config open now, and bedrock while it is offered and
 // the gateway holds a marked profile for it.
 func (a agentImpl) UsableRoutes() []string {
-	keys, pref, acct := credentialView()
+	keys, pref, acct, _ := credentialView()
 	out := usableOf(keys, pref, acct, HasEngineProviders())
 	for _, r := range a.OfferedRoutes() {
 		if agents.GatewayHolds(r) {
