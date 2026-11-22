@@ -1149,3 +1149,35 @@ func TestCursorWithUnopenableLockDoesNothingDestructive(t *testing.T) {
 		t.Fatal("marker removed without the lock")
 	}
 }
+
+func TestCursorUnopenableLockRepinWithHealthyPinnedTreeIsNotNoSpace(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", "#!/bin/sh\necho 1\n", true) // healthy pinned tree
+	// The link points at another version, so a repin relinks (no download).
+	other := f.tree("2025.0.0-old")
+	os.MkdirAll(other, 0o755)
+	os.WriteFile(filepath.Join(other, "cursor-agent"), []byte("#!/bin/sh\necho 1\n"), 0o755)
+	os.Remove(f.link())
+	os.Symlink(filepath.Join(other, "cursor-agent"), f.link())
+	f.env.Repin = true
+	f.env.FreeMiB = func(string) (int64, bool) { return 350, true }
+	os.MkdirAll(f.env.cursorLockPath(), 0o755)
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d want %d (relink needs the lock, not space) out=%s", rc, ExitFailed, f.out)
+	}
+}
+
+func TestCursorUnreadableMarkerPathFailsWithoutTheLock(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newCursor(t, goodCursorMembers(), "")
+	f.env.Pins = map[string]string{} // no pin: without the journal check the run would end 0
+	local := filepath.Join(f.home, ".local")
+	os.MkdirAll(local, 0o755)
+	os.Chmod(local, 0o000)
+	t.Cleanup(func() { os.Chmod(local, 0o755) })
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+}

@@ -539,3 +539,63 @@ func TestCursorIncompleteMarkerLeavesALiveTree(t *testing.T) {
 		})
 	}
 }
+
+func TestUnopenableLockLeavesRecoveryStateAlone(t *testing.T) {
+	t.Run("npm pending and accepted backups", func(t *testing.T) {
+		for _, state := range []string{"pending", "accepted"} {
+			f := newSU(t, goodRTK, "", "", "")
+			tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+			f.write(t, tree+npmBakSuffix+"/VERSION", "1.0.0")
+			f.write(t, f.env.npmMarker(), state+"\nclaude\n")
+			if err := os.MkdirAll(f.env.npmLockPath(), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			f.env.npmRecoverAside(false)
+			f.env.selfUpdateNPM()
+			f.env.NPMVerifyPresentStep()
+			if got := f.read(filepath.Join(tree, "VERSION")); got != "2.0.0" {
+				t.Fatalf("%s: tree changed without the lock: %q", state, got)
+			}
+			if _, err := os.Lstat(tree + npmBakSuffix + "/VERSION"); err != nil {
+				t.Fatalf("%s: backup touched without the lock", state)
+			}
+			if _, err := os.Lstat(f.env.npmMarker()); err != nil {
+				t.Fatalf("%s: marker removed without the lock", state)
+			}
+			if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+				t.Fatalf("%s: npm ran without the lock", state)
+			}
+		}
+	})
+	t.Run("cursor journal, links and trees", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorInstaller)
+		m := f.plantSwitched(t, []cursorLinkState{{Path: f.local("agent"), Kind: "none"}})
+		f.link(t, "agent", filepath.Join(m.Dir, cursorTool))
+		f.link(t, "cursor-agent", filepath.Join(m.Dir, cursorTool))
+		if err := os.MkdirAll(f.env.cursorLockPath(), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		check := func(what string) {
+			t.Helper()
+			if _, err := os.Lstat(f.env.cursorMarkerPath()); err != nil {
+				t.Fatalf("%s: journal removed", what)
+			}
+			for _, p := range []string{m.Old, m.Dir} {
+				if _, err := os.Lstat(p); err != nil {
+					t.Fatalf("%s: %s gone", what, p)
+				}
+			}
+			for _, l := range []string{"agent", "cursor-agent"} {
+				if got, _ := os.Readlink(f.local(l)); got != filepath.Join(m.Dir, cursorTool) {
+					t.Fatalf("%s: link %s moved to %q", what, l, got)
+				}
+			}
+		}
+		if rc := Cursor(context.Background(), f.env); rc != ExitFailed {
+			t.Fatalf("Cursor rc=%d", rc)
+		}
+		check("Cursor")
+		f.env.selfUpdateCursor(context.Background())
+		check("selfUpdateCursor")
+	})
+}

@@ -213,7 +213,12 @@ func Cursor(ctx context.Context, e Env) int {
 	}
 	if lockErr != nil {
 		// Recovery rewrites links and trees: with a journal left, it cannot run unlocked.
-		if _, err := os.Lstat(e.cursorMarkerPath()); err == nil {
+		switch _, err := os.Lstat(e.cursorMarkerPath()); {
+		case err == nil:
+			return refuseUnlocked()
+		case !errors.Is(err, fs.ErrNotExist):
+			// Cannot even tell whether a journal is left: as main, an unreadable journal fails.
+			fmt.Fprintln(e.Stderr, err)
 			return refuseUnlocked()
 		}
 	}
@@ -265,15 +270,15 @@ func Cursor(ctx context.Context, e Env) int {
 		}
 		return ExitOK
 	}
-	if lockErr != nil && !e.room(cursorNeedMiB, []string{cursorStatusName}, cursorStatusName) {
-		return ExitNoSpace // answerable without writing
-	}
-	if lockErr != nil {
-		return refuseUnlocked()
-	}
 	// Space is needed only when the pinned tree has to be downloaded: relinking to a healthy one
 	// (a repin after the self-update moved ahead) writes nothing.
 	pinnedRuns := e.cursorRuns(filepath.Join(dir, cursorTool)) // asked once: it decides the space check and the download alike
+	if lockErr != nil {
+		if !pinnedRuns && !e.room(cursorNeedMiB, []string{cursorStatusName}, cursorStatusName) {
+			return ExitNoSpace // answerable without writing
+		}
+		return refuseUnlocked() // relinking or downloading both write
+	}
 	if !pinnedRuns && !e.room(cursorNeedMiB, []string{cursorStatusName}, cursorStatusName) {
 		return ExitNoSpace
 	}

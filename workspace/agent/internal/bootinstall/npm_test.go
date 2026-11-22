@@ -578,3 +578,42 @@ func TestNPMRereadsItsPlanOnceTheLockIsHeld(t *testing.T) {
 		t.Fatalf("redundant reinstall: %q", f.npmLog())
 	}
 }
+
+func TestNPMVerifyUnopenableLockProbesOnceAndFallsBackToBaked(t *testing.T) {
+	f := newNPM(t, allPins)
+	f.putIn(f.env.BakedBin, "claude", "#!/bin/sh\necho 1\n")
+	breakLock(t, f.env.npmLockPath())
+	// No ~/.local copy and a working baked one: as without the lock, nothing to do.
+	if rc := f.env.NPMVerify([]string{"claude"}, false); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	// A link that runs on the first probe and fails on the next must not reach a repair.
+	probes := filepath.Join(f.dir, "probes")
+	f.put("codex", fmt.Sprintf("#!/bin/sh\necho x >>%q\n[ $(wc -l <%q) -le 1 ] || exit 1\necho 1\n", probes, probes))
+	if rc := f.env.NPMVerify([]string{"codex"}, false); rc != ExitOK {
+		t.Fatalf("rc=%d", rc)
+	}
+	if _, err := os.Lstat(f.bin("codex")); err != nil || f.npmLog() != "" {
+		t.Fatalf("a second probe led to a repair: err=%v log=%q", err, f.npmLog())
+	}
+}
+
+func TestNPMRecheckKeepsTheDriftWhenNpmLsIsEmpty(t *testing.T) {
+	f := newNPM(t, map[string]string{"codex": "3.0.0"})
+	f.put("codex", "#!/bin/sh\necho 1\n")
+	f.stub("ls.json", `{"dependencies":{"@openai/codex":{"version":"2.0.0"}}}`)
+	f.env.Repin = true
+	f.env.afterNPMLock = func() { os.Remove(filepath.Join(f.dir, "ls.json")) } // npm ls now answers nothing
+	if rc := NPM(f.env); rc != ExitOK || !strings.Contains(f.npmLog(), "@openai/codex@3.0.0") {
+		t.Fatalf("drift dropped: rc=%d log=%q out=%s", rc, f.npmLog(), f.out)
+	}
+}
+
+func TestNPMRecordsEachSkipOnce(t *testing.T) {
+	f := newNPM(t, map[string]string{"claude": "1.0.0", "codex": "3.0.0"})
+	f.put("claude", "#!/bin/sh\necho 1\n")
+	NPM(f.env)
+	if n := strings.Count(f.statusText(), "claude\tskipped\t"); n != 1 {
+		t.Fatalf("skipped recorded %d times: %q", n, f.statusText())
+	}
+}
