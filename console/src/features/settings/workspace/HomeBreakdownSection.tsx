@@ -9,6 +9,7 @@ import { useSettingsUI } from "../store.ts";
 import { useSessionUI } from "../../sessions/ui.ts";
 import { Row } from "../parts/controls.tsx";
 import { PlaceLine, type Place } from "./machinePlace.tsx";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 // The /cleanup/home answer (workspace/agent/internal/homeusage).
 interface HomePart extends Place {
@@ -120,11 +121,7 @@ export function HomeBreakdownSection({ own }: { own: boolean }) {
   }, [read]);
 
   const running = !!st?.running;
-  useEffect(() => {
-    if (!running) return;
-    const id = setInterval(() => read(), POLL_MS);
-    return () => clearInterval(id);
-  }, [running, read]);
+  useInterval(() => void read(), running ? POLL_MS : null);
 
   if (unsupported) return null;
 

@@ -11,7 +11,7 @@
 //
 // Other runtimes have no notion of a pool. An empty table would read as "every slot is gone" on
 // a Fargate deployment, so there the whole tab is omitted (in AdminTab).
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
 import {
@@ -26,6 +26,7 @@ import { Button } from "../../../ui/Button.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 export type PoolBudget = {
   max_slots: number;
@@ -257,7 +258,6 @@ export function PoolView() {
   // Return of a rung-L2 slot to the pool (#4019): the row being confirmed, and its last refusal.
   const [returning, setReturning] = useState<Slot | null>(null);
   const [returnErr, setReturnErr] = useState("");
-  const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   const poll = useCallback(async () => {
     try {
@@ -275,11 +275,10 @@ export function PoolView() {
 
   useEffect(() => {
     poll();
-    timer.current = setInterval(() => {
-      if (!document.hidden) poll();
-    }, 10000);
-    return () => clearInterval(timer.current);
   }, [poll]);
+  useInterval(() => {
+    if (!document.hidden) poll();
+  }, 10000);
 
   // Terminating is the one write on this screen. A refusal is kept on the page rather than
   // thrown away: the server's reasons ("it is not quarantined", "a home is still attached")

@@ -7,6 +7,7 @@ import { useSettingsUI } from "../store.ts";
 import { openSessionTerminal } from "../../sessions/open.ts";
 import { useSessionsStore } from "../../sessions/store.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 // The name a member may type for a new database. Same shape the Agent enforces
 // (validateExplicitDB): checking it here turns a 400 into a disabled button with
@@ -93,14 +94,13 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
   // Poll while installing or starting (5 s interval). setInterval keeps firing even when the
   // refreshed state is still installing/starting; the effect cleanup stops it on unmount or
   // when the state transitions away from those two values.
-  useEffect(() => {
-    if (eng.state !== "installing" && eng.state !== "starting") return;
-    const id = setInterval(() => {
+  useInterval(
+    () => {
       if (!alive.current) return;
       onRefresh();
-    }, 5000);
-    return () => clearInterval(id);
-  }, [eng.state, onRefresh]);
+    },
+    eng.state === "installing" || eng.state === "starting" ? 5000 : null,
+  );
 
   const doAction = async (action: string, query = "") => {
     setBusy(true);

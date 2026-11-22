@@ -19,6 +19,7 @@ import { ServerRow } from "./mcpServerRow.tsx";
 import { SecretsForm, ServerForm } from "./mcpServerForm.tsx";
 import { DirectionNote } from "../parts/DirectionNote.tsx";
 import { takeReturn } from "./mcpOAuth.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 // McpTab — the member's own MCP server registry (docs/log/48 P1 + ADR0031). Lists the
 // EFFECTIVE registry (builtin ∪ tenant ∪ user) as one table, because that is what the
@@ -115,13 +116,10 @@ export function McpTab() {
   useEffect(() => {
     if (!running || !formOpen) return;
     reload();
-    const timer = setInterval(reload, WATCH_REFRESH_MS);
     window.addEventListener("focus", reload);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener("focus", reload);
-    };
+    return () => window.removeEventListener("focus", reload);
   }, [running, formOpen, reload]);
+  useInterval(reload, running && formOpen ? WATCH_REFRESH_MS : null);
 
   // Definite false only; see Registry.watchSources.
   const watchBlocked = reg?.watchSources === false;

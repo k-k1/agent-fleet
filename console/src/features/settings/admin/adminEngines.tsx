@@ -23,6 +23,7 @@ import {
   type EngineRow,
 } from "./engineTypes.ts";
 import { useEngineRows } from "./useEngineRows.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 // The self-hosted inference engines as MACHINES (ADR 0071): one row per engine, each with the
 // same off / on-demand / always-on control the VOICEVOX panel has, plus what that engine is
@@ -82,18 +83,13 @@ export function EnginesAdminView() {
   // Poll only while something is actually moving. An engine parked at "off", or stopped under
   // on-demand with nobody asking, is a settled state, and a GPU panel that polls forever is a
   // request per five seconds for a screen nobody is watching.
-  useEffect(() => {
-    if (!rows) return;
-    const moving = rows.some(
-      (e) =>
-        e.state === "starting" ||
-        e.state === "stopping" ||
-        (e.mode === "ondemand" && e.state === "running"),
-    );
-    if (!moving) return;
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, [rows, load]);
+  const moving = (rows ?? []).some(
+    (e) =>
+      e.state === "starting" ||
+      e.state === "stopping" ||
+      (e.mode === "ondemand" && e.state === "running"),
+  );
+  useInterval(() => void load(), moving ? 5000 : null);
 
   const setMode = async (key: string, mode: string) => {
     setBusy(key);
@@ -974,11 +970,7 @@ const ENGINE_TICK_MS = 15_000;
 
 function useSecondHand(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => setNow(Date.now()), ENGINE_TICK_MS);
-    return () => clearInterval(t);
-  }, [active]);
+  useInterval(() => setNow(Date.now()), active ? ENGINE_TICK_MS : null);
   return now;
 }
 

@@ -58,6 +58,7 @@ import type { SessionKind } from "../../types/session.ts";
 import { SessionLinkMenuHost } from "../sessions/SessionLinkMenu.tsx";
 import { PathLinkMenuHost } from "../viewer/PathLinkMenu.tsx";
 import { PortLinkMenuHost } from "../preview/PortLinkMenu.tsx";
+import { useInterval } from "../../lib/useInterval.ts";
 
 // ChatView renders one assistant-chat conversation (docs/log/19) — a headless-CLI LLM
 // chat/translation thread. Unlike the terminal panes it never mounts xterm; it's a
@@ -202,6 +203,10 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const convRef = useRef<Conversation | null>(null); // mirror of conv, to guard reloads
+  // Latest-render mirrors for the report poller: a read that lands after a send started or the
+  // conversation changed must be dropped, as the old effect-scoped `alive` flag did.
+  const sendingRef = useRef(false);
+  const idRef = useRef<string | null | undefined>(undefined);
   // Aborts an in-flight streaming turn, per chat: a turn left running when the pane was
   // pointed at another chat must still be the one stop cancels when you come back to it.
   const abortsRef = useRef(new Map<string, AbortController>());
@@ -426,14 +431,14 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
   // observed in_progress. A fresher updated_at adopts the server copy; a turn in flight
   // flips in_progress, which the reattach poller above then takes over.
   const reportCapable = conv?.tools === "af_write";
-  useEffect(() => {
-    if (!conversationId || !reportCapable) return;
-    let alive = true;
-    const timer = window.setInterval(async () => {
-      if (!alive || sending) return;
+  sendingRef.current = sending;
+  idRef.current = conversationId;
+  useInterval(
+    async () => {
+      if (!conversationId || sending) return;
       try {
         const c = await chatGet(conversationId);
-        if (!alive || sending || !c || !c.id) return;
+        if (!c || !c.id || c.id !== idRef.current || sendingRef.current) return;
         const cur = convRef.current;
         if (!cur || cur.id !== c.id || c.updated_at > cur.updated_at || !!c.in_progress !== !!cur.in_progress) {
           applyConv(c);
@@ -441,13 +446,9 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
       } catch {
         /* transient — keep polling */
       }
-    }, 5000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId, reportCapable, sending]);
+    },
+    conversationId && reportCapable ? 5000 : null,
+  );
 
   // Keep the transcript pinned to the newest turn (and to the thinking indicator). While
   // live karaoke is following the spoken sentence, defer to its scrollIntoView instead —
