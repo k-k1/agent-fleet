@@ -19,6 +19,7 @@
 //
 // Pure: no fetch, no React.
 
+import type { LooseRow } from "./settingsBundle.ts";
 import { awsProfileName, validDuration, validExternalId, validRoleArn, validSessionName } from "./awsRoleChain.ts";
 
 // The Agent's allowlists. Anchored and without \s, so a multi-line value never passes.
@@ -77,7 +78,7 @@ function sessionOf(name: string, signIn: string, startUrl: string, ssoRegion: st
 const SIGN_IN_NAME_RE = /^[A-Za-z0-9._@-]{1,61}$/;
 
 interface Prepared {
-  row: any;
+  row: LooseRow;
   label: string;
   name: string;
 }
@@ -85,7 +86,7 @@ interface Prepared {
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /** Check the fields of an SSO row; the first failing field's name (never its value), or null. */
-function ssoProblem(p: any): ExportReason | null {
+function ssoProblem(p: LooseRow): ExportReason | null {
   const missing = [
     ["accountId", str(p.accountId)],
     ["roleName", str(p.roleName)],
@@ -105,7 +106,7 @@ function ssoProblem(p: any): ExportReason | null {
   return null;
 }
 
-function roleProblem(p: any): ExportReason | null {
+function roleProblem(p: LooseRow): ExportReason | null {
   if (!validRoleArn(str(p.roleArn))) return { code: "invalid", field: "roleArn" };
   if (!validExternalId(str(p.externalId))) return { code: "invalid", field: "externalId" };
   if (!validSessionName(str(p.sessionName))) return { code: "invalid", field: "sessionName" };
@@ -116,7 +117,7 @@ function roleProblem(p: any): ExportReason | null {
 }
 
 /** Render the rows of GET api/ssm/profiles. */
-export function renderAwsConfig(rows: any[]): AwsConfigExport {
+export function renderAwsConfig(rows: LooseRow[]): AwsConfigExport {
   const list: Prepared[] = (rows || []).map((row) => {
     const label = str(row?.label).trim();
     return { row, label, name: awsProfileName(label) };

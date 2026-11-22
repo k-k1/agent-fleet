@@ -42,7 +42,7 @@
 import { hasSshWildcard, sshGlob, type SshFile, type SshLine } from "./sshConfigIni.ts";
 import { RE, SECRET_KEYS, shownName } from "./awsConfigImport.ts";
 import { awsProfileName } from "./awsRoleChain.ts";
-import type { SsmHostEntry, SsmSection } from "./settingsBundle.ts";
+import type { LooseRow, SsmHostEntry, SsmSection } from "./settingsBundle.ts";
 
 /** Above this many rows the preview stops being reviewable; the file is refused whole. */
 export const MAX_ENTRIES = 500;
@@ -335,7 +335,7 @@ const ci = (s: string) => s.trim().toLowerCase();
 
 /** Resolve the entries against the member's Settings (the CP lists, as GET api/ssm/profiles and
  *  api/ssm/hosts return them) and the preview's edits. Re-run on every edit. */
-export function resolveSshImport(cfg: NativeSsh, profiles: any[], hosts: any[], edits: Record<string, SshEdit>): SshPreview {
+export function resolveSshImport(cfg: NativeSsh, profiles: LooseRow[], hosts: LooseRow[], edits: Record<string, SshEdit>): SshPreview {
   const exP = (profiles || []).map((p) => ({ id: String(p?.id ?? ""), label: String(p?.label ?? "").trim() }));
   const exH = (hosts || []).map((h) => ({ alias: ci(String(h?.alias ?? "")), label: String(h?.alias ?? "").trim(), instanceId: ci(String(h?.instanceId ?? "")) }));
   const taken = new Map<string, string>(); // alias (folded) -> display of the row holding it

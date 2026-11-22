@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { apiJSON, errDetail, raw } from "../../../core/api/client.ts";
+import { errDetail, raw } from "../../../core/api/client.ts";
+import { putOpencodeKey } from "./credentialsApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { ProviderCard, StatusPill, IssueLink } from "../parts/providerCard.tsx";
@@ -56,7 +57,7 @@ export function ProviderKeyCard({
     if (!envName || !key.trim() || !customOk) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/opencode", "PUT", { env: envName, key: key.trim() });
+      const res = await putOpencodeKey(envName, key.trim());
       if (res && res.error) {
         toast(tr("common.save_failed_msg", { msg: errDetail(res.error) }));
         return;

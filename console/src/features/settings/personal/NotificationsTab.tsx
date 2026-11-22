@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiJSON } from "../../../core/api/client.ts";
+import { putChatConn, type ChatConn } from "../chat/chatApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useSettings, setSetting } from "../../../lib/settings.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
@@ -31,8 +31,8 @@ export function NotificationsTab() {
 
   // Flip only the master mute, preserving the connection's other settings (the backend
   // PUT overwrites non-pointer fields, so resend them from the current status).
-  const setNotify = async (kind: "discord" | "slack", st: any, on: boolean) => {
-    const res = await apiJSON(`api/connections/${kind}`, "PUT", {
+  const setNotify = async (kind: "discord" | "slack", st: ChatConn | undefined, on: boolean) => {
+    const res = await putChatConn(kind, {
       // token + destination omitted → the backend reuses the stored connection.
       events: Array.isArray(st?.events) ? st.events : [],
       threads: !!st?.threads,

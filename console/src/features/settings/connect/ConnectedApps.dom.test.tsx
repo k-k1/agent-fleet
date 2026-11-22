@@ -25,6 +25,12 @@ const mount = async (node: React.ReactNode) => { await act(async () => { root.re
 const click = async (button: HTMLElement) => { await act(async () => button.click()); };
 
 describe("connected apps", () => {
+  it("hides the section without an alert when the body is JSON null", async () => {
+    api.mockResolvedValue(null);
+    await mount(<ConnectedApps />);
+    expect(host.querySelector("[role=alert]")).toBeNull();
+    expect(host.textContent).toBe("");
+  });
   it("hides on the explicit deployment flag", async () => {
     api.mockResolvedValue({ enabled: false, grants: [] });
     await mount(<ConnectedApps />);

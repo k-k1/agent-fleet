@@ -4,6 +4,7 @@
 // "the transport decides which half is sent", the CLI-narrowest name charset — are
 // pinned by unit tests instead of only by a running browser.
 
+import type { ApiError } from "../../../core/api/client.ts";
 import { tMaybe } from "../../../lib/i18n/index.ts";
 import { FALLBACK_KIND_FACTS, catalogKinds, kindFacts, useKindCatalogVersion } from "../../../agents/kindCatalog.ts";
 import { SESSION_KINDS, type SessionKind } from "../../../types/session.ts";
@@ -160,7 +161,10 @@ export const isOAuthRequired = (p: ProbeResult): boolean => !p.ok && p.oauth?.re
 // CP/Agent refused is an error ENVELOPE (`error` is an object with a code); a probe's own
 // failure also has a string `error`, and for an OAuth-protected server it rides together with
 // the `oauth` report, which must not be thrown away as if the request had failed.
-export const probeOfAnswer = (res: any, errMsg: (e: unknown) => string): ProbeResult =>
+export const probeOfAnswer = (
+  res: ProbeResult | { error: ApiError } | null,
+  errMsg: (e: ApiError) => string,
+): ProbeResult =>
   res && res.error && typeof res.error === "object"
     ? { ok: false, toolCount: 0, elapsedMs: 0, error: errMsg(res.error) }
     : (res as ProbeResult);

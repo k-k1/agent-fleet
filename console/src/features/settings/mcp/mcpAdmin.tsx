@@ -3,7 +3,7 @@
 // The CP opens /api/admin/mcp-servers* to tenant_admin (and super_admin), so this view has
 // to be reachable from tenant settings as well as from the admin modal.
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { kindLabel } from "../../../lib/sessionkind.ts";
@@ -28,6 +28,8 @@ import {
   tenantOAuthClientValid,
   tenantOAuthSecretReentry,
 } from "./mcpWire.ts";
+import { deleteTenantMcpServer, listTenantMcpServers, saveTenantMcpServer } from "./mcpApi.ts";
+import { isOk } from "../api.ts";
 import type { TenantForm, TenantServer } from "./mcpWire.ts";
 // Same field furniture as the member tab's form (McpTab), so the two MCP forms stay
 // one design instead of two.
@@ -69,12 +71,13 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
     if (!slug) return;
     setErr("");
     try {
-      const d = await api("api/admin/mcp-servers?tenant=" + encodeURIComponent(slug));
-      if (d?.error) {
+      const d = await listTenantMcpServers(slug);
+      if (d && !isOk(d)) {
         setErr(errText(d.error));
         setRows([]);
         return;
       }
+      if (!d) throw new TypeError("empty reply body");
       setRows(d.servers || []);
     } catch {
       setErr(tr("admin.load_error"));
@@ -87,9 +90,8 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
   const save = async (f: TenantForm) => {
     setBusy(true);
     try {
-      const path = f.id ? "api/admin/mcp-servers/" + encodeURIComponent(f.id) : "api/admin/mcp-servers";
-      const d = await apiJSON(path, f.id ? "PUT" : "POST", bodyOfTenant(f, slug));
-      if (d && d.error) {
+      const d = await saveTenantMcpServer(f.id, bodyOfTenant(f, slug));
+      if (d && !isOk(d)) {
         setErr(errText(d.error));
         return;
       }
@@ -104,11 +106,8 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
   const remove = async (s: TenantServer) => {
     setBusy(true);
     try {
-      const d = await apiJSON(
-        "api/admin/mcp-servers/" + encodeURIComponent(s.id) + "?tenant=" + encodeURIComponent(slug),
-        "DELETE",
-      );
-      if (d && d.error) setErr(errText(d.error));
+      const d = await deleteTenantMcpServer(s.id, slug);
+      if (d && !isOk(d)) setErr(errText(d.error));
       await load();
     } finally {
       setBusy(false);

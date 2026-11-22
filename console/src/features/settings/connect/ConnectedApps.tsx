@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, raw, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { listMcpOAuthGrants, revokeMcpOAuthGrant, type McpOAuthGrant as Grant } from "./connectApi.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -7,17 +9,6 @@ import { fmtDate } from "./tokenDate.ts";
 import { RecentCalls } from "./RecentCalls.tsx";
 import { endpointLabel } from "./tokenEndpoint.ts";
 
-interface Grant {
-  id: string;
-  client_name: string;
-  redirect_host: string;
-  tenant: string;
-  scope: string;
-  // The endpoint the connection is bound to (#2764).
-  endpoint?: string;
-  created_at: number;
-  last_used_at: number;
-}
 
 export function ConnectedApps() {
   const tr = useT();
@@ -28,8 +19,8 @@ export function ConnectedApps() {
   const [busy, setBusy] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
-      const res = await api("api/mcp-oauth/grants");
-      if (res?.error) {
+      const res = await listMcpOAuthGrants();
+      if (res && !isOk(res)) {
         setError(errText(res.error));
         return;
       }
@@ -52,7 +43,7 @@ export function ConnectedApps() {
     if (!ok) return;
     setBusy(g.id);
     try {
-      const res = await raw(`api/mcp-oauth/grants/${encodeURIComponent(g.id)}`, { method: "DELETE" });
+      const res = await revokeMcpOAuthGrant(g.id);
       if (!res.ok && res.status !== 404) {
         toast(tr("tokens.apps_revoke_failed"));
         return;

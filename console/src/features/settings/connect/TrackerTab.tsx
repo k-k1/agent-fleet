@@ -13,13 +13,14 @@
 // the token that clones is the token that lists issues. Only Jira needs its own.
 import { useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { api, apiJSON, raw } from "../../../core/api/client.ts";
+import { deleteJira, getConnections, getGitOAuthAvailability, putJiraSite, putJiraToken, startJiraOAuth, type JiraConn } from "./connectApi.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { EmptyState } from "../../../ui/EmptyState.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useConnections } from "../parts/useConnections.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { ProviderCard, StatusPill, Hint, DisconnectButton } from "../parts/providerCard.tsx";
+import { isOk } from "../api.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 
 export function TrackerTab() {
@@ -34,9 +35,9 @@ export function TrackerTab() {
   // so it can be read while the workspace is stopped.
   const [oauthOk, setOauthOk] = useState<boolean | null>(null);
   useEffect(() => {
-    api("api/git-oauth")
+    getGitOAuthAvailability()
       .then((d) => {
-        if (d && !d.error) setOauthOk(d.jira?.configured !== false);
+        if (isOk(d)) setOauthOk(d.jira?.configured !== false);
       })
       .catch(() => {});
   }, []);
@@ -61,7 +62,7 @@ export function TrackerTab() {
       ) : (
         <>
           <p className="muted ds-note">{tr("tracker.intro")}</p>
-          <JiraCard st={conns.jira} reload={reload} oauthAvailable={oauthOk !== false} />
+          <JiraCard st={conns.jira as JiraConn | undefined} reload={reload} oauthAvailable={oauthOk !== false} />
         </>
       )}
     </div>
@@ -80,7 +81,7 @@ export function TrackerTab() {
 // way in, and that is the state every deployment starts in.
 //
 // Either way the credentials stay container-side; the CP only ever passes them through.
-function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void; oauthAvailable: boolean }) {
+function JiraCard({ st, reload, oauthAvailable }: { st: JiraConn | undefined; reload: () => void; oauthAvailable: boolean }) {
   const tr = useT();
   const toast = useToast();
   const poll = usePolling();
@@ -93,10 +94,11 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
   const ready = !!site.trim() && !!email.trim() && !!token.trim();
 
   const startOAuth = async () => {
-    const res = await apiJSON("api/connections/jira/oauth/start", "POST");
-    if (!res || res.error || !res.authorize_url) {
-      if (res?.error?.code === "not_configured") toast(tr("tracker.jira_oauth_unconfigured"), { kind: "warn" });
-      else toast(tr("git.oauth_start_failed", { msg: res?.error?.message || "" }));
+    const res = await startJiraOAuth();
+    if (!isOk(res) || !res.authorize_url) {
+      const err = res && !isOk(res) ? res.error : undefined;
+      if (err?.code === "not_configured") toast(tr("tracker.jira_oauth_unconfigured"), { kind: "warn" });
+      else toast(tr("git.oauth_start_failed", { msg: err?.message || "" }));
       return;
     }
     window.open(res.authorize_url, "_blank", "noopener");
@@ -111,11 +113,11 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
       step: async () => {
         let d;
         try {
-          d = await api("api/connections");
+          d = await getConnections();
         } catch {
           d = null;
         }
-        if (d && d.jira && d.jira.connected) {
+        if (isOk(d) && d.jira && d.jira.connected) {
           setMode("idle");
           reload();
           return { stop: true };
@@ -129,12 +131,12 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
     if (!ready) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/jira", "PUT", {
+      const res = await putJiraToken({
         site: site.trim(),
         email: email.trim(),
         token: token.trim(),
       });
-      if (res && res.error) {
+      if (res && !isOk(res)) {
         toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
         return;
       }
@@ -149,8 +151,8 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
   };
 
   const pickSite = async (cloudId: string) => {
-    const res = await apiJSON("api/connections/jira/site", "PUT", { cloudId });
-    if (res && res.error) {
+    const res = await putJiraSite(cloudId);
+    if (res && !isOk(res)) {
       toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
       return;
     }
@@ -158,11 +160,11 @@ function JiraCard({ st, reload, oauthAvailable }: { st: any; reload: () => void;
   };
 
   const disconnect = async () => {
-    await raw("api/connections/jira", { method: "DELETE" });
+    await deleteJira();
     reload();
   };
 
-  const sites: { cloudId: string; url: string; name?: string }[] = st?.sites || [];
+  const sites = st?.sites || [];
 
   return (
     <ProviderCard

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../../../core/api/client.ts";
+
+import { getAgentKinds } from "./credentialsApi.ts";
 import { useTenantStore } from "../../../core/store/tenant.ts";
 import type { LiveKindAccess } from "../../../agents/launchAccess.ts";
 
@@ -62,7 +63,7 @@ const inflight = new Map<string, Promise<unknown>>();
 function fetchKinds(identity: string, fresh: boolean): Promise<unknown> {
   let p = fresh ? undefined : inflight.get(identity);
   if (!p) {
-    p = api("api/agents/kinds");
+    p = getAgentKinds();
     inflight.set(identity, p);
     const drop = () => {
       if (inflight.get(identity) === p) inflight.delete(identity);

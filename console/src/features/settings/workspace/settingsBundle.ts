@@ -136,14 +136,19 @@ export function exportablePrefs(
 /** Convert the CP DTOs (id references) into the bundle shape (display-name references). A
  *  host whose profile cannot be resolved keeps an empty profile, so the import side skips it
  *  with a reason. */
+/** A profile / host / GCP row as the lists hand it over: read field by field through `str`, so a
+ *  row from an older Control Plane (or a test) with fields missing reads as empty, not as a crash. */
+export type LooseRow = Record<string, unknown>;
+
 /** Canonical identity of an SSO profile's sign-in: portal, SSO region, account and role. */
-export function ssoKey(p: any): string {
+export function ssoKey(row: object | undefined): string {
+  const p = row as LooseRow | undefined;
   return [str(p?.startUrl).replace(/\/+$/, ""), str(p?.ssoRegion), str(p?.accountId), str(p?.roleName)].join("|");
 }
 
-export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
+export function toSsmSection(profiles: LooseRow[], hosts: LooseRow[]): SsmSection {
   const labelOf = new Map<string, string>();
-  const byId = new Map<string, any>();
+  const byId = new Map<string, LooseRow>();
   for (const p of profiles || []) {
     labelOf.set(String(p?.id ?? ""), str(p?.label));
     byId.set(String(p?.id ?? ""), p);
@@ -190,7 +195,8 @@ export function toSsmSection(profiles: any[], hosts: any[]): SsmSection {
   };
 }
 
-function gcpEntry(raw: any): GcpProfileEntry {
+function gcpEntry(row: object | undefined): GcpProfileEntry {
+  const raw = row as LooseRow | undefined;
   return {
     label: str(raw?.label),
     loginMethod: str(raw?.loginMethod) || "google",
@@ -205,13 +211,17 @@ function gcpEntry(raw: any): GcpProfileEntry {
 
 /** Convert the CP's Google Cloud rows into the bundle shape: only the fields a person
  *  entered, so `id`, `name` and `conflict` never travel. */
-export function toGcpSection(profiles: any[]): GcpProfileEntry[] {
+export function toGcpSection(profiles: LooseRow[]): GcpProfileEntry[] {
   return (profiles || []).map(gcpEntry);
 }
 
 /** Convert the user-notes GET response (targets is an array) into the bundle shape
  *  (kind -> on/off). */
-export function toInstructionsSection(payload: any): InstructionsSection {
+export function toInstructionsSection(body: unknown): InstructionsSection {
+  const payload = body as
+    | { text?: unknown; enabled?: unknown; targets?: { kind?: unknown; supported?: unknown; on?: unknown }[] }
+    | null
+    | undefined;
   const targets: Record<string, boolean> = {};
   for (const t of payload?.targets || []) {
     if (t && typeof t.kind === "string" && t.supported) targets[t.kind] = t.on === true;
@@ -244,12 +254,25 @@ export function bundleFileName(at: Date): string {
 
 // --- Parsing --------------------------------------------------------------------
 
+/** What JSON.parse hands back for a bundle file: every member is checked before it is trusted. */
+type RawBundle = {
+  kind?: unknown;
+  version?: unknown;
+  exportedAt?: unknown;
+  sections?: {
+    prefs?: unknown;
+    ssm?: { profiles?: unknown; hosts?: unknown };
+    gcpProfiles?: unknown;
+    instructions?: { text?: unknown; enabled?: unknown; targets?: unknown };
+  };
+};
+
 export type ParseError = "bad_json" | "bad_kind" | "bad_version" | "empty";
 
 /** Read the received JSON as a bundle. Failures come back as a reason code; the caller
  *  supplies the wording. */
 export function parseBundle(text: string): { bundle: SettingsBundle } | { error: ParseError } {
-  let raw: any;
+  let raw: RawBundle | null;
   try {
     raw = JSON.parse(text);
   } catch {
@@ -266,12 +289,12 @@ export function parseBundle(text: string): { bundle: SettingsBundle } | { error:
   }
   if (src.ssm && typeof src.ssm === "object") {
     sections.ssm = {
-      profiles: Array.isArray(src.ssm.profiles) ? src.ssm.profiles : [],
-      hosts: Array.isArray(src.ssm.hosts) ? src.ssm.hosts : [],
+      profiles: Array.isArray(src.ssm.profiles) ? (src.ssm.profiles as SsmSection["profiles"]) : [],
+      hosts: Array.isArray(src.ssm.hosts) ? (src.ssm.hosts as SsmSection["hosts"]) : [],
     };
   }
   if (Array.isArray(src.gcpProfiles)) {
-    sections.gcpProfiles = src.gcpProfiles;
+    sections.gcpProfiles = src.gcpProfiles as GcpProfileEntry[];
   }
   if (src.instructions && typeof src.instructions === "object") {
     const t = src.instructions.targets;
@@ -375,8 +398,8 @@ export interface SsmPlan {
  *  alias and instance id match. */
 export function planSsmImport(
   section: SsmSection,
-  existingProfiles: any[],
-  existingHosts: any[],
+  existingProfiles: LooseRow[],
+  existingHosts: LooseRow[],
 ): SsmPlan {
   const plan: SsmPlan = { profiles: [], hosts: [], skippedProfiles: [], skippedHosts: [] };
   const haveProfile = new Set((existingProfiles || []).map((p) => key(str(p?.label))));
@@ -479,9 +502,9 @@ export interface GcpPlan {
  *  a label that already exists (case-insensitive) is left alone, and an entry the CP would
  *  refuse for want of a label, a project or a supported login method is skipped with a
  *  reason instead of turning into a row of 400s. */
-export function planGcpImport(section: GcpProfileEntry[], existing: any[]): GcpPlan {
+export function planGcpImport(section: GcpProfileEntry[], existing: readonly object[]): GcpPlan {
   const plan: GcpPlan = { profiles: [], skipped: [] };
-  const have = new Set((existing || []).map((p) => key(str(p?.label))));
+  const have = new Set((existing as readonly LooseRow[] || []).map((p) => key(str(p?.label))));
   for (const raw of section || []) {
     const p = gcpEntry(raw);
     if (!p.label || !p.project || p.loginMethod !== "google") {

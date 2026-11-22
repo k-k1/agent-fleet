@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
+import { errDetail, raw } from "../../../core/api/client.ts";
+import { startCursorLogin, pollCursorLogin } from "./credentialsApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -28,7 +29,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
   const startLogin = async () => {
     setBusy(true);
     try {
-      const res = await api("api/connections/cursor/start", { method: "POST" });
+      const res = await startCursorLogin();
       if (!res || res.error || !res.url) {
         toast(tr("agents.cursor_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
@@ -45,7 +46,7 @@ export function CursorCard({ running, st, reload }: { running: boolean; st: Prov
           if (!active.is(res.flow_id)) return { stop: true };
           let p;
           try {
-            p = await apiJSON("api/connections/cursor/poll", "POST", { flow_id: res.flow_id });
+            p = await pollCursorLogin(res.flow_id);
           } catch {
             p = null;
           }

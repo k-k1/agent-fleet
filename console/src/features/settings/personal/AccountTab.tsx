@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText, rel } from "../../../core/api/client.ts";
+import { errText, rel } from "../../../core/api/client.ts";
+import { assertBody } from "../workspace/workspaceApi.ts";
+import { detachLoginMethod, getLoginMethods } from "./personalApi.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { getLocale, useT } from "../../../lib/i18n/index.ts";
 import { zonedDayKey } from "../../../lib/intl.ts";
@@ -16,7 +18,7 @@ import { zonedDayKey } from "../../../lib/intl.ts";
 // permission; the link itself only succeeds when it passes that method's gate (org, allowed
 // domains).
 
-interface LinkedMethod {
+export interface LinkedMethod {
   provider: string;
   // provider alone is not enough to name a row: in principle one provider can have two
   // subjects. Both detaching and the React key use this pair.
@@ -32,7 +34,7 @@ interface LinkedMethod {
   label_en?: string;
 }
 
-interface LinkableMethod {
+export interface LinkableMethod {
   provider: string;
   label_ja?: string;
   label_en?: string;
@@ -58,12 +60,13 @@ export function AccountTab() {
 
   const load = useCallback(() => {
     setErr("");
-    api("api/me/login-methods")
+    getLoginMethods()
       .then((res) => {
         if (res && res.error) {
           setErr(res.error.message || tr("account.load_failed"));
           return;
         }
+        assertBody(res);
         setEnabled(res.enabled !== false);
         setLinked(res.linked || []);
         setLinkable(res.linkable || []);
@@ -94,7 +97,7 @@ export function AccountTab() {
     setBusy(true);
     try {
       const q = new URLSearchParams({ provider: m.provider, subject: m.subject });
-      const res = await apiJSON("api/me/login-methods?" + q.toString(), "DELETE");
+      const res = await detachLoginMethod(q.toString());
       if (res?.error) {
         setErr(errText(res.error));
         return;

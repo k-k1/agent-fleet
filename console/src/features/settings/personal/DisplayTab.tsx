@@ -305,7 +305,7 @@ function ChipChoice({ value, options, onChange }: ChoiceProps) {
           key={String(v)}
           type="button"
           className={"font-chip" + (v === value ? " active" : "")}
-          onClick={() => onChange(v)}
+          onClick={() => onChange(v as never)}
         >
           {label as ReactNode}
         </button>

@@ -1,37 +1,11 @@
 import { useCallback, useState } from "react";
-import { api, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { getMcpCalls, type McpCall as Call, type McpCallItem as CallItem } from "./connectApi.ts";
+import { isOk } from "../api.ts";
+import { assertBody } from "../workspace/workspaceApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { DATETIME_LOCALE_DEFAULT, fmtDateTime } from "../../../lib/intl.ts";
 
-// Mirrors mcpsrv.CallRecord (control-plane/internal/mcpsrv/mcp_calls.go).
-interface CallItem {
-  method: string;
-  name?: string;
-  era: string;
-  meta_version?: string;
-  client_name?: string;
-  client_version?: string;
-  status: number;
-  notification?: boolean;
-  error_code?: number;
-  error_message?: string;
-  tools?: number;
-  tool_error?: boolean;
-}
-interface Call {
-  at: string;
-  http_method: string;
-  status: number;
-  latency_ms: number;
-  header_version?: string;
-  mcp_method_header: boolean;
-  mcp_name_header: boolean;
-  accept?: string;
-  content_type?: string;
-  user_agent?: string;
-  items: CallItem[];
-  items_omitted?: number;
-}
 
 function summary(it: CallItem, tr: ReturnType<typeof useT>): string {
   let s = it.method || tr("tokens.calls_unparsed");
@@ -51,11 +25,12 @@ export function RecentCalls({ url }: { url: string }) {
   const [error, setError] = useState("");
   const load = useCallback(async () => {
     try {
-      const res = await api(url);
-      if (res?.error) {
+      const res = await getMcpCalls(url);
+      if (res && !isOk(res)) {
         setError(errText(res.error));
         return;
       }
+      assertBody(res);
       setCalls(res.calls ?? []);
       setError("");
     } catch {

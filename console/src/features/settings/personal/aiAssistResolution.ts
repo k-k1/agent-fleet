@@ -7,7 +7,7 @@
 // not part of the answer (docs/log/103 decision 5 / §103.8-3) — a caller that wants one draws
 // it from the model catalog it already fetches (lib/agentModels.ts's useModelOptions).
 import { useEffect, useState } from "react";
-import { api } from "../../../core/api/client.ts";
+import { getAiAssistResolution } from "./personalApi.ts";
 
 export interface AiAssistResolutionRow {
   feature: string;
@@ -32,7 +32,7 @@ export function useAiAssistResolution(enabled = true): Record<string, AiAssistRe
     }
     let alive = true;
     const load = () => {
-      void api("api/ai-assist/resolution").then((d) => {
+      void getAiAssistResolution().then((d) => {
         if (!alive) return;
         const list: AiAssistResolutionRow[] = Array.isArray(d?.features) ? d.features : [];
         setRows(Object.fromEntries(list.map((r) => [r.feature, r])));

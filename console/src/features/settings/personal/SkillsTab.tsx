@@ -8,7 +8,8 @@
 // shadows, `user-invocable: false` ones and Agent Fleet's own `af-*` skills, because "why is my
 // skill not used" is exactly what someone opens this screen to answer.
 import { useCallback, useState, type MouseEvent } from "react";
-import { api, errText, isTransientErr } from "../../../core/api/client.ts";
+import { errText, isTransientErr } from "../../../core/api/client.ts";
+import { getSkillFile, getSkillsCatalog } from "./personalApi.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -116,7 +117,7 @@ export function SkillsTab() {
   const load = useCallback(
     async (signal: AbortSignal) => {
       if (!running) return true;
-      const r = await api("api/skills/catalog");
+      const r = await getSkillsCatalog();
       if (signal.aborted) return true;
       if (isTransientErr(r)) return false;
       if (r?.error || !Array.isArray(r?.kinds)) {
@@ -254,7 +255,7 @@ export function SkillDetail({ skill, source }: { skill: CatalogSkill; source?: S
   const load = useCallback(
     async (signal: AbortSignal) => {
       if (!want || skill.outside) return true;
-      const r = await api(skillFileUrl(want, source));
+      const r = await getSkillFile(skillFileUrl(want, source));
       if (signal.aborted) return true;
       if (isTransientErr(r)) return false;
       if (r?.error || typeof r?.content !== "string") {

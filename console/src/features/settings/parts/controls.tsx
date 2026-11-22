@@ -19,7 +19,9 @@ export function Row({ label, children }: { label: ReactNode; children?: ReactNod
 export interface ChoiceProps {
   value: unknown;
   options: unknown[][];
-  onChange: (v: any) => void;
+  /** `never` accepts a handler of any parameter type: each caller's options carry its own value
+   *  type, which this untyped option list cannot name. */
+  onChange: (v: never) => void;
 }
 
 // Choice: a small horizontal segmented control.
@@ -31,7 +33,7 @@ export function Choice({ value, options, onChange }: ChoiceProps) {
           key={String(v)}
           type="button"
           className={"seg-btn" + (v === value ? " active" : "")}
-          onClick={() => onChange(v)}
+          onClick={() => onChange(v as never)}
         >
           {label as ReactNode}
         </button>
@@ -83,7 +85,7 @@ export function Select({ value, options, onChange }: ChoiceProps) {
       value={String(value)}
       onChange={(e) => {
         const hit = options.find(([v]) => String(v) === e.target.value);
-        onChange(hit ? hit[0] : e.target.value);
+        onChange((hit ? hit[0] : e.target.value) as never);
       }}
     >
       {options.map(([v, label]) => (

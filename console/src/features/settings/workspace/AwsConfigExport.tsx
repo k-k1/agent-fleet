@@ -3,6 +3,7 @@
 // The file is built in the browser from GET api/ssm/profiles by awsConfigExport.ts (a validated
 // renderer) and goes to the member's disk only; nothing is sent anywhere. It is a fragment to
 // merge by hand, and the dialog and the file name say so.
+import type { LooseRow } from "./settingsBundle.ts";
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../../ui/Modal.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
@@ -41,7 +42,7 @@ function download(text: string) {
 
 export function AwsConfigExport({ onClose }: { onClose: () => void }) {
   const tr = useT();
-  const [rows, setRows] = useState<any[] | null>(null);
+  const [rows, setRows] = useState<LooseRow[] | null>(null);
   const [err, setErr] = useState("");
   useEffect(() => {
     let live = true;

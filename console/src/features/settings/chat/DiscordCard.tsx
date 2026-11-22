@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
-import { apiJSON, errText, raw } from "../../../core/api/client.ts";
+import { errText, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { OnOff } from "../parts/controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton, IssueLink } from "../parts/providerCard.tsx";
 import { getLocale, useT } from "../../../lib/i18n/index.ts";
+import { assertBody } from "../workspace/workspaceApi.ts";
+import { inspectDiscord, listDiscordGuilds, putDiscordConn, type ChatConn } from "./chatApi.ts";
 import { SettingsPanel, PsRow, CHAT_EVENTS, ALL_EVENTS } from "./chatCardParts.tsx";
 
 // DiscordCard — connect = token → verify → invite → pick channel → connect (adjacent). The
 // detail settings appear only AFTER connect, in the collapsible SettingsPanel that
 // auto-saves each toggle. docs/log/37 P1.
-export function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
+export function DiscordCard({ st, reload }: { st: ChatConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const [token, setToken] = useState("");
@@ -29,7 +31,7 @@ export function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   const [busy, setBusy] = useState(false);
   // The PUT response is the fresh status — trust it immediately (a transient parent
   // refetch failure otherwise flips the card back to "not connected" right after a change).
-  const [localSt, setLocalSt] = useState<any>(null);
+  const [localSt, setLocalSt] = useState<ChatConn | null>(null);
   const view = localSt?.connected ? localSt : st?.connected ? st : null;
 
   // Seed the detail settings from the live connection, re-seeding only when the
@@ -61,11 +63,12 @@ export function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
     if (!token.trim()) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/discord/inspect", "POST", { token: token.trim() });
+      const res = await inspectDiscord(token.trim());
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errText(res.error) }));
         return;
       }
+      assertBody(res);
       setInsp({ botName: res.botName, inviteUrl: res.inviteUrl, token: token.trim() });
       setToken("");
     } finally {
@@ -79,15 +82,15 @@ export function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
     if (!insp || dm || found) return;
     let stopped = false;
     const load = async () => {
-      const res = await apiJSON("api/connections/discord/guilds", "POST", { token: insp.token });
+      const res = await listDiscordGuilds(insp.token);
       if (stopped || !res || res.error) return;
       const guilds = Array.isArray(res.guilds) ? res.guilds : [];
-      const opts = guilds.flatMap((g: any) =>
-        (g.channels || []).map((c: any) => ({
+      const opts = guilds.flatMap((g) =>
+        (g.channels || []).map((c) => ({
           id: c.id,
           label: (guilds.length > 1 ? g.name + " / " : "") + "#" + c.name,
-          ownerId: g.ownerId as string | undefined,
-          ownerName: g.ownerName as string | undefined,
+          ownerId: g.ownerId,
+          ownerName: g.ownerName,
         })),
       );
       setChans(opts);
@@ -103,7 +106,7 @@ export function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   }, [insp, dm, found]);
 
   // Build the PUT body from the current settings; `token` empty = edit (reuse stored).
-  const body = (token: string, over: Record<string, any> = {}) => ({
+  const body = (token: string, over: Record<string, unknown> = {}) => ({
     token,
     channelId: dm ? "" : channel,
     userId: dm ? userId.trim() : "",
@@ -123,7 +126,7 @@ export function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
     if (!insp || (dm ? !userId.trim() : !channel)) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/discord", "PUT", body(insp.token));
+      const res = await putDiscordConn(body(insp.token));
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errText(res.error) }));
         return;
@@ -141,8 +144,8 @@ export function DiscordCard({ st, reload }: { st: any; reload: () => void }) {
   // Auto-save a settings change on a live connection (edit: token omitted → reuse stored).
   // The full payload is sent so the backend's non-pointer fields aren't wiped; no test
   // notification fires on an edit (backend), so per-toggle saves don't spam the channel.
-  const persist = async (over: Record<string, any> = {}) => {
-    const res = await apiJSON("api/connections/discord", "PUT", body("", over));
+  const persist = async (over: Record<string, unknown> = {}) => {
+    const res = await putDiscordConn(body("", over));
     if (res && res.error) {
       toast(tr("conn.connect_failed", { msg: errText(res.error) }));
       return;

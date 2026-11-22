@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { useConnections } from "../parts/useConnections.ts";
 import { getKiroInstall, getMuseInstall, isOk, type CliInstallStatus } from "../api.ts";
+import { startCliInstall } from "./agentsApi.ts";
 
 type InstallKind = "kiro" | "muse";
 
@@ -98,7 +99,7 @@ export function CliInstall({ kind, running, supported }: { kind: InstallKind; ru
     setBusy(true);
     setInstalling("installing");
     try {
-      const res = await api(`api/connections/${kind}/install`, { method: "POST" });
+      const res = await startCliInstall(kind);
       if (!res || res.error) {
         setInstalling("error");
         toast(tr(`agents.${kind}_install_failed`, { msg: res?.error ? errDetail(res.error) : "" }));
