@@ -29,6 +29,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/engine"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -138,11 +139,9 @@ func silentFar(t *testing.T, key string, entered chan struct{}) (*farGateway, *h
 // it is what a borrowed request must NOT present.
 func newTestRemoteEngine(t *testing.T, base, key string) *engineRuntimeState {
 	t.Helper()
-	remotes := &engineRemotes{base: strings.TrimRight(base, "/"), token: "afei_borrower",
-		byKey: map[string]*engineRemote{}}
-	rem := remotes.forKey(key)
-	rem.rows = []store.EngineModel{{Role: key, ID: "m-1", Enabled: true}}
-	rem.loaded = true
+	remotes := engine.NewRemotesFor(strings.TrimRight(base, "/"), "afei_borrower", nil, engineClient)
+	rem := remotes.ForKey(key)
+	rem.SeedMirror([]store.EngineModel{{Role: key, ID: "m-1", Enabled: true}})
 	def := engineDef{
 		Key: key, API: engineAPIChat, Provider: "llamacpp",
 		URL: strings.TrimRight(base, "/"), Lifecycle: engineLifecycleRemote,
@@ -261,7 +260,7 @@ func TestRemoteEngineDialUsesTheFarBasePathAndItsOwnToken(t *testing.T) {
 	}
 	// The session the token was bought for is the LOCAL one: that name is the only way an
 	// operator over there tells one borrower's spending from another's.
-	if tok, err := e.remote.sessionToken(context.Background(), "local-session-7"); err != nil ||
+	if tok, err := e.remote.SessionToken(context.Background(), "local-session-7"); err != nil ||
 		tok != "afe_far-token" || far.minted != 1 {
 		t.Errorf("second read = %q/%v after %d mints, want the cached token", tok, err, far.minted)
 	}

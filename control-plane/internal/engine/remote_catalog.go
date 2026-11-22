@@ -1,6 +1,6 @@
-package main
+package engine
 
-// engine_remote_catalog.go — the far deployment's catalogue, read and mirrored (ADR 0079
+// remote_catalog.go — the far deployment's catalogue, read and mirrored (ADR 0079
 // decision 7).
 //
 // The far side publishes /internal/engine/catalog for the AGENT to read, so the shape here is the
@@ -35,51 +35,51 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// engineRemoteHTTPTimeout bounds one catalogue or token call. Both are ordinary JSON round trips to
+// remoteHTTPTimeout bounds one catalogue or token call. Both are ordinary JSON round trips to
 // another deployment's Control Plane — never to an engine — so there is no cold start to wait out
 // here and a slow answer is a failure rather than something to hold a request for.
-const engineRemoteHTTPTimeout = 20 * time.Second
+const remoteHTTPTimeout = 20 * time.Second
 
-// engineRemoteMaxBody bounds what is read from the far side. A catalogue is a list of model rows;
+// remoteMaxBody bounds what is read from the far side. A catalogue is a list of model rows;
 // anything of this size is a wrong URL answering, not a catalogue.
-const engineRemoteMaxBody = 4 << 20
+const remoteMaxBody = 4 << 20
 
-// engineRemoteCatalog is the far side's /internal/engine/catalog answer.
-type engineRemoteCatalog struct {
-	Engines []engineRemoteCatalogRow `json:"engines"`
+// remoteCatalog is the far side's /internal/engine/catalog answer.
+type remoteCatalog struct {
+	Engines []RemoteCatalogRow `json:"engines"`
 }
 
-// engineRemoteCatalogRow is one borrowed engine as the far deployment declares it. `api` and
+// RemoteCatalogRow is one borrowed engine as the far deployment declares it. `api` and
 // `provider` are the fields that must never be guessed (decision 2): the Workspace composes a
 // completely different request for a comfy role than for an sdcpp one.
-type engineRemoteCatalogRow struct {
-	Key      string                     `json:"key"`
-	API      string                     `json:"api"`
-	Provider string                     `json:"provider"`
-	BaseURL  string                     `json:"base_url"`
-	Models   []engineRemoteCatalogModel `json:"model_rows"`
-	Loras    []engineRemoteCatalogModel `json:"loras"`
+type RemoteCatalogRow struct {
+	Key      string               `json:"key"`
+	API      string               `json:"api"`
+	Provider string               `json:"provider"`
+	BaseURL  string               `json:"base_url"`
+	Models   []RemoteCatalogModel `json:"model_rows"`
+	Loras    []RemoteCatalogModel `json:"loras"`
 	// NegativeAlways is what the far ADMINISTRATOR excludes from every image on that engine. It is
 	// a deployment-wide setting there, so it is not a model row and does not go in the mirror; it
 	// travels to the Workspace through this deployment's own catalogue answer instead.
 	NegativeAlways string `json:"negative_always"`
 }
 
-// engineRemoteCatalogModel is one model row on the wire. Deliberately not store.EngineModel: see
+// RemoteCatalogModel is one model row on the wire. Deliberately not store.EngineModel: see
 // the file header for the three fields where the two shapes disagree.
-type engineRemoteCatalogModel struct {
-	ID              string                    `json:"id"`
-	ContextTokens   int                       `json:"context_tokens"`
-	MaxOutputTokens int                       `json:"max_output_tokens"`
-	Description     string                    `json:"description"`
-	Sizes           []string                  `json:"sizes"`
-	BaseModel       string                    `json:"base_model"`
-	Negative        string                    `json:"negative"`
-	Params          *store.EngineParams       `json:"params"`
-	Selected        bool                      `json:"selected"`
-	Default         bool                      `json:"default"`
-	Warm            bool                      `json:"warm"`
-	Files           []engineRemoteCatalogFile `json:"files"`
+type RemoteCatalogModel struct {
+	ID              string              `json:"id"`
+	ContextTokens   int                 `json:"context_tokens"`
+	MaxOutputTokens int                 `json:"max_output_tokens"`
+	Description     string              `json:"description"`
+	Sizes           []string            `json:"sizes"`
+	BaseModel       string              `json:"base_model"`
+	Negative        string              `json:"negative"`
+	Params          *store.EngineParams `json:"params"`
+	Selected        bool                `json:"selected"`
+	Default         bool                `json:"default"`
+	Warm            bool                `json:"warm"`
+	Files           []remoteCatalogFile `json:"files"`
 	// What ADR 0081 decision 5 added to engineCatalogModelRow. Read here as well because this
 	// wire is the SAME answer one deployment further out: a borrowed adapter whose trigger words
 	// stop at this struct loads and changes nothing visible, and the licence of a borrowed model
@@ -89,8 +89,8 @@ type engineRemoteCatalogModel struct {
 	LicenseURL   string   `json:"license_url"`
 }
 
-// engineRemoteCatalogFile is one file of a model row, in the wire's own spelling.
-type engineRemoteCatalogFile struct {
+// remoteCatalogFile is one file of a model row, in the wire's own spelling.
+type remoteCatalogFile struct {
 	Flag  string `json:"flag"`
 	S3Key string `json:"s3_key"`
 }
@@ -102,8 +102,8 @@ type engineRemoteCatalogFile struct {
 // What comes back is the far side's answer plus one empty row per role that has GONE from it —
 // see withVanishedRoles, without which a role the far administrator switches off keeps serving
 // its last mirror here for as long as this process runs.
-func (r *engineRemotes) fetchCatalog(ctx context.Context) ([]engineRemoteCatalogRow, error) {
-	var out engineRemoteCatalog
+func (r *Remotes) fetchCatalog(ctx context.Context) ([]RemoteCatalogRow, error) {
+	var out remoteCatalog
 	if err := r.call(ctx, http.MethodGet, "/internal/engine/catalog", nil, &out); err != nil {
 		return nil, err
 	}
@@ -125,7 +125,7 @@ func (r *engineRemotes) fetchCatalog(ctx context.Context) ([]engineRemoteCatalog
 // serve already refuses with `engine_unavailable` and a sentence saying the engine has no
 // enabled model. The empty row carries no `api`, which is what applyCatalogRow refuses to adopt
 // a row on: an absent role is never evidence that a role exists.
-func (r *engineRemotes) withVanishedRoles(rows []engineRemoteCatalogRow) []engineRemoteCatalogRow {
+func (r *Remotes) withVanishedRoles(rows []RemoteCatalogRow) []RemoteCatalogRow {
 	if r == nil {
 		return rows
 	}
@@ -137,15 +137,15 @@ func (r *engineRemotes) withVanishedRoles(rows []engineRemoteCatalogRow) []engin
 	defer r.mu.Unlock()
 	for key := range r.byKey {
 		if !offered[key] {
-			rows = append(rows, engineRemoteCatalogRow{Key: key})
+			rows = append(rows, RemoteCatalogRow{Key: key})
 		}
 	}
 	return rows
 }
 
 // call is the one HTTP shape both far-side calls share: the issuing token in, JSON out.
-func (r *engineRemotes) call(ctx context.Context, method, path string, in, out any) error {
-	ctx, cancel := context.WithTimeout(ctx, engineRemoteHTTPTimeout)
+func (r *Remotes) call(ctx context.Context, method, path string, in, out any) error {
+	ctx, cancel := context.WithTimeout(ctx, remoteHTTPTimeout)
 	defer cancel()
 	var body io.Reader
 	if in != nil {
@@ -163,12 +163,12 @@ func (r *engineRemotes) call(ctx context.Context, method, path string, in, out a
 	if in != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	resp, err := engineClient.Do(req)
+	resp, err := r.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(resp.Body, engineRemoteMaxBody))
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, remoteMaxBody))
 	if err != nil {
 		return err
 	}
@@ -203,12 +203,12 @@ func tailLine(s string) string {
 // The row it adopts is built from the far declaration and nothing else — `api` and `provider` are
 // the far administrator's to state, `url` is the far fleet's base, and `lifecycle` is what makes
 // every other branch in the process treat it as somebody else's (decision 1).
-func (r *engineRemotes) applyCatalogRow(ctx context.Context, reg *engineRegistry, row engineRemoteCatalogRow) {
-	if r == nil || reg == nil || row.Key == "" {
+func (r *Remotes) applyCatalogRow(ctx context.Context, host RemoteHost, row RemoteCatalogRow) {
+	if r == nil || host == nil || row.Key == "" {
 		return
 	}
-	e := reg.get(row.Key)
-	if e != nil && !e.def.Remote() {
+	def, invalidate, served := host.Served(row.Key)
+	if served && !def.Remote() {
 		// 🔴 A key a LOCAL row already holds is not borrowed, and the far declaration is not even
 		// mirrored: the registry is one map keyed by role, and quietly replacing a managed row
 		// would leave its ECS service with nobody to stop it at $1.26/hour — the same reasoning
@@ -216,25 +216,27 @@ func (r *engineRemotes) applyCatalogRow(ctx context.Context, reg *engineRegistry
 		// purpose: the local table and the far catalogue go on disagreeing until an operator
 		// changes one of them.
 		log.Printf("engines: %s is already served by a %s row, so it is not borrowed from %s",
-			row.Key, lifecycleLabel(e.def), r.base)
+			row.Key, lifecycleLabel(def), r.base)
 		return
 	}
 	// The mirror is replaced before the row is adopted, so that the row build's own log line —
 	// and the first request to reach it — see the models rather than an empty catalogue.
-	changed := r.forKey(row.Key).setMirror(row)
-	if e != nil {
+	changed := r.ForKey(row.Key).SetMirror(row)
+	if served {
 		// Already borrowed. The mirror above is the whole update — engineCatalog reads through
 		// it — and dropping the row's ten-second cache is what stops a role the far side has just
 		// switched off from being offered for ten seconds more. The re-read costs a mutex and a
 		// slice, not a database round trip, because the source is the mirror in memory.
-		e.catalog.invalidate()
+		if invalidate != nil {
+			invalidate()
+		}
 		if changed {
 			// 🔥 A borrowed catalogue used to move in silence. Decision 7's push is wired to this
 			// deployment's own admin routes, so every workspace learned about a far checkpoint on
 			// its own ten-minute TTL and not before — which is the difference between "a model
 			// somebody enabled" and "a model nobody can find". Telling them here costs one POST
 			// per running workspace, and only when the mirror really moved.
-			go notifyEngineCatalogChanged(context.WithoutCancel(ctx), r.mgr, row.Key)
+			host.NotifyCatalogChanged(context.WithoutCancel(ctx), row.Key)
 		}
 		return
 	}
@@ -245,33 +247,33 @@ func (r *engineRemotes) applyCatalogRow(ctx context.Context, reg *engineRegistry
 		// or a wrong URL answering — neither is an engine to take on.
 		return
 	}
-	def := engineDef{
+	adopted := Def{
 		Key:       row.Key,
 		API:       row.API,
 		Provider:  row.Provider,
 		URL:       r.base,
-		Lifecycle: engineLifecycleRemote,
+		Lifecycle: LifecycleRemote,
 	}
-	if reg.adopt(def) {
+	if host.Adopt(adopted) {
 		log.Printf("engines: %s (%s/%s) is borrowed from %s (%d model(s))",
-			row.Key, def.APIFamily(), def.Provider, r.base, len(row.Models))
+			row.Key, adopted.APIFamily(), adopted.Provider, r.base, len(row.Models))
 		// A role that did not exist a moment ago is the largest change a workspace can be told
 		// about: with no row, generate_image was not advertised at all.
-		go notifyEngineCatalogChanged(context.WithoutCancel(ctx), r.mgr, row.Key)
+		host.NotifyCatalogChanged(context.WithoutCancel(ctx), row.Key)
 		return
 	}
 	log.Printf("engines: %s is offered by %s but this process cannot take it on", row.Key, r.base)
 }
 
 // lifecycleLabel names a row's lifecycle for a log line, including the unnamed one.
-func lifecycleLabel(d engineDef) string {
+func lifecycleLabel(d Def) string {
 	if l := d.LifecycleKind(); l != "" {
 		return l
 	}
 	return "managed"
 }
 
-// setMirror replaces this role's mirrored catalogue with what the far side just declared.
+// SetMirror replaces this role's mirrored catalogue with what the far side just declared.
 //
 // 🔴 Always a list, never nil: engineCatalog.hasModels answers TRUE for a catalogue it cannot read
 // at all, so an absent mirror would pass serve's no-models gate and then 404 every named model.
@@ -280,7 +282,7 @@ func lifecycleLabel(d engineDef) string {
 // It reports whether the mirror it just wrote differs from the one it replaced, which is what
 // decides whether every running workspace is told (applyCatalogRow). false on the FIRST mirror:
 // there is nothing to have changed from, and the adoption that follows it does the telling.
-func (e *engineRemote) setMirror(row engineRemoteCatalogRow) (changed bool) {
+func (e *Remote) SetMirror(row RemoteCatalogRow) (changed bool) {
 	if e == nil {
 		return false
 	}
@@ -297,9 +299,9 @@ func (e *engineRemote) setMirror(row engineRemoteCatalogRow) (changed bool) {
 	}
 	// The kind comes from WHICH ARRAY this arrived in and nowhere else — see the file header.
 	for _, m := range row.Loras {
-		rows = append(rows, e.mirrorRow(m, engineModelKindLora))
+		rows = append(rows, e.mirrorRow(m, ModelKindLora))
 	}
-	sig := engineMirrorSignature(rows)
+	sig := MirrorSignature(rows)
 	e.mu.Lock()
 	changed = e.loaded && sig != e.sig
 	e.rows, e.warmModel, e.loaded, e.sig = rows, warm, true, sig
@@ -307,7 +309,7 @@ func (e *engineRemote) setMirror(row engineRemoteCatalogRow) (changed bool) {
 	return changed
 }
 
-// engineMirrorSignature is what "the far catalogue moved" means, and it deliberately does not
+// MirrorSignature is what "the far catalogue moved" means, and it deliberately does not
 // mean "the answer differed".
 //
 // 🔴 Sorted, because a far side that listed the same rows in another order would otherwise be a
@@ -319,7 +321,7 @@ func (e *engineRemote) setMirror(row engineRemoteCatalogRow) (changed bool) {
 // different checkpoint — several times an hour on a busy engine — and all it changes on this side
 // is a hint in a tool description. Waking every workspace for it would spend the push on the one
 // fact that does not need it.
-func engineMirrorSignature(rows []store.EngineModel) string {
+func MirrorSignature(rows []store.EngineModel) string {
 	parts := make([]string, 0, len(rows))
 	for _, r := range rows {
 		parts = append(parts, fmt.Sprintf("%+v", r))
@@ -334,7 +336,7 @@ func engineMirrorSignature(rows []store.EngineModel) string {
 // so a row being here IS the enablement. `bytes` is absent on the wire, which leaves the panel's
 // "+N s on the next cold start" at zero for a borrowed row — harmless, since that estimate is
 // about a box this deployment does not pay for.
-func (e *engineRemote) mirrorRow(m engineRemoteCatalogModel, kind string) store.EngineModel {
+func (e *Remote) mirrorRow(m RemoteCatalogModel, kind string) store.EngineModel {
 	files := make([]store.EngineModelFile, 0, len(m.Files))
 	for _, f := range m.Files {
 		files = append(files, store.EngineModelFile{Flag: f.Flag, S3Key: f.S3Key})
@@ -365,3 +367,6 @@ func (e *engineRemote) mirrorRow(m engineRemoteCatalogModel, kind string) store.
 		// deployment holds that row, not this one.
 	}
 }
+
+// ModelKindLora is the one catalogue kind that is an accessory rather than a model.
+const ModelKindLora = "lora"

@@ -16,6 +16,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/engine"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -98,36 +99,36 @@ func TestNewEngineRemotesReadsTheDeclaration(t *testing.T) {
 	// engines.go relies on the nil-safety rather than guarding.
 	t.Setenv("AF_REMOTE_ENGINE_URL", "")
 	t.Setenv("AF_REMOTE_ENGINE_TOKEN", "")
-	if newEngineRemotes(nil) != nil {
+	if newEngineRemotes() != nil {
 		t.Fatal("borrowing was configured from an empty environment")
 	}
 	// Half a declaration is an operator error, not a partial feature: a URL with no credential
 	// could only ever be refused 401.
 	t.Setenv("AF_REMOTE_ENGINE_URL", "https://af.example.com")
-	if newEngineRemotes(nil) != nil {
+	if newEngineRemotes() != nil {
 		t.Fatal("a URL with no token produced a borrowing config")
 	}
 	t.Setenv("AF_REMOTE_ENGINE_TOKEN", "afei_x.y")
 	t.Setenv("AF_REMOTE_ENGINE_KEYS", " image , llm ")
-	r := newEngineRemotes(nil)
+	r := newEngineRemotes()
 	if r == nil {
 		t.Fatal("a complete declaration produced no borrowing config")
 	}
 	// The trailing slash goes: every path this joins begins with one, and //engine/... is a
 	// different URL to a proxy that normalises.
 	t.Setenv("AF_REMOTE_ENGINE_URL", "https://af.example.com/")
-	if got := newEngineRemotes(nil).base; got != "https://af.example.com" {
+	if got := newEngineRemotes().Base(); got != "https://af.example.com" {
 		t.Errorf("base = %q, want the trailing slash gone", got)
 	}
 	for key, want := range map[string]bool{"image": true, "llm": true, "LLM": true, "tts": false} {
-		if got := r.wants(key); got != want {
+		if got := r.Wants(key); got != want {
 			t.Errorf("wants(%q) = %v, want %v", key, got, want)
 		}
 	}
 	// An empty filter borrows whatever the far fleet offers, which is the answer for an operator
 	// who does not want to maintain a second list.
 	t.Setenv("AF_REMOTE_ENGINE_KEYS", "")
-	if !newEngineRemotes(nil).wants("anything") {
+	if !newEngineRemotes().Wants("anything") {
 		t.Error("an empty AF_REMOTE_ENGINE_KEYS did not borrow every role")
 	}
 }
@@ -260,7 +261,7 @@ func TestEngineCatalogSourceFailureKeepsThePreviousAnswer(t *testing.T) {
 // refuses — fired from the admin panel on every load, and on a row whose URL contains the engine
 // path it buys a GPU box — and answering false would report every borrowed engine cold for ever.
 func TestBorrowedWarmComesFromTheMirror(t *testing.T) {
-	rem := &engineRemote{key: "image", tokens: map[string]engineRemoteToken{}}
+	rem := engine.NewRemote("image")
 	e := &engineRuntimeState{
 		def:    engineDef{Key: "image", URL: "https://af.example.invalid", Lifecycle: engineLifecycleRemote},
 		remote: rem,
@@ -270,15 +271,14 @@ func TestBorrowedWarmComesFromTheMirror(t *testing.T) {
 	if e.warm(t.Context()) {
 		t.Error("warm() = true before the far side reported anything")
 	}
-	rem.mu.Lock()
-	rem.warmModel = "sdxl"
-	rem.mu.Unlock()
+	rem.SetMirror(engine.RemoteCatalogRow{Key: "image",
+		Models: []engine.RemoteCatalogModel{{ID: "sdxl", Warm: true}}})
 	if !e.warm(t.Context()) {
 		t.Error("warm() = false while the far catalogue reports a warm model")
 	}
 	// And the far administrator's exclusion list is read from the same place rather than from a
 	// local setting nobody over there can see.
-	rem.setNegativeAlways("  watermark  ")
+	rem.SetNegativeAlways("  watermark  ")
 	if got := e.negativeAlways(t.Context()); got != "watermark" {
 		t.Errorf("negativeAlways() = %q, want the far side's list", got)
 	}
@@ -294,9 +294,9 @@ func TestBorrowedAdminRowStatesItsOwnLifecycle(t *testing.T) {
 		def:      engineDef{Key: "image", API: engineAPIImages, Provider: "comfy", URL: "https://af.example.invalid", Lifecycle: engineLifecycleRemote},
 		settings: st,
 		catalog:  newEngineCatalog(nil, "image"),
-		remote:   &engineRemote{key: "image", tokens: map[string]engineRemoteToken{}},
+		remote:   engine.NewRemote("image"),
 	}
-	e.catalog.source = e.remote.catalogSource()
+	e.catalog.source = e.remote.CatalogSource()
 	reg.byKey["image"] = e
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
 
@@ -326,14 +326,14 @@ func TestBorrowedAdminRowStatesItsOwnLifecycle(t *testing.T) {
 func TestBorrowedCatalogueWritesAreRefused(t *testing.T) {
 	st := testSettingsStore(t)
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}}
-	rem := &engineRemote{key: "image", tokens: map[string]engineRemoteToken{}}
+	rem := engine.NewRemote("image")
 	e := &engineRuntimeState{
 		def:      engineDef{Key: "image", API: engineAPIImages, Provider: "comfy", URL: "https://af.example.invalid", Lifecycle: engineLifecycleRemote},
 		settings: st,
 		catalog:  newEngineCatalog(nil, "image"),
 		remote:   rem,
 	}
-	e.catalog.source = rem.catalogSource()
+	e.catalog.source = rem.CatalogSource()
 	reg.byKey["image"] = e
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
 	ident := store.Identity{ID: "u1"}
@@ -421,7 +421,7 @@ func TestARemoteRowWithNothingToBorrowFromIsNotServed(t *testing.T) {
 // rather than nil, so hasModels reports a definite "nothing enabled" instead of "cannot read".
 func TestABorrowedCatalogSourceIsNeverNil(t *testing.T) {
 	var none *engineRemote
-	src := none.catalogSource()
+	src := none.CatalogSource()
 	if src == nil {
 		t.Fatal("catalogSource() on a nil handle returned nil — the row would read the local database")
 	}

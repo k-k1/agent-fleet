@@ -82,9 +82,6 @@ engine_params_hint.go
 engine_pending.go
 engine_plan.go
 engine_refusal.go
-engine_remote.go
-engine_remote_catalog.go
-engine_remote_token.go
 engine_safetensors.go
 engine_shared.go
 engine_storage.go

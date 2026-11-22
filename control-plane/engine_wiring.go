@@ -5,6 +5,7 @@ package main
 // historical unexported ones so the engine call sites and tests do not change.
 
 import (
+	"context"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/engine"
@@ -18,6 +19,8 @@ type (
 	engineOfferAttempt  = engine.OfferAttempt
 	engineOfferRun      = engine.OfferRun
 	engineSessionClaims = engine.SessionClaims
+	engineRemotes       = engine.Remotes
+	engineRemote        = engine.Remote
 )
 
 const (
@@ -41,6 +44,8 @@ const (
 	engineOfferBudget        = engine.OfferBudget
 	engineOfferInterrupted   = engine.OfferInterrupted
 	engineOfferUnusable      = engine.OfferUnusable
+
+	engineModelKindLora = engine.ModelKindLora
 
 	engineBuyOnDemand = engine.BuyOnDemand
 	engineBuySpot     = engine.BuySpot
@@ -102,3 +107,38 @@ func verifyEngineSessionToken(signKey []byte, token string, now time.Time) (engi
 }
 
 func engineSessionMembership(token string) (string, bool) { return engine.SessionMembership(token) }
+
+// newEngineRemotes reads the operator's borrowing declaration; nil when nothing is borrowed.
+func newEngineRemotes() *engineRemotes { return engine.NewRemotes(engineClient) }
+
+// engineRemoteHost is the registry side of borrowing (engine.RemoteHost): the four things the
+// remote cluster does to main's engineRegistry and to the workspaces.
+type engineRemoteHost struct {
+	reg *engineRegistry
+	mgr *manager
+}
+
+// newEngineRemoteHost is nil for a nil registry, as an interface: the cluster treats "no
+// registry" as a no-op, and a typed nil inside a non-nil interface would defeat that check.
+func newEngineRemoteHost(reg *engineRegistry, mgr *manager) engine.RemoteHost {
+	if reg == nil {
+		return nil
+	}
+	return engineRemoteHost{reg: reg, mgr: mgr}
+}
+
+func (h engineRemoteHost) Served(key string) (engine.Def, func(), bool) {
+	e := h.reg.get(key)
+	if e == nil {
+		return engine.Def{}, nil, false
+	}
+	return e.def, e.catalog.invalidate, true
+}
+
+func (h engineRemoteHost) Adopt(d engine.Def) bool { return h.reg.adopt(d) }
+
+func (h engineRemoteHost) NotifyCatalogChanged(ctx context.Context, key string) {
+	// The function variable is read here, before the goroutine starts, as `go notify(...)` did at
+	// the old call site: a test that swaps the stub afterwards must not race a late read.
+	go notifyEngineCatalogChanged(ctx, h.mgr, key)
+}

@@ -354,7 +354,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// to be on this gate: a CP that declares nothing but AF_REMOTE_ENGINE_URL used to return here
 	// with no registry at all — and registerEngineRoutes then skips the gateway routes entirely,
 	// so `/engine/…` would not even be routed.
-	rem := newEngineRemotes(mgr)
+	rem := newEngineRemotes()
 	// A CP with a store can be given a LAN ComfyUI from the admin panel at any time (#957), so it
 	// always gets a registry — possibly an empty one — for the panel to put the row into. Without
 	// it a first save on a deployment that booted with no engines would still need a restart.
@@ -583,8 +583,8 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			// decisions 7 and 4). Both hang off this one handle so that nothing else in the
 			// process has to know which flavour of "somebody else's" a row is.
 			if d.Remote() {
-				st.remote = rem.forKey(d.Key)
-				st.catalog.source = st.remote.catalogSource()
+				st.remote = rem.ForKey(d.Key)
+				st.catalog.source = st.remote.CatalogSource()
 			}
 			// No `service=`: there is none, and printing an empty one reads as a truncated line.
 			log.Printf("engines: %s (%s) -> %s (%s, health=%s models=%s)",
@@ -674,7 +674,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// The borrowed rows arrive the same way a rung does, on their own poll: the far catalogue is
 	// what declares which engines exist, so there is nothing to read at boot (ADR 0079 decision 2).
 	// It also refreshes the mirror every row already reads through.
-	rem.run(ctx, reg)
+	rem.Run(ctx, newEngineRemoteHost(reg, mgr))
 	return reg
 }
 
@@ -775,7 +775,7 @@ func (e *engineRuntimeState) negativeAlways(ctx context.Context) string {
 	// something nobody on the deployment that owns the engine can see — and writing one is refused
 	// for the same reason.
 	if e.def.Remote() {
-		return e.remote.negativeAlways()
+		return e.remote.NegativeAlways()
 	}
 	keys := engineSettingsFor(e.def.Key)
 	if e.settings == nil || keys.negative == "" {
@@ -795,7 +795,7 @@ func (e *engineRuntimeState) warm(ctx context.Context) bool {
 	// far deployment already publishes its own observation in the catalogue this row mirrors
 	// (ADR 0079 decision 10), so warmth is READ rather than asked for.
 	if e.def.Remote() {
-		return e.remote.warm()
+		return e.remote.Warm()
 	}
 	if !e.def.External() {
 		return false

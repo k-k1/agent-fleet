@@ -22,6 +22,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/engine"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -1482,7 +1483,7 @@ func TestEngineAdminEditsAModelVram(t *testing.T) {
 func TestEngineAdminRefusesAWindowEditOnABorrowedRow(t *testing.T) {
 	t.Parallel()
 	st := testSettingsStore(t)
-	rem := &engineRemote{key: "image", tokens: map[string]engineRemoteToken{}}
+	rem := engine.NewRemote("image")
 	e := &engineRuntimeState{
 		def: engineDef{Key: "image", API: engineAPIImages, Provider: "comfy",
 			URL: "https://af.example.invalid", Lifecycle: engineLifecycleRemote},
@@ -1490,7 +1491,7 @@ func TestEngineAdminRefusesAWindowEditOnABorrowedRow(t *testing.T) {
 		catalog:  newEngineCatalog(nil, "image"),
 		remote:   rem,
 	}
-	e.catalog.source = rem.catalogSource()
+	e.catalog.source = rem.CatalogSource()
 	a := engineAdminAPI{memberAuth{&manager{store: st}}, &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}, st}
 
 	for _, body := range []string{`{"context_tokens":4096,"max_output_tokens":1024}`, `{"vram_mib":19000}`} {
