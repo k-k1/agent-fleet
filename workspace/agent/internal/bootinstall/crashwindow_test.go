@@ -966,9 +966,16 @@ func TestCursorRecoverForeignTreeWithoutNoReplaceRename(t *testing.T) {
 // fs.protected_hardlinks on a file the user does not own) stays at its .af-prev path; the
 // recovery settles the marker instead of failing at every start.
 func TestCursorRecoverForeignTreeKeepsItemWhenLinkRefused(t *testing.T) {
+	for _, linkErr := range []error{syscall.EPERM, syscall.EIO, syscall.ENOSPC} {
+		t.Run(linkErr.Error(), func(t *testing.T) { keepItemWhenLinkRefused(t, linkErr) })
+	}
+}
+
+func keepItemWhenLinkRefused(t *testing.T, linkErr error) {
+	t.Helper()
 	oldR, oldL := renameNoReplace, linkFile
 	renameNoReplace = func(string, string) error { return syscall.EINVAL }
-	linkFile = func(string, string) error { return syscall.EPERM }
+	linkFile = func(string, string) error { return linkErr }
 	defer func() { renameNoReplace, linkFile = oldR, oldL }()
 	f := newSU(t, goodRTK, "", "", "")
 	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
@@ -984,6 +991,9 @@ func TestCursorRecoverForeignTreeKeepsItemWhenLinkRefused(t *testing.T) {
 	}
 	if err := f.env.cursorRecover(); err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(f.out.String(), keep) {
+		t.Fatalf("the kept path was not logged: %q", f.out.String())
 	}
 	if f.read(keep) != "realfile" {
 		t.Fatal("the kept launcher was not preserved")
