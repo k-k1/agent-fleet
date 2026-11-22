@@ -47,12 +47,12 @@ var ErrServeUnverified = errors.New("opencode is unavailable under the credentia
 func credentialGen() string { return credentialGenFrom(readView()) }
 
 func credentialGenFrom(v policyView) string {
-	p, restricted := policyRestriction()
+	p, restricted := v.p, v.restricted
 	if !restricted {
 		return openGen
 	}
 	keys, pref, acct, custom := v.keys, v.pref, v.acct, v.custom
-	engines := engineProviderIDs()
+	engines := v.engines
 	parts := []string{"pin:" + strings.Join(serveProviders(p, keys, pref, acct, engines, custom), ","),
 		"custom:" + customPinDigest(p, engines, custom),
 		"engine:" + strconv.FormatBool(p.Allows(routes.RouteAFEngineLLM))}

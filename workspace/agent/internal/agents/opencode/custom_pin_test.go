@@ -33,6 +33,7 @@ func useCustom(t *testing.T, c *secrets.CustomAPIConn) {
 // endpoint and resolves to nothing, because the route's approval is of one host. Without a
 // connection the launch is what it was.
 func TestCustomLaunchIsTiedToTheProvider(t *testing.T) {
+	useIsolationPolicy(t, approvedCustom())
 	got := resolveModel("mine/m", nil, UsageZen, oauthState{}, nil, selfHosted)
 	want := routes.Launch{Route: routes.RouteCustomAPI, Binding: credbind.Endpoint(routes.RouteCustomAPI, selfHosted.URL, "")}
 	if got != want || got.Binding == "" {
@@ -182,12 +183,15 @@ func TestUnapprovedConnectionDoesNotBlockOtherRoutes(t *testing.T) {
 func TestPinIsJudgedOnTheSnapshotURL(t *testing.T) {
 	useIsolationPolicy(t, approvedCustom())
 	useCustom(t, selfHosted) // the reader a registered callback sees
-	snap := policyView{pref: UsageZen, custom: &secrets.CustomAPIConn{Provider: "mine", URL: "https://evil.example/v1"}}
+	snap := readView()
+	snap.custom = &secrets.CustomAPIConn{Provider: "mine", URL: "https://evil.example/v1"}
+	good := snap
+	good.custom = selfHosted
 	env, _ := servePolicyEnvFrom(nil, snap)
 	if enabled, cfg := runPin(t, env); len(enabled) != 0 || cfg["provider"] != nil {
 		t.Errorf("pinned an unapproved snapshot URL: %v %v", enabled, cfg)
 	}
-	if g := credentialGenFrom(snap); g == credentialGenFrom(policyView{pref: UsageZen, custom: selfHosted}) {
+	if g := credentialGenFrom(snap); g == credentialGenFrom(good) {
 		t.Error("generation does not follow the snapshot")
 	}
 }
@@ -219,8 +223,60 @@ func TestApprovedEndpointReleasesNoGenericKey(t *testing.T) {
 	if ref := agents.CredentialEntryRefusalAt("", keyEnvRoutes("SOME_OTHER_KEY")...); ref == nil {
 		t.Error("generic key entry accepted")
 	}
+	if KeyListed(p, "SOME_OTHER_KEY") {
+		t.Error("listing (connections page) must follow the same rule")
+	}
 	open := routepolicy.Policy{Revision: 6, Restricted: true, Allowed: []string{routes.RouteCustomAPI}}
 	if !keyAllowed(open, "SOME_OTHER_KEY") {
 		t.Error("control: route allowed outright must admit its keys")
+	}
+}
+
+// Unrestricted, nothing is pinned, so the launch records the route and no binding (what it did
+// before), and the launch path never reads the credential store for the pin.
+func TestUnrestrictedCustomLaunchRecordsNoBinding(t *testing.T) {
+	old := credentialView
+	t.Cleanup(func() { credentialView = old })
+	reads := 0
+	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
+		reads++
+		return nil, UsageZen, oauthState{known: true}, selfHosted
+	}
+	useIsolationPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
+	if l := resolveModel("mine/m", nil, UsageZen, oauthState{}, nil, selfHosted); l != (routes.Launch{Route: routes.RouteCustomAPI}) {
+		t.Errorf("unrestricted launch = %+v", l)
+	}
+	if err := policyConfigErr(nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := servePolicyEnv(nil); ok {
+		t.Error("restricted")
+	}
+	if reads != 0 {
+		t.Errorf("credentialView read %d times while nothing is restricted", reads)
+	}
+}
+
+// A file with a base URL for the approved provider on a model of the v2 block refuses a run, and a
+// v1 file beside a v2 one is judged on both.
+func TestRunRefusesModelLevelBaseURLInFiles(t *testing.T) {
+	home := isolatedHome(t)
+	useIsolationPolicy(t, approvedCustom())
+	useCustom(t, selfHosted)
+	dir := filepath.Join(home, "chat", "c1")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f := filepath.Join(home, "chat", "opencode.json")
+	for name, body := range map[string]string{
+		"v2 model": `{"providers":{"mine":{"models":{"m":{"baseURL":"https://evil.example"}}}}}`,
+		"v1 model": `{"provider":{"mine":{"models":{"m":{"options":{"baseURL":"https://evil.example"}}}}}}`,
+	} {
+		if err := os.WriteFile(f, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := RunPolicyEnv(nil, dir); err == nil {
+			t.Errorf("%s: run not refused", name)
+		}
 	}
 }

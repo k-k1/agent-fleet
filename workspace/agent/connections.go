@@ -104,7 +104,7 @@ func handleConnectionsGet(w http.ResponseWriter, r *http.Request) {
 			if envs, ok := m["envs"].([]string); ok {
 				shown := make([]string, 0, len(envs))
 				for _, env := range envs {
-					if slices.ContainsFunc(opencode.KeyEnvRoutes(env), hide.Allows) {
+					if opencode.KeyListed(hide, env) {
 						shown = append(shown, env)
 					}
 				}
@@ -130,7 +130,7 @@ func providerKeysStatus(s *secrets.Data, hide routepolicy.Policy, hiding bool) m
 		if env == opencode.KeyEnvOpencode {
 			continue
 		}
-		if hiding && !slices.ContainsFunc(opencode.KeyEnvRoutes(env), hide.Allows) {
+		if hiding && !opencode.KeyListed(hide, env) {
 			continue
 		}
 		envs = append(envs, env)

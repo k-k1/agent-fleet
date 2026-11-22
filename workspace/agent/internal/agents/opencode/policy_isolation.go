@@ -120,12 +120,12 @@ func servePolicyEnv(base []string) (env []string, ok bool) {
 }
 
 func servePolicyEnvFrom(base []string, v policyView) (env []string, ok bool) {
-	p, restricted := policyRestriction()
+	p, restricted := v.p, v.restricted
 	if !restricted {
 		return base, false
 	}
 	keys, pref, acct, custom := v.keys, v.pref, v.acct, v.custom
-	engines := engineProviderIDs()
+	engines := v.engines
 	cfg, _ := json.Marshal(pinConfig(map[string]any{}, p, keys, pref, acct, engines, custom))
 	env = withoutEnv(base, append(forbiddenInheritedKeys(p), routeUnset...)...)
 	env = withoutEnv(env, routeConfigKey)
@@ -141,11 +141,11 @@ func servePolicyEnvFrom(base []string, v policyView) (env []string, ok bool) {
 // (ErrPolicyConfig), as for a session. env is the run's whole environment, the stored keys already
 // filtered (keyEnv); while nothing is restricted it is returned unchanged.
 func RunPolicyEnv(env []string, dir string) ([]string, error) {
-	p, restricted := policyRestriction()
+	v := readView()
+	p, restricted := v.p, v.restricted
 	if !restricted {
 		return env, nil
 	}
-	v := readView()
 	if err := policyConfigErrFrom(append(globalConfigFiles(), projectConfigFiles(session.Meta{Dir: dir})...), v); err != nil {
 		return nil, err
 	}
@@ -155,7 +155,7 @@ func RunPolicyEnv(env []string, dir string) ([]string, error) {
 			return nil, fmt.Errorf("%w: its inline configuration cannot be read, so its providers cannot be pinned", ErrPolicyConfig)
 		}
 	}
-	pinConfig(cfg, p, v.keys, v.pref, v.acct, engineProviderIDs(), v.custom)
+	pinConfig(cfg, p, v.keys, v.pref, v.acct, v.engines, v.custom)
 	b, err := json.Marshal(cfg)
 	if err != nil {
 		return nil, err
@@ -356,12 +356,12 @@ func policyConfigErr(files []string) error { return policyConfigErrFrom(files, r
 // the pin actually sets: a stored connection the policy does not approve pins nothing, so it must
 // not stop another route's launch.
 func policyConfigErrFrom(files []string, v policyView) error {
-	p, restricted := policyRestriction()
+	p, restricted := v.p, v.restricted
 	if !restricted {
 		return nil
 	}
 	pin := ""
-	if c := allowedCustom(p, engineProviderIDs(), v.custom); c != nil {
+	if c := allowedCustom(p, v.engines, v.custom); c != nil {
 		pin = strings.TrimSpace(c.Provider)
 	}
 	if f, k := pinConflict(files, pin); f != "" {

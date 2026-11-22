@@ -41,6 +41,10 @@ var providerKeys = map[string]struct{ route, key string }{
 // keys of this store by the routes they open.
 func KeyEnvRoutes(env string) []string { return keyEnvRoutes(env) }
 
+// KeyListed reports whether a key stored under env may be listed, entered and injected under p:
+// some route it opens is allowed outright, an endpoint approval not counting (keyAllowed).
+func KeyListed(p routepolicy.Policy, env string) bool { return keyAllowed(p, env) }
+
 // KeyEnvOpencode is the opencode.ai Zen/Go key's name: it belongs to opencode.ai's own card, not
 // to a provider's.
 const KeyEnvOpencode = opencodeKeyEnv
@@ -67,16 +71,27 @@ func keyRoutes() map[string]string {
 // policyView is one reading of everything a launch decision rests on. The serve's start takes it
 // once and builds its file check, its inline pin and its generation from it, so an update of the
 // connection between those steps cannot approve one URL and pin another.
+//
+// The held policy and the engine provider ids are part of it, and the credential store is read only
+// while something is restricted: without a restriction the launch path must not wait on the store.
 type policyView struct {
-	keys   map[string]string
-	pref   string
-	acct   oauthState
-	custom *secrets.CustomAPIConn
+	p          routepolicy.Policy
+	restricted bool
+	engines    []string
+	keys       map[string]string
+	pref       string
+	acct       oauthState
+	custom     *secrets.CustomAPIConn
 }
 
 func readView() policyView {
-	k, p, a, c := credentialView()
-	return policyView{k, p, a, c}
+	p, restricted := policyRestriction()
+	v := policyView{p: p, restricted: restricted}
+	if restricted {
+		v.engines = engineProviderIDs()
+		v.keys, v.pref, v.acct, v.custom = credentialView()
+	}
+	return v
 }
 
 // credentialView is what the resolution reads: the stored keys, the billing choice, the
@@ -187,13 +202,20 @@ func resolveModel(model string, keys map[string]string, pref string, acct oauthS
 		// AWS credential chain decides, which cannot be told.
 		return routes.Launch{}
 	}
-	// A custom provider. With a stored connection (customConn, from the credentialView snapshot) only
-	// the provider the URL belongs to is on that endpoint, bound to URL and key together; any other
-	// custom provider resolves to nothing, since the route's approval is of the one host. Without a
-	// connection the launch records the route and no binding.
+	// A custom provider. Unrestricted, the URL is not pinned, so no binding claims it: the route
+	// alone is recorded, as before. Under a restriction with a stored connection (customConn, from
+	// the credentialView snapshot) only the provider the URL belongs to is on that endpoint; any
+	// other custom provider resolves to nothing, since the route's approval is of the one host.
+	p, restricted := policyRestriction()
+	if !restricted {
+		return routes.Launch{Route: routes.RouteCustomAPI}
+	}
 	if c := customConn(custom, engines); c != nil {
 		if prov != strings.TrimSpace(c.Provider) {
 			return routes.Launch{}
+		}
+		if allowedCustom(p, engines, custom) == nil {
+			return routes.Launch{Route: routes.RouteCustomAPI}
 		}
 		// The binding is of the endpoint alone: the stored key is not handed to the process (the
 		// provider's own configuration supplies it), so a binding that covered it would claim a
