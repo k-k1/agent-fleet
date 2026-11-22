@@ -58,6 +58,13 @@ describe("answered question card text", () => {
     for (const b of questionBlocks) expect(b.body, b.selector).not.toMatch(/(?<![\w-])opacity\s*:\s*(?!1\s*;)/);
   });
 
+  it("an inert unpicked option stays distinguishable from a live one without fading text", () => {
+    const body = rule(".mq-opt:disabled:not(.selected):not(.checked)");
+    expect(body).toMatch(/border-color:/);
+    expect(body).toMatch(/background:\s*transparent/);
+    expect(rule(".mq-opt:disabled:not(.selected):not(.checked) .mq-mark")).toMatch(/color:\s*var\(--muted\)/);
+  });
+
   it("colours answered descriptions with tokens: --muted, --fg once picked", () => {
     expect(rule(".mt-question.answered .mq-opt-desc")).toMatch(/color:\s*var\(--muted\)/);
     expect(rule(".mt-question.answered .mq-opt.selected .mq-opt-desc")).toMatch(/color:\s*var\(--fg\)/);
@@ -72,7 +79,7 @@ describe("answered question card text", () => {
       it(`${theme}/${level}: picked and unpicked descriptions reach 4.5:1 on the answered card`, () => {
         const p = palette(level, theme);
         const card = mix(p("--fg"), mixPct(".mt-question.answered"), p("--bg"));
-        expect(rule(".mt-question.answered .mq-opt:disabled:not(.selected)")).toMatch(/background:\s*transparent/);
+        expect(rule(".mq-opt:disabled:not(.selected):not(.checked)")).toMatch(/background:\s*transparent/);
         expect(ratio(p("--muted"), card), "unpicked").toBeGreaterThanOrEqual(4.5);
         for (const [name, a] of Object.entries(ACCENTS)) {
           const picked = mix(a ?? p("--accent"), mixPct(".mq-opt.selected"), p("--bg"));

@@ -93,15 +93,15 @@
 .mq-opt:disabled {
   cursor: default;
 }
-/* On an answered card an option that was not picked is quieter by border, background and the ○
-   marker, never by fading its text: text opacity stacks on the card's colour and escapes the
-   Text contrast setting (tokens.css), which only moves --fg / --muted / --muted2. Scoped to
-   .answered: on a pending card a disabled option can also be .checked (while sending). */
-.mt-question.answered .mq-opt:disabled:not(.selected) {
+/* An inert option that is not picked (answered card, terminal-only menu, a send in flight) is
+   quieter by border, background and the ○ marker, never by fading its text: text opacity stacks
+   on the card's colour and escapes the Text contrast setting (tokens.css), which only moves
+   --fg / --muted / --muted2. A disabled option that is .checked keeps its accent look. */
+.mq-opt:disabled:not(.selected):not(.checked) {
   border-color: color-mix(in srgb, var(--border) 60%, transparent);
   background: transparent;
 }
-.mt-question.answered .mq-opt:disabled:not(.selected) .mq-opt-label {
+.mq-opt:disabled:not(.selected):not(.checked) .mq-opt-label {
   color: var(--muted);
 }
 .mq-opt.selected {
@@ -168,7 +168,7 @@
   line-height: 1.35;
   color: color-mix(in srgb, var(--fg) 90%, transparent);
 }
-.mt-question.answered .mq-opt:disabled:not(.selected) .mq-mark {
+.mq-opt:disabled:not(.selected):not(.checked) .mq-mark {
   color: var(--muted);
 }
 .mq-opt.selected .mq-mark,
