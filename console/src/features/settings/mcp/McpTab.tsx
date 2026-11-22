@@ -9,6 +9,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 // The wire contract (types, masked-secret round-trip, form↔definition mapping)
 // lives beside this file so its rules are unit-tested — see mcpWire.test.ts.
 import { deleteMcpServer, getMcpRegistry, putMcpSecrets, refreshTenantMcp, saveMcpServer, testMcpServer } from "./mcpApi.ts";
+import { assertBody } from "../workspace/workspaceApi.ts";
 import { isOk } from "../api.ts";
 import { useApiSave } from "../parts/useApiSave.ts";
 import { bodyOf, emptyForm, formOf, probeOfAnswer } from "./mcpWire.ts";
@@ -179,7 +180,9 @@ export function McpTab() {
       toast(tr("mcp.tenant_refresh_failed", { msg: r.error }));
       return;
     }
-    if (r.status !== "ok" || !r.value) return;
+    if (r.status !== "ok") return;
+    // A JSON null body threw on `d.servers` before; keep that failure path.
+    assertBody(r.value);
     const d = r.value;
     setReg({ ...d, servers: Array.isArray(d.servers) ? d.servers : [] });
     // Rows the CP could not decrypt, and rows this agent refused, are both absent from

@@ -44,6 +44,17 @@ describe("recent calls", () => {
     await click(host.querySelectorAll("button")[1] as HTMLElement);
     expect(host.textContent).toContain("Could not load recent calls.");
   });
+  it("keeps the rows it has and reports a failure when the body is JSON null", async () => {
+    api.mockResolvedValueOnce({ calls: [listed] });
+    await act(async () => { root.render(<RecentCalls url="u" />); });
+    await click(host.querySelector("button")!);
+    expect(host.textContent).toContain("12 tools");
+    api.mockResolvedValueOnce(null);
+    await click(host.querySelectorAll("button")[1] as HTMLElement);
+    expect(host.textContent).toContain("Could not load recent calls.");
+    expect(host.textContent).toContain("12 tools");
+    expect(host.textContent).not.toContain("No requests recorded yet.");
+  });
   it("renders in Japanese", async () => {
     setLocale("ja");
     api.mockResolvedValue({ calls: [] });

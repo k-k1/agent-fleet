@@ -78,7 +78,7 @@ describe("connect typed API layer: source pins", () => {
   it("no component in the area imports api() / apiJSON() from the client", () => {
     expect(files.length).toBeGreaterThan(5);
     const offenders = files.filter((f) =>
-      /import\s*\{[^}]*\b(api|apiJSON)\b[^}]*\}\s*from\s*"[^"]*core\/api\/client\.ts"/.test(read(f)),
+      /import\s*\{[^}]*\b(api|apiJSON)\b[^}]*\}\s*from\s*["'][^"']*core\/api\/client\.ts["']/.test(read(f)),
     );
     expect(offenders).toEqual([]);
   });

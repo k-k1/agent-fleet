@@ -5,6 +5,20 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useApiSave, type SaveResult } from "./useApiSave.ts";
 
+// React 19 drops a state update on an unmounted component without a warning, so the only way to
+// see the unmount guard work is to watch the setter itself.
+const setterCalls: unknown[] = [];
+vi.mock("react", async (importActual) => {
+  const actual = await importActual<typeof import("react")>();
+  return {
+    ...actual,
+    useState: ((init: unknown) => {
+      const [v, set] = actual.useState(init);
+      return [v, (x: unknown) => { setterCalls.push(x); set(x as never); }];
+    }) as typeof actual.useState,
+  };
+});
+
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
 const roots: Root[] = [];
@@ -87,16 +101,15 @@ describe("useApiSave", () => {
   it("settles a write that finishes after unmount without touching state", async () => {
     const d = deferred();
     const root = await mount(() => d.p);
-    const err = vi.spyOn(console, "error").mockImplementation(() => {});
     let first!: Promise<SaveResult<unknown>>;
     await act(async () => {
       first = latest.save(1);
     });
     await act(async () => root.unmount());
     roots.splice(roots.indexOf(root), 1);
+    setterCalls.length = 0;
     d.resolve({});
     await expect(first).resolves.toEqual({ status: "ok", value: {} });
-    expect(err).not.toHaveBeenCalled();
-    err.mockRestore();
+    expect(setterCalls).toEqual([]);
   });
 });

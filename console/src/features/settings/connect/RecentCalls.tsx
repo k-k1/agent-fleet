@@ -2,6 +2,7 @@ import { useCallback, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { getMcpCalls, type McpCall as Call, type McpCallItem as CallItem } from "./connectApi.ts";
 import { isOk } from "../api.ts";
+import { assertBody } from "../workspace/workspaceApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { DATETIME_LOCALE_DEFAULT, fmtDateTime } from "../../../lib/intl.ts";
 
@@ -29,7 +30,8 @@ export function RecentCalls({ url }: { url: string }) {
         setError(errText(res.error));
         return;
       }
-      setCalls(res?.calls ?? []);
+      assertBody(res);
+      setCalls(res.calls ?? []);
       setError("");
     } catch {
       setError(tr("tokens.calls_load_failed"));

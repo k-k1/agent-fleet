@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
-import { assertBody } from "../workspace/workspaceApi.ts";
 import { listMcpOAuthGrants, revokeMcpOAuthGrant, type McpOAuthGrant as Grant } from "./connectApi.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -26,7 +25,6 @@ export function ConnectedApps() {
         return;
       }
       setView(res);
-      assertBody(res);
       setError("");
     } catch {
       setError(tr("tokens.apps_load_failed"));

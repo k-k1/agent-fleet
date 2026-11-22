@@ -75,7 +75,7 @@ describe("mcp typed API layer: source pins", () => {
     const files = readdirSync(dir).filter((f) => /\.tsx?$/.test(f) && !/\.test\./.test(f) && !/Api\.ts$/.test(f));
     expect(files.length).toBeGreaterThan(8);
     const offenders = files.filter((f) =>
-      /import\s*\{[^}]*\b(api|apiJSON)\b[^}]*\}\s*from\s*"[^"]*core\/api\/client\.ts"/.test(read(f)),
+      /import\s*\{[^}]*\b(api|apiJSON)\b[^}]*\}\s*from\s*["'][^"']*core\/api\/client\.ts["']/.test(read(f)),
     );
     expect(offenders).toEqual([]);
   });
