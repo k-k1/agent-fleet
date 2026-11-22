@@ -144,11 +144,10 @@ describe("useApiOnce", () => {
   });
 
   it("reports a 5xx reply as it is, once, without retrying", async () => {
+    vi.useFakeTimers(); // before the mount: a retry timer scheduled by the answer must be a fake one
     const fetch = vi.fn().mockResolvedValue({ error: { code: "http_502", message: "x" } });
     const onReply = vi.fn();
     await mount(<Once id="a" fetch={fetch} onReply={onReply} />);
-    await flush();
-    vi.useFakeTimers();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(10000);
     });

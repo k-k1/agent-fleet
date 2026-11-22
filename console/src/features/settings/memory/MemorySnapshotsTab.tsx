@@ -161,6 +161,7 @@ export function MemorySnapshotsTab() {
 
   const setAuto = async (on: boolean) => {
     const res = await putMemorySettings(on);
+    if (res === null) return; // no result to apply
     if (!isOk(res)) {
       toast(tr("common.save_failed"));
       return;

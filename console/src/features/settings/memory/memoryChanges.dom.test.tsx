@@ -55,7 +55,7 @@ const flush = () =>
     for (let i = 0; i < 4; i++) await Promise.resolve();
   });
 
-async function mount() {
+async function mount(onChanged: () => void = () => {}) {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -63,7 +63,7 @@ async function mount() {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <AgentChangesPanel reload={0} onChanged={() => {}} />
+          <AgentChangesPanel reload={0} onChanged={onChanged} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -252,6 +252,27 @@ describe("AgentChangesPanel", () => {
         "POST",
         { run: "aaaaaaaaaaaaaaaaaaaa" },
       ]);
+    });
+
+    it("clears the earlier report and still reads the list again when the answer body is null", async () => {
+      withRun();
+      const onChanged = vi.fn();
+      apiJSON.mockResolvedValueOnce({
+        run: "aaaaaaaaaaaaaaaaaaaa",
+        items: [{ commit: "2", op: "update", scope: "user", name: "SENTINEL-EDITED", result: "conflict", reason: "edited" }],
+      });
+      apiJSON.mockResolvedValueOnce(null);
+      await mount(onChanged);
+      await click(host!.querySelectorAll<HTMLButtonElement>(".mem-diff-head button")[2]);
+      await click(confirmButton()!);
+      expect(host!.querySelector(".mem-run-report")).toBeTruthy();
+      const listReads = () => api.mock.calls.filter(([p]) => String(p).startsWith("api/agents/memory/entries/changes")).length;
+      const before = listReads();
+      await click(host!.querySelectorAll<HTMLButtonElement>(".mem-diff-head button")[2]);
+      await click(confirmButton()!);
+      expect(host!.querySelector(".mem-run-report")).toBeNull();
+      expect(listReads()).toBe(before + 1);
+      expect(onChanged).toHaveBeenCalledTimes(2);
     });
 
     it("reports what it put back and names the memories it left, with the reason", async () => {

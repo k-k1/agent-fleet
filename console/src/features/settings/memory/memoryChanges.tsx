@@ -241,8 +241,9 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
     setBusy(true);
     try {
       const res = await revertReviewRun(c.reviewRun);
-      if (res === null) return;
-      if (!isOk(res)) {
+      // A null body says nothing of what the run did, but the request went through: the old
+      // report is cleared and the list is read again, as for any answer without an error.
+      if (res !== null && !isOk(res)) {
         toast(errDetail(res.error));
         return;
       }
