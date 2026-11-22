@@ -955,7 +955,7 @@
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.wi-row.unread .wi-title {
+.wi-row.is-unread .wi-title {
   font-weight: 600;
 }
 .wi-unread-total {

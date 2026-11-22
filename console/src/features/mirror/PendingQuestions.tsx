@@ -222,7 +222,7 @@ export function PendingQuestions({
             {qn.multiSelect && <span className="mq-multi muted">{tr("mirror.multi_select")}</span>}
           </div>
           {qn.question && <div className="mq-text">{shownQs[qi]?.question || qn.question}</div>}
-          <div className={"mq-options" + (wide ? " wide" : "")}>
+          <div className={"mq-options" + (wide ? " is-wide" : "")}>
             {(qn.options || []).map((o, oi) => {
               const checked = (sel[qi] || []).includes(o.label);
               // Selecting is all a click does — on every form, including the single

@@ -133,7 +133,7 @@ function LearnedQuickReplies() {
         {rows.map((r) => {
           const pin = isQuickReplyPinned(pinned, r.text);
           return (
-            <span className={"qr-item" + (pin ? " pinned" : "")} key={r.key}>
+            <span className={"qr-item" + (pin ? " qr-pinned" : "")} key={r.key}>
               <span className="qr-text">{r.text}</span>
               <span className="muted qr-count">{r.count}</span>
               <button

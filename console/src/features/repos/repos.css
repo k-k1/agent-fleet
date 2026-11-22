@@ -1264,7 +1264,7 @@
 .pmcp-cell {
   color: var(--muted);
 }
-.pmcp-cell.present {
+.pmcp-cell.is-present {
   color: var(--ok);
 }
 .pmcp-warning {
