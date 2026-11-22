@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
@@ -26,7 +28,7 @@ func TestNormalizeCustomAPIURL(t *testing.T) {
 			t.Errorf("%q = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"", "box:80", "ftp://box", "http://", "https://u:p@box", "https://box/v1?x=1", "https://box/#f"} {
+	for _, in := range []string{"", "box:80", "ftp://box", "http://", "https://u:p@box", "https://box/v1?x=1", "https://box/#f", "https://box/v1?", "https://box/v1#", "https://box:65536/v1", "https://box:0/v1", "https://[box.example.test]/v1"} {
 		if got, err := normalizeCustomAPIURL(in); err == nil {
 			t.Errorf("%q accepted as %q", in, got)
 		}
@@ -69,8 +71,32 @@ func TestPutAndDeleteCustomAPIConn(t *testing.T) {
 	}
 }
 
-// Grafana's writer runs while a stale snapshot of the store is held elsewhere: the custom
-// connection written in between must survive.
+// Under a restriction the custom-api route is open only on an approved host: the writer gates on
+// it, keeps the stored connection when it refuses, and DELETE stays possible.
+func TestPutCustomAPIConnGatesOnTheApprovedEndpoint(t *testing.T) {
+	memberHome(t)
+	useHidingPolicy(t, routepolicy.Policy{Revision: 2, Restricted: true,
+		Allowed: []string{routes.RouteAnthropicAPI}, EndpointRoutes: []string{routes.RouteCustomAPI}, Endpoints: []string{"ok.example.test"}})
+	if w := customAPIPut("mine", "https://ok.example.test/v1", ""); w.Code != http.StatusOK {
+		t.Fatalf("approved host: %d %s", w.Code, w.Body)
+	}
+	if w := customAPIPut("mine", "https://other.example.test/v1", ""); w.Code != http.StatusForbidden {
+		t.Fatalf("unapproved host: %d %s", w.Code, w.Body)
+	}
+	if s, _ := secrets.Load(); s.CustomAPI == nil || s.CustomAPI.URL != "https://ok.example.test/v1" {
+		t.Fatalf("refused PUT changed the stored connection: %+v", s.CustomAPI)
+	}
+	dw := httptest.NewRecorder()
+	handleDeleteCustomAPIConn(dw, httptest.NewRequest("DELETE", "/connections/custom-api", nil))
+	if dw.Code != http.StatusOK {
+		t.Fatalf("delete under restriction: %d", dw.Code)
+	}
+	if s, _ := secrets.Load(); s.CustomAPI != nil {
+		t.Fatalf("still stored: %+v", s.CustomAPI)
+	}
+}
+
+// Grafana's writers must neither drop the custom connection nor lose their own change.
 func TestGrafanaWritersKeepCustomAPIConn(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if w := customAPIPut("mine", "https://llm.example.test", ""); w.Code != http.StatusOK {
@@ -82,8 +108,17 @@ func TestGrafanaWritersKeepCustomAPIConn(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
-	handleDeleteGrafanaConn(httptest.NewRecorder(), httptest.NewRequest("DELETE", "/connections/grafana", nil))
-	if s, _ := secrets.Load(); s.CustomAPI == nil || s.CustomAPI.URL != "https://llm.example.test" {
-		t.Fatalf("custom connection lost: %+v", s.CustomAPI)
+	s, _ := secrets.Load()
+	if s.Grafana == nil || s.Grafana.URL != "https://g.example.test" || s.Grafana.Token != "t" ||
+		s.CustomAPI == nil || s.CustomAPI.URL != "https://llm.example.test" {
+		t.Fatalf("after PUT: grafana=%+v custom=%+v", s.Grafana, s.CustomAPI)
+	}
+	dw := httptest.NewRecorder()
+	handleDeleteGrafanaConn(dw, httptest.NewRequest("DELETE", "/connections/grafana", nil))
+	if dw.Code != http.StatusOK {
+		t.Fatalf("delete: %d", dw.Code)
+	}
+	if s, _ := secrets.Load(); s.Grafana != nil || s.CustomAPI == nil || s.CustomAPI.URL != "https://llm.example.test" {
+		t.Fatalf("after DELETE: grafana=%+v custom=%+v", s.Grafana, s.CustomAPI)
 	}
 }

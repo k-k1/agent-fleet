@@ -12,10 +12,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"log"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -1539,8 +1541,18 @@ func normalizeCustomAPIURL(raw string) (string, error) {
 	if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return "", errors.New("URL must start with http(s)://")
 	}
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery || strings.ContainsAny(trimmed, "?#") {
 		return "", errors.New("URL must not carry credentials, a query or a fragment")
+	}
+	// The host judged here must be the host opencode reads: a port outside 1-65535 or a bracketed
+	// name that is not an IP literal parses in Go but not in a WHATWG URL parser.
+	if p := u.Port(); p != "" {
+		if n, err := strconv.Atoi(p); err != nil || n < 1 || n > 65535 {
+			return "", errors.New("URL port must be 1-65535")
+		}
+	}
+	if strings.HasPrefix(u.Host, "[") && net.ParseIP(strings.Split(u.Hostname(), "%")[0]) == nil {
+		return "", errors.New("URL host in brackets must be an IP address")
 	}
 	return trimmed, nil
 }
@@ -1587,11 +1599,21 @@ func handlePutCustomAPIConn(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var status customAPIStatusWire
+	var refused *agents.RouteRefusal
 	if err := secrets.Update(func(s *secrets.Data) error {
+		// Judged again under the store's lock: the first check can be stale by the time the lock
+		// is won, and a policy that moved on must not have a connection stored under it.
+		if refused = agents.CredentialEntryRefusalAt(routepolicy.HostOf(normalized), routes.RouteCustomAPI); refused != nil {
+			return errors.New("refused")
+		}
 		s.CustomAPI = conn
 		status = customAPIStatus(s)
 		return nil
 	}); err != nil {
+		if refused != nil {
+			httpx.WriteErr(w, refused.Status, refused.Code, refused.Message)
+			return
+		}
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}

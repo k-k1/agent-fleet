@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -66,5 +67,58 @@ func TestSaveKeepsStoredCustomAPIForAStaleSnapshot(t *testing.T) {
 	}
 	if again, _ := Load(); again.CustomAPI == nil || again.CustomAPI.URL != "https://b.example.test" {
 		t.Fatalf("own change lost: %+v", again.CustomAPI)
+	}
+}
+
+// A Save that fails must not leave the baseline behind the adopted connection: a retry after the
+// connection was deleted would read the adopted one as the caller's own edit and bring it back.
+func TestSaveRetryAfterFailedWriteDoesNotResurrectCustomAPI(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := Update(func(d *Data) error {
+		d.CustomAPI = &CustomAPIConn{Provider: "mine", URL: "https://a.example.test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := Load()
+	if err := Update(func(d *Data) error {
+		d.CustomAPI = &CustomAPIConn{Provider: "mine", URL: "https://b.example.test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prev := writeTemp
+	writeTemp = func(*os.File, []byte) (int, error) { return 0, errors.New("disk full") }
+	err := stale.Save()
+	writeTemp = prev
+	if err == nil {
+		t.Fatal("Save should have failed")
+	}
+	if err := Update(func(d *Data) error { d.CustomAPI = nil; return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := Load(); got.CustomAPI != nil {
+		t.Fatalf("deleted connection came back: %+v", got.CustomAPI)
+	}
+}
+
+// A Data that never came from Load keeps the stored connection unless it sets one.
+func TestSaveOfAnUnloadedDataKeepsCustomAPI(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := Update(func(d *Data) error {
+		d.CustomAPI = &CustomAPIConn{Provider: "mine", URL: "https://a.example.test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := &Data{Git: map[string]GitEntry{}, Grafana: &GrafanaCreds{URL: "https://g.example.test", Token: "t"}}
+	if err := d.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := Load(); got.CustomAPI == nil || got.CustomAPI.URL != "https://a.example.test" {
+		t.Fatalf("lost: %+v", got.CustomAPI)
 	}
 }

@@ -894,11 +894,15 @@ func (s *Data) Save() error {
 		if s.ghBaseSet {
 			s.Jira = keepRotated(s.Jira, s.jiraBase, cur.Jira, jiraTokens, setJiraTokens)
 			s.Bitbucket = keepRotated(s.Bitbucket, s.bbBase, cur.Bitbucket, bbTokens, setBBTokens)
-			// A snapshot loaded before the custom connection was written or removed must not put
-			// the old one back: the route policy's approval is of the stored URL.
-			if reflect.DeepEqual(s.CustomAPI, s.customBase) {
-				s.CustomAPI = cur.CustomAPI
-			}
+		}
+		// A snapshot loaded before the custom connection was written or removed must not put the
+		// old one back: the route policy's approval is of the stored URL. The baseline moves with
+		// the adopted value, so a retry after a failed write still reads it as untouched. A Data
+		// that never came from Load has a nil baseline and keeps the stored connection too unless
+		// it sets one.
+		if reflect.DeepEqual(s.CustomAPI, s.customBase) {
+			s.CustomAPI = cur.CustomAPI
+			s.customBase = cloneCustom(cur.CustomAPI)
 		}
 		if err := s.save(); err != nil {
 			return err
@@ -914,11 +918,15 @@ func (s *Data) Save() error {
 // compares against.
 func (s *Data) setOAuthBase() {
 	s.jiraBase, s.bbBase = cloneJira(s.Jira), cloneBB(s.Bitbucket)
-	s.customBase = nil
-	if s.CustomAPI != nil {
-		c := *s.CustomAPI
-		s.customBase = &c
+	s.customBase = cloneCustom(s.CustomAPI)
+}
+
+func cloneCustom(c *CustomAPIConn) *CustomAPIConn {
+	if c == nil {
+		return nil
 	}
+	n := *c
+	return &n
 }
 
 func cloneJira(c *JiraCreds) *JiraCreds {
