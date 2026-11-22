@@ -14,7 +14,7 @@ vi.mock("./pushApi.ts", () => ({
   },
 }));
 let tenantNow = "t1";
-vi.mock("../../core/api/client.ts", () => ({ getTenant: () => tenantNow }));
+vi.mock("../../core/api/client.ts", () => ({ getTenant: () => tenantNow, apiJSON: async () => ({}) }));
 vi.mock("../../core/store/tenant.ts", () => ({ useTenantStore: (sel: (s: any) => unknown) => sel({ tenant: tenantNow }) }));
 let session = "sess-one";
 vi.mock("../../layout/store.ts", () => ({ useLayoutStore: (sel: (s: any) => unknown) => sel({ layout: {} }) }));
