@@ -519,13 +519,13 @@ func TestAnInstanceClassLadderReadsAsAllOnDemandOffers(t *testing.T) {
 		t.Fatalf("parsed %d offers", len(list))
 	}
 	for _, c := range list {
-		if c.buy() != engineBuyOnDemand {
-			t.Errorf("offer %s reads as %q, want on-demand", c.ID, c.buy())
+		if c.BuyOption() != engineBuyOnDemand {
+			t.Errorf("offer %s reads as %q, want on-demand", c.ID, c.BuyOption())
 		}
 	}
 	// And `offers` wins where both are declared.
 	both := engineDef{Classes: ladder, Offers: "spot|S|22000|g6.xlarge|4-8|15000-65536|1.57|spot"}
-	if got := parseEngineClasses(both.OffersSpec()); len(got) != 1 || got[0].buy() != engineBuySpot {
+	if got := parseEngineClasses(both.OffersSpec()); len(got) != 1 || got[0].BuyOption() != engineBuySpot {
 		t.Fatalf("offers = %+v, want the declared list to win", got)
 	}
 }
@@ -540,8 +540,8 @@ func TestParseEngineOffersReadsTheBuyColumn(t *testing.T) {
 	if len(list) != 3 {
 		t.Fatalf("parsed %d offers, want the misspelt one dropped: %s", len(list), offerIDs(list))
 	}
-	if list[0].buy() != engineBuySpot || list[1].buy() != engineBuyOnDemand || list[2].buy() != engineBuyOnDemand {
-		t.Fatalf("buy column = %s/%s/%s", list[0].buy(), list[1].buy(), list[2].buy())
+	if list[0].BuyOption() != engineBuySpot || list[1].BuyOption() != engineBuyOnDemand || list[2].BuyOption() != engineBuyOnDemand {
+		t.Fatalf("buy column = %s/%s/%s", list[0].BuyOption(), list[1].BuyOption(), list[2].BuyOption())
 	}
 }
 
@@ -936,8 +936,8 @@ func TestTheWalkBranchesOnTheFailureCode(t *testing.T) {
 			t.Fatalf("trail = %q, want the second Spot row skipped entirely", got)
 		}
 		cur, _ := e.offers.current()
-		if cur.buy() != engineBuyOnDemand {
-			t.Fatalf("moved to a %s offer after a quota error", cur.buy())
+		if cur.BuyOption() != engineBuyOnDemand {
+			t.Fatalf("moved to a %s offer after a quota error", cur.BuyOption())
 		}
 		if len(fleet.creates) != 2 {
 			t.Fatalf("%d purchases, want spotB not to have been asked for at all", len(fleet.creates))

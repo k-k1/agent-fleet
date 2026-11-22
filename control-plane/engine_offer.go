@@ -227,7 +227,7 @@ func (r *engineOfferRun) restart(list []engineClass) (engineClass, bool) {
 	r.list = append([]engineClass(nil), list...)
 	r.box, r.since, r.rebuild = "", time.Time{}, true
 	for i := range r.list {
-		if r.skipBuy[r.list[i].buy()] || r.skipOffer[r.list[i].ID] {
+		if r.skipBuy[r.list[i].BuyOption()] || r.skipOffer[r.list[i].ID] {
 			continue
 		}
 		r.idx = i
@@ -334,7 +334,7 @@ func (r *engineOfferRun) took(c engineClass, instanceID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.box, r.since = instanceID, r.clock()
-	r.trail = append(r.trail, engineOfferAttempt{ID: c.ID, Buy: c.buy(), Result: engineOfferActive})
+	r.trail = append(r.trail, engineOfferAttempt{ID: c.ID, Buy: c.BuyOption(), Result: engineOfferActive})
 }
 
 // boxID is the instance the current offer bought, "" when nothing has been bought yet.
@@ -401,11 +401,11 @@ func (r *engineOfferRun) settle(result string) {
 	case n > 0 && r.trail[n-1].ID == cur.ID && r.trail[n-1].Result == engineOfferActive:
 		r.trail[n-1].Result = result
 	case ok:
-		r.trail = append(r.trail, engineOfferAttempt{ID: cur.ID, Buy: cur.buy(), Result: result})
+		r.trail = append(r.trail, engineOfferAttempt{ID: cur.ID, Buy: cur.BuyOption(), Result: result})
 	}
 	if result == engineOfferQuota {
 		if cur := r.idx; cur >= 0 && cur < len(r.list) {
-			r.skipBuy[r.list[cur].buy()] = true
+			r.skipBuy[r.list[cur].BuyOption()] = true
 		}
 	}
 }
@@ -419,7 +419,7 @@ func (r *engineOfferRun) advance() (engineClass, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	for i := r.idx + 1; i < len(r.list); i++ {
-		if r.skipBuy[r.list[i].buy()] || r.skipOffer[r.list[i].ID] {
+		if r.skipBuy[r.list[i].BuyOption()] || r.skipOffer[r.list[i].ID] {
 			continue
 		}
 		r.idx = i
@@ -535,7 +535,7 @@ func (e *engineRuntimeState) candidateOffers(ctx context.Context) []engineClass 
 	if id := e.selectedClassID(ctx); id != "" {
 		c, ok := engineClassByID(list, id)
 		switch {
-		case ok && id == c.ID && (spotOK || c.buy() != engineBuySpot):
+		case ok && id == c.ID && (spotOK || c.BuyOption() != engineBuySpot):
 			return []engineClass{c}
 		case ok && id == c.ID:
 			// Pinned to an offer this role is not allowed to buy. Automatic, for the same reason
@@ -556,7 +556,7 @@ func (e *engineRuntimeState) candidateOffers(ctx context.Context) []engineClass 
 		if !engineClassFits(c, need) {
 			continue
 		}
-		if !spotOK && c.buy() == engineBuySpot {
+		if !spotOK && c.BuyOption() == engineBuySpot {
 			continue
 		}
 		out = append(out, c)
@@ -697,7 +697,7 @@ func (e *engineRuntimeState) nextOffer(ctx context.Context, result string) (engi
 		e.noteNoBox(ctx)
 		return engineClass{}, false
 	}
-	log.Printf("engines: %s: trying the offer %s (%s) after %s", e.def.Key, next.ID, next.buy(), result)
+	log.Printf("engines: %s: trying the offer %s (%s) after %s", e.def.Key, next.ID, next.BuyOption(), result)
 	return next, true
 }
 
@@ -808,7 +808,7 @@ func (e *engineRuntimeState) stepRebuild(ctx context.Context, view engineService
 			e.def.Key, e.offerTrailLine())
 		return errEngineOffersSpent
 	}
-	log.Printf("engines: %s: the box was taken away; rebuilding from %s (%s)", e.def.Key, next.ID, next.buy())
+	log.Printf("engines: %s: the box was taken away; rebuilding from %s (%s)", e.def.Key, next.ID, next.BuyOption())
 	return e.walkOffers(ctx, false)
 }
 
@@ -968,7 +968,7 @@ func (e *engineRuntimeState) noteOffer(ctx context.Context, c engineClass, insta
 	if e == nil || e.audit == nil {
 		return
 	}
-	detail := fmt.Sprintf("buy=%s instance=%s type=%s price=%.2f", c.buy(), instanceID, instanceType, c.UsdPerHour)
+	detail := fmt.Sprintf("buy=%s instance=%s type=%s price=%.2f", c.BuyOption(), instanceID, instanceType, c.UsdPerHour)
 	if after != "" && after != engineOfferActive {
 		detail += " after=" + after
 	}
