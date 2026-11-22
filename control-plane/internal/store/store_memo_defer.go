@@ -228,7 +228,7 @@ func (t memoTx) ReturnDelivered(delivery string, r MemoReturn) (MemoReturnResult
 			_, err = t.q.ExecContext(t.ctx, `UPDATE memo SET state=?, sent_at='', delivery_id='',
 				  release_hash='', released_at='', released_by='', held_reason=?,
 				  release_repo='', release_category='', release_kind='', release_body='', release_ref_path='', release_attachments='',
-				  release_ref_provider='', release_ref_key='', release_ref_url='', release_after_ids='', release_start_after='',
+				  release_ref_provider='', release_ref_key='', release_ref_url='', release_after_ids='', release_start_after='', release_recipe='',
 				  not_before='', defer_count=?, defer_reasons=?`+guard,
 				append([]any{MemoStateHeld, r.HeldReason, count, reasons}, gargs...)...)
 			if err != nil {
@@ -246,7 +246,7 @@ func (t memoTx) ReturnDelivered(delivery string, r MemoReturn) (MemoReturnResult
 			  release_repo=repo, release_category=category, release_kind=kind, release_body=body,
 			  release_ref_path=ref_path, release_attachments=attachments,
 			  release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url,
-			  release_after_ids=after_ids, release_start_after=start_after,
+			  release_after_ids=after_ids, release_start_after=start_after, release_recipe=recipe,
 			  not_before=?, defer_count=?, defer_reasons=?`+guard,
 			append([]any{MemoStatePending, hash, releasedAt, releasedBy, notBefore, count, reasons}, gargs...)...)
 		if err != nil {

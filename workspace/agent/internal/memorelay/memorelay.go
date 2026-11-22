@@ -53,6 +53,12 @@ type Fields struct {
 	// StartAfter is the earliest time the message may be started, RFC 3339 with an offset. The
 	// Control Plane checks it.
 	StartAfter string `json:"startAfter,omitempty"`
+	// AgentKind, Model, Effort and Route are the run recipe the message asks for in place of its
+	// category's setting (ADR 0137, addendum 2026-11-23). The Control Plane validates them.
+	AgentKind string `json:"agentKind,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"`
+	Route     string `json:"route,omitempty"`
 	// Continuation is the model's claim that this follows the message its queue run was given
 	// (ADR 0137, addendum 2026-11-20). It names no id: the relay adds the delivery from the
 	// session's own meta, and the Control Plane decides from its own rows.
@@ -102,6 +108,11 @@ type Patch struct {
 	After *[]string `json:"after,omitempty"`
 	// StartAfter is the start time: nil leaves it, "" clears it, a time replaces it.
 	StartAfter *string `json:"startAfter,omitempty"`
+	// AgentKind, Model, Effort and Route are the run recipe: nil leaves a field, "" clears it.
+	AgentKind *string `json:"agentKind,omitempty"`
+	Model     *string `json:"model,omitempty"`
+	Effort    *string `json:"effort,omitempty"`
+	Route     *string `json:"route,omitempty"`
 }
 
 // ListResponse is GET /memos: the memos (each with its state) and the categories (each with

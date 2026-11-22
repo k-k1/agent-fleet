@@ -372,6 +372,15 @@ Workspace を起こさない。
   どのキューからも出たメッセージでは消える。Agent の中継は、未来の時刻を送ったのに答えに無い作成・更新を「残らなかった」
   と返す（古い Control Plane）。
 
+- **実行レシピ（`agentKind`・`model`・`effort`・`route`）**（ADR 0137 の付記 2026-11-23、#4845、`internal/memorecipe`）。
+  `memo.recipe`（正規化した JSON。なしは `""`。migration 0156 / pg 0141）がカテゴリの実行設定を項目ごとに上書きする
+  （別のエージェントを指定したメッセージは、カテゴリのモデル・effort・route を引き継がない。支出上限はカテゴリのまま）。
+  作成と更新はどの面でも受ける（REST、`add_memo` / `update_memo`。キュー設定と同じ検査で、外れたら
+  REST では `400 memo_recipe_invalid`（`/mcp` では `isError` のツール結果）。キューのないメモへの指定も同じ。更新では省略で据え置き、`""` で外す）。設定したときだけ
+  `memoContentHash` に足し、`release_recipe` に CHECK 付きで写す。取り出しは実効レシピが同じメッセージだけを
+  バッチにし（最も古い対象が決める）、配信の作成本体はそれを使い、整理は保存されたレシピの違うメッセージをマージせず、
+  継続は自分で書かなければ引き継ぐ。
+
 - **型付きの参照**（[decisions/0137](../decisions/0137-message-queues.ja.md) §4、step 3 の Control Plane 側）。
   メッセージは作業項目への指し先を持てる。本文は写さない。Agent（step 3b、実装済み）と Console（step 3c）はこの契約の上に作る。
   - *wire。* `reference` は `{"provider": "github", "key": "acme/app#12", "url": "https://github.com/acme/app/issues/12"}`

@@ -73,6 +73,9 @@ type memoTidyMove struct {
 	// Hash and ToState are what the run wrote.
 	Hash    string `json:"hash"`
 	ToState string `json:"toState"`
+	// Recipe is the run recipe the message had before the move: a move out of every queue drops it,
+	// and the undo puts it back.
+	Recipe string `json:"recipe,omitempty"`
 }
 
 // memoTidyRecord is what an applied run's ops column holds.
@@ -278,7 +281,7 @@ func memoTidyApplyTx(tx store.MemoTxOps, in memoTidyApplyIn, out *memoTidyApplyO
 		d := store.Memo{ID: store.NewID(), MembershipID: in.MembershipID, Repo: cat.Repo, Category: cat.Name, Kind: "text", Body: text,
 			Position: position, CreatedAt: created, State: state, Provenance: store.MemoProvenanceCurator,
 			SourceProvenance: group.Provenance, Producer: group.Producer, ProducerOrigin: group.ProducerOrigin,
-			DerivedFrom: encodeIDs(ids), TidyRunID: run.ID}
+			DerivedFrom: encodeIDs(ids), TidyRunID: run.ID, Recipe: sources[0].Recipe}
 		h := memoContentHash(d)
 		d.TidySeenHash = h
 		if state == store.MemoStatePending {
@@ -345,7 +348,7 @@ func memoTidyApplyTx(tx store.MemoTxOps, in memoTidyApplyIn, out *memoTidyApplyO
 // a pending message as pending, and any other queue holds it for the person to release there.
 // A held message stays held, so a move never releases one.
 func memoTidyMoveOne(tx store.MemoTxOps, q store.MemoQueue, m store.Memo, dest store.MemoCategory, runID, queueID string) (memoTidyMove, error) {
-	rec := memoTidyMove{ID: m.ID, State: m.State, PrevRun: m.TidyRunID, ReleaseHash: m.ReleaseHash, ReleasedAt: m.ReleasedAt, ReleasedBy: m.ReleasedBy}
+	rec := memoTidyMove{ID: m.ID, State: m.State, PrevRun: m.TidyRunID, ReleaseHash: m.ReleaseHash, ReleasedAt: m.ReleasedAt, ReleasedBy: m.ReleasedBy, Recipe: m.Recipe}
 	_, destIsQueue, err := tx.GetQueue(dest.ID)
 	if err != nil {
 		return rec, err
@@ -363,6 +366,7 @@ func memoTidyMoveOne(tx store.MemoTxOps, q store.MemoQueue, m store.Memo, dest s
 	switch {
 	case !destIsQueue:
 		next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = "", "", "", ""
+		next.Recipe = ""
 	case m.State == store.MemoStatePending && slices.Contains(q.TidyDestinations, dest.ID):
 		next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = store.MemoStatePending, memoContentHash(next), memoNow(), store.MemoReleasedByTidy
 	default:
@@ -380,7 +384,7 @@ func memoTidyItemOf(m store.Memo) memotidy.Item {
 	if m.Provenance == store.MemoProvenanceCurator && m.SourceProvenance != "" {
 		prov = m.SourceProvenance
 	}
-	return memotidy.Item{ID: m.ID, Group: memotidy.Group{Provenance: prov, Producer: m.Producer, ProducerOrigin: m.ProducerOrigin},
+	return memotidy.Item{ID: m.ID, Group: memotidy.Group{Provenance: prov, Producer: m.Producer, ProducerOrigin: m.ProducerOrigin, Recipe: m.Recipe},
 		Mergeable: m.Kind == "text" && m.Body != "" && m.Attachments == "" && m.RefPath == "" && m.RefKey == "",
 		Bytes:     len(m.Body), Moved: m.TidyFrom != "", Ref: memoRefIdent(m)}
 }
@@ -529,6 +533,12 @@ func memoTidyUndoCheck(rd store.MemoTidyReader, run store.MemoTidyRun, rec memoT
 		back := m
 		back.Repo, back.Category, back.Position = home.Repo, home.Name, next
 		back.TidyFrom, back.TidyRunID = "", mv.PrevRun
+		// Only a queue keeps a recipe: the row may have moved on into another queue since, and a plain
+		// note carries none.
+		back.Recipe = ""
+		if homeIsQueue {
+			back.Recipe = mv.Recipe
+		}
 		switch {
 		case mv.State == store.MemoStatePending && homeIsQueue && mv.ReleaseHash == memoContentHash(back):
 			back.State, back.ReleaseHash, back.ReleasedAt, back.ReleasedBy = store.MemoStatePending, mv.ReleaseHash, mv.ReleasedAt, mv.ReleasedBy

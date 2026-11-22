@@ -22,6 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
+	"github.com/k-k1/agent-fleet/control-plane/internal/memorecipe"
 	"github.com/k-k1/agent-fleet/control-plane/internal/memoref"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -94,12 +95,13 @@ func (v memoVia) provenance() string {
 func (v memoVia) fromWorkspace() bool { return v.face != memoFaceConsole }
 
 // memoContentHash is what a release is bound to: the body, the kind, the ref path, the
-// attachments, the reference, the prerequisites, the start time, the repo and the category. The category is its name, so a rename changes the
+// attachments, the reference, the prerequisites, the start time, the run recipe, the repo and the category. The category is its name, so a rename changes the
 // hash and a pending message's release is re-recorded in the same transaction.
 func memoContentHash(m store.Memo) string {
 	parts := append([]string{"memo-content/v1", m.Kind, m.Body, m.RefPath, m.Attachments, m.Repo, m.Category}, memoRefHashParts(m)...)
 	parts = append(parts, memoafter.HashParts(m)...)
-	b, _ := json.Marshal(append(parts, memoafter.StartAfterHashParts(m)...))
+	parts = append(parts, memoafter.StartAfterHashParts(m)...)
+	b, _ := json.Marshal(append(parts, memorecipe.HashParts(m)...))
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -188,7 +190,7 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext, accept bool, via memoV
 		// A plain note waits for nothing: a list left behind would block its every later move,
 		// and come back if the category became a queue again.
 		next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = "", "", "", ""
-		next.AfterIDs, next.HeldReason, next.StartAfter = "", "", ""
+		next.AfterIDs, next.HeldReason, next.StartAfter, next.Recipe = "", "", "", ""
 		return next, nil
 	}
 	// A superseded message was replaced by a tidy run and comes back only by undoing it: whatever
@@ -204,7 +206,7 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext, accept bool, via memoV
 	}
 	if prev.State == store.MemoStatePending {
 		switch {
-		case memoAcceptedBySetting(next, via, accept):
+		case memoAcceptedBySetting(next, via, accept) && prev.Recipe == next.Recipe:
 			// The switch already accepts that such a session could have added this text as a
 			// new message, so a change of it keeps the state and records the release again.
 			next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = memoContentHash(next), memoNow(), store.MemoReleasedBySetting
@@ -733,6 +735,17 @@ func (a memoAPI) putQueue(w http.ResponseWriter, r *http.Request, _ store.Identi
 		if err := tx.PutQueue(q); err != nil {
 			return err
 		}
+		if existed {
+			// New defaults may leave a message's recipe unable to create a run: it is held now, so the
+			// list's counts (SQL) agree at once with what a fire would claim.
+			rows, err := tx.ListMemosIn(c.Repo, c.Name)
+			if err != nil {
+				return err
+			}
+			if _, err := memoHoldInvalidRecipes(tx, q, rows); err != nil {
+				return err
+			}
+		}
 		out = memoQueueToDTO(q, c)
 		return nil
 	})
@@ -1008,4 +1021,104 @@ func derefRef(r *memoRefWire) memoRefWire {
 // memoRefLine is a reference as a line of a hand-sent message.
 func memoRefLine(m store.Memo) string {
 	return "作業項目: " + m.RefKey + " (" + m.RefURL + ")"
+}
+
+// --- Run recipes (ADR 0137, addendum 2026-11-23) ---
+
+func badMemoRecipe(msg string) *apiError {
+	return &apiError{http.StatusBadRequest, errCodeMemoRecipeInvalid, msg}
+}
+
+func memoRecipeOutside() *apiError {
+	return badMemoRecipe("an agent, model, effort or route is only for a note of an auto-run category")
+}
+
+// memoRecipeCheck validates a recipe exactly as the queue settings validate theirs (memoQueueIn.validate).
+// queueKind is the agent kind of the category the message is in: a route is checked against the
+// kind the run will really use.
+func memoRecipeCheck(r memorecipe.Recipe, queueKind string) *apiError {
+	if r.AgentKind == "shell" || r.AgentKind == "ssm" {
+		return badMemoRecipe("a queue's consumer must be an agent: " + r.AgentKind + " is refused")
+	}
+	if err := agentkinds.CheckCreateKind(r.AgentKind); err != nil {
+		return badMemoRecipe(err.Error())
+	}
+	if r.Model != "" && !launchModelRe.MatchString(r.Model) {
+		return badMemoRecipe("model is not a model id")
+	}
+	if !validRecipeToken(r.Effort) {
+		return badMemoRecipe("effort is not an effort level")
+	}
+	if r.Route != "" {
+		kind := r.AgentKind
+		if kind == "" {
+			kind = queueKind
+		}
+		if _, err := agentroutes.CheckCreateRoute(kind, &agentroutes.Selection{Route: r.Route}); err != nil {
+			return badMemoRecipe(err.Error())
+		}
+	}
+	return nil
+}
+
+// memoRecipeEffectiveProblem says why a message that carries a recipe cannot run with it under the
+// category's settings now, "" when it can or when it carries none. Held with this reason, it waits
+// for a person instead of being claimed again and again.
+func memoRecipeEffectiveProblem(q store.MemoQueue, m store.Memo) string {
+	if m.Recipe == "" {
+		return ""
+	}
+	e := memorecipe.Effective(q, m)
+	if err := agentkinds.CheckCreateKind(e.AgentKind); err != nil {
+		return "recipe_invalid"
+	}
+	if e.Route != "" {
+		if _, err := agentroutes.CheckCreateRoute(e.AgentKind, &agentroutes.Selection{Route: e.Route}); err != nil {
+			return "recipe_invalid"
+		}
+	}
+	return ""
+}
+
+// memoRecipeEligible narrows an eligibility test to the messages whose recipe the run could be
+// created with: one the claim would hold for a person must not count towards an open threshold or
+// start a drain by itself.
+func memoRecipeEligible(q store.MemoQueue, eligible func(store.Memo) bool) func(store.Memo) bool {
+	return func(m store.Memo) bool {
+		return eligible(m) && memoRecipeEffectiveProblem(q, m) == ""
+	}
+}
+
+// memoHoldForRecipe puts a pending message whose recipe cannot create a run back to held with the
+// reason, as the claim does.
+func memoHoldForRecipe(tx store.MemoTxOps, m store.Memo, why string) error {
+	m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStateHeld, "", "", ""
+	raw, _ := json.Marshal(memoafter.HeldReason{Reason: why, At: store.DeliveryTS(time.Now())})
+	m.HeldReason = string(raw)
+	return tx.WriteMemo(m)
+}
+
+// memoHoldInvalidRecipes holds the pending messages of rows whose recipe cannot create a run under
+// the queue's settings now, and returns rows as they stand after. The dispatcher calls it before
+// it counts, so the member's list (which counts in SQL) agrees with what a fire would claim after
+// the next tick instead of waiting on a message that never can be claimed.
+func memoHoldInvalidRecipes(tx store.MemoTxOps, q store.MemoQueue, rows []store.Memo) ([]store.Memo, error) {
+	out := rows
+	for i, m := range rows {
+		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
+			continue
+		}
+		why := memoRecipeEffectiveProblem(q, m)
+		if why == "" {
+			continue
+		}
+		if err := memoHoldForRecipe(tx, m, why); err != nil {
+			return nil, err
+		}
+		if &out[0] == &rows[0] {
+			out = append([]store.Memo(nil), rows...)
+		}
+		out[i].State, out[i].ReleaseHash, out[i].ReleasedAt, out[i].ReleasedBy = store.MemoStateHeld, "", "", ""
+	}
+	return out, nil
 }

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
+	"github.com/k-k1/agent-fleet/control-plane/internal/memorecipe"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -107,6 +108,12 @@ type memoDTO struct {
 	// none. A create takes an RFC 3339 time with an offset and answers it in the fixed-width UTC
 	// the column holds.
 	StartAfter string `json:"startAfter,omitempty"`
+	// AgentKind, Model, Effort and Route are the run recipe the message asks for (memo_recipe.go),
+	// absent for the category's own setting, field by field. A create or an update may set them.
+	AgentKind string `json:"agentKind,omitempty"`
+	Model     string `json:"model,omitempty"`
+	Effort    string `json:"effort,omitempty"`
+	Route     string `json:"route,omitempty"`
 	// Existing is set on the answer of a create into a queue that found the same reference
 	// already waiting there: the message returned is that one, and nothing was added.
 	Existing bool `json:"existing,omitempty"`
@@ -143,6 +150,8 @@ func memoToDTO(m store.Memo) memoDTO {
 		DeliveryID: m.DeliveryID, Reference: memoRefToWire(m),
 		DerivedFrom: decodeIDs(m.DerivedFrom), SourceProvenance: m.SourceProvenance, TidyRunID: m.TidyRunID,
 		After: memoafter.IDs(m), ChainID: m.ChainID, ChainSeq: m.ChainSeq, StartAfter: m.StartAfter}
+	rc := memorecipe.Of(m)
+	d.AgentKind, d.Model, d.Effort, d.Route = rc.AgentKind, rc.Model, rc.Effort, rc.Route
 	if m.State == store.MemoStateHeld {
 		d.HeldReason = memoafter.ParseHeldReason(m.HeldReason)
 	}
@@ -318,6 +327,7 @@ func validateMemo(mv store.MembershipView, in memoDTO) (store.Memo, *apiError) {
 		Position:     in.Position,
 	}
 	m = memoSetRef(m, ref)
+	m.Recipe = memorecipe.Trim(memorecipe.Recipe{AgentKind: in.AgentKind, Model: in.Model, Effort: in.Effort, Route: in.Route}).Encode()
 	switch m.Kind {
 	case "file":
 		if m.RefPath == "" {
@@ -378,6 +388,14 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		accept := inQ && q.AcceptOwnSessions
 		if !inQ && m.StartAfter != "" {
 			return memoTxFail(memoStartAfterOutside())
+		}
+		if m.Recipe != "" {
+			if !inQ {
+				return memoTxFail(memoRecipeOutside())
+			}
+			if aerr := memoRecipeCheck(memorecipe.Of(m), q.AgentKind); aerr != nil {
+				return memoTxFail(aerr)
+			}
 		}
 		// One read of the bucket and one clock reading serve the whole create: the time the
 		// prerequisites are ordered against is the time the row is stamped with.
@@ -496,6 +514,12 @@ type memoPatch struct {
 	After *[]string `json:"after"`
 	// StartAfter absent leaves the start time as it is, a time sets it, and "" clears it.
 	StartAfter *string `json:"startAfter"`
+	// AgentKind, Model, Effort and Route absent leave that field of the run recipe as it is, a value
+	// sets it, and "" clears it (the category's setting applies again).
+	AgentKind *string `json:"agentKind"`
+	Model     *string `json:"model"`
+	Effort    *string `json:"effort"`
+	Route     *string `json:"route"`
 }
 
 // memoUpdateFor applies a partial edit to an owned memo (ownership by membership).
@@ -532,6 +556,18 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 		// memoQueueMove when the note leaves the queue.
 		if in.StartAfter != nil && next.StartAfter != "" && !inNext {
 			return memoTxFail(memoStartAfterOutside())
+		}
+		if in.recipeGiven() && next.Recipe != "" {
+			if !inNext {
+				return memoTxFail(memoRecipeOutside())
+			}
+			nq, _, err := tx.QueueOf(next.Repo, next.Category)
+			if err != nil {
+				return err
+			}
+			if aerr := memoRecipeCheck(memorecipe.Of(next), nq.AgentKind); aerr != nil {
+				return memoTxFail(aerr)
+			}
 		}
 		switch {
 		case in.After != nil:
@@ -639,6 +675,7 @@ func applyMemoPatch(cur store.Memo, in memoPatch) (store.Memo, *apiError) {
 		}
 		cur.StartAfter = at
 	}
+	cur = memorecipe.Set(cur, in.AgentKind, in.Model, in.Effort, in.Route)
 	if cur.Kind == "file" && cur.RefPath == "" {
 		return cur, &apiError{http.StatusBadRequest, "bad_ref", "refPath is required for kind=file"}
 	}
@@ -1327,4 +1364,9 @@ func memoRehashRenamed(tx store.MemoTxOps, repo, from, to string) error {
 		}
 	}
 	return nil
+}
+
+// recipeGiven says whether the patch sets or clears any field of the run recipe.
+func (p memoPatch) recipeGiven() bool {
+	return p.AgentKind != nil || p.Model != nil || p.Effort != nil || p.Route != nil
 }
