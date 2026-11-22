@@ -27,6 +27,14 @@
   mask-position: center;
 }
 
+/* A brand mark in the provider badge (the agent cards; providercard.css) is sized in px rather than inheriting the 11px
+   monogram size: .brandicon is 1em, and 11px in a 26px tile reads as a speck. It still paints
+   in currentColor, so it takes the same per-fill label colour the two letters had. */
+.p-badge .brandicon {
+  width: 16px;
+  height: 16px;
+}
+
 .bi-agent-claude {
   mask-image: url("../assets/brandicons/agents/claude.svg");
 }
