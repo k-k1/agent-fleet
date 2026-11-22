@@ -239,8 +239,13 @@ func resolveGapPending(evs []bindEvent) bool {
 // readGaps returns every recorded gap; ok=false when the file cannot be read whole.
 func readGaps() (gaps []int64, ok bool) {
 	bindIntervalsMu.Lock()
+	defer bindIntervalsMu.Unlock()
+	return readGapsLocked()
+}
+
+// readGapsLocked is readGaps for a caller that holds bindIntervalsMu.
+func readGapsLocked() (gaps []int64, ok bool) {
 	gaps = append(gaps, gapsMem...)
-	bindIntervalsMu.Unlock()
 	fg, _, ok := readGapsFile()
 	if !ok {
 		return nil, false
@@ -306,6 +311,13 @@ const bindLockFile = "opencode-binding-intervals.lock"
 // Limit: this only orders Agent processes that share the home. A hand-made `opencode auth login`
 // changes the account without passing through any Agent, so no lock can see it; bindings after one
 // rest on the next account reading.
+var (
+	// bindLockWait bounds the wait for another process's lock; past it the section runs unlocked.
+	bindLockWait = 3 * time.Second
+	// bindLockRetry is a test seam: it runs after each failed attempt.
+	bindLockRetry func()
+)
+
 func lockBindFiles() func() {
 	dir := paths.AgentConfigDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -316,10 +328,23 @@ func lockBindFiles() func() {
 		log.Printf("opencode: binding lock not taken: %v", err)
 		return func() {}
 	}
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
-		log.Printf("opencode: binding lock not taken: %v", err)
-		_ = f.Close()
-		return func() {}
+	deadline := time.Now().Add(bindLockWait)
+	for {
+		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		if err == nil {
+			break
+		}
+		// A holder that is stopped (not dead) never releases; blocking here would stall the
+		// Supervisor and every OAuth call behind it, which main never did.
+		if err != syscall.EWOULDBLOCK && err != syscall.EINTR || time.Now().After(deadline) {
+			log.Printf("opencode: binding lock not taken: %v", err)
+			_ = f.Close()
+			return func() {}
+		}
+		if bindLockRetry != nil {
+			bindLockRetry()
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 	return func() {
 		_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
@@ -831,13 +856,16 @@ func daemonBinder() bindFn {
 	if ok {
 		ok = resolveGapPending(evs)
 	}
+	// Read the gaps under the same lock: another process's pending marker must not be paired with
+	// events read before it.
+	var gaps []int64
+	gapsOK := false
+	if ok {
+		gaps, gapsOK = readGapsLocked()
+	}
 	unlock()
 	bindIntervalsMu.Unlock()
-	if !ok || len(evs) == 0 || bindOff.Load() {
-		return nil
-	}
-	gaps, ok := readGaps()
-	if !ok {
+	if !ok || len(evs) == 0 || bindOff.Load() || !gapsOK {
 		return nil
 	}
 	return func(route string, paid bool, times ...int64) string {
