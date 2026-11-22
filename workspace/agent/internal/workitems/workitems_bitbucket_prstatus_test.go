@@ -29,13 +29,14 @@ type bbStatusStub struct {
 	listQuery []url.Values
 	prs       []bbListPR
 	// override may answer a status read itself; it returns true when it did.
-	override func(w http.ResponseWriter, id int, kind string) bool
-	listNear bool
-	nearRepo map[string]bool
-	list429  map[string]bool
-	lists    map[string]int
-	srcShift bool // lists after the first report another source commit
-	statuses string
+	override    func(w http.ResponseWriter, id int, kind string) bool
+	listNear    bool
+	nearRepo    map[string]bool
+	list429     map[string]bool
+	list429Once map[string]bool // the first list of the repository answers 429, then 200
+	lists       map[string]int
+	srcShift    bool // lists after the first report another source commit
+	statuses    string
 }
 
 func newBBStatusStub(t *testing.T, prs ...bbListPR) *bbStatusStub {
@@ -71,7 +72,7 @@ func newBBStatusStub(t *testing.T, prs ...bbListPR) *bbStatusStub {
 		}
 		st.lists[repo]++
 		nth := st.lists[repo]
-		if st.list429[repo] {
+		if st.list429[repo] || (st.list429Once[repo] && nth == 1) {
 			st.mu.Unlock()
 			w.WriteHeader(http.StatusTooManyRequests)
 			return
@@ -684,5 +685,95 @@ func TestBitbucketUnattemptedRowsNeverTouchAFullCache(t *testing.T) {
 	bitbucketStatusCache.Unlock()
 	if n != bitbucketStatusCacheMax || !ok || unsettled != 0 {
 		t.Fatalf("cache changed by rows that were never read: %d entries, k0 present=%v, %d attempt records", n, ok, unsettled)
+	}
+}
+
+func TestBitbucketA429ThatTheListRetryAbsorbedStillStopsTheReads(t *testing.T) {
+	st := newBBStatusStub(t, web(1, 2)...)
+	st.set(func() { st.list429Once = map[string]bool{"acme/web": true} })
+	rows := bbRefresh(t, bbTokenStore(), "acme/web")
+	if len(rows) != 2 {
+		t.Fatalf("the retried list was lost: %d rows", len(rows))
+	}
+	if len(st.snapshot()) != 0 {
+		t.Fatalf("reads after a 429 on the list: %v", st.snapshot())
+	}
+}
+
+func TestBitbucketUnsupportedStateAndBadlyTypedFieldsAreFailedReads(t *testing.T) {
+	cases := map[string]struct{ kind, body string }{
+		"unsupported state": {"statuses", `{"values":[{"state":"IN_PROGRESS"}]}`},
+		"numeric reason":    {"mergeability", `{"values":[{"type":"git_mergeability_check","status":"PASSED","reason":7}]}`},
+		"string blocking":   {"mergeability", `{"values":[{"type":"x","status":"PASSED","blocking":"no"}]}`},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			st := newBBStatusStub(t, web(1)...)
+			st.set(func() {
+				st.override = func(w http.ResponseWriter, id int, kind string) bool {
+					if kind != c.kind {
+						return false
+					}
+					_, _ = w.Write([]byte(c.body))
+					return true
+				}
+			})
+			s := bbTokenStore()
+			if r := bbRefresh(t, s, "acme/web")["acme/web#1"]; r.Checks.State != "" || r.Mergeable != "" {
+				t.Fatalf("drew %+v", r)
+			}
+			st.reset()
+			bbRefresh(t, s, "acme/web")
+			if !hasCall(st.snapshot(), "1/"+c.kind) {
+				t.Fatalf("not re-read: %v", st.snapshot())
+			}
+		})
+	}
+}
+
+func TestBitbucketOlderListingNeverBorrowsTheNewerOnesAnswer(t *testing.T) {
+	st := newBBStatusStub(t, web(1)...)
+	s := bbTokenStore()
+	// Cache the newer commit (what a second, newer listing reports) first.
+	st.set(func() { st.srcShift = true; st.lists = map[string]int{"acme/web": 1} })
+	bbRefresh(t, s, "acme/web")
+	st.reset()
+	st.set(func() { st.lists = nil })
+	items, _, _ := fetchWorkItems(s, []workItemQueryIn{
+		{ID: "old", Provider: "bitbucket", Query: "acme/web"},
+		{ID: "new", Provider: "bitbucket", Query: `acme/web state="OPEN"`},
+	})
+	if len(st.snapshot()) != 0 {
+		t.Fatalf("calls = %v", st.snapshot())
+	}
+	for _, r := range items {
+		switch r.QueryID {
+		case "old":
+			if r.srcHash != "s1" || r.Mergeable != "" || r.Checks.State != "" {
+				t.Fatalf("the older listing got an answer read at another commit: %+v", r)
+			}
+		case "new":
+			if r.srcHash != "s1b" || r.Mergeable != "clean" {
+				t.Fatalf("the newer listing lost its cached answer: %+v", r)
+			}
+		}
+	}
+}
+
+func TestBitbucketJobsThatNeverStartedLeaveNoAttemptRecord(t *testing.T) {
+	st := newBBStatusStub(t, web(1, 2, 3, 4, 5, 6, 7, 8)...)
+	st.set(func() {
+		st.override = func(w http.ResponseWriter, id int, kind string) bool {
+			time.Sleep(100 * time.Millisecond)
+			w.WriteHeader(http.StatusTooManyRequests)
+			return true
+		}
+	})
+	bbRefresh(t, bbTokenStore(), "acme/web")
+	bitbucketStatusCache.Lock()
+	n := len(bitbucketStatusCache.m)
+	bitbucketStatusCache.Unlock()
+	if n > bitbucketStatusConcurrency {
+		t.Fatalf("%d attempt records for at most %d reads that started", n, bitbucketStatusConcurrency)
 	}
 }

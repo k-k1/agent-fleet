@@ -145,12 +145,9 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 	if filter != "" {
 		params.Set("q", filter)
 	}
-	body, status, hdr, err := gitx.BitbucketGetStatusHeader(workItemHTTPClient, auth, endpoint+"?"+params.Encode())
+	body, status, hdr, err := gitx.BitbucketGetStatusHeader(bitbucketListClient(), auth, endpoint+"?"+params.Encode())
 	if err != nil {
 		return nil, "", fmt.Errorf("could not reach %s", BitbucketAPIBase)
-	}
-	if status == http.StatusTooManyRequests || strings.EqualFold(strings.TrimSpace(hdr.Get("X-RateLimit-NearLimit")), "true") {
-		bitbucketNoteRateLimit()
 	}
 	if status != http.StatusOK {
 		return nil, "", bitbucketWorkItemError(status, body, q)

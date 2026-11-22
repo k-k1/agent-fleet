@@ -120,6 +120,7 @@ type bbGroup struct {
 	srcHash, dstHash string
 	updated          string
 	idxs             []int
+	auth             string // the credential this listing was read with
 
 	needCheck, needMerge bool
 	unsettled            bool
@@ -137,7 +138,7 @@ type bbGroup struct {
 func bitbucketEnrichItems(s *secrets.Data, items []workItemOut, started time.Time, seq uint64) {
 	groups := map[string]*bbGroup{}
 	order := []*bbGroup{}
-	conn, auth := "", ""
+	conn := ""
 	for i := range items {
 		r := &items[i]
 		if r.Provider != "bitbucket" || r.Kind != "pr" || (r.State != "open" && r.State != "in_progress") ||
@@ -149,13 +150,13 @@ func bitbucketEnrichItems(s *secrets.Data, items []workItemOut, started time.Tim
 			continue
 		}
 		if conn == "" {
-			conn, auth = bitbucketConnKey(s), r.bbAuth
+			conn = bitbucketConnKey(s)
 		}
 		gk := conn + "|" + r.Key + "|" + r.srcHash + "|" + r.dstHash
 		g := groups[gk]
 		if g == nil {
 			ws, name, _ := strings.Cut(r.Repo, "/")
-			g = &bbGroup{cacheKey: conn + "|" + r.Key, srcHash: r.srcHash, dstHash: r.dstHash, updated: r.UpdatedAt,
+			g = &bbGroup{auth: r.bbAuth, cacheKey: conn + "|" + r.Key, srcHash: r.srcHash, dstHash: r.dstHash, updated: r.UpdatedAt,
 				prBase: fmt.Sprintf("%s/2.0/repositories/%s/%s/pullrequests/%s", BitbucketAPIBase,
 					url.PathEscape(ws), url.PathEscape(name), url.PathEscape(num))}
 			groups[gk] = g
@@ -185,19 +186,19 @@ func bitbucketEnrichItems(s *secrets.Data, items []workItemOut, started time.Tim
 	bitbucketStatusCache.Unlock()
 
 	// One job per pull request: when two queries saw it at different commits, the newest listing
-	// is read and the other keeps only what the cache already holds for its hashes.
+	// is the one to read (whether or not an older listing's hashes happen to be cached), and an
+	// older one keeps only what the cache already holds for its own hashes.
 	newest := map[string]*bbGroup{}
 	for _, g := range order {
-		if !g.needCheck && !g.needMerge {
-			continue
-		}
 		if o := newest[g.cacheKey]; o == nil || g.updated >= o.updated {
 			newest[g.cacheKey] = g
 		}
 	}
 	jobs := make([]*bbGroup, 0, len(newest))
 	for _, g := range newest {
-		jobs = append(jobs, g)
+		if g.needCheck || g.needMerge {
+			jobs = append(jobs, g)
+		}
 	}
 	deadline := started.Add(bitbucketStatusWindow)
 	limited := bitbucketRateLimitedAt.Load() >= started.UnixNano()
@@ -218,7 +219,7 @@ func bitbucketEnrichItems(s *secrets.Data, items []workItemOut, started time.Tim
 		if len(jobs) > bitbucketStatusBudget {
 			jobs = jobs[:bitbucketStatusBudget]
 		}
-		bitbucketReadAll(auth, jobs, deadline)
+		bitbucketReadAll(jobs, deadline)
 	}
 
 	bitbucketStatusCache.Lock()
@@ -263,7 +264,7 @@ func bitbucketStoreGroup(g *bbGroup, seq uint64) {
 	bitbucketStatusCache.m[g.cacheKey] = e
 }
 
-func bitbucketReadAll(auth string, jobs []*bbGroup, deadline time.Time) {
+func bitbucketReadAll(jobs []*bbGroup, deadline time.Time) {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	var stop atomic.Bool
@@ -274,7 +275,7 @@ func bitbucketReadAll(auth string, jobs []*bbGroup, deadline time.Time) {
 		go func() {
 			defer wg.Done()
 			for g := range ch {
-				bitbucketReadGroup(ctx, auth, g, &stop)
+				bitbucketReadGroup(ctx, g, &stop)
 			}
 		}()
 	}
@@ -289,10 +290,10 @@ func bitbucketReadAll(auth string, jobs []*bbGroup, deadline time.Time) {
 }
 
 // bitbucketReadGroup reads the stale halves of one pull request. Each worker owns its group.
-func bitbucketReadGroup(ctx context.Context, auth string, g *bbGroup, stop *atomic.Bool) {
-	g.attempted, g.unsettled = true, false
+func bitbucketReadGroup(ctx context.Context, g *bbGroup, stop *atomic.Bool) {
+	g.unsettled = false
 	if g.needCheck {
-		if body, ok := bitbucketGetOnce(ctx, auth, g.prBase+"/statuses?pagelen=50&fields=values.state,next", stop); ok {
+		if body, ok := bitbucketGetOnce(ctx, g, g.prBase+"/statuses?pagelen=50&fields=values.state,next", stop); ok {
 			if c, final, ok := parseBitbucketStatusesPage(body); ok {
 				g.checks, g.haveChecks = c, true
 				g.newChecks = final
@@ -301,7 +302,7 @@ func bitbucketReadGroup(ctx context.Context, auth string, g *bbGroup, stop *atom
 		}
 	}
 	if g.needMerge && !stop.Load() {
-		if body, ok := bitbucketGetOnce(ctx, auth, g.prBase+"/mergeability/checks?fields=values.type,values.status,values.reason,values.blocking", stop); ok && bitbucketValidMergeChecks(body) {
+		if body, ok := bitbucketGetOnce(ctx, g, g.prBase+"/mergeability/checks?fields=values.type,values.status,values.reason,values.blocking", stop); ok && bitbucketValidMergeChecks(body) {
 			g.mergeable, g.haveMerge = parseBitbucketMergeChecks(body).mergeable, true
 			g.newMerge = g.mergeable != "unknown"
 			g.unsettled = g.unsettled || !g.newMerge
@@ -312,14 +313,16 @@ func bitbucketReadGroup(ctx context.Context, auth string, g *bbGroup, stop *atom
 	}
 }
 
-// bitbucketValidMergeChecks accepts a `values` array of objects that each name a check type and a
-// status. The detail parser turns anything it cannot read into "unknown", which a list row must
-// not take for a read answer.
+// bitbucketValidMergeChecks accepts a `values` array of objects whose fields have the types the
+// detail parser reads. That parser turns anything it cannot decode into "unknown", which a list
+// row must not take for a read answer.
 func bitbucketValidMergeChecks(body []byte) bool {
 	var r struct {
 		Values *[]struct {
-			Type   *string `json:"type"`
-			Status *string `json:"status"`
+			Type     *string `json:"type"`
+			Status   *string `json:"status"`
+			Reason   *string `json:"reason"`
+			Blocking *bool   `json:"blocking"`
 		} `json:"values"`
 	}
 	if json.Unmarshal(body, &r) != nil || r.Values == nil {
@@ -332,6 +335,10 @@ func bitbucketValidMergeChecks(body []byte) bool {
 	}
 	return true
 }
+
+// bitbucketStatusStates are the build states Bitbucket documents. A state outside them is not
+// counted: the detail parser would add it to the total and let the row read green.
+var bitbucketStatusStates = map[string]bool{"SUCCESSFUL": true, "FAILED": true, "INPROGRESS": true, "STOPPED": true}
 
 // parseBitbucketStatusesPage folds one page of build statuses. ok is false for a body that is not
 // a statuses page, or whose entries have no state. final says the answer may be kept for this
@@ -347,7 +354,7 @@ func parseBitbucketStatusesPage(body []byte) (c workItemChecksOut, final, ok boo
 		return workItemChecksOut{}, false, false
 	}
 	for _, v := range *p.Values {
-		if v.State == nil || strings.TrimSpace(*v.State) == "" {
+		if v.State == nil || !bitbucketStatusStates[strings.ToUpper(strings.TrimSpace(*v.State))] {
 			return workItemChecksOut{}, false, false
 		}
 	}
@@ -364,15 +371,16 @@ func parseBitbucketStatusesPage(body []byte) (c workItemChecksOut, final, ok boo
 // back-off, which is the opposite of stopping. It raises stop (and the refresh-wide note) on a 429
 // or a near-limit header as soon as the headers arrive, before the body, and reports ok only for a
 // complete 200.
-func bitbucketGetOnce(ctx context.Context, auth, u string, stop *atomic.Bool) ([]byte, bool) {
+func bitbucketGetOnce(ctx context.Context, g *bbGroup, u string, stop *atomic.Bool) ([]byte, bool) {
 	if stop.Load() || ctx.Err() != nil {
 		return nil, false
 	}
+	g.attempted = true // a read was actually started, so a failure is a real attempt
 	req, err := http.NewRequestWithContext(ctx, "GET", u, nil)
 	if err != nil {
 		return nil, false
 	}
-	req.Header.Set("Authorization", auth)
+	req.Header.Set("Authorization", g.auth)
 	req.Header.Set("Accept", "application/json")
 	resp, err := workItemHTTPClient.Do(req)
 	if err != nil {
@@ -391,4 +399,28 @@ func bitbucketGetOnce(ctx context.Context, auth, u string, stop *atomic.Bool) ([
 		return nil, false
 	}
 	return body, true
+}
+
+// bitbucketListClient is the list's HTTP client with a tap on every response: the helper behind it
+// retries a 429, and only the last attempt's status would otherwise be visible, so a 429 followed
+// by a 200 would leave no trace for the status reads.
+func bitbucketListClient() *http.Client {
+	c := *workItemHTTPClient
+	base := c.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	c.Transport = rateLimitTap{base}
+	return &c
+}
+
+type rateLimitTap struct{ http.RoundTripper }
+
+func (t rateLimitTap) RoundTrip(r *http.Request) (*http.Response, error) {
+	resp, err := t.RoundTripper.RoundTrip(r)
+	if err == nil && (resp.StatusCode == http.StatusTooManyRequests ||
+		strings.EqualFold(strings.TrimSpace(resp.Header.Get("X-RateLimit-NearLimit")), "true")) {
+		bitbucketNoteRateLimit()
+	}
+	return resp, err
 }
