@@ -865,9 +865,17 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 				if after != nil {
 					afterList = *after
 				}
+				startAfter, err := argMemoStartAfter(args)
+				if err != nil {
+					return "", err
+				}
+				var start string
+				if startAfter != nil {
+					start = *startAfter
+				}
 				dto, err := a.cp.MemoCreate(ctx, res.MV, mcpCallFrom(ctx).patID,
 					argStr(args, "repo"), argStr(args, "category"),
-					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref, afterList, argStr(args, "startAfter"))
+					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref, afterList, start)
 				if err != nil {
 					return "", err
 				}
@@ -901,10 +909,14 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 				if err != nil {
 					return "", err
 				}
+				startAfter, err := argMemoStartAfter(args)
+				if err != nil {
+					return "", err
+				}
 				dto, err := a.cp.MemoUpdate(ctx, res.MV.MembershipID, argStr(args, "id"),
 					argStrPtr(args, "repo"), argStrPtr(args, "category"),
 					argStrPtr(args, "body"), argStrPtr(args, "refPath"),
-					argIntPtr(args, "position"), ref, after, argStrPtr(args, "startAfter"))
+					argIntPtr(args, "position"), ref, after, startAfter)
 				if err != nil {
 					return "", err
 				}
@@ -1181,6 +1193,21 @@ func memoStartAfterSchema(update bool) map[string]any {
 		desc += " Omit to leave it as it is; \"\" clears it. Changing it on a released note sends it back to wait for release."
 	}
 	return map[string]any{"type": "string", "description": desc}
+}
+
+// argMemoStartAfter reads the `startAfter` argument: absent or null is nil (leave it), a string is
+// the time ("" means clear), anything else is refused rather than dropped, so a number of seconds
+// never turns into a note that waits for nothing.
+func argMemoStartAfter(a map[string]any) (*string, error) {
+	v, ok := a["startAfter"]
+	if !ok || v == nil {
+		return nil, nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return nil, errors.New("startAfter must be a string: an RFC 3339 time with its offset")
+	}
+	return &s, nil
 }
 
 // argMemoAfter reads the `after` argument: absent or null is nil (leave it), an array of strings is

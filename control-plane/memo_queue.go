@@ -983,6 +983,12 @@ func memoStartAfterParse(raw string, now time.Time) (string, *apiError) {
 	return at, nil
 }
 
+// memoStartAfterOutside is the refusal of a start time on a note outside every queue: nothing would
+// make it wait.
+func memoStartAfterOutside() *apiError {
+	return &apiError{http.StatusBadRequest, errCodeMemoStartAfterInvalid, "a start time is only for a note of an auto-run category"}
+}
+
 // memoAfterResolve is memoafter.Resolve with its refusal as the API's answer (400 memo_after_invalid).
 func memoAfterResolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (string, *apiError) {
 	out, inv := memoafter.Resolve(self, rows, in, inQueue)

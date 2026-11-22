@@ -539,9 +539,9 @@ func (s *SQL) queuePendingStats(ctx context.Context, cond string, args ...any) (
 	rows, err := s.db.QueryContext(ctx, `SELECT c.id, COUNT(*), SUM(CASE WHEN `+eligible+` THEN 1 ELSE 0 END),
 		  SUM(CASE WHEN m.ref_key<>'' AND `+eligible+` THEN 1 ELSE 0 END),
 		  SUM(CASE WHEN m.provenance='curator' AND `+eligible+` THEN 1 ELSE 0 END), MIN(m.created_at), MAX(m.created_at), MAX(m.released_at),
-		  SUM(CASE WHEN m.not_before>? THEN 1 ELSE 0 END),
-		  SUM(CASE WHEN m.not_before<=? AND m.start_after>? THEN 1 ELSE 0 END),
-		  COALESCE(MIN(CASE WHEN `+memoWaitUntilSQL+`>? THEN `+memoWaitUntilSQL+` END), '')
+		  SUM(CASE WHEN `+memoClaimableSQL+` AND m.not_before>? THEN 1 ELSE 0 END),
+		  SUM(CASE WHEN `+memoClaimableSQL+` AND m.not_before<=? AND m.start_after>? THEN 1 ELSE 0 END),
+		  COALESCE(MIN(CASE WHEN `+memoClaimableSQL+` AND `+memoWaitUntilSQL+`>? THEN `+memoWaitUntilSQL+` END), '')
 		FROM memo m
 		JOIN memo_category c ON c.membership_id=m.membership_id AND c.repo=m.repo AND c.name=m.category
 		JOIN memo_queue q ON q.category_id=c.id

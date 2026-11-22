@@ -202,6 +202,11 @@ export function waitingWords(
     case "window_closed":
       return when ? { key: "memo.waiting_window_closed_at", params: when } : { key: "memo.waiting_window_closed" };
     case "below_threshold":
+      if (w.detail?.scheduled)
+        return {
+          key: w.detail.blocked ? "memo.waiting_below_threshold_blocked_timed" : "memo.waiting_below_threshold_timed",
+          params: { needed: w.detail.needed ?? 0, count: w.detail.waiting ?? 0, blocked: w.detail.blocked ?? 0, timed: w.detail.scheduled + (w.detail.deferred ?? 0) },
+        };
       if (w.detail?.deferred)
         return {
           key: w.detail?.blocked ? "memo.waiting_below_threshold_blocked_deferred" : "memo.waiting_below_threshold_deferred",
@@ -232,6 +237,11 @@ export function waitingWords(
         ? { key: "memo.waiting_prerequisites_deferred", params: { count: w.detail?.blocked ?? 0, deferred: w.detail.deferred } }
         : { key: "memo.waiting_prerequisites", params: { count: w.detail?.blocked ?? 0 } };
     case "deferred":
+      // Some of them carry a start time instead: the next time may be one of theirs.
+      if (w.detail?.scheduled)
+        return when
+          ? { key: "memo.waiting_timed_at", params: { ...when, count: w.detail.scheduled + (w.detail.deferred ?? 0) } }
+          : { key: "memo.waiting_timed", params: { count: w.detail.scheduled + (w.detail.deferred ?? 0) } };
       return when
         ? { key: "memo.waiting_deferred_at", params: { ...when, count: w.detail?.deferred ?? 0 } }
         : { key: "memo.waiting_deferred", params: { count: w.detail?.deferred ?? 0 } };
@@ -985,13 +995,20 @@ export function startAfterInputValue(iso: string | undefined): string {
 }
 
 /** A datetime-local value, read as a wall time of the member's effective time zone, as the RFC 3339
- *  time (UTC) the Control Plane takes; "" for an empty or unreadable value. The offset is looked up
- *  twice: the first guess may sit on the other side of a DST change from the answer. */
-export function startAfterFromInput(local: string): string {
-  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(local);
-  if (!m) return "";
+ *  time (UTC) the Control Plane takes. "" for an empty value (no start time); null for one that is
+ *  not a time of that zone: unreadable, or skipped by a DST change (02:30 on the morning the clocks
+ *  go forward). A wall time a DST change repeats is read as its later instant: the note waits for
+ *  the second 01:30, never runs before what the member may have meant. */
+export function startAfterFromInput(local: string): string | null {
+  if (local === "") return "";
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(local);
+  if (!m) return null;
   const wall = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
-  let t = wall - zoneOffsetMinutes(wall) * 60000;
-  t = wall - zoneOffsetMinutes(t) * 60000;
-  return new Date(t).toISOString();
+  // The offsets a day either side cover both sides of any change near this wall time; a candidate
+  // counts only when it reads back as the same wall time.
+  const day = 86400000;
+  const fits = [wall - day, wall, wall + day]
+    .map((at) => wall - zoneOffsetMinutes(at) * 60000)
+    .filter((t) => startAfterInputValue(new Date(t).toISOString()) === local);
+  return fits.length === 0 ? null : new Date(Math.max(...fits)).toISOString();
 }

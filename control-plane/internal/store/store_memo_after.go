@@ -68,6 +68,11 @@ const memoEligibleSQL = `(m.after_ids='' OR (SELECT COUNT(*) FROM memo p WHERE p
 // order is the time order.
 const memoNotBeforeSQL = `((m.not_before='' OR m.not_before<=?) AND (m.start_after='' OR m.start_after<=?))`
 
+// memoClaimableSQL holds for a pending row m that no hand send or delivery holds: the rows pendingOf
+// and the claim look at. The timed counters use it, so a row in a hand send never shows as the next
+// one to run.
+const memoClaimableSQL = `(m.sent_at='' AND m.send_token='' AND m.delivery_id='')`
+
 // memoWaitUntilSQL is the later of a row m's two times: the time it becomes claimable when either
 // is still ahead. An empty one sorts below every stamp.
 const memoWaitUntilSQL = `(CASE WHEN m.not_before>m.start_after THEN m.not_before ELSE m.start_after END)`

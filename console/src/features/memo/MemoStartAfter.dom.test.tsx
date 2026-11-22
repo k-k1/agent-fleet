@@ -138,6 +138,35 @@ describe("a note with a start time", () => {
     expect(memoUpdate).toHaveBeenLastCalledWith("a", { body: "later job", category: "inbox", startAfter: "" });
   });
 
+  it("does not clear a time set elsewhere while the edit was open", async () => {
+    servedMemos = [aMemo({ id: "a", body: "job", state: "pending" })];
+    await renderSection();
+    await openEditor("job");
+    expect(startInput().value).toBe("");
+    // Another tab sets a time; the list refresh brings it while this edit is still open.
+    servedMemos = [aMemo({ id: "a", body: "job", state: "pending", startAfter: START })];
+    const { useMemoStore } = await import("./store.ts");
+    await act(async () => useMemoStore.getState().bump());
+    await settle();
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("a", { body: "job", category: "inbox" });
+  });
+
+  it("refuses a wall time the clocks skip, and saves nothing", async () => {
+    setFormatPrefs("en-US", "America/New_York");
+    servedMemos = [aMemo({ id: "a", body: "job", state: "pending" })];
+    await renderSection();
+    await openEditor("job");
+    await typeInto(startInput(), "2027-03-14T02:30");
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).not.toHaveBeenCalled();
+    expect(editRow().querySelector('[role="alert"]')?.textContent).toBe(t("memo.start_invalid"));
+    await typeInto(startInput(), "2027-03-14T03:30");
+    expect(editRow().querySelector('[role="alert"]')).toBeNull();
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("a", { body: "job", category: "inbox", startAfter: "2027-03-14T07:30:00.000Z" });
+  });
+
   it("offers no start time outside an auto-run category", async () => {
     servedCats = [{ ...queueCat, queue: false }];
     servedMemos = [aMemo({ id: "a", body: "plain note" })];

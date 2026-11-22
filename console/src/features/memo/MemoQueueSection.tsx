@@ -1568,8 +1568,12 @@ function MemoRow(props: MemoRowProps) {
   // The member asked to drop the note's reference; it is sent with the save, not before.
   const [clearRef, setClearRef] = useState(false);
   const [after, setAfter] = useState<string[]>(m.after ?? []);
-  // The start time as the datetime-local input holds it, a wall time of the member's time zone.
+  // The start time as the datetime-local input holds it, a wall time of the member's time zone, and
+  // what it held when the edit began: a list refresh that brings a time set elsewhere must not read
+  // as the member clearing it.
   const [start, setStart] = useState(startAfterInputValue(m.startAfter));
+  const [startBase, setStartBase] = useState(start);
+  const [startBad, setStartBad] = useState(false);
   const ref = memoReference(m);
   // The earlier notes on offer, then any it already waits for that are no longer on offer (deleted,
   // moved, replaced, or kept past the list's window): those must stay visible so they can be removed.
@@ -1587,11 +1591,16 @@ function MemoRow(props: MemoRowProps) {
     const was = m.after ?? [];
     return after.length === was.length && after.every((id, i) => id === was[i]) ? undefined : after;
   };
-  // Compared as the input shows it, so an untouched field never re-sends a stored time (which may
-  // have passed, and the Control Plane would then clear it).
-  const startChanged = (): string | undefined =>
-    start === startAfterInputValue(m.startAfter) ? undefined : startAfterFromInput(start);
-  const save = () => props.onSave(body, cat, clearRef, afterChanged(), startChanged());
+  // Sent only when the member changed the field, so an untouched one never re-sends a stored time
+  // (which may have passed, and the Control Plane would then clear it) nor clears one set elsewhere.
+  const save = () => {
+    const startAfter = start === startBase ? undefined : startAfterFromInput(start);
+    if (startAfter === null) {
+      setStartBad(true);
+      return;
+    }
+    props.onSave(body, cat, clearRef, afterChanged(), startAfter);
+  };
   const taRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextarea(taRef, body);
 
@@ -1602,6 +1611,8 @@ function MemoRow(props: MemoRowProps) {
       setClearRef(false);
       setAfter(m.after ?? []);
       setStart(startAfterInputValue(m.startAfter));
+      setStartBase(startAfterInputValue(m.startAfter));
+      setStartBad(false);
       requestAnimationFrame(() => {
         const ta = taRef.current;
         if (ta) {
@@ -1711,14 +1722,29 @@ function MemoRow(props: MemoRowProps) {
                   className="memo-edit-start-input"
                   aria-label={tr("memo.start_edit_label")}
                   value={start}
-                  onChange={(e) => setStart(e.target.value)}
+                  onChange={(e) => {
+                    setStart(e.target.value);
+                    setStartBad(false);
+                  }}
                 />
                 {start && (
-                  <Button small variant="ghost" onClick={() => setStart("")}>
+                  <Button
+                    small
+                    variant="ghost"
+                    onClick={() => {
+                      setStart("");
+                      setStartBad(false);
+                    }}
+                  >
                     {tr("memo.start_clear")}
                   </Button>
                 )}
               </div>
+              {startBad && (
+                <div className="memo-edit-after-why" role="alert">
+                  {tr("memo.start_invalid")}
+                </div>
+              )}
               <div className="memo-edit-hint">{tr("memo.start_edit_hint")}</div>
             </fieldset>
           )}

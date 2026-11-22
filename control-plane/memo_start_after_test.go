@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,9 @@ func TestMemoStartAfterParse(t *testing.T) {
 		{name: "now itself", in: "2026-11-22T07:00:00Z", want: ""},
 		{name: "no offset", in: "2026-12-04T09:00:00", bad: true},
 		{name: "a date alone", in: "2026-12-04", bad: true},
+		{name: "a minute of 60 in the offset", in: "2026-12-04T09:00:00+09:60", bad: true},
+		{name: "an offset of 24 hours", in: "2026-12-04T09:00:00+24:00", bad: true},
+		{name: "a negative offset", in: "2026-12-03T19:00:00-05:00", want: "2026-12-04T00:00:00.000000Z"},
 		{name: "past the bound", in: now.Add(memoafter.StartAfterMaxAhead + time.Minute).Format(time.RFC3339), bad: true},
 		{name: "on the bound", in: now.Add(memoafter.StartAfterMaxAhead).Format(time.RFC3339), want: store.DeliveryTS(now.Add(memoafter.StartAfterMaxAhead))},
 	} {
@@ -197,4 +201,56 @@ func TestMemoStartAfterIsLinkedForTidy(t *testing.T) {
 	if got := memoafter.Linked(rows); got["a"] || !got["b"] {
 		t.Fatalf("linked %v", got)
 	}
+}
+
+// A time given outside every queue is refused, on a create and on an edit, rather than dropped: the
+// caller would take a note that waits for nothing for one that waits.
+func TestMemoStartAfterRefusedOutsideAQueue(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("app", "impl", nil)
+		at := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+		body := textMemo("app", "notes", "plain")
+		body["startAfter"] = at
+		if rec := e.do("a", "POST", "/api/memos", body); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), errCodeMemoStartAfterInvalid) {
+			t.Fatalf("create outside a queue: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := e.memoTokenDo("a", "POST", "/internal/memos", body); rec.Code != http.StatusBadRequest {
+			t.Fatalf("token create outside a queue: %d %s", rec.Code, rec.Body.String())
+		}
+		rec := e.do("a", "POST", "/api/memos", textMemo("app", "notes", "plain"))
+		plain := decode[memoDTO](t, rec)
+		if rec := e.do("a", "PATCH", "/api/memos/"+plain.ID, map[string]any{"startAfter": at}); rec.Code != http.StatusBadRequest {
+			t.Fatalf("patch outside a queue: %d %s", rec.Code, rec.Body.String())
+		}
+		// Moving out with a new time at once is refused too; a clear goes through.
+		m := e.pending("app", "impl", "queued")
+		if rec := e.do("a", "PATCH", "/api/memos/"+m.ID, map[string]any{"category": "notes", "startAfter": at}); rec.Code != http.StatusBadRequest {
+			t.Fatalf("move out with a time: %d %s", rec.Code, rec.Body.String())
+		}
+		if row := e.memoRow(m.ID); row.Category != "impl" {
+			t.Fatalf("a refused move moved the row: %+v", row)
+		}
+		if rec := e.do("a", "PATCH", "/api/memos/"+plain.ID, map[string]any{"startAfter": ""}); rec.Code != http.StatusOK {
+			t.Fatalf("clear outside a queue: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// A row in a hand send is no part of the timed counters, on the SQL side as on the Go side.
+func TestMemoStartAfterStatsSkipAHandSend(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", nil)
+		m := e.pending("app", "impl", "one")
+		at := store.DeliveryTS(time.Now().Add(time.Hour))
+		row := e.memoRow(m.ID)
+		row.StartAfter = at
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET start_after=?, release_start_after=?, release_hash=?, send_token='t', send_started_at=? WHERE id=?`,
+			at, at, memoContentHash(row), store.NowTS(), m.ID); err != nil {
+			t.Fatal(err)
+		}
+		sql, goSide := e.statsOf(q)
+		if sql.Scheduled != 0 || sql.NextAt != "" || goSide.Scheduled != 0 || goSide.NextAt != "" {
+			t.Fatalf("stats sql %+v go %+v", sql, goSide)
+		}
+	})
 }

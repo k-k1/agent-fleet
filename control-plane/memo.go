@@ -376,6 +376,9 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 			return err
 		}
 		accept := inQ && q.AcceptOwnSessions
+		if !inQ && m.StartAfter != "" {
+			return memoTxFail(memoStartAfterOutside())
+		}
 		// One read of the bucket and one clock reading serve the whole create: the time the
 		// prerequisites are ordered against is the time the row is stamped with.
 		rows, err := tx.ListMemosIn(m.Repo, m.Category)
@@ -524,6 +527,12 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 			return err
 		}
 		moved := next.Repo != cur.Repo || next.Category != cur.Category
+		// A time given with the write is refused outside a queue rather than dropped: the caller would
+		// take a note with no start time for one that waits. One only carried along is dropped by
+		// memoQueueMove when the note leaves the queue.
+		if in.StartAfter != nil && next.StartAfter != "" && !inNext {
+			return memoTxFail(memoStartAfterOutside())
+		}
 		switch {
 		case in.After != nil:
 			rows, err := tx.ListMemosIn(next.Repo, next.Category)

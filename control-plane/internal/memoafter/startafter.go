@@ -29,6 +29,9 @@ func ParseStartAfter(raw string, now time.Time) (string, error) {
 	}
 	// time.RFC3339 requires the offset ("Z" or "+09:00"); a fraction of a second is accepted too.
 	t, err := time.Parse(time.RFC3339, raw)
+	if err == nil && !offsetInRange(raw) {
+		err = fmt.Errorf("offset out of range")
+	}
 	if err != nil {
 		return "", fmt.Errorf("startAfter must be an RFC 3339 time with an offset, such as 2026-12-04T09:00:00+09:00")
 	}
@@ -49,4 +52,16 @@ func StartAfterHashParts(m store.Memo) []string {
 		return nil
 	}
 	return []string{"start_after", m.StartAfter}
+}
+
+// offsetInRange reports whether a parsed RFC 3339 time's numeric offset is one RFC 3339 allows:
+// time.Parse also takes a minute of 60 (+09:60 reads as +10:00), which would be a guess.
+func offsetInRange(raw string) bool {
+	n := len(raw)
+	if n < 6 || (raw[n-6] != '+' && raw[n-6] != '-') {
+		return true // "Z"
+	}
+	h := int(raw[n-5]-'0')*10 + int(raw[n-4]-'0')
+	m := int(raw[n-2]-'0')*10 + int(raw[n-1]-'0')
+	return h <= 23 && m <= 59
 }

@@ -382,34 +382,55 @@ func memoWriteResult(id json.RawMessage, args json.RawMessage, answer string) []
 			"support them yet, so nothing makes the note wait. Do not report them as stored; tell your user. "+
 			"The Control Plane answered: "+answer)
 	}
-	if memoStartAfterSent(args, time.Now()) && !memoStartAfterAnswered(answer) && !memoExistingAnswer(answer) {
-		return mcpToolErr(id, "The note was saved, but its start time (startAfter) was NOT kept: this Control Plane does not "+
-			"support it yet, so nothing makes the note wait for that time. Do not report it as stored; tell your user. "+
-			"The Control Plane answered: "+answer)
+	if msg := memoStartAfterProblem(args, answer, time.Now()); msg != "" {
+		return mcpToolErr(id, msg+" The Control Plane answered: "+answer)
 	}
 	return mcpTextResult(id, answer)
 }
 
-// memoStartAfterSent reports whether the call asks for a start time to be kept: one that parses and
-// is still ahead at now. The Control Plane drops a past one by design, and refuses one that does not
-// parse, so neither says anything about whether it supports the field.
-func memoStartAfterSent(args json.RawMessage, now time.Time) bool {
+// memoStartAfterSlack is how far ahead of the check a requested time must be for its absence from
+// the answer to mean anything: one that passed while the call was in flight is cleared by a
+// Control Plane that supports the field, which must not read as one that does not.
+const memoStartAfterSlack = time.Minute
+
+// memoStartAfterProblem says why the start time the call asked for is not on the note the answer
+// returns, "" when it is or when nothing was asked. Times are compared as instants, so the
+// Control Plane's fixed-width UTC matches the offset the model wrote.
+func memoStartAfterProblem(args json.RawMessage, answer string, now time.Time) string {
 	var in struct {
 		StartAfter string `json:"startAfter"`
 	}
 	if json.Unmarshal(args, &in) != nil {
-		return false
+		return ""
 	}
-	t, err := time.Parse(time.RFC3339, strings.TrimSpace(in.StartAfter))
-	return err == nil && t.After(now)
-}
-
-// memoStartAfterAnswered reports whether the Control Plane's answer carries a start time.
-func memoStartAfterAnswered(answer string) bool {
+	want, err := time.Parse(time.RFC3339, strings.TrimSpace(in.StartAfter))
+	if err != nil || !want.After(now) {
+		return ""
+	}
 	var out struct {
 		StartAfter string `json:"startAfter"`
+		Existing   bool   `json:"existing"`
 	}
-	return json.Unmarshal([]byte(answer), &out) == nil && out.StartAfter != ""
+	if json.Unmarshal([]byte(answer), &out) != nil {
+		return ""
+	}
+	if got, err := time.Parse(time.RFC3339Nano, out.StartAfter); err == nil && got.Equal(want) {
+		return ""
+	}
+	if out.Existing {
+		return "Nothing was added: the queue already holds a waiting note for the same item, and it was returned " +
+			"unchanged, so it does NOT carry the start time you asked for. Do not report it as set; tell your user, " +
+			"or set it on that note with update_memo."
+	}
+	if out.StartAfter == "" && !want.After(now.Add(memoStartAfterSlack)) {
+		return ""
+	}
+	if out.StartAfter != "" {
+		return "The note was saved with a different start time (startAfter) than the one you asked for. Do not report " +
+			"yours as stored; tell your user."
+	}
+	return "The note was saved, but its start time (startAfter) was NOT kept: this Control Plane does not support " +
+		"it yet, so nothing makes the note wait for that time. Do not report it as stored; tell your user."
 }
 
 // memoRefSent reports whether the call's reference is one to be kept: any non-empty field counts,

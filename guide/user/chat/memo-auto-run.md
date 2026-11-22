@@ -162,7 +162,8 @@ Check the memo it waited for, then approve the memo again (it waits once more) o
 A memo can carry a start time: even once approved, it does not run before it, and "Run now" does not take it. Use it for work that must wait for something, such as a check that a scheduled deletion went through. In the memo's edit view, pick the time under "**Do not run before**" and press "Save" ("Clear" removes it). The row then says "Runs from *time*".
 
 - The time is read in the time zone of your settings, at most 60 days ahead; one already past means none. A session sets it with `add_memo` / `update_memo` (`startAfter`, with its offset, such as `2026-12-04T09:00:00+09:00`; `""` removes it)
-- It is part of the memo: approving the memo approves it, and the approval card shows it. When a session changes it on a memo you approved, the memo goes back to "Waits for approval". A tidy keeps such a memo as it is
+- It is part of the memo: approving the memo approves it, and the approval card shows it. Changing it is changing the memo, under the same approval rules as any edit. A tidy keeps such a memo as it is. Only a memo of an auto-run category takes one
+- A time that the clocks skip (the hour a daylight saving change jumps over) is refused; one they repeat means its second occurrence
 
 ### Approve
 

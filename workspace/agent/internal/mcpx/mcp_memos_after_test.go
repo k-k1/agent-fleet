@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 // A write whose prerequisites the answer leaves out is reported as not kept, except when the
@@ -25,30 +26,44 @@ func TestMemoWriteResultAfter(t *testing.T) {
 	}
 }
 
-// A write whose future start time the answer leaves out is reported as not kept. A past time (the
-// Control Plane drops it by design), one that does not parse (it refuses it) and an existing note
-// say nothing about the Control Plane.
+// A write whose future start time is not on the note the answer returns is reported: a Control
+// Plane that drops the field, a different time, or an existing note returned unchanged. A past time
+// (the Control Plane clears it by design), one that does not parse (it refuses it), a clear, and a
+// time that passed while the call was in flight say nothing.
 func TestMemoWriteResultStartAfter(t *testing.T) {
-	isErr := func(args, answer string) bool {
-		return strings.Contains(string(memoWriteResult(json.RawMessage(`1`), json.RawMessage(args), answer)), `"isError":true`)
+	now := time.Date(2026, 11, 22, 0, 0, 0, 0, time.UTC)
+	problem := func(args, answer string) string {
+		return memoStartAfterProblem(json.RawMessage(args), answer, now)
 	}
-	future := `{"kind":"text","startAfter":"2099-12-04T09:00:00+09:00"}`
-	if !isErr(future, `{"id":"m1"}`) {
+	future := `{"kind":"text","startAfter":"2026-12-04T09:00:00+09:00"}`
+	if problem(future, `{"id":"m1"}`) == "" {
 		t.Error("an answer without startAfter was not reported")
 	}
-	if isErr(future, `{"id":"m1","startAfter":"2099-12-04T00:00:00.000000Z"}`) {
-		t.Error("an answer with startAfter was reported")
+	if p := problem(future, `{"id":"m1","startAfter":"2026-12-04T00:00:00.000000Z"}`); p != "" {
+		t.Errorf("the same instant was reported: %s", p)
 	}
-	if isErr(future, `{"id":"m0","existing":true}`) {
-		t.Error("an existing note was reported")
+	if !strings.Contains(problem(future, `{"id":"m1","startAfter":"2026-12-05T00:00:00.000000Z"}`), "different start time") {
+		t.Error("a different time was not reported")
 	}
-	if isErr(`{"kind":"text","startAfter":"2020-01-01T00:00:00Z"}`, `{"id":"m1"}`) {
-		t.Error("a past time was reported as not kept")
+	if !strings.Contains(problem(future, `{"id":"m0","existing":true}`), "unchanged") {
+		t.Error("an existing note without the time was not reported")
 	}
-	if isErr(`{"kind":"text","startAfter":"2099-12-04 09:00"}`, `{"id":"m1"}`) {
-		t.Error("a time without an offset was reported as not kept")
+	if p := problem(future, `{"id":"m0","existing":true,"startAfter":"2026-12-04T00:00:00.000000Z"}`); p != "" {
+		t.Errorf("an existing note with the same time was reported: %s", p)
 	}
-	if isErr(`{"kind":"text","startAfter":""}`, `{"id":"m1"}`) {
-		t.Error("a clear was reported as not kept")
+	for _, args := range []string{
+		`{"kind":"text","startAfter":"2020-01-01T00:00:00Z"}`,
+		`{"kind":"text","startAfter":"2026-12-04 09:00"}`,
+		`{"kind":"text","startAfter":""}`,
+		`{"kind":"text","startAfter":"2026-11-22T00:00:30Z"}`,
+		`{"kind":"text"}`,
+	} {
+		if p := problem(args, `{"id":"m1"}`); p != "" {
+			t.Errorf("%s was reported: %s", args, p)
+		}
+	}
+	// The tool result itself is an error when there is a problem.
+	if !strings.Contains(string(memoWriteResult(json.RawMessage(`1`), json.RawMessage(`{"startAfter":"2099-01-01T00:00:00Z"}`), `{"id":"m1"}`)), `"isError":true`) {
+		t.Error("the tool result is not an error")
 	}
 }
