@@ -231,7 +231,7 @@
 /* Parent-diff chip: the rail's own chip, one size down to sit in a card's caption line. */
 .ovw-where .repo-chip {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-10);
 }
 .ovw-waited.on {
   color: var(--warn);

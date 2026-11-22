@@ -2,38 +2,38 @@
 .inbox-wrap { position: relative; }
 .inbox-modal { width: min(720px, calc(100vw - 24px)); }
 .inbox-tabs { margin-bottom: 10px; }
-.inbox-group h4 { margin: 12px 0 6px; font-size: 12px; color: var(--muted); font-weight: 600; }
+.inbox-group h4 { margin: 12px 0 6px; font-size: var(--fs-12); color: var(--muted); font-weight: 600; }
 .inbox-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .inbox-card { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
 .inbox-card.is-unseen { border-color: var(--accent, var(--border2)); }
 .inbox-card-head { all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; padding: 8px 10px; }
 .inbox-card-head:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; border-radius: 8px; }
-.inbox-kind, .inbox-state, .inbox-long-open, .inbox-unread { font-size: 11px; padding: 1px 6px; border-radius: 9px; border: 1px solid var(--border2, var(--border)); }
+.inbox-kind, .inbox-state, .inbox-long-open, .inbox-unread { font-size: var(--fs-11); padding: 1px 6px; border-radius: 9px; border: 1px solid var(--border2, var(--border)); }
 .inbox-kind-request { font-weight: 600; }
 .inbox-long-open, .inbox-warn { color: var(--warn, var(--err)); }
 .inbox-unread { font-weight: 600; }
-.inbox-who { font-size: 12px; }
-.inbox-when { font-size: 11px; margin-left: auto; }
-.inbox-preview { flex-basis: 100%; font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.inbox-who { font-size: var(--fs-12); }
+.inbox-when { font-size: var(--fs-11); margin-left: auto; }
+.inbox-preview { flex-basis: 100%; font-size: var(--fs-12); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inbox-card-body { padding: 0 10px 10px; display: flex; flex-direction: column; gap: 8px; }
-.inbox-body { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: 13px; max-height: 320px; overflow: auto; }
-.inbox-recipients { list-style: none; margin: 0; padding: 0; font-size: 12px; display: flex; flex-direction: column; gap: 2px; }
+.inbox-body { margin: 0; white-space: pre-wrap; word-break: break-word; font-family: inherit; font-size: var(--fs-13); max-height: 320px; overflow: auto; }
+.inbox-recipients { list-style: none; margin: 0; padding: 0; font-size: var(--fs-12); display: flex; flex-direction: column; gap: 2px; }
 .inbox-actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
 .inbox-launch, .inbox-pr { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; }
 .inbox-compose, .inbox-settings { display: flex; flex-direction: column; gap: 10px; }
 .inbox-compose textarea { width: 100%; box-sizing: border-box; }
 .inbox-picker { display: flex; flex-direction: column; gap: 6px; }
 .inbox-chips, .inbox-hits { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
-.inbox-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 1px 4px 1px 8px; border-radius: 10px; border: 1px solid var(--border2, var(--border)); }
+.inbox-chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-12); padding: 1px 4px 1px 8px; border-radius: 10px; border: 1px solid var(--border2, var(--border)); }
 .inbox-chip button, .inbox-hits button { all: unset; cursor: pointer; }
-.inbox-hits button { font-size: 12px; padding: 2px 8px; border-radius: 10px; border: 1px dashed var(--border2, var(--border)); }
+.inbox-hits button { font-size: var(--fs-12); padding: 2px 8px; border-radius: 10px; border: 1px dashed var(--border2, var(--border)); }
 .inbox-hits button:disabled { opacity: .5; cursor: default; }
-.inbox-check { display: flex; align-items: flex-start; gap: 6px; font-size: 13px; }
-.inbox-attachment { border: 1px dashed var(--border2, var(--border)); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.inbox-check { display: flex; align-items: flex-start; gap: 6px; font-size: var(--fs-13); }
+.inbox-attachment { border: 1px dashed var(--border2, var(--border)); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 6px; font-size: var(--fs-12); }
 .inbox-attachment.inbox-session { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
 .inbox-attachment.inbox-placeholder { color: var(--muted); flex-direction: row; align-items: center; gap: 6px; }
 .inbox-attachment-head { display: flex; align-items: center; gap: 6px; font-weight: 600; }
-.inbox-recipe-repo code { font-size: 12px; }
+.inbox-recipe-repo code { font-size: var(--fs-12); }
 .inbox-session-attached { display: flex; flex-direction: column; gap: 4px; }
 .inbox-recipe-editor, .inbox-session-editor { display: flex; flex-direction: column; gap: 8px; }
 .inbox-recipe-hints { display: flex; flex-wrap: wrap; gap: 8px; }

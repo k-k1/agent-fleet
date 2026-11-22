@@ -3,21 +3,21 @@
 .pick-muted {
   color: var(--dialog-muted, var(--muted));
   margin: 4px 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .pick-field {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 .pick-field > span:first-child {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--muted);
 }
 .pick-field select {
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 /* Provider tabs. */
@@ -33,7 +33,7 @@
   border-radius: 4px;
   padding: 3px 10px;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 .provider-tabs .prov.active {
@@ -58,7 +58,7 @@
   border-radius: 4px;
   padding: 5px 8px;
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .branch-list {
   list-style: none;
@@ -132,7 +132,7 @@
   flex: 1;
   min-width: 0;
   font-family: var(--mono);
-  font-size: 13px;
+  font-size: var(--fs-13);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -160,11 +160,11 @@
 .bi-time {
   flex: none;
   color: var(--muted2);
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 .bi-subject {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -186,7 +186,7 @@
   flex-wrap: wrap;
   align-items: center;
   gap: 1px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .dirpick-seg {
   display: inline-flex;
@@ -203,7 +203,7 @@
   background: transparent;
   color: var(--fg);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
   cursor: pointer;
 }
 .dirpick-crumb:hover {
@@ -224,7 +224,7 @@
 }
 /* Group heading (repositories / folders) inside the picker list. */
 .dirpick-head {
-  font-size: 10px;
+  font-size: var(--fs-10);
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: uppercase;
@@ -245,7 +245,7 @@
   background: transparent;
   color: var(--fg);
   font: inherit;
-  font-size: 13px;
+  font-size: var(--fs-13);
   text-align: left;
   cursor: pointer;
   min-width: 0;
@@ -267,7 +267,7 @@
 /* Branch chip on a folder that is a git working copy. */
 .dirpick-branch {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-10);
   color: var(--muted);
   background: var(--btn);
   border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
@@ -289,10 +289,10 @@
   gap: 6px;
   color: var(--muted);
   padding: 10px 8px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .dirpick-cur {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   border-top: 1px solid var(--border);
   padding-top: 6px;
@@ -317,7 +317,7 @@
 .subdirpick-root {
   flex: none;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-13);
   max-width: 12em;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -332,7 +332,7 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 8px;
   border-radius: 6px;
   cursor: pointer;
@@ -344,7 +344,7 @@
    disappear the moment the connection drops, taking the result with it. */
 .repo-job {
   padding: 6px 8px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   border-radius: 6px;
 }
 .repo-job.settled {
@@ -372,7 +372,7 @@
 .repo-job-error,
 .repo-job-hint {
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-12);
   margin-top: 2px;
   padding-left: 24px;
 }
@@ -449,7 +449,7 @@
 }
 /* With a summary line the name/branch drops to a small muted first line. */
 .repo-lines.peeked .repo-name {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 .repo-peek {
@@ -457,7 +457,7 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .repo-peek.stopped {
   opacity: 0.55;
@@ -479,7 +479,7 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-13);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -493,7 +493,7 @@
   flex: 0 1 auto;
   min-width: 2em;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -503,14 +503,14 @@
 .repo-lock {
   flex: none;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 /* Session sharing: badge showing that this working copy (repo/worktree) is currently
    shared with someone (paired with .repo-lock). */
 .repo-shared {
   flex: none;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 .repo-state {
   flex: none;
@@ -521,7 +521,7 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 10px;
+  font-size: var(--fs-10);
   border-radius: 999px;
   padding: 0 6px;
 }
@@ -580,7 +580,7 @@
    to just before this badge (span.unread-dot — rule in sessions.css). */
 .repo-sess-badge {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-10);
   font-variant-numeric: tabular-nums;
   color: var(--muted);
   border: 1px solid var(--border);
@@ -654,7 +654,7 @@
   color: var(--accent);
   border: 1px solid #2f5a6a;
   font: inherit;
-  font-size: 11px;
+  font-size: var(--fs-11);
   line-height: 1.4;
   padding: 2px 8px;
   cursor: pointer;
@@ -723,18 +723,18 @@
 }
 .launch-sec-chev {
   flex: none;
-  font-size: 12px;
+  font-size: var(--fs-12);
   opacity: 0.8;
 }
 .launch-sec-label {
   flex: none;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
 }
 .launch-sec-sum {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--dialog-muted, var(--muted));
   overflow: hidden;
   text-overflow: ellipsis;
@@ -750,7 +750,7 @@
   margin: -4px 0 0;
   padding: 0;
   list-style: none;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--warn);
 }
 .launch-branch-warns li {
@@ -760,7 +760,7 @@
 }
 .launch-sec-edit {
   flex: none;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--dialog-muted, var(--muted));
 }
 .launch-sec-body {
@@ -775,7 +775,7 @@
   flex-direction: column;
   gap: 6px;
   color: var(--warn);
-  font-size: 12px;
+  font-size: var(--fs-12);
   background: color-mix(in srgb, var(--warn) 10%, transparent);
   border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent);
   border-radius: 6px;
@@ -809,7 +809,7 @@
   padding: 2px 8px;
   border: 1px solid var(--btn-border);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 /* Same tile as the template button. On a phone the label goes and the icon stays, so the
    toolbar keeps to one row beside the field label. */
@@ -821,7 +821,7 @@
   padding: 2px 8px;
   border: 1px solid var(--btn-border);
   border-radius: 4px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 @media (max-width: 520px) {
   .launch-stash-label {
@@ -829,7 +829,7 @@
   }
 }
 .launch-stash-note {
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--muted);
   margin-bottom: 4px;
 }
@@ -887,7 +887,7 @@
 }
 .launch-tmpl-group {
   padding: 4px 8px 2px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--tmpl-sub);
   text-transform: uppercase;
   letter-spacing: 0.04em;
@@ -940,7 +940,7 @@
 .launch-tmpl-note {
   padding: 8px;
   color: var(--tmpl-sub);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .launch-tmpl-preview {
   display: flex;
@@ -965,7 +965,7 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--fg);
 }
 .launch-tmpl-actions,
@@ -976,7 +976,7 @@
   gap: 4px;
 }
 .launch-tmpl-actions > span {
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .launch-tmpl-foot {
   display: flex;
@@ -986,7 +986,7 @@
 }
 .launch-tmpl-keys,
 .launch-tmpl-hint {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--tmpl-sub);
 }
 .launch-tmpl-ask {
@@ -1011,7 +1011,7 @@
 }
 .launch-tmpl-edit label {
   color: var(--tmpl-sub);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .launch-tmpl-edit textarea {
   resize: vertical;
@@ -1027,7 +1027,7 @@
 .launch-tmpl-scope-set legend {
   padding: 0;
   margin-bottom: 2px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--tmpl-sub);
 }
 .launch-tmpl-scope-set label {
@@ -1038,7 +1038,7 @@
 }
 .launch-tmpl-err {
   color: var(--err);
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 
 /* ---- Start hub (StartModal, launch flow Ph2) ---- */
@@ -1083,7 +1083,7 @@
   gap: 1px;
 }
 .start-row-title {
-  font-size: 13px;
+  font-size: var(--fs-13);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -1093,14 +1093,14 @@
   color: var(--accent);
 }
 .start-row-desc {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .start-row-meta {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   flex: none;
 }
@@ -1130,7 +1130,7 @@
   display: block;
   padding: 18px 12px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: var(--fs-12);
   text-align: center;
 }
 .ssm-instance-row {
@@ -1147,7 +1147,7 @@
   border-radius: 6px;
   background: color-mix(in srgb, var(--err) 8%, transparent);
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.5;
 }
 /* "Back to start" — pinned left in the modal footer (hub back-navigation). */
@@ -1172,7 +1172,7 @@
 }
 .pmcp-h {
   margin: 14px 0 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 600;
   color: var(--muted);
   text-transform: uppercase;
@@ -1211,7 +1211,7 @@
   padding: 6px 8px;
   border: 1px solid var(--border2, var(--border));
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .pmcp-file-path {
   font-family: var(--mono);
@@ -1222,11 +1222,11 @@
   align-items: center;
   gap: 3px;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 .pmcp-file-state {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 .pmcp-file-state.warn {
@@ -1238,7 +1238,7 @@
 .pmcp-matrix {
   border-collapse: collapse;
   width: 100%;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .pmcp-matrix th,
 .pmcp-matrix td {
@@ -1273,7 +1273,7 @@
   gap: 6px;
   padding: 6px 8px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   line-height: 1.45;
   border: 1px solid color-mix(in srgb, var(--warn) 40%, var(--border));
   background: color-mix(in srgb, var(--warn) 8%, transparent);
@@ -1284,7 +1284,7 @@
   background: color-mix(in srgb, var(--err) 8%, transparent);
 }
 .pmcp-badge-unverified {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--warn);
 }
 
@@ -1294,7 +1294,7 @@
   border: none;
   padding: 0;
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--fs-11);
   cursor: pointer;
   margin-left: auto;
 }
@@ -1331,7 +1331,7 @@
 .pmcp-panel-title {
   margin: 0;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-13);
   display: flex;
   align-items: center;
   gap: 6px;
@@ -1346,7 +1346,7 @@
   display: flex;
   flex-direction: column;
   gap: 4px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .pmcp-radio-group label {
   display: flex;
@@ -1385,7 +1385,7 @@
   border-radius: 999px;
   background: var(--bg2, transparent);
   color: var(--fg);
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 .pmcp-kind-chip-btn:hover {
@@ -1397,7 +1397,7 @@
   align-items: center;
   justify-content: space-between;
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .pmcp-copy-target > span {
   display: inline-flex;
@@ -1409,7 +1409,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   font-weight: 400;
 }
 
@@ -1418,7 +1418,7 @@
 .svn-auth-url {
   display: block;
   overflow-wrap: anywhere;
-  font-size: 12px;
+  font-size: var(--fs-12);
   padding: 4px 6px;
   border-radius: 4px;
   background: var(--code-bg, rgba(127, 127, 127, 0.12));
@@ -1435,7 +1435,7 @@
 }
 .wcdel-intro {
   margin: 0 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--muted);
 }
 .wcdel-list {
@@ -1466,13 +1466,13 @@
   opacity: 0.75;
 }
 .wcdel-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .wcdel-branch {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1480,12 +1480,12 @@
 }
 .wcdel-sess {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   white-space: nowrap;
 }
 .wcdel-grade {
-  font-size: 10px;
+  font-size: var(--fs-10);
   padding: 1px 6px;
   border-radius: 9px;
   white-space: nowrap;
@@ -1509,7 +1509,7 @@
   display: flex;
   flex-wrap: wrap;
   gap: 2px 12px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--fg);
   min-width: 0;
 }
@@ -1538,7 +1538,7 @@
 .wcdel-why,
 .wcdel-result {
   margin: 2px 0 0 26px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   display: flex;
   align-items: center;
@@ -1552,7 +1552,7 @@
   align-items: center;
   gap: 6px;
   margin-top: 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 .wcdel-opt-sub {
@@ -1560,7 +1560,7 @@
   padding-left: 20px;
 }
 .wcdel-opt-hint {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 .wcdel-opt-hint.is-warn {
@@ -1574,7 +1574,7 @@
 .wcdel-summary {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 .wcdel-warn {
@@ -1594,7 +1594,7 @@
 }
 .wcstop-intro {
   margin: 0 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   color: var(--muted);
 }
 .wcstop-list,
@@ -1621,7 +1621,7 @@
   gap: 6px;
   margin: 0;
   padding: 4px 0 2px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   min-width: 0;
 }
@@ -1653,7 +1653,7 @@
   color: var(--muted);
 }
 .wcstop-name {
-  font-size: 13px;
+  font-size: var(--fs-13);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1661,7 +1661,7 @@
 /* The state chip carries margin-left:auto itself, so the mode badge simply follows it. */
 .wcstop-mode {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-10);
   padding: 1px 6px;
   border-radius: 9px;
   white-space: nowrap;
@@ -1683,7 +1683,7 @@
 .wcstop-why,
 .wcstop-result {
   margin: 2px 0 0 38px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
   display: flex;
   align-items: center;
@@ -1697,11 +1697,11 @@
   align-items: center;
   gap: 6px;
   margin-top: 10px;
-  font-size: 12px;
+  font-size: var(--fs-12);
   cursor: pointer;
 }
 .wcstop-opt-hint {
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 .wcstop-opt-hint.is-warn {
@@ -1715,7 +1715,7 @@
 .wcstop-summary {
   flex: 1;
   min-width: 0;
-  font-size: 11px;
+  font-size: var(--fs-11);
   color: var(--muted);
 }
 .wcstop-warn {
@@ -1750,7 +1750,7 @@
 .gitflow-changes ul {
   margin: 4px 0 0;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .launch-gitflow-suggest {
   display: flex;
