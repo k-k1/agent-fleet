@@ -338,3 +338,26 @@ func TestTrimBacksOffWhenFreeSpaceCannotBeReadAfterARemoval(t *testing.T) {
 		t.Fatalf("want one file removed then a stop with done=false, got res=%+v done=%v", res, done)
 	}
 }
+
+// A parent of the cache directory (here ~/.cache) swapped for a link to another place on the
+// same volume between resolving and opening must not be followed.
+func TestTrimDoesNotFollowAParentSwappedBeforeOpen(t *testing.T) {
+	now := time.Now()
+	day := 24 * time.Hour
+	dir := fakeGoCache(t, now, map[string]time.Duration{"ab/a-a": 9 * day})
+	other := t.TempDir()
+	victim := filepath.Join(other, "go-build", "ab", "a-a")
+	_ = os.MkdirAll(filepath.Dir(victim), 0o755)
+	_ = os.WriteFile(victim, []byte("keep"), 0o644)
+	_ = os.Chtimes(victim, now.Add(-9*day), now.Add(-9*day))
+	g := trimmerFor(dir, now, 1000, 50000, true)
+	g.beforeOpen = func(real string) {
+		parent := filepath.Dir(real)
+		_ = os.Rename(parent, parent+".moved")
+		_ = os.Symlink(other, parent)
+	}
+	g.pass()
+	if !exists(victim) {
+		t.Fatal("a swapped parent directory was followed")
+	}
+}

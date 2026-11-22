@@ -162,10 +162,16 @@ func (g trimmer) pass() (res Result, trimmed, done bool) {
 	if g.beforeOpen != nil {
 		g.beforeOpen(real)
 	}
-	root, err := openDirNoFollow(unix.AT_FDCWD, real)
+	// real has no links in it (EvalSymlinks), so RESOLVE_NO_SYMLINKS refuses a link at ANY
+	// element, not just the last one: a parent such as ~/.cache swapped for a link is caught too.
+	rfd, err := unix.Openat2(unix.AT_FDCWD, real, &unix.OpenHow{
+		Flags:   unix.O_RDONLY | unix.O_DIRECTORY | unix.O_CLOEXEC,
+		Resolve: unix.RESOLVE_NO_SYMLINKS,
+	})
 	if err != nil {
 		return res, false, true
 	}
+	root := os.NewFile(uintptr(rfd), real)
 	defer root.Close()
 	var home, rst unix.Stat_t
 	if unix.Stat(paths.HomeDir(), &home) != nil || unix.Fstat(int(root.Fd()), &rst) != nil || home.Dev != rst.Dev {
