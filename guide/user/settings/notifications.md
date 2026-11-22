@@ -125,7 +125,7 @@ How the red dot clears is in [Read a session's state](../sessions/status.md#the-
 - No "Push to this device" section: Web Push is off on this deployment. Ask the deployment administrator
 - On an iPhone, push works only when the Console is opened from the Home Screen icon, on iOS 16.4 or later
 - Check that "Push notifications on this device" is on, that the kind is on, and that the device is listed under "Devices"
-- A session shown on another device of yours is not pushed. Close it there or wait about a minute
+- A session shown on another device of yours is not pushed. Close it there or move it off the screen; the report expires 45 seconds after the last one. A push held back meanwhile is not sent later, so only the next notification reaches you
 
 ### Voice notifications stay silent
 

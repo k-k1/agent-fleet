@@ -28,7 +28,7 @@ The key pair belongs to this deployment. There is no relay: the Control Plane si
    openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'
    ```
 
-2. Put the variables in the Control Plane's environment (for compose, in `.env`) and restart it
+2. Put the variables in the Control Plane's environment (for compose, in `.env`) and restart it. With compose, `docker compose restart` does not re-read `.env`: run `docker compose up -d` so the Control Plane container is recreated
 
    | Variable | Meaning |
    |---|---|
@@ -60,7 +60,7 @@ The Control Plane POSTs each push to the endpoint the member's browser registere
 ## What is pushed
 
 - Only four kinds are pushed: a question, a plan waiting for approval, a permission request and a finished turn. Everything else stays in the notification center
-- The payload carries the session name and the kind. The text of a question is added only when a tenant administrator allows it under the tenant's "Limits & idle" settings, and it is cut short. The setting can be prepared before Web Push is switched on
+- The payload carries the session name and the kind. The text of a question is added only when a tenant administrator allows it under the tenant's "Limits & idle" settings, and it is cut short. The setting is stored even while Web Push is off, but the switch itself appears in the Console only once Web Push is on, so set it after switching on
 - A session on screen in another Console of the same member is not pushed, and members can switch each kind off. Members who are no longer active are never pushed
 - A push the service cannot deliver within an hour is dropped. One member can register up to 20 devices
 
