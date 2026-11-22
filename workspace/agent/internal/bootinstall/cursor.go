@@ -4,6 +4,8 @@ import (
 	"archive/tar"
 	"compress/gzip"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -51,19 +53,51 @@ func (e Env) cursorShare() string {
 	return filepath.Join(e.Home, ".local", "share", "cursor-agent", "versions")
 }
 
+// realPath resolves symlinks when the path exists and cleans it otherwise.
+func realPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
+}
+
 // aliasVersion is the version an `agent` alias at path points at when it is cursor's own: the
-// target, resolved from the alias's directory, must be exactly <share>/<version>/cursor-agent.
-// Another tool's `agent` (even one whose path contains cursor-agent/versions/) is not.
+// target, resolved from the alias's real directory, must be exactly <share>/<version>/cursor-agent.
+// Another tool's `agent` (even one whose path contains cursor-agent/versions/) is not. Both sides
+// are compared as real paths: a ~/.local/bin that is itself a link into another tree must not make
+// that tree's relative alias read as this install's.
 func (e Env) aliasVersion(alias, target string) (string, bool) {
 	if !filepath.IsAbs(target) {
-		target = filepath.Join(filepath.Dir(alias), target)
+		target = filepath.Join(realPath(filepath.Dir(alias)), target)
 	}
 	target = filepath.Clean(target)
-	verDir := filepath.Dir(target)
-	if filepath.Base(target) != cursorTool || filepath.Dir(verDir) != filepath.Clean(e.cursorShare()) {
+	verDir := realPath(filepath.Dir(target))
+	if filepath.Base(target) != cursorTool || filepath.Dir(verDir) != realPath(e.cursorShare()) {
 		return "", false
 	}
 	return filepath.Base(verDir), true
+}
+
+// cursorAliasVersion is aliasVersion for the alias file on disk. Only "not there" and "not a
+// link" mean "not cursor's"; any other failed look is an error, so a one-off I/O error is never
+// read as "nothing to do".
+func (e Env) cursorAliasVersion(alias string) (string, bool, error) {
+	st, err := lstatAlias(alias)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	if st.Mode()&os.ModeSymlink == 0 {
+		return "", false, nil
+	}
+	t, err := readlinkAlias(alias)
+	if err != nil {
+		return "", false, err
+	}
+	v, ok := e.aliasVersion(alias, t)
+	return v, ok, nil
 }
 
 // cursorVersionInLink reads the version the way the shell's greedy sed did: the last
@@ -110,10 +144,15 @@ func Cursor(ctx context.Context, e Env) int {
 				}
 			}
 			alias := filepath.Join(e.localBin(), "agent")
-			if t, err := os.Readlink(alias); err == nil {
-				if v, ok := e.aliasVersion(alias, t); ok && v != ver {
-					need = true
-				}
+			v, ok, err := e.cursorAliasVersion(alias)
+			if err != nil {
+				fmt.Fprintln(e.Stderr, err)
+				fmt.Fprintln(e.Stdout, "[entrypoint] WARN: cursor boot-install failed (the agent alias could not be checked; retrying next start)")
+				e.note(cursorStatusName, statusFailed, ReasonOther)
+				return ExitFailed
+			}
+			if ok && v != ver {
+				need = true
 			}
 		}
 	}
@@ -169,18 +208,10 @@ func (e Env) installCursor(ctx context.Context, ver, sum, dir, link string, pinn
 func (e Env) cursorLinks(link string) ([]string, error) {
 	var links []string
 	alias := filepath.Join(filepath.Dir(link), "agent")
-	st, err := lstatAlias(alias)
-	switch {
-	case err == nil && st.Mode()&os.ModeSymlink != 0:
-		t, err := readlinkAlias(alias)
-		if err != nil {
-			return nil, err
-		}
-		if _, ok := e.aliasVersion(alias, t); ok {
-			links = append(links, alias)
-		}
-	case err != nil && !os.IsNotExist(err):
+	if _, ok, err := e.cursorAliasVersion(alias); err != nil {
 		return nil, err
+	} else if ok {
+		links = append(links, alias)
 	}
 	return append(links, link), nil
 }
@@ -220,9 +251,13 @@ func relinkAll(links []string, target string) error {
 				}
 				back := d.link + ".af-back." + fmt.Sprint(os.Getpid())
 				os.Remove(back)
-				if serr := os.Symlink(d.target, back); serr != nil || os.Rename(back, d.link) != nil {
+				serr := os.Symlink(d.target, back)
+				if serr == nil {
+					serr = os.Rename(back, d.link)
+				}
+				if serr != nil {
 					os.Remove(back)
-					stuck = append(stuck, d.link+" (was "+d.target+")")
+					stuck = append(stuck, fmt.Sprintf("%s (was %s): %v", d.link, d.target, serr))
 				}
 			}
 			if len(stuck) > 0 {
@@ -426,12 +461,16 @@ func untarStrip1(archive, dest string) error {
 			var tmpName string
 			var w *os.File
 			for n := 0; ; n++ {
-				tmpName = filepath.Join(filepath.Dir(rel), fmt.Sprintf(".af-w%d", n))
+				var rnd [6]byte
+				if _, err := rand.Read(rnd[:]); err != nil {
+					return err
+				}
+				tmpName = filepath.Join(filepath.Dir(rel), ".af-w"+hex.EncodeToString(rnd[:]))
 				w, err = root.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
 				if err == nil {
 					break
 				}
-				if !os.IsExist(err) || n > 1000 {
+				if !os.IsExist(err) || n >= 16 {
 					return err
 				}
 			}
@@ -492,7 +531,7 @@ func untarStrip1(archive, dest string) error {
 // checkLinksInside requires every symlink of the unpacked tree to resolve inside it, as the OS
 // would follow it, through any chain. os.Root does the resolving (it refuses any hop that
 // leaves the tree), so this is not a second, lexical opinion. A link whose final element does
-// not exist yet passes only when everything before it resolved inside. It runs before the
+// not exist yet passes only when the directory that would hold it resolved inside. It runs before the
 // directory modes are applied, so every directory can still be read.
 func checkLinksInside(dest string, root *os.Root) error {
 	return filepath.WalkDir(dest, func(p string, d os.DirEntry, err error) error {
@@ -506,8 +545,22 @@ func checkLinksInside(dest string, root *os.Root) error {
 		if err != nil {
 			return err
 		}
-		if _, err := root.Stat(rel); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		_, err = root.Stat(rel)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
 			return fmt.Errorf("unsafe link in archive: %s: %v", rel, err)
+		}
+		// Dangling: the directory that would hold the final element must resolve inside the
+		// tree, or a missing middle component could hide a path that leaves it. The path is
+		// built without cleaning, so ".." is resolved by os.Root through any links on the way.
+		t, err := root.Readlink(rel)
+		if err != nil {
+			return fmt.Errorf("unsafe link in archive: %s: %v", rel, err)
+		}
+		if _, err := root.Stat(filepath.Dir(rel) + "/" + filepath.Dir(t)); err != nil {
+			return fmt.Errorf("unsafe link in archive: %s -> %s: %v", rel, t, err)
 		}
 		return nil
 	})

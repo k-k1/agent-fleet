@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -323,8 +324,9 @@ func TestCursorWithoutPinDoesNothing(t *testing.T) {
 }
 
 func TestCursorStripMatchesTar(t *testing.T) {
-	// "./dist/f" and "dist/f" are the same member after stripping one component, as in tar;
-	// directory modes survive the umask; a hard link to another member is kept.
+	// "./dist-package/f" and "dist-package/f" are different members: stripping one component, as
+	// tar does, drops the "." from the first and "dist-package" from the second, so they land at
+	// different names. Directory modes survive the umask; a hard link to another member is kept.
 	f := newCursor(t, append(goodCursorMembers(),
 		tarMember{name: "./dist-package/f", body: "one", mode: 0o644},
 		tarMember{name: "dist-package/f", body: "two", mode: 0o644},
@@ -725,15 +727,16 @@ func TestCursorModesFollowUmaskAndHeaderOrder(t *testing.T) {
 		{name: "p/a/b/", typ: tar.TypeDir, mode: 0o755},
 		{name: "p/a/b/f", body: "f", mode: 0o755},
 		{name: "p/a/", typ: tar.TypeDir, mode: 0o000},
-		{name: "p/d/", typ: tar.TypeDir, mode: 0o755},
-		{name: "p/d/", typ: tar.TypeDir, mode: 0o750},
+		{name: "p/d/", typ: tar.TypeDir, mode: 0o700},
+		{name: "p/d/", typ: tar.TypeDir, mode: 0o500},
 	}, "")
 	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
 		t.Fatalf("rc=%d out=%s", rc, f.out)
 	}
 	d := f.tree("2026.1.1-abc")
 	defer os.Chmod(filepath.Join(d, "a"), 0o700)
-	for p, want := range map[string]os.FileMode{".": 0o700, "d": 0o700, "cursor-agent": 0o700} {
+	defer os.Chmod(filepath.Join(d, "d"), 0o700)
+	for p, want := range map[string]os.FileMode{".": 0o700, "d": 0o500, "cursor-agent": 0o700} {
 		if st, err := os.Stat(filepath.Join(d, p)); err != nil || st.Mode().Perm() != want {
 			t.Errorf("%s: %v %v, want %o", p, st, err, want)
 		}
@@ -866,5 +869,88 @@ func TestCursorAliasReadlinkFailureStopsBeforeAnyLinkMoves(t *testing.T) {
 	}
 	if !strings.Contains(f.statusText(), "cursor\tfailed\t") {
 		t.Errorf("status=%q", f.statusText())
+	}
+}
+
+func TestCursorRefusesDanglingLinkThroughMissingDirectory(t *testing.T) {
+	// "gone" does not exist, so os.Root answers not-exist for the whole path even though the rest
+	// (../../..) would leave the tree; a missing final element under an existing directory stays fine.
+	for name, ms := range map[string][]tarMember{
+		"missing middle": {{name: "p/l", typ: tar.TypeSymlink, link: "gone/../../../x"}},
+		"missing parent": {{name: "p/l", typ: tar.TypeSymlink, link: "gone/x"}},
+	} {
+		f := newCursor(t, append(goodCursorMembers(), ms...), "")
+		if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+			t.Errorf("%s: rc=%d", name, rc)
+		}
+		if _, err := os.Stat(f.tree("2026.1.1-abc")); err == nil {
+			t.Errorf("%s: tree installed", name)
+		}
+	}
+	f := newCursor(t, append(goodCursorMembers(),
+		tarMember{name: "p/l", typ: tar.TypeSymlink, link: "later"}), "")
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Errorf("dangling final element: rc=%d out=%s", rc, f.out)
+	}
+}
+
+func TestCursorAliasInSymlinkedBinDirIsNotOurs(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	// ~/.local/bin is a link to another tree whose own cursor install holds a relative alias.
+	other := filepath.Join(f.home, "other")
+	otherVer := filepath.Join(other, "share", "cursor-agent", "versions", "9.9")
+	os.MkdirAll(otherVer, 0o755)
+	os.WriteFile(filepath.Join(otherVer, "cursor-agent"), []byte("#!/bin/sh\n"), 0o755)
+	os.MkdirAll(filepath.Join(other, "bin"), 0o755)
+	os.Symlink("../share/cursor-agent/versions/9.9/cursor-agent", filepath.Join(other, "bin", "agent"))
+	bin := filepath.Join(f.home, ".local", "bin")
+	os.Rename(bin, filepath.Join(f.home, "oldbin"))
+	os.Symlink(filepath.Join(other, "bin"), bin)
+	os.Symlink(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent"), f.link())
+	if v, ok := f.env.aliasVersion(filepath.Join(bin, "agent"), "../share/cursor-agent/versions/9.9/cursor-agent"); ok {
+		t.Errorf("another tree's alias read as ours: %q", v)
+	}
+}
+
+func TestCursorAliasReadlinkOneOffFailureAtDecisionIsFailed(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	f.plant(t, "2026.2.2-def", goodCursor, true)
+	os.Remove(f.link())
+	os.Symlink(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent"), f.link()) // main link on the pin
+	bin := filepath.Join(f.home, ".local", "bin")
+	oldT := filepath.Join(f.tree("2026.2.2-def"), "cursor-agent")
+	os.Symlink(oldT, filepath.Join(bin, "agent")) // alias on another version
+	f.env.Repin = true
+	orig := readlinkAlias
+	defer func() { readlinkAlias = orig }()
+	calls := 0
+	readlinkAlias = func(p string) (string, error) {
+		if calls++; calls == 1 {
+			return "", errors.New("injected I/O error")
+		}
+		return os.Readlink(p)
+	}
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed || !strings.Contains(f.statusText(), "cursor\tfailed\t") {
+		t.Fatalf("rc=%d status=%q", rc, f.statusText())
+	}
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("retry rc=%d", rc)
+	}
+	if got, _ := os.Readlink(filepath.Join(bin, "agent")); !strings.Contains(got, "2026.1.1-abc") {
+		t.Errorf("alias not repaired on the retry: %s", got)
+	}
+}
+
+func TestCursorUnpackSurvivesManyDotWNames(t *testing.T) {
+	ms := goodCursorMembers()
+	for i := 0; i < 1100; i++ {
+		ms = append(ms, tarMember{name: fmt.Sprintf("dist-package/.af-w%d", i), body: "x", mode: 0o644})
+	}
+	ms = append(ms, tarMember{name: "dist-package/last", body: "y", mode: 0o644})
+	f := newCursor(t, ms, "")
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
 	}
 }
