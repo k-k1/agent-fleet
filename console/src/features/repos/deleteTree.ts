@@ -227,6 +227,41 @@ export function deleteOrder(plans: CopyPlan[], selected: Set<string>, withStop =
     .map(({ p }) => p);
 }
 
+/** How many rows the run works on at once. Archives and HTTP round trips dominate a row's
+ *  time (the Agent's delete gate is a single lock), so a small pool hides them without piling
+ *  requests onto the gate. */
+export const DELETE_CONCURRENCY = 3;
+
+/** `deleteOrder` cut into waves that may each run concurrently inside, one wave after the
+ *  other: a wave starts only once the deeper one has fully settled, so a copy is never removed
+ *  while a worktree nested under it still exists. A base clone (not a linked worktree) is a
+ *  wave of its own, last: git refuses to remove it while any worktree of it is registered. */
+export function deleteWaves(order: CopyPlan[]): CopyPlan[][] {
+  const waves: CopyPlan[][] = [];
+  const bases: CopyPlan[] = [];
+  for (const p of order) {
+    if (!p.repo.worktree) {
+      bases.push(p);
+      continue;
+    }
+    const last = waves[waves.length - 1];
+    if (last && last[0].depth === p.depth) last.push(p);
+    else waves.push([p]);
+  }
+  if (bases.length) waves.push(bases);
+  return waves;
+}
+
+/** Runs `fn` over `items` with at most `limit` in flight; resolves once all have settled.
+ *  `fn` must not throw (a row's failure is its own result). Items start in list order. */
+export async function runPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) await fn(items[next++]);
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, worker));
+}
+
 /** A base clone cannot go while any linked worktree of it survives — the Agent answers
  *  has_worktrees, and no force flag passes it. The rail nests a base's whole group under
  *  it, so "every other row in this plan is going too" is exactly the condition. It depends

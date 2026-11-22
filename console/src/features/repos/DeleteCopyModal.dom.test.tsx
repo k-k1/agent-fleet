@@ -276,4 +276,30 @@ describe("作業コピー削除モーダル", () => {
     const intro = document.querySelector(".wcdel-intro")!.textContent!;
     expect(intro).toContain("app@a");
   });
+
+  it("rows of one depth overlap, but the parent waits until every child delete has settled (#4736)", async () => {
+    // Hold every child DELETE open so what has been SENT while they are pending is observable.
+    const release: Array<() => void> = [];
+    raw.mockImplementation((url: string, init: { method: string }) =>
+      init.method === "DELETE" && /app%40[bc]$/.test(url)
+        ? new Promise((r) => release.push(() => r(ok())))
+        : Promise.resolve(ok()),
+    );
+    await render(node(repo("app@a"), [node(repo("app@b")), node(repo("app@c"))]), [
+      sess("s2", "app@b"),
+      sess("s3", "app@c"),
+    ]);
+    await click(runButton());
+    // Both children are in flight at once (c did not wait for b's delete); the parent is not sent.
+    expect(sent()).toEqual([
+      "POST api/sessions/s2/archive",
+      "POST api/sessions/s3/archive",
+      "DELETE api/repos/app%40b",
+      "DELETE api/repos/app%40c",
+    ]);
+    await act(async () => release[0]());
+    expect(sent()).not.toContain("DELETE api/repos/app%40a");
+    await act(async () => release[1]());
+    expect(sent().at(-1)).toBe("DELETE api/repos/app%40a");
+  });
 });
