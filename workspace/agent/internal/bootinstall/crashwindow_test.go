@@ -3,6 +3,7 @@ package bootinstall
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -619,20 +620,15 @@ func TestSelfUpdateNPMWithUnopenableLockStartsNothing(t *testing.T) {
 }
 
 // A first cursor update killed before it published its tree, then the user installs that same
-// version by hand: recovery must not delete the user's tree or its launcher.
-func TestCursorRecoverLeavesAForeignTreeAtTheFinalPath(t *testing.T) {
+// version by hand: recovery must neither delete the user's tree nor its launcher.
+func TestCursorRecoverLeavesAForeignTreeAndItsLauncher(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
 	f.write(t, filepath.Join(dir, "cursor-agent"), "#!/bin/sh\necho manual\n")
 	os.MkdirAll(filepath.Join(f.home, ".local", "bin"), 0o755)
 	f.link(t, "cursor-agent", filepath.Join(dir, "cursor-agent"))
-	// The marker names an inode the tree at dir does not have.
-	dev, ino, ok := stagedID(dir)
-	if !ok {
-		t.Fatal("no id")
-	}
 	no := false
-	m := cursorMarker{Dir: dir, Old: dir + ".af-old.1", Tree: true, HadTree: &no, Dev: dev, Ino: ino + 1000,
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.1", Tree: true, HadTree: &no, ID: "staged-token",
 		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "none"}}}
 	if err := f.env.cursorWriteMarker(m); err != nil {
 		t.Fatal(err)
@@ -643,8 +639,14 @@ func TestCursorRecoverLeavesAForeignTreeAtTheFinalPath(t *testing.T) {
 	if !strings.Contains(f.read(filepath.Join(dir, "cursor-agent")), "manual") {
 		t.Fatal("the user's tree was deleted")
 	}
-	// The same marker with the tree's own identity does delete it.
-	m.Ino = ino
+	if out, err := exec.Command(f.local("cursor-agent")).Output(); err != nil || !strings.Contains(string(out), "manual") {
+		t.Fatalf("the user's launcher no longer starts their tree: %v %q", err, out)
+	}
+	if _, err := os.Lstat(f.env.cursorMarkerPath()); err == nil {
+		t.Fatal("the marker stayed")
+	}
+	// The same marker with the tree's own token does delete it.
+	f.write(t, filepath.Join(dir, cursorIDFile), "staged-token")
 	if err := f.env.cursorWriteMarker(m); err != nil {
 		t.Fatal(err)
 	}
@@ -656,33 +658,38 @@ func TestCursorRecoverLeavesAForeignTreeAtTheFinalPath(t *testing.T) {
 	}
 }
 
-// The staged tree's identity is journaled by a real update and survives the rename to Dir.
-func TestCursorMarkerRecordsTheStagedTreeIdentity(t *testing.T) {
+// A real interrupted update journals the token, and it is the staged tree's own file (so it
+// survives the rename and a remount, unlike an inode).
+func TestCursorMarkerCarriesTheStagedTreeToken(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	dir := filepath.Join(f.versions(), "v")
 	f.write(t, filepath.Join(dir, "cursor-agent"), "x")
-	dev, ino, _ := stagedID(dir)
+	id, err := stampTree(dir)
+	if err != nil || id == "" {
+		t.Fatal(err)
+	}
 	moved := dir + "-moved"
 	if err := os.Rename(dir, moved); err != nil {
 		t.Fatal(err)
 	}
-	m := cursorMarker{Dev: dev, Ino: ino}
-	if !m.dirIsOurs(moved) {
-		t.Fatal("a rename changed the identity")
+	m := cursorMarker{ID: id}
+	if !m.dirIsOurs(moved) || m.dirIsOurs(f.versions()) {
+		t.Fatal("the token does not identify the staged tree")
 	}
-	if m.dirIsOurs(f.versions()) {
-		t.Fatal("another directory matched")
+	if !(cursorMarker{}).dirIsOurs(f.versions()) {
+		t.Fatal("a marker without a token must keep the old behaviour")
 	}
 }
 
-// The supervisor holds the lock until npm's process group is gone, even when the process that
-// started it is killed, and a straggler started with default options (no lock fd) is killed with the group.
+// Only the supervisor holds the lock here (npm closes its copy at once and the caller drops its
+// own), and it is still refused to a second holder until npm and its straggler are gone.
 func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
-	flag := filepath.Join(f.home, "straggler.pid")
-	// npm returns at once; a backgrounded child outlives it and has no fd 3.
-	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf("#!/bin/sh\n(exec 3>&-; exec /bin/sleep 30) &\necho $! >%q\n/bin/sleep 1\n", flag))
-	e, release, ok := f.env.lockNPM()
+	ready, release := filepath.Join(f.home, "ready"), filepath.Join(f.home, "release")
+	pidf := filepath.Join(f.home, "straggler.pid")
+	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf(
+		"#!/bin/sh\nexec 3>&-\n(exec /bin/sleep 30) &\necho $! >%q\n: >%q\nwhile [ ! -e %q ]; do /bin/sleep 0.05; done\n", pidf, ready, release))
+	e, rel, ok := f.env.lockNPM()
 	if !ok {
 		t.Fatal("lock not taken")
 	}
@@ -694,30 +701,53 @@ func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 		}
 		done <- err
 	}()
-	// The parent drops its own hold, as a killed parent would.
-	time.Sleep(300 * time.Millisecond)
-	release()
+	deadline := time.Now().Add(10 * time.Second)
+	for !exists(ready) {
+		if time.Now().After(deadline) {
+			t.Fatal("npm never started")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	rel() // the caller's own hold goes, as a killed caller's would
 	e.npmLockFile.Close()
 	if _, _, busy := probeLock(f.env.npmLockPath()); !busy {
-		select {
-		case err := <-done:
-			t.Fatalf("install already ended: %v", err)
-		default:
-		}
 		t.Fatal("the lock was free while npm's group still ran")
 	}
+	os.WriteFile(release, nil, 0o644)
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
 	if _, _, busy := probeLock(f.env.npmLockPath()); busy {
 		t.Fatal("the lock stayed after the group was gone")
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(f.read(flag)))
-	if pid <= 0 || syscall.Kill(pid, 0) == nil {
-		// Zombie reaping is the container's init; a live straggler is the failure.
-		if b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); !strings.Contains(string(b), ") Z") {
-			t.Fatal("npm's straggler outlived the supervisor")
+	pid, _ := strconv.Atoi(strings.TrimSpace(f.read(pidf)))
+	if pid > 0 {
+		if b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); len(b) > 0 && !strings.Contains(string(b), ") Z") {
+			t.Fatal("npm's straggler outlived the install")
 		}
+	}
+}
+
+// A missing npm and a failing npm are both reported from the supervisor as main reports them.
+func TestNPMSupervisorReportsStartErrorsAndExitCodes(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	e, rel, ok := f.env.lockNPM()
+	if !ok {
+		t.Fatal("lock not taken")
+	}
+	defer rel()
+	good := e.NPM
+	e.NPM = filepath.Join(f.home, "no-such-npm")
+	se, err := e.npmInstall([]string{"x"})
+	if err == nil || !strings.Contains(se, "no-such-npm") {
+		t.Fatalf("start error lost: %v %q", err, se)
+	}
+	e.NPM = good
+	f.write(t, filepath.Join(f.npmDir, "npm"), "#!/bin/sh\necho boom >&2\nexit 7\n")
+	se, err = e.npmInstall([]string{"x"})
+	var ee *exec.ExitError
+	if !errors.As(err, &ee) || ee.ExitCode() != 7 || !strings.Contains(se, "boom") {
+		t.Fatalf("exit code or stderr lost: %v %q", err, se)
 	}
 }
 
@@ -728,3 +758,5 @@ func probeLock(path string) (*os.File, bool, bool) {
 	}
 	return fl, false, busy
 }
+
+func exists(p string) bool { _, err := os.Stat(p); return err == nil }

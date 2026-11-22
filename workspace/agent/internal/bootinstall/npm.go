@@ -76,21 +76,34 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 	defer cancel()
 	args := append([]string{"install", "-g", "--prefix", filepath.Join(e.Home, ".local")}, specs...)
 	se := &tailWriter{max: 64 << 10}
-	if self, serr := os.Executable(); serr == nil && e.npmLockFile != nil {
-		// A supervisor process holds the lock until npm's whole process group is gone, so a
-		// kill of this process, or a postinstall child started with default child_process
-		// options (which does not inherit the lock), cannot leave a writer running unlocked.
+	if e.npmLockFile != nil {
+		// A supervisor holds the lock until npm's whole process group is gone, so a kill of this
+		// process, or a postinstall child started with default child_process options (which does
+		// not inherit the lock), cannot leave a writer running unlocked. /proc/self/exe is the
+		// binary running now, even if its path was replaced or removed since it started.
 		sup := append([]string{"boot-install", superviseStep, e.npmBin()}, args...)
-		cmd := exec.CommandContext(ctx, self, sup...)
+		cmd := exec.CommandContext(ctx, "/proc/self/exe", sup...)
 		cmd.ExtraFiles = []*os.File{e.npmLockFile}
-		cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
-		cmd.WaitDelay = superviseGrace + time.Second
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		cmd.WaitDelay = time.Second
 		cmd.Stderr = se
-		err = cmd.Run()
-		if errors.Is(err, exec.ErrWaitDelay) {
-			err = nil
+		if err = cmd.Start(); err == nil {
+			err = cmd.Wait()
+			// Group kill and wait, as for a direct npm: nothing may write once this returns, and a
+			// supervisor killed alone takes npm (same group) down with it.
+			pgid := cmd.Process.Pid
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			if !waitGroupGone(pgid, superviseGrace) && err == nil {
+				err = errors.New("npm's process group did not stop")
+			}
+			if errors.Is(err, exec.ErrWaitDelay) {
+				err = nil
+			}
+			return se.String(), err
 		}
-		return se.String(), err
+		// The supervisor could not be started at all: nothing ran, so run npm directly.
+		err = nil
 	}
 	cmd := exec.CommandContext(ctx, e.npmBin(), args...)
 	if e.npmLockFile != nil {

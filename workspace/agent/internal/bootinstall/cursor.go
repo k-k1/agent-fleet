@@ -865,9 +865,11 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 		}
 		had := lerr == nil
 		m.HadTree = &had
-		if dev, ino, ok := stagedID(verDir); ok {
-			m.Dev, m.Ino = dev, ino
+		id, serr := stampTree(verDir)
+		if serr != nil {
+			return fmt.Errorf("cursor: cannot mark the staged tree, keeping the current copy: %w", serr)
 		}
+		m.ID = id
 	}
 	for _, l := range links {
 		st := cursorLinkState{Path: l, Kind: "none"}
@@ -986,35 +988,38 @@ type cursorMarker struct {
 	Tree    bool              `json:"tree"`
 	HadTree *bool             `json:"hadTree"` // nil only in a marker this code did not write
 	Links   []cursorLinkState `json:"links"`
-	// Dev and Ino identify the staged tree this update publishes at Dir (a rename keeps them).
-	// Recovery removes or moves aside only a Dir that still carries them, so a tree the user
-	// installed there by hand after an interruption is never touched. Zero in a marker written
-	// before this field existed (then Dir is acted on as before).
-	Dev uint64 `json:"dev,omitempty"`
-	Ino uint64 `json:"ino,omitempty"`
+	// ID names the staged tree this update publishes at Dir: a random token written into the
+	// tree before the marker (it travels with the rename and survives a remount, unlike an
+	// inode). Recovery acts on a Dir only while it carries this token, so a tree installed there
+	// by hand after an interruption is never touched. Empty in a marker written before it existed
+	// (Dir is then acted on as before).
+	ID string `json:"id,omitempty"`
 }
 
-// stagedID is the (device, inode) of p without following a symlink; ok is false when unknown.
-func stagedID(p string) (dev, ino uint64, ok bool) {
-	fi, err := os.Lstat(p)
-	if err != nil {
-		return 0, 0, false
+// cursorIDFile is the token's name inside the staged tree.
+const cursorIDFile = ".af-update-id"
+
+// stampTree writes a fresh token into the staged tree at p and returns it.
+func stampTree(p string) (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
 	}
-	st, isSys := fi.Sys().(*syscall.Stat_t)
-	if !isSys {
-		return 0, 0, false
+	id := hex.EncodeToString(b[:])
+	if err := os.WriteFile(filepath.Join(p, cursorIDFile), []byte(id), 0o644); err != nil {
+		return "", err
 	}
-	return uint64(st.Dev), uint64(st.Ino), true
+	return id, nil
 }
 
-// dirIsOurs: Dir at p is the tree this update staged. A marker without an identity cannot tell,
-// so it answers true (the behaviour before the identity existed).
+// dirIsOurs: the tree at p is the one this update staged. A marker without a token cannot
+// tell, so it answers true (the behaviour before the token existed).
 func (m cursorMarker) dirIsOurs(p string) bool {
-	if m.Ino == 0 {
+	if m.ID == "" {
 		return true
 	}
-	dev, ino, ok := stagedID(p)
-	return ok && dev == m.Dev && ino == m.Ino
+	b, err := os.ReadFile(filepath.Join(p, cursorIDFile))
+	return err == nil && string(b) == m.ID
 }
 
 func (e Env) cursorMarkerPath() string {
@@ -1130,11 +1135,17 @@ func (e Env) cursorRecover() error {
 		return fmt.Errorf("cursor: ignoring an unreadable %s (backups, if any, stay as *.af-old.* / *.af-prev.*)", e.cursorMarkerPath())
 	}
 	var errs []error
+	foreign := false
 	if m.Tree {
-		if _, derr := os.Lstat(m.Dir); derr == nil && !m.dirIsOurs(m.Dir) {
-			// Someone installed this version by hand after the interruption: neither remove it
-			// nor put the previous tree over it. A kept previous tree stays where it is.
-			fmt.Fprintf(e.Stderr, "cursor: %s is not the tree this update staged; leaving it (any previous tree stays at %s)\n", m.Dir, m.Old)
+		if _, derr := os.Lstat(m.Dir); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
+			// Not knowing what is at Dir must not read as "empty" or "ours": retry at the next start.
+			return fmt.Errorf("cursor: cannot look at %s: %v", m.Dir, derr)
+		} else if derr == nil && !m.dirIsOurs(m.Dir) {
+			// Someone installed this version by hand after the interruption: it owns Dir and its
+			// launchers. Neither remove it, nor put the previous tree (the same version) over it, nor
+			// repoint its links; a kept previous tree stays where it is.
+			foreign = true
+			fmt.Fprintf(e.Stderr, "cursor: %s is not the tree this update staged; leaving it and its launchers (any previous tree stays at %s)\n", m.Dir, m.Old)
 		} else if _, lerr := os.Lstat(m.Old); lerr == nil {
 			// The candidate is moved aside whole before the old tree goes back: removing it in
 			// place can fail on a read-only subtree and would leave it at the final path.
@@ -1164,6 +1175,9 @@ func (e Env) cursorRecover() error {
 		}
 	}
 	for _, l := range m.Links {
+		if foreign {
+			break
+		}
 		switch l.Kind {
 		case "symlink":
 			if cur, rerr := os.Readlink(l.Path); rerr != nil || cur != string(l.Target) {
