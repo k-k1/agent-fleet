@@ -25,6 +25,7 @@ type bbListPR struct {
 // bbStatusStub answers PR lists plus per-PR statuses and mergeability, and records every call.
 type bbStatusStub struct {
 	mu        sync.Mutex
+	auths     []string
 	calls     []string // "<id>/statuses" or "<id>/mergeability"
 	listQuery []url.Values
 	prs       []bbListPR
@@ -50,6 +51,7 @@ func newBBStatusStub(t *testing.T, prs ...bbListPR) *bbStatusStub {
 			kind := rest[1]
 			st.mu.Lock()
 			st.calls = append(st.calls, fmt.Sprintf("%d/%s", id, kind))
+			st.auths = append(st.auths, r.Header.Get("Authorization"))
 			ov := st.override
 			body := st.statuses
 			st.mu.Unlock()
@@ -739,12 +741,12 @@ func TestBitbucketOlderListingNeverBorrowsTheNewerOnesAnswer(t *testing.T) {
 	bbRefresh(t, s, "acme/web")
 	st.reset()
 	st.set(func() { st.lists = nil })
-	items, _, _ := fetchWorkItems(s, []workItemQueryIn{
+	items, errs, _ := fetchWorkItems(s, []workItemQueryIn{
 		{ID: "old", Provider: "bitbucket", Query: "acme/web"},
 		{ID: "new", Provider: "bitbucket", Query: `acme/web state="OPEN"`},
 	})
-	if len(st.snapshot()) != 0 {
-		t.Fatalf("calls = %v", st.snapshot())
+	if len(st.snapshot()) != 0 || len(errs) != 0 || len(items) != 2 || items[0].QueryID == items[1].QueryID {
+		t.Fatalf("calls = %v errs = %v rows = %d", st.snapshot(), errs, len(items))
 	}
 	for _, r := range items {
 		switch r.QueryID {
@@ -775,5 +777,26 @@ func TestBitbucketJobsThatNeverStartedLeaveNoAttemptRecord(t *testing.T) {
 	bitbucketStatusCache.Unlock()
 	if n > bitbucketStatusConcurrency {
 		t.Fatalf("%d attempt records for at most %d reads that started", n, bitbucketStatusConcurrency)
+	}
+}
+
+func TestBitbucketReadsUseTheNewestCredentialOfDuplicateListings(t *testing.T) {
+	st := newBBStatusStub(t, web(1)...)
+	rows := func(auth string) workItemOut {
+		return workItemOut{Provider: "bitbucket", Kind: "pr", Key: "acme/web#1", State: "open", Repo: "acme/web",
+			UpdatedAt: "2026-08-01T07:00:00Z", srcHash: "s1", dstHash: "d0", bbAuth: auth}
+	}
+	items := []workItemOut{rows("Bearer old"), rows("Bearer new")}
+	bitbucketEnrichItems(bbTokenStore(), items, time.Now(), bitbucketNextRefresh())
+	st.mu.Lock()
+	auths := append([]string(nil), st.auths...)
+	st.mu.Unlock()
+	if len(auths) != 2 || auths[0] != "Bearer new" || auths[1] != "Bearer new" {
+		t.Fatalf("reads were sent with %v", auths)
+	}
+	for _, r := range items {
+		if r.Mergeable != "clean" || r.Checks.State != "success" {
+			t.Fatalf("row = %+v", r)
+		}
 	}
 }

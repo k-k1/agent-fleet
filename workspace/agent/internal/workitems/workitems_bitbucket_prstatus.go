@@ -163,6 +163,9 @@ func bitbucketEnrichItems(s *secrets.Data, items []workItemOut, started time.Tim
 			order = append(order, g)
 		}
 		g.idxs = append(g.idxs, i)
+		// Rows arrive in listing order, so the last one carries the newest credential of this connection
+		// (a later list may have refreshed an expired token).
+		g.auth = r.bbAuth
 	}
 	if len(order) == 0 {
 		return
