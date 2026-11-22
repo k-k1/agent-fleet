@@ -192,19 +192,19 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if m.Route != nil {
 		program = routeLaunchProgram(program, unset)
 	}
+	var onStarted func() error
 	if pointFork {
-		// A marker left behind would make a later resume of this slot look like a first launch and
-		// override a mode the user switched to, so a failed removal fails the launch (it is retried
-		// as a first launch, which is what the marker records).
-		if err := clearPointForkMarker(sid); err != nil {
-			return agents.LaunchPlan{}, fmt.Errorf("could not clear the point-fork first-launch marker: %w", err)
-		}
+		onStarted = func() error { return clearPointForkMarker(sid) }
 	}
 	return agents.LaunchPlan{
 		Program: program,
 		Cwd:     m.CWD(),
 		Env:     env,
 		Notices: notices,
+		// The marker outlives every failure before the pane exists, so a retry is still a
+		// first launch; a leftover marker would make a later resume override a mode the user
+		// switched to.
+		OnStarted: onStarted,
 	}, nil
 }
 

@@ -75,6 +75,22 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 	if out, err := tmuxx.Cmd(args...).CombinedOutput(); err != nil {
 		return fmt.Errorf("%v: %s", err, out)
 	}
+	// The pane is up: the launch is no longer retryable as a first launch. If the bookkeeping
+	// cannot be completed the pane is torn down and the launch reported as failed, because a
+	// leftover first-launch state would make a later resume override what the user chose in
+	// the pane; the retry is then a first launch again, as when the pane never started.
+	if plan.OnStarted != nil {
+		err := plan.OnStarted()
+		if err != nil {
+			err = plan.OnStarted() // one retry for a transient fault
+		}
+		if err != nil {
+			if kerr := tmuxx.Cmd("kill-session", "-t", session.TmuxName(m.Name)).Run(); kerr != nil {
+				return fmt.Errorf("could not finish the launch bookkeeping and could not stop the pane (%v): %w", kerr, err)
+			}
+			return fmt.Errorf("could not finish the launch bookkeeping, pane stopped: %w", err)
+		}
+	}
 	// Record pane output even when no browser is attached. The helper owns the
 	// size cap; failure here must not prevent the actual session from starting.
 	if pane := tmuxx.SessionPaneID(session.TmuxName(m.Name)); pane != "" {

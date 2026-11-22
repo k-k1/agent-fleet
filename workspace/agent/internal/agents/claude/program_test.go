@@ -298,14 +298,17 @@ func TestBuildProgramPermissionModeQuotedValueIsNotAFlag(t *testing.T) {
 // The word after a single-value option is its value, even when it spells the flag.
 func TestHasPermissionModeFlagSkipsOptionValues(t *testing.T) {
 	for flags, want := range map[string]bool{
-		`--name --permission-mode`:                    false,
-		`--name --permission-mode --permission-mode`:  true,
-		`--model opus --permission-mode plan`:         true,
-		`--name x --permission-mode=plan`:             true,
-		`--verbose --permission-mode plan`:            true,
-		`--append-system-prompt --permission-mode -n`: false,
-		`--resume --permission-mode plan`:             true,
-		`-r --permission-mode plan`:                   true,
+		`--name --permission-mode`:                                      false,
+		`--name --permission-mode --permission-mode`:                    true,
+		`--model opus --permission-mode plan`:                           true,
+		`--name x --permission-mode=plan`:                               true,
+		`--verbose --permission-mode plan`:                              true,
+		`--append-system-prompt --permission-mode -n`:                   false,
+		`--resume --permission-mode plan`:                               true,
+		`-r --permission-mode plan`:                                     true,
+		`--append-system-prompt-file --permission-mode`:                 false,
+		`--system-prompt-file --permission-mode --permission-mode auto`: true,
+		`--json-schema --permission-mode`:                               false,
 	} {
 		if got := hasPermissionModeFlag(flags); got != want {
 			t.Errorf("hasPermissionModeFlag(%q) = %v, want %v", flags, got, want)
@@ -367,6 +370,12 @@ func TestBuildLaunchPointForkRetryAfterFailureStaysManual(t *testing.T) {
 	if after, err := os.ReadFile(rawJSONLPaths(sid)[0]); err != nil || string(after) != string(before) {
 		t.Errorf("the retry must reuse the first transcript unchanged (err=%v)", err)
 	}
+	if retry.OnStarted == nil {
+		t.Fatal("a point-fork first launch must hand the marker clear to the caller")
+	}
+	if err := retry.OnStarted(); err != nil {
+		t.Fatal(err)
+	}
 	next, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
 	if err != nil {
 		t.Fatal(err)
@@ -403,6 +412,17 @@ func TestBuildLaunchPointForkStartsManualOnlyOnce(t *testing.T) {
 	}
 	if !strings.Contains(first.Program, "--permission-mode default") {
 		t.Errorf("first point-fork launch must start in manual mode: %q", first.Program)
+	}
+	// The pane never started (OnStarted not called): the marker survives, so a retry is still manual.
+	again, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatalf("retry launch: %v", err)
+	}
+	if !strings.Contains(again.Program, "--permission-mode default") {
+		t.Errorf("a launch whose pane never started must stay a first launch: %q", again.Program)
+	}
+	if err := again.OnStarted(); err != nil {
+		t.Fatal(err)
 	}
 	second, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
 	if err != nil {
