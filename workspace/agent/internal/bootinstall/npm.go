@@ -724,22 +724,24 @@ func (e Env) npmKeepPendingFor(stuck []string) {
 			rest = append(rest, ent)
 		}
 	}
-	e.npmNarrowMarker(keep, e.npmAsidesOf(rest))
+	e.npmNarrowMarker(keep, rest)
 }
 
-// npmNarrowMarker turns the marker into a pending one for the CLIs in keep and deletes the
-// backups of the accepted ones in drop. The marker records the drop group before anything is
-// deleted, so a failed or interrupted delete leaves the backups listed; when that write fails,
-// nothing is deleted and the earlier marker stays.
-func (e Env) npmNarrowMarker(keep []string, drop []npmAside) {
-	if len(drop) == 0 {
+// npmNarrowMarker turns the marker into a pending one for the entries in keep and deletes the
+// backups of the accepted entries in drop. The marker records the drop group, as the same entries
+// the caller holds (a legacy path stays that one path), before anything is deleted, so a failed
+// or interrupted delete leaves the backups listed; when that write fails, nothing is deleted and
+// the earlier marker stays.
+func (e Env) npmNarrowMarker(keep, drop []string) {
+	asides := e.npmAsidesOf(drop)
+	if len(asides) == 0 {
 		_ = e.npmWriteMarker("pending", keep)
 		return
 	}
-	if err := e.npmWriteMarkerDiscard("pending", keep, npmCLINames(drop)); err != nil {
+	if err := e.npmWriteMarkerDiscard("pending", keep, drop); err != nil {
 		return
 	}
-	if npmDiscardAside(drop) {
+	if npmDiscardAside(asides) {
 		_ = e.npmWriteMarker("pending", keep)
 	}
 }

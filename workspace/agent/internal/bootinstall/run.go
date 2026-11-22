@@ -7,11 +7,11 @@ import (
 )
 
 // Run is `workspace-agent boot-install <step> [--repin] [--present] [cli...]`: one step of the
-// entrypoint's lean boot-install. Steps: rtk, agy, cursor, agy-version (prints the installed agy's version), npm (the four npm CLIs), npm-recover (settle a killed self-update's backups), npm-verify (the repair
+// entrypoint's lean boot-install. Steps: rtk, agy, cursor, agy-version (prints the installed agy's version), npm (the four npm CLIs), npm-recover [--discard] (settle a killed self-update's backups; --discard also drops an accepted update's), npm-verify (the repair
 // pass; --present limits it to CLIs with a ~/.local copy). Exit 1 is a failed install, 3 a skip
 // for lack of space (the entrypoint then holds back its other downloads), 2 a usage error.
 func Run(args []string) {
-	repin, present := false, false
+	repin, present, discard := false, false, false
 	var names []string
 	for _, a := range args {
 		switch a {
@@ -19,12 +19,14 @@ func Run(args []string) {
 			repin = true
 		case "--present":
 			present = true
+		case "--discard":
+			discard = true
 		default:
 			names = append(names, a)
 		}
 	}
 	usage := func() {
-		fmt.Fprintln(os.Stderr, "usage: workspace-agent boot-install rtk|agy|cursor|npm [--repin] | agy-version | self-update | npm-recover | npm-verify [--present] [claude|opencode|codex|copilot...]")
+		fmt.Fprintln(os.Stderr, "usage: workspace-agent boot-install rtk|agy|cursor|npm [--repin] | agy-version | self-update | npm-recover [--discard] | npm-verify [--present] [claude|opencode|codex|copilot...]")
 		os.Exit(2)
 	}
 	if len(names) == 0 {
@@ -32,6 +34,9 @@ func Run(args []string) {
 	}
 	step, rest := names[0], names[1:]
 	if (step == "agy-version" || step == "self-update" || step == "npm-recover") && (len(rest) > 0 || repin || present) {
+		usage()
+	}
+	if discard && step != "npm-recover" {
 		usage()
 	}
 	if (step != "npm-verify" && step != "agy-version" && len(rest) > 0) || (present && step != "npm-verify") || (repin && step == "npm-verify") {
@@ -44,7 +49,9 @@ func Run(args []string) {
 		// Before anything looks at the npm CLIs: a killed self-update may have left them moved aside.
 		// The every-start verify pass keeps an accepted update's backups until it has run.
 		if !(step == "npm-verify" && present) {
-			DefaultEnv(false).npmRecoverAside(true)
+			// npm-recover --discard is for the opt-in OFF start: the copies are about to be uninstalled,
+			// so an accepted update's backups have nothing left to be verified against.
+			DefaultEnv(false).npmRecoverAside(!discard)
 		}
 	}
 	switch step {

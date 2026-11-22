@@ -756,8 +756,11 @@ else
   # Returning lean to the pin is the boot-install REPIN's job above.
   # The 4 npm CLIs: remove the ~/.local shadow only when the baked pin (/usr/local) exists,
   # so PATH falls back to it at once (never in lean, where ~/.local is the pin itself).
+  # The copies are about to go, so an accepted update's backups need no verifying first: drop them
+  # (and put back a pending one's) before looking at the marker.
+  [ ! -e "$HOME/.local/.af-npm-update" ] || [ ! -x "$NPM_RECOVER_WA" ] || "$NPM_RECOVER_WA" boot-install npm-recover --discard || true
   if [ -e "$HOME/.local/.af-npm-update" ]; then
-    echo "[entrypoint] WARN: an earlier npm update's marker is still present; not uninstalling the npm CLIs in ~/.local"
+    echo "[entrypoint] WARN: an earlier npm update marker is still present; not uninstalling the npm CLIs in ~/.local"
   elif [ -x /usr/local/bin/claude ]; then
     npm uninstall -g --prefix "$HOME/.local" \
       @anthropic-ai/claude-code opencode-ai @opencode/cli @openai/codex @github/copilot >/dev/null 2>&1 || true

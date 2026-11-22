@@ -1314,7 +1314,7 @@ func TestNPMNarrowMarkerRecordsBackupsItCannotDelete(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { os.Chmod(parent, 0o755) })
-	f.env.npmNarrowMarker([]string{"claude"}, f.env.npmAsidesOf([]string{"codex"}))
+	f.env.npmNarrowMarker([]string{"claude"}, []string{"codex"})
 	if _, _, discard, ok, bad := f.env.npmReadMarkerFull(); !ok || bad || len(discard) != 1 || discard[0] != "codex" {
 		t.Fatalf("the undeletable backup is not recorded: discard=%v ok=%v bad=%v", discard, ok, bad)
 	}
@@ -1336,7 +1336,7 @@ func TestNPMNarrowMarkerDeletesNothingWhenItCannotRecord(t *testing.T) {
 	codex := f.plantNPMTree(t, "@openai/codex", "codex", "2.0.0")
 	f.write(t, filepath.Join(codex+npmBakSuffix, "VERSION"), "1.0.0")
 	f.write(t, filepath.Join(f.env.npmMarker(), "x"), "") // the marker path is a directory: the write cannot replace it
-	f.env.npmNarrowMarker([]string{"claude"}, f.env.npmAsidesOf([]string{"codex"}))
+	f.env.npmNarrowMarker([]string{"claude"}, []string{"codex"})
 	if _, err := os.Lstat(codex + npmBakSuffix); err != nil {
 		t.Fatal("a backup was deleted although the record could not be written")
 	}
@@ -1353,5 +1353,88 @@ func TestSelfUpdateNPMLeavesAnAcceptedUpdatesBackupsToTheFinalPass(t *testing.T)
 	}
 	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
 		t.Fatal("a new update started over unverified backups")
+	}
+}
+
+// bothRefuse makes the trees' parents of claude and codex refuse unlinking and renaming, so a
+// restore of the one and the delete of the other's backup both fail; the returned func undoes it.
+func (f *suFixture) bothRefuse(t *testing.T, claude, codex string) (undo func()) {
+	t.Helper()
+	dirs := []string{filepath.Dir(claude), filepath.Dir(codex)}
+	undo = func() {
+		for _, d := range dirs {
+			os.Chmod(d, 0o755)
+		}
+	}
+	t.Cleanup(undo)
+	return undo
+}
+
+// checkMixedMarkerSettles reads the marker the production path wrote and then lets recovery run
+// once the fault is gone: the stuck CLI goes back, the accepted CLI's backup is deleted, and the
+// marker with it.
+func (f *suFixture) checkMixedMarkerSettles(t *testing.T, claude, codex string, undo func()) {
+	t.Helper()
+	state, entries, discard, ok, bad := f.env.npmReadMarkerFull()
+	if !ok || bad || state != "pending" || len(entries) == 0 || f.env.npmEntryCLI(entries[0]) != "claude" || len(discard) != 1 || discard[0] != "codex" {
+		t.Fatalf("marker = %q %v %v ok=%v bad=%v\n%s", state, entries, discard, ok, bad, f.out)
+	}
+	undo()
+	f.env.npmRecoverAside(false)
+	if f.read(filepath.Join(claude, "VERSION")) != "1.0.0" {
+		t.Fatalf("claude's previous copy is not back\n%s", f.out)
+	}
+	if _, err := os.Lstat(codex + npmBakSuffix); err == nil {
+		t.Fatal("codex backup left behind: the next update would refuse on its name")
+	}
+	if _, err := os.Lstat(f.env.npmMarker()); err == nil {
+		t.Fatal("marker left after both groups settled")
+	}
+}
+
+func TestSelfUpdateNPMDoubleFaultRecordsTheUndeletableBackup(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	claude := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	codex := f.plantNPMTree(t, "@openai/codex", "codex", "1.0.0")
+	f.write(t, filepath.Join(f.npmDir, "body.claude"), brokenCLI) // the new claude does not run: its previous copy must go back
+	stub := strings.Replace(f.read(filepath.Join(f.npmDir, "npm")), `mkdir -p "$prefix/bin"`, `mkdir -p "$prefix/bin"; chmod 555 `+filepath.Dir(claude)+" "+filepath.Dir(codex), 1)
+	f.write(t, filepath.Join(f.npmDir, "npm"), stub)
+	undo := f.bothRefuse(t, claude, codex)
+	f.env.selfUpdateNPM()
+	f.checkMixedMarkerSettles(t, claude, codex, undo)
+}
+
+func TestNPMVerifyPresentDoubleFaultRecordsTheUndeletableBackup(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	claude := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	codex := f.plantNPMTree(t, "@openai/codex", "codex", "2.0.0")
+	f.write(t, filepath.Join(claude, "cli.sh"), brokenCLI) // the accepted claude stopped running
+	f.write(t, filepath.Join(claude+npmBakSuffix, "VERSION"), "1.0.0")
+	f.write(t, filepath.Join(claude+npmBakSuffix, "cli.sh"), "#!/bin/sh\necho 1.0.0\n")
+	f.write(t, filepath.Join(codex+npmBakSuffix, "VERSION"), "1.0.0")
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\ncodex\n")
+	undo := f.bothRefuse(t, claude, codex)
+	os.Chmod(filepath.Dir(claude), 0o555)
+	os.Chmod(filepath.Dir(codex), 0o555)
+	f.env.NPMVerifyPresentStep()
+	f.checkMixedMarkerSettles(t, claude, codex, undo)
+}
+
+func TestNPMNarrowMarkerKeepsALegacyPathAsThatOnePath(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	codex := f.plantNPMTree(t, "@openai/codex", "codex", "2.0.0")
+	f.write(t, filepath.Join(codex+npmBakSuffix, "VERSION"), "1.0.0")
+	mine := f.local("codex") + npmBakSuffix // not ours: the earlier release never recorded the bin side
+	f.write(t, mine, "mine")
+	f.write(t, f.env.npmMarker(), "accepted\n"+codex+"\nclaude\n")
+	f.env.npmKeepPendingFor([]string{"claude"})
+	if f.read(mine) != "mine" {
+		t.Fatal("a file that is not ours was deleted")
 	}
 }

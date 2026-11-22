@@ -276,7 +276,7 @@ func (e Env) selfUpdateNPM() {
 		// A previous copy could not be put back: its backup and the marker stay, so the next
 		// start retries. The accepted CLIs' backups go now, or the pending marker's restore would
 		// put them over their new copies; the marker lists only the stuck CLIs once they are gone.
-		e.npmNarrowMarker(npmCLINames(stuck), moved)
+		e.npmNarrowMarker(npmCLINames(stuck), npmCLINames(moved))
 	case len(moved) > 0:
 		// Accepted: the marker says so, and the backups stay until the start's final verify pass
 		// (`npm-verify --present`) has looked at the new copies once more; it, or the next
