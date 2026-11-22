@@ -366,7 +366,7 @@
   pointer-events: none;
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
 }
-.ux-tip.right {
+.ux-tip.ux-tip-right {
   transform: translateX(-100%);
 }
 .uxt-head {

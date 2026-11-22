@@ -670,7 +670,7 @@
 .arch-modal-tall.ui-modal {
   height: min(88dvh, 820px);
 }
-.arch-modal-tall .ui-modal-body {
+.arch-modal-tall .arch-modal-body {
   min-height: 0;
   overflow: hidden;
 }

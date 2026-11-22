@@ -237,7 +237,7 @@ export function MarpView({ source }: { source?: string }) {
                 ←/→ arrow over them (see styles.css). The middle is inert. */}
             <div className="marp-nav left" onClick={() => go((c) => c - 1)} title={tr("view.prev_slide")} />
             <div className="marp-host" ref={hostRef} />
-            <div className="marp-nav right" onClick={() => go((c) => c + 1)} title={tr("view.next_slide")} />
+            <div className="marp-nav marp-nav-right" onClick={() => go((c) => c + 1)} title={tr("view.next_slide")} />
           </>
         )}
       </div>

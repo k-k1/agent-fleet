@@ -83,6 +83,14 @@
 /* Narrow pane: the full path duplicates the filename and is the first thing to
    drop; very narrow, also drop the size/lines meta so the bar stays one clean
    line (filename + type tag + download). (.fileview is the `filepane` container.) */
+/* Whatever follows the unit in the head (the action cluster) must not push a second time.
+   Same shape as the chat head's idle chip (ui/ui.css): this unit normally grows
+   (flex:1 1 0) and swallows the free space, so nothing is left to split — until the
+   narrow-pane rule below drops it to `flex: 0 0 auto` and the two auto margins strand
+   the download icon mid-row. */
+.view-head .fi-end ~ * {
+  margin-left: 0;
+}
 @container filepane (max-width: 520px) {
   .fileinfo .fi-path {
     display: none;

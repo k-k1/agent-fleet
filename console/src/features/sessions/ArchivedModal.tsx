@@ -262,7 +262,7 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir, session: sco
 
   return (
     <Modal title={tr("arch.title")} onClose={onClose} className={tall ? "arch-modal arch-modal-tall" : "arch-modal"}>
-      <div className="ui-modal-body">
+      <div className="ui-modal-body arch-modal-body">
         {items === null && <p className="sm-muted">{tr("chat.ph_loading")}</p>}
         {items && total === 0 && <p className="sm-muted">{tr("arch.empty")}</p>}
         {items && total > 0 && (

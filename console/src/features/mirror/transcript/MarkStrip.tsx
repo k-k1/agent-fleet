@@ -37,7 +37,7 @@ export function MarkStrip({ marks, storageKey }: { marks: TranscriptMarksWiring;
 
   return (
     <section className={"mirror-marks mirror-disclosure" + (open ? " open" : "")}>
-      <div className="mirror-marks-head">
+      <div className={"mirror-marks-head" + (open ? " mirror-marks-head-open" : "")}>
         <button
           type="button"
           className="mirror-marks-toggle"

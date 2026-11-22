@@ -1154,10 +1154,6 @@
   gap: 6px;
   margin-left: auto;
 }
-/* In a group the actions own the right alignment themselves. */
-.view-head-actions .mirror-toggle {
-  margin-left: 0;
-}
 /* ONE auto margin per band. `.session-state` carries its own margin-left:auto so
    it lands at the right edge of a RAIL ROW (sessions.css), and the chat head is
    the one band that renders that chip as a DIRECT child — so the band had two
@@ -1169,14 +1165,10 @@
    chat head matches: the terminal/mirror chip is nested inside .pane-session, a
    flex container of its own, so its auto margin never reaches this band.
 
-   `.fi-end` (path + download, viewer.css) is the same shape and needs the same
-   treatment, but only shows it on a NARROW pane: it normally grows (flex:1 1 0)
-   and swallows the free space, so there is nothing left to split — until the
-   `@container filepane (max-width: 520px)` rule drops it to `flex: 0 0 auto` and
-   the two auto margins strand the download icon mid-row. Any new auto-margined
-   child of this band belongs on this list. */
-.view-head .session-state ~ .view-head-actions,
-.view-head .fi-end ~ .view-head-actions {
+   The file head's path + download unit has the same shape; its rule is in
+   viewer/parts/fileinfo.css. Any new auto-margined child of this band belongs on
+   this list. */
+.view-head .session-state ~ .view-head-actions {
   margin-left: 0;
 }
 .view-title {

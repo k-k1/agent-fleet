@@ -249,7 +249,7 @@ export function SettingsDialog() {
 
   return (
     <Modal title={tr("set.title")} onClose={closeSettings} className="settings-modal">
-      <div className="ui-modal-body">
+      <div className="ui-modal-body settings-modal-body">
         <div className={"settings-layout" + (entered ? " entered" : "")}>
           <nav className="settings-rail" ref={railRef} aria-label={tr("set.title")}>
             {GROUPS.map((g) => (

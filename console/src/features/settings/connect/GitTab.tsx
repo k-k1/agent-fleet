@@ -300,7 +300,7 @@ function GlobalIdentity() {
   return (
     <>
       <div className="ds-title">{tr("git.global_identity_cat")}</div>
-      <div className="git-identity solo">
+      <div className="git-identity git-identity-solo">
         <div className="gi-row">
           <input className="cinput" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
           <input className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />

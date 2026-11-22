@@ -62,7 +62,7 @@
   border-top: 1px solid var(--border);
 }
 
-.git-identity.solo {
+.git-identity.git-identity-solo {
   border-top: none;
   padding-top: 8px;
 }
