@@ -15,10 +15,10 @@ const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.met
 // Because this check reads source text, it depends on how many files the tab is split into.
 // The two memory entries are MemoryTab (Agent memory shell) with its views/ and the panels they
 // mount, and MemorySnapshotsTab (root overview, history) / memoryRestore (restore) /
-// memoryTransfer (export and import), so the family is concatenated and read as one tab body.
+// memoryTransfer (export and import), and memoryApi (where the endpoint paths now live), so the family is concatenated and read as one tab body.
 // Add any new file here: forget one and the check that is supposed to watch for unregistered
 // REST paths silently stops covering it.
-const tab = ["./MemoryTab.tsx", "./MemorySnapshotsTab.tsx", "./views/AgentMemoryStatus.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx", "./memoryProposals.tsx", "./memoryClaudeImport.tsx", "./memoryMuseImport.tsx", "./memoryClaudeExport.tsx", "./memoryProjectMove.tsx"]
+const tab = ["./MemoryTab.tsx", "./MemorySnapshotsTab.tsx", "./views/AgentMemoryStatus.tsx", "./memoryTypes.ts", "./memoryRestore.tsx", "./memoryTransfer.tsx", "./memoryChanges.tsx", "./memoryProposals.tsx", "./memoryApi.ts", "./memoryClaudeImport.tsx", "./memoryMuseImport.tsx", "./memoryClaudeExport.tsx", "./memoryProjectMove.tsx"]
   .map(read)
   .join("\n");
 const dialog = read("../SettingsDialog.tsx");
@@ -60,6 +60,8 @@ describe("agent memory tab in the settings modal", () => {
         "api/agents/memory/claude",
         // The muse project-memory import (#1991; same regex stop).
         "api/agents/memory/muse",
+        // The bundle import of AF memory (#1983; same regex stop at the hyphen of af-import).
+        "api/agents/memory/af",
       ]),
     );
     for (const p of new Set(paths)) {
@@ -88,7 +90,7 @@ describe("agent memory tab in the settings modal", () => {
   });
 
   it("registers every consolidator route the Suggestions view calls, with the writes signed", () => {
-    const src = read("./memoryProposals.tsx");
+    const src = read("./memoryApi.ts");
     for (const r of ["", "/proposals", "/proposal"]) {
       expect(cpRoutes).toContain(`"GET /api/agents/memory-consolidation${r}"`);
       expect(agentRoutes).toContain(`"GET /agents/memory-consolidation${r}"`);
@@ -102,7 +104,7 @@ describe("agent memory tab in the settings modal", () => {
     // The manual run (#3702): signed on both sides, and the Console posts to it.
     expect(cpRoutes).toMatch(/"POST \/api\/agents\/memory-consolidation\/run"[^\n]*sign: signBody/);
     expect(agentRoutes).toMatch(/"POST \/agents\/memory-consolidation\/run", memberorigin\.Require/);
-    expect(src).toContain("${BASE}/run");
+    expect(src).toContain("${CONSOL}/run");
     // Every dynamic key the view builds exists in both catalogs.
     const keys = [
       ...["budget", "interrupted", "workspace_stopped", "never_idle", "next_run", "run_failed"].map((c) => `mem.cs_cause_${c}`),
