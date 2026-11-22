@@ -97,8 +97,11 @@ interface EditorSlot {
   recovery: RecoveryCoordinator;
   mounted: number;
   listeners: Set<(model: FileEditorModel | null) => void>;
-  /** The newest mounted hook's save / discard; they stay bound to this slot after it unmounts. */
+  /** Save / discard bound to this slot and to `io`, whatever a hook points at: they serve the
+   *  close / reload guards after the hook unmounted or moved to another memory. */
   api: { save(): Promise<boolean>; discard(signal?: AbortSignal): Promise<boolean> } | null;
+  /** The adapter this slot was opened with (the latest mounted hook's), for the guard's calls. */
+  io: FileEditorIO | null;
   unregister: (() => void) | null;
 }
 
@@ -116,6 +119,7 @@ function newSlot(key: string, path: string, model: FileEditorModel | null): Edit
     mounted: 0,
     listeners: new Set(),
     api: null,
+    io: null,
     unregister: null,
   };
 }
@@ -305,8 +309,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     [runUnknownRecovery],
   );
 
-  const save = useCallback(async (): Promise<boolean> => {
-    const owner = slotRef.current;
+  const saveOn = useCallback(async (owner: EditorSlot, io: FileEditorIO): Promise<boolean> => {
     if (owner.saving.current) return owner.saving.current;
     const current = owner.model.current;
     if (!current || !current.dirty) return true;
@@ -318,9 +321,8 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       return false;
     }
     setModelOn(owner, saving);
-    // The adapter of the memory this save is for: the hook may point at another one by the time a
-    // recovery read is needed, and that adapter would read the wrong thing.
-    const io = ioRef.current;
+    // `io` is the adapter of the memory this save is for: the hook may point at another one by the
+    // time a recovery read is needed, and that adapter would read the wrong thing.
     const operation = (async () => {
       try {
         const result = await io.save(snapshot.path, snapshot.content, snapshot.baseDiskRevision);
@@ -362,6 +364,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       releaseIfIdle(owner);
     }
   }, [runConflictRecovery, runUnknownRecovery, setModelOn]);
+  const save = useCallback((): Promise<boolean> => saveOn(slotRef.current, ioRef.current), [saveOn]);
 
   const edit = useCallback((content: string) => {
     const current = modelRef.current;
@@ -369,8 +372,8 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     setModel(editBuffer(current, content));
   }, [setModel]);
 
-  const discard = useCallback(async (signal?: AbortSignal): Promise<boolean> => {
-    const requested = modelRef.current;
+  const discardOn = useCallback(async (owner: EditorSlot, io: FileEditorIO, signal?: AbortSignal): Promise<boolean> => {
+    const requested = owner.model.current;
     if (!requested) return true;
     if (signal?.aborted) return false;
     const path = requested.path;
@@ -381,21 +384,21 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       // discard target. The waits themselves are cancellable: when the guard
       // request aborts (Back/cancel while this discard is pending), the
       // navigation was already refused, so the buffer must never be cleaned.
-      if (savingRef.current) await savingRef.current;
+      if (owner.saving.current) await owner.saving.current;
       if (signal?.aborted) return false;
-      let current = modelRef.current;
+      let current = owner.model.current;
       if (!current || current.path !== path) return false;
 
       if (
         current.phase === "save_state_unknown" &&
         (!current.unknownObservation || current.unknownObservation.kind === "unavailable")
       ) {
-        await recoverUnknown();
+        await runUnknownRecovery(owner, io);
       } else if (current.phase === "conflict_remote_unavailable") {
-        await recoverConflict();
+        await runConflictRecovery(owner, io);
       }
       if (signal?.aborted) return false;
-      current = modelRef.current;
+      current = owner.model.current;
       if (!current || current.path !== path) return false;
 
       // Another discard of the same buffer waited on the same save / read and finished first:
@@ -405,29 +408,30 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       // the buffer: it stays, and the guard / button answers "not discarded".
       if (current.bufferGeneration !== requested.bufferGeneration || current.bufferRevision !== requested.bufferRevision) return false;
 
-      mergeMineRef.current = null;
-      setModel(discardToBase(current, !!ioRef.current.discardUnconfirmed));
+      owner.mergeMine.current = null;
+      setModelOn(owner, discardToBase(current, !!io.discardUnconfirmed));
       return true;
     } catch {
       // Without a verified live snapshot, marking the buffer clean would invent
       // a disk base. Keep the guard open so the user can retry or cancel.
       return false;
     }
-  }, [recoverConflict, recoverUnknown, setModel]);
+  }, [runConflictRecovery, runUnknownRecovery, setModelOn]);
+  const discard = useCallback((signal?: AbortSignal): Promise<boolean> => discardOn(slotRef.current, ioRef.current, signal), [discardOn]);
 
   useEffect(() => {
-    const previous = slot.api;
-    const api = { save, discard };
-    slot.api = api;
-    return () => {
-      // Unmounted, these callbacks stay bound to this slot and keep serving its guard. But a
-      // hook moving to another file (the render already pointed slotRef there) takes them
-      // along: left with unsaved work, this slot goes back to the api it had before (an
-      // unmounted hook's, still bound to it) or to none, which the guard treats as unable to
-      // proceed.
-      if (slot.api === api && slotRef.current !== slot) slot.api = previous;
+    slot.io = io;
+  }, [slot, io]);
+
+  // Bound to this slot and its adapter, never to the hook's current pointer: when the hook moves
+  // to another memory (or unmounts) a failed save or text added after a send must still be
+  // savable / discardable from the guard.
+  useEffect(() => {
+    slot.api = {
+      save: () => saveOn(slot, slot.io ?? ioRef.current),
+      discard: (signal) => discardOn(slot, slot.io ?? ioRef.current, signal),
     };
-  }, [slot, save, discard]);
+  }, [slot, saveOn, discardOn]);
 
   useEffect(() => {
     const listener = (next: FileEditorModel | null) => setReactModel(next);

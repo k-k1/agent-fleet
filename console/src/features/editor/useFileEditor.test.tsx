@@ -1208,3 +1208,84 @@ describe("useFileEditor across unmount (tab switch)", () => {
     expect(editor!.model?.dirty).toBe(false);
   });
 });
+
+describe("useFileEditor guard after the hook moved to another memory", () => {
+  const bGiven = { path: "repos/b.txt", content: "other\n", revision: revisionOf("other\n") };
+
+  function adapters() {
+    const ioA: FileEditorIO = { load: vi.fn(), save: vi.fn() };
+    const ioB: FileEditorIO = { load: vi.fn(), save: vi.fn() };
+    return { ioA, ioB };
+  }
+
+  async function moveToB(ioB: FileEditorIO) {
+    given = bGiven;
+    givenIo = ioB;
+    await act(async () => {
+      renderer!.update(<Harness />);
+    });
+  }
+
+  it("saves A's refused buffer through A's adapter from the guard", async () => {
+    const { ioA, ioB } = adapters();
+    givenIo = ioA;
+    const mine = "mine\n";
+    vi.mocked(ioA.save).mockResolvedValueOnce({ ok: false, status: 400, error: { code: "invalid_request", message: "no" } });
+    const current = await renderEditor();
+    await act(async () => current.edit(mine));
+    await act(async () => {
+      await current.save();
+    });
+    expect(editor!.model?.phase).toBe("dirty");
+    await moveToB(ioB);
+    expect(editor!.model?.path).toBe(bGiven.path);
+
+    vi.mocked(ioA.save).mockResolvedValueOnce({
+      ok: true,
+      path: initial.path,
+      size: mine.length,
+      revision: revisionOf(mine),
+    });
+    const decision = confirmDirtyNavigation("history");
+    const request = currentDirtyGuardRequest()!;
+    let saved!: boolean;
+    await act(async () => {
+      saved = await saveDirtyGuardRequest(request.id);
+    });
+    await expect(decision).resolves.toBe(true);
+    expect(saved).toBe(true);
+    expect(ioA.save).toHaveBeenCalledTimes(2);
+    expect(ioB.save).not.toHaveBeenCalled();
+    expect(dirtyPaneIds()).toEqual([]);
+  });
+
+  it("discards text A gained after a send from the guard", async () => {
+    const { ioA, ioB } = adapters();
+    givenIo = ioA;
+    const sent = "sent\n";
+    const pending = deferred<PutFileResult>();
+    vi.mocked(ioA.save).mockReturnValueOnce(pending.promise);
+    const current = await renderEditor();
+    await act(async () => current.edit(sent));
+    let save!: Promise<boolean>;
+    await act(async () => {
+      save = current.save();
+      await Promise.resolve();
+    });
+    await act(async () => current.edit(sent + "more\n"));
+    pending.resolve({ ok: true, path: initial.path, size: sent.length, revision: revisionOf(sent) });
+    await act(async () => {
+      await save;
+    });
+    expect(editor!.model?.dirty).toBe(true);
+    await moveToB(ioB);
+
+    const decision = confirmDirtyNavigation("history");
+    const request = currentDirtyGuardRequest()!;
+    await act(async () => {
+      await discardDirtyGuardRequest(request.id);
+    });
+    await expect(decision).resolves.toBe(true);
+    expect(dirtyPaneIds()).toEqual([]);
+  });
+});

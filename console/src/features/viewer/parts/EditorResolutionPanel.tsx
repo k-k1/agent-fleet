@@ -21,6 +21,10 @@ export interface EditorResolutionPanelProps {
   /** False where a resave of the text already stored would only be refused (a new memory at
    *  revision 0); the choice left is to accept it. Default true. */
   canResaveStored?: boolean;
+  /** Offered with the unavailable-remote answer when the memory the save was for exists but cannot
+   *  be matched to it: opens that memory. Replaces the generic text with `existingText`. */
+  onOpenExisting?: () => void;
+  existingText?: string;
   /** Replaces the "sent content is live" sentence for a store that is not a file. */
   sentLiveText?: string;
 }
@@ -74,7 +78,7 @@ export function EditorResolutionPanel(props: EditorResolutionPanelProps) {
           ? (props.sentLiveText ?? tr("editor.unknown.sent_live"))
           : observation?.kind === "old_base_live"
             ? tr("editor.unknown.old_base")
-            : tr("editor.unknown.unavailable")}
+            : (props.onOpenExisting && props.existingText) || tr("editor.unknown.unavailable")}
       </p>
       <div className="file-editor-actions">
         {observation?.kind === "sent_live" && (
@@ -88,6 +92,9 @@ export function EditorResolutionPanel(props: EditorResolutionPanelProps) {
         )}
         {(!observation || observation.kind === "unavailable") && (
           <button type="button" autoFocus onClick={props.onRetryUnknown}>{tr("editor.unknown.retry")}</button>
+        )}
+        {props.onOpenExisting && (!observation || observation.kind === "unavailable") && (
+          <button type="button" onClick={props.onOpenExisting}>{tr("mem.br_open_existing")}</button>
         )}
         <button type="button" onClick={props.onCopyMine}>{tr("editor.copy_mine")}</button>
         <button type="button" onClick={props.onClose}>{tr("editor.close_without_save")}</button>
