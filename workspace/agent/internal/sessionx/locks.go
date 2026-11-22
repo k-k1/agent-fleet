@@ -136,7 +136,7 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	// Not inside a working-copy delete: see WithDeletionGate.
+	// Not while a working-copy delete decides: see deletionGate.
 	deletionGate.Lock()
 	defer deletionGate.Unlock()
 	sessionLockMu.Lock()
@@ -144,6 +144,11 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 	m, ok := session.ReadMeta(name)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
+		return
+	}
+	if gitx.UnderDeletion(m.Dir) {
+		httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(),
+			"the working copy of this session is being deleted, so it cannot be locked now")
 		return
 	}
 	m.Locked = req.Locked
@@ -195,13 +200,17 @@ func updateSessionMetaChecked(name string, fn func(m *session.Meta) bool) (m ses
 	return m, true, nil
 }
 
-// deletionGate serialises a working-copy delete (gitx.HandleDeleteRepo, from its guards to
-// settling its sessions) against the lock endpoints. Without it a lock set while `git worktree
-// remove` ran was answered "locked" and the folder was deleted anyway (ADR 0101). Order: the
-// gate is always taken first, never while holding sessionLockMu or lockMu.
+// deletionGate serialises the decision of a working-copy delete (gitx.HandleDeleteRepo: its
+// guards and the "being deleted" mark, gitx.BeginDelete) against the lock endpoints. A lock
+// request either lands before the guards read it, and the delete is refused, or meets the mark
+// and is refused itself (409), so a lock is never answered "locked" for a folder that then goes
+// (ADR 0101). The delete's slow work runs after the gate is released, which is what lets deletes
+// of different copies overlap. Order: the gate is always taken first, never while holding
+// sessionLockMu or lockMu.
 var deletionGate sync.Mutex
 
-// WithDeletionGate runs fn inside the deletion gate (gitx takes it through its deps).
+// WithDeletionGate runs fn inside the deletion gate (gitx takes it through its deps). Keep fn
+// short: everything queued behind it, lock requests included, waits for it.
 func WithDeletionGate(fn func()) {
 	deletionGate.Lock()
 	defer deletionGate.Unlock()
@@ -273,8 +282,13 @@ func HandleRepoLock(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	deletionGate.Lock() // not inside a working-copy delete: see WithDeletionGate
+	deletionGate.Lock() // not while a delete decides: see deletionGate
 	defer deletionGate.Unlock()
+	if gitx.UnderDeletion(dir) {
+		httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(),
+			"this working copy is being deleted, so it cannot be locked now")
+		return
+	}
 	if err := SetRepoLock(dir, req.Locked); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "lock_save", err.Error())
 		return

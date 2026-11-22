@@ -85,6 +85,9 @@ func restoreDeletedWorktree(t gitx.WorktreeTombstone) error {
 }
 
 func recreateFromTombstone(dir string, t gitx.WorktreeTombstone) error {
+	if gitx.UnderDeletion(dir) || gitx.UnderDeletion(t.Parent) {
+		return &restoreConflict{gitx.ErrCodeDeleteInProgress(), "a delete of this working copy or of its base clone is still in progress; try again in a moment"}
+	}
 	if _, err := os.Lstat(dir); err == nil {
 		if gitx.IsGitRepo(dir) {
 			return nil // recreated since; nothing to put back

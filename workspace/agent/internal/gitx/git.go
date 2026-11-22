@@ -2077,27 +2077,52 @@ func HandleRepoFetch(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, st)
 }
 
-// HandleDeleteRepo deletes a working copy. Everything from the guards to settling its sessions
-// runs inside the deletion gate, which the lock endpoints take too: a lock set on the working
-// copy or on a session in it while the delete is in flight either lands before the guards read
-// it (and the delete is refused) or waits until the delete is over — it can no longer be
-// "accepted" and then deleted anyway (ADR 0101).
+// HandleDeleteRepo deletes a working copy. Only the decision runs inside the deletion gate,
+// which the lock endpoints take too: the guards, and the "being deleted" mark (delete_mark.go).
+// A lock set on the working copy or on a session in it while the delete is in flight either
+// lands before the guards read it (and the delete is refused) or meets the mark and is refused
+// itself — it can no longer be "accepted" and then deleted anyway (ADR 0101). The slow work
+// (tombstone, trash, `git worktree remove`) runs after the gate is released, so deletes of
+// different copies overlap.
 func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
-	withDeletionGate(func() { handleDeleteRepoGated(w, r) })
-}
-
-func handleDeleteRepoGated(w http.ResponseWriter, r *http.Request) {
 	dir, ok := RepoAnyDirFromPath(w, r)
 	if !ok {
 		return
 	}
+	tm := newDeleteTimer(dir)
+	defer tm.log()
+
+	// What kind of copy this is does not depend on any guard; read it before taking the gate.
+	svn := !IsGitRepo(dir) && isSvnRepo(dir)
+	linked := !svn && IsLinkedWorktree(dir)
+	parent := ""
+	if linked {
+		parent = WorktreeParent(dir)
+	}
+
+	var end func()
+	tm.step("gate", func() {
+		withDeletionGate(func() {
+			tm.step("guards", func() { end = decideDeleteRepo(w, dir, parent, linked) })
+		})
+	})
+	if end == nil {
+		return
+	}
+	defer end()
+	deleteRepoMarked(w, r, dir, parent, linked, svn, tm)
+}
+
+// decideDeleteRepo is the part of a delete that runs inside the gate. It returns the function
+// that clears the mark, or nil after answering the refusal itself.
+func decideDeleteRepo(w http.ResponseWriter, dir, parent string, linked bool) (end func()) {
 	// An import in flight is writing into this very folder; deleting it underneath
 	// leaves the git/svn process writing into a removed tree. Cancel the job first
 	// (DELETE /repos/jobs/{id}) — then the folder is an ordinary working copy again.
 	if repoJobActive(filepath.Base(dir)) {
 		httpx.WriteErr(w, http.StatusConflict, "job_running",
 			"this working copy is still being imported; cancel the import first")
-		return
+		return nil
 	}
 	// Deleting the working copy out from under live sessions is even worse than a
 	// branch switch: their cwd vanishes mid-flight. Refuse while any session runs
@@ -2106,7 +2131,7 @@ func handleDeleteRepoGated(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
 			fmt.Sprintf("%d session(s) are running in this working copy (%s); deleting it would break them. Stop those sessions first.",
 				len(running), strings.Join(running, ", ")))
-		return
+		return nil
 	}
 	// Deletion lock (docs/log/45): the working copy's own lock, and locked sessions living
 	// in it being taken down with it. Neither is passable with force=true — unlocking is the
@@ -2114,27 +2139,43 @@ func handleDeleteRepoGated(w http.ResponseWriter, r *http.Request) {
 	if repoLocked(dir) {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
 			"working copy is locked against deletion; unlock it first")
-		return
+		return nil
 	}
 	if locked := lockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeLockedSessions,
 			fmt.Sprintf("%d locked session(s) live in this working copy (%s); deleting it would strand them. Unlock them first.",
 				len(locked), strings.Join(locked, ", ")))
-		return
+		return nil
 	}
+	if linked && parent == "" {
+		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", "cannot resolve worktree parent")
+		return nil
+	}
+	end, ok, why := BeginDelete(dir, parent)
+	if !ok {
+		httpx.WriteErr(w, http.StatusConflict, errCodeDeleteInProgress, why)
+		return nil
+	}
+	return end
+}
+
+// deleteRepoMarked is the rest of a delete, outside the gate, with dir marked as being deleted.
+func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string, linked, svn bool, tm *deleteTimer) {
+	done := func() { httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")}) }
+
 	// An SVN working copy has no worktree registry — just a folder with a .svn dir.
 	// Remove it directly (after the session guard above); the git worktree logic below
 	// applies only to git working copies.
-	if !IsGitRepo(dir) && isSvnRepo(dir) {
-		if !trashShellSessionsUnder(w, dir) {
+	if svn {
+		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir) }) {
 			return
 		}
-		if err := os.RemoveAll(dir); err != nil {
+		if err := tm.stepErr("remove", func() error { return os.RemoveAll(dir) }); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 			return
 		}
-		shelveSessionsUnder(dir)
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
+		tm.step("shelve", func() { shelveSessionsUnder(dir) })
+		done()
 		return
 	}
 	force := r.URL.Query().Get("force") == "true" || r.URL.Query().Get("force") == "1"
@@ -2144,31 +2185,39 @@ func handleDeleteRepoGated(w http.ResponseWriter, r *http.Request) {
 	// worktree has submodules). Use `remove --force`, but gate it on our own dirty/ahead
 	// check so uncommitted or unpushed work isn't silently destroyed — the client must
 	// re-request with force=true to override.
-	if IsLinkedWorktree(dir) {
+	if linked {
 		if !force {
-			if st, err := GitStatus(dir); err == nil && (st.Dirty || st.Ahead > 0) {
+			dirty := false
+			tm.step("status", func() {
+				st, err := GitStatus(dir)
+				dirty = err == nil && (st.Dirty || st.Ahead > 0)
+			})
+			if dirty {
 				httpx.WriteErr(w, http.StatusConflict, errCodeWorktreeDirty,
 					"worktree has uncommitted or unpushed changes; pass force=true to delete anyway")
 				return
 			}
 		}
-		parent := WorktreeParent(dir)
-		if parent == "" {
-			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", "cannot resolve worktree parent")
-			return
-		}
 		// Record it in the trash before anything is removed, so the delete can be taken back:
 		// its commit pinned, its uncommitted work (untracked files included) snapshotted.
 		// Failing that, nothing is deleted — the same rule as the shell sessions below.
-		undo, ok := recordWorktreeTombstone(w, dir, parent)
-		if !ok {
+		var undo func()
+		if !tm.stepOK("tombstone", func() bool {
+			var ok bool
+			undo, ok = recordWorktreeTombstone(w, dir, parent)
+			return ok
+		}) {
 			return
 		}
-		if !trashShellSessionsUnder(w, dir) {
+		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir) }) {
 			undo()
 			return
 		}
-		if out, err := Combined(parent, "worktree", "remove", "--force", dir); err != nil {
+		var out string
+		if err := tm.stepErr("remove", func() (err error) {
+			out, err = removeWorktree(parent, dir)
+			return err
+		}); err != nil {
 			// No undo once the remove has run: one that fails part way (a directory it may not
 			// delete) has already taken files and often the registration — measured — and the
 			// trash entry is then the only copy of the uncommitted work. A worktree that is in
@@ -2176,29 +2225,28 @@ func handleDeleteRepoGated(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, out)
 			return
 		}
-		_ = Cmd(parent, "worktree", "prune").Run()
-		shelveSessionsUnder(dir)
-		httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
+		tm.step("shelve", func() { shelveSessionsUnder(dir) })
+		done()
 		return
 	}
 
 	// A main working copy with linked worktrees must not be removed — os.RemoveAll would
 	// break every worktree hanging off it. Refuse and let the user delete the worktrees
-	// first.
+	// first. (A worktree being deleted right now is refused by BeginDelete.)
 	if n := LinkedWorktreeCount(dir); n > 0 {
 		httpx.WriteErr(w, http.StatusConflict, errCodeHasWorktrees,
 			fmt.Sprintf("this working copy has %d worktree(s) branched off it; delete those first", n))
 		return
 	}
-	if !trashShellSessionsUnder(w, dir) {
+	if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir) }) {
 		return
 	}
-	if err := os.RemoveAll(dir); err != nil {
+	if err := tm.stepErr("remove", func() error { return os.RemoveAll(dir) }); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
-	shelveSessionsUnder(dir)
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")})
+	tm.step("shelve", func() { shelveSessionsUnder(dir) })
+	done()
 }
 
 // recordWorktreeTombstone writes the trash entry for a worktree about to be deleted and returns

@@ -95,6 +95,21 @@ Throwing one away is a separate operation: deleting it from the shelf. The confi
 A working-copy delete runs from its guards to settling its sessions inside a deletion gate that the lock endpoints
 also take, so a lock set during the delete either takes effect before it or waits until it is over.
 
+*Amended 2026-11-23 (#4833): the gate is held only for the decision.* Timing one delete of a merged worktree of
+this repo (about 750 MB with `node_modules`, a loaded host) gave status 0.2–0.75 s, tombstone 0.26–0.54 s,
+`git worktree remove` 1.1–1.6 s, and the guards, shell trash, prune and shelving a few milliseconds each. Holding
+all of that in one process-wide gate made a bulk delete serial however many requests the Console sent. Now the
+gate covers only the guards and a "being deleted" mark on the copy (`gitx.BeginDelete`); the tombstone, the shell
+trash, the removal and the shelving run after it is released. A lock request on a marked copy, or on a session
+in one, is refused with 409 `delete_in_progress` instead of waiting, so the guarantee is unchanged: no lock is
+answered "locked" for something that is then deleted. The mark is cleared when the delete ends, done or failed.
+Two deletes of the same copy, or of a worktree and its base clone, are refused the same way (409), and
+recreating or restoring a worktree under a marked copy or base clone is too. Nothing is removed before its
+tombstone is recorded, as before. Git takes no registry lock across `git worktree remove` of different worktrees
+of one base clone (three at once took about as long as one, and left no entry), so removes run concurrently;
+`git worktree prune` takes the write side of a per-base-clone lock, because it would otherwise drop the entry of
+a worktree whose folder another remove has just deleted. A rename-then-background-remove was not needed.
+
 A session whose working folder is gone can still be read, on the shelf or in the list, but not resumed
 ("Folder missing").
 
