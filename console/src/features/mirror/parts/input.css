@@ -52,11 +52,6 @@ history button
   align-items: stretch; /* chip + send share one width → read as a unit */
   gap: 6px;
 }
-.mirror-send {
-  flex: none;
-  height: 31px;
-  padding: 0 16px;
-}
 /* Composer history buttons: only on phones (no arrow keys). Hidden elsewhere. */
 .mirror-hist {
   display: none;

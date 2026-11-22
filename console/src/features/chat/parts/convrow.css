@@ -24,6 +24,10 @@
 .chat-open:hover {
   background: var(--hover-bg);
 }
+/* Conversation-row status chip: compact, sits after the count (not far-right auto). */
+.chat-open .session-state {
+  margin-left: 4px;
+}
 /* Shows in the left pane which chat is open. Same vocabulary as the session row
    (.sess-row): .is-open = shown in some pane (a restrained accent bar), .active = the
    conversation open in the focused pane, i.e. who you are talking to now (bar plus row

@@ -5,18 +5,6 @@
  *   rules or move them to another file (same-named global classes are not a conflict; they are
  *   silently merged in @import order). Index: ../mirror.css.
  */
-/* Carried-over exchanges (docs/log/75) — on screen when the session stopped, but the answer
-   never arrived. They must be visually distinguishable from a live pending card
-   (.mt-question / .mt-perm): the same question in the same shape reads as "I already answered
-   this and it came back", and hides that this one cannot be answered by key. Hence a neutral
-   frame rather than an attention colour, plus the first-line note (.mt-carried-note) saying
-   the answer never got through. */
-.mt-carried .mirror-turn-body {
-  border: 1px dashed color-mix(in srgb, var(--fg) 25%, transparent);
-  border-radius: 8px;
-  padding: 10px 12px;
-  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
-}
 .mt-carried-note {
   display: flex;
   align-items: flex-start;

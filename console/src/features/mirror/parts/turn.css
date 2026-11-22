@@ -235,6 +235,18 @@
 .mirror-turn-body {
   padding-left: 15px;
 }
+/* Carried-over exchanges (docs/log/75) — on screen when the session stopped, but the answer
+   never arrived. They must be visually distinguishable from a live pending card
+   (.mt-question / .mt-perm): the same question in the same shape reads as "I already answered
+   this and it came back", and hides that this one cannot be answered by key. Hence a neutral
+   frame rather than an attention colour, plus the first-line note (.mt-carried-note) saying
+   the answer never got through. */
+.mt-carried .mirror-turn-body {
+  border: 1px dashed color-mix(in srgb, var(--fg) 25%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+}
 /* Completed tool-using replies keep the final answer visible and fold everything before
    the last work boundary into one disclosure. While the session is working the parts stay
    flat; this row appears only at completion, avoiding a moving boundary during polling. */

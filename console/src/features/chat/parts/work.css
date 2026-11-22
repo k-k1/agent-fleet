@@ -12,11 +12,3 @@
 .chat-step + .chat-step {
   margin-top: 8px;
 }
-/* Karaoke read-aloud (AssistantTurn / turnTts, docs/log/24): highlights the block the sentence
-   being spoken belongs to and follows it with scrollIntoView(nearest). Same idea as the mirror's
-   .mirror-turn-body .tts-active. Applied to blocks (p, headings, li, paragraphs in blockquote). */
-.chat-body .tts-active {
-  background: color-mix(in srgb, var(--chat-accent, var(--accent)) 14%, transparent);
-  border-radius: 4px;
-  scroll-margin: 64px; /* keeps it clear of the header */
-}

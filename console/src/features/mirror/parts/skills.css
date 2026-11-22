@@ -192,3 +192,21 @@
   color: var(--skill-sub);
   font-size: 12px;
 }
+/* The mirror's skill list, dropped below the first-prompt field rather than over the agent and
+   model pickers above it. */
+.launch-prompt-field {
+  position: relative;
+}
+.launch-prompt-field > .mirror-skills {
+  top: calc(100% + 4px);
+  bottom: auto;
+  left: 0;
+  right: 0;
+}
+.launch-prompt-tools .mirror-skill-btn {
+  align-self: auto;
+  width: auto;
+  padding: 2px 8px;
+  border-color: var(--btn-border);
+  border-radius: 4px;
+}

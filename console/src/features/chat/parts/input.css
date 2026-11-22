@@ -27,7 +27,3 @@
     display: flex;
   }
 }
-/* Conversation-row status chip: compact, sits after the count (not far-right auto). */
-.chat-open .session-state {
-  margin-left: 4px;
-}

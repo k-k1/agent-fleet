@@ -69,6 +69,11 @@
   }
 }
 
+.mirror-send {
+  flex: none;
+  height: 31px;
+  padding: 0 16px;
+}
 /* Split Send (#1083): Send plus an attached chevron while a turn runs. The send part gives up
    some padding so the column keeps the width it has without the chevron. */
 .mirror-send-split {
