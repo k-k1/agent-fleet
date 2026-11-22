@@ -147,9 +147,9 @@ var bindOff atomic.Bool
 // touch that ended its proof). It is the later of the failed event's time and the newest time in the
 // file, so a clock that was set back cannot place a life beyond it. Kept in the gaps file (append
 // only, never cleared) and in memory.
-func noteGap(bound int64) {
+func noteGap(bound int64) bool {
 	gapsMem = append(gapsMem, bound)
-	appendGapLine(strconv.FormatInt(bound, 10))
+	return appendGapLine(strconv.FormatInt(bound, 10))
 }
 
 // Two marker lines of the gaps file stand beside the numeric bounds. gapPending says a first read
@@ -208,29 +208,29 @@ func readGapsFile() (gaps []int64, pending, ok bool) {
 }
 
 // resolveGapPending retires, once the evidence file is readable again, every life it holds when a
-// first read failed with nothing known: the bound is the newest time any of those events shows, so
-// a life stamped on a clock that was set back is still behind it. The caller holds bindIntervalsMu
-// and has just read evs whole. A life that starts after this call is not retired.
-func resolveGapPending(evs []bindEvent) {
+// first read failed with nothing known: the bound is the newest start time among those events, so a
+// life stamped on a clock that was set back is still behind it, while a life that starts after the
+// recovery is not retired (a moved clock inside the file is the business of Floor and Carry). The
+// caller holds bindIntervalsMu and has just read evs whole. false means the gaps file could not be
+// read this time: nothing is resolved and the caller binds nothing for this call; it is no reason to
+// turn binding off.
+func resolveGapPending(evs []bindEvent) bool {
 	_, pending, ok := readGapsFile()
 	if !ok {
-		bindOff.Store(true) // the marker cannot be read: nothing is proven
-		return
+		return false
 	}
 	if !pending {
-		return
+		return true
 	}
 	bound := int64(0)
 	for _, e := range evs {
 		bound = max(bound, e.At)
-		if e.Reg && e.Floor != math.MaxInt64 {
-			bound = max(bound, e.Floor)
-		}
 	}
-	if bound > 0 {
-		noteGap(bound)
+	if bound > 0 && !noteGap(bound) {
+		return true // binding is off already; the marker stays, so a restart retires them again
 	}
 	appendGapLine(gapResolved)
+	return true
 }
 
 // readGaps returns every recorded gap; ok=false when the file cannot be read whole.
@@ -309,8 +309,8 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent, e bindEvent) bool)
 		}
 		return
 	}
-	resolveGapPending(evs)
-	if e.Boot == "" { // not stamped: nothing orders it against the clock
+	resolveGapPending(evs) // a read failure leaves the marker for the next call
+	if e.Boot == "" {      // not stamped: nothing orders it against the clock
 		e.Reg, e.Floor = true, math.MaxInt64
 	}
 	if n := len(evs); n > 0 && e.Boot != "" {
@@ -790,7 +790,7 @@ func daemonBinder() bindFn {
 	bindIntervalsMu.Lock()
 	evs, ok := readBindEvents()
 	if ok {
-		resolveGapPending(evs)
+		ok = resolveGapPending(evs)
 	}
 	bindIntervalsMu.Unlock()
 	if !ok || len(evs) == 0 || bindOff.Load() {

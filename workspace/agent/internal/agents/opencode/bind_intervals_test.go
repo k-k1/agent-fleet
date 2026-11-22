@@ -486,3 +486,63 @@ func TestBindingUnknownGapRetiresOlderLivesAfterClockSetBack(t *testing.T) {
 		t.Error("a life after the resolution is bound")
 	}
 }
+
+// The first healthy read after the failure is an append (a daemon start), not a binder read: the
+// older life is retired there, the life that start begins is bound, and a recovery after a clock
+// correction does not retire it for good.
+func TestBindingUnknownGapResolvedByAppend(t *testing.T) {
+	bindT(t)
+	start(5000, 1, "A")
+	acct(5100, acctOut, 1)
+	gapsMem = nil
+	seenMaxAt.Store(0)
+	p := bindIntervalsPath()
+	good, _ := os.ReadFile(p)
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	start(600, 2, "B")
+	_ = os.Remove(p)
+	if err := os.WriteFile(p, good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gapsMem = nil // only the gaps file carries the state
+	start(9000, 3, "C")
+	acct(9100, acctOut, 3)
+	gapsMem = nil
+	b := daemonBinder()
+	if b == nil {
+		t.Fatal("no binder")
+	}
+	if got := b(routes.RouteOpencodeZen, false, 5500); got != "" {
+		t.Errorf("older life = %q, want none", got)
+	}
+	if got := b(routes.RouteOpencodeZen, false, 10000); got == "" {
+		t.Error("the life started after the recovery is bound")
+	}
+}
+
+// A gaps file that cannot be read for a moment gives no binder for that call and does not turn
+// binding off.
+func TestBindingGapsUnreadableIsTransient(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "A")
+	acct(1100, acctOut, 1)
+	gp := filepath.Join(paths.AgentConfigDir(), bindGapsFile)
+	if err := os.MkdirAll(gp, 0o700); err != nil { // a directory: the read fails
+		t.Fatal(err)
+	}
+	if daemonBinder() != nil {
+		t.Error("binder with an unreadable gaps file")
+	}
+	if bindOff.Load() {
+		t.Error("a read failure turned binding off")
+	}
+	_ = os.Remove(gp)
+	if daemonBinder() == nil {
+		t.Error("no binder after the gaps file is readable again")
+	}
+}
