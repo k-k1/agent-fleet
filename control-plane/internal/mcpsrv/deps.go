@@ -35,6 +35,11 @@ import (
 // which the memo core does the same for every face.
 type MemoRef struct{ Provider, Key, URL string }
 
+// MemoRecipe is the run recipe a tool call asks for (agentKind, model, effort, route). On a create
+// an empty string is no field; on an update nil leaves a field and "" clears it. The memo core
+// validates it for every face.
+type MemoRecipe struct{ AgentKind, Model, Effort, Route *string }
+
 type CP interface {
 	// --- Data ------------------------------------------------------------------
 	// Store is the CP metadata store. mcpsrv reads PATs, identities, memberships,
@@ -126,9 +131,9 @@ type CP interface {
 	// leaves the reference, an empty MemoRef clears it, a full one sets it. after is the
 	// prerequisites (ids or reference keys of the same queue); on an update nil leaves them and an
 	// empty list clears them. startAfter is the start time (RFC 3339 with an offset); on an update
-	// nil leaves it and "" clears it.
-	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef, after []string, startAfter string) (any, error)
-	MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int, ref *MemoRef, after *[]string, startAfter *string) (any, error)
+	// nil leaves it and "" clears it. recipe is the run recipe (agent, model, effort, route).
+	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef, after []string, startAfter string, recipe MemoRecipe) (any, error)
+	MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int, ref *MemoRef, after *[]string, startAfter *string, recipe MemoRecipe) (any, error)
 	MemoFlush(ctx context.Context, rt runtime.Runtime, membershipID, sessionName string, ids []string) (map[string]any, error)
 	// MemoDelete is delete_memo through the shared core, which refuses a message in a queue.
 	MemoDelete(ctx context.Context, membershipID, id string) error

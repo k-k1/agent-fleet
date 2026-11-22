@@ -660,6 +660,10 @@
             },
             "type": "array"
           },
+          "agentKind": {
+            "description": "Optional, for a note of an auto-run category only: the agent kind that runs it (one create_session accepts). Left out, the category's own setting is used, field by field. A refused value is an error, never ignored. Approving the note approves this too.",
+            "type": "string"
+          },
           "body": {
             "description": "note text (kind=text) or comment (kind=file)",
             "type": "string"
@@ -668,8 +672,16 @@
             "description": "sub-project label (optional)",
             "type": "string"
           },
+          "effort": {
+            "description": "Optional, for a note of an auto-run category only: the effort level it runs at (e.g. low, medium, high). Left out, the category's own setting is used, field by field. A refused value is an error, never ignored. Approving the note approves this too.",
+            "type": "string"
+          },
           "kind": {
             "description": "text | file",
+            "type": "string"
+          },
+          "model": {
+            "description": "Optional, for a note of an auto-run category only: the model it runs on (an id from list_models; must suit the agent). Left out, the category's own setting is used, field by field. A refused value is an error, never ignored. Approving the note approves this too.",
             "type": "string"
           },
           "refPath": {
@@ -696,6 +708,10 @@
           },
           "repo": {
             "description": "repo bucket, '' = 共通/未分類 (optional)",
+            "type": "string"
+          },
+          "route": {
+            "description": "Optional, for a note of an auto-run category only: the route the run uses (leave empty unless the model needs one). Left out, the category's own setting is used, field by field. A refused value is an error, never ignored. Approving the note approves this too.",
             "type": "string"
           },
           "startAfter": {
@@ -1587,6 +1603,10 @@
             },
             "type": "array"
           },
+          "agentKind": {
+            "description": "Optional, for a note of an auto-run category only: the agent kind that runs it (one create_session accepts). Left out, the category's own setting is used, field by field. A refused value is an error, never ignored. Approving the note approves this too. Omit to leave it as it is; \"\" clears it. Changing it on a released note sends it back to wait for release.",
+            "type": "string"
+          },
           "body": {
             "description": "new body (optional)",
             "type": "string"
@@ -1595,8 +1615,16 @@
             "description": "new category (optional)",
             "type": "string"
           },
+          "effort": {
+            "description": "Optional, for a note of an auto-run category only: the effort level it runs at (e.g. low, medium, high). Left out, the category's own setting is used, field by field. A refused value is an error, never ignored. Approving the note approves this too. Omit to leave it as it is; \"\" clears it. Changing it on a released note sends it back to wait for release.",
+            "type": "string"
+          },
           "id": {
             "description": "memo id (from list_memos)",
+            "type": "string"
+          },
+          "model": {
+            "description": "Optional, for a note of an auto-run category only: the model it runs on (an id from list_models; must suit the agent). Left out, the category's own setting is used, field by field. A refused value is an error, never ignored. Approving the note approves this too. Omit to leave it as it is; \"\" clears it. Changing it on a released note sends it back to wait for release.",
             "type": "string"
           },
           "position": {
@@ -1627,6 +1655,10 @@
           },
           "repo": {
             "description": "new repo bucket (optional)",
+            "type": "string"
+          },
+          "route": {
+            "description": "Optional, for a note of an auto-run category only: the route the run uses (leave empty unless the model needs one). Left out, the category's own setting is used, field by field. A refused value is an error, never ignored. Approving the note approves this too. Omit to leave it as it is; \"\" clears it. Changing it on a released note sends it back to wait for release.",
             "type": "string"
           },
           "startAfter": {

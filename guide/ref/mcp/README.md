@@ -81,7 +81,7 @@ How to read a cell:
 | Tool | What it does | Session | Assistant | Outside | Required parameters |
 |---|---|---|---|---|---|
 | `list_memos` | List your memo queue | ✓ | ✓ AF read | ✓ `read` | — |
-| `add_memo` | Add one memo to your memo queue; in an auto-run category it waits for your approval; an optional `reference` points at a work item without copying it, and an optional `startAfter` keeps it from running before that time | ✓ | ✓ AF write | ✓ `write` | `kind` |
+| `add_memo` | Add one memo to your memo queue; in an auto-run category it waits for your approval; an optional `reference` points at a work item without copying it, an optional `startAfter` keeps it from running before that time, and optional `agentKind`, `model`, `effort` and `route` choose what it runs on instead of the category's setting | ✓ | ✓ AF write | ✓ `write` | `kind` |
 | `update_memo` | Edit a memo; only the fields passed change (`reference`: leave out to keep it, `{}` to remove it). Editing an approved auto-run memo sends it back for approval | ✓ | ✓ AF write | ✓ `write` | `id` |
 | `defer_queue_item` | Hand the auto-run memo that started this session back to its queue, to run again later; applied only when the run ends, and dropped when the session worked on or has an open or merged pull request | ✓ only a session an auto-run started | — | — | — |
 | `delete_memo` | Delete a memo by its id; refused in an auto-run category | — | ✓ AF write | ✓ `write` | `id` |

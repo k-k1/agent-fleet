@@ -66,6 +66,10 @@ func memoTools() []toolSpec {
 							"reference":  memoRefSchemaJA(false),
 							"after":      memoAfterSchemaJA(false),
 							"startAfter": memoStartAfterSchemaJA(false),
+							"agentKind":  memoRecipeSchemaJA("agentKind", false),
+							"model":      memoRecipeSchemaJA("model", false),
+							"effort":     memoRecipeSchemaJA("effort", false),
+							"route":      memoRecipeSchemaJA("route", false),
 						},
 						"required": []string{"kind"},
 					},
@@ -104,6 +108,10 @@ func memoTools() []toolSpec {
 							"reference":  memoRefSchema(false),
 							"after":      memoAfterSchema(false),
 							"startAfter": memoStartAfterSchema(false),
+							"agentKind":  memoRecipeSchema("agentKind", false),
+							"model":      memoRecipeSchema("model", false),
+							"effort":     memoRecipeSchema("effort", false),
+							"route":      memoRecipeSchema("route", false),
 							"continuation": map[string]any{"type": "boolean", "description": "Only for a session a queue started: true when this note is the next part of the queued message you were given, for the same work item (give the same reference, repo and category). " +
 								"If your user's release of that message allows continuations, it runs without another release, up to the queue's limit. Otherwise it waits for a release like any note"},
 						},
@@ -159,6 +167,10 @@ func memoTools() []toolSpec {
 							"reference":  memoRefSchemaJA(true),
 							"after":      memoAfterSchemaJA(true),
 							"startAfter": memoStartAfterSchemaJA(true),
+							"agentKind":  memoRecipeSchemaJA("agentKind", true),
+							"model":      memoRecipeSchemaJA("model", true),
+							"effort":     memoRecipeSchemaJA("effort", true),
+							"route":      memoRecipeSchemaJA("route", true),
 						},
 						"required": []string{"id"},
 					},
@@ -190,6 +202,10 @@ func memoTools() []toolSpec {
 							"reference":  memoRefSchema(true),
 							"after":      memoAfterSchema(true),
 							"startAfter": memoStartAfterSchema(true),
+							"agentKind":  memoRecipeSchema("agentKind", true),
+							"model":      memoRecipeSchema("model", true),
+							"effort":     memoRecipeSchema("effort", true),
+							"route":      memoRecipeSchema("route", true),
 						},
 						"required": []string{"id"},
 					},
@@ -365,6 +381,61 @@ func memoStartAfterSchemaJA(update bool) map[string]any {
 	return map[string]any{"type": "string", "description": desc}
 }
 
+// memoRecipeSchema is one run-recipe argument (agentKind, model, effort, route) of the session's
+// add_memo and update_memo.
+func memoRecipeSchema(field string, update bool) map[string]any {
+	what := map[string]string{
+		"agentKind": "the agent kind that runs it",
+		"model":     "the model it runs on (an id that suits the agent)",
+		"effort":    "the effort level it runs at",
+		"route":     "the route the run uses (leave out unless the model needs one)",
+	}[field]
+	desc := "Only for a note of an auto-run category (queue=true): " + what + ". Left out, the category's own setting " +
+		"applies, field by field. Pick a heavier recipe only for work that needs it. A value the Control Plane refuses is an " +
+		"error, and releasing the note releases its recipe too."
+	if update {
+		desc += " Omit to keep it; \"\" removes it, and changing it on a released note sends it back to wait for release."
+	}
+	return map[string]any{"type": "string", "description": desc}
+}
+
+// memoRecipeSchemaJA is memoRecipeSchema for the operator assistant's Japanese tool texts.
+func memoRecipeSchemaJA(field string, update bool) map[string]any {
+	what := map[string]string{
+		"agentKind": "実行するエージェントの種類",
+		"model":     "実行するモデル（エージェントに合う id）",
+		"effort":    "実行する effort レベル",
+		"route":     "実行に使うルート（モデルが要るときだけ）",
+	}[field]
+	desc := "自動実行カテゴリ（queue=true）のメモだけ: " + what + "。省略するとカテゴリの設定を項目ごとに使う。拒否された値はエラーになり、解放するとこの指定ごと解放したことになる。"
+	if update {
+		desc += "省略で据え置き、\"\" で外す。解放済みのメッセージで変えると解放待ちに戻る。"
+	}
+	return map[string]any{"type": "string", "description": desc}
+}
+
+// memoRecipeProblem says why a recipe field the call asked for is not on the note the answer
+// returns, "" when every one is or when none was asked (a value of "" is a clear and asks for
+// nothing). An older Control Plane drops the fields, and success would then be a false report.
+func memoRecipeProblem(args json.RawMessage, answer string) string {
+	var want map[string]any
+	if json.Unmarshal(args, &want) != nil {
+		return ""
+	}
+	got := map[string]any{}
+	if json.Unmarshal([]byte(answer), &got) != nil {
+		return ""
+	}
+	for _, k := range []string{"agentKind", "model", "effort", "route"} {
+		// A non-string value is not this check's to read: the Control Plane refuses it.
+		if w, _ := want[k].(string); strings.TrimSpace(w) != "" && got[k] != strings.TrimSpace(w) {
+			return "The note is there, but its " + k + " was NOT kept as asked: this Control Plane does not support a run " +
+				"recipe yet, or returned an existing note unchanged. Do not report it as set; tell your user."
+		}
+	}
+	return ""
+}
+
 // memoWriteResult is the tool result of an add_memo or update_memo that the Control Plane
 // accepted. The answer goes back as it came, so the session sees `existing` and the state. A
 // reference that was sent but is missing from the answer means the Control Plane ignored it (an
@@ -383,6 +454,9 @@ func memoWriteResult(id json.RawMessage, args json.RawMessage, answer string) []
 			"The Control Plane answered: "+answer)
 	}
 	if msg := memoStartAfterProblem(args, answer, time.Now()); msg != "" {
+		return mcpToolErr(id, msg+" The Control Plane answered: "+answer)
+	}
+	if msg := memoRecipeProblem(args, answer); msg != "" {
 		return mcpToolErr(id, msg+" The Control Plane answered: "+answer)
 	}
 	return mcpTextResult(id, answer)

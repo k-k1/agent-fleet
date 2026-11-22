@@ -178,10 +178,11 @@ func (d cpDeps) MemoList(ctx context.Context, membershipID string) (any, error) 
 
 // The memo methods below are the /mcp face: memoFaceMCP is fixed here, and the producer is
 // the connection id mcpsrv reads from the authenticated principal.
-func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *mcpsrv.MemoRef, after []string, startAfter string) (any, error) {
+func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *mcpsrv.MemoRef, after []string, startAfter string, recipe mcpsrv.MemoRecipe) (any, error) {
 	dto, _, aerr := memoCreateVia(ctx, d.m.store, mv, memoDTO{
 		Repo: repo, Category: category, Kind: kind, Body: body, RefPath: refPath, Reference: memoRefFromMCP(ref), After: after,
-		StartAfter: startAfter,
+		StartAfter: startAfter, AgentKind: derefStr(recipe.AgentKind), Model: derefStr(recipe.Model),
+		Effort: derefStr(recipe.Effort), Route: derefStr(recipe.Route),
 	}, memoVia{face: memoFaceMCP, producer: connection})
 	if aerr != nil {
 		return nil, errors.New(aerr.message)
@@ -189,10 +190,10 @@ func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, connect
 	return dto, nil
 }
 
-func (d cpDeps) MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int, ref *mcpsrv.MemoRef, after *[]string, startAfter *string) (any, error) {
+func (d cpDeps) MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int, ref *mcpsrv.MemoRef, after *[]string, startAfter *string, recipe mcpsrv.MemoRecipe) (any, error) {
 	dto, aerr := memoUpdateFor(ctx, d.m.store, membershipID, id, memoPatch{
 		Repo: repo, Category: category, Body: body, RefPath: refPath, Position: position, Reference: memoRefFromMCP(ref), After: after,
-		StartAfter: startAfter,
+		StartAfter: startAfter, AgentKind: recipe.AgentKind, Model: recipe.Model, Effort: recipe.Effort, Route: recipe.Route,
 	}, memoVia{face: memoFaceMCP})
 	if aerr != nil {
 		return nil, errors.New(aerr.message)
@@ -230,4 +231,11 @@ func mcpAPIError(e *apiError) *mcpsrv.APIError {
 		return nil
 	}
 	return &mcpsrv.APIError{Status: e.status, Code: e.code, Message: e.message}
+}
+
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

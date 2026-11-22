@@ -61,6 +61,8 @@ type memoContinuationVerdict struct {
 	Seq   int
 	// RefURL is the given message's URL, which an admitted continuation carries instead of its own.
 	RefURL string
+	// Recipe is the given message's recipe, which an admitted continuation inherits unless it names its own.
+	Recipe string
 }
 
 // memoContinue decides whether message m, being created by via, is a continuation the member's
@@ -168,7 +170,7 @@ func memoContinue(tx store.MemoTxOps, membershipID string, m store.Memo, via mem
 		// the delivery's place back.
 		return memoContinuationVerdict{}, errors.New("memo chain: no place after the check")
 	}
-	return memoContinuationVerdict{Admitted: true, Root: root, Seq: seq, After: given.ID, RefURL: given.RefURL}, nil
+	return memoContinuationVerdict{Admitted: true, Root: root, Seq: seq, After: given.ID, RefURL: given.RefURL, Recipe: given.Recipe}, nil
 }
 
 // memoDeliveryPastDue is a delivery that is overdue, waiting to be retired, or older than the
@@ -192,6 +194,10 @@ func memoDeliveryPastDue(d store.MemoDelivery, q store.MemoQueue, now time.Time)
 func memoContinuationApply(m store.Memo, v memoContinuationVerdict, delivery string) store.Memo {
 	if v.Admitted {
 		m.RefURL = v.RefURL
+		// A continuation runs as the message it continues unless it names a recipe of its own.
+		if m.Recipe == "" {
+			m.Recipe = v.Recipe
+		}
 		m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStatePending, memoContentHash(m), memoNow(), store.MemoReleasedByContinuation
 		m.ChainID, m.ChainSeq, m.ChainDelivery, m.HeldReason = v.Root, v.Seq, delivery, ""
 		return m

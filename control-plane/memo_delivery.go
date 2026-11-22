@@ -33,6 +33,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
+	"github.com/k-k1/agent-fleet/control-plane/internal/memorecipe"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -359,6 +360,10 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 	// Pick the batch and check every message of it before anything is claimed: a refusal
 	// commits (the holds below stay), so a claim made before it would be left with no delivery.
 	var batch []store.Memo
+	// A run has one recipe: a batch holds only messages whose effective recipes are the same,
+	// and the first eligible message (oldest first) fixes it. One with another recipe is skipped
+	// and waits for its own run.
+	var batchRecipe memorecipe.Recipe
 	eligible := memoafter.EligibleIn(memoafter.TxLookup(tx, rows, time.Now()))
 	for _, m := range rows {
 		if len(batch) >= q.Batch {
@@ -393,9 +398,26 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 			}
 			continue
 		}
+		// A recipe the run could not be created with (a route another agent does not take, after
+		// a move or a change of the category's agent) sends the message back to a person.
+		if why := memoRecipeEffectiveProblem(q, m); why != "" {
+			if err := memoHoldForRecipe(tx, m, why); err != nil {
+				return none, nil, err
+			}
+			continue
+		}
+		// A message with another recipe is skipped before anything else is asked of it: it waits for
+		// its own run and must not stop this one.
+		rc := memorecipe.Effective(q, m)
+		if len(batch) > 0 && rc != batchRecipe {
+			continue
+		}
 		if why := memoDeliveryItemProblem(m); why != "" {
 			return none, &apiError{http.StatusConflict, errCodeMemoQueueItemInvalid,
 				fmt.Sprintf("message %s cannot be sent to a session: %s", m.ID, why)}, nil
+		}
+		if len(batch) == 0 {
+			batchRecipe = rc
 		}
 		batch = append(batch, m)
 	}
@@ -1810,7 +1832,9 @@ func (r *memoQueueRunner) closeOpen(ctx context.Context, d store.MemoDelivery, o
 
 // memoSendPlan is what a claimed delivery sends: the queue, its category and the messages.
 type memoSendPlan struct {
-	q        store.MemoQueue
+	q store.MemoQueue
+	// base is the category's own settings, q with the batch's recipe laid over them.
+	base     store.MemoQueue
 	c        store.MemoCategory
 	messages []store.Memo
 }
@@ -1835,6 +1859,14 @@ func (r *memoQueueRunner) send(ctx context.Context, d store.MemoDelivery) {
 	if len(plan.messages) == 0 {
 		notSent("no message is claimed by it")
 		return
+	}
+	// The batch was formed under the settings of that moment: if the category's defaults changed
+	// since, the messages may no longer share a recipe, and none is sent until they are grouped again.
+	for _, m := range plan.messages[1:] {
+		if memorecipe.Effective(plan.base, m) != memorecipe.Effective(plan.base, plan.messages[0]) {
+			notSent("the batch no longer shares one recipe")
+			return
+		}
 	}
 	kind := scheduleInjectKind(plan.q.AgentKind)
 	if err := agentkinds.CheckCreateKind(kind); err != nil {
@@ -2040,7 +2072,7 @@ func (r *memoQueueRunner) plan(ctx context.Context, d store.MemoDelivery) (memoS
 		if err != nil || !ok {
 			return err
 		}
-		p.q, p.c = q, c
+		p.q, p.base, p.c = q, q, c
 		rows, err := tx.ListMemosIn(c.Repo, c.Name)
 		if err != nil {
 			return err
@@ -2055,6 +2087,11 @@ func (r *memoQueueRunner) plan(ctx context.Context, d store.MemoDelivery) (memoS
 			if m, ok := byID[id]; ok {
 				p.messages = append(p.messages, m)
 			}
+		}
+		// The run uses the recipe its messages share (the claim batches only equal ones): the
+		// category's settings with the first message's recipe over them.
+		if len(p.messages) > 0 {
+			p.q = memorecipe.WithRecipe(q, p.messages[0])
 		}
 		return nil
 	})
