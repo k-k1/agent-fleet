@@ -47,12 +47,17 @@
   flex-wrap: wrap;
   gap: 8px;
 }
-.chat-plan .cp-title {
+.chat-plan .plan-title {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  flex: 1;
   font-size: 12px;
   font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .chat-plan .cp-ts {
   font-size: 11px;
@@ -119,7 +124,13 @@
   outline: none;
   border-color: var(--accent);
 }
-.chat-plan .cp-empty,
+.chat-plan .plan-empty {
+  margin: 0;
+  padding: 16px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
 .chat-plan .cp-note {
   margin: 0;
   font-size: 11px;

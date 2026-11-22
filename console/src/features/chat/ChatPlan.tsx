@@ -85,7 +85,7 @@ export function ChatPlan({ conversationId, plan, updatedAt, disabled, onUpdated,
   return (
     <section className="chat-plan" aria-label={tr("chat.plan.title")}>
       <header className="cp-head">
-        <span className="cp-title">
+        <span className="plan-title">
           <Icon name="checklist" /> {tr("chat.plan.title")}
         </span>
         {updatedAt ? <span className="cp-ts">{fmtDateTime(updatedAt)}</span> : null}
@@ -145,7 +145,7 @@ export function ChatPlan({ conversationId, plan, updatedAt, disabled, onUpdated,
           <MarkdownView source={plan} previewLinks />
         </div>
       ) : (
-        <p className="cp-empty muted">{tr("chat.plan.empty")}</p>
+        <p className="plan-empty muted">{tr("chat.plan.empty")}</p>
       )}
       <p className="cp-note muted">{tr("chat.plan.note")}</p>
     </section>
