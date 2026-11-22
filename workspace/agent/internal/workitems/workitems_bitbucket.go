@@ -107,6 +107,7 @@ func bitbucketSearchWorkItems(s *secrets.Data, queryID, query string) ([]workIte
 			rows[i].CanComment = true
 		}
 	}
+	bitbucketEnrichPullRequests(auth, bitbucketConnKey(s), rows)
 	return rows, nil
 }
 
@@ -140,7 +141,7 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 		"sort": {"-updated_on"},
 		"fields": {"values.id,values.title,values.state,values.draft,values.updated_on,values.comment_count," +
 			"values.links.html.href,values.author.display_name,values.author.nickname," +
-			"values.destination.repository.full_name"},
+			"values.destination.repository.full_name,values.source.commit.hash,values.destination.commit.hash"},
 	}
 	if filter != "" {
 		params.Set("q", filter)
@@ -210,7 +211,15 @@ func parseBitbucketPullRequests(body []byte, queryID string) ([]workItemOut, err
 				Repository struct {
 					FullName string `json:"full_name"`
 				} `json:"repository"`
+				Commit struct {
+					Hash string `json:"hash"`
+				} `json:"commit"`
 			} `json:"destination"`
+			Source struct {
+				Commit struct {
+					Hash string `json:"hash"`
+				} `json:"commit"`
+			} `json:"source"`
 			Links struct {
 				HTML struct {
 					Href string `json:"href"`
@@ -242,6 +251,7 @@ func parseBitbucketPullRequests(body []byte, queryID string) ([]workItemOut, err
 			Labels: []string{}, LabelColors: map[string]string{},
 			Repo: repo, UpdatedAt: bitbucketTimeToRFC3339(pr.UpdatedOn),
 			CommentCount: knownCount(pr.Comments),
+			srcHash:      pr.Source.Commit.Hash, dstHash: pr.Destination.Commit.Hash,
 		})
 	}
 	return out, nil

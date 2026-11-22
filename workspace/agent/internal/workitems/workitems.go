@@ -100,6 +100,9 @@ type workItemOut struct {
 
 	// nodeID is GitHub's global ID, the key the enrichment call looks rows up by. Not on the wire.
 	nodeID string
+	// srcHash and dstHash are a Bitbucket pull request's source and destination commit ids as the
+	// list read them: the cache key of its status enrichment. Not on the wire.
+	srcHash, dstHash string
 }
 
 // gitHubLabel is one entry of a GitHub issue's or pull request's `labels` array.

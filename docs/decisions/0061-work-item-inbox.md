@@ -664,3 +664,24 @@ pinned to the bottom of the rail. The rail draws every row the query returned an
 (150 rows, the work-items view filling the whole left pane) the fold left most of the pane empty and put a press in
 front of every row past the tenth. The in-rail filter (shown past 10 rows), the order and decision 15 (the cap is on the
 fetch, never the display) are unchanged.
+
+## Note (2026-11-23, #4840): Bitbucket pull request status is read per pull request, cached and capped
+
+Decision 17 amended for one case: "one saved query = one provider call" no longer holds for the CI and conflict status of
+Bitbucket rows. Bitbucket Cloud has no bulk endpoint for build statuses or mergeability (only Data Center does), and the
+list carries neither, so the rail would draw nothing where GitHub rows already show both. After the list call, each open
+or draft row gets two reads: `/statuses` and `/mergeability/checks`, parsed by the detail panel's own parsers.
+
+- The list adds `source.commit.hash` and `destination.commit.hash`. The answers are cached per connection, repository and
+  pull request: the checks keyed by the source hash, the conflict verdict by both hashes. A half is re-read only when its
+  own key changed, so an idle rail makes no status calls.
+- At most 10 pull requests are re-read per refresh, most recently updated first, 3 at a time. The others keep a valid
+  cached answer or stay "not read" and are reached on a later refresh.
+- Why the cap: repository reads are limited to 1,000 requests per hour per user (OAuth and API tokens), and the same budget
+  serves every query, the detail panel and merges. 10 pull requests are 20 calls per refresh, so a 5-minute refresh
+  spends at most 240 an hour even if every hash changed.
+- A 429 or `X-RateLimit-NearLimit: true` (under 20 % left) stops further status reads for that refresh, and these reads are
+  never retried. A failed or 500 read (custom merge checks that are unavailable answer 500) leaves the row "not read":
+  it draws nothing, never green. An "unknown" conflict verdict is shown but not cached. The list is never lost to any of it.
+
+Out of scope: Jira, Bitbucket Data Center (which has a bulk endpoint) and the detail panel.
