@@ -56,6 +56,7 @@ export function TtsAdminView() {
       const d = await putTtsMode(mode);
       if (isOk(d)) setData(d);
       else if (d) setErr(errText(d.error));
+      else setData(null);
     } finally {
       setBusy(false);
     }
@@ -66,12 +67,12 @@ export function TtsAdminView() {
     setDictBusy(true);
     try {
       const d = await putTtsDict(dict);
-      if (!isOk(d)) {
-        if (d) setErr(errText(d.error));
+      if (d && !isOk(d)) {
+        setErr(errText(d.error));
         return;
       }
       setErr("");
-      setData(d);
+      setData(d); // null stays a success, as it always did
       setSavedDict(dict);
       setTenantDict(dict); // applies to this browser's speech at once; other users on next load
     } finally {

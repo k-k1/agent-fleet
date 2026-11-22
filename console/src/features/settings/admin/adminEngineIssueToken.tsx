@@ -108,7 +108,13 @@ export function EngineIssueTokenPanel() {
     try {
       const d = await issueEngineToken(t, k);
       if (!isOk(d)) {
-        if (!d) return;
+        if (!d) {
+          // A null body shows nothing: the previous member's token must not stay on screen.
+          setErr("");
+          setIssued(null);
+          setShown(false);
+          return;
+        }
         // errDetail, not errText: `membership_inactive` and the two 404s all have a translation
         // for WHAT went wrong, and the CP's message is the only place the rest of the sentence
         // is ("restore the membership first", which tenant it looked in).

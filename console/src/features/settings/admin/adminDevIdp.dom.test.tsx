@@ -145,4 +145,15 @@ describe("DevIdpAdminView", () => {
     expect(text()).not.toContain("3");
     expect(host!.querySelectorAll(".form-err").length).toBeGreaterThan(1);
   });
+
+  it("drops the old value when the PUT answers a null body, instead of keeping it live", async () => {
+    api.mockResolvedValue(status());
+    apiJSON.mockResolvedValue(null);
+    await mount();
+    await act(async () => {
+      box().click();
+    });
+    expect(box().disabled).toBe(true);
+    expect(text()).not.toContain("https://af.example.com/dev-idp");
+  });
 });

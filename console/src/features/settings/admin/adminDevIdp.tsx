@@ -53,6 +53,11 @@ export function DevIdpAdminView() {
       const d = await putDevIdp(enabled);
       if (!isOk(d)) {
         if (d) setErr(errText(d.error));
+        else {
+          // A null body says nothing about what applied: drop the old value rather than keep it live.
+          setErr("");
+          setData(null);
+        }
         return;
       }
       setErr("");

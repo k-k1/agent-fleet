@@ -68,7 +68,7 @@ export function McpTrustedHostsView() {
     try {
       const d = await (method === "PUT" ? putMcpTrusted(body) : deleteMcpTrusted());
       if (!isOk(d)) {
-        if (d) setErr(errText(d.error));
+        setErr(d ? errText(d.error) : tr("admin.load_error"));
         return;
       }
       setErr("");

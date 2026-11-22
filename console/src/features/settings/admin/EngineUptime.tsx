@@ -108,8 +108,11 @@ export function EngineUptimePanel({ engineKey }: { engineKey: string }) {
       const w = widenForTimezone(range.from, range.to);
       const p = new URLSearchParams({ from: w.from, to: w.to });
       const d = await getEngineHourly(engineKey, String(p));
-      if (!isOk(d)) {
+      if (d && !isOk(d)) {
         setErr(tr("admin.engines_uptime_error"));
+        setData(null);
+      } else if (!d) {
+        setErr("");
         setData(null);
       } else {
         setErr("");
