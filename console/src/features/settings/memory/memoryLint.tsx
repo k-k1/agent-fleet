@@ -5,9 +5,10 @@
 // thing the member edits here is the retired-term list, which is a setting of the report.
 
 import { useEffect, useState } from "react";
-import { errDetail, errText } from "../../../core/api/client.ts";
+import { errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
+import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { isOk } from "../api.ts";
-import { useApiLoad, useApiOnce } from "../parts/useApiLoad.ts";
+import { useApiOnce } from "../parts/useApiLoad.ts";
 import { getLintTerms, getMemoryLint, getMemoryProjects, putLintTerms } from "./memoryApi.ts";
 import { useEscLayer } from "../../../lib/escLayer.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -50,23 +51,22 @@ export function LintPanel({
   const [stored, setStored] = useState<string[]>([]);
   const [rejected, setRejected] = useState<string[]>([]);
 
-  useApiLoad(
-    getMemoryProjects,
-    (res) => {
-      setLoadErr(isOk(res) ? "" : errText(res.error));
-      setRows(isOk(res) ? (res.projects ?? []) : []);
-    },
-    [reload],
-  );
-  useApiLoad(
-    getLintTerms,
-    (t) => {
-      setTerms(isOk(t) ? (t.terms ?? []).join("\n") : "");
-      setStored(isOk(t) ? (t.terms ?? []) : []);
-      setRejected(isOk(t) ? (t.rejected ?? []) : []);
-    },
-    [reload],
-  );
+  // The projects settle first and the terms are read after them, as one retried unit: a
+  // transient failure of either re-reads both, and the terms box stays disabled meanwhile.
+  useRetryLoad(async (signal) => {
+    const res = await getMemoryProjects();
+    if (signal.aborted) return true;
+    if (isTransientErr(res)) return false;
+    setLoadErr(isOk(res) ? "" : errText(res.error));
+    setRows(isOk(res) ? (res.projects ?? []) : []);
+    const t = await getLintTerms();
+    if (signal.aborted) return true;
+    if (isTransientErr(t)) return false;
+    setTerms(isOk(t) ? (t.terms ?? []).join("\n") : "");
+    setStored(isOk(t) ? (t.terms ?? []) : []);
+    setRejected(isOk(t) ? (t.rejected ?? []) : []);
+    return true;
+  }, [reload]);
 
   // Only the latest request may answer, so a slow report for an earlier scope never replaces the
   // one chosen now.

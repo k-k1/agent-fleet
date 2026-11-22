@@ -20,12 +20,13 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
-import { isOk, putCodexSettings } from "../api.ts";
+import { isOk } from "../api.ts";
 import { useApiOnce } from "../parts/useApiLoad.ts";
 import {
   getMemoryDiff,
   getMemoryRoots,
   getMemorySnapshots,
+  putCodexMemories,
   putMemorySettings,
   restoreMemory,
   takeMemorySnapshot,
@@ -173,7 +174,7 @@ export function MemorySnapshotsTab() {
   // right afterwards the root reads as enabled but not yet created (roots is re-read to take
   // the state from the Agent rather than assume it).
   const setCodexMemories = async (on: boolean) => {
-    const res = await putCodexSettings({ memories: on });
+    const res = await putCodexMemories(on);
     if (!isOk(res)) {
       toast(errText(res.error));
       return;

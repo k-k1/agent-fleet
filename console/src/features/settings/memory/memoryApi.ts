@@ -4,7 +4,7 @@
 //
 // Each write repeats its target id in the query as well as the body: the CP audit ledger reads
 // the URL only, never the body. Keep both when adding a write.
-import { api, apiJSON } from "../../../core/api/client.ts";
+import { api as rawApi, apiJSON as rawApiJSON } from "../../../core/api/client.ts";
 import type { ApiError } from "../../../core/api/client.ts";
 import type { Reply } from "../api.ts";
 import type {
@@ -38,6 +38,13 @@ import type {
   TreeKind,
   TreeProject,
 } from "./memoryTypes.ts";
+
+// A JSON `null` body is not an error: the call sites this replaced read `res?.error` and
+// `res?.field`, so null meant an empty success. Fold it to {} here, once, so `isOk` and the
+// callers can read `res.error` / `res.field` without a nullish check.
+const api = (path: string): Promise<never> => rawApi(path).then((r) => (r ?? {}) as never);
+const apiJSON = (path: string, method: string, body?: unknown): Promise<never> =>
+  rawApiJSON(path, method, body).then((r) => (r ?? {}) as never);
 
 /** A reply whose refusals also carry data (secret findings, what a broken-off move did): one
  *  object with an optional `error`, read with `if (res.error)` instead of `isOk`. */
@@ -80,6 +87,10 @@ export const applyMemoryImport = (
   body: { importId: string; mode: "replace" | "migrate"; scope: { projects: string[]; kinds: string[] } },
 ): Promise<Reply<CommitReply & { adopted?: boolean }>> =>
   apiJSON("api/agents/memory/import/apply?importId=" + encodeURIComponent(importId), "POST", body);
+
+/** Fleet-wide codex memories switch; the write lives in codex's own config through /codex/settings. */
+export const putCodexMemories = (memories: boolean): Promise<Reply<Ack>> =>
+  apiJSON("api/codex/settings", "PUT", { memories });
 
 // --- Auto-sync -----------------------------------------------------------------------------
 export const getAutoSync = (): Promise<Reply<AutoSyncStatus>> => api("api/agents/memory/auto-sync");
