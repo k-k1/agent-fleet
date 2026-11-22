@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -909,14 +910,14 @@ func TestCursorAliasInSymlinkedBinDirIsNotOurs(t *testing.T) {
 	// ~/.local/bin is a link to another tree whose own cursor install holds a relative alias.
 	other := filepath.Join(f.home, "other")
 	otherVer := filepath.Join(other, "share", "cursor-agent", "versions", "9.9")
-	os.MkdirAll(otherVer, 0o755)
-	os.WriteFile(filepath.Join(otherVer, "cursor-agent"), []byte("#!/bin/sh\n"), 0o755)
-	os.MkdirAll(filepath.Join(other, "bin"), 0o755)
-	os.Symlink("../share/cursor-agent/versions/9.9/cursor-agent", filepath.Join(other, "bin", "agent"))
+	mustSetup(t, os.MkdirAll(otherVer, 0o755))
+	mustSetup(t, os.WriteFile(filepath.Join(otherVer, "cursor-agent"), []byte("#!/bin/sh\n"), 0o755))
+	mustSetup(t, os.MkdirAll(filepath.Join(other, "bin"), 0o755))
+	mustSetup(t, os.Symlink("../share/cursor-agent/versions/9.9/cursor-agent", filepath.Join(other, "bin", "agent")))
 	bin := filepath.Join(f.home, ".local", "bin")
-	os.Rename(bin, filepath.Join(f.home, "oldbin"))
-	os.Symlink(filepath.Join(other, "bin"), bin)
-	os.Symlink(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent"), f.link())
+	mustSetup(t, os.Rename(bin, filepath.Join(f.home, "oldbin")))
+	mustSetup(t, os.Symlink(filepath.Join(other, "bin"), bin))
+	mustSetup(t, os.Symlink(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent"), f.link()))
 	if v, ok, err := f.env.aliasVersion(filepath.Join(bin, "agent"), "../share/cursor-agent/versions/9.9/cursor-agent"); ok || err != nil {
 		t.Errorf("another tree's alias read as ours: %q", v)
 	}
@@ -926,11 +927,11 @@ func TestCursorAliasReadlinkOneOffFailureAtDecisionIsFailed(t *testing.T) {
 	f := newCursor(t, goodCursorMembers(), "")
 	f.plant(t, "2026.1.1-abc", goodCursor, true)
 	f.plant(t, "2026.2.2-def", goodCursor, true)
-	os.Remove(f.link())
-	os.Symlink(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent"), f.link()) // main link on the pin
+	mustSetup(t, os.Remove(f.link()))
+	mustSetup(t, os.Symlink(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent"), f.link())) // main link on the pin
 	bin := filepath.Join(f.home, ".local", "bin")
 	oldT := filepath.Join(f.tree("2026.2.2-def"), "cursor-agent")
-	os.Symlink(oldT, filepath.Join(bin, "agent")) // alias on another version
+	mustSetup(t, os.Symlink(oldT, filepath.Join(bin, "agent"))) // alias on another version
 	f.env.Repin = true
 	orig := readlinkAlias
 	defer func() { readlinkAlias = orig }()
@@ -958,14 +959,14 @@ func TestCursorAliasThroughLinkedVersionsRootAndMissingOldVersionIsOurs(t *testi
 	// versions is a link to another volume and the old version's directory is already gone.
 	versions := filepath.Dir(f.tree("x"))
 	moved := filepath.Join(f.home, "vol", "versions")
-	os.MkdirAll(filepath.Dir(moved), 0o755)
+	mustSetup(t, os.MkdirAll(filepath.Dir(moved), 0o755))
 	if err := os.Rename(versions, moved); err != nil {
 		t.Fatal(err)
 	}
-	os.Symlink(moved, versions)
+	mustSetup(t, os.Symlink(moved, versions))
 	bin := filepath.Join(f.home, ".local", "bin")
 	alias := filepath.Join(bin, "agent")
-	os.Symlink("../share/cursor-agent/versions/2026.0.0-old/cursor-agent", alias)
+	mustSetup(t, os.Symlink("../share/cursor-agent/versions/2026.0.0-old/cursor-agent", alias))
 	f.env.Repin = true
 	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
 		t.Fatalf("rc=%d out=%s", rc, f.out)
@@ -979,11 +980,11 @@ func TestCursorAliasDotDotAfterLinkIsResolvedInOSOrder(t *testing.T) {
 	f := newCursor(t, goodCursorMembers(), "")
 	f.plant(t, "2026.1.1-abc", goodCursor, true)
 	other, third := filepath.Join(f.home, "other"), filepath.Join(f.home, "third")
-	os.MkdirAll(filepath.Join(third, "bin"), 0o755)
-	os.MkdirAll(filepath.Join(third, "shortcut", "9.9"), 0o755)
-	os.MkdirAll(other, 0o755)
-	os.Symlink(filepath.Dir(f.tree("x")), filepath.Join(other, "shortcut")) // would be ours
-	os.Symlink(filepath.Join(third, "bin"), filepath.Join(other, "hop"))
+	mustSetup(t, os.MkdirAll(filepath.Join(third, "bin"), 0o755))
+	mustSetup(t, os.MkdirAll(filepath.Join(third, "shortcut", "9.9"), 0o755))
+	mustSetup(t, os.MkdirAll(other, 0o755))
+	mustSetup(t, os.Symlink(filepath.Dir(f.tree("x")), filepath.Join(other, "shortcut"))) // would be ours
+	mustSetup(t, os.Symlink(filepath.Join(third, "bin"), filepath.Join(other, "hop")))
 	// hop/.. is "third", not "other": the target is third/shortcut/9.9/cursor-agent.
 	target := other + "/hop/../shortcut/9.9/cursor-agent"
 	if _, ok, err := f.env.aliasVersion(filepath.Join(f.home, ".local", "bin", "agent"), target); ok || err != nil {
@@ -995,11 +996,11 @@ func TestCursorRepinLstatOneOffFailureWithPinnedMainLinkIsFailed(t *testing.T) {
 	f := newCursor(t, goodCursorMembers(), "")
 	f.plant(t, "2026.1.1-abc", goodCursor, true)
 	f.plant(t, "2026.2.2-def", goodCursor, true)
-	os.Remove(f.link())
-	os.Symlink(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent"), f.link())
+	mustSetup(t, os.Remove(f.link()))
+	mustSetup(t, os.Symlink(filepath.Join(f.tree("2026.1.1-abc"), "cursor-agent"), f.link()))
 	bin := filepath.Join(f.home, ".local", "bin")
 	oldT := filepath.Join(f.tree("2026.2.2-def"), "cursor-agent")
-	os.Symlink(oldT, filepath.Join(bin, "agent"))
+	mustSetup(t, os.Symlink(oldT, filepath.Join(bin, "agent")))
 	f.env.Repin = true
 	orig := lstatAlias
 	defer func() { lstatAlias = orig }()
@@ -1056,12 +1057,12 @@ func TestCursorAliasThroughFileOrMissingComponentThenDotDotIsNotOurs(t *testing.
 	f := newCursor(t, goodCursorMembers(), "")
 	f.plant(t, "2026.1.1-abc", goodCursor, true)
 	vol := filepath.Join(f.home, "volume")
-	os.MkdirAll(vol, 0o755)
+	mustSetup(t, os.MkdirAll(vol, 0o755))
 	versions := filepath.Dir(f.tree("x"))
 	moved := filepath.Join(vol, "versions")
-	os.Rename(versions, moved)
-	os.Symlink(moved, versions)
-	os.WriteFile(filepath.Join(vol, "marker"), []byte("x"), 0o644)
+	mustSetup(t, os.Rename(versions, moved))
+	mustSetup(t, os.Symlink(moved, versions))
+	mustSetup(t, os.WriteFile(filepath.Join(vol, "marker"), []byte("x"), 0o644))
 	alias := filepath.Join(f.home, ".local", "bin", "agent")
 	for name, mid := range map[string]string{"regular file": "marker", "missing": "nothere"} {
 		target := vol + "/" + mid + "/../versions/9.9/cursor-agent"
@@ -1075,9 +1076,9 @@ func TestCursorAliasOnOldVersionReplacedByFileIsRepaired(t *testing.T) {
 	f := newCursor(t, goodCursorMembers(), "")
 	f.plant(t, "2026.1.1-abc", goodCursor, true)
 	old := f.tree("2026.0.0-old")
-	os.WriteFile(old, []byte("not a directory"), 0o644)
+	mustSetup(t, os.WriteFile(old, []byte("not a directory"), 0o644))
 	alias := filepath.Join(f.home, ".local", "bin", "agent")
-	os.Symlink("../share/cursor-agent/versions/2026.0.0-old/cursor-agent", alias)
+	mustSetup(t, os.Symlink("../share/cursor-agent/versions/2026.0.0-old/cursor-agent", alias))
 	f.env.Repin = true
 	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
 		t.Fatalf("rc=%d out=%s", rc, f.out)
@@ -1095,9 +1096,9 @@ func TestCursorAliasSpellingsOfAnOldVersionAreOurs(t *testing.T) {
 	} {
 		f := newCursor(t, goodCursorMembers(), "")
 		f.plant(t, "2026.1.1-abc", goodCursor, true)
-		os.MkdirAll(filepath.Join(f.tree("2026.0.0-old"), "sub"), 0o755)
+		mustSetup(t, os.MkdirAll(filepath.Join(f.tree("2026.0.0-old"), "sub"), 0o755))
 		alias := filepath.Join(f.home, ".local", "bin", "agent")
-		os.Symlink(target, alias)
+		mustSetup(t, os.Symlink(target, alias))
 		f.env.Repin = true
 		if rc := Cursor(t.Context(), f.env); rc != ExitOK {
 			t.Fatalf("%s: rc=%d out=%s", name, rc, f.out)
@@ -1113,14 +1114,14 @@ func TestCursorAliasThroughLinkedVersionSlotIsNotOurs(t *testing.T) {
 	f.plant(t, "2026.1.1-abc", goodCursor, true)
 	versions := filepath.Dir(f.tree("x"))
 	moved := filepath.Join(f.home, "vol", "versions")
-	os.MkdirAll(filepath.Dir(moved), 0o755)
-	os.Rename(versions, moved)
-	os.Symlink(moved, versions)
+	mustSetup(t, os.MkdirAll(filepath.Dir(moved), 0o755))
+	mustSetup(t, os.Rename(versions, moved))
+	mustSetup(t, os.Symlink(moved, versions))
 	tool := filepath.Join(f.home, "other-tool")
-	os.MkdirAll(tool, 0o755)
-	os.Symlink(tool, filepath.Join(moved, "9.9"))
+	mustSetup(t, os.MkdirAll(tool, 0o755))
+	mustSetup(t, os.Symlink(tool, filepath.Join(moved, "9.9")))
 	alias := filepath.Join(f.home, ".local", "bin", "agent")
-	os.Symlink(filepath.Join(moved, "9.9", "cursor-agent"), alias)
+	mustSetup(t, os.Symlink(filepath.Join(moved, "9.9", "cursor-agent"), alias))
 	f.env.Repin = true
 	if v, ok, err := f.env.aliasVersion(alias, filepath.Join(moved, "9.9", "cursor-agent")); ok || err != nil {
 		t.Errorf("another tool's alias read as ours: %q %v", v, err)
@@ -1191,5 +1192,78 @@ func TestCursorUnopenableLockNeedingDownloadWithLowSpaceIsNoSpace(t *testing.T) 
 	}
 	if !strings.Contains(f.statusText(), "cursor\tfailed\tno_space\n") || f.hits.Load() != 0 {
 		t.Fatalf("status=%q hits=%d", f.statusText(), f.hits.Load())
+	}
+}
+
+// mustSetup fails the test on a failed fixture step, so an assertion about a setup that never
+// happened cannot pass vacuously.
+func mustSetup(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatalf("test setup: %v", err)
+	}
+}
+
+func TestRelinkAllErrorNamesLinkThatCouldNotBePutBack(t *testing.T) {
+	dir := t.TempDir()
+	a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+	mustSetup(t, os.Symlink("old-a", a))
+	mustSetup(t, os.Symlink("old-b", b))
+	// A non-empty directory squats on a's restore name: os.Remove cannot clear it and the
+	// restore symlink then fails, so the switch of b and the put-back of a fail together.
+	back := a + ".af-back." + fmt.Sprint(os.Getpid())
+	mustSetup(t, os.MkdirAll(filepath.Join(back, "x"), 0o755))
+	orig := relinkRename
+	defer func() { relinkRename = orig }()
+	relinkRename = func(from, to string) error {
+		if to == b {
+			return errors.New("injected switch failure")
+		}
+		return os.Rename(from, to)
+	}
+	err := relinkAll([]string{a, b}, "new")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	for _, want := range []string{"injected switch failure", "could not put back", a, "was old-a"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q lacks %q", err, want)
+		}
+	}
+}
+
+func TestCursorAliasVersionSlotLstatFailureIsFailedAndRetried(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	old := f.tree("2026.0.0-old")
+	mustSetup(t, os.WriteFile(old, []byte("not a directory"), 0o644))
+	alias := filepath.Join(f.home, ".local", "bin", "agent")
+	oldT := "../share/cursor-agent/versions/2026.0.0-old/cursor-agent"
+	mustSetup(t, os.Symlink(oldT, alias))
+	f.env.Repin = true
+	orig := lstatSlot
+	defer func() { lstatSlot = orig }()
+	injected := errors.New("injected I/O error")
+	lstatSlot = func(p string) (os.FileInfo, error) {
+		if p == old {
+			return nil, injected
+		}
+		return os.Lstat(p)
+	}
+	if _, ok, err := f.env.aliasVersion(alias, oldT); ok || !errors.Is(err, injected) {
+		t.Fatalf("aliasVersion: ok=%v err=%v", ok, err)
+	}
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if got, _ := os.Readlink(alias); got != oldT {
+		t.Errorf("alias moved: %s", got)
+	}
+	lstatSlot = orig
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("retry rc=%d", rc)
+	}
+	if got, _ := os.Readlink(alias); !strings.Contains(got, "2026.1.1-abc") {
+		t.Errorf("alias not repaired on the retry: %s", got)
 	}
 }
