@@ -622,6 +622,12 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       danger: true,
     });
     if (!ok) return;
+    await deleteMemos(picked);
+  };
+
+  // Delete memos one by one, skipping a claimed one up front and counting any refusal as left. One
+  // image sweep runs after the batch; reports through a toast.
+  const deleteMemos = async (picked: Memo[]) => {
     const deletable = picked.filter((m) => m.state !== "claimed");
     let left = picked.length - deletable.length;
     let deleted = 0;
@@ -649,6 +655,33 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     }
     if (left > 0) toast(t("memo.delete_selected_left", { deleted, count: left }), { kind: "warn" });
     else toast(t("memo.delete_selected_done", { count: deleted }), { kind: "success" });
+  };
+
+  // Delete a category's finished memos (delivered, or replaced by a tidy run). Run history keeps
+  // its rows and counts (a delivery stores message ids, not text) and the continuation count lives
+  // on the chain row, so both stay readable. Two things are lost, and the dialog says so: undoing a
+  // tidy run needs the replaced originals, and a memo that waits for a deleted one would never
+  // start (its prerequisite row is gone), so a finished memo another memo still waits for is kept.
+  const clearFinished = async (c: MemoCategory) => {
+    const inCat = memos.filter((m) => m.repo === c.repo && m.category === c.name);
+    const finished = inCat.filter((m) => m.state === "delivered" || m.state === "superseded");
+    const finishedIds = new Set(finished.map((m) => m.id));
+    const awaited = new Set<string>();
+    for (const m of memos) if (!finishedIds.has(m.id)) for (const id of m.after ?? []) awaited.add(id);
+    const picked = finished.filter((m) => !awaited.has(m.id));
+    if (picked.length === 0) {
+      toast(t("memo.clear_finished_none"));
+      return;
+    }
+    const kept = finished.length - picked.length;
+    const ok = await askConfirm({
+      title: t("memo.clear_finished"),
+      body: t("memo.clear_finished_confirm", { count: picked.length, name: c.name }) + (kept > 0 ? " " + t("memo.clear_finished_kept", { count: kept }) : ""),
+      confirmLabel: t("common.delete"),
+      danger: true,
+    });
+    if (!ok) return;
+    await deleteMemos(picked);
   };
 
   // ---- categories --------------------------------------------------------------
@@ -1395,6 +1428,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
               onHistory={() => setDeliveriesFor(c.id)}
               onSettings={() => setSettingsFor(c.id)}
               onRename={() => setRenameCat(c.id)}
+              finishedCount={memos.filter((m) => m.repo === c.repo && m.category === c.name && (m.state === "delivered" || m.state === "superseded")).length}
+              onClearFinished={() => void clearFinished(c)}
               onDelete={() => void deleteCategory(c)}
             />
           );

@@ -2642,9 +2642,12 @@ const SCENES = [
     height: 1500,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
     action: `(async () => {
-      for (let i = 0; i < 50 && !document.querySelector(".memo-cat-act"); i++) await new Promise((r) => setTimeout(r, 200));
+      for (let i = 0; i < 50 && !document.querySelector(".memo-cat-more"); i++) await new Promise((r) => setTimeout(r, 200));
       const cat = [...document.querySelectorAll(".memo-cat")].find((c) => /決済|Checkout/.test(c.querySelector(".memo-cat-name")?.textContent || ""));
-      const acts = cat ? [...cat.querySelectorAll(".memo-cat-act")] : [];
+      // The head keeps only ⋯; Auto-run settings is the last of the menu's two memo-cat-menu-act items.
+      cat?.querySelector(".memo-cat-more")?.click();
+      await new Promise((r) => setTimeout(r, 300));
+      const acts = [...document.querySelectorAll(".memo-cat-menu .memo-cat-menu-act")];
       acts[acts.length - 1]?.click();
       for (let i = 0; i < 50 && !document.querySelector(".ui-modal textarea"); i++) await new Promise((r) => setTimeout(r, 200));
     })()`,
@@ -2661,12 +2664,34 @@ const SCENES = [
     height: 1100,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
     action: `(async () => {
-      for (let i = 0; i < 50 && !document.querySelector(".memo-cat-act"); i++) await new Promise((r) => setTimeout(r, 200));
+      for (let i = 0; i < 50 && !document.querySelector(".memo-cat-more"); i++) await new Promise((r) => setTimeout(r, 200));
       const cat = [...document.querySelectorAll(".memo-cat")].find((c) => /決済|Checkout/.test(c.querySelector(".memo-cat-name")?.textContent || ""));
-      const acts = cat ? [...cat.querySelectorAll(".memo-cat-act")] : [];
       for (let i = 0; i < 50 && !document.querySelector(".memo-release"); i++) await new Promise((r) => setTimeout(r, 200));
     })()`,
     settle: 2000,
+  },
+  {
+    // A category head with its ⋯ menu open: the actions the head used to show as a row of buttons.
+    name: "chatpages-memo-cat-menu",
+    guide: true,
+    stubEnv: { SHOT_AUTORUN_GUIDE: "1" },
+    clip: [".memo-cat-head", ".memo-cat-menu"],
+    pad: 8,
+    sections: { assistant: 0, workitems: 0, memos: 1, schedules: 0, repos: 0, files: 0 },
+    width: 1300,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      for (let i = 0; i < 50 && !document.querySelector(".memo-cat-more"); i++) await new Promise((r) => setTimeout(r, 200));
+      const cat = [...document.querySelectorAll(".memo-cat")].find((c) => /決済|Checkout/.test(c.querySelector(".memo-cat-name")?.textContent || ""));
+      cat?.querySelector(".memo-cat-more")?.click();
+      await new Promise((r) => setTimeout(r, 400));
+      // No item shows focus or hover in the picture.
+      document.activeElement?.blur?.();
+      document.querySelectorAll(".memo-cat-menu .ui-menu-item").forEach((e) => e.removeAttribute("tabindex"));
+    })()`,
+    verify: `!!document.querySelector(".memo-cat-menu")`,
+    settle: 800,
   },
   {
     name: "autorun-history",
@@ -2679,11 +2704,11 @@ const SCENES = [
     height: 1100,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
     action: `(async () => {
-      for (let i = 0; i < 50 && !document.querySelector(".memo-cat-act"); i++) await new Promise((r) => setTimeout(r, 200));
+      for (let i = 0; i < 50 && !document.querySelector(".memo-cat-more"); i++) await new Promise((r) => setTimeout(r, 200));
       const cat = [...document.querySelectorAll(".memo-cat")].find((c) => /決済|Checkout/.test(c.querySelector(".memo-cat-name")?.textContent || ""));
-      const acts = cat ? [...cat.querySelectorAll(".memo-cat-act")] : [];
-      // History is the button after Run now; it was the first action before Run now moved onto the head.
-      (cat?.querySelector(".memo-cat-run + .memo-cat-act") ?? acts[0])?.click();
+      cat?.querySelector(".memo-cat-more")?.click();
+      await new Promise((r) => setTimeout(r, 300));
+      document.querySelector(".memo-cat-menu .memo-cat-menu-act")?.click();
       for (let i = 0; i < 50 && !document.querySelector(".memo-d-row"); i++) await new Promise((r) => setTimeout(r, 200));
     })()`,
     settle: 2000,

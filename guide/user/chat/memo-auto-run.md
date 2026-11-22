@@ -23,7 +23,7 @@ Auto-run is not a [schedule](../fleet/schedules.md). A schedule runs a fixed pro
 
 ## Set it up
 
-1. In the "**Memo queue**" view, press the gear ("**Auto-run settings**") in the header of the category
+1. In the "**Memo queue**" view, open the **⋯** menu in the header of the category (or right-click the header) and choose "**Auto-run settings**"
 2. Write the "**Instruction**" and decide the other fields
 3. Press "**Save**"
 4. To have it start by itself, turn on "**Run by itself**" and save again
@@ -285,7 +285,7 @@ It is all or nothing, and it is refused once a result has been used. The history
 
 ### Run now
 
-1. Press "**Run now**" (the play button) on the category's header in the Memo queue view, or choose "**Run now**" in the "**...**" menu of the category in the Auto-run view
+1. Choose "**Run now**" in the **⋯** menu of the category's header in the Memo queue view, or choose "**Run now**" in the "**...**" menu of the category in the Auto-run view
 2. "Started the run." appears. The session starts at the next check, about a minute later. A stopped workspace takes longer, because it is started first
 
 - A run takes the oldest memos waiting to run, as many as "Memos per session". One press is one run

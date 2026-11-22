@@ -1712,11 +1712,12 @@ describe("the category head", () => {
     expect(document.querySelector(".memo-cat-menu")).toBeNull();
     await click(must(head().querySelector(".memo-cat-more"), "more"));
     const labels = [...document.querySelectorAll(".memo-cat-menu .ui-menu-item")].map((e) => e.textContent ?? "");
-    expect(labels).toHaveLength(6);
+    expect(labels).toHaveLength(7);
     expect(labels[0]).toContain(t("common.send"));
     expect(labels[1]).toContain(t("memo.cat_menu_run"));
     expect(labels[4]).toContain(t("memo.rename_category_item"));
-    expect(labels[5]).toContain(t("memo.delete_category"));
+    expect(labels[5]).toContain(t("memo.clear_finished"));
+    expect(labels[6]).toContain(t("memo.delete_category"));
   });
 
   it("opens the same menu on right-click and on Shift+F10, and does not fold the category", async () => {
