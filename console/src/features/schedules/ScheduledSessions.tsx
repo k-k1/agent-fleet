@@ -58,9 +58,24 @@ export function useScheduledRuns(): ScheduledRun[] {
 }
 
 /** Live runs, then the finished ones folded under "Finished N". */
-export function ScheduledRunList({ runs }: { runs: ScheduledRun[] }) {
+export function ScheduledRunList({
+  runs,
+  endedOpen,
+  onEndedOpenChange,
+}: {
+  runs: ScheduledRun[];
+  /** Controlled fold state; the owner lifts it so the fold survives the list moving to another group. */
+  endedOpen?: boolean;
+  onEndedOpenChange?: (open: boolean) => void;
+}) {
   const tr = useT();
-  const [showEnded, setShowEnded] = useState(false);
+  const [localEnded, setLocalEnded] = useState(false);
+  const showEnded = endedOpen ?? localEnded;
+  const setShowEnded = (f: (v: boolean) => boolean) => {
+    const next = f(showEnded);
+    setLocalEnded(next);
+    onEndedOpenChange?.(next);
+  };
   if (runs.length === 0) return null;
   const live = runs.filter((r) => r.live);
   const ended = runs.filter((r) => !r.live);
@@ -92,13 +107,21 @@ export function ScheduledRunList({ runs }: { runs: ScheduledRun[] }) {
 
 /** The runs that belong under no listed schedule: a deleted or hidden one, or a session that
  *  carries no schedule id. */
-export function ScheduledSessions({ runs }: { runs: ScheduledRun[] }) {
+export function ScheduledSessions({
+  runs,
+  endedOpen,
+  onEndedOpenChange,
+}: {
+  runs: ScheduledRun[];
+  endedOpen?: boolean;
+  onEndedOpenChange?: (open: boolean) => void;
+}) {
   const tr = useT();
   if (runs.length === 0) return null;
   return (
     <section className="sched-sess-group" data-sched-sessions="">
       <h3 className="sched-sess-head">{tr("sched.sessions")}</h3>
-      <ScheduledRunList runs={runs} />
+      <ScheduledRunList runs={runs} endedOpen={endedOpen} onEndedOpenChange={onEndedOpenChange} />
     </section>
   );
 }

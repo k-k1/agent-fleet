@@ -106,6 +106,8 @@ interface ScheduleRowProps {
   runs: ScheduleRun[] | undefined;
   /** Sessions this schedule started (and the ones they spawned), newest first. */
   sessionRuns: ScheduledRun[];
+  endedOpen: boolean;
+  onEndedOpenChange: (open: boolean) => void;
   /** Working sets (docs/log/52): the defined sets + the derivation context, for the
    * ⋯ menu's membership toggles. */
   wsets: WorkingSet[];
@@ -117,7 +119,7 @@ interface ScheduleRowProps {
   onDelete: (s: ScheduleDTO) => void;
 }
 
-function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
+function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEndedOpenChange, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
   const tr = useT();
   const paused = !s.enabled;
   const tone = statusTone(s.last_status);
@@ -306,11 +308,20 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, wsets, wctx, onT
       )}
       {sessionRuns.length > 0 && (
         <div className="sched-sess-under" data-sched-sessions-of={s.id}>
-          <ScheduledRunList runs={sessionRuns} />
+          <ScheduledRunList runs={sessionRuns} endedOpen={endedOpen} onEndedOpenChange={onEndedOpenChange} />
         </div>
       )}
     </div>
   );
+}
+
+// Rendered inside the Section body: its unmount is the real "body went away" signal.
+function BodyMark({ onUnmount }: { onUnmount: () => void }) {
+  useLayoutEffect(() => {
+    return onUnmount;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
 }
 
 export const SchedulesSection = memo(function SchedulesSection() {
@@ -432,6 +443,39 @@ export const SchedulesSection = memo(function SchedulesSection() {
     const g = groupRunsBySchedule(scheduledRuns, new Set(scoped.map((s) => s.id)));
     return firstReadPending ? { ...g, rest: g.rest.filter((r) => !r.scheduleId) } : g;
   }, [scheduledRuns, scoped, firstReadPending]);
+  // "Finished N" fold state per group ("" = the unscheduled group, else a schedule id), owned here
+  // so a finished run the member opened in the unscheduled group stays open when a late schedule
+  // list moves it under its schedule row (a fresh list instance would start closed).
+  const [endedOpen, setEndedOpen] = useState<Record<string, boolean>>({});
+  const setEnded = (key: string, v: boolean) => setEndedOpen((m) => (!!m[key] === v ? m : { ...m, [key]: v }));
+  // Section unmounts its body when closed, but never under SoloSection, so the section's own
+  // open flag cannot tell: BodyMark's unmount resets every fold.
+  const prevRestEnded = useRef<Map<string, string>>(new Map());
+  useLayoutEffect(() => {
+    const prev = prevRestEnded.current;
+    const next = new Map<string, string>();
+    for (const r of grouped.rest) if (!r.live) next.set(r.root.name, "");
+    prevRestEnded.current = next;
+    // A fold's state lives as long as its group does (the list unmounts when it has no runs at
+    // all); one kept past that would open a later, unrelated fold.
+    const keep = new Set<string>();
+    if (grouped.rest.length) keep.add("");
+    for (const [id, list] of grouped.bySchedule) if (list.length) keep.add(id);
+    const carry = new Set<string>();
+    if (endedOpen[""]) {
+      for (const [id, list] of grouped.bySchedule) {
+        if (list.some((r) => !r.live && prev.get(r.root.name) === "")) carry.add(id);
+      }
+    }
+    setEndedOpen((m) => {
+      const out: Record<string, boolean> = {};
+      for (const k of Object.keys(m)) if (m[k] && keep.has(k)) out[k] = true;
+      for (const id of carry) out[id] = true;
+      const same = Object.keys(out).length === Object.keys(m).filter((k) => m[k]).length && Object.keys(out).every((k) => m[k]);
+      return same ? m : out;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [grouped]);
   const activeCount = useMemo(() => scoped.filter((s) => s.enabled).length, [scoped]);
   // From the rows the active working set lists, not from everything loaded: opening the view
   // acknowledges what it publishes, and a failure the view does not show must stay unread.
@@ -564,6 +608,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
       open={sectionOpen}
       onToggle={() => setSectionOpen(!sectionOpen)}
     >
+      <BodyMark onUnmount={() => setEndedOpen({})} />
       {/* A failed fetch is shown as its own state, not as "empty" (the rows on screen stay). */}
       {loadErr && (
         <div className="sched-load-err" role="status" title={loadErr}>
@@ -590,6 +635,8 @@ export const SchedulesSection = memo(function SchedulesSection() {
               runsOpen={openRuns === s.id}
               runs={openRuns === s.id ? runs[s.id] : undefined}
               sessionRuns={grouped.bySchedule.get(s.id) ?? []}
+              endedOpen={!!endedOpen[s.id]}
+              onEndedOpenChange={(v) => setEnded(s.id, v)}
               wsets={wsets}
               wctx={wctx}
               onToggleRuns={(x) => void toggleRuns(x)}
@@ -601,7 +648,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
           ))}
         </div>
       )}
-      <ScheduledSessions runs={grouped.rest} />
+      <ScheduledSessions runs={grouped.rest} endedOpen={!!endedOpen[""]} onEndedOpenChange={(v) => setEnded("", v)} />
       {detail && (
         <ScheduleDetailModal
           s={detail}

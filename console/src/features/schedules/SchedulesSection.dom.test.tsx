@@ -171,6 +171,177 @@ describe("SchedulesSection scheduled sessions", () => {
   });
 });
 
+describe("SchedulesSection late schedule list", () => {
+  it("keeps a finished run's fold open when the late list moves it under its schedule row", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({
+      sessions: [{ name: "cron-old", title: "cron-old", kind: "claude", alive: false, origin: "schedule", scheduleId: "sch_1", createdAt: "2026-11-01T00:00:00Z" }] as never,
+    });
+    let answer: (v: unknown) => void = () => {};
+    scheduleList.mockReturnValue(new Promise((r) => (answer = r)));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await render();
+      await act(async () => {
+        vi.advanceTimersByTime(5100); // the first-read wait ends: the run shows in the unscheduled group
+      });
+      const group = () => host.querySelector("[data-sched-sessions]");
+      expect(group()).not.toBeNull();
+      await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+      expect(group()!.querySelector('[data-sched-session="cron-old"]')).not.toBeNull();
+      await act(async () => answer([sched]));
+      const under = host.querySelector('[data-sched-sessions-of="sch_1"]');
+      expect(group()).toBeNull();
+      expect(under!.querySelector('[data-sched-session="cron-old"]')).not.toBeNull();
+      expect(under!.querySelector(".sched-sess-ended")!.getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      useSessionsStore.setState({ sessions: [] });
+    }
+  });
+});
+
+describe("SchedulesSection fold state across groups", () => {
+  const ended = (name: string, scheduleId?: string) => ({ name, title: name, kind: "claude", alive: false, origin: "schedule", ...(scheduleId ? { scheduleId } : {}), createdAt: "2026-11-01T00:00:00Z" });
+  const setup = async (sessions: unknown[]) => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({ sessions: sessions as never });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    return useSessionsStore;
+  };
+  const ariaOf = (sel: string) => host.querySelector(`${sel} .sched-sess-ended`)?.getAttribute("aria-expanded");
+
+  it("keeps the row's fold closed when the unscheduled fold was closed", async () => {
+    const store = await setup([ended("a")]);
+    expect(ariaOf("[data-sched-sessions]")).toBe("false");
+    store.setState({ sessions: [ended("a", "sch_1")] as never });
+    await act(async () => {});
+    expect(ariaOf('[data-sched-sessions-of="sch_1"]')).toBe("false");
+    store.setState({ sessions: [] });
+  });
+
+  it("does not open a row's own finished runs because the unscheduled fold is open", async () => {
+    const store = await setup([ended("a"), ended("b", "sch_1")]);
+    await act(async () => host.querySelector<HTMLButtonElement>("[data-sched-sessions] .sched-sess-ended")!.click());
+    expect(ariaOf('[data-sched-sessions-of="sch_1"]')).toBe("false");
+    store.setState({ sessions: [] });
+  });
+
+  it("lets the member close the carried fold", async () => {
+    const store = await setup([ended("a")]);
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    store.setState({ sessions: [ended("a", "sch_1")] as never });
+    await act(async () => {});
+    const btn = () => host.querySelector<HTMLButtonElement>('[data-sched-sessions-of="sch_1"] .sched-sess-ended')!;
+    expect(btn().getAttribute("aria-expanded")).toBe("true");
+    await act(async () => btn().click());
+    expect(btn().getAttribute("aria-expanded")).toBe("false");
+    store.setState({ sessions: [] });
+  });
+
+  it("starts a new unscheduled fold closed after the group emptied", async () => {
+    const store = await setup([ended("a")]);
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    store.setState({ sessions: [] });
+    await act(async () => {});
+    expect(host.querySelector("[data-sched-sessions]")).toBeNull();
+    store.setState({ sessions: [ended("c")] as never });
+    await act(async () => {});
+    expect(ariaOf("[data-sched-sessions]")).toBe("false");
+    store.setState({ sessions: [] });
+  });
+});
+
+describe("SchedulesSection fold state lifetime", () => {
+  const ended = (name: string, extra: Record<string, unknown> = {}) => ({ name, title: name, kind: "claude", alive: false, origin: "schedule", createdAt: "2026-11-01T00:00:00Z", ...extra });
+  const live = (name: string) => ended(name, { alive: true });
+  const aria = () => host.querySelector("[data-sched-sessions] .sched-sess-ended")?.getAttribute("aria-expanded");
+
+  it("keeps the fold open while a live run holds the group through ended -> live -> ended", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({ sessions: [ended("a")] as never });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    useSessionsStore.setState({ sessions: [live("a")] as never });
+    await act(async () => {});
+    useSessionsStore.setState({ sessions: [ended("a")] as never });
+    await act(async () => {});
+    expect(aria()).toBe("true");
+    useSessionsStore.setState({ sessions: [] });
+  });
+
+  it("keeps the fold open after a data update when the section is solo and its stored fold is closed", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const { SoloSection } = await import("../../ui/Section.tsx");
+    localStorage.setItem("af-section-schedules", "false");
+    useSessionsStore.setState({ sessions: [ended("a")] as never });
+    scheduleList.mockResolvedValue([sched]);
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <SoloSection>
+              <SchedulesSection />
+            </SoloSection>
+          </ConfirmProvider>
+        </ToastProvider>,
+      );
+    });
+    await act(async () => {});
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    useSessionsStore.setState({ sessions: [ended("a"), ended("b")] as never });
+    await act(async () => {});
+    expect(aria()).toBe("true");
+    localStorage.removeItem("af-section-schedules");
+    useSessionsStore.setState({ sessions: [] });
+  });
+
+  it("resets the folds when the section closes and reopens", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({ sessions: [ended("a")] as never });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    const head = () => host.querySelector<HTMLButtonElement>(".ui-section-toggle")!;
+    await act(async () => head().click());
+    expect(host.querySelector("[data-sched-sessions]")).toBeNull();
+    await act(async () => head().click());
+    expect(aria()).toBe("false");
+    localStorage.removeItem("af-section-schedules");
+    useSessionsStore.setState({ sessions: [] });
+  });
+});
+
+describe("SchedulesSection late list racing a section close", () => {
+  it("does not carry a fold into a row when the section closes in the same commit as the late list", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({
+      sessions: [{ name: "cron-old", title: "cron-old", kind: "claude", alive: false, origin: "schedule", scheduleId: "sch_1", createdAt: "2026-11-01T00:00:00Z" }] as never,
+    });
+    let answer: (v: unknown) => void = () => {};
+    scheduleList.mockReturnValue(new Promise((r) => (answer = r)));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await render();
+      await act(async () => {
+        vi.advanceTimersByTime(5100);
+      });
+      await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>(".ui-section-toggle")!.click(); // close, batched with the answer
+        answer([sched]);
+      });
+      expect(host.querySelector(".sched-list")).toBeNull();
+      await act(async () => host.querySelector<HTMLButtonElement>(".ui-section-toggle")!.click());
+      expect(host.querySelector('[data-sched-sessions-of="sch_1"] .sched-sess-ended')!.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      localStorage.removeItem("af-section-schedules");
+      useSessionsStore.setState({ sessions: [] });
+    }
+  });
+});
+
 describe("SchedulesSection scheduled sessions under a working set", () => {
   it("shows a root outside the set as a heading without a state or an open button", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
