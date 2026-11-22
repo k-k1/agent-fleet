@@ -49,8 +49,3 @@
   flex-direction: column;
   gap: 14px;
 }
-.chat-msg {
-  display: flex;
-  flex-direction: column;
-  gap: 3px;
-}

@@ -4,7 +4,8 @@
  *
  * ADR 0067 / FE-MIRROR split the original 3,059-line sheet by cutting it at its own order of
  * appearance, with no reordering anywhere: concatenating the @imports below reproduces the
- * original sheet byte for byte, so the cascade cannot have changed.
+ * original sheet byte for byte, so the cascade did not change at the split. A few rules have
+ * moved between parts since, so that each class is defined in one file (#4782).
  *
  * All of this Console's CSS is global, so the same class name living in two files is not a
  * conflict — the rules are silently merged in @import order (scripts/css-dup.mjs counts them).

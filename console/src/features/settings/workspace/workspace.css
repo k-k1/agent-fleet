@@ -1167,3 +1167,21 @@ button.mv-path:focus-visible {
 .boost-hours input {
   width: 4.5em;
 }
+
+/* Destructive actions in the member detail, ruled off below the operations that can be taken
+   back. The zone's own spacing is tighter here than in the workspace tab, hence the scoped
+   rules below; they stay after the base `.danger-zone` rules above. */
+.member-detail .danger-zone {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.member-detail .danger-zone-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--err);
+}

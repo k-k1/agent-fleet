@@ -1,7 +1,7 @@
 /* Index only: never put a rule in this file.
-   Concatenating parts/ in the @import order below reproduces the pre-split chat.css byte
-   for byte. Same-named global classes are composed in import order, so not moving the
-   order is the guarantee itself. */
+   parts/ was cut from the pre-split chat.css in its order of appearance; a few rules have
+   since moved so each class lives in one file. Same-named global classes are composed in
+   import order, so keep the @import order below. */
 @import "./parts/shell.css";
 @import "./parts/bubble.css";
 @import "./parts/work.css";

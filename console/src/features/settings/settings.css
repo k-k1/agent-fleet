@@ -18,7 +18,8 @@
  * colour moved from #777 to #888, with the rule count unchanged, so it only showed up in a
  * before/after screenshot comparison).
  *
- * The @import order is the order of appearance in the original single sheet, and that is also
+ * The @import order started as the order of appearance in the original single sheet (a few
+ * rules have moved since, e.g. the member-detail danger zone into workspace.css), and it is
  * the concatenation order, i.e. the cascade order. Reordering silently swaps which of two
  * different names hitting the same element wins.
  */
