@@ -183,7 +183,7 @@ func (r *OfferRun) Begin(list []Class) {
 
 // Restart puts the walk back at the top of the list after an interruption (decision 4).
 //
-// 🔴 It is NOT begin(): the demand has not changed, so the trail and both skip lists are KEPT. A
+// 🔴 It is NOT Begin(): the demand has not changed, so the trail and both skip lists are KEPT. A
 // trail that forgot the interruption would answer "why is this engine on this box" with the box
 // that was taken away, and a skip list that forgot would buy the same reclaimed offer for ever.
 // It reports the offer to try, and false when every candidate has been skipped.
@@ -353,7 +353,7 @@ func (r *OfferRun) WaitedForBox() (time.Duration, bool) {
 //
 // 🔴 It APPENDS when the offer has no row yet, because most outcomes now happen before anything
 // is bought: `CreateFleet` answers in the same breath as the request, so an offer that was tried
-// and refused never reaches took(). A trail that only held the purchases would answer the panel's
+// and refused never reaches Took(). A trail that only held the purchases would answer the panel's
 // question — "why is it on this box" — by hiding every row that was asked for and could not be
 // had.
 func (r *OfferRun) Settle(result string) {
