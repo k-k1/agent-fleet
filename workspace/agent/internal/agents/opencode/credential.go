@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"os"
 	"slices"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -135,7 +137,38 @@ func resolveModel(model string, keys map[string]string, pref string, acct oauthS
 		// AWS credential chain decides, which cannot be told.
 		return routes.Launch{}
 	}
-	return routes.Launch{Route: routes.RouteCustomAPI}
+	return routes.Launch{Route: routes.RouteCustomAPI, Binding: customBinding(prov)}
+}
+
+// customConn is the stored custom provider connection, ok=false without a usable one. A seam for
+// tests.
+var customConn = func() (secrets.CustomAPIConn, bool) {
+	s, err := secrets.Load()
+	if err != nil || s.CustomAPI == nil || strings.TrimSpace(s.CustomAPI.URL) == "" || strings.TrimSpace(s.CustomAPI.Provider) == "" {
+		return secrets.CustomAPIConn{}, false
+	}
+	return *s.CustomAPI, true
+}
+
+// customBinding is the binding of a call on provider when it is the stored custom provider: the
+// endpoint and key together, so repointing the URL or replacing the key is another connection.
+// Any other custom provider (one only a config file defines) has no binding, as before.
+func customBinding(provider string) string {
+	if c, ok := customConn(); ok && c.Provider == provider {
+		return credbind.Endpoint(routes.RouteCustomAPI, c.URL, c.APIKey)
+	}
+	return ""
+}
+
+// The stored custom provider's endpoint is a per-connection route: under a restriction it is
+// allowed only while its host is an approved self-hosted endpoint (ADR 0138 §2).
+func init() {
+	routepolicy.RegisterEndpoint(routes.RouteCustomAPI, func() string {
+		if c, ok := customConn(); ok {
+			return routepolicy.HostOf(c.URL)
+		}
+		return ""
+	})
 }
 
 // resolveOpencodeAI resolves a model on opencode.ai's own providers. Who pays is proven only
