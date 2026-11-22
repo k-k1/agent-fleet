@@ -39,6 +39,7 @@ import { MemoryHistory, useAllChanges } from "../settings/memory/memoryHistory.t
 import { PurgeHistoryDialog, type PurgeTarget } from "../settings/memory/memoryPurge.tsx";
 import type { MemoryBody, MemoryChange, SecretFinding } from "../settings/memory/memoryTypes.ts";
 import type { PaneContent } from "../../layout/types.ts";
+import { popoutMode } from "../../lib/popoutMode.ts";
 import { memoryEntryContent, openMemoryEntry } from "./openEntry.ts";
 import { openMemoryView } from "./open.ts";
 import { useMemoryStore } from "./store.ts";
@@ -707,10 +708,11 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           canResaveStored={!isNew}
           sentLiveText={tr("mem.br_unknown_sent_live")}
           onOpenExisting={
-            isNew && model.unknownObservation?.kind === "unavailable" && model.unknownObservation.message.includes(EXISTS_UNVERIFIED)
+            isNew && popoutMode() !== "popout" && model.unknownObservation?.kind === "unavailable" && model.unknownObservation.message.includes(EXISTS_UNVERIFIED)
               ? () => {
                   const sentName = (decodeEntry(model.saveSnapshot?.content ?? model.content).name ?? "").trim();
                   if (!sentName) return;
+                  // (Not offered in a minimal pop-out: its one pane would be replaced, hiding the draft.)
                   // Beside this pane, never over it: it holds the draft the member may still copy.
                   // The bump re-reads a pane already showing that name, whose body may predate it.
                   openMemoryEntry({ scope, project: { id: project, display: projectName }, name: sentName }, { inNew: true });
