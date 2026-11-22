@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { searchEngineCatalog } from "./adminApi.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import { CATALOG_SOURCES_DEFAULT, type CatalogSource, type IngestHit } from "./engineTypes.ts";
@@ -68,17 +70,17 @@ function EngineBrowse({ sources }: { sources: CatalogSource[] }) {
     setErr("");
     try {
       const k = opts.kind ?? kind;
-      const d = await apiJSON(`api/admin/engines/search?kind=${encodeURIComponent(k)}`, "POST", {
+      const d = await searchEngineCatalog(k, {
         q,
         source: opts.source ?? source,
         sort: opts.sort ?? sort,
       });
-      if (d?.error) {
+      if (!isOk(d)) {
         setHits(null);
         setErr(errDetail(d.error));
         return;
       }
-      setHits((Array.isArray(d?.hits) ? d.hits : []) as IngestHit[]);
+      setHits((Array.isArray(d.hits) ? d.hits : []) as IngestHit[]);
     } finally {
       setBusy(false);
     }

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { addEngineModel, callEngineModel, completeEngineModel, deleteEngineObject, dismissIngestJob, fillEngineModelMeta, getEngineObjects, registerEngineObject } from "./adminApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Button, IconButton } from "../../../ui/Button.tsx";
 import { Modal } from "../../../ui/Modal.tsx";
@@ -87,12 +89,12 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
   const listRef = useScrollMemory(memoryKey)("list");
 
   const loadObjects = useCallback(async () => {
-    const answer = await api(objectsPath(row.key));
-    if (answer?.error) { setObjects(null); setLedgerFailed(true); return; }
+    const answer = await getEngineObjects(objectsPath(row.key));
+    if (!isOk(answer)) { setObjects(null); setLedgerFailed(true); return; }
     setLedgerFailed(false);
-    const rows: EngineObjectRow[] = Array.isArray(answer?.objects) ? answer.objects : [];
+    const rows: EngineObjectRow[] = Array.isArray(answer.objects) ? answer.objects : [];
     setObjects(rows);
-    setCheckedAt(answer?.checked_at || "");
+    setCheckedAt(answer.checked_at || "");
     saveObjectsMemory(row.key, { objects: rows, checkedAt: answer?.checked_at || "" });
     // A key the listing no longer returns is gone — that, and nothing else, ends "deleting".
     setDeletingKeys((current) => current.filter((key) => rows.some((object) => object.key === key)));
@@ -138,12 +140,8 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
   const callModel = async (model: EngineModel, method: string, body?: Record<string, unknown>, purgeBytes = false) => {
     setBusy(model.id); setErr(null);
     try {
-      const answer = await apiJSON(
-        `api/admin/engines/${encodeURIComponent(row.key)}/models/${encodeURIComponent(model.id)}${purgeBytes ? "?purge=1" : ""}`,
-        method,
-        body,
-      );
-      if (answer?.error) {
+      const answer = await callEngineModel(row.key, model.id, method, body, purgeBytes);
+      if (!isOk(answer)) {
         if (method === "PUT" && body && answer.error.code === "engine_vram_confirm") {
           setEdit(null);
           setVramAsk({ model, patch: body, message: answer.error.message });
@@ -164,11 +162,9 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
   const completeModel = useCallback(async (id: string, body: Record<string, unknown> = {}): Promise<CompleteAnswer | undefined> => {
     setBusy(id); setErr(null);
     try {
-      const answer = await apiJSON(
-        `api/admin/engines/${encodeURIComponent(row.key)}/models/${encodeURIComponent(id)}/complete`, "POST", body,
-      );
-      if (answer?.error) { setErr(answer.error as EngineApiError); return undefined; }
-      return answer as CompleteAnswer;
+      const answer = await completeEngineModel(row.key, id, body);
+      if (!isOk(answer)) { setErr(answer.error as EngineApiError); return undefined; }
+      return answer;
     } finally { setBusy(""); }
   }, [row.key]);
 
@@ -216,9 +212,8 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
     if (!key) return;
     setBusy(`object:${key}`); setErr(null); setNote("");
     try {
-      const answer = await apiJSON(objectsPath(row.key) + "/register", "POST", { key });
-      if (answer?.error) { setErr(answer.error as EngineApiError); return; }
-      const registered = answer as { model_id?: string; complete?: CompleteAnswer };
+      const registered = await registerEngineObject(objectsPath(row.key), key);
+      if (!isOk(registered)) { setErr(registered.error as EngineApiError); return; }
       const head = (tr("admin.catalog_ledger_registered" as never) as string).replace("{id}", registered.model_id || "");
       setNote(registered.complete ? `${head} ${completeNote(registered.complete)}` : head);
       await onChanged();
@@ -252,9 +247,8 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
       setBusy(`meta:${model.id}`);
       setNote((tr("admin.catalog_meta_busy" as never) as string)
         .replace("{n}", String(done + 1)).replace("{m}", String(targets.length)));
-      const answer = await apiJSON(
-        `api/admin/engines/${encodeURIComponent(row.key)}/models/${encodeURIComponent(model.id)}/meta`, "POST");
-      if (answer?.error) last = answer.error as EngineApiError; else done += 1;
+      const answer = await fillEngineModelMeta(row.key, model.id);
+      if (!isOk(answer)) last = answer.error as EngineApiError; else done += 1;
     }
     setBusy("");
     const failed = targets.length - done;
@@ -267,8 +261,8 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
   const deleteObject = async (key: string) => {
     setBusy(`object:${key}`); setErr(null); setNote("");
     try {
-      const answer = await apiJSON(objectsPath(row.key), "DELETE", { key });
-      if (answer?.error) { setErr(answer.error as EngineApiError); return; }
+      const answer = await deleteEngineObject(objectsPath(row.key), key);
+      if (!isOk(answer)) { setErr(answer.error as EngineApiError); return; }
       // The answer is `{deleting}`, not `{deleted}`: draw the row as such AT ONCE and keep
       // reloading until the bucket stops listing it.
       setDeletingKeys((current) => current.includes(key) ? current : [...current, key]);
@@ -286,8 +280,8 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
   const addModel = async (body: Record<string, unknown>) => {
     setBusy("discover"); setErr(null);
     try {
-      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/models`, "POST", body);
-      if (answer?.error) { setErr(answer.error as EngineApiError); return answer; }
+      const answer = await addEngineModel(row.key, body);
+      if (!isOk(answer)) { setErr(answer.error as EngineApiError); return answer; }
       await onChanged();
       return answer;
     } finally { setBusy(""); }
@@ -296,8 +290,8 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
   const dismissJob = async (id: string) => {
     setBusy(`job:${id}`); setErr(null);
     try {
-      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/${encodeURIComponent(id)}`, "DELETE");
-      if (answer?.error) { setErr(answer.error as EngineApiError); return; }
+      const answer = await dismissIngestJob(row.key, id);
+      if (!isOk(answer)) { setErr(answer.error as EngineApiError); return; }
       await loadObjects();
     } finally { setBusy(""); }
   };

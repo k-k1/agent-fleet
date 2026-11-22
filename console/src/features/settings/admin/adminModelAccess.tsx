@@ -7,7 +7,8 @@
 // approved at all, the deployment rule and a cap narrow that, and a tenant's own rule approves
 // exact hosts inside what is left (on the tenant page).
 import { useCallback, useEffect, useState } from "react";
-import { api, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { getRoutePolicy, getRoutePolicyTenantCounts } from "./adminApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import type { Tenant } from "../parts/adminShared.ts";
 import { RuleEditor, RuleSummary, putRule } from "../tenant/routePolicyRuleEditor.tsx";
@@ -41,7 +42,7 @@ function useTenantCounts(): TenantCounts | null | undefined | "off" {
   const [counts, setCounts] = useState<TenantCounts | null | undefined | "off">(undefined);
   useEffect(() => {
     let live = true;
-    api(`${PATH}/tenant-counts`)
+    getRoutePolicyTenantCounts()
       .then((d) => live && setCounts(isOff(d) ? "off" : parseTenantCounts(d)))
       .catch(() => live && setCounts(null));
     return () => {
@@ -57,7 +58,7 @@ function useDeploymentRoutePolicy() {
   const [failed, setFailed] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
-      const d = await api(PATH);
+      const d = await getRoutePolicy();
       const v = parseDeploymentPolicy(d);
       if (v) {
         setView(v);

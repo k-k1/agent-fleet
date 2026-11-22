@@ -29,7 +29,9 @@
 // `has_workspace` are described there as the machine-readable halves of the prose.
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { issueEngineToken } from "./adminApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 
 /** What `POST /api/admin/engines/issue-token` answers (engineIssueTokenView). Everything after
@@ -104,11 +106,15 @@ export function EngineIssueTokenPanel() {
     if (!t || !k) return;
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/engines/issue-token", "POST", {
-        tenant_slug: t,
-        user_key: k,
-      });
-      if (d?.error) {
+      const d = await issueEngineToken(t, k);
+      if (!isOk(d)) {
+        if (!d) {
+          // A null body shows nothing: the previous member's token must not stay on screen.
+          setErr("");
+          setIssued(null);
+          setShown(false);
+          return;
+        }
         // errDetail, not errText: `membership_inactive` and the two 404s all have a translation
         // for WHAT went wrong, and the CP's message is the only place the rest of the sentence
         // is ("restore the membership first", which tenant it looked in).
@@ -117,7 +123,7 @@ export function EngineIssueTokenPanel() {
         return;
       }
       setErr("");
-      setIssued(d as IssuedEngineToken);
+      setIssued(d);
       setShown(false);
     } finally {
       setBusy(false);

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getAdminTenants, getEc2Pool, getEngines } from "./adminApi.ts";
 import { mobileMatches } from "../../../lib/device.ts";
 import { useBackClose } from "../../../lib/backClose.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -161,8 +162,8 @@ export function AdminTab() {
 
   const loadTenants = useCallback(async () => {
     try {
-      const d = await api("api/admin/tenants");
-      if (d && d.error) {
+      const d = await getAdminTenants();
+      if (!isOk(d)) {
         setForbidden(true);
         return;
       }
@@ -190,11 +191,11 @@ export function AdminTab() {
   useEffect(() => {
     // super_admin only, so a tenant_admin simply never sees the tab (the endpoint 403s
     // and this stays false).
-    api("api/admin/ec2-pool")
-      .then((d) => setHasPool(d?.runtime === "ecs-ec2"))
+    getEc2Pool()
+      .then((d) => setHasPool(isOk(d) && d.runtime === "ecs-ec2"))
       .catch(() => setHasPool(false));
-    api("api/admin/engines")
-      .then((d) => setHasEngines(Array.isArray(d?.engines)))
+    getEngines()
+      .then((d) => setHasEngines(isOk(d) && Array.isArray(d.engines)))
       .catch(() => setHasEngines(false));
   }, []);
 

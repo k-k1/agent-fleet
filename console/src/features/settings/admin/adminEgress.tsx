@@ -1,6 +1,7 @@
 import type { FormEvent } from "react";
 import { Fragment, useCallback, useEffect, useState } from "react";
-import { apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { addEgressEntry, putEgressMode, setEgressEntryState } from "./adminApi.ts";
 import { getEgressAllowlist, getEgressStats, isOk, type EgressAllowEntry, type EgressStats } from "../api.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -71,7 +72,7 @@ export function EgressView() {
   const setMode = async (enforce: boolean) => {
     setBusy(true);
     try {
-      await apiJSON("api/admin/egress/mode", "PUT", { enforce });
+      await putEgressMode(enforce);
       await load();
     } finally {
       setBusy(false);
@@ -95,8 +96,8 @@ export function EgressView() {
     setBusy(true);
     setAddErr("");
     try {
-      const d = await apiJSON("api/admin/egress/allowlist", "POST", { entry: v, reason });
-      if (d?.error) {
+      const d = await addEgressEntry(v, reason);
+      if (!isOk(d)) {
         setAddErr(tr("admin.egress_add_failed", { msg: errText(d.error) }));
         return;
       }
@@ -112,7 +113,7 @@ export function EgressView() {
   const setState = async (id: string, state: string) => {
     setBusy(true);
     try {
-      await apiJSON("api/admin/egress/allowlist/" + encodeURIComponent(id) + "/state", "POST", { state });
+      await setEgressEntryState(id, state);
       await load();
     } finally {
       setBusy(false);

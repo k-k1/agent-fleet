@@ -14,6 +14,7 @@ vi.mock("../../../core/api/client.ts", () => ({
   rel: (p: string) => p,
 }));
 
+import { t } from "../../../lib/i18n/index.ts";
 import { McpTrustedHostsView } from "./adminMcpTrusted.tsx";
 
 let root: Root | null = null;
@@ -129,7 +130,7 @@ describe("McpTrustedHostsView", () => {
     expect(host!.textContent).toContain("mcp.corp.example");
     expect(host!.textContent).toContain("環境変数");
     await click(button("既定に戻す"));
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/mcp-oauth/trusted-hosts", "DELETE", undefined);
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/mcp-oauth/trusted-hosts", "DELETE");
     expect(host!.textContent).toContain("AF_MCP_OAUTH_TRUSTED_HOSTS");
     expect(area().value).toBe("mcp.corp.example");
   });
@@ -148,5 +149,21 @@ describe("McpTrustedHostsView", () => {
     api.mockResolvedValue(view("default", ["claude.ai"], { served: false }));
     await mount();
     expect(host!.textContent).toContain("まだ MCP OAuth を提供していません");
+  });
+
+  it("reports a load error when a write answers a null body, and does not say saved", async () => {
+    api.mockResolvedValue(view("default", ["claude.ai"]));
+    apiJSON.mockResolvedValue(null);
+    await mount();
+    await type("claude.ai, af.peer.example");
+    await click(button("保存"));
+    expect(host!.textContent).toContain(t("admin.load_error"));
+    expect(host!.textContent).not.toContain("ここで保存した一覧");
+  });
+
+  it("drops the list and reports an error when a null body answers the read", async () => {
+    api.mockResolvedValue(null);
+    await mount();
+    expect(host!.textContent).toContain(t("admin.load_error"));
   });
 });

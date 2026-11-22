@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getEngineObjects, searchEngineCatalog, searchEngineIngest } from "./adminApi.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -88,12 +90,12 @@ export function CatalogBrowser({ row, kind, onKind, paneId, sources, readOnly, o
     // saying it again would blank every card's badge on the way back from another tab.
     if (!listed.current) setLedgerState("checking");
     try {
-      const answer = await api(objectsPath(row.key));
-      if (answer?.error) { setObjects(null); listed.current = false; setLedgerState("failed"); return; }
-      const rows: EngineObjectRow[] = Array.isArray(answer?.objects) ? answer.objects : [];
+      const answer = await getEngineObjects(objectsPath(row.key));
+      if (!isOk(answer)) { setObjects(null); listed.current = false; setLedgerState("failed"); return; }
+      const rows: EngineObjectRow[] = Array.isArray(answer.objects) ? answer.objects : [];
       setObjects(rows);
       listed.current = true;
-      saveObjectsMemory(row.key, { objects: rows, checkedAt: answer?.checked_at || "" });
+      saveObjectsMemory(row.key, { objects: rows, checkedAt: answer.checked_at || "" });
       setLedgerState("ready");
     } catch { setObjects(null); listed.current = false; setLedgerState("failed"); }
   }, [row.key]);
@@ -107,9 +109,9 @@ export function CatalogBrowser({ row, kind, onKind, paneId, sources, readOnly, o
     };
     setBusy(true); setBusyMore(more); setErr("");
     try {
-      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/search`, "POST", body);
+      const answer = await searchEngineIngest(row.key, body);
       if (seq !== requestSeq.current) return;
-      if (answer?.error) { setErr(errDetail(answer.error)); if (!more) setHits(null); return; }
+      if (!isOk(answer)) { setErr(errDetail(answer.error)); if (!more) setHits(null); return; }
       const page = (answer || {}) as IngestSearchAnswer;
       const next = Array.isArray(page.hits) ? page.hits : [];
       setHits((current) => more && current ? [...current, ...next] : next);
@@ -394,11 +396,11 @@ export function NoEngineCatalog({ sources }: { sources: CatalogSource[] }) {
     setBusy(true); setErr("");
     try {
       const wireKind = image ? "checkpoint" : "gguf";
-      const answer = await apiJSON(`api/admin/engines/search?kind=${encodeURIComponent(wireKind)}`, "POST", {
+      const answer = await searchEngineCatalog(wireKind, {
         q: more ? submittedQuery : query, source, sort, lora: kind === "lora", ...(more && cursor ? { cursor } : {}),
       });
       if (seq !== requestSeq.current) return;
-      if (answer?.error) { setErr(errDetail(answer.error)); if (!more) setHits(null); return; }
+      if (!isOk(answer)) { setErr(errDetail(answer.error)); if (!more) setHits(null); return; }
       const page = answer as IngestSearchAnswer;
       const next = Array.isArray(page?.hits) ? page.hits : [];
       setHits((current) => more && current ? [...current, ...next] : next);

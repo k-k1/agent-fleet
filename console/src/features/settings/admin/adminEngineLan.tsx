@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
-import { apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { sendComfyLan } from "./adminApi.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Button } from "../../../ui/Button.tsx";
@@ -24,9 +26,6 @@ export type ComfyLanStatus = {
   updated_by?: string;
   updated_at?: string;
 };
-
-// PUT saves, DELETE forgets; both answer the new ComfyLanStatus. There is no GET of its own.
-const PATH = "api/admin/engines/comfy-lan";
 
 /** The LAN ComfyUI's URL and bearer, set from the panel instead of AF_COMFY_URL /
  *  AF_COMFY_API_KEY (ADR 0076 decision 2 and its 2026-10-04 addendum). The panel value wins over
@@ -54,16 +53,16 @@ export function ComfyLanPanel({ status, onChanged }: { status: ComfyLanStatus; o
   const send = async (method: "PUT" | "DELETE", body?: Record<string, unknown>) => {
     setBusy(true);
     try {
-      const d = await apiJSON(PATH, method, body);
-      if (d?.error) {
+      const d = await sendComfyLan(method, body);
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }
       setErr("");
       // Cleared on success only, like the token panels: a refused save keeps what was typed.
       setKey("");
-      setSt(d || {});
-      setUrl(d?.panel_url || "");
+      setSt(d);
+      setUrl(d.panel_url || "");
       onChanged?.();
     } finally {
       setBusy(false);

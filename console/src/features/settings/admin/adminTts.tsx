@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getTts, putTtsDict, putTtsMode, type TtsStatus } from "./adminApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { setTenantDict } from "../../chat/ttsDict.ts";
 
 export function TtsAdminView() {
   const tr = useT();
-  const [data, setData] = useState<any | null>(null); // { managed, enabled, engine, polly, dict }
+  const [data, setData] = useState<TtsStatus | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
   // The tenant-wide reading dictionary, applied to every user's speech; a user's own dictionary
@@ -18,9 +20,13 @@ export function TtsAdminView() {
 
   const load = useCallback(async () => {
     try {
-      const d = await api("api/admin/tts");
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await getTts();
+      if (!isOk(d)) {
+        if (d) setErr(errText(d.error));
+        else {
+          setData(null);
+          setErr(tr("admin.load_error"));
+        }
         return;
       }
       setErr("");
@@ -51,9 +57,10 @@ export function TtsAdminView() {
   const setMode = async (mode: string) => {
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/tts", "PUT", { mode });
-      if (d?.error) setErr(errText(d.error));
-      else setData(d);
+      const d = await putTtsMode(mode);
+      if (isOk(d)) setData(d);
+      else if (d) setErr(errText(d.error));
+      else setData(null);
     } finally {
       setBusy(false);
     }
@@ -63,13 +70,13 @@ export function TtsAdminView() {
     if (dict === null) return;
     setDictBusy(true);
     try {
-      const d = await apiJSON("api/admin/tts/dict", "PUT", { dict });
-      if (d?.error) {
+      const d = await putTtsDict(dict);
+      if (d && !isOk(d)) {
         setErr(errText(d.error));
         return;
       }
       setErr("");
-      setData(d);
+      setData(d); // null stays a success, as it always did
       setSavedDict(dict);
       setTenantDict(dict); // applies to this browser's speech at once; other users on next load
     } finally {

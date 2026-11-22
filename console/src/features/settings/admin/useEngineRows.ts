@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getEngines } from "./adminApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { loadEngines, saveEngines } from "./catalogMemory.ts";
 import type { ComfyLanStatus } from "./adminEngineLan.tsx";
@@ -39,8 +41,8 @@ export function useEngineRows() {
 
   const load = useCallback(async () => {
     try {
-      const d = await api("api/admin/engines");
-      if (d?.error) {
+      const d = await getEngines();
+      if (d && !isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }

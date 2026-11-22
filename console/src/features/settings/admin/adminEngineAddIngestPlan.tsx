@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiJSON } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getIngestFiles, getIngestVersions, resolveIngest, startIngest } from "./adminApi.ts";
 import { tMaybe, useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { Button } from "../../../ui/Button.tsx";
@@ -101,10 +102,10 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
     const source = sourceType === "civitai"
       ? { civitai: { versionId: Number(selectedVersion), file: "" } }
       : { hf: { repo, revision: selectedVersion, file: "" } };
-    const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/files`, "POST", { source });
+    const answer = await getIngestFiles(row.key, source);
     if (seq !== filesSeq.current || (parentSeq !== undefined && parentSeq !== inspectSeq.current)) return;
-    if (answer?.error) { setErr(answer.error as EngineApiError); return; }
-    const offered = (Array.isArray(answer?.files) ? answer.files : []) as IngestCandidate[];
+    if (!isOk(answer)) { setErr(answer.error as EngineApiError); return; }
+    const offered = (Array.isArray(answer.files) ? answer.files : []) as IngestCandidate[];
     setFiles(offered);
     if (offered.length === 1) setFile(offered[0].name);
   }, [repo, row.key, sourceType]);
@@ -121,12 +122,12 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
       // up here, because the route demanded a model id the Console did not have. The CP resolves
       // it from the version now, so the same question has one answer and one road to it — the
       // version list this then draws is the real one, and the other versions are selectable.
-      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/versions`, "POST", {
+      const answer = await getIngestVersions(row.key, {
         source: sourceType, ref: hit?.ref || pastedVersion || repo, model_ref: sourceType === "civitai" ? civitaiModelRef : repo,
       });
       if (seq !== inspectSeq.current) return;
-      if (answer?.error) { setErr(answer.error as EngineApiError); return; }
-      const offered = (Array.isArray(answer?.versions) ? answer.versions : []) as IngestVersion[];
+      if (!isOk(answer)) { setErr(answer.error as EngineApiError); return; }
+      const offered = (Array.isArray(answer.versions) ? answer.versions : []) as IngestVersion[];
       setVersions(offered);
       const first = offered.find((version) => version.ref === requestedVersion)?.ref || offered[0]?.ref || requestedVersion;
       setVersionRef(first);
@@ -165,13 +166,13 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
     if (!file) return;
     let live = true;
     setResolved(null); setPlan(null); setAccepted(false); setReplanned(false);
-    apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest/resolve`, "POST", {
+    resolveIngest(row.key, {
       source: sourceBody(file), kind: isLora ? "lora" : image ? "checkpoint" : "gguf",
       ...(plannedFamily ? { base_model: plannedFamily } : {}),
     }).then((answer) => {
       if (!live) return;
-      if (answer?.error) { setErr(answer.error as EngineApiError); return; }
-      const found = answer as ResolvedSource;
+      if (!isOk(answer)) { setErr(answer.error as EngineApiError); return; }
+      const found = answer;
       setResolved(found);
       if (found.plan) {
         setPlan(found.plan);
@@ -263,7 +264,7 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
     const paramsBody = Object.fromEntries(Object.entries(params).flatMap(([key, value]) => value.trim()
       ? [[key, key === "sampler" || key === "scheduler" ? value.trim() : n(value)]] : []));
     try {
-      const answer = await apiJSON(`api/admin/engines/${encodeURIComponent(row.key)}/ingest`, "POST", {
+      const answer = await startIngest(row.key, {
         // 🔴 The source and the CP's own plan, and nothing else about the destination. The key,
         // the role, the parts and the reuse decision are all inside `plan_token`: three parties
         // deciding one key is what produced the 400 `s3Key must be empty or identical`.
@@ -281,7 +282,7 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
         ...(isLora ? { trained_words: trainedWords.split(/[\n,]/).map((word) => word.trim()).filter(Boolean) } : {}),
         license_accepted: true,
       });
-      if (answer?.error) {
+      if (!isOk(answer)) {
         const error = answer.error as EngineApiError;
         // The plan is a quote and the press is the purchase. When anything material moved, the
         // CP answers the NEW plan and the card is redrawn from it — including the licence tick,

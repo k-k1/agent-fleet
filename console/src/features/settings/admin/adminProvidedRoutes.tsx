@@ -7,7 +7,7 @@
 // takes SourceInput alone and reads an absent `active` as true, so the body always carries the
 // loaded or edited `active`: re-saving an inactive source must never switch it back on.
 import { useState } from "react";
-import { apiJSON } from "../../../core/api/client.ts";
+import { putProvidedDeployment } from "./adminApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import { DirtyScope, useReportDirty } from "../parts/dirtyScope.tsx";
@@ -113,7 +113,7 @@ function SourceEditor({
                 const now = await peek();
                 return now && sameSource(now.source, source);
               },
-              () => apiJSON(SOURCE_PATH, "PUT", body),
+              () => putProvidedDeployment(body),
             )
           }
         >
