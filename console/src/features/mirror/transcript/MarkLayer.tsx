@@ -160,7 +160,8 @@ export function MarkLayer({ marks }: { marks: TranscriptMarksWiring }) {
             <button
               key={c}
               type="button"
-              className={"tmark-swatch tmark-" + c}
+              className="tmark-swatch"
+              data-mark={c}
               title={tr("mirror.mark.paint", { color: COLOR_LABEL[c]() })}
               aria-label={tr("mirror.mark.paint", { color: COLOR_LABEL[c]() })}
               onMouseDown={(e) => e.preventDefault()} // let the click happen without losing the selection

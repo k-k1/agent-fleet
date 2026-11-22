@@ -694,7 +694,7 @@
 /* Set flex-direction explicitly. This sits inside `.wi-qform label`, which stacks heading above
    control, so without it the row stacks vertically and the checkbox floats above its label
    (confirmed by rendering). */
-.wi-qchecks .ssm-check {
+.wi-qchecks .wi-qcheck {
   flex-direction: row;
   align-items: baseline;
   gap: 6px;

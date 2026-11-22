@@ -323,7 +323,7 @@ function Row({
       <div className="aws-import-status">{status}</div>
       {editable && r.status !== "exists" && (
         <div className="ssm-fgrid">
-          <label className="ssm-fld">
+          <label className="ssm-fld aws-import-fld">
             <span>{tr("ssm.imp_label")}</span>
             <input
               className="cinput"
@@ -333,7 +333,7 @@ function Row({
             />
           </label>
           {r.kind === "sso" && !preview.signInsUnknown && (
-            <label className="ssm-fld">
+            <label className="ssm-fld aws-import-fld">
               <span>{tr("ssm.imp_sign_in")}</span>
               <input
                 className="cinput ssm-imp-signin"
@@ -346,7 +346,7 @@ function Row({
             </label>
           )}
           {r.kind === "assume_role" && (
-            <label className="ssm-fld">
+            <label className="ssm-fld aws-import-fld">
               <span>{tr("ssm.imp_duration")}</span>
               <input
                 className="cinput"
@@ -359,7 +359,7 @@ function Row({
             </label>
           )}
           {r.kind === "assume_role" && (r.reason?.code === "source_missing" || r.source?.via === "picked") && (
-            <label className="ssm-fld wide">
+            <label className="ssm-fld aws-import-fld wide">
               <span>{tr("ssm.imp_pick_source", { name: r.sourceProfile ?? "" })}</span>
               <select
                 className="cinput"

@@ -21,7 +21,7 @@
   flex-direction: column;
   gap: 18px;
 }
-.home-body .ovw-grid {
+.home-body .home-grid {
   overflow: visible;
   padding: 0;
 }
@@ -134,7 +134,7 @@ section.home-setup {
   display: flex;
   gap: 3px;
 }
-.glance-strip .uh-cell {
+.glance-strip .glance-cell {
   width: 18px;
   height: 18px;
 }

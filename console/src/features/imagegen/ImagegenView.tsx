@@ -129,7 +129,7 @@ function LegacyPane({ paneId, headerActions }: { paneId: string; headerActions?:
   return (
     <div className="igen">
       <ViewHead actions={headerActions}>
-        <span className="view-title">
+        <span className="view-title igen-view-title">
           <Icon name="wand" /> {tr("imggen.title")}
         </span>
       </ViewHead>
@@ -827,7 +827,7 @@ function StudioPane({
           </>
         }
       >
-        <span className="view-title">
+        <span className="view-title igen-view-title">
           <Icon name="wand" /> <span className="igen-title-text">{tr("imggen.title")}</span>
         </span>
         {/* The studio this pane edits (ADR 0100 decision 10), and "＋ New studio" beside it. */}

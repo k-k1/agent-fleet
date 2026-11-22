@@ -267,12 +267,12 @@ function Row({
       <div className="aws-import-status">{status}</div>
       {editable && r.status !== "exists" && (
         <div className="ssm-fgrid">
-          <label className="ssm-fld">
+          <label className="ssm-fld aws-import-fld">
             <span>{tr("ssm.ssh_alias")}</span>
             <input className="cinput" value={e.alias ?? r.display} disabled={busy} onChange={(ev) => edit(r.id, { alias: ev.target.value })} />
           </label>
           {needsProfile && (
-            <label className="ssm-fld wide">
+            <label className="ssm-fld aws-import-fld wide">
               <span>{tr("ssm.ssh_pick_profile")}</span>
               <select className="cinput" value={e.profileId ?? ""} disabled={busy} onChange={(ev) => edit(r.id, { profileId: ev.target.value || undefined })}>
                 <option value="">{tr("ssm.imp_pick_none")}</option>

@@ -198,7 +198,7 @@
   .igen .igen-head-refresh {
     display: none;
   }
-  .igen .view-title {
+  .igen .igen-view-title {
     flex: none;
   }
   /* ds-select's 200px floor is what pushed the head's last buttons under the pane's own. */

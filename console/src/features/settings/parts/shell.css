@@ -1145,7 +1145,7 @@ label.idp-flag {
   margin: 2px 0 6px;
 }
 
-.aws-import-row .ssm-fld {
+.aws-import-row .aws-import-fld {
   display: flex;
   flex-direction: column;
   gap: 3px;
