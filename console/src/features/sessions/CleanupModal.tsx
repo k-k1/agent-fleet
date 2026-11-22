@@ -27,7 +27,7 @@ import { t, tMaybe, useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../lib/intl.ts";
 import { humanSize } from "../../lib/filemeta.ts";
 import { cleanupReasonParts } from "./cleanupReason.ts";
-import { groupCandidates, rowLabel, type CleanupCandidate, type CleanupRepoGroup } from "./cleanupGroups.ts";
+import { safetyBadgeClass, groupCandidates, rowLabel, type CleanupCandidate, type CleanupRepoGroup } from "./cleanupGroups.ts";
 import { useSessionUI } from "./ui.ts";
 import { RecreateWorktreeModal } from "./RecreateWorktreeModal.tsx";
 import { WorktreeOutputSection } from "./WorktreeOutputSection.tsx";
@@ -393,7 +393,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
         ) : (
           <span className="clean-check" aria-hidden="true" />
         )}
-        <span className={"clean-badge clean-badge-" + c.safety}>{tMaybe("clean.safety_" + c.safety) ?? c.safety}</span>
+        <span className={safetyBadgeClass(c.safety)}>{tMaybe("clean.safety_" + c.safety) ?? c.safety}</span>
         <span className="clean-type clean-type-cache">{tr("clean.type_cache")}</span>
         <span className="clean-target" title={c.id}>
           {cacheLabel(c.id)}
@@ -408,7 +408,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
         </span>
         <span className="clean-act">{c.action ? (tMaybe("clean.action_" + c.action) ?? c.action) : ""}</span>
         <span className="clean-reason">
-          {reason.badge && <span className="clean-reason-badge">{reason.badge}</span>}
+          {reason.badge && <span className="ui-badge clean-reason-badge">{reason.badge}</span>}
           {reason.text && <span className="clean-reason-text">{reason.text}</span>}
         </span>
       </li>
@@ -495,7 +495,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                                 {/* A dynamic key from the Agent can be a value we do not know
                                     — rather than an unchecked cast that would print the raw
                                     key, fall back to the Agent's own text. */}
-                                <span className={"clean-badge clean-badge-" + c.safety}>
+                                <span className={safetyBadgeClass(c.safety)}>
                                   {tMaybe("clean.safety_" + c.safety) ?? c.safety}
                                 </span>
                                 <span className={"clean-type clean-type-" + c.type}>
@@ -512,7 +512,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                                 {/* Line 2: state badge + note. On one line the reason column
                                     was squeezed until it was cut off. */}
                                 <span className="clean-reason">
-                                  {reason.badge && <span className="clean-reason-badge">{reason.badge}</span>}
+                                  {reason.badge && <span className="ui-badge clean-reason-badge">{reason.badge}</span>}
                                   {reason.text && <span className="clean-reason-text">{reason.text}</span>}
                                 </span>
                               </li>

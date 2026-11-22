@@ -906,16 +906,11 @@
 .clean-row { display: grid; grid-template-columns: 24px auto auto 1fr auto; align-items: center; column-gap: 8px; row-gap: 2px; padding: 6px 4px; border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent); }
 .clean-row.is-keep { opacity: 0.6; }
 .clean-check { display: inline-flex; justify-content: center; grid-row: 1; grid-column: 1; }
-.clean-badge { font-size: 10px; padding: 1px 6px; border-radius: 9px; white-space: nowrap; }
-.clean-badge-safe { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
-.clean-badge-review { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
-.clean-badge-regenerable { color: var(--accent, var(--ok)); background: color-mix(in srgb, var(--accent, var(--ok)) 16%, transparent); }
-.clean-badge-keep { color: var(--muted); background: color-mix(in srgb, var(--muted) 14%, transparent); }
 .clean-type { font-size: 11px; color: var(--muted); grid-row: 1; }
 .clean-target { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; grid-row: 1; grid-column: 4; }
 .clean-act { color: var(--muted); font-size: 11px; white-space: nowrap; grid-row: 1; grid-column: 5; justify-self: end; }
 .clean-reason { grid-row: 2; grid-column: 2 / -1; display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-.clean-reason-badge { flex: none; font-size: 10px; padding: 1px 6px; border-radius: 9px; white-space: nowrap; color: var(--muted); background: color-mix(in srgb, var(--muted) 14%, transparent); }
+.clean-reason-badge { flex: none; }
 .clean-reason-text { color: var(--muted); font-size: 12px; min-width: 0; }
 /* Candidate tree: repo → working copy → rows. The headings reuse .sess-group-* (the
    left pane / archived modal grouping look); only the indent and the working-copy

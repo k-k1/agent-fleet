@@ -15,6 +15,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT, tMaybe } from "../../lib/i18n/index.ts";
+import { safetyBadgeClass } from "./cleanupGroups.ts";
 import { humanSize } from "../../lib/filemeta.ts";
 import {
   applyWorktreeOutput,
@@ -154,7 +155,7 @@ export function WorktreeOutputSection({ onChanged }: { onChanged?: () => void })
     return (
       <li key={r.name} className={"wto-row" + (grade === "keep" ? " is-keep" : "")} data-name={r.name}>
         <div className="wto-head">
-          <span className={"clean-badge clean-badge-" + grade}>{tMaybe("clean.safety_" + grade)}</span>
+          <span className={safetyBadgeClass(grade)}>{tMaybe("clean.safety_" + grade)}</span>
           <span className="clean-target" title={r.path}>
             {r.name}
           </span>
