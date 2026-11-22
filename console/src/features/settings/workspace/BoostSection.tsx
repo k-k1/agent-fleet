@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -8,6 +8,7 @@ import { fmtDateTime } from "../../../lib/intl.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { Row } from "../parts/controls.tsx";
 import { boostReasonKey, boxText, type WsSizingView } from "./boost.ts";
+import { cancelBoost, getWorkspaceSizing, pressBoost } from "./workspaceApi.ts";
 
 // useSizing reads the CP's sizing answer, and re-reads it whenever the workspace changes state:
 // a Stop → Start is exactly when the next-start box becomes the running one.
@@ -16,7 +17,7 @@ export function useSizing(): { d: WsSizingView | null; reload: () => Promise<voi
   const [d, setD] = useState<WsSizingView | null>(null);
   const reload = useCallback(async () => {
     try {
-      const r = await api("api/workspace/sizing");
+      const r = await getWorkspaceSizing();
       if (r && !r.error) setD(r);
     } catch {
       /* the section keeps its last answer */
@@ -50,7 +51,7 @@ export function BoostView({ d, reload }: { d: WsSizingView; reload: () => Promis
   const press = async () => {
     setBusy(true);
     try {
-      const r = await apiJSON("api/workspace/boost", "POST", { hours });
+      const r = await pressBoost(hours);
       if (r?.error) toast(errText(r.error), { kind: "error" });
       await reload();
     } finally {
@@ -60,7 +61,7 @@ export function BoostView({ d, reload }: { d: WsSizingView; reload: () => Promis
   const cancel = async () => {
     setBusy(true);
     try {
-      const r = await api("api/workspace/boost", { method: "DELETE" });
+      const r = await cancelBoost();
       if (r?.error) toast(errText(r.error), { kind: "error" });
       await reload();
     } finally {

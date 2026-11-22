@@ -7,7 +7,8 @@
 //     "unknown" and stops the run: the row may exist, and the next import's re-read tells.
 //   - A failure the CP answered (a 400) is that row's alone; the run goes on.
 // The body is built here from the plan's fields and nothing else.
-import { api, rawJSON } from "../../../core/api/client.ts";
+import { rawJSON } from "../../../core/api/client.ts";
+import { listExistingGcpProfiles } from "./workspaceApi.ts";
 import type { ExistingGcpProfile, GcpCreate } from "./gcloudConfigImport.ts";
 
 export type GcpRowOutcome = "created" | "failed" | "unknown" | "not_run";
@@ -22,7 +23,7 @@ export interface GcpExecRow {
 /** The member's current profiles, or null when they could not be read. */
 export async function loadGcpProfiles(): Promise<ExistingGcpProfile[] | null> {
   try {
-    const rows = await api("api/gcp/profiles");
+    const rows = await listExistingGcpProfiles();
     return Array.isArray(rows) ? rows : null;
   } catch {
     return null;

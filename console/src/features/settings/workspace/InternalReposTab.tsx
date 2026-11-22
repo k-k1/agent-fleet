@@ -1,10 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { InternalRepoBrowser } from "./InternalRepoBrowser.tsx";
 import { ProviderCard, StatusPill } from "../parts/providerCard.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { assertBody, createInternalRepo, deleteInternalRepo, listInternalRepos, renameInternalRepo } from "./workspaceApi.ts";
 
 // InternalReposTab manages the tenant's self-hosted git repositories (docs/reference/
 // internal-git-provider). It sits in the workspace group because, unlike the
@@ -15,7 +16,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 // token, so there is no connect step.
 
 // An internal repo from GET /api/internal-git/repos.
-interface InternalRepo {
+export interface InternalRepo {
   name: string;
   clone_url: string;
   default_branch?: string;
@@ -35,7 +36,7 @@ export function InternalReposTab() {
   const [browsing, setBrowsing] = useState<string | null>(null);
 
   const load = () =>
-    api("api/internal-git/repos")
+    listInternalRepos()
       .then((d) => setRepos(d && !d.error ? d.repos || [] : []))
       .catch(() => setRepos([]));
   useEffect(() => {
@@ -47,11 +48,12 @@ export function InternalReposTab() {
     if (!n) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/internal-git/repos", "POST", { name: n });
+      const res = await createInternalRepo(n);
       if (res && res.error) {
         toast(tr("git.create_failed", { msg: errText(res.error) }));
         return;
       }
+      assertBody(res);
       toast(tr("git.created", { name: res.name }));
       setName("");
       load();
@@ -68,7 +70,7 @@ export function InternalReposTab() {
       danger: true,
     });
     if (!ok) return;
-    const res = await api(`api/internal-git/repos/${encodeURIComponent(rn)}`, { method: "DELETE" });
+    const res = await deleteInternalRepo(rn);
     if (!res || res.error) {
       toast(res?.error ? tr("git.delete_failed_msg", { msg: errText(res.error) }) : tr("git.delete_failed"));
       return;
@@ -78,13 +80,12 @@ export function InternalReposTab() {
   };
 
   const rename = async (oldName: string, newName: string) => {
-    const res = await apiJSON(`api/internal-git/repos/${encodeURIComponent(oldName)}/rename`, "POST", {
-      new_name: newName,
-    });
+    const res = await renameInternalRepo(oldName, newName);
     if (res && res.error) {
       toast(tr("git.rename_failed", { msg: errText(res.error) }));
       return false;
     }
+    assertBody(res);
     toast(tr("git.renamed", { old: oldName, new: res.name }));
     load();
     return true;

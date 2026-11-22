@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, apiJSON } from "../../../core/api/client.ts";
+import { deleteAfWorkFolders, getAfWorkOlderThan } from "./workspaceApi.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { humanSize } from "../../../lib/filemeta.ts";
@@ -9,7 +9,7 @@ import { Row } from "../parts/controls.tsx";
 import { PlaceLine, type Place } from "./machinePlace.tsx";
 
 // The /cleanup/af-work answer (workspace/agent/leftovers_afwork_age.go).
-interface AgeFolder extends Place {
+export interface AgeFolder extends Place {
   name: string;
   bytes: number;
   modified: string;
@@ -44,14 +44,14 @@ export function AfWorkAgeSection() {
     setBusy(true);
     setErr(false);
     try {
-      const res = await api("api/cleanup/af-work?older_than_days=" + q);
+      const res = await getAfWorkOlderThan(q);
       if (!res || res.error || !Array.isArray(res.folders)) throw new Error("");
       if (res.unsupported) {
         setListed(null);
         return;
       }
       setListed({ days: q, folders: res.folders });
-      setPicked(new Set(res.folders.map((f: AgeFolder) => f.name)));
+      setPicked(new Set(res.folders.map((f) => f.name)));
       setTruncated(!!res.truncated);
     } catch {
       setErr(true);
@@ -67,10 +67,10 @@ export function AfWorkAgeSection() {
     if (!listed || chosen.length === 0) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/cleanup/af-work", "POST", {
-        older_than_days: listed.days,
-        names: chosen.map((f) => f.name),
-      });
+      const res = await deleteAfWorkFolders(
+        listed.days,
+        chosen.map((f) => f.name),
+      );
       if (res?.error) setMsg(tr("machine.afage_failed_delete") + (res.error.message ?? res.error.code));
       else {
         const removed: AgeFolder[] = res?.removed ?? [];

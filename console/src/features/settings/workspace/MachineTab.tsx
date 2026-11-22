@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../../../core/api/client.ts";
+import { deleteCleanupLeftover, getCleanupLeftovers, getCleanupUsage, getWorkspaceMachine } from "./workspaceApi.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { humanSize } from "../../../lib/filemeta.ts";
@@ -55,8 +55,8 @@ export function MachineTab() {
   useEffect(() => {
     let cancelled = false;
     setErr(false);
-    api("api/workspace/machine")
-      .then((res: any) => {
+    getWorkspaceMachine()
+      .then((res) => {
         if (cancelled) return;
         if (!res || res.error) throw new Error("");
         setD(res);
@@ -301,7 +301,7 @@ function PressureChart({ samples, spanMs, boostable }: { samples: StatSample[]; 
 }
 
 // The /cleanup/usage answer (workspace/agent/cleanup_cache.go).
-interface CleanupUsage {
+export interface CleanupUsage {
   cache?: { bytes: number; files: number; parts?: ({ name: string; bytes: number; files: number } & Place)[] } & Place;
   orphans?: { ok: boolean; bytes: number; files: number; dirs: number; unjudged?: number };
   /** oldest = YYYY-MM-DD of the oldest archive; nothing in the trash expires on its own. */
@@ -332,8 +332,8 @@ function DiskSection() {
 
   useEffect(() => {
     let cancelled = false;
-    api("api/cleanup/usage")
-      .then((res: CleanupUsage & { error?: unknown }) => {
+    getCleanupUsage()
+      .then((res) => {
         if (cancelled) return;
         // An Agent older than the endpoint answers with an error or without the fields.
         if (!res || res.error || !res.cache) throw new Error("");
@@ -499,7 +499,7 @@ function ToolCacheSection() {
 }
 
 // The /cleanup/leftovers answer (workspace/agent/leftovers.go).
-interface LeftoverRow extends Place {
+export interface LeftoverRow extends Place {
   kind: string;
   count: number;
   bytes: number;
@@ -535,7 +535,7 @@ function LeftoverSection() {
     setMeasuring(true);
     setErr(false);
     try {
-      const res = await api("api/cleanup/leftovers");
+      const res = await getCleanupLeftovers();
       if (!res || res.error || !Array.isArray(res.kinds)) throw new Error("");
       setHidden(!!res.unsupported);
       setRows(res.kinds);
@@ -551,9 +551,7 @@ function LeftoverSection() {
     const label = leftoverLabel(row.kind);
     setBusy(row.kind);
     try {
-      const res = await api("api/cleanup/leftovers/" + encodeURIComponent(row.kind) + (row.confirm ? "?confirm=1" : ""), {
-        method: "DELETE",
-      });
+      const res = await deleteCleanupLeftover(row.kind, !!row.confirm);
       if (res?.error) setMsg(tr("machine.left_failed_delete", { name: label }) + (res.error.message ?? res.error.code));
       else {
         const done = tr("machine.left_deleted", { name: label, count: res?.count ?? 0, size: humanSize(res?.bytes ?? 0) });

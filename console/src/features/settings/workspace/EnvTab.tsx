@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
-import { api, apiJSON, getTenant } from "../../../core/api/client.ts";
+import { getTenant } from "../../../core/api/client.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { useSessionsStore } from "../../sessions/store.ts";
 import { OnOff, Row } from "../parts/controls.tsx";
@@ -26,6 +26,16 @@ import {
   type WsSettings,
 } from "../api.ts";
 import { useWsSettings } from "../useWsSettings.ts";
+import {
+  applyHostUpdate,
+  deleteToolchain,
+  getJdkInstall,
+  getNodeInstall,
+  getToolchainInstalls,
+  getToolchainLatest,
+  startJdkInstall,
+  startNodeInstall,
+} from "./workspaceApi.ts";
 
 // EnvTab (the "toolchains" tab) selects the workspace toolchains: timezone, node (via nvm),
 // go, and java (a Temurin or Corretto JDK), plus the read-only bundled-tool versions and
@@ -152,7 +162,7 @@ function HostUpdateSection() {
     });
     if (!ok) return;
     setBusy(true);
-    const res = await apiJSON("api/update/apply", "POST", {});
+    const res = await applyHostUpdate();
     if (res && res.error) {
       toast(tr("env.update_apply_failed"));
       setBusy(false);
@@ -413,7 +423,7 @@ function useToolchainLatest(
     setAns(null);
     if (!enabled) return;
     let live = true;
-    api(`api/env/${endpoint}?major=${encodeURIComponent(selected)}`)
+    getToolchainLatest(endpoint, selected)
       .then((r) => {
         if (!live) return;
         setAns(
@@ -481,7 +491,7 @@ function JavaRow({
       if (msg) toast(tr("env.java_install_failed", { msg }));
       reload(); // refresh java_installed either way
     };
-    const res = await apiJSON("api/env/jdk-install", "POST", { major: selected });
+    const res = await startJdkInstall(selected);
     if (!res) {
       finish("");
       return;
@@ -514,7 +524,7 @@ function JavaRow({
       step: async () => {
         let p;
         try {
-          p = await api("api/env/jdk-install");
+          p = await getJdkInstall();
         } catch {
           p = null;
         }
@@ -525,7 +535,7 @@ function JavaRow({
           return { stop: true };
         }
         if (p && p.state === "error") {
-          finish(p.error || "");
+          finish(typeof p.error === "string" ? p.error : "");
           return { stop: true };
         }
         return { stop: false, nextMs: 4000 };
@@ -626,7 +636,7 @@ function NodeRow({
       if (msg) toast(tr("env.node_install_failed", { msg }));
       reload(); // refresh node_installed either way
     };
-    const res = await apiJSON("api/env/node-install", "POST", { major: selected });
+    const res = await startNodeInstall(selected);
     if (!res) {
       finish("");
       return;
@@ -655,7 +665,7 @@ function NodeRow({
       step: async () => {
         let p;
         try {
-          p = await api("api/env/node-install");
+          p = await getNodeInstall();
         } catch {
           p = null;
         }
@@ -665,7 +675,7 @@ function NodeRow({
           return { stop: true };
         }
         if (p && p.state === "error") {
-          finish(p.error || "");
+          finish(typeof p.error === "string" ? p.error : "");
           return { stop: true };
         }
         return { stop: false, nextMs: 2000 };
@@ -717,7 +727,7 @@ function NodeRow({
   );
 }
 
-type ToolchainInstall = {
+export type ToolchainInstall = {
   major: string;
   version: string;
   source: "home" | "system";
@@ -744,7 +754,7 @@ function InstalledVersions({ gen, running, reload }: { gen: number; running: boo
   useEffect(() => {
     if (!running) return;
     let live = true;
-    api("api/env/toolchain-installs")
+    getToolchainInstalls()
       .then((r) => {
         if (live) setList(r && !r.error && r.java && r.node ? r : null);
       })
@@ -771,7 +781,7 @@ function InstalledVersions({ gen, running, reload }: { gen: number; running: boo
     if (!ok) return;
     setBusy(kind + e.major);
     try {
-      const res = await apiJSON(`api/env/${kind}/${encodeURIComponent(e.major)}`, "DELETE");
+      const res = await deleteToolchain(kind, e.major);
       if (!res || res.error) {
         toast(tr("env.uninstall_failed", { msg: res?.error?.message || "" }));
         // A refusal changes nothing, but a failure part-way (some Node trees gone) does:
