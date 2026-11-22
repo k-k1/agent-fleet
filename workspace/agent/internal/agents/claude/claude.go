@@ -133,10 +133,16 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// is invisible from there on, exactly like the whole-conversation fork becomes a
 	// plain resume after its first launch. A failure must not fall through to
 	// `--fork-session`, which would copy the WHOLE conversation the user asked to cut.
-	pointFork := m.ForkAt != "" && m.ForkFrom != "" && !SessionJSONLExists(sid)
+	// A marker outlives a failed launch: once the transcript exists the existence test alone would
+	// call a retry an ordinary resume and drop the manual-mode start. It is cleared only when the
+	// launch plan is complete.
+	pointFork := m.ForkAt != "" && m.ForkFrom != "" && (!SessionJSONLExists(sid) || pointForkPending.Read(sid) != "")
 	if pointFork {
-		if err := MaterializeForkAt(m.ForkFrom, sid, m.ForkAt); err != nil {
-			return agents.LaunchPlan{}, fmt.Errorf("発言時点からの分岐を作成できませんでした / could not create the fork at that message: %w", err)
+		pointForkPending.Write(sid, "1")
+		if !SessionJSONLExists(sid) {
+			if err := MaterializeForkAt(m.ForkFrom, sid, m.ForkAt); err != nil {
+				return agents.LaunchPlan{}, fmt.Errorf("発言時点からの分岐を作成できませんでした / could not create the fork at that message: %w", err)
+			}
 		}
 	}
 	// No env token is injected: the interactive TUI authenticates from claude's own
@@ -185,6 +191,14 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	program := buildProgramPinned(pin, sid, m.Model, m.Effort, m.Mode, m.Label, m.ForkFrom, agents.BypassPermissions(m), pointFork, limitMode...)
 	if m.Route != nil {
 		program = routeLaunchProgram(program, unset)
+	}
+	if pointFork {
+		// A marker left behind would make a later resume of this slot look like a first launch and
+		// override a mode the user switched to, so a failed removal fails the launch (it is retried
+		// as a first launch, which is what the marker records).
+		if err := clearPointForkMarker(sid); err != nil {
+			return agents.LaunchPlan{}, fmt.Errorf("could not clear the point-fork first-launch marker: %w", err)
+		}
 	}
 	return agents.LaunchPlan{
 		Program: program,

@@ -2,12 +2,14 @@ package claude
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -293,6 +295,87 @@ func TestBuildProgramPermissionModeQuotedValueIsNotAFlag(t *testing.T) {
 	}
 }
 
+// The word after a single-value option is its value, even when it spells the flag.
+func TestHasPermissionModeFlagSkipsOptionValues(t *testing.T) {
+	for flags, want := range map[string]bool{
+		`--name --permission-mode`:                    false,
+		`--name --permission-mode --permission-mode`:  true,
+		`--model opus --permission-mode plan`:         true,
+		`--name x --permission-mode=plan`:             true,
+		`--verbose --permission-mode plan`:            true,
+		`--append-system-prompt --permission-mode -n`: false,
+		`--resume --permission-mode plan`:             true,
+		`-r --permission-mode plan`:                   true,
+	} {
+		if got := hasPermissionModeFlag(flags); got != want {
+			t.Errorf("hasPermissionModeFlag(%q) = %v, want %v", flags, got, want)
+		}
+	}
+}
+
+// A launch retried after the transcript was written (a later step failed) is still the first
+// launch of the point fork and starts in manual mode.
+func TestBuildLaunchPointForkRetryAfterFailureStaysManual(t *testing.T) {
+	cfg := isolateSlot(t)
+	dir := t.TempDir()
+	const srcSid = "11111111-1111-4111-8111-111111111111"
+	var buf strings.Builder
+	for _, ln := range convo(t) {
+		buf.Write(ln)
+		buf.WriteByte('\n')
+	}
+	pdir := filepath.Join(cfg, "projects", "-tmp-x")
+	if err := os.MkdirAll(pdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pdir, srcSid+".jsonl"), []byte(buf.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	m := session.Meta{Kind: session.KindClaude, Name: "pf-retry", Dir: dir, ForkFrom: srcSid, ForkAt: "u2", SkipPermissions: &off}
+	// A project settings file that overrides the route fails the launch after the transcript is
+	// written (settingsConflict runs after MaterializeForkAt).
+	bad := m
+	bad.Route = sel(RouteSubscription, "")
+	conflict := filepath.Join(dir, ".claude", "settings.json")
+	writeFile(t, conflict, `{"env":{"ANTHROPIC_BASE_URL":"https://gateway.invalid"}}`)
+	_, badErr := agentImpl{}.BuildLaunch(bad, agents.LaunchOpts{})
+	var ref *agents.RouteRefusal
+	if !errors.As(badErr, &ref) || ref.Code != routes.CodeRouteSettings {
+		t.Fatalf("first launch err = %v, want a %s refusal", badErr, routes.CodeRouteSettings)
+	}
+	sid := session.UUID(dir, "pf-retry")
+	if !JSONLResumable(sid) {
+		t.Fatal("the failed launch should have left the branch transcript behind")
+	}
+	before, err := os.ReadFile(rawJSONLPaths(sid)[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(conflict); err != nil {
+		t.Fatal(err)
+	}
+	bad.Route = sel(RouteSubscription, "")
+	m = bad
+	retry, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if !strings.Contains(retry.Program, "claude --resume "+session.ShellQuote(sid)+" ") || strings.Contains(retry.Program, "--fork-session") || !strings.Contains(retry.Program, "--permission-mode default") {
+		t.Errorf("retried first launch lost manual mode: %q", retry.Program)
+	}
+	if after, err := os.ReadFile(rawJSONLPaths(sid)[0]); err != nil || string(after) != string(before) {
+		t.Errorf("the retry must reuse the first transcript unchanged (err=%v)", err)
+	}
+	next, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(next.Program, "--permission-mode default") {
+		t.Errorf("a later launch must be a plain resume: %q", next.Program)
+	}
+}
+
 // The production wiring: BuildLaunch computes pointFork before MaterializeForkAt writes the
 // branch transcript, so the first launch of a prompts-on point fork starts in manual mode and
 // the next launch (a plain resume of that transcript) does not.
@@ -327,5 +410,30 @@ func TestBuildLaunchPointForkStartsManualOnlyOnce(t *testing.T) {
 	}
 	if !strings.Contains(second.Program, "claude --resume ") || strings.Contains(second.Program, "--permission-mode default") {
 		t.Errorf("a later launch must be a plain resume keeping the recorded mode: %q", second.Program)
+	}
+}
+
+// A marker that cannot be removed must be reported even when the same fault hides it from Read.
+func TestClearPointForkMarkerReportsUnremovable(t *testing.T) {
+	isolateSlot(t)
+	const sid = "33333333-3333-4333-8333-333333333333"
+	if err := clearPointForkMarker(sid); err != nil {
+		t.Fatalf("absent marker: %v", err)
+	}
+	pointForkPending.Write(sid, "1")
+	dir := filepath.Dir(pointForkPending.Path(sid))
+	if err := os.Chmod(dir, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	if err := clearPointForkMarker(sid); err == nil {
+		t.Error("an unremovable marker was reported as cleared")
+	}
+	_ = os.Chmod(dir, 0o755)
+	if err := clearPointForkMarker(sid); err != nil || pointForkPending.Read(sid) != "" {
+		t.Errorf("marker not cleared: %v", err)
 	}
 }

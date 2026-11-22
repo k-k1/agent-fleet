@@ -138,6 +138,9 @@ var Entries = []string{
 	// Slots whose claude conversation has had a finished turn (claude.NoteTalked). Introduced
 	// directly under AgentStateDir.
 	"claude-talked",
+	// Slots whose point fork was materialized but whose first launch has not completed
+	// (claude.BuildLaunch). Introduced directly under AgentStateDir.
+	"claude-pointfork",
 	"codex-sid",
 	// An open PreCompact on a Terminal codex session (codex.MarkCompacting). Introduced
 	// directly under AgentStateDir; it never existed under .config.
