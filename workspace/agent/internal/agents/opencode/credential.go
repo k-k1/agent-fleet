@@ -3,13 +3,11 @@ package opencode
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
@@ -84,23 +82,14 @@ type policyView struct {
 	pref       string
 	acct       oauthState
 	custom     *secrets.CustomAPIConn
-	// foreign is the stored connection while the process's config root (XDG_CONFIG_HOME) is not
-	// the one af checks: the pin is then not applied (custom is nil), because a file in the root
-	// opencode would read could move the approved URL. It lets a launch say why it is refused.
-	foreign *secrets.CustomAPIConn
 }
 
-func readView() policyView { return readViewAt(os.Getenv("XDG_CONFIG_HOME")) }
-
-func readViewAt(xdg string) policyView {
+func readView() policyView {
 	p, restricted := policyRestriction()
 	v := policyView{p: p, restricted: restricted}
 	if restricted {
 		v.engines = engineProviderIDs()
 		v.keys, v.pref, v.acct, v.custom = credentialView()
-		if xdg != "" && filepath.Clean(xdg) != filepath.Dir(paths.OpencodeConfigDir()) {
-			v.foreign, v.custom = v.custom, nil
-		}
 	}
 	return v
 }

@@ -2,11 +2,12 @@ package opencode
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -18,52 +19,61 @@ import (
 func TestCustomEndpointIsManagedOnly(t *testing.T) {
 	useIsolationPolicy(t, approvedCustom())
 	useCustom(t, selfHosted)
-	home := filepath.Dir(paths.OpencodeConfigDir())
 	custom := session.Meta{Model: "mine/m"}
 	other := session.Meta{Model: "anthropic/m"}
-	at := func(xdg string) policyView { return readViewAt(xdg) }
+	v := readView()
 
-	for _, xdg := range []string{"", home, home + "/"} {
-		if err := customManagedOnlyErrFrom(custom, true, at(xdg)); err != nil {
-			t.Errorf("managed, config root %q: %v", xdg, err)
-		}
+	if err := customManagedOnlyErrFrom(custom, true, v, ""); err != nil {
+		t.Errorf("managed, pinned root: %v", err)
 	}
-	if err := customManagedOnlyErrFrom(custom, false, at("")); !errors.Is(err, ErrPolicyConfig) {
+	if err := customManagedOnlyErrFrom(custom, false, v, ""); !errors.Is(err, ErrPolicyConfig) {
 		t.Errorf("terminal / private server: %v", err)
 	}
-	if err := customManagedOnlyErrFrom(custom, true, at("/elsewhere")); !errors.Is(err, ErrPolicyConfig) {
+	if err := customManagedOnlyErrFrom(custom, true, v, "/elsewhere"); !errors.Is(err, ErrPolicyConfig) {
 		t.Errorf("foreign config root: %v", err)
 	}
-	if err := customManagedOnlyErrFrom(other, false, at("/elsewhere")); err != nil {
+	if err := customManagedOnlyErrFrom(other, false, v, "/elsewhere"); err != nil {
 		t.Errorf("another provider is not affected: %v", err)
 	}
-	if err := customManagedOnlyErrFrom(session.Meta{}, false, at("")); err != nil {
+	if err := customManagedOnlyErrFrom(session.Meta{}, false, v, ""); err != nil {
 		t.Errorf("no model named: %v", err)
 	}
 }
 
-// A foreign config root withholds the custom pin from the shared serve whatever model the launch
-// names, so an auxiliary model cannot reach an endpoint whose URL files outside the check could move.
-func TestForeignConfigRootWithholdsTheCustomPin(t *testing.T) {
+// foreignConfigRoot is only a root other than HOME/.config: unset, empty and the same root with a
+// trailing slash are the pinned one. A foreign root's opencode files are checked with the global ones.
+func TestForeignConfigRootFilesAreChecked(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for _, x := range []string{"", home + "/.config", home + "/.config/"} {
+		t.Setenv("XDG_CONFIG_HOME", x)
+		if r := foreignConfigRoot(); r != "" {
+			t.Errorf("XDG_CONFIG_HOME=%q reported foreign: %q", x, r)
+		}
+		if n := len(globalConfigFiles()); n != len(configFileNames) {
+			t.Errorf("XDG_CONFIG_HOME=%q: %d global files", x, n)
+		}
+	}
+	other := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", other)
+	if foreignConfigRoot() != other {
+		t.Fatalf("foreign root = %q", foreignConfigRoot())
+	}
+	want := filepath.Join(other, "opencode", "opencode.json")
+	if !slices.Contains(globalConfigFiles(), want) {
+		t.Fatalf("global files %v lack %s", globalConfigFiles(), want)
+	}
+	// A file there that would widen the pin refuses the serve, as one under HOME does.
+	if err := os.MkdirAll(filepath.Dir(want), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(want, []byte(`{"enabled_providers":["mine","anthropic"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	useIsolationPolicy(t, approvedCustom())
 	useCustom(t, selfHosted)
-	if v := readViewAt(""); v.custom == nil {
-		t.Fatal("pinned root: no custom connection")
-	}
-	v := readViewAt("/elsewhere")
-	if v.custom != nil || v.foreign == nil {
-		t.Fatalf("foreign root kept the pin: custom=%v foreign=%v", v.custom, v.foreign)
-	}
-	env, ok := servePolicyEnvFrom(nil, v)
-	if !ok {
-		t.Fatal("not restricted")
-	}
-	enabled, cfg := runPin(t, env)
-	if len(enabled) != 0 {
-		t.Errorf("enabled_providers = %v", enabled)
-	}
-	if _, has := cfg["provider"]; has {
-		t.Errorf("provider block pinned: %v", cfg["provider"])
+	if err := policyConfigErrFrom(globalConfigFiles(), readView()); !errors.Is(err, ErrPolicyConfig) {
+		t.Errorf("foreign-root file not refused: %v", err)
 	}
 }
 
@@ -73,6 +83,8 @@ func TestForeignConfigRootWithholdsTheCustomPin(t *testing.T) {
 func TestCustomManagedOnlyAtTheEntryPoints(t *testing.T) {
 	useIsolationPolicy(t, approvedCustom())
 	useCustom(t, selfHosted)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", "")
 	dir := t.TempDir()
 	terminal := session.Meta{Name: "t1", Dir: dir, Kind: session.KindOpencode, Model: "mine/m"}
 
@@ -98,6 +110,14 @@ func TestCustomManagedOnlyAtTheEntryPoints(t *testing.T) {
 	if err := (agentImpl{}).LaunchRefusal(terminal); err != nil {
 		t.Errorf("guard, another provider: %v", err)
 	}
+	// Managed on the shared serve under a foreign config root: Resume refuses before any serve starts.
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	foreign := managed
+	foreign.Model = "mine/m"
+	if _, err := (managedDriver{}).Resume(foreign); !errors.Is(err, ErrPolicyConfig) {
+		t.Errorf("resume under a foreign config root: %v", err)
+	}
+	t.Setenv("XDG_CONFIG_HOME", "")
 	// Nothing restricted: the guard is silent.
 	useIsolationPolicy(t, routepolicy.Policy{Revision: 9})
 	terminal.Model = "mine/m"

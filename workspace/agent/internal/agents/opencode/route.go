@@ -279,14 +279,31 @@ func buildRouteLaunch(spec LaunchSpec, m session.Meta, ocSid string) (agents.Lau
 // configFileNames are the config files opencode reads in a directory (config.json is not: measured).
 var configFileNames = []string{"opencode.json", "opencode.jsonc"}
 
-// globalConfigFiles are the member's own config files.
+// globalConfigFiles are the member's own config files: the HOME-based directory af writes, and,
+// when the process inherits an XDG_CONFIG_HOME that points elsewhere, the directory opencode then
+// reads instead, so a file there cannot widen the pin unseen.
 func globalConfigFiles() []string {
-	dir := paths.OpencodeConfigDir()
-	out := make([]string, 0, len(configFileNames))
-	for _, n := range configFileNames {
-		out = append(out, filepath.Join(dir, n))
+	dirs := []string{paths.OpencodeConfigDir()}
+	if x := foreignConfigRoot(); x != "" {
+		dirs = append(dirs, filepath.Join(x, "opencode"))
+	}
+	out := make([]string, 0, len(configFileNames)*len(dirs))
+	for _, dir := range dirs {
+		for _, n := range configFileNames {
+			out = append(out, filepath.Join(dir, n))
+		}
 	}
 	return out
+}
+
+// foreignConfigRoot is the inherited XDG_CONFIG_HOME when it is not the root af's own writers
+// and the Bedrock route use (HOME/.config), "" otherwise.
+func foreignConfigRoot() string {
+	x := os.Getenv("XDG_CONFIG_HOME")
+	if x == "" || filepath.Clean(x) == filepath.Dir(paths.OpencodeConfigDir()) {
+		return ""
+	}
+	return filepath.Clean(x)
 }
 
 // projectConfigFiles are the config files of the session's working directory and every directory

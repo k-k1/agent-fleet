@@ -128,6 +128,11 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if !session.DirExists(m.Dir) {
 		return agents.LaunchPlan{}, agents.DirGoneErr(m.Dir)
 	}
+	// Terminal launches carry no provider pin, so the approved custom endpoint is not served here.
+	// Before PrepareStart: a refused launch must not touch the store.
+	if err := customManagedOnlyErr(m, false); err != nil {
+		return agents.LaunchPlan{}, err
+	}
 	// AF_SESSION_SID lets the bundled opencode plugin report this session's
 	// working/idle state back keyed by OUR deterministic sid (same store claude
 	// uses), so wireSession can surface it. Provider API keys are injected as env
@@ -135,13 +140,13 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// env rides LaunchPlan.Env → `tmux new-session -e` (reaches the pane process;
 	// verified on tmux 3.3a) so the keys never appear in the command string /
 	// /proc/*/cmdline / pane_start_command.
+	// Terminal launches carry no provider pin, so the approved custom endpoint is not served here.
+	if err := customManagedOnlyErr(m, false); err != nil {
+		return agents.LaunchPlan{}, err
+	}
 	ocSid := session.UUID(m.Dir, m.Name)
 	spec := CurrentLaunch()
 	if err := PrepareStart(spec); err != nil {
-		return agents.LaunchPlan{}, err
-	}
-	// Terminal launches carry no provider pin, so the approved custom endpoint is not served here.
-	if err := customManagedOnlyErr(m, false); err != nil {
 		return agents.LaunchPlan{}, err
 	}
 	// An explicit route runs on a private server in this pane, with none of the workspace's

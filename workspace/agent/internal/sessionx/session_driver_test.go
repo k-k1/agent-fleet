@@ -207,10 +207,16 @@ func fakeLoadedListServer(t *testing.T, loaded ...string) string {
 	return "ws" + strings.TrimPrefix(srv.URL, "http")
 }
 
-// refusingGuard is an agent that refuses every launch through agents.LaunchGuard.
+// refusingGuard is an agent that refuses a launch on Terminal (and only there) through
+// agents.LaunchGuard, so a guard handed the source driver instead of the target lets the switch by.
 type refusingGuard struct{ agents.Agent }
 
-func (refusingGuard) LaunchRefusal(session.Meta) error { return errors.New("not on this driver") }
+func (refusingGuard) LaunchRefusal(m session.Meta) error {
+	if m.DriverKind() == session.DriverTUI {
+		return errors.New("not on Terminal")
+	}
+	return nil
+}
 
 // A switch whose target launch the agent would refuse is refused before the old runtime is
 // stopped: the tmux session is not killed, the held input is kept and the meta stays.

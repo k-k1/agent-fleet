@@ -376,22 +376,19 @@ func policyConfigErrFrom(files []string, v policyView) error {
 // Managed session on the shared serve with the pinned config root. Only that serve carries the
 // inline pin (enabled_providers and the provider's base URL) and has its config files checked; a
 // Terminal pane, a private route server or a standalone server starts without it. A process whose
-// config root is not the pinned one reads files nobody checked, so readView withholds the pin
-// there, whatever model a launch names (the serve is shared), and a launch on the custom provider
-// is refused here. managed is true for a launch through the shared serve's driver. Nil while
-// nothing is restricted, while the endpoint is not approved, or for any other provider.
+// config root is not the pinned one (foreignConfigRoot) is refused too, for the custom provider
+// only: the serve still checks that root's files (globalConfigFiles), but the approval is of the
+// pinned root. managed is true for a launch through the shared serve's driver. Nil while nothing
+// is restricted, while the endpoint is not approved, or for any other provider.
 func customManagedOnlyErr(m session.Meta, managed bool) error {
-	return customManagedOnlyErrFrom(m, managed, readView())
+	return customManagedOnlyErrFrom(m, managed, readView(), foreignConfigRoot())
 }
 
-func customManagedOnlyErrFrom(m session.Meta, managed bool, v policyView) error {
+func customManagedOnlyErrFrom(m session.Meta, managed bool, v policyView, foreignRoot string) error {
 	if !v.restricted {
 		return nil
 	}
 	c := allowedCustom(v.p, v.engines, v.custom)
-	if c == nil {
-		c = allowedCustom(v.p, v.engines, v.foreign)
-	}
 	if c == nil {
 		return nil
 	}
@@ -402,9 +399,9 @@ func customManagedOnlyErrFrom(m session.Meta, managed bool, v policyView) error 
 	switch {
 	case !managed:
 		return fmt.Errorf("%w: the approved custom endpoint (custom-api) is available to Managed sessions only; this launch has no provider pin", ErrPolicyConfig)
-	case v.custom == nil:
-		return fmt.Errorf("%w: the approved custom endpoint (custom-api) needs the opencode config root to be %s (XDG_CONFIG_HOME differs), the only one whose files are checked",
-			ErrPolicyConfig, filepath.Dir(paths.OpencodeConfigDir()))
+	case foreignRoot != "":
+		return fmt.Errorf("%w: the approved custom endpoint (custom-api) needs the opencode config root to be %s, not XDG_CONFIG_HOME=%s",
+			ErrPolicyConfig, filepath.Dir(paths.OpencodeConfigDir()), foreignRoot)
 	}
 	return nil
 }
