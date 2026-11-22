@@ -214,7 +214,7 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		// in order — so an administrator who pinned the offer that happens to be first has still
 		// said something, and the badge that offers "back to automatic" has to appear for them.
 		row["class_is_default"] = e.selectedClassID(ctx) == ""
-		if trail := e.offers.attempts(); len(trail) > 0 {
+		if trail := e.offers.Attempts(); len(trail) > 0 {
 			rows := make([]map[string]any, 0, len(trail))
 			for _, a := range trail {
 				rows = append(rows, map[string]any{"id": a.ID, "buy": a.Buy, "result": a.Result})

@@ -1684,7 +1684,7 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 	// Not an error. The caller is a wait loop that polls this, so "not yet" means it comes back
 	// — and the request ends in the retryable `503 engine_waking` the provider already knows
 	// how to answer, rather than in a failure that names a class change nobody asked about.
-	if e.offers.startInFlight() {
+	if e.offers.StartInFlight() {
 		// The box for this start is bought and is joining the cluster (ADR 0077 decision 2). The
 		// controller finishes it; asking the gate again here would begin the walk again on every
 		// poll of this wait loop, which is every three seconds for as long as the request is

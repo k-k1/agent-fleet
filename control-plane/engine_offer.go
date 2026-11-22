@@ -32,426 +32,13 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
-
-// What one offer came to, as the panel reads it (contract B, unchanged — the Console is not
-// touched by ADR 0077). `active` is the one that is not an outcome yet: it is the offer whose box
-// this engine is on, or is waiting for.
-const (
-	engineOfferActive        = "active"
-	engineOfferUnfulfillable = "unfulfillable"
-	engineOfferInsufficient  = "insufficient"
-	engineOfferQuota         = "quota"
-	// engineOfferBudget is the offer whose box was bought and never joined the cluster inside
-	// `<role>OfferBudgetSec`. 🔴 That is ALL the budget means now (ADR 0077 decision 1): under
-	// ADR 0075 it timed "did this provider produce a box", which is the question `CreateFleet`
-	// answers in one call, so what is left to time is the box's own boot → ECS registration.
-	engineOfferBudget = "budget"
-	// engineOfferInterrupted is the offer whose box was TAKEN AWAY (ADR 0077 decision 4): a Spot
-	// reclaim, or anything else that ends the instance while the service still wants a task. It
-	// is not a failure — rule 3 of what the operator asked for is "a Spot box dying suddenly is
-	// acceptable, and the rebuild handles it" — and it is in the trail because "why is it on this
-	// box" has to be answerable after one.
-	engineOfferInterrupted = "interrupted"
-	// engineOfferUnusable is the offer that could not even be ASKED for. Under ADR 0075 that was
-	// `UpdateCapacityProvider` refusing a rung (400, "No instance types satisfy the instance
-	// requirements") while the provider still held the PREVIOUS offer's declaration; here a
-	// misspelt type is refused by `CreateFleet` on the spot, which is the same verdict arriving
-	// in the response to its own request.
-	engineOfferUnusable = "unusable"
-)
-
-// errEngineBoxRegistering says the box for this offer is bought and has not joined the cluster
-// yet. NOT a failed start: the expensive half has succeeded, and the next attempt is one
-// ListContainerInstances away from writing the desired count. Counting it would double a cooldown
-// over a call that did exactly what it was asked to.
-//
-// ⚠️ The wait it stands for is tens of seconds to minutes (ADR 0045 decision 22 measured boot →
-// ECS registration at 21 s for a CPU slot), so it is answered by coming back on the next tick
-// rather than by sleeping inside this one — the admin toggle shares this path and it answers an
-// HTTP request.
-var errEngineBoxRegistering = errors.New("the box is bought; waiting for it to register with the cluster")
-
-// errEngineOffersSpent says every candidate offer was tried and none produced a box. ONE failed
-// start, which is what the controller's cooldown counts.
-var errEngineOffersSpent = errors.New("every offer was tried and none produced a box")
-
-// errEngineFleetRefused says EC2 refused the request for a reason that is about the DEPLOYMENT
-// and not about the offer: a grant the CP does not hold. Every other row would be refused the
-// same way, so the walk stops where it is — and the cooldown, not a busy loop, decides when the
-// next demand may try again.
-var errEngineFleetRefused = errors.New("EC2 refused to launch for this deployment")
-
-// engineOfferAttempt is one row of the trail: which offer was tried, how it was bought, and what
-// came of it.
-type engineOfferAttempt struct {
-	ID     string
-	Buy    string
-	Result string
-}
-
-// engineOfferRun is rule 2's state for ONE demand: the candidate list this start was judged on,
-// where in it we are, which box the current offer bought, when, and what every earlier offer
-// answered.
-//
-// In memory and nowhere else. A CP replaced mid-start adopts nothing — it reports no trail and
-// waits for no box it did not buy — because the alternative is inferring somebody else's attempt
-// from a cluster it did not write. What makes that safe is decision 3: a box it forgot is still
-// findable by TAG, and the sweep (decision 5) is what collects it.
-type engineOfferRun struct {
-	mu    sync.Mutex
-	list  []engineClass
-	idx   int
-	trail []engineOfferAttempt
-	// box is the EC2 instance the current offer bought, "" before the purchase. It is also the
-	// flag for "a start is in flight": the gate has chosen the offer, the money is being spent,
-	// and no second path may choose again.
-	box string
-	// since is when that box was bought, i.e. when the registration ceiling started.
-	since time.Time
-	// skipBuy holds the purchase options a quota error has taken off the table for this demand
-	// (decision 8). The quotas are SEPARATE (`L-DB2E81BA` on-demand, `L-3819A6DF` Spot), so
-	// "on-demand is full" says nothing about Spot and vice versa — which is exactly why the
-	// answer to a quota error is to change purchase option rather than to wait.
-	skipBuy map[string]bool
-	// noOffer is whether the refusal of decision 2 has already been recorded. Without it, an
-	// engine whose models outgrew every offer would audit a line every tick.
-	noOffer bool
-	// rebuild is true while this walk is decision 4's REBUILD rather than a start: the desired
-	// count is already 1 and the task is PENDING, so the walk buys a box and writes nothing.
-	// Told apart from a start because the two end differently, and because the departure sweep
-	// has to stand down for both.
-	rebuild bool
-	// skipOffer holds the offers an interruption has taken off the table for this demand: an
-	// offer interrupted TWICE IN A ROW is skipped for the rest of it (decision 4, inherited from
-	// ADR 0075 decision 6). lastInterrupted is what "in a row" is measured against.
-	skipOffer       map[string]bool
-	lastInterrupted string
-	// onBox is the box this engine's task is believed to be on: the one the last walk left the
-	// cluster with. 🔴 It is the LEDGER decision 4's detection needs when there is no state
-	// transition to read — a box taken away before its task ever reached RUNNING produces none
-	// (measured, ADR 0077 P2 hardware run) — and it is the difference between "no box is
-	// running, so one was taken away" and "no box is running because none was ever bought".
-	// In memory, like everything else here: a CP replaced mid-demand detects nothing and says
-	// nothing, which is the same limit the transition already had (prevState is memory too).
-	onBox string
-	// budgetSec is how long one offer's box is given to register, live. Carried here rather than
-	// read off the row this process started with, because the engine table is re-read while the
-	// CP runs and an operator raising the budget must not need a Control Plane replacement to be
-	// heard.
-	budgetSec int
-	now       func() time.Time // test seam
-}
-
-func newEngineOfferRun(budget time.Duration) *engineOfferRun {
-	r := &engineOfferRun{now: time.Now}
-	r.setBudget(budget)
-	return r
-}
-
-// budget is the per-offer registration ceiling, live.
-func (r *engineOfferRun) budget() time.Duration {
-	if r == nil {
-		return engineOfferBudgetDefault
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.budgetSec <= 0 {
-		return engineOfferBudgetDefault
-	}
-	return time.Duration(r.budgetSec) * time.Second
-}
-
-// setBudget takes a new budget from the table, reporting whether it changed. It keys nothing and
-// is read once per tick, so unlike the controller's own intervals it can move under a running
-// start — the box being waited on simply gets the new figure.
-func (r *engineOfferRun) setBudget(d time.Duration) bool {
-	if r == nil {
-		return false
-	}
-	secs := int(d.Seconds())
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.budgetSec == secs {
-		return false
-	}
-	r.budgetSec = secs
-	return true
-}
-
-func (r *engineOfferRun) clock() time.Time {
-	if r == nil {
-		return time.Time{}
-	}
-	if r.now != nil {
-		return r.now()
-	}
-	return time.Now()
-}
-
-// begin starts a fresh walk down the candidate list. Called by the start gate, which is the one
-// place that knows the start is actually about to happen — and which refuses to run at all while
-// a box is already bought (see startGate), so this can never throw one away.
-func (r *engineOfferRun) begin(list []engineClass) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.list = append([]engineClass(nil), list...)
-	r.idx, r.trail, r.noOffer = 0, nil, false
-	r.skipBuy, r.skipOffer = map[string]bool{}, map[string]bool{}
-	r.box, r.since, r.rebuild, r.lastInterrupted, r.onBox = "", time.Time{}, false, "", ""
-}
-
-// restart puts the walk back at the top of the list after an interruption (decision 4).
-//
-// 🔴 It is NOT begin(): the demand has not changed, so the trail and both skip lists are KEPT. A
-// trail that forgot the interruption would answer "why is this engine on this box" with the box
-// that was taken away, and a skip list that forgot would buy the same reclaimed offer for ever.
-// It reports the offer to try, and false when every candidate has been skipped.
-func (r *engineOfferRun) restart(list []engineClass) (engineClass, bool) {
-	if r == nil {
-		return engineClass{}, false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.list = append([]engineClass(nil), list...)
-	r.box, r.since, r.rebuild = "", time.Time{}, true
-	for i := range r.list {
-		if r.skipBuy[r.list[i].BuyOption()] || r.skipOffer[r.list[i].ID] {
-			continue
-		}
-		r.idx = i
-		return r.list[i], true
-	}
-	r.idx = len(r.list)
-	return engineClass{}, false
-}
-
-// settled ends the walk on the box that registered, and remembers it: the walk is over, and from
-// here that box is what the engine is believed to be running on.
-func (r *engineOfferRun) settled(id string) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.box, r.since, r.rebuild, r.onBox = "", time.Time{}, false, id
-	r.mu.Unlock()
-}
-
-// hadBox reports whether the ledger holds a box, i.e. whether "nothing of this role is running"
-// is a LOSS rather than the ordinary state of an engine that has not bought anything.
-func (r *engineOfferRun) hadBox() bool {
-	if r == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.onBox != ""
-}
-
-// forgetBox clears the ledger, for a box whose loss has been acted on (or which the CP itself
-// ended). Without it one interruption would be detected on every tick until the replacement
-// registered.
-func (r *engineOfferRun) forgetBox() {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.onBox = ""
-	r.mu.Unlock()
-}
-
-// rebuildAbandoned reports whether a rebuild is in flight for a service that no longer wants a
-// task. Its box has to be ended by the caller: nothing would drive the walk again.
-func (r *engineOfferRun) rebuildAbandoned(desired int32) bool {
-	if r == nil || desired >= 1 {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.rebuild && r.box != ""
-}
-
-// rebuilding reports whether the walk in flight is a rebuild.
-func (r *engineOfferRun) rebuilding() bool {
-	if r == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.rebuild && r.box != ""
-}
-
-// noteInterrupted records that the current offer's box was taken away, and reports whether that
-// was the SECOND in a row for this offer — which takes it off the table for the rest of this
-// demand (decision 4). "In a row" is per offer and not per demand: an offer that was reclaimed,
-// then replaced by another that was also reclaimed, gets its second chance.
-func (r *engineOfferRun) noteInterrupted(id string) bool {
-	if r == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.skipOffer == nil {
-		r.skipOffer = map[string]bool{}
-	}
-	twice := r.lastInterrupted == id && id != ""
-	r.lastInterrupted = id
-	if twice {
-		r.skipOffer[id] = true
-	}
-	return twice
-}
-
-// current is the offer this walk is on.
-func (r *engineOfferRun) current() (engineClass, bool) {
-	if r == nil {
-		return engineClass{}, false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.idx < 0 || r.idx >= len(r.list) {
-		return engineClass{}, false
-	}
-	return r.list[r.idx], true
-}
-
-// took records the box this offer bought and starts its registration ceiling.
-func (r *engineOfferRun) took(c engineClass, instanceID string) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.box, r.since = instanceID, r.clock()
-	r.trail = append(r.trail, engineOfferAttempt{ID: c.ID, Buy: c.BuyOption(), Result: engineOfferActive})
-}
-
-// boxID is the instance the current offer bought, "" when nothing has been bought yet.
-func (r *engineOfferRun) boxID() string {
-	if r == nil {
-		return ""
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.box
-}
-
-// startInFlight reports whether money has already been spent on this demand: a box is bought and
-// the desired count has not been written yet.
-//
-// 🔴 It is what keeps the two start paths — the admin toggle, which starts the box itself because
-// somebody is watching, and the controller's next tick a second later — from buying two boxes.
-// On the ADR 0075 deployment those two raced and `offer_trail` read `[spot3 active, spot3
-// active]`, which is a lie about the walk; here the second one would be a second GPU.
-func (r *engineOfferRun) startInFlight() bool { return r.boxID() != "" }
-
-// dropBox forgets the current offer's box, for a walk that has just terminated it.
-func (r *engineOfferRun) dropBox() {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.box, r.since, r.rebuild = "", time.Time{}, false
-	r.mu.Unlock()
-}
-
-// waitedForBox is how long the current offer's box has had to register, and whether it has been
-// bought at all.
-func (r *engineOfferRun) waitedForBox() (time.Duration, bool) {
-	if r == nil {
-		return 0, false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.since.IsZero() {
-		return 0, false
-	}
-	return r.clock().Sub(r.since), true
-}
-
-// settle closes the current offer with its outcome.
-//
-// 🔴 It APPENDS when the offer has no row yet, because most outcomes now happen before anything
-// is bought: `CreateFleet` answers in the same breath as the request, so an offer that was tried
-// and refused never reaches took(). A trail that only held the purchases would answer the panel's
-// question — "why is it on this box" — by hiding every row that was asked for and could not be
-// had.
-func (r *engineOfferRun) settle(result string) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	cur, ok := engineClass{}, r.idx >= 0 && r.idx < len(r.list)
-	if ok {
-		cur = r.list[r.idx]
-	}
-	switch n := len(r.trail); {
-	case n > 0 && r.trail[n-1].ID == cur.ID && r.trail[n-1].Result == engineOfferActive:
-		r.trail[n-1].Result = result
-	case ok:
-		r.trail = append(r.trail, engineOfferAttempt{ID: cur.ID, Buy: cur.BuyOption(), Result: result})
-	}
-	if result == engineOfferQuota {
-		if cur := r.idx; cur >= 0 && cur < len(r.list) {
-			r.skipBuy[r.list[cur].BuyOption()] = true
-		}
-	}
-}
-
-// advance moves to the next offer that is still worth trying, skipping the purchase options a
-// quota error ruled out. false means the list has been gone round once.
-func (r *engineOfferRun) advance() (engineClass, bool) {
-	if r == nil {
-		return engineClass{}, false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for i := r.idx + 1; i < len(r.list); i++ {
-		if r.skipBuy[r.list[i].BuyOption()] || r.skipOffer[r.list[i].ID] {
-			continue
-		}
-		r.idx = i
-		return r.list[i], true
-	}
-	r.idx = len(r.list)
-	return engineClass{}, false
-}
-
-// noteNoOfferOnce is the guard on decision 2's refusal: once per demand, not once per tick.
-func (r *engineOfferRun) noteNoOfferOnce() bool {
-	if r == nil {
-		return false
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.noOffer {
-		return false
-	}
-	r.noOffer = true
-	return true
-}
-
-// attempts is the trail, copied.
-func (r *engineOfferRun) attempts() []engineOfferAttempt {
-	if r == nil {
-		return nil
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return append([]engineOfferAttempt(nil), r.trail...)
-}
 
 // --- the engine's side ---------------------------------------------------------------
 
@@ -488,7 +75,7 @@ func (e *engineRuntimeState) wireOffers(fleet *engineFleet) {
 	}
 	e.ctrl.startGate = e.startGate
 	e.ctrl.startWith = e.startOnOffer
-	e.ctrl.startSettling = e.offers.startInFlight
+	e.ctrl.startSettling = e.offers.StartInFlight
 	e.ctrl.boxStep = e.sweepBoxes
 	e.ctrl.rebuildStep = e.stepRebuild
 }
@@ -498,7 +85,7 @@ func (e *engineRuntimeState) setOfferBudget(d time.Duration) bool {
 	if e == nil {
 		return false
 	}
-	return e.offers.setBudget(d)
+	return e.offers.SetBudget(d)
 }
 
 // offerList is the declared offers. Same storage as ADR 0074's ladder: an offer IS a rung with a
@@ -578,7 +165,7 @@ func (e *engineRuntimeState) candidateOffers(ctx context.Context) []engineClass 
 // Each iteration either returns or moves the walk on by one, so the loop is bounded by the
 // candidate list.
 func (e *engineRuntimeState) startOnOffer(ctx context.Context) error {
-	if _, ok := e.offers.current(); !ok {
+	if _, ok := e.offers.Current(); !ok {
 		// No walk in progress. The only way here is a start that did not come through the gate,
 		// and starting the plain way is the same behaviour as every deployment without offers.
 		return e.ecs.setEnabled(ctx, true)
@@ -609,13 +196,13 @@ func (e *engineRuntimeState) startOnOffer(ctx context.Context) error {
 //
 // The caller holds startMu.
 func (e *engineRuntimeState) walkOffers(ctx context.Context, ask bool) error {
-	c, ok := e.offers.current()
+	c, ok := e.offers.Current()
 	if !ok {
 		return nil
 	}
 	after := ""
 	for {
-		if id := e.offers.boxID(); id != "" {
+		if id := e.offers.BoxID(); id != "" {
 			b, known := e.ecs.boxFor(ctx, id)
 			if known && b.registered() {
 				// The box is in the cluster and ECS will place on it. This is the only line that
@@ -640,19 +227,19 @@ func (e *engineRuntimeState) walkOffers(ctx context.Context, ask bool) error {
 				// The box goes into the LEDGER as it leaves the walk: decision 4's detection has
 				// to be able to say "the box we were running on is gone" without a state
 				// transition to read (see stepRebuild).
-				e.offers.settled(id)
+				e.offers.Settled(id)
 				return nil
 			}
-			waited, started := e.offers.waitedForBox()
-			if !started || waited < e.offers.budget() {
+			waited, started := e.offers.WaitedForBox()
+			if !started || waited < e.offers.Budget() {
 				return errEngineBoxRegistering
 			}
 			// Past the ceiling. The box is ours and it is billing, so it goes before the next
 			// offer is tried — this is the one place ADR 0075's "two boxes" could still happen.
 			log.Printf("engines: %s: the box %s for offer %s did not register within %s; ending it",
-				e.def.Key, id, c.ID, e.offers.budget().Round(time.Second))
+				e.def.Key, id, c.ID, e.offers.Budget().Round(time.Second))
 			e.endBox(ctx, id, "it never registered with the cluster")
-			e.offers.dropBox()
+			e.offers.DropBox()
 			next, ok := e.nextOffer(ctx, engineOfferBudget)
 			if !ok {
 				return errEngineOffersSpent
@@ -662,7 +249,7 @@ func (e *engineRuntimeState) walkOffers(ctx context.Context, ask bool) error {
 		}
 		id, instanceType, verdict := e.fleet.buy(ctx, c)
 		if id != "" {
-			e.offers.took(c, id)
+			e.offers.Took(c, id)
 			e.noteOffer(ctx, c, id, instanceType, after)
 			// Deliberately not "wait for it here": the caller may be an HTTP request, and the
 			// next tick is five seconds away.
@@ -674,7 +261,7 @@ func (e *engineRuntimeState) walkOffers(ctx context.Context, ask bool) error {
 			// 200, in the same shape as "there was no stock" (measured, ADR 0077 P0) — so
 			// walking the list would ask the same impossible question once per row, every time
 			// demand appears. One failed start, and the cooldown holds it off.
-			e.offers.settle(verdict.result)
+			e.offers.Settle(verdict.result)
 			return fmt.Errorf("%w: %s", errEngineFleetRefused, c.ID)
 		}
 		next, ok := e.nextOffer(ctx, verdict.result)
@@ -689,8 +276,8 @@ func (e *engineRuntimeState) walkOffers(ctx context.Context, ask bool) error {
 // trying. false means the list has been gone round once — ONE failed start, which is what the
 // controller's cooldown counts.
 func (e *engineRuntimeState) nextOffer(ctx context.Context, result string) (engineClass, bool) {
-	e.offers.settle(result)
-	next, ok := e.offers.advance()
+	e.offers.Settle(result)
+	next, ok := e.offers.Advance()
 	if !ok {
 		log.Printf("engines: %s: every offer was tried (%s); giving up on this start",
 			e.def.Key, e.offerTrailLine())
@@ -754,21 +341,21 @@ func (e *engineRuntimeState) stepRebuild(ctx context.Context, view engineService
 	// anywhere, and the box is ours and billing. Nothing would drive this walk again either —
 	// the rebuild's premise is a task the service wants — so the box goes here rather than
 	// waiting for the sweep's ceiling backstop.
-	if e.offers.rebuildAbandoned(view.desired) {
-		if id := e.offers.boxID(); id != "" {
+	if e.offers.RebuildAbandoned(view.desired) {
+		if id := e.offers.BoxID(); id != "" {
 			e.endBox(ctx, id, "the engine stopped while its replacement box was still registering")
 		}
-		e.offers.dropBox()
-		e.offers.forgetBox()
+		e.offers.DropBox()
+		e.offers.ForgetBox()
 		return nil
 	}
-	if e.offers.rebuilding() {
+	if e.offers.Rebuilding() {
 		// A rebuild is already under way: keep walking it. This is the tick that notices the
 		// registration ceiling and moves to the next offer — nothing else drives the walk once
 		// the desired count is 1, because the controller's own decision is "do nothing" then.
 		return e.walkOffers(ctx, false)
 	}
-	if view.desired < 1 || e.offers.startInFlight() {
+	if view.desired < 1 || e.offers.StartInFlight() {
 		// Nothing is asked for, or a walk is already spending money on this demand. Note that
 		// desired 0 with the box gone is not an interruption but a DEPARTURE — the sweep's
 		// business (decision 5), and it has already run this tick.
@@ -781,28 +368,28 @@ func (e *engineRuntimeState) stepRebuild(ctx context.Context, view engineService
 		}
 		return nil
 	}
-	if !replaced && !e.offers.hadBox() {
+	if !replaced && !e.offers.HadBox() {
 		// No box is running and none was ever bought for this demand: that is a start that has
 		// not happened yet, not a loss. The start path owns it.
 		return nil
 	}
 	// The ledger is consumed here: without this one interruption would be detected again on
 	// every tick until the replacement registered, and each detection would begin a walk.
-	e.offers.forgetBox()
-	cur, had := e.offers.current()
-	if twice := e.offers.noteInterrupted(cur.ID); twice {
+	e.offers.ForgetBox()
+	cur, had := e.offers.Current()
+	if twice := e.offers.NoteInterrupted(cur.ID); twice {
 		log.Printf("engines: %s: the offer %s has been interrupted twice in a row; skipping it for this demand",
 			e.def.Key, cur.ID)
 	}
 	if had {
-		e.offers.settle(engineOfferInterrupted)
+		e.offers.Settle(engineOfferInterrupted)
 	}
 	e.noteInterrupted(ctx, cur)
 	// From the TOP of the list, as decision 4 says: the cheapest offer that fits is the one the
 	// operator asked for, and an interruption says nothing about the offers above the one that
 	// was reclaimed. The candidates are re-derived because the catalogue may have moved since
 	// this demand began; the skip lists are what the restart keeps.
-	next, ok := e.offers.restart(e.candidateOffers(ctx))
+	next, ok := e.offers.Restart(e.candidateOffers(ctx))
 	if !ok {
 		log.Printf("engines: %s: the box was taken away and every offer has been skipped (%s)",
 			e.def.Key, e.offerTrailLine())
@@ -870,7 +457,7 @@ func (e *engineRuntimeState) sweepBoxes(ctx context.Context, view engineServiceV
 	// driving is exactly a stray. That is what covers the walk nobody drives any more — a start
 	// or a rebuild whose engine was switched off while its box was still booting, which has no
 	// path back into walkOffers at all.
-	if waited, inFlight := e.offers.waitedForBox(); inFlight && waited < e.offers.budget()+engineBoxDepartGrace {
+	if waited, inFlight := e.offers.WaitedForBox(); inFlight && waited < e.offers.Budget()+engineBoxDepartGrace {
 		return
 	}
 	registered := map[string]engineBox{}
@@ -911,7 +498,7 @@ func (e *engineRuntimeState) sweepBoxes(ctx context.Context, view engineServiceV
 			continue
 		}
 		e.endBox(ctx, fb.instanceID, why)
-		e.offers.forgetBox()
+		e.offers.ForgetBox()
 	}
 	for id, ci := range registered {
 		if live[id] {
@@ -1008,7 +595,7 @@ func (e *engineRuntimeState) noteNoBox(ctx context.Context) {
 // between two things the operator declared (the models and the offers), so it belongs in the
 // ledger next to the charges that did not happen because of it.
 func (e *engineRuntimeState) noteNoOffer(ctx context.Context) {
-	if !e.offers.noteNoOfferOnce() {
+	if !e.offers.NoteNoOfferOnce() {
 		return
 	}
 	need, source, id := engineVramDemand(e.catalog.list(ctx))
@@ -1042,7 +629,7 @@ func engineLargestOfferLabel(list []engineClass) string {
 // offerTrailLine is the walk in one line, for the log that closes it.
 func (e *engineRuntimeState) offerTrailLine() string {
 	parts := make([]string, 0, 4)
-	for _, a := range e.offers.attempts() {
+	for _, a := range e.offers.Attempts() {
 		parts = append(parts, a.ID+"="+a.Result)
 	}
 	if len(parts) == 0 {

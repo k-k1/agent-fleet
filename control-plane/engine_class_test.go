@@ -133,7 +133,7 @@ func TestStartGateChoosesTheStoredRungAndBuysNothing(t *testing.T) {
 	if ok, why := e.startGate(t.Context()); !ok {
 		t.Fatalf("gate refused (%s)", why)
 	}
-	if cur, ok := e.offers.current(); !ok || cur.ID != "l40s" {
+	if cur, ok := e.offers.Current(); !ok || cur.ID != "l40s" {
 		t.Fatalf("the walk starts on %+v, want the stored choice to win over the stack's first rung", cur)
 	}
 	if f.calls() != 0 {
