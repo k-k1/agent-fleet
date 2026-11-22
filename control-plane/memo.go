@@ -777,13 +777,22 @@ func (a memoAPI) flushVia(w http.ResponseWriter, r *http.Request, res *resolved,
 		// Keep sends the text but leaves the memos unsent (see memoFlushFor). Only the Console
 		// may ask for it: the workspace tool's contract is "sent means sent_at", and it forwards
 		// its arguments untouched.
-		Keep bool `json:"keep"`
+		// Kept raw: the workspace tool forwards its arguments untouched, and a malformed keep
+		// there must stay ignored as an unknown field was.
+		Keep json.RawMessage `json:"keep"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	out, aerr := memoFlushFor(r.Context(), a.store, res.rt, res.mv.MembershipID, in.SessionName, in.IDs, in.Text, in.Keep && !via.fromWorkspace(), via)
+	keep := false
+	if !via.fromWorkspace() && len(in.Keep) > 0 {
+		if err := json.Unmarshal(in.Keep, &keep); err != nil {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "keep must be a boolean"})
+			return
+		}
+	}
+	out, aerr := memoFlushFor(r.Context(), a.store, res.rt, res.mv.MembershipID, in.SessionName, in.IDs, in.Text, keep, via)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return

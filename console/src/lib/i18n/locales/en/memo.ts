@@ -76,7 +76,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.clear_selection": "Clear selection",
   "memo.send_title": "Send memos",
   "memo.send_keep": "Keep the memos after sending",
-  "memo.send_keep_queue": "The queue state of a message does not change: it still waits for its release.",
+  "memo.send_keep_queue": "The queue state of the message does not change.",
   "memo.send_keep_sent": "Memos that were already sent cannot be kept.",
   "memo.content_label": "Content",
   "memo.content_hint": "Edit freely before sending",

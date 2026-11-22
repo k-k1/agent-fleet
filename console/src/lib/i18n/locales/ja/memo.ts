@@ -74,7 +74,7 @@ export const memo = {
   "memo.clear_selection": "選択を解除",
   "memo.send_title": "メモを送信",
   "memo.send_keep": "送信後もメモを残す",
-  "memo.send_keep_queue": "メッセージのキュー上の状態は変わりません（リリース待ちのものは、リリースされるまで実行されません）。",
+  "memo.send_keep_queue": "メッセージのキュー上の状態は変わりません。",
   "memo.send_keep_sent": "送信済みのメモは残せません。",
   "memo.content_label": "内容",
   "memo.content_hint": "送信前に自由に編集できます",

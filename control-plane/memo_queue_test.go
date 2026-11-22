@@ -989,21 +989,9 @@ func TestMemoFlushKeepSendsWithoutStamping(t *testing.T) {
 		if got := e.memoRow(queued.ID); got.State != before.State {
 			t.Fatalf("a kept queue message changed state %q -> %q", before.State, got.State)
 		}
+		e.assertPendingReleaseMatches()
 		if got := e.memoRow(queued.ID); got.ReleaseHash != before.ReleaseHash || got.ReleaseHash != queued.ContentHash || got.SendStartedAt != "" {
 			t.Fatalf("a kept queue message lost its release or kept a reservation: %+v", got)
-		}
-
-		// An unknown outcome with keep leaves a pending message pending under its release.
-		_, q2 := console.create(textMemo("r", "q", "kept, outcome unknown"))
-		h.mu.Lock()
-		h.status = http.StatusBadGateway
-		h.mu.Unlock()
-		_ = e.do("a", "POST", "/api/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{q2.ID}, "keep": true})
-		h.mu.Lock()
-		h.status = 0
-		h.mu.Unlock()
-		if got := e.memoRow(q2.ID); got.State != store.MemoStatePending || got.ReleaseHash != q2.ContentHash || got.SendToken != "" {
-			t.Fatalf("kept message after an unknown outcome: %+v", got)
 		}
 
 		// A sent memo cannot be kept (it would keep its old sent_at and be swept).
@@ -1034,6 +1022,18 @@ func TestMemoFlushKeepSendsWithoutStamping(t *testing.T) {
 		}
 		if got := e.memoRow(note.ID); got.SentAt == "" {
 			t.Fatalf("a flush without keep must stamp sent_at: %+v", got)
+		}
+
+		// An unknown outcome (the Agent is unreachable, not a structured refusal) with keep leaves a
+		// pending message pending under its release.
+		_, q2 := console.create(textMemo("r", "q", "kept, outcome unknown"))
+		h.srv.Close()
+		ur := e.do("a", "POST", "/api/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{q2.ID}, "keep": true})
+		if !strings.Contains(ur.Body.String(), "flush_failed") {
+			t.Fatalf("want an unknown outcome (flush_failed), got %d %s", ur.Code, ur.Body.String())
+		}
+		if got := e.memoRow(q2.ID); got.State != store.MemoStatePending || got.ReleaseHash != q2.ContentHash || got.SendToken != "" {
+			t.Fatalf("kept message after an unknown outcome: %+v", got)
 		}
 	})
 }
