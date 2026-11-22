@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-import { api, apiJSON } from "../../../core/api/client.ts";
+import { assertBody, createShellSession, getDatabases, postDatabaseAction } from "./workspaceApi.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { useSettingsUI } from "../store.ts";
 import { openSessionTerminal } from "../../sessions/open.ts";
@@ -40,7 +40,7 @@ interface DBEngine {
   lastError: string;
 }
 
-interface DBPayload {
+export interface DBPayload {
   engines: DBEngine[];
 }
 
@@ -105,8 +105,7 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
   const doAction = async (action: string, query = "") => {
     setBusy(true);
     setStopMenu(false);
-    const path = `api/env/databases/${eng.engine}/${action}${query ? "?" + query : ""}`;
-    const res = await apiJSON(path, "POST", {});
+    const res = await postDatabaseAction(eng.engine, action, query);
     setBusy(false);
     if (!alive.current) return false;
     if (res && res.error) {
@@ -143,19 +142,19 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
   // brand-new session's environment predates nothing.
   const handleConnect = async (db: DBDatabase) => {
     setBusy(true);
-    const res = await apiJSON("api/sessions", "POST", {
-      kind: "shell",
-      // No dir: a home session. The database is not tied to the working copy the
-      // member happens to have open, and the Connect button names it explicitly.
-      initial_prompt: `af-db connect ${eng.engine} --db=${db.name}`,
-      title: `${eng.engine === "postgres" ? "psql" : "mysql"} ${db.name}`,
-    });
+    // No dir: a home session. The database is not tied to the working copy the
+    // member happens to have open, and the Connect button names it explicitly.
+    const res = await createShellSession(
+      `af-db connect ${eng.engine} --db=${db.name}`,
+      `${eng.engine === "postgres" ? "psql" : "mysql"} ${db.name}`,
+    );
     setBusy(false);
     if (!alive.current) return;
     if (res && res.error) {
       toast(tr("env.db_action_failed", { msg: res.error.message || "" }));
       return;
     }
+    assertBody(res);
     void useSessionsStore.getState().refresh();
     // The settings modal covers the pane the session just opened in.
     useSettingsUI.getState().closeSettings();
@@ -384,7 +383,7 @@ export function DatabaseTab() {
   const load = useCallback(() => {
     if (!running) return;
     setErr("");
-    api("api/env/databases")
+    getDatabases()
       .then((res) => {
         if (res && res.error) throw new Error(res.error.message || "");
         setData(res as DBPayload);

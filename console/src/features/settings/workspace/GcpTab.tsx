@@ -8,7 +8,7 @@
 // the workspace receives.
 import { useCallback, useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
-import { api } from "../../../core/api/client.ts";
+import { getGcpLoginStates, listGcpProfileRows } from "./workspaceApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -67,7 +67,7 @@ export function GcpTab() {
   const [loginFor, setLoginFor] = useState<{ profile: GcpLoginProfile; force: boolean } | null>(null);
   const [states, setStates] = useState<Record<string, { state: string; account: string }>>({});
   const loadStates = useCallback(() => {
-    api("api/gcp-login/profiles")
+    getGcpLoginStates()
       .then((d) => {
         // No prototype: a profile named "__proto__" would otherwise set it instead of a key.
         const m: Record<string, { state: string; account: string }> = Object.create(null);
@@ -84,13 +84,13 @@ export function GcpTab() {
   // A failed GET keeps the last list (null if none ever loaded) and says so, as SsmTab does:
   // replacing it with [] would close an open edit form as if its row had been deleted.
   const reload = useCallback(() => {
-    api("api/gcp/profiles")
+    listGcpProfileRows()
       .then((d) => {
         if (!Array.isArray(d)) throw new Error(d?.error?.message || "unexpected response");
         setProfiles(d);
         setLoadErr("");
       })
-      .catch((e: any) => setLoadErr(String(e?.message || e)));
+      .catch((e: unknown) => setLoadErr(String((e as Error | undefined)?.message || e)));
   }, []);
   useEffect(reload, [reload]);
 

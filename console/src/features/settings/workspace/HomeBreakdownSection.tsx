@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api } from "../../../core/api/client.ts";
+import { getHomeUsage } from "./workspaceApi.ts";
 import { publishWalk } from "../../../core/store/homeReclaim.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { humanSize } from "../../../lib/filemeta.ts";
@@ -52,7 +52,7 @@ export interface HomeUsage {
   measured_at: string;
   elapsed_ms: number;
 }
-interface HomeStatus {
+export interface HomeStatus {
   running: boolean;
   started_at?: string;
   scanned: number;
@@ -89,7 +89,7 @@ export function HomeBreakdownSection({ own }: { own: boolean }) {
 
   const read = useCallback(async (init?: RequestInit) => {
     try {
-      const res = await api(init ? "api/cleanup/home/measure" : "api/cleanup/home", init);
+      const res = await getHomeUsage(init);
       if (!alive.current) return;
       // A 404, or an answer without the shape, means an Agent older than the endpoint. Any
       // other error (a 502 while the Agent restarts, a refused POST) is a failure to say, and

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "../../../core/api/client.ts";
+import { assertBody, getRepoBlob, getRepoBranches, getRepoTree } from "./workspaceApi.ts";
 import { Modal } from "../../../ui/Modal.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
@@ -7,12 +7,12 @@ import { useT } from "../../../lib/i18n/index.ts";
 // the CP (api/internal-git/repos/{name}/tree|blob). Pick a branch, walk the tree via
 // breadcrumbs, and preview a text file; binary / too-large / LFS blobs show a note
 // instead of bytes. No write surface.
-interface Entry {
+export interface Entry {
   name: string;
   type: "tree" | "blob";
   size: number;
 }
-interface Blob {
+export interface Blob {
   path: string;
   size: number;
   content?: string;
@@ -32,11 +32,9 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
   const [file, setFile] = useState<string | null>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
 
-  const base = `api/internal-git/repos/${encodeURIComponent(name)}`;
-
   // Load branches once; default the ref to the repo's default branch.
   useEffect(() => {
-    api(`${base}/branches`)
+    getRepoBranches(name)
       .then((d) => {
         if (d && !d.error) {
           setBranches(d.branches || []);
@@ -52,13 +50,14 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
     let alive = true;
     setEntries(null);
     setTreeErr("");
-    api(`${base}/tree?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`)
+    getRepoTree(name, ref, path)
       .then((d) => {
         if (!alive) return;
         if (d && d.error) {
           setTreeErr(d.error.message || tr("igb.fetch_failed"));
           setEntries([]);
         } else {
+          assertBody(d);
           setEntries(d.entries || []);
         }
       })
@@ -76,7 +75,7 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
     }
     let alive = true;
     setBlob(null);
-    api(`${base}/blob?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(file)}`)
+    getRepoBlob(name, ref, file)
       .then((d) => alive && setBlob(d && !d.error ? d : { path: file, size: 0 }))
       .catch(() => alive && setBlob({ path: file, size: 0 }));
     return () => {
