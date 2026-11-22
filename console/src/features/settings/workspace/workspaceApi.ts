@@ -40,7 +40,8 @@ export const getCleanupUsage = (): Promise<Rep<CleanupUsage> | null> => rawApi("
 
 export type LeftoversReply = { kinds?: LeftoverRow[]; unsupported?: boolean; truncated?: boolean };
 export const getCleanupLeftovers = (): Promise<Rep<LeftoversReply> | null> => rawApi("api/cleanup/leftovers");
-export type LeftoverDeleted = { count?: number; bytes?: number; failed?: number };
+/** `failed` is the first removal error (a message), present when some went and some did not. */
+export type LeftoverDeleted = { count?: number; bytes?: number; failed?: string };
 export const deleteCleanupLeftover = (kind: string, confirm: boolean): Promise<Rep<LeftoverDeleted> | null> =>
   rawApi("api/cleanup/leftovers/" + encodeURIComponent(kind) + (confirm ? "?confirm=1" : ""), { method: "DELETE" });
 
@@ -53,12 +54,14 @@ export const deleteToolCache = (name: string): Promise<Rep<ToolCacheEmptied> | n
 export type AfWorkListReply = { folders?: AgeFolder[]; unsupported?: boolean; truncated?: boolean };
 export const getAfWorkOlderThan = (days: number): Promise<Rep<AfWorkListReply> | null> =>
   rawApi("api/cleanup/af-work?older_than_days=" + days);
-export type AfWorkRemoved = { removed?: AgeFolder[]; skipped?: unknown[]; failed?: number };
+export type AfWorkRemoved = { removed?: AgeFolder[]; skipped?: unknown[]; failed?: string };
 export const deleteAfWorkFolders = (olderThanDays: number, names: string[]): Promise<Rep<AfWorkRemoved> | null> =>
   rawApiJSON("api/cleanup/af-work", "POST", { older_than_days: olderThanDays, names });
 
 /** GET reads the last walk; the POST (`init` given) starts a new one. Both answer a HomeStatus. */
-export const getHomeUsage = (init?: RequestInit): Promise<Rep<HomeStatus> | null> =>
+export type HomeReply = Omit<HomeStatus, "error"> & { error?: string | ApiError };
+/** Not `Rep`: a failed walk answers 200 with `error` a plain string, next to an API failure's object. */
+export const getHomeUsage = (init?: RequestInit): Promise<HomeReply | null> =>
   rawApi(init ? "api/cleanup/home/measure" : "api/cleanup/home", init);
 
 // --- Boost ----------------------------------------------------------------------------------------

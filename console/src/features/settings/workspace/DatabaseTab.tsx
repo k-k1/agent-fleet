@@ -154,10 +154,10 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
       toast(tr("env.db_action_failed", { msg: res.error.message || "" }));
       return;
     }
-    assertBody(res);
     void useSessionsStore.getState().refresh();
     // The settings modal covers the pane the session just opened in.
     useSettingsUI.getState().closeSettings();
+    assertBody(res);
     openSessionTerminal(res.name);
   };
 
