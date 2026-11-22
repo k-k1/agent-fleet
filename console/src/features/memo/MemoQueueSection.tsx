@@ -662,18 +662,20 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // on the chain row, so both stay readable. Two things are lost, and the dialog says so: undoing a
   // tidy run needs the replaced originals, and a memo that waits for a deleted one would never
   // start (its prerequisite row is gone), so a finished memo another memo still waits for is kept.
-  const clearFinished = async (c: MemoCategory) => {
-    const inCat = memos.filter((m) => m.repo === c.repo && m.category === c.name);
-    const finished = inCat.filter((m) => m.state === "delivered" || m.state === "superseded");
+  const clearableOf = (c: MemoCategory) => {
+    const finished = memos.filter((m) => m.repo === c.repo && m.category === c.name && (m.state === "delivered" || m.state === "superseded"));
     const finishedIds = new Set(finished.map((m) => m.id));
     const awaited = new Set<string>();
     for (const m of memos) if (!finishedIds.has(m.id)) for (const id of m.after ?? []) awaited.add(id);
     const picked = finished.filter((m) => !awaited.has(m.id));
+    return { picked, kept: finished.length - picked.length };
+  };
+  const clearFinished = async (c: MemoCategory) => {
+    const { picked, kept } = clearableOf(c);
     if (picked.length === 0) {
       toast(t("memo.clear_finished_none"));
       return;
     }
-    const kept = finished.length - picked.length;
     const ok = await askConfirm({
       title: t("memo.clear_finished"),
       body: t("memo.clear_finished_confirm", { count: picked.length, name: c.name }) + (kept > 0 ? " " + t("memo.clear_finished_kept", { count: kept }) : ""),
@@ -1428,7 +1430,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
               onHistory={() => setDeliveriesFor(c.id)}
               onSettings={() => setSettingsFor(c.id)}
               onRename={() => setRenameCat(c.id)}
-              finishedCount={memos.filter((m) => m.repo === c.repo && m.category === c.name && (m.state === "delivered" || m.state === "superseded")).length}
+              finishedCount={clearableOf(c).picked.length}
               onClearFinished={() => void clearFinished(c)}
               onDelete={() => void deleteCategory(c)}
             />

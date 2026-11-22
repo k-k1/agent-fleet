@@ -1718,6 +1718,8 @@ describe("the category head", () => {
     expect(labels[4]).toContain(t("memo.rename_category_item"));
     expect(labels[5]).toContain(t("memo.clear_finished"));
     expect(labels[6]).toContain(t("memo.delete_category"));
+    // The rename input's class styles a bordered text field: the menu item must not carry it.
+    expect(document.querySelector(".memo-cat-menu .memo-cat-rename")).toBeNull();
   });
 
   it("opens the same menu on right-click and on Shift+F10, and does not fold the category", async () => {

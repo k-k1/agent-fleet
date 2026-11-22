@@ -75,7 +75,7 @@ export const memo = {
   "memo.delete_selected": "選択したメモを削除",
   "memo.clear_finished": "完了したメモを削除…",
   "memo.clear_finished_none": "削除できる完了メモはありません",
-  "memo.clear_finished_confirm": "「{name}」の完了したメモ（配信済み・置き換え済み）{count} 件を削除しますか？元に戻せません。実行履歴と実行回数は残りますが、これらのメモの本文と、置き換え済みメモの整理の取り消しはできなくなります。",
+  "memo.clear_finished_confirm": "「{name}」の完了したメモ（配信済み・置き換え済み）{count} 件を削除しますか？元に戻せません。実行履歴と実行回数は残りますが、これらのメモの本文、その実行の「キューに戻す」、置き換え済みメモの整理の取り消しはできなくなります。",
   "memo.clear_finished_kept": "他のメモが待っている完了メモ {count} 件は残します。",
   "memo.delete_selected_confirm": "選択した {count} 件のメモを削除しますか？元に戻せません。送信中のメモは削除されません。",
   "memo.delete_selected_done": "{count} 件のメモを削除しました",

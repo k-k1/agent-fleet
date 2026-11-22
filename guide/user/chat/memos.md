@@ -29,7 +29,7 @@ Memos are stored on the server, so the same queue shows on another PC or your ph
 - Attach images by pasting or dropping them into the box, or with the attach button
 - Memos are grouped by repository, and by category within it
 - A memo added from a worktree session, or from a file in a worktree, goes under the **parent repository**, not under a group of its own for that worktree. Memos already under a worktree's group stay there; drag them to move them
-- A category header keeps only the fold arrow, the tick box, the name, the count, one badge (auto-run, paused or off), **+** and **⋯**. Everything else is in the menu behind **⋯** (or a right-click on the header, or the Menu key): "**Send**", "**Run now**", "**Run history**", "**Auto-run settings**", "**Rename**", "**Clear finished memos…**" and "**Delete category**". An item that cannot act now stays listed, greyed out, with the reason under it. Drag the header to reorder categories
+- A category header keeps only the fold arrow, the tick box, the name, the count, one badge (auto-run, paused or off), **+** and **⋯**. Everything else is in the menu behind **⋯** (or a right-click on the header, or the Menu key): "**Send**", "**Run now**", "**Run history**", "**Auto-run settings**", "**Rename**", "**Clear finished memos…**" and "**Delete category**". "**Send**" shows only when something can be sent, and "**Run now**", "**Run history**" and "**Clear finished memos…**" only in an auto-run category. Any other item that cannot act now stays listed, greyed out, with the reason under it. Drag the header to reorder categories
   ![A category header with its ⋯ menu open: Send, Run now, Run history, Auto-run settings, Rename, Clear finished memos… and, below a line, Delete category](../../assets/chatpages-memo-cat-menu-en-light.webp)
 - Press **+** on a category header to write straight into that category. "**Add category**" creates one ahead of time
 - The send button of an open file can also "**Add to queue**" a memo about that file ([Hand a file to a session](../files/send.md#send-it-later-in-a-batch))
@@ -41,6 +41,7 @@ Memos are stored on the server, so the same queue shows on another PC or your ph
 - "**Collapse**" under the body goes back to two lines
 - The row's **⋯** (or a right-click) offers "**Edit**", "**Send this memo**", "**Copy**" and "**Delete**"
 - Drag to reorder memos or move them to another category. Press a category's name, or choose "**Rename**" in its **⋯** menu, to rename it. Deleting a category moves its memos to "**Uncategorized**"
+- "**Clear finished memos…**" in a category's **⋯** menu deletes the memos that were delivered or replaced, after asking with the count. It cannot be undone. It is offered in auto-run categories only. The run history and the run counts stay, but the text of those memos is gone, "**Return to queue**" no longer works for their runs, and a tidy run can no longer be undone for the replaced ones. A finished memo that another memo is still waiting for is kept
 
 ## Point a memo at a work item
 
@@ -74,7 +75,7 @@ rewrite above, as before.
 
 1. Tick the memos to send and press "**Send…**" at the bottom. "**Send**" in a category's **⋯** menu sends that whole category
 
-   ![The memo queue: memos of webshop and payments-api by category, two of them ticked, and "2 selected", "Clear selection" and "Send…" at the bottom](../../assets/chatpages-memos-en-light.webp)
+   ![The memo queue: memos of webshop and payments-api by category, two of them ticked, and "2 selected", "Clear selection", "Delete" and "Send…" at the bottom](../../assets/chatpages-memos-en-light.webp)
 
 2. Check the **Content** on the "**Send memos**" screen. You can rewrite it freely before sending
 3. Pick a **Destination** and send
@@ -87,7 +88,6 @@ rewrite above, as before.
 | Launch a new session | "**Launch & send**" opens the screen where you pick the repository and agent, with the content as the first prompt. The memos stay in the queue |
 | An assistant | A new chat with that assistant opens with the content in the input box. Check it and send. The memos stay in the queue |
 
-- "**Clear finished memos…**" in a category's **⋯** menu deletes the memos that were delivered or replaced, after asking with the count. It cannot be undone. The run history and the run counts stay, but the text of those memos is gone and a tidy run can no longer be undone for the replaced ones. A finished memo that another memo is still waiting for is kept
 - Several memos sent together become one message, with a heading per category (`## …`) and numbers from `1.`
 - A single memo is sent as its bare text
 - A memo that points at an item adds one line with the item's key and URL after its text, or alone when the memo is only the link

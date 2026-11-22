@@ -2688,7 +2688,6 @@ const SCENES = [
       await new Promise((r) => setTimeout(r, 400));
       // No item shows focus or hover in the picture.
       document.activeElement?.blur?.();
-      document.querySelectorAll(".memo-cat-menu .ui-menu-item").forEach((e) => e.removeAttribute("tabindex"));
     })()`,
     verify: `!!document.querySelector(".memo-cat-menu")`,
     settle: 800,

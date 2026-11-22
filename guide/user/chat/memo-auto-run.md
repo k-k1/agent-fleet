@@ -469,7 +469,7 @@ When the first turns of the last two runs both fail, the category **pauses** aut
 - A failure is a first turn that failed or was stopped, or one that ended within a minute without finishing cleanly
 - The category's header shows "**Paused**", and under it and at the top of the run history it says "Auto-run is paused: the first turns of the last two runs failed, so no run starts by itself. “Run now” still works."
 
-![A paused category: "Auto-run" and "Paused" side by side on its header, with the pause notice and the "Resume" button below](../../assets/chatpages-autorun-paused-en-light.webp)
+![A paused category: the "Paused" badge on its header, with the pause notice and the "Resume" button below](../../assets/chatpages-autorun-paused-en-light.webp)
 
 - Only runs that start by themselves stop. "Run now" still works
 - Fix the cause and press "**Resume**". Counting failures starts again from then
@@ -518,7 +518,7 @@ They arrive in the notification center. In **⚙ Settings → "Notifications"**,
 
 When memos are waiting to run and nothing starts, a line or a notice under the category's header may say why (the notice is for the pause or a workspace to restart). The same can show at the top of the run history. Read them first.
 
-![The line under a category's header: "It is outside the time set for auto-run. The next run can start at 11/16, 22:00."](../../assets/chatpages-autorun-waiting-en-light.webp)
+![The line under a category's header: "It is outside the time set for auto-run. The next run can start at 11/23, 22:00."](../../assets/chatpages-autorun-waiting-en-light.webp)
 
 - The line shows only while at least one memo is waiting to run. Memos that wait for approval do not count
 - When several reasons hold, one line shows. When it is gone, the line may change to the next reason

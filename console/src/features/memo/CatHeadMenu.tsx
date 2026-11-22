@@ -33,7 +33,7 @@ interface Props {
   onHistory: () => void;
   onSettings: () => void;
   onRename: () => void;
-  /** Delivered and replaced memos in the category; 0 disables the item. */
+  /** Delivered and replaced memos that can go (queue categories only); 0 disables the item. */
   finishedCount: number;
   onClearFinished: () => void;
   onDelete: () => void;
@@ -103,8 +103,8 @@ export function CatHeadMenu(p: Props) {
         )}
       {p.isQueue && item("memo-cat-menu-act", "history", tr("memo.autorun_deliveries"), p.onHistory)}
       {item("memo-cat-menu-act", "settings-gear", tr("memo.autorun_settings"), p.onSettings, p.settingsNote)}
-      {item("memo-cat-rename", "edit", tr("memo.rename_category_item"), p.onRename)}
-      {item("memo-cat-menu-clear", "trash", tr("memo.clear_finished"), p.onClearFinished, p.finishedCount === 0 ? tr("memo.clear_finished_none") : "")}
+      {item("memo-cat-menu-rename", "edit", tr("memo.rename_category_item"), p.onRename)}
+      {p.isQueue && item("memo-cat-menu-clear", "trash", tr("memo.clear_finished"), p.onClearFinished, p.finishedCount === 0 ? tr("memo.clear_finished_none") : "")}
       <li className="ui-menu-sep" aria-hidden="true" />
       {item("memo-cat-menu-del", "trash", tr("memo.delete_category"), p.onDelete, "", true)}
     </ul>,

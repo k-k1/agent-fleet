@@ -42,6 +42,7 @@ vi.mock("./api.ts", () => ({
 vi.mock("./share.ts", () => ({ consumeShare: async () => null, registerShareSW: () => {} }));
 
 const { MemoQueueSection } = await import("./MemoQueueSection.tsx");
+const { t } = await import("../../lib/i18n/index.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 
@@ -234,9 +235,16 @@ describe("deleting the selected memos", () => {
       servedMemos = servedMemos.map((m) => (m.id === "p1" ? { ...m, after: ["d1"] } : m));
       await render();
       await click(headMenuItem({ cls: "memo-cat-menu-clear" }));
-      expect(q(".ui-confirm-body").textContent).toContain("1");
+      expect(q(".ui-confirm-body").textContent).toContain(t("memo.clear_finished_kept", { count: 1 }));
       await click(q(".ui-confirm-actions .ui-btn-danger"));
       expect(memoDelete.mock.calls.map((c) => c[0])).toEqual(["r1"]);
+
+    });
+
+    it("disables the item when every finished memo is awaited", async () => {
+      servedMemos = servedMemos.map((m) => (m.id === "p1" ? { ...m, after: ["d1", "r1"] } : m));
+      await render();
+      expect(headMenuItem({ cls: "memo-cat-menu-clear" }).getAttribute("aria-disabled")).toBe("true");
     });
 
     it("is disabled when nothing is finished", async () => {
