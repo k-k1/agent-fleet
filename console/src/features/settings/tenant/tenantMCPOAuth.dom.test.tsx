@@ -18,6 +18,7 @@ vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 vi.mock("../../../ui/ConfirmProvider.tsx", () => ({ useConfirm: () => async () => true }));
 
 import { TenantMCPOAuthView } from "./tenantMCPOAuth.tsx";
+import { t } from "../../../lib/i18n/index.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -67,6 +68,7 @@ describe("tenant MCP OAuth switch", () => {
     await act(async () => check().click());
     await act(async () => save().click());
     expect(toast).toHaveBeenCalledTimes(1);
+    expect(toast).toHaveBeenCalledWith(t("tenant.mcp_oauth_save_failed"));
     expect(document.querySelector('input[type="checkbox"]')).toBeNull();
   });
 

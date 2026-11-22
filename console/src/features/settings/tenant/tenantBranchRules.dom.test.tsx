@@ -19,6 +19,7 @@ vi.mock("../../../core/api/client.ts", async (importOriginal) => ({
 }));
 
 import { TenantBranchRulesView } from "./tenantBranchRules.tsx";
+import { t } from "../../../lib/i18n/index.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -116,6 +117,7 @@ describe("tenant branch rules", () => {
     await click(saveButton());
     expect(apiJSON).toHaveBeenCalledTimes(1);
     expect(document.querySelector("textarea")).toBeNull();
+    expect(host!.textContent).toContain(t("common.loading"));
   });
 
   it("stops text that is not a JSON list before the request", async () => {
