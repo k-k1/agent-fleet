@@ -68,7 +68,7 @@ const inkOf = (sel) => `${INK_FN}(document.querySelector(${JSON.stringify(sel)})
 // How long to poll. `until` exits as soon as the condition holds, so larger values cost nothing
 // on a fast machine. Locally pdf:check completes in ~5 s (3 runs, all 15 checks OK).
 //
-// PDF_LOAD_TRIES (30 s): page-layout waits where .pdfview.is-failed is an early-exit terminal.
+// PDF_LOAD_TRIES (30 s): page-layout waits where .pdfview.pdf-failed is an early-exit terminal.
 // Failures — a PDF that never loads — exit the same instant the banner appears, so raising this
 // limit does not delay failure detection. Only the happy-path upper bound grows.
 const PDF_LOAD_TRIES = 300;
@@ -77,11 +77,11 @@ const PDF_LOAD_TRIES = 300;
 // 15 s = ~75× headroom. If any of these exceeds 15 s the PDF rendered but the feature is broken.
 const PDF_BEHAVIOR_TRIES = 150;
 
-// Returns the page count, or -1 when .pdfview.is-failed has appeared. Used for the "N pages
+// Returns the page count, or -1 when .pdfview.pdf-failed has appeared. Used for the "N pages
 // laid out" waits so a PDF that fails to load exits immediately instead of spinning to the limit.
-const PAGES_OR_FAILED = `(() => { if (document.querySelector('.pdfview.is-failed')) return -1;
+const PAGES_OR_FAILED = `(() => { if (document.querySelector('.pdfview.pdf-failed')) return -1;
   return document.querySelectorAll('.pdfview-page').length; })()`;
-// Returns inkOf(sel), or -2 when .pdfview.is-failed has appeared. Used for the ink wait on
+// Returns inkOf(sel), or -2 when .pdfview.pdf-failed has appeared. Used for the ink wait on
 // assets.pdf: if the page-count wait already detected failure this exits immediately rather than
 // spinning for 30 s. (-1 is "canvas not found/unsized" from inkOf; -2 is the failure sentinel.)
 // Ink on the page's canvas under the first text-layer span matching `re`, as a share of the
@@ -109,7 +109,7 @@ const headRatio = (page) => `(() => {
   const sp = pg && [...pg.querySelectorAll('.textLayer span:not(.markedContent)')].find((e) => /^\\d+$/.test(e.textContent));
   return sp ? sp.getBoundingClientRect().height / pg.getBoundingClientRect().height : -1; })()`;
 const inkOrFailed = (sel) =>
-  `(() => { if (document.querySelector('.pdfview.is-failed')) return -2; return ${inkOf(sel)}; })()`;
+  `(() => { if (document.querySelector('.pdfview.pdf-failed')) return -2; return ${inkOf(sel)}; })()`;
 
 // ---- Working directory ------------------------------------------------------
 const www = fs.mkdtempSync(path.join(os.tmpdir(), "af-pdfcheck-"));
@@ -567,7 +567,7 @@ try {
 
   // 8. A corrupt PDF states a reason instead of showing a blank surface.
   await b.goto(`http://127.0.0.1:${port}/index.html?src=/broken.pdf`);
-  const failed = await until(b.evaluate, "document.querySelector('.pdfview.is-failed')?.textContent || ''", (s) => !!s, PDF_BEHAVIOR_TRIES);
+  const failed = await until(b.evaluate, "document.querySelector('.pdfview.pdf-failed')?.textContent || ''", (s) => !!s, PDF_BEHAVIOR_TRIES);
   check(!!failed, "a corrupt PDF shows a reason", JSON.stringify(failed));
 } finally {
   b.close();

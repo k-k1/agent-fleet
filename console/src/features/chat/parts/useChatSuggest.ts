@@ -107,7 +107,7 @@ export function useChatSuggest({
   // Scroll the candidate being cycled into view when it falls outside the single-line chip row.
   useEffect(() => {
     if (!cycledText) return;
-    const el = suggestRef.current?.querySelector<HTMLElement>(".chat-suggest-chip.cycling");
+    const el = suggestRef.current?.querySelector<HTMLElement>(".chat-suggest-chip.is-cycling");
     // scrollIntoView returns a Promise on Chrome 150: an implicit return would be taken as the
     // effect's cleanup and crash, so always discard it in a block body.
     if (el) {

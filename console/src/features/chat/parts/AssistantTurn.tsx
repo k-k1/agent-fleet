@@ -78,7 +78,7 @@ export function AssistantTurn({
     const h = readTurn(body, t("chat.label"), fromBlock, () => {
       handleRef.current = null;
       setState("idle");
-    }, voice);
+    }, voice, "", "chat-tts-active");
     if (h) {
       handleRef.current = h;
       setState("playing");
