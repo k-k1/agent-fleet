@@ -442,18 +442,31 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const prevRestEnded = useRef<Map<string, string>>(new Map());
   useLayoutEffect(() => {
     const prev = prevRestEnded.current;
-    const carry: string[] = [];
-    if (endedOpen[""]) {
-      for (const [id, list] of grouped.bySchedule) {
-        if (list.some((r) => !r.live && prev.get(r.root.name) === "")) carry.push(id);
-      }
-    }
     const next = new Map<string, string>();
     for (const r of grouped.rest) if (!r.live) next.set(r.root.name, "");
     prevRestEnded.current = next;
-    if (carry.length) setEndedOpen((m) => ({ ...m, ...Object.fromEntries(carry.map((id) => [id, true])) }));
+    // A fold only exists while its group has finished runs, and the groups are unmounted with a
+    // closed section; a state kept past either would open a later, unrelated fold.
+    const keep = new Set<string>();
+    if (sectionOpen) {
+      if (next.size) keep.add("");
+      for (const [id, list] of grouped.bySchedule) if (list.some((r) => !r.live)) keep.add(id);
+    }
+    const carry = new Set<string>();
+    if (endedOpen[""]) {
+      for (const [id, list] of grouped.bySchedule) {
+        if (list.some((r) => !r.live && prev.get(r.root.name) === "")) carry.add(id);
+      }
+    }
+    setEndedOpen((m) => {
+      const out: Record<string, boolean> = {};
+      for (const k of Object.keys(m)) if (m[k] && keep.has(k)) out[k] = true;
+      for (const id of carry) out[id] = true;
+      const same = Object.keys(out).length === Object.keys(m).filter((k) => m[k]).length && Object.keys(out).every((k) => m[k]);
+      return same ? m : out;
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grouped]);
+  }, [grouped, sectionOpen]);
   const activeCount = useMemo(() => scoped.filter((s) => s.enabled).length, [scoped]);
   // From the rows the active working set lists, not from everything loaded: opening the view
   // acknowledges what it publishes, and a failure the view does not show must stay unread.

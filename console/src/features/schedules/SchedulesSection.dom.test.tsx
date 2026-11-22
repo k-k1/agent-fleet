@@ -200,6 +200,58 @@ describe("SchedulesSection late schedule list", () => {
   });
 });
 
+describe("SchedulesSection fold state across groups", () => {
+  const ended = (name: string, scheduleId?: string) => ({ name, title: name, kind: "claude", alive: false, origin: "schedule", ...(scheduleId ? { scheduleId } : {}), createdAt: "2026-11-01T00:00:00Z" });
+  const setup = async (sessions: unknown[]) => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({ sessions: sessions as never });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    return useSessionsStore;
+  };
+  const ariaOf = (sel: string) => host.querySelector(`${sel} .sched-sess-ended`)?.getAttribute("aria-expanded");
+
+  it("keeps the row's fold closed when the unscheduled fold was closed", async () => {
+    const store = await setup([ended("a")]);
+    expect(ariaOf("[data-sched-sessions]")).toBe("false");
+    store.setState({ sessions: [ended("a", "sch_1")] as never });
+    await act(async () => {});
+    expect(ariaOf('[data-sched-sessions-of="sch_1"]')).toBe("false");
+    store.setState({ sessions: [] });
+  });
+
+  it("does not open a row's own finished runs because the unscheduled fold is open", async () => {
+    const store = await setup([ended("a"), ended("b", "sch_1")]);
+    await act(async () => host.querySelector<HTMLButtonElement>("[data-sched-sessions] .sched-sess-ended")!.click());
+    expect(ariaOf('[data-sched-sessions-of="sch_1"]')).toBe("false");
+    store.setState({ sessions: [] });
+  });
+
+  it("lets the member close the carried fold", async () => {
+    const store = await setup([ended("a")]);
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    store.setState({ sessions: [ended("a", "sch_1")] as never });
+    await act(async () => {});
+    const btn = () => host.querySelector<HTMLButtonElement>('[data-sched-sessions-of="sch_1"] .sched-sess-ended')!;
+    expect(btn().getAttribute("aria-expanded")).toBe("true");
+    await act(async () => btn().click());
+    expect(btn().getAttribute("aria-expanded")).toBe("false");
+    store.setState({ sessions: [] });
+  });
+
+  it("starts a new unscheduled fold closed after the group emptied", async () => {
+    const store = await setup([ended("a")]);
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    store.setState({ sessions: [] });
+    await act(async () => {});
+    expect(host.querySelector("[data-sched-sessions]")).toBeNull();
+    store.setState({ sessions: [ended("c")] as never });
+    await act(async () => {});
+    expect(ariaOf("[data-sched-sessions]")).toBe("false");
+    store.setState({ sessions: [] });
+  });
+});
+
 describe("SchedulesSection scheduled sessions under a working set", () => {
   it("shows a root outside the set as a heading without a state or an open button", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
