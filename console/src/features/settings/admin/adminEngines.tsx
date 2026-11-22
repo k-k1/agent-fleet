@@ -23,6 +23,7 @@ import {
   type EngineRow,
 } from "./engineTypes.ts";
 import { useEngineRows } from "./useEngineRows.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 // The self-hosted inference engines as MACHINES (ADR 0071): one row per engine, each with the
 // same off / on-demand / always-on control the VOICEVOX panel has, plus what that engine is
@@ -974,11 +975,7 @@ const ENGINE_TICK_MS = 15_000;
 
 function useSecondHand(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => setNow(Date.now()), ENGINE_TICK_MS);
-    return () => clearInterval(t);
-  }, [active]);
+  useInterval(() => setNow(Date.now()), active ? ENGINE_TICK_MS : null);
   return now;
 }
 

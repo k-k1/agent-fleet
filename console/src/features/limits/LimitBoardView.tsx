@@ -27,6 +27,7 @@ import {
   type LimitView,
 } from "./limitBoard.ts";
 import "./limits.css";
+import { useInterval } from "../../lib/useInterval.ts";
 
 const PAGE = 50;
 // How often an open board re-reads the CP: values age, publishers revoke, and a tenant
@@ -110,20 +111,18 @@ export function LimitBoardView() {
   }, [scope, load]);
 
   useEffect(() => {
-    const refresh = setInterval(() => {
-      if (document.visibilityState !== "hidden") void load(false);
-    }, REFRESH_MS);
-    const tick = setInterval(() => setNow(Date.now()), TICK_MS);
     const onVisible = () => {
       if (document.visibilityState === "visible") void load(false);
     };
     document.addEventListener("visibilitychange", onVisible);
     return () => {
-      clearInterval(refresh);
-      clearInterval(tick);
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [load]);
+  useInterval(() => {
+    if (document.visibilityState !== "hidden") void load(false);
+  }, REFRESH_MS);
+  useInterval(() => setNow(Date.now()), TICK_MS);
 
   const more = async () => {
     const at = scopeRef.current;

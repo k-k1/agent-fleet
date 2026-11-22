@@ -16,6 +16,7 @@ import { EngineLedger, inFlight } from "./adminEngineAddLedger.tsx";
 import { RegisteredEditDialog } from "./adminEngineAddRegisteredEdit.tsx";
 import { type CatalogProps, EngineRefusal, formatBytes, objectsPath, otherOf } from "./adminEngineAddShared.tsx";
 import { fmtNum } from "../../../lib/intl.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 /** Whether a `complete` answer has a question in it. Two things are worth a dialog and nothing
  * else is: a role the CP wants a pick for — which it asks even with ONE candidate, because
@@ -107,11 +108,7 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
   // while a task writes over it (engine_objects.go:354 only promotes an ABSENT object to
   // `uploading`), so an ingest in flight is invisible if only the state is consulted.
   const live = deletingKeys.length > 0 || (objects || []).some(inFlight);
-  useEffect(() => {
-    if (!live) return;
-    const timer = setInterval(() => void loadObjects(), 5000);
-    return () => clearInterval(timer);
-  }, [live, loadObjects]);
+  useInterval(() => void loadObjects(), live ? 5000 : null);
 
   const visible = [...models].filter((model) => {
     // The publisher's name is searched too, and it is the half people type: a catalogue where
