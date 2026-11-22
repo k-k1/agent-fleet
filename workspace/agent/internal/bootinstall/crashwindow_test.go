@@ -673,10 +673,11 @@ func TestCursorMarkerCarriesTheStagedTreeToken(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := cursorMarker{ID: id}
-	if !m.dirIsOurs(moved) || m.dirIsOurs(f.versions()) {
+	own := func(m cursorMarker, p string) string { o, _ := m.dirOwner(p); return o }
+	if own(m, moved) != "ours" || own(m, f.versions()) != "foreign" {
 		t.Fatal("the token does not identify the staged tree")
 	}
-	if !(cursorMarker{}).dirIsOurs(f.versions()) {
+	if own(cursorMarker{}, f.versions()) != "ours" {
 		t.Fatal("a marker without a token must keep the old behaviour")
 	}
 }
@@ -760,3 +761,36 @@ func probeLock(path string) (*os.File, bool, bool) {
 }
 
 func exists(p string) bool { _, err := os.Stat(p); return err == nil }
+
+// After a foreign tree is found, a regular file this update moved aside still goes back to its
+// empty place, and never over something that is there.
+func TestCursorRecoverForeignTreeStillRestoresAMovedAsideFile(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "#!/bin/sh\necho restored-tree\n") // no token
+	os.MkdirAll(filepath.Join(f.home, ".local", "bin"), 0o755)
+	keep := f.local("cursor-agent") + ".af-prev.9"
+	f.write(t, keep, "#!/bin/sh\necho realfile\n")
+	yes := true
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.9", Tree: true, HadTree: &yes, ID: "t",
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "file", Keep: keep}}}
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.read(f.local("cursor-agent")), "realfile") {
+		t.Fatal("the moved-aside launcher did not come back")
+	}
+}
+
+// A real update stamps the tree it publishes, and the stamp is what the marker is matched to.
+func TestSelfUpdateCursorStampsThePublishedTree(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", cursorInstaller)
+	f.env.selfUpdateCursor(context.Background())
+	b, err := os.ReadFile(filepath.Join(f.versions(), "2026.2.0-abc123", cursorIDFile))
+	if err != nil || len(b) != 32 {
+		t.Fatalf("no token in the published tree: %v %q", err, b)
+	}
+}

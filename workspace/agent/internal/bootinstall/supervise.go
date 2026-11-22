@@ -34,10 +34,12 @@ func MaybeSupervise(args []string) {
 // does not inherit it still cannot outlive the lock. The caller owns the deadline and kills the
 // whole group (supervisor included), so no signal handling is needed here.
 func supervise(npm string, args []string) int {
+	// The step signals its whole group at the end: it must lead its own, never a caller's.
 	lock := os.NewFile(3, "npm-lock")
-	if lock == nil {
+	if lock == nil || syscall.Getpgrp() != os.Getpid() {
 		return 125
 	}
+	defer lock.Close() // the last holder if npm's children did not inherit it: live until the end
 	cmd := exec.Command(npm, args...)
 	cmd.ExtraFiles = []*os.File{lock}
 	cmd.Stderr = os.Stderr
@@ -47,8 +49,11 @@ func supervise(npm string, args []string) int {
 	}
 	werr := cmd.Wait()
 	// Nothing npm started may outlive it: kill what is left, wait for it to be gone.
-	killGroupMembers(syscall.Getpgrp())
-	waitGroupGone(syscall.Getpgrp(), superviseGrace)
+	// Re-listed each round: a child that forks between a listing and the kill is caught by the next.
+	pgid := syscall.Getpgrp()
+	for deadline := time.Now().Add(superviseGrace); len(groupMembers(pgid)) > 0 && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		killGroupMembers(pgid)
+	}
 	if werr == nil {
 		return 0
 	}

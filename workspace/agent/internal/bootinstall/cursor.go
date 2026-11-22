@@ -1006,20 +1006,54 @@ func stampTree(p string) (string, error) {
 		return "", err
 	}
 	id := hex.EncodeToString(b[:])
-	if err := os.WriteFile(filepath.Join(p, cursorIDFile), []byte(id), 0o644); err != nil {
+	// Exclusive and not following links: an unpacked file of the same name must fail the update, not
+	// be written through.
+	f, err := os.OpenFile(filepath.Join(p, cursorIDFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
+	if err != nil {
 		return "", err
+	}
+	_, werr := f.WriteString(id)
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return "", werr
 	}
 	return id, nil
 }
 
-// dirIsOurs: the tree at p is the one this update staged. A marker without a token cannot
-// tell, so it answers true (the behaviour before the token existed).
-func (m cursorMarker) dirIsOurs(p string) bool {
+// dirOwner says whose tree is at p: ours (it carries the token), foreign (no token, or the
+// name is not a plain file), or unknown (the token could not be read: retry later, touch
+// nothing). A marker without a token cannot tell, so it answers ours (the behaviour before
+// the token existed).
+func (m cursorMarker) dirOwner(p string) (owner string, err error) {
 	if m.ID == "" {
-		return true
+		return "ours", nil
 	}
-	b, err := os.ReadFile(filepath.Join(p, cursorIDFile))
-	return err == nil && string(b) == m.ID
+	f, err := os.OpenFile(filepath.Join(p, cursorIDFile), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ELOOP) {
+			return "foreign", nil
+		}
+		return "unknown", err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return "unknown", err
+	}
+	if !fi.Mode().IsRegular() {
+		return "foreign", nil
+	}
+	buf := make([]byte, len(m.ID)+1)
+	n, err := io.ReadFull(f, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return "unknown", err
+	}
+	if string(buf[:n]) == m.ID {
+		return "ours", nil
+	}
+	return "foreign", nil
 }
 
 func (e Env) cursorMarkerPath() string {
@@ -1140,7 +1174,9 @@ func (e Env) cursorRecover() error {
 		if _, derr := os.Lstat(m.Dir); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
 			// Not knowing what is at Dir must not read as "empty" or "ours": retry at the next start.
 			return fmt.Errorf("cursor: cannot look at %s: %v", m.Dir, derr)
-		} else if derr == nil && !m.dirIsOurs(m.Dir) {
+		} else if owner, oerr := m.dirOwner(m.Dir); derr == nil && oerr != nil {
+			return fmt.Errorf("cursor: cannot read the update token in %s: %v", m.Dir, oerr)
+		} else if derr == nil && owner == "foreign" {
 			// Someone installed this version by hand after the interruption: it owns Dir and its
 			// launchers. Neither remove it, nor put the previous tree (the same version) over it, nor
 			// repoint its links; a kept previous tree stays where it is.
@@ -1176,7 +1212,18 @@ func (e Env) cursorRecover() error {
 	}
 	for _, l := range m.Links {
 		if foreign {
-			break
+			// The manual install owns Dir and the links it made; only a regular file this
+			// update moved aside is ours, and it goes back only to an empty place.
+			if l.Kind == "file" {
+				if _, kerr := os.Lstat(l.Keep); kerr == nil {
+					if _, perr := os.Lstat(l.Path); errors.Is(perr, fs.ErrNotExist) {
+						if err := os.Rename(l.Keep, l.Path); err != nil {
+							errs = append(errs, fmt.Errorf("cursor: the previous %s is left at %s: %v", l.Path, l.Keep, err))
+						}
+					}
+				}
+			}
+			continue
 		}
 		switch l.Kind {
 		case "symlink":
