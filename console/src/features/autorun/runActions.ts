@@ -63,13 +63,14 @@ function createdWorktree(run: RunRow, repos: Repo[], sessions: Session[]): RepoT
 
 /** Whether deleting `folder` would archive a run's session while another session of the same run
  *  stays listed outside it. Those would be unreachable from any run afterwards. Looks at every run
- *  with a session in the copy, not only the one asking. */
-function leavesRunSessions(folder: string, sessions: Session[]): boolean {
+ *  with a session in the copy, not only the one asking. `gone` names sessions about to be archived
+ *  elsewhere, which then do not stay listed. */
+function leavesRunSessions(folder: string, sessions: Session[], gone: ReadonlySet<string> = new Set()): boolean {
   const byName = new Map(sessions.map((s) => [s.name, s]));
   const roots = new Set<string>();
   for (const s of sessions) if (sessionFolder(s) === folder) roots.add(runRootName(s, byName));
   roots.delete("");
-  return sessions.some((t) => sessionFolder(t) !== folder && roots.has(runRootName(t, byName)));
+  return sessions.some((t) => sessionFolder(t) !== folder && !gone.has(t.name) && roots.has(runRootName(t, byName)));
 }
 
 /** "Clear finished runs": per ended run, the stopped sessions to archive (what the run started
@@ -87,9 +88,10 @@ export function planClearFinished(
   const ownedBy = (r: RunRow) => runSessions(r).flatMap((s) => fresh.get(s.name) ?? []);
   const mine = new Set(ended.flatMap(ownedBy).map((s) => s.name));
   // `offered` holds every candidate copy, so its sessions are left to the delete dialog; `heads`
-  // only those whose run has nothing left outside the copy. A run with a session elsewhere (not yet
-  // archived, alive, locked, or failed) keeps its copy and root until a later clear finds it clear.
-  const heads: RepoTreeNode[] = [];
+  // only those whose run has nothing left outside the copy once the planned archive is done. A run
+  // with a session elsewhere that is not planned for archive (alive, locked, or in a copy that is
+  // not deleted) keeps its copy and root until a later clear finds it clear.
+  const offeredWts: RepoTreeNode[] = [];
   const offered = new Set<string>();
   for (const r of ended) {
     if (r.pr?.state !== "merged") continue;
@@ -97,7 +99,7 @@ export function planClearFinished(
     if (!wt || offered.has(wt.repo.name)) continue;
     if (!sessionsInFolder(sessions, wt.repo.name).every((s) => mine.has(s.name))) continue;
     offered.add(wt.repo.name);
-    if (!leavesRunSessions(wt.repo.name, sessions)) heads.push(wt);
+    offeredWts.push(wt);
   }
   // A session is archived only when it and everything the run started below it can be: an ancestor
   // archived while a descendant stays would leave that descendant unreachable from its run.
@@ -123,6 +125,10 @@ export function planClearFinished(
       return all.filter((s) => clearable(s.name)).sort((x, y) => depth(y) - depth(x));
     })
     .filter((g) => g.length > 0);
+  // Decided from the plan, not from a re-read after the archive: the dialog opens before the
+  // archive of the sessions outside the copies has run.
+  const gone = new Set(archive.flat().map((s) => s.name));
+  const heads = offeredWts.filter((wt) => !leavesRunSessions(wt.repo.name, sessions, gone));
   // Siblings, not a tree: the delete dialog plans each at depth 0 rather than nesting them under the first.
   return { archive, nodes: heads };
 }

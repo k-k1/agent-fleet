@@ -353,8 +353,12 @@ function Category({
   );
 }
 
-/** "Clear finished runs": archives the stopped sessions of ended runs after one confirmation, then
- *  offers the worktrees of merged runs to the delete dialog (its own confirmation). */
+/** "Clear finished runs": after one confirmation, offers the worktrees of merged runs to the delete
+ *  dialog at once (its own confirmation) and archives, in the background, the stopped sessions of
+ *  ended runs that live outside those copies. */
+/** Runs archived at the same time by "Clear finished runs" (sessions of one run stay sequential). */
+const CLEAR_PARALLEL = 3;
+
 function ClearFinished({ runs }: { runs: RunRow[] }) {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
@@ -380,38 +384,48 @@ function ClearFinished({ runs }: { runs: RunRow[] }) {
         confirmLabel: tr("autorun.clear_do"),
       });
       if (!ok) return;
+      // The dialog opens at once on the nodes the plan takes; the sessions inside those copies are
+      // archived by the dialog per row, the rest here in the background.
+      const plan = latest();
+      if (plan.nodes.length > 0) setDel(plan.nodes);
       setBusy(true);
       let archived = 0;
       let failed = 0;
-      try {
-        for (const group of latest().archive) {
-          // Deepest first: a session whose archive failed keeps its ancestors, so the run stays
-          // listed with everything below it and the next clear retries.
-          const keep = new Set<string>();
-          for (const s of group) {
-            if (keep.has(s.name)) continue;
-            const res = await (agentOf(s.kind).caps.ephemeral
-              ? sessionDelete(s.name, { stop: true })
-              : raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" })
-            ).catch(() => null);
-            if (res?.ok) {
-              archived++;
-              closeSessionPanes(s.name);
-              continue;
-            }
-            failed++;
-            const j = await res?.json().catch(() => null);
-            toast(tr("autorun.clear_failed", { name: s.name, err: j?.error ? errText(j.error) : "" }));
-            for (const n of ancestorNames(s.name, useSessionsStore.getState().sessions)) keep.add(n);
+      const runGroup = async (group: Session[]) => {
+        // Deepest first: a session whose archive failed keeps its ancestors, so the run stays
+        // listed with everything below it and the next clear retries.
+        const keep = new Set<string>();
+        for (const s of group) {
+          if (keep.has(s.name)) continue;
+          const res = await (agentOf(s.kind).caps.ephemeral
+            ? sessionDelete(s.name, { stop: true })
+            : raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" })
+          ).catch(() => null);
+          if (res?.ok) {
+            archived++;
+            closeSessionPanes(s.name);
+            continue;
           }
+          failed++;
+          const j = await res?.json().catch(() => null);
+          toast(tr("autorun.clear_failed", { name: s.name, err: j?.error ? errText(j.error) : "" }));
+          for (const n of ancestorNames(s.name, useSessionsStore.getState().sessions)) keep.add(n);
         }
+      };
+      try {
+        const queue = [...plan.archive];
+        await Promise.all(
+          Array.from({ length: Math.min(CLEAR_PARALLEL, queue.length) }, async () => {
+            for (let g = queue.shift(); g; g = queue.shift()) await runGroup(g);
+          }),
+        );
       } finally {
         setBusy(false);
         await useSessionsStore.getState().refresh();
       }
       if (archived > 0 && failed === 0) toast(tr("autorun.cleared", { count: archived }), { kind: "success" });
+      return;
     }
-    // Planned again from what the list says now, after the archive settled.
     const nodes = latest().nodes;
     if (nodes.length > 0) setDel(nodes);
   };

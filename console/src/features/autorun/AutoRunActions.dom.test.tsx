@@ -152,6 +152,34 @@ describe("Clear finished runs", () => {
     expect(document.body.querySelector("[data-delete-modal]")!.getAttribute("data-delete-modal")).toBe("base@wip-o");
   });
 
+  it("opens the delete dialog without waiting for the archive calls to settle", async () => {
+    let release: (v: { ok: boolean }) => void = () => {};
+    rawCall.mockImplementation(() => new Promise((r) => (release = r)));
+    await act(async () => host.querySelector<HTMLButtonElement>(".autorun-clear")!.click());
+    await flush();
+    // rev-old's archive is still pending, yet the copy of the merged run is on offer.
+    expect(rawCall.mock.calls.map((c) => c[0])).toEqual(["api/sessions/rev-old/archive"]);
+    expect(document.body.querySelector("[data-delete-modal]")!.getAttribute("data-delete-modal")).toBe("base@wip-o");
+    expect(host.querySelector<HTMLButtonElement>(".autorun-clear")!.disabled).toBe(true);
+    await act(async () => release({ ok: true }));
+    await flush();
+    expect(host.querySelector<HTMLButtonElement>(".autorun-clear")!.disabled).toBe(false);
+  });
+
+  it("leaves the sessions inside a listed copy to the dialog", async () => {
+    useSessionsStore.setState({
+      sessions: [
+        ...useSessionsStore.getState().sessions,
+        sess("rev-in", { origin: "session", originSession: "run-old", alive: false, repo: "base@wip-o", createdAt: "2026-11-02T00:00:00Z" }),
+      ],
+    } as never);
+    await flush();
+    await act(async () => host.querySelector<HTMLButtonElement>(".autorun-clear")!.click());
+    await flush();
+    expect(rawCall.mock.calls.map((c) => c[0])).toEqual(["api/sessions/rev-old/archive"]);
+    expect(document.body.querySelector("[data-delete-modal]")!.getAttribute("data-delete-modal")).toBe("base@wip-o");
+  });
+
   it("does not offer a worktree a member's session entered while the confirmation was open", async () => {
     confirm.mockImplementationOnce(async () => {
       useSessionsStore.setState({
