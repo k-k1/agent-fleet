@@ -100,3 +100,27 @@ func TestStartSessionTmuxStopsThePaneWhenOnStartedKeepsFailing(t *testing.T) {
 		t.Fatalf("the pane was left running; tmux log = %s", b)
 	}
 }
+
+// A fault that clears on the retry must not fail the launch or stop the pane.
+func TestStartSessionTmuxOnStartedRecoversOnRetry(t *testing.T) {
+	logPath, _ := failableTmux(t)
+	calls := 0
+	swapCodex(t, func() error {
+		calls++
+		if calls == 1 {
+			return errors.New("transient")
+		}
+		return nil
+	})
+	m := session.Meta{Name: "onstarted_retry", Dir: t.TempDir(), Kind: session.KindCodex}
+	session.WriteMeta(m)
+	if err := startSessionTmux(m, false); err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("OnStarted ran %d times, want 2", calls)
+	}
+	if b, _ := os.ReadFile(logPath); strings.Contains(string(b), "kill-session") {
+		t.Fatalf("a recovered launch stopped its pane; tmux log = %s", b)
+	}
+}

@@ -85,7 +85,9 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 			err = plan.OnStarted() // one retry for a transient fault
 		}
 		if err != nil {
-			_ = tmuxx.Cmd("kill-session", "-t", session.TmuxName(m.Name)).Run()
+			if kerr := tmuxx.Cmd("kill-session", "-t", session.TmuxName(m.Name)).Run(); kerr != nil {
+				return fmt.Errorf("could not finish the launch bookkeeping and could not stop the pane (%v): %w", kerr, err)
+			}
 			return fmt.Errorf("could not finish the launch bookkeeping, pane stopped: %w", err)
 		}
 	}
