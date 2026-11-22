@@ -199,3 +199,104 @@ export const deletePagerDuty = (): Promise<Response> => raw("api/connections/pag
 export const deleteGrafana = (): Promise<Response> => raw("api/connections/grafana", { method: "DELETE" });
 export const deleteCloudWatch = (): Promise<Response> => raw("api/connections/cloudwatch", { method: "DELETE" });
 export const deleteAwsMcp = (): Promise<Response> => raw("api/connections/aws", { method: "DELETE" });
+
+// --- Jira (workspace/agent/connections.go; CP-native OAuth start) ---------------------------
+
+/** One Atlassian site an OAuth grant covers. */
+export type JiraSite = { cloudId: string; url: string; name?: string };
+
+/** The `jira` entry of GET /connections the tracker card reads. Never the token. */
+export type JiraConn = ProviderConn & {
+  account?: string;
+  email?: string;
+  site?: string;
+  cloudId?: string;
+  sites?: JiraSite[];
+  authKind?: "oauth" | "token" | string;
+  /** "missing" / "outdated" are verdicts; anything else (or absent) carries none. */
+  softwareScopes?: string;
+  confluenceScopes?: string;
+};
+
+export type JiraOAuthStart = { authorize_url: string };
+export type JiraTokenPut = { site: string; email: string; token: string };
+
+export const startJiraOAuth = (): Promise<Reply<JiraOAuthStart> | null> =>
+  apiJSON("api/connections/jira/oauth/start", "POST");
+export const putJiraToken = (body: JiraTokenPut): Promise<Reply<OpsConnReply> | null> =>
+  apiJSON("api/connections/jira", "PUT", body);
+export const putJiraSite = (cloudId: string): Promise<Reply<OpsConnReply> | null> =>
+  apiJSON("api/connections/jira/site", "PUT", { cloudId });
+export const deleteJira = (): Promise<Response> => raw("api/connections/jira", { method: "DELETE" });
+
+// --- Personal access tokens and connected apps (control-plane/pat.go, oauth_mcp_server.go) ---
+
+/** A Personal Access Token row from GET /api/pat. */
+export type PatToken = {
+  id: string;
+  name?: string;
+  scope?: string;
+  /** The endpoint the token is bound to; absent on a Control Plane that predates it. */
+  endpoint?: string;
+  expires_at?: string;
+  last_used_at?: string;
+  revoked?: boolean;
+};
+export type PatList = { tokens?: PatToken[]; ceiling?: string; max_ttl_days?: number };
+/** The once-shown answer of an issue: `token` is the secret. */
+export type PatIssued = { token: string; endpoint?: string };
+export type PatCreate = { name: string; scope: string; ttl_days: number; endpoint: string };
+
+export const listPats = (): Promise<Reply<PatList> | null> => api("api/pat");
+export const createPat = (body: PatCreate): Promise<Reply<PatIssued> | null> => apiJSON("api/pat", "POST", body);
+export const deletePat = (id: string): Promise<Response> =>
+  raw(`api/pat/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+/** An OAuth client's grant to the MCP endpoint, from GET /api/mcp-oauth/grants. */
+export type McpOAuthGrant = {
+  id: string;
+  client_name: string;
+  redirect_host: string;
+  tenant: string;
+  scope: string;
+  endpoint?: string;
+  created_at: number;
+  last_used_at: number;
+};
+export type McpOAuthGrants = { enabled: boolean; grants: McpOAuthGrant[] };
+
+export const listMcpOAuthGrants = (): Promise<Reply<McpOAuthGrants> | null> => api("api/mcp-oauth/grants");
+export const revokeMcpOAuthGrant = (id: string): Promise<Response> =>
+  raw(`api/mcp-oauth/grants/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+/** Mirrors mcpsrv.CallRecord (control-plane/internal/mcpsrv/mcp_calls.go). */
+export type McpCallItem = {
+  method: string;
+  name?: string;
+  era: string;
+  meta_version?: string;
+  client_name?: string;
+  client_version?: string;
+  status: number;
+  notification?: boolean;
+  error_code?: number;
+  error_message?: string;
+  tools?: number;
+  tool_error?: boolean;
+};
+export type McpCall = {
+  at: string;
+  http_method: string;
+  status: number;
+  latency_ms: number;
+  header_version?: string;
+  mcp_method_header: boolean;
+  mcp_name_header: boolean;
+  accept?: string;
+  content_type?: string;
+  user_agent?: string;
+  items: McpCallItem[];
+  items_omitted?: number;
+};
+/** `url` is `api/pat/<id>/calls` or `api/mcp-oauth/grants/<id>/calls`, built by RecentCalls' callers. */
+export const getMcpCalls = (url: string): Promise<Reply<{ calls?: McpCall[] }> | null> => api(url);

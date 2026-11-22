@@ -21,7 +21,7 @@ import {
   type SshRow,
   type SshPreview,
 } from "./sshConfigImport.ts";
-import { planSsmImport } from "./settingsBundle.ts";
+import { planSsmImport, type LooseRow } from "./settingsBundle.ts";
 import { executeSsmPlan, loadSsmLists, type ExecRow } from "./ssmImportExec.ts";
 
 type Tr = ReturnType<typeof useT>;
@@ -51,7 +51,7 @@ export function SshConfigImport({ onClose, onImported }: { onClose: () => void; 
   const [text, setText] = useState("");
   const [err, setErr] = useState("");
   const [cfg, setCfg] = useState<NativeSsh | null>(null);
-  const [lists, setLists] = useState<{ profiles: any[]; hosts: any[] }>({ profiles: [], hosts: [] });
+  const [lists, setLists] = useState<{ profiles: LooseRow[]; hosts: LooseRow[] }>({ profiles: [], hosts: [] });
   const [edits, setEdits] = useState<Record<string, SshEdit>>({});
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<[number, number] | null>(null);

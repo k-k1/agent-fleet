@@ -30,14 +30,15 @@ export const asRegistration = (v: unknown): OAuthRegistration | undefined =>
   OAUTH_REGISTRATIONS.find((r) => r === v);
 
 // normalizeStatus reads an Agent answer defensively: an unknown state reads as "not signed in".
-export function normalizeStatus(raw: any, serverId: string): OAuthStatus {
+export function normalizeStatus(body: unknown, serverId: string): OAuthStatus {
+  const raw = (body ?? undefined) as Record<string, unknown> | undefined;
   const state = OAUTH_STATES.find((s) => s === raw?.state) ?? "not_signed_in";
   return {
     serverId,
     state,
     issuer: typeof raw?.issuer === "string" ? raw.issuer : undefined,
     registration: asRegistration(raw?.registration),
-    scopes: Array.isArray(raw?.scopes) ? raw.scopes.filter((x: unknown) => typeof x === "string") : undefined,
+    scopes: Array.isArray(raw?.scopes) ? (raw.scopes as unknown[]).filter((x): x is string => typeof x === "string") : undefined,
     expiresAt: typeof raw?.expiresAt === "number" ? raw.expiresAt : undefined,
     connectedAt: typeof raw?.connectedAt === "number" ? raw.connectedAt : undefined,
     stepUpScope: typeof raw?.stepUpScope === "string" ? raw.stepUpScope : undefined,

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { apiJSON, errDetail, raw } from "../../../core/api/client.ts";
+import { errDetail, raw } from "../../../core/api/client.ts";
+import { putLcppConnection, checkLcppConnection } from "./credentialsApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -51,7 +52,7 @@ export function LcppCard({
     if (!url.trim()) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/lcpp", "PUT", { url: url.trim(), apiKey: apiKey.trim() });
+      const res = await putLcppConnection(url.trim(), apiKey.trim());
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errDetail(res.error) }));
         return;
@@ -76,7 +77,7 @@ export function LcppCard({
   const runCheck = useCallback(async () => {
     setCheck({ state: "checking" });
     try {
-      const res = await apiJSON("api/connections/lcpp/check", "POST", {});
+      const res = await checkLcppConnection();
       if (!res || res.error) {
         setCheck({ state: "error", msg: res?.error ? errDetail(res.error) : "" });
       } else {

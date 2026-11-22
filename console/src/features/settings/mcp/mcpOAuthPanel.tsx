@@ -67,7 +67,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
     const r = await fetchOAuthStatus(s.id);
     if (mine !== seq.current) return null; // a newer read is in flight
     if ("error" in r) {
-      setStatusErr(errText(r.error as any));
+      setStatusErr(errText(r.error));
       return null;
     }
     setStatusErr("");
@@ -154,7 +154,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
           }
           // errDetail: the Agent's bad_request carries the reason (e.g. the server's scope
           // list is invalid) that the generic err.bad_request wording alone would hide.
-          toast(tr("mcp.oauth_signin_failed", { msg: errDetail(r.error as any) }));
+          toast(tr("mcp.oauth_signin_failed", { msg: errDetail(r.error) }));
           return;
         }
         startedReg.current = r.registration;
@@ -170,7 +170,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
         window.location.assign(r.authorizeUrl);
       } catch (e) {
         tab?.close();
-        toast(tr("mcp.oauth_signin_failed", { msg: errText(e as any) }));
+        toast(tr("mcp.oauth_signin_failed", { msg: errText(e instanceof Error ? e.message : String(e)) }));
       } finally {
         inFlight.current = false;
         setBusy(false);
@@ -189,7 +189,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
       try {
         const r = await saveClientId(s.id, clientFor, clientId, secret);
         if (r.error) {
-          toast(tr("mcp.save_failed", { msg: errText(r.error as any) }));
+          toast(tr("mcp.save_failed", { msg: errText(r.error) }));
           return;
         }
         setClientFor(null);
@@ -216,7 +216,7 @@ export function useOAuthFlow(s: McpServer, failedReturn?: OAuthReturn | null) {
     try {
       const r = await disconnectOAuth(s.id);
       if (r.error) {
-        toast(tr("mcp.save_failed", { msg: errText(r.error as any) }));
+        toast(tr("mcp.save_failed", { msg: errText(r.error) }));
         return;
       }
       toast(tr("mcp.oauth_disconnected", { name: s.label || s.name }));

@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
-import { apiJSON, errText, raw } from "../../../core/api/client.ts";
+import { errText, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { OnOff } from "../parts/controls.tsx";
 import { ProviderCard, StatusPill, Hint, DisconnectButton, IssueLink } from "../parts/providerCard.tsx";
 import { useTenantStore } from "../../../core/store/tenant.ts";
 import { getLocale, useT } from "../../../lib/i18n/index.ts";
+import { assertBody } from "../workspace/workspaceApi.ts";
+import { inspectSlack, listSlackChannels, putSlackConn, type ChatConn } from "./chatApi.ts";
 import { SettingsPanel, PsRow, CHAT_EVENTS, ALL_EVENTS } from "./chatCardParts.tsx";
 
 // SlackCard — the Socket-Mode twin of DiscordCard (docs/log/37 Slack follow-up). Two tokens (bot
 // xoxb- + app-level xapp-) → verify → pick channel → connect; details auto-save afterward.
-export function SlackCard({ st, reload }: { st: any; reload: () => void }) {
+export function SlackCard({ st, reload }: { st: ChatConn | undefined; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
   const email = useTenantStore((s) => s.whoami?.email || "");
@@ -26,7 +28,7 @@ export function SlackCard({ st, reload }: { st: any; reload: () => void }) {
   const [mirror, setMirror] = useState(true);
   const [events, setEvents] = useState<string[]>(ALL_EVENTS);
   const [busy, setBusy] = useState(false);
-  const [localSt, setLocalSt] = useState<any>(null);
+  const [localSt, setLocalSt] = useState<ChatConn | null>(null);
   const view = localSt?.connected ? localSt : st?.connected ? st : null;
 
   useEffect(() => {
@@ -46,11 +48,12 @@ export function SlackCard({ st, reload }: { st: any; reload: () => void }) {
     if (!botToken.trim()) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/slack/inspect", "POST", { botToken: botToken.trim(), appToken: appToken.trim() });
+      const res = await inspectSlack(botToken.trim(), appToken.trim());
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errText(res.error) }));
         return;
       }
+      assertBody(res);
       setInsp({ botName: res.botName, teamName: res.teamName, botToken: botToken.trim(), appToken: appToken.trim() });
       setBotToken("");
       setAppToken("");
@@ -64,9 +67,9 @@ export function SlackCard({ st, reload }: { st: any; reload: () => void }) {
     if (!insp || dm || found) return;
     let stopped = false;
     const load = async () => {
-      const res = await apiJSON("api/connections/slack/channels", "POST", { botToken: insp.botToken, email });
+      const res = await listSlackChannels(insp.botToken, email);
       if (stopped || !res || res.error) return;
-      const opts = (Array.isArray(res.channels) ? res.channels : []).map((c: any) => ({ id: c.id, label: "#" + c.name }));
+      const opts = (Array.isArray(res.channels) ? res.channels : []).map((c) => ({ id: c.id, label: "#" + c.name }));
       setChans(opts);
       if (res.resolvedUserId && userId === "") setUserId(res.resolvedUserId);
       if (opts.length === 1) setChannel(opts[0].id);
@@ -80,7 +83,7 @@ export function SlackCard({ st, reload }: { st: any; reload: () => void }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [insp, dm, found, email, userId]);
 
-  const body = (botToken: string, appToken: string, over: Record<string, any> = {}) => ({
+  const body = (botToken: string, appToken: string, over: Record<string, unknown> = {}) => ({
     botToken,
     appToken,
     channelId: dm ? "" : channel,
@@ -98,7 +101,7 @@ export function SlackCard({ st, reload }: { st: any; reload: () => void }) {
     if (!insp || (dm ? !userId.trim() : !channel) || (receive && !userId.trim())) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/slack", "PUT", body(insp.botToken, insp.appToken));
+      const res = await putSlackConn(body(insp.botToken, insp.appToken));
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errText(res.error) }));
         return;
@@ -113,8 +116,8 @@ export function SlackCard({ st, reload }: { st: any; reload: () => void }) {
     reload();
   };
 
-  const persist = async (over: Record<string, any> = {}) => {
-    const res = await apiJSON("api/connections/slack", "PUT", body("", "", over));
+  const persist = async (over: Record<string, unknown> = {}) => {
+    const res = await putSlackConn(body("", "", over));
     if (res && res.error) {
       toast(tr("conn.connect_failed", { msg: errText(res.error) }));
       return;

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { useApiSave } from "../parts/useApiSave.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { checkEgress, proposeEgress } from "./mcpApi.ts";
+import { isOk } from "../api.ts";
 import { checkQuery, egressLevel, hostOf } from "./egressCheck.ts";
 import type { EgressCheck } from "./egressCheck.ts";
 
@@ -28,8 +30,8 @@ export function useEgressCheck(hosts: string[]): { check: EgressCheck | null; re
       setCheck(null);
       return;
     }
-    api("api/egress/check?" + checkQuery(key.split(",")))
-      .then((d) => setCheck(d && !d.error ? (d as EgressCheck) : null))
+    checkEgress(checkQuery(key.split(",")))
+      .then((d) => setCheck(isOk(d) ? d : null))
       .catch(() => setCheck(null));
   }, [key]);
 
@@ -63,8 +65,8 @@ export function EgressNote({
   const level = egressLevel(check, host);
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
+  const { saving: busy, save: propose } = useApiSave(proposeEgress);
 
   if (level === "none") return null;
   if (level === "pending") {
@@ -72,24 +74,17 @@ export function EgressNote({
   }
 
   const send = async () => {
-    setBusy(true);
     setErr("");
-    try {
-      const d = await apiJSON("api/egress/propose", "POST", {
-        entry: host,
-        reason: reason.trim() || defaultReason || "",
-      });
-      if (d && d.error) {
-        setErr(tr("mcp.egress_propose_failed", { msg: errText(d.error) }));
-        return;
-      }
-      setOpen(false);
-      // Re-check rather than assuming: the CP may answer "already active", in which case
-      // the right outcome is the warning disappearing, not a "requested" message.
-      onProposed();
-    } finally {
-      setBusy(false);
+    const r = await propose(host, reason.trim() || defaultReason || "");
+    if (r.status === "failed") {
+      setErr(tr("mcp.egress_propose_failed", { msg: r.error }));
+      return;
     }
+    if (r.status === "busy") return;
+    setOpen(false);
+    // Re-check rather than assuming: the CP may answer "already active", in which case
+    // the right outcome is the warning disappearing, not a "requested" message.
+    onProposed();
   };
 
   return (

@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
+import { errDetail, raw } from "../../../core/api/client.ts";
+import { putOpencodeKey, restartOpencodeServe, putOpencodeWorkspace, startOpencodeOauth, pollOpencodeOauth, cancelOpencodeOauth } from "./credentialsApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { DATETIME_LOCALE_DEFAULT, fmtDateTime } from "../../../lib/intl.ts";
@@ -196,7 +197,7 @@ function OpencodeRestartRow({ st, reload }: { st: ProviderConn | undefined; relo
 
   const apply = async () => {
     setBusy(true);
-    const res = await apiJSON("api/connections/opencode/serve/restart", "POST", {});
+    const res = await restartOpencodeServe();
     setBusy(false);
     if (res && res.error) {
       toast(tr("agents.oc_restart_failed", { msg: errDetail(res.error) }));
@@ -235,7 +236,7 @@ function OpencodeWorkspaceRow({ st, reload }: { st: ProviderConn | undefined; re
   const limit = st?.last_limit;
 
   const save = async (value: string) => {
-    const res = await apiJSON("api/connections/opencode/workspace", "PUT", { id: value });
+    const res = await putOpencodeWorkspace(value);
     if (res && res.error) {
       toast(tr("common.save_failed_msg", { msg: errDetail(res.error) }));
       return;
@@ -338,7 +339,7 @@ export function OpencodeCard({
     if (!envName || !key.trim()) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/opencode", "PUT", { env: envName, key: key.trim() });
+      const res = await putOpencodeKey(envName, key.trim());
       if (res && res.error) {
         toast(tr("common.save_failed_msg", { msg: errDetail(res.error) }));
         return;
@@ -358,7 +359,7 @@ export function OpencodeCard({
   const startAccountLogin = async () => {
     setOauthBusy(true);
     try {
-      const res = await api("api/connections/opencode/oauth/start", { method: "POST" });
+      const res = await startOpencodeOauth();
       if (!res || res.error || !res.url) {
         toast(tr("agents.oc_account_failed", { msg: res?.error ? `: ${errDetail(res.error)}` : "" }));
         return;
@@ -377,7 +378,7 @@ export function OpencodeCard({
         step: async () => {
           let p;
           try {
-            p = await apiJSON("api/connections/opencode/oauth/poll", "POST", { flow_id: res.flow_id });
+            p = await pollOpencodeOauth(res.flow_id);
           } catch {
             p = null;
           }
@@ -402,7 +403,7 @@ export function OpencodeCard({
   const cancelAccountLogin = async () => {
     const id = flow?.flow_id;
     setFlow(null);
-    if (id) await apiJSON("api/connections/opencode/oauth/cancel", "POST", { flow_id: id }).catch(() => {});
+    if (id) await cancelOpencodeOauth(id).catch(() => {});
   };
   const disconnectAccount = async () => {
     await raw("api/connections/opencode/oauth", { method: "DELETE" });

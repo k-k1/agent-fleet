@@ -20,6 +20,7 @@ import {
   type GcpImportRow,
   type GcpReason,
   type GcpRowEdit,
+  type ExistingGcpProfile,
   type NativeGcpConfig,
 } from "./gcloudConfigImport.ts";
 import { executeGcpPlan, loadGcpProfiles, type GcpExecRow } from "./gcpImportExec.ts";
@@ -53,7 +54,7 @@ export function GcpConfigImport({ onClose, onImported }: { onClose: () => void; 
   const [pasteName, setPasteName] = useState("default");
   const [err, setErr] = useState("");
   const [cfgs, setCfgs] = useState<NativeGcpConfig[] | null>(null);
-  const [existing, setExisting] = useState<any[]>([]);
+  const [existing, setExisting] = useState<ExistingGcpProfile[]>([]);
   const [edits, setEdits] = useState<Record<number, GcpRowEdit>>({});
   const [loading, setLoading] = useState(false);
   const [busy, setBusy] = useState(false);

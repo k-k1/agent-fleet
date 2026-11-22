@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errDetail, type ApiError } from "../../../core/api/client.ts";
+import { errDetail, type ApiError } from "../../../core/api/client.ts";
+import { getUnusableConnections, removeUnusableConnections } from "./credentialsApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
@@ -41,7 +42,7 @@ export function UnusableLine({ running }: { running: boolean }) {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    api("api/connections/unusable")
+    getUnusableConnections()
       .then((r) => setOffer(isUnusable(r) ? r : null))
       .catch(() => setOffer(null));
   }, []);
@@ -55,6 +56,7 @@ export function UnusableLine({ running }: { running: boolean }) {
 
   if (!running || !offer || offer.count <= 0 || !offer.token) return null;
 
+  const token = offer.token;
   const remove = async () => {
     const ok = await confirm({
       title: tr("cred.unusable_confirm_title"),
@@ -67,7 +69,7 @@ export function UnusableLine({ running }: { running: boolean }) {
     try {
       let r: (UnusableRemoveAnswer & { error?: ApiError }) | null;
       try {
-        r = (await apiJSON("api/connections/unusable/remove", "POST", { token: offer.token })) as typeof r;
+        r = (await removeUnusableConnections(token)) as typeof r;
       } catch (e) {
         // A network failure: whether anything was removed is unknown, so ask the Agent again.
         r = { error: { code: "network", message: e instanceof Error ? e.message : String(e) } } as typeof r;

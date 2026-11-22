@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
+import { errDetail, raw } from "../../../core/api/client.ts";
+import { startMuseLogin, pollMuseLogin, putMuseApiKey } from "./credentialsApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -71,7 +72,7 @@ export function MuseCard({
   const startLogin = async () => {
     setBusy(true);
     try {
-      const res = await api("api/connections/muse/start", { method: "POST" });
+      const res = await startMuseLogin();
       if (!res || res.error || !res.url) {
         toast(tr("agents.muse_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
@@ -88,7 +89,7 @@ export function MuseCard({
           if (!active.is(res.flow_id)) return { stop: true };
           let p;
           try {
-            p = await apiJSON("api/connections/muse/poll", "POST", { flow_id: res.flow_id });
+            p = await pollMuseLogin(res.flow_id);
           } catch {
             p = null;
           }
@@ -122,7 +123,7 @@ export function MuseCard({
   const saveKey = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/muse/api-key", "POST", { key: key.trim() });
+      const res = await putMuseApiKey(key.trim());
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errDetail(res.error) }));
         return;

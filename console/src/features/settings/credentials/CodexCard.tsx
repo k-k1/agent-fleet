@@ -1,5 +1,6 @@
 import { useRef, useState } from "react";
-import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
+import { errDetail, raw } from "../../../core/api/client.ts";
+import { startCodexDeviceLogin, pollCodexDeviceLogin, putCodexApiKey } from "./credentialsApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -51,7 +52,7 @@ export function CodexCard({
   const startDevice = async () => {
     setBusy(true);
     try {
-      const res = await api("api/connections/codex/device/start", { method: "POST" });
+      const res = await startCodexDeviceLogin();
       if (!res || res.error || !res.url) {
         toast(tr("agents.codex_auth_failed", { msg: res?.error ? errDetail(res.error) : tr("agents.codex_device_disabled") }));
         return;
@@ -69,7 +70,7 @@ export function CodexCard({
           if (activeFlow.current !== res.flow_id) return { stop: true };
           let p;
           try {
-            p = await apiJSON("api/connections/codex/device/poll", "POST", { flow_id: res.flow_id });
+            p = await pollCodexDeviceLogin(res.flow_id);
           } catch {
             p = null;
           }
@@ -101,7 +102,7 @@ export function CodexCard({
     if (!key.trim()) return;
     setBusy(true);
     try {
-      const res = await apiJSON("api/connections/codex/api-key", "POST", { key: key.trim() });
+      const res = await putCodexApiKey(key.trim());
       if (res && res.error) {
         toast(tr("conn.connect_failed", { msg: errDetail(res.error) }));
         return;

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { create } from "zustand";
-import { api } from "../../../core/api/client.ts";
+import { getConnections } from "../connect/connectApi.ts";
+import { isOk } from "../api.ts";
 import { useTenantStore } from "../../../core/store/tenant.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { useSettingsUI } from "../store.ts";
@@ -76,10 +77,10 @@ export function useConnections() {
     const giveUp = () =>
       useConnectionsCache.setState((s) => ({ ...(s.conns ? s : { conns: {}, failed: true }), failures: s.failures + 1, lastOk: false }));
     const attempt = (retriesLeft: number) => {
-      api("api/connections")
+      getConnections()
         .then((d) => {
           if (id !== connSeq) return;
-          if (d && !d.error) {
+          if (isOk(d)) {
             setConns(d);
             useConnectionsCache.setState((s) => ({ answered: s.answered + 1, lastOk: true }));
             return;

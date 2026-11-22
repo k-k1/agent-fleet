@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, isTransientErr, errText, rawJSON } from "../../../core/api/client.ts";
+import { isTransientErr, errText, rawJSON } from "../../../core/api/client.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { EmptyState } from "../../../ui/EmptyState.tsx";
 import { Button } from "../../../ui/Button.tsx";
@@ -8,6 +8,9 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 // The wire contract (types, masked-secret round-trip, form↔definition mapping)
 // lives beside this file so its rules are unit-tested — see mcpWire.test.ts.
+import { deleteMcpServer, getMcpRegistry, putMcpSecrets, refreshTenantMcp, saveMcpServer, testMcpServer } from "./mcpApi.ts";
+import { isOk } from "../api.ts";
+import { useApiSave } from "../parts/useApiSave.ts";
 import { bodyOf, emptyForm, formOf, probeOfAnswer } from "./mcpWire.ts";
 import type { Form, McpServer, ProbeResult, Registry } from "./mcpWire.ts";
 // Egress allowlist tie-in (docs/log/48 §9): a remote server the deployment's proxy will not
@@ -60,7 +63,7 @@ export function McpTab() {
   // Probe results keyed by server id ("" = the unsaved form), so a test result stays
   // pinned to the row that produced it across a reload.
   const [probes, setProbes] = useState<Record<string, ProbeResult>>({});
-  const [refreshing, setRefreshing] = useState(false);
+    const { saving: refreshing, save: refresh } = useApiSave(refreshTenantMcp);
   // Which tenant user_secret row is having its values entered ("" = none).
   const [secretFor, setSecretFor] = useState<McpServer | null>(null);
   // Every remote destination on screen, including the one being typed into the open form.
@@ -86,10 +89,10 @@ export function McpTab() {
     const id = ++reqId.current;
     const stale = () => id !== reqId.current;
     const attempt = (left: number) => {
-      api("api/mcp-servers")
+      getMcpRegistry()
         .then((d) => {
           if (stale()) return;
-          if (d && !d.error) {
+          if (isOk(d)) {
             setReg({ ...d, servers: Array.isArray(d.servers) ? d.servers : [] });
             return;
           }
@@ -125,9 +128,8 @@ export function McpTab() {
   const watchBlocked = reg?.watchSources === false;
 
   const save = async (f: Form) => {
-    const path = f.id ? `api/mcp-servers/${encodeURIComponent(f.id)}` : "api/mcp-servers";
-    const res = await apiJSON(path, f.id ? "PUT" : "POST", bodyOf(f, watchBlocked));
-    if (res && res.error) {
+    const res = await saveMcpServer(f.id, bodyOf(f, watchBlocked));
+    if (res && !isOk(res)) {
       toast(tr("mcp.save_failed", { msg: errText(res.error) }));
       return false;
     }
@@ -144,8 +146,8 @@ export function McpTab() {
     });
     // Unlike save, the probe keeps targets.watch: /test is not behind the CP's watch gate, and the
     // Agent narrows the probe environment for a watch source.
-    const res = await apiJSON("api/mcp-servers/test", "POST", bodyOf(f));
-    setProbes((p) => ({ ...p, [key]: probeOfAnswer(res, (e) => errText(e as any)) }));
+    const res = await testMcpServer(bodyOf(f));
+    setProbes((p) => ({ ...p, [key]: probeOfAnswer(res, errText) }));
   };
 
   const setEnabled = async (s: McpServer, on: boolean) => {
@@ -159,8 +161,8 @@ export function McpTab() {
   };
 
   const remove = async (s: McpServer) => {
-    const r = await apiJSON(`api/mcp-servers/${encodeURIComponent(s.id)}`, "DELETE");
-    if (r && r.error) {
+    const r = await deleteMcpServer(s.id);
+    if (r && !isOk(r)) {
       toast(tr("mcp.save_failed", { msg: errText(r.error) }));
       return;
     }
@@ -172,29 +174,26 @@ export function McpTab() {
   // poll (docs/log/48 §6). A failure is surfaced verbatim — a silently stale list is the
   // thing this button exists to rule out.
   const refreshTenant = async () => {
-    setRefreshing(true);
-    try {
-      const d = await apiJSON("api/mcp-servers/tenant-refresh", "POST", {});
-      if (d && d.error) {
-        toast(tr("mcp.tenant_refresh_failed", { msg: errText(d.error) }));
-        return;
-      }
-      setReg({ ...d, servers: Array.isArray(d.servers) ? d.servers : [] });
-      // Rows the CP could not decrypt, and rows this agent refused, are both absent from
-      // the list. Saying so beats letting the member conclude the admin never added them.
-      const unreadable = Number(d.fetch?.unreadable) || 0;
-      const dropped = Number(d.fetch?.dropped) || 0;
-      if (unreadable + dropped > 0) toast(tr("mcp.tenant_incomplete", { n: unreadable + dropped }));
-    } finally {
-      setRefreshing(false);
+    const r = await refresh();
+    if (r.status === "failed") {
+      toast(tr("mcp.tenant_refresh_failed", { msg: r.error }));
+      return;
     }
+    if (r.status !== "ok" || !r.value) return;
+    const d = r.value;
+    setReg({ ...d, servers: Array.isArray(d.servers) ? d.servers : [] });
+    // Rows the CP could not decrypt, and rows this agent refused, are both absent from
+    // the list. Saying so beats letting the member conclude the admin never added them.
+    const unreadable = Number(d.fetch?.unreadable) || 0;
+    const dropped = Number(d.fetch?.dropped) || 0;
+    if (unreadable + dropped > 0) toast(tr("mcp.tenant_incomplete", { n: unreadable + dropped }));
   };
 
   // Store the member's own header values for a tenant user_secret definition. Lands in
   // this workspace's encrypted store; the distributed definition is never modified.
   const saveSecrets = async (s: McpServer, headers: Record<string, string>) => {
-    const d = await apiJSON(`api/mcp-servers/${encodeURIComponent(s.id)}/secrets`, "PUT", { headers });
-    if (d && d.error) {
+    const d = await putMcpSecrets(s.id, headers);
+    if (d && !isOk(d)) {
       toast(tr("mcp.save_failed", { msg: errText(d.error) }));
       return false;
     }

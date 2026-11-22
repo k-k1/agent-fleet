@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
+import { errDetail, raw } from "../../../core/api/client.ts";
+import { startKiroLogin, pollKiroLogin } from "./credentialsApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -29,7 +30,7 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: Provid
   const startLogin = async () => {
     setBusy(true);
     try {
-      const res = await api("api/connections/kiro/start", { method: "POST" });
+      const res = await startKiroLogin();
       if (!res || res.error || !res.url) {
         toast(tr("agents.kiro_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
@@ -46,7 +47,7 @@ export function KiroCard({ running, st, reload }: { running: boolean; st: Provid
           if (!active.is(res.flow_id)) return { stop: true };
           let p;
           try {
-            p = await apiJSON("api/connections/kiro/poll", "POST", { flow_id: res.flow_id });
+            p = await pollKiroLogin(res.flow_id);
           } catch {
             p = null;
           }

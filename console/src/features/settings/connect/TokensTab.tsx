@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useState } from "react";
 import { DirectionNote } from "../parts/DirectionNote.tsx";
-import { api, apiJSON, raw, rel } from "../../../core/api/client.ts";
+import { rel } from "../../../core/api/client.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { isOk } from "../api.ts";
+import { assertBody } from "../workspace/workspaceApi.ts";
 import { Row } from "../parts/controls.tsx";
 import { fmtDate } from "./tokenDate.ts";
 import { endpointLabel } from "./tokenEndpoint.ts";
 import { ConnectedApps } from "./ConnectedApps.tsx";
+import { createPat, deletePat, listPats, type PatIssued, type PatToken } from "./connectApi.ts";
 import { RecentCalls } from "./RecentCalls.tsx";
 import { TokenCapabilities } from "./TokenCapabilities.tsx";
 
@@ -15,18 +18,6 @@ import { TokenCapabilities } from "./TokenCapabilities.tsx";
 // (docs/decisions/0006, P3-6). A token carries the issuer's identity+membership;
 // role is resolved live at call time, scope is fixed here and capped at the
 // issuer's ceiling. The secret is shown exactly once.
-
-// A Personal Access Token row from GET /api/pat.
-interface PatToken {
-  id: string;
-  name?: string;
-  scope?: string;
-  // The endpoint the token is bound to (#2764); absent on a Control Plane that predates it.
-  endpoint?: string;
-  expires_at?: string;
-  last_used_at?: string;
-  revoked?: boolean;
-}
 
 export function TokensTab() {
   const askConfirm = useConfirm();
@@ -41,7 +32,7 @@ export function TokensTab() {
   const [scope, setScope] = useState("write");
   const [ttl, setTtl] = useState("90");
   const [endpoint, setEndpoint] = useState("mcp");
-  const [issued, setIssued] = useState<{ token: string; endpoint?: string } | null>(null); // the once-shown secret
+  const [issued, setIssued] = useState<PatIssued | null>(null); // the once-shown secret
   const [busy, setBusy] = useState(false);
 
   // Offered lifetimes: the usual three that fit under the deployment cap, plus the cap itself when
@@ -54,15 +45,16 @@ export function TokensTab() {
 
   const load = useCallback(() => {
     setErr("");
-    api("api/pat")
+    listPats()
       .then((res) => {
-        if (res && res.error) {
+        if (res && !isOk(res)) {
           setErr(res.error.message || tr("tokens.fetch_failed"));
           return;
         }
+        assertBody(res);
         setTokens(res.tokens || []);
         if (res.ceiling) setCeiling(res.ceiling);
-        if (res.max_ttl_days > 0) setMaxTtl(res.max_ttl_days);
+        if (res.max_ttl_days && res.max_ttl_days > 0) setMaxTtl(res.max_ttl_days);
       })
       .catch(() => setErr(tr("tokens.load_failed")));
   }, [tr]);
@@ -70,14 +62,14 @@ export function TokensTab() {
 
   const create = async () => {
     setBusy(true);
-    const res = await apiJSON("api/pat", "POST", {
+    const res = await createPat({
       name: name.trim(),
       scope,
       ttl_days: parseInt(ttlValue, 10),
       endpoint,
     });
     setBusy(false);
-    if (res && res.error) {
+    if (res && !isOk(res)) {
       toast(tr("tokens.issue_failed", { msg: res.error.message || "" }));
       return;
     }
@@ -94,7 +86,7 @@ export function TokensTab() {
       danger: true,
     });
     if (!ok) return;
-    await raw(`api/pat/${encodeURIComponent(id)}`, { method: "DELETE" });
+    await deletePat(id);
     load();
   };
 

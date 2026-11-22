@@ -22,7 +22,7 @@ import {
   type RowEdit,
   safeKey,
 } from "./awsConfigImport.ts";
-import { planSsmImport } from "./settingsBundle.ts";
+import { planSsmImport, type LooseRow } from "./settingsBundle.ts";
 import { executeSsmPlan, loadSignIns, loadSsmLists, type ExecRow } from "./ssmImportExec.ts";
 import { signInSaveError } from "./ssmSignIns.ts";
 
@@ -60,7 +60,7 @@ export function AwsConfigImport({ onClose, onImported }: { onClose: () => void; 
   const [text, setText] = useState("");
   const [err, setErr] = useState("");
   const [cfg, setCfg] = useState<NativeConfig | null>(null);
-  const [existing, setExisting] = useState<any[]>([]);
+  const [existing, setExisting] = useState<LooseRow[]>([]);
   // The member's sign-ins (null = unreadable: nothing is proposed, see resolveImport).
   const [signIns, setSignIns] = useState<ExistingSignIn[] | null>([]);
   const [edits, setEdits] = useState<Record<string, RowEdit>>({});

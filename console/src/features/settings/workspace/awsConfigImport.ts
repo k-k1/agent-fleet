@@ -25,7 +25,7 @@
 
 import { botocoreValue, effectiveOptions, sectionRole, type IniFile, type IniValue } from "./awsConfigIni.ts";
 import { awsProfileName, validDuration, validExternalId, validRoleArn, validSessionName } from "./awsRoleChain.ts";
-import { ssoKey, type SsmProfileEntry, type SsmSection } from "./settingsBundle.ts";
+import { ssoKey, type LooseRow, type SsmProfileEntry, type SsmSection } from "./settingsBundle.ts";
 
 /** Above this many profiles the preview stops being reviewable; the file is refused whole. */
 export const MAX_PROFILES = 500;
@@ -381,7 +381,7 @@ type Source = { via: "file" | "existing" | "picked"; label: string; key: string;
  *  as returned by GET api/ssm/profiles) and the preview's edits. Re-run on every edit. */
 export function resolveImport(
   cfg: NativeConfig,
-  existing: any[],
+  existing: LooseRow[],
   edits: Record<string, RowEdit>,
   signIns: ExistingSignIn[] | null = [],
 ): ImportPreview {

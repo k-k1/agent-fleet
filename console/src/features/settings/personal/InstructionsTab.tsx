@@ -17,12 +17,9 @@
 //      retroactively changed. lcpp is the exception: it has no file (delivery "prompt", no
 //      path), and its harness re-reads the text every turn, which its row's wording says.
 import { useCallback, useState } from "react";
-import {
-  api,
-  apiJSON,
-  errText,
-  isTransientErr,
-} from "../../../core/api/client.ts";
+import { errText, isTransientErr } from "../../../core/api/client.ts";
+import { assertBody } from "../workspace/workspaceApi.ts";
+import { getUserNotePreview, getUserNotes, putUserNotes } from "./personalApi.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -42,7 +39,7 @@ interface Target {
   applied: boolean;
   error?: string;
 }
-interface Payload {
+export interface Payload {
   text: string;
   bytes: number;
   max_bytes: number;
@@ -75,7 +72,7 @@ export function InstructionsTab() {
   const load = useCallback(
     async (signal: AbortSignal) => {
       if (!running) return true; // don't call while stopped; deps re-run this once it starts
-      const r = await api("api/user-notes");
+      const r = await getUserNotes();
       if (signal.aborted) return true;
       if (isTransientErr(r)) return false;
       if (r?.error) {
@@ -99,7 +96,7 @@ export function InstructionsTab() {
   const put = async (body: Record<string, unknown>, okMsg?: string) => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/user-notes", "PUT", body);
+      const res = await putUserNotes(body);
       if (res?.error) {
         toast(errText(res.error));
         return false;
@@ -118,13 +115,12 @@ export function InstructionsTab() {
   };
 
   const openPeek = async (kind: string) => {
-    const res = await api(
-      "api/user-notes/preview?kind=" + encodeURIComponent(kind),
-    );
+    const res = await getUserNotePreview(kind);
     if (res?.error) {
       toast(errText(res.error));
       return;
     }
+    assertBody(res);
     setPeek({ kind, path: res.path, content: res.content });
   };
 

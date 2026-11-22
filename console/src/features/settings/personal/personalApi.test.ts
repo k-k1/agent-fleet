@@ -1,0 +1,59 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+// Runs the wrappers against a mocked client: the URL, method, body and argument count each one
+// sends, and what a null body or an error body does.
+const { api, apiJSON } = vi.hoisted(() => ({ api: vi.fn(), apiJSON: vi.fn() }));
+vi.mock("../../../core/api/client.ts", () => ({
+  api: (...a: unknown[]) => api(...a),
+  apiJSON: (...a: unknown[]) => apiJSON(...a),
+}));
+
+import * as A from "./personalApi.ts";
+
+beforeEach(() => {
+  api.mockReset().mockResolvedValue({ ok: 1 });
+  apiJSON.mockReset().mockResolvedValue({ ok: 1 });
+});
+
+const reads: [string, () => Promise<unknown>, unknown[]][] = [
+  ["getLoginMethods", () => A.getLoginMethods(), ["api/me/login-methods"]],
+  ["getUserNotes", () => A.getUserNotes(), ["api/user-notes"]],
+  ["getUserNotePreview", () => A.getUserNotePreview("a/b"), ["api/user-notes/preview?kind=a%2Fb"]],
+  ["getSkillsCatalog", () => A.getSkillsCatalog(), ["api/skills/catalog"]],
+  ["getSkillFile", () => A.getSkillFile("api/skills/file?path=x"), ["api/skills/file?path=x"]],
+  ["getAiAssistResolution", () => A.getAiAssistResolution(), ["api/ai-assist/resolution"]],
+];
+const writes: [string, () => Promise<unknown>, unknown[]][] = [
+  ["detachLoginMethod", () => A.detachLoginMethod("provider=p&subject=s"), ["api/me/login-methods?provider=p&subject=s", "DELETE"]],
+  ["putUserNotes", () => A.putUserNotes({ text: "t" }), ["api/user-notes", "PUT", { text: "t" }]],
+];
+
+describe("personal wrappers send what the components used to", () => {
+  it.each(reads)("%s", async (_n, call, args) => {
+    await call();
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(api).toHaveBeenCalledTimes(1);
+    expect(api.mock.calls[0]).toEqual(args);
+    expect(api.mock.calls[0].length).toBe(args.length);
+  });
+
+  it.each(writes)("%s", async (_n, call, args) => {
+    await call();
+    expect(api).not.toHaveBeenCalled();
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(apiJSON.mock.calls[0]).toEqual(args);
+    expect(apiJSON.mock.calls[0].length).toBe(args.length);
+  });
+
+  it("keeps a null body as null", async () => {
+    api.mockResolvedValue(null);
+    apiJSON.mockResolvedValue(null);
+    for (const [, call] of [...reads, ...writes]) expect(await call()).toBeNull();
+  });
+
+  it("hands an error body through unchanged", async () => {
+    api.mockResolvedValue({ error: { code: "x" } });
+    apiJSON.mockResolvedValue({ error: { code: "x" } });
+    for (const [, call] of [...reads, ...writes]) expect(await call()).toEqual({ error: { code: "x" } });
+  });
+});

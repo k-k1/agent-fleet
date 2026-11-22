@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
+import { errDetail, raw } from "../../../core/api/client.ts";
+import { startClaudeLogin, completeClaudeLogin } from "./credentialsApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { DATETIME_LOCALE_DEFAULT, fmtDateTime } from "../../../lib/intl.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -28,7 +29,7 @@ export function ClaudeCard({
   const start = async () => {
     setBusy(true);
     try {
-      const res = await api("api/connections/claude/start", { method: "POST" });
+      const res = await startClaudeLogin();
       if (!res || res.error || !res.url) {
         toast(tr("agents.claude_auth_failed", { msg: res?.error ? errDetail(res.error) : "" }));
         return;
@@ -48,7 +49,7 @@ export function ClaudeCard({
     if (!c) return;
     setBusy(true);
     try {
-      const r = await apiJSON("api/connections/claude/complete", "POST", { flow_id: flow!.flow_id, code: c });
+      const r = await completeClaudeLogin(flow!.flow_id, c);
       if (r && r.error) {
         toast(tr("conn.connect_failed", { msg: errDetail(r.error) }));
         return;
