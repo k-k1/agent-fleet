@@ -28,15 +28,19 @@ export function SpendChip({ s }: SpendChipProps) {
   const openBudget = useSessionUI((u) => u.openBudget);
 
   // gen is bumped whenever the inputs change or the chip unmounts, so a read started under
-  // older inputs never lands; seq keeps the newest read from being overwritten by a slower, older one.
+  // older inputs never lands; a read lands only if it started after the last one that did, so a
+  // slow older answer cannot overwrite a newer one while answers slower than the period still show.
   const gen = useRef(0);
   const seq = useRef(0);
+  const applied = useRef(0);
   const load = () => {
     const g = gen.current;
     const n = ++seq.current;
     void sessionSpend(s.name)
       .then((r) => {
-        if (g === gen.current && n === seq.current && r && !r.error) setSpend(r);
+        if (g !== gen.current || n < applied.current || !r || r.error) return;
+        applied.current = n;
+        setSpend(r);
       })
       .catch(() => {});
   };

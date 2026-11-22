@@ -40,16 +40,18 @@ export interface Proposal {
 export function useHandoffProposals(session: string): [Proposal[], (ps: Proposal[]) => void] {
   const [proposals, setProposals] = useState<Proposal[]>([]);
   // gen changes with every session swap and on unmount (a swap A -> B -> A is not the same
-  // episode as the first A); seq lets only the newest read land, so a slow initial read cannot
-  // overwrite a later poll.
+  // episode as the first A); a read lands only if it started after the last one that did, so a
+  // slow initial read cannot overwrite a later poll while answers slower than the period still show.
   const gen = useRef(0);
   const seq = useRef(0);
+  const applied = useRef(0);
   const load = async (name: string) => {
     const g = gen.current;
     const n = ++seq.current;
     try {
       const d = await api(`api/sessions/${encodeURIComponent(name)}/handoff-proposal`);
-      if (d?.error || g !== gen.current || n !== seq.current) return;
+      if (d?.error || g !== gen.current || n < applied.current) return;
+      applied.current = n;
       setProposals(Array.isArray(d?.proposals) ? (d.proposals as Proposal[]) : []);
     } catch {
       /* transient polling failure: keep the last visible proposals */

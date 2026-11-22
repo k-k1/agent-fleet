@@ -63,6 +63,23 @@ describe("useHandoffProposals", () => {
   });
 });
 
+describe("useHandoffProposals under slow answers", () => {
+  it("still shows answers that take longer than the poll period", async () => {
+    await act(async () => root.render(<Probe session="a" />));
+    await act(async () => void vi.advanceTimersByTime(3000));
+    await answer(0, { proposals: [{ id: "first", created_at: 1 }] });
+    expect(ids()).toBe("first");
+  });
+
+  it("keeps an older success when a later read fails", async () => {
+    await act(async () => root.render(<Probe session="a" />));
+    await act(async () => void vi.advanceTimersByTime(3000));
+    await act(async () => pending[1]!.resolve({ error: "boom" }));
+    await answer(0, { proposals: [{ id: "ok", created_at: 1 }] });
+    expect(ids()).toBe("ok");
+  });
+});
+
 describe("SpendChip", () => {
   const sess = (name: string, cap: number) => ({ name, alive: true, spendCapUsd: cap }) as never;
   const spend = (name: string, usd: number) => ({ name, spendUsd: usd, priced: true, hardFactor: 1, children: [], childrenUsd: 0 });
@@ -78,6 +95,13 @@ describe("SpendChip", () => {
     await answer(1, spend("a", 9));
     expect(chip()).toContain("2");
     expect(chip()).not.toContain("9");
+  });
+
+  it("still shows an answer slower than the poll period", async () => {
+    await act(async () => root.render(<SpendChip s={sess("a", 0)} />));
+    await act(async () => void vi.advanceTimersByTime(30_000));
+    await answer(0, spend("a", 4));
+    expect(chip()).toContain("4");
   });
 
   it("drops a poll answer that predates a cap change", async () => {
