@@ -30,6 +30,10 @@ var ErrTranscriptRestore = errors.New("could not restore the conversation log fr
 // an older slot log. Lives in the agent state dir, so it survives a stop.
 var talked = agents.NewSidStore("claude-talked")
 
+// pointForkPending marks a slot whose point-fork transcript is written but whose first launch
+// has not finished building.
+var pointForkPending = agents.NewSidStore("claude-pointfork")
+
 // NoteTalked records the log id of slot's conversation after a finished turn (Stop hook).
 // Rewritten only when the id changes, so the steady-state cost is one small read per turn.
 func NoteTalked(slot string) {

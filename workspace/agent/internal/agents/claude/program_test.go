@@ -293,6 +293,65 @@ func TestBuildProgramPermissionModeQuotedValueIsNotAFlag(t *testing.T) {
 	}
 }
 
+// The word after a single-value option is its value, even when it spells the flag.
+func TestHasPermissionModeFlagSkipsOptionValues(t *testing.T) {
+	for flags, want := range map[string]bool{
+		`--name --permission-mode`:                    false,
+		`--name --permission-mode --permission-mode`:  true,
+		`--model opus --permission-mode plan`:         true,
+		`--name x --permission-mode=plan`:             true,
+		`--verbose --permission-mode plan`:            true,
+		`--append-system-prompt --permission-mode -n`: false,
+	} {
+		if got := hasPermissionModeFlag(flags); got != want {
+			t.Errorf("hasPermissionModeFlag(%q) = %v, want %v", flags, got, want)
+		}
+	}
+}
+
+// A launch retried after the transcript was written (a later step failed) is still the first
+// launch of the point fork and starts in manual mode.
+func TestBuildLaunchPointForkRetryAfterFailureStaysManual(t *testing.T) {
+	cfg := isolateSlot(t)
+	dir := t.TempDir()
+	const srcSid = "11111111-1111-4111-8111-111111111111"
+	var buf strings.Builder
+	for _, ln := range convo(t) {
+		buf.Write(ln)
+		buf.WriteByte('\n')
+	}
+	pdir := filepath.Join(cfg, "projects", "-tmp-x")
+	if err := os.MkdirAll(pdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(pdir, srcSid+".jsonl"), []byte(buf.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	off := false
+	m := session.Meta{Kind: session.KindClaude, Name: "pf-retry", Dir: dir, ForkFrom: srcSid, ForkAt: "u2", SkipPermissions: &off}
+	// A route whose settings conflict fails after the transcript is written.
+	bad := m
+	bad.Route = sel(RouteAPI, "")
+	_, badErr := agentImpl{}.BuildLaunch(bad, agents.LaunchOpts{})
+	if badErr == nil {
+		t.Fatal("the route launch was expected to fail after the transcript was written")
+	}
+	retry, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if !strings.Contains(retry.Program, "--permission-mode default") {
+		t.Errorf("retried first launch lost manual mode: %q", retry.Program)
+	}
+	next, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(next.Program, "--permission-mode default") {
+		t.Errorf("a later launch must be a plain resume: %q", next.Program)
+	}
+}
+
 // The production wiring: BuildLaunch computes pointFork before MaterializeForkAt writes the
 // branch transcript, so the first launch of a prompts-on point fork starts in manual mode and
 // the next launch (a plain resume of that transcript) does not.

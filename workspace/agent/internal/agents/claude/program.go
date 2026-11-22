@@ -525,15 +525,31 @@ func resumablePaths(paths []string) bool {
 	return false
 }
 
+// valueFlags are the claude options that take exactly one separate value, so the word after one
+// is that value and never a flag, whatever it spells. Variadic options (--add-dir,
+// --allowedTools, ...) are left out: claude stops them at the next dash-led word.
+var valueFlags = map[string]bool{
+	"--name": true, "-n": true, "--model": true, "--effort": true, "--fallback-model": true,
+	"--session-id": true, "--resume": true, "-r": true, "--append-system-prompt": true,
+	"--system-prompt": true, "--settings": true, "--agent": true, "--agents": true,
+	"--output-format": true, "--input-format": true, "--setting-sources": true,
+	"--permission-prompt-tool": true, "--max-turns": true, "--max-budget-usd": true,
+	"--debug-file": true, "--plugin-dir": true,
+}
+
 // hasPermissionModeFlag reports whether the launch flags already choose a permission mode, as
-// `--permission-mode X` or `--permission-mode=X`. Only whole whitespace-delimited tokens count, so
-// a quoted value that merely contains the text (a --name) does not.
+// `--permission-mode X` or `--permission-mode=X`. shellSplit reads the quoting the shell would, and
+// the value of a single-value option (valueFlags) is skipped, so neither a quoted --name holding
+// the text nor `--name --permission-mode` counts. An unterminated quote yields nil: no explicit mode.
 func hasPermissionModeFlag(flags string) bool {
-	// shellSplit reads the quoting the shell would, so a quoted value that holds the text is not a
-	// flag and a quoted flag is. An unterminated quote yields nil: treated as no explicit mode.
-	for _, tok := range shellSplit(flags) {
+	toks := shellSplit(flags)
+	for i := 0; i < len(toks); i++ {
+		tok := toks[i]
 		if tok == "--permission-mode" || strings.HasPrefix(tok, "--permission-mode=") {
 			return true
+		}
+		if valueFlags[tok] {
+			i++
 		}
 	}
 	return false
