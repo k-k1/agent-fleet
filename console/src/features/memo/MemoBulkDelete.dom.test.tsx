@@ -199,4 +199,17 @@ describe("deleting the selected memos", () => {
     await click(box);
     expect(document.querySelector(".memo-selbar")).toBeNull();
   });
+
+  it("keeps the head box selecting the visible rows when only a hidden one is picked", async () => {
+    servedMemos = servedMemos.filter((m) => m.id === "p1" || m.id === "r1");
+    await render();
+    await click(q(".memo-sent-fold"));
+    const replacedRow = [...document.querySelectorAll<HTMLElement>(".memo-row")].find((r) => r.textContent?.includes("replaced one"));
+    await click(replacedRow!.querySelector("input[type=checkbox]")!);
+    await click(q(".memo-sent-fold"));
+    expect(q(".memo-selbar-n").textContent).toContain("1");
+    await click(q(".memo-cat-check"));
+    // The pending note is now selected too; the hidden pick is not dropped by that click.
+    expect(q(".memo-selbar-n").textContent).toContain("2");
+  });
 });

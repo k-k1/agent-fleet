@@ -1076,9 +1076,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   if (cat) catSendIds.current.set(cat.id, visible.filter((m) => !isSuperseded(m)).map((m) => m.id));
                   const allSel = ids.length > 0 && ids.every((id) => sel[id]);
                   // Selected rows that are folded away (the fold was closed after ticking them) still count
-                  // in the selection bar; the head box must be able to drop them.
+                  // in the selection bar. With nothing else on screen the head box drops them; otherwise it
+                  // keeps its ordinary select / unselect meaning for the visible rows.
                   const hiddenSel = g.memos.some((m) => sel[m.id] && !ids.includes(m.id));
-                  const clearing = allSel || hiddenSel;
+                  const clearing = allSel || (ids.length === 0 && hiddenSel);
                   const renderRow = (m: Memo, isHistory = false) => (
                     <MemoRow
                       key={m.id}
