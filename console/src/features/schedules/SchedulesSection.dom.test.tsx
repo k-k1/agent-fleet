@@ -171,6 +171,35 @@ describe("SchedulesSection scheduled sessions", () => {
   });
 });
 
+describe("SchedulesSection late schedule list", () => {
+  it("keeps a finished run's fold open when the late list moves it under its schedule row", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({
+      sessions: [{ name: "cron-old", title: "cron-old", kind: "claude", alive: false, origin: "schedule", scheduleId: "sch_1", createdAt: "2026-11-01T00:00:00Z" }] as never,
+    });
+    let answer: (v: unknown) => void = () => {};
+    scheduleList.mockReturnValue(new Promise((r) => (answer = r)));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await render();
+      await act(async () => {
+        vi.advanceTimersByTime(5100); // the first-read wait ends: the run shows in the unscheduled group
+      });
+      const group = () => host.querySelector("[data-sched-sessions]");
+      expect(group()).not.toBeNull();
+      await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+      expect(group()!.querySelector('[data-sched-session="cron-old"]')).not.toBeNull();
+      await act(async () => answer([sched]));
+      const under = host.querySelector('[data-sched-sessions-of="sch_1"]');
+      expect(group()).toBeNull();
+      expect(under!.querySelector('[data-sched-session="cron-old"]')).not.toBeNull();
+      expect(under!.querySelector(".sched-sess-ended")!.getAttribute("aria-expanded")).toBe("true");
+    } finally {
+      useSessionsStore.setState({ sessions: [] });
+    }
+  });
+});
+
 describe("SchedulesSection scheduled sessions under a working set", () => {
   it("shows a root outside the set as a heading without a state or an open button", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
