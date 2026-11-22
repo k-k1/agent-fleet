@@ -32,6 +32,8 @@ describe(".ui-badge primitive", () => {
   });
   it("font-size tokens keep their literal values", () => {
     expect(rule(ui, ":root")).toContain("--fs-10: 10px");
+    expect(rule(ui, ":root")).toContain("--fs-11: 11px");
+    expect(rule(ui, ":root")).toContain("--fs-12: 12px");
     expect(rule(ui, ":root")).toContain("--fs-13: 13px");
   });
   it("the reason badge keeps flex:none and the cleanup call sites use the primitive", () => {
@@ -51,6 +53,9 @@ describe(".ui-chip primitive", () => {
   it("keeps the size, padding, radius and colours of the old .igen-chip", () => {
     const r = rule(ui, ".ui-chip");
     expect(r).toContain("font-size: var(--fs-11)");
+    expect(r).toContain("font: inherit");
+    expect(r).toContain("color: var(--fg)");
+    expect(r).toContain("cursor: pointer");
     expect(r).toContain("padding: 1px 7px");
     expect(r).toContain("border-radius: 10px");
     expect(r).toContain("border: 1px solid var(--border)");
