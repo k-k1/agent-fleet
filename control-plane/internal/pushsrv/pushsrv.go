@@ -4,6 +4,7 @@ package pushsrv
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"log"
@@ -181,6 +182,11 @@ func (p *Service) send(ctx context.Context, membershipID string, s store.PushSub
 	}
 }
 
+func canonicalB64(s string) bool {
+	raw, err := base64.RawURLEncoding.DecodeString(s)
+	return err == nil && base64.RawURLEncoding.EncodeToString(raw) == s
+}
+
 // --- API -----------------------------------------------------------------------------------
 //
 // Handlers take the caller's membership id from package main's auth wrapper. A nil *Service (Web
@@ -279,6 +285,13 @@ func (p *Service) Subscribe(w http.ResponseWriter, r *http.Request, membershipID
 	}
 	if err := p.check(in.Endpoint); err != nil {
 		writeErr(w, http.StatusBadRequest, "bad_endpoint", err.Error())
+		return
+	}
+	// Keys are compared as stored strings when a browser is released from its previous member, and
+	// Go's decoder ignores CR/LF, so one key has several spellings. Only the canonical unpadded
+	// base64url is stored, which makes the string comparison exact.
+	if !canonicalB64(in.Keys.P256dh) || !canonicalB64(in.Keys.Auth) {
+		writeErr(w, http.StatusBadRequest, "bad_keys", "subscription keys must be unpadded base64url")
 		return
 	}
 	// Refuse keys Encrypt cannot use now rather than failing silently on the first push.

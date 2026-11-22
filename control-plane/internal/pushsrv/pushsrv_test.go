@@ -356,6 +356,26 @@ func TestDeviceCap(t *testing.T) {
 	}
 }
 
+func TestNonCanonicalKeysAreRefused(t *testing.T) {
+	f := newFixture(t)
+	_, p256, auth := newDevice(t)
+	for name, keys := range map[string][2]string{
+		"newline in p256dh": {p256[:10] + "\\n" + p256[10:], auth},
+		"newline in auth":   {p256, auth[:5] + "\\r\\n" + auth[5:]},
+		"padded auth":       {p256, auth + "=="},
+	} {
+		w := httptest.NewRecorder()
+		f.svc.Subscribe(w, httptest.NewRequest("POST", "/", strings.NewReader(
+			`{"endpoint":"`+f.srv.URL+`/k","keys":{"p256dh":"`+keys[0]+`","auth":"`+keys[1]+`"}}`)), "m1")
+		if w.Code != 400 {
+			t.Errorf("%s: %d %s", name, w.Code, w.Body)
+		}
+	}
+	if len(f.st.subs) != 0 {
+		t.Fatal("a non-canonical subscription was stored")
+	}
+}
+
 func TestValidSubject(t *testing.T) {
 	for s, want := range map[string]bool{"mailto:ops@example.invalid": true, "https://example.invalid/contact": true,
 		"mailto:": false, "mailto:ops@@example.invalid": false, "mailto:@x": false, "https://": false, "http://example.invalid": false, "": false} {
