@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/pushsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -240,6 +242,9 @@ func TestNotificationDrainerSweep(t *testing.T) {
 
 // An oversized /notifications body is neither stored nor acked, so the entries stay queued.
 func TestDrainAgentOutboxRejectsOversizedBody(t *testing.T) {
+	old := maxOutboxBody
+	maxOutboxBody = 2 << 20
+	defer func() { maxOutboxBody = old }()
 	ctx := context.Background()
 	st := newDrainStore(t)
 	var announced, acks atomic.Int32
@@ -310,6 +315,9 @@ func TestNotificationDrainerHoldsAtMostParallelSlots(t *testing.T) {
 	st := newDrainStore(t)
 	wss := seedSubscribed(t, st, notificationDrainParallel+3)
 	gate := make(chan struct{})
+	var once sync.Once
+	release := func() { once.Do(func() { close(gate) }) }
+	defer release() // a failed assertion must not leave handlers blocked
 	var inflight, total atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/notifications" {
@@ -317,7 +325,10 @@ func TestNotificationDrainerHoldsAtMostParallelSlots(t *testing.T) {
 		}
 		inflight.Add(1)
 		total.Add(1)
-		<-gate
+		select {
+		case <-gate:
+		case <-r.Context().Done():
+		}
 		inflight.Add(-1)
 		_, _ = w.Write([]byte(`{"notifications":[]}`))
 	}))
@@ -331,7 +342,7 @@ func TestNotificationDrainerHoldsAtMostParallelSlots(t *testing.T) {
 	if got := total.Load(); got != notificationDrainParallel {
 		t.Fatalf("%d workspaces asked while all slots were held, want %d", got, notificationDrainParallel)
 	}
-	close(gate)
+	release()
 	select {
 	case <-done:
 	case <-time.After(10 * time.Second):
@@ -382,6 +393,9 @@ func TestNotificationDrainerRunDoesNotOverlapSweeps(t *testing.T) {
 	d := &notificationDrainer{store: blockingTenantStore{Store: st, n: &calls, release: release}, interval: 5 * time.Millisecond,
 		runtimeOf: func(store.Workspace) runtime.Runtime { return nil }}
 	ctx, cancel := context.WithCancel(context.Background())
+	var relOnce sync.Once
+	defer relOnce.Do(func() { close(release) })
+	defer cancel()
 	done := make(chan struct{})
 	go func() { d.run(ctx); close(done) }()
 	waitFor(t, "first sweep started", func() bool { return calls.Load() == 1 })
@@ -389,7 +403,7 @@ func TestNotificationDrainerRunDoesNotOverlapSweeps(t *testing.T) {
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("%d sweeps started while the first had not returned", got)
 	}
-	close(release)
+	relOnce.Do(func() { close(release) })
 	waitFor(t, "second sweep started", func() bool { return calls.Load() >= 2 })
 	cancel()
 	<-done
@@ -471,41 +485,144 @@ func TestStartNotificationDrainNeedsASender(t *testing.T) {
 	}
 }
 
-// Entries are folded up one at a time under a byte cap: those read whole are stored and acked
-// and the rest stays queued for the next drain.
-func TestDrainAgentOutboxTakesWhatFitsUnderTheCap(t *testing.T) {
-	ctx := context.Background()
-	st := newDrainStore(t)
-	var acked atomic.Value
-	big := strings.Repeat("x", 1<<20)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/notifications/ack" {
-			b, _ := io.ReadAll(r.Body)
-			acked.Store(string(b))
-			return
+// statefulOutbox is an Agent outbox that serves what has not been acked, oldest first, up to
+// the Agent's 100 entries, and drops what is acked.
+type statefulOutbox struct {
+	mu      sync.Mutex
+	pending []string // ids, oldest first
+	pad     string
+	acked   []string
+}
+
+func (o *statefulOutbox) handler(w http.ResponseWriter, r *http.Request) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if r.URL.Path == "/notifications/ack" {
+		var b struct {
+			IDs []string `json:"ids"`
 		}
-		_, _ = w.Write([]byte(`{"notifications":[`))
-		for i := 0; i < 12; i++ { // 12 MiB in all, over maxOutboxBody
-			if i > 0 {
-				_, _ = w.Write([]byte(","))
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		for _, id := range b.IDs {
+			o.acked = append(o.acked, id)
+			for i, p := range o.pending {
+				if p == id {
+					o.pending = append(o.pending[:i], o.pending[i+1:]...)
+					break
+				}
 			}
-			_, _ = w.Write([]byte(`{"id":"e` + string(rune('a'+i)) + `","kind":"question","sessionName":"s","displayName":"` + big + `"}`))
 		}
-		_, _ = w.Write([]byte(`]}`))
-	}))
+		return
+	}
+	if len(o.pending) == 0 {
+		_, _ = w.Write([]byte(`{"notifications":null}`)) // the Agent's real empty shape
+		return
+	}
+	_, _ = w.Write([]byte(`{"notifications":[`))
+	for i, id := range o.pending {
+		if i == 100 {
+			break
+		}
+		if i > 0 {
+			_, _ = w.Write([]byte(","))
+		}
+		_, _ = w.Write([]byte(`{"id":"` + id + `","kind":"question","sessionName":"s","displayName":"` + o.pad + `"}`))
+	}
+	_, _ = w.Write([]byte(`]}`))
+}
+
+func drainFixture(t *testing.T) (*store.SQL, string) {
+	t.Helper()
+	st := newDrainStore(t)
+	tn, _ := st.EnsureDefaultTenant(context.Background())
+	id, _ := st.UpsertIdentity(context.Background(), "a@example.com", "a", "")
+	m, _ := st.EnsureMembership(context.Background(), id.ID, tn.ID, "member")
+	return st, m.ID
+}
+
+// The Agent's empty outbox is {"notifications":null}; that is ready, with nothing stored or acked.
+func TestDrainAgentOutboxEmptyIsReady(t *testing.T) {
+	st, mem := drainFixture(t)
+	o := &statefulOutbox{}
+	srv := httptest.NewServer(http.HandlerFunc(o.handler))
 	defer srv.Close()
-	tn, _ := st.EnsureDefaultTenant(ctx)
-	id, _ := st.UpsertIdentity(ctx, "a@example.com", "a", "")
-	m, _ := st.EnsureMembership(ctx, id.ID, tn.ID, "member")
-	if got := drainAgentOutbox(ctx, st, drainFakeRT{state: "running", endpoint: srv.URL}, m.ID); got != "ready" {
+	if got := drainAgentOutbox(context.Background(), st, drainFakeRT{state: "running", endpoint: srv.URL}, mem); got != "ready" {
+		t.Fatalf("empty outbox = %q, want ready", got)
+	}
+	if len(o.acked) != 0 {
+		t.Fatalf("acked %v for an empty outbox", o.acked)
+	}
+}
+
+// With the byte bound lowered below a batch, repeated drains store and ack every entry exactly
+// once, by id, until the outbox is empty.
+func TestDrainAgentOutboxFoldsABatchUpOverSeveralDrains(t *testing.T) {
+	old := maxOutboxBody
+	maxOutboxBody = 3 << 20
+	defer func() { maxOutboxBody = old }()
+	st, mem := drainFixture(t)
+	o := &statefulOutbox{pad: strings.Repeat("x", 1<<20)}
+	var want []string
+	for i := 0; i < 8; i++ { // 8 MiB, over the lowered bound
+		id := "e" + string(rune('a'+i))
+		o.pending = append(o.pending, id)
+		want = append(want, id)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(o.handler))
+	defer srv.Close()
+	rt := drainFakeRT{state: "running", endpoint: srv.URL}
+	for i := 0; i < 10 && len(o.pending) > 0; i++ {
+		if got := drainAgentOutbox(context.Background(), st, rt, mem); got != "ready" {
+			t.Fatalf("drain %d = %q", i, got)
+		}
+	}
+	if len(o.pending) != 0 {
+		t.Fatalf("still pending after repeated drains: %v", o.pending)
+	}
+	if strings.Join(o.acked, ",") != strings.Join(want, ",") {
+		t.Fatalf("acked %v, want %v once each, in order", o.acked, want)
+	}
+	rows, _ := st.ListNotifications(context.Background(), mem, "2000-01-01T00:00:00Z", 50)
+	if len(rows) != len(want) {
+		t.Fatalf("stored %d rows, want %d", len(rows), len(want))
+	}
+}
+
+// An entry-count bound stops a runaway Agent from making the CP hold an unbounded list.
+func TestDrainAgentOutboxBoundsTheEntryCount(t *testing.T) {
+	old := maxOutboxEntries
+	maxOutboxEntries = 3
+	defer func() { maxOutboxEntries = old }()
+	st, mem := drainFixture(t)
+	o := &statefulOutbox{pending: []string{"a", "b", "c", "d", "e"}}
+	srv := httptest.NewServer(http.HandlerFunc(o.handler))
+	defer srv.Close()
+	if got := drainAgentOutbox(context.Background(), st, drainFakeRT{state: "running", endpoint: srv.URL}, mem); got != "ready" {
 		t.Fatalf("drain = %q", got)
 	}
-	rows, _ := st.ListNotifications(ctx, m.ID, "2000-01-01T00:00:00Z", 50)
-	if len(rows) == 0 || len(rows) >= 12 {
-		t.Fatalf("stored %d entries, want some but not all 12", len(rows))
+	if strings.Join(o.acked, ",") != "a,b,c" {
+		t.Fatalf("acked %v, want the first 3", o.acked)
 	}
-	ids, _ := acked.Load().(string)
-	if strings.Count(ids, `"e`) != len(rows) {
-		t.Fatalf("acked %q for %d stored rows", ids, len(rows))
+}
+
+// With a sender present the drain starts and sweeps on its timer.
+func TestStartNotificationDrainStartsWithASender(t *testing.T) {
+	var ticks atomic.Int32
+	st := newDrainStore(t)
+	mgr := &manager{store: countingTenantStore{Store: st, n: &ticks}, push: &pushsrv.Service{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if !startNotificationDrain(ctx, mgr, 5*time.Millisecond) {
+		t.Fatal("the drain did not start with a sender")
 	}
+	waitFor(t, "the timer to sweep", func() bool { return ticks.Load() >= 2 })
+}
+
+type countingTenantStore struct {
+	store.Store
+	n *atomic.Int32
+}
+
+func (c countingTenantStore) ListTenants(ctx context.Context) ([]store.Tenant, error) {
+	c.n.Add(1)
+	return c.Store.ListTenants(ctx)
 }

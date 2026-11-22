@@ -111,14 +111,20 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 	return n
 }
 
-// maxOutboxBody bounds how much of one /notifications response the CP reads. The Agent caps
-// the entry count but not an entry's size, and the drain runs on a timer for every workspace.
-const maxOutboxBody = 8 << 20
+// The bounds on one /notifications response, vars only so a test can lower them. The Agent
+// returns at most 100 entries but does not bound an entry's size, and the drain runs on a timer
+// for every workspace, so the CP stops reading at a byte count and an entry count far above
+// anything a healthy Agent sends. Entries read whole before a bound is hit are stored and
+// acked; the rest stays queued for the next drain.
+var (
+	maxOutboxBody    int64 = 64 << 20
+	maxOutboxEntries       = 200
+)
 
 // readOutboxEntries decodes {"notifications":[...]} entry by entry and returns the entries it
-// read whole. ok is false when the body is not that shape or nothing could be read from a
-// non-empty list; a read cut off by the byte cap or a decode error after some entries is not
-// an error, the rest comes on the next drain.
+// read whole. A null or empty list is an empty success (the Agent sends null for an empty
+// outbox). ok is false when the body is not that shape or nothing could be read; a read cut
+// off by a bound or a decode error after some entries is not an error.
 func readOutboxEntries(r io.Reader) (entries []agentNotification, ok bool) {
 	dec := json.NewDecoder(r)
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
@@ -136,10 +142,17 @@ func readOutboxEntries(r io.Reader) (entries []agentNotification, ok bool) {
 			}
 			continue
 		}
-		if t, err := dec.Token(); err != nil || t != json.Delim('[') {
+		t, err := dec.Token()
+		if err != nil {
 			return nil, false
 		}
-		for dec.More() {
+		if t == nil {
+			return nil, true
+		}
+		if t != json.Delim('[') {
+			return nil, false
+		}
+		for dec.More() && len(entries) < maxOutboxEntries {
 			var in agentNotification
 			if dec.Decode(&in) != nil {
 				return entries, len(entries) > 0
@@ -174,9 +187,8 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 	if resp.StatusCode != http.StatusOK {
 		return "offline"
 	}
-	// At most maxOutboxBody bytes are read per drain, and entries are taken one at a time, so
-	// an outbox holding more than that is folded up over several drains: what was read whole is
-	// stored and acked, the rest stays queued. An unreadable first entry stores nothing.
+	// Bounded by maxOutboxBody / maxOutboxEntries; see there. An unreadable first entry stores
+	// nothing, so a single entry past the byte bound stays queued.
 	entries, ok := readOutboxEntries(io.LimitReader(resp.Body, maxOutboxBody))
 	if !ok {
 		return "offline"
