@@ -84,8 +84,8 @@ describe("a worktree whose creator the Agent recorded", () => {
   it("is not cleared with the finished runs either", () => {
     const merged = sess("r", { origin: "queue", repo: "base@wip-a", alive: false, pr: { state: "merged" } as Session["pr"] });
     const runs = runsOf([merged], ["r"]);
-    expect(planClearFinished(runs, [merged], rec("mine")).node).toBeNull();
-    expect(planClearFinished(runs, [merged], rec("r")).node?.repo.name).toBe("base@wip-a");
+    expect(planClearFinished(runs, [merged], rec("mine")).nodes).toEqual([]);
+    expect(planClearFinished(runs, [merged], rec("r")).nodes.map((n) => n.repo.name)).toEqual(["base@wip-a"]);
   });
 });
 
@@ -103,8 +103,8 @@ describe("planClearFinished", () => {
 
   it("offers the merged worktrees only, and archives the rest of the stopped finished sessions", () => {
     const p = planClearFinished(runs, sessions, repos);
-    expect(p.node!.repo.name).toBe("base@wip-a");
-    expect(p.node!.children).toEqual([]);
+    expect(p.nodes.map((n) => n.repo.name)).toEqual(["base@wip-a"]);
+    expect(p.nodes[0].children).toEqual([]);
     // r1/k1 go with their worktree; r2 is unmerged; r3's copy holds a session of the member's.
     expect(p.archive.flat().map((s) => s.name).sort()).toEqual(["r2", "r3"]);
   });
@@ -154,12 +154,12 @@ describe("planClearFinished", () => {
     ];
     const rs = runsOf(tree, ["r"]);
     const p = planClearFinished(rs, tree, repos);
-    expect(p.node).toBeNull();
+    expect(p.nodes).toEqual([]);
     expect(p.archive).toEqual([]); // the root stays too: its worktree is a candidate, its child is alive
     expect(runWorktreeNode(rs[0], repos, tree)).toBeNull();
     // Once the child is gone from the list the copy is offered.
     const after = planClearFinished(rs, tree.filter((s) => s.name !== "c"), repos);
-    expect(after.node!.repo.name).toBe("base@wip-a");
+    expect(after.nodes.map((n) => n.repo.name)).toEqual(["base@wip-a"]);
   });
 
   it("keeps a worktree two finished runs share while the other run has a session elsewhere", () => {
@@ -170,8 +170,8 @@ describe("planClearFinished", () => {
       sess("bc", { origin: "session", originSession: "b", alive: true, repo: "base", createdAt: "2026-11-03T00:00:00Z" }),
     ];
     const rs = runsOf(tree, ["a", "b"]);
-    expect(planClearFinished(rs, tree, repos).node).toBeNull();
-    expect(planClearFinished(rs, tree.filter((s) => s.name !== "bc"), repos).node!.repo.name).toBe("base@wip-a");
+    expect(planClearFinished(rs, tree, repos).nodes).toEqual([]);
+    expect(planClearFinished(rs, tree.filter((s) => s.name !== "bc"), repos).nodes.map((n) => n.repo.name)).toEqual(["base@wip-a"]);
     // The row menu of run A refuses the same copy for the same reason.
     expect(runWorktreeNode(rs.find((r) => r.root.name === "a")!, repos, tree)).toBeNull();
     expect(runWorktreeNode(rs.find((r) => r.root.name === "a")!, repos, tree.filter((s) => s.name !== "bc"))!.repo.name).toBe("base@wip-a");
@@ -184,7 +184,7 @@ describe("planClearFinished", () => {
     ];
     const p = planClearFinished(runsOf(tree, ["r"]), tree, repos);
     expect(p.archive.map((g) => g.map((s) => s.name))).toEqual([["c"]]);
-    expect(p.node).toBeNull();
+    expect(p.nodes).toEqual([]);
   });
 
   it("names the ancestors of a session, for keeping them after a failure", () => {
@@ -192,9 +192,9 @@ describe("planClearFinished", () => {
     expect(ancestorNames("g", tree)).toEqual(["c", "r"]);
   });
 
-  it("chains several merged worktrees under one head", () => {
+  it("offers several merged worktrees as siblings, none nested under another", () => {
     const more = [...sessions.filter((s) => s.name !== "mine"), ];
     const p = planClearFinished(runsOf(more, ["r1", "r2", "r3"]), more, repos);
-    expect([p.node!.repo.name, ...p.node!.children.map((c) => c.repo.name)].sort()).toEqual(["base@wip-a", "base@wip-c"]);
+    expect(p.nodes.map((n) => n.repo.name).sort()).toEqual(["base@wip-a", "base@wip-c"]);
   });
 });

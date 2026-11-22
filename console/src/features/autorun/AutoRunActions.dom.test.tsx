@@ -21,7 +21,9 @@ vi.mock("../repos/StopSessionsModal.tsx", () => ({
   ),
 }));
 vi.mock("../repos/DeleteCopyModal.tsx", () => ({
-  DeleteCopyModal: (p: { node: { repo: { name: string } } }) => <div data-delete-modal={p.node.repo.name} />,
+  DeleteCopyModal: (p: { node?: { repo: { name: string } }; nodes?: { repo: { name: string } }[] }) => (
+    <div data-delete-modal={(p.nodes ?? (p.node ? [p.node] : [])).map((n) => n.repo.name).join(",")} />
+  ),
 }));
 const confirm = vi.fn(async (_o: unknown) => true);
 vi.mock("../../ui/confirmBridge.ts", async (orig) => ({ ...(await orig<object>()), askConfirm: (o: unknown) => confirm(o) }));

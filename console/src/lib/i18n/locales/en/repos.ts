@@ -336,6 +336,8 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   // copies the rail nests under it in one pass.
   "rp.del.intro_tree":
     "\"{name}\" and the {count} working copies nested under it. Stopped sessions inside them are archived first (history and the remote are left untouched).",
+  "rp.del.intro_flat":
+    "{count} unrelated working copies. Stopped sessions inside them are archived first (history and the remote are left untouched).",
   "rp.del.grade_safe": "safe",
   "rp.del.grade_review": "review",
   "rp.del.grade_blocked": "blocked",

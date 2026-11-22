@@ -81,7 +81,7 @@ export function planClearFinished(
   runs: RunRow[],
   sessions: Session[],
   repos: Repo[],
-): { archive: Session[][]; node: RepoTreeNode | null } {
+): { archive: Session[][]; nodes: RepoTreeNode[] } {
   const fresh = new Map(sessions.map((s) => [s.name, s]));
   const ended = runs.filter((r) => r.state === "ended");
   const ownedBy = (r: RunRow) => runSessions(r).flatMap((s) => fresh.get(s.name) ?? []);
@@ -123,8 +123,8 @@ export function planClearFinished(
       return all.filter((s) => clearable(s.name)).sort((x, y) => depth(y) - depth(x));
     })
     .filter((g) => g.length > 0);
-  const [head, ...rest] = heads;
-  return { archive, node: head ? { ...head, children: rest } : null };
+  // Siblings, not a tree: the delete dialog plans each at depth 0 rather than nesting them under the first.
+  return { archive, nodes: heads };
 }
 
 /** The names above `name` in its run (its parent, that one's parent, ...), for skipping the

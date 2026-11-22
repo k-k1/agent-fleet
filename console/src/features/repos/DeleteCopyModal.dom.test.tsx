@@ -52,7 +52,7 @@ const sess = (name: string, folder: string, over: Partial<Session> = {}): Sessio
 let root: Root | null = null;
 let host: HTMLDivElement;
 
-const render = async (n: RepoTreeNode, sessions: Session[]) => {
+const render = async (n: RepoTreeNode | RepoTreeNode[], sessions: Session[]) => {
   // Tests that compare "without the tick" against "with it" render twice; both dialogs
   // portal to <body>, so leaving the first mounted would make every query read the wrong one.
   if (root) {
@@ -66,7 +66,7 @@ const render = async (n: RepoTreeNode, sessions: Session[]) => {
   await act(async () => {
     root!.render(
       <ToastProvider>
-        <DeleteCopyModal node={n} onClose={() => {}} />
+        <DeleteCopyModal {...(Array.isArray(n) ? { nodes: n } : { node: n })} onClose={() => {}} />
       </ToastProvider>,
     );
   });
@@ -252,5 +252,15 @@ describe("作業コピー削除モーダル", () => {
     // app@c is left behind (unticked), so the clone itself cannot go this round — and the
     // row says so rather than failing with has_worktrees halfway through the run.
     expect(sent()).toEqual(["DELETE api/repos/app%40b"]);
+  });
+
+  it("offers unrelated copies as siblings at depth 0, none worded as the parent of another", async () => {
+    const names = ["app@wip-a", "app@wip-b", "app@wip-c"];
+    await render(names.map((n) => node(repo(n))), []);
+    const depths = [...document.querySelectorAll<HTMLElement>(".wcdel-row")].map((el) => el.style.getPropertyValue("--wcdel-depth"));
+    expect(depths).toEqual(["0", "0", "0"]);
+    const intro = document.querySelector(".wcdel-intro")!.textContent!;
+    expect(intro).toContain("3");
+    for (const n of names) expect(intro).not.toContain(n);
   });
 });
