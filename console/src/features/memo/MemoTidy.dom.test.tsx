@@ -3,6 +3,7 @@
 // tidy history with its undo (done, and refused with the messages named).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
+import { headMenuItem } from "./catMenuTest.ts";
 import { createRoot, type Root } from "react-dom/client";
 import type { Memo, MemoCategory } from "../../types/memo.ts";
 
@@ -121,7 +122,11 @@ async function click(el: Element): Promise<void> {
   });
   await settle();
 }
-const byLabel = (label: string) => must(document.querySelector<HTMLElement>(`[aria-label="${label}"]`), `button ${label}`);
+const byLabel = (label: string) => must(
+    document.querySelector<HTMLElement>(`[aria-label="${label}"]`) ??
+      (label === t("memo.autorun_settings") || label === t("memo.autorun_deliveries") ? headMenuItem({ label }) : null),
+    `button ${label}`,
+  );
 const dialog = () => must(document.querySelector<HTMLElement>(".memo-q-modal"), "dialog");
 const labelled = (text: string) =>
   must([...dialog().querySelectorAll("label")].find((l) => l.textContent?.includes(text)), `label ${text}`);

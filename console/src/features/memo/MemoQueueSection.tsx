@@ -55,7 +55,7 @@ import { useQueueSettings, useQueueSettingsCache } from "./queueSettingsCache.ts
 import { MemoProducerText } from "./MemoProducerText.tsx";
 import { MemoQueueRuns } from "./MemoQueueRuns.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
-import { RunNowButton } from "./RunNowButton.tsx";
+import { CatHeadMenu, type CatHeadMenuAt } from "./CatHeadMenu.tsx";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
 import { memoReference } from "./reference.ts";
@@ -795,6 +795,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     if (memoMenu.anchor) placeFixed(el, memoMenu.anchor.right - el.offsetWidth, memoMenu.anchor.bottom + 2, bounds);
     else placeFixed(el, memoMenu.x, memoMenu.y, bounds);
   });
+  // Category head menu (⋯, right-click, Menu / Shift+F10): one at a time, for the category named by `cat`.
+  const [catMenu, setCatMenu] = useState<{ at: CatHeadMenuAt; catId: string } | null>(null);
+  // Sendable ids per category, refreshed each render, so an open menu acts on the current list and not on the one it opened with.
+  const catSendIds = useRef(new Map<string, string[]>());
   const runMemoMenu = (fn: () => void) => {
     setMemoMenu(null);
     fn();
@@ -1018,6 +1022,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   // A replaced note is read-only and cannot be sent, and a folded one is not on screen,
                   // so a select-all covers neither.
                   const ids = visible.filter((m) => !isSuperseded(m)).map((m) => m.id);
+                  if (cat) catSendIds.current.set(cat.id, ids);
                   const allSel = ids.length > 0 && ids.every((id) => sel[id]);
                   const renderRow = (m: Memo, isHistory = false) => (
                     <MemoRow
@@ -1096,6 +1101,25 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       <MemoCatHead
                         className={"memo-cat-head" + (collapsed ? " collapsed" : "")}
                         onClick={() => toggleCollapse(dropKey)}
+                        // The head is the drag handle for reordering categories (the uncategorised bucket has none).
+                        // Not while renaming: a draggable ancestor stops the name field from selecting text.
+                        draggable={!!cat && renameCat !== cat.id}
+                        onDragStart={cat ? (e) => {
+                          if ((e.target as HTMLElement).closest("input")) return;
+                          dragCat.current = cat.id;
+                        } : undefined}
+                        onDragEnd={cat ? () => (dragCat.current = null) : undefined}
+                        onContextMenu={cat ? (e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setCatMenu({ at: { x: e.clientX, y: e.clientY }, catId: cat.id });
+                        } : undefined}
+                        onKeyDown={cat ? (e) => {
+                          if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
+                          e.preventDefault();
+                          const r = (e.currentTarget.querySelector(".memo-cat-more") ?? e.currentTarget).getBoundingClientRect();
+                          setCatMenu({ at: { x: r.left, y: r.bottom + 2, anchor: r }, catId: cat.id });
+                        } : undefined}
                       >
                         <button
                           type="button"
@@ -1109,22 +1133,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                         >
                           <Icon name={collapsed ? "chevron-right" : "chevron-down"} />
                         </button>
-                        {cat ? (
-                          <span
-                            className="memo-cat-grip"
-                            draggable
-                            title={tr("memo.reorder_category")}
-                            onClick={(e) => e.stopPropagation()}
-                            onDragStart={() => (dragCat.current = cat.id)}
-                            onDragEnd={() => (dragCat.current = null)}
-                          >
-                            <Icon name="gripper" />
-                          </span>
-                        ) : (
-                          // The uncategorised bucket isn't reorderable/deletable, but keep the grip column so its
-                          // header aligns with the named categories below.
-                          <span className="memo-cat-grip placeholder" aria-hidden="true" />
-                        )}
                         <input
                           type="checkbox"
                           className="memo-cat-check"
@@ -1168,22 +1176,23 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             {catLabel(g.category)}
                           </span>
                         )}
-                        <span className="memo-cat-n">{g.memos.length}</span>
-                        {isQueue && (
-                          <span
-                            className={"memo-q-badge" + (queue && !queue.enabled ? " off" : "")}
-                            title={tr(queue && !queue.enabled ? "memo.autorun_badge_off_title" : "memo.autorun_badge_title")}
-                          >
-                            {tr(queue && !queue.enabled ? "memo.autorun_badge_off" : "memo.autorun_badge")}
-                          </span>
-                        )}
-                        {queue?.paused && (
-                          <span className="memo-q-badge paused" title={tr("memo.autorun_badge_paused_title")}>
-                            {tr("memo.autorun_badge_paused")}
-                          </span>
-                        )}
-
-                        {ids.length > 0 && (
+                        <span className="memo-cat-n">{isQueue ? g.memos.filter(isWaiting).length : g.memos.length}</span>
+                        {isQueue && (() => {
+                          // One badge for the three states; the words stay as its accessible name when the rail is
+                          // narrow enough to show the icon alone.
+                          const b = queue?.paused
+                            ? { cls: " paused", icon: "debug-pause", label: tr("memo.autorun_badge_paused"), title: tr("memo.autorun_badge_paused_title") }
+                            : queue && !queue.enabled
+                              ? { cls: " off", icon: "circle-slash", label: tr("memo.autorun_badge_off"), title: tr("memo.autorun_badge_off_title") }
+                              : { cls: "", icon: "play-circle", label: tr("memo.autorun_badge"), title: tr("memo.autorun_badge_title") };
+                          return (
+                            <span className={"memo-q-badge" + b.cls} title={b.title} aria-label={b.label}>
+                              <Icon name={b.icon} />
+                              <span className="memo-q-badge-txt">{b.label}</span>
+                            </span>
+                          );
+                        })()}
+                        {!cat && ids.length > 0 && (
                           <button
                             type="button"
                             className="memo-cat-send linkish sm"
@@ -1207,77 +1216,20 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                         >
                           <Icon name="add" />
                         </button>
-                        {cat && isQueue && (
-                          <RunNowButton
-                            categoryId={cat.id}
-                            queue={queueByCat.get(cat.id)}
-                            onResult={(r) => {
-                              if (r === "started") bumpMemos();
-                              // The refusal says a slot is taken; the history names who holds it.
-                              if (r === "no_slot") {
-                                setSlotsFullFor(true);
-                                setDeliveriesFor(cat.id);
-                              }
-                            }}
-                          />
-                        )}
-                        {cat && isQueue && (
-                          <button
-                            type="button"
-                            className="memo-cat-act"
-                            title={tr("memo.autorun_deliveries")}
-                            aria-label={tr("memo.autorun_deliveries")}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setDeliveriesFor(cat.id);
-                            }}
-                          >
-                            <Icon name="history" />
-                          </button>
-                        )}
-                        {cat && (() => {
-                          // A category that already is a queue stays openable while the tenant blocks
-                          // new setups: the dialog still lets the member remove it.
-                          const settingsBlocked = tenantKnown && !tenantEnabled && !isQueue;
-                          // Until a settings read has succeeded the dialog would edit a draft built
-                          // from defaults, and a save would overwrite an existing queue's setting.
-                          const settingsUnread = !tenantKnown;
-                          const gearNote = settingsUnread ? tr("memo.q_unread") : settingsBlocked ? tr("memo.q_tenant_off") : null;
-                          return (
-                          <button
-                            type="button"
-                            className="memo-cat-act"
-                            title={gearNote ?? tr("memo.autorun_settings")}
-                            aria-label={gearNote ?? tr("memo.autorun_settings")}
-                            // aria-disabled, not disabled: a native disabled button cannot take focus
-                            // (the reason would be unreachable by keyboard) and swallows the click,
-                            // which would then fall through to the header and fold the category.
-                            aria-disabled={gearNote ? true : undefined}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (gearNote) {
-                                toast(gearNote, { kind: "warn" });
-                                return;
-                              }
-                              setSettingsFor(cat.id);
-                            }}
-                          >
-                            <Icon name="settings-gear" />
-                          </button>
-                          );
-                        })()}
                         {cat && (
                           <button
                             type="button"
-                            className="memo-cat-del"
-                            title={tr("memo.delete_category")}
-                            aria-label={tr("memo.delete_category")}
+                            className="memo-cat-more"
+                            title={tr("memo.cat_menu_btn")}
+                            aria-label={tr("memo.cat_menu_btn")}
+                            aria-haspopup="menu"
                             onClick={(e) => {
                               e.stopPropagation();
-                              void deleteCategory(cat);
+                              const r = e.currentTarget.getBoundingClientRect();
+                              setCatMenu({ at: { x: r.left, y: r.bottom + 2, anchor: r }, catId: cat.id });
                             }}
                           >
-                            <Icon name="trash" />
+                            <Icon name="ellipsis" />
                           </button>
                         )}
                       </MemoCatHead>
@@ -1352,6 +1304,42 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             </Button>
           </div>
         )}
+
+        {catMenu && (() => {
+          const c = cats.find((x) => x.id === catMenu.catId);
+          if (!c) return null;
+          const sendIds = catSendIds.current.get(c.id) ?? [];
+          const q = queueByCat.get(c.id);
+          const isQ = !!q || !!c.queue;
+          // A category that already is a queue stays openable while the tenant blocks new setups: the
+          // dialog still lets the member remove it. Until a settings read has succeeded the dialog would
+          // edit a draft built from defaults, and a save would overwrite an existing queue's setting.
+          const note = !tenantKnown ? tr("memo.q_unread") : tenantKnown && !tenantEnabled && !isQ ? tr("memo.q_tenant_off") : "";
+          return (
+            <CatHeadMenu
+              at={catMenu.at}
+              categoryId={c.id}
+              isQueue={isQ}
+              queue={q}
+              sendCount={sendIds.length}
+              settingsNote={note}
+              onClose={() => setCatMenu(null)}
+              onSend={() => sendGroup(sendIds)}
+              onRunResult={(r) => {
+                if (r === "started") bumpMemos();
+                // The refusal says a slot is taken; the history names who holds it.
+                if (r === "no_slot") {
+                  setSlotsFullFor(true);
+                  setDeliveriesFor(c.id);
+                }
+              }}
+              onHistory={() => setDeliveriesFor(c.id)}
+              onSettings={() => setSettingsFor(c.id)}
+              onRename={() => setRenameCat(c.id)}
+              onDelete={() => void deleteCategory(c)}
+            />
+          );
+        })()}
 
         {memoMenu &&
           createPortal(
@@ -1491,6 +1479,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     </>
   );
 });
+
+/** Counts toward an auto-run category's number: a memo still waiting, not started, delivered or replaced. */
+const isWaiting = (m: Memo): boolean => !["claimed", "delivered", "unconfirmed", "superseded"].includes(m.state ?? "");
 
 /** Category head. Publishes its height on `.memo-cat` as `--memo-cat-head-h` so the open fold line pins
  *  directly below it however tall the head grows (larger text, wrapping). */

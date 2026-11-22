@@ -445,6 +445,7 @@
    affordance that says a category can be written into, and a hover-only icon is invisible
    on touch, where the header's other actions already are. */
 .memo-cat-add,
+.memo-cat-more,
 .memo-cat-act {
   flex: none;
   background: none;
@@ -456,10 +457,12 @@
   display: inline-flex;
 }
 .memo-cat-head:hover .memo-cat-add,
+.memo-cat-head:hover .memo-cat-more,
 .memo-cat-head:hover .memo-cat-act {
   opacity: 1;
 }
 .memo-cat-add:hover,
+.memo-cat-more:hover,
 .memo-cat-act:hover {
   color: var(--fg);
 }
@@ -1422,4 +1425,32 @@ button.memo-reflink-key {
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 2px 4px;
+}
+
+.memo-cat-head[draggable="true"] {
+  cursor: grab;
+}
+.memo-cat-menu-txt {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.memo-cat-menu-why {
+  font-size: 10px;
+  color: var(--muted);
+  white-space: normal;
+  max-width: 240px;
+}
+.memo-cat-menu-item[aria-disabled="true"] {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+/* A narrow rail shows the state badge as its icon alone (the words stay as its accessible name). */
+.memo-cat {
+  container-type: inline-size;
+}
+@container (max-width: 260px) {
+  .memo-q-badge-txt {
+    display: none;
+  }
 }
