@@ -39,7 +39,7 @@ class FakeIO {
 const liveObservers = () => FakeIO.all.filter((o) => o.live);
 // Make the card titled `t` visible or not.
 async function show(t: string, v: boolean) {
-  const card = [...document.querySelectorAll(".member-card")].find((c) => c.querySelector(".mc-title")?.textContent === t)!;
+  const card = [...document.querySelectorAll(".member-card")].find((c) => c.querySelector(".mcard-title")?.textContent === t)!;
   const io = liveObservers().find((o) => o.els.has(card))!;
   await act(async () => io.fire(card, v));
 }

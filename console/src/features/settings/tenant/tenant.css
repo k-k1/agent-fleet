@@ -387,7 +387,7 @@
   padding-left: 10px;
 }
 
-.mc-head {
+.mcard-head {
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -400,14 +400,14 @@
   min-width: 0;
 }
 
-.mc-title,
+.mcard-title,
 .mc-key {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mc-title {
+.mcard-title {
   font-size: 13px;
   font-weight: 600;
 }
@@ -472,11 +472,11 @@
   color: var(--err);
 }
 
-.mc-disk.warn .mc-bar-fill {
+.mc-disk.warn .mcard-bar-fill {
   background: var(--warn);
 }
 
-.mc-disk.error .mc-bar-fill {
+.mc-disk.error .mcard-bar-fill {
   background: var(--err);
 }
 
@@ -488,13 +488,13 @@
   overflow: hidden;
 }
 
-.mc-bar-fill {
+.mcard-bar-fill {
   display: block;
   height: 100%;
   background: var(--fg);
 }
 
-.mc-bar.full .mc-bar-fill {
+.mc-bar.full .mcard-bar-fill {
   background: var(--warn);
 }
 

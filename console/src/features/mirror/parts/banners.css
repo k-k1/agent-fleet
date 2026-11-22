@@ -93,6 +93,11 @@ suggestions, and the collapsed compaction summary left in the transcript (.mirro
   display: none;
 }
 .mirror-compact-head .mc-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--fg);
 }
 .mirror-compact-head .mc-time {

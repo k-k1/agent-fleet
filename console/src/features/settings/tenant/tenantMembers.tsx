@@ -264,9 +264,9 @@ function MemberCard({
   const title = memberTitle(m);
   return (
     <button ref={ref} type="button" className={"member-card" + (reasons.length ? " attn" : "")} onClick={onOpen}>
-      <span className="mc-head">
+      <span className="mcard-head">
         <span className="mc-name">
-          <span className="mc-title" title={title}>
+          <span className="mcard-title" title={title}>
             {title}
           </span>
           {m.email && (
@@ -336,7 +336,7 @@ function MemberSessions({ m }: { m: Member }) {
               aria-valuenow={Math.min(s.live, max)}
               aria-valuetext={text}
             >
-              <span className="mc-bar-fill" style={{ width: pct + "%" }} />
+              <span className="mcard-bar-fill" style={{ width: pct + "%" }} />
             </span>
           )}
           <span className="mc-sess-text">{text}</span>
@@ -396,7 +396,7 @@ function MemberDisk({ m, now }: { m: Member; now: number }) {
           aria-valuenow={Math.min(100, Math.round(ratio * 100))}
           aria-valuetext={text}
         >
-          <span className="mc-bar-fill" style={{ width: Math.min(100, ratio * 100) + "%" }} />
+          <span className="mcard-bar-fill" style={{ width: Math.min(100, ratio * 100) + "%" }} />
         </span>
       )}
       <span className="mc-disk-text">{text}</span>
@@ -455,7 +455,7 @@ function LiveRow({ label, text, ratio }: { label: string; text: string; ratio: n
           aria-valuenow={pct}
           aria-valuetext={text}
         >
-          <span className="mc-bar-fill" style={{ width: pct + "%" }} />
+          <span className="mcard-bar-fill" style={{ width: pct + "%" }} />
         </span>
       )}
       <span className="mc-live-text">{text}</span>
