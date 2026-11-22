@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -61,6 +62,7 @@ type Service struct {
 	timeout  time.Duration
 	slotWait time.Duration
 	slots    chan struct{}
+	view     *viewing
 }
 
 // validSubject accepts mailto:<addr with @> or an https URL with a host: services that check the
@@ -99,7 +101,7 @@ func New(st *store.SQL) *Service {
 		}
 	}
 	p := &Service{store: st, sender: webpush.NewSender(keys, subject), pubKey: keys.PublicKey(),
-		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, slots: make(chan struct{}, pushMaxInFlight)}
+		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, slots: make(chan struct{}, pushMaxInFlight), view: newViewing()}
 	st.SetNotificationHook(p.onNotification)
 	log.Printf("web push enabled")
 	return p
@@ -114,6 +116,29 @@ type pushPayload struct {
 	Kind    string `json:"kind"`
 	Session string `json:"session"`
 	Name    string `json:"name,omitempty"`
+	// Text is a question's text. Present only when the tenant allows it (tenant_push_setting).
+	Text string `json:"text,omitempty"`
+}
+
+// maxPushText keeps the text short: a push is a prompt to open the Console, and the service
+// limits a payload to about 4 KB anyway.
+const maxPushText = 140
+
+// questionText is the first question's text of a "question" notification payload, or "".
+func questionText(payload string) string {
+	var p struct {
+		Questions []struct {
+			Question string `json:"question"`
+		} `json:"questions"`
+	}
+	if json.Unmarshal([]byte(payload), &p) != nil || len(p.Questions) == 0 {
+		return ""
+	}
+	r := []rune(strings.TrimSpace(p.Questions[0].Question))
+	if len(r) > maxPushText {
+		r = append(r[:maxPushText-1], '…')
+	}
+	return string(r)
 }
 
 // onNotification runs on the inserting caller, so it only starts the delivery.
@@ -128,17 +153,41 @@ func (p *Service) onNotification(n store.Notification) {
 
 // deliver has three separate budgets so that none eats another's: the list read, the wait for a
 // free slot (slotWait), and each send once it holds a slot (timeout, started after the wait).
+//
+// Before any send, in order: the member must still be active (a removed member gets nothing), the
+// kind must not be one the member turned off, and the session must not be on screen in an active
+// Console. Every doubt resolves to "send": a lost question costs more than a redundant buzz.
 func (p *Service) deliver(ctx context.Context, n store.Notification) {
 	lctx, lcancel := context.WithTimeout(ctx, p.timeout)
+	defer lcancel()
+	if p.view.on(n.MembershipID, n.TargetID, time.Now()) {
+		return
+	}
+	active, includeText, err := p.store.PushDeliveryContext(lctx, n.MembershipID)
+	if err != nil {
+		log.Printf("web push: delivery context: %v", err)
+		active, includeText = true, false
+	}
+	if !active {
+		return
+	}
+	if off, err := p.store.GetPushOffKinds(lctx, n.MembershipID); err != nil {
+		log.Printf("web push: preferences: %v", err)
+	} else if slices.Contains(off, n.Kind) {
+		return
+	}
 	subs, err := p.store.ListPushSubscriptions(lctx, n.MembershipID)
-	lcancel()
 	if err != nil || len(subs) == 0 {
 		if err != nil {
 			log.Printf("web push: list subscriptions: %v", err)
 		}
 		return
 	}
-	body, _ := json.Marshal(pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName})
+	pl := pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName}
+	if includeText && n.Kind == "question" {
+		pl.Text = questionText(n.Payload)
+	}
+	body, _ := json.Marshal(pl)
 	// One goroutine per device with its own deadline: a device whose push service hangs must not
 	// eat the budget of the ones behind it. p.slots bounds the sends in flight CP-wide.
 	var wg sync.WaitGroup
@@ -342,6 +391,115 @@ func (p *Service) Remove(w http.ResponseWriter, r *http.Request, membershipID, i
 	}
 	if !ok {
 		writeErr(w, http.StatusNotFound, "not_found", "no such subscription")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// --- preferences, on-screen reports, release --------------------------------------------------
+
+// PrefKinds are the kinds a member may turn off for push.
+func PrefKinds() []string {
+	out := make([]string, 0, len(pushKinds))
+	for k := range pushKinds {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
+type prefsWire struct {
+	Off []string `json:"off"`
+}
+
+// GetPrefs answers the kinds the caller turned off.
+func (p *Service) GetPrefs(w http.ResponseWriter, r *http.Request, membershipID string) {
+	if p.off(w) {
+		return
+	}
+	off, err := p.store.GetPushOffKinds(r.Context(), membershipID)
+	if err != nil {
+		internalErr(w, err)
+		return
+	}
+	if off == nil {
+		off = []string{}
+	}
+	writeJSON(w, http.StatusOK, prefsWire{Off: off})
+}
+
+// PutPrefs replaces the caller's turned-off kinds. An unknown kind is refused so a typo cannot
+// look like a saved opt-out.
+func (p *Service) PutPrefs(w http.ResponseWriter, r *http.Request, membershipID string) {
+	if p.off(w) {
+		return
+	}
+	var in prefsWire
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil || in.Off == nil {
+		writeErr(w, http.StatusBadRequest, "bad_request", `body must be {"off":[...]}`)
+		return
+	}
+	seen := map[string]bool{}
+	var off []string
+	for _, k := range in.Off {
+		if !pushKinds[k] {
+			writeErr(w, http.StatusBadRequest, "bad_kind", "unknown push kind: "+k)
+			return
+		}
+		if !seen[k] {
+			seen[k] = true
+			off = append(off, k)
+		}
+	}
+	slices.Sort(off)
+	if err := p.store.PutPushOffKinds(r.Context(), membershipID, off); err != nil {
+		internalErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, prefsWire{Off: append([]string{}, off...)})
+}
+
+// Viewing records that the caller's Console shows session on screen right now. A Console sends it
+// while the tab is visible and focused, about every 20 s; an entry older than viewTTL is ignored,
+// so a closed or backgrounded tab stops suppressing pushes by itself. An empty session clears the
+// device's entry. device is any stable id the Console picks; the server only keeps it apart per
+// device so that one device clearing does not clear another's.
+func (p *Service) Viewing(w http.ResponseWriter, r *http.Request, membershipID string) {
+	if p.off(w) {
+		return
+	}
+	var in struct {
+		Device  string `json:"device"`
+		Session string `json:"session"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&in); err != nil || in.Device == "" || len(in.Device) > 100 || len(in.Session) > 200 {
+		writeErr(w, http.StatusBadRequest, "bad_request", "device and session required")
+		return
+	}
+	p.view.set(membershipID, in.Device, in.Session, time.Now())
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// Release drops the subscription named by endpoint+keys without a session: the Console calls it
+// while signing out, and the proof of owning the browser is the subscription's own keys. A row
+// that is not there is success (the goal, "no push to this browser", already holds).
+func (p *Service) Release(w http.ResponseWriter, r *http.Request) {
+	if p.off(w) {
+		return
+	}
+	var in struct {
+		Endpoint string `json:"endpoint"`
+		Keys     struct {
+			P256dh string `json:"p256dh"`
+			Auth   string `json:"auth"`
+		} `json:"keys"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&in); err != nil || in.Endpoint == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON")
+		return
+	}
+	if err := p.store.ReleasePushEndpoint(r.Context(), in.Endpoint, in.Keys.P256dh, in.Keys.Auth); err != nil {
+		internalErr(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
