@@ -461,13 +461,20 @@ func TestMemoRecipeOtherRecipeIsSkippedBeforeItsTextIsChecked(t *testing.T) {
 }
 
 // A recipe the run could not be created with (a route another agent does not take) holds the
-// message for a person, with a reason, instead of being claimed again and again.
+// message for a person at the claim, with a reason, instead of being claimed again and again. The
+// message is moved into a queue of another agent, which is not checked at the move.
 func TestMemoRecipeInvalidAtTheClaimHoldsTheMessage(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-		q := e.queueWith("app", "impl", map[string]any{})
+		e.queueWith("app", "impl", map[string]any{})
+		other := e.queueWith("app", "other", map[string]any{"agentKind": "codex"})
 		m := decode[memoDTO](t, e.recipeMemo("app", "impl", "m", map[string]any{"route": "anthropic-subscription"}))
-		e.queueWith("app", "impl", map[string]any{"agentKind": "codex"})
-		if rec := e.fire(q); rec.Code != http.StatusConflict {
+		if rec := e.do("a", "PATCH", "/api/memos/"+m.ID, map[string]any{"category": "other"}); rec.Code != http.StatusOK {
+			t.Fatalf("move: %d %s", rec.Code, rec.Body.String())
+		}
+		if row := e.memoRow(m.ID); row.State != store.MemoStatePending || row.Category != "other" {
+			t.Fatalf("before the claim: %+v", row)
+		}
+		if rec := e.fire(other); rec.Code != http.StatusConflict {
 			t.Fatalf("fire: %d %s", rec.Code, rec.Body.String())
 		}
 		row := e.memoRow(m.ID)
