@@ -27,8 +27,9 @@ import (
 var b64 = base64.RawURLEncoding
 
 type memStore struct {
-	mu   sync.Mutex
-	subs []store.PushSubscription
+	mu         sync.Mutex
+	releaseErr error
+	subs       []store.PushSubscription
 }
 
 func (m *memStore) UpsertPushSubscription(_ context.Context, p store.PushSubscription) error {
@@ -77,11 +78,14 @@ func (m *memStore) DeletePushSubscriptionByEndpoint(_ context.Context, _, ep str
 	}
 	return nil
 }
-func (m *memStore) ReleasePushEndpoint(ctx context.Context, ep string) error {
+func (m *memStore) ReleasePushEndpoint(ctx context.Context, ep, p256dh, auth string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.releaseErr != nil {
+		return m.releaseErr
+	}
 	for i, s := range m.subs {
-		if s.Endpoint == ep {
+		if s.Endpoint == ep && s.P256dh == p256dh && s.Auth == auth {
 			m.subs = append(m.subs[:i], m.subs[i+1:]...)
 			break
 		}
@@ -319,8 +323,26 @@ func TestDeviceCap(t *testing.T) {
 		t.Fatalf("over the cap: %d", c)
 	}
 	rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1")
-	// A browser that switches to a member with no room is still released from the previous one.
-	f.st.subs = append(f.st.subs, store.PushSubscription{MembershipID: "m0", Endpoint: f.srv.URL + "/new"})
+	// A browser that switches to a member with no room is still released from the previous one,
+	// but only when it presents that subscription's own keys.
+	f.st.subs = append(f.st.subs, store.PushSubscription{MembershipID: "m0", Endpoint: f.srv.URL + "/new", P256dh: p256, Auth: auth})
+	_, otherKey, otherAuth := newDevice(t)
+	foreign := func() int {
+		w := httptest.NewRecorder()
+		f.svc.Subscribe(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"endpoint":"`+f.srv.URL+`/new","keys":{"p256dh":"`+otherKey+`","auth":"`+otherAuth+`"}}`)), "m1")
+		return w.Code
+	}
+	if c := foreign(); c != 409 {
+		t.Fatalf("foreign keys over the cap: %d", c)
+	}
+	if len(f.st.subs) != pushMaxPerMember+1 {
+		t.Fatal("a request with foreign keys released the previous owner's subscription")
+	}
+	f.st.releaseErr = io.ErrUnexpectedEOF
+	if c := post(f.srv.URL + "/new"); c != 500 {
+		t.Fatalf("a failed release must not read as the plain cap error: %d", c)
+	}
+	f.st.releaseErr = nil
 	if c := post(f.srv.URL + "/new"); c != 409 {
 		t.Fatalf("over the cap: %d", c)
 	}
@@ -405,10 +427,17 @@ func TestSlotWaitDoesNotShortenTheSend(t *testing.T) {
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 	})
-	f.svc.deliver(context.Background(), note("question"))
-	if f.count() != 1 {
-		t.Fatal("the send was cut short by time spent waiting for a slot")
+	// Through the real entry point, and success is read off last_ok_at, so a shared deadline
+	// brought back there fails this test.
+	f.svc.onNotification(note("question"))
+	deadline := time.Now().Add(8 * time.Second)
+	for time.Now().Before(deadline) {
+		if rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(rows) == 1 && rows[0].LastOKAt != "" {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
 	}
+	t.Fatal("the send was cut short by time spent waiting for a slot")
 }
 
 func TestBadRedirectLeavesNoToken(t *testing.T) {

@@ -30,8 +30,9 @@ type PushSubscriptionStore interface {
 	// scoped to the membership the send was made for: a row that moved to another member while
 	// the send was in flight is not that subscription any more and must survive a stale result.
 	DeletePushSubscriptionByEndpoint(ctx context.Context, membershipID, endpoint string) error
-	// ReleasePushEndpoint drops the row for endpoint whoever holds it.
-	ReleasePushEndpoint(ctx context.Context, endpoint string) error
+	// ReleasePushEndpoint drops the row for endpoint whoever holds it, but only when the caller
+	// presents the subscription's own keys: the endpoint alone is not proof of owning the browser.
+	ReleasePushEndpoint(ctx context.Context, endpoint, p256dh, auth string) error
 	TouchPushSubscription(ctx context.Context, membershipID, endpoint, at string) error
 }
 
@@ -87,7 +88,7 @@ func (s *SQL) TouchPushSubscription(ctx context.Context, membershipID, endpoint,
 	return err
 }
 
-func (s *SQL) ReleasePushEndpoint(ctx context.Context, endpoint string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE endpoint=?`, endpoint)
+func (s *SQL) ReleasePushEndpoint(ctx context.Context, endpoint, p256dh, auth string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE endpoint=? AND p256dh=? AND auth=?`, endpoint, p256dh, auth)
 	return err
 }

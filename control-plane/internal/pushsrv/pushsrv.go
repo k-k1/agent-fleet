@@ -292,10 +292,15 @@ func (p *Service) Subscribe(w http.ResponseWriter, r *http.Request, membershipID
 			held = held || s.Endpoint == in.Endpoint
 		}
 		if !held {
-			// The browser still presents a subscription of its own, so it has left its previous
+			// The browser presents the subscription's own keys, so it has left its previous
 			// member: stop delivering that member's notifications to it even though this member
 			// has no room (otherwise a switch at the cap would keep the old association).
-			_ = p.store.ReleasePushEndpoint(r.Context(), in.Endpoint)
+			if err := p.store.ReleasePushEndpoint(r.Context(), in.Endpoint, in.Keys.P256dh, in.Keys.Auth); err != nil {
+				// Not released: answering 409 would leave the old member's notifications flowing to
+				// this browser, so say it is retryable instead.
+				internalErr(w, err)
+				return
+			}
 			writeErr(w, http.StatusConflict, "too_many_devices", "too many registered devices; remove one first")
 			return
 		}

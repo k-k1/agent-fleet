@@ -104,7 +104,14 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 1 {
 		t.Fatalf("a stale delete removed the new owner's row: %+v", rows)
 	}
-	if err := st.ReleasePushEndpoint(ctx, ep); err != nil {
+	// Another member who knows the endpoint but not its keys cannot release it.
+	if err := st.ReleasePushEndpoint(ctx, ep, "other", "other"); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 1 {
+		t.Fatalf("a release with foreign keys removed the row: %+v", rows)
+	}
+	if err := st.ReleasePushEndpoint(ctx, ep, sub.P256dh, sub.Auth); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 0 {
