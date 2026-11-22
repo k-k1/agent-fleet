@@ -134,6 +134,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if err := PrepareStart(spec); err != nil {
 		return agents.LaunchPlan{}, err
 	}
+	// Terminal launches carry no provider pin, so the approved custom endpoint is not served here.
+	if err := customManagedOnlyErr(m, false); err != nil {
+		return agents.LaunchPlan{}, err
+	}
 	// An explicit route runs on a private server in this pane, with none of the workspace's
 	// provider keys or engine token (route.go).
 	if m.Route != nil {

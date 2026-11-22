@@ -105,6 +105,10 @@ func (managedDriver) resume(m session.Meta) (agents.ThreadHandle, error) {
 			return nil, err
 		}
 	}
+	// The approved custom endpoint is pinned on the shared serve only (customManagedOnlyErr).
+	if err := customManagedOnlyErr(m, m.Route == nil); err != nil {
+		return nil, err
+	}
 	epoch := dropEpochOf(m.Name)
 	ensure := func() (string, int, error) { return Serve().Ensure() }
 	if m.Route != nil {
