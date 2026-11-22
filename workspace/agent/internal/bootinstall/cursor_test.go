@@ -1086,3 +1086,43 @@ func TestCursorAliasOnOldVersionReplacedByFileIsRepaired(t *testing.T) {
 		t.Errorf("alias on a broken old version was not repaired: %s", got)
 	}
 }
+
+func TestCursorAliasSpellingsOfAnOldVersionAreOurs(t *testing.T) {
+	for name, target := range map[string]string{
+		"double slash":  "../share/cursor-agent/versions/2026.0.0-old//cursor-agent",
+		"dot":           "../share/cursor-agent/versions/2026.0.0-old/./cursor-agent",
+		"subdir dotdot": "../share/cursor-agent/versions/2026.0.0-old/sub/../cursor-agent",
+	} {
+		f := newCursor(t, goodCursorMembers(), "")
+		f.plant(t, "2026.1.1-abc", goodCursor, true)
+		os.MkdirAll(filepath.Join(f.tree("2026.0.0-old"), "sub"), 0o755)
+		alias := filepath.Join(f.home, ".local", "bin", "agent")
+		os.Symlink(target, alias)
+		f.env.Repin = true
+		if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+			t.Fatalf("%s: rc=%d out=%s", name, rc, f.out)
+		}
+		if got, _ := os.Readlink(alias); !strings.Contains(got, "2026.1.1-abc") {
+			t.Errorf("%s: alias not repaired: %s", name, got)
+		}
+	}
+}
+
+func TestCursorAliasThroughLinkedVersionSlotIsNotOurs(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	versions := filepath.Dir(f.tree("x"))
+	moved := filepath.Join(f.home, "vol", "versions")
+	os.MkdirAll(filepath.Dir(moved), 0o755)
+	os.Rename(versions, moved)
+	os.Symlink(moved, versions)
+	tool := filepath.Join(f.home, "other-tool")
+	os.MkdirAll(tool, 0o755)
+	os.Symlink(tool, filepath.Join(moved, "9.9"))
+	alias := filepath.Join(f.home, ".local", "bin", "agent")
+	os.Symlink(filepath.Join(moved, "9.9", "cursor-agent"), alias)
+	f.env.Repin = true
+	if v, ok, err := f.env.aliasVersion(alias, filepath.Join(moved, "9.9", "cursor-agent")); ok || err != nil {
+		t.Errorf("another tool's alias read as ours: %q %v", v, err)
+	}
+}

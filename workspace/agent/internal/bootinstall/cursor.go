@@ -121,20 +121,12 @@ func (e Env) aliasVersion(alias, target string) (string, bool, error) {
 	if target[i+1:] != cursorTool {
 		return "", false, nil
 	}
-	// The version directory itself is not followed: whatever it is now (gone, a file, a link), its
-	// name is the version the link names, as it was before. Only the directories above it are
-	// resolved.
-	j := strings.LastIndex(target[:i], "/")
-	ver := target[j+1 : i]
-	if ver == "" || ver == "." || ver == ".." {
-		return "", false, nil
-	}
-	parent, err := resolveReal(target[:j+1])
-	if errors.Is(err, errNotDirPath) {
-		return "", false, nil
-	}
-	if err != nil {
-		return "", false, err
+	// Repeated separators and "." are no-ops for the OS and are dropped; ".." is kept for resolveReal.
+	var comps []string
+	for _, c := range strings.Split(target[:i], "/") {
+		if c != "" && c != "." {
+			comps = append(comps, c)
+		}
 	}
 	share, err := resolveReal(e.cursorShare())
 	if errors.Is(err, errNotDirPath) {
@@ -143,7 +135,34 @@ func (e Env) aliasVersion(alias, target string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if parent != share {
+	if len(comps) == 0 {
+		return "", false, nil
+	}
+	verDir, err := resolveReal("/" + strings.Join(comps, "/"))
+	if err == nil {
+		if filepath.Dir(verDir) != share {
+			return "", false, nil
+		}
+		return filepath.Base(verDir), true, nil
+	}
+	if !errors.Is(err, errNotDirPath) {
+		return "", false, err
+	}
+	// The version slot itself is not a directory: a plain file that replaced a version tree still
+	// names that version, so the alias stays cursor's own. A link there is followed above and is
+	// never read as ours.
+	ver := comps[len(comps)-1]
+	if ver == ".." {
+		return "", false, nil
+	}
+	parent, err := resolveReal("/" + strings.Join(comps[:len(comps)-1], "/"))
+	if errors.Is(err, errNotDirPath) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, err
+	}
+	if st, lerr := os.Lstat(filepath.Join(parent, ver)); parent != share || lerr != nil || !st.Mode().IsRegular() {
 		return "", false, nil
 	}
 	return ver, true, nil
