@@ -367,6 +367,19 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // Approve what a release card showed, each message with the hash its row carried. A 409
   // means something changed after the card was drawn: nothing was approved, the stale ids
   // are marked, and the list is re-read so the card shows what is there now.
+  // The menu holds a memo id and asks again on every render, so a poll that moves the note out of
+  // reach (it ran, the allowance went to 0, it changed category) also removes the item.
+  // A root has no chain id: it can be stopped before its first follow-up exists, while the
+  // category allows follow-ups and the note a person or the switch approved points at a work item.
+  const canStopChain = (m: Memo) => {
+    if (m.state !== "pending" && m.state !== "delivered") return false;
+    if (m.chainId) return true;
+    const cat = cats.find((c) => c.repo === m.repo && c.name === m.category);
+    const queue = cat ? queueByCat.get(cat.id) : undefined;
+    return (
+      (!!queue || !!cat?.queue) && (queue?.continuationMax ?? 0) > 0 && !!memoReference(m) && !(m.releasedBy && m.releasedBy !== "setting")
+    );
+  };
   const stopChain = async (m: Memo) => {
     try {
       const res = await memoStopChain(m.id);
@@ -860,6 +873,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // instead of a one-tap trash button (mirrors the chat assistant rows).
   const [memoMenu, setMemoMenu] = useState<{ x: number; y: number; m: Memo; anchor?: DOMRect } | null>(null);
   const memoMenuRef = useRef<HTMLUListElement>(null);
+  const menuLive = memoMenu ? memos.find((x) => x.id === memoMenu.m.id) : undefined;
   const openMemoMenu = (e: RMouseEvent, m: Memo) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1139,13 +1153,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           : undefined
                       }
                       continuationMax={queue?.continuationMax}
-                      onStopChain={
-                        // A root has no chain id: it can be stopped before its first follow-up exists, while the
-                        // category allows follow-ups and the note a person or the switch approved points at a work item.
-                        m.chainId || (isQueue && (queue?.continuationMax ?? 0) > 0 && memoReference(m) && !(m.releasedBy && m.releasedBy !== "setting"))
-                          ? () => void stopChain(m)
-                          : undefined
-                      }
                       onOpenMenu={(e) => openMemoMenu(e, m)}
                       onOpenKebab={(e) => openMemoMenuBtn(e, m)}
                       onDragStart={(e) => {
@@ -1496,6 +1503,23 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   <Icon name="copy" /> {tr("memo.copy")}
                 </button>
               </li>
+              {menuLive && canStopChain(menuLive) && (
+                <li>
+                  <button
+                    type="button"
+                    className="ui-menu-item memo-cat-menu-item memo-menu-stopchain"
+                    // Set here: useMenuRoving tags only the items present when the menu opened, and this one can appear later.
+                    role="menuitem"
+                    onClick={() => runMemoMenu(() => void stopChain(menuLive))}
+                  >
+                    <Icon name="debug-stop" />
+                    <span className="memo-cat-menu-txt">
+                      {tr("memo.continuation_stop")}
+                      <span className="memo-cat-menu-why">{tr("memo.continuation_stop_title")}</span>
+                    </span>
+                  </button>
+                </li>
+              )}
               <li className="ui-menu-sep" aria-hidden="true" />
               <li>
                 <button type="button" className="ui-menu-item danger" onClick={() => runMemoMenu(() => void remove(memoMenu.m.id))}>
@@ -1640,8 +1664,6 @@ interface MemoRowProps {
   onOpenTidyRuns?: () => void;
   /** The category's follow-up allowance, for "follow-up K of M". */
   continuationMax?: number;
-  /** Stops the chain a follow-up belongs to; absent on a note that is in none. */
-  onStopChain?: () => void;
   onOpenMenu: (e: RMouseEvent) => void;
   onOpenKebab: (e: RMouseEvent) => void;
   onDragStart: (e: RDragEvent) => void;
@@ -1893,19 +1915,6 @@ function MemoRow(props: MemoRowProps) {
               ? tr("memo.continuation_badge_of", { seq: m.chainSeq!, max: props.continuationMax! })
               : tr("memo.continuation_badge", { seq: m.chainSeq! })}
         </span>
-      )}
-      {props.onStopChain && (m.state === "pending" || m.state === "delivered") && (
-        <button
-          type="button"
-          className="linkish"
-          title={tr("memo.continuation_stop_title")}
-          onClick={(e) => {
-            e.stopPropagation();
-            props.onStopChain!();
-          }}
-        >
-          {tr("memo.continuation_stop")}
-        </button>
       )}
       {releasedByTidy(m) && (
         <span className="memo-qorigin" title={tr("memo.released_by_tidy_title")}>
