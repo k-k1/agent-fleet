@@ -134,6 +134,19 @@ describe("SharedSessionView handoff poll beat", () => {
           <SharedSessionView sharedSessionId={id} />
         </ConfirmProvider>
       );
+      // The first read of the new session answers late, with an older card; the tick's read answers
+      // at once with the newer one.
+      let resolveFirstNew!: (v: unknown) => void;
+      let newReads = 0;
+      const card = (title: string) => ({ proposals: [{ id: title, title, prompt: "x", created_at: Date.parse("2026-08-18T10:02:00Z") }] });
+      api.mockImplementation(async (path: string) => {
+        if (path.includes("catalog-new/handoff-proposals")) {
+          return ++newReads === 1 ? new Promise((r) => (resolveFirstNew = r)) : card("NEWER-CARD");
+        }
+        if (path.includes("/handoff-proposals")) return card("OLD-SESSION-CARD");
+        if (path.includes("/messages")) return MESSAGES;
+        return { sessions: [] };
+      });
       const reads = (id: string) => api.mock.calls.filter((c) => String(c[0]).includes(`${id}/handoff-proposals`)).length;
       await act(async () => root!.render(view("catalog-old")));
       await act(async () => void vi.advanceTimersByTime(2500));
@@ -142,6 +155,10 @@ describe("SharedSessionView handoff poll beat", () => {
       await act(async () => void vi.advanceTimersByTime(2500)); // the original 5 s period ends
       expect(reads("catalog-new")).toBe(2);
       expect(reads("catalog-old")).toBe(1);
+      expect(host.textContent).toContain("NEWER-CARD");
+      await act(async () => resolveFirstNew(card("STALE-CARD")));
+      expect(host.textContent).toContain("NEWER-CARD");
+      expect(host.textContent).not.toContain("STALE-CARD");
     } finally {
       vi.useRealTimers();
     }

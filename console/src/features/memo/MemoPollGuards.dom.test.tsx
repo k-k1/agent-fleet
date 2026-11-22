@@ -112,6 +112,7 @@ describe("MemoQueueSection poll guards", () => {
     expect(useQueueSettingsCache.getState().tenant.startsWith("B")).toBe(true);
     // The switch's own read answers late with older content: it must not roll the tick's list back.
     await act(async () => memoReads[1]!.resolve([aMemo("b0", "stale memo of B")]));
+    await act(async () => queueReads[1]!.resolve(queue("catB")));
     expect(host.textContent).toContain("memo of B");
     expect(host.textContent).not.toContain("stale memo of B");
   });
