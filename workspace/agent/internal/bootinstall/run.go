@@ -44,7 +44,7 @@ func Run(args []string) {
 		// Before anything looks at the npm CLIs: a killed self-update may have left them moved aside.
 		// The every-start verify pass keeps an accepted update's backups until it has run.
 		if !(step == "npm-verify" && present) {
-			DefaultEnv(false).npmSettleAside()
+			DefaultEnv(false).npmRecoverAside(true)
 		}
 	}
 	switch step {

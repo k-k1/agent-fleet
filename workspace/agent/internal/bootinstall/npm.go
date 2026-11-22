@@ -544,6 +544,13 @@ func (e Env) npmReadMarkerFull() (state string, entries, discard []string, ok, b
 			entries = append(entries, l)
 		}
 	}
+	for _, d := range discard {
+		for _, k := range entries {
+			if e.npmEntryCLI(d) == e.npmEntryCLI(k) {
+				return state, nil, nil, true, true // one CLI in both groups
+			}
+		}
+	}
 	return state, entries, discard, true, false
 }
 
@@ -717,8 +724,24 @@ func (e Env) npmKeepPendingFor(stuck []string) {
 			rest = append(rest, ent)
 		}
 	}
-	npmDiscardAside(e.npmAsidesOf(rest))
-	_ = e.npmWriteMarker("pending", keep)
+	e.npmNarrowMarker(keep, e.npmAsidesOf(rest))
+}
+
+// npmNarrowMarker turns the marker into a pending one for the CLIs in keep and deletes the
+// backups of the accepted ones in drop. The marker records the drop group before anything is
+// deleted, so a failed or interrupted delete leaves the backups listed; when that write fails,
+// nothing is deleted and the earlier marker stays.
+func (e Env) npmNarrowMarker(keep []string, drop []npmAside) {
+	if len(drop) == 0 {
+		_ = e.npmWriteMarker("pending", keep)
+		return
+	}
+	if err := e.npmWriteMarkerDiscard("pending", keep, npmCLINames(drop)); err != nil {
+		return
+	}
+	if npmDiscardAside(drop) {
+		_ = e.npmWriteMarker("pending", keep)
+	}
 }
 
 // npmMoveAside renames the installed tree and npm's own bin link of every npm CLI to
@@ -818,23 +841,6 @@ func npmDiscardAside(moved []npmAside) bool {
 		}
 	}
 	return gone
-}
-
-// npmSettleAside is the recovery that runs before any later npm write. An accepted update's
-// backups are deleted only after the verify pass has looked at the new copies: a kill between the
-// marker and that pass must not cost the previous copies of one that does not run.
-func (e Env) npmSettleAside() {
-	e, release, ok := e.lockNPM()
-	if !ok {
-		e.npmBusy("recovery of an earlier agent CLI update")
-		return
-	}
-	defer release()
-	if state, _, mok, mbad := e.npmReadMarker(); mok && !mbad && state == "accepted" {
-		e.NPMVerifyPresentStep()
-		return
-	}
-	e.npmRecoverAside(false)
 }
 
 // NPMVerifyPresentStep is the entrypoint's final pass: it recovers what a killed update left but

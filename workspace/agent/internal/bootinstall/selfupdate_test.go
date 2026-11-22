@@ -489,10 +489,8 @@ func TestSelfUpdateNPMSkipsWhileAnEarlierUpdateIsUnsettled(t *testing.T) {
 	}
 	t.Cleanup(func() { os.Chmod(parent, 0o755) })
 	f.env.selfUpdateNPM()
-	// The verify pass that now precedes the discard may turn the marker into a pending one (the
-	// copy cannot be probed behind the locked parent); either way the record and backup stay.
-	if _, err := os.Lstat(f.env.npmMarker()); err != nil {
-		t.Fatalf("marker dropped: %v", err)
+	if got := f.read(f.env.npmMarker()); got != "accepted\nclaude\n" {
+		t.Fatalf("marker rewritten: %q", got)
 	}
 	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
 		t.Fatal("npm ran over unsettled backups")
@@ -1293,7 +1291,7 @@ func TestNPMMarkerDiscardGroupIsRestoredAndSwept(t *testing.T) {
 
 func TestNPMMarkerDiscardGroupOnlyInPending(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
-	for _, body := range []string{"accepted\nclaude\naccepted\nopencode\n", "pending\nclaude\naccepted\nopencode\naccepted\ncodex\n"} {
+	for _, body := range []string{"pending\nclaude\naccepted\nclaude\n", "accepted\nclaude\naccepted\nopencode\n", "pending\nclaude\naccepted\nopencode\naccepted\ncodex\n"} {
 		f.write(t, f.env.npmMarker(), body)
 		if _, _, _, ok, bad := f.env.npmReadMarkerFull(); !ok || !bad {
 			t.Fatalf("%q: not refused", body)
@@ -1301,17 +1299,59 @@ func TestNPMMarkerDiscardGroupOnlyInPending(t *testing.T) {
 	}
 }
 
-func TestNPMSettleAsideVerifiesAnAcceptedUpdateBeforeDiscarding(t *testing.T) {
+func TestNPMNarrowMarkerRecordsBackupsItCannotDelete(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
 	f := newSU(t, goodRTK, "", "", "")
-	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
-	f.write(t, filepath.Join(tree, "cli.sh"), "#!/bin/sh\nexit 1\n") // killed before the final verify: the new copy is broken
-	f.write(t, filepath.Join(tree+npmBakSuffix, "cli.sh"), "#!/bin/sh\necho 1.0.0\n")
-	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
-	f.env.npmSettleAside()
-	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
-		t.Fatalf("previous copy not back: %q %v\n%s", out, err, f.out)
+	claude := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, filepath.Join(claude+npmBakSuffix, "VERSION"), "1.0.0")
+	codex := f.plantNPMTree(t, "@openai/codex", "codex", "2.0.0")
+	codexBak := codex + npmBakSuffix
+	f.write(t, filepath.Join(codexBak, "VERSION"), "1.0.0")
+	parent := filepath.Dir(codexBak)
+	if err := os.Chmod(parent, 0o555); err != nil { // the accepted backup cannot be unlinked
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
+	f.env.npmNarrowMarker([]string{"claude"}, f.env.npmAsidesOf([]string{"codex"}))
+	if _, _, discard, ok, bad := f.env.npmReadMarkerFull(); !ok || bad || len(discard) != 1 || discard[0] != "codex" {
+		t.Fatalf("the undeletable backup is not recorded: discard=%v ok=%v bad=%v", discard, ok, bad)
+	}
+	os.Chmod(parent, 0o755)
+	f.env.npmRecoverAside(false)
+	if f.read(filepath.Join(claude, "VERSION")) != "1.0.0" {
+		t.Fatal("claude not restored")
+	}
+	if _, err := os.Lstat(codexBak); err == nil {
+		t.Fatal("codex backup left behind: the next update would refuse on its name")
 	}
 	if _, err := os.Lstat(f.env.npmMarker()); err == nil {
-		t.Fatal("marker left after settling")
+		t.Fatal("marker left after both groups settled")
+	}
+}
+
+func TestNPMNarrowMarkerDeletesNothingWhenItCannotRecord(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	codex := f.plantNPMTree(t, "@openai/codex", "codex", "2.0.0")
+	f.write(t, filepath.Join(codex+npmBakSuffix, "VERSION"), "1.0.0")
+	f.write(t, filepath.Join(f.env.npmMarker(), "x"), "") // the marker path is a directory: the write cannot replace it
+	f.env.npmNarrowMarker([]string{"claude"}, f.env.npmAsidesOf([]string{"codex"}))
+	if _, err := os.Lstat(codex + npmBakSuffix); err != nil {
+		t.Fatal("a backup was deleted although the record could not be written")
+	}
+}
+
+func TestSelfUpdateNPMLeavesAnAcceptedUpdatesBackupsToTheFinalPass(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, filepath.Join(tree+npmBakSuffix, "VERSION"), "1.0.0")
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
+	f.env.selfUpdateNPM()
+	if _, err := os.Lstat(tree + npmBakSuffix); err != nil {
+		t.Fatal("backup discarded before the final verify pass looked at the new copy")
+	}
+	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+		t.Fatal("a new update started over unverified backups")
 	}
 }

@@ -272,7 +272,18 @@ BI_AGENT_BIN="$T/none" bash -c 'set -e; . "$1"; echo STARTED' _ "$T/recover.sh" 
 mkdir -p "$T/mh/.local"; : >"$T/mh/.local/.af-npm-update"
 HOME="$T/mh" BI_AGENT_BIN="$T/none" bash -c 'set -e; . "$1"; echo STARTED' _ "$T/recover.sh" >"$T/out" 2>&1
 has 'are not settled' || fail "npm-recover: no WARN for a missing Agent with a marker"
-awk '/marker is still present; not uninstalling/{w=NR} /npm uninstall -g/{u=NR} END{exit !(w && u && w<u)}' "$ENTRY" || fail "npm uninstall: not held while a marker is present"
+# The OFF branch's uninstall itself: cut the marker/uninstall stanza out, swap the baked-claude
+# test for a fake, and run it against a stub npm.
+awk '/^  if \[ -e "\$HOME\/.local\/.af-npm-update" \]; then$/{on=1} on{print} on&&/^  fi$/{exit}' "$ENTRY" \
+  | sed 's#\[ -x /usr/local/bin/claude \]#[ -x "$FAKE_BAKED_CLAUDE" ]#' >"$T/off.sh"
+grep -q 'npm uninstall -g' "$T/off.sh" || fail "npm uninstall: the OFF stanza was not cut out"
+printf '#!/bin/sh\necho "npm $*" >>"$OFF_LOG"\n' >"$T/bin/npm"; chmod +x "$T/bin/npm"
+: >"$T/baked-claude"; chmod +x "$T/baked-claude"
+off_run() { : >"$T/off.log"; PATH="$T/bin:$PATH" HOME="$T/mh" OFF_LOG="$T/off.log" FAKE_BAKED_CLAUDE="$T/baked-claude" bash -c 'set -e; . "$1"' _ "$T/off.sh" >"$T/out" 2>&1; }
+off_run; [ ! -s "$T/off.log" ] || fail "npm uninstall: ran while a marker is present"
+has 'not uninstalling' || fail "npm uninstall: no WARN while a marker is present"
+rm -f "$T/mh/.local/.af-npm-update"
+off_run; grep -q '^npm uninstall -g' "$T/off.log" || fail "npm uninstall: did not run without a marker"
 # Where it sits: before the OFF branch's uninstall and before the lean block's installs.
 awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} /^LEAN_CLIS=0/{l=NR} END{exit !(r && u && l && r<l && l<u)}' "$ENTRY" || fail "npm-recover: not before the lean block and the OFF branch's uninstall"
 # The shell no longer carries an npm install or a verify of its own.
