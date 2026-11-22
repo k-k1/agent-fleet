@@ -71,9 +71,8 @@
 }
 /* Answered question: options are inert; the chosen one stays highlighted. */
 .mt-question.answered {
-  opacity: 0.9;
   border-left-color: color-mix(in srgb, var(--chat-accent) 45%, var(--border));
-  background: color-mix(in srgb, var(--fg) 3%, var(--bg));
+  background: color-mix(in srgb, var(--fg) 1%, var(--bg));
 }
 /* Declined (an Escape out of the modal, not a real answer) — same muted red as a
    rejected plan (.mt-plan-badge.no), so the two "the agent didn't get an answer"
@@ -86,7 +85,6 @@
   color: color-mix(in srgb, #e5534b 62%, var(--fg));
   border-radius: 999px;
   padding: 1px 7px;
-  opacity: 1;
 }
 .mq-declined-note {
   margin-top: 6px;
@@ -94,15 +92,27 @@
 }
 .mq-opt:disabled {
   cursor: default;
-  opacity: 0.55;
+}
+/* An option that was not picked is quieter by border, background and the ○ marker, never by
+   fading its text: text opacity stacks on the card's colour and escapes the Text contrast
+   setting (tokens.css), which only moves --fg / --muted / --muted2. */
+.mq-opt:disabled:not(.selected) {
+  border-color: color-mix(in srgb, var(--border) 60%, transparent);
+  background: transparent;
+}
+.mq-opt:disabled:not(.selected) .mq-opt-label {
+  color: var(--muted);
 }
 .mq-opt.selected {
-  opacity: 1;
   border-color: var(--chat-accent);
   background: color-mix(in srgb, var(--chat-accent) 14%, var(--bg));
 }
 .mq-opt.selected .mq-opt-label {
   color: var(--chat-accent);
+}
+/* The picked option sits on an accent tint, which costs --muted its margin; --fg keeps 4.5:1. */
+.mq-opt.selected .mq-opt-desc {
+  color: var(--fg);
 }
 .mq-done {
   font-size: 11px;
@@ -132,7 +142,6 @@
   font-weight: 600;
   letter-spacing: 0.02em;
   color: var(--chat-accent);
-  opacity: 0.85;
 }
 .mq-free-text {
   font-size: 13px;
@@ -152,12 +161,13 @@
 .mq-mark {
   flex: none;
   line-height: 1.35;
-  opacity: 0.9;
+}
+.mq-opt:disabled:not(.selected) .mq-mark {
+  color: var(--muted);
 }
 .mq-opt.selected .mq-mark,
 .mq-opt.checked .mq-mark {
   color: var(--chat-accent);
-  opacity: 1;
 }
 .mq-opt-body {
   display: flex;
@@ -171,7 +181,7 @@
 }
 .mq-opt-desc {
   font-size: 11px;
-  opacity: 0.68;
+  color: var(--muted);
   line-height: 1.35;
   /* Keep options compact: clamp long descriptions to two lines. */
   display: -webkit-box;
@@ -228,11 +238,12 @@
   border-color: var(--chat-accent);
 }
 .mq-freetext:disabled {
-  opacity: 0.55;
+  color: var(--muted);
+  border-color: color-mix(in srgb, var(--border) 60%, transparent);
 }
 /* Free text kept while a single-select option is picked: shown, but not what is sent. */
 .mq-freetext.inactive {
-  opacity: 0.55;
+  color: var(--muted);
   border-style: dashed;
 }
 .mq-freetext-note {
