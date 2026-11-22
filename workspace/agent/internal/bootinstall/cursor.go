@@ -162,7 +162,18 @@ func (e Env) aliasVersion(alias, target string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if st, lerr := os.Lstat(filepath.Join(parent, ver)); parent != share || lerr != nil || !st.Mode().IsRegular() {
+	if parent != share {
+		return "", false, nil
+	}
+	// Only "not there" means "not ours"; any other failed look is an error, never a verdict.
+	st, lerr := os.Lstat(filepath.Join(parent, ver))
+	if lerr != nil {
+		if os.IsNotExist(lerr) {
+			return "", false, nil
+		}
+		return "", false, lerr
+	}
+	if !st.Mode().IsRegular() {
 		return "", false, nil
 	}
 	return ver, true, nil
