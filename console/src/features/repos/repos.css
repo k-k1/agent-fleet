@@ -1758,3 +1758,10 @@
   gap: 6px;
   align-items: center;
 }
+/* Inside a dialog the start-row secondary text takes the dialog's muted colour (the
+   `.ui-modal` specificity wins over the plain rules above whatever the import order). */
+.ui-modal .start-row-desc,
+.ui-modal .start-row-meta,
+.ui-modal .start-row-chev {
+  color: var(--dialog-muted);
+}

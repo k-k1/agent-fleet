@@ -98,9 +98,6 @@
   border-bottom-left-radius: 0;
   border-left: 1px solid color-mix(in srgb, var(--on-accent) 40%, transparent);
 }
-.mirror-send-menu .ui-menu-item {
-  justify-content: space-between;
-}
 .mirror-send-menu-key {
   font: inherit;
   font-size: 11px;

@@ -118,11 +118,6 @@
   display: inline-flex;
 }
 
-/* The tenant-admin tag, kept apart from the user key it follows. */
-.engine-access-table .af-note {
-  margin-left: 6px;
-}
-
 .usage-csv {
   display: inline-flex;
   align-items: center;
@@ -1413,4 +1408,17 @@
     width: 100%;
     max-width: 12em;
   }
+}
+
+/* The shared bucket by af-role (ADR 0048 decision 15). Two levels: the group totals read as the
+   answer, the per-role rows behind a disclosure read as the evidence. The detail is collapsed
+   because a reader asking "what are the engines costing" is done after the first list. */
+.cloud-cost .cc-roles {
+  margin: 6px 0 4px;
+}
+.cloud-cost .cc-roles > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--muted, #8a94a6);
+  padding: 4px 0;
 }

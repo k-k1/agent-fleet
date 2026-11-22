@@ -1118,3 +1118,8 @@ label.idp-flag {
 .admin-scopes code {
   font-family: var(--mono);
 }
+
+/* The tenant-admin tag, kept apart from the user key it follows. */
+.engine-access-table .af-note {
+  margin-left: 6px;
+}
