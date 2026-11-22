@@ -1,4 +1,4 @@
--- Postgres mirror of migrations/0156_push_prefs.sql. The migrator splits on the semicolon, so comments must not contain one.
+-- Postgres mirror of migrations/0157_push_prefs.sql. The migrator splits on the semicolon, so comments must not contain one.
 -- Web Push preferences (#4750 part 3). Additive only: no row means the current behaviour.
 -- push_pref holds the notification kinds a member turned off for push, and a kind that is absent
 -- is pushed. Stored per member rather than per device so a phone and a desktop agree.
