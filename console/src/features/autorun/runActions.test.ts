@@ -217,8 +217,30 @@ describe("planClearFinished", () => {
     });
 
     it("leaves a run whose PR is open or closed to its own rule", () => {
-      const open = tree.map((s) => ({ ...s, pr: { number: 3, state: "open" as const, url: "u" } }));
-      expect(planClearFinished(runsOf(open, ["r"]), open, wt({ integration: integ("same") })).nodes).toEqual([]);
+      for (const state of ["open", "closed"] as const) {
+        const withPr = tree.map((s) => ({ ...s, pr: { number: 3, state, url: "u" } }));
+        expect(planClearFinished(runsOf(withPr, ["r"]), withPr, wt({ integration: integ("same") })).nodes).toEqual([]);
+      }
+    });
+
+    it("keeps the existing ownership checks: another creator, an unreadable record, a member's session in the copy", () => {
+      const clean = { integration: integ("same") };
+      expect(plan(wt({ ...clean, createdBy: "mine" })).nodes).toEqual([]);
+      expect(plan(wt({ ...clean, createdBy: undefined, createdByState: "unreadable" })).nodes).toEqual([]);
+      const shared = [...tree, sess("mine", { origin: "user", alive: false, repo: "base@wip-a", createdAt: "2026-11-02T00:00:00Z" })];
+      const p = planClearFinished(runsOf(shared, ["r"]), shared, wt(clean));
+      expect(p.nodes).toEqual([]);
+      expect(p.archive.flat().map((s) => s.name)).not.toContain("mine");
+    });
+
+    it("keeps the copy while a session of the run lives or is locked elsewhere", () => {
+      const clean = wt({ integration: integ("same") });
+      for (const extra of [{ alive: true }, { locked: true }]) {
+        const t = [...tree, sess("c", { origin: "session", originSession: "r", alive: false, repo: "base", createdAt: "2026-11-02T00:00:00Z", ...extra })];
+        const p = planClearFinished(runsOf(t, ["r"]), t, clean);
+        expect(p.nodes).toEqual([]);
+        expect(p.archive.flat().map((s) => s.name)).not.toContain("r");
+      }
     });
   });
 
