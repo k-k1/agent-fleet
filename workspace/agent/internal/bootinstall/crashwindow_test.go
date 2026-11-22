@@ -915,3 +915,49 @@ func TestCursorRecoverSlotIsARegularFile(t *testing.T) {
 		t.Fatal("the slot was changed")
 	}
 }
+
+// A filesystem that refuses RENAME_NOREPLACE (EINVAL on NFS/EFS): a kept regular file still goes
+// back through a hard link, a kept directory stays put without failing the recovery, and a place
+// in use is never overwritten.
+func TestCursorRecoverForeignTreeWithoutNoReplaceRename(t *testing.T) {
+	old := renameNoReplace
+	renameNoReplace = func(string, string) error { return syscall.EINVAL }
+	defer func() { renameNoReplace = old }()
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "manual")
+	os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755)
+	keep := f.local("cursor-agent") + ".af-prev.3"
+	yes := true
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.3", Tree: true, HadTree: &yes, ID: "tok",
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "file", Keep: keep}}}
+	run := func() {
+		t.Helper()
+		if err := f.env.cursorWriteMarker(m); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.env.cursorRecover(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.write(t, keep, "realfile")
+	run()
+	if f.read(f.local("cursor-agent")) != "realfile" {
+		t.Fatal("the file did not come back through the fallback")
+	}
+	os.Remove(f.local("cursor-agent"))
+	f.write(t, filepath.Join(keep, "inner"), "kept dir")
+	os.Remove(keep)
+	f.write(t, filepath.Join(keep, "inner"), "kept dir")
+	run()
+	if f.read(filepath.Join(keep, "inner")) != "kept dir" {
+		t.Fatal("the kept directory was not preserved")
+	}
+	f.write(t, f.local("cursor-agent"), "mine")
+	os.RemoveAll(keep)
+	f.write(t, keep, "realfile")
+	run()
+	if f.read(f.local("cursor-agent")) != "mine" {
+		t.Fatal("a place in use was overwritten")
+	}
+}

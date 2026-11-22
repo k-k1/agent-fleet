@@ -1040,6 +1040,33 @@ func stampTree(p string) (id string, err error) {
 	return id, nil
 }
 
+// renameNoReplace is a seam: some network filesystems (NFS, so EFS) refuse RENAME_NOREPLACE.
+var renameNoReplace = func(from, to string) error {
+	return unix.Renameat2(unix.AT_FDCWD, from, unix.AT_FDCWD, to, unix.RENAME_NOREPLACE)
+}
+
+// restoreNoReplace moves the kept item back to an empty place without ever replacing anything.
+// Where the filesystem cannot do that atomically, a regular file goes back through a hard link
+// (which also refuses to replace); anything else stays at keep, which the caller's message
+// names, and the recovery counts as settled rather than failing at every start.
+func restoreNoReplace(keep, path string) error {
+	err := renameNoReplace(keep, path)
+	switch {
+	case err == nil || errors.Is(err, fs.ErrExist):
+		return nil
+	case !errors.Is(err, syscall.EINVAL) && !errors.Is(err, syscall.ENOSYS) && !errors.Is(err, syscall.EOPNOTSUPP):
+		return err
+	}
+	if fi, lerr := os.Lstat(keep); lerr == nil && fi.Mode().IsRegular() {
+		if lerr := os.Link(keep, path); lerr == nil {
+			os.Remove(keep)
+		} else if !errors.Is(lerr, fs.ErrExist) {
+			return lerr
+		}
+	}
+	return nil
+}
+
 // dirOwner says whose tree is at p: ours (it carries the token), foreign (no token, or the
 // name is not a plain file), or unknown (the token could not be read: retry later, touch
 // nothing). A marker without a token cannot tell, so it answers ours (the behaviour before
@@ -1221,9 +1248,8 @@ func (e Env) cursorRecover() error {
 				case perr != nil && !errors.Is(perr, fs.ErrNotExist):
 					errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Path, perr))
 				case kerr == nil && perr != nil:
-					// NOREPLACE: never overwrite what a manual installer put there meanwhile; a
-					// rename also takes a directory or any other kind of file.
-					if err := unix.Renameat2(unix.AT_FDCWD, l.Keep, unix.AT_FDCWD, l.Path, unix.RENAME_NOREPLACE); err != nil && !errors.Is(err, fs.ErrExist) {
+					// Never overwrite what a manual installer put there meanwhile.
+					if err := restoreNoReplace(l.Keep, l.Path); err != nil {
 						errs = append(errs, fmt.Errorf("cursor: the previous %s is left at %s: %v", l.Path, l.Keep, err))
 					}
 				}
