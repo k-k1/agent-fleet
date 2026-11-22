@@ -5,7 +5,7 @@
 // a few seconds), so it is fetched here rather than riding the 4 s session-list poll, and only
 // while the mirror is open. It is an estimate at list price, and says so: "≈" on the number and
 // the reason in the tooltip.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { useInterval } from "../../lib/useInterval.ts";
 import { sessionSpend } from "../../core/api/client.ts";
@@ -27,27 +27,28 @@ export function SpendChip({ s }: SpendChipProps) {
   const [spend, setSpend] = useState<SessionSpend | null>(null);
   const openBudget = useSessionUI((u) => u.openBudget);
 
-  useEffect(() => {
-    let live = true;
+  // gen is bumped whenever the inputs change or the chip unmounts, so a read started under
+  // older inputs never lands; seq keeps the newest read from being overwritten by a slower, older one.
+  const gen = useRef(0);
+  const seq = useRef(0);
+  const load = () => {
+    const g = gen.current;
+    const n = ++seq.current;
     void sessionSpend(s.name)
       .then((r) => {
-        if (live && r && !r.error) setSpend(r);
+        if (g === gen.current && n === seq.current && r && !r.error) setSpend(r);
       })
       .catch(() => {});
+  };
+  useEffect(() => {
+    gen.current++;
+    load();
     return () => {
-      live = false;
+      gen.current++;
     };
   }, [s.name, s.alive, s.spendCapUsd]);
   // A stopped session's spend does not move; one read is enough until it runs again.
-  useInterval(
-    () =>
-      void sessionSpend(s.name)
-        .then((r) => {
-          if (r && !r.error) setSpend(r);
-        })
-        .catch(() => {}),
-    s.alive ? SPEND_POLL_MS : null,
-  );
+  useInterval(load, s.alive ? SPEND_POLL_MS : null);
 
   if (!spend) return null;
   const cap = spend.spendCapUsd ?? 0;

@@ -39,21 +39,29 @@ export interface Proposal {
  *  for a tick. */
 export function useHandoffProposals(session: string): [Proposal[], (ps: Proposal[]) => void] {
   const [proposals, setProposals] = useState<Proposal[]>([]);
-  // The session this hook currently serves: a read that resolves after a swap must not land.
-  const current = useRef(session);
-  current.current = session;
+  // gen changes with every session swap and on unmount (a swap A -> B -> A is not the same
+  // episode as the first A); seq lets only the newest read land, so a slow initial read cannot
+  // overwrite a later poll.
+  const gen = useRef(0);
+  const seq = useRef(0);
   const load = async (name: string) => {
+    const g = gen.current;
+    const n = ++seq.current;
     try {
       const d = await api(`api/sessions/${encodeURIComponent(name)}/handoff-proposal`);
-      if (d?.error || current.current !== name) return;
+      if (d?.error || g !== gen.current || n !== seq.current) return;
       setProposals(Array.isArray(d?.proposals) ? (d.proposals as Proposal[]) : []);
     } catch {
       /* transient polling failure: keep the last visible proposals */
     }
   };
   useEffect(() => {
+    gen.current++;
     setProposals([]);
     void load(session);
+    return () => {
+      gen.current++;
+    };
   }, [session]);
   useInterval(() => void load(session), 3000);
   return [proposals, setProposals];
