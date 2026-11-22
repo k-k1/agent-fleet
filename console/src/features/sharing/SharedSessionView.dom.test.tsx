@@ -87,6 +87,41 @@ async function render() {
   return host;
 }
 
+describe("SharedSessionView handoff poll guards (#4786)", () => {
+  it("drops a proposal read for the previous session after a pane swaps sessions in place", async () => {
+    let resolveOld!: (v: unknown) => void;
+    let resolveNew!: (v: unknown) => void;
+    api.mockImplementation(async (path: string) => {
+      if (path.includes("/handoff-proposals")) {
+        if (path.includes("catalog-old")) return new Promise((r) => (resolveOld = r));
+        return new Promise((r) => (resolveNew = r));
+      }
+      if (path.includes("/messages")) return MESSAGES;
+      return { sessions: [] };
+    });
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    const view = (id: string) => (
+      <ConfirmProvider>
+        <SharedSessionView sharedSessionId={id} />
+      </ConfirmProvider>
+    );
+    await act(async () => root!.render(view("catalog-old")));
+    await act(async () => root!.render(view("catalog-new")));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await act(async () =>
+      resolveOld({ proposals: [{ id: "hp_old", title: "OLD-SESSION-CARD", prompt: "x", created_at: Date.parse("2026-08-18T10:02:00Z") }] }),
+    );
+    // The new session's read is still out, so only the generation can tell the old answer apart.
+    expect(host.textContent).not.toContain("OLD-SESSION-CARD");
+    await act(async () => resolveNew(PROPOSALS));
+    expect(host.textContent).toContain("残作業の続き");
+  });
+});
+
 describe("SharedSessionView handoff proposals", () => {
   it("shows the proposal title and prompt", async () => {
     const el = await render();

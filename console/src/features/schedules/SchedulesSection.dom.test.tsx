@@ -542,7 +542,19 @@ describe("SchedulesSection poll guards", () => {
     scheduleList.mockReturnValueOnce(first.p).mockReturnValue(new Promise(() => {}));
     await render();
     await act(async () => void vi.advanceTimersByTime(15000));
+    expect(scheduleList).toHaveBeenCalledTimes(2); // the tick fired while the first read is still out
     await act(async () => first.resolve([sched]));
     expect(text()).toContain("morning review");
+  });
+
+  it("keeps a newer failure on screen when the older read succeeds afterwards", async () => {
+    vi.useFakeTimers();
+    const first = defer();
+    scheduleList.mockReturnValueOnce(first.p).mockResolvedValueOnce({ error: { code: "http_502", message: "bad gateway" } });
+    await render();
+    await act(async () => void vi.advanceTimersByTime(15000));
+    expect(failed()).toBe(true);
+    await act(async () => first.resolve([sched]));
+    expect(failed()).toBe(true);
   });
 });

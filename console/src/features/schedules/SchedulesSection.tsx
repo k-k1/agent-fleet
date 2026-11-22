@@ -401,6 +401,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
         if (g !== gen.current || n < applied.current) return;
         const { items: arr, error } = readScheduleList(res);
         if (!arr) {
+          applied.current = n;
           setLoadErr(errText(error) || t("sched.load_failed"));
           setFirstReadDone(true);
           return;
@@ -419,6 +420,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
       .catch(() => {
         // Thrown = the network dropped (api() resolves CP errors instead).
         if (g === gen.current && n >= applied.current) {
+          applied.current = n;
           setLoadErr(t("sched.load_failed"));
           setFirstReadDone(true);
         }
