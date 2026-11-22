@@ -14,13 +14,23 @@ export interface PushDevice {
 export const PUSH_KINDS = ["question", "plan-approval", "permission-request", "answer-ready"] as const;
 export type PushKind = (typeof PUSH_KINDS)[number];
 
-/** The applicationServerKey, or null when this deployment has no Web Push. */
+/**
+ * The applicationServerKey; null when this deployment has no Web Push (503) or the member cannot
+ * use it (4xx). Throws on a transient failure (network, 5xx other than 503), so a caller can tell
+ * "not configured" from "ask again later".
+ */
+export async function probePushKey(): Promise<string | null> {
+  const r = await raw("api/push/config");
+  if (r.status === 503 || (r.status >= 400 && r.status < 500)) return null;
+  if (!r.ok) throw new Error(String(r.status));
+  const j = await r.json();
+  return typeof j?.publicKey === "string" && j.publicKey ? j.publicKey : null;
+}
+
+/** probePushKey that reads a transient failure as "no key" (UI that simply hides itself). */
 export async function getPushKey(): Promise<string | null> {
   try {
-    const r = await raw("api/push/config");
-    if (!r.ok) return null;
-    const j = await r.json();
-    return typeof j?.publicKey === "string" && j.publicKey ? j.publicKey : null;
+    return await probePushKey();
   } catch {
     return null;
   }
@@ -64,16 +74,23 @@ export async function putPushOff(off: string[]): Promise<void> {
   if (!r.ok) throw new Error(String(r.status));
 }
 
-export async function postViewing(device: string, session: string): Promise<void> {
-  await rawJSON("api/push/viewing", "POST", { device, session });
+/** `tenant` pins the report to the tenant it was made for: a later tenant switch must not re-aim it. */
+export async function postViewing(device: string, session: string, tenant?: string): Promise<void> {
+  await raw("api/push/viewing", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...(tenant ? { "X-AF-Tenant": tenant } : {}) },
+    body: JSON.stringify({ device, session }),
+  });
 }
 
 /** Sign-out: drops the browser's subscription server-side; the keys are the proof (no session needed). */
 export async function releasePushEndpoint(sub: PushSubscriptionJSON, signal?: AbortSignal): Promise<void> {
-  await raw("api/push/release", {
+  const r = await raw("api/push/release", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ endpoint: sub.endpoint, keys: sub.keys }),
     signal,
   });
+  // A 500 is not "released": the caller must not report the device as gone.
+  if (!r.ok) throw new Error(String(r.status));
 }

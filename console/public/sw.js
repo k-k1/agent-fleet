@@ -108,12 +108,15 @@ const PUSH_TEXT = {
     other: "A session needs you",
   },
 };
-const SESSION_NAME = /^[a-z0-9][a-z0-9-]{2,39}$/;
+// Same rule as the Agent's session.ValidName: a name from a push may hold capitals and underscores.
+const SESSION_NAME = /^[A-Za-z0-9_-]{1,40}$/;
+const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 function pushLines(data) {
   const lang = /^ja/i.test(self.navigator.language || "") ? "ja" : "en";
   const table = PUSH_TEXT[lang];
-  const kind = data && typeof data.kind === "string" && table[data.kind] ? data.kind : "other";
+  // Own properties only: a kind such as "constructor" must not select an inherited function.
+  const kind = data && typeof data.kind === "string" && has(table, data.kind) ? data.kind : "other";
   const name = data && typeof data.name === "string" ? data.name : "";
   const text = data && typeof data.text === "string" ? data.text : "";
   return { title: name || "Agent Fleet", body: text || table[kind], kind };
@@ -126,13 +129,13 @@ self.addEventListener("push", (event) => {
   } catch {
     data = null;
   }
-  const { title, body } = pushLines(data);
+  const { title, body, kind } = pushLines(data);
   const session = data && typeof data.session === "string" && SESSION_NAME.test(data.session) ? data.session : "";
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
       // One notification per session and kind: a repeat replaces the earlier one instead of stacking.
-      tag: session ? `af-${session}-${(data && data.kind) || ""}` : undefined,
+      tag: session ? `af-${session}-${kind}` : undefined,
       data: { session },
     }),
   );
@@ -145,14 +148,35 @@ self.addEventListener("notificationclick", (event) => {
   event.waitUntil(
     (async () => {
       const wins = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
-      const win = wins.find((c) => c.url.startsWith(scope)) || wins[0];
-      if (win) {
-        // An open Console opens the session itself (listenPushOpen in the app); navigating would reload it.
-        if (session) win.postMessage({ type: "af-open-session", session });
-        await win.focus();
-        return;
+      // Only a page running the Console answers the hand-off (a /login or preview page under the
+      // same scope never does), so ask each and take the first that acknowledges.
+      for (const win of wins.filter((c) => c.url.startsWith(scope))) {
+        if (await handOff(win, session)) {
+          await win.focus().catch(() => {});
+          return;
+        }
       }
       await self.clients.openWindow(session ? `${scope}?session=${encodeURIComponent(session)}` : scope);
     })(),
   );
 });
+
+// handOff asks an open page to open the session and resolves true only when that page acknowledges
+// (listenPushOpen in the app), so a tap never lands on a page that cannot act on it. With no
+// session there is nothing to hand over: any Console page that answers is enough.
+function handOff(win, session) {
+  return new Promise((resolve) => {
+    const ch = new MessageChannel();
+    const timer = setTimeout(() => resolve(false), 1500);
+    ch.port1.onmessage = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    try {
+      win.postMessage({ type: "af-open-session", session }, [ch.port2]);
+    } catch {
+      clearTimeout(timer);
+      resolve(false);
+    }
+  });
+}

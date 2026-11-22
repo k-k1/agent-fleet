@@ -6,6 +6,7 @@ import { useCallback, useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
 import { getTenantPushSettings, putTenantPushSettings } from "./tenantApi.ts";
+import { getPushKey } from "../../push/pushApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
@@ -14,9 +15,12 @@ export function TenantPushView({ slug }: { slug: string }) {
   const toast = useToast();
   const [includeText, setIncludeText] = useState<boolean | null>(null);
   const [busy, setBusy] = useState(false);
+  // Only a deployment with Web Push shows the switch; the setting itself is stored either way.
+  const [pushOn, setPushOn] = useState(false);
 
   const load = useCallback(async () => {
     try {
+      setPushOn(!!(await getPushKey()));
       const d = await getTenantPushSettings(slug);
       if (d && isOk(d)) setIncludeText(!!d.includeText);
     } catch {
@@ -27,7 +31,7 @@ export function TenantPushView({ slug }: { slug: string }) {
     void load();
   }, [load]);
 
-  if (includeText === null) return null;
+  if (includeText === null || !pushOn) return null;
 
   const save = async (on: boolean) => {
     setBusy(true);
@@ -35,6 +39,8 @@ export function TenantPushView({ slug }: { slug: string }) {
       const res = await putTenantPushSettings(slug, { includeText: on });
       if (res && !isOk(res)) toast(errText(res.error));
       else if (res) setIncludeText(!!res.includeText);
+    } catch (e) {
+      toast(tr("push.failed", { msg: e instanceof Error ? e.message : String(e) }));
     } finally {
       setBusy(false);
     }

@@ -7,6 +7,7 @@
 // being told "not allowed" when the fix is one click away is how support tickets
 // are made. Dismissing is a real option here — unlike an expired session, the
 // person can simply go back to a tenant they are already signed in for.
+import { releasePushForSignOut } from "../push/webPush.ts";
 import { useEffect, useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { Modal } from "../../ui/Modal.tsx";
@@ -40,7 +41,11 @@ export function ProviderRequiredModal() {
   };
   const signIn = () => {
     void confirmDirtyNavigation("logout").then((proceed) => {
-      if (proceed) reloginForTenant({ tenant: req.tenant, provider });
+      if (!proceed) return;
+      // The next sign-in may be another account: stop pushes for this one first.
+      void releasePushForSignOut()
+        .catch(() => {})
+        .then(() => reloginForTenant({ tenant: req.tenant, provider }));
     });
   };
   return (

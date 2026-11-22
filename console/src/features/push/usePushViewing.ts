@@ -1,10 +1,13 @@
 import { useEffect } from "react";
+import { getTenant } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { activePane } from "../../layout/ops.ts";
-import { getPushKey, postViewing } from "./pushApi.ts";
+import { postViewing, probePushKey } from "./pushApi.ts";
 
 // Heartbeat period; the CP forgets a report after 45 s (pushsrv viewTTL), so one missed beat is tolerated.
 export const VIEWING_BEAT_MS = 20_000;
+// How long to wait before asking again after a transient failure of the config probe.
+export const PROBE_RETRY_MS = 30_000;
 
 // One id per tab: the CP keeps reports apart per device id, and a tab that closes just expires.
 const deviceId = (() => {
@@ -15,9 +18,25 @@ const deviceId = (() => {
   }
 })();
 
-// The probe answers the same for the page's lifetime; asking again per session switch is waste.
+// Reports go out one at a time, in the order they were made: a slow "on screen" POST must not land
+// after the "left" report that followed it and bring the suppression back.
+let chain: Promise<unknown> = Promise.resolve();
+const post = (session: string, tenant: string) => {
+  chain = chain.then(() => postViewing(deviceId, session, tenant).catch(() => {}));
+};
+
+// A definite answer ("no Web Push here", or the key) stays for the page's lifetime; a transient
+// failure is not remembered, so the next try asks again.
 let probe: Promise<string | null> | null = null;
-const hasPush = () => (probe ??= getPushKey());
+const hasPush = (): Promise<string | null> => {
+  if (!probe) {
+    probe = probePushKey();
+    probe.catch(() => {
+      probe = null;
+    });
+  }
+  return probe;
+};
 
 const onScreen = () => document.visibilityState === "visible" && document.hasFocus();
 
@@ -31,33 +50,47 @@ export function usePushViewing(enabled = true): void {
   const session = activePane(layout)?.session ?? "";
   useEffect(() => {
     if (!enabled) return;
+    const tenant = getTenant();
     let alive = true;
+    let started = false;
     let timer: ReturnType<typeof setInterval> | undefined;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     let sent = "";
     const send = (s: string) => {
       sent = s;
-      void postViewing(deviceId, s).catch(() => {});
+      post(s, tenant);
     };
     const beat = () => {
       if (onScreen() && session) send(session);
       else if (sent) send("");
     };
-    const onChange = () => beat();
-    void hasPush().then((key) => {
-      if (!alive || !key) return;
-      beat();
-      timer = setInterval(beat, VIEWING_BEAT_MS);
-      document.addEventListener("visibilitychange", onChange);
-      window.addEventListener("focus", onChange);
-      window.addEventListener("blur", onChange);
-    });
+    const start = () => {
+      void hasPush().then(
+        (key) => {
+          if (!alive || !key) return;
+          started = true;
+          beat();
+          timer = setInterval(beat, VIEWING_BEAT_MS);
+          document.addEventListener("visibilitychange", beat);
+          window.addEventListener("focus", beat);
+          window.addEventListener("blur", beat);
+        },
+        () => {
+          if (alive) retry = setTimeout(start, PROBE_RETRY_MS);
+        },
+      );
+    };
+    start();
     return () => {
       alive = false;
       if (timer) clearInterval(timer);
-      document.removeEventListener("visibilitychange", onChange);
-      window.removeEventListener("focus", onChange);
-      window.removeEventListener("blur", onChange);
-      if (sent) void postViewing(deviceId, "").catch(() => {});
+      if (retry) clearTimeout(retry);
+      if (started) {
+        document.removeEventListener("visibilitychange", beat);
+        window.removeEventListener("focus", beat);
+        window.removeEventListener("blur", beat);
+      }
+      if (sent) post("", tenant);
     };
   }, [enabled, session]);
 }

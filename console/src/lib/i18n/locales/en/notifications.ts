@@ -308,4 +308,7 @@ export const notifications: Record<keyof typeof jaNotifications, string> = {
   "push.unsupported": "This browser cannot receive push notifications. On iPhone, add the Console to the Home Screen and open it from there.",
   "push.unavailable": "Push notifications are not available on this deployment.",
   "push.failed": "Could not update push notifications: {msg}",
+  "push.stale": "This device was set up before the server's push key changed. Turn it on again to receive pushes.",
+  "push.prefs_failed": "Could not load your push choices.",
+  "push.retry": "Retry",
 };

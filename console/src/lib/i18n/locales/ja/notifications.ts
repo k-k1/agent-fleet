@@ -306,4 +306,7 @@ export const notifications = {
   "push.unsupported": "このブラウザはプッシュ通知を受け取れません。iPhone では Console をホーム画面に追加し、そこから開いてください。",
   "push.unavailable": "この環境ではプッシュ通知を使えません。",
   "push.failed": "プッシュ通知を更新できませんでした: {msg}",
+  "push.stale": "この端末はサーバーのプッシュ用の鍵が変わる前に設定されています。もう一度オンにすると受け取れます。",
+  "push.prefs_failed": "プッシュの選択を読み込めませんでした。",
+  "push.retry": "再読み込み",
 };

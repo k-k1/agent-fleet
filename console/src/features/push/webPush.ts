@@ -1,6 +1,6 @@
 // Browser side of Web Push (#4750): subscribe / unsubscribe this device through the service worker
 // (public/sw.js), and release it on sign-out. Nothing here caches or intercepts a request.
-import { addPushDevice, getPushKey, releasePushEndpoint, removePushDevice } from "./pushApi.ts";
+import { addPushDevice, releasePushEndpoint, removePushDevice } from "./pushApi.ts";
 
 // The CP's id of this browser's subscription, kept to mark "this device" in the list. Best effort:
 // without it the list simply marks nothing. The af prefix makes clearLocalState drop it at sign-out.
@@ -37,6 +37,20 @@ export const thisDeviceId = (): string => {
     return "";
   }
 };
+const storeDeviceId = (id: string) => {
+  try {
+    localStorage.setItem(ID_KEY, id);
+  } catch {
+    /* quota / private mode: the list just marks no device */
+  }
+};
+const forgetDeviceId = () => {
+  try {
+    localStorage.removeItem(ID_KEY);
+  } catch {
+    /* ignore */
+  }
+};
 
 function b64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
   const pad = "=".repeat((4 - (s.length % 4)) % 4);
@@ -46,21 +60,52 @@ function b64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
   return out;
 }
 
+function bytesToB64url(buf: ArrayBuffer | null | undefined): string {
+  if (!buf) return "";
+  let bin = "";
+  for (const b of new Uint8Array(buf)) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** Whether the browser's subscription was made with the CP's current key (false after a key rotation). */
+export function subscriptionMatchesKey(sub: PushSubscription, key: string): boolean {
+  return bytesToB64url(sub.options?.applicationServerKey) === key.replace(/=+$/, "");
+}
+
 export type EnableResult = "ok" | "denied" | "unsupported" | "unavailable";
 
-/** Asks permission, subscribes and registers this browser with the CP. Throws the CP's message on refusal. */
-export async function enablePush(): Promise<EnableResult> {
+const READY_TIMEOUT_MS = 10_000;
+// serviceWorker.ready never settles when the worker failed to register; bound it so the UI recovers.
+function swReady(): Promise<ServiceWorkerRegistration> {
+  return Promise.race([
+    navigator.serviceWorker.ready,
+    new Promise<never>((_, rej) => setTimeout(() => rej(new Error("service worker not ready")), READY_TIMEOUT_MS)),
+  ]);
+}
+
+/**
+ * Asks permission, subscribes and registers this browser with the CP. `key` is the CP's public key,
+ * loaded before the click: requestPermission is the first await so it still runs inside the user's
+ * tap (iOS refuses the prompt once the activation has lapsed). Throws the CP's message on refusal.
+ */
+export async function enablePush(key: string | null): Promise<EnableResult> {
   if (pushSupport() !== "ok") return "unsupported";
-  const key = await getPushKey();
   if (!key) return "unavailable";
   const perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
   if (perm !== "granted") return "denied";
-  const reg = await navigator.serviceWorker.ready;
+  const reg = await swReady();
   let sub = await reg.pushManager.getSubscription();
+  if (sub && !subscriptionMatchesKey(sub, key)) {
+    // Made with a key the CP no longer sends with (rotation): its pushes would be refused, so end
+    // it on both sides first (the old row also frees a slot at the device cap) and start over.
+    await releasePushEndpoint(sub.toJSON()).catch(() => {});
+    await sub.unsubscribe().catch(() => {});
+    forgetDeviceId();
+    sub = null;
+  }
   if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(key) });
   try {
-    const id = await addPushDevice(sub.toJSON());
-    localStorage.setItem(ID_KEY, id);
+    storeDeviceId(await addPushDevice(sub.toJSON()));
   } catch (e) {
     // A subscription the CP does not know would be a device that silently gets nothing.
     await sub.unsubscribe().catch(() => {});
@@ -74,33 +119,40 @@ export async function disablePush(): Promise<void> {
   const sub = await currentSubscription();
   if (!sub) return;
   // Server first: if it fails the browser keeps the subscription and the UI still shows the device.
-  const json = sub.toJSON();
   const id = thisDeviceId();
   if (id) await removePushDevice(id);
-  else await releasePushEndpoint(json);
+  else await releasePushEndpoint(sub.toJSON());
+  forgetDeviceId();
   await sub.unsubscribe().catch(() => {});
-  try {
-    localStorage.removeItem(ID_KEY);
-  } catch {
-    /* ignore */
-  }
 }
 
 /**
- * Sign-out: the CP stops pushing to this browser before the session ends. Bounded, because a slow
- * network must not hold the sign-out; the unsubscribe also happens locally.
+ * Sign-out: the CP stops pushing to this browser before the session ends. The whole call is bounded
+ * (a slow network or a push service that never answers must not hold the sign-out); whatever is
+ * still pending at the deadline is left to finish on its own, and the CP prunes on the next 410.
  */
 export async function releasePushForSignOut(timeoutMs = 2500): Promise<void> {
-  const sub = await currentSubscription();
-  if (!sub) return;
   const ctl = new AbortController();
-  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  const work = (async () => {
+    const sub = await currentSubscription();
+    if (!sub) return;
+    try {
+      await releasePushEndpoint(sub.toJSON(), ctl.signal);
+    } catch {
+      /* offline or slow: the unsubscribe below still ends delivery */
+    }
+    await sub.unsubscribe().catch(() => {});
+  })();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<void>((res) => {
+    timer = setTimeout(() => {
+      ctl.abort();
+      res();
+    }, timeoutMs);
+  });
   try {
-    await releasePushEndpoint(sub.toJSON(), ctl.signal);
-  } catch {
-    /* offline or slow: the unsubscribe below still ends delivery, the CP prunes on the next 410 */
+    await Promise.race([work, deadline]);
   } finally {
     clearTimeout(timer);
   }
-  await sub.unsubscribe().catch(() => {});
 }

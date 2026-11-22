@@ -6,6 +6,7 @@
 // re-login. Any dismissal — the ✕, the backdrop, Escape, the device back button —
 // also re-logins: with an expired cookie every request 401s, so re-authenticating
 // is the only useful action.
+import { releasePushForSignOut } from "../push/webPush.ts";
 import { useEffect, useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { Modal } from "../../ui/Modal.tsx";
@@ -21,7 +22,7 @@ export function AuthExpiredModal() {
   if (!shown) return null;
   const guardedRelogin = () => {
     void confirmDirtyNavigation("logout").then((proceed) => {
-      if (proceed) relogin();
+      if (proceed) void releasePushForSignOut().catch(() => {}).then(relogin);
     });
   };
   return (

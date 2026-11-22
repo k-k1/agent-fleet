@@ -11,7 +11,7 @@ import {
   type PushDevice,
   type PushKind,
 } from "./pushApi.ts";
-import { currentSubscription, disablePush, enablePush, pushSupport, thisDeviceId } from "./webPush.ts";
+import { currentSubscription, disablePush, enablePush, pushSupport, subscriptionMatchesKey, thisDeviceId } from "./webPush.ts";
 
 const KIND_LABEL = {
   question: "push.kind_question",
@@ -26,39 +26,61 @@ const KIND_LABEL = {
 export function PushSection() {
   const tr = useT();
   const toast = useToast();
-  const [available, setAvailable] = useState<boolean | null>(null);
+  // The CP's key, loaded when the section opens so the enable click can ask for permission at once.
+  const [key, setKey] = useState<string | null | undefined>(undefined);
   const [here, setHere] = useState(false);
+  // A subscription made with a key the CP no longer uses: shown as off with a hint, re-enabling replaces it.
+  const [stale, setStale] = useState(false);
   const [devices, setDevices] = useState<PushDevice[]>([]);
-  const [off, setOff] = useState<string[]>([]);
+  // null until the saved choices arrive: a write built from an empty guess would erase them.
+  const [off, setOff] = useState<string[] | null>(null);
+  const [prefsFailed, setPrefsFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [perm, setPerm] = useState(() => ("Notification" in window ? Notification.permission : "unsupported"));
 
-  const reload = useCallback(async () => {
+  const loadPrefs = useCallback(async () => {
     try {
-      const [d, o, sub] = await Promise.all([listPushDevices(), getPushOff(), currentSubscription()]);
+      setOff(await getPushOff());
+      setPrefsFailed(false);
+    } catch {
+      setPrefsFailed(true);
+    }
+  }, []);
+
+  const loadDevices = useCallback(async (k: string) => {
+    try {
+      const [d, sub] = await Promise.all([listPushDevices(), currentSubscription()]);
       setDevices(d);
-      setOff(o);
-      // This browser counts as enabled only while the CP also knows it.
+      const matches = !!sub && subscriptionMatchesKey(sub, k);
+      setStale(!!sub && !matches);
+      // This browser counts as enabled only while its key is current and the CP also knows it.
       const id = thisDeviceId();
-      setHere(!!sub && (!id || d.some((x) => x.id === id)));
+      setHere(matches && (!id || d.some((x) => x.id === id)));
     } catch {
       /* transient; keep the last view */
     }
   }, []);
 
+  const reload = useCallback(() => {
+    if (key) void loadDevices(key);
+  }, [key, loadDevices]);
+
   useEffect(() => {
     let alive = true;
     void getPushKey().then((k) => {
       if (!alive) return;
-      setAvailable(!!k);
-      if (k) void reload();
+      setKey(k);
+      if (k) {
+        void loadDevices(k);
+        void loadPrefs();
+      }
     });
     return () => {
       alive = false;
     };
-  }, [reload]);
+  }, [loadDevices, loadPrefs]);
 
-  if (!available) return null;
+  if (!key) return null;
 
   const fail = (e: unknown) => toast(tr("push.failed", { msg: e instanceof Error ? e.message : String(e) }));
 
@@ -66,7 +88,7 @@ export function PushSection() {
     setBusy(true);
     try {
       if (on) {
-        const res = await enablePush();
+        const res = await enablePush(key);
         if ("Notification" in window) setPerm(Notification.permission);
         if (res === "denied") toast(tr("push.denied"));
         else if (res === "unsupported") toast(tr("push.unsupported"));
@@ -83,6 +105,7 @@ export function PushSection() {
   };
 
   const toggleKind = async (k: PushKind, on: boolean) => {
+    if (off === null) return;
     const next = on ? off.filter((x) => x !== k) : [...off.filter((x) => x !== k), k];
     setBusy(true);
     try {
@@ -131,13 +154,22 @@ export function PushSection() {
             {tr("push.this_device")}
           </label>
           {perm === "denied" && <p className="muted ds-note">{tr("noti.os_permission_denied")}</p>}
+          {stale && <p className="muted ds-note">{tr("push.stale")}</p>}
         </div>
       )}
-      <fieldset className="push-kinds" disabled={busy}>
+      {prefsFailed && (
+        <p className="muted ds-note">
+          {tr("push.prefs_failed")}{" "}
+          <button type="button" className="linklike" onClick={() => void loadPrefs()}>
+            {tr("push.retry")}
+          </button>
+        </p>
+      )}
+      <fieldset className="push-kinds" disabled={busy || off === null}>
         <legend className="muted ds-note">{tr("push.kinds")}</legend>
         {PUSH_KINDS.map((k) => (
           <label key={k} className="push-kind">
-            <input type="checkbox" role="switch" className="noti-switch" checked={!off.includes(k)} onChange={(e) => void toggleKind(k, e.target.checked)} />{" "}
+            <input type="checkbox" role="switch" className="noti-switch" checked={!(off ?? []).includes(k)} onChange={(e) => void toggleKind(k, e.target.checked)} />{" "}
             {tr(KIND_LABEL[k])}
           </label>
         ))}
@@ -154,7 +186,7 @@ export function PushSection() {
                 {d.id === myId && <b> — {tr("push.this_badge")}</b>}
               </span>{" "}
               <span className="muted">{d.createdAt.slice(0, 10)}</span>{" "}
-              <button type="button" disabled={busy} onClick={() => void remove(d)} aria-label={tr("push.remove_aria", { device: shortAgent(d.userAgent) })}>
+              <button type="button" disabled={busy} onClick={() => void remove(d)} aria-label={tr("push.remove_aria", { device: `${shortAgent(d.userAgent)} ${d.createdAt.slice(0, 10)}${d.id === myId ? ` (${tr("push.this_badge")})` : ""}` })}>
                 {tr("push.remove")}
               </button>
             </li>

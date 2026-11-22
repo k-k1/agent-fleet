@@ -78,12 +78,70 @@ describe("notificationclick", () => {
   it("hands the session to an open Console and focuses it", async () => {
     const msgs: unknown[] = [];
     let focused = false;
-    const win = { url: "https://console.test/", postMessage: (m: unknown) => msgs.push(m), focus: async () => void (focused = true) };
+    const win = {
+      url: "https://console.test/",
+      postMessage: (m: unknown, ports: MessagePort[]) => {
+        msgs.push(m);
+        ports[0].postMessage("ok");
+      },
+      focus: async () => void (focused = true),
+    };
     const sw = loadSw("en", [win]);
     await click(sw, "my-sess");
     expect(msgs).toEqual([{ type: "af-open-session", session: "my-sess" }]);
     expect(focused).toBe(true);
     expect(sw.opened).toEqual([]);
+  });
+});
+
+describe("notificationclick hand-off", () => {
+  const click = async (sw: ReturnType<typeof loadSw>, session: string) => {
+    let p: Promise<unknown> = Promise.resolve();
+    sw.listeners.notificationclick({ notification: { close() {}, data: { session } }, waitUntil: (x: Promise<unknown>) => (p = x) });
+    await p;
+  };
+  it("opens a new window when the only page under the scope never answers (a /login page)", async () => {
+    let focused = false;
+    const login = { url: "https://console.test/login", postMessage() {}, focus: async () => void (focused = true) };
+    const sw = loadSw("en", [login]);
+    await click(sw, "my-sess");
+    expect(sw.opened).toEqual(["https://console.test/?session=my-sess"]);
+    expect(focused).toBe(false);
+  }, 5000);
+  it("takes the page that answers when another page does not", async () => {
+    const dead = { url: "https://console.test/login", postMessage() {}, focus: async () => {} };
+    const got: unknown[] = [];
+    const live = {
+      url: "https://console.test/",
+      postMessage: (m: unknown, ports: MessagePort[]) => {
+        got.push(m);
+        ports[0].postMessage("ok");
+      },
+      focus: async () => {},
+    };
+    const sw = loadSw("en", [dead, live]);
+    await click(sw, "A_1");
+    expect(got).toEqual([{ type: "af-open-session", session: "A_1" }]);
+    expect(sw.opened).toEqual([]);
+  }, 5000);
+});
+
+describe("payload shapes", () => {
+  it("keeps a capitalised / underscored session name the Agent allows", async () => {
+    const sw = loadSw();
+    await push(sw, { kind: "question", session: "A_1" });
+    expect(sw.shown[0].opts.data.session).toBe("A_1");
+  });
+  it("shows a generic text for an inherited property name used as kind", async () => {
+    const sw = loadSw();
+    await push(sw, { kind: "constructor", session: "abc" });
+    expect(sw.shown[0].opts.body).toBe("A session needs you");
+  });
+  it("survives a kind that is not a string", async () => {
+    const sw = loadSw();
+    await push(sw, { kind: { toString: null }, session: "abc" });
+    expect(sw.shown).toHaveLength(1);
+    expect(sw.shown[0].opts.tag).toBe("af-abc-other");
   });
 });
 
