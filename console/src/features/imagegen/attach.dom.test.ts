@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from "vitest";
 const calls: string[] = [];
 let putStatus = 200;
 let created: Record<string, unknown> = { name: "snew001" };
+let createGate: Promise<void> | null = null;
 let current: { title: string; updated_at: string } | null = null;
 vi.mock("../../core/api/client.ts", () => ({
   raw: async (path: string, init?: { method?: string }) => {
@@ -15,11 +16,14 @@ vi.mock("../../core/api/client.ts", () => ({
   },
   apiJSON: async (path: string, method: string, body: { studio?: string }) => {
     calls.push(`${method} ${path} studio=${body.studio}`);
+    if (createGate) await createGate;
     return created;
   },
   errText: () => "",
   errDetail: () => "",
 }));
+const repoRefresh = vi.fn(async () => true);
+vi.mock("../repos/store.ts", () => ({ useReposStore: { getState: () => ({ refresh: repoRefresh }) } }));
 vi.mock("./api.ts", () => ({
   bindStudio: async (id: string, session: string) => {
     calls.push(`bind ${id} "${session}"`);
@@ -46,6 +50,22 @@ describe("switching the studio's agent", () => {
     });
     expect(r).toEqual({ studioId: "st1", session: "snew001" });
     expect(calls).toEqual(['bind st1 ""', "POST api/sessions/sold001/halt", "POST api/sessions studio=st1"]);
+  });
+
+  it("refetches the repo list after a worktree create, and not for an in-place one", async () => {
+    repoRefresh.mockClear();
+    let release!: () => void;
+    createGate = new Promise<void>((r) => (release = r));
+    const pending = attachAgent({ studioId: "st1", draft: () => ({}), opts: { dir: "/r", kind: "codex", driver: "managed", worktree: true } as never });
+    await new Promise((r) => setTimeout(r, 20));
+    // The create has not answered: a refetch now would still read the placeholder.
+    expect(repoRefresh).not.toHaveBeenCalled();
+    release();
+    await pending;
+    createGate = null;
+    expect(repoRefresh).toHaveBeenCalledTimes(1);
+    await attachAgent({ studioId: "st1", draft: () => ({}), opts: { dir: "/r", kind: "codex", driver: "managed", worktree: false } as never });
+    expect(repoRefresh).toHaveBeenCalledTimes(1);
   });
 });
 
