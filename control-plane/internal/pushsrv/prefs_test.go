@@ -219,23 +219,56 @@ func TestOversizedTextIsDroppedNotTheQuestion(t *testing.T) {
 	}
 }
 
-type slowCtxStore struct{ *memStore }
-
-func (slowCtxStore) PushDeliveryContext(ctx context.Context, _ string) (bool, bool, error) {
-	<-ctx.Done()
-	return false, false, ctx.Err()
+// ctxStore makes the named reads honour their context the way a database does: a stalled read
+// blocks until its deadline, and every read fails once the context it was given is done.
+type ctxStore struct {
+	*memStore
+	stall string // "context" or "prefs": the read that hangs until its deadline
 }
 
-func TestStalledSettingsReadStillDeliversWithoutText(t *testing.T) {
-	f := newFixture(t)
-	d := f.subscribe(t, "m1")
-	f.svc.store = slowCtxStore{f.st}
-	f.svc.timeout = 300 * time.Millisecond
-	f.svc.deliver(context.Background(), note("question"))
-	if f.count() != 1 {
-		t.Fatal("a stalled settings read cost the member the notification")
+func (c ctxStore) PushDeliveryContext(ctx context.Context, mid string) (bool, bool, error) {
+	if c.stall == "context" {
+		<-ctx.Done()
+		return false, false, ctx.Err()
 	}
-	if got := d.open(t, f.bodies[0]); strings.Contains(got, `"text"`) {
-		t.Fatal("text sent although the setting could not be read")
+	return c.memStore.PushDeliveryContext(ctx, mid)
+}
+func (c ctxStore) GetPushOffKinds(ctx context.Context, mid string) ([]string, error) {
+	if c.stall == "prefs" {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	return c.memStore.GetPushOffKinds(ctx, mid)
+}
+func (c ctxStore) ListPushSubscriptions(ctx context.Context, mid string) ([]store.PushSubscription, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return c.memStore.ListPushSubscriptions(ctx, mid)
+}
+
+func TestStalledReadStillDeliversTheQuestion(t *testing.T) {
+	for _, stall := range []string{"context", "prefs"} {
+		t.Run(stall, func(t *testing.T) {
+			f := newFixture(t)
+			d := f.subscribe(t, "m1")
+			f.st.includeTxt = true
+			f.svc.store = ctxStore{f.st, stall}
+			f.svc.timeout = 300 * time.Millisecond
+			n := note("question")
+			n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
+			f.svc.deliver(context.Background(), n)
+			if f.count() != 1 {
+				t.Fatalf("a stalled %s read cost the member the notification", stall)
+			}
+			got := d.open(t, f.bodies[0])
+			// A settings read that could not be answered must not be read as "text allowed".
+			if stall == "context" && strings.Contains(got, `"text"`) {
+				t.Fatalf("text sent although the tenant setting could not be read: %s", got)
+			}
+			if stall == "prefs" && !strings.Contains(got, `"text":"Deploy to prod?"`) {
+				t.Fatalf("text lost when only the opt-out read stalled: %s", got)
+			}
+		})
 	}
 }

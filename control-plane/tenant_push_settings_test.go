@@ -1,10 +1,18 @@
 package main
 
 import (
+	"context"
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/base64"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/pushsrv"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"github.com/k-k1/agent-fleet/control-plane/internal/webpush"
 )
 
 func pushSettingsCall(mgr *manager, method, slug, email, body string) *httptest.ResponseRecorder {
@@ -81,5 +89,56 @@ func TestPushRoutesAuthBoundary(t *testing.T) {
 		if c := code(rt[0], rt[1]); c != http.StatusUnauthorized {
 			t.Fatalf("%s %s without a session: %d, want 401", rt[0], rt[1], c)
 		}
+	}
+}
+
+// With Web Push configured, a signed-out browser (no cookie) drops its subscription by proving
+// the subscription's own keys, and a wrong key leaves it in place.
+func TestPushReleaseWorksWithoutASession(t *testing.T) {
+	t.Setenv("AF_WEB_PUSH", "true")
+	_, priv, err := webpush.GenerateKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AF_WEB_PUSH_VAPID_PRIVATE_KEY", priv)
+	t.Setenv("AF_WEB_PUSH_SUBJECT", "mailto:ops@example.invalid")
+	cfg, _ := smokeEnvWith(t, allRouteSwitches(t)...)
+	sql := cfg.mgr.store.(*store.SQL)
+	cfg.mgr.push = pushsrv.New(sql)
+	if cfg.mgr.push == nil {
+		t.Fatal("push service did not start")
+	}
+	ctx := context.Background()
+	tn, _ := sql.EnsureDefaultTenant(ctx)
+	id, err := sql.UpsertIdentity(ctx, "m@example.com", "m@example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := sql.EnsureMembership(ctx, id.ID, tn.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	k, _ := ecdh.P256().GenerateKey(rand.Reader)
+	auth := make([]byte, 16)
+	_, _ = rand.Read(auth)
+	b64 := base64.RawURLEncoding
+	const ep = "https://fcm.googleapis.com/fcm/send/release-test"
+	p256 := b64.EncodeToString(k.PublicKey().Bytes())
+	if err := sql.UpsertPushSubscription(ctx, store.PushSubscription{MembershipID: m.ID, Endpoint: ep, P256dh: p256, Auth: b64.EncodeToString(auth)}); err != nil {
+		t.Fatal(err)
+	}
+	h := cfg.authGate(buildMux(cfg))
+	release := func(authKey string) int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/api/push/release",
+			strings.NewReader(`{"endpoint":"`+ep+`","keys":{"p256dh":"`+p256+`","auth":"`+authKey+`"}}`)))
+		return rec.Code
+	}
+	held := func() int { rows, _ := sql.ListPushSubscriptions(ctx, m.ID); return len(rows) }
+	if c := release("d3Jvbmc"); c != http.StatusNoContent || held() != 1 {
+		t.Fatalf("wrong key: code %d, subscriptions %d (want 204 and 1)", c, held())
+	}
+	if c := release(b64.EncodeToString(auth)); c != http.StatusNoContent || held() != 0 {
+		t.Fatalf("release: code %d, subscriptions %d (want 204 and 0)", c, held())
 	}
 }
