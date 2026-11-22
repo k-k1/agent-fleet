@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gocachetrim"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/taskid"
 	"log"
@@ -346,6 +347,7 @@ func serve() {
 	// Throwaway chromium profiles, orphaned ~/.af-work dirs, superseded node / kiro versions.
 	go pruneLeftoversAtBoot()
 	go pruneLeftoversDaily(leftoverInterval, nil) // nil stop: runs for the life of the Agent
+	go gocachetrim.Run(goBuildCacheDir, nil)      // home low: drop old Go build-cache entries (#4560)
 
 	mux := buildMux()
 
