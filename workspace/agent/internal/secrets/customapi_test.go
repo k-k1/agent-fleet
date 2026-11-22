@@ -37,3 +37,34 @@ func TestCustomAPIConnStoredShape(t *testing.T) {
 		t.Fatal("an unrelated update dropped the connection")
 	}
 }
+
+// A snapshot loaded before the connection was written must not put the old state back on Save,
+// and a snapshot that changed the connection itself wins.
+func TestSaveKeepsStoredCustomAPIForAStaleSnapshot(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	stale, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := Update(func(d *Data) error {
+		d.CustomAPI = &CustomAPIConn{Provider: "mine", URL: "https://a.example.test"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	stale.Grafana = &GrafanaCreds{URL: "https://g.example.test", Token: "t"}
+	if err := stale.Save(); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := Load()
+	if got.CustomAPI == nil || got.CustomAPI.URL != "https://a.example.test" || got.Grafana == nil {
+		t.Fatalf("after stale Save: custom=%+v grafana=%+v", got.CustomAPI, got.Grafana)
+	}
+	got.CustomAPI = &CustomAPIConn{Provider: "mine", URL: "https://b.example.test"}
+	if err := got.Save(); err != nil {
+		t.Fatal(err)
+	}
+	if again, _ := Load(); again.CustomAPI == nil || again.CustomAPI.URL != "https://b.example.test" {
+		t.Fatalf("own change lost: %+v", again.CustomAPI)
+	}
+}

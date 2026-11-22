@@ -99,6 +99,7 @@ const (
 
 	// llama.cpp member connection (connections.go, docs/log/107)
 	errCodeConnLcppURLRequired = "conn_lcpp_url_required"
+	errCodeConnCustomAPIFields = "conn_custom_api_fields"
 
 	// Chat bridge connections (connections.go, docs/log/37 P1)
 	errCodeConnDiscordTokenRequired = "conn_discord_token_required"
