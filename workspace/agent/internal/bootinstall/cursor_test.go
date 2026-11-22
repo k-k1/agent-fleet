@@ -1126,3 +1126,26 @@ func TestCursorAliasThroughLinkedVersionSlotIsNotOurs(t *testing.T) {
 		t.Errorf("another tool's alias read as ours: %q %v", v, err)
 	}
 }
+
+func TestCursorWithUnopenableLockDoesNothingDestructive(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	if err := os.MkdirAll(f.env.cursorLockPath(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed || f.hits.Load() != 0 {
+		t.Fatalf("install ran unlocked: rc=%d hits=%d out=%s", rc, f.hits.Load(), f.out)
+	}
+	// A healthy copy is still a read-only no-op.
+	f.plant(t, "2026.1.1-abc", "#!/bin/sh\necho 1\n", true)
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("healthy rc=%d out=%s", rc, f.out)
+	}
+	// A left journal cannot be rolled back without the lock: it stays.
+	os.WriteFile(f.env.cursorMarkerPath(), []byte("{}"), 0o600)
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("marker rc=%d", rc)
+	}
+	if _, err := os.Lstat(f.env.cursorMarkerPath()); err != nil {
+		t.Fatal("marker removed without the lock")
+	}
+}

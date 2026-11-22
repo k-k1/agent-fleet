@@ -200,16 +200,28 @@ var cursorVersionInLink = regexp.MustCompile(`^.*/versions/([^/]*)/.*$`)
 func Cursor(ctx context.Context, e Env) int {
 	// One writer per HOME: a recovery or a pin racing a self-update would read its marker
 	// mid-flight and undo a tree that is about to be accepted.
-	release, ok := e.lockCursor()
-	if !ok {
+	release, ok, lockErr := e.lockCursor()
+	if !ok && lockErr == nil {
 		// No status change: the copy on disk is not known to be bad, only busy.
 		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: cursor boot-install skipped (another cursor update is running; retrying next start)")
 		return ExitFailed
 	}
 	defer release()
+	refuseUnlocked := func() int {
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: cursor boot-install skipped (cannot open %s: %v; no destructive step runs without the lock; retrying next start)\n", e.cursorLockPath(), lockErr)
+		return ExitFailed
+	}
+	if lockErr != nil {
+		// Recovery rewrites links and trees: with a journal left, it cannot run unlocked.
+		if _, err := os.Lstat(e.cursorMarkerPath()); err == nil {
+			return refuseUnlocked()
+		}
+	}
 	// What a killed self-update changed goes back before the pin is judged: a half-switched link
 	// pair would otherwise read as healthy.
-	if err := e.cursorRecover(); err != nil {
+	if lockErr != nil {
+		// Nothing to recover (checked above); the decision below is read-only.
+	} else if err := e.cursorRecover(); err != nil {
 		fmt.Fprintln(e.Stderr, err)
 		fmt.Fprintln(e.Stdout, "[entrypoint] WARN: cursor boot-install skipped (an earlier update could not be rolled back; retrying next start)")
 		e.note(cursorStatusName, statusFailed, ReasonOther)
@@ -252,6 +264,12 @@ func Cursor(ctx context.Context, e Env) int {
 			fmt.Fprintln(e.Stdout, "[entrypoint] boot-install: cursor already present (skip)")
 		}
 		return ExitOK
+	}
+	if lockErr != nil && !e.room(cursorNeedMiB, []string{cursorStatusName}, cursorStatusName) {
+		return ExitNoSpace // answerable without writing
+	}
+	if lockErr != nil {
+		return refuseUnlocked()
 	}
 	// Space is needed only when the pinned tree has to be downloaded: relinking to a healthy one
 	// (a repin after the self-update moved ahead) writes nothing.
@@ -910,17 +928,19 @@ func (e Env) installCursorLatest(ctx context.Context, script string) (err error)
 
 func (e Env) cursorLockPath() string { return filepath.Join(e.Home, ".local", ".af-cursor.lock") }
 
-// lockCursor takes the cursor lock without waiting; ok is false only when another process holds
-// it. A lock that cannot be set up at all is not a holder: go on unlocked, as main did.
-func (e Env) lockCursor() (release func(), ok bool) {
-	f, busy := flockPath(e.cursorLockPath())
+// lockCursor takes the cursor lock without waiting. ok is false when another process holds it
+// (err nil) or when the lock file cannot be made or opened (err set). The latter is not a free
+// lock: a holder that opened the file earlier may be writing, so destructive steps refuse;
+// callers that can answer without writing check err.
+func (e Env) lockCursor() (release func(), ok bool, err error) {
+	f, busy, err := flockPath(e.cursorLockPath())
 	if busy {
-		return func() {}, false
+		return func() {}, false, nil
 	}
-	if f == nil {
-		return func() {}, true
+	if err != nil {
+		return func() {}, false, err
 	}
-	return func() { f.Close() }, true
+	return func() { f.Close() }, true, nil
 }
 
 // errCursorUnsettled: the update verified but its marker could not be removed, so the next start

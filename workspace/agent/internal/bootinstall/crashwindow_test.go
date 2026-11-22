@@ -407,8 +407,8 @@ func TestCursorRecoverReviewRound1(t *testing.T) {
 	})
 	t.Run("a cursor update and the pin step exclude each other", func(t *testing.T) {
 		f := newSU(t, goodRTK, "", "", cursorInstaller)
-		l, busy := flockPath(f.env.cursorLockPath())
-		if l == nil || busy {
+		l, busy, err := flockPath(f.env.cursorLockPath())
+		if l == nil || busy || err != nil {
 			t.Fatal("lock not taken")
 		}
 		f.env.selfUpdateCursor(context.Background())
@@ -481,20 +481,6 @@ func TestNPMLockHelperProcess(t *testing.T) {
 	}
 	e.npmInstall([]string{"x"})
 	os.Exit(0)
-}
-
-func TestNPMLockIOErrorIsNotBusy(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root ignores directory permissions")
-	}
-	f := newSU(t, goodRTK, "", "", "")
-	local := filepath.Join(f.home, ".local")
-	os.MkdirAll(local, 0o755)
-	os.Chmod(local, 0o555)
-	t.Cleanup(func() { os.Chmod(local, 0o755) })
-	if _, _, ok := f.env.lockNPM(); !ok {
-		t.Fatal("an unwritable ~/.local was reported as another holder")
-	}
 }
 
 func TestCursorRecoverReadlinkErrorKeepsTheMarker(t *testing.T) {

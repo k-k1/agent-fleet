@@ -508,3 +508,73 @@ func TestNPMSkipsACLIWhoseRestoreIsPending(t *testing.T) {
 		t.Fatalf("npm log %q: want the copilot pin only", log)
 	}
 }
+
+// breakLock makes the lock path unopenable for any uid (a directory cannot be opened O_RDWR).
+func breakLock(t *testing.T, p string) {
+	t.Helper()
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNPMLockOpenErrorIsNeitherBusyNorFree(t *testing.T) {
+	f := newNPM(t, allPins)
+	breakLock(t, f.env.npmLockPath())
+	e, _, ok := f.env.lockNPM()
+	if ok || e.npmLockErr == nil {
+		t.Fatalf("an unopenable lock file was reported as free: ok=%v err=%v", ok, e.npmLockErr)
+	}
+}
+
+func TestNPMWithUnopenableLockDoesNothingDestructive(t *testing.T) {
+	f := newNPM(t, allPins)
+	breakLock(t, f.env.npmLockPath())
+	if rc := NPM(f.env); rc != ExitFailed || f.npmLog() != "" {
+		t.Fatalf("rc=%d npm ran=%q out=%s", rc, f.npmLog(), f.out)
+	}
+	if !strings.Contains(f.out.String(), "cannot open") {
+		t.Errorf("no reason given: %q", f.out)
+	}
+	// No space is still answered without writing.
+	f.env.FreeMiB = func(string) (int64, bool) { return 100, true }
+	if rc := NPM(f.env); rc != ExitNoSpace {
+		t.Fatalf("no-space rc=%d", rc)
+	}
+	// Nothing to install stays a read-only no-op.
+	g := newNPM(t, allPins)
+	for _, c := range []string{"claude", "opencode", "codex", "copilot"} {
+		g.put(c, "#!/bin/sh\necho 1\n")
+	}
+	breakLock(t, g.env.npmLockPath())
+	if rc := NPM(g.env); rc != ExitOK {
+		t.Fatalf("no-op rc=%d out=%s", rc, g.out)
+	}
+}
+
+func TestNPMVerifyWithUnopenableLockKeepsABrokenLinkAndPassesHealthyOnes(t *testing.T) {
+	f := newNPM(t, allPins)
+	f.put("claude", brokenCLI)
+	f.put("codex", "#!/bin/sh\necho 1\n")
+	breakLock(t, f.env.npmLockPath())
+	if rc := f.env.NPMVerify([]string{"claude"}, false); rc != ExitFailed {
+		t.Fatalf("broken: rc=%d", rc)
+	}
+	if _, err := os.Lstat(f.bin("claude")); err != nil || f.npmLog() != "" {
+		t.Fatalf("a repair ran without the lock (err=%v log=%q)", err, f.npmLog())
+	}
+	if rc := f.env.NPMVerify([]string{"codex"}, false); rc != ExitOK {
+		t.Fatalf("healthy: rc=%d out=%s", rc, f.out)
+	}
+}
+
+func TestNPMRereadsItsPlanOnceTheLockIsHeld(t *testing.T) {
+	f := newNPM(t, map[string]string{"claude": "1.0.0"})
+	// A self-update that held the lock meanwhile finished the install.
+	f.env.afterNPMLock = func() { f.put("claude", "#!/bin/sh\necho 1.0.0\n") }
+	if rc := NPM(f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if f.npmLog() != "" {
+		t.Fatalf("redundant reinstall: %q", f.npmLog())
+	}
+}
