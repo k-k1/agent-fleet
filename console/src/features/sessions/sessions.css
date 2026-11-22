@@ -853,13 +853,6 @@
 .session-state.off.question {
   font-weight: 400;
 }
-
-/* Waiting for a usage limit to reset: the row still has to be readable, so it borrows the
-   question colour, but this says "wait", not "answer", so the bold is dropped — at the same
-   weight as an unanswered question, the rows that need action get buried among these. */
-.session-state.question.limited {
-  font-weight: 400;
-}
 /* A handoff the session proposed and nobody has launched. It takes the accent colour rather
    than the question warn, and no pulse: this is not the agent asking for something, it is the
    next piece of work sitting there — but it does keep the bold and the visible text, because
@@ -1120,3 +1113,6 @@
 .wto-warn { margin: 6px 0; color: var(--warn); font-size: 12px; }
 .wto-plan { margin-left: 24px; }
 .wto-plan .wto-dirs, .wto-plan .wto-note { margin-left: 0; }
+.ui-modal .sm-muted {
+  color: var(--dialog-muted);
+}

@@ -297,3 +297,10 @@
   border-radius: 999px;
   white-space: nowrap;
 }
+
+/* Waiting for a usage limit to reset: the row still has to be readable, so it borrows the
+   question colour, but this says "wait", not "answer", so the bold is dropped — at the same
+   weight as an unanswered question, the rows that need action get buried among these. */
+.session-state.question.limited {
+  font-weight: 400;
+}

@@ -97,16 +97,3 @@
   margin: 18px 0 8px;
   font-size: 0.9rem;
 }
-
-/* The shared bucket by af-role (ADR 0048 decision 15). Two levels: the group totals read as the
-   answer, the per-role rows behind a disclosure read as the evidence. The detail is collapsed
-   because a reader asking "what are the engines costing" is done after the first list. */
-.cloud-cost .cc-roles {
-  margin: 6px 0 4px;
-}
-.cloud-cost .cc-roles > summary {
-  cursor: pointer;
-  font-size: 0.82rem;
-  color: var(--muted, #8a94a6);
-  padding: 4px 0;
-}
