@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -62,22 +63,72 @@ func TestRunPinRefusesAMismatchedBinding(t *testing.T) {
 }
 
 // A Managed turn is refused when the shared serve runs on another custom pin than the one its
-// launch was judged on, and let through when they agree.
+// launch was judged on, in either direction; a different key generation with the same pin is not
+// a reason, and an adopted daemon is not judged.
 func TestServePinMatchesTheJudgedView(t *testing.T) {
 	useIsolationPolicy(t, approvedCustom())
 	useCustom(t, selfHosted)
 	judged := readView()
-	s := &Supervisor{up: true, credGen: credentialGenFrom(judged)}
+	s := &Supervisor{up: true, credGen: "some-older-generation", customPin: customPinDigest(judged.p, judged.engines, judged.custom)}
 	if err := s.servePinMatches(judged); err != nil {
-		t.Errorf("same pin refused: %v", err)
+		t.Errorf("same custom pin, other generation: refused: %v", err)
 	}
 	useCustom(t, movedHost)
 	if err := s.servePinMatches(readView()); !errors.Is(err, ErrServePolicyMoved) {
 		t.Errorf("serve on the old pin: err = %v, want ErrServePolicyMoved", err)
 	}
+	// The serve has a pin the judged view did not carry.
+	useCustom(t, nil)
+	if err := s.servePinMatches(readView()); !errors.Is(err, ErrServePolicyMoved) {
+		t.Errorf("serve pinned, view not: err = %v, want ErrServePolicyMoved", err)
+	}
+	// The view carries a pin the serve lacks.
+	useCustom(t, selfHosted)
+	bare := &Supervisor{up: true, credGen: "g"}
+	if err := bare.servePinMatches(readView()); !errors.Is(err, ErrServePolicyMoved) {
+		t.Errorf("view pinned, serve not: err = %v, want ErrServePolicyMoved", err)
+	}
 	s.credGen = ""
 	if err := s.servePinMatches(readView()); err != nil {
 		t.Errorf("adopted daemon judged: %v", err)
+	}
+}
+
+// While nothing is restricted the launch record is what ModelLaunch gives (stored keys, billing
+// choice, engines), and the environment passes through unchanged.
+func TestRunPinUnrestrictedLaunchIsModelLaunch(t *testing.T) {
+	useIsolationPolicy(t, routepolicy.Policy{})
+	old := credentialView
+	t.Cleanup(func() { credentialView = old })
+	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
+		return map[string]string{"ANTHROPIC_API_KEY": "sk-test"}, UsageZen, oauthState{known: true}, selfHosted
+	}
+	for _, model := range []string{"anthropic/claude-x", "mine/m", "opencode/free"} {
+		if got, want := PinRun(model).Launch, ModelLaunch(model); got != want {
+			t.Errorf("%s: pin launch %+v, ModelLaunch %+v", model, got, want)
+		}
+	}
+	if l := PinRun("anthropic/claude-x").Launch; l.Route == "" || l.Binding == "" {
+		t.Errorf("a stored key resolved to %+v", l)
+	}
+	env := []string{"A=1"}
+	if out, err := PinRun("mine/m").Env(env, t.TempDir()); err != nil || len(out) != 1 {
+		t.Errorf("env = %v, %v; want it unchanged", out, err)
+	}
+}
+
+// A pin taken before a policy was accepted is refused afterwards: the stored endpoint's host may
+// now be allowed while the run's own settings were never judged against the new restriction.
+func TestRunPinRefusedWhenThePolicyMoved(t *testing.T) {
+	useIsolationPolicy(t, routepolicy.Policy{})
+	useCustom(t, selfHosted)
+	pin := PinRun("mine/m")
+	useIsolationPolicy(t, approvedCustom())
+	if _, err := pin.Env(nil, t.TempDir()); !errors.Is(err, ErrPolicyConfig) {
+		t.Errorf("err = %v, want ErrPolicyConfig", err)
+	}
+	if _, err := PinRun("mine/m").Env(nil, t.TempDir()); err != nil {
+		t.Errorf("a fresh pin refused: %v", err)
 	}
 }
 

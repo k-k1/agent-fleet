@@ -113,3 +113,27 @@ func TestOpencodeOneShotResolvesTheModelItRuns(t *testing.T) {
 		t.Errorf("resolved on %v, want only %q", asked, m)
 	}
 }
+
+// A reading of the opencode pin that does not answer within the budget leaves the route
+// unresolved and a pin that refuses the run, and the slow reading is released afterwards.
+func TestOpencodePinObservationTimesOut(t *testing.T) {
+	oldPin, oldBudget := opencodePinRun, chatObserveBudget
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	opencodePinRun = func(string) opencode.RunPin {
+		defer close(finished)
+		<-release
+		return opencode.RunPin{Launch: routes.Launch{Route: "late"}}
+	}
+	chatObserveBudget = 20 * time.Millisecond
+	t.Cleanup(func() { opencodePinRun, chatObserveBudget = oldPin, oldBudget })
+	pin, route, binding, _ := opencodeLaunchChecked("mine/m")
+	if route != "" || binding != "" {
+		t.Errorf("route %q binding %q, want unresolved", route, binding)
+	}
+	if _, err := pin.Env(nil, t.TempDir()); err == nil {
+		t.Error("a pin that never answered isolated a run")
+	}
+	close(release)
+	<-finished
+}

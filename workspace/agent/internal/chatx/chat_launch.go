@@ -80,7 +80,8 @@ var opencodePinRun = opencode.PinRun
 // chatObserveBudget leaves the route unresolved and the pin refusing, like chatLaunch.
 func opencodeLaunchChecked(model string) (pin opencode.RunPin, route, binding string, err error) {
 	ch := make(chan opencode.RunPin, 1)
-	go func() { ch <- opencodePinRun(model) }()
+	resolve := opencodePinRun // read here: a late worker must not read the variable after a test restores it
+	go func() { ch <- resolve(model) }()
 	t := time.NewTimer(chatObserveBudget)
 	defer t.Stop()
 	select {

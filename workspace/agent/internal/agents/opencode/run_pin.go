@@ -24,6 +24,12 @@ type RunPin struct {
 // RunPin (a reading that could not be taken) refuses every Env.
 func PinRun(model string) RunPin {
 	v := readView()
+	if !v.restricted {
+		// readView leaves the credential sources empty while nothing is restricted; the launch
+		// record needs them all the same (ModelLaunch).
+		v.engines = engineProviderIDs()
+		v.keys, v.pref, v.acct, v.custom = credentialView()
+	}
 	return RunPin{
 		view:   v,
 		ok:     true,
@@ -37,6 +43,12 @@ func PinRun(model string) RunPin {
 func (r RunPin) Env(env []string, dir string) ([]string, error) {
 	if !r.ok {
 		return nil, fmt.Errorf("%w: the policy and connections could not be read, so the run cannot be pinned", ErrPolicyConfig)
+	}
+	// The reading is only good for the policy it was taken under: a policy accepted since (one that
+	// allows the stored endpoint's host but not the run's own file settings) would be judged
+	// against an older isolation, so the run is refused and the caller retries on the new one.
+	if p, restricted := policyRestriction(); restricted != r.view.restricted || p.Revision != r.view.p.Revision {
+		return nil, fmt.Errorf("%w: the credential policy changed while the call was being prepared; try again", ErrPolicyConfig)
 	}
 	if err := r.checkBinding(); err != nil {
 		return nil, err
