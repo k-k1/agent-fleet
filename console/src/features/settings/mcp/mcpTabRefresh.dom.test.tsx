@@ -29,33 +29,48 @@ beforeEach(() => {
 });
 afterEach(() => { act(() => root.unmount()); host.remove(); });
 
-async function mountAndRefresh() {
+async function mount() {
   await act(async () => root.render(<McpTab />));
   await act(async () => {});
-  const btn = host.querySelector<HTMLButtonElement>(".mcp-tenant-bar button")!;
+  return host.querySelector<HTMLButtonElement>(".mcp-tenant-bar button")!;
+}
+async function mountAndRefresh() {
+  const btn = await mount();
   await act(async () => btn.click());
   return btn;
 }
 
 describe("McpTab tenant refresh", () => {
-  it("toasts the failure and re-enables the button when the request rejects", async () => {
-    apiJSON.mockRejectedValueOnce(new Error("network down"));
-    const btn = await mountAndRefresh();
+  it("disables the button while the request is out, then toasts the failure and re-enables it when it rejects", async () => {
+    let reject!: (e: Error) => void;
+    apiJSON.mockReturnValueOnce(new Promise((_, r) => (reject = r)));
+    const btn = await mount();
+    await act(async () => btn.click());
+    expect(btn.disabled).toBe(true);
+    await act(async () => reject(new Error("network down")));
     expect(toast).toHaveBeenCalledWith(expect.stringContaining("network down"));
     expect(btn.disabled).toBe(false);
+    expect(host.textContent).toContain("tenant-one");
   });
   it("toasts a refusal body", async () => {
     apiJSON.mockResolvedValueOnce({ error: { message: "nope" } });
     await mountAndRefresh();
     expect(toast).toHaveBeenCalledWith(expect.stringContaining("nope"));
   });
-  it("leaves the list alone and raises no toast on a JSON null body (the old failure path threw)", async () => {
+  it("raises the old TypeError (no toast, list kept, button back) on a JSON null body", async () => {
     apiJSON.mockResolvedValueOnce(null);
     const unhandled: unknown[] = [];
     const on = (e: unknown) => unhandled.push(e);
     process.on("unhandledRejection", on);
-    const btn = await mountAndRefresh();
-    process.off("unhandledRejection", on);
+    let btn!: HTMLButtonElement;
+    try {
+      btn = await mountAndRefresh();
+      await new Promise((r) => setTimeout(r, 20));
+    } finally {
+      process.off("unhandledRejection", on);
+    }
+    expect(unhandled).toHaveLength(1);
+    expect(unhandled[0]).toBeInstanceOf(TypeError);
     expect(toast).not.toHaveBeenCalled();
     expect(btn.disabled).toBe(false);
     expect(host.textContent).toContain("tenant-one");

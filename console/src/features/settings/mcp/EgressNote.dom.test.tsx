@@ -33,9 +33,12 @@ const send = () => host.querySelector<HTMLButtonElement>(".egress-mcp-ask button
 
 describe("EgressNote propose", () => {
   it("shows the failure, re-enables the button and does not call onProposed when the request rejects", async () => {
-    apiJSON.mockRejectedValueOnce(new Error("network down"));
+    let reject!: (e: Error) => void;
+    apiJSON.mockReturnValueOnce(new Promise((_, r) => (reject = r)));
     await openForm();
     await act(async () => send().click());
+    expect(send().disabled).toBe(true);
+    await act(async () => reject(new Error("network down")));
     expect(host.textContent).toContain("network down");
     expect(send().disabled).toBe(false);
     expect(onProposed).not.toHaveBeenCalled();
