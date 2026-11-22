@@ -204,3 +204,13 @@ member turned on that queue's standing switch for sessions they started, which i
 (0137 §3). A tidy step may rewrite those messages before the fire, by a call that has no tools and whose reply is
 validated (0137 §8). Schedules are unchanged: a schedule's prompt still carries only the fixed variables and
 `{{gate.refs}}`. Nothing of 0137 is built yet (#4148).
+
+**Note (2026-11-23, #4631):** the decision above is unchanged. `AF_SCHEDULE_TOKEN` is still set on the workspace
+environment, so any session process can reach `POST /internal/schedules`. What changed is what a write on that face
+does. A schedule created through the token starts held (`approval_pending`): the due query skips it, it does not wake
+a stopped workspace, and run-now is refused until the member approves it in the Console (`POST /api/schedules/{id}/approve`,
+member face only). A token-face edit that changes the run shape (prompt, spec, time zone, target, delivery, policies) or
+the gate puts an approved schedule back on hold; pause and resume do not. A generation counter makes an approval apply
+only to the version the member looked at. The token-face answer carries `approval_pending` and a warning, and the
+operator persona and tool descriptions tell the user that the schedule waits. The Fleet Operator is not told apart from
+a session (same token), so its schedules wait too (#4853).

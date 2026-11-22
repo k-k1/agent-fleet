@@ -53,6 +53,26 @@ Below the list, "**Scheduled sessions**" shows the sessions schedules started, n
 
 The conversation of a session it ran carries a **Scheduled** or **Manual fire** badge, so it is not mixed up with what you typed.
 
+## A schedule the operator registers waits for your approval
+
+A schedule registered or changed from a session, which includes the Fleet Operator's, does not run until you approve it. Until then it does not run at its set time, does not wake a stopped workspace, and **Run now** is disabled. The reason is that a schedule keeps running without anyone watching, so you see it first.
+
+1. The row shows the **Awaiting approval** badge
+2. Open **Details / edit** and choose **Review & approve**, then check the prompt and the time
+3. Approve it. The next run is worked out from that moment
+
+If a session changes what you approved (the time, the prompt, or what it runs), it waits for approval again. Changing only the label, pause or resume does not. A schedule you edit yourself in the Console is not held. The operator tells you when what it registered is waiting.
+
+## A schedule the operator registers waits for your approval
+
+A schedule registered or changed from a session, which includes the Fleet Operator's, does not run until you approve it. Until then it does not run at its set time, does not wake a stopped workspace, and **Run now** is disabled. The reason is that a schedule keeps running without anyone watching, so you see it first.
+
+1. The row shows the **Awaiting approval** badge
+2. Open **Details / edit** and choose **Review & approve**, then check the prompt and the time
+3. Approve it. The next run is worked out from that moment
+
+If a session later changes what you approved (the prompt, the time, the target or the delivery), it waits for approval again. Pausing and resuming do not. A schedule you edit yourself in the Console is not held. The operator tells you when what it registered is waiting.
+
 ## Change what it does
 
 Open **Details / edit** from the row's ⋯ menu.
