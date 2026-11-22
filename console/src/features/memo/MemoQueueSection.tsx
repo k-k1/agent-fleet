@@ -225,6 +225,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // committed into the memo on Add). Not draft-persisted — the bytes live server-side
   // and a page reload would leave them orphaned, so a fresh composer starts empty.
   const [newImages, setNewImages] = useState<MemoAttachment[]>([]);
+  // The sweep after a bulk delete runs after a confirmation and a loop of requests; an upload that
+  // finishes meanwhile must still be kept, so it reads the composer's images through this ref
+  // rather than the closure of the click.
+  const newImagesRef = useRef(newImages);
+  newImagesRef.current = newImages;
   const [imgBusy, setImgBusy] = useState(false);
   const imgInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
@@ -639,7 +644,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         return n;
       });
       const fresh = await memoList().catch(() => null);
-      if (Array.isArray(fresh)) runImageGC(fresh, newImages);
+      if (Array.isArray(fresh)) runImageGC(fresh, newImagesRef.current);
       bumpMemos();
     }
     if (left > 0) toast(t("memo.delete_selected_left", { deleted, count: left }), { kind: "warn" });
@@ -1070,6 +1075,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   const ids = visible.map((m) => m.id);
                   if (cat) catSendIds.current.set(cat.id, visible.filter((m) => !isSuperseded(m)).map((m) => m.id));
                   const allSel = ids.length > 0 && ids.every((id) => sel[id]);
+                  // Selected rows that are folded away (the fold was closed after ticking them) still count
+                  // in the selection bar; the head box must be able to drop them.
+                  const hiddenSel = g.memos.some((m) => sel[m.id] && !ids.includes(m.id));
+                  const clearing = allSel || hiddenSel;
                   const renderRow = (m: Memo, isHistory = false) => (
                     <MemoRow
                       key={m.id}
@@ -1183,14 +1192,14 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           type="checkbox"
                           className="memo-cat-check"
                           checked={allSel}
-                          disabled={ids.length === 0}
+                          disabled={ids.length === 0 && !hiddenSel}
                           onClick={(e) => e.stopPropagation()}
                           onChange={() =>
                             setSel((s) => {
                               const n = { ...s };
                               // Clearing also drops folded rows that were selected while the fold was open.
-                              const target = allSel ? g.memos.map((m) => m.id) : ids;
-                              for (const id of target) n[id] = !allSel;
+                              const target = clearing ? g.memos.map((m) => m.id) : ids;
+                              for (const id of target) n[id] = !clearing;
                               return n;
                             })
                           }

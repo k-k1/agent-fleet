@@ -8,7 +8,12 @@ import type { Memo, MemoCategory } from "../../types/memo.ts";
 
 let servedMemos: Memo[] = [];
 const refuse = new Set<string>();
-const memoDelete = vi.fn(async (id: string) => ({ ok: !refuse.has(id) }));
+// A successful delete drops the memo from the list the next memoList() serves, like the server.
+const memoDelete = vi.fn(async (id: string) => {
+  if (refuse.has(id)) return { ok: false };
+  servedMemos = servedMemos.filter((m) => m.id !== id);
+  return { ok: true };
+});
 const memoImageGC = vi.fn(async (_keep: string[]) => ({}));
 const memoList = vi.fn(async () => servedMemos);
 
@@ -151,5 +156,47 @@ describe("deleting the selected memos", () => {
     await click([...document.querySelectorAll<HTMLButtonElement>(".memo-selbar .ui-btn-danger")][0]);
     await click(q(".ui-confirm-actions .ui-btn-danger"));
     expect(memoImageGC).not.toHaveBeenCalled();
+  });
+
+  it("keeps the images of a memo whose delete was refused and drops the deleted one's", async () => {
+    const att = (name: string) => [{ name, path: "/img/" + name } as unknown as NonNullable<Memo["attachments"]>[number]];
+    servedMemos = [
+      aMemo({ id: "p1", state: "pending", attachments: att("kept.png") }),
+      aMemo({ id: "p2", state: "pending", attachments: att("gone.png") }),
+    ];
+    refuse.add("p1");
+    await render();
+    await click(q(".memo-cat-check"));
+    await click([...document.querySelectorAll<HTMLButtonElement>(".memo-selbar .ui-btn-danger")][0]);
+    await click(q(".ui-confirm-actions .ui-btn-danger"));
+    expect(memoImageGC).toHaveBeenCalledTimes(1);
+    const keep = memoImageGC.mock.calls[0][0];
+    expect(keep).toContain("kept.png");
+    expect(keep).not.toContain("gone.png");
+  });
+
+  it("never offers a replaced note to either Send", async () => {
+    await render();
+    await click(q(".memo-sent-fold"));
+    await click(q(".memo-cat-check"));
+    // Selection bar Send: the composed text carries the pending note, not the replaced one.
+    await click(q(".memo-selbar .ui-btn-primary"));
+    const text = q<HTMLTextAreaElement>(".memo-send-text").value;
+    expect(text).toContain("pending one");
+    expect(text).not.toContain("replaced one");
+  });
+
+  it("lets the head box drop a selection that the closed fold hides", async () => {
+    // Only history in the queue: closing the fold leaves nothing on screen to tick or untick.
+    servedMemos = servedMemos.filter((m) => m.state === "delivered" || m.state === "superseded");
+    await render();
+    await click(q(".memo-sent-fold"));
+    await click(q(".memo-cat-check"));
+    expect(q(".memo-selbar-n").textContent).toContain("2");
+    await click(q(".memo-sent-fold"));
+    const box = q<HTMLInputElement>(".memo-cat-check");
+    expect(box.disabled).toBe(false);
+    await click(box);
+    expect(document.querySelector(".memo-selbar")).toBeNull();
   });
 });
