@@ -383,8 +383,11 @@ func TestMemoRecipeReleaseAndReturn(t *testing.T) {
 		if !sameIDs(d.MessageIDs, m.ID) {
 			t.Fatalf("batch %v", d.MessageIDs)
 		}
-		// The queue is renamed while the delivery is claimed: the returned row is pending again and
-		// still equal to its release.
+		// The release copy is empty while the row is claimed (a row that is not pending may hold
+		// none): the return has to copy it back for the row to be pending again under the CHECK.
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET release_recipe='' WHERE id=?`, m.ID); err != nil {
+			t.Fatal(err)
+		}
 		if err := e.st.MemoTx(context.Background(), e.members["a"], func(tx store.MemoTxOps) error { return tx.ReturnDeliveryMessages(d.ID) }); err != nil {
 			t.Fatalf("return: %v", err)
 		}
@@ -552,7 +555,7 @@ func TestMemoRecipeReturnAndDeferRestoreTheReleaseCopy(t *testing.T) {
 // with openAfter 2 and one valid message, nothing fires; the next valid message opens the queue.
 func TestMemoRecipeInvalidDoesNotOpenAThreshold(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-		e.queueWith("app", "impl", map[string]any{"enabled": true, "openAfter": 2, "batch": 5})
+		q := e.queueWith("app", "impl", map[string]any{"enabled": true, "openAfter": 2, "batch": 5})
 		ok1 := e.pending("app", "impl", "valid")
 		bad := decode[memoDTO](t, e.recipeMemo("app", "impl", "bad", map[string]any{"route": "anthropic-subscription"}))
 		e.queueWith("app", "impl", map[string]any{"enabled": true, "openAfter": 2, "batch": 5, "agentKind": "codex"})
@@ -564,6 +567,9 @@ func TestMemoRecipeInvalidDoesNotOpenAThreshold(t *testing.T) {
 		e.autoTick(later)
 		if agent.createCount() != 0 || e.memoRow(ok1.ID).State != store.MemoStatePending {
 			t.Fatalf("one valid message opened a threshold of two: creates %d, %+v (bad %s)", agent.createCount(), e.memoRow(ok1.ID), bad.ID)
+		}
+		if w := e.queueWaiting(q); w == nil || w.Reason != waitBelowThreshold || w.Detail == nil || w.Detail.Waiting != 1 || w.Detail.Needed != 2 {
+			t.Fatalf("the list after the tick: %+v", w)
 		}
 		ok2 := e.pending("app", "impl", "second valid")
 		e.autoTick(later.Add(10 * time.Minute))
@@ -584,7 +590,18 @@ func TestMemoRecipeExplicitIsKeptAndRouteIsNotInherited(t *testing.T) {
 		y := e.pending("app", "impl", "y")
 		agent := e.useQueueAgent("")
 		d1, d2 := e.fired(q), e.fired(q)
+		if !sameIDs(d1.MessageIDs, x.ID) || !sameIDs(d2.MessageIDs, y.ID) {
+			t.Fatalf("batches %v %v", d1.MessageIDs, d2.MessageIDs)
+		}
 		e.tick(e.runner(), time.Now())
+		seen := map[string]int{}
+		for _, c := range agent.creates {
+			qd, _ := c["queue_delivery"].(map[string]any)
+			seen[qd["id"].(string)]++
+		}
+		if seen[d1.ID] != 1 || seen[d2.ID] != 1 || agent.createCount() != 2 {
+			t.Fatalf("creates per delivery %v", seen)
+		}
 		for _, c := range agent.creates {
 			qd, _ := c["queue_delivery"].(map[string]any)
 			r, hasRoute := c["route"].(map[string]any)
@@ -599,7 +616,6 @@ func TestMemoRecipeExplicitIsKeptAndRouteIsNotInherited(t *testing.T) {
 				}
 			}
 		}
-		_, _ = x, y
 	})
 	eachDialect(t, func(t *testing.T, e *inboxEnv) {
 		q := e.category("r", "q")

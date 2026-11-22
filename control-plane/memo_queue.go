@@ -1077,3 +1077,37 @@ func memoRecipeEligible(q store.MemoQueue, eligible func(store.Memo) bool) func(
 		return eligible(m) && memoRecipeEffectiveProblem(q, m) == ""
 	}
 }
+
+// memoHoldForRecipe puts a pending message whose recipe cannot create a run back to held with the
+// reason, as the claim does.
+func memoHoldForRecipe(tx store.MemoTxOps, m store.Memo, why string) error {
+	m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStateHeld, "", "", ""
+	raw, _ := json.Marshal(memoafter.HeldReason{Reason: why, At: store.DeliveryTS(time.Now())})
+	m.HeldReason = string(raw)
+	return tx.WriteMemo(m)
+}
+
+// memoHoldInvalidRecipes holds the pending messages of rows whose recipe cannot create a run under
+// the queue's settings now, and returns rows as they stand after. The dispatcher calls it before
+// it counts, so the member's list (which counts in SQL) agrees with what a fire would claim after
+// the next tick instead of waiting on a message that never can be claimed.
+func memoHoldInvalidRecipes(tx store.MemoTxOps, q store.MemoQueue, rows []store.Memo) ([]store.Memo, error) {
+	out := rows
+	for i, m := range rows {
+		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
+			continue
+		}
+		why := memoRecipeEffectiveProblem(q, m)
+		if why == "" {
+			continue
+		}
+		if err := memoHoldForRecipe(tx, m, why); err != nil {
+			return nil, err
+		}
+		if &out[0] == &rows[0] {
+			out = append([]store.Memo(nil), rows...)
+		}
+		out[i].State, out[i].ReleaseHash, out[i].ReleasedAt, out[i].ReleasedBy = store.MemoStateHeld, "", "", ""
+	}
+	return out, nil
+}

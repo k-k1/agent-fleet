@@ -627,6 +627,9 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 				if err != nil {
 					return store.QueuePending{}, err
 				}
+				if rows, err = memoHoldInvalidRecipes(tx, cur, rows); err != nil {
+					return store.QueuePending{}, err
+				}
 				return pendingOf(rows, memoRecipeEligible(cur, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now))), now), nil
 			}})
 		if err != nil || why != nil {
@@ -838,6 +841,9 @@ func (r *memoQueueRunner) settleWake(ctx context.Context, w *memoQueueWork, live
 		}
 		rows, err := tx.ListMemosIn(c.Repo, c.Name)
 		if err != nil {
+			return err
+		}
+		if rows, err = memoHoldInvalidRecipes(tx, cur, rows); err != nil {
 			return err
 		}
 		pending := pendingOf(rows, memoRecipeEligible(cur, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now))), now)
@@ -1512,6 +1518,9 @@ func (r *memoQueueRunner) prWake(ctx context.Context, views map[string]*memoMemb
 		}
 		rows, err := tx.ListMemosIn(c.Repo, c.Name)
 		if err != nil {
+			return err
+		}
+		if rows, err = memoHoldInvalidRecipes(tx, cur, rows); err != nil {
 			return err
 		}
 		pending := pendingOf(rows, memoRecipeEligible(cur, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now))), now)

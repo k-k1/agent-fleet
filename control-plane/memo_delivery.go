@@ -401,10 +401,7 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 		// A recipe the run could not be created with (a route another agent does not take, after
 		// a move or a change of the category's agent) sends the message back to a person.
 		if why := memoRecipeEffectiveProblem(q, m); why != "" {
-			m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStateHeld, "", "", ""
-			raw, _ := json.Marshal(memoafter.HeldReason{Reason: why, At: now})
-			m.HeldReason = string(raw)
-			if err := tx.WriteMemo(m); err != nil {
+			if err := memoHoldForRecipe(tx, m, why); err != nil {
 				return none, nil, err
 			}
 			continue
