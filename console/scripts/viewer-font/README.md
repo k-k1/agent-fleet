@@ -13,7 +13,7 @@ node console/scripts/viewer-font/check.mjs --sizes 13,26 --screenshot /tmp/mdfon
 表示しているときだけ文字が動かなかった（2026-09-07）。
 
 - `.markdown` が `font: 14px/1.7` と**固定値**を持っていた。コード表示（`codegrid.css`）・plain
-  （`plain.css`）・diff（`diff.css`）はいずれも `var(--viewer-size)` を読むのに、Markdown だけが
+  （`diff.css`）・diff（`diff.css`）はいずれも `var(--viewer-size)` を読むのに、Markdown だけが
   読んでいない。var は要素まで届いているのに文字が動かない、という形の故障。
 - フェンスコードブロック（`.markdown pre code`）も同じく 12px 固定。
 - 見出しパンくず `.md-sticky` は `.markdown` ではなく**スクローラの子**なので本文サイズを継承せず、

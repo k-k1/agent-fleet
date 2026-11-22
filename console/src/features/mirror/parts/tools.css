@@ -228,3 +228,6 @@ button.mt-tool-outhead {
     transition: none;
   }
 }
+.mt-toolrun-body .mt-tool {
+  margin: 0.15em 0;
+}

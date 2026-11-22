@@ -652,6 +652,7 @@
 .admin-hint.ok {
   color: var(--ok);
 }
+.engine-ledger > .admin-hint { margin: 6px 0 10px; }
 
 /* Running is a filled dot, anything else a hollow ring. Shape is the cue, because two filled
    colours could not be told apart: light --ok and --muted2 measured 1.13:1 against each other

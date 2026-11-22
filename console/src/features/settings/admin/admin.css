@@ -1716,7 +1716,6 @@ a.engines-model-source:hover {
 .engine-ledger { margin-top: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }
 .engine-ledger-head { display: flex; align-items: baseline; gap: 8px; }
 .engine-ledger-head span { font-size: 11px; }
-.engine-ledger > .admin-hint { margin: 6px 0 10px; }
 .engine-ledger-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
 .engine-ledger-row {
   display: grid;

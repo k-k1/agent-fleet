@@ -2,7 +2,7 @@
    parts/*.css in their original order of appearance in the single sheet.
 
    The order must not move because same-named global classes are silently merged in @import
-   order (console/scripts/css-dup.mjs lists them). Concatenating these 22 files in the order
+   order (console/scripts/css-dup.mjs lists them). Concatenating the files in the order
    below reproduces the pre-split viewer.css byte for byte. Anyone who wants to reorder them
    has to check for themselves what the merge then produces.
 
@@ -16,14 +16,12 @@
 @import "./parts/highlight.css";
 @import "./parts/seg.css";
 @import "./parts/marp.css";
-@import "./parts/image.css";
 @import "./parts/pdf.css";
 @import "./parts/doc.css";
 @import "./parts/markdown.css";
 @import "./parts/mdlinks.css";
 @import "./parts/mdcode.css";
 @import "./parts/scm.css";
-@import "./parts/plain.css";
 @import "./parts/editor.css";
 @import "./parts/drawio.css";
 @import "./parts/editorstatus.css";

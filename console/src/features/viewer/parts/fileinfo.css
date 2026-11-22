@@ -98,17 +98,3 @@
     display: none;
   }
 }
-.codeview-wrap {
-  flex: 1;
-  display: flex;
-  min-height: 0;
-  overflow: hidden;
-}
-.codeview {
-  flex: 1;
-  min-width: 0;
-  display: block;
-  overflow: auto;
-  background: transparent; /* inherit the .fileview tint (--viewer-bg) */
-}
-

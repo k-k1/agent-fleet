@@ -1,7 +1,7 @@
 // Does the Markdown a viewer pane renders follow Settings > Display > File viewer font size?
 //
 // The regression this guards (2026-09-07): `.markdown` carried `font: 14px/1.7 …` — a fixed
-// size — while every other viewer surface read `--viewer-size` (codegrid.css, plain.css,
+// size — while every other viewer surface read `--viewer-size` (codegrid.css,
 // diff.css). The setting, and the keyboard zoom that moves it for a viewer pane
 // (lib/viewFont.ts), therefore did nothing whenever the pane showed Markdown: the var reached
 // the element, the text did not move. Fenced code blocks had the same fault at 12px, and the

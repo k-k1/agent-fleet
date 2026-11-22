@@ -98,36 +98,6 @@
   font-size: 0.9rem;
 }
 
-/* Per-service breakdown. Uptime rows have a bar (.ur-bar) filling the middle, but this
-   table has only two columns (name and amount), so the amount has to be pushed to the
-   right edge or it looks like it is floating. */
-.cloud-cost .usage-row.cc-svc {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.cloud-cost .usage-row.cc-svc .ur-key {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cloud-cost .usage-row.cc-svc .ur-hrs {
-  flex: 0 0 auto;
-  margin-left: auto;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
-/* The single card embedded in member details (docs/log/67 §67.15). The personal view
-   splits the period field and the numbers into separate cards whose borders create the
-   gap; this is one card, so without spacing a large amount sticks to the date input and
-   becomes unreadable (measured). */
-.member-cost .usage-toolbar {
-  margin-bottom: 16px;
-}
-
 /* The shared bucket by af-role (ADR 0048 decision 15). Two levels: the group totals read as the
    answer, the per-role rows behind a disclosure read as the evidence. The detail is collapsed
    because a reader asking "what are the engines costing" is done after the first list. */
@@ -139,10 +109,4 @@
   font-size: 0.82rem;
   color: var(--muted, #8a94a6);
   padding: 4px 0;
-}
-/* Indented so an open disclosure reads as detail OF the list above rather than a second list
-   of the same rank - the two carry the same money and would otherwise look additive. */
-.cloud-cost .cc-roles .usage-rows {
-  padding-left: 14px;
-  border-left: 2px solid var(--border, #2a2f3a);
 }
