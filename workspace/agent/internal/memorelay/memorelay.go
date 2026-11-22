@@ -50,6 +50,9 @@ type Fields struct {
 	// After is the messages of the same queue this one waits for, memo ids or reference keys.
 	// The Control Plane resolves and checks them.
 	After []string `json:"after,omitempty"`
+	// StartAfter is the earliest time the message may be started, RFC 3339 with an offset. The
+	// Control Plane checks it.
+	StartAfter string `json:"startAfter,omitempty"`
 	// Continuation is the model's claim that this follows the message its queue run was given
 	// (ADR 0137, addendum 2026-11-20). It names no id: the relay adds the delivery from the
 	// session's own meta, and the Control Plane decides from its own rows.
@@ -97,6 +100,8 @@ type Patch struct {
 	// After is the prerequisites: nil leaves them, an empty list clears them (it survives the
 	// encoding as []), a list replaces them.
 	After *[]string `json:"after,omitempty"`
+	// StartAfter is the start time: nil leaves it, "" clears it, a time replaces it.
+	StartAfter *string `json:"startAfter,omitempty"`
 }
 
 // ListResponse is GET /memos: the memos (each with its state) and the categories (each with

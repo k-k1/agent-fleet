@@ -936,14 +936,21 @@
   font-size: 11px;
   color: var(--muted);
 }
-.memo-edit-after {
+.memo-edit-after,
+.memo-edit-start {
   border: 1px solid var(--border2, var(--border));
   border-radius: 6px;
   padding: 4px 8px;
   margin: 0;
   font-size: 11px;
 }
-.memo-edit-after legend {
+.memo-edit-start-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.memo-edit-after legend,
+.memo-edit-start legend {
   padding: 0 4px;
   color: var(--muted);
 }
@@ -1381,7 +1388,9 @@ button.memo-reflink-key {
 }
 
 /* A note its run handed back (ADR 0137, addendum 2026-11-19, part B): when it may run again, and
-   the session's reason, which the person reads and no later run ever does. */
+   the session's reason, which the person reads and no later run ever does. A note's own start time
+   (addendum 2026-11-22) reads the same way. */
+.memo-scheduled,
 .memo-deferred {
   margin-top: 2px;
   font-size: 11px;

@@ -697,6 +697,10 @@
           "repo": {
             "description": "repo bucket, '' = 共通/未分類 (optional)",
             "type": "string"
+          },
+          "startAfter": {
+            "description": "Optional: the earliest time this note of an auto-run category may be started, as an RFC 3339 time WITH its offset (e.g. 2026-12-04T09:00:00+09:00 for 9:00 in Japan). A time without an offset is refused, and one already past means no constraint. At most 60 days ahead. Before that time the note is not started, even when the user presses Run now. Approving the note approves its start time too.",
+            "type": "string"
           }
         },
         "required": [
@@ -1623,6 +1627,10 @@
           },
           "repo": {
             "description": "new repo bucket (optional)",
+            "type": "string"
+          },
+          "startAfter": {
+            "description": "Optional: the earliest time this note of an auto-run category may be started, as an RFC 3339 time WITH its offset (e.g. 2026-12-04T09:00:00+09:00 for 9:00 in Japan). A time without an offset is refused, and one already past means no constraint. At most 60 days ahead. Before that time the note is not started, even when the user presses Run now. Approving the note approves its start time too. Omit to leave it as it is; \"\" clears it. Changing it on a released note sends it back to wait for release.",
             "type": "string"
           }
         },

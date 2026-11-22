@@ -67,6 +67,10 @@ type Memo struct {
 	NotBefore    string
 	DeferCount   int
 	DeferReasons string
+	// StartAfter is the earliest time the message may be claimed (fixed-width UTC, "" for none),
+	// set by whoever wrote it (ADR 0137, addendum 2026-11-22). Unlike NotBefore it is content: a
+	// release is bound to it and does not clear it.
+	StartAfter string
 	// ChainID, ChainSeq and ChainDelivery mark a continuation of a released message (ADR 0137,
 	// addendum 2026-11-20): the root message of its chain, its place in it, and the delivery whose
 	// run added it. Display and bookkeeping only: the count is memo_chain's. A release by a person
@@ -120,7 +124,7 @@ const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path
 	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at, delivery_id,
 	ref_provider, ref_key, ref_url, released_by,
 	derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id, after_ids, held_reason,
-	not_before, defer_count, defer_reasons, chain_id, chain_seq, chain_delivery FROM memo`
+	not_before, defer_count, defer_reasons, chain_id, chain_seq, chain_delivery, start_after FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
@@ -130,7 +134,7 @@ func scanMemo(row scanner) (Memo, error) {
 		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt, &m.DeliveryID,
 		&m.RefProvider, &m.RefKey, &m.RefURL, &m.ReleasedBy,
 		&m.DerivedFrom, &m.SourceProvenance, &m.TidyFrom, &m.TidySeenHash, &m.TidyRunID, &m.AfterIDs, &m.HeldReason,
-		&m.NotBefore, &m.DeferCount, &m.DeferReasons, &m.ChainID, &m.ChainSeq, &m.ChainDelivery)
+		&m.NotBefore, &m.DeferCount, &m.DeferReasons, &m.ChainID, &m.ChainSeq, &m.ChainDelivery, &m.StartAfter)
 	return m, err
 }
 
@@ -179,14 +183,14 @@ func insertMemo(ctx context.Context, q memoQuerier, m Memo) error {
 		   release_repo, release_category, release_kind, release_body, release_ref_path, release_attachments,
 		   release_ref_provider, release_ref_key, release_ref_url, released_by,
 		   derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id,
-		   after_ids, release_after_ids, held_reason, chain_id, chain_seq, chain_delivery)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   after_ids, release_after_ids, held_reason, chain_id, chain_seq, chain_delivery, start_after, release_start_after)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt,
 		m.State, m.Provenance, m.Producer, m.ProducerOrigin, m.ReleaseHash, m.ReleasedAt,
 		m.RefProvider, m.RefKey, m.RefURL,
 		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy,
 		m.DerivedFrom, m.SourceProvenance, m.TidyFrom, m.TidySeenHash, m.TidyRunID,
-		m.AfterIDs, rel[9], heldReasonOf(m), m.ChainID, m.ChainSeq, m.ChainDelivery)
+		m.AfterIDs, rel[9], heldReasonOf(m), m.ChainID, m.ChainSeq, m.ChainDelivery, m.StartAfter, rel[10])
 	return err
 }
 
@@ -199,12 +203,12 @@ func heldReasonOf(m Memo) string {
 }
 
 // releasedContent is what the release_* columns hold: the content of a pending message, and
-// nothing otherwise. The CHECKs of migrations 0131, 0138 and 0144 require it for every pending row.
-func releasedContent(m Memo) [10]string {
+// nothing otherwise. The CHECKs of migrations 0131, 0138, 0144 and 0152 require it for every pending row.
+func releasedContent(m Memo) [11]string {
 	if m.State != MemoStatePending {
-		return [10]string{}
+		return [11]string{}
 	}
-	return [10]string{m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.RefProvider, m.RefKey, m.RefURL, m.AfterIDs}
+	return [11]string{m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.RefProvider, m.RefKey, m.RefURL, m.AfterIDs, m.StartAfter}
 }
 
 // UpdateMemo writes the editable columns, sent_at and the message state of an owned row.
@@ -241,7 +245,7 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 		m.State, m.ReleaseHash, m.ReleasedAt, m.SendToken, m.SendStartedAt,
 		m.RefProvider, m.RefKey, m.RefURL,
 		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy,
-		m.AfterIDs, rel[9], heldReasonOf(m)}
+		m.AfterIDs, rel[9], heldReasonOf(m), m.StartAfter, rel[10]}
 	args = append(args, tidyArgs...)
 	// A write that takes a held message to pending is a person's release (the Console's own
 	// write in a queue): it clears the hand-backs as ReleaseMemo does. So does a write that takes
@@ -263,7 +267,7 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 		   ref_provider=?, ref_key=?, ref_url=?,
 		   release_repo=?, release_category=?, release_kind=?, release_body=?, release_ref_path=?, release_attachments=?,
 		   release_ref_provider=?, release_ref_key=?, release_ref_url=?, released_by=?,
-		   after_ids=?, release_after_ids=?, held_reason=?`+tidyCols+`,
+		   after_ids=?, release_after_ids=?, held_reason=?, start_after=?, release_start_after=?`+tidyCols+`,
 		   not_before=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' THEN '' ELSE not_before END,
 		   defer_count=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' THEN 0 ELSE defer_count END,
 		   defer_reasons=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' THEN '' ELSE defer_reasons END,

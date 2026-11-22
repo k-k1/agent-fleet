@@ -103,6 +103,10 @@ type memoDTO struct {
 	NotBefore    string                 `json:"notBefore,omitempty"`
 	DeferCount   int                    `json:"deferCount,omitempty"`
 	DeferReasons []store.MemoDeferEntry `json:"deferReasons,omitempty"`
+	// StartAfter is the earliest time the message may be claimed (memoafter.ParseStartAfter), absent for
+	// none. A create takes an RFC 3339 time with an offset and answers it in the fixed-width UTC
+	// the column holds.
+	StartAfter string `json:"startAfter,omitempty"`
 	// Existing is set on the answer of a create into a queue that found the same reference
 	// already waiting there: the message returned is that one, and nothing was added.
 	Existing bool `json:"existing,omitempty"`
@@ -138,7 +142,7 @@ func memoToDTO(m store.Memo) memoDTO {
 		ContentHash: memoContentHash(m), Producer: m.Producer, ProducerOrigin: m.ProducerOrigin,
 		DeliveryID: m.DeliveryID, Reference: memoRefToWire(m),
 		DerivedFrom: decodeIDs(m.DerivedFrom), SourceProvenance: m.SourceProvenance, TidyRunID: m.TidyRunID,
-		After: memoafter.IDs(m), ChainID: m.ChainID, ChainSeq: m.ChainSeq}
+		After: memoafter.IDs(m), ChainID: m.ChainID, ChainSeq: m.ChainSeq, StartAfter: m.StartAfter}
 	if m.State == store.MemoStateHeld {
 		d.HeldReason = memoafter.ParseHeldReason(m.HeldReason)
 	}
@@ -361,6 +365,9 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 	if aerr != nil {
 		return memoDTO{}, false, aerr
 	}
+	if m.StartAfter, aerr = memoStartAfterParse(in.StartAfter, time.Now()); aerr != nil {
+		return memoDTO{}, false, aerr
+	}
 	m.Provenance, m.Producer, m.ProducerOrigin = via.provenance(), clipProducer(via.producer), clipProducer(via.producerOrigin)
 	created := true
 	err := st.MemoTx(ctx, mv.MembershipID, func(tx store.MemoTxOps) error {
@@ -484,6 +491,8 @@ type memoPatch struct {
 	// After absent leaves the prerequisites as they are, a list replaces them (ids or reference
 	// keys, as on a create), and an empty list clears them.
 	After *[]string `json:"after"`
+	// StartAfter absent leaves the start time as it is, a time sets it, and "" clears it.
+	StartAfter *string `json:"startAfter"`
 }
 
 // memoUpdateFor applies a partial edit to an owned memo (ownership by membership).
@@ -613,6 +622,13 @@ func applyMemoPatch(cur store.Memo, in memoPatch) (store.Memo, *apiError) {
 			return cur, aerr
 		}
 		cur = memoSetRef(cur, ref)
+	}
+	if in.StartAfter != nil {
+		at, aerr := memoStartAfterParse(*in.StartAfter, time.Now())
+		if aerr != nil {
+			return cur, aerr
+		}
+		cur.StartAfter = at
 	}
 	if cur.Kind == "file" && cur.RefPath == "" {
 		return cur, &apiError{http.StatusBadRequest, "bad_ref", "refPath is required for kind=file"}

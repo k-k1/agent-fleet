@@ -62,7 +62,7 @@ import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import { tidySelection } from "./tidyOps.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
-import { afterChoices, afterItemMessage, continuationHeldKey, afterItemWords, deferredUntil, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
+import { afterChoices, afterItemMessage, continuationHeldKey, afterItemWords, deferredUntil, scheduledUntil, startAfterFromInput, startAfterInputValue, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
 import { MemoImageThumb } from "./MemoImageThumb.tsx";
@@ -538,7 +538,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   }, []);
 
   // ---- memo edit / delete ------------------------------------------------------
-  const saveEdit = async (m: Memo, body: string, category: string, clearRef: boolean, after?: string[]) => {
+  const saveEdit = async (m: Memo, body: string, category: string, clearRef: boolean, after?: string[], startAfter?: string) => {
     setEditing(null);
     try {
       // The reference is left out unless the member removed it: absent keeps it, `{}` clears it. The
@@ -548,6 +548,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         category: category.trim(),
         ...(clearRef ? { reference: {} } : {}),
         ...(after ? { after } : {}),
+        ...(startAfter !== undefined ? { startAfter } : {}),
       });
       // apiJSON resolves a server error as {error} rather than throwing, so check it or a
       // false success toast is shown.
@@ -1021,7 +1022,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       onCollapse={() => setExpanded((s) => ({ ...s, [m.id]: false }))}
                       onEdit={() => setEditing(m.id)}
                       onCancelEdit={() => setEditing(null)}
-                      onSave={(body, category, clearRef, after) => void saveEdit(m, body, category, clearRef, after)}
+                      onSave={(body, category, clearRef, after, startAfter) => void saveEdit(m, body, category, clearRef, after, startAfter)}
                       afterChoices={isQueue && (m.state === "held" || m.state === "pending") ? afterChoices(g.memos, m) : undefined}
                       onOpenTidyRuns={
                         cat && isQueue
@@ -1534,7 +1535,8 @@ interface MemoRowProps {
   onEdit: () => void;
   onCancelEdit: () => void;
   /** after is the notes it waits for when the member changed them, absent otherwise. */
-  onSave: (body: string, category: string, clearRef: boolean, after?: string[]) => void;
+  /** after and startAfter are sent only when the member changed them (absent keeps them). */
+  onSave: (body: string, category: string, clearRef: boolean, after?: string[], startAfter?: string) => void;
   /** The notes of its auto-run category it may wait for; absent outside one, or once it has run. */
   afterChoices?: { id: string; label: string }[];
   /** Opens the run history of this note's category; absent outside an auto-run category. */
@@ -1566,6 +1568,8 @@ function MemoRow(props: MemoRowProps) {
   // The member asked to drop the note's reference; it is sent with the save, not before.
   const [clearRef, setClearRef] = useState(false);
   const [after, setAfter] = useState<string[]>(m.after ?? []);
+  // The start time as the datetime-local input holds it, a wall time of the member's time zone.
+  const [start, setStart] = useState(startAfterInputValue(m.startAfter));
   const ref = memoReference(m);
   // The earlier notes on offer, then any it already waits for that are no longer on offer (deleted,
   // moved, replaced, or kept past the list's window): those must stay visible so they can be removed.
@@ -1583,6 +1587,11 @@ function MemoRow(props: MemoRowProps) {
     const was = m.after ?? [];
     return after.length === was.length && after.every((id, i) => id === was[i]) ? undefined : after;
   };
+  // Compared as the input shows it, so an untouched field never re-sends a stored time (which may
+  // have passed, and the Control Plane would then clear it).
+  const startChanged = (): string | undefined =>
+    start === startAfterInputValue(m.startAfter) ? undefined : startAfterFromInput(start);
+  const save = () => props.onSave(body, cat, clearRef, afterChanged(), startChanged());
   const taRef = useRef<HTMLTextAreaElement>(null);
   useAutosizeTextarea(taRef, body);
 
@@ -1592,6 +1601,7 @@ function MemoRow(props: MemoRowProps) {
       setCat(currentCat);
       setClearRef(false);
       setAfter(m.after ?? []);
+      setStart(startAfterInputValue(m.startAfter));
       requestAnimationFrame(() => {
         const ta = taRef.current;
         if (ta) {
@@ -1641,7 +1651,7 @@ function MemoRow(props: MemoRowProps) {
               const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
               if (submitWithKey) {
                 e.preventDefault();
-                props.onSave(body, cat, clearRef, afterChanged());
+                save();
               }
             }}
           />
@@ -1653,7 +1663,7 @@ function MemoRow(props: MemoRowProps) {
               placeholder={tr("memo.category_ph")}
               onChange={(e) => setCat(e.target.value)}
             />
-            <Button small variant="primary" onClick={() => props.onSave(body, cat, clearRef, afterChanged())}>
+            <Button small variant="primary" onClick={save}>
               {tr("memo.save")}
             </Button>
             <Button small variant="ghost" onClick={props.onCancelEdit}>
@@ -1689,6 +1699,27 @@ function MemoRow(props: MemoRowProps) {
                   <div className="memo-edit-hint">{tr("memo.after_edit_hint")}</div>
                 </>
               )}
+            </fieldset>
+          )}
+          {/* Offered where the prerequisites are: a note of a queue that is held or waiting. */}
+          {afterOptions && (
+            <fieldset className="memo-edit-start">
+              <legend>{tr("memo.start_edit_label")}</legend>
+              <div className="memo-edit-start-row">
+                <input
+                  type="datetime-local"
+                  className="memo-edit-start-input"
+                  aria-label={tr("memo.start_edit_label")}
+                  value={start}
+                  onChange={(e) => setStart(e.target.value)}
+                />
+                {start && (
+                  <Button small variant="ghost" onClick={() => setStart("")}>
+                    {tr("memo.start_clear")}
+                  </Button>
+                )}
+              </div>
+              <div className="memo-edit-hint">{tr("memo.start_edit_hint")}</div>
             </fieldset>
           )}
           <div className="memo-edit-hint">{m.kind === "file" ? tr("memo.edit_hint_file") : tr("memo.edit_hint")}</div>
@@ -1850,6 +1881,7 @@ function MemoRow(props: MemoRowProps) {
             ))}
           </div>
         )}
+        {scheduledUntil(m) && <div className="memo-scheduled">{tr("memo.start_until", { at: fmtDateTime(scheduledUntil(m)!) })}</div>}
         {deferredUntil(m) && (
           <div className="memo-deferred" title={(m.deferReasons ?? []).at(-1)?.reason || undefined}>
             {tr("memo.defer_until", { at: fmtDateTime(deferredUntil(m)!) })}

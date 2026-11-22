@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorelay"
@@ -57,13 +58,14 @@ func memoTools() []toolSpec {
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"kind":      map[string]any{"type": "string", "description": "text | file"},
-							"body":      map[string]any{"type": "string", "description": "メモ本文（kind=text）またはコメント（kind=file）"},
-							"refPath":   map[string]any{"type": "string", "description": "~/repos/... のパス（kind=file）"},
-							"repo":      map[string]any{"type": "string", "description": "レポのバケツ。''=共通/未分類（任意）。worktree のフォルダ（repo@slug）を渡しても元のレポ（repo）に入る"},
-							"category":  map[string]any{"type": "string", "description": "サブプロジェクトのラベル（任意）"},
-							"reference": memoRefSchemaJA(false),
-							"after":     memoAfterSchemaJA(false),
+							"kind":       map[string]any{"type": "string", "description": "text | file"},
+							"body":       map[string]any{"type": "string", "description": "メモ本文（kind=text）またはコメント（kind=file）"},
+							"refPath":    map[string]any{"type": "string", "description": "~/repos/... のパス（kind=file）"},
+							"repo":       map[string]any{"type": "string", "description": "レポのバケツ。''=共通/未分類（任意）。worktree のフォルダ（repo@slug）を渡しても元のレポ（repo）に入る"},
+							"category":   map[string]any{"type": "string", "description": "サブプロジェクトのラベル（任意）"},
+							"reference":  memoRefSchemaJA(false),
+							"after":      memoAfterSchemaJA(false),
+							"startAfter": memoStartAfterSchemaJA(false),
 						},
 						"required": []string{"kind"},
 					},
@@ -94,13 +96,14 @@ func memoTools() []toolSpec {
 					"inputSchema": map[string]any{
 						"type": "object", "additionalProperties": false,
 						"properties": map[string]any{
-							"kind":      map[string]any{"type": "string", "enum": []string{"text", "file"}, "description": "text | file"},
-							"body":      map[string]any{"type": "string", "description": "The note (kind=text), or a comment on the file (kind=file)"},
-							"refPath":   map[string]any{"type": "string", "description": "A ~/repos/... path (kind=file)"},
-							"repo":      map[string]any{"type": "string", "description": "Which repo bucket it belongs to (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
-							"category":  map[string]any{"type": "string", "description": "Free-form sub-project label (optional; reuse one from list_memos)"},
-							"reference": memoRefSchema(false),
-							"after":     memoAfterSchema(false),
+							"kind":       map[string]any{"type": "string", "enum": []string{"text", "file"}, "description": "text | file"},
+							"body":       map[string]any{"type": "string", "description": "The note (kind=text), or a comment on the file (kind=file)"},
+							"refPath":    map[string]any{"type": "string", "description": "A ~/repos/... path (kind=file)"},
+							"repo":       map[string]any{"type": "string", "description": "Which repo bucket it belongs to (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
+							"category":   map[string]any{"type": "string", "description": "Free-form sub-project label (optional; reuse one from list_memos)"},
+							"reference":  memoRefSchema(false),
+							"after":      memoAfterSchema(false),
+							"startAfter": memoStartAfterSchema(false),
 							"continuation": map[string]any{"type": "boolean", "description": "Only for a session a queue started: true when this note is the next part of the queued message you were given, for the same work item (give the same reference, repo and category). " +
 								"If your user's release of that message allows continuations, it runs without another release, up to the queue's limit. Otherwise it waits for a release like any note"},
 						},
@@ -147,14 +150,15 @@ func memoTools() []toolSpec {
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
-							"id":        map[string]any{"type": "string", "description": "メモ id（list_memos で取得）"},
-							"body":      map[string]any{"type": "string", "description": "新しい本文（任意）"},
-							"repo":      map[string]any{"type": "string", "description": "新しいレポバケツ（任意）。worktree のフォルダ（repo@slug）は元のレポに入る"},
-							"category":  map[string]any{"type": "string", "description": "新しいカテゴリ（任意）"},
-							"refPath":   map[string]any{"type": "string", "description": "新しい参照パス（任意）"},
-							"position":  map[string]any{"type": "integer", "description": "グループ内の新しい並び順（任意）"},
-							"reference": memoRefSchemaJA(true),
-							"after":     memoAfterSchemaJA(true),
+							"id":         map[string]any{"type": "string", "description": "メモ id（list_memos で取得）"},
+							"body":       map[string]any{"type": "string", "description": "新しい本文（任意）"},
+							"repo":       map[string]any{"type": "string", "description": "新しいレポバケツ（任意）。worktree のフォルダ（repo@slug）は元のレポに入る"},
+							"category":   map[string]any{"type": "string", "description": "新しいカテゴリ（任意）"},
+							"refPath":    map[string]any{"type": "string", "description": "新しい参照パス（任意）"},
+							"position":   map[string]any{"type": "integer", "description": "グループ内の新しい並び順（任意）"},
+							"reference":  memoRefSchemaJA(true),
+							"after":      memoAfterSchemaJA(true),
+							"startAfter": memoStartAfterSchemaJA(true),
 						},
 						"required": []string{"id"},
 					},
@@ -178,13 +182,14 @@ func memoTools() []toolSpec {
 					"inputSchema": map[string]any{
 						"type": "object", "additionalProperties": false,
 						"properties": map[string]any{
-							"id":        map[string]any{"type": "string", "minLength": 1, "description": "Memo id from list_memos"},
-							"body":      map[string]any{"type": "string", "description": "Replacement note text (optional)"},
-							"refPath":   map[string]any{"type": "string", "description": "Replacement ~/repos/... path (optional)"},
-							"repo":      map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
-							"category":  map[string]any{"type": "string", "description": "Change the sub-project label (optional)"},
-							"reference": memoRefSchema(true),
-							"after":     memoAfterSchema(true),
+							"id":         map[string]any{"type": "string", "minLength": 1, "description": "Memo id from list_memos"},
+							"body":       map[string]any{"type": "string", "description": "Replacement note text (optional)"},
+							"refPath":    map[string]any{"type": "string", "description": "Replacement ~/repos/... path (optional)"},
+							"repo":       map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
+							"category":   map[string]any{"type": "string", "description": "Change the sub-project label (optional)"},
+							"reference":  memoRefSchema(true),
+							"after":      memoAfterSchema(true),
+							"startAfter": memoStartAfterSchema(true),
 						},
 						"required": []string{"id"},
 					},
@@ -337,6 +342,29 @@ func memoAfterSchemaJA(update bool) map[string]any {
 	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
 }
 
+// memoStartAfterSchema is the startAfter argument of the session's add_memo and update_memo.
+func memoStartAfterSchema(update bool) map[string]any {
+	desc := "The earliest time this note of an auto-run category (queue=true) may be started, as an RFC 3339 time " +
+		"WITH its offset, e.g. 2026-12-04T09:00:00+09:00 for 9:00 in Japan. A time without an offset is refused; " +
+		"one already past means no constraint; at most 60 days ahead. Before that time the note is not started, " +
+		"even when your user presses Run now, and releasing the note releases its start time too. " +
+		"Use it for work that must not begin before some event, instead of writing \"release after <date>\" in the body."
+	if update {
+		desc += " Omit to keep it; \"\" removes it."
+	}
+	return map[string]any{"type": "string", "description": desc}
+}
+
+// memoStartAfterSchemaJA is memoStartAfterSchema for the operator assistant's Japanese tool texts.
+func memoStartAfterSchemaJA(update bool) map[string]any {
+	desc := "自動実行カテゴリのこのメモを始めてよい最も早い時刻。オフセット付きの RFC 3339（例: 日本時間 9:00 なら 2026-12-04T09:00:00+09:00）。" +
+		"オフセットの無い時刻は拒否され、過ぎた時刻は制約なしになる。60 日先まで。その時刻までは「今すぐ実行」でも始まらず、解放するとこの時刻ごと解放したことになる。"
+	if update {
+		desc += "省略で据え置き、\"\" で外す。"
+	}
+	return map[string]any{"type": "string", "description": desc}
+}
+
 // memoWriteResult is the tool result of an add_memo or update_memo that the Control Plane
 // accepted. The answer goes back as it came, so the session sees `existing` and the state. A
 // reference that was sent but is missing from the answer means the Control Plane ignored it (an
@@ -354,7 +382,34 @@ func memoWriteResult(id json.RawMessage, args json.RawMessage, answer string) []
 			"support them yet, so nothing makes the note wait. Do not report them as stored; tell your user. "+
 			"The Control Plane answered: "+answer)
 	}
+	if memoStartAfterSent(args, time.Now()) && !memoStartAfterAnswered(answer) && !memoExistingAnswer(answer) {
+		return mcpToolErr(id, "The note was saved, but its start time (startAfter) was NOT kept: this Control Plane does not "+
+			"support it yet, so nothing makes the note wait for that time. Do not report it as stored; tell your user. "+
+			"The Control Plane answered: "+answer)
+	}
 	return mcpTextResult(id, answer)
+}
+
+// memoStartAfterSent reports whether the call asks for a start time to be kept: one that parses and
+// is still ahead at now. The Control Plane drops a past one by design, and refuses one that does not
+// parse, so neither says anything about whether it supports the field.
+func memoStartAfterSent(args json.RawMessage, now time.Time) bool {
+	var in struct {
+		StartAfter string `json:"startAfter"`
+	}
+	if json.Unmarshal(args, &in) != nil {
+		return false
+	}
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(in.StartAfter))
+	return err == nil && t.After(now)
+}
+
+// memoStartAfterAnswered reports whether the Control Plane's answer carries a start time.
+func memoStartAfterAnswered(answer string) bool {
+	var out struct {
+		StartAfter string `json:"startAfter"`
+	}
+	return json.Unmarshal([]byte(answer), &out) == nil && out.StartAfter != ""
 }
 
 // memoRefSent reports whether the call's reference is one to be kept: any non-empty field counts,

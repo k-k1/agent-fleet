@@ -7,7 +7,7 @@
 // so the owner can change a word with one line.
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import type { Session } from "../../types/session.ts";
-import { browserTimeZone, isValidTimeZone } from "../../lib/intl.ts";
+import { browserTimeZone, isValidTimeZone, zoneOffsetMinutes, zonedParts } from "../../lib/intl.ts";
 import type {
   Memo,
   MemoAfterItem,
@@ -64,6 +64,7 @@ const WAITING_REASONS: readonly string[] = [
   "no_tidy",
   "prerequisites",
   "deferred",
+  "scheduled",
   "nothing_waiting",
 ] satisfies MemoWaitingReason[];
 
@@ -82,6 +83,7 @@ function readWaiting(v: unknown): MemoQueueWaiting | undefined {
       by: d.by === "member" ? "member" : "category",
       blocked: num(d.blocked, 0),
       deferred: num(d.deferred, 0),
+      scheduled: num(d.scheduled, 0),
     },
   };
 }
@@ -221,6 +223,11 @@ export function waitingWords(
     case "tidying":
       return { key: "memo.waiting_tidying" };
     case "prerequisites":
+      if (w.detail?.scheduled)
+        return {
+          key: "memo.waiting_prerequisites_timed",
+          params: { count: w.detail.blocked ?? 0, timed: w.detail.scheduled + (w.detail.deferred ?? 0) },
+        };
       return w.detail?.deferred
         ? { key: "memo.waiting_prerequisites_deferred", params: { count: w.detail?.blocked ?? 0, deferred: w.detail.deferred } }
         : { key: "memo.waiting_prerequisites", params: { count: w.detail?.blocked ?? 0 } };
@@ -228,6 +235,10 @@ export function waitingWords(
       return when
         ? { key: "memo.waiting_deferred_at", params: { ...when, count: w.detail?.deferred ?? 0 } }
         : { key: "memo.waiting_deferred", params: { count: w.detail?.deferred ?? 0 } };
+    case "scheduled":
+      return when
+        ? { key: "memo.waiting_scheduled_at", params: { ...when, count: w.detail?.scheduled ?? 0 } }
+        : { key: "memo.waiting_scheduled", params: { count: w.detail?.scheduled ?? 0 } };
   }
 }
 
@@ -952,4 +963,35 @@ export function runOpenPRs(session: Pick<Session, "pr" | "links"> | undefined): 
     if ((l.state === "open" || l.state === "draft" || l.state === "merged") && l.key && !out.some((k) => l.key.endsWith(k))) out.push(l.key);
   }
   return out;
+}
+
+// ---- a start time a note carries (ADR 0137, addendum 2026-11-22) ------------------------------
+
+/** The start time of a note of a queue while it is still ahead, else null. A held note shows it too:
+ *  approving the note approves the time. */
+export function scheduledUntil(m: Pick<Memo, "state" | "startAfter">, now: number = Date.now()): string | null {
+  if ((m.state !== "pending" && m.state !== "held") || !m.startAfter) return null;
+  const t = Date.parse(m.startAfter);
+  return Number.isNaN(t) || t <= now ? null : m.startAfter;
+}
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+/** A stored start time as a datetime-local input's value ("YYYY-MM-DDTHH:MM"), in the member's
+ *  effective time zone, not the browser's. "" for none. */
+export function startAfterInputValue(iso: string | undefined): string {
+  const p = iso ? zonedParts(iso) : null;
+  return p ? `${String(p.year).padStart(4, "0")}-${pad2(p.month)}-${pad2(p.day)}T${pad2(p.hour)}:${pad2(p.minute)}` : "";
+}
+
+/** A datetime-local value, read as a wall time of the member's effective time zone, as the RFC 3339
+ *  time (UTC) the Control Plane takes; "" for an empty or unreadable value. The offset is looked up
+ *  twice: the first guess may sit on the other side of a DST change from the answer. */
+export function startAfterFromInput(local: string): string {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(local);
+  if (!m) return "";
+  const wall = Date.UTC(+m[1], +m[2] - 1, +m[3], +m[4], +m[5]);
+  let t = wall - zoneOffsetMinutes(wall) * 60000;
+  t = wall - zoneOffsetMinutes(t) * 60000;
+  return new Date(t).toISOString();
 }

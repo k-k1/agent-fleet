@@ -362,6 +362,15 @@ Workspace を起こさない。
   メモは `notBefore` と `deferCount` を持ち、`deferReasons` は `GET /api/memos` にだけ載る（token の面と `/mcp` には
   載せない。セッションの理由が後のセッションに届かないように）。配信は `defer {reason, notBefore, at, result}`・
   `returnBlocked`・`returnedAt` を持つ。
+- **開始日時（`startAfter`）**（ADR 0137 の付記 2026-11-22、#4777、`internal/memoafter/startafter.go`）。`memo.start_after`
+  （固定幅の UTC、無しは `""`、移行 0152 / pg 0137）は、メッセージを取れる最も早い時刻。`not_before` と違って中身であり、
+  作成と更新がどの面でも受ける（REST の `startAfter`、`add_memo` / `update_memo` の `startAfter`。オフセット付きの
+  RFC 3339 でなければ `400 memo_start_after_invalid`、過ぎた時刻は外す、60 日先まで、更新では省略で据え置き・`""` で外す）。
+  あるときだけ `memoContentHash` に足し、CHECK 付きの `release_start_after` に写し、承認は消さない。取り出しは両方の時刻を
+  待つ（`memoafter.Waits`、`store.memoNotBeforeSQL`）。待っているメッセージがすべて開始日時を待ち、差し戻されたものが
+  無いとき待ち理由は `until` 付きの `scheduled` で、`detail.scheduled` が数える。整理はそうしたメッセージを残し、
+  どのキューからも出たメッセージでは消える。Agent の中継は、未来の時刻を送ったのに答えに無い作成・更新を「残らなかった」
+  と返す（古い Control Plane）。
 
 - **型付きの参照**（[decisions/0137](../decisions/0137-message-queues.ja.md) §4、step 3 の Control Plane 側）。
   メッセージは作業項目への指し先を持てる。本文は写さない。Agent（step 3b、実装済み）と Console（step 3c）はこの契約の上に作る。

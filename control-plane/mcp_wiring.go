@@ -178,9 +178,10 @@ func (d cpDeps) MemoList(ctx context.Context, membershipID string) (any, error) 
 
 // The memo methods below are the /mcp face: memoFaceMCP is fixed here, and the producer is
 // the connection id mcpsrv reads from the authenticated principal.
-func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *mcpsrv.MemoRef, after []string) (any, error) {
+func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *mcpsrv.MemoRef, after []string, startAfter string) (any, error) {
 	dto, _, aerr := memoCreateVia(ctx, d.m.store, mv, memoDTO{
 		Repo: repo, Category: category, Kind: kind, Body: body, RefPath: refPath, Reference: memoRefFromMCP(ref), After: after,
+		StartAfter: startAfter,
 	}, memoVia{face: memoFaceMCP, producer: connection})
 	if aerr != nil {
 		return nil, errors.New(aerr.message)
@@ -188,9 +189,10 @@ func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, connect
 	return dto, nil
 }
 
-func (d cpDeps) MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int, ref *mcpsrv.MemoRef, after *[]string) (any, error) {
+func (d cpDeps) MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int, ref *mcpsrv.MemoRef, after *[]string, startAfter *string) (any, error) {
 	dto, aerr := memoUpdateFor(ctx, d.m.store, membershipID, id, memoPatch{
 		Repo: repo, Category: category, Body: body, RefPath: refPath, Position: position, Reference: memoRefFromMCP(ref), After: after,
+		StartAfter: startAfter,
 	}, memoVia{face: memoFaceMCP})
 	if aerr != nil {
 		return nil, errors.New(aerr.message)

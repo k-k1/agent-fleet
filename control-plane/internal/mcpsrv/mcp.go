@@ -841,13 +841,14 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"kind":      map[string]any{"type": "string", "description": "text | file"},
-					"body":      map[string]any{"type": "string", "description": "note text (kind=text) or comment (kind=file)"},
-					"refPath":   map[string]any{"type": "string", "description": "~/repos/... path (kind=file)"},
-					"repo":      map[string]any{"type": "string", "description": "repo bucket, '' = 共通/未分類 (optional)"},
-					"category":  map[string]any{"type": "string", "description": "sub-project label (optional)"},
-					"reference": memoRefSchema(false),
-					"after":     memoAfterSchema(false),
+					"kind":       map[string]any{"type": "string", "description": "text | file"},
+					"body":       map[string]any{"type": "string", "description": "note text (kind=text) or comment (kind=file)"},
+					"refPath":    map[string]any{"type": "string", "description": "~/repos/... path (kind=file)"},
+					"repo":       map[string]any{"type": "string", "description": "repo bucket, '' = 共通/未分類 (optional)"},
+					"category":   map[string]any{"type": "string", "description": "sub-project label (optional)"},
+					"reference":  memoRefSchema(false),
+					"after":      memoAfterSchema(false),
+					"startAfter": memoStartAfterSchema(false),
 				},
 				"required": []string{"kind"},
 			},
@@ -866,7 +867,7 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 				}
 				dto, err := a.cp.MemoCreate(ctx, res.MV, mcpCallFrom(ctx).patID,
 					argStr(args, "repo"), argStr(args, "category"),
-					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref, afterList)
+					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref, afterList, argStr(args, "startAfter"))
 				if err != nil {
 					return "", err
 				}
@@ -879,14 +880,15 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"id":        map[string]any{"type": "string", "description": "memo id (from list_memos)"},
-					"body":      map[string]any{"type": "string", "description": "new body (optional)"},
-					"repo":      map[string]any{"type": "string", "description": "new repo bucket (optional)"},
-					"category":  map[string]any{"type": "string", "description": "new category (optional)"},
-					"refPath":   map[string]any{"type": "string", "description": "new ref path (optional)"},
-					"position":  map[string]any{"type": "integer", "description": "new position within its group (optional)"},
-					"reference": memoRefSchema(true),
-					"after":     memoAfterSchema(true),
+					"id":         map[string]any{"type": "string", "description": "memo id (from list_memos)"},
+					"body":       map[string]any{"type": "string", "description": "new body (optional)"},
+					"repo":       map[string]any{"type": "string", "description": "new repo bucket (optional)"},
+					"category":   map[string]any{"type": "string", "description": "new category (optional)"},
+					"refPath":    map[string]any{"type": "string", "description": "new ref path (optional)"},
+					"position":   map[string]any{"type": "integer", "description": "new position within its group (optional)"},
+					"reference":  memoRefSchema(true),
+					"after":      memoAfterSchema(true),
+					"startAfter": memoStartAfterSchema(true),
 				},
 				"required": []string{"id"},
 			},
@@ -902,7 +904,7 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 				dto, err := a.cp.MemoUpdate(ctx, res.MV.MembershipID, argStr(args, "id"),
 					argStrPtr(args, "repo"), argStrPtr(args, "category"),
 					argStrPtr(args, "body"), argStrPtr(args, "refPath"),
-					argIntPtr(args, "position"), ref, after)
+					argIntPtr(args, "position"), ref, after, argStrPtr(args, "startAfter"))
 				if err != nil {
 					return "", err
 				}
@@ -1169,6 +1171,16 @@ func memoAfterSchema(update bool) map[string]any {
 		"description": desc,
 		"items":       map[string]any{"type": "string"},
 	}
+}
+
+// memoStartAfterSchema is the `startAfter` argument of add_memo and update_memo.
+func memoStartAfterSchema(update bool) map[string]any {
+	desc := "Optional: the earliest time this note of an auto-run category may be started, as an RFC 3339 time WITH its offset (e.g. 2026-12-04T09:00:00+09:00 for 9:00 in Japan). A time without an offset is refused, and one already past means no constraint. At most 60 days ahead. " +
+		"Before that time the note is not started, even when the user presses Run now. Approving the note approves its start time too."
+	if update {
+		desc += " Omit to leave it as it is; \"\" clears it. Changing it on a released note sends it back to wait for release."
+	}
+	return map[string]any{"type": "string", "description": desc}
 }
 
 // argMemoAfter reads the `after` argument: absent or null is nil (leave it), an array of strings is

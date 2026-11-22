@@ -94,11 +94,12 @@ func (v memoVia) provenance() string {
 func (v memoVia) fromWorkspace() bool { return v.face != memoFaceConsole }
 
 // memoContentHash is what a release is bound to: the body, the kind, the ref path, the
-// attachments, the reference, the prerequisites, the repo and the category. The category is its name, so a rename changes the
+// attachments, the reference, the prerequisites, the start time, the repo and the category. The category is its name, so a rename changes the
 // hash and a pending message's release is re-recorded in the same transaction.
 func memoContentHash(m store.Memo) string {
 	parts := append([]string{"memo-content/v1", m.Kind, m.Body, m.RefPath, m.Attachments, m.Repo, m.Category}, memoRefHashParts(m)...)
-	b, _ := json.Marshal(append(parts, memoafter.HashParts(m)...))
+	parts = append(parts, memoafter.HashParts(m)...)
+	b, _ := json.Marshal(append(parts, memoafter.StartAfterHashParts(m)...))
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -187,7 +188,7 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext, accept bool, via memoV
 		// A plain note waits for nothing: a list left behind would block its every later move,
 		// and come back if the category became a queue again.
 		next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = "", "", "", ""
-		next.AfterIDs, next.HeldReason = "", ""
+		next.AfterIDs, next.HeldReason, next.StartAfter = "", "", ""
 		return next, nil
 	}
 	// A superseded message was replaced by a tidy run and comes back only by undoing it: whatever
@@ -970,6 +971,16 @@ func memoRefHashParts(m store.Memo) []string {
 		return nil
 	}
 	return []string{"ref", m.RefProvider, m.RefKey, m.RefURL}
+}
+
+// memoStartAfterParse is memoafter.ParseStartAfter with its refusal as the API's answer (400
+// memo_start_after_invalid).
+func memoStartAfterParse(raw string, now time.Time) (string, *apiError) {
+	at, err := memoafter.ParseStartAfter(raw, now)
+	if err != nil {
+		return "", &apiError{http.StatusBadRequest, errCodeMemoStartAfterInvalid, err.Error()}
+	}
+	return at, nil
 }
 
 // memoAfterResolve is memoafter.Resolve with its refusal as the API's answer (400 memo_after_invalid).

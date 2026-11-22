@@ -157,6 +157,13 @@ Check the memo it waited for, then approve the memo again (it waits once more) o
 - A memo another waits for is kept past the 7 days after it was sent, until nothing waits for it any more
 - When a memo has waited longer than "Overdue after (hours)" since it became "Waiting to run", you are notified once
 
+### Run a memo no earlier than a given time
+
+A memo can carry a start time: even once approved, it does not run before it, and "Run now" does not take it. Use it for work that must wait for something, such as a check that a scheduled deletion went through. In the memo's edit view, pick the time under "**Do not run before**" and press "Save" ("Clear" removes it). The row then says "Runs from *time*".
+
+- The time is read in the time zone of your settings, at most 60 days ahead; one already past means none. A session sets it with `add_memo` / `update_memo` (`startAfter`, with its offset, such as `2026-12-04T09:00:00+09:00`; `""` removes it)
+- It is part of the memo: approving the memo approves it, and the approval card shows it. When a session changes it on a memo you approved, the memo goes back to "Waits for approval". A tidy keeps such a memo as it is
+
 ### Approve
 
 Memos waiting for approval gather in a card for each session (or `/mcp` connection) that added them.
@@ -525,6 +532,7 @@ When memos are waiting to run and nothing starts, a line or a notice under the c
 | Waiting for more memos: *n* of *m* ready so far, and *k* more waiting for the memos they depend on. … | As above. Memos that wait for other memos do not count until those have ended well ([Make a memo wait for another](#make-a-memo-wait-for-another)) |
 | Every waiting memo (*n*) waits for other memos of this category to finish first. | Every memo waiting to run waits for another memo. It runs once those have ended well |
 | Every waiting memo (*n*) was handed back by its run and waits for its time.<br>Every waiting memo (*n*) was handed back by its run. The next may run at *time*. | Their runs handed them back ([A run hands its memo back](#a-run-hands-its-memo-back)). They run by themselves once the time has come, and "Run now" does not take them before it |
+| Every waiting memo (*n*) waits for its start time.<br>Every waiting memo (*n*) waits for its start time. The next may run at *time*. | Each memo waiting to run has a start time still ahead ([Run a memo no earlier than a given time](#run-a-memo-no-earlier-than-a-given-time)). They run by themselves once the time has come, and "Run now" does not take them before it. To run one now, clear its start time |
 | A memo was just added. Runs start once nothing new has come in for a minute.<br>A memo was just added. Runs start once nothing new has come in for a minute, at *time*. | Wait. While memos keep coming, the minute starts again |
 | The number of runs allowed per day has been reached, so nothing starts by itself.<br>The number of runs allowed per day has been reached. The next run can start at *time*. | The runs of the last 24 hours have reached "Runs per day". Wait for the time, or raise the number. "Run now" still works |
 | The last run could not be sent, so auto-run is waiting a while before it tries again.<br>The last run could not be sent, so auto-run is waiting until *time* before it tries again. | Wait, and it tries again by itself. The wait begins at 5 minutes, doubles with each failure in a row, and is at most 4 hours. If it goes on, check the run history for the run that ended as "Not sent" |
