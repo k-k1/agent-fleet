@@ -132,7 +132,7 @@ function EmptyPane({ cell, style, active, tabbed, canSplitRight, canSplitDown, c
       {!canClose ? (
         <HomeView embedded />
       ) : (
-        <div className="pane-empty">
+        <div className="pane-blank">
           <span>{tr("pane.no_session")}</span>
           {active && (
             <Button variant="ghost" icon="home" onClick={() => openHome()}>

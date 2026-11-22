@@ -91,7 +91,7 @@ button.mt-tool-outhead {
   background: var(--surface-2, rgba(127, 127, 127, 0.1));
   border-radius: 4px;
 }
-.mt-tool-diff-inline .dv-table {
+.mt-tool-diff-inline table {
   font-size: 11px;
 }
 
