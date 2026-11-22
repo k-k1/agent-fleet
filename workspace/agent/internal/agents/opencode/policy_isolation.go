@@ -373,21 +373,25 @@ func policyConfigErrFrom(files []string, v policyView) error {
 }
 
 // customManagedOnlyErr refuses a launch of m on the approved custom endpoint everywhere but a
-// Managed session on the shared serve. Only that serve carries the inline pin (enabled_providers
-// and the provider's base URL) and has its config files checked; a Terminal pane, a private route
-// server or a standalone server starts without it, and a process whose config root is not the
-// pinned one reads files nobody checked, so a member config could move the approved URL. managed
-// is true for a launch through the shared serve's driver. Nil while nothing is restricted, while
-// the endpoint is not approved, or for any other provider.
+// Managed session on the shared serve with the pinned config root. Only that serve carries the
+// inline pin (enabled_providers and the provider's base URL) and has its config files checked; a
+// Terminal pane, a private route server or a standalone server starts without it. A process whose
+// config root is not the pinned one reads files nobody checked, so readView withholds the pin
+// there, whatever model a launch names (the serve is shared), and a launch on the custom provider
+// is refused here. managed is true for a launch through the shared serve's driver. Nil while
+// nothing is restricted, while the endpoint is not approved, or for any other provider.
 func customManagedOnlyErr(m session.Meta, managed bool) error {
-	return customManagedOnlyErrFrom(m, managed, readView(), os.Getenv("XDG_CONFIG_HOME"))
+	return customManagedOnlyErrFrom(m, managed, readView())
 }
 
-func customManagedOnlyErrFrom(m session.Meta, managed bool, v policyView, xdg string) error {
+func customManagedOnlyErrFrom(m session.Meta, managed bool, v policyView) error {
 	if !v.restricted {
 		return nil
 	}
 	c := allowedCustom(v.p, v.engines, v.custom)
+	if c == nil {
+		c = allowedCustom(v.p, v.engines, v.foreign)
+	}
 	if c == nil {
 		return nil
 	}
@@ -398,9 +402,9 @@ func customManagedOnlyErrFrom(m session.Meta, managed bool, v policyView, xdg st
 	switch {
 	case !managed:
 		return fmt.Errorf("%w: the approved custom endpoint (custom-api) is available to Managed sessions only; this launch has no provider pin", ErrPolicyConfig)
-	case xdg != "" && filepath.Clean(xdg) != filepath.Dir(paths.OpencodeConfigDir()):
-		return fmt.Errorf("%w: the approved custom endpoint (custom-api) needs the opencode config root to be %s (XDG_CONFIG_HOME is %s), the only one whose files are checked",
-			ErrPolicyConfig, filepath.Dir(paths.OpencodeConfigDir()), xdg)
+	case v.custom == nil:
+		return fmt.Errorf("%w: the approved custom endpoint (custom-api) needs the opencode config root to be %s (XDG_CONFIG_HOME differs), the only one whose files are checked",
+			ErrPolicyConfig, filepath.Dir(paths.OpencodeConfigDir()))
 	}
 	return nil
 }

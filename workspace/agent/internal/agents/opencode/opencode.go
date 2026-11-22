@@ -117,6 +117,12 @@ func (a agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	return agents.PendingModal{Kind: "question", Questions: td.Pending}, true
 }
 
+// LaunchRefusal implements agents.LaunchGuard: the approved custom endpoint is refused on the
+// driver that carries no provider pin (customManagedOnlyErr).
+func (agentImpl) LaunchRefusal(m session.Meta) error {
+	return customManagedOnlyErr(m, m.DriverKind() == session.DriverManaged && m.Route == nil)
+}
+
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// opencode resumes (or starts) in its real project dir; refuse if it's gone.
 	if !session.DirExists(m.Dir) {
