@@ -315,14 +315,10 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
   );
 }
 
-// Rendered inside the Section body: lives and dies with it, so it reports the real visibility.
-function BodyMark({ mounted, onUnmount }: { mounted: { current: boolean }; onUnmount: () => void }) {
+// Rendered inside the Section body: its unmount is the real "body went away" signal.
+function BodyMark({ onUnmount }: { onUnmount: () => void }) {
   useLayoutEffect(() => {
-    mounted.current = true;
-    return () => {
-      mounted.current = false;
-      onUnmount();
-    };
+    return onUnmount;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return null;
@@ -452,9 +448,8 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // list moves it under its schedule row (a fresh list instance would start closed).
   const [endedOpen, setEndedOpen] = useState<Record<string, boolean>>({});
   const setEnded = (key: string, v: boolean) => setEndedOpen((m) => (!!m[key] === v ? m : { ...m, [key]: v }));
-  // Whether the section body is mounted (Section unmounts it when closed, but never under
-  // SoloSection, so the section's own open flag cannot tell). Closing resets every fold.
-  const bodyMounted = useRef(false);
+  // Section unmounts its body when closed, but never under SoloSection, so the section's own
+  // open flag cannot tell: BodyMark's unmount resets every fold.
   const prevRestEnded = useRef<Map<string, string>>(new Map());
   useLayoutEffect(() => {
     const prev = prevRestEnded.current;
@@ -467,7 +462,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
     if (grouped.rest.length) keep.add("");
     for (const [id, list] of grouped.bySchedule) if (list.length) keep.add(id);
     const carry = new Set<string>();
-    if (bodyMounted.current && endedOpen[""]) {
+    if (endedOpen[""]) {
       for (const [id, list] of grouped.bySchedule) {
         if (list.some((r) => !r.live && prev.get(r.root.name) === "")) carry.add(id);
       }
@@ -613,7 +608,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
       open={sectionOpen}
       onToggle={() => setSectionOpen(!sectionOpen)}
     >
-      <BodyMark mounted={bodyMounted} onUnmount={() => setEndedOpen({})} />
+      <BodyMark onUnmount={() => setEndedOpen({})} />
       {/* A failed fetch is shown as its own state, not as "empty" (the rows on screen stay). */}
       {loadErr && (
         <div className="sched-load-err" role="status" title={loadErr}>

@@ -313,6 +313,35 @@ describe("SchedulesSection fold state lifetime", () => {
   });
 });
 
+describe("SchedulesSection late list racing a section close", () => {
+  it("does not carry a fold into a row when the section closes in the same commit as the late list", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({
+      sessions: [{ name: "cron-old", title: "cron-old", kind: "claude", alive: false, origin: "schedule", scheduleId: "sch_1", createdAt: "2026-11-01T00:00:00Z" }] as never,
+    });
+    let answer: (v: unknown) => void = () => {};
+    scheduleList.mockReturnValue(new Promise((r) => (answer = r)));
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      await render();
+      await act(async () => {
+        vi.advanceTimersByTime(5100);
+      });
+      await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+      await act(async () => {
+        host.querySelector<HTMLButtonElement>(".ui-section-toggle")!.click(); // close, batched with the answer
+        answer([sched]);
+      });
+      expect(host.querySelector(".sched-list")).toBeNull();
+      await act(async () => host.querySelector<HTMLButtonElement>(".ui-section-toggle")!.click());
+      expect(host.querySelector('[data-sched-sessions-of="sch_1"] .sched-sess-ended')!.getAttribute("aria-expanded")).toBe("false");
+    } finally {
+      localStorage.removeItem("af-section-schedules");
+      useSessionsStore.setState({ sessions: [] });
+    }
+  });
+});
+
 describe("SchedulesSection scheduled sessions under a working set", () => {
   it("shows a root outside the set as a heading without a state or an open button", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
