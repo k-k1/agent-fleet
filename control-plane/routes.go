@@ -16,6 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
 	"github.com/k-k1/agent-fleet/control-plane/internal/localredirect"
 	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
+	"github.com/k-k1/agent-fleet/control-plane/internal/pushsrv"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 	"github.com/k-k1/agent-fleet/control-plane/internal/watchingress"
 )
@@ -53,6 +54,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerWatchIngressRoutes(mux, cfg)
 	registerMCPServerRoutes(mux, cfg)
 	registerNotificationRoutes(mux, cfg)
+	registerPushRoutes(mux, cfg)
 	registerLimitBoardRoutes(mux, cfg)
 	registerUpdateRoutes(mux, cfg)
 	registerRepoFSRoutes(mux, cfg)
@@ -75,6 +77,27 @@ func registerNotificationRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/notifications", n.withResolved(n.list))
 	mux.HandleFunc("POST /api/notifications/seen", n.withMembership(n.seen))
 	mux.HandleFunc("POST /api/notifications/usage-observations", n.withMembership(n.observeUsage))
+}
+
+// Web Push subscriptions (#4750). Registered only with AF_WEB_PUSH=true; the service itself is
+// built at start-up and answers 503 when its key is missing.
+func registerPushRoutes(mux *http.ServeMux, cfg config) {
+	if !pushsrv.Enabled() {
+		return
+	}
+	a := memberAuth{cfg.mgr}
+	mux.HandleFunc("GET /api/push/config", a.withMembership(func(w http.ResponseWriter, _ *http.Request, _ store.Identity, _ store.MembershipView) {
+		cfg.mgr.push.Config(w)
+	}))
+	mux.HandleFunc("GET /api/push/subscriptions", a.withMembership(func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		cfg.mgr.push.List(w, r, mv.MembershipID)
+	}))
+	mux.HandleFunc("POST /api/push/subscriptions", a.withMembership(func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		cfg.mgr.push.Subscribe(w, r, mv.MembershipID)
+	}))
+	mux.HandleFunc("DELETE /api/push/subscriptions/{id}", a.withMembership(func(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+		cfg.mgr.push.Remove(w, r, mv.MembershipID, r.PathValue("id"))
+	}))
 }
 
 // --- authGate exemption registry (docs/log/23 P2-W1) ---------------------------

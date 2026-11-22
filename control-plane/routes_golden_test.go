@@ -52,6 +52,10 @@ func routeSwitches(t *testing.T) []routeSwitch {
 	return []routeSwitch{
 		{name: "mcp", env: map[string]string{"AF_MCP_ENABLED": "true"},
 			routes: []string{"ANY /mcp", "ANY /mcp/memory"}},
+		// Web Push subscriptions (#4750). Registration checks only the switch; the key is read at
+		// start-up and a missing one makes the routes answer 503.
+		{name: "web-push", env: map[string]string{"AF_WEB_PUSH": "true"},
+			routes: []string{"GET /api/push/config", "GET /api/push/subscriptions", "POST /api/push/subscriptions", "DELETE /api/push/subscriptions/{id}"}},
 		// Native self-update (registerUpdateRoutes). Registration only checks that the variable
 		// is set; the link itself is read per request.
 		{name: "update", env: map[string]string{"AF_SELF_LINK": filepath.Join(t.TempDir(), "af")},
@@ -74,6 +78,7 @@ func routeSwitches(t *testing.T) []routeSwitch {
 // AWS config.
 var routeSwitchOffEnv = []string{
 	"AF_MCP_ENABLED",
+	"AF_WEB_PUSH",
 	"AF_SELF_LINK",
 	"AF_PROVIDED_ROUTES",
 	"AF_ENGINES_SSM_PARAM", "AF_ENGINES_JSON", "AF_COMFY_URL", "AF_LLM_URL",
