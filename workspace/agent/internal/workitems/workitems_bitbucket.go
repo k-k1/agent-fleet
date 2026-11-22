@@ -107,7 +107,6 @@ func bitbucketSearchWorkItems(s *secrets.Data, queryID, query string) ([]workIte
 			rows[i].CanComment = true
 		}
 	}
-	bitbucketEnrichPullRequests(auth, bitbucketConnKey(s), rows)
 	return rows, nil
 }
 
@@ -154,6 +153,11 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 		return nil, "", bitbucketWorkItemError(status, body, q)
 	}
 	rows, err := parseBitbucketPullRequests(body, queryID)
+	if strings.EqualFold(strings.TrimSpace(hdr.Get("X-RateLimit-NearLimit")), "true") {
+		for i := range rows {
+			rows[i].bbListNear = true
+		}
+	}
 	return rows, hdr.Get("X-OAuth-Scopes"), err
 }
 

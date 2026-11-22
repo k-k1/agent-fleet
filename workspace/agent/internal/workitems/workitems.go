@@ -103,6 +103,8 @@ type workItemOut struct {
 	// srcHash and dstHash are a Bitbucket pull request's source and destination commit ids as the
 	// list read them: the cache key of its status enrichment. Not on the wire.
 	srcHash, dstHash string
+	// bbListNear marks rows of a Bitbucket page whose list response warned X-RateLimit-NearLimit.
+	bbListNear bool
 }
 
 // gitHubLabel is one entry of a GitHub issue's or pull request's `labels` array.
@@ -166,6 +168,7 @@ func HandleWorkItemsFetch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "store_failed", err.Error())
 		return
 	}
+	started := time.Now()
 	for _, q := range in.Queries {
 		rows, total, err := fetchWorkItemQuery(s, q)
 		if err != nil {
@@ -177,6 +180,9 @@ func HandleWorkItemsFetch(w http.ResponseWriter, r *http.Request) {
 			truncs = append(truncs, workItemTruncOut{QueryID: q.ID, Total: total})
 		}
 	}
+	// Once, over every query's rows: the status budget and the stop on a rate limit are per
+	// refresh, not per query.
+	bitbucketEnrichItems(s, items, started)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"items": items, "errors": errs, "truncated": truncs})
 }
 

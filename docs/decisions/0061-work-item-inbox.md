@@ -669,19 +669,28 @@ fetch, never the display) are unchanged.
 
 Decision 17 amended for one case: "one saved query = one provider call" no longer holds for the CI and conflict status of
 Bitbucket rows. Bitbucket Cloud has no bulk endpoint for build statuses or mergeability (only Data Center does), and the
-list carries neither, so the rail would draw nothing where GitHub rows already show both. After the list call, each open
-or draft row gets two reads: `/statuses` and `/mergeability/checks`, parsed by the detail panel's own parsers.
+list carries neither, so the rail would draw nothing where GitHub rows already show both. Once per refresh, after every
+query's list, each open or draft Bitbucket row gets two reads: `/statuses` and `/mergeability/checks`, parsed by the
+detail panel's own parsers.
 
-- The list adds `source.commit.hash` and `destination.commit.hash`. The answers are cached per connection, repository and
-  pull request: the checks keyed by the source hash, the conflict verdict by both hashes. A half is re-read only when its
-  own key changed, so an idle rail makes no status calls.
-- At most 10 pull requests are re-read per refresh, most recently updated first, 3 at a time. The others keep a valid
-  cached answer or stay "not read" and are reached on a later refresh.
+- The list adds `source.commit.hash` and `destination.commit.hash`. Answers are cached per connection, repository and pull
+  request: the checks keyed by the source hash, the conflict verdict by both hashes. A half is re-read only when its own
+  key changed, so an idle rail makes no status calls. Only a final answer is kept: a build still running, a statuses page
+  that has a next page, or an "unknown" verdict is shown (or withheld) and read again on the next refresh.
+- At most 10 pull requests are re-read per refresh, counted over all queries together, most recently updated first, 3 at a
+  time. A pull request whose last attempt failed goes behind those never tried, so a persistent error on the newest ten
+  cannot starve the rest. The others keep a valid cached answer or stay "not read" and are reached on a later refresh.
 - Why the cap: repository reads are limited to 1,000 requests per hour per user (OAuth and API tokens), and the same budget
   serves every query, the detail panel and merges. 10 pull requests are 20 calls per refresh, so a 5-minute refresh
   spends at most 240 an hour even if every hash changed.
-- A 429 or `X-RateLimit-NearLimit: true` (under 20 % left) stops further status reads for that refresh, and these reads are
-  never retried. A failed or 500 read (custom merge checks that are unavailable answer 500) leaves the row "not read":
-  it draws nothing, never green. An "unknown" conflict verdict is shown but not cached. The list is never lost to any of it.
+- A 429 stops further status reads for that refresh, as does `X-RateLimit-NearLimit: true` (under 20 % left) on the list
+  or on a read, noticed when the headers arrive. Atlassian documents the header for scaled access tokens only, so for a
+  user OAuth or API token connection the 429 is the stop that is always there and the header a bonus. Nothing is retried.
+  The reads share one deadline, 20 s after the refresh started, so a stuck read cannot cost the list the Control Plane
+  waits for (it gives the fetch 30 s).
+- A row shows its status only when both halves were read. A failed or 500 read (custom merge checks that are unavailable
+  answer 500), a truncated or malformed 200, or a statuses page with a next page and no failure leaves the row "not read":
+  no CI mark, no conflict mark, never green. An "unknown" verdict is shown as the rail shows it for GitHub: no mark.
+  The list is never lost to any of it.
 
 Out of scope: Jira, Bitbucket Data Center (which has a bulk endpoint) and the detail panel.
