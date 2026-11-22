@@ -210,7 +210,7 @@ func memoRefFromMCP(r *mcpsrv.MemoRef) *memoRefWire {
 }
 
 func (d cpDeps) MemoFlush(ctx context.Context, rt runtime.Runtime, membershipID, sessionName string, ids []string) (map[string]any, error) {
-	out, aerr := memoFlushFor(ctx, d.m.store, rt, membershipID, sessionName, ids, "", memoVia{face: memoFaceMCP})
+	out, aerr := memoFlushFor(ctx, d.m.store, rt, membershipID, sessionName, ids, "", false, memoVia{face: memoFaceMCP})
 	if aerr != nil {
 		return nil, errors.New(aerr.message)
 	}

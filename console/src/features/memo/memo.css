@@ -672,6 +672,13 @@
   color: var(--muted2);
   font-size: 11px;
 }
+.memo-send-keep {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12px;
+}
 .memo-send-text {
   width: 100%;
   resize: vertical;
