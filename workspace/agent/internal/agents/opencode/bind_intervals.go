@@ -208,7 +208,7 @@ func readGapsFile() (gaps []int64, pending, ok bool) {
 }
 
 // resolveGapPending retires, once the evidence file is readable again, every life it holds when a
-// first read failed with nothing known: the bound is the newest start time among those events, so a
+// first read failed with nothing known: the bound is the newest daemon-event time among those events, so a
 // life stamped on a clock that was set back is still behind it, while a life that starts after the
 // recovery is not retired (a moved clock inside the file is the business of Floor and Carry). The
 // caller holds bindIntervalsMu and has just read evs whole. false means the gaps file could not be
@@ -224,7 +224,9 @@ func resolveGapPending(evs []bindEvent) bool {
 	}
 	bound := int64(0)
 	for _, e := range evs {
-		bound = max(bound, e.At)
+		if e.Kind != evAccount { // an account reading is not a life, and a trim may drop it later
+			bound = max(bound, e.At)
+		}
 	}
 	if bound > 0 && !noteGap(bound) {
 		return true // binding is off already; the marker stays, so a restart retires them again

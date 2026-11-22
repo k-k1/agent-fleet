@@ -1,10 +1,12 @@
 package opencode
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -544,5 +546,40 @@ func TestBindingGapsUnreadableIsTransient(t *testing.T) {
 	_ = os.Remove(gp)
 	if daemonBinder() == nil {
 		t.Error("no binder after the gaps file is readable again")
+	}
+}
+
+// The retire bound is the newest daemon event's At: a clock correction recorded earlier in the file
+// (a Floor above the later lives' starts) does not retire a
+// life that starts after the recovery.
+func TestBindingUnknownGapBoundIgnoresFloor(t *testing.T) {
+	bindT(t)
+	dir := paths.AgentConfigDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := []bindEvent{
+		{At: 7000, Kind: evStart, Key: "A", Gen: 1, Reg: true, Floor: 14000},
+		{At: 7100, Kind: evAccount, Acct: acctOut, Gen: 1},
+	}
+	var sb strings.Builder
+	for _, e := range old {
+		b, _ := json.Marshal(e)
+		sb.Write(b)
+		sb.WriteByte('\n')
+	}
+	if err := os.WriteFile(bindIntervalsPath(), []byte(sb.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, bindGapsFile), []byte(gapPending+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start(8000, 2, "C")
+	acct(8100, acctOut, 2)
+	if got := bind(t, routes.RouteOpencodeZen, false, 7500); got != "" {
+		t.Errorf("older life = %q, want none", got)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 15000); got == "" {
+		t.Error("the life started after the recovery is bound")
 	}
 }
