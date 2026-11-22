@@ -1,3 +1,4 @@
+import { useInterval } from "../../lib/useInterval.ts";
 import { memo, useEffect, useMemo, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { IconButton } from "../../ui/Button.tsx";
@@ -36,9 +37,9 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
     const stopMine = startMySharesPolling();
     const stopHandoff = startHandoffPolling();
     void loadProposals();
-    const timer = window.setInterval(() => void loadProposals(), 5000);
-    return () => { stop(); stopMine(); stopHandoff(); window.clearInterval(timer); };
+    return () => { stop(); stopMine(); stopHandoff(); };
   }, []);
+  useInterval(() => void loadProposals(), 5000);
 
   const decide = async (id: string, decision: "approve" | "reject") => {
     await api(`api/session-share-proposals/${encodeURIComponent(id)}/${decision}`, { method: "POST" });

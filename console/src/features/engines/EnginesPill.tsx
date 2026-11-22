@@ -6,6 +6,7 @@
 // mounted and asserted on directly in a DOM test without a store or a mocked `api()` — the
 // same split `imagegen/parts/JobList.tsx` uses. `EnginesPill` (the default export TopBar
 // renders) is the thin store-connected wrapper.
+import { useInterval } from "../../lib/useInterval.ts";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -75,11 +76,7 @@ const ROLE_ICON: Record<EngineRole, string> = {
 const ENGINE_TICK_MS = 15_000;
 function useEngineTick(active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active) return;
-    const id = setInterval(() => setNow(Date.now()), ENGINE_TICK_MS);
-    return () => clearInterval(id);
-  }, [active]);
+  useInterval(() => setNow(Date.now()), active ? ENGINE_TICK_MS : null);
   return now;
 }
 

@@ -15,6 +15,7 @@
 //     page size come back out of galleryCache.ts first and the read behind them only corrects
 //     what changed (ADR 0080 P2). Walking back into a folder is the common case, and a round
 //     trip's worth of empty pane is what made it feel slow.
+import { useInterval } from "../../lib/useInterval.ts";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode, KeyboardEvent as RKeyboardEvent, MouseEvent as RMouseEvent } from "react";
 import { createPortal } from "react-dom";
@@ -416,11 +417,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
   // end-of-turn signal is far too late for this surface and this slow tick is what makes
   // pictures appear on their own. The timer exists only while something is running and
   // only while this view is mounted, so it is not a resident poller.
-  useEffect(() => {
-    if (!anyBusy || !running) return;
-    const id = window.setInterval(() => refresh(), WORKING_TICK_MS);
-    return () => window.clearInterval(id);
-  }, [anyBusy, running, refresh]);
+  useInterval(() => refresh(), anyBusy && running ? WORKING_TICK_MS : null);
 
   // An opener asked for one picture (the left rail's context menu on an image). Enlarge it
   // once the listing is in, then take the request out of the pane content: it has been

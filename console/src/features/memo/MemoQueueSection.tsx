@@ -10,6 +10,7 @@
 //     pick a destination.
 import { useFold } from "../../lib/useFold.ts";
 import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
+import { useInterval } from "../../lib/useInterval.ts";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps, MouseEvent as RMouseEvent, DragEvent as RDragEvent, RefObject } from "react";
 import { createPortal } from "react-dom";
@@ -267,52 +268,61 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   useEffect(() => useMemoStore.getState().attachPanel(), []);
 
   // Refetch memos + categories on mount / bump / tenant switch, and poll while mounted.
-  useEffect(() => {
-    let alive = true;
+  //
+  // gen is bumped on every refetch trigger and on unmount, so a read started under an older
+  // scope never lands; a read lands only if it started after the last one that did, so a slow
+  // older answer cannot overwrite a newer one while answers slower than the period still show.
+  const gen = useRef(0);
+  const seq = useRef(0);
+  const applied = useRef(0);
+  const load = () => {
+    const g = gen.current;
+    const n = ++seq.current;
     const scope = memoScope(workspaceRunning, tenant ?? "");
-    const load = () => {
-      // Numbered when the request starts, and tied to the scope it starts in (store.ts).
-      const ticket = useMemoStore.getState().begin();
-      const queueTicket = useQueueSettingsCache.getState().begin();
-      // Published by its own read, so that a failed or slow memo or category read neither holds it
-      // back nor drops it: Run now's enabled state follows it. A failed settings read (an older
-      // Control Plane, an error body) keeps the cached one and never takes the memo list down.
-      const queues = memoQueueList()
-        .catch(() => null)
-        .then((qRaw) => {
-          if (!alive) return;
-          const fresh = readMemoQueues(qRaw);
-          if (fresh) useQueueSettingsCache.getState().publish(queueKey, queueTicket, fresh);
-        });
-      return Promise.all([memoList(), memoCategoryList(), queues])
-        .then(([mList, cList]) => {
-          if (!alive) return;
-          // An error body (api() resolves HTTP errors as {error}) is a failed read, not an empty
-          // list: keep what is on screen, and with it the records of the changed notes.
-          const readOk = (v: unknown) => v === null || Array.isArray(v);
-          if (!readOk(mList) || !readOk(cList)) return;
-          const marr = Array.isArray(mList) ? mList : [];
-          const carr = Array.isArray(cList) ? cList : [];
-          useMemoStore.getState().publish(marr, ticket, scope);
-          setMemosTenant(tenant ?? "");
-          const ser = JSON.stringify([marr, carr]);
-          if (ser !== serRef.current) {
-            serRef.current = ser;
-            setMemos(marr);
-            setCats(carr);
-          }
-        })
-        .catch(() => {});
-    };
+    // Numbered when the request starts, and tied to the scope it starts in (store.ts).
+    const ticket = useMemoStore.getState().begin();
+    const queueTicket = useQueueSettingsCache.getState().begin();
+    // Published by its own read, so that a failed or slow memo or category read neither holds it
+    // back nor drops it: Run now's enabled state follows it. A failed settings read (an older
+    // Control Plane, an error body) keeps the cached one and never takes the memo list down.
+    const queues = memoQueueList()
+      .catch(() => null)
+      .then((qRaw) => {
+        if (g !== gen.current) return;
+        const fresh = readMemoQueues(qRaw);
+        if (fresh) useQueueSettingsCache.getState().publish(queueKey, queueTicket, fresh);
+      });
+    return Promise.all([memoList(), memoCategoryList(), queues])
+      .then(([mList, cList]) => {
+        if (g !== gen.current || n < applied.current) return;
+        // An error body (api() resolves HTTP errors as {error}) is a failed read, not an empty
+        // list: keep what is on screen, and with it the records of the changed notes.
+        const readOk = (v: unknown) => v === null || Array.isArray(v);
+        if (!readOk(mList) || !readOk(cList)) return;
+        applied.current = n;
+        const marr = Array.isArray(mList) ? mList : [];
+        const carr = Array.isArray(cList) ? cList : [];
+        useMemoStore.getState().publish(marr, ticket, scope);
+        setMemosTenant(tenant ?? "");
+        const ser = JSON.stringify([marr, carr]);
+        if (ser !== serRef.current) {
+          serRef.current = ser;
+          setMemos(marr);
+          setCats(carr);
+        }
+      })
+      .catch(() => {});
+  };
+  useEffect(() => {
+    gen.current++;
     load();
-    const id = setInterval(() => {
-      if (!document.hidden) load(); // hidden tab: skip the tick (mobile data / battery)
-    }, POLL_MS);
     return () => {
-      alive = false;
-      clearInterval(id);
+      gen.current++;
     };
   }, [memosKey, tenant, identity, workspaceRunning]);
+  useInterval(() => {
+    if (!document.hidden) load(); // hidden tab: skip the tick (mobile data / battery)
+  }, POLL_MS);
 
   // Leader Ctrl/⌘+K → M (or any requestCompose) reveals + focuses the composer.
   useEffect(() => {
