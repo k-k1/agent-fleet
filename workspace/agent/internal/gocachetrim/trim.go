@@ -71,6 +71,8 @@ type trimmer struct {
 	free    func() (free, total uint64, ok bool)
 	enabled func() bool
 	now     func() time.Time
+	// beforeRemove is a test seam: it runs between the survey and each removal.
+	beforeRemove func(rel string)
 }
 
 func newTrimmer(dir func() string) trimmer {
@@ -106,7 +108,7 @@ func sameVolume(a, b string) bool {
 }
 
 type goCacheEntry struct {
-	path string
+	rel  string // relative to the cache directory
 	size int64
 	mod  time.Time
 }
@@ -126,14 +128,23 @@ func (g trimmer) pass() (res Result, trimmed, done bool) {
 	if err != nil || !sameVolumeFn(real, paths.HomeDir()) {
 		return res, false, true
 	}
-	need := int64(toFrac*float64(total)) - int64(free)
+	target := int64(toFrac * float64(total))
 	cutoff := g.now().Add(-minAge)
+
+	// Every file operation goes through an os.Root on the cache directory: it refuses a path
+	// that leaves the root through a symlink, so a two-hex-digit directory swapped for a link
+	// between the survey and the removal cannot send a delete outside the cache.
+	root, err := os.OpenRoot(real)
+	if err != nil {
+		return res, false, true
+	}
+	defer root.Close()
 
 	var old []goCacheEntry
 	tops, _ := os.ReadDir(real)
 	for _, top := range tops {
 		if !top.IsDir() || !isHex2(top.Name()) {
-			continue // README, trim.txt, anything Go did not put in an entry directory
+			continue // README, trim.txt, a link, anything Go did not put in an entry directory
 		}
 		files, _ := os.ReadDir(filepath.Join(real, top.Name()))
 		for _, f := range files {
@@ -141,25 +152,47 @@ func (g trimmer) pass() (res Result, trimmed, done bool) {
 			if err != nil || !info.Mode().IsRegular() || !info.ModTime().Before(cutoff) {
 				continue
 			}
-			old = append(old, goCacheEntry{filepath.Join(real, top.Name(), f.Name()), info.Size(), info.ModTime()})
+			old = append(old, goCacheEntry{filepath.Join(top.Name(), f.Name()), info.Size(), info.ModTime()})
 		}
 	}
 	sort.Slice(old, func(i, j int) bool { return old[i].mod.Before(old[j].mod) })
 
+	// need is an estimate from the sizes removed so far; it is checked against the real free
+	// space each time it is reached, because an unlinked file that is hard-linked elsewhere or
+	// still open frees nothing.
+	need := target - int64(free)
 	var freed int64
+	done = need <= 0
 	for _, e := range old {
-		if freed >= need {
+		if done {
 			break
 		}
-		if os.Remove(e.path) != nil {
+		if g.beforeRemove != nil {
+			g.beforeRemove(e.rel)
+		}
+		// Go refreshes the mtime when it uses an entry, possibly after the survey: look again.
+		fi, err := root.Lstat(e.rel)
+		if err != nil || !fi.Mode().IsRegular() || !fi.ModTime().Before(cutoff) {
 			continue
 		}
-		freed += e.size
+		if root.Remove(e.rel) != nil {
+			continue
+		}
+		freed += fi.Size()
+		res.Bytes += fi.Size()
 		res.Files++
+		if freed >= need {
+			if f, _, ok := g.free(); ok && int64(f) >= target {
+				done = true
+			} else if ok {
+				need, freed = target-int64(f), 0
+			} else {
+				done = true
+			}
+		}
 	}
-	res.Bytes = freed
 	res.At = g.now().UTC().Format(time.RFC3339)
-	return res, res.Files > 0, freed >= need
+	return res, res.Files > 0, done
 }
 
 func isHex2(s string) bool {
@@ -174,11 +207,26 @@ func isHex2(s string) bool {
 	return true
 }
 
+// tick is one wake-up of Run: it returns how long to wait before the next.
+func (g trimmer) tick() time.Duration {
+	res, trimmed, done := g.pass()
+	if trimmed {
+		last.mu.Lock()
+		last.last = &res
+		last.mu.Unlock()
+		log.Printf("go-build: home is low, removed %d cache entries unused for over %s (%d MiB)",
+			res.Files, minAge, res.Bytes>>20)
+	}
+	if !done {
+		return retryAfter
+	}
+	return checkEvery
+}
+
 // Run checks free space every checkEvery until stop closes.
 func Run(dir func() string, stop <-chan struct{}) {
 	g := newTrimmer(dir)
-	wait := checkEvery
-	t := time.NewTimer(wait)
+	t := time.NewTimer(checkEvery)
 	defer t.Stop()
 	for {
 		select {
@@ -186,19 +234,6 @@ func Run(dir func() string, stop <-chan struct{}) {
 			return
 		case <-t.C:
 		}
-		wait = checkEvery
-		if res, trimmed, done := g.pass(); trimmed {
-			last.mu.Lock()
-			last.last = &res
-			last.mu.Unlock()
-			log.Printf("go-build: home is low, removed %d cache entries unused for over %s (%d MiB)",
-				res.Files, minAge, res.Bytes>>20)
-			if !done {
-				wait = retryAfter
-			}
-		} else if !done {
-			wait = retryAfter
-		}
-		t.Reset(wait)
+		t.Reset(g.tick())
 	}
 }
