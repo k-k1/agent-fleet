@@ -7,7 +7,8 @@
 // (TenantAdminFor); a refused or unreadable GET draws no editor, so nothing on this page can
 // write a rule built from an answer it did not get.
 import { useCallback, useEffect, useState } from "react";
-import { api, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { getTenantRoutePolicy } from "./tenantApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { TenantOverview, byList } from "./routePolicyOverview.tsx";
 import { TenantProvidedRoutesView } from "./tenantProvidedRoutes.tsx";
@@ -23,7 +24,7 @@ export function useTenantRoutePolicy(slug: string) {
   const path = `api/admin/tenants/${encodeURIComponent(slug)}/route-policy`;
   const load = useCallback(async () => {
     try {
-      const d = await api(path);
+      const d = await getTenantRoutePolicy(slug);
       const v = parseTenantPolicy(d);
       if (v) {
         setView(v);
@@ -42,7 +43,7 @@ export function useTenantRoutePolicy(slug: string) {
       setView(null);
       setFailed(tr("admin.mpol_load_failed"));
     }
-  }, [path, tr]);
+  }, [slug, path, tr]);
   useEffect(() => {
     load();
   }, [load]);

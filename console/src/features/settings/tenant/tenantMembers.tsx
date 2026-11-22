@@ -10,7 +10,8 @@
 // withSuperAdmin, so hiding the button here is presentation only.
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
-import { api, errDetail, rawJSON } from "../../../core/api/client.ts";
+import { errDetail, rawJSON } from "../../../core/api/client.ts";
+import { getTenantMembers } from "./tenantApi.ts";
 import { getWorkspaceSizing, isOk } from "../api.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -76,8 +77,8 @@ export function MembersPanel({
 
   const loadMembers = useCallback(async () => {
     try {
-      const d = await api(`api/admin/tenants/${encodeURIComponent(slug)}/members`);
-      setMembers(d.members || []);
+      const d = await getTenantMembers(slug);
+      setMembers((isOk(d) && d.members) || []);
     } catch {
       setMembers([]);
     }

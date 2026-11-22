@@ -4,7 +4,9 @@
 // Workspace Agent in the tenant runs none; with it on, members still choose per server. The
 // server owns the answer; this screen shows what it stores and never infers it.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getTenantWatchSources, putTenantWatchSources } from "./tenantApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
@@ -14,12 +16,11 @@ export function TenantWatchSourcesView({ slug }: { slug: string }) {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState(false);
-  const path = `api/admin/tenants/${encodeURIComponent(slug)}/watch-sources`;
 
   const load = useCallback(async () => {
     try {
-      const d = await api(path);
-      if (d && !d.error && typeof d.enabled === "boolean") {
+      const d = await getTenantWatchSources(slug);
+      if (isOk(d) && typeof d.enabled === "boolean") {
         setEnabled(d.enabled);
         setFailed(false);
         return;
@@ -28,7 +29,7 @@ export function TenantWatchSourcesView({ slug }: { slug: string }) {
       /* falls through to the failed note */
     }
     setFailed(true);
-  }, [path]);
+  }, [slug]);
   useEffect(() => {
     load();
   }, [load]);
@@ -37,12 +38,12 @@ export function TenantWatchSourcesView({ slug }: { slug: string }) {
     if (next === enabled) return;
     setBusy(true);
     try {
-      const res = await apiJSON(path, "PUT", { enabled: next });
-      if (res?.error) {
+      const res = await putTenantWatchSources(slug, next);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }
-      setEnabled(res?.enabled ?? next);
+      setEnabled(isOk(res) ? (res.enabled ?? next) : next);
     } catch {
       toast(tr("tenant.watch_src_save_failed"));
     } finally {

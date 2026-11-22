@@ -10,7 +10,9 @@
 // method are fixed at withSuperAdmin / super_admin (ADR0043 decision 19 / decision 30); what
 // is switched here is presentation only.
 import { useEffect, useState } from "react";
-import { apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { deleteTenant, putTenantLimits } from "./tenantApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
@@ -224,7 +226,7 @@ export function TenantLimits({
   }, [slug, tenant]);
 
   const saveLimits = async () => {
-    const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}/limits`, "PUT", {
+    const res = await putTenantLimits(slug, {
       max_workspaces: +maxWs || 0,
       max_sessions: +maxSs || 0,
       max_git_repos: +maxRepos || 0,
@@ -248,14 +250,14 @@ export function TenantLimits({
       terminal_history_retention_days: termRetention,
       pat_max_days: Math.round(+patMaxDays || 0),
     });
-    if (res?.error) {
+    if (res && !isOk(res)) {
       toast(errText(res.error));
       return;
     }
     // The save went through: exceeding the pool is a warning, not a rejection (see the reason
     // on the server side in setTenantLimits). Keep the note about the numbers just entered
     // alongside the saved indicator; a toast would disappear and simply go unread.
-    setBudget(res?.pool_budget || null);
+    setBudget((isOk(res) && res.pool_budget) || null);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
     onChanged();
@@ -464,8 +466,8 @@ function TenantDeletePanel({ slug, onDeleted }: { slug: string; onDeleted: () =>
   const del = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON(`api/admin/tenants/${encodeURIComponent(slug)}`, "DELETE", {});
-      if (res?.error) {
+      const res = await deleteTenant(slug);
+      if (res && !isOk(res)) {
         toast(errText(res.error));
         return;
       }

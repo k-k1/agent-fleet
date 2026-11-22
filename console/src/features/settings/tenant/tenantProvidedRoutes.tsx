@@ -9,7 +9,8 @@
 // No PUT here carries a revision, so each save re-reads the stored values first and refuses when
 // they moved since the page loaded; a save racing in between is not caught (#4367).
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, errDetail, errText } from "../../../core/api/client.ts";
+import { errDetail, errText } from "../../../core/api/client.ts";
+import { getProvided, putProvidedGrant, putProvidedMembers, putProvidedPolicy } from "./tenantApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { DirtyScope, useReportDirty } from "../parts/dirtyScope.tsx";
 import { useShowView, useViewActive } from "../parts/tabbedViews.tsx";
@@ -37,7 +38,7 @@ export function useProvided<T>(path: string, parse: (d: unknown) => T | null, li
   const [load, setLoad] = useState<Load<T> | null>(null);
   const read = useCallback(async (): Promise<Load<T>> => {
     try {
-      const d = await api(path);
+      const d = await getProvided(path);
       if (isOff(d)) return { state: "off" };
       const v = parse(d);
       if (v !== null) return { state: "ok", value: v };
@@ -318,7 +319,7 @@ function GrantEditor({
         const now = await peek();
         return now && now.granted === view.granted && now.ceiling_micro === view.ceiling_micro;
       },
-      () => apiJSON(`${path}/grant`, "PUT", body),
+      () => putProvidedGrant(path, body),
     );
   };
   return (
@@ -388,7 +389,7 @@ function PolicyEditor({
         const now = await peek();
         return now && now.members_only === view.members_only && now.member_default_micro === view.member_default_micro;
       },
-      () => apiJSON(`${path}/policy`, "PUT", body),
+      () => putProvidedPolicy(path, body),
     );
   };
   return (
@@ -471,7 +472,7 @@ function MemberRow({
         const m = now.members.find((x) => x.membership_id === member.membership_id);
         return !!m && m.granted === member.granted && m.budget_micro === member.budget_micro;
       },
-      () => apiJSON(`${path}/members`, "PUT", body),
+      () => putProvidedMembers(path, body),
     );
   };
   return (

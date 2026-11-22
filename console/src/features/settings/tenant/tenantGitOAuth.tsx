@@ -15,13 +15,15 @@
 // client_secret is write-only. A stored value is never returned, so saving with the field
 // empty means "leave unchanged" (the server keeps the same contract).
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText, raw } from "../../../core/api/client.ts";
+import { errText, raw } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getTenantGitOAuth, putGitOAuthApp } from "./tenantApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { guideLinkProps } from "../../../lib/guideDocs.ts";
 
-interface GitOAuthApp {
+export interface GitOAuthApp {
   provider: string;
   client_id?: string;
   has_secret?: boolean;
@@ -126,8 +128,8 @@ export function TenantGitOAuthView({ slug }: { slug: string }) {
 
   const load = useCallback(async () => {
     try {
-      const d = await api(`api/admin/tenants/${encodeURIComponent(slug)}/git-oauth`);
-      if (d && !d.error) setApps(d.providers || []);
+      const d = await getTenantGitOAuth(slug);
+      if (isOk(d)) setApps(d.providers || []);
     } catch {
       /* transient; keep the previous values */
     }
@@ -175,12 +177,12 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
   const save = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON(base, "PUT", {
+      const res = await putGitOAuthApp(slug, app.provider, {
         client_id: clientID.trim(),
         client_secret: secret.trim(),
         scope_groups: groups,
       });
-      if (res?.error) {
+      if (res && !isOk(res)) {
         toast(errText(res.error), { kind: "warn" });
         return;
       }
@@ -339,8 +341,8 @@ function GitHubOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuth
         body.client_id = clientID.trim();
         body.install_url = installURL.trim();
       }
-      const res = await apiJSON(base, "PUT", body);
-      if (res?.error) {
+      const res = await putGitOAuthApp(slug, "github", body);
+      if (res && !isOk(res)) {
         toast(errText(res.error), { kind: "warn" });
         return;
       }

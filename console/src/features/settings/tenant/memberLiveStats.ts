@@ -8,8 +8,8 @@
 // The poller is a plain object owned by one MembersPanel, not module state: a module-scope
 // schedule would leak between panels and between tests.
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../../core/api/client.ts";
 import type { MemberStats } from "../api.ts";
+import { getMemberLiveStats } from "./tenantApi.ts";
 
 export type LiveReading = { mem_used: number; mem_max?: number; cpu_pct?: number };
 
@@ -145,7 +145,7 @@ export function useLiveStats(slug: string, wanted: string[]): Record<string, Liv
     setReadings({});
     const p = new LivePoller(
       async (key, signal) => {
-        const s = await api(`api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(key)}/stats?disk=0`, { signal });
+        const s = await getMemberLiveStats(slug, key, signal);
         if (s?.error) throw new Error("stats failed"); // counts as a failure: back off, keep the last reading
         return parseReading(s);
       },
