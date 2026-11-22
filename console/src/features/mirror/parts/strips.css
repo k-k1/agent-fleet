@@ -214,14 +214,14 @@
    commit made since the session started. All they have to convey is "this one is settled", so
    they are quieter than rows still open to editing (unstaged / untracked) but louder than an
    unsubstantiated "no diff". */
-.chg-badge.st-done {
+.st-done {
   color: var(--ok);
   background: color-mix(in srgb, var(--ok) 12%, transparent);
 }
 /* Edited but with nothing left in the working tree AND no commit we can point at, plus
    files outside ~/repos: kept in the list — they ARE part of what the session did — but
    muted so the eye lands on the rows that still have a diff to open. */
-.chg-badge.st-muted {
+.st-muted {
   color: var(--muted);
   background: color-mix(in srgb, var(--muted) 15%, transparent);
 }
