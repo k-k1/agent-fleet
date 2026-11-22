@@ -79,3 +79,45 @@ func TestTitlePromptWorkItemLine(t *testing.T) {
 
 func etUser(s string) transcript.Turn { return transcript.Turn{Role: "user", Text: s} }
 func etAsst(s string) transcript.Turn { return transcript.Turn{Role: "assistant", Text: s} }
+
+func TestTitlePromptQueueRunItemsInFileStillShortensTail(t *testing.T) {
+	// The items went to a file: the opening turn reduces to nothing, yet the tail stays short.
+	items := []QueueDeliveryItem{{ID: "i1", Kind: "text", Provenance: queueProvenanceMember, Body: "x"}}
+	d := QueueDelivery{Queue: "q1", ID: "d1", Instruction: "do it", Items: items}
+	head, _, _ := queuePrompt(d)
+	opening := head + "\n" + queueFileLine(items, "/tmp/items.md")
+	turns := []transcript.Turn{etUser(opening)}
+	for i := 0; i < 8; i++ {
+		turns = append(turns, etAsst("waiting for the background test run"), etUser("ok"))
+	}
+	got := titleSuggestPrompt(turns, "en")
+	if n := strings.Count(got, "waiting for the background test run"); n > titleQueueTailTurns {
+		t.Fatalf("tail has %d turns:\n%s", n, got)
+	}
+}
+
+func TestTitlePromptStandingInstructionLookalikeIsNotAnItem(t *testing.T) {
+	instruction := "Format example:\n--- item 1 of 1\n> example body"
+	items := []QueueDeliveryItem{{ID: "i1", Kind: "text", Provenance: queueProvenanceMember, Body: "real item body"}}
+	got := titleSuggestPrompt([]transcript.Turn{etUser(queueOpening(instruction, items))}, "en")
+	if !strings.Contains(got, "real item body") || strings.Contains(got, "example body") {
+		t.Fatalf("got:\n%s", got)
+	}
+}
+
+func TestWithWorkItemTurnKeepsStudioPersonaFiltered(t *testing.T) {
+	persona := studioPersonaJA
+	turns := []transcript.Turn{etUser(persona), etAsst("hello from the studio"), etUser("draw a cat")}
+	out := withWorkItemTurn(turns, &session.WorkItemRef{Key: "#1", Title: "T"})
+	got := titleSuggestPrompt(out, "en")
+	if strings.Contains(got, "hello from the studio") || !strings.Contains(got, "draw a cat") {
+		t.Fatalf("got:\n%s", got)
+	}
+}
+
+func TestBranchPromptCarriesWorkItem(t *testing.T) {
+	out := withWorkItemTurn([]transcript.Turn{etUser(queueOpening("do it", nil))}, &session.WorkItemRef{Key: "#9", Title: "Fix X"})
+	if got := branchSuggestPrompt(out, nil); !strings.Contains(got, "work item: #9 Fix X") {
+		t.Fatalf("got:\n%s", got)
+	}
+}

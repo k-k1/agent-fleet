@@ -338,9 +338,9 @@ const titleQueueTailTurns = 2
 
 // titleRealTurns drops what carries no topic (studio persona, sidechains, compaction, empty
 // turns) and reduces the first user turn to its payload when Agent Fleet composed it.
-func titleRealTurns(turns []transcript.Turn) []transcript.Turn {
+func titleRealTurns(turns []transcript.Turn) (real []transcript.Turn, queueRun bool) {
 	turns = withoutStudioPersona(turns)
-	real := make([]transcript.Turn, 0, len(turns))
+	real = make([]transcript.Turn, 0, len(turns))
 	opening := true
 	for _, t := range turns {
 		// The studio's signal line is addressed to the agent (ADR 0100 decision 5); a title or a
@@ -351,23 +351,15 @@ func titleRealTurns(turns []transcript.Turn) []transcript.Turn {
 		}
 		if opening && t.Role == "user" {
 			opening = false
-			var queue bool
-			t.Text, queue = envelopePayload(t.Text)
-			if queue {
-				t.Source = titleQueueSource
-			}
+			t.Text, queueRun = envelopePayload(t.Text)
 		}
 		if t.Text == "" {
 			continue
 		}
 		real = append(real, t)
 	}
-	return real
+	return real, queueRun
 }
-
-// titleQueueSource tags the opening turn of a queue run inside titleRealTurns only; it never
-// leaves this file's prompt builders.
-const titleQueueSource = "queue-payload"
 
 // envelopePayload reduces an Agent Fleet-composed opening prompt to what names the work.
 // Recognition is by the Agent's own envelope prefixes at the very start of the text, never by
@@ -396,9 +388,16 @@ func envelopePayload(text string) (payload string, queue bool) {
 // The boilerplate before the first header, and the origin lines, are dropped. An items file
 // leaves nothing: the prompt then holds no item text at all.
 func queueItemsPayload(text string) string {
+	// Items follow the data label, which Agent Fleet writes after the member's standing
+	// instruction. The last occurrence at a line start is the real one: the instruction may quote
+	// anything, and an item's own lines carry the "> " prefix. An items file has no label.
+	i := strings.LastIndex(text, "\n"+queueDataLabel)
+	if i < 0 {
+		return ""
+	}
 	var out []string
 	inItem := false
-	for _, line := range strings.Split(text, "\n") {
+	for _, line := range strings.Split(text[i:], "\n") {
 		switch {
 		case strings.HasPrefix(line, "--- item "):
 			inItem = true
@@ -422,6 +421,9 @@ func withWorkItemTurn(turns []transcript.Turn, item *session.WorkItemRef) []tran
 	if item == nil || strings.TrimSpace(item.Key) == "" {
 		return turns
 	}
+	// Drop a studio persona first: the synthetic turn would otherwise be the first turn
+	// withoutStudioPersona sees and hide it.
+	turns = withoutStudioPersona(turns)
 	line := strings.TrimSpace(item.Key)
 	if t := strings.TrimSpace(item.Title); t != "" {
 		line += " " + t
@@ -433,13 +435,13 @@ func withWorkItemTurn(turns []transcript.Turn, item *session.WorkItemRef) []tran
 // sidechain/compaction/tool-only turns), weighting the recent topic — so the title
 // tracks where the conversation is now, not just where it started.
 func titleSuggestPrompt(turns []transcript.Turn, lang string) string {
-	real := titleRealTurns(turns)
+	real, queueRun := titleRealTurns(turns)
 
 	var b strings.Builder
 	// Few-shot anchors the output as a noun-phrase topic label rather than a sentence
 	// or the assistant's own reasoning.
 	b.WriteString(TitleSuggestInstructions(lang))
-	writeConversationWindow(&b, real)
+	writeConversationWindow(&b, real, queueRun)
 	b.WriteString(TitleSuggestFooter(lang))
 	return b.String()
 }
@@ -492,7 +494,7 @@ const titleSuggestInstructionsEN = "Output ONE subject line for the conversation
 
 // writeConversationWindow appends the opening + most recent real turns (head/tail
 // windowing, per-turn length cap), shared by the title and branch-name prompts.
-func writeConversationWindow(b *strings.Builder, real []transcript.Turn) {
+func writeConversationWindow(b *strings.Builder, real []transcript.Turn, queueRun bool) {
 	writeTurn := func(t transcript.Turn) {
 		text := t.Text
 		if r := []rune(text); len(r) > titlePerTurnRunes {
@@ -506,7 +508,7 @@ func writeConversationWindow(b *strings.Builder, real []transcript.Turn) {
 		real = real[1:]
 	}
 	tail := titleTailTurns
-	if len(real) > 0 && real[0].Source == titleQueueSource {
+	if queueRun {
 		tail = titleQueueTailTurns
 	}
 	if len(real) <= titleHeadTurns+tail {
@@ -537,7 +539,7 @@ func BranchSuggestPrompt(turns []transcript.Turn) string {
 // known (ADR 0103 decision 8), so the resolver can compose the name with the kind's prefix;
 // without them it asks for the bare name as before.
 func branchSuggestPrompt(turns []transcript.Turn, kinds []string) string {
-	real := titleRealTurns(turns)
+	real, queueRun := titleRealTurns(turns)
 	var b strings.Builder
 	b.WriteString("Read the conversation log and output ONE git branch name for the task.\n")
 	b.WriteString("Rules: English only, lowercase kebab-case (words joined by hyphens), ")
@@ -557,7 +559,7 @@ func branchSuggestPrompt(turns []transcript.Turn, kinds []string) string {
 	}
 	b.WriteString("If the conversation drifted, prefer the most recent topic. Output ONLY the name.\n\n")
 	b.WriteString("--- conversation log ---\n")
-	writeConversationWindow(&b, real)
+	writeConversationWindow(&b, real, queueRun)
 	return b.String()
 }
 
@@ -1081,7 +1083,8 @@ func suggestionKinds(ctx context.Context, dir string) []string {
 // runBranchSuggestLLM asks the title model for a git-safe branch name from the
 // conversation, then hard-sanitizes the reply so a chatty model can't produce an
 // invalid ref/folder segment. kind is "" unless kinds were offered and the reply picked one.
-func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn, kinds []string) (kind, slug string, err error) {
+func runBranchSuggestLLM(ctx context.Context, turns []transcript.Turn, kinds []string, item *session.WorkItemRef) (kind, slug string, err error) {
+	turns = withWorkItemTurn(turns, item)
 	reply, err := chatx.OneShotHeadless(ctx, usagex.FeatureBranchSuggest, chatx.OneShotShort, BranchSuggestPersona, branchSuggestPrompt(turns, kinds), TitleModel())
 	if err != nil {
 		return "", "", fmt.Errorf("branch suggestion failed: %w", err)
@@ -1174,7 +1177,7 @@ func HandleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureBranchSuggest, Trigger: usagex.TriggerManual, Ref: name})
-	kind, branch, err := runBranchSuggestLLM(ctx, turns, suggestionKinds(ctx, m.Dir))
+	kind, branch, err := runBranchSuggestLLM(ctx, turns, suggestionKinds(ctx, m.Dir), m.WorkItem)
 	if err != nil {
 		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.
 		// Deliberately not catalogued: the developer message is shown as-is to keep the
