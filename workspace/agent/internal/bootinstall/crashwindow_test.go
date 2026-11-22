@@ -617,3 +617,114 @@ func TestSelfUpdateNPMWithUnopenableLockStartsNothing(t *testing.T) {
 		t.Fatalf("link moved: %q %v", out, err)
 	}
 }
+
+// A first cursor update killed before it published its tree, then the user installs that same
+// version by hand: recovery must not delete the user's tree or its launcher.
+func TestCursorRecoverLeavesAForeignTreeAtTheFinalPath(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "#!/bin/sh\necho manual\n")
+	os.MkdirAll(filepath.Join(f.home, ".local", "bin"), 0o755)
+	f.link(t, "cursor-agent", filepath.Join(dir, "cursor-agent"))
+	// The marker names an inode the tree at dir does not have.
+	dev, ino, ok := stagedID(dir)
+	if !ok {
+		t.Fatal("no id")
+	}
+	no := false
+	m := cursorMarker{Dir: dir, Old: dir + ".af-old.1", Tree: true, HadTree: &no, Dev: dev, Ino: ino + 1000,
+		Links: []cursorLinkState{{Path: f.local("cursor-agent"), Kind: "none"}}}
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.read(filepath.Join(dir, "cursor-agent")), "manual") {
+		t.Fatal("the user's tree was deleted")
+	}
+	// The same marker with the tree's own identity does delete it.
+	m.Ino = ino
+	if err := f.env.cursorWriteMarker(m); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.env.cursorRecover(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(dir); err == nil {
+		t.Fatal("the staged tree stayed")
+	}
+}
+
+// The staged tree's identity is journaled by a real update and survives the rename to Dir.
+func TestCursorMarkerRecordsTheStagedTreeIdentity(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	dir := filepath.Join(f.versions(), "v")
+	f.write(t, filepath.Join(dir, "cursor-agent"), "x")
+	dev, ino, _ := stagedID(dir)
+	moved := dir + "-moved"
+	if err := os.Rename(dir, moved); err != nil {
+		t.Fatal(err)
+	}
+	m := cursorMarker{Dev: dev, Ino: ino}
+	if !m.dirIsOurs(moved) {
+		t.Fatal("a rename changed the identity")
+	}
+	if m.dirIsOurs(f.versions()) {
+		t.Fatal("another directory matched")
+	}
+}
+
+// The supervisor holds the lock until npm's process group is gone, even when the process that
+// started it is killed, and a straggler started with default options (no lock fd) is killed with the group.
+func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	flag := filepath.Join(f.home, "straggler.pid")
+	// npm returns at once; a backgrounded child outlives it and has no fd 3.
+	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf("#!/bin/sh\n(exec 3>&-; exec /bin/sleep 30) &\necho $! >%q\n/bin/sleep 1\n", flag))
+	e, release, ok := f.env.lockNPM()
+	if !ok {
+		t.Fatal("lock not taken")
+	}
+	done := make(chan error, 1)
+	go func() {
+		se, err := e.npmInstall([]string{"x"})
+		if err != nil {
+			err = fmt.Errorf("%v: %s", err, se)
+		}
+		done <- err
+	}()
+	// The parent drops its own hold, as a killed parent would.
+	time.Sleep(300 * time.Millisecond)
+	release()
+	e.npmLockFile.Close()
+	if _, _, busy := probeLock(f.env.npmLockPath()); !busy {
+		select {
+		case err := <-done:
+			t.Fatalf("install already ended: %v", err)
+		default:
+		}
+		t.Fatal("the lock was free while npm's group still ran")
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if _, _, busy := probeLock(f.env.npmLockPath()); busy {
+		t.Fatal("the lock stayed after the group was gone")
+	}
+	pid, _ := strconv.Atoi(strings.TrimSpace(f.read(flag)))
+	if pid <= 0 || syscall.Kill(pid, 0) == nil {
+		// Zombie reaping is the container's init; a live straggler is the failure.
+		if b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/stat", pid)); !strings.Contains(string(b), ") Z") {
+			t.Fatal("npm's straggler outlived the supervisor")
+		}
+	}
+}
+
+func probeLock(path string) (*os.File, bool, bool) {
+	fl, busy, _ := flockPath(path)
+	if fl != nil {
+		fl.Close()
+	}
+	return fl, false, busy
+}
