@@ -188,4 +188,12 @@ describe("buildRuns tie-break", () => {
     const two = buildRuns([b, a], new Map()).map((r) => r.root.name);
     expect(one).toEqual(two);
   });
+  it("orders a run's children oldest first, ties by name, for either input order", () => {
+    const root = sess("run-r", { origin: "queue", createdAt: "2026-11-22T18:00:00+09:00", alive: false });
+    const k = (n: string, at: string) => sess(n, { origin: "session", originSession: "run-r", createdAt: at });
+    const kids = [k("kid-b", "2026-11-22T18:39:31+09:00"), k("kid-a", "2026-11-22T18:39:31+09:00"), k("kid-z", "2026-11-22T18:10:00+09:00")];
+    const names = (list: Session[]) => buildRuns([root, ...list], new Map())[0].children.map((c) => c.name);
+    expect(names(kids)).toEqual(["kid-z", "kid-a", "kid-b"]);
+    expect(names([...kids].reverse())).toEqual(["kid-z", "kid-a", "kid-b"]);
+  });
 });
