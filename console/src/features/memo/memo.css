@@ -1430,9 +1430,12 @@ button.memo-reflink-key {
 .memo-cat-head[draggable="true"] {
   cursor: grab;
 }
+.memo-cat-menu-txt {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
 .memo-cat-menu-why {
-  display: block;
-  margin-left: 20px;
   font-size: 10px;
   color: var(--muted);
   white-space: normal;

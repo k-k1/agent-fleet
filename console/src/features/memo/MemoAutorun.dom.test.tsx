@@ -1795,8 +1795,13 @@ describe("the category head", () => {
     expect(headMenuItem({ cls: "memo-cat-run" }).getAttribute("aria-disabled")).toBe("true");
     await click(headMenuItem({ cls: "memo-cat-run" }));
     expect(memoQueueFire).toHaveBeenCalledTimes(1);
-    await act(async () => finish({ id: "d1" }));
+    expect(headMenuItem({ cls: "memo-cat-run" }).textContent).toContain(t("memo.cat_menu_run_busy"));
+    expect(headMenuItem({ cls: "memo-cat-run" }).querySelector(".memo-cat-menu-why")).not.toBeNull();
+    // The reopened menu is still showing when the request fails: it must re-enable by itself.
+    await act(async () => finish({ error: { code: "memo_queue_failed", message: "x" } }));
     await settle();
+    expect(document.querySelector(".memo-cat-menu")).not.toBeNull();
+    expect(headMenuItem({ cls: "memo-cat-run" }).getAttribute("aria-disabled")).toBeNull();
   });
 
   it("sends the category's current memos, not the ones it had when the menu opened", async () => {

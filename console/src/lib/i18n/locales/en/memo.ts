@@ -44,6 +44,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.rename_category": "Click to rename category",
   "memo.rename_category_item": "Rename",
   "memo.cat_menu_run": "Run now",
+  "memo.cat_menu_run_busy": "A run is starting…",
   "memo.cat_menu_btn": "Category actions",
   "memo.delete_category": "Delete category",
   "memo.reorder_category": "Drag to reorder categories",

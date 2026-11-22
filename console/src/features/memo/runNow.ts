@@ -2,7 +2,7 @@
 // offered on the Memo queue view's category head and in the Auto-run view's category menu, so the
 // two share one implementation. The enabled state is advisory (the list's fireBlock); the Control
 // Plane's claim stays the authority and its refusals still arrive as toasts.
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { errText } from "../../core/api/client.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
@@ -33,23 +33,34 @@ export async function runNow(categoryId: string): Promise<RunNowResult> {
 
 /** Categories with a press in flight. Module-level so a menu that closed and reopened still knows. */
 const pressing = new Set<string>();
+const pressListeners = new Set<() => void>();
+const setPressing = (id: string, on: boolean) => {
+  if (on) pressing.add(id);
+  else pressing.delete(id);
+  for (const l of pressListeners) l();
+};
+const subscribePressing = (l: () => void) => {
+  pressListeners.add(l);
+  return () => void pressListeners.delete(l);
+};
 
 /** The state of a Run now control. Whether it is enabled comes from the queue list's fireBlock
  *  alone ("nothing_waiting" included): the memo list is a separate read and may lag it. */
 export function useRunNow(categoryId: string, queue: MemoQueue | undefined) {
   const tr = useT();
-  const [pressed, setBusy] = useState(false);
-  const busy = pressed || pressing.has(categoryId);
+  const [, setBusy] = useState(false);
+  // Shared per category: a menu reopened mid-press must see the press end (and re-enable) too.
+  const busy = useSyncExternalStore(subscribePressing, () => pressing.has(categoryId));
   const why = fireBlockWords(queue, (iso) => fmtDateTime(iso), (kind) => kindLabel(kind));
   const reason = why ? tr(why.key, why.params) : "";
   const press = async (): Promise<RunNowResult | null> => {
     if (busy || reason) return null;
     setBusy(true);
-    pressing.add(categoryId);
+    setPressing(categoryId, true);
     try {
       return await runNow(categoryId);
     } finally {
-      pressing.delete(categoryId);
+      setPressing(categoryId, false);
       setBusy(false);
     }
   };

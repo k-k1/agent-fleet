@@ -42,6 +42,7 @@ export const memo = {
   "memo.rename_category": "クリックでカテゴリ名を変更",
   "memo.rename_category_item": "名前を変更",
   "memo.cat_menu_run": "今すぐ実行",
+  "memo.cat_menu_run_busy": "実行を開始しています…",
   "memo.cat_menu_btn": "カテゴリの操作",
   "memo.delete_category": "カテゴリを削除",
   "memo.reorder_category": "ドラッグでカテゴリを並べ替え",

@@ -75,8 +75,11 @@ export function CatHeadMenu(p: Props) {
           onPick();
         }}
       >
-        <Icon name={icon} /> {label}
-        {reason && <span className="memo-cat-menu-why">{reason}</span>}
+        <Icon name={icon} />
+        <span className="memo-cat-menu-txt">
+          {label}
+          {reason && <span className="memo-cat-menu-why">{reason}</span>}
+        </span>
       </button>
     </li>
   );
@@ -91,7 +94,7 @@ export function CatHeadMenu(p: Props) {
           "play",
           tr("memo.cat_menu_run"),
           () => void run.press().then((r) => r && p.onRunResult(r)),
-          run.reason,
+          run.reason || (run.busy ? tr("memo.cat_menu_run_busy") : ""),
           false,
           runOff,
         )}
