@@ -1758,6 +1758,23 @@ describe("the category head", () => {
     expect(n("plain")).toBe("2");
   });
 
+  it("offers Clear finished memos in an auto-run category only", async () => {
+    servedCats = [aCat({ queue: true }), aCat({ id: "c2", name: "plain", position: 1 })];
+    servedMemos = [aMemo({ id: "d", state: "delivered" }), aMemo({ id: "p1", category: "plain" })];
+    await render();
+    const menuOf = async (name: string) => {
+      const g = [...document.querySelectorAll<HTMLElement>(".memo-cat")].find((x) => x.querySelector(".memo-cat-name")?.textContent === name);
+      await click(must(g?.querySelector(".memo-cat-more"), "more"));
+      const has = document.querySelector(".memo-cat-menu .memo-cat-menu-clear") !== null;
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      return has;
+    };
+    expect(await menuOf("inbox-q")).toBe(true);
+    expect(await menuOf("plain")).toBe(false);
+  });
+
   it("is the drag handle of a named category, folds on click, and the uncategorised bucket is not draggable", async () => {
     servedCats = [aCat({})];
     servedMemos = [aMemo({ id: "a" }), aMemo({ id: "u", category: "" })];

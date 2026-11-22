@@ -238,7 +238,6 @@ describe("deleting the selected memos", () => {
       expect(q(".ui-confirm-body").textContent).toContain(t("memo.clear_finished_kept", { count: 1 }));
       await click(q(".ui-confirm-actions .ui-btn-danger"));
       expect(memoDelete.mock.calls.map((c) => c[0])).toEqual(["r1"]);
-
     });
 
     it("disables the item when every finished memo is awaited", async () => {
