@@ -29,6 +29,13 @@ func TestRemoteWireVectors(t *testing.T) {
 		t.Fatalf("catalogue = %+v, %v", cat, err)
 	}
 	row := cat.Engines[0]
+	if len(row.Models) != 1 || len(row.Loras) != 1 || len(row.Models[0].Files) != 1 || len(row.Models[0].TrainedWords) != 1 ||
+		len(row.Models[0].Sizes) != 1 {
+		t.Fatalf("decoded row lost an array: %+v", row)
+	}
+	if row.BaseURL != "/b" || row.Models[0].Description != "d" || row.Models[0].Sizes[0] != "1x1" {
+		t.Fatalf("decoded row = %+v", row)
+	}
 	m := row.Models[0]
 	if row.Key != "image" || row.API != "images" || row.Provider != "comfy" || row.NegativeAlways != "x" ||
 		len(row.Loras) != 1 || row.Loras[0].ID != "l1" ||
@@ -36,5 +43,17 @@ func TestRemoteWireVectors(t *testing.T) {
 		m.Files[0].S3Key != "k/a.safetensors" || m.Files[0].Flag != "f" ||
 		m.TrainedWords[0] != "w" || m.LicenseName != "l" || m.LicenseURL != "u" || m.BaseModel != "sdxl" || m.Negative != "n" {
 		t.Fatalf("decoded row = %+v", row)
+	}
+}
+
+// A handle with no parent deployment can mirror but never buy a token; asking must be an error,
+// not a nil dereference.
+func TestSessionTokenWithoutParentIsAnError(t *testing.T) {
+	if _, err := NewRemote("image").SessionToken(t.Context(), "s"); err == nil {
+		t.Fatal("a parentless handle minted a token")
+	}
+	var none *Remote
+	if _, err := none.SessionToken(t.Context(), "s"); err == nil {
+		t.Fatal("a nil handle minted a token")
 	}
 }

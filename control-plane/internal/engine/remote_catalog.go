@@ -207,7 +207,7 @@ func (r *Remotes) applyCatalogRow(ctx context.Context, host RemoteHost, row Remo
 	if r == nil || host == nil || row.Key == "" {
 		return
 	}
-	def, served := host.Served(row.Key)
+	def, invalidate, served := host.Served(row.Key)
 	if served && !def.Remote() {
 		// 🔴 A key a LOCAL row already holds is not borrowed, and the far declaration is not even
 		// mirrored: the registry is one map keyed by role, and quietly replacing a managed row
@@ -227,14 +227,16 @@ func (r *Remotes) applyCatalogRow(ctx context.Context, host RemoteHost, row Remo
 		// it — and dropping the row's ten-second cache is what stops a role the far side has just
 		// switched off from being offered for ten seconds more. The re-read costs a mutex and a
 		// slice, not a database round trip, because the source is the mirror in memory.
-		host.InvalidateCatalog(row.Key)
+		if invalidate != nil {
+			invalidate()
+		}
 		if changed {
 			// 🔥 A borrowed catalogue used to move in silence. Decision 7's push is wired to this
 			// deployment's own admin routes, so every workspace learned about a far checkpoint on
 			// its own ten-minute TTL and not before — which is the difference between "a model
 			// somebody enabled" and "a model nobody can find". Telling them here costs one POST
 			// per running workspace, and only when the mirror really moved.
-			go host.NotifyCatalogChanged(context.WithoutCancel(ctx), row.Key)
+			host.NotifyCatalogChanged(context.WithoutCancel(ctx), row.Key)
 		}
 		return
 	}
@@ -257,7 +259,7 @@ func (r *Remotes) applyCatalogRow(ctx context.Context, host RemoteHost, row Remo
 			row.Key, adopted.APIFamily(), adopted.Provider, r.base, len(row.Models))
 		// A role that did not exist a moment ago is the largest change a workspace can be told
 		// about: with no row, generate_image was not advertised at all.
-		go host.NotifyCatalogChanged(context.WithoutCancel(ctx), row.Key)
+		host.NotifyCatalogChanged(context.WithoutCancel(ctx), row.Key)
 		return
 	}
 	log.Printf("engines: %s is offered by %s but this process cannot take it on", row.Key, r.base)

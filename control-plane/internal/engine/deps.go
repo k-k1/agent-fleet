@@ -20,14 +20,17 @@ import (
 // RemoteHost is the registry side of borrowing. A nil RemoteHost means "no registry", and every
 // entry point treats that as a no-op.
 type RemoteHost interface {
-	// Served reports the row this process already serves under key, if any.
-	Served(key string) (Def, bool)
-	// InvalidateCatalog drops the served row's catalogue cache so the next read sees the mirror.
-	InvalidateCatalog(key string)
+	// Served reports the row this process already serves under key, if any, and a function that
+	// drops THAT row's catalogue cache so the next read sees the mirror. The function is bound to
+	// the instance Served saw: a row the registry swaps in afterwards must not be the one
+	// invalidated.
+	Served(key string) (def Def, invalidate func(), ok bool)
 	// Adopt registers a role the far catalogue declares and this process does not serve yet. It
 	// reports whether the role was taken on.
 	Adopt(d Def) bool
-	// NotifyCatalogChanged tells every running workspace that this role's catalogue moved.
+	// NotifyCatalogChanged tells every running workspace that this role's catalogue moved. It
+	// returns at once: the implementation does the fan-out in its own goroutine, and reads any
+	// stubbable function value before starting it.
 	NotifyCatalogChanged(ctx context.Context, key string)
 }
 

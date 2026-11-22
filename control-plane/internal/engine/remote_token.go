@@ -52,6 +52,9 @@ func (e *Remote) SessionToken(ctx context.Context, session string) (string, erro
 	if e == nil {
 		return "", fmt.Errorf("no remote engine handle")
 	}
+	if e.parent == nil {
+		return "", fmt.Errorf("remote engine %s has no parent deployment", e.key)
+	}
 	e.mu.Lock()
 	if t, ok := e.tokens[session]; ok && time.Until(t.expires) > remoteTokenRenewAhead {
 		e.mu.Unlock()

@@ -127,22 +127,18 @@ func newEngineRemoteHost(reg *engineRegistry, mgr *manager) engine.RemoteHost {
 	return engineRemoteHost{reg: reg, mgr: mgr}
 }
 
-func (h engineRemoteHost) Served(key string) (engine.Def, bool) {
+func (h engineRemoteHost) Served(key string) (engine.Def, func(), bool) {
 	e := h.reg.get(key)
 	if e == nil {
-		return engine.Def{}, false
+		return engine.Def{}, nil, false
 	}
-	return e.def, true
-}
-
-func (h engineRemoteHost) InvalidateCatalog(key string) {
-	if e := h.reg.get(key); e != nil {
-		e.catalog.invalidate()
-	}
+	return e.def, e.catalog.invalidate, true
 }
 
 func (h engineRemoteHost) Adopt(d engine.Def) bool { return h.reg.adopt(d) }
 
 func (h engineRemoteHost) NotifyCatalogChanged(ctx context.Context, key string) {
-	notifyEngineCatalogChanged(ctx, h.mgr, key)
+	// The function variable is read here, before the goroutine starts, as `go notify(...)` did at
+	// the old call site: a test that swaps the stub afterwards must not race a late read.
+	go notifyEngineCatalogChanged(ctx, h.mgr, key)
 }

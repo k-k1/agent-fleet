@@ -175,7 +175,7 @@ func (e *Remote) SeedMirror(rows []store.EngineModel) {
 		return
 	}
 	e.mu.Lock()
-	e.rows, e.loaded = rows, true
+	e.rows, e.loaded, e.sig = rows, true, MirrorSignature(rows)
 	e.mu.Unlock()
 }
 
