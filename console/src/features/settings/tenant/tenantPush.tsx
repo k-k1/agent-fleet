@@ -3,7 +3,7 @@
 // tenant_admin of that tenant only. The setting is stored whether or not Web Push is switched on
 // for the deployment, so an admin can prepare it first.
 import { useCallback, useEffect, useState } from "react";
-import { errText } from "../../../core/api/client.ts";
+import { errText, isTransientErr } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
 import { getTenantPushSettings, putTenantPushSettings } from "./tenantApi.ts";
 import { usePushKey } from "../../push/usePushKey.ts";
@@ -23,8 +23,12 @@ export function TenantPushView({ slug }: { slug: string }) {
   const load = useCallback(async (): Promise<boolean> => {
     try {
       const d = await getTenantPushSettings(slug);
-      if (d && isOk(d)) setIncludeText(!!d.includeText);
-      return true;
+      if (d && isOk(d)) {
+        setIncludeText(!!d.includeText);
+        return true;
+      }
+      // A resolved error reply (a gateway's 503) is as transient as a thrown fetch.
+      return !isTransientErr(d);
     } catch {
       return false;
     }

@@ -5,11 +5,12 @@ import { createRoot, type Root } from "react-dom/client";
 let key: string | null = "k";
 let putFails = false;
 let getFails = 0;
+let resolvedErr = false;
 const puts: unknown[] = [];
 const toasts: string[] = [];
 vi.mock("../../push/pushApi.ts", () => ({ probePushKey: () => Promise.resolve(key) }));
 vi.mock("./tenantApi.ts", () => ({
-  getTenantPushSettings: () => (getFails-- > 0 ? Promise.reject(new Error("503")) : Promise.resolve({ tenant: "acme", includeText: false })),
+  getTenantPushSettings: () => (getFails-- > 0 ? (resolvedErr ? Promise.resolve({ error: { code: "http_503", status: 503 } }) : Promise.reject(new Error("503"))) : Promise.resolve({ tenant: "acme", includeText: false })),
   putTenantPushSettings: (slug: string, body: unknown) => {
     if (putFails) return Promise.reject(new Error("offline"));
     puts.push([slug, body]);
@@ -37,6 +38,7 @@ beforeEach(() => {
   key = "k";
   putFails = false;
   getFails = 0;
+  resolvedErr = false;
   puts.length = 0;
   toasts.length = 0;
 });
@@ -55,6 +57,19 @@ describe("TenantPushView", () => {
     vi.useFakeTimers();
     try {
       getFails = 1;
+      const host = await mount();
+      expect(host.querySelector(".push-policy")).toBeNull();
+      await act(async () => void (await vi.advanceTimersByTimeAsync(15_100)));
+      expect(host.querySelector(".push-policy")).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("also retries when the failure is a resolved 503 reply, not a thrown fetch", async () => {
+    vi.useFakeTimers();
+    try {
+      getFails = 1;
+      resolvedErr = true;
       const host = await mount();
       expect(host.querySelector(".push-policy")).toBeNull();
       await act(async () => void (await vi.advanceTimersByTimeAsync(15_100)));

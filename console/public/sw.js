@@ -156,9 +156,14 @@ self.addEventListener("notificationclick", (event) => {
       // origin cannot crowd it out of the short list; the whole search has a deadline.
       const mine = wins.filter((c) => c.url.startsWith(scope));
       mine.sort((a, b) => Number(isRoot(b.url, scope)) - Number(isRoot(a.url, scope)));
+      // `over` is set when the deadline passes: the fallback window is opening then, and a search
+      // that kept going would hand the session to, and focus, yet another open Console.
+      let over = false;
       const search = async () => {
         for (const win of mine.slice(0, 5)) {
-          if (await handOff(win, session)) {
+          if (over) return false;
+          if (await handOff(win, session, () => over)) {
+            if (over) return false;
             // A page that answered but cannot be focused (closing, navigating away) is not a hit.
             if (await win.focus().then(() => true, () => false)) return true;
           }
@@ -170,6 +175,7 @@ self.addEventListener("notificationclick", (event) => {
       let timer;
       const found = await Promise.race([search(), new Promise((r) => (timer = setTimeout(() => r(false), 3000)))]);
       clearTimeout(timer);
+      over = true;
       if (found) return;
       await self.clients.openWindow(session ? `${scope}?session=${encodeURIComponent(session)}` : scope);
     })(),
@@ -184,8 +190,9 @@ function isRoot(url, scope) {
   return u.origin + u.pathname === scope || u.pathname === new URL(scope).pathname + "index.html";
 }
 
-function handOff(win, session) {
+function handOff(win, session, cancelled) {
   return new Promise((resolve) => {
+    if (cancelled && cancelled()) return resolve(false);
     const ch = new MessageChannel();
     const timer = setTimeout(() => resolve(false), 1500);
     ch.port1.onmessage = () => {

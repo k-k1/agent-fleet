@@ -169,6 +169,40 @@ describe("hung focus", () => {
   });
 });
 
+describe("search after the deadline", () => {
+  it("does not hand the session to a second Console once the fallback window is opening", async () => {
+    vi.useFakeTimers();
+    try {
+      let failFirst!: () => void;
+      const second: unknown[] = [];
+      const first = {
+        url: "https://console.test/",
+        postMessage: (_m: unknown, ports: MessagePort[]) => ports[0].postMessage("ok"),
+        focus: () => new Promise((_, rej) => (failFirst = () => rej(new Error("gone")))),
+      };
+      const other = {
+        url: "https://console.test/index.html",
+        postMessage: (m: unknown, ports: MessagePort[]) => {
+          second.push(m);
+          ports[0].postMessage("ok");
+        },
+        focus: async () => {},
+      };
+      const sw = loadSw("en", [first, other]);
+      let p: Promise<unknown> = Promise.resolve();
+      sw.listeners.notificationclick({ notification: { close() {}, data: { session: "abc" } }, waitUntil: (x: Promise<unknown>) => (p = x) });
+      await vi.advanceTimersByTimeAsync(3000);
+      await p;
+      expect(sw.opened).toEqual(["https://console.test/?session=abc"]);
+      failFirst();
+      await vi.advanceTimersByTimeAsync(200);
+      expect(second).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("focus failure", () => {
   it("falls back to opening the session when the answering page cannot be focused", async () => {
     const win = {
