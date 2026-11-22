@@ -49,6 +49,7 @@ const sess = (name: string, folder: string, over: Partial<Session> = {}): Sessio
   ...over,
 });
 
+const onClose = vi.fn();
 let root: Root | null = null;
 let host: HTMLDivElement;
 
@@ -66,7 +67,7 @@ const render = async (n: RepoTreeNode | RepoTreeNode[], sessions: Session[]) => 
   await act(async () => {
     root!.render(
       <ToastProvider>
-        <DeleteCopyModal {...(Array.isArray(n) ? { nodes: n } : { node: n })} onClose={() => {}} />
+        <DeleteCopyModal {...(Array.isArray(n) ? { nodes: n } : { node: n })} onClose={onClose} />
       </ToastProvider>,
     );
   });
@@ -87,6 +88,7 @@ const sent = () => raw.mock.calls.map((c) => `${(c[1] as { method: string }).met
 
 beforeEach(() => {
   raw.mockReset();
+  onClose.mockReset();
   raw.mockResolvedValue(ok());
   useReposStore.setState({ repos: [] });
   useFilesStore.setState({ ...useFilesStore.getState() });
@@ -275,5 +277,67 @@ describe("作業コピー削除モーダル", () => {
     await render([node(repo("app@a"))], []);
     const intro = document.querySelector(".wcdel-intro")!.textContent!;
     expect(intro).toContain("app@a");
+  });
+
+  it("rows of one depth overlap, but the parent waits until every child delete has settled (#4736)", async () => {
+    // Hold every child DELETE open so what has been SENT while they are pending is observable.
+    const release: Array<() => void> = [];
+    raw.mockImplementation((url: string, init: { method: string }) =>
+      init.method === "DELETE" && /app%40[bc]$/.test(url)
+        ? new Promise((r) => release.push(() => r(ok())))
+        : Promise.resolve(ok()),
+    );
+    await render(node(repo("app@a"), [node(repo("app@b")), node(repo("app@c"))]), [
+      sess("s2", "app@b"),
+      sess("s3", "app@c"),
+    ]);
+    await click(runButton());
+    // Both children are in flight at once (c did not wait for b's delete); the parent is not sent.
+    expect(sent()).toEqual([
+      "POST api/sessions/s2/archive",
+      "POST api/sessions/s3/archive",
+      "DELETE api/repos/app%40b",
+      "DELETE api/repos/app%40c",
+    ]);
+    await act(async () => release[0]());
+    expect(sent()).not.toContain("DELETE api/repos/app%40a");
+    await act(async () => release[1]());
+    expect(sent().at(-1)).toBe("DELETE api/repos/app%40a");
+  });
+
+  it("branch deletes take turns on the parent clone, and a failed one does not stall the next (#4736)", async () => {
+    const release: Array<(r: unknown) => void> = [];
+    raw.mockImplementation((url: string, init: { method: string }) =>
+      url.includes("/branch?") ? new Promise((r) => release.push(r)) : Promise.resolve(ok()),
+    );
+    await render([node(repo("app@a")), node(repo("app@b"))], []);
+    await click(optBoxes()[0]);
+    await click(runButton());
+    const branchCalls = () => sent().filter((c) => c.includes("/branch?"));
+    // Both copies are gone, but only the first branch delete is on the wire.
+    expect(sent().filter((c) => c.startsWith("DELETE api/repos/app%40"))).toHaveLength(2);
+    expect(branchCalls()).toHaveLength(1);
+    await act(async () => release[0]({ ok: false, json: async () => ({ error: "locked" }) }));
+    expect(branchCalls()).toHaveLength(2);
+    await act(async () => release[1](ok()));
+  });
+
+  it("a failed sibling keeps its note while the other finishes; the dialog stays open (#4736)", async () => {
+    let finishB: () => void = () => {};
+    raw.mockImplementation((url: string, init: { method: string }) => {
+      if (url === "api/sessions/s1/archive") return Promise.resolve({ ok: false, json: async () => ({ error: "nope" }) });
+      if (init.method === "DELETE" && url === "api/repos/app%40b") return new Promise((r) => (finishB = () => r(ok())));
+      return Promise.resolve(ok());
+    });
+    await render([node(repo("app@a")), node(repo("app@b"))], [sess("s1", "app@a")]);
+    await click(runButton());
+    // a failed on its archive and was never deleted; b is still pending, so no results yet.
+    expect(sent()).not.toContain("DELETE api/repos/app%40a");
+    expect(document.querySelectorAll(".wcdel-result")).toHaveLength(0);
+    await act(async () => finishB());
+    expect(sent()).toContain("DELETE api/repos/app%40b");
+    expect(document.querySelectorAll(".wcdel-result.is-failed")).toHaveLength(1);
+    expect(document.querySelectorAll(".wcdel-result:not(.is-failed)")).toHaveLength(1);
+    expect(onClose).not.toHaveBeenCalled();
   });
 });

@@ -33,6 +33,9 @@ import {
   planTree,
   defaultSelection,
   deleteOrder,
+  deleteWaves,
+  runPool,
+  DELETE_CONCURRENCY,
   baseBlockedByWorktrees,
   effectiveGrade,
   sessionsToClear,
@@ -181,13 +184,20 @@ export function DeleteCopyModal({ node, nodes, onClose, onDeleted }: DeleteCopyM
     const out = new Map<string, RowResult>();
     let deleted = 0;
     try {
-      // Sequential: every call mutates the same working copies through one Agent, and the
-      // order is the safety (deepest first, branch after its copy).
-      for (const p of order) {
+      // Rows of one depth have no order between them and run through a small pool; a wave
+      // starts only after the deeper one settled, and a base clone is the last wave (see
+      // deleteWaves). Branch deletes all write the parent clone's refs, so they take turns.
+      let branchTurn: Promise<unknown> = Promise.resolve();
+      const branchInTurn = (p: CopyPlan): Promise<string> => {
+        const r = branchTurn.then(() => clearBranch(p));
+        branchTurn = r.catch(() => null);
+        return r;
+      };
+      const doRow = async (p: CopyPlan) => {
         const sessErr = await clearSessions(p);
         if (sessErr) {
           out.set(p.repo.name, { ok: false, note: tr("rp.del.kept_sessions_failed", { err: sessErr }) });
-          continue;
+          return;
         }
         const res = await raw(`api/repos/${enc(p.repo.name)}${p.force ? "?force=true" : ""}`, {
           method: "DELETE",
@@ -198,11 +208,12 @@ export function DeleteCopyModal({ node, nodes, onClose, onDeleted }: DeleteCopyM
             ok: false,
             note: tr("rp.del.row_failed", { err: j?.error ? errText(j.error) : "" }),
           });
-          continue;
+          return;
         }
         deleted += 1;
-        out.set(p.repo.name, { ok: true, note: tr("rp.del.row_done") + (await clearBranch(p)) });
-      }
+        out.set(p.repo.name, { ok: true, note: tr("rp.del.row_done") + (await branchInTurn(p)) });
+      };
+      for (const wave of deleteWaves(order)) await runPool(wave, DELETE_CONCURRENCY, doRow);
     } finally {
       setBusy(false);
       setResults(out);

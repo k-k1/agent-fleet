@@ -7,6 +7,8 @@ import {
   planTree,
   defaultSelection,
   deleteOrder,
+  deleteWaves,
+  runPool,
   baseBlockedByWorktrees,
   effectiveGrade,
   sessionsToClear,
@@ -266,5 +268,38 @@ describe("稼働中セッションを先に停止する", () => {
     const sel = new Set(["app", "app@b"]);
     expect(baseBlockedByWorktrees(plans, sel)).toBe(true);
     expect(baseBlockedByWorktrees(plans, sel, true)).toBe(false);
+  });
+});
+
+describe("削除の並列実行（#4736）", () => {
+  const names = (w: ReturnType<typeof deleteWaves>) => w.map((x) => x.map((p) => p.repo.name));
+
+  it("同じ深さは 1 つの wave、深い wave が先、base clone は最後の単独 wave", () => {
+    const base = node(repo("app", { worktree: false, parent: undefined, branch: "main" }), [
+      node(repo("app@a"), [node(repo("app@c")), node(repo("app@d"))]),
+      node(repo("app@b")),
+    ]);
+    const plans = planTree(base, []);
+    const order = deleteOrder(plans, new Set(plans.map((p) => p.repo.name)));
+    expect(names(deleteWaves(order))).toEqual([["app@c", "app@d"], ["app@a", "app@b"], ["app"]]);
+  });
+
+  it("runPool は同時実行数を超えず、全件が終わってから解決する", async () => {
+    let live = 0;
+    let peak = 0;
+    const done: number[] = [];
+    await runPool([1, 2, 3, 4, 5, 6, 7], 3, async (n) => {
+      live += 1;
+      peak = Math.max(peak, live);
+      await new Promise((r) => setTimeout(r, 5));
+      live -= 1;
+      done.push(n);
+    });
+    expect(peak).toBe(3);
+    expect(done.sort()).toEqual([1, 2, 3, 4, 5, 6, 7]);
+  });
+
+  it("runPool は空配列でも解決する", async () => {
+    await runPool([], 3, async () => {});
   });
 });
