@@ -1,10 +1,12 @@
 package opencode
 
 import (
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -440,5 +442,148 @@ func TestBindingGapWhileUnreadableCoversKnownLives(t *testing.T) {
 	_ = os.WriteFile(p, good, 0o600)
 	if got := bind(t, routes.RouteOpencodeZen, false, 102000); got != "" {
 		t.Errorf("a known life after a gap taken while unreadable = %q, want none", got)
+	}
+}
+
+// A restart whose first read of the evidence file fails, on a wall clock set back behind an older
+// life: the older life stays unproven once the file is readable again, though the gap itself was
+// recorded with the set-back clock. The state survives a second restart.
+func TestBindingUnknownGapRetiresOlderLivesAfterClockSetBack(t *testing.T) {
+	bindT(t)
+	start(5000, 1, "A")
+	acct(5100, acctOut, 1)
+	// Agent restart: nothing is known in this process, the file cannot be read, the clock is at 600.
+	gapsMem = nil
+	seenMaxAt.Store(0)
+	p := bindIntervalsPath()
+	good, _ := os.ReadFile(p)
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	start(600, 2, "B") // not recorded: a gap bounded by the set-back clock
+	_ = os.Remove(p)
+	if err := os.WriteFile(p, good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if b := daemonBinder(); b == nil {
+		t.Fatal("no binder once the file is readable")
+	} else if got := b(routes.RouteOpencodeZen, false, 5500); got != "" {
+		t.Errorf("a call of the older life stamped after the set-back clock = %q, want none", got)
+	}
+	// Resolved once: a life that starts later is bound, and a restart keeps the older one retired.
+	start(9000, 3, "C")
+	acct(9100, acctOut, 3)
+	gapsMem = nil
+	b := daemonBinder()
+	if b == nil {
+		t.Fatal("no binder")
+	}
+	if got := b(routes.RouteOpencodeZen, false, 5500); got != "" {
+		t.Errorf("after a restart = %q, want none", got)
+	}
+	if got := b(routes.RouteOpencodeZen, false, 10000); got == "" {
+		t.Error("a life after the resolution is bound")
+	}
+}
+
+// The first healthy read after the failure is an append (a daemon start), not a binder read: the
+// older life is retired there, the life that start begins is bound, and a recovery after a clock
+// correction does not retire it for good.
+func TestBindingUnknownGapResolvedByAppend(t *testing.T) {
+	bindT(t)
+	start(5000, 1, "A")
+	acct(5100, acctOut, 1)
+	gapsMem = nil
+	seenMaxAt.Store(0)
+	p := bindIntervalsPath()
+	good, _ := os.ReadFile(p)
+	if err := os.Remove(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(p, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	start(600, 2, "B")
+	_ = os.Remove(p)
+	if err := os.WriteFile(p, good, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gapsMem = nil // only the gaps file carries the state
+	start(9000, 3, "C")
+	acct(9100, acctOut, 3)
+	gapsMem = nil
+	b := daemonBinder()
+	if b == nil {
+		t.Fatal("no binder")
+	}
+	if got := b(routes.RouteOpencodeZen, false, 5500); got != "" {
+		t.Errorf("older life = %q, want none", got)
+	}
+	if got := b(routes.RouteOpencodeZen, false, 10000); got == "" {
+		t.Error("the life started after the recovery is bound")
+	}
+}
+
+// A gaps file that cannot be read for a moment gives no binder for that call and does not turn
+// binding off.
+func TestBindingGapsUnreadableIsTransient(t *testing.T) {
+	bindT(t)
+	start(1000, 1, "A")
+	acct(1100, acctOut, 1)
+	gp := filepath.Join(paths.AgentConfigDir(), bindGapsFile)
+	if err := os.MkdirAll(gp, 0o700); err != nil { // a directory: the read fails
+		t.Fatal(err)
+	}
+	if daemonBinder() != nil {
+		t.Error("binder with an unreadable gaps file")
+	}
+	if bindOff.Load() {
+		t.Error("a read failure turned binding off")
+	}
+	_ = os.Remove(gp)
+	if daemonBinder() == nil {
+		t.Error("no binder after the gaps file is readable again")
+	}
+}
+
+// The retire bound is the newest daemon event's At: a clock correction recorded earlier in the file
+// (a Floor above the later lives' starts) does not retire a
+// life that starts after the recovery.
+func TestBindingUnknownGapBoundIgnoresFloor(t *testing.T) {
+	bindT(t)
+	dir := paths.AgentConfigDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	old := []bindEvent{
+		{At: 7000, Kind: evStart, Key: "A", Gen: 1, Reg: true, Floor: 14000},
+		{At: 7100, Kind: evAccount, Acct: acctOut, Gen: 1},
+	}
+	var sb strings.Builder
+	for _, e := range old {
+		b, _ := json.Marshal(e)
+		sb.Write(b)
+		sb.WriteByte('\n')
+	}
+	if err := os.WriteFile(bindIntervalsPath(), []byte(sb.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, bindGapsFile), []byte(gapPending+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start(8000, 2, "C")
+	acct(8100, acctOut, 2)
+	// The bound is the one daemon event's At, not the account reading's (7100) nor the Floor.
+	if gaps, pending, ok := readGapsFile(); !ok || pending || len(gaps) != 1 || gaps[0] != 7000 {
+		t.Errorf("gaps file = %v pending=%v ok=%v, want [7000] resolved", gaps, pending, ok)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 7500); got != "" {
+		t.Errorf("older life = %q, want none", got)
+	}
+	if got := bind(t, routes.RouteOpencodeZen, false, 15000); got == "" {
+		t.Error("the life started after the recovery is bound")
 	}
 }

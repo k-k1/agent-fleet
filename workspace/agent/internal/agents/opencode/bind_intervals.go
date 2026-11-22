@@ -147,11 +147,26 @@ var bindOff atomic.Bool
 // touch that ended its proof). It is the later of the failed event's time and the newest time in the
 // file, so a clock that was set back cannot place a life beyond it. Kept in the gaps file (append
 // only, never cleared) and in memory.
-func noteGap(bound int64) {
+func noteGap(bound int64) bool {
 	gapsMem = append(gapsMem, bound)
+	return appendGapLine(strconv.FormatInt(bound, 10))
+}
+
+// Two marker lines of the gaps file stand beside the numeric bounds. gapPending says a first read
+// of the evidence file failed in a process that knew no event time, so the bound of the lives to
+// retire could not be named; gapResolved says the file was read later and those lives were retired
+// by a numeric bound. The state is the last marker, so it survives an Agent restart: a clock set
+// back across the restart cannot make an older life look later than the gap.
+const (
+	gapPending  = "?"
+	gapResolved = "!"
+)
+
+// appendGapLine appends one line to the gaps file; false (and binding off) when it cannot be written.
+func appendGapLine(line string) bool {
 	f, err := os.OpenFile(filepath.Join(paths.AgentConfigDir(), bindGapsFile), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err == nil {
-		_, err = f.WriteString(strconv.FormatInt(bound, 10) + "\n")
+		_, err = f.WriteString(line + "\n")
 		if cerr := f.Close(); err == nil {
 			err = cerr
 		}
@@ -159,7 +174,65 @@ func noteGap(bound int64) {
 	if err != nil {
 		log.Printf("opencode: binding intervals gap not persisted, binding is off until restart: %v", err)
 		bindOff.Store(true)
+		return false
 	}
+	return true
+}
+
+// readGapsFile returns the numeric gaps of the file and whether an unresolved pending marker is the
+// last marker; ok=false when the file cannot be read whole.
+func readGapsFile() (gaps []int64, pending, ok bool) {
+	b, err := os.ReadFile(filepath.Join(paths.AgentConfigDir(), bindGapsFile))
+	if os.IsNotExist(err) {
+		return nil, false, true
+	}
+	if err != nil {
+		return nil, false, false
+	}
+	for _, l := range strings.Fields(string(b)) {
+		switch l {
+		case gapPending:
+			pending = true
+			continue
+		case gapResolved:
+			pending = false
+			continue
+		}
+		v, err := strconv.ParseInt(l, 10, 64)
+		if err != nil {
+			return nil, false, false
+		}
+		gaps = append(gaps, v)
+	}
+	return gaps, pending, true
+}
+
+// resolveGapPending retires, once the evidence file is readable again, every life it holds when a
+// first read failed with nothing known: the bound is the newest daemon-event time among those events, so a
+// life stamped on a clock that was set back is still behind it, while a life that starts after the
+// recovery is not retired (a moved clock inside the file is the business of Floor and Carry). The
+// caller holds bindIntervalsMu and has just read evs whole. false means the gaps file could not be
+// read this time: nothing is resolved and the caller binds nothing for this call; it is no reason to
+// turn binding off.
+func resolveGapPending(evs []bindEvent) bool {
+	_, pending, ok := readGapsFile()
+	if !ok {
+		return false
+	}
+	if !pending {
+		return true
+	}
+	bound := int64(0)
+	for _, e := range evs {
+		if e.Kind != evAccount { // an account reading is not a life, and a trim may drop it later
+			bound = max(bound, e.At)
+		}
+	}
+	if bound > 0 && !noteGap(bound) {
+		return true // binding is off already; the marker stays, so a restart retires them again
+	}
+	appendGapLine(gapResolved)
+	return true
 }
 
 // readGaps returns every recorded gap; ok=false when the file cannot be read whole.
@@ -167,21 +240,11 @@ func readGaps() (gaps []int64, ok bool) {
 	bindIntervalsMu.Lock()
 	gaps = append(gaps, gapsMem...)
 	bindIntervalsMu.Unlock()
-	b, err := os.ReadFile(filepath.Join(paths.AgentConfigDir(), bindGapsFile))
-	if os.IsNotExist(err) {
-		return gaps, true
-	}
-	if err != nil {
+	fg, _, ok := readGapsFile()
+	if !ok {
 		return nil, false
 	}
-	for _, l := range strings.Fields(string(b)) {
-		v, err := strconv.ParseInt(l, 10, 64)
-		if err != nil {
-			return nil, false
-		}
-		gaps = append(gaps, v)
-	}
-	return gaps, true
+	return append(gaps, fg...), true
 }
 
 func bindIntervalsPath() string {
@@ -241,11 +304,15 @@ func appendBindEvent(e bindEvent, check func(evs []bindEvent, e bindEvent) bool)
 		if m := seenMaxAt.Load(); m > 0 {
 			noteGap(max(e.At, m))
 		} else {
-			noteGap(max(e.At, time.Now().UnixMilli())) // nothing known: every life up to now
+			noteGap(max(e.At, wallNow().UnixMilli())) // nothing known: every life up to now
+			// A clock set back can leave older lives stamped after "now"; once the file is readable
+			// every life it holds is retired (resolveGapPending).
+			appendGapLine(gapPending)
 		}
 		return
 	}
-	if e.Boot == "" { // not stamped: nothing orders it against the clock
+	resolveGapPending(evs) // a read failure leaves the marker for the next call
+	if e.Boot == "" {      // not stamped: nothing orders it against the clock
 		e.Reg, e.Floor = true, math.MaxInt64
 	}
 	if n := len(evs); n > 0 && e.Boot != "" {
@@ -722,8 +789,13 @@ func ledgerBinder(m session.Meta) bindFn {
 
 // daemonBinder binds a call by the shared daemon's evidence; nil when that is unreadable.
 func daemonBinder() bindFn {
+	bindIntervalsMu.Lock()
 	evs, ok := readBindEvents()
-	if !ok || len(evs) == 0 {
+	if ok {
+		ok = resolveGapPending(evs)
+	}
+	bindIntervalsMu.Unlock()
+	if !ok || len(evs) == 0 || bindOff.Load() {
 		return nil
 	}
 	gaps, ok := readGaps()
