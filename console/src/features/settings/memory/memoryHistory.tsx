@@ -6,8 +6,10 @@
 // An entry's diff is the Changes view's own ChangeDiffBody.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { api, errText, isTransientErr } from "../../../core/api/client.ts";
-import { useRetryLoad } from "../../../lib/retryLoad.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { useApiLoad } from "../parts/useApiLoad.ts";
+import { getMemoryChanges } from "./memoryApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { ChangeDiffBody, opLabel } from "./memoryChanges.tsx";
@@ -46,33 +48,30 @@ export function useAllChanges(version: number): AllChanges {
   const [olderErr, setOlderErr] = useState(false);
   // An answer for an older read (a reload moved on meanwhile) is dropped.
   const gen = useRef(0);
-  const load = useCallback(async (signal: AbortSignal) => {
-    const res = await api(`api/agents/memory/entries/changes?limit=${HISTORY_LIMIT}`);
-    if (signal.aborted) return true;
-    if (isTransientErr(res)) return false;
-    gen.current++;
-    setBusy(false);
-    setOlderErr(false);
-    const all: MemoryChange[] = res?.error ? [] : (res?.changes ?? []);
-    setNext(res?.error ? "" : (res?.next ?? ""));
-    setState({
-      changes: all,
-      capped: !res?.error && !!res?.next,
-      err: res?.error ? errText(res.error) : "",
-    });
-    return true;
-  }, []);
-  useRetryLoad(load, [version]);
+  useApiLoad(
+    () => getMemoryChanges(HISTORY_LIMIT),
+    (res) => {
+      gen.current++;
+      setBusy(false);
+      setOlderErr(false);
+      const all: MemoryChange[] = isOk(res) ? (res.changes ?? []) : [];
+      setNext(isOk(res) ? (res.next ?? "") : "");
+      setState({
+        changes: all,
+        capped: isOk(res) && !!res.next,
+        err: isOk(res) ? "" : errText(res.error),
+      });
+    },
+    [version],
+  );
   const loadOlder = useCallback(async () => {
     const g = gen.current;
     setBusy(true);
     setOlderErr(false);
-    const res = await api(`api/agents/memory/entries/changes?limit=${HISTORY_LIMIT}&before=${encodeURIComponent(next)}`).catch(
-      () => ({ error: true }),
-    );
+    const res = await getMemoryChanges(HISTORY_LIMIT, next).catch(() => null);
     if (g !== gen.current) return;
     setBusy(false);
-    if (res?.error) return setOlderErr(true);
+    if (!isOk(res)) return setOlderErr(true);
     const older: MemoryChange[] = res?.changes ?? [];
     setNext(res?.next ?? "");
     setState((prev) => {

@@ -19,7 +19,18 @@
 // confirm-dialog wording is written on that assumption.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
+import { errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { useApiOnce } from "../parts/useApiLoad.ts";
+import {
+  getMemoryDiff,
+  getMemoryRoots,
+  getMemorySnapshots,
+  putCodexMemories,
+  putMemorySettings,
+  restoreMemory,
+  takeMemorySnapshot,
+} from "./memoryApi.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -93,12 +104,12 @@ export function MemorySnapshotsTab() {
     async (signal: AbortSignal) => {
       if (!running) return true; // don't call while stopped; deps re-run this once it starts
       const [r, s] = await Promise.all([
-        api("api/agents/memory/roots"),
-        api("api/agents/memory/snapshots?limit=100"),
+        getMemoryRoots(),
+        getMemorySnapshots(100),
       ]);
       if (signal.aborted) return true;
       if (isTransientErr(r) || isTransientErr(s)) return false;
-      if (r?.error) {
+      if (r !== null && !isOk(r)) {
         // A failed roots request is a failed History too: leaving `snaps` null would read "Loading…" for good.
         const msg = errText(r.error);
         setErr(msg);
@@ -109,9 +120,9 @@ export function MemorySnapshotsTab() {
       }
       setErr("");
       setData(r);
-      snapErrRef.current = s?.error ? errText(s.error) : "";
+      snapErrRef.current = isOk(s) ? "" : errText(s.error);
       setSnapErr(snapErrRef.current);
-      setSnaps(s?.error ? [] : (s?.snapshots ?? []));
+      setSnaps(isOk(s) ? (s.snapshots ?? []) : []);
       return true;
     },
     [running],
@@ -139,24 +150,19 @@ export function MemorySnapshotsTab() {
       setDiff(null);
       return;
     }
-    let live = true;
     setDiff(null);
-    api("api/agents/memory/diff?to=" + encodeURIComponent(sel))
-      .then((d) => {
-        if (!live) return;
-        setDiff(d?.error ? "" : (d.diff ?? ""));
-      })
-      .catch(() => live && setDiff(""));
-    return () => {
-      live = false;
-    };
   }, [sel]);
+  useApiOnce(
+    sel ? () => getMemoryDiff(sel) : null,
+    (d) => setDiff(isOk(d) ? (d.diff ?? "") : ""),
+    () => setDiff(""),
+    [sel],
+  );
 
   const setAuto = async (on: boolean) => {
-    const res = await apiJSON("api/agents/memory/settings", "PUT", {
-      auto: on,
-    });
-    if (res?.error) {
+    const res = await putMemorySettings(on);
+    if (res === null) return; // no result to apply
+    if (!isOk(res)) {
       toast(tr("common.save_failed"));
       return;
     }
@@ -169,8 +175,8 @@ export function MemorySnapshotsTab() {
   // right afterwards the root reads as enabled but not yet created (roots is re-read to take
   // the state from the Agent rather than assume it).
   const setCodexMemories = async (on: boolean) => {
-    const res = await apiJSON("api/codex/settings", "PUT", { memories: on });
-    if (res?.error) {
+    const res = await putCodexMemories(on);
+    if (!isOk(res)) {
       toast(errText(res.error));
       return;
     }
@@ -181,10 +187,9 @@ export function MemorySnapshotsTab() {
   const snapshotNow = async () => {
     setBusy(true);
     try {
-      const res = await apiJSON("api/agents/memory/snapshots", "POST", {
-        trigger: "manual",
-      });
-      if (res?.error) {
+      const res = await takeMemorySnapshot();
+      if (res === null) return; // no result to act on: neither a success nor a refusal
+      if (!isOk(res)) {
         toast(errDetail(res.error));
         return;
       }
@@ -199,8 +204,8 @@ export function MemorySnapshotsTab() {
   const jumpTo = async () => {
     if (!at) return;
     const iso = new Date(at).toISOString();
-    const res = await api("api/agents/memory/snapshots?limit=1&before=" + encodeURIComponent(iso));
-    const hit = res?.snapshots?.[0];
+    const res = await getMemorySnapshots(1, iso);
+    const hit = isOk(res) ? res.snapshots?.[0] : undefined;
     // The list failed to reload while this jump was out: selecting now would show a row beside the error.
     if (snapErrRef.current) return;
     if (!hit) {
@@ -234,8 +239,9 @@ export function MemorySnapshotsTab() {
     try {
       // rev also goes in the query: the CP audit ledger takes its target from the URL only
       // and never reads the body. The body is what actually drives the operation.
-      const res = await apiJSON("api/agents/memory/restore?rev=" + encodeURIComponent(rev), "POST", body);
-      if (res?.error) {
+      const res = await restoreMemory(rev, body);
+      if (res === null) return; // no result to act on: the panel stays open
+      if (!isOk(res)) {
         toast(errDetail(res.error));
         return;
       }

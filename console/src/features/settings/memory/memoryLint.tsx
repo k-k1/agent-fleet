@@ -4,15 +4,12 @@
 // terms and bodies over 4,096 bytes, and reports. Nothing is written to any memory. The only
 // thing the member edits here is the retired-term list, which is a setting of the report.
 
-import { useCallback, useEffect, useState } from "react";
-import {
-  api,
-  apiJSON,
-  errDetail,
-  errText,
-  isTransientErr,
-} from "../../../core/api/client.ts";
+import { useEffect, useState } from "react";
+import { errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
+import { isOk } from "../api.ts";
+import { useApiOnce } from "../parts/useApiLoad.ts";
+import { getLintTerms, getMemoryLint, getMemoryProjects, putLintTerms } from "./memoryApi.ts";
 import { useEscLayer } from "../../../lib/escLayer.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
@@ -54,61 +51,53 @@ export function LintPanel({
   const [stored, setStored] = useState<string[]>([]);
   const [rejected, setRejected] = useState<string[]>([]);
 
-  const load = useCallback(async (signal: AbortSignal) => {
-    const res = await api("api/agents/memory/entries/projects");
+  // The projects settle first and the terms are read after them, as one retried unit: a
+  // transient failure of either re-reads both, and the terms box stays disabled meanwhile.
+  useRetryLoad(async (signal) => {
+    const res = await getMemoryProjects();
     if (signal.aborted) return true;
     if (isTransientErr(res)) return false;
-    setLoadErr(res?.error ? errText(res.error) : "");
-    setRows(res?.error ? [] : (res?.projects ?? []));
-    const t = await api("api/agents/memory/entries/lint-terms");
+    setLoadErr(isOk(res) ? "" : errText(res.error));
+    setRows(isOk(res) ? (res.projects ?? []) : []);
+    const t = await getLintTerms();
     if (signal.aborted) return true;
     if (isTransientErr(t)) return false;
-    setTerms(t?.error ? "" : ((t?.terms ?? []) as string[]).join("\n"));
-    setStored(t?.error ? [] : ((t?.terms ?? []) as string[]));
-    setRejected(t?.error ? [] : ((t?.rejected ?? []) as string[]));
+    setTerms(isOk(t) ? (t.terms ?? []).join("\n") : "");
+    setStored(isOk(t) ? (t.terms ?? []) : []);
+    setRejected(isOk(t) ? (t.rejected ?? []) : []);
     return true;
-  }, []);
-  useRetryLoad(load, [reload]);
+  }, [reload]);
 
   // Only the latest request may answer, so a slow report for an earlier scope never replaces the
   // one chosen now.
+  const lintQuery = scope === USER ? "scope=user" : `scope=project&project=${encodeURIComponent(scope)}`;
   useEffect(() => {
     if (rows === null) return;
-    let live = true;
     setReport(null);
     setReportErr("");
-    const q =
-      scope === USER
-        ? "scope=user"
-        : `scope=project&project=${encodeURIComponent(scope)}`;
-    api("api/agents/memory/entries/lint?" + q)
-      .then((res) => {
-        if (!live) return;
-        if (res?.error) setReportErr(errDetail(res.error));
-        else if (!res?.report) setReportErr(tr("mem.af_failed"));
-        else setReport(res as LintReport);
-      })
-      .catch(() => live && setReportErr(tr("mem.af_failed")));
-    return () => {
-      live = false;
-    };
-  }, [rows, scope, again, tr]);
+  }, [rows, scope, again]);
+  useApiOnce(
+    rows === null ? null : () => getMemoryLint(lintQuery),
+    (res) => {
+      if (!isOk(res)) setReportErr(errDetail(res.error));
+      else if (!res.report) setReportErr(tr("mem.af_failed"));
+      else setReport(res as LintReport);
+    },
+    () => setReportErr(tr("mem.af_failed")),
+    [rows, scope, again, tr],
+  );
 
   const saveTerms = async () => {
     if (terms === null) return;
     setSaving(true);
     try {
-      const res = await apiJSON(
-        "api/agents/memory/entries/lint-terms",
-        "POST",
-        { terms: terms.split("\n") },
-      );
-      if (res?.error) {
+      const res = await putLintTerms({ terms: terms.split("\n") });
+      if (!isOk(res)) {
         toast(errDetail(res.error), { kind: "error" });
         return;
       }
-      setTerms(((res?.terms ?? []) as string[]).join("\n"));
-      setStored((res?.terms ?? []) as string[]);
+      setTerms((res.terms ?? []).join("\n"));
+      setStored(res.terms ?? []);
       toast(tr("mem.lint_terms_saved"), { kind: "success" });
       setAgain((n) => n + 1);
     } finally {
@@ -121,21 +110,17 @@ export function LintPanel({
   const decide = async (term: string, accept: boolean) => {
     setSaving(true);
     try {
-      const res = await apiJSON(
-        "api/agents/memory/entries/lint-terms",
-        "POST",
-        {
-          terms: accept ? [...stored, term] : stored,
-          rejected: accept ? rejected : [...rejected, term],
-        },
-      );
-      if (res?.error) {
+      const res = await putLintTerms({
+        terms: accept ? [...stored, term] : stored,
+        rejected: accept ? rejected : [...rejected, term],
+      });
+      if (!isOk(res)) {
         toast(errDetail(res.error), { kind: "error" });
         return;
       }
-      setStored((res?.terms ?? []) as string[]);
-      setRejected((res?.rejected ?? []) as string[]);
-      if (accept) setTerms(((res?.terms ?? []) as string[]).join("\n"));
+      setStored(res.terms ?? []);
+      setRejected(res.rejected ?? []);
+      if (accept) setTerms((res.terms ?? []).join("\n"));
       toast(tr(accept ? "mem.lint_terms_saved" : "mem.lint_prop_rejected"), {
         kind: "success",
       });

@@ -7,8 +7,10 @@
 // fixes the claude file and previews again. Applying needs the Agent Fleet memory switch on.
 
 import { useCallback, useRef, useState } from "react";
-import { api, apiJSON, errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
-import { useRetryLoad } from "../../../lib/retryLoad.ts";
+import { errDetail, errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { useApiLoad } from "../parts/useApiLoad.ts";
+import { applyClaudeImport, getClaudeImportPreview, getClaudeImportSources } from "./memoryApi.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
@@ -18,7 +20,6 @@ import { WizardFrame, GroupedPreview, Findings, type WizardStep } from "./memory
 import type {
   ClaudeImportItem,
   ClaudeImportPreview,
-  ClaudeImportResult,
   ClaudeImportSource,
   ClaudeImportStatus,
 } from "./memoryTypes.ts";
@@ -50,16 +51,15 @@ export function ClaudeImportPanel({ reload, onChanged, onClose }: { reload: numb
     setResult(msg);
   };
 
-  const load = useCallback(async (signal: AbortSignal) => {
-    const res = await api("api/agents/memory/claude-import");
-    if (signal.aborted) return true;
-    if (isTransientErr(res)) return false;
-    setLoadErr(res?.error ? errText(res.error) : "");
-    setSources(res?.error ? [] : (res?.sources ?? []));
-    setWithheld(res?.error ? 0 : (res?.withheld ?? 0));
-    return true;
-  }, []);
-  useRetryLoad(load, [reload, again]);
+  useApiLoad(
+    getClaudeImportSources,
+    (res) => {
+      setLoadErr(isOk(res) ? "" : errText(res.error));
+      setSources(isOk(res) ? (res.sources ?? []) : []);
+      setWithheld(isOk(res) ? (res.withheld ?? 0) : 0);
+    },
+    [reload, again],
+  );
 
   // Only the latest request may answer: a slow response for a source picked earlier must not
   // replace the preview of the one shown (the confirm would pair one project with another slug).
@@ -69,13 +69,14 @@ export function ClaudeImportPanel({ reload, onChanged, onClose }: { reload: numb
     setPreview(null);
     setPreviewErr("");
     if (!s) return;
-    const res = await api("api/agents/memory/claude-import/preview?slug=" + encodeURIComponent(s));
+    const res = await getClaudeImportPreview(s);
     if (seq !== previewSeq.current) return;
-    if (res?.error) {
+    if (res === null) return; // unknown answer: the preview stays unloaded
+    if (!isOk(res)) {
       setPreviewErr(errDetail(res.error));
       return;
     }
-    setPreview(res as ClaudeImportPreview);
+    setPreview(res);
   }, []);
 
   const pick = (s: string) => {
@@ -97,16 +98,12 @@ export function ClaudeImportPanel({ reload, onChanged, onClose }: { reload: numb
       for (let at = 0; at < todo.length; at += IMPORT_BATCH) {
         const items = todo.slice(at, at + IMPORT_BATCH).map((i) => ({ name: i.name, sourceHash: i.sourceHash }));
         // The project id also goes in the query: the CP audit ledger reads the URL only.
-        const res = await apiJSON("api/agents/memory/claude-import?project=" + encodeURIComponent(project), "POST", {
-          project,
-          slug: preview.slug,
-          items,
-        });
-        if (res?.error) {
+        const res = await applyClaudeImport(project, { project, slug: preview.slug, items });
+        if (!isOk(res)) {
           notify(errDetail(res.error));
           return;
         }
-        for (const r of (res?.results ?? []) as ClaudeImportResult[]) {
+        for (const r of res.results ?? []) {
           if (r.result === "skipped") skipped++;
           else imported++;
         }

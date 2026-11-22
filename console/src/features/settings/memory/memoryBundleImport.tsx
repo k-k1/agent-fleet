@@ -8,16 +8,18 @@
 // history do not (the Agent resets them and records where each came from), a memory that already
 // exists here is never replaced, and one forgotten here is never brought back.
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { api, apiJSON, errDetail, errText, getTenant, isTransientErr, raw } from "../../../core/api/client.ts";
+import { useEffect, useRef, useState } from "react";
+import { errDetail, errText, getTenant, raw } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { useApiLoad } from "../parts/useApiLoad.ts";
+import { applyBundleImport, getBundlePreview } from "./memoryApi.ts";
 import { useTenantStore } from "../../../core/store/tenant.ts";
-import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { useSettingsUI } from "../store.ts";
 import { WizardFrame, GroupedPreview, PreviewSection, Findings, type WizardStep } from "./memoryWizard.tsx";
-import type { BundleItem, BundlePreview, BundleResult, BundleScope } from "./memoryTypes.ts";
+import type { BundleItem, BundlePreview, BundleScope } from "./memoryTypes.ts";
 
 /** The Agent's per-request cap (agentMemBundleBatch). */
 export const BUNDLE_BATCH = 50;
@@ -76,18 +78,14 @@ export function BundleAfPanel({
     };
   }, [importId, ownerKey]);
 
-  const load = useCallback(
-    async (signal: AbortSignal) => {
-      const res = await api("api/agents/memory/af-import/preview?importId=" + encodeURIComponent(importId));
-      if (signal.aborted) return true;
-      if (isTransientErr(res)) return false;
-      setLoadErr(res?.error ? errText(res.error) : "");
-      setShown(res?.error ? null : { owner: ownerKey, preview: res as BundlePreview });
-      return true;
+  useApiLoad(
+    () => getBundlePreview(importId),
+    (res) => {
+      setLoadErr(res === null || isOk(res) ? "" : errText(res.error));
+      setShown(isOk(res) ? { owner: ownerKey, preview: res } : null);
     },
-    [importId, ownerKey],
+    [importId, again, ownerKey],
   );
-  useRetryLoad(load, [importId, again, ownerKey]);
 
   if (loadErr) return <p className="mem-warn">{loadErr}</p>;
   if (!preview) return showEmpty ? <p className="muted">{tr("common.loading")}</p> : null;
@@ -123,16 +121,13 @@ export function BundleAfPanel({
         if (!live()) return;
         const items = todo.slice(at, at + BUNDLE_BATCH);
         // The import id also goes in the query: the CP audit ledger reads the URL only.
-        const res = await apiJSON("api/agents/memory/af-import?importId=" + encodeURIComponent(importId), "POST", {
-          importId,
-          items,
-        });
+        const res = await applyBundleImport(importId, { importId, items });
         if (!live()) return;
-        if (res?.error) {
+        if (!isOk(res)) {
           say(errDetail(res.error));
           return;
         }
-        for (const r of (res?.results ?? []) as BundleResult[]) {
+        for (const r of res.results ?? []) {
           if (r.result === "imported") imported++;
           else skipped++;
         }
@@ -335,17 +330,11 @@ export function BundleAfPointer({ importId }: { importId: string }) {
   const tr = useT();
   const openSettings = useSettingsUI((s) => s.openSettings);
   const [hasAF, setHasAF] = useState(false);
-  const load = useCallback(
-    async (signal: AbortSignal) => {
-      const res = await api("api/agents/memory/af-import/preview?importId=" + encodeURIComponent(importId));
-      if (signal.aborted) return true;
-      if (isTransientErr(res)) return false;
-      setHasAF(!res?.error && !!res?.hasAF);
-      return true;
-    },
+  useApiLoad(
+    () => getBundlePreview(importId),
+    (res) => setHasAF(isOk(res) && !!res.hasAF),
     [importId],
   );
-  useRetryLoad(load, [importId]);
   if (!hasAF) return null;
   return (
     <p className="muted ds-hint">

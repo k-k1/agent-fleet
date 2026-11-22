@@ -5,8 +5,11 @@
 // asks for the memory's name to be typed before the purge route is called. The CP signs and audits
 // the purge; no MCP tool reaches it.
 
-import { useEffect, useState } from "react";
-import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { useState } from "react";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { useApiOnce } from "../parts/useApiLoad.ts";
+import { getPurgePreview, purgeMemory } from "./memoryApi.ts";
 import { Modal } from "../../../ui/Modal.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -47,33 +50,29 @@ export function PurgeHistoryDialog({
   const [typed, setTyped] = useState("");
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    let live = true;
-    api(
-      `api/agents/memory/entries/purge-preview?scope=${target.scope}&project=${encodeURIComponent(projectId(target))}&name=${encodeURIComponent(target.name)}`,
-    )
-      .then((res) => {
-        if (!live) return;
-        if (res?.error) setErr(errDetail(res.error));
-        else setPv({ changes: [], refs: [], findings: [], changesTotal: 0, snapshots: 0, ...res } as PurgePreview);
-      })
-      .catch(() => live && setErr(tr("mem.af_failed")));
-    return () => {
-      live = false;
-    };
-  }, [target, tr]);
+  useApiOnce(
+    () => getPurgePreview(target.scope, projectId(target), target.name),
+    (res) => {
+      if (!isOk(res)) setErr(errDetail(res.error));
+      else setPv({ changes: [], refs: [], findings: [], changesTotal: 0, snapshots: 0, ...res } as PurgePreview);
+    },
+    () => setErr(tr("mem.af_failed")),
+    [target, tr],
+  );
 
   const run = async () => {
     if (!pv || typed !== target.name) return;
     setBusy(true);
     try {
       // The project also goes in the query: the CP audit ledger reads the URL only, never the body.
-      const res = await apiJSON(
-        "api/agents/memory/entries/purge" + (projectId(target) ? "?project=" + encodeURIComponent(projectId(target)) : ""),
-        "POST",
-        { scope: target.scope, project: projectId(target), name: target.name, plan: pv.plan, confirm: typed },
-      );
-      if (res?.error) {
+      const res = await purgeMemory(projectId(target), {
+        scope: target.scope,
+        project: projectId(target),
+        name: target.name,
+        plan: pv.plan,
+        confirm: typed,
+      });
+      if (!isOk(res)) {
         setErr(errDetail(res.error));
         return;
       }

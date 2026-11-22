@@ -163,6 +163,42 @@ describe("LintPanel", () => {
   });
 });
 
+describe("LintPanel load order", () => {
+  it("reads the terms only after the projects answered, and re-reads both after a transient terms failure", async () => {
+    vi.useFakeTimers();
+    try {
+      let projectsDone!: (v: unknown) => void;
+      let termsCalls = 0;
+      let projectsCalls = 0;
+      api.mockImplementation(async (path: string) => {
+        if (path.startsWith("api/agents/memory/entries/projects")) {
+          projectsCalls++;
+          return projectsCalls === 1
+            ? new Promise((r) => (projectsDone = r))
+            : { projects: [{ project: proj, count: 3, orphaned: false, live: true }] };
+        }
+        if (path.startsWith("api/agents/memory/entries/lint-terms")) {
+          termsCalls++;
+          return termsCalls === 1 ? { error: { code: "http_502", message: "x" } } : { terms: ["muse"] };
+        }
+        return userReport;
+      });
+      await mount();
+      expect(termsCalls).toBe(0); // projects still pending: terms are not requested yet
+      await act(async () => projectsDone({ projects: [] }));
+      await flush();
+      expect(termsCalls).toBe(1); // 502: the whole unit is retried, projects first
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(projectsCalls).toBe(2);
+      expect(termsCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
 describe("LintPanel retired-term proposals", () => {
   const withProposal = () =>
     api.mockImplementation(async (path: string) => {
