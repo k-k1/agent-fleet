@@ -50,4 +50,17 @@ describe("useInterval", () => {
     expect(fn).toHaveBeenCalledTimes(1);
     root = createRoot(document.createElement("div"));
   });
+  it("stops a running timer when ms goes to null, and swaps periods without a stale timer", () => {
+    const fn = vi.fn();
+    act(() => root.render(<Probe fn={fn} ms={1000} />));
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(fn).toHaveBeenCalledTimes(1);
+    act(() => root.render(<Probe fn={fn} ms={null} />));
+    act(() => void vi.advanceTimersByTime(10000));
+    expect(fn).toHaveBeenCalledTimes(1);
+    act(() => root.render(<Probe fn={fn} ms={1000} />));
+    act(() => root.render(<Probe fn={fn} ms={4000} />));
+    act(() => void vi.advanceTimersByTime(4000));
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
 });
