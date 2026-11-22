@@ -1,0 +1,326 @@
+package main
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/mcpsrv"
+	"github.com/k-k1/agent-fleet/control-plane/internal/memorecipe"
+	"github.com/k-k1/agent-fleet/control-plane/internal/memotidy"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+)
+
+// A run recipe a queue message carries (ADR 0137, addendum 2026-11-23, #4845).
+
+func TestMemoEffectiveRecipe(t *testing.T) {
+	q := store.MemoQueue{AgentKind: "claude", Model: "claude-x", Effort: "high", Route: ""}
+	for _, tc := range []struct {
+		name   string
+		recipe memorecipe.Recipe
+		want   memorecipe.Recipe
+	}{
+		{"none uses the category", memorecipe.Recipe{}, memorecipe.Recipe{AgentKind: "claude", Model: "claude-x", Effort: "high"}},
+		{"field by field", memorecipe.Recipe{Effort: "low"}, memorecipe.Recipe{AgentKind: "claude", Model: "claude-x", Effort: "low"}},
+		{"the same agent keeps the category's model", memorecipe.Recipe{AgentKind: "claude", Model: "claude-y"}, memorecipe.Recipe{AgentKind: "claude", Model: "claude-y", Effort: "high"}},
+		{"another agent does not inherit the model or effort", memorecipe.Recipe{AgentKind: "codex"}, memorecipe.Recipe{AgentKind: "codex"}},
+		{"another agent with its own model", memorecipe.Recipe{AgentKind: "codex", Model: "m", Effort: "low"}, memorecipe.Recipe{AgentKind: "codex", Model: "m", Effort: "low"}},
+	} {
+		if got := memorecipe.Effective(q, store.Memo{Recipe: tc.recipe.Encode()}); got != tc.want {
+			t.Errorf("%s: got %+v want %+v", tc.name, got, tc.want)
+		}
+	}
+	if got := memorecipe.Effective(store.MemoQueue{}, store.Memo{}); got.AgentKind != "claude" {
+		t.Errorf("a queue with no kind runs claude, got %+v", got)
+	}
+}
+
+// A message without a recipe hashes as it always did; one with a recipe hashes differently for each.
+func TestMemoRecipeInTheContentHash(t *testing.T) {
+	m := store.Memo{Kind: "text", Body: "do it", Repo: "app", Category: "impl"}
+	plain := memoContentHash(m)
+	b, _ := json.Marshal([]string{"memo-content/v1", "text", "do it", "", "", "app", "impl"})
+	if sum := sha256.Sum256(b); plain != hex.EncodeToString(sum[:]) {
+		t.Fatal("a message without a recipe hashes differently than before the column")
+	}
+	m.Recipe = memorecipe.Recipe{Effort: "high"}.Encode()
+	a := memoContentHash(m)
+	m.Recipe = memorecipe.Recipe{Effort: "low"}.Encode()
+	if plain == a || a == memoContentHash(m) {
+		t.Fatal("the recipe is not part of the content hash")
+	}
+}
+
+func (e *deliveryEnv) recipeMemo(repo, cat, text string, extra map[string]any) *httptest.ResponseRecorder {
+	body := textMemo(repo, cat, text)
+	for k, v := range extra {
+		body[k] = v
+	}
+	return e.do("a", "POST", "/api/memos", body)
+}
+
+// A refused value is a 400 and nothing is stored; a note outside every queue is refused rather than
+// silently losing the recipe.
+func TestMemoRecipeValidation(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("app", "impl", nil)
+		for _, tc := range []struct {
+			name  string
+			extra map[string]any
+		}{
+			{"unknown agent", map[string]any{"agentKind": "nope"}},
+			{"shell is no consumer", map[string]any{"agentKind": "shell"}},
+			{"bad model", map[string]any{"model": "bad model!"}},
+			{"bad effort", map[string]any{"effort": "hi gh"}},
+			{"unknown route", map[string]any{"route": "no-such-route"}},
+		} {
+			rec := e.recipeMemo("app", "impl", "x", tc.extra)
+			if rec.Code != http.StatusBadRequest || deliveryErrCode(t, rec) != errCodeMemoRecipeInvalid {
+				t.Errorf("%s: %d %s", tc.name, rec.Code, rec.Body.String())
+			}
+		}
+		if rec := e.recipeMemo("app", "plain", "x", map[string]any{"effort": "low"}); rec.Code != http.StatusBadRequest || deliveryErrCode(t, rec) != errCodeMemoRecipeInvalid {
+			t.Errorf("outside a queue: %d %s", rec.Code, rec.Body.String())
+		}
+		rows, _ := e.st.ListMemos(context.Background(), e.members["a"], "")
+		if len(rows) != 0 {
+			t.Fatalf("a refused create stored %d rows", len(rows))
+		}
+		rec := e.recipeMemo("app", "impl", "ok", map[string]any{"agentKind": "codex", "model": "m1", "effort": "low"})
+		got := decode[memoDTO](t, rec)
+		if rec.Code != http.StatusCreated || got.AgentKind != "codex" || got.Model != "m1" || got.Effort != "low" || got.State != store.MemoStatePending {
+			t.Fatalf("create: %d %+v", rec.Code, got)
+		}
+		if listed := e.listed(got.ID); listed.AgentKind != "codex" || listed.Model != "m1" || listed.Effort != "low" || listed.ContentHash != got.ContentHash {
+			t.Fatalf("listed %+v", listed)
+		}
+		// A refused patch changes nothing.
+		if rec := e.do("a", "PATCH", "/api/memos/"+got.ID, map[string]any{"effort": "no good"}); rec.Code != http.StatusBadRequest {
+			t.Fatalf("bad patch: %d %s", rec.Code, rec.Body.String())
+		}
+		if row := e.memoRow(got.ID); memorecipe.Of(row).Effort != "low" {
+			t.Fatalf("a refused patch changed the recipe: %q", row.Recipe)
+		}
+	})
+}
+
+// The Console's edit re-records the member's own release, a session's edit sends it back to held,
+// "" clears a field, and leaving the queue drops the recipe.
+func TestMemoRecipeEdits(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("app", "impl", nil)
+		m := e.pending("app", "impl", "one")
+		rec := e.do("a", "PATCH", "/api/memos/"+m.ID, map[string]any{"effort": "high", "model": "m1"})
+		got := decode[memoDTO](t, rec)
+		if rec.Code != http.StatusOK || got.State != store.MemoStatePending || got.Effort != "high" || got.ContentHash == m.ContentHash {
+			t.Fatalf("console patch: %d %+v", rec.Code, got)
+		}
+		e.assertPendingReleaseMatches()
+		rec = e.memoTokenDo("a", "PATCH", "/internal/memos/"+m.ID, map[string]any{"effort": "low"})
+		if got := decode[memoDTO](t, rec); rec.Code != http.StatusOK || got.State != store.MemoStateHeld || got.Effort != "low" || got.Model != "m1" {
+			t.Fatalf("a session's change of the recipe kept the release: %d %+v", rec.Code, got)
+		}
+		rec = e.do("a", "PATCH", "/api/memos/"+m.ID, map[string]any{"effort": "", "model": ""})
+		if got := decode[memoDTO](t, rec); rec.Code != http.StatusOK || got.Effort != "" || got.Model != "" || e.memoRow(m.ID).Recipe != "" {
+			t.Fatalf("clear: %d %+v", rec.Code, got)
+		}
+		e.do("a", "PATCH", "/api/memos/"+m.ID, map[string]any{"effort": "low"})
+		rec = e.do("a", "PATCH", "/api/memos/"+m.ID, map[string]any{"category": "notes"})
+		if got := decode[memoDTO](t, rec); rec.Code != http.StatusOK || got.State != "" || got.Effort != "" || e.memoRow(m.ID).Recipe != "" {
+			t.Fatalf("moved out: %d %+v", rec.Code, got)
+		}
+	})
+}
+
+// The /mcp face sets and refuses a recipe through the same core.
+func TestMemoRecipeOverMCP(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("app", "impl", nil)
+		s := func(v string) *string { return &v }
+		d := cpDeps{e.mgr}
+		out, err := d.MemoCreate(context.Background(), store.MembershipView{MembershipID: e.members["a"]}, "conn-1", "app", "impl", "text", "hello", "", nil, nil, "",
+			mcpsrv.MemoRecipe{Effort: s("high")})
+		if err != nil || out.(memoDTO).Effort != "high" || out.(memoDTO).State != store.MemoStateHeld {
+			t.Fatalf("create: %v %+v", err, out)
+		}
+		if _, err := d.MemoCreate(context.Background(), store.MembershipView{MembershipID: e.members["a"]}, "conn-1", "app", "impl", "text", "hello2", "", nil, nil, "",
+			mcpsrv.MemoRecipe{AgentKind: s("nope")}); err == nil {
+			t.Fatal("a bad agent was accepted")
+		}
+		id := out.(memoDTO).ID
+		up, err := d.MemoUpdate(context.Background(), e.members["a"], id, nil, nil, nil, nil, nil, nil, nil, nil, mcpsrv.MemoRecipe{Effort: s("")})
+		if err != nil || up.(memoDTO).Effort != "" {
+			t.Fatalf("update: %v %+v", err, up)
+		}
+	})
+}
+
+func recipeCreate(c map[string]any) (kind, model, effort string) {
+	kind, _ = c["kind"].(string)
+	model, _ = c["model"].(string)
+	effort, _ = c["effort"].(string)
+	return
+}
+
+// A run has one recipe: a batch groups only messages whose effective recipes are equal, and a
+// message with another one waits for its own run, oldest first otherwise. The session is created
+// with the effective recipe: the message's fields over the category's.
+func TestMemoRecipeBatchingAndDelivery(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"batch": 5, "maxActive": 3, "model": "claude-x", "effort": "high"})
+		a := e.pending("app", "impl", "a")
+		time.Sleep(1100 * time.Millisecond)
+		b := decode[memoDTO](t, e.recipeMemo("app", "impl", "b", map[string]any{"effort": "low"}))
+		time.Sleep(1100 * time.Millisecond)
+		c := e.pending("app", "impl", "c")
+		// Spelling the category's own value out is the same effective recipe.
+		time.Sleep(1100 * time.Millisecond)
+		d := decode[memoDTO](t, e.recipeMemo("app", "impl", "d", map[string]any{"effort": "high"}))
+		agent := e.useQueueAgent("")
+
+		first := e.fired(q)
+		if !sameIDs(first.MessageIDs, a.ID, c.ID, d.ID) {
+			t.Fatalf("first batch %v, want a, c and d", first.MessageIDs)
+		}
+		second := e.fired(q)
+		if !sameIDs(second.MessageIDs, b.ID) {
+			t.Fatalf("second batch %v, want b alone", second.MessageIDs)
+		}
+		r := e.runner()
+		e.tick(r, time.Now())
+		if agent.createCount() != 2 {
+			t.Fatalf("%d creates", agent.createCount())
+		}
+		got := map[string]string{}
+		for _, c := range agent.creates {
+			k, m, ef := recipeCreate(c)
+			qd, _ := c["queue_delivery"].(map[string]any)
+			got[qd["id"].(string)] = k + "/" + m + "/" + ef
+		}
+		if got[first.ID] != "claude/claude-x/high" || got[second.ID] != "claude/claude-x/low" {
+			t.Fatalf("creates %v", got)
+		}
+	})
+}
+
+// A message that names another agent runs on it, without the category's model, and not with the
+// category's other messages.
+func TestMemoRecipeOtherAgent(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"batch": 5, "maxActive": 3, "model": "claude-x", "effort": "high"})
+		x := decode[memoDTO](t, e.recipeMemo("app", "impl", "x", map[string]any{"agentKind": "codex"}))
+		time.Sleep(1100 * time.Millisecond)
+		y := e.pending("app", "impl", "y")
+		agent := e.useQueueAgent("")
+		d1 := e.fired(q)
+		if !sameIDs(d1.MessageIDs, x.ID) {
+			t.Fatalf("batch %v", d1.MessageIDs)
+		}
+		d2 := e.fired(q)
+		if !sameIDs(d2.MessageIDs, y.ID) {
+			t.Fatalf("batch %v", d2.MessageIDs)
+		}
+		e.tick(e.runner(), time.Now())
+		seen := 0
+		for _, c := range agent.creates {
+			qd, _ := c["queue_delivery"].(map[string]any)
+			k, m, ef := recipeCreate(c)
+			switch qd["id"] {
+			case d1.ID:
+				seen++
+				if k != "codex" || m != "" || ef != "" {
+					t.Errorf("codex run: %s/%s/%s", k, m, ef)
+				}
+			case d2.ID:
+				seen++
+				if k != "claude" || m != "claude-x" || ef != "high" {
+					t.Errorf("default run: %s/%s/%s", k, m, ef)
+				}
+			}
+		}
+		if seen != 2 {
+			t.Fatalf("saw %d creates", seen)
+		}
+	})
+}
+
+// A tidy run never merges messages whose effective recipes differ, and what it derives keeps the
+// recipe of its sources.
+func TestMemoRecipeInTidy(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.category("r", "q")
+		e.tidyQueue(q)
+		row := func(body, effort string) store.Memo {
+			m := store.Memo{ID: store.NewID(), MembershipID: e.members["a"], Repo: "r", Category: "q", Kind: "text", Body: body,
+				CreatedAt: store.NowTS(), State: store.MemoStatePending, Provenance: "member", Recipe: memorecipe.Recipe{Effort: effort}.Encode()}
+			m.ReleaseHash, m.ReleasedAt = memoContentHash(m), store.NowTS()
+			if err := e.st.CreateMemo(context.Background(), m); err != nil {
+				t.Fatal(err)
+			}
+			return e.memoRow(m.ID)
+		}
+		a, b, c := row("one", "low"), row("two", "high"), row("three", "low")
+		out, err := memoTidyApply(context.Background(), e.st, memoTidyApplyIn{MembershipID: e.members["a"], QueueID: q, Trigger: store.TidyTriggerManual,
+			Input: tidyItems(a, b), Ops: []memotidy.Op{merge("both", a.ID, b.ID)}})
+		if err != nil || out.Run.State != store.TidyRunDropped || out.Run.Reason != memotidy.CodeMixedGroup {
+			t.Fatalf("a merge across recipes: %v %+v", err, out.Run)
+		}
+		out = e.tidyApply(q, store.TidyTriggerManual, []store.Memo{a, c}, nil, merge("both", a.ID, c.ID))
+		if out.Run.State != store.TidyRunApplied || len(out.Results) != 1 {
+			t.Fatalf("a merge of equal recipes: %+v", out.Run)
+		}
+		if m := e.memoRow(out.Results[0]); memorecipe.Of(m).Effort != "low" || m.ReleaseHash != memoContentHash(m) {
+			t.Fatalf("merged %+v", m)
+		}
+		out = e.tidyApply(q, store.TidyTriggerManual, []store.Memo{b}, nil, memotidy.Op{Op: memotidy.OpSplit, ID: b.ID, Texts: []string{"x", "y"}})
+		if out.Run.State != store.TidyRunApplied || len(out.Results) != 2 {
+			t.Fatalf("split: %+v", out.Run)
+		}
+		for _, id := range out.Results {
+			if m := e.memoRow(id); memorecipe.Of(m).Effort != "high" {
+				t.Fatalf("a split lost the recipe: %+v", m)
+			}
+		}
+		e.assertPendingReleaseMatches()
+	})
+}
+
+// A continuation runs as the message it continues unless it names a recipe of its own.
+func TestMemoRecipeContinuationInherits(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		q := e.contQueue("impl", -1, nil)
+		body := contMemo("impl", "part 1", "acme/app#1")
+		body["effort"], body["model"] = "high", "m1"
+		rec := e.do("a", "POST", "/api/memos", body)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("root: %d %s", rec.Code, rec.Body.String())
+		}
+		root := e.memoRow(decode[memoDTO](t, rec).ID)
+		d := e.contRun(q, "run-1", store.DeliveryOpen, root.ID)
+		next := e.contSend("impl", "part 2", "acme/app#1", "queue", "run-1", d)
+		if next.State != store.MemoStatePending || next.Recipe != root.Recipe || next.ReleaseHash != memoContentHash(next) {
+			t.Fatalf("inherited: %+v (root recipe %q)", next, root.Recipe)
+		}
+		// One that names its own recipe keeps it, whole: the root's fields are not mixed in.
+		body3 := contMemo("impl", "root 3", "acme/app#3")
+		body3["effort"], body3["model"] = "high", "m1"
+		root3 := e.memoRow(decode[memoDTO](t, e.do("a", "POST", "/api/memos", body3)).ID)
+		d3 := e.contRun(q, "run-3", store.DeliveryOpen, root3.ID)
+		m := contMemo("impl", "part 2", "acme/app#3")
+		m["producer"], m["producerOrigin"], m["continuation"], m["queueDelivery"] = "run-3", "queue", true, d3
+		m["effort"] = "low"
+		rec = e.memoTokenDo("a", "POST", "/internal/memos", m)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("own recipe: %d %s", rec.Code, rec.Body.String())
+		}
+		own := e.memoRow(decode[memoDTO](t, rec).ID)
+		if r := memorecipe.Of(own); own.State != store.MemoStatePending || r.Effort != "low" || r.Model != "" {
+			t.Fatalf("own recipe: %+v", own)
+		}
+	})
+}

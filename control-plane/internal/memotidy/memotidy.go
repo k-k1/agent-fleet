@@ -81,6 +81,9 @@ type Op struct {
 // message carries its sources' provenance), the producer and the producer origin.
 type Group struct {
 	Provenance, Producer, ProducerOrigin string
+	// Recipe is the encoded run recipe the message resolves to under its queue's settings, so two
+	// messages that would run differently are never merged (ADR 0137, addendum 2026-11-23).
+	Recipe string
 }
 
 // Item is one message the run read.

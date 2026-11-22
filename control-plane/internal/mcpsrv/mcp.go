@@ -849,6 +849,10 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 					"reference":  memoRefSchema(false),
 					"after":      memoAfterSchema(false),
 					"startAfter": memoStartAfterSchema(false),
+					"agentKind":  memoRecipeSchema("agentKind", false),
+					"model":      memoRecipeSchema("model", false),
+					"effort":     memoRecipeSchema("effort", false),
+					"route":      memoRecipeSchema("route", false),
 				},
 				"required": []string{"kind"},
 			},
@@ -873,9 +877,13 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 				if startAfter != nil {
 					start = *startAfter
 				}
+				recipe, err := argMemoRecipe(args)
+				if err != nil {
+					return "", err
+				}
 				dto, err := a.cp.MemoCreate(ctx, res.MV, mcpCallFrom(ctx).patID,
 					argStr(args, "repo"), argStr(args, "category"),
-					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref, afterList, start)
+					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref, afterList, start, recipe)
 				if err != nil {
 					return "", err
 				}
@@ -897,6 +905,10 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 					"reference":  memoRefSchema(true),
 					"after":      memoAfterSchema(true),
 					"startAfter": memoStartAfterSchema(true),
+					"agentKind":  memoRecipeSchema("agentKind", true),
+					"model":      memoRecipeSchema("model", true),
+					"effort":     memoRecipeSchema("effort", true),
+					"route":      memoRecipeSchema("route", true),
 				},
 				"required": []string{"id"},
 			},
@@ -913,10 +925,14 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 				if err != nil {
 					return "", err
 				}
+				recipe, err := argMemoRecipe(args)
+				if err != nil {
+					return "", err
+				}
 				dto, err := a.cp.MemoUpdate(ctx, res.MV.MembershipID, argStr(args, "id"),
 					argStrPtr(args, "repo"), argStrPtr(args, "category"),
 					argStrPtr(args, "body"), argStrPtr(args, "refPath"),
-					argIntPtr(args, "position"), ref, after, startAfter)
+					argIntPtr(args, "position"), ref, after, startAfter, recipe)
 				if err != nil {
 					return "", err
 				}
@@ -1193,6 +1209,44 @@ func memoStartAfterSchema(update bool) map[string]any {
 		desc += " Omit to leave it as it is; \"\" clears it. Changing it on a released note sends it back to wait for release."
 	}
 	return map[string]any{"type": "string", "description": desc}
+}
+
+// memoRecipeSchema is one of the run-recipe arguments of add_memo and update_memo: agentKind,
+// model, effort and route. They apply only to a note of an auto-run category, and a field left out
+// uses that category's own setting.
+func memoRecipeSchema(field string, update bool) map[string]any {
+	what := map[string]string{
+		"agentKind": "the agent kind that runs it (one create_session accepts)",
+		"model":     "the model it runs on (an id from list_models; must suit the agent)",
+		"effort":    "the effort level it runs at (e.g. low, medium, high)",
+		"route":     "the route the run uses (leave empty unless the model needs one)",
+	}[field]
+	desc := "Optional, for a note of an auto-run category only: " + what + ". Left out, the category's own setting is used, field by field. A refused value is an error, never ignored. Approving the note approves this too."
+	if update {
+		desc += " Omit to leave it as it is; \"\" clears it. Changing it on a released note sends it back to wait for release."
+	}
+	return map[string]any{"type": "string", "description": desc}
+}
+
+// argMemoRecipe reads the recipe arguments: absent or null is nil (leave it), a string is the value
+// ("" means clear on an update), anything else is refused rather than dropped.
+func argMemoRecipe(a map[string]any) (MemoRecipe, error) {
+	var r MemoRecipe
+	for _, f := range []struct {
+		key string
+		dst **string
+	}{{"agentKind", &r.AgentKind}, {"model", &r.Model}, {"effort", &r.Effort}, {"route", &r.Route}} {
+		v, ok := a[f.key]
+		if !ok || v == nil {
+			continue
+		}
+		s, ok := v.(string)
+		if !ok {
+			return r, errors.New(f.key + " must be a string")
+		}
+		*f.dst = &s
+	}
+	return r, nil
 }
 
 // argMemoStartAfter reads the `startAfter` argument: absent or null is nil (leave it), a string is

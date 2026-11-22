@@ -22,6 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/memoafter"
+	"github.com/k-k1/agent-fleet/control-plane/internal/memorecipe"
 	"github.com/k-k1/agent-fleet/control-plane/internal/memoref"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -94,12 +95,13 @@ func (v memoVia) provenance() string {
 func (v memoVia) fromWorkspace() bool { return v.face != memoFaceConsole }
 
 // memoContentHash is what a release is bound to: the body, the kind, the ref path, the
-// attachments, the reference, the prerequisites, the start time, the repo and the category. The category is its name, so a rename changes the
+// attachments, the reference, the prerequisites, the start time, the run recipe, the repo and the category. The category is its name, so a rename changes the
 // hash and a pending message's release is re-recorded in the same transaction.
 func memoContentHash(m store.Memo) string {
 	parts := append([]string{"memo-content/v1", m.Kind, m.Body, m.RefPath, m.Attachments, m.Repo, m.Category}, memoRefHashParts(m)...)
 	parts = append(parts, memoafter.HashParts(m)...)
-	b, _ := json.Marshal(append(parts, memoafter.StartAfterHashParts(m)...))
+	parts = append(parts, memoafter.StartAfterHashParts(m)...)
+	b, _ := json.Marshal(append(parts, memorecipe.HashParts(m)...))
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:])
 }
@@ -188,7 +190,7 @@ func memoQueueMove(prev, next store.Memo, inPrev, inNext, accept bool, via memoV
 		// A plain note waits for nothing: a list left behind would block its every later move,
 		// and come back if the category became a queue again.
 		next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = "", "", "", ""
-		next.AfterIDs, next.HeldReason, next.StartAfter = "", "", ""
+		next.AfterIDs, next.HeldReason, next.StartAfter, next.Recipe = "", "", "", ""
 		return next, nil
 	}
 	// A superseded message was replaced by a tidy run and comes back only by undoing it: whatever
@@ -1008,4 +1010,42 @@ func derefRef(r *memoRefWire) memoRefWire {
 // memoRefLine is a reference as a line of a hand-sent message.
 func memoRefLine(m store.Memo) string {
 	return "作業項目: " + m.RefKey + " (" + m.RefURL + ")"
+}
+
+// --- Run recipes (ADR 0137, addendum 2026-11-23) ---
+
+func badMemoRecipe(msg string) *apiError {
+	return &apiError{http.StatusBadRequest, errCodeMemoRecipeInvalid, msg}
+}
+
+func memoRecipeOutside() *apiError {
+	return badMemoRecipe("an agent, model, effort or route is only for a note of an auto-run category")
+}
+
+// memoRecipeCheck validates a recipe exactly as the queue settings validate theirs (memoQueueIn.validate).
+// queueKind is the agent kind of the category the message is in: a route is checked against the
+// kind the run will really use.
+func memoRecipeCheck(r memorecipe.Recipe, queueKind string) *apiError {
+	if r.AgentKind == "shell" || r.AgentKind == "ssm" {
+		return badMemoRecipe("a queue's consumer must be an agent: " + r.AgentKind + " is refused")
+	}
+	if err := agentkinds.CheckCreateKind(r.AgentKind); err != nil {
+		return badMemoRecipe(err.Error())
+	}
+	if r.Model != "" && !launchModelRe.MatchString(r.Model) {
+		return badMemoRecipe("model is not a model id")
+	}
+	if !validRecipeToken(r.Effort) {
+		return badMemoRecipe("effort is not an effort level")
+	}
+	if r.Route != "" {
+		kind := r.AgentKind
+		if kind == "" {
+			kind = queueKind
+		}
+		if _, err := agentroutes.CheckCreateRoute(kind, &agentroutes.Selection{Route: r.Route}); err != nil {
+			return badMemoRecipe(err.Error())
+		}
+	}
+	return nil
 }

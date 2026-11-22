@@ -468,6 +468,15 @@ Memos you accumulate and send to a session in one go (the tables are
   such a message; a message that leaves every queue drops it. The Agent's relay reports a create or update whose
   future time is missing from the answer as not kept (an older Control Plane).
 
+- **Run recipe (`agentKind`, `model`, `effort`, `route`)** (ADR 0137, addendum 2026-11-23, #4845; `internal/memorecipe`).
+  `memo.recipe` (canonical JSON, `""` for none, migration 0155 / pg 0140) overrides the category's run settings field by
+  field (a message naming another agent inherits none of the category's model, effort or route; the spend cap stays the
+  category's). Create and update take it on every face (REST, `add_memo` / `update_memo`; validated as the queue settings
+  are, else `400 memo_recipe_invalid`, also for a note outside every queue; on an update absent = keep, `""` = clear). It
+  is appended to `memoContentHash` only when set and copied to `release_recipe` under a CHECK. The claim batches only
+  messages with the same effective recipe (the oldest eligible fixes it), the delivery's create body uses it, a tidy run
+  never merges messages whose effective recipes differ, and a continuation inherits it unless it names its own.
+
 - **Typed references** ([decisions/0137](../decisions/0137-message-queues.md) §4, step 3, Control Plane half). A message
   may carry a pointer to a work item, never a copy of it. This is the contract the Agent (step 3b, built) and the Console
   (step 3c) are built on.

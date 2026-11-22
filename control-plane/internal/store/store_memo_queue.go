@@ -325,13 +325,13 @@ func (t memoTx) ReleaseMemo(seen Memo, hash, at string) (bool, error) {
 		   release_repo=repo, release_category=category, release_kind=kind, release_body=body,
 		   release_ref_path=ref_path, release_attachments=attachments,
 		   release_ref_provider=ref_provider, release_ref_key=ref_key, release_ref_url=ref_url,
-		   release_after_ids=after_ids, release_start_after=start_after, chain_id='', chain_seq=0, chain_delivery=''
+		   release_after_ids=after_ids, release_start_after=start_after, release_recipe=recipe, chain_id='', chain_seq=0, chain_delivery=''
 		   WHERE id=? AND membership_id=? AND state=?
 		     AND repo=? AND category=? AND kind=? AND body=? AND ref_path=? AND attachments=?
-		     AND ref_provider=? AND ref_key=? AND ref_url=? AND after_ids=? AND start_after=?`,
+		     AND ref_provider=? AND ref_key=? AND ref_url=? AND after_ids=? AND start_after=? AND recipe=?`,
 		MemoStatePending, hash, at, seen.ID, t.mid, MemoStateHeld,
 		seen.Repo, seen.Category, seen.Kind, seen.Body, seen.RefPath, seen.Attachments,
-		seen.RefProvider, seen.RefKey, seen.RefURL, seen.AfterIDs, seen.StartAfter))
+		seen.RefProvider, seen.RefKey, seen.RefURL, seen.AfterIDs, seen.StartAfter, seen.Recipe))
 }
 
 func (t memoTx) CountQueueIntakeSince(since string) (int, error) {

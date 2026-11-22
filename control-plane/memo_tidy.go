@@ -19,6 +19,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/memorecipe"
 	"github.com/k-k1/agent-fleet/control-plane/internal/memotidy"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -247,7 +248,7 @@ func memoTidyApplyTx(tx store.MemoTxOps, in memoTidyApplyIn, out *memoTidyApplyO
 	}
 	items := make([]memotidy.Item, 0, len(in.Input))
 	for _, it := range in.Input {
-		item := memoTidyItemOf(rows[it.ID])
+		item := memoTidyItemOf(q, rows[it.ID])
 		item.KeepOnly = linked[it.ID]
 		items = append(items, item)
 	}
@@ -278,7 +279,7 @@ func memoTidyApplyTx(tx store.MemoTxOps, in memoTidyApplyIn, out *memoTidyApplyO
 		d := store.Memo{ID: store.NewID(), MembershipID: in.MembershipID, Repo: cat.Repo, Category: cat.Name, Kind: "text", Body: text,
 			Position: position, CreatedAt: created, State: state, Provenance: store.MemoProvenanceCurator,
 			SourceProvenance: group.Provenance, Producer: group.Producer, ProducerOrigin: group.ProducerOrigin,
-			DerivedFrom: encodeIDs(ids), TidyRunID: run.ID}
+			DerivedFrom: encodeIDs(ids), TidyRunID: run.ID, Recipe: sources[0].Recipe}
 		h := memoContentHash(d)
 		d.TidySeenHash = h
 		if state == store.MemoStatePending {
@@ -300,7 +301,7 @@ func memoTidyApplyTx(tx store.MemoTxOps, in memoTidyApplyIn, out *memoTidyApplyO
 				srcs = append(srcs, rows[id])
 				pos = min(pos, rows[id].Position)
 			}
-			if err := derive(srcs, memotidy.CleanText(op.Text), pos, memoTidyItemOf(srcs[0]).Group); err != nil {
+			if err := derive(srcs, memotidy.CleanText(op.Text), pos, memoTidyItemOf(q, srcs[0]).Group); err != nil {
 				return err
 			}
 			for _, s := range srcs {
@@ -312,7 +313,7 @@ func memoTidyApplyTx(tx store.MemoTxOps, in memoTidyApplyIn, out *memoTidyApplyO
 		case memotidy.OpSplit:
 			src := rows[op.ID]
 			for _, t := range op.Texts {
-				if err := derive([]store.Memo{src}, memotidy.CleanText(t), src.Position, memoTidyItemOf(src).Group); err != nil {
+				if err := derive([]store.Memo{src}, memotidy.CleanText(t), src.Position, memoTidyItemOf(q, src).Group); err != nil {
 					return err
 				}
 			}
@@ -375,12 +376,12 @@ func memoTidyMoveOne(tx store.MemoTxOps, q store.MemoQueue, m store.Memo, dest s
 // memoTidyItemOf is a message as the validator sees it. A derived message is grouped by the
 // provenance of its sources, so that tidying never mixes what a member wrote with what a session
 // wrote, however many times it has been tidied.
-func memoTidyItemOf(m store.Memo) memotidy.Item {
+func memoTidyItemOf(q store.MemoQueue, m store.Memo) memotidy.Item {
 	prov := memoEffectiveProvenance(m)
 	if m.Provenance == store.MemoProvenanceCurator && m.SourceProvenance != "" {
 		prov = m.SourceProvenance
 	}
-	return memotidy.Item{ID: m.ID, Group: memotidy.Group{Provenance: prov, Producer: m.Producer, ProducerOrigin: m.ProducerOrigin},
+	return memotidy.Item{ID: m.ID, Group: memotidy.Group{Provenance: prov, Producer: m.Producer, ProducerOrigin: m.ProducerOrigin, Recipe: memorecipe.Effective(q, m).Encode()},
 		Mergeable: m.Kind == "text" && m.Body != "" && m.Attachments == "" && m.RefPath == "" && m.RefKey == "",
 		Bytes:     len(m.Body), Moved: m.TidyFrom != "", Ref: memoRefIdent(m)}
 }

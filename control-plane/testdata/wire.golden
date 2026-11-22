@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 658
+# count: 662
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -238,6 +238,7 @@ memoDTO.afterStatus[].prs[].state string
 memoDTO.afterStatus[].prs[].url string,omitempty
 memoDTO.afterStatus[].reason string,omitempty
 memoDTO.afterStatus[].state string
+memoDTO.agentKind string,omitempty
 memoDTO.attachments[].name string
 memoDTO.attachments[].path string
 memoDTO.body string
@@ -253,12 +254,14 @@ memoDTO.deferReasons[].delivery string,omitempty
 memoDTO.deferReasons[].reason string
 memoDTO.deliveryId string,omitempty
 memoDTO.derivedFrom [string],omitempty
+memoDTO.effort string,omitempty
 memoDTO.existing bool,omitempty
 memoDTO.heldReason.after string
 memoDTO.heldReason.at string,omitempty
 memoDTO.heldReason.reason string
 memoDTO.id string
 memoDTO.kind string
+memoDTO.model string,omitempty
 memoDTO.notBefore string,omitempty
 memoDTO.origin.itemId string
 memoDTO.origin.sender string
@@ -274,6 +277,7 @@ memoDTO.reference.url string
 memoDTO.releasedAt string,omitempty
 memoDTO.releasedBy string,omitempty
 memoDTO.repo string
+memoDTO.route string,omitempty
 memoDTO.sentAt string
 memoDTO.sourceProvenance string,omitempty
 memoDTO.startAfter string,omitempty
