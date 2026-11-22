@@ -252,6 +252,67 @@ describe("SchedulesSection fold state across groups", () => {
   });
 });
 
+describe("SchedulesSection fold state lifetime", () => {
+  const ended = (name: string, extra: Record<string, unknown> = {}) => ({ name, title: name, kind: "claude", alive: false, origin: "schedule", createdAt: "2026-11-01T00:00:00Z", ...extra });
+  const live = (name: string) => ended(name, { alive: true });
+  const aria = () => host.querySelector("[data-sched-sessions] .sched-sess-ended")?.getAttribute("aria-expanded");
+
+  it("keeps the fold open while a live run holds the group through ended -> live -> ended", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({ sessions: [ended("a")] as never });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    useSessionsStore.setState({ sessions: [live("a")] as never });
+    await act(async () => {});
+    useSessionsStore.setState({ sessions: [ended("a")] as never });
+    await act(async () => {});
+    expect(aria()).toBe("true");
+    useSessionsStore.setState({ sessions: [] });
+  });
+
+  it("keeps the fold open after a data update when the section is solo and its stored fold is closed", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    const { SoloSection } = await import("../../ui/Section.tsx");
+    localStorage.setItem("af-section-schedules", "false");
+    useSessionsStore.setState({ sessions: [ended("a")] as never });
+    scheduleList.mockResolvedValue([sched]);
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ConfirmProvider>
+            <SoloSection>
+              <SchedulesSection />
+            </SoloSection>
+          </ConfirmProvider>
+        </ToastProvider>,
+      );
+    });
+    await act(async () => {});
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    useSessionsStore.setState({ sessions: [ended("a"), ended("b")] as never });
+    await act(async () => {});
+    expect(aria()).toBe("true");
+    localStorage.removeItem("af-section-schedules");
+    useSessionsStore.setState({ sessions: [] });
+  });
+
+  it("resets the folds when the section closes and reopens", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useSessionsStore.setState({ sessions: [ended("a")] as never });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
+    const head = () => host.querySelector<HTMLButtonElement>(".ui-section-toggle")!;
+    await act(async () => head().click());
+    expect(host.querySelector("[data-sched-sessions]")).toBeNull();
+    await act(async () => head().click());
+    expect(aria()).toBe("false");
+    localStorage.removeItem("af-section-schedules");
+    useSessionsStore.setState({ sessions: [] });
+  });
+});
+
 describe("SchedulesSection scheduled sessions under a working set", () => {
   it("shows a root outside the set as a heading without a state or an open button", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");

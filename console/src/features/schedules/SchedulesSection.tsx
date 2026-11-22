@@ -315,6 +315,19 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
   );
 }
 
+// Rendered inside the Section body: lives and dies with it, so it reports the real visibility.
+function BodyMark({ mounted, onUnmount }: { mounted: { current: boolean }; onUnmount: () => void }) {
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      onUnmount();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return null;
+}
+
 export const SchedulesSection = memo(function SchedulesSection() {
   const tenant = useTenantStore((s) => s.tenant);
   const toast = useToast();
@@ -439,21 +452,22 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // list moves it under its schedule row (a fresh list instance would start closed).
   const [endedOpen, setEndedOpen] = useState<Record<string, boolean>>({});
   const setEnded = (key: string, v: boolean) => setEndedOpen((m) => (!!m[key] === v ? m : { ...m, [key]: v }));
+  // Whether the section body is mounted (Section unmounts it when closed, but never under
+  // SoloSection, so the section's own open flag cannot tell). Closing resets every fold.
+  const bodyMounted = useRef(false);
   const prevRestEnded = useRef<Map<string, string>>(new Map());
   useLayoutEffect(() => {
     const prev = prevRestEnded.current;
     const next = new Map<string, string>();
     for (const r of grouped.rest) if (!r.live) next.set(r.root.name, "");
     prevRestEnded.current = next;
-    // A fold only exists while its group has finished runs, and the groups are unmounted with a
-    // closed section; a state kept past either would open a later, unrelated fold.
+    // A fold's state lives as long as its group does (the list unmounts when it has no runs at
+    // all); one kept past that would open a later, unrelated fold.
     const keep = new Set<string>();
-    if (sectionOpen) {
-      if (next.size) keep.add("");
-      for (const [id, list] of grouped.bySchedule) if (list.some((r) => !r.live)) keep.add(id);
-    }
+    if (grouped.rest.length) keep.add("");
+    for (const [id, list] of grouped.bySchedule) if (list.length) keep.add(id);
     const carry = new Set<string>();
-    if (endedOpen[""]) {
+    if (bodyMounted.current && endedOpen[""]) {
       for (const [id, list] of grouped.bySchedule) {
         if (list.some((r) => !r.live && prev.get(r.root.name) === "")) carry.add(id);
       }
@@ -466,7 +480,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
       return same ? m : out;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [grouped, sectionOpen]);
+  }, [grouped]);
   const activeCount = useMemo(() => scoped.filter((s) => s.enabled).length, [scoped]);
   // From the rows the active working set lists, not from everything loaded: opening the view
   // acknowledges what it publishes, and a failure the view does not show must stay unread.
@@ -599,6 +613,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
       open={sectionOpen}
       onToggle={() => setSectionOpen(!sectionOpen)}
     >
+      <BodyMark mounted={bodyMounted} onUnmount={() => setEndedOpen({})} />
       {/* A failed fetch is shown as its own state, not as "empty" (the rows on screen stay). */}
       {loadErr && (
         <div className="sched-load-err" role="status" title={loadErr}>
