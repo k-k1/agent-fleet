@@ -1,5 +1,7 @@
 import { useState } from "react";
-import { apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk, type Reply } from "../api.ts";
+import { discoverEngine } from "./adminApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import type { EngineRow } from "./engineTypes.ts";
 
@@ -46,7 +48,7 @@ function candidateID(name: string): string {
   return name.replace(/\.[A-Za-z0-9]+$/, "") || name;
 }
 
-type AddAnswer = { error?: { code?: string; message?: string } } | undefined;
+type AddAnswer = Reply<{ model_id?: string }> | undefined;
 
 export function EngineDiscoverPanel({
   engineKey,
@@ -73,15 +75,14 @@ export function EngineDiscoverPanel({
   const press = async () => {
     setFetching(true);
     setErr("");
-    const d: (EngineDiscoverResult & { error?: { code?: string; message?: string } }) | undefined =
-      await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/discover`, "POST", {});
+    const d = await discoverEngine(engineKey);
     setFetching(false);
-    if (d && "error" in d && d.error) {
-      setErr(errDetail(d.error as never));
+    if (!isOk(d)) {
+      setErr(errDetail(d.error));
       setResult(null);
       return;
     }
-    setResult(d || {});
+    setResult(d);
   };
 
   const add = async (kind: "checkpoint" | "lora", c: EngineDiscoverCandidate) => {
@@ -93,8 +94,8 @@ export function EngineDiscoverPanel({
       base_model: c.base_model_suggest || "",
       files: [{ flag: "", s3Key: c.name }],
     });
-    if (d?.error) {
-      setAddErr((cur) => ({ ...cur, [rowKey]: errDetail(d.error as never) }));
+    if (d && !isOk(d)) {
+      setAddErr((cur) => ({ ...cur, [rowKey]: errDetail(d.error) }));
       return;
     }
     setAdded((cur) => ({ ...cur, [rowKey]: true }));

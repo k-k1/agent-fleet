@@ -7,12 +7,14 @@
 // environment" is a separate action rather than "pick teal and clear the label", because on
 // a deployment whose environment names a colour those are different outcomes.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { deleteBrand, getBrand, putBrand } from "./adminApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { applyBrand, readableInk } from "../../../lib/brand.ts";
 
-interface BrandStatus {
+export interface BrandStatus {
   color: string;
   hex: string;
   label: string;
@@ -43,13 +45,13 @@ export function BrandAdminView() {
 
   const load = useCallback(async () => {
     try {
-      const d = await api("api/admin/brand");
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await getBrand();
+      if (!isOk(d)) {
+        setErr(d ? errText(d.error) : tr("admin.load_error"));
         return;
       }
       setErr("");
-      take(d as BrandStatus);
+      take(d);
     } catch {
       setErr(tr("admin.load_error"));
     }
@@ -61,13 +63,13 @@ export function BrandAdminView() {
   const save = async () => {
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/brand", "PUT", { color, label });
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await putBrand({ color, label });
+      if (!isOk(d)) {
+        if (d) setErr(errText(d.error));
         return;
       }
       setErr("");
-      take(d as BrandStatus);
+      take(d);
     } finally {
       setBusy(false);
     }
@@ -76,13 +78,13 @@ export function BrandAdminView() {
   const reset = async () => {
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/brand", "DELETE");
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await deleteBrand();
+      if (!isOk(d)) {
+        if (d) setErr(errText(d.error));
         return;
       }
       setErr("");
-      take(d as BrandStatus);
+      take(d);
     } finally {
       setBusy(false);
     }

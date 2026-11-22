@@ -6,11 +6,13 @@
 // effect; "reset" deletes the saved value so the environment variable, then the built-in
 // default, applies again.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { deleteMcpTrusted, getMcpTrusted, putMcpTrusted } from "./adminApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
-interface TrustedView {
+export interface TrustedView {
   hosts: string[];
   source: "admin" | "env" | "default";
   fallback: string[];
@@ -30,7 +32,6 @@ const FALLBACK_KEY = {
   default: "admin.mcptrust_fallback_default",
 } as const;
 
-const PATH = "api/admin/mcp-oauth/trusted-hosts";
 
 export function McpTrustedHostsView() {
   const tr = useT();
@@ -46,13 +47,13 @@ export function McpTrustedHostsView() {
   };
   const load = useCallback(async () => {
     try {
-      const d = await api(PATH);
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await getMcpTrusted();
+      if (!isOk(d)) {
+        setErr(d ? errText(d.error) : tr("admin.load_error"));
         return;
       }
       setErr("");
-      show(d as TrustedView);
+      show(d);
     } catch {
       setErr(tr("admin.load_error"));
     }
@@ -65,13 +66,13 @@ export function McpTrustedHostsView() {
     setBusy(true);
     setSaved(false);
     try {
-      const d = await apiJSON(PATH, method, body);
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await (method === "PUT" ? putMcpTrusted(body) : deleteMcpTrusted());
+      if (!isOk(d)) {
+        if (d) setErr(errText(d.error));
         return;
       }
       setErr("");
-      show(d as TrustedView);
+      show(d);
       setSaved(true);
     } catch {
       setErr(tr("admin.load_error"));

@@ -10,7 +10,8 @@
 // able to choose between IQ2_XXS and IQ2_S, so they cannot be merged), and the ladder of sizes
 // that are not here yet is one press away with a verdict on every line.
 import { useCallback, useEffect, useState } from "react";
-import { apiJSON } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getIngestFiles, getIngestVersions } from "./adminApi.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Button } from "../../../ui/Button.tsx";
@@ -91,9 +92,8 @@ export function RepoQuantLadder({ engine, repo, rows, readOnly, startOpen, onTak
       // One press, one listing (and one 1 MiB header read behind it). NOT on mount: a catalogue
       // of eight repositories would open as eight upstream requests nobody asked for, at a host
       // that sheds load with a 503.
-      const got = await apiJSON(`api/admin/engines/${encodeURIComponent(engine.key)}/ingest/files`, "POST",
-        { source: { hf: { repo } } }) as LadderAnswer;
-      setAnswer(got || {});
+      const got = await getIngestFiles(engine.key, { hf: { repo } });
+      setAnswer(got as LadderAnswer);
       setOpen(true);
     } finally { setBusy(false); }
   }, [engine.key, repo]);
@@ -182,10 +182,9 @@ export function CivitaiVersionLadder({ engine, versionRef, rows, readOnly, onTak
   useEffect(() => {
     let live = true;
     setBusy(true);
-    apiJSON(`api/admin/engines/${encodeURIComponent(engine.key)}/ingest/versions`, "POST",
-      { source: "civitai", ref: versionRef }).then((got) => {
+    getIngestVersions(engine.key, { source: "civitai", ref: versionRef }).then((got) => {
       if (!live) return;
-      if (got?.error) setErr((got.error as EngineApiError).message || "");
+      if (!isOk(got)) setErr((got.error as EngineApiError).message || "");
       else setAnswer(got as IngestVersionsAnswer);
     }).finally(() => { if (live) setBusy(false); });
     return () => { live = false; };

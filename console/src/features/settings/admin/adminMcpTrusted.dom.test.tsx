@@ -129,7 +129,7 @@ describe("McpTrustedHostsView", () => {
     expect(host!.textContent).toContain("mcp.corp.example");
     expect(host!.textContent).toContain("環境変数");
     await click(button("既定に戻す"));
-    expect(apiJSON).toHaveBeenCalledWith("api/admin/mcp-oauth/trusted-hosts", "DELETE", undefined);
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/mcp-oauth/trusted-hosts", "DELETE");
     expect(host!.textContent).toContain("AF_MCP_OAUTH_TRUSTED_HOSTS");
     expect(area().value).toBe("mcp.corp.example");
   });

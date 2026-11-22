@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { putEngineClass, putEngineIdle, putEngineMode, putEngineModelWindow, putEngineNegative, putEngineSpot, replaceEngineBox } from "./adminApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtNum, zonedMdHm } from "../../../lib/intl.ts";
@@ -96,8 +98,8 @@ export function EnginesAdminView() {
   const setMode = async (key: string, mode: string) => {
     setBusy(key);
     try {
-      const d = await apiJSON("api/admin/engines/" + encodeURIComponent(key), "PUT", { mode });
-      if (d?.error) {
+      const d = await putEngineMode(key, mode);
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }
@@ -114,8 +116,8 @@ export function EnginesAdminView() {
   const replaceBox = async (key: string) => {
     setBusy(key);
     try {
-      const d = await apiJSON(`api/admin/engines/${encodeURIComponent(key)}/replace-box`, "POST", {});
-      if (d?.error) {
+      const d = await replaceEngineBox(key);
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }
@@ -164,11 +166,10 @@ export function EnginesAdminView() {
       let caught = false;
       let threw = "";
       try {
-        answer = await apiJSON(
-          `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(p.id)}`,
-          "PUT",
-          { context_tokens: p.to, max_output_tokens: outputForWindow(p.to) },
-        );
+        answer = await putEngineModelWindow(key, p.id, {
+          context_tokens: p.to,
+          max_output_tokens: outputForWindow(p.to),
+        });
       } catch (e) {
         // 🔴 A boolean, not the message. `reject("")` and `new Error("")` both give an empty
         // string, and keying off that counted a throw as a success.
@@ -201,12 +202,8 @@ export function EnginesAdminView() {
   const setClass = async (key: string, cls: string) => {
     setBusy(key);
     try {
-      const d = await apiJSON(
-        `api/admin/engines/${encodeURIComponent(key)}/class`,
-        "PUT",
-        { class: cls },
-      );
-      if (d?.error) {
+      const d = await putEngineClass(key, cls);
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         // 🔴 A refusal here is not a request that did nothing: the CP stores the choice before
         // it applies it, so the rung on screen is already stale and the failure it should be
@@ -234,8 +231,8 @@ export function EnginesAdminView() {
   const setSpot = async (key: string, spot: boolean) => {
     setBusy(key);
     try {
-      const d = await apiJSON(`api/admin/engines/${encodeURIComponent(key)}/spot`, "PUT", { spot });
-      if (d?.error) {
+      const d = await putEngineSpot(key, spot);
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }
@@ -255,12 +252,8 @@ export function EnginesAdminView() {
   const setNegative = async (key: string, negative: string) => {
     setBusy(key + "/negative");
     try {
-      const d = await apiJSON(
-        `api/admin/engines/${encodeURIComponent(key)}/negative`,
-        "PUT",
-        { negative },
-      );
-      if (d?.error) {
+      const d = await putEngineNegative(key, negative);
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }
@@ -274,10 +267,8 @@ export function EnginesAdminView() {
   const setIdle = async (key: string, idleSecs: number) => {
     setBusy(key + "/idle");
     try {
-      const d = await apiJSON(`api/admin/engines/${encodeURIComponent(key)}/idle`, "PUT", {
-        idle_secs: idleSecs,
-      });
-      if (d?.error) {
+      const d = await putEngineIdle(key, idleSecs);
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }

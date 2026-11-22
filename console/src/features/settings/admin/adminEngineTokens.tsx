@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
+import { errDetail } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { deleteCivitaiToken, deleteHfToken, getCivitaiRed, getCivitaiToken, getHfToken, putCivitaiRed, putCivitaiToken, putHfToken } from "./adminApi.ts";
 import { fmtDateTime } from "../../../lib/intl.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Button } from "../../../ui/Button.tsx";
@@ -27,7 +29,7 @@ export function EngineTokensAdminView() {
 
 /** What the CP knows about the operator's Hugging Face token. Never the value: the CP cannot
  *  read the secret it writes, and it does not offer to unseal the stored copy for a screen. */
-type HfTokenStatus = {
+export type HfTokenStatus = {
   /** false on a stack that predates P5, where the token was a CloudFormation parameter and
    *  there is nowhere for the CP to put one. */
   available?: boolean;
@@ -58,12 +60,12 @@ export function HfTokenPanel() {
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
-    const d = await api("api/admin/engines/hf-token");
-    if (d?.error) {
+    const d = await getHfToken();
+    if (!isOk(d)) {
       setErr(errDetail(d.error));
       return;
     }
-    setSt(d || {});
+    setSt(d);
   }, []);
   useEffect(() => {
     load();
@@ -72,8 +74,8 @@ export function HfTokenPanel() {
   const save = async () => {
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/engines/hf-token", "PUT", { token });
-      if (d?.error) {
+      const d = await putHfToken(token);
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }
@@ -81,7 +83,7 @@ export function HfTokenPanel() {
       // Cleared on success only: a token that was refused is still in the box to be corrected,
       // and retyping 40 characters because the deployment answered 502 is its own small insult.
       setToken("");
-      setSt(d || {});
+      setSt(d);
     } finally {
       setBusy(false);
     }
@@ -90,13 +92,13 @@ export function HfTokenPanel() {
   const remove = async () => {
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/engines/hf-token", "DELETE");
-      if (d?.error) {
+      const d = await deleteHfToken();
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }
       setErr("");
-      setSt(d || {});
+      setSt(d);
     } finally {
       setBusy(false);
     }
@@ -152,7 +154,7 @@ export function HfTokenPanel() {
 /** The same shape as HfTokenStatus, for a Civitai account. There is no `stack_token` case:
  *  Civitai never had a CloudFormation parameter to fall back on, so an unavailable deployment
  *  simply has nowhere to register one yet. */
-type CivitaiTokenStatus = {
+export type CivitaiTokenStatus = {
   available?: boolean;
   configured?: boolean;
   updated_by?: string;
@@ -170,12 +172,12 @@ export function CivitaiTokenPanel() {
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
-    const d = await api("api/admin/engines/civitai-token");
-    if (d?.error) {
+    const d = await getCivitaiToken();
+    if (!isOk(d)) {
       setErr(errDetail(d.error));
       return;
     }
-    setSt(d || {});
+    setSt(d);
   }, []);
   useEffect(() => {
     load();
@@ -184,14 +186,14 @@ export function CivitaiTokenPanel() {
   const save = async () => {
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/engines/civitai-token", "PUT", { token });
-      if (d?.error) {
+      const d = await putCivitaiToken(token);
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }
       setErr("");
       setToken("");
-      setSt(d || {});
+      setSt(d);
     } finally {
       setBusy(false);
     }
@@ -200,13 +202,13 @@ export function CivitaiTokenPanel() {
   const remove = async () => {
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/engines/civitai-token", "DELETE");
-      if (d?.error) {
+      const d = await deleteCivitaiToken();
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }
       setErr("");
-      setSt(d || {});
+      setSt(d);
     } finally {
       setBusy(false);
     }
@@ -263,7 +265,7 @@ export function CivitaiTokenPanel() {
  * deployment has the source (`available`), and this switch says whether it is showing. A
  * deployment that was never given it reads the first sentence and nothing else — a checkbox that
  * cannot be pressed is worse than no checkbox, and the fix is on the stack rather than here. */
-type CivitaiRedStatus = {
+export type CivitaiRedStatus = {
   available?: boolean;
   enabled?: boolean;
 };
@@ -275,12 +277,12 @@ export function CivitaiRedPanel() {
   const [err, setErr] = useState("");
 
   const load = useCallback(async () => {
-    const d = await api("api/admin/engines/civitai-red");
-    if (d?.error) {
+    const d = await getCivitaiRed();
+    if (!isOk(d)) {
       setErr(errDetail(d.error));
       return;
     }
-    setSt(d || {});
+    setSt(d);
   }, []);
   useEffect(() => {
     load();
@@ -289,13 +291,13 @@ export function CivitaiRedPanel() {
   const move = async (enabled: boolean) => {
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/engines/civitai-red", "PUT", { enabled });
-      if (d?.error) {
+      const d = await putCivitaiRed(enabled);
+      if (!isOk(d)) {
         setErr(errDetail(d.error));
         return;
       }
       setErr("");
-      setSt(d || {});
+      setSt(d);
     } finally {
       setBusy(false);
     }

@@ -5,11 +5,13 @@
 // environment forbids it, and why it cannot be on without PUBLIC_BASE_URL. Turning it off
 // keeps the workspaces' opt-ins, which is why the count is on screen.
 import { useCallback, useEffect, useState } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { errText } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getDevIdp, putDevIdp } from "./adminApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
-interface DevIdpStatus {
+export interface DevIdpStatus {
   enabled: boolean;
   setting: boolean;
   locked: boolean;
@@ -28,13 +30,13 @@ export function DevIdpAdminView() {
   // Resolves true only when the server's current state was read and is now on screen.
   const load = useCallback(async (): Promise<boolean> => {
     try {
-      const d = await api("api/admin/dev-idp");
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await getDevIdp();
+      if (!isOk(d)) {
+        setErr(d ? errText(d.error) : tr("admin.load_error"));
         return false;
       }
       setErr("");
-      setData(d as DevIdpStatus);
+      setData(d);
       return true;
     } catch {
       setErr(tr("admin.load_error"));
@@ -48,13 +50,13 @@ export function DevIdpAdminView() {
   const toggle = async (enabled: boolean) => {
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/dev-idp", "PUT", { enabled });
-      if (d?.error) {
-        setErr(errText(d.error));
+      const d = await putDevIdp(enabled);
+      if (!isOk(d)) {
+        if (d) setErr(errText(d.error));
         return;
       }
       setErr("");
-      setData(d as DevIdpStatus);
+      setData(d);
     } catch {
       // A lost response may still have applied the change: say so, then show the real state.
       if (await load()) {

@@ -17,7 +17,8 @@
 // and the engine was down, colour = it was up. Collapsing blank into grey turns a CP outage
 // into a confident "the GPU was idle all weekend".
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api } from "../../../core/api/client.ts";
+import { isOk } from "../api.ts";
+import { getEngineHourly } from "./adminApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { effectiveTimeZone, shiftDayKey } from "../../../lib/intl.ts";
 import type { MsgKey } from "../../../lib/i18n/index.ts";
@@ -106,13 +107,13 @@ export function EngineUptimePanel({ engineKey }: { engineKey: string }) {
       // (at +09:00, 15:00 UTC is the local next-day 00:00 cell).
       const w = widenForTimezone(range.from, range.to);
       const p = new URLSearchParams({ from: w.from, to: w.to });
-      const d = await api(`api/admin/engines/${encodeURIComponent(engineKey)}/hourly?${p}`);
-      if (d?.error) {
+      const d = await getEngineHourly(engineKey, String(p));
+      if (!isOk(d)) {
         setErr(tr("admin.engines_uptime_error"));
         setData(null);
       } else {
         setErr("");
-        setData(d as EngineUptimeResponse);
+        setData(d);
       }
     } catch {
       setErr(tr("admin.engines_uptime_error"));
