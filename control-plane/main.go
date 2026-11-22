@@ -550,6 +550,14 @@ func main() {
 	// bill. No-op unless the runtime declares one (docker/native have no invoice).
 	startCloudCostPoller(context.Background(), mgr)
 
+	// Drain each running workspace's notification outbox on a timer so a question reaches the
+	// Web Push sender with no Console open. Only when AF_WEB_PUSH is on; with it off nothing runs.
+	if pushsrv.Enabled() {
+		iv := envx.DurationOr(os.Getenv("AF_NOTIFICATION_DRAIN_INTERVAL"), 15*time.Second)
+		go newNotificationDrainer(mgr, iv).run(context.Background())
+		log.Printf("notification-drain: draining running workspaces every %s", iv)
+	}
+
 	// docs/log/20 M5 (claude self-op audit, A stage 2): a sweeper that pulls each running
 	// claude session's transcript and records Write/Edit/Bash into the audit ledger
 	// (actor_kind=claude). OFF by default (AF_CLAUDE_AUDIT_INTERVAL=0) — it polls every
