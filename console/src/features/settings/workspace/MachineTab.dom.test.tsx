@@ -15,6 +15,8 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MachineView } from "./MachineTab.tsx";
+import { getSettings } from "../../../lib/settings.ts";
+import { setLocale } from "../../../lib/i18n/index.ts";
 import type { WsMachine } from "../../../lib/machine.ts";
 import { __test as feed } from "../../../core/store/wsStatsFeed.ts";
 
@@ -62,6 +64,7 @@ async function mount(d: WsMachine) {
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 beforeEach(() => {
   g.IS_REACT_ACT_ENVIRONMENT = true;
+  setLocale("ja"); // importing settings.ts resolves the jsdom browser language to en
   feed.reset();
   answers.byPath = {};
   answers.calls = [];
@@ -429,6 +432,17 @@ describe("MachineView", () => {
     expect(answers.calls).toContain("DELETE api/cleanup/tool-caches/go-build");
     expect(host!.textContent).toContain("go-build を空にしました");
     expect(document.body.querySelector(".confirm-title")).toBeNull();
+  });
+
+  it("offers the Go cache auto-trim switch: on by default, and off writes goCacheAutoTrim", async () => {
+    expect(getSettings().goCacheAutoTrim).toBe(true);
+    await mount(shared);
+    const off = [...document.body.querySelectorAll("button")].find((b) => b.textContent === "オフ");
+    expect(off).toBeTruthy();
+    await act(async () => {
+      off!.click();
+    });
+    expect(getSettings().goCacheAutoTrim).toBe(false);
   });
 
   it("measures the leftovers only on a press, and deletes one kind without asking", async () => {

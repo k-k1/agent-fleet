@@ -487,6 +487,22 @@ describe("ui-prefs: the owner of the local copy", () => {
     expect(s.getSettings().museContributorMode).toBe(true);
   });
 
+  // #4560: the Agent reads anything but a boolean false as ON; the Console must show the same.
+  it("reads the Go cache auto-trim as off only for a boolean false, from the server and from storage", async () => {
+    const s = await freshSettings({ goCacheAutoTrim: 0 as unknown as boolean });
+    expect(s.getSettings().goCacheAutoTrim).toBe(true);
+    localStorage.setItem(OWNER_KEY, "t1|u1");
+    s.setPrefsOwnerSource(() => "t1|u1");
+    for (const junk of [0, null, ""]) {
+      apiMock.mockResolvedValueOnce({ goCacheAutoTrim: junk });
+      await s.hydrateUIPrefs();
+      expect(s.getSettings().goCacheAutoTrim).toBe(true);
+    }
+    apiMock.mockResolvedValueOnce({ goCacheAutoTrim: false });
+    await s.hydrateUIPrefs();
+    expect(s.getSettings().goCacheAutoTrim).toBe(false);
+  });
+
   it("does not push a never-held key while the owner is unknown", async () => {
     const s = await freshSettings({ hiddenModels: hidden });
     localStorage.setItem(OWNER_KEY, "t1|u1");

@@ -14,7 +14,8 @@ import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { humanSize } from "../../lib/filemeta.ts";
-import { emptyToolCache, loadToolCaches } from "../settings/workspace/toolCaches.ts";
+import { DATETIME_FULL, fmtDateTime } from "../../lib/intl.ts";
+import { emptyToolCache, loadToolCaches, type GoTrim } from "../settings/workspace/toolCaches.ts";
 import { applyWorktreeOutput, loadSurvey, sortReports, type WtoDir } from "./worktreeOutput.ts";
 
 interface Item {
@@ -39,6 +40,8 @@ export function ReclaimModal({ onClose, onChanged }: { onClose: () => void; onCh
   const [partial, setPartial] = useState(false);
   // The list changed under the confirm; it was redrawn and nothing was deleted.
   const [stale, setStale] = useState(false);
+  // What the Agent's automatic go-build trim last freed (go_trim, #4560); absent until one ran.
+  const [goTrim, setGoTrim] = useState<GoTrim | undefined>();
   const alive = useRef(true);
   // Set synchronously: a second click in the same tick must not start a second run.
   const running = useRef(false);
@@ -68,6 +71,7 @@ export function ReclaimModal({ onClose, onChanged }: { onClose: () => void; onCh
       } else if (survey.kind === "error") missed = true;
       try {
         const tc = await loadToolCaches();
+        if (alive.current) setGoTrim(tc.goTrim);
         for (const c of tc.caches) {
           // A row in use, or one the Agent offers nothing for, is not something this can take.
           if (c.bytes > 0 && !c.busy?.length && !c.skipped) {
@@ -152,13 +156,25 @@ export function ReclaimModal({ onClose, onChanged }: { onClose: () => void; onCh
     onClose();
   };
 
+  const trimNote = goTrim && goTrim.bytes > 0 && (
+    <p className="wto-note" data-testid="reclaim-go-trim">
+      {tr("reclaim.go_trim", { size: humanSize(goTrim.bytes), files: String(goTrim.files), at: fmtDateTime(goTrim.at, DATETIME_FULL) })}
+    </p>
+  );
+
   const body =
     phase === "loading" ? (
       <p>{tr("reclaim.loading")}</p>
     ) : phase === "failed" ? (
-      <p>{tr("reclaim.failed")}</p>
+      <>
+        <p>{tr("reclaim.failed")}</p>
+        {trimNote}
+      </>
     ) : items.length === 0 ? (
-      <p>{tr("reclaim.none")}</p>
+      <>
+        <p>{tr("reclaim.none")}</p>
+        {trimNote}
+      </>
     ) : (
       <>
         <p>{tr("reclaim.intro")}</p>
@@ -201,6 +217,7 @@ export function ReclaimModal({ onClose, onChanged }: { onClose: () => void; onCh
         </ul>
         {stale && <p className="wto-note" role="status">{tr("reclaim.stale")}</p>}
         {partial && <p className="wto-note">{tr("reclaim.partial")}</p>}
+        {trimNote}
         <p className="wto-warn">{tr("reclaim.irreversible")}</p>
       </>
     );

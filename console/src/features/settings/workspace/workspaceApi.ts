@@ -19,7 +19,7 @@ import type { AgeFolder } from "./AfWorkAgeSection.tsx";
 import type { CleanupUsage, LeftoverRow } from "./MachineTab.tsx";
 import type { GcpProfile } from "./GcpTab.tsx";
 import type { ExistingGcpProfile } from "./gcloudConfigImport.ts";
-import type { ToolCacheRow } from "./toolCaches.ts";
+import type { GoTrim, ToolCacheRow } from "./toolCaches.ts";
 
 /** `Reply<T>` with `error` readable on the success arm too: these callers test `res.error` before
  *  anything else, and a truthy `error` narrows the union to the failure. */
@@ -45,7 +45,7 @@ export type LeftoverDeleted = { count?: number; bytes?: number; failed?: string 
 export const deleteCleanupLeftover = (kind: string, confirm: boolean): Promise<Rep<LeftoverDeleted> | null> =>
   rawApi("api/cleanup/leftovers/" + encodeURIComponent(kind) + (confirm ? "?confirm=1" : ""), { method: "DELETE" });
 
-export type ToolCachesReply = { caches?: ToolCacheRow[]; truncated?: boolean };
+export type ToolCachesReply = { caches?: ToolCacheRow[]; truncated?: boolean; go_trim?: GoTrim };
 export const getToolCaches = (): Promise<Rep<ToolCachesReply> | null> => rawApi("api/cleanup/tool-caches");
 export type ToolCacheEmptied = { bytes?: number };
 export const deleteToolCache = (name: string): Promise<Rep<ToolCacheEmptied> | null> =>

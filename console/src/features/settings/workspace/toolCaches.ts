@@ -15,12 +15,19 @@ export interface ToolCacheRow extends Place {
   skipped?: string;
 }
 
+/** The last automatic go-build trim since the Agent started (go_trim, #4560). */
+export interface GoTrim {
+  at: string;
+  bytes: number;
+  files: number;
+}
+
 /** GET: measures every row (slow; only on a press or an opened confirm). Throws on an error
  *  answer, which includes an Agent older than the endpoint. */
-export async function loadToolCaches(): Promise<{ caches: ToolCacheRow[]; truncated: boolean }> {
+export async function loadToolCaches(): Promise<{ caches: ToolCacheRow[]; truncated: boolean; goTrim?: GoTrim }> {
   const res = await getToolCaches();
   if (!res || res.error || !Array.isArray(res.caches)) throw new Error("tool caches unavailable");
-  return { caches: res.caches, truncated: !!res.truncated };
+  return { caches: res.caches, truncated: !!res.truncated, goTrim: res.go_trim };
 }
 
 /** DELETE: empties one cache. Returns the raw answer ({bytes} or {error}); the Agent itself

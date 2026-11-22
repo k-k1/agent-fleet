@@ -6,7 +6,8 @@ import { humanSize } from "../../../lib/filemeta.ts";
 import { useSettingsUI } from "../store.ts";
 import { useSessionUI } from "../../sessions/ui.ts";
 import { useWorkspaceStore } from "../../../core/store/workspace.ts";
-import { Row } from "../parts/controls.tsx";
+import { OnOff, Row } from "../parts/controls.tsx";
+import { setSetting, useSettings } from "../../../lib/settings.ts";
 import { PlaceLine, type Place } from "./machinePlace.tsx";
 import { emptyToolCache, loadToolCaches, type ToolCacheRow } from "./toolCaches.ts";
 import { BoostSection, useSizing } from "./BoostSection.tsx";
@@ -415,6 +416,7 @@ function DiskSection() {
 // of it, and when to pay the slower next build is the person's call.
 function ToolCacheSection() {
   const tr = useT();
+  const s = useSettings();
   // The outcome of the last "empty", said under the rows it changed.
   const [msg, setMsg] = useState("");
   const [rows, setRows] = useState<ToolCacheRow[] | null>(null);
@@ -483,6 +485,10 @@ function ToolCacheSection() {
       {msg && <p className="ds-note">{msg}</p>}
       {truncated && <p className="muted ds-note">{tr("machine.disk_truncated")}</p>}
       <p className="muted ds-note">{tr("machine.tool_note")}</p>
+      <Row label={tr("machine.go_trim_switch")}>
+        <OnOff value={s.goCacheAutoTrim} onChange={(v) => setSetting("goCacheAutoTrim", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("machine.go_trim_note")}</p>
       {confirm && (
         <ConfirmDialog
           title={tr("machine.tool_confirm_title", { name: confirm.name })}
