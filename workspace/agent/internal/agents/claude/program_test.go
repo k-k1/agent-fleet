@@ -2,12 +2,14 @@ package claude
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -302,6 +304,8 @@ func TestHasPermissionModeFlagSkipsOptionValues(t *testing.T) {
 		`--name x --permission-mode=plan`:             true,
 		`--verbose --permission-mode plan`:            true,
 		`--append-system-prompt --permission-mode -n`: false,
+		`--resume --permission-mode plan`:             true,
+		`-r --permission-mode plan`:                   true,
 	} {
 		if got := hasPermissionModeFlag(flags); got != want {
 			t.Errorf("hasPermissionModeFlag(%q) = %v, want %v", flags, got, want)
@@ -329,18 +333,31 @@ func TestBuildLaunchPointForkRetryAfterFailureStaysManual(t *testing.T) {
 	}
 	off := false
 	m := session.Meta{Kind: session.KindClaude, Name: "pf-retry", Dir: dir, ForkFrom: srcSid, ForkAt: "u2", SkipPermissions: &off}
-	// A route whose settings conflict fails after the transcript is written.
+	// A project settings file that overrides the route fails the launch after the transcript is
+	// written (settingsConflict runs after MaterializeForkAt).
 	bad := m
-	bad.Route = sel(RouteAPI, "")
+	bad.Route = sel(RouteSubscription, "")
+	conflict := filepath.Join(dir, ".claude", "settings.json")
+	writeFile(t, conflict, `{"env":{"ANTHROPIC_BASE_URL":"https://gateway.invalid"}}`)
 	_, badErr := agentImpl{}.BuildLaunch(bad, agents.LaunchOpts{})
-	if badErr == nil {
-		t.Fatal("the route launch was expected to fail after the transcript was written")
+	var ref *agents.RouteRefusal
+	if !errors.As(badErr, &ref) || ref.Code != routes.CodeRouteSettings {
+		t.Fatalf("first launch err = %v, want a %s refusal", badErr, routes.CodeRouteSettings)
 	}
+	sid := session.UUID(dir, "pf-retry")
+	if !JSONLResumable(sid) {
+		t.Fatal("the failed launch should have left the branch transcript behind")
+	}
+	if err := os.Remove(conflict); err != nil {
+		t.Fatal(err)
+	}
+	bad.Route = sel(RouteSubscription, "")
+	m = bad
 	retry, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})
 	if err != nil {
 		t.Fatalf("retry: %v", err)
 	}
-	if !strings.Contains(retry.Program, "--permission-mode default") {
+	if !strings.Contains(retry.Program, "claude --resume ") || !strings.Contains(retry.Program, "--permission-mode default") {
 		t.Errorf("retried first launch lost manual mode: %q", retry.Program)
 	}
 	next, err := agentImpl{}.BuildLaunch(m, agents.LaunchOpts{})

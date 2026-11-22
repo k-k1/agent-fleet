@@ -527,10 +527,10 @@ func resumablePaths(paths []string) bool {
 
 // valueFlags are the claude options that take exactly one separate value, so the word after one
 // is that value and never a flag, whatever it spells. Variadic options (--add-dir,
-// --allowedTools, ...) are left out: claude stops them at the next dash-led word.
+// --allowedTools, ...) and options whose value is optional (--resume, -r) are left out: claude stops them at the next dash-led word.
 var valueFlags = map[string]bool{
 	"--name": true, "-n": true, "--model": true, "--effort": true, "--fallback-model": true,
-	"--session-id": true, "--resume": true, "-r": true, "--append-system-prompt": true,
+	"--session-id": true, "--append-system-prompt": true,
 	"--system-prompt": true, "--settings": true, "--agent": true, "--agents": true,
 	"--output-format": true, "--input-format": true, "--setting-sources": true,
 	"--permission-prompt-tool": true, "--max-turns": true, "--max-budget-usd": true,
