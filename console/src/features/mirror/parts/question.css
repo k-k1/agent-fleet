@@ -93,14 +93,15 @@
 .mq-opt:disabled {
   cursor: default;
 }
-/* An option that was not picked is quieter by border, background and the ○ marker, never by
-   fading its text: text opacity stacks on the card's colour and escapes the Text contrast
-   setting (tokens.css), which only moves --fg / --muted / --muted2. */
-.mq-opt:disabled:not(.selected) {
+/* On an answered card an option that was not picked is quieter by border, background and the ○
+   marker, never by fading its text: text opacity stacks on the card's colour and escapes the
+   Text contrast setting (tokens.css), which only moves --fg / --muted / --muted2. Scoped to
+   .answered: on a pending card a disabled option can also be .checked (while sending). */
+.mt-question.answered .mq-opt:disabled:not(.selected) {
   border-color: color-mix(in srgb, var(--border) 60%, transparent);
   background: transparent;
 }
-.mq-opt:disabled:not(.selected) .mq-opt-label {
+.mt-question.answered .mq-opt:disabled:not(.selected) .mq-opt-label {
   color: var(--muted);
 }
 .mq-opt.selected {
@@ -110,8 +111,12 @@
 .mq-opt.selected .mq-opt-label {
   color: var(--chat-accent);
 }
-/* The picked option sits on an accent tint, which costs --muted its margin; --fg keeps 4.5:1. */
-.mq-opt.selected .mq-opt-desc {
+/* Answered card: --muted on the card; --fg on the picked option, whose accent tint costs --muted
+   its margin. The test pins both against 4.5:1. */
+.mt-question.answered .mq-opt-desc {
+  color: var(--muted);
+}
+.mt-question.answered .mq-opt.selected .mq-opt-desc {
   color: var(--fg);
 }
 .mq-done {
@@ -141,7 +146,7 @@
   font-size: 10.5px;
   font-weight: 600;
   letter-spacing: 0.02em;
-  color: var(--chat-accent);
+  color: color-mix(in srgb, var(--chat-accent) 85%, transparent);
 }
 .mq-free-text {
   font-size: 13px;
@@ -161,8 +166,9 @@
 .mq-mark {
   flex: none;
   line-height: 1.35;
+  color: color-mix(in srgb, var(--fg) 90%, transparent);
 }
-.mq-opt:disabled:not(.selected) .mq-mark {
+.mt-question.answered .mq-opt:disabled:not(.selected) .mq-mark {
   color: var(--muted);
 }
 .mq-opt.selected .mq-mark,
@@ -181,7 +187,8 @@
 }
 .mq-opt-desc {
   font-size: 11px;
-  color: var(--muted);
+  /* Same rendering as the former opacity 0.68, but derived from --fg so Text contrast moves it. */
+  color: color-mix(in srgb, var(--fg) 68%, transparent);
   line-height: 1.35;
   /* Keep options compact: clamp long descriptions to two lines. */
   display: -webkit-box;

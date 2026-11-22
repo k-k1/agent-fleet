@@ -46,27 +46,38 @@ function rule(selector: string): string {
   return b.body;
 }
 
+// Percent of `color-mix(in srgb, <x> N%, <y>)` declared as `background` in the rule.
+function mixPct(selector: string): number {
+  const m = rule(selector).match(/background:\s*color-mix\(in srgb,\s*var\(--[\w-]+\)\s+(\d+(?:\.\d+)?)%,\s*var\(--bg\)\)/);
+  if (!m) throw new Error(`no color-mix background in ${selector}`);
+  return Number(m[1]) / 100;
+}
+
 describe("answered question card text", () => {
   it("dims no text with opacity", () => {
-    for (const sel of [".mt-question.answered", ".mq-opt:disabled", ".mq-opt-desc", ".mq-opt.selected", ".mq-mark", ".mq-free-tag", ".mq-freetext:disabled", ".mq-freetext.inactive"]) {
-      expect(rule(sel), sel).not.toMatch(/opacity\s*:\s*(?!1\b)/);
-    }
+    for (const b of questionBlocks) expect(b.body, b.selector).not.toMatch(/(?<![\w-])opacity\s*:\s*(?!1\s*;)/);
   });
 
-  it("colours descriptions with tokens: --muted, --fg once picked", () => {
-    expect(rule(".mq-opt-desc")).toMatch(/color:\s*var\(--muted\)/);
-    expect(rule(".mq-opt.selected .mq-opt-desc")).toMatch(/color:\s*var\(--fg\)/);
-    expect(rule(".mt-question.answered")).toMatch(/var\(--fg\) 1%/);
+  it("colours answered descriptions with tokens: --muted, --fg once picked", () => {
+    expect(rule(".mt-question.answered .mq-opt-desc")).toMatch(/color:\s*var\(--muted\)/);
+    expect(rule(".mt-question.answered .mq-opt.selected .mq-opt-desc")).toMatch(/color:\s*var\(--fg\)/);
   });
+
+  // An unpicked option is transparent over the card; the picked one tints --bg with the accent, which the
+  // user chooses (--chat-accent), so check the extremes as well as the default.
+  const ACCENTS: Record<string, RGB | null> = { default: null, black: [0, 0, 0], white: [255, 255, 255], yellow: [255, 255, 0] };
 
   for (const theme of THEMES) {
     for (const level of LEVELS) {
       it(`${theme}/${level}: picked and unpicked descriptions reach 4.5:1 on the answered card`, () => {
         const p = palette(level, theme);
-        const card = mix(p("--fg"), 0.01, p("--bg"));
-        const picked = mix(p("--accent"), 0.14, card); // accent-tinted (--chat-accent defaults to --accent)
+        const card = mix(p("--fg"), mixPct(".mt-question.answered"), p("--bg"));
+        expect(rule(".mt-question.answered .mq-opt:disabled:not(.selected)")).toMatch(/background:\s*transparent/);
         expect(ratio(p("--muted"), card), "unpicked").toBeGreaterThanOrEqual(4.5);
-        expect(ratio(p("--fg"), picked), "picked").toBeGreaterThanOrEqual(4.5);
+        for (const [name, a] of Object.entries(ACCENTS)) {
+          const picked = mix(a ?? p("--accent"), mixPct(".mq-opt.selected"), p("--bg"));
+          expect(ratio(p("--fg"), picked), `picked, accent ${name}`).toBeGreaterThanOrEqual(4.5);
+        }
       });
     }
   }
