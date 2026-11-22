@@ -1427,14 +1427,82 @@ func TestNPMVerifyPresentDoubleFaultRecordsTheUndeletableBackup(t *testing.T) {
 }
 
 func TestNPMNarrowMarkerKeepsALegacyPathAsThatOnePath(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
 	f := newSU(t, goodRTK, "", "", "")
 	codex := f.plantNPMTree(t, "@openai/codex", "codex", "2.0.0")
-	f.write(t, filepath.Join(codex+npmBakSuffix, "VERSION"), "1.0.0")
+	codexBak := codex + npmBakSuffix
+	f.write(t, filepath.Join(codexBak, "VERSION"), "1.0.0")
 	mine := f.local("codex") + npmBakSuffix // not ours: the earlier release never recorded the bin side
 	f.write(t, mine, "mine")
 	f.write(t, f.env.npmMarker(), "accepted\n"+codex+"\nclaude\n")
+	parent := filepath.Dir(codexBak)
+	if err := os.Chmod(parent, 0o555); err != nil { // the first delete leaves the tree backup behind
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(parent, 0o755) })
 	f.env.npmKeepPendingFor([]string{"claude"})
+	if _, _, discard, ok, bad := f.env.npmReadMarkerFull(); !ok || bad || len(discard) != 1 || discard[0] != codex {
+		t.Fatalf("the legacy path was not kept as that one path: %v ok=%v bad=%v", discard, ok, bad)
+	}
+	os.Chmod(parent, 0o755)
+	f.env.npmRecoverAside(false)
 	if f.read(mine) != "mine" {
-		t.Fatal("a file that is not ours was deleted")
+		t.Fatal("a file that is not ours was deleted by the later recovery")
+	}
+	if _, err := os.Lstat(codexBak); err == nil {
+		t.Fatal("the recorded tree backup was not swept")
+	}
+	if _, err := os.Lstat(f.env.npmMarker()); err == nil {
+		t.Fatal("marker left after both groups settled")
+	}
+}
+
+func TestNPMRecoverPlan(t *testing.T) {
+	for _, c := range []struct {
+		step             string
+		present, discard bool
+		do, keep         bool
+	}{
+		{"npm-recover", false, false, true, true},
+		{"npm-recover", false, true, true, false}, // the OFF start
+		{"npm", false, false, true, true},
+		{"self-update", false, false, true, true},
+		{"npm-verify", false, false, true, true},
+		{"npm-verify", true, false, false, false},
+		{"rtk", false, false, false, false},
+	} {
+		if do, keep := npmRecoverPlan(c.step, c.present, c.discard); do != c.do || keep != c.keep {
+			t.Errorf("%+v: got do=%v keep=%v", c, do, keep)
+		}
+	}
+}
+
+// --discard is what the OFF start passes: an accepted update's backups go, a pending one's are
+// put back, and without it an accepted update's backups stay.
+func TestNPMRecoverDiscardSemantics(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, filepath.Join(tree+npmBakSuffix, "VERSION"), "1.0.0")
+	run := func(args ...string) {
+		if do, keep := npmRecoverPlan(args[0], false, len(args) > 1 && args[1] == "--discard"); do {
+			f.env.npmRecoverAside(keep)
+		}
+	}
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
+	run("npm-recover")
+	if _, err := os.Lstat(tree + npmBakSuffix); err != nil {
+		t.Fatal("npm-recover dropped an accepted update's backup")
+	}
+	run("npm-recover", "--discard")
+	if _, err := os.Lstat(tree + npmBakSuffix); err == nil {
+		t.Fatal("--discard kept an accepted update's backup")
+	}
+	f.write(t, filepath.Join(tree+npmBakSuffix, "VERSION"), "1.0.0")
+	f.write(t, f.env.npmMarker(), "pending\nclaude\n")
+	run("npm-recover", "--discard")
+	if f.read(filepath.Join(tree, "VERSION")) != "1.0.0" {
+		t.Fatal("--discard did not restore a pending update's previous copy")
 	}
 }

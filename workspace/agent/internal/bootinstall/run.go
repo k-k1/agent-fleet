@@ -45,14 +45,8 @@ func Run(args []string) {
 	if present && len(rest) > 0 {
 		usage()
 	}
-	if step == "npm" || step == "npm-verify" || step == "self-update" || step == "npm-recover" {
-		// Before anything looks at the npm CLIs: a killed self-update may have left them moved aside.
-		// The every-start verify pass keeps an accepted update's backups until it has run.
-		if !(step == "npm-verify" && present) {
-			// npm-recover --discard is for the opt-in OFF start: the copies are about to be uninstalled,
-			// so an accepted update's backups have nothing left to be verified against.
-			DefaultEnv(false).npmRecoverAside(!discard)
-		}
+	if do, keep := npmRecoverPlan(step, present, discard); do {
+		DefaultEnv(false).npmRecoverAside(keep)
 	}
 	switch step {
 	case "rtk":
@@ -89,4 +83,20 @@ func Run(args []string) {
 		fmt.Fprintf(os.Stderr, "boot-install: unknown step %q (have: rtk, agy, cursor, agy-version, self-update, npm, npm-recover, npm-verify)\n", step)
 		os.Exit(2)
 	}
+}
+
+// npmRecoverPlan says whether a step settles a killed self-update's backups first, and whether an
+// accepted update's backups stay for the every-start verify pass. Only the opt-in OFF start
+// (npm-recover --discard) drops them unverified: its copies are about to be uninstalled, so there
+// is nothing left to verify them against.
+func npmRecoverPlan(step string, present, discard bool) (do, keepAccepted bool) {
+	switch step {
+	case "npm", "npm-verify", "self-update", "npm-recover":
+	default:
+		return false, false
+	}
+	if step == "npm-verify" && present {
+		return false, false // the pass that settles them itself
+	}
+	return true, !(step == "npm-recover" && discard)
 }

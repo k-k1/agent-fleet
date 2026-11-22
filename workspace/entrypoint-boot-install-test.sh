@@ -274,13 +274,13 @@ HOME="$T/mh" BI_AGENT_BIN="$T/none" bash -c 'set -e; . "$1"; echo STARTED' _ "$T
 has 'are not settled' || fail "npm-recover: no WARN for a missing Agent with a marker"
 # The OFF branch's uninstall itself: cut the marker/uninstall stanza out, swap the baked-claude
 # test for a fake, and run it against a stub npm.
-awk '/^  \[ ! -e "\$HOME\/.local\/.af-npm-update" \]/{on=1} on{print} on&&/^  fi$/{exit}' "$ENTRY" \
+awk '/^  if \[ -x \/usr\/local\/bin\/claude \]; then$/{lastif=$0} /^    \[ ! -e "\$HOME\/.local\/.af-npm-update" \]/{on=1; print lastif} on{print} on&&/^  fi$/{exit}' "$ENTRY" \
   | sed 's#\[ -x /usr/local/bin/claude \]#[ -x "$FAKE_BAKED_CLAUDE" ]#' >"$T/off.sh"
 grep -q 'npm uninstall -g' "$T/off.sh" || fail "npm uninstall: the OFF stanza was not cut out"
 printf '#!/bin/sh\necho "npm $*" >>"$OFF_LOG"\n' >"$T/bin/npm"; chmod +x "$T/bin/npm"
 : >"$T/baked-claude"; chmod +x "$T/baked-claude"
 printf '#!/bin/sh\necho "wa $*" >>"$OFF_LOG"\n[ -z "$WA_CLEARS" ] || rm -f "$HOME/.local/.af-npm-update"\n' >"$T/bin/wa-stub"; chmod +x "$T/bin/wa-stub"
-off_run() { : >"$T/off.log"; NPM_RECOVER_WA="$T/bin/wa-stub" PATH="$T/bin:$PATH" HOME="$T/mh" OFF_LOG="$T/off.log" FAKE_BAKED_CLAUDE="$T/baked-claude" bash -c 'set -e; . "$1"' _ "$T/off.sh" >"$T/out" 2>&1; }
+off_run() { : >"$T/off.log"; NPM_RECOVER_WA="$T/bin/wa-stub" PATH="$T/bin:$PATH" HOME="$T/mh" OFF_LOG="$T/off.log" FAKE_BAKED_CLAUDE="${BAKED:-$T/baked-claude}" bash -c 'set -e; . "$1"' _ "$T/off.sh" >"$T/out" 2>&1; }
 off_run; grep -q '^npm uninstall' "$T/off.log" && fail "npm uninstall: ran while a marker is present"
 grep -qx 'wa boot-install npm-recover --discard' "$T/off.log" || fail "npm uninstall: the marker was not handed to npm-recover --discard"
 has 'not uninstalling' || fail "npm uninstall: no WARN while a marker is present"
@@ -288,6 +288,11 @@ has 'not uninstalling' || fail "npm uninstall: no WARN while a marker is present
 : >"$T/mh/.local/.af-npm-update"; WA_CLEARS=1 off_run; grep -q '^npm uninstall -g' "$T/off.log" || fail "npm uninstall: did not run after the marker was settled"
 rm -f "$T/mh/.local/.af-npm-update"
 off_run; grep -q '^npm uninstall -g' "$T/off.log" || fail "npm uninstall: did not run without a marker"
+# Lean OFF (no baked claude): the marker is left for the final verify pass, nothing is handed to recovery.
+: >"$T/mh/.local/.af-npm-update"; BAKED="$T/none" off_run
+[ ! -s "$T/off.log" ] || fail "lean OFF: touched the marker or ran npm ($(cat "$T/off.log"))"
+[ -e "$T/mh/.local/.af-npm-update" ] || fail "lean OFF: the marker was removed"
+rm -f "$T/mh/.local/.af-npm-update"
 # Where it sits: before the OFF branch's uninstall and before the lean block's installs.
 awk '/boot-install npm-recover [|][|] echo/{r=NR} /npm uninstall -g/{u=NR} /^LEAN_CLIS=0/{l=NR} END{exit !(r && u && l && r<l && l<u)}' "$ENTRY" || fail "npm-recover: not before the lean block and the OFF branch's uninstall"
 # The shell no longer carries an npm install or a verify of its own.
