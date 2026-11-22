@@ -1070,3 +1070,19 @@ func TestCursorAliasThroughFileOrMissingComponentThenDotDotIsNotOurs(t *testing.
 		}
 	}
 }
+
+func TestCursorAliasOnOldVersionReplacedByFileIsRepaired(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	old := f.tree("2026.0.0-old")
+	os.WriteFile(old, []byte("not a directory"), 0o644)
+	alias := filepath.Join(f.home, ".local", "bin", "agent")
+	os.Symlink("../share/cursor-agent/versions/2026.0.0-old/cursor-agent", alias)
+	f.env.Repin = true
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if got, _ := os.Readlink(alias); !strings.Contains(got, "2026.1.1-abc") {
+		t.Errorf("alias on a broken old version was not repaired: %s", got)
+	}
+}

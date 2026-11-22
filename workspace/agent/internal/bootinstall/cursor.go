@@ -121,7 +121,15 @@ func (e Env) aliasVersion(alias, target string) (string, bool, error) {
 	if target[i+1:] != cursorTool {
 		return "", false, nil
 	}
-	verDir, err := resolveReal(target[:i])
+	// The version directory itself is not followed: whatever it is now (gone, a file, a link), its
+	// name is the version the link names, as it was before. Only the directories above it are
+	// resolved.
+	j := strings.LastIndex(target[:i], "/")
+	ver := target[j+1 : i]
+	if ver == "" || ver == "." || ver == ".." {
+		return "", false, nil
+	}
+	parent, err := resolveReal(target[:j+1])
 	if errors.Is(err, errNotDirPath) {
 		return "", false, nil
 	}
@@ -135,10 +143,10 @@ func (e Env) aliasVersion(alias, target string) (string, bool, error) {
 	if err != nil {
 		return "", false, err
 	}
-	if filepath.Dir(verDir) != share {
+	if parent != share {
 		return "", false, nil
 	}
-	return filepath.Base(verDir), true, nil
+	return ver, true, nil
 }
 
 // cursorAliasVersion is aliasVersion for the alias file on disk. Only "not there" and "not a
