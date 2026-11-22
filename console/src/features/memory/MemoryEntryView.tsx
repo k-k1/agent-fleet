@@ -518,6 +518,8 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
     </>
   );
 
+  const existsUnverified =
+    isNew && model?.unknownObservation?.kind === "unavailable" && model.unknownObservation.message.includes(EXISTS_UNVERIFIED);
   return (
     <div className="mentry" data-memory-key={key}>
       <ViewHead actions={actions}>
@@ -708,7 +710,7 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
           canResaveStored={!isNew}
           sentLiveText={tr("mem.br_unknown_sent_live")}
           onOpenExisting={
-            isNew && popoutMode() !== "popout" && model.unknownObservation?.kind === "unavailable" && model.unknownObservation.message.includes(EXISTS_UNVERIFIED)
+            existsUnverified && popoutMode() !== "popout"
               ? () => {
                   const sentName = (decodeEntry(model.saveSnapshot?.content ?? model.content).name ?? "").trim();
                   if (!sentName) return;
@@ -720,7 +722,9 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
                 }
               : undefined
           }
-          existingText={tr("mem.br_exists_unverified")}
+          existingText={
+            existsUnverified ? tr(popoutMode() === "popout" ? "mem.br_exists_unverified_popout" : "mem.br_exists_unverified") : undefined
+          }
         />
       )}
       {purging && <PurgeHistoryDialog target={purging} onClose={() => setPurging(null)} onDone={bump} />}

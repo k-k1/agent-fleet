@@ -729,6 +729,8 @@ describe("MemoryEntryView", () => {
         expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
         expect(button(t("editor.unknown.resave_old"))).toBeUndefined();
         expect(button(t("editor.unknown.resave"))).toBeUndefined();
+        expect(document.body.textContent).toContain(t("mem.br_exists_unverified"));
+        expect(document.body.textContent).not.toContain(t("mem.br_exists_unverified_popout"));
         const draftPane = pane().id;
         const version = useMemoryStore.getState().version;
         await act(async () => button(t("mem.br_open_existing"))!.click());
@@ -748,6 +750,9 @@ describe("MemoryEntryView", () => {
           api.mockImplementation(async (url: string) => (url.includes("name=house-rules") ? { ...stored, revision: 2 } : {}));
           await lost();
           expect(button(t("mem.br_open_existing"))).toBeUndefined();
+          // The state is still explained, pointing at Expand or Copy rather than the generic retry text.
+          expect(document.body.textContent).toContain(t("mem.br_exists_unverified_popout"));
+          expect(document.body.textContent).not.toContain(t("editor.unknown.unavailable"));
           expect(button(t("editor.unknown.resave_old"))).toBeUndefined();
           expect(button(t("editor.copy_mine"))).toBeDefined();
           expect(pane().content).toMatchObject({ name: "" });
@@ -767,10 +772,30 @@ describe("MemoryEntryView", () => {
         await lost();
         expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
         expect(button(t("editor.unknown.resave_old"))).toBeUndefined();
+        // A failed read is not "a memory of this name exists": the generic text stays.
+        expect(document.body.textContent).toContain(t("editor.unknown.unavailable"));
+        expect(document.body.textContent).not.toContain(t("mem.br_exists_unverified"));
+        expect(document.body.textContent).not.toContain(t("mem.br_exists_unverified_popout"));
         online = true;
         await act(async () => button(t("editor.unknown.retry"))!.click());
         await flush();
         expect(button(t("editor.unknown.accept_risk"))).toBeDefined();
+      });
+
+      it("shows the generic unavailable text, not the exists-unverified one, when the read fails in a minimal pop-out", async () => {
+        setPopoutMode("popout");
+        try {
+          api.mockImplementation(async (url: string) => {
+            if (url.includes("name=house-rules")) throw new Error("offline");
+            return {};
+          });
+          await lost();
+          expect(document.body.textContent).toContain(t("editor.unknown.unavailable"));
+          expect(document.body.textContent).not.toContain(t("mem.br_exists_unverified"));
+          expect(document.body.textContent).not.toContain(t("mem.br_exists_unverified_popout"));
+        } finally {
+          setPopoutMode(null);
+        }
       });
 
       it("asks before Cancel drops a buffer whose save cannot be confirmed", async () => {

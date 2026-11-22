@@ -161,6 +161,7 @@ export const memory: Record<keyof typeof jaMemory, string> = {
   "mem.br_discard_conflict_body": "\"{name}\" changed elsewhere and the current text could not be read, so your edit cannot be merged. Discarding drops the text you typed.",
   "mem.br_open_existing": "Open the existing memory",
   "mem.br_exists_unverified": "A memory with this name already holds this text, but it could not be told whether this save wrote it. Open it to check, or copy your text.",
+  "mem.br_exists_unverified_popout": "This memory already exists with this text, but it could not be told whether this save wrote it. This minimal pop-out cannot open it beside your draft: expand to the full console (Expand) to open it, or copy your text.",
   "mem.br_unknown_sent_live": "The sent text is what the memory holds now, but its durability could not be confirmed.",
   "mem.br_cancel": "Cancel",
   "mem.br_saved": "Saved {name}.",
