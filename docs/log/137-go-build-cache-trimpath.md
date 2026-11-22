@@ -1,7 +1,7 @@
 # 137. Go build cache growth: `-trimpath` across worktrees (2026-11-19)
 
 status: **Measured; `GOFLAGS=-trimpath` made the workspace default.** Issue #4560 (stays open to
-watch the cache size). The automatic age trim of the issue's option 1 is deliberately not built yet.
+watch the cache size). The automatic age trim of the issue's option 1 was decided on 2026-11-22 and is being built in parts (see below).
 
 ## Incident
 
@@ -50,3 +50,15 @@ working copies before tool caches in survey order, so a 160 GB go-build cache co
 list is now sorted by size, largest first.
 
 2026-11-20: for the `native` runtime (rootfs mode gets the image ENV via `image-env.json`; the host-agent mode does not, so it needs `WS_ENV=GOFLAGS=-trimpath`), see "Sharing Go build-cache entries between worktrees" in `guide/operate/native/install.md`.
+
+## Automatic trim (decided 2026-11-22, part 1)
+
+Owner decision on #4560: option 1. `internal/gocachetrim` checks free space on the home volume every
+10 minutes; below 15% free it deletes go-build entries unused for over a day, oldest first, until
+free space is back at 20%. Only files in the two-hex-digit subdirectories go (never `README` or
+`trim.txt`), and a cache that lives on another volume (`/scratch`) is left alone. A pass that cannot
+reach the target waits an hour before trying again. The switch is ui-prefs `goCacheAutoTrim`
+(default on). 15% / 20% are about 70 GB / 93 GB of a 466 GB home, above the 47 GB at which the low-disk
+notice raises, and the 5% margin (about 23 GB) is more than the measured 15 GB/day inflow.
+The last trim is reported as `go_trim` in `GET /cleanup/tool-caches`. Part 2: the Settings > Machine
+switch and showing the figure in the reclaim list.

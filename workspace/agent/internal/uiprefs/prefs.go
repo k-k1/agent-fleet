@@ -308,6 +308,14 @@ func MemoryConsolidationEnabled() bool {
 	return AgentMemory() && MemoryConsolidation()
 }
 
+// GoCacheAutoTrim is the member's switch for trimming the Go build cache by last use when home
+// runs low (ui-prefs goCacheAutoTrim, #4560). Missing or malformed reads as ON: the trim only
+// deletes entries Go would rebuild, and a home that fills up stops every session's builds.
+func GoCacheAutoTrim() bool {
+	v, ok := Read()["goCacheAutoTrim"].(bool)
+	return !ok || v
+}
+
 // MemoryLintSchedule is the member's switch for the scheduled `lint --apply` (ADR 0130 decision 5,
 // ui-prefs memoryLintSchedule). It is separate from MemoryConsolidation on purpose: lint calls no
 // model, so the consolidator's switch (which means "memory text goes to a model") says nothing
