@@ -957,6 +957,9 @@ func TestMemoFlushKeepSendsWithoutStamping(t *testing.T) {
 
 		_, note := console.create(textMemo("r", "plain", "kept note"))
 		_, queued := console.create(textMemo("r", "q", "kept queue message"))
+		if queued.State != store.MemoStatePending || queued.ContentHash == "" {
+			t.Fatalf("setup: want a pending queue message, got %+v", queued)
+		}
 		before := e.memoRow(queued.ID)
 		var again int
 		h.onTurn = func() {
@@ -969,8 +972,13 @@ func TestMemoFlushKeepSendsWithoutStamping(t *testing.T) {
 		if again != http.StatusConflict {
 			t.Fatalf("a concurrent flush of a kept row during the send: %d, want 409", again)
 		}
-		if len(h.prompts) < 1 || !strings.Contains(h.prompts[0], "kept note") {
+		if len(h.prompts) < 1 || !strings.Contains(h.prompts[0], "kept note") || !strings.Contains(h.prompts[0], "kept queue message") {
 			t.Fatalf("prompts %q", h.prompts)
+		}
+		var resp map[string]any
+		_ = json.Unmarshal(r.Body.Bytes(), &resp)
+		if v, ok := resp["sentAt"]; !ok || v != "" || resp["sent"] != float64(2) {
+			t.Fatalf("keep response %v: want sent=2 and an empty sentAt present", resp)
 		}
 		for _, id := range []string{note.ID, queued.ID} {
 			got := e.memoRow(id)
@@ -980,6 +988,43 @@ func TestMemoFlushKeepSendsWithoutStamping(t *testing.T) {
 		}
 		if got := e.memoRow(queued.ID); got.State != before.State {
 			t.Fatalf("a kept queue message changed state %q -> %q", before.State, got.State)
+		}
+		if got := e.memoRow(queued.ID); got.ReleaseHash != before.ReleaseHash || got.ReleaseHash != queued.ContentHash || got.SendStartedAt != "" {
+			t.Fatalf("a kept queue message lost its release or kept a reservation: %+v", got)
+		}
+
+		// An unknown outcome with keep leaves a pending message pending under its release.
+		_, q2 := console.create(textMemo("r", "q", "kept, outcome unknown"))
+		h.mu.Lock()
+		h.status = http.StatusBadGateway
+		h.mu.Unlock()
+		_ = e.do("a", "POST", "/api/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{q2.ID}, "keep": true})
+		h.mu.Lock()
+		h.status = 0
+		h.mu.Unlock()
+		if got := e.memoRow(q2.ID); got.State != store.MemoStatePending || got.ReleaseHash != q2.ContentHash || got.SendToken != "" {
+			t.Fatalf("kept message after an unknown outcome: %+v", got)
+		}
+
+		// A sent memo cannot be kept (it would keep its old sent_at and be swept).
+		_, sentMemo := console.create(textMemo("r", "plain", "already sent"))
+		if r := e.do("a", "POST", "/api/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{sentMemo.ID}}); r.Code != 200 {
+			t.Fatalf("send: %d", r.Code)
+		}
+		if r := e.do("a", "POST", "/api/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{sentMemo.ID}, "keep": true}); r.Code != http.StatusBadRequest {
+			t.Fatalf("keep of a sent memo: %d, want 400", r.Code)
+		}
+		if got := e.memoRow(sentMemo.ID); got.SendToken != "" {
+			t.Fatalf("a refused keep left a reservation: %+v", got)
+		}
+
+		// The workspace face ignores keep: its sent contract is sent_at.
+		_, wm := console.create(textMemo("r", "plain", "workspace send"))
+		if code := (memoFaceClient{"token", e}).http("POST", "/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{wm.ID}, "keep": true}).Code; code != 200 {
+			t.Fatalf("token flush: %d", code)
+		}
+		if got := e.memoRow(wm.ID); got.SentAt == "" {
+			t.Fatalf("a workspace flush must stamp sent_at even with keep: %+v", got)
 		}
 
 		// Without keep the same note is stamped, as before.

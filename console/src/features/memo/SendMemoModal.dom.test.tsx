@@ -90,9 +90,18 @@ describe("SendMemoModal keep option", () => {
 
   it("notes that the queue still runs a kept queue message", async () => {
     await render([memo({ id: "q", state: "pending" })]);
-    expect(document.body.textContent).not.toContain("キューはこのメッセージを引き続き実行します。");
+    expect(document.body.textContent).not.toContain("キュー上の状態は変わりません");
     await act(async () => keepBox().click());
-    expect(document.body.textContent).toContain("キューはこのメッセージを引き続き実行します。");
+    expect(document.body.textContent).toContain("キュー上の状態は変わりません");
+  });
+
+  it("does not offer keep for a selection with a sent memo", async () => {
+    localStorage.setItem("af.memo-send-keep", "true");
+    await render([memo({ id: "a", sentAt: "2026-11-01T00:00:00Z" })]);
+    expect(keepBox().disabled).toBe(true);
+    expect(keepBox().checked).toBe(false);
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls[0][3]).toBe(false);
   });
 
   it("passes keep to every send of a mixed selection", async () => {

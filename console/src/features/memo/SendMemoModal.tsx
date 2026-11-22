@@ -84,7 +84,11 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
   const [text, setText] = useState(() => composeMemoMessage(mixed ? own : memos));
   const [target, setTarget] = useState<Target | null>(null);
   const [busy, setBusy] = useState(false);
-  const [keep, setKeep] = useState(loadKeep);
+  const [keepChoice, setKeepChoice] = useState(loadKeep);
+  // A memo that was already sent keeps its old sent_at when kept and would be swept on that
+  // date, so keep is offered for unsent selections only (the server refuses it too).
+  const hasSent = memos.some((m) => !!m.sentAt);
+  const keep = keepChoice && !hasSent;
 
   useEffect(() => {
     assistantList()
@@ -126,7 +130,7 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
     try {
       if (target.type === "session") {
         // Only a send to a running session consumes memos, so only there is the choice made.
-        saveKeep(keep);
+        saveKeep(keepChoice);
         let res: { sent?: number; error?: unknown } = { sent: 0 };
         if (!mixed) {
           res = await memoFlush(target.name, ids, outText, keep);
@@ -282,10 +286,11 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
           )}
           {target?.type === "session" && (
             <label className="memo-send-keep">
-              <input type="checkbox" checked={keep} disabled={busy} onChange={(e) => setKeep(e.target.checked)} />
+              <input type="checkbox" checked={keep} disabled={busy || hasSent} onChange={(e) => setKeepChoice(e.target.checked)} />
               {tr("memo.send_keep")}
             </label>
           )}
+          {target?.type === "session" && hasSent && <div className="ui-field-hint">{tr("memo.send_keep_sent")}</div>}
           {target?.type === "session" && keep && memos.some((m) => m.state) && (
             <div className="ui-field-hint">{tr("memo.send_keep_queue")}</div>
           )}

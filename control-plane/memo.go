@@ -774,14 +774,16 @@ func (a memoAPI) flushVia(w http.ResponseWriter, r *http.Request, res *resolved,
 		// message — the send modal lets the user edit the concatenated text before
 		// sending (docs/log/21 UI overhaul). The ids still drive which memos get stamped sent.
 		Text string `json:"text"`
-		// Keep sends the text but leaves the memos unsent (see memoFlushFor).
+		// Keep sends the text but leaves the memos unsent (see memoFlushFor). Only the Console
+		// may ask for it: the workspace tool's contract is "sent means sent_at", and it forwards
+		// its arguments untouched.
 		Keep bool `json:"keep"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
 		return
 	}
-	out, aerr := memoFlushFor(r.Context(), a.store, res.rt, res.mv.MembershipID, in.SessionName, in.IDs, in.Text, in.Keep, via)
+	out, aerr := memoFlushFor(r.Context(), a.store, res.rt, res.mv.MembershipID, in.SessionName, in.IDs, in.Text, in.Keep && !via.fromWorkspace(), via)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -1122,6 +1124,13 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 				}
 			}
 		}
+		// A sent memo kept would keep its old sent_at and be swept on that date, where a plain
+		// resend moves it forward. Keep is for memos that are not sent yet.
+		for _, m := range memos {
+			if keep && m.SentAt != "" {
+				return memoTxFail(&apiError{http.StatusBadRequest, "bad_request", "keep applies to unsent memos only"})
+			}
+		}
 		reserved := map[string]bool{}
 		for _, m := range memos {
 			if reserved[m.ID] {
@@ -1187,8 +1196,9 @@ func memoSendUnknown(aerr *apiError) bool { return aerr != nil && aerr.code == "
 // memoSettleSend records a send's outcome on the rows that still carry its reservation. Sent:
 // sent_at, and a queue message delivered. Refused: as before the flush. Unknown: a held or
 // pending message becomes unconfirmed, because firing it again could do its work twice; a
-// plain note stays unsent, as a failed flush always left it. With keep, a successful send only
-// releases the reservation.
+// plain note stays unsent, as a failed flush always left it. With keep, the member chose to leave
+// the message for the queue, so a successful send and an unknown one both only release the
+// reservation: its state and release stay as they were.
 func memoSettleSend(ctx context.Context, st store.MemoStore, membershipID, token string, memos []store.Memo, sendErr *apiError, sentAt string, keep bool) error {
 	return st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
 		done := map[string]bool{}
@@ -1217,7 +1227,7 @@ func memoSettleSend(ctx context.Context, st store.MemoStore, membershipID, token
 				if next.State != "" {
 					next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = store.MemoStateDelivered, "", "", ""
 				}
-			case memoSendUnknown(sendErr) && (cur.State == store.MemoStateHeld || cur.State == store.MemoStatePending):
+			case memoSendUnknown(sendErr) && !keep && (cur.State == store.MemoStateHeld || cur.State == store.MemoStatePending):
 				next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = store.MemoStateUnconfirmed, "", "", ""
 			}
 			if err := tx.WriteMemo(next); err != nil {
