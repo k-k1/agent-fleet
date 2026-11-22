@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -192,11 +193,60 @@ func (e Env) room(needMiB int64, tools []string, what string) bool {
 	return false
 }
 
-// NPM installs the pinned npm CLIs into ~/.local that are missing or (with Repin) drifted from
-// the pin, in one npm run, then verifies each. It returns the process exit code.
-func NPM(e Env) int {
-	var specs, wanted []string
-	var cur map[string]string
+// npmNoteSkips records "skipped" for each pinned CLI that is present and not in the adopted
+// plan. It runs once per decision, so a plan computed twice does not write the status twice.
+func (e Env) npmNoteSkips(wanted []string) {
+	for _, c := range npmCLIs {
+		if e.Pins[c.Name] == "" || e.npmPendingHas(c.Name) || !e.cliPresent(c.Name) {
+			continue
+		}
+		in := false
+		for _, w := range wanted {
+			in = in || w == c.Name
+		}
+		if !in {
+			e.note(c.Name, statusSkip, "")
+		}
+	}
+}
+
+// npmRecheck narrows an earlier plan once the lock is held. A CLI leaves the plan only when what
+// is on disk now shows it settled (present and, with Repin, at the pin, or parked for a restore).
+// An unreadable or empty `npm ls` is not evidence of that: the earlier answer stands, as it
+// would without a re-read.
+func (e Env) npmRecheck(wanted []string, cur map[string]string) (specs, kept []string) {
+	for _, name := range wanted {
+		var c struct{ Name, Pkg string }
+		for _, k := range npmCLIs {
+			if k.Name == name {
+				c = k
+			}
+		}
+		pin := e.Pins[name]
+		if pin == "" || e.npmPendingHas(name) {
+			continue
+		}
+		if e.cliPresent(name) {
+			if !e.Repin {
+				continue
+			}
+			if cur == nil {
+				cur = e.npmVersions()
+			}
+			if cur[c.Pkg] == pin {
+				continue
+			}
+		}
+		specs = append(specs, c.Pkg+"@"+pin)
+		kept = append(kept, name)
+	}
+	return specs, kept
+}
+
+// npmPlan is the pinned installs this start owes: the specs to hand npm and the CLI names they
+// stand for. It reads the marker, the presence of each CLI and (with Repin) the installed
+// versions, so it is asked again once the lock is held.
+func (e Env) npmPlan(cur map[string]string) (specs, wanted []string) {
 	for _, c := range npmCLIs {
 		pin := e.Pins[c.Name]
 		if pin == "" {
@@ -206,9 +256,6 @@ func NPM(e Env) int {
 			continue // its previous copy is still waiting to be put back
 		}
 		present := e.cliPresent(c.Name)
-		if present {
-			e.note(c.Name, statusSkip, "")
-		}
 		need := !present
 		if present && e.Repin {
 			if _, err := os.Stat(filepath.Join(e.localBin(), c.Name)); err == nil {
@@ -226,17 +273,59 @@ func NPM(e Env) int {
 			wanted = append(wanted, c.Name)
 		}
 	}
+	return specs, wanted
+}
+
+// NPM installs the pinned npm CLIs into ~/.local that are missing or (with Repin) drifted from
+// the pin, in one npm run, then verifies each. It returns the process exit code.
+func NPM(e Env) int {
+	specs, wanted := e.npmPlan(nil)
 	if len(specs) == 0 {
+		e.npmNoteSkips(nil)
 		fmt.Fprintln(e.Stdout, "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)")
 		return ExitOK
 	}
 	// Nothing to install returned above without touching the lock; from here npm writes.
 	e, release, ok := e.lockNPM()
 	if !ok {
+		if e.npmLockErr != nil && !e.room(int64(len(specs))*npmPerPkgMiB, wanted, strings.Join(specs, " ")) {
+			return ExitNoSpace // answerable without writing
+		}
 		e.npmBusy("npm boot-install")
 		return ExitFailed
 	}
 	defer release()
+	if e.afterNPMLock != nil {
+		e.afterNPMLock()
+	}
+	// The plan above was read before the lock: a self-update that held it meanwhile may have
+	// installed, repinned or parked these CLIs. Decide again from what is on disk now.
+	// Decide every pin again (a self-update that held the lock may have moved a CLI that was fine
+	// before), and keep what the earlier plan owed unless the disk now shows it settled.
+	// One `npm ls` for both: a second one that failed must not undo what the first showed settled.
+	var cur map[string]string
+	if e.Repin {
+		cur = e.npmVersions()
+	}
+	if cur == nil {
+		cur = map[string]string{}
+	}
+	_, fresh := e.npmPlan(cur)
+	_, kept := e.npmRecheck(wanted, cur)
+	wanted = wanted[:0:0]
+	specs = nil
+	for _, c := range npmCLIs {
+		if !slices.Contains(fresh, c.Name) && !slices.Contains(kept, c.Name) {
+			continue
+		}
+		wanted = append(wanted, c.Name)
+		specs = append(specs, c.Pkg+"@"+e.Pins[c.Name])
+	}
+	e.npmNoteSkips(wanted)
+	if len(specs) == 0 {
+		fmt.Fprintln(e.Stdout, "[entrypoint] boot-install: npm CLIs already present in ~/.local (skip)")
+		return ExitOK
+	}
 	fmt.Fprintf(e.Stdout, "[entrypoint] boot-install (pinned): %s ...\n", strings.Join(specs, " "))
 	if !e.room(int64(len(specs))*npmPerPkgMiB, wanted, strings.Join(specs, " ")) {
 		return ExitNoSpace
@@ -267,6 +356,9 @@ func NPM(e Env) int {
 func (e Env) NPMVerify(clis []string, present bool) int {
 	e, release, ok := e.lockNPM()
 	if !ok {
+		if e.npmLockErr != nil {
+			return e.npmVerifyReadOnly(clis, present)
+		}
 		e.npmBusy("npm verify")
 		return ExitFailed
 	}
@@ -402,6 +494,32 @@ func (e Env) NPMVerifyPresent() int {
 	return e.NPMVerify(list, true)
 }
 
+// npmVerifyReadOnly is NPMVerify when the lock file cannot be opened: each CLI is probed once and
+// nothing is removed, restored or installed. A copy that runs, or a missing ~/.local copy a baked
+// one covers, is fine as in NPMVerify; a broken ~/.local copy is reported failed and left for a
+// start that can take the lock.
+func (e Env) npmVerifyReadOnly(clis []string, present bool) int {
+	rc := ExitOK
+	for _, c := range clis {
+		link := filepath.Join(e.localBin(), c)
+		if e.runs(link) {
+			if !present || e.lastStatus(c) == statusFailed {
+				e.note(c, statusOK, "")
+			}
+			continue
+		}
+		if _, err := os.Lstat(link); err != nil && usable(filepath.Join(e.bakedBin(), c)) {
+			continue
+		}
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s in ~/.local does not run; not repairing it without the lock (cannot open %s: %v)\n", c, e.npmLockPath(), e.npmLockErr)
+		if e.lastStatus(c) != statusFailed {
+			e.note(c, statusFailed, ReasonOther) // an earlier failure's reason (no_space) stays the last line
+		}
+		rc = ExitFailed
+	}
+	return rc
+}
+
 // npmLockPath is the lock every writer of the npm trees (an install) and every restore or
 // delete of their backups holds.
 func (e Env) npmLockPath() string { return filepath.Join(e.Home, ".local", ".af-npm.lock") }
@@ -415,38 +533,51 @@ func (e Env) lockNPM() (_ Env, release func(), ok bool) {
 	if e.npmLockFile != nil {
 		return e, func() {}, true
 	}
-	f, busy := flockPath(e.npmLockPath())
+	e.npmLockErr = nil // each attempt reports its own outcome
+	f, busy, err := flockPath(e.npmLockPath())
 	if busy {
 		return e, func() {}, false
 	}
-	if f == nil {
-		// The lock file itself cannot be made or opened (read-only or full ~/.local): that is
-		// not another holder, and main ran without a lock. Go on unlocked.
-		return e, func() {}, true
+	if err != nil {
+		// The lock file cannot be made or opened. Going on unlocked would let this process
+		// restore or write under a holder that opened the file before its mode changed, so
+		// every destructive step refuses (ok false, npmLockErr set). Callers that can answer
+		// without writing (nothing to install, no space, every copy runs) check npmLockErr.
+		e.npmLockErr = err
+		return e, func() {}, false
 	}
 	e.npmLockFile = f
 	return e, func() { f.Close() }, true
 }
 
 // flockPath takes an exclusive flock on path without waiting. busy is true only when another
-// holder has it; f is nil without busy when the lock could not be set up at all.
-func flockPath(path string) (f *os.File, busy bool) {
+// holder has it; err is non-nil when the lock could not be set up at all (the file cannot be
+// made or opened, or flock failed for a reason other than contention). "Cannot open" is not
+// "free": the caller must not treat it as the lock being available.
+func flockPath(path string) (f *os.File, busy bool, err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return nil, false
+		return nil, false, err
 	}
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
+	f, err = os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o600)
 	if err != nil {
-		return nil, false
+		return nil, false, err
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		f.Close()
-		return nil, errors.Is(err, syscall.EWOULDBLOCK)
+		if errors.Is(err, syscall.EWOULDBLOCK) {
+			return nil, true, nil
+		}
+		return nil, false, err
 	}
-	return f, false
+	return f, false, nil
 }
 
 // npmBusy says why a step did nothing when the lock was not free.
 func (e Env) npmBusy(what string) {
+	if e.npmLockErr != nil {
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s skipped (cannot open %s: %v; no destructive step runs without the lock)\n", what, e.npmLockPath(), e.npmLockErr)
+		return
+	}
 	fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s skipped (another process holds %s; an earlier npm may still be writing)\n", what, e.npmLockPath())
 }
 
@@ -850,8 +981,14 @@ func npmDiscardAside(moved []npmAside) bool {
 func (e Env) NPMVerifyPresentStep() int {
 	e, release, ok := e.lockNPM()
 	if !ok {
-		e.npmBusy("agent CLI verify")
-		return ExitFailed
+		if e.npmLockErr == nil {
+			e.npmBusy("agent CLI verify")
+			return ExitFailed
+		}
+		// No lock could be opened: recovery refuses itself when a marker is left, and the verify
+		// pass writes only for a copy that does not run, which it refuses too.
+		e.npmRecoverAside(true)
+		return e.NPMVerifyPresent()
 	}
 	defer release()
 	e.npmRecoverAside(true)

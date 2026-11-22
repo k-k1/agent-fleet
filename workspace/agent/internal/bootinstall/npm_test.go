@@ -508,3 +508,157 @@ func TestNPMSkipsACLIWhoseRestoreIsPending(t *testing.T) {
 		t.Fatalf("npm log %q: want the copilot pin only", log)
 	}
 }
+
+// breakLock makes the lock path unopenable for any uid (a directory cannot be opened O_RDWR).
+func breakLock(t *testing.T, p string) {
+	t.Helper()
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNPMLockOpenErrorIsNeitherBusyNorFree(t *testing.T) {
+	f := newNPM(t, allPins)
+	breakLock(t, f.env.npmLockPath())
+	e, _, ok := f.env.lockNPM()
+	if ok || e.npmLockErr == nil {
+		t.Fatalf("an unopenable lock file was reported as free: ok=%v err=%v", ok, e.npmLockErr)
+	}
+}
+
+func TestNPMWithUnopenableLockDoesNothingDestructive(t *testing.T) {
+	f := newNPM(t, allPins)
+	breakLock(t, f.env.npmLockPath())
+	if rc := NPM(f.env); rc != ExitFailed || f.npmLog() != "" {
+		t.Fatalf("rc=%d npm ran=%q out=%s", rc, f.npmLog(), f.out)
+	}
+	if !strings.Contains(f.out.String(), "cannot open") {
+		t.Errorf("no reason given: %q", f.out)
+	}
+	// No space is still answered without writing.
+	f.env.FreeMiB = func(string) (int64, bool) { return 100, true }
+	if rc := NPM(f.env); rc != ExitNoSpace {
+		t.Fatalf("no-space rc=%d", rc)
+	}
+	// Nothing to install stays a read-only no-op.
+	g := newNPM(t, allPins)
+	for _, c := range []string{"claude", "opencode", "codex", "copilot"} {
+		g.put(c, "#!/bin/sh\necho 1\n")
+	}
+	breakLock(t, g.env.npmLockPath())
+	if rc := NPM(g.env); rc != ExitOK {
+		t.Fatalf("no-op rc=%d out=%s", rc, g.out)
+	}
+}
+
+func TestNPMVerifyWithUnopenableLockKeepsABrokenLinkAndPassesHealthyOnes(t *testing.T) {
+	f := newNPM(t, allPins)
+	f.put("claude", brokenCLI)
+	f.put("codex", "#!/bin/sh\necho 1\n")
+	breakLock(t, f.env.npmLockPath())
+	if rc := f.env.NPMVerify([]string{"claude"}, false); rc != ExitFailed {
+		t.Fatalf("broken: rc=%d", rc)
+	}
+	if _, err := os.Lstat(f.bin("claude")); err != nil || f.npmLog() != "" {
+		t.Fatalf("a repair ran without the lock (err=%v log=%q)", err, f.npmLog())
+	}
+	if rc := f.env.NPMVerify([]string{"codex"}, false); rc != ExitOK {
+		t.Fatalf("healthy: rc=%d out=%s", rc, f.out)
+	}
+}
+
+func TestNPMRereadsItsPlanOnceTheLockIsHeld(t *testing.T) {
+	f := newNPM(t, map[string]string{"claude": "1.0.0"})
+	// A self-update that held the lock meanwhile finished the install.
+	f.env.afterNPMLock = func() { f.put("claude", "#!/bin/sh\necho 1.0.0\n") }
+	if rc := NPM(f.env); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if f.npmLog() != "" {
+		t.Fatalf("redundant reinstall: %q", f.npmLog())
+	}
+}
+
+func TestNPMVerifyUnopenableLockProbesOnceAndFallsBackToBaked(t *testing.T) {
+	f := newNPM(t, allPins)
+	f.putIn(f.env.BakedBin, "claude", "#!/bin/sh\necho 1\n")
+	breakLock(t, f.env.npmLockPath())
+	// No ~/.local copy and a working baked one: as without the lock, nothing to do.
+	if rc := f.env.NPMVerify([]string{"claude"}, false); rc != ExitOK {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	// A link that runs on the first probe and fails on the next must not reach a repair.
+	probes := filepath.Join(f.dir, "probes")
+	f.put("codex", fmt.Sprintf("#!/bin/sh\necho x >>%q\n[ $(wc -l <%q) -le 1 ] || exit 1\necho 1\n", probes, probes))
+	if rc := f.env.NPMVerify([]string{"codex"}, false); rc != ExitOK {
+		t.Fatalf("rc=%d", rc)
+	}
+	if _, err := os.Lstat(f.bin("codex")); err != nil || f.npmLog() != "" {
+		t.Fatalf("a second probe led to a repair: err=%v log=%q", err, f.npmLog())
+	}
+}
+
+func TestNPMRecheckKeepsTheDriftWhenNpmLsIsEmpty(t *testing.T) {
+	f := newNPM(t, map[string]string{"codex": "3.0.0"})
+	f.put("codex", "#!/bin/sh\necho 1\n")
+	f.stub("ls.json", `{"dependencies":{"@openai/codex":{"version":"2.0.0"}}}`)
+	f.env.Repin = true
+	f.env.afterNPMLock = func() { os.Remove(filepath.Join(f.dir, "ls.json")) } // npm ls now answers nothing
+	if rc := NPM(f.env); rc != ExitOK || !strings.Contains(f.npmLog(), "@openai/codex@3.0.0") {
+		t.Fatalf("drift dropped: rc=%d log=%q out=%s", rc, f.npmLog(), f.out)
+	}
+}
+
+func TestNPMRecordsEachSkipOnce(t *testing.T) {
+	f := newNPM(t, map[string]string{"claude": "1.0.0", "codex": "3.0.0"})
+	f.put("claude", "#!/bin/sh\necho 1\n")
+	NPM(f.env)
+	if n := strings.Count(f.statusText(), "claude\tskipped\t"); n != 1 {
+		t.Fatalf("skipped recorded %d times: %q", n, f.statusText())
+	}
+}
+
+func TestNPMRecheckAddsACLIThatDriftedWhileWaitingForTheLock(t *testing.T) {
+	f := newNPM(t, map[string]string{"claude": "1.0.0", "codex": "3.0.0"})
+	f.put("claude", "#!/bin/sh\necho 1\n") // at the pin on the first look
+	f.stub("ls.json", `{"dependencies":{"@anthropic-ai/claude-code":{"version":"1.0.0"}}}`)
+	f.env.Repin = true
+	// A self-update that held the lock moved claude off the pin; codex still needs installing.
+	f.env.afterNPMLock = func() {
+		f.stub("ls.json", `{"dependencies":{"@anthropic-ai/claude-code":{"version":"9.9.9"}}}`)
+	}
+	NPM(f.env)
+	if log := f.npmLog(); !strings.Contains(log, "@anthropic-ai/claude-code@1.0.0") || !strings.Contains(log, "@openai/codex@3.0.0") {
+		t.Fatalf("npm asked for %q", log)
+	}
+}
+
+func TestNPMVerifyReadOnlyKeepsAnEarlierNoSpaceReason(t *testing.T) {
+	f := newNPM(t, allPins)
+	f.put("claude", brokenCLI)
+	f.env.note("claude", statusFailed, ReasonNoSpace)
+	breakLock(t, f.env.npmLockPath())
+	f.env.NPMVerify([]string{"claude"}, true)
+	if !strings.HasSuffix(f.statusText(), "claude\tfailed\tno_space\n") {
+		t.Fatalf("status=%q", f.statusText())
+	}
+}
+
+func TestNPMRecheckAsksNpmLsOnceUnderTheLock(t *testing.T) {
+	f := newNPM(t, map[string]string{"codex": "3.0.0"})
+	f.put("codex", "#!/bin/sh\necho 1\n")
+	// ls answers while $D/lsleft is absent or positive; each answer under the lock spends one.
+	f.stub("npm", strings.Replace(npmStub, "ls) [ -f \"$D/ls.json\" ] && cat \"$D/ls.json\"; exit 0 ;;",
+		`ls) if [ -f "$D/lsleft" ]; then n=$(cat "$D/lsleft"); [ "$n" -gt 0 ] || exit 0; echo $((n-1)) >"$D/lsleft"; fi; cat "$D/ls.json"; exit 0 ;;`, 1))
+	os.Chmod(filepath.Join(f.dir, "npm"), 0o755)
+	f.stub("ls.json", `{"dependencies":{"@openai/codex":{"version":"2.0.0"}}}`)
+	f.env.Repin = true
+	f.env.afterNPMLock = func() {
+		// A concurrent self-update installed the pin; only the first ls under the lock will say so.
+		f.stub("ls.json", `{"dependencies":{"@openai/codex":{"version":"3.0.0"}}}`)
+		f.stub("lsleft", "1\n")
+	}
+	if rc := NPM(f.env); rc != ExitOK || f.npmLog() != "" {
+		t.Fatalf("rc=%d reinstall after the pin was seen: %q out=%s", rc, f.npmLog(), f.out)
+	}
+}

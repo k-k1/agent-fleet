@@ -407,8 +407,8 @@ func TestCursorRecoverReviewRound1(t *testing.T) {
 	})
 	t.Run("a cursor update and the pin step exclude each other", func(t *testing.T) {
 		f := newSU(t, goodRTK, "", "", cursorInstaller)
-		l, busy := flockPath(f.env.cursorLockPath())
-		if l == nil || busy {
+		l, busy, err := flockPath(f.env.cursorLockPath())
+		if l == nil || busy || err != nil {
 			t.Fatal("lock not taken")
 		}
 		f.env.selfUpdateCursor(context.Background())
@@ -483,20 +483,6 @@ func TestNPMLockHelperProcess(t *testing.T) {
 	os.Exit(0)
 }
 
-func TestNPMLockIOErrorIsNotBusy(t *testing.T) {
-	if os.Getuid() == 0 {
-		t.Skip("root ignores directory permissions")
-	}
-	f := newSU(t, goodRTK, "", "", "")
-	local := filepath.Join(f.home, ".local")
-	os.MkdirAll(local, 0o755)
-	os.Chmod(local, 0o555)
-	t.Cleanup(func() { os.Chmod(local, 0o755) })
-	if _, _, ok := f.env.lockNPM(); !ok {
-		t.Fatal("an unwritable ~/.local was reported as another holder")
-	}
-}
-
 func TestCursorRecoverReadlinkErrorKeepsTheMarker(t *testing.T) {
 	if os.Getuid() == 0 {
 		t.Skip("root ignores directory permissions")
@@ -551,5 +537,83 @@ func TestCursorIncompleteMarkerLeavesALiveTree(t *testing.T) {
 				t.Fatal("the live launcher was removed")
 			}
 		})
+	}
+}
+
+func TestUnopenableLockLeavesRecoveryStateAlone(t *testing.T) {
+	t.Run("npm pending and accepted backups", func(t *testing.T) {
+		for _, state := range []string{"pending", "accepted"} {
+			f := newSU(t, goodRTK, "", "", "")
+			tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+			f.write(t, tree+npmBakSuffix+"/VERSION", "1.0.0")
+			f.write(t, f.env.npmMarker(), state+"\nclaude\n")
+			if err := os.MkdirAll(f.env.npmLockPath(), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			f.env.npmRecoverAside(false)
+			f.env.selfUpdateNPM()
+			f.env.NPMVerifyPresentStep()
+			if got := f.read(filepath.Join(tree, "VERSION")); got != "2.0.0" {
+				t.Fatalf("%s: tree changed without the lock: %q", state, got)
+			}
+			if _, err := os.Lstat(tree + npmBakSuffix + "/VERSION"); err != nil {
+				t.Fatalf("%s: backup touched without the lock", state)
+			}
+			if _, err := os.Lstat(f.env.npmMarker()); err != nil {
+				t.Fatalf("%s: marker removed without the lock", state)
+			}
+			if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+				t.Fatalf("%s: npm ran without the lock", state)
+			}
+		}
+	})
+	t.Run("cursor journal, links and trees", func(t *testing.T) {
+		f := newSU(t, goodRTK, "", "", cursorInstaller)
+		m := f.plantSwitched(t, []cursorLinkState{{Path: f.local("agent"), Kind: "none"}})
+		f.link(t, "agent", filepath.Join(m.Dir, cursorTool))
+		f.link(t, "cursor-agent", filepath.Join(m.Dir, cursorTool))
+		if err := os.MkdirAll(f.env.cursorLockPath(), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		check := func(what string) {
+			t.Helper()
+			if _, err := os.Lstat(f.env.cursorMarkerPath()); err != nil {
+				t.Fatalf("%s: journal removed", what)
+			}
+			for _, p := range []string{m.Old, m.Dir} {
+				if _, err := os.Lstat(p); err != nil {
+					t.Fatalf("%s: %s gone", what, p)
+				}
+			}
+			for _, l := range []string{"agent", "cursor-agent"} {
+				if got, _ := os.Readlink(f.local(l)); got != filepath.Join(m.Dir, cursorTool) {
+					t.Fatalf("%s: link %s moved to %q", what, l, got)
+				}
+			}
+		}
+		if rc := Cursor(context.Background(), f.env); rc != ExitFailed {
+			t.Fatalf("Cursor rc=%d", rc)
+		}
+		check("Cursor")
+		f.env.selfUpdateCursor(context.Background())
+		check("selfUpdateCursor")
+	})
+}
+
+func TestSelfUpdateNPMWithUnopenableLockStartsNothing(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "") // no marker: only the lock check can stop the update
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	if err := os.MkdirAll(f.env.npmLockPath(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	f.env.selfUpdateNPM()
+	if f.read(filepath.Join(f.npmDir, "npm.log")) != "" {
+		t.Fatal("npm install ran without the lock")
+	}
+	if got := f.read(filepath.Join(tree, "VERSION")); got != "1.0.0" {
+		t.Fatalf("tree changed: %q", got)
+	}
+	if out, _, err := f.env.probe(f.local("claude")); err != nil || out != "1.0.0" {
+		t.Fatalf("link moved: %q %v", out, err)
 	}
 }

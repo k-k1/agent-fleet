@@ -1126,3 +1126,70 @@ func TestCursorAliasThroughLinkedVersionSlotIsNotOurs(t *testing.T) {
 		t.Errorf("another tool's alias read as ours: %q %v", v, err)
 	}
 }
+
+func TestCursorWithUnopenableLockDoesNothingDestructive(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	if err := os.MkdirAll(f.env.cursorLockPath(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed || f.hits.Load() != 0 {
+		t.Fatalf("install ran unlocked: rc=%d hits=%d out=%s", rc, f.hits.Load(), f.out)
+	}
+	// A healthy copy is still a read-only no-op.
+	f.plant(t, "2026.1.1-abc", "#!/bin/sh\necho 1\n", true)
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("healthy rc=%d out=%s", rc, f.out)
+	}
+	// A left journal cannot be rolled back without the lock: it stays.
+	os.WriteFile(f.env.cursorMarkerPath(), []byte("{}"), 0o600)
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("marker rc=%d", rc)
+	}
+	if _, err := os.Lstat(f.env.cursorMarkerPath()); err != nil {
+		t.Fatal("marker removed without the lock")
+	}
+}
+
+func TestCursorUnopenableLockRepinWithHealthyPinnedTreeIsNotNoSpace(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", "#!/bin/sh\necho 1\n", true) // healthy pinned tree
+	// The link points at another version, so a repin relinks (no download).
+	other := f.tree("2025.0.0-old")
+	os.MkdirAll(other, 0o755)
+	os.WriteFile(filepath.Join(other, "cursor-agent"), []byte("#!/bin/sh\necho 1\n"), 0o755)
+	os.Remove(f.link())
+	os.Symlink(filepath.Join(other, "cursor-agent"), f.link())
+	f.env.Repin = true
+	f.env.FreeMiB = func(string) (int64, bool) { return 350, true }
+	os.MkdirAll(f.env.cursorLockPath(), 0o755)
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d want %d (relink needs the lock, not space) out=%s", rc, ExitFailed, f.out)
+	}
+}
+
+func TestCursorUnreadableMarkerPathFailsWithoutTheLock(t *testing.T) {
+	if os.Getuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	f := newCursor(t, goodCursorMembers(), "")
+	f.env.Pins = map[string]string{} // no pin: without the journal check the run would end 0
+	local := filepath.Join(f.home, ".local")
+	os.MkdirAll(local, 0o755)
+	os.Chmod(local, 0o000)
+	t.Cleanup(func() { os.Chmod(local, 0o755) })
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+}
+
+func TestCursorUnopenableLockNeedingDownloadWithLowSpaceIsNoSpace(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "") // no pinned tree: a download would be needed
+	f.env.FreeMiB = func(string) (int64, bool) { return 350, true }
+	os.MkdirAll(f.env.cursorLockPath(), 0o755)
+	if rc := Cursor(t.Context(), f.env); rc != ExitNoSpace {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if !strings.Contains(f.statusText(), "cursor\tfailed\tno_space\n") || f.hits.Load() != 0 {
+		t.Fatalf("status=%q hits=%d", f.statusText(), f.hits.Load())
+	}
+}
