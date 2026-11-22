@@ -138,6 +138,11 @@ func resolveModel(model string, keys map[string]string, pref string, acct oauthS
 	return routes.Launch{Route: routes.RouteCustomAPI}
 }
 
+// A launch on a custom provider still records no binding. The stored custom provider connection
+// (secrets.CustomAPIConn) is not read here: a second store read on this path would sit outside the
+// one snapshot credentialView takes. The endpoint binding and the endpoint registration come
+// together with the URL pin, reading the connection from that snapshot.
+
 // resolveOpencodeAI resolves a model on opencode.ai's own providers. Who pays is proven only
 // when exactly one payer can be: the Zen/Go key alone (the account known to be signed out), or
 // the Console account alone (no key on the launch). The account state comes from the cached view

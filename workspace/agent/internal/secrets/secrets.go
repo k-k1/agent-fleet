@@ -184,6 +184,21 @@ type LcppConn struct {
 	APIKey string `json:"apiKey,omitempty"`
 }
 
+// CustomAPIConn is the one place the member's custom opencode provider (route custom-api) has its
+// base URL held by the Agent, so the route policy can judge the host a call goes to (ADR 0138 §2,
+// "Endpoint approval"). Provider is the provider id the URL belongs to in opencode's configuration;
+// only a model on that provider is on this endpoint. Nothing writes it yet: until the Agent also
+// pins the URL in the inline configuration and refuses a config file that overrides it, an
+// approval of this endpoint would not hold, so no writer may be added before that pin, nor the
+// endpoint registered with the route policy. A stale Load then Save elsewhere (the Grafana
+// connection's) drops this field, so the writer's PR moves those read-modify-write paths to Update
+// (or has Save carry the current CustomAPI over).
+type CustomAPIConn struct {
+	Provider string `json:"provider"`
+	URL      string `json:"url"`
+	APIKey   string `json:"apiKey,omitempty"`
+}
+
 // AWSProfileRef points an ops integration at an AWS profile. It holds NO secret:
 // auth is the AWS credential chain already in the container (the user's SSO login,
 // same as ssm sessions). Profile selects the profile; Region optionally overrides
@@ -490,6 +505,7 @@ type Data struct {
 	Grafana        *GrafanaCreds     `json:"grafana,omitempty"`    // ops MCP credential (docs/log/25)
 	Jira           *JiraCreds        `json:"jira,omitempty"`       // work item inbox source (docs/log/80 P1)
 	Lcpp           *LcppConn         `json:"lcpp,omitempty"`       // member's own llama.cpp connection (docs/log/107)
+	CustomAPI      *CustomAPIConn    `json:"customApi,omitempty"`  // custom opencode provider's endpoint (route custom-api)
 	CloudWatch     *CloudWatchConn   `json:"cloudwatch,omitempty"` // ops MCP settings (docs/log/25; no secret — AWS cred chain)
 	AWS            *AWSConn          `json:"aws,omitempty"`        // Agent Toolkit for AWS MCP settings (docs/log/25; no secret — AWS cred chain)
 	Discord        *DiscordCreds     `json:"discord,omitempty"`    // chat-bridge connection (docs/log/37)
