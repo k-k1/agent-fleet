@@ -2,6 +2,7 @@ package chatx
 
 import (
 	"context"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"maps"
 	"slices"
 	"testing"
@@ -97,14 +98,14 @@ func TestOpencodeOneShotResolvesTheModelItRuns(t *testing.T) {
 	writeResolvePrefs(t, `{}`)
 	t.Setenv("AF_TITLE_MODEL_OPENCODE", "anthropic/claude-haiku-x")
 	var asked []string
-	old := chatLaunches[session.KindOpencode]
-	chatLaunches[session.KindOpencode] = func(model string) routes.Launch {
+	old := opencodePinRun
+	opencodePinRun = func(model string) opencode.RunPin {
 		asked = append(asked, model)
-		return routes.Launch{Route: "resolved-on:" + model}
+		return opencode.RunPin{Launch: routes.Launch{Route: "resolved-on:" + model}}
 	}
-	t.Cleanup(func() { chatLaunches[session.KindOpencode] = old })
+	t.Cleanup(func() { opencodePinRun = old })
 	var call usagex.Call
-	m, err := opencodeOneShotModel(&call, "", false, session.KindOpencode, OneShotShort)
+	_, m, err := opencodeOneShotModel(&call, "", false, session.KindOpencode, OneShotShort)
 	if err != nil || m == "" || call.ModelReq != m || call.Route != "resolved-on:"+m {
 		t.Fatalf("model %q, call = %+v; want the route resolved on the model passed", m, call)
 	}

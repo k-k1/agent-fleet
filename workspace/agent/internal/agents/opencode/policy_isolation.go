@@ -143,7 +143,10 @@ func servePolicyEnvFrom(base []string, v policyView) (env []string, ok bool) {
 // (ErrPolicyConfig), as for a session. env is the run's whole environment, the stored keys already
 // filtered (keyEnv); while nothing is restricted it is returned unchanged.
 func RunPolicyEnv(env []string, dir string) ([]string, error) {
-	v := readView()
+	return runPolicyEnvFrom(readView(), env, dir)
+}
+
+func runPolicyEnvFrom(v policyView, env []string, dir string) ([]string, error) {
 	p, restricted := v.p, v.restricted
 	if !restricted {
 		return env, nil
@@ -212,7 +215,16 @@ func pinConfig(cfg map[string]any, p routepolicy.Policy, keys map[string]string,
 			stripBaseURL(m[id])
 		}
 	}
-	sub(sub(sub(cfg, "provider"), id), "options")["baseURL"] = strings.TrimSpace(c.URL)
+	url := strings.TrimSpace(c.URL)
+	sub(sub(sub(cfg, "provider"), id), "options")["baseURL"] = url
+	// A v2 block for the provider takes the route over from the v1 one (measured on opencode 2.3.2:
+	// with its base URL stripped it fails with "requires an endpoint baseURL"), so it carries the
+	// pin too. Only a block the run already has: adding one would change which block wins.
+	if m, ok := cfg["providers"].(map[string]any); ok {
+		if _, ok := m[id].(map[string]any); ok {
+			sub(sub(m, id), "settings")["baseURL"] = url
+		}
+	}
 	return cfg
 }
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -68,6 +69,27 @@ var chatObserveBudget = routes.ObserveBudget
 func chatLaunchChecked(kind, model string) (route, binding string, err error) {
 	route, binding = chatLaunch(kind, model)
 	return route, binding, routeChecked(kind, route)
+}
+
+// opencodePinRun is opencode.PinRun; a seam for tests.
+var opencodePinRun = opencode.PinRun
+
+// opencodeLaunchChecked is chatLaunchChecked for an opencode run, and the pin the run is isolated
+// with: the route, the binding and the pin come from one reading (opencode.PinRun), so what the
+// call is judged and recorded on is what it is sent to. A reading that does not answer within
+// chatObserveBudget leaves the route unresolved and the pin refusing, like chatLaunch.
+func opencodeLaunchChecked(model string) (pin opencode.RunPin, route, binding string, err error) {
+	ch := make(chan opencode.RunPin, 1)
+	go func() { ch <- opencodePinRun(model) }()
+	t := time.NewTimer(chatObserveBudget)
+	defer t.Stop()
+	select {
+	case pin = <-ch:
+	case <-t.C:
+		log.Printf("route observation: opencode chat launch did not answer within %v; recorded as unresolved", chatObserveBudget)
+	}
+	route, binding = pin.Launch.Route, pin.Launch.Binding
+	return pin, route, binding, routeChecked(session.KindOpencode, route)
 }
 
 // routeChecked is the credential policy's answer for a call on kind about to run on route: nil
