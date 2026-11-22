@@ -283,10 +283,6 @@
 .mt-work-count {
   font-size: 11px;
 }
-.mt-work-body {
-  padding: 2px 9px 7px 20px;
-  border-top: 1px solid color-mix(in srgb, var(--fg) 7%, transparent);
-}
 /* Timestamp + copy sit together at the bottom-right of the turn. */
 .mirror-turn-foot {
   display: flex;

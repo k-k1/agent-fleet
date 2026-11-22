@@ -1123,3 +1123,42 @@ label.idp-flag {
 .engine-access-table .af-note {
   margin-left: 6px;
 }
+
+.aws-import-rows {
+  max-height: 50vh;
+  overflow: auto;
+}
+
+.aws-import-pick {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.aws-import-row.blocked .ssm-alias,
+.aws-import-row.unselected .ssm-alias {
+  color: var(--muted);
+}
+
+.aws-import-status {
+  font-size: 12px;
+  margin: 2px 0 6px;
+}
+
+.aws-import-row .ssm-fld {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 12px;
+}
+
+.aws-import-row .ssm-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  font-size: 11.5px;
+}
+
+/* The bucket. Orphans are tinted rather than badged alone: the whole reason this list exists is
+   that an object nobody declares was invisible while it went on costing money. */
+.engine-ledger { margin-top: 16px; border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; }

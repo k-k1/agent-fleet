@@ -231,3 +231,13 @@ button.mt-tool-outhead {
 .mt-toolrun-body .mt-tool {
   margin: 0.15em 0;
 }
+
+/* Expanded traces sit indented under the head, aligned past the chevron. */
+.mt-toolrun-body {
+  margin: 0.1em 0 0.2em 14px;
+}
+
+.mt-work-body {
+  padding: 2px 9px 7px 20px;
+  border-top: 1px solid color-mix(in srgb, var(--fg) 7%, transparent);
+}

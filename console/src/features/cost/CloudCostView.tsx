@@ -20,7 +20,6 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { fmtNum } from "../../lib/intl.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
-import "./cost.css";
 
 // Capability declaration returned by the CP (GET /api/cost/profile). A deployment with available
 // false has no bill at all, so the caller does not render the screen.
