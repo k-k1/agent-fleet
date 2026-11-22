@@ -190,6 +190,38 @@ describe("planClearFinished", () => {
     expect(planClearFinished(runsOf(locked, ["r"]), locked, repos).nodes).toEqual([]);
   });
 
+  describe("runs that ended without a PR", () => {
+    const integ = (relation: "same" | "contained" | "unmerged", worktreeUnique = 0) => ({ targetUnique: 0, worktreeUnique, relation });
+    const wt = (extra: Partial<Repo>): Repo[] => [{ name: "base" }, { name: "base@wip-a", worktree: true, parent: "base", createdBy: "r", ...extra }];
+    const tree = [sess("r", { origin: "queue", alive: false, repo: "base@wip-a", createdAt: "2026-11-01T00:00:00Z" })];
+    const plan = (rp: Repo[]) => planClearFinished(runsOf(tree, ["r"]), tree, rp);
+
+    it("offers a clean, fully contained worktree", () => {
+      for (const relation of ["same", "contained"] as const) {
+        expect(plan(wt({ integration: integ(relation) })).nodes.map((n) => n.repo.name)).toEqual(["base@wip-a"]);
+      }
+    });
+
+    it("does not offer a dirty tree, unique commits, an unpushed-ahead branch or unknown state", () => {
+      for (const extra of [
+        { dirty: true, integration: integ("same") },
+        { integration: integ("unmerged", 2) },
+        { integration: integ("contained", 1) },
+        { ahead: 1, integration: integ("same") },
+        { integration: undefined },
+      ] as Partial<Repo>[]) {
+        const p = plan(wt(extra));
+        expect(p.nodes).toEqual([]);
+        expect(p.archive.flat().map((s) => s.name)).toEqual(["r"]);
+      }
+    });
+
+    it("leaves a run whose PR is open or closed to its own rule", () => {
+      const open = tree.map((s) => ({ ...s, pr: { number: 3, state: "open" as const, url: "u" } }));
+      expect(planClearFinished(runsOf(open, ["r"]), open, wt({ integration: integ("same") })).nodes).toEqual([]);
+    });
+  });
+
   it("names the ancestors of a session, for keeping them after a failure", () => {
     const tree = [sess("r", { origin: "queue" }), sess("c", { origin: "session", originSession: "r" }), sess("g", { origin: "session", originSession: "c" })];
     expect(ancestorNames("g", tree)).toEqual(["c", "r"]);
