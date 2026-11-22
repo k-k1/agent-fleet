@@ -245,7 +245,7 @@ npm1=$(grep -nx 'workspace-agent boot-install npm' "$STUB_WA_LOG" | head -1 | cu
 { [ -n "$rec" ] && [ -n "$npm1" ] && [ "$rec" -lt "$npm1" ]; } || fail "npm-recover: not run before the lean install ($(cat "$STUB_WA_LOG"))"
 reset; run_block STUB_WA_RC=126 || fail "npm-recover: an exit outside the contract aborted the start"
 has 'WARN: npm boot-install npm-recover exited 126' || fail "npm-recover: no WARN for an exit outside the contract"
-awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} END{exit !(r && u && r<u)}' "$ENTRY" || fail "npm-recover: not before the OFF branch's npm uninstall"
+awk '/boot-install npm-recover [|][|] echo/{r=NR} /npm uninstall -g/{u=NR} END{exit !(r && u && r<u)}' "$ENTRY" || fail "npm-recover: not before the OFF branch's npm uninstall"
 # The step is exactly this stanza, at the top of the start (no condition added to the call or the
 # line before it can skip it on the starts that most need it), and it runs: the stanza is cut out
 # of the entrypoint and executed against the stub Agent.
@@ -253,6 +253,10 @@ awk '/^NPM_RECOVER_WA=/{on=1} on{print} on&&/^fi$/{exit}' "$ENTRY" >"$T/recover.
 want='NPM_RECOVER_WA="${BI_AGENT_BIN:-/usr/local/bin/workspace-agent}"
 if [ -x "$NPM_RECOVER_WA" ]; then
   "$NPM_RECOVER_WA" boot-install npm-recover || echo "[entrypoint] WARN: npm boot-install npm-recover exited $? (continuing)"
+elif [ -e "$HOME/.local/.af-npm-update" ]; then
+  # Without the Agent nothing can settle the backups the marker records; the OFF branch
+  # (its npm uninstall) must not run over a tree that is mid-update.
+  echo "[entrypoint] WARN: the Agent binary is missing; the backups of an earlier npm update are not settled"
 fi'
 [ "$(cat "$T/recover.sh")" = "$want" ] || fail "npm-recover: the stanza in entrypoint.sh changed"
 prev_code() { awk '/^[ \t]*#/ || /^[ \t]*$/ { next } /^NPM_RECOVER_WA=/ { print last; exit } { last=$0 }' "$1"; }
@@ -264,8 +268,33 @@ esac
 BI_AGENT_BIN="$T/bin/workspace-agent" bash -c 'set -e; . "$1"' _ "$T/recover.sh" >"$T/out" 2>&1 || fail "npm-recover: the stanza failed"
 grep -qx 'workspace-agent boot-install npm-recover' "$STUB_WA_LOG" || fail "npm-recover: the stanza did not call the Agent"
 BI_AGENT_BIN="$T/none" bash -c 'set -e; . "$1"; echo STARTED' _ "$T/recover.sh" >"$T/out" 2>&1; has STARTED || fail "npm-recover: a missing Agent ended the start"
+# A missing Agent with an unsettled marker is said out loud, and the OFF branch's uninstall holds.
+mkdir -p "$T/mh/.local"; : >"$T/mh/.local/.af-npm-update"
+HOME="$T/mh" BI_AGENT_BIN="$T/none" bash -c 'set -e; . "$1"; echo STARTED' _ "$T/recover.sh" >"$T/out" 2>&1
+has 'are not settled' || fail "npm-recover: no WARN for a missing Agent with a marker"
+# The OFF branch's uninstall itself: cut the marker/uninstall stanza out, swap the baked-claude
+# test for a fake, and run it against a stub npm.
+awk '/^  if \[ -x \/usr\/local\/bin\/claude \]; then$/{lastif=$0} /^    \[ ! -e "\$HOME\/.local\/.af-npm-update" \]/{on=1; print lastif} on{print} on&&/^  fi$/{exit}' "$ENTRY" \
+  | sed 's#\[ -x /usr/local/bin/claude \]#[ -x "$FAKE_BAKED_CLAUDE" ]#' >"$T/off.sh"
+grep -q 'npm uninstall -g' "$T/off.sh" || fail "npm uninstall: the OFF stanza was not cut out"
+printf '#!/bin/sh\necho "npm $*" >>"$OFF_LOG"\n' >"$T/bin/npm"; chmod +x "$T/bin/npm"
+: >"$T/baked-claude"; chmod +x "$T/baked-claude"
+printf '#!/bin/sh\necho "wa $*" >>"$OFF_LOG"\n[ -z "$WA_CLEARS" ] || rm -f "$HOME/.local/.af-npm-update"\n' >"$T/bin/wa-stub"; chmod +x "$T/bin/wa-stub"
+off_run() { : >"$T/off.log"; NPM_RECOVER_WA="$T/bin/wa-stub" PATH="$T/bin:$PATH" HOME="$T/mh" OFF_LOG="$T/off.log" FAKE_BAKED_CLAUDE="${BAKED:-$T/baked-claude}" bash -c 'set -e; . "$1"' _ "$T/off.sh" >"$T/out" 2>&1; }
+off_run; grep -q '^npm uninstall' "$T/off.log" && fail "npm uninstall: ran while a marker is present"
+grep -qx 'wa boot-install npm-recover --discard' "$T/off.log" || fail "npm uninstall: the marker was not handed to npm-recover --discard"
+has 'not uninstalling' || fail "npm uninstall: no WARN while a marker is present"
+# Recovery settles the marker in the same start: the uninstall then runs.
+: >"$T/mh/.local/.af-npm-update"; WA_CLEARS=1 off_run; grep -q '^npm uninstall -g' "$T/off.log" || fail "npm uninstall: did not run after the marker was settled"
+rm -f "$T/mh/.local/.af-npm-update"
+off_run; grep -q '^npm uninstall -g' "$T/off.log" || fail "npm uninstall: did not run without a marker"
+# Lean OFF (no baked claude): the marker is left for the final verify pass, nothing is handed to recovery.
+: >"$T/mh/.local/.af-npm-update"; BAKED="$T/none" off_run
+[ ! -s "$T/off.log" ] || fail "lean OFF: touched the marker or ran npm ($(cat "$T/off.log"))"
+[ -e "$T/mh/.local/.af-npm-update" ] || fail "lean OFF: the marker was removed"
+rm -f "$T/mh/.local/.af-npm-update"
 # Where it sits: before the OFF branch's uninstall and before the lean block's installs.
-awk '/boot-install npm-recover/{r=NR} /npm uninstall -g/{u=NR} /^LEAN_CLIS=0/{l=NR} END{exit !(r && u && l && r<l && l<u)}' "$ENTRY" || fail "npm-recover: not before the lean block and the OFF branch's uninstall"
+awk '/boot-install npm-recover [|][|] echo/{r=NR} /npm uninstall -g/{u=NR} /^LEAN_CLIS=0/{l=NR} END{exit !(r && u && l && r<l && l<u)}' "$ENTRY" || fail "npm-recover: not before the lean block and the OFF branch's uninstall"
 # The shell no longer carries an npm install or a verify of its own.
 grep -q 'npm install -g' "$BLOCK" && fail "npm: shell install block still present"
 grep -q 'npm_clis_verify' "$BLOCK" && fail "npm: shell verify still present"

@@ -169,7 +169,7 @@ func (e Env) selfUpdateNPM() {
 		return
 	}
 	defer release()
-	e.npmRecoverAside(false)
+	e.npmRecoverAside(true)
 	if _, err := os.Lstat(e.npmMarker()); err == nil {
 		// Recovery could not settle the earlier update's backups: starting another one would
 		// overwrite their record. The installed copies stay.
@@ -275,9 +275,8 @@ func (e Env) selfUpdateNPM() {
 	case len(stuck) > 0:
 		// A previous copy could not be put back: its backup and the marker stay, so the next
 		// start retries. The accepted CLIs' backups go now, or the pending marker's restore would
-		// put them over their new copies; the rebuilt names list only the stuck CLIs.
-		npmDiscardAside(moved)
-		_ = e.npmWriteMarker("pending", npmCLINames(stuck))
+		// put them over their new copies; the marker lists only the stuck CLIs once they are gone.
+		e.npmNarrowMarker(npmCLINames(stuck), npmCLINames(moved))
 	case len(moved) > 0:
 		// Accepted: the marker says so, and the backups stay until the start's final verify pass
 		// (`npm-verify --present`) has looked at the new copies once more; it, or the next
