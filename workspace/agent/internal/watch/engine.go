@@ -1129,6 +1129,11 @@ func (e *Engine) dueLocked(now time.Time) []dueSubject {
 		if !ok || now.Before(ss.NextPoll) {
 			continue
 		}
+		// A read that carries a poke time bypasses the source's cache, so it keeps the poke
+		// gap whatever moved NextPoll (a second watch on the subject resets it to zero).
+		if !ss.PokedAt.IsZero() && now.Before(ss.LastPoll.Add(pokeMinGap)) {
+			continue
+		}
 		if s, ok := e.Source(src); ok {
 			// A source may bound how often a subject is read whatever its hint, a restart and a
 			// new watch on the subject included (LastPoll is on disk).

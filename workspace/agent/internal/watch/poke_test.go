@@ -256,3 +256,82 @@ func TestGoneConfirmationReadsPastTheAnswerJustGiven(t *testing.T) {
 		t.Fatalf("polls=%d pokedSince=%v: the confirming read may reuse the answer given at %v", src.polls, src.pokedSince, readAt)
 	}
 }
+
+func TestSecondWatchInsideTheGapDoesNotForceAnEarlyFreshRead(t *testing.T) {
+	e, src, c := pokeEngine(t, Hint{After: 30 * time.Minute})
+	c.add(2 * time.Second)
+	e.Poke("fake", "fake:o/r#1")
+	c.add(time.Second)
+	if _, err := e.Subscribe(context.Background(), Request{Owner: "b", Source: "fake", Ref: "o/r#1", Types: []string{"pr.merged"}, Until: UntilDeadline}); err != nil {
+		t.Fatal(err)
+	}
+	c.add(2 * time.Second) // 5 s after the first read: inside the gap
+	e.Tick(context.Background())
+	if src.polls != 1 {
+		t.Fatalf("polls=%d: a poked read ran inside the gap", src.polls)
+	}
+	c.add(pokeMinGap)
+	e.Tick(context.Background())
+	if src.polls != 2 || src.pokedSince.IsZero() {
+		t.Fatalf("polls=%d pokedSince=%v: the read after the gap must be fresh", src.polls, src.pokedSince)
+	}
+}
+
+func TestFailedReadKeepsTheOriginalPokeWithoutAnotherWebhook(t *testing.T) {
+	e, src, c := pokeEngine(t, Hint{After: 30 * time.Minute})
+	c.add(time.Minute)
+	e.Poke("fake", "fake:o/r#1")
+	pokeAt := c.now()
+	c.add(pokeMinGap)
+	src.err = errors.New("boom")
+	e.Tick(context.Background()) // fails, backs off
+	src.err = nil
+	c.add(time.Second)
+	e.Tick(context.Background())
+	if src.polls != 2 {
+		t.Fatalf("polls=%d: re-read before the backoff ended", src.polls)
+	}
+	c.add(time.Hour)
+	e.Tick(context.Background())
+	if src.polls != 3 || !src.pokedSince.Equal(pokeAt) {
+		t.Fatalf("polls=%d pokedSince=%v, want the original poke %v", src.polls, src.pokedSince, pokeAt)
+	}
+}
+
+func TestPokeUnservedHintKeepsThePokeUntilASuccessfulRead(t *testing.T) {
+	e, src, c := pokeEngine(t, Hint{After: 30 * time.Minute, PokeUnserved: true})
+	c.add(time.Minute)
+	e.Poke("fake", "fake:o/r#1")
+	pokeAt := c.now()
+	c.add(pokeMinGap)
+	e.Tick(context.Background())
+	if src.polls != 2 || !src.pokedSince.Equal(pokeAt) {
+		t.Fatalf("polls=%d pokedSince=%v", src.polls, src.pokedSince)
+	}
+	src.hint = Hint{After: 30 * time.Minute}
+	c.add(time.Hour)
+	e.Tick(context.Background())
+	if src.polls != 3 || !src.pokedSince.Equal(pokeAt) {
+		t.Fatalf("polls=%d pokedSince=%v: the unserved poke was dropped", src.polls, src.pokedSince)
+	}
+	c.add(time.Hour)
+	e.Tick(context.Background())
+	if src.polls != 4 || !src.pokedSince.IsZero() {
+		t.Fatalf("polls=%d pokedSince=%v: a served poke outlived its read", src.polls, src.pokedSince)
+	}
+}
+
+func TestPokeSurvivesARestartThroughTheStore(t *testing.T) {
+	e, src, c := pokeEngine(t, Hint{After: 30 * time.Minute})
+	st := e.store.(*memStore)
+	c.add(time.Minute)
+	e.Poke("fake", "fake:o/r#1")
+	pokeAt := c.now()
+	e2 := New(st, &fakeSink{answer: Ready}, src)
+	e2.now = c.now
+	c.add(pokeMinGap)
+	e2.Tick(context.Background())
+	if src.polls != 2 || !src.pokedSince.Equal(pokeAt) {
+		t.Fatalf("polls=%d pokedSince=%v, want the first read after a restart to carry %v", src.polls, src.pokedSince, pokeAt)
+	}
+}
