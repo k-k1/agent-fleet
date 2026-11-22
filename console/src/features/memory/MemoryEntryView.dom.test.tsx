@@ -728,9 +728,17 @@ describe("MemoryEntryView", () => {
         expect(button(t("editor.unknown.accept_risk"))).toBeUndefined();
         expect(button(t("editor.unknown.resave_old"))).toBeUndefined();
         expect(button(t("editor.unknown.resave"))).toBeUndefined();
+        const draftPane = pane().id;
+        const version = useMemoryStore.getState().version;
         await act(async () => button(t("mem.br_open_existing"))!.click());
         await flush();
-        expect(allViews(useLayoutStore.getState().layout).some((v) => v.content.kind === "memoryEntry" && v.content.name === "house-rules")).toBe(true);
+        const views = allViews(useLayoutStore.getState().layout).filter((v) => v.content.kind === "memoryEntry");
+        // Beside the draft, never over it: the draft's pane keeps its target and its guard.
+        expect(views.some((v) => v.id !== draftPane && v.content.kind === "memoryEntry" && v.content.name === "house-rules")).toBe(true);
+        expect(views.find((v) => v.id === draftPane)!.content).toMatchObject({ name: "" });
+        expect(dirtyPaneIds()).toEqual([draftPane]);
+        // A pane already showing that name re-reads.
+        expect(useMemoryStore.getState().version).toBeGreaterThan(version);
       });
 
       it("keeps the outcome unconfirmed while the memory cannot be read, and lands once the read answers", async () => {

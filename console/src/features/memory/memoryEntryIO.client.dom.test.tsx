@@ -8,10 +8,13 @@ import { useTenantStore } from "../../core/store/tenant.ts";
 
 function cutOff(): Response {
   const enc = new TextEncoder();
+  // The fragment is delivered by the first pull and the connection drops on the next, so the
+  // client is already reading the body when it fails.
+  let pulls = 0;
   const body = new ReadableStream<Uint8Array>({
-    start(c) {
-      c.enqueue(enc.encode('{"name":"house-rules","rev'));
-      c.error(new TypeError("network error"));
+    pull(c) {
+      if (pulls++ === 0) c.enqueue(enc.encode('{"name":"house-rules","rev'));
+      else c.error(new TypeError("network error"));
     },
   });
   return new Response(body, { status: 200, headers: { "Content-Type": "application/json" } });

@@ -710,7 +710,11 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
             isNew && model.unknownObservation?.kind === "unavailable" && model.unknownObservation.message.includes(EXISTS_UNVERIFIED)
               ? () => {
                   const sentName = (decodeEntry(model.saveSnapshot?.content ?? model.content).name ?? "").trim();
-                  if (sentName) openMemoryEntry({ scope, project: { id: project, display: projectName }, name: sentName });
+                  if (!sentName) return;
+                  // Beside this pane, never over it: it holds the draft the member may still copy.
+                  // The bump re-reads a pane already showing that name, whose body may predate it.
+                  openMemoryEntry({ scope, project: { id: project, display: projectName }, name: sentName }, { inNew: true });
+                  bump();
                 }
               : undefined
           }
