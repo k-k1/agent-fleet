@@ -12,8 +12,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"log"
 	"maps"
-	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"regexp"
 	"slices"
@@ -1551,8 +1551,10 @@ func normalizeCustomAPIURL(raw string) (string, error) {
 			return "", errors.New("URL port must be 1-65535")
 		}
 	}
-	if strings.HasPrefix(u.Host, "[") && net.ParseIP(strings.Split(u.Hostname(), "%")[0]) == nil {
-		return "", errors.New("URL host in brackets must be an IP address")
+	if strings.HasPrefix(u.Host, "[") {
+		if a, err := netip.ParseAddr(u.Hostname()); err != nil || !a.Is6() || a.Zone() != "" {
+			return "", errors.New("URL host in brackets must be an IPv6 address without a zone")
+		}
 	}
 	return trimmed, nil
 }

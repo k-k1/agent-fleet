@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routepolicy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
@@ -21,14 +23,15 @@ func customAPIPut(provider, url, key string) *httptest.ResponseRecorder {
 
 func TestNormalizeCustomAPIURL(t *testing.T) {
 	for in, want := range map[string]string{
-		"https://llm.example.test/v1/": "https://llm.example.test/v1",
-		" http://box:8080 ":            "http://box:8080",
+		"https://[2001:db8::1]:8443/v1": "https://[2001:db8::1]:8443/v1",
+		"https://llm.example.test/v1/":  "https://llm.example.test/v1",
+		" http://box:8080 ":             "http://box:8080",
 	} {
 		if got, err := normalizeCustomAPIURL(in); err != nil || got != want {
 			t.Errorf("%q = %q, %v; want %q", in, got, err, want)
 		}
 	}
-	for _, in := range []string{"", "box:80", "ftp://box", "http://", "https://u:p@box", "https://box/v1?x=1", "https://box/#f", "https://box/v1?", "https://box/v1#", "https://box:65536/v1", "https://box:0/v1", "https://[box.example.test]/v1"} {
+	for _, in := range []string{"", "box:80", "ftp://box", "http://", "https://u:p@box", "https://box/v1?x=1", "https://box/#f", "https://box/v1?", "https://box/v1#", "https://box:65536/v1", "https://box:0/v1", "https://[box.example.test]/v1", "https://[fe80::1%25eth0]/v1", "https://[1.2.3.4]/v1"} {
 		if got, err := normalizeCustomAPIURL(in); err == nil {
 			t.Errorf("%q accepted as %q", in, got)
 		}
@@ -120,5 +123,39 @@ func TestGrafanaWritersKeepCustomAPIConn(t *testing.T) {
 	}
 	if s, _ := secrets.Load(); s.Grafana != nil || s.CustomAPI == nil || s.CustomAPI.URL != "https://llm.example.test" {
 		t.Fatalf("after DELETE: grafana=%+v custom=%+v", s.Grafana, s.CustomAPI)
+	}
+}
+
+// The policy is judged again once the store lock is won: a PUT that passed the first check and then
+// waited behind another writer must not store a host the policy stopped approving meanwhile.
+func TestPutCustomAPIConnRechecksPolicyUnderTheStoreLock(t *testing.T) {
+	memberHome(t)
+	policy := func(hosts ...string) routepolicy.Policy {
+		return routepolicy.Policy{Revision: 2, Restricted: true, Allowed: []string{routes.RouteAnthropicAPI},
+			EndpointRoutes: []string{routes.RouteCustomAPI}, Endpoints: hosts}
+	}
+	useHidingPolicy(t, policy("a.example.test", "b.example.test"))
+	if w := customAPIPut("mine", "https://a.example.test/v1", ""); w.Code != http.StatusOK {
+		t.Fatalf("seed: %d %s", w.Code, w.Body)
+	}
+	narrowed := routepolicy.Open(filepath.Join(t.TempDir(), "rp2.json"), "")
+	if _, err := narrowed.Accept(policy("a.example.test")); err != nil {
+		t.Fatal(err)
+	}
+	held, release := make(chan struct{}), make(chan struct{})
+	go func() {
+		_ = secrets.Update(func(*secrets.Data) error { close(held); <-release; return nil })
+	}()
+	<-held
+	done := make(chan *httptest.ResponseRecorder)
+	go func() { done <- customAPIPut("mine", "https://b.example.test/v1", "") }()
+	time.Sleep(300 * time.Millisecond) // the PUT has passed its first check and waits for the lock
+	routepolicy.Active = func() *routepolicy.Store { return narrowed }
+	close(release)
+	if w := <-done; w.Code != http.StatusForbidden {
+		t.Fatalf("PUT after the policy narrowed: %d %s", w.Code, w.Body)
+	}
+	if s, _ := secrets.Load(); s.CustomAPI == nil || s.CustomAPI.URL != "https://a.example.test/v1" {
+		t.Fatalf("stored connection changed: %+v", s.CustomAPI)
 	}
 }
