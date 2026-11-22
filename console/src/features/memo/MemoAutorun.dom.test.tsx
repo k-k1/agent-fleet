@@ -18,6 +18,7 @@ const memoRelease = vi.fn();
 const memoQueuePut = vi.fn();
 const memoQueueDelete = vi.fn();
 const memoQueueFire = vi.fn();
+const memoCategoryUpdateMock = vi.fn(async (_id: string, _patch: unknown) => ({}));
 const memoQueueResume = vi.fn();
 const memoUpdateMock = vi.fn(async (_id: string, _patch: unknown) => ({}));
 const memoQueueDeliveryEnd = vi.fn();
@@ -38,7 +39,7 @@ vi.mock("./api.ts", () => ({
   memoUpdate: (id: string, patch: unknown) => memoUpdateMock(id, patch),
   memoDelete: async () => ({ ok: true }),
   memoCategoryCreate: async () => ({}),
-  memoCategoryUpdate: async () => ({}),
+  memoCategoryUpdate: (id: string, patch: unknown) => memoCategoryUpdateMock(id, patch),
   memoCategoryDelete: async () => ({ ok: true }),
   memoPasteImage: async () => ({ status: 500 }),
   memoImageGC: async () => ({}),
@@ -180,7 +181,7 @@ beforeEach(() => {
   servedQueues = { tenantEnabled: true, queues: [aQueue()] };
   queuesFail = false;
   servedDeliveries = [];
-  for (const m of [memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueDeliveryReturn, memoQueueList, openSessionChat]) m.mockClear();
+  for (const m of [memoCategoryUpdateMock, memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueDeliveryReturn, memoQueueList, openSessionChat]) m.mockClear();
   memoRelease.mockResolvedValue({ released: [], stale: [] });
   memoQueuePut.mockResolvedValue(aQueue());
   memoQueueDelete.mockResolvedValue({ ok: true });
@@ -1826,5 +1827,56 @@ describe("the category head", () => {
     });
     expect(document.querySelector(".memo-cat-menu")).toBeNull();
     expect(document.activeElement).toBe(more);
+  });
+
+  const sendText = () => must(document.querySelector<HTMLTextAreaElement>(".ui-modal textarea"), "send text").value;
+
+  it("Send from an open menu takes the category's current memos", async () => {
+    servedMemos = [aMemo({ id: "a", body: "first-body", state: "pending", provenance: "member" })];
+    await render();
+    await click(must(head().querySelector(".memo-cat-more"), "more"));
+    servedMemos = [
+      aMemo({ id: "a", body: "first-body", state: "pending", provenance: "member" }),
+      aMemo({ id: "b", body: "second-body", state: "pending", provenance: "member", position: 1 }),
+    ];
+    await bump();
+    await click(headMenuItem({ cls: "memo-cat-menu-send" }));
+    expect(sendText()).toContain("first-body");
+    expect(sendText()).toContain("second-body");
+  });
+
+  it("the uncategorised Send opens the send dialog with that bucket's memos", async () => {
+    servedCats = [];
+    servedMemos = [aMemo({ id: "u1", category: "", body: "loose-one" }), aMemo({ id: "u2", category: "", body: "loose-two", position: 1 })];
+    await render();
+    await click(must(head().querySelector(".memo-cat-send"), "send"));
+    expect(sendText()).toContain("loose-one");
+    expect(sendText()).toContain("loose-two");
+  });
+
+  it("dragging a head onto another category reorders them, and does not fold either", async () => {
+    servedCats = [aCat({}), aCat({ id: "c2", name: "plain", position: 1 })];
+    servedMemos = [aMemo({ id: "a" }), aMemo({ id: "p", category: "plain" })];
+    await render();
+    const heads = [...document.querySelectorAll<HTMLElement>(".memo-cat-head")];
+    const [first, second] = heads;
+    const target = must(first.closest<HTMLElement>(".memo-cat"), "target group");
+    const fold = () => heads.map((h) => h.querySelector("[aria-expanded]")?.getAttribute("aria-expanded"));
+    const before = fold();
+    const ev = (type: string) => {
+      const e = new Event(type, { bubbles: true, cancelable: true });
+      Object.assign(e, { dataTransfer: { setData() {}, getData: () => "", effectAllowed: "", dropEffect: "" } });
+      return e;
+    };
+    await act(async () => {
+      second.dispatchEvent(ev("dragstart"));
+      target.dispatchEvent(ev("dragover"));
+      target.dispatchEvent(ev("drop"));
+      second.dispatchEvent(ev("dragend"));
+    });
+    await settle();
+    expect(memoCategoryUpdateMock).toHaveBeenCalledWith("c2", { position: 0 });
+    expect(memoCategoryUpdateMock).toHaveBeenCalledWith("c1", { position: 1 });
+    expect(fold()).toEqual(before);
   });
 });
