@@ -40,6 +40,17 @@ export function CatHeadMenu(p: Props) {
   const tr = useT();
   const ref = useRef<HTMLUListElement>(null);
   const run = useRunNow(p.categoryId, p.queue);
+  // Where focus was when the menu opened (the ⋯ button, for a keyboard user). A pick that leaves the menu's own
+  // item focused hands it back on unmount; a rename field or dialog opened by the pick takes focus afterwards.
+  const opener = useRef<Element | null>(typeof document === "undefined" ? null : document.activeElement);
+  useLayoutEffect(
+    () => () => {
+      const el = opener.current;
+      const cur = document.activeElement;
+      if (el instanceof HTMLElement && el !== document.body && el.isConnected && (!cur || cur === document.body || ref.current?.contains(cur))) el.focus();
+    },
+    [],
+  );
   useDismiss(ref, true, p.onClose);
   useMenuRoving(ref, true);
   useLayoutEffect(() => {
@@ -50,16 +61,16 @@ export function CatHeadMenu(p: Props) {
     else placeFixed(el, p.at.x, p.at.y, bounds);
   });
 
-  const item = (cls: string, icon: string, label: string, onPick: () => void, reason = "", danger = false) => (
+  const item = (cls: string, icon: string, label: string, onPick: () => void, reason = "", danger = false, off = reason !== "") => (
     <li>
       <button
         type="button"
         className={"ui-menu-item memo-cat-menu-item " + cls + (danger ? " danger" : "")}
         role="menuitem"
         // aria-disabled, not disabled: the reason stays reachable by keyboard.
-        aria-disabled={reason ? true : undefined}
+        aria-disabled={off ? true : undefined}
         onClick={() => {
-          if (reason) return;
+          if (off) return;
           p.onClose();
           onPick();
         }}
@@ -73,20 +84,22 @@ export function CatHeadMenu(p: Props) {
   const runOff = run.reason !== "" || run.busy;
   return createPortal(
     <ul className="ui-menu memo-cat-menu" ref={ref} style={{ left: p.at.x, top: p.at.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-      {p.sendCount > 0 && item("memo-cat-send", "send", `${tr("common.send")} (${p.sendCount})`, p.onSend)}
+      {p.sendCount > 0 && item("memo-cat-menu-send", "send", `${tr("common.send")} (${p.sendCount})`, p.onSend)}
       {p.isQueue &&
         item(
           "memo-cat-run",
           "play",
           tr("memo.cat_menu_run"),
           () => void run.press().then((r) => r && p.onRunResult(r)),
-          runOff ? run.reason || run.title : "",
+          run.reason,
+          false,
+          runOff,
         )}
-      {p.isQueue && item("memo-cat-act", "history", tr("memo.autorun_deliveries"), p.onHistory)}
-      {item("memo-cat-act", "settings-gear", tr("memo.autorun_settings"), p.onSettings, p.settingsNote)}
+      {p.isQueue && item("memo-cat-menu-act", "history", tr("memo.autorun_deliveries"), p.onHistory)}
+      {item("memo-cat-menu-act", "settings-gear", tr("memo.autorun_settings"), p.onSettings, p.settingsNote)}
       {item("memo-cat-rename", "edit", tr("memo.rename_category_item"), p.onRename)}
       <li className="ui-menu-sep" aria-hidden="true" />
-      {item("memo-cat-del", "trash", tr("memo.delete_category"), p.onDelete, "", true)}
+      {item("memo-cat-menu-del", "trash", tr("memo.delete_category"), p.onDelete, "", true)}
     </ul>,
     document.body,
   );

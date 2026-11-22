@@ -31,19 +31,25 @@ export async function runNow(categoryId: string): Promise<RunNowResult> {
   }
 }
 
+/** Categories with a press in flight. Module-level so a menu that closed and reopened still knows. */
+const pressing = new Set<string>();
+
 /** The state of a Run now control. Whether it is enabled comes from the queue list's fireBlock
  *  alone ("nothing_waiting" included): the memo list is a separate read and may lag it. */
 export function useRunNow(categoryId: string, queue: MemoQueue | undefined) {
   const tr = useT();
-  const [busy, setBusy] = useState(false);
+  const [pressed, setBusy] = useState(false);
+  const busy = pressed || pressing.has(categoryId);
   const why = fireBlockWords(queue, (iso) => fmtDateTime(iso), (kind) => kindLabel(kind));
   const reason = why ? tr(why.key, why.params) : "";
   const press = async (): Promise<RunNowResult | null> => {
     if (busy || reason) return null;
     setBusy(true);
+    pressing.add(categoryId);
     try {
       return await runNow(categoryId);
     } finally {
+      pressing.delete(categoryId);
       setBusy(false);
     }
   };

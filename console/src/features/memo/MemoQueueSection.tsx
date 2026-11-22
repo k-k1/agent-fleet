@@ -786,7 +786,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     else placeFixed(el, memoMenu.x, memoMenu.y, bounds);
   });
   // Category head menu (⋯, right-click, Menu / Shift+F10): one at a time, for the category named by `cat`.
-  const [catMenu, setCatMenu] = useState<{ at: CatHeadMenuAt; cat: MemoCategory; repo: string; category: string; ids: string[] } | null>(null);
+  const [catMenu, setCatMenu] = useState<{ at: CatHeadMenuAt; catId: string } | null>(null);
+  // Sendable ids per category, refreshed each render, so an open menu acts on the current list and not on the one it opened with.
+  const catSendIds = useRef(new Map<string, string[]>());
   const runMemoMenu = (fn: () => void) => {
     setMemoMenu(null);
     fn();
@@ -1010,6 +1012,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   // A replaced note is read-only and cannot be sent, and a folded one is not on screen,
                   // so a select-all covers neither.
                   const ids = visible.filter((m) => !isSuperseded(m)).map((m) => m.id);
+                  if (cat) catSendIds.current.set(cat.id, ids);
                   const allSel = ids.length > 0 && ids.every((id) => sel[id]);
                   const renderRow = (m: Memo, isHistory = false) => (
                     <MemoRow
@@ -1099,13 +1102,13 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                         onContextMenu={cat ? (e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          setCatMenu({ at: { x: e.clientX, y: e.clientY }, cat, repo: rb.repo, category: g.category, ids });
+                          setCatMenu({ at: { x: e.clientX, y: e.clientY }, catId: cat.id });
                         } : undefined}
                         onKeyDown={cat ? (e) => {
                           if (e.key !== "ContextMenu" && !(e.shiftKey && e.key === "F10")) return;
                           e.preventDefault();
                           const r = (e.currentTarget.querySelector(".memo-cat-more") ?? e.currentTarget).getBoundingClientRect();
-                          setCatMenu({ at: { x: r.left, y: r.bottom + 2, anchor: r }, cat, repo: rb.repo, category: g.category, ids });
+                          setCatMenu({ at: { x: r.left, y: r.bottom + 2, anchor: r }, catId: cat.id });
                         } : undefined}
                       >
                         <button
@@ -1179,6 +1182,18 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             </span>
                           );
                         })()}
+                        {!cat && ids.length > 0 && (
+                          <button
+                            type="button"
+                            className="memo-cat-send linkish sm"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              sendGroup(ids);
+                            }}
+                          >
+                            {tr("common.send")}
+                          </button>
+                        )}
                         <button
                           type="button"
                           className="memo-cat-add"
@@ -1201,7 +1216,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             onClick={(e) => {
                               e.stopPropagation();
                               const r = e.currentTarget.getBoundingClientRect();
-                              setCatMenu({ at: { x: r.left, y: r.bottom + 2, anchor: r }, cat, repo: rb.repo, category: g.category, ids });
+                              setCatMenu({ at: { x: r.left, y: r.bottom + 2, anchor: r }, catId: cat.id });
                             }}
                           >
                             <Icon name="ellipsis" />
@@ -1281,7 +1296,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         )}
 
         {catMenu && (() => {
-          const c = catMenu.cat;
+          const c = cats.find((x) => x.id === catMenu.catId);
+          if (!c) return null;
+          const sendIds = catSendIds.current.get(c.id) ?? [];
           const q = queueByCat.get(c.id);
           const isQ = !!q || !!c.queue;
           // A category that already is a queue stays openable while the tenant blocks new setups: the
@@ -1294,10 +1311,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
               categoryId={c.id}
               isQueue={isQ}
               queue={q}
-              sendCount={catMenu.ids.length}
+              sendCount={sendIds.length}
               settingsNote={note}
               onClose={() => setCatMenu(null)}
-              onSend={() => sendGroup(catMenu.ids)}
+              onSend={() => sendGroup(sendIds)}
               onRunResult={(r) => {
                 if (r === "started") bumpMemos();
                 // The refusal says a slot is taken; the history names who holds it.

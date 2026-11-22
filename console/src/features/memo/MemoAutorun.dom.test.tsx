@@ -1769,4 +1769,57 @@ describe("the category head", () => {
     await click(named);
     expect(expanded()).not.toBe(before);
   });
+
+  it("keeps the menu items free of the head's hover-only button classes (they are portalled out of the head)", async () => {
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    await render();
+    await click(must(head().querySelector(".memo-cat-more"), "more"));
+    expect(document.querySelectorAll(".memo-cat-menu .memo-cat-send, .memo-cat-menu .memo-cat-del, .memo-cat-menu .memo-cat-act")).toHaveLength(0);
+  });
+
+  it("gives the uncategorised bucket its own Send in the head", async () => {
+    servedCats = [];
+    servedMemos = [aMemo({ id: "u", category: "" })];
+    await render();
+    expect(head().querySelector(".memo-cat-send")).not.toBeNull();
+    expect(head().querySelector(".memo-cat-more")).toBeNull();
+  });
+
+  it("keeps Run now disabled while a press is in flight, also after the menu closed and reopened", async () => {
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    let finish: (v: unknown) => void = () => {};
+    memoQueueFire.mockReturnValue(new Promise((r) => (finish = r)));
+    await render();
+    await click(headMenuItem({ cls: "memo-cat-run" }));
+    expect(document.querySelector(".memo-cat-menu")).toBeNull();
+    expect(headMenuItem({ cls: "memo-cat-run" }).getAttribute("aria-disabled")).toBe("true");
+    await click(headMenuItem({ cls: "memo-cat-run" }));
+    expect(memoQueueFire).toHaveBeenCalledTimes(1);
+    await act(async () => finish({ id: "d1" }));
+    await settle();
+  });
+
+  it("sends the category's current memos, not the ones it had when the menu opened", async () => {
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    await render();
+    await click(must(head().querySelector(".memo-cat-more"), "more"));
+    expect(document.querySelector(".memo-cat-menu .ui-menu-item")?.textContent).toContain("(1)");
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" }), aMemo({ id: "b", state: "pending", provenance: "member", position: 1 })];
+    await bump();
+    expect(document.querySelector(".memo-cat-menu .ui-menu-item")?.textContent).toContain("(2)");
+  });
+
+  it("returns focus to ⋯ when the menu is closed with Escape", async () => {
+    servedMemos = [aMemo({ id: "a", state: "pending", provenance: "member" })];
+    await render();
+    const more = must(head().querySelector<HTMLElement>(".memo-cat-more"), "more");
+    more.focus();
+    await click(more);
+    must(document.querySelector<HTMLElement>(".memo-cat-menu .ui-menu-item"), "item").focus();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(document.querySelector(".memo-cat-menu")).toBeNull();
+    expect(document.activeElement).toBe(more);
+  });
 });
