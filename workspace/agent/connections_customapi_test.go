@@ -150,15 +150,24 @@ func TestPutCustomAPIConnRechecksPolicyUnderTheStoreLock(t *testing.T) {
 	held, release := make(chan struct{}), make(chan struct{})
 	var releaseOnce sync.Once
 	unlock := func() { releaseOnce.Do(func() { close(release) }) }
-	holderDone := make(chan error, 1)
+	holderEnded := make(chan struct{}) // closed when the holder returns, however it ends
+	var holderErr error
 	go func() {
-		holderDone <- secrets.Update(func(*secrets.Data) error { close(held); <-release; return nil })
+		defer close(holderEnded)
+		holderErr = secrets.Update(func(*secrets.Data) error { close(held); <-release; return nil })
 	}()
-	defer func() { unlock(); <-holderDone }()
+	defer func() {
+		unlock()
+		select {
+		case <-holderEnded:
+		case <-time.After(10 * time.Second):
+			t.Error("lock holder did not end")
+		}
+	}()
 	select {
 	case <-held:
-	case err := <-holderDone:
-		t.Fatalf("lock holder did not start: %v", err)
+	case <-holderEnded:
+		t.Fatalf("lock holder did not start: %v", holderErr)
 	case <-time.After(10 * time.Second):
 		t.Fatal("lock holder did not start")
 	}
@@ -182,7 +191,7 @@ func TestPutCustomAPIConnRechecksPolicyUnderTheStoreLock(t *testing.T) {
 			t.Fatalf("PUT after the policy narrowed: %d %s", w.Code, w.Body)
 		}
 	case <-time.After(10 * time.Second):
-		t.Fatal("the PUT did not finish")
+		t.Fatal("the PUT did not finish") // the deferred unlock has already freed the lock it waits on
 	}
 	if s, _ := secrets.Load(); s.CustomAPI == nil || s.CustomAPI.URL != "https://a.example.test/v1" {
 		t.Fatalf("stored connection changed: %+v", s.CustomAPI)
