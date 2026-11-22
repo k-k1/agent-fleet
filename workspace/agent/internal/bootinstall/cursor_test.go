@@ -1231,3 +1231,44 @@ func TestRelinkAllErrorNamesLinkThatCouldNotBePutBack(t *testing.T) {
 		}
 	}
 }
+
+func TestCursorAliasVersionSlotLstatFailureIsFailedAndRetried(t *testing.T) {
+	f := newCursor(t, goodCursorMembers(), "")
+	f.plant(t, "2026.1.1-abc", goodCursor, true)
+	old := f.tree("2026.0.0-old")
+	mustSetup(t, os.WriteFile(old, []byte("not a directory"), 0o644))
+	alias := filepath.Join(f.home, ".local", "bin", "agent")
+	oldT := "../share/cursor-agent/versions/2026.0.0-old/cursor-agent"
+	mustSetup(t, os.Symlink(oldT, alias))
+	f.env.Repin = true
+	orig := lstatSlot
+	defer func() { lstatSlot = orig }()
+	injected := errors.New("injected I/O error")
+	lstatSlot = func(p string) (os.FileInfo, error) {
+		if p == old {
+			return nil, injected
+		}
+		return os.Lstat(p)
+	}
+	if _, ok, err := f.env.aliasVersion(alias, oldT); ok || !errors.Is(err, injected) {
+		t.Fatalf("aliasVersion: ok=%v err=%v", ok, err)
+	}
+	if rc := Cursor(t.Context(), f.env); rc != ExitFailed {
+		t.Fatalf("rc=%d out=%s", rc, f.out)
+	}
+	if got, _ := os.Readlink(alias); got != oldT {
+		t.Errorf("alias moved: %s", got)
+	}
+	lstatSlot = orig
+	if rc := Cursor(t.Context(), f.env); rc != ExitOK {
+		t.Fatalf("retry rc=%d", rc)
+	}
+	if got, _ := os.Readlink(alias); !strings.Contains(got, "2026.1.1-abc") {
+		t.Errorf("alias not repaired on the retry: %s", got)
+	}
+	// A slot that is really gone is not ours.
+	mustSetup(t, os.Remove(old))
+	if _, ok, err := f.env.aliasVersion(alias, "../share/cursor-agent/versions/2026.0.0-old/cursor-agent"); ok || err != nil {
+		t.Errorf("missing slot: ok=%v err=%v", ok, err)
+	}
+}

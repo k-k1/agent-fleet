@@ -166,7 +166,7 @@ func (e Env) aliasVersion(alias, target string) (string, bool, error) {
 		return "", false, nil
 	}
 	// Only "not there" means "not ours"; any other failed look is an error, never a verdict.
-	st, lerr := os.Lstat(filepath.Join(parent, ver))
+	st, lerr := lstatSlot(filepath.Join(parent, ver))
 	if lerr != nil {
 		if os.IsNotExist(lerr) {
 			return "", false, nil
@@ -707,6 +707,9 @@ var unpackTmpName = func() (string, error) {
 
 // lstatAlias is a seam for tests: the look at the agent alias.
 var lstatAlias = os.Lstat
+
+// lstatSlot is a seam for tests: the look at a version slot that is not a directory.
+var lstatSlot = os.Lstat
 
 // readlinkAlias is a seam for tests: reading where the alias points.
 var readlinkAlias = os.Readlink
