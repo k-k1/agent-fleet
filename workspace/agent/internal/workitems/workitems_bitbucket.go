@@ -149,14 +149,15 @@ func bitbucketFetchPullRequests(auth string, q bitbucketWorkItemQuery, queryID s
 	if err != nil {
 		return nil, "", fmt.Errorf("could not reach %s", BitbucketAPIBase)
 	}
+	if status == http.StatusTooManyRequests || strings.EqualFold(strings.TrimSpace(hdr.Get("X-RateLimit-NearLimit")), "true") {
+		bitbucketNoteRateLimit()
+	}
 	if status != http.StatusOK {
 		return nil, "", bitbucketWorkItemError(status, body, q)
 	}
 	rows, err := parseBitbucketPullRequests(body, queryID)
-	if strings.EqualFold(strings.TrimSpace(hdr.Get("X-RateLimit-NearLimit")), "true") {
-		for i := range rows {
-			rows[i].bbListNear = true
-		}
+	for i := range rows {
+		rows[i].bbAuth = auth
 	}
 	return rows, hdr.Get("X-OAuth-Scopes"), err
 }

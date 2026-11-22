@@ -675,19 +675,21 @@ detail panel's own parsers.
 
 - The list adds `source.commit.hash` and `destination.commit.hash`. Answers are cached per connection, repository and pull
   request: the checks keyed by the source hash, the conflict verdict by both hashes. A half is re-read only when its own
-  key changed, so an idle rail makes no status calls. Only a final answer is kept: a build still running, a statuses page
-  that has a next page, or an "unknown" verdict is shown (or withheld) and read again on the next refresh.
+  key changed, so a rail whose answers are all final makes no status calls. Only a final answer is kept: a build still
+  running, a statuses page that has a next page (even when page one already shows a failure, which is shown but not kept),
+  or an "unknown" verdict is shown (or withheld) and read again on the next refresh, within the cap below.
 - At most 10 pull requests are re-read per refresh, counted over all queries together, most recently updated first, 3 at a
-  time. A pull request whose last attempt failed goes behind those never tried, so a persistent error on the newest ten
-  cannot starve the rest. The others keep a valid cached answer or stay "not read" and are reached on a later refresh.
+  time. A pull request whose last attempt failed or stayed provisional goes behind those never tried, oldest attempt
+  first, so a persistent error on the newest ten cannot starve the rest. The others keep a valid cached answer or stay "not read" and are reached on a later refresh.
 - Why the cap: repository reads are limited to 1,000 requests per hour per user (OAuth and API tokens), and the same budget
   serves every query, the detail panel and merges. 10 pull requests are 20 calls per refresh, so a 5-minute refresh
   spends at most 240 an hour even if every hash changed.
 - A 429 stops further status reads for that refresh, as does `X-RateLimit-NearLimit: true` (under 20 % left) on the list
-  or on a read, noticed when the headers arrive. Atlassian documents the header for scaled access tokens only, so for a
+  or on a read (including a list that answered 429), noticed when the headers arrive. Atlassian documents the header for scaled access tokens only, so for a
   user OAuth or API token connection the 429 is the stop that is always there and the header a bonus. Nothing is retried.
   The reads share one deadline, 20 s after the refresh started, so a stuck read cannot cost the list the Control Plane
-  waits for (it gives the fetch 30 s).
+  waits for (it gives the fetch 30 s). The reads reuse the Authorization the list was read with, so enrichment never starts
+  a token refresh of its own.
 - A row shows its status only when both halves were read. A failed or 500 read (custom merge checks that are unavailable
   answer 500), a truncated or malformed 200, or a statuses page with a next page and no failure leaves the row "not read":
   no CI mark, no conflict mark, never green. An "unknown" verdict is shown as the rail shows it for GitHub: no mark.

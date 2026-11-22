@@ -18,6 +18,7 @@ type bbListPR struct {
 	id    int
 	repo  string // "acme/web"
 	state string // "" = OPEN
+	draft bool
 	dst   string // "" = d0
 }
 
@@ -30,6 +31,10 @@ type bbStatusStub struct {
 	// override may answer a status read itself; it returns true when it did.
 	override func(w http.ResponseWriter, id int, kind string) bool
 	listNear bool
+	nearRepo map[string]bool
+	list429  map[string]bool
+	lists    map[string]int
+	srcShift bool // lists after the first report another source commit
 	statuses string
 }
 
@@ -60,7 +65,17 @@ func newBBStatusStub(t *testing.T, prs ...bbListPR) *bbStatusStub {
 		repo := strings.TrimSuffix(strings.TrimPrefix(p, "/2.0/repositories/"), "/pullrequests")
 		st.mu.Lock()
 		st.listQuery = append(st.listQuery, r.URL.Query())
-		near := st.listNear
+		near := st.listNear || st.nearRepo[repo]
+		if st.lists == nil {
+			st.lists = map[string]int{}
+		}
+		st.lists[repo]++
+		nth := st.lists[repo]
+		if st.list429[repo] {
+			st.mu.Unlock()
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
 		var vals []string
 		for _, pr := range st.prs {
 			if pr.repo != repo {
@@ -73,9 +88,13 @@ func newBBStatusStub(t *testing.T, prs ...bbListPR) *bbStatusStub {
 			if state == "" {
 				state = "OPEN"
 			}
-			vals = append(vals, fmt.Sprintf(`{"id":%d,"title":"t","state":%q,"updated_on":"2026-08-%02dT07:00:00+00:00",`+
-				`"source":{"commit":{"hash":"s%d"}},"destination":{"repository":{"full_name":%q},"commit":{"hash":%q}}}`,
-				pr.id, state, pr.id, pr.id, pr.repo, d))
+			src := fmt.Sprintf("s%d", pr.id)
+			if st.srcShift && nth > 1 {
+				src += "b"
+			}
+			vals = append(vals, fmt.Sprintf(`{"id":%d,"title":"t","state":%q,"draft":%t,"updated_on":"2026-08-%02dT07:00:00+00:00",`+
+				`"source":{"commit":{"hash":%q}},"destination":{"repository":{"full_name":%q},"commit":{"hash":%q}}}`,
+				pr.id, state, pr.draft, pr.id, src, pr.repo, d))
 		}
 		st.mu.Unlock()
 		if near {
@@ -100,20 +119,16 @@ func (st *bbStatusStub) snapshot() []string {
 func (st *bbStatusStub) reset()       { st.mu.Lock(); st.calls = nil; st.mu.Unlock() }
 func (st *bbStatusStub) set(f func()) { st.mu.Lock(); f(); st.mu.Unlock() }
 
-// bbRefresh does what HandleWorkItemsFetch does for Bitbucket: every query's list, then one
+// bbRefresh runs the handler's own fetch path (fetchWorkItems): every query's list, then one
 // enrichment over all rows.
 func bbRefresh(t *testing.T, s *secrets.Data, queries ...string) map[string]workItemOut {
 	t.Helper()
-	started := time.Now()
-	var items []workItemOut
+	var qs []workItemQueryIn
 	for i, q := range queries {
-		rows, err := bitbucketSearchWorkItems(s, fmt.Sprint("q", i), q)
-		if err != nil {
-			t.Fatalf("list %q: %v", q, err)
-		}
-		items = append(items, rows...)
+		qs = append(qs, workItemQueryIn{ID: fmt.Sprint("q", i), Provider: "bitbucket", Query: q})
 	}
-	bitbucketEnrichItems(s, items, started)
+	items, errs, _ := fetchWorkItems(s, qs)
+	_ = errs
 	out := map[string]workItemOut{}
 	for _, r := range items {
 		out[r.Key] = r
@@ -272,12 +287,36 @@ func TestBitbucketNearLimitHeaderStopsBeforeTheBodyArrives(t *testing.T) {
 	}
 }
 
-func TestBitbucketListNearLimitStartsNoReads(t *testing.T) {
-	st := newBBStatusStub(t, web(1, 2)...)
+func TestBitbucketAListRateLimitStopsReadsForEveryQuery(t *testing.T) {
+	prs := append(web(1, 2), bbListPR{id: 3, repo: "acme/api"}, bbListPR{id: 4, repo: "acme/done", state: "MERGED"})
+	for name, arrange := range map[string]func(st *bbStatusStub){
+		"near-limit on an empty list": func(st *bbStatusStub) { st.nearRepo = map[string]bool{"acme/empty": true} },
+		"near-limit on finished rows": func(st *bbStatusStub) { st.nearRepo = map[string]bool{"acme/done": true} },
+		"429 on one of the lists":     func(st *bbStatusStub) { st.list429 = map[string]bool{"acme/empty": true} },
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := newBBStatusStub(t, prs...)
+			arrange(st)
+			rows := bbRefresh(t, bbTokenStore(), "acme/empty", "acme/done", "acme/web", "acme/api")
+			if len(st.snapshot()) != 0 {
+				t.Fatalf("reads after a list warning: %v", st.snapshot())
+			}
+			if len(rows) == 0 {
+				t.Fatal("lists lost")
+			}
+		})
+	}
+}
+
+func TestBitbucketRateLimitedPastRefreshDoesNotStopTheNextOne(t *testing.T) {
+	st := newBBStatusStub(t, web(1)...)
 	st.set(func() { st.listNear = true })
-	rows := bbRefresh(t, bbTokenStore(), "acme/web")
-	if len(st.snapshot()) != 0 || len(rows) != 2 {
-		t.Fatalf("calls=%v rows=%d", st.snapshot(), len(rows))
+	s := bbTokenStore()
+	bbRefresh(t, s, "acme/web")
+	st.set(func() { st.listNear = false })
+	rows := bbRefresh(t, s, "acme/web")
+	if rows["acme/web#1"].Mergeable != "clean" {
+		t.Fatalf("row = %+v", rows["acme/web#1"])
 	}
 }
 
@@ -450,5 +489,200 @@ func TestBitbucketCacheIsPerConnectionAndSkipsFinishedPullRequests(t *testing.T)
 	bbRefresh(t, b, "acme/web")
 	if len(st.snapshot()) == 0 {
 		t.Fatal("a replaced token reused the previous connection's answers")
+	}
+}
+
+func TestBitbucketConnKeyTellsAccessTokenOnlyConnectionsApart(t *testing.T) {
+	mk := func(access string) *secrets.Data {
+		return &secrets.Data{Bitbucket: &secrets.BitbucketCreds{AccessToken: access}}
+	}
+	if bitbucketConnKey(mk("a")) == bitbucketConnKey(mk("b")) {
+		t.Fatal("two access-token-only connections share a key")
+	}
+	if bitbucketConnKey(mk("a")) != bitbucketConnKey(mk("a")) {
+		t.Fatal("key is not stable")
+	}
+	c1 := &secrets.Data{Bitbucket: &secrets.BitbucketCreds{AccessToken: "x", RefreshToken: "r"}}
+	c2 := &secrets.Data{Bitbucket: &secrets.BitbucketCreds{AccessToken: "y", RefreshToken: "r"}}
+	if bitbucketConnKey(c1) != bitbucketConnKey(c2) {
+		t.Fatal("a rotated access token must not drop the cache of the same connection")
+	}
+}
+
+func TestBitbucketMalformedEntriesAreFailedReads(t *testing.T) {
+	cases := map[string]struct{ kind, body string }{
+		"statuses entry without state": {"statuses", `{"values":[{}]}`},
+		"statuses null state":          {"statuses", `{"values":[{"state":null}]}`},
+		"merge entry not an object":    {"mergeability", `{"values":[42]}`},
+		"merge entry without status":   {"mergeability", `{"values":[{"type":"git_mergeability_check"}]}`},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			st := newBBStatusStub(t, web(1)...)
+			st.set(func() {
+				st.override = func(w http.ResponseWriter, id int, kind string) bool {
+					if kind != c.kind {
+						return false
+					}
+					_, _ = w.Write([]byte(c.body))
+					return true
+				}
+			})
+			s := bbTokenStore()
+			if r := bbRefresh(t, s, "acme/web")["acme/web#1"]; r.Checks.State != "" || r.Mergeable != "" {
+				t.Fatalf("malformed answer drew %+v", r)
+			}
+			st.reset()
+			bbRefresh(t, s, "acme/web")
+			if !hasCall(st.snapshot(), "1/"+c.kind) {
+				t.Fatalf("not re-read at the same hash: %v", st.snapshot())
+			}
+		})
+	}
+	// A legitimately empty page and an explicit UNKNOWN are answers.
+	if _, final, ok := parseBitbucketStatusesPage([]byte(`{"values":[]}`)); !ok || !final {
+		t.Fatal("empty statuses page rejected")
+	}
+	if !bitbucketValidMergeChecks([]byte(`{"values":[{"type":"git_mergeability_check","status":"UNKNOWN"}]}`)) {
+		t.Fatal("explicit UNKNOWN rejected")
+	}
+}
+
+func TestBitbucketOnePullRequestSeenAtTwoCommitsIsReadOnce(t *testing.T) {
+	st := newBBStatusStub(t, web(1)...)
+	st.set(func() { st.srcShift = true })
+	s := bbTokenStore()
+	// The same repository twice, as two overlapping saved queries; the second list sees a newer source.
+	rows := bbRefresh(t, s, "acme/web", "acme/web state=\"OPEN\"")
+	if n := len(st.snapshot()); n > 2 {
+		t.Fatalf("one pull request read %d times: %v", n, st.snapshot())
+	}
+	_ = rows
+	bitbucketStatusCache.Lock()
+	var kept string
+	for _, e := range bitbucketStatusCache.m {
+		kept = e.checksSrc
+	}
+	bitbucketStatusCache.Unlock()
+	if kept != "s1b" {
+		t.Fatalf("cache holds %q, want the newest listing's source", kept)
+	}
+}
+
+func TestBitbucketRetriesRotateThroughEveryPullRequest(t *testing.T) {
+	st := newBBStatusStub(t, web(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)...)
+	st.set(func() {
+		st.override = func(w http.ResponseWriter, id int, kind string) bool {
+			if kind == "mergeability" {
+				w.WriteHeader(http.StatusInternalServerError)
+				return true
+			}
+			return false
+		}
+	})
+	s := bbTokenStore()
+	for i := 0; i < 4; i++ {
+		bbRefresh(t, s, "acme/web")
+	}
+	merges := map[string]int{}
+	for _, c := range st.snapshot() {
+		if strings.HasSuffix(c, "/mergeability") {
+			merges[c]++
+		}
+	}
+	for id := 1; id <= 14; id++ {
+		if merges[fmt.Sprintf("%d/mergeability", id)] < 2 {
+			t.Fatalf("#%d retried %d times in 4 refreshes: %v", id, merges[fmt.Sprintf("%d/mergeability", id)], merges)
+		}
+	}
+}
+
+func TestBitbucketOnlyTheSlowHeaderMattersForTheStop(t *testing.T) {
+	st := newBBStatusStub(t, web(1, 2, 3, 4, 5, 6, 7, 8)...)
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	st.set(func() {
+		st.override = func(w http.ResponseWriter, id int, kind string) bool {
+			if kind != "statuses" {
+				return false
+			}
+			if id == 8 { // the newest, read first: warns at once, body much later
+				w.Header().Set("X-RateLimit-NearLimit", "true")
+				w.WriteHeader(http.StatusOK)
+				w.(http.Flusher).Flush()
+				<-release
+				_, _ = w.Write([]byte(`{"values":[]}`))
+				return true
+			}
+			time.Sleep(150 * time.Millisecond) // finishes after the header, with no warning of its own
+			_, _ = w.Write([]byte(`{"values":[]}`))
+			return true
+		}
+	})
+	go func() { time.Sleep(600 * time.Millisecond); close(release) }()
+	bbRefresh(t, bbTokenStore(), "acme/web")
+	if n := len(st.snapshot()); n > bitbucketStatusConcurrency {
+		t.Fatalf("reads started after another read's near-limit header: %v", st.snapshot())
+	}
+}
+
+func TestBitbucketDraftsAreReadAndSourceChangesRereadBothHalves(t *testing.T) {
+	st := newBBStatusStub(t, bbListPR{id: 1, repo: "acme/web", draft: true})
+	s := bbTokenStore()
+	r := bbRefresh(t, s, "acme/web")["acme/web#1"]
+	if r.State != "in_progress" || r.Mergeable != "clean" || len(st.snapshot()) != 2 {
+		t.Fatalf("draft row = %+v calls=%v", r, st.snapshot())
+	}
+	st.reset()
+	st.set(func() { st.srcShift = true; st.lists = map[string]int{"acme/web": 1} })
+	bbRefresh(t, s, "acme/web")
+	if len(st.snapshot()) != 2 {
+		t.Fatalf("a new source commit must re-read both halves: %v", st.snapshot())
+	}
+}
+
+func TestBitbucketStaleRefreshCannotOverwriteANewerOne(t *testing.T) {
+	bitbucketStatusCache.Lock()
+	bitbucketStatusCache.m = map[string]bitbucketStatusEntry{}
+	bitbucketStatusCache.Unlock()
+	newer := &bbGroup{cacheKey: "k", srcHash: "sB", dstHash: "d", newChecks: true, checks: workItemChecksOut{State: "success", Total: 1}}
+	older := &bbGroup{cacheKey: "k", srcHash: "sA", dstHash: "d", newChecks: true, unsettled: true}
+	bitbucketStatusCache.Lock()
+	bitbucketStoreGroup(newer, 5)
+	bitbucketStoreGroup(older, 4)
+	e := bitbucketStatusCache.m["k"]
+	bitbucketStatusCache.Unlock()
+	if e.checksSrc != "sB" || e.unsettled {
+		t.Fatalf("older refresh overwrote the newer one: %+v", e)
+	}
+}
+
+func TestBitbucketUnattemptedRowsNeverTouchAFullCache(t *testing.T) {
+	st := newBBStatusStub(t, web(1, 2)...)
+	st.set(func() { st.listNear = true })
+	bitbucketStatusCache.Lock()
+	for i := 0; i < bitbucketStatusCacheMax; i++ {
+		bitbucketStatusCache.m[fmt.Sprint("k", i)] = bitbucketStatusEntry{checksOK: true}
+	}
+	bitbucketStatusCache.Unlock()
+	bbRefresh(t, bbTokenStore(), "acme/web")
+	bitbucketStatusCache.Lock()
+	n := len(bitbucketStatusCache.m)
+	_, ok := bitbucketStatusCache.m["k0"]
+	unsettled := 0
+	for k, e := range bitbucketStatusCache.m {
+		if e.unsettled || strings.Contains(k, "|") {
+			unsettled++
+		}
+	}
+	bitbucketStatusCache.Unlock()
+	if n != bitbucketStatusCacheMax || !ok || unsettled != 0 {
+		t.Fatalf("cache changed by rows that were never read: %d entries, k0 present=%v, %d attempt records", n, ok, unsettled)
 	}
 }
