@@ -1485,11 +1485,7 @@ func TestNPMRecoverDiscardSemantics(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
 	f.write(t, filepath.Join(tree+npmBakSuffix, "VERSION"), "1.0.0")
-	run := func(args ...string) {
-		if do, keep := npmRecoverPlan(args[0], false, len(args) > 1 && args[1] == "--discard"); do {
-			f.env.npmRecoverAside(keep)
-		}
-	}
+	run := func(args ...string) { Run(args) } // the real entry point, so the flag parser is under test (newSU set a fake HOME)
 	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
 	run("npm-recover")
 	if _, err := os.Lstat(tree + npmBakSuffix); err != nil {
