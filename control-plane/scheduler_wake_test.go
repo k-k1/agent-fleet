@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
@@ -252,4 +254,23 @@ func TestInjectDriverFollowsTheCatalog(t *testing.T) {
 			t.Errorf("injectDriver(%q) = %q, want none", k, got)
 		}
 	}
+}
+
+// waitReleases returns only after a scheduled release has finished, including the slow
+// presence write it makes; a test relies on that to drop its database afterwards. It runs in
+// a synctest bubble so the timer and the sleep use virtual time: a waitReleases that stopped
+// waiting reaches the assertion before the clock moves, on every run.
+func TestWaitReleasesWaitsForAScheduledRelease(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := &wakeFirer{settle: time.Millisecond}
+		var finished atomic.Bool
+		f.scheduleRelease(func() {
+			time.Sleep(50 * time.Millisecond)
+			finished.Store(true)
+		})
+		f.waitReleases()
+		if !finished.Load() {
+			t.Fatal("waitReleases returned before the release finished")
+		}
+	})
 }

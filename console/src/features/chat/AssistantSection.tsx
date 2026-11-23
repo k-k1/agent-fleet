@@ -12,7 +12,6 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useDismiss } from "../../lib/useDismiss.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { getTenant, isTransientErr, type ApiError } from "../../core/api/client.ts";
-import { copyText } from "../../lib/clipboard.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
 import { useMenuRoving } from "../../lib/useMenuRoving.ts";
@@ -22,15 +21,12 @@ import { activeChatId, chatPanes, ordClass, paneCount } from "../../layout/badge
 import { useChatStore } from "./store.ts";
 import { openChat, openAssistantDraft, convTarget, draftTarget } from "./open.ts";
 import { AssistantModal } from "./AssistantModal.tsx";
-import { ChatTitleModal } from "./ChatTitleModal.tsx";
+import { ConversationMenu, refreshConversations } from "./ConversationMenu.tsx";
 import { assistantName, assistantDesc, assistantSaveError } from "./assistantI18n.ts";
-import { useSettings } from "../../lib/settings.ts";
-import { useActiveWorkingSet, convInSet, workingSetList, toggleWorkingSetMember } from "../../lib/workingSetsStore.ts";
+import { useActiveWorkingSet, convInSet } from "../../lib/workingSetsStore.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import {
   chatList,
-  chatDelete,
-  chatSetLock,
   assistantList,
   assistantCreate,
   assistantUpdate,
@@ -63,31 +59,26 @@ export const AssistantSection = memo(function AssistantSection() {
   const [assistants, setAssistants] = useState<Assistant[]>([]);
   const [editing, setEditing] = useState<Assistant | null>(null);
   const [creating, setCreating] = useState(false);
-  const [renaming, setRenaming] = useState<ConversationMeta | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const pickerRef = useRef<HTMLDivElement>(null);
   const pickerMenuRef = useRef<HTMLDivElement>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; a: Assistant } | null>(null);
   const menuRef = useRef<HTMLUListElement>(null);
-  // Right-click menu for a conversation row (title rename + copy id) — same
-  // portal/roving/dismiss pattern as the assistant-template menu above.
-  const [convMenu, setConvMenu] = useState<{ x: number; y: number; c: ConversationMeta; anchor?: DOMRect } | null>(null);
-  const convMenuRef = useRef<HTMLUListElement>(null);
+  // Right-click / ⋯ menu for a conversation row. The menu itself is the shared
+  // ConversationMenu (also opened from a chat tab); `open` is cleared on close rather than
+  // dropping the state so the rename dialog it owns stays mounted.
+  const [convMenu, setConvMenu] = useState<{ x: number; y: number; c: ConversationMeta; anchor?: DOMRect; open: boolean } | null>(null);
 
   const refresh = useCallback(() => {
     // An answer asked under the previous tenant must not repopulate what the switch emptied.
     const started = getTenant();
-    chatList()
-      .then((r) => {
-        if (getTenant() === started) setConvs(r.conversations || []);
-      })
-      .catch(() => {});
+    refreshConversations();
     assistantList()
       .then((r) => {
         if (getTenant() === started) setAssistants(r.assistants || []);
       })
       .catch(() => {});
-  }, [setConvs]);
+  }, []);
   // The list is proxied to the agent, so right after a workspace start it is unreachable and
   // answers {error: http_5xx} — api() resolves that instead of throwing, so the .catch above
   // does not see it. Unlike the other left-rail sections this one has no poller, so treating a
@@ -146,7 +137,7 @@ export const AssistantSection = memo(function AssistantSection() {
   const openConvMenu = (e: RMouseEvent, c: ConversationMeta) => {
     e.preventDefault();
     e.stopPropagation();
-    setConvMenu({ x: e.clientX, y: e.clientY, c });
+    setConvMenu({ x: e.clientX, y: e.clientY, c, open: true });
   };
   // ⋯ kebab: anchor the menu under the button (right-aligned) rather than at a
   // cursor point, so touch users get a two-step delete instead of a mis-tappable
@@ -155,25 +146,11 @@ export const AssistantSection = memo(function AssistantSection() {
     e.preventDefault();
     e.stopPropagation();
     const r = e.currentTarget.getBoundingClientRect();
-    setConvMenu({ x: r.left, y: r.bottom + 2, c, anchor: r });
-  };
-  useDismiss(convMenuRef, !!convMenu, () => setConvMenu(null));
-  useMenuRoving(convMenuRef, !!convMenu);
-  useLayoutEffect(() => {
-    const el = convMenuRef.current;
-    if (!convMenu || !el) return;
-    const bounds = el.closest<HTMLElement>(".app-rail");
-    if (convMenu.anchor) placeFixed(el, convMenu.anchor.right - el.offsetWidth, convMenu.anchor.bottom + 2, bounds);
-    else placeFixed(el, convMenu.x, convMenu.y, bounds);
-  });
-  const runConvMenu = (fn: () => void) => {
-    setConvMenu(null);
-    fn();
+    setConvMenu({ x: r.left, y: r.bottom + 2, c, anchor: r, open: true });
   };
 
   // Only started threads are listed — a draft is never persisted (docs/log/19).
   // Working group (docs/log/52): scope the list to the active group's conversations.
-  const wsets = workingSetList(useSettings());
   const wset = useActiveWorkingSet();
   const startedConvs = useMemo(
     () => convs.filter((c) => c.message_count > 0 && (!wset || convInSet(wset, c.id))),
@@ -222,47 +199,6 @@ export const AssistantSection = memo(function AssistantSection() {
     } catch {
       toast(tr("asst.delete_failed"));
     }
-  };
-
-  const removeConv = async (id: string) => {
-    try {
-      const res = await chatDelete(id);
-      if (!res.ok) {
-        toast(tr("asst.remove_failed"));
-        return;
-      }
-      refresh();
-    } catch {
-      toast(tr("asst.remove_failed"));
-    }
-  };
-
-  // Deletion lock (docs/log/45): pin or release this conversation against deletion. The
-  // protection itself is on the Agent (DELETE answers 403); this only toggles it and greys
-  // out the affordance.
-  const toggleConvLock = async (c: ConversationMeta) => {
-    const locked = !c.locked;
-    const res = await chatSetLock(c.id, locked);
-    if (res?.error) {
-      toast(tr("asst.lock_failed"));
-      return;
-    }
-    // A list refresh can race this mutation. Keep the menu and badge in sync
-    // with the value the server just accepted.
-    const all = useChatStore.getState().convs ?? [];
-    setConvs(all.map((item) => (item.id === c.id ? { ...item, locked: res?.locked ?? locked } : item)));
-    toast(locked ? tr("asst.locked_on") : tr("asst.locked_off"), { kind: "success" });
-    refresh();
-  };
-
-  // Copy the conversation's short slug ("a…", docs/log/38 §assistant triggering) — the id humans
-  // and schedules address a conversation by. UUID fallback only for a conversation the
-  // agent hasn't backfilled yet.
-  const copyId = (c: ConversationMeta) => {
-    const ref = c.slug || c.id;
-    void copyText(ref).then((ok) =>
-      ok ? toast(tr("asst.id_copied", { id: ref }), { kind: "success" }) : toast(tr("common.copy_failed")),
-    );
   };
 
   const actions = (
@@ -453,58 +389,6 @@ export const AssistantSection = memo(function AssistantSection() {
             </ul>,
             document.body,
           )}
-        {convMenu &&
-          createPortal(
-            <ul className="ui-menu" ref={convMenuRef} style={{ left: convMenu.x, top: convMenu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
-              <li>
-                <button type="button" className="ui-menu-item" onClick={() => runConvMenu(() => copyId(convMenu.c))}>
-                  <Icon name="copy" /> {tr("asst.copy_id", { id: convMenu.c.slug || convMenu.c.id })}
-                </button>
-              </li>
-              <li>
-                <button type="button" className="ui-menu-item" onClick={() => runConvMenu(() => setRenaming(convMenu.c))}>
-                  <Icon name="edit" /> {tr("asst.rename")}
-                </button>
-              </li>
-              {/* Working sets (docs/log/52): toggle this conversation's membership. */}
-              {wsets.length > 0 && (
-                <>
-                  <li className="ui-menu-sep" aria-hidden="true" />
-                  <li className="ui-menu-caption">{tr("wset.menu_caption")}</li>
-                  {wsets.map((w) => (
-                    <li key={w.id}>
-                      <button
-                        type="button"
-                        className="ui-menu-item"
-                        onClick={() => runConvMenu(() => toggleWorkingSetMember(w.id, "convs", convMenu.c.id))}
-                      >
-                        <Icon name="check" className={convInSet(w, convMenu.c.id) ? "wset-check" : "wset-check wset-check--off"} /> {w.name}
-                      </button>
-                    </li>
-                  ))}
-                </>
-              )}
-              <li className="ui-menu-sep" aria-hidden="true" />
-              <li>
-                <button type="button" className="ui-menu-item" onClick={() => runConvMenu(() => void toggleConvLock(convMenu.c))}>
-                  <Icon name={convMenu.c.locked ? "unlock" : "lock"} />{" "}
-                  {convMenu.c.locked ? tr("asst.unlock") : tr("asst.lock")}
-                </button>
-              </li>
-              <li>
-                <button
-                  type="button"
-                  className="ui-menu-item danger"
-                  disabled={!!convMenu.c.locked}
-                  title={convMenu.c.locked ? tr("asst.locked_hint") : undefined}
-                  onClick={() => runConvMenu(() => void removeConv(convMenu.c.id))}
-                >
-                  <Icon name="trash" /> {tr("asst.delete_chat")}
-                </button>
-              </li>
-            </ul>,
-            document.body,
-          )}
       </Section>
 
       {(creating || editing) && (
@@ -517,12 +401,16 @@ export const AssistantSection = memo(function AssistantSection() {
           onSave={saveAssistant}
         />
       )}
-      {renaming && (
-        <ChatTitleModal
-          id={renaming.id}
-          title={renaming.title}
-          onClose={() => setRenaming(null)}
-          onSaved={refresh}
+      {convMenu && (
+        <ConversationMenu
+          c={convMenu.c}
+          open={convMenu.open}
+          place={(el) => {
+            const bounds = el.closest<HTMLElement>(".app-rail");
+            if (convMenu.anchor) placeFixed(el, convMenu.anchor.right - el.offsetWidth, convMenu.anchor.bottom + 2, bounds);
+            else placeFixed(el, convMenu.x, convMenu.y, bounds);
+          }}
+          onClose={() => setConvMenu((m) => (m ? { ...m, open: false } : m))}
         />
       )}
     </>

@@ -731,6 +731,9 @@ func (e *deliveryEnv) setRuntime(a *fakeQueueAgent, state string) {
 
 func (e *deliveryEnv) runner() *memoQueueRunner {
 	f := &wakeFirer{mgr: e.mgr, wsAPI: newWorkspaceAPI(e.mgr, true), settle: time.Millisecond, readyTimeout: time.Second}
+	// The releases a send schedules write workspace activity from a timer goroutine. Without
+	// this wait the schema drop at the end of the test races that write and can deadlock.
+	e.t.Cleanup(f.waitReleases)
 	return newMemoQueueRunner(e.mgr, f)
 }
 
