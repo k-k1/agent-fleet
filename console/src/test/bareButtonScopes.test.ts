@@ -59,31 +59,51 @@ describe("bare button scopes", () => {
     }));
 
   // The text with every at-rule block (`@media`, `@container`, ...) removed: what applies on every
-  // device and width.
+  // device and width. An `@` or a brace inside a quoted string (`content: "@"`) is text, not syntax.
   const withoutAtRules = (css: string): string => {
+    // The index just past the string literal that opens at `i`.
+    const skipString = (i: number): number => {
+      const q = css[i];
+      for (i++; i < css.length && css[i] !== q; i++) if (css[i] === "\\") i++;
+      return i + 1;
+    };
     let out = "";
     let i = 0;
     while (i < css.length) {
+      if (css[i] === '"' || css[i] === "'") {
+        const end = skipString(i);
+        out += css.slice(i, end);
+        i = end;
+        continue;
+      }
       if (css[i] !== "@") {
         out += css[i++];
         continue;
       }
       // An at-rule runs to its `;` (`@import`) or to the `}` that closes its block.
-      const semi = css.indexOf(";", i);
-      const open = css.indexOf("{", i);
-      if (open < 0 || (semi >= 0 && semi < open)) {
-        i = (semi < 0 ? css.length : semi) + 1;
-        continue;
-      }
       let depth = 0;
-      for (i = open; i < css.length; i++) {
-        if (css[i] === "{") depth++;
-        else if (css[i] === "}" && --depth === 0) break;
+      let j = i;
+      for (; j < css.length; j++) {
+        const c = css[j];
+        if (c === '"' || c === "'") j = skipString(j) - 1;
+        else if (c === "{") depth++;
+        else if (c === "}" && --depth <= 0) break;
+        else if (c === ";" && depth === 0) break;
       }
-      i++;
+      i = j + 1;
     }
     return out;
   };
+
+  it("withoutAtRules drops at-rules but keeps an `@` inside a string", () => {
+    const rules = (css: string) => rulesOf(withoutAtRules(css)).map((r) => r.selector);
+    expect(rules('.a::before { content: "@" } .b { color: red }')).toEqual([".a::before", ".b"]);
+    expect(rules(".a::before { content: '@' } .b { color: red }")).toEqual([".a::before", ".b"]);
+    expect(rules('.a { content: "\\"@" } .b { color: red }')).toEqual([".a", ".b"]);
+    expect(rules("@media (hover: hover) { .a { color: red } } .b { color: red }")).toEqual([".b"]);
+    expect(rules('@import "x;y.css"; .b { color: red }')).toEqual([".b"]);
+    expect(rules('@media (x) { .a { content: "}" } } .b { color: red }')).toEqual([".b"]);
+  });
 
   it("ui.css holds each scope's variant rules, with the declarations they exist for", () => {
     // Top level only: a rule moved into an at-rule (`@media (hover: hover)`) would stop applying on
