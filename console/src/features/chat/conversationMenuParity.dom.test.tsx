@@ -7,6 +7,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { Pane } from "../panes/Pane.tsx";
 import { AssistantSection } from "./AssistantSection.tsx";
 import { useChatStore } from "./store.ts";
+import { getSettings, setSetting } from "../../lib/settings.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
@@ -17,6 +18,7 @@ const api = vi.hoisted(() => ({
   chatList: vi.fn(),
   chatDelete: vi.fn(),
   chatSetLock: vi.fn(),
+  chatRename: vi.fn(),
   assistantList: vi.fn(),
 }));
 vi.mock("./api.ts", async (orig) => ({ ...(await orig<typeof import("./api.ts")>()), ...api }));
@@ -94,6 +96,13 @@ describe("assistant conversation menu — rail row and chat tab", () => {
   };
   const items = () => [...document.querySelectorAll<HTMLElement>("ul.ui-menu .ui-menu-item")];
   const labels = () => items().map((b) => b.textContent!.trim());
+  // Text, disabled state and the icon classes (working-set check on/off, lock vs unlock).
+  const shape = () =>
+    items().map((b) => ({
+      text: b.textContent!.trim(),
+      disabled: (b as HTMLButtonElement).disabled,
+      icon: b.querySelector("i,span.codicon")?.className ?? "",
+    }));
   const rowButton = () => host!.querySelector<HTMLElement>(".chat-row .chat-open")!;
   const tab = (i: number) => host!.querySelectorAll<HTMLElement>(".pane-tab")[i];
   const dismiss = async () => {
@@ -111,6 +120,8 @@ describe("assistant conversation menu — rail row and chat tab", () => {
     api.assistantList.mockResolvedValue({ assistants: [] });
     api.chatDelete.mockResolvedValue({ ok: true });
     api.chatSetLock.mockResolvedValue({ locked: true });
+    api.chatRename.mockResolvedValue({});
+    setSetting("workingSets", []);
     copy.copyText.mockResolvedValue(true);
   });
   afterEach(async () => {
@@ -133,6 +144,67 @@ describe("assistant conversation menu — rail row and chat tab", () => {
     const ev = await ctx(tab(0));
     expect(ev.defaultPrevented).toBe(true);
     expect(labels()).toEqual(rail);
+  });
+
+  it.each([false, true])("shows the same items, check states and disabled states with working sets (locked=%s)", async (locked) => {
+    setSetting("workingSets", [
+      { id: "w1", name: "含む", repos: [], convs: ["c1"], sessions: [], schedules: [] },
+      { id: "w2", name: "含まない", repos: [], convs: [], sessions: [], schedules: [] },
+    ]);
+    api.chatList.mockResolvedValue({ conversations: [meta("c1", { locked })] });
+    await show();
+    await ctx(rowButton());
+    const rail = shape();
+    expect(rail.map((i) => i.text)).toEqual(expect.arrayContaining(["含む", "含まない"]));
+    // The two sets must differ in their check state, or this would not prove the state is shared.
+    const on = rail.find((i) => i.text === "含む")!.icon;
+    const off = rail.find((i) => i.text === "含まない")!.icon;
+    expect(on).not.toBe(off);
+    expect(rail[rail.length - 1].disabled).toBe(locked); // the delete item is last
+    await dismiss();
+
+    await ctx(tab(0));
+    expect(shape()).toEqual(rail);
+  });
+
+  it("toggles working-set membership of the tab's own conversation", async () => {
+    setSetting("workingSets", [{ id: "w1", name: "含む", repos: [], convs: [], sessions: [], schedules: [] }]);
+    await show();
+    await ctx(tab(0));
+    const w = items().find((b) => b.textContent!.includes("含む"))!;
+    await act(async () => w.click());
+    expect(getSettings().workingSets?.[0].convs).toEqual(["c1"]);
+  });
+
+  it("saves a rename from the tab for that conversation and reloads the list", async () => {
+    await show();
+    await ctx(tab(0));
+    await act(async () => items()[1].click());
+    const input = document.querySelector("input") as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "新しい題");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const before = api.chatList.mock.calls.length;
+    await act(async () => {
+      input.form!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    expect(api.chatRename).toHaveBeenCalledWith("c1", "新しい題");
+    expect(api.chatList.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("keeps the rename dialog and its text when the list empties underneath it", async () => {
+    await show();
+    await ctx(tab(0));
+    await act(async () => items()[1].click());
+    const input = document.querySelector("input") as HTMLInputElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "入力途中");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // A workspace stop makes the rail store an empty list.
+    await act(async () => useChatStore.setState({ convs: [] }));
+    expect((document.querySelector("input") as HTMLInputElement).value).toBe("入力途中");
   });
 
   it("opens from the menu key on the tab, like a session tab", async () => {

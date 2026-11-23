@@ -39,6 +39,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { cx } from "../../ui/cx.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
+import type { ConversationMeta } from "../../types/chat.ts";
 import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
@@ -303,9 +304,10 @@ function PopulatedPane({
   // Right-click on an assistant chat tab: the left rail's conversation menu. Kept apart from
   // tabMenu because it is keyed by conversation, not session. A tab whose conversation is not
   // in the list (a draft, or one deleted elsewhere) has no menu and keeps the browser's.
+  // The opened meta is kept as a snapshot: the menu owns the rename dialog, and a list that
+  // empties while it is open (workspace stopped) must not unmount it and drop the typed title.
   const convList = useChatStore((s) => s.convs);
-  const [convTabMenu, setConvTabMenu] = useState<{ id: string; x: number; y: number; open: boolean } | null>(null);
-  const convTabMenuMeta = convTabMenu ? convList?.find((c) => c.id === convTabMenu.id) ?? null : null;
+  const [convTabMenu, setConvTabMenu] = useState<{ c: ConversationMeta; x: number; y: number; open: boolean } | null>(null);
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
   const canWrap =
@@ -556,7 +558,7 @@ function PopulatedPane({
             const tabSession = view.content.kind === "imagegen" ? studioSession(view)?.name : view.session;
             const menuSession = wsRunning && tabSession && sessionByName.has(tabSession) ? tabSession : null;
             const chatId = view.content.kind === "chat" ? view.content.conversationId : null;
-            const menuConv = wsRunning && chatId && convList?.some((c) => c.id === chatId) ? chatId : null;
+            const menuConv = (wsRunning && chatId && convList?.find((c) => c.id === chatId)) || null;
             return (
               <div
                 className={cx("pane-tab", view.id === cell.selectedViewId && "pane-tab--selected")}
@@ -573,7 +575,7 @@ function PopulatedPane({
                   } else if (menuConv) {
                     e.preventDefault();
                     setTabMenu((m) => (m ? { ...m, open: false } : m));
-                    setConvTabMenu({ id: menuConv, x: e.clientX, y: e.clientY, open: true });
+                    setConvTabMenu({ c: menuConv, x: e.clientX, y: e.clientY, open: true });
                   }
                 }}
               >
@@ -680,9 +682,9 @@ function PopulatedPane({
           onClose={() => setTabMenu((m) => (m ? { ...m, open: false } : m))}
         />
       )}
-      {convTabMenu && convTabMenuMeta && (
+      {convTabMenu && (
         <ConversationMenu
-          c={convTabMenuMeta}
+          c={convList?.find((c) => c.id === convTabMenu.c.id) ?? convTabMenu.c}
           open={convTabMenu.open}
           place={(el) => placeFixed(el, convTabMenu.x, convTabMenu.y)}
           onClose={() => setConvTabMenu((m) => (m ? { ...m, open: false } : m))}
