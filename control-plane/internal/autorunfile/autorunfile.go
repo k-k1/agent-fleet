@@ -20,6 +20,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/secretpat"
 )
 
 // Path is where the file sits in the repository.
@@ -457,10 +459,10 @@ func yamlErrLine(err error) (int, string) {
 // (workspace/agent/internal/memoryx/memory_secrets.go).
 var credentialRules = []struct {
 	name string
-	re   *regexp.Regexp
+	re   interface{ MatchString(string) bool }
 }{
 	{"aws-access-key-id", regexp.MustCompile(`\b(?:A3T[A-Z0-9]|AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b`)},
-	{"github-token", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`)},
+	{"github-token", secretpat.GitHubTokens},
 	{"github-fine-grained-pat", regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{60,}\b`)},
 	{"gitlab-token", regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20,}\b`)},
 	{"slack-token", regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9\-]{10,}\b`)},
