@@ -339,6 +339,54 @@ describe("compose request", () => {
   });
 });
 
+// The composer's text area can be dragged taller or shorter (vertical only). A height the member
+// dragged to is theirs: typing never snaps it back, and it grows by itself again once emptied.
+describe("the composer's text area size", () => {
+  let scrollH = 0;
+  let spy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    spy = vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get").mockImplementation(() => scrollH);
+  });
+  afterEach(() => spy.mockRestore());
+  const area = () => must(composer()?.querySelector<HTMLTextAreaElement>(".memo-add-text"), "composer textarea");
+  const openComposer = async () => {
+    await render();
+    await act(async () => useMemoStore.getState().requestCompose());
+  };
+
+  it("grows with the text until the member drags the handle, then keeps their height", async () => {
+    await openComposer();
+    scrollH = 60;
+    await type("one\ntwo\nthree");
+    expect(area().style.height).toBe("60px");
+    scrollH = 90;
+    await type("one\ntwo\nthree\nfour");
+    expect(area().style.height).toBe("90px");
+
+    // The handle writes an inline height of its own.
+    area().style.height = "240px";
+    scrollH = 130;
+    await type("one\ntwo\nthree\nfour\nfive\nsix");
+    expect(area().style.height).toBe("240px");
+    await type("one\ntwo\nthree\nfour\nfive\nsix\nseven");
+    expect(area().style.height).toBe("240px");
+  });
+
+  it("starts growing again for the next draft once it is emptied", async () => {
+    await openComposer();
+    scrollH = 60;
+    await type("one\ntwo");
+    area().style.height = "240px";
+    await type("one\ntwo\nthree");
+    expect(area().style.height).toBe("240px");
+    await type("");
+    expect(area().style.height).toBe("");
+    scrollH = 75;
+    await type("fresh draft");
+    expect(area().style.height).toBe("75px");
+  });
+});
+
 // "Start with this" (#3289) is how a draft set aside from the Start working dialog comes back,
 // so it lives on the row menu of the member's own text memos and seeds the launch.
 describe("starting a session from a memo", () => {

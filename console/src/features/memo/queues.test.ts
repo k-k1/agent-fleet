@@ -9,6 +9,8 @@ import {
   deferWords,
   deferredUntil,
   afterChoices,
+  afterEntryOf,
+  searchAfterEntries,
   answerWords,
   afterItemMessage,
   afterItemWords,
@@ -541,5 +543,33 @@ describe("runRecipes", () => {
     // The run took "a"; it came back (no delivery any more) and its model was changed afterwards.
     expect(runRecipes([m("a", { state: "pending", model: "new" })], { id: "d1", messageIds: ["a"] })).toEqual([]);
     expect(runRecipes([m("a", { deliveryId: "d2", model: "new" })], { id: "d1", messageIds: ["a"] })).toEqual([]);
+  });
+});
+
+describe("naming a prerequisite for the picker", () => {
+  const memo = (over: Partial<Memo>): Memo => ({
+    id: "m", repo: "", category: "c", kind: "text", body: "", refPath: "", position: 0, createdAt: "2026-11-19T00:00:00Z", sentAt: "", ...over,
+  });
+  it("uses the work item's title, else the first line of the text, and keeps the whole text", () => {
+    const withRef = memo({ body: "line one\nline two", reference: { provider: "github", key: "acme/app#7", url: "" } });
+    expect(afterEntryOf("m", withRef, "", "Crash when saving")).toMatchObject({ key: "acme/app#7", title: "Crash when saving", text: "line one\nline two" });
+    expect(afterEntryOf("m", withRef, "", "")).toMatchObject({ key: "acme/app#7", title: "line one" });
+    expect(afterEntryOf("m", memo({ body: "x".repeat(100) }), "", "").title).toBe("x".repeat(80) + "…");
+    // Nothing to name it by: the id; a memo that is not loaded: the label the Control Plane gave it.
+    expect(afterEntryOf("m9", memo({ id: "m9" }), "", "").title).toBe("m9");
+    expect(afterEntryOf("gone", undefined, "acme/app#3", "")).toMatchObject({ id: "gone", key: "", title: "acme/app#3" });
+  });
+  it("searches key, title and text, every word, case-folded, and counts what it cut", () => {
+    const es = [
+      afterEntryOf("a", memo({ id: "a", body: "Ship the importer", reference: { provider: "github", key: "acme/app#7", url: "" } }), "", "Crash when saving"),
+      afterEntryOf("b", memo({ id: "b", body: "rotate keys" }), "", ""),
+      afterEntryOf("c", memo({ id: "c", body: "rotate again" }), "", ""),
+    ];
+    expect(searchAfterEntries(es, "", 2)).toMatchObject({ total: 3, items: [{ id: "a" }, { id: "b" }] });
+    expect(searchAfterEntries(es, "APP#7", 8).items.map((e) => e.id)).toEqual(["a"]);
+    expect(searchAfterEntries(es, "saving crash", 8).items.map((e) => e.id)).toEqual(["a"]);
+    expect(searchAfterEntries(es, "IMPORTER", 8).items.map((e) => e.id)).toEqual(["a"]);
+    expect(searchAfterEntries(es, "rotate", 8).items.map((e) => e.id)).toEqual(["b", "c"]);
+    expect(searchAfterEntries(es, "rotate nothing", 8)).toEqual({ items: [], total: 0 });
   });
 });

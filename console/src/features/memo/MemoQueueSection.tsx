@@ -20,7 +20,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { copyText } from "../../lib/clipboard.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
-import { t, useT, type MsgKey } from "../../lib/i18n/index.ts";
+import { t, useT } from "../../lib/i18n/index.ts";
 import {
   memoList,
   memoCreate,
@@ -69,6 +69,7 @@ import { confirmReturnRun } from "./runReturn.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import type { MemoDelivery } from "../../types/memo.ts";
 import { canReturnRun, readDeliveries } from "./queues.ts";
+import { MemoAfterPicker, type AfterOption } from "./MemoAfterPicker.tsx";
 import { afterChoices, afterItemMessage, continuationHeldKey, heldRecipeKey, afterItemWords, deferredUntil, scheduledUntil, fmtStartAfter, startAfterFromInput, startAfterInputValue, hasRecipe, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
@@ -98,10 +99,11 @@ const catLabel = (cat: string) => cat || t("memo.uncategorized");
 const groupKey = (repo: string, category: string) => repo + "\x00" + category;
 
 // Keep memo composition fields as compact as their content permits, while letting a
-// longer note grow without the user having to drag the resize handle first.
+// longer note grow without the user having to drag the resize handle first. Once the member drags
+// the handle their height is kept until the text is emptied or the editor closes (autoGrowTextarea).
 function useAutosizeTextarea(ref: RefObject<HTMLTextAreaElement | null>, value: string) {
   useLayoutEffect(() => {
-    autoGrowTextarea(ref.current);
+    autoGrowTextarea(ref.current, { respectResize: true });
   }, [ref, value]);
 }
 
@@ -1214,6 +1216,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       isQueueCategory={(name) => !!cats.find((c) => c.repo === m.repo && c.name === name)?.queue}
                       recipeAgent={isQueue && (m.state === "held" || m.state === "pending") ? (queue?.agentKind ?? "") : undefined}
                       afterChoices={isQueue && (m.state === "held" || m.state === "pending") ? afterChoices(g.memos, m) : undefined}
+                      afterPool={g.memos}
                       onOpenTidyRuns={
                         cat && isQueue
                           ? () => {
@@ -1767,6 +1770,8 @@ interface MemoRowProps {
   isQueueCategory?: (name: string) => boolean;
   /** The notes of its auto-run category it may wait for; absent outside one, or once it has run. */
   afterChoices?: { id: string; label: string }[];
+  /** The notes of the category as loaded, to name a prerequisite by its text and state. */
+  afterPool?: Memo[];
   /** Opens the run history of this note's category; absent outside an auto-run category. */
   onOpenTidyRuns?: () => void;
   /** The category's follow-up allowance, for "follow-up K of M". */
@@ -1804,17 +1809,18 @@ function MemoRow(props: MemoRowProps) {
   const [startBase, setStartBase] = useState(start);
   const [startBad, setStartBad] = useState(false);
   const ref = memoReference(m);
-  // The earlier notes on offer, then any it already waits for that are no longer on offer (deleted,
-  // moved, replaced, or kept past the list's window): those must stay visible so they can be removed.
-  const afterOptions = props.afterChoices && [
-    ...props.afterChoices.map((c) => ({ ...c, why: undefined as MsgKey | undefined })),
-    ...(m.after ?? [])
-      .filter((id) => !props.afterChoices!.some((c) => c.id === id))
-      .map((id) => {
-        const st = m.afterStatus?.find((a) => a.id === id);
-        return { id, label: st?.label || id, why: st ? afterItemWords(st) : undefined };
-      }),
-  ];
+  // The notes on offer, then any it already waits for that are no longer on offer (deleted, moved,
+  // replaced, or kept past the list's window): those stay visible as chips so they can be removed.
+  const afterOptions: AfterOption[] | undefined =
+    props.afterChoices && [
+      ...props.afterChoices.map((c) => ({ ...c, memo: props.afterPool?.find((o) => o.id === c.id) })),
+      ...(m.after ?? [])
+        .filter((id) => !props.afterChoices!.some((c) => c.id === id))
+        .map((id) => {
+          const st = m.afterStatus?.find((a) => a.id === id);
+          return { id, label: st?.label || id, memo: props.afterPool?.find((o) => o.id === id), why: st ? afterItemWords(st) : undefined };
+        }),
+    ];
   // Sent only when it differs from what is stored, so a plain text edit never touches it.
   const afterChanged = (): string[] | undefined => {
     const was = m.after ?? [];
@@ -1940,25 +1946,7 @@ function MemoRow(props: MemoRowProps) {
                 <div className="memo-edit-hint">{tr("memo.after_edit_none")}</div>
               ) : (
                 <>
-                  {afterOptions.map((c) => (
-                    <label key={c.id} className="memo-edit-after-item">
-                      <input
-                        type="checkbox"
-                        checked={after.includes(c.id)}
-                        onChange={(e) =>
-                          // Kept in the order shown, whatever order they were ticked in; a ticked one
-                          // that is not offered any more stays until it is unticked.
-                          setAfter((cur) =>
-                            e.target.checked
-                              ? afterOptions.map((x) => x.id).filter((id) => id === c.id || cur.includes(id))
-                              : cur.filter((id) => id !== c.id),
-                          )
-                        }
-                      />
-                      <span>{c.label}</span>
-                      {c.why && <span className="memo-edit-after-why">{tr(c.why)}</span>}
-                    </label>
-                  ))}
+                  <MemoAfterPicker options={afterOptions} value={after} onChange={setAfter} />
                   <div className="memo-edit-hint">{tr("memo.after_edit_hint")}</div>
                 </>
               )}

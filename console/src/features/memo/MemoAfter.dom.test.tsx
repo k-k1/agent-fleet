@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { Memo, MemoCategory } from "../../types/memo.ts";
+import type { WorkItem } from "../workitems/read.ts";
 
 let servedMemos: Memo[] = [];
 let servedCats: MemoCategory[] = [];
@@ -30,6 +31,7 @@ const { MemoQueueSection } = await import("./MemoQueueSection.tsx");
 const { MemoReleaseCard } = await import("./MemoReleaseCard.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
+const { useWorkItemStore } = await import("../workitems/store.ts");
 const { t } = await import("../../lib/i18n/index.ts");
 
 let root: Root | null = null;
@@ -76,6 +78,7 @@ beforeEach(() => {
   servedCats = [aCat({})];
   memoUpdate.mockClear();
   memoUpdate.mockResolvedValue({});
+  useWorkItemStore.setState({ payload: null, loaded: false });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -92,6 +95,32 @@ const openEditor = async (text: string) => {
   for (let i = 0; i < 2 && !document.querySelector(".memo-row.editing"); i++) await click(rowOf(text).querySelector<HTMLElement>(".memo-body")!);
 };
 const editRow = () => document.querySelector<HTMLElement>(".memo-row.editing")!;
+
+// The prerequisite picker: chips for the chosen memos, a search field, a list of matches.
+const search = () => editRow().querySelector<HTMLInputElement>(".memo-after-search")!;
+const chips = () => [...editRow().querySelectorAll<HTMLElement>(".memo-after-chip")];
+const opts = () => [...editRow().querySelectorAll<HTMLElement>(".memo-after-opt")];
+const titles = (els: HTMLElement[]) => els.map((e) => e.querySelector(".memo-after-title")?.textContent ?? "");
+const focusSearch = async () => {
+  await act(async () => void search().focus());
+  await settle();
+};
+const typeSearch = async (v: string) => {
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(search(), v);
+    search().dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  await settle();
+};
+const pressKey = async (key: string) => {
+  const ev = new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true });
+  await act(async () => void search().dispatchEvent(ev));
+  await settle();
+  return ev;
+};
+const removeChip = (i: number) => click(chips()[i].querySelector("button")!);
+const workItem = (key: string, title: string): WorkItem =>
+  ({ id: key, queryId: "q", provider: "github", kind: "issue", key, title, state: "open", url: "", assignee: "", labels: [], labelColors: {}, repo: "", updatedAt: "", checks: { state: "", total: 0, failed: 0, pending: 0 }, mergeable: "" }) as WorkItem;
 
 describe("a note that waits for other notes", () => {
   it("says what it waits for and how each stands", async () => {
@@ -171,21 +200,27 @@ describe("a note that waits for other notes", () => {
     await renderSection();
     await openEditor("third job");
     expect(editRow().textContent).toContain(t("memo.after_edit_label"));
-    const choices = [...editRow().querySelectorAll<HTMLLabelElement>(".memo-edit-after-item")];
-    // In the category's order, later ones too; never itself, nor one that already waits for it.
-    expect(choices.map((c) => c.textContent)).toEqual(["first job", "other job", "later job"]);
-    expect(choices.map((c) => c.querySelector("input")!.checked)).toEqual([false, true, false]);
+    // The one it waits for is a chip; the rest are offered when the field is focused, the nearest
+    // (latest in the category's order) first. Never itself, nor one that already waits for it.
+    expect(titles(chips())).toEqual(["other job"]);
+    expect(opts()).toHaveLength(0);
+    await focusSearch();
+    expect(titles(opts())).toEqual(["later job", "first job"]);
     // A text edit alone leaves it out of the patch.
     await click(btn(editRow(), t("memo.save")));
     expect(memoUpdate).toHaveBeenLastCalledWith("d1", { body: "third job", category: "inbox" });
 
     await openEditor("third job");
-    await click(editRow().querySelectorAll<HTMLInputElement>(".memo-edit-after-item input")[0]);
+    await focusSearch();
+    await click(opts()[1]);
+    // Added, it leaves the list and joins the chips in the category's order.
+    expect(titles(chips())).toEqual(["first job", "other job"]);
+    expect(titles(opts())).toEqual(["later job"]);
     await click(btn(editRow(), t("memo.save")));
     expect(memoUpdate).toHaveBeenLastCalledWith("d1", { body: "third job", category: "inbox", after: ["p1", "p2"] });
 
     await openEditor("third job");
-    await click(editRow().querySelectorAll<HTMLInputElement>(".memo-edit-after-item input")[1]);
+    await removeChip(0);
     await click(btn(editRow(), t("memo.save")));
     expect(memoUpdate).toHaveBeenLastCalledWith("d1", { body: "third job", category: "inbox", after: [] });
   });
@@ -207,16 +242,30 @@ describe("a note that waits for other notes", () => {
     ];
     await renderSection();
     await openEditor("second job");
-    const items = () => [...editRow().querySelectorAll<HTMLLabelElement>(".memo-edit-after-item")];
-    expect(items().map((c) => c.querySelector("span")!.textContent)).toEqual(["first job", "acme/app#3"]);
-    expect(items()[1].textContent).toContain(t("memo.after_r_deleted"));
-    // Ticking another keeps the one already there.
-    await click(items()[0].querySelector("input")!);
-    expect(items().map((c) => c.querySelector("input")!.checked)).toEqual([true, true]);
-    // Unticking it removes it.
-    await click(items()[1].querySelector("input")!);
+    expect(chips().map((c) => c.textContent)).toEqual(["acme/app#3" + t("memo.after_r_deleted")]);
+    // It is never offered as a candidate, and adding another keeps it.
+    await focusSearch();
+    expect(titles(opts())).toEqual(["first job"]);
+    await click(opts()[0]);
+    expect(chips().map((c) => c.textContent?.includes("acme/app#3"))).toEqual([false, true]);
+    // The × removes it.
+    await removeChip(1);
     await click(btn(editRow(), t("memo.save")));
     expect(memoUpdate).toHaveBeenLastCalledWith("d1", { body: "second job", category: "inbox", after: ["p1"] });
+  });
+
+  it("names a chosen memo the list no longer offers by its own text when it is still loaded", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({ id: "s1", body: "replaced job\nwith more", state: "superseded", position: 0, reference: { provider: "github", key: "acme/app#9", url: "" } }),
+      aMemo({ id: "d1", body: "second job", state: "held", position: 1, createdAt: "2026-09-09T00:00:01Z", after: ["s1"] }),
+    ];
+    await renderSection();
+    await openEditor("second job");
+    expect(chips()).toHaveLength(1);
+    expect(chips()[0].querySelector(".memo-after-key")!.textContent).toBe("acme/app#9");
+    expect(chips()[0].querySelector(".memo-after-title")!.textContent).toBe("replaced job");
+    expect(chips()[0].title).toBe("acme/app#9\nreplaced job\nwith more");
   });
 
   it("sends a later note as a prerequisite", async () => {
@@ -227,7 +276,8 @@ describe("a note that waits for other notes", () => {
     ];
     await renderSection();
     await openEditor("first job");
-    await click(editRow().querySelectorAll<HTMLInputElement>(".memo-edit-after-item input")[0]);
+    await focusSearch();
+    await click(opts()[0]);
     await click(btn(editRow(), t("memo.save")));
     expect(memoUpdate).toHaveBeenLastCalledWith("d1", { body: "first job", category: "inbox", after: ["z9"] });
   });
@@ -283,9 +333,132 @@ describe("a note that waits for other notes", () => {
     servedMemos = [aMemo({ id: "p1", body: "first job", state: "pending" }), aMemo({ id: "d1", body: "second job", state: "pending", position: 1 })];
     await renderSection();
     await openEditor("second job");
-    await click(editRow().querySelectorAll<HTMLInputElement>(".memo-edit-after-item input")[0]);
+    await focusSearch();
+    await click(opts()[0]);
     await click(btn(editRow(), t("memo.save")));
     expect(document.body.textContent).toContain(t("err.memo_after_invalid"));
+  });
+});
+
+describe("choosing what a note waits for by search", () => {
+  const ref = (key: string) => ({ provider: "github", key, url: "" });
+  const seed = () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({ id: "a1", body: "ship the importer", state: "delivered", position: 0, reference: ref("acme/app#7") }),
+      aMemo({ id: "a2", body: "write the docs for it", state: "pending", position: 1, createdAt: "2026-09-09T00:00:01Z", reference: ref("acme/app#8") }),
+      aMemo({ id: "a3", body: "rotate the keys", state: "held", position: 2, createdAt: "2026-09-09T00:00:02Z" }),
+      aMemo({ id: "me", body: "the edited one", state: "held", position: 3, createdAt: "2026-09-09T00:00:03Z" }),
+    ];
+    useWorkItemStore.setState({
+      payload: { items: [workItem("acme/app#7", "Crash when saving"), workItem("acme/app#8", "Importer docs")], queries: [], sessions: [], fetchedAt: "", running: false } as never,
+      loaded: true,
+    });
+  };
+
+  it("filters by key, by the work item's title and by the memo's text, and says what it matched", async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    // Focused with nothing typed: everything on offer, the nearest first.
+    expect(titles(opts())).toEqual(["rotate the keys", "Importer docs", "Crash when saving"]);
+    await typeSearch("app#7");
+    expect(titles(opts())).toEqual(["Crash when saving"]);
+    await typeSearch("IMPORTER");
+    // The title of #8, and the text of #7 ("ship the importer"): both match, the nearest first.
+    expect(titles(opts())).toEqual(["Importer docs", "Crash when saving"]);
+    await typeSearch("keys rotate");
+    expect(titles(opts())).toEqual(["rotate the keys"]);
+    await typeSearch("zzz");
+    expect(opts()).toHaveLength(0);
+    expect(editRow().textContent).toContain(t("memo.after_no_match"));
+  });
+
+  it("offers at most eight and says how many more there are", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      ...Array.from({ length: 11 }, (_, i) => aMemo({ id: "n" + i, body: "job " + i, state: "pending", position: i, createdAt: "2026-09-09T00:00:" + String(i).padStart(2, "0") + "Z" })),
+      aMemo({ id: "me", body: "the edited one", state: "held", position: 20, createdAt: "2026-09-09T00:01:00Z" }),
+    ];
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    expect(opts()).toHaveLength(8);
+    expect(editRow().querySelector(".memo-after-more")!.textContent).toBe(t("memo.after_more", { n: 3 }));
+    await typeSearch("job 1");
+    // "job 1", "job 10": both fit.
+    expect(titles(opts())).toEqual(["job 10", "job 1"]);
+    expect(editRow().querySelector(".memo-after-more")).toBeNull();
+  });
+
+  it("tells two memos of the same issue apart in the list and in the chips", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({ id: "a1", body: "part one", state: "delivered", position: 0, createdAt: "2026-09-01T08:00:00Z", reference: ref("acme/app#7") }),
+      aMemo({ id: "a2", body: "part two", state: "pending", position: 1, createdAt: "2026-09-02T09:30:00Z", releasedBy: "continuation", chainSeq: 2, reference: ref("acme/app#7") }),
+      aMemo({ id: "me", body: "the edited one", state: "held", position: 2, createdAt: "2026-09-09T00:00:03Z" }),
+    ];
+    useWorkItemStore.setState({
+      payload: { items: [workItem("acme/app#7", "Crash when saving")], queries: [], sessions: [], fetchedAt: "", running: false } as never,
+      loaded: true,
+    });
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    const names = opts().map((o) => o.textContent!);
+    expect(new Set(names).size).toBe(2);
+    // Both read "acme/app#7 Crash when saving"; the rest tells them apart.
+    expect(names[0]).toContain("acme/app#7Crash when saving");
+    expect(names[0]).toContain(t("memo.state_pending"));
+    expect(names[0]).toContain(t("memo.after_part", { seq: 2 }));
+    expect(names[1]).toContain(t("memo.state_delivered"));
+    expect(names[1]).not.toContain(t("memo.after_part", { seq: 2 }));
+    expect(opts()[0].title).toBe("acme/app#7\npart two");
+    await click(opts()[0]);
+    await click(opts()[0]);
+    const chipNames = chips().map((c) => c.textContent!);
+    expect(new Set(chipNames).size).toBe(2);
+    expect(chipNames[0]).toContain(t("memo.state_delivered"));
+    expect(chipNames[1]).toContain(t("memo.after_part", { seq: 2 }));
+  });
+
+  it("adds with the keyboard, and Escape closes the list without leaving the editor", async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    expect(opts().map((o) => o.getAttribute("aria-selected"))).toEqual(["true", "false", "false"]);
+    await pressKey("ArrowDown");
+    await pressKey("ArrowDown");
+    expect(opts().map((o) => o.getAttribute("aria-selected"))).toEqual(["false", "false", "true"]);
+    expect(search().getAttribute("aria-activedescendant")).toBe(opts()[2].id);
+    await pressKey("ArrowDown"); // wraps
+    expect(opts()[0].getAttribute("aria-selected")).toBe("true");
+    await pressKey("ArrowUp"); // wraps back
+    expect(opts()[2].getAttribute("aria-selected")).toBe("true");
+    await pressKey("Escape");
+    expect(opts()).toHaveLength(0);
+    expect(editRow()).toBeTruthy();
+    // ArrowDown opens it again; Enter adds the active one, and is not taken as a save.
+    await pressKey("ArrowDown");
+    expect(opts()).toHaveLength(3);
+    const enter = await pressKey("Enter");
+    expect(enter.defaultPrevented).toBe(true);
+    expect(titles(chips())).toEqual(["Crash when saving"]);
+    expect(memoUpdate).not.toHaveBeenCalled();
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox", after: ["a1"] });
+  });
+
+  it("a second Escape, with the list closed, still reaches the editor", async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    await pressKey("Escape");
+    const second = await pressKey("Escape");
+    expect(second.defaultPrevented).toBe(false);
   });
 });
 

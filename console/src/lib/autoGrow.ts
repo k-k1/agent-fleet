@@ -23,11 +23,31 @@
 // in scrollHeight, so an empty measure is "how many lines the placeholder wraps to at this width",
 // and the value then sticks until the next draft change. Seen on a phone in the image studio:
 // the composer came back one line tall with the placeholder's second line cut off.
-export function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
+//
+// A textarea that offers a drag handle passes `respectResize`. The handle writes an inline height
+// that autoGrow did not write, which is how a member's own size is told from ours: while the inline
+// height differs from the last one written here, the member's size is kept (no keystroke snaps it
+// back) and the textarea scrolls past it (`data-resized`). Emptying it starts over, so the next
+// draft grows again. A touch browser has no handle, so its height is only ever ours.
+export function autoGrowTextarea(el: HTMLTextAreaElement | null, opts?: { respectResize?: boolean }): void {
   if (!el) return;
+  const respect = !!opts?.respectResize;
   if (!el.value) {
     el.style.height = "";
+    if (respect) {
+      delete el.dataset.grown;
+      delete el.dataset.resized;
+      delete el.dataset.capped;
+    }
     return;
+  }
+  if (respect) {
+    const h = el.style.height;
+    if (el.dataset.resized || (h && h !== el.dataset.grown)) {
+      el.dataset.resized = "1";
+      return;
+    }
+    delete el.dataset.capped;
   }
   const row = el.parentElement;
   const frozen = row ? Math.ceil(row.getBoundingClientRect().height) : 0;
@@ -36,6 +56,11 @@ export function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
   try {
     el.style.height = "auto";
     el.style.height = el.scrollHeight + "px";
+    if (respect) {
+      el.dataset.grown = el.style.height;
+      // Held at the CSS max-height: the text scrolls inside from here on.
+      if (el.scrollHeight > el.clientHeight + 1) el.dataset.capped = "1";
+    }
   } finally {
     if (row && frozen > 0) row.style.minHeight = prevMin;
   }

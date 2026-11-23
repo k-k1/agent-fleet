@@ -67,4 +67,67 @@ describe("autoGrowTextarea", () => {
   it("does nothing without an element (before mount / after unmount)", () => {
     expect(() => autoGrowTextarea(null)).not.toThrow();
   });
+
+  describe("with respectResize (a textarea the member can drag taller or shorter)", () => {
+    const grown = (input: HTMLTextAreaElement, h: number) => {
+      Object.defineProperty(input, "scrollHeight", { configurable: true, get: () => h });
+    };
+
+    it("keeps a height the member dragged to while they type", () => {
+      const { input } = composer();
+      input.value = "a";
+      grown(input, 40);
+      autoGrowTextarea(input, { respectResize: true });
+      expect(input.style.height).toBe("40px");
+      // The handle writes an inline height that autoGrow did not write.
+      input.style.height = "180px";
+      input.value = "a longer draft\nover two lines";
+      grown(input, 70);
+      autoGrowTextarea(input, { respectResize: true });
+      expect(input.style.height).toBe("180px");
+      expect(input.dataset.resized).toBe("1");
+      // And it stays theirs on the following keystrokes, even if it is dragged back to our last value.
+      input.style.height = "40px";
+      autoGrowTextarea(input, { respectResize: true });
+      expect(input.style.height).toBe("40px");
+    });
+
+    it("grows again once the text is emptied", () => {
+      const { input } = composer();
+      input.value = "a";
+      grown(input, 40);
+      autoGrowTextarea(input, { respectResize: true });
+      input.style.height = "180px";
+      autoGrowTextarea(input, { respectResize: true });
+      input.value = "";
+      autoGrowTextarea(input, { respectResize: true });
+      expect(input.style.height).toBe("");
+      expect(input.dataset.resized).toBeUndefined();
+      input.value = "next draft";
+      grown(input, 55);
+      autoGrowTextarea(input, { respectResize: true });
+      expect(input.style.height).toBe("55px");
+    });
+
+    it("still follows its own growth, keystroke after keystroke", () => {
+      const { input } = composer();
+      input.value = "a";
+      grown(input, 40);
+      autoGrowTextarea(input, { respectResize: true });
+      input.value = "a\nb\nc";
+      grown(input, 90);
+      autoGrowTextarea(input, { respectResize: true });
+      expect(input.style.height).toBe("90px");
+      expect(input.dataset.resized).toBeUndefined();
+    });
+
+    it("leaves an input that does not opt in as it was (a height it did not write is overwritten)", () => {
+      const { input } = composer();
+      input.value = "a";
+      input.style.height = "180px";
+      grown(input, 40);
+      autoGrowTextarea(input);
+      expect(input.style.height).toBe("40px");
+    });
+  });
 });
