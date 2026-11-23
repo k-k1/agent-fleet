@@ -145,6 +145,44 @@ describe("the release card's ticks", () => {
   });
 });
 
+describe("the release card's ticks over the polls", () => {
+  const card = (items: Memo[]) => ({ key: "k", provenance: "workspace", producer: "kid01", items }) as never;
+  const props = { busy: false, changedIds: new Set<string>(), edited: new Set<string>(), awaiting: new Set<string>(), onRelease: () => {}, onConfirm: () => {} };
+  const draw = async (items: Memo[]) =>
+    act(async () => {
+      root!.render(<MemoReleaseCard card={card(items)} {...props} />);
+    });
+
+  it("ticks a note that comes back after it left the card", async () => {
+    const [a, b] = [held("a", "one"), held("b", "two")];
+    await draw([a, b]);
+    await click(checks()[1]);
+    expect(checks().map((c) => c.checked)).toEqual([true, false]);
+    // b is approved elsewhere and leaves; a alone has no checkbox.
+    await draw([a]);
+    expect(checks()).toHaveLength(0);
+    // b is edited and held again: it arrives ticked.
+    await draw([a, b]);
+    expect(checks().map((c) => c.checked)).toEqual([true, true]);
+  });
+
+  it("keeps the untick of a note that stays while another comes and goes", async () => {
+    const [a, b, c] = [held("a", "one"), held("b", "two"), held("c", "three")];
+    await draw([a, b, c]);
+    await click(checks()[1]);
+    await draw([a, b]);
+    expect(checks().map((x) => x.checked)).toEqual([true, false]);
+  });
+
+  it("ties each checkbox to its own note's text", async () => {
+    await draw([held("a", "first job"), held("b", "second job")]);
+    const described = checks().map((c) => document.getElementById(c.getAttribute("aria-describedby")!)?.textContent);
+    expect(described[0]).toContain("first job");
+    expect(described[0]).not.toContain("second job");
+    expect(described[1]).toContain("second job");
+  });
+});
+
 describe("the release card of one note, and of none ticked", () => {
   const card = (items: Memo[]) => ({ key: "k", provenance: "workspace", producer: "kid01", items }) as never;
   const props = { busy: false, changedIds: new Set<string>(), edited: new Set<string>(), awaiting: new Set<string>(), onConfirm: () => {} };

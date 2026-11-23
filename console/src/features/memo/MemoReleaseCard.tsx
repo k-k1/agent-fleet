@@ -14,7 +14,7 @@
 // otherwise: the approval covers exactly the ticked notes, each with its own hash, and the rest
 // stay held on the card. Whether a note is unticked is kept by id, so a note that arrives on a later
 // poll starts ticked like the others, as the card shows it.
-import { useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { MemoProducerText } from "./MemoProducerText.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -60,6 +60,17 @@ export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edite
         ? tr("memo.release_title_session", { name: card.producer })
         : tr("memo.release_title_unknown");
   const [unticked, setUnticked] = useState<ReadonlySet<string>>(new Set());
+  const uid = useId();
+  // A note that left the card (approved, deleted, moved) takes its untick with it, so one that comes
+  // back later (edited and held again) starts ticked like any other arrival.
+  useEffect(() => {
+    setUnticked((s) => {
+      if (s.size === 0) return s;
+      const here = new Set(card.items.map((m) => m.id));
+      const kept = [...s].filter((id) => here.has(id));
+      return kept.length === s.size ? s : new Set(kept);
+    });
+  }, [card.items]);
   const total = card.items.length;
   // A lone note has no checkbox, so a tick left over from when the card held more must not count:
   // otherwise the last note could be neither approved nor ticked again.
@@ -101,10 +112,11 @@ export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edite
                   checked={isTicked(m.id)}
                   disabled={busy}
                   aria-label={tr("memo.release_pick")}
+                  aria-describedby={uid + m.id}
                   onChange={() => toggle(m.id)}
                 />
               )}
-              <div className="memo-release-body">
+              <div className="memo-release-body" id={uid + m.id}>
                 {m.kind === "file" && m.refPath && <code className="memo-release-ref">{m.refPath}</code>}
                 {ref && <MemoReferenceLink reference={ref} />}
                 {tidyMarks(m).map((k) => (
