@@ -342,7 +342,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	}
 	// Past this point a new process starts, i.e. new memory is paid for. Do not pay
 	// while unconnected. (An adopt is memory already paid for, so it passed above.)
-	if !allowUnauthed && !Connected() {
+	if !allowUnauthed && !serveConnected() {
 		return "", 0, ErrNotConnected
 	}
 	host, port, err := splitServeAddr(addr)
@@ -403,7 +403,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	// is connected only while the policy that pins it is held, so a restriction lifted since would
 	// start a serve with no pin; judged again after the view, the answer matches the view's policy
 	// (a policy moving later is caught by the generation comparison below).
-	if !allowUnauthed && !Connected() {
+	if !allowUnauthed && !serveConnected() {
 		return "", 0, ErrNotConnected
 	}
 	if err := policyConfigErrFrom(globalConfigFiles(), view); err != nil {

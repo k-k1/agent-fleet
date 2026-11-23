@@ -19,43 +19,58 @@ func storeCustom(t *testing.T, c *secrets.CustomAPIConn) {
 	}
 }
 
-// On "own" a workspace whose only provider is the approved custom endpoint is connected: the
-// serve's pin gives it that endpoint, so there is something behind the launch. Not approved (host
-// off the list, no restriction, no connection) it is not, and "off" wins over all of it.
-func TestConnectedOnOwnCountsTheApprovedCustomEndpoint(t *testing.T) {
+// On "own" a workspace whose only provider is the approved custom endpoint may start the shared
+// serve and the kind is launchable: the serve's pin gives it that endpoint. Not approved (host off
+// the list, no restriction, no connection) it is not, and "off" wins over all of it. Connected,
+// which the assistant's headless runs ask, never counts the custom endpoint: those runs carry no pin.
+func TestServeConnectedOnOwnCountsTheApprovedCustomEndpoint(t *testing.T) {
 	isolatedHome(t)
 	t.Setenv("AF_SECRET_KEY", "")
 	_ = newFakeDaemon(t) // isolate from a developer's real Console login
 	stubUsagePref(t, UsageOwn)
+	status := func() bool {
+		s, err := secrets.Load()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return Status(s)["connected"] == true
+	}
 
 	useIsolationPolicy(t, approvedCustom())
-	if Connected() {
-		t.Fatal("connected=true on own with no connection stored at all")
+	if serveConnected() || status() {
+		t.Fatal("connected on own with no connection stored at all")
 	}
 	storeCustom(t, selfHosted)
-	if !Connected() {
-		t.Fatal("connected=false on own although the approved custom endpoint is stored")
+	if !serveConnected() || !status() {
+		t.Fatal("not connected on own although the approved custom endpoint is stored")
+	}
+	if Connected() {
+		t.Error("Connected() counts the custom endpoint: a headless run has no pin to hold it to")
 	}
 
 	storeCustom(t, &secrets.CustomAPIConn{Provider: "mine", URL: "https://evil.example/v1", APIKey: "k"})
-	if Connected() {
-		t.Error("connected=true for a custom endpoint whose host the policy does not approve")
+	if serveConnected() || status() {
+		t.Error("connected for a custom endpoint whose host the policy does not approve")
 	}
 	storeCustom(t, &secrets.CustomAPIConn{Provider: "anthropic", URL: selfHosted.URL, APIKey: "k"})
-	if Connected() {
-		t.Error("connected=true for a connection naming a provider another route owns")
+	if serveConnected() || status() {
+		t.Error("connected for a connection naming a provider another route owns")
 	}
 
 	storeCustom(t, selfHosted)
 	useIsolationPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
-	if Connected() {
-		t.Error("connected=true with no restriction held: nothing pins the custom provider then")
+	if serveConnected() || status() {
+		t.Error("connected with no restriction held: nothing pins the custom provider then")
 	}
 
 	useIsolationPolicy(t, approvedCustom())
+	stubUsagePref(t, UsageZen)
+	if serveConnected() {
+		t.Error("the custom endpoint counted on a route other than own")
+	}
 	stubUsagePref(t, UsageOff)
-	if Connected() {
-		t.Error("connected=true under an explicit off")
+	if serveConnected() || status() {
+		t.Error("connected under an explicit off")
 	}
 }
 

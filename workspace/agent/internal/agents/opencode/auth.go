@@ -127,19 +127,27 @@ func connected(s *secrets.Data, oa oauthState) bool {
 	case UsageOwn:
 		// opencode.ai is not used on this route, so neither an account login nor a stored
 		// OPENCODE_API_KEY makes opencode usable here — what does is a provider the user
-		// connected directly, one of the fleet's own engines (ADR 0071), or the approved
-		// custom endpoint. Being strict is the safe direction: reporting connected with
-		// nothing behind it would let a launch fall through to opencode's own default model,
-		// which is a zero-auth opencode.ai one — exactly the unasked-for outside call this
-		// setting exists to prevent.
-		return hasDirectProviderKey(s) || HasEngineProviders() || hasApprovedCustom(s)
+		// connected directly, or one of the fleet's own engines (ADR 0071). Being strict is
+		// the safe direction: reporting connected with nothing behind it would let a launch
+		// fall through to opencode's own default model, which is a zero-auth opencode.ai one
+		// — exactly the unasked-for outside call this setting exists to prevent.
+		return hasDirectProviderKey(s) || HasEngineProviders()
 	}
 	return UsagePref() == UsageFree || len(s.Opencode) > 0 || oa.connected
 }
 
+// servable is connected plus the one case only the shared serve can honour: on "own", the stored
+// custom connection while the held policy approves it. The serve is started with that policy's pin,
+// which hands it the endpoint and enables nothing else; every other way of running opencode (the
+// assistant's headless runs, a Terminal launch) carries no such pin and keeps asking connected, so
+// a policy lifted after an availability answer was cached cannot send them anywhere new.
+func servable(s *secrets.Data, oa oauthState) bool {
+	return connected(s, oa) || (UsagePref() == UsageOwn && hasApprovedCustom(s))
+}
+
 // hasApprovedCustom reports whether the stored custom connection is one the held policy approves:
-// the only case in which the shared serve is given it (the pin), and so the only one that makes
-// opencode usable. Unrestricted, nothing pins the provider, so a stored connection alone is not.
+// the only case in which the shared serve is given it (the pin). Unrestricted, nothing pins the
+// provider, so a stored connection alone is not.
 func hasApprovedCustom(s *secrets.Data) bool {
 	p, restricted := policyRestriction()
 	return restricted && allowedCustom(p, engineProviderIDs(), s.CustomAPI) != nil
@@ -172,6 +180,16 @@ func Connected() bool {
 	return connected(s, oauthStatus())
 }
 
+// serveConnected is the gate for starting the shared serve: Connected, or the approved custom
+// endpoint on "own" (servable).
+func serveConnected() bool {
+	s, err := secrets.Load()
+	if err != nil {
+		s = &secrets.Data{}
+	}
+	return servable(s, oauthStatus())
+}
+
 // Status reports which provider env vars are configured (names only,
 // never the keys) for the Console Connections panel (GET /connections), plus the
 // state of the second, independent path: the opencode Console account (OAuth device
@@ -186,9 +204,10 @@ func Status(s *secrets.Data) map[string]any {
 	oa := oauthStatus()
 	usage := UsagePref()
 	m := map[string]any{
-		// connected is what decides whether this kind can be launched, for both
-		// registry.ts and headlessAgentAvailable — the same formula Connected uses.
-		"connected":      connected(s, oa),
+		// connected is what decides whether this kind can be launched (registry.ts): the formula
+		// Connected uses, plus the approved custom endpoint on "own" (servable), which only a
+		// Managed session on the shared serve can use. headlessAgentAvailable asks Connected.
+		"connected":      servable(s, oa),
 		"envs":           names,
 		"usage":          usage,
 		"supported":      Available(), // no binary (old image) means not even the free tier can launch
