@@ -623,7 +623,7 @@ export function WorkItemDetailModal({
             row looks exactly like one showing the live pull request, and the difference is the
             whole point of the live read (§80.24). */}
         {canReadLive(item, reference) && (
-          <p className={"wi-dlive" + (live.err ? " bad" : "")} role="status" title={live.err || undefined}>
+          <p className={"wi-dlive" + (live.err ? " wi-dlive--bad" : "")} role="status" title={live.err || undefined}>
             <Icon
               name={reading ? "sync" : live.err ? "warning" : live.stopped ? "debug-pause" : "check"}
               spin={reading}
@@ -938,7 +938,7 @@ export function WorkItemDetailModal({
         {mergeSlot.note && (
           <span
             id="wi-dmerge-why"
-            className={"wi-dmergewhy" + (mergeSlot.note.bad ? " bad" : "")}
+            className={"wi-dmergewhy" + (mergeSlot.note.bad ? " wi-dmergewhy--bad" : "")}
             title={mergeSlot.note.text}
             role="status"
           >

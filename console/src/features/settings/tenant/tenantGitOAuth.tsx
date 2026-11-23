@@ -240,7 +240,7 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
             {tr("tenant.git_oauth_redirect")} <code>{app.redirect_uri}</code>
           </p>
         ) : (
-          <p className="admin-hint warn">{tr("tenant.git_oauth_no_base_url")}</p>
+          <p className="admin-hint admin-hint--warn">{tr("tenant.git_oauth_no_base_url")}</p>
         ))}
       {app.provider === "github" && <p className="admin-hint">{tr("tenant.git_oauth_gh_device")}</p>}
       {/* Bitbucket puts no scope on the authorize URL: whatever is ticked in the consumer's
@@ -395,7 +395,7 @@ function GitHubOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuth
         <p className="admin-hint">{tr("tenant.gh_builtin_off")}</p>
       ) : (
         (current === "builtin_oauth" || current === "builtin_app") &&
-        !available(current) && <p className="admin-hint warn">{tr("tenant.gh_builtin_missing")}</p>
+        !available(current) && <p className="admin-hint admin-hint--warn">{tr("tenant.gh_builtin_missing")}</p>
       )}
       {source === "custom" && (
         <>

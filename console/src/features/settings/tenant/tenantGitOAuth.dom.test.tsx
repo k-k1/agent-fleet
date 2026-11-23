@@ -214,7 +214,7 @@ describe("git provider OAuth", () => {
       providers: [{ provider: "bitbucket", client_id: "key-1", has_secret: true, needs_secret: true }],
     });
     await mount();
-    expect(groupFor("Bitbucket").querySelector(".admin-hint.warn")).not.toBeNull();
+    expect(groupFor("Bitbucket").querySelector(".admin-hint.admin-hint--warn")).not.toBeNull();
     expect(document.body.textContent).toContain("PUBLIC_BASE_URL");
   });
 
@@ -264,7 +264,7 @@ describe("GitHub app source", () => {
     expect(radioLabel("組み込みの OAuth App")).toBeUndefined();
     const app = radioLabel("組み込みの GitHub App");
     expect(app.querySelector("input")!.disabled).toBe(true);
-    expect(groupFor("GitHub").querySelector(".admin-hint.warn")).not.toBeNull();
+    expect(groupFor("GitHub").querySelector(".admin-hint.admin-hint--warn")).not.toBeNull();
   });
 
   it("says when the operator switched the built-in apps off", async () => {

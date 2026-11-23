@@ -120,7 +120,7 @@
   background: var(--hover, rgba(127, 127, 127, 0.08));
 }
 /* Done rows are dimmed, not dropped (never silently hide a row the query asked for). */
-.wi-row.done {
+.wi-row.wi-row--done {
   opacity: 0.55;
 }
 
@@ -760,7 +760,7 @@
   font-size: 11px;
   color: var(--muted);
 }
-.wi-dlive.bad {
+.wi-dlive.wi-dlive--bad {
   color: var(--warn);
 }
 
@@ -919,7 +919,7 @@
   line-clamp: 2;
   overflow: hidden;
 }
-.wi-dmergewhy.bad {
+.wi-dmergewhy.wi-dmergewhy--bad {
   color: var(--warn);
 }
 /* Keeps Merge's room while the read is in flight, and when the answer says no button. */

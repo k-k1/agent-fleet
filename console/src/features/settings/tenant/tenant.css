@@ -488,19 +488,19 @@
   font-size: 11px;
 }
 
-.mc-disk.warn {
+.mc-disk.mc-disk--warn {
   color: var(--warn);
 }
 
-.mc-disk.error {
+.mc-disk.mc-disk--error {
   color: var(--err);
 }
 
-.mc-disk.warn .mcard-bar-fill {
+.mc-disk.mc-disk--warn .mcard-bar-fill {
   background: var(--warn);
 }
 
-.mc-disk.error .mcard-bar-fill {
+.mc-disk.mc-disk--error .mcard-bar-fill {
   background: var(--err);
 }
 

@@ -463,7 +463,7 @@ describe("admin overview and tenants", () => {
     expect(counts()!.textContent).toContain("読み込めませんでした");
     expect(counts()!.textContent).not.toContain("0 件");
     expect(counts()!.getAttribute("role")).toBe("alert");
-    expect(counts()!.className).toContain("warn");
+    expect(counts()!.className).toContain("admin-hint--warn");
     // A JSON error that happens to be a 404 is a failure too; only the plain-text one is "off".
     act(() => root?.unmount());
     host?.remove();

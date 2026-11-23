@@ -50,7 +50,7 @@ export function WizardFrame({
         {WIZARD_STEPS.map((s, i) => (
           <li
             key={s}
-            className={"mem-wiz-step" + (i < at ? " done" : "") + (i === at ? " current" : "")}
+            className={"mem-wiz-step" + (i < at ? " mem-wiz-step--done" : "") + (i === at ? " current" : "")}
             aria-current={i === at ? "step" : undefined}
           >
             {tr(("mem.wz_step_" + s) as "mem.wz_step_source")}

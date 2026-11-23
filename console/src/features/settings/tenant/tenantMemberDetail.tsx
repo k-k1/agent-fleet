@@ -740,7 +740,7 @@ export function MemberView({
                 architectures makes the next start reinstall them (docs/log/70 §70.5).
                 Shown only when the architecture actually changes: within one
                 architecture the home is portable and there is nothing to warn about. */}
-            {archChanged && <p className="admin-hint warn">{tr("admin.ws_machine_arch_warn")}</p>}
+            {archChanged && <p className="admin-hint admin-hint--warn">{tr("admin.ws_machine_arch_warn")}</p>}
             <p className="admin-hint">
               {tr("admin.mem_clamp_1")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.mem_clamp_2")}
             </p>
@@ -1037,13 +1037,13 @@ function HomeResizeNote({ resize }: { resize: HomeResize | null }) {
   const to = String(resize.to_gib ?? 0);
   switch (resize.outcome) {
     case "growing":
-      return <p className="admin-hint ok">{tr("admin.home_resize_growing", { from, to })}</p>;
+      return <p className="admin-hint admin-hint--ok">{tr("admin.home_resize_growing", { from, to })}</p>;
     case "shrink":
-      return <p className="admin-hint warn">{tr("admin.home_resize_shrink", { from, to })}</p>;
+      return <p className="admin-hint admin-hint--warn">{tr("admin.home_resize_shrink", { from, to })}</p>;
     case "no_home":
       return <p className="admin-hint">{tr("admin.home_resize_no_home", { to })}</p>;
     case "failed":
-      return <p className="admin-hint warn">{tr("admin.home_resize_failed", { detail: resize.detail ?? "" })}</p>;
+      return <p className="admin-hint admin-hint--warn">{tr("admin.home_resize_failed", { detail: resize.detail ?? "" })}</p>;
     default:
       // `same` — saving this form for any other reason lands here every time, so it says
       // nothing at all rather than reporting a non-event.
@@ -1068,7 +1068,7 @@ function ResTile({
   crit: number;
 }) {
   const level = ratio == null ? 0 : ratio >= crit ? 2 : ratio >= warn ? 1 : 0;
-  const cls = "res-tile" + (level === 2 ? " crit" : level === 1 ? " warn" : "");
+  const cls = "res-tile" + (level === 2 ? " res-tile--crit" : level === 1 ? " res-tile--warn" : "");
   return (
     <div className={cls}>
       <div className="rt-label">{label}</div>

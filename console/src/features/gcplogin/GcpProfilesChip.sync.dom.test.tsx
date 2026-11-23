@@ -136,6 +136,6 @@ describe("Google Cloud badge and Settings", () => {
     expect(asked.filter((p) => p === "api/gcp-login/profiles").length).toBe(before + 1);
     expect(asked).toContain("api/gcp-login");
     expect(chip()!.textContent).toContain("Dev");
-    expect(chip()!.className).toContain("ok");
+    expect(chip()!.className).toContain("ws-aws-btn--ok");
   });
 });

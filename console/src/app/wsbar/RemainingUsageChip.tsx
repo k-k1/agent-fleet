@@ -70,7 +70,7 @@ export function RemainingUsageChip({ src, tenant }: { src: RemainingSource; tena
       >
         <Icon name={kindIcon(src.kind)} />
         <span className="ws-usage-name">{kindLabel(src.kind)}</span>
-        <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
+        <span className={"ws-usage-nums" + (bind ? " ws-usage-nums--crit" : unavailable ? " muted" : "")}>{label}</span>
         <Icon name="chevron-down" />
       </Button>
       {open && (

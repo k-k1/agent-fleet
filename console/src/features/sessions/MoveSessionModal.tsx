@@ -157,10 +157,10 @@ export function MoveSessionModal({ session, fromLimit = false, onClose }: MoveSe
           </div>
         )}
         {load.state === "ready" && load.stale && (
-          <div className="ui-field-hint warn move-stale">{tr("move.reread_failed", { reason: errText(load.stale) })}</div>
+          <div className="ui-field-hint ui-field-hint--warn move-stale">{tr("move.reread_failed", { reason: errText(load.stale) })}</div>
         )}
         {load.state === "error" && !result && (
-          <div className="ui-field-hint warn move-load-error">{tr("move.load_failed", { reason: errText(load.error) })}</div>
+          <div className="ui-field-hint ui-field-hint--warn move-load-error">{tr("move.load_failed", { reason: errText(load.error) })}</div>
         )}
         {result && (
           <MoveDone result={result} delivery={doneDelivery} busy={busy} onDeliver={(t) => run("deliver", () => moveDeliver(t), delivered)} />
@@ -293,7 +293,7 @@ function MoveForm({
     >
       <div className="ui-field-hint">{tr("move.intro", { kind: kindDisplayName(preview.kind) })}</div>
       {preview.refusal && (
-        <div className="ui-field-hint warn move-refusal" role="alert">
+        <div className="ui-field-hint ui-field-hint--warn move-refusal" role="alert">
           <Icon name="warning" /> {refusalText(preview.refusal, tr)}
         </div>
       )}
@@ -360,7 +360,7 @@ function MoveForm({
       )}
 
       {warnings.includes("managed_cursor_mirror_empty") && (
-        <div className="ui-field-hint warn move-warn-cursor">
+        <div className="ui-field-hint ui-field-hint--warn move-warn-cursor">
           <Icon name="warning" /> {tr("move.warn.managed_cursor_mirror_empty")}
         </div>
       )}
@@ -396,7 +396,7 @@ function MoveForm({
         <div className="ui-field move-children">
           <span className="ui-field-label">{tr("move.children_label")}</span>
           {warnings.includes("children_running") && (
-            <div className="ui-field-hint warn move-warn-children">
+            <div className="ui-field-hint ui-field-hint--warn move-warn-children">
               <Icon name="warning" /> {tr("move.warn.children_running")}
             </div>
           )}
@@ -434,7 +434,7 @@ function MoveGitSection({ preview }: { preview: MovePreview }) {
         <div className="ui-field-hint">{tr("move.git_unavailable")}</div>
       ) : g.dirty ? (
         <>
-          <div className="ui-field-hint warn move-git-dirty">
+          <div className="ui-field-hint ui-field-hint--warn move-git-dirty">
             <Icon name="warning" /> {tr("move.git_dirty")}
           </div>
           <pre className="move-pre">{[g.status, g.diffStat].filter(Boolean).join("\n\n")}</pre>
@@ -479,7 +479,7 @@ function MovePendingView({
   const running = !!p?.busy;
   return (
     <div className="move-pending">
-      <div className="ui-field-hint warn" role="alert">
+      <div className="ui-field-hint ui-field-hint--warn" role="alert">
         <Icon name="warning" /> {tr(running ? "move.pending_running" : "move.pending_intro", { target })}
       </div>
       {p?.error && <div className="ui-field-hint move-pending-error">{tr("move.pending_error", { reason: p.error })}</div>}
@@ -557,7 +557,7 @@ function MoveDone({
       <div className="ui-field-hint">{tr("move.done_file", { file: result.file, size: fmtSize(result.sizeBytes ?? 0) })}</div>
       {!!result.cut && <div className="ui-field-hint">{tr("move.done_cut", { n: result.cut })}</div>}
       {!result.sourceStopped && (
-        <div className="ui-field-hint warn">{tr("move.done_not_stopped", { reason: result.stopError || "" })}</div>
+        <div className="ui-field-hint ui-field-hint--warn">{tr("move.done_not_stopped", { reason: result.stopError || "" })}</div>
       )}
       {delivery && <DeliveryRow delivery={delivery} busy={busy} onDeliver={() => onDeliver(delivery.target)} />}
     </div>
@@ -572,7 +572,7 @@ function DeliveryRow({ delivery, busy, onDeliver }: { delivery: { target: string
   const key = st === "pending" ? "move.delivery_pending" : st === "failed" ? "move.delivery_failed" : "move.delivery_unknown";
   return (
     <div className="ui-field move-delivery">
-      <div className="ui-field-hint warn">
+      <div className="ui-field-hint ui-field-hint--warn">
         <Icon name="warning" /> {tr(key, { target: sessionLabel(delivery.target) })}
       </div>
       {delivery.deliverable && (
@@ -589,7 +589,7 @@ function DeliveryRow({ delivery, busy, onDeliver }: { delivery: { target: string
 function MoveFailure({ failure }: { failure: MoveRefusal }) {
   const tr = useT();
   return (
-    <div className="ui-field-hint warn move-failure" role="alert">
+    <div className="ui-field-hint ui-field-hint--warn move-failure" role="alert">
       <Icon name="warning" /> {refusalText(failure, tr)}
     </div>
   );

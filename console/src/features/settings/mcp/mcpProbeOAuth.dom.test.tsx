@@ -53,7 +53,7 @@ describe("OAuth connection-test result", () => {
   it("renders as sign-in required, not as a failure", () => {
     setLocale("en");
     const el = render(oauth);
-    expect(el.querySelector(".mcp-probe.bad")).toBeNull();
+    expect(el.querySelector(".mcp-probe.mcp-probe--bad")).toBeNull();
     expect(el.querySelector(".mcp-probe.info")).not.toBeNull();
     const text = el.textContent || "";
     expect(text).toContain("OAuth sign-in required");
@@ -109,6 +109,6 @@ describe("OAuth connection-test result", () => {
 
   it("leaves an ordinary failure red", () => {
     const el = render({ ok: false, toolCount: 0, elapsedMs: 1, error: "HTTP 401" });
-    expect(el.querySelector(".mcp-probe.bad")).not.toBeNull();
+    expect(el.querySelector(".mcp-probe.mcp-probe--bad")).not.toBeNull();
   });
 });

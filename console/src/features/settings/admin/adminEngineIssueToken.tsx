@@ -207,7 +207,7 @@ function IssuedToken({
           weight of the prohibition is on how loudly this is said. */}
       {view.has_workspace ? (
         <div className="engines-issue-person">
-          <span className="engines-model-tag bad">{tr("admin.engines_issue_has_workspace_tag")}</span>
+          <span className="engines-model-tag engines-model-tag--bad">{tr("admin.engines_issue_has_workspace_tag")}</span>
           <p className="form-err">{tr("admin.engines_issue_has_workspace")}</p>
         </div>
       ) : (

@@ -364,11 +364,11 @@ function BrowseCardFooter({ hit, readOnly, onTakeIn }: Pick<BrowseCardProps, "hi
 function CatalogRestrictionTags({ value }: { value: Pick<IngestHit, "restrictions" | "gated" | "login_required" | "commercial_use" | "gated_needs_acceptance" | "trained_words"> }) {
   const tr = useT();
   return <>
-    {value.login_required === "yes" && <span className="engines-model-tag warn" title={tr("admin.engines_hit_login_note")}>{tr("admin.engines_hit_login_required")}</span>}
-    {value.restrictions?.length ? value.restrictions.map((code) => <span key={code} className={`engines-model-tag${CATALOG_HARD_RESTRICTIONS.has(code) ? " warn" : ""}`}>{tMaybe(`admin.engines_limit_${code}`) ?? code}</span>)
-      : value.gated && <span className="engines-model-tag warn">{tr("admin.engines_ingest_hit_gated")}</span>}
-    {value.commercial_use === "no" && <span className="engines-model-tag warn">{tr("admin.engines_model_noncommercial")}</span>}
-    {value.gated_needs_acceptance && <span className="engines-model-tag warn">{tr("admin.catalog_gate_accept" as never)}</span>}
+    {value.login_required === "yes" && <span className="engines-model-tag engines-model-tag--warn" title={tr("admin.engines_hit_login_note")}>{tr("admin.engines_hit_login_required")}</span>}
+    {value.restrictions?.length ? value.restrictions.map((code) => <span key={code} className={`engines-model-tag${CATALOG_HARD_RESTRICTIONS.has(code) ? " engines-model-tag--warn" : ""}`}>{tMaybe(`admin.engines_limit_${code}`) ?? code}</span>)
+      : value.gated && <span className="engines-model-tag engines-model-tag--warn">{tr("admin.engines_ingest_hit_gated")}</span>}
+    {value.commercial_use === "no" && <span className="engines-model-tag engines-model-tag--warn">{tr("admin.engines_model_noncommercial")}</span>}
+    {value.gated_needs_acceptance && <span className="engines-model-tag engines-model-tag--warn">{tr("admin.catalog_gate_accept" as never)}</span>}
     {!!value.trained_words?.length && <span className="engines-model-tag">{tr("admin.engines_hit_trigger")}: {value.trained_words.join(", ")}</span>}
   </>;
 }
@@ -425,7 +425,7 @@ export function NoEngineCatalog({ sources }: { sources: CatalogSource[] }) {
         <Button variant="ghost" small role="tab" aria-selected={image} className={image ? "active" : ""} onClick={() => switchRole("image")}><Icon name="file-media" />{tr("admin.engines_role_image")}</Button>
         <Button variant="ghost" small role="tab" aria-selected={!image} className={!image ? "active" : ""} onClick={() => switchRole("llm")}><Icon name="comment" />{tr("admin.engines_role_llm")}</Button>
       </div>
-      <span className="engines-model-tag lead">{tr("admin.catalog_view_search" as never)}</span>
+      <span className="engines-model-tag engines-model-tag--lead">{tr("admin.catalog_view_search" as never)}</span>
     </div>
     <p className="admin-hint">{tr("admin.engines_browse_note")}</p>
     <div className="engine-catalog-toolbar">

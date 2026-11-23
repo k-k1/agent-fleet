@@ -563,7 +563,7 @@ export function DelegationCard({ p, agentName }: { p: Part; agentName: string })
       <div className="mt-delegation-head">
         <Icon name="repo-forked" />
         <span className="mt-delegation-title">{tr("mirror.delegation_title", { name: agentName })}</span>
-        <span className={"mt-delegation-status " + status}>{statusLabel[status] || status}</span>
+        <span className={"mt-delegation-status mt-delegation-status--" + status}>{statusLabel[status] || status}</span>
       </div>
       {(p.info || p.agentType || p.model) && (
         <div className="mt-delegation-meta">
@@ -1182,7 +1182,7 @@ export function PlanBlock({
         <span className="mt-plan-title">{planTitle(plan)}</span>
         {pending && <span className="mt-plan-badge">{tr("mirror.approval_pending")}</span>}
         {decided && (
-          <span className={"mt-plan-badge" + (approved ? " ok" : rejected ? " no" : "")}>
+          <span className={"mt-plan-badge" + (approved ? " mt-plan-badge--ok" : rejected ? " no" : "")}>
             {approved ? tr("mirror.approved") : rejected ? tr("mirror.rejected") : tr("mirror.decided")}
           </span>
         )}

@@ -230,7 +230,7 @@ export function SendSelectionModal({
         <div className="ui-field">
           <div className="ui-field-label">{tr("send.destination")}</div>
           {noTarget ? (
-            <div className="ui-field-hint warn">
+            <div className="ui-field-hint ui-field-hint--warn">
               {tr("send.no_running")}
             </div>
           ) : (
@@ -263,7 +263,7 @@ export function SendSelectionModal({
               )}
             </select>
           )}
-          <div className={"ui-field-hint" + (sessionStopped ? " warn" : "")}>
+          <div className={"ui-field-hint" + (sessionStopped ? " ui-field-hint--warn" : "")}>
             {sessionStopped
               ? tr("send.hint_stopped")
               : isAssistant

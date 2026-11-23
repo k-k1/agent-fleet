@@ -197,7 +197,7 @@ describe("the engine panel a granted tenant_admin sees", () => {
     expect(text()).toContain("CreativeML Open RAIL++-M");
     // On or off is a badge, not the label of a button that would change it — which is the
     // whole reason the read-only list still reads correctly.
-    expect(host?.querySelector(".engines-model-tag.on")).toBeTruthy();
+    expect(host?.querySelector(".engines-model-tag.engines-model-tag--on")).toBeTruthy();
   });
 
   it("keeps the way in to taking a model in, which is the one thing the grant is for", async () => {

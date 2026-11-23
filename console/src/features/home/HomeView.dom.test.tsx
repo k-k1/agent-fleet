@@ -129,7 +129,7 @@ describe("Home", () => {
     conns = { cursor: { connected: true } };
     await mount();
     const steps = [...setupCard()!.querySelectorAll(".onboard-step")];
-    expect(steps[1].classList.contains("done")).toBe(true);
+    expect(steps[1].classList.contains("onboard-step--done")).toBe(true);
     const chat = [...setupCard()!.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("onb.start_chat")))!;
     expect(chat.disabled).toBe(false);
   });

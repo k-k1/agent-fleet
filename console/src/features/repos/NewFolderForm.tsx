@@ -53,7 +53,7 @@ export function NewFolderForm({ value, onChange, taken, onSubmit, autoFocus = fa
       />
       <span className="ui-field-hint">{tr("rp.new_folder_hint")}</span>
       {!!trimmed && !newFolderNameOk(value, taken) && (
-        <span className="ui-field-hint warn">{tr(taken_ ? "rp.new_folder_taken" : "rp.name_rule_hint")}</span>
+        <span className="ui-field-hint ui-field-hint--warn">{tr(taken_ ? "rp.new_folder_taken" : "rp.name_rule_hint")}</span>
       )}
     </div>
   );

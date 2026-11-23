@@ -153,7 +153,7 @@ function WorkLinkChip({ link }: { link: SessionWorkLink }) {
   return (
     <button
       type="button"
-      className={"sess-item" + (role ? " role-" + role : "") + (done ? " done" : "")}
+      className={"sess-item" + (role ? " role-" + role : "") + (done ? " sess-item--done" : "")}
       title={tr("srow.link_title", {
         key: link.key,
         role: prState ? [roleText, tr(`srow.pr_state.${prState}`)].filter(Boolean).join(" · ") : roleText,

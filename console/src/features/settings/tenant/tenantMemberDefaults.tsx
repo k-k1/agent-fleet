@@ -117,7 +117,7 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
   if (!view)
     return loadFailed ? (
       <div className="pad">
-        <p className="admin-hint warn" role="alert">
+        <p className="admin-hint admin-hint--warn" role="alert">
           {error}
         </p>
         <button onClick={load}>{tr("tenant.member_defaults_retry")}</button>
@@ -200,7 +200,7 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
           </label>
         ))}
         {error && (
-          <p className="admin-hint warn" role="alert">
+          <p className="admin-hint admin-hint--warn" role="alert">
             {error}
           </p>
         )}

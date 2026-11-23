@@ -446,18 +446,6 @@
   color: var(--fg);
 }
 
-.cdot {
-  font-size: 10px;
-}
-
-.cdot.ok {
-  color: var(--ok);
-}
-
-.cdot.off {
-  color: var(--muted2);
-}
-
 .ssm-item-head {
   display: flex;
   align-items: center;
@@ -642,14 +630,14 @@
 /* A misconfiguration (undeclared proxy, unknown source address) is a warning, not a hint:
    left unnoticed it lets everyone through while you believe you restricted access, so it is
    coloured apart from the other hints. */
-.admin-hint.warn {
+.admin-hint.admin-hint--warn {
   color: var(--warn);
 }
 
 /* The other direction: a save that reached beyond the database and did what it said —
    currently only "the home is growing". Green because the ordinary hint colour reads as
    a caveat, and this one is the confirmation an admin came for. */
-.admin-hint.ok {
+.admin-hint.admin-hint--ok {
   color: var(--ok);
 }
 .engine-ledger > .admin-hint { margin: 6px 0 10px; }
@@ -715,11 +703,11 @@
   padding: 10px 12px;
 }
 
-.res-tile.warn {
+.res-tile.res-tile--warn {
   border-color: var(--warn);
 }
 
-.res-tile.crit {
+.res-tile.res-tile--crit {
   border-color: var(--err);
 }
 
@@ -728,11 +716,11 @@
   background: var(--ok);
 }
 
-.res-tile.warn .rt-fill {
+.res-tile.res-tile--warn .rt-fill {
   background: var(--warn);
 }
 
-.res-tile.crit .rt-fill {
+.res-tile.res-tile--crit .rt-fill {
   background: var(--err);
 }
 
@@ -1052,13 +1040,13 @@ label.idp-flag {
   min-width: 0;
 }
 
-.mcp-probe.ok {
+.mcp-probe.mcp-probe--ok {
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 40%, var(--border2));
   background: color-mix(in srgb, var(--ok) 8%, transparent);
 }
 
-.mcp-probe.bad {
+.mcp-probe.mcp-probe--bad {
   color: var(--err);
   border-color: color-mix(in srgb, var(--err) 40%, var(--border2));
   background: color-mix(in srgb, var(--err) 8%, transparent);

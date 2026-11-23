@@ -482,7 +482,7 @@ button.ssm-row-action.danger:hover:not(:disabled) {
 }
 
 /* a profile edited to a new name or portal: the Agent's badge would be stale (#1409) */
-.ssm-login-state.relogin {
+.ssm-login-state.ssm-login-state--relogin {
   color: var(--warn);
   border-color: currentColor;
 }
@@ -556,7 +556,7 @@ button.ssm-row-action.danger:hover:not(:disabled) {
   white-space: nowrap;
 }
 
-.ssm-login-state.signed_in {
+.ssm-login-state.ssm-login-state--signed_in {
   color: var(--ok);
   border-color: currentColor;
 }
@@ -730,7 +730,7 @@ button.ssm-row-action.danger:hover:not(:disabled) {
   background: transparent;
 }
 
-.bake-step.done .bake-dot {
+.bake-step.bake-step--done .bake-dot {
   background: var(--border);
   border-color: var(--border);
 }

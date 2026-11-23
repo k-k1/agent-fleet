@@ -374,6 +374,11 @@ result).
   stylesheet. CI runs it with `--max-dups` / `--max-bare` ceilings at the current counts, so the
   counts can fall but not grow. A fall never fails; the script then suggests lowering the
   ceilings in `package.json` (`css:dup:ci`), which is optional and can wait for a clean-up PR.
+- **State modifiers are `<block>--<state>`** (`.res-tile.res-tile--warn`, set from data as
+  `"res-tile res-tile--" + level`). A bare `.warn` / `.on` / `.failed` is a name every feature
+  stylesheet reuses, so `is-<state>` / `tone-<tone>` would only move the collision; prefixing the
+  owning block keeps each modifier unique to one file. Keep the `.block.block--state` compound so
+  the specificity is unchanged.
 - **CI** (`.github/workflows/ci.yml`, job `console`) runs typecheck, lint, i18n lint,
   the css-dup ceiling, vitest, two checks in real headless Chromium (`pdf:check`, `doc:check`) and the build.
 - The other scripts in `package.json` (screenshots, mirror and viewer scroll checks, the

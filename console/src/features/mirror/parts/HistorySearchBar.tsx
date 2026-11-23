@@ -31,7 +31,7 @@ export function HistorySearchBar({
   onCancel: () => void;
 }) {
   return (
-    <div className={"mirror-histsearch" + (failed ? " failed" : "")}>
+    <div className={"mirror-histsearch" + (failed ? " mirror-histsearch--failed" : "")}>
       <Icon name="search" />
       <span className="mirror-histsearch-label">{tr(failed ? "mirror.hsearch_failed" : "mirror.hsearch_label")}</span>
       <input

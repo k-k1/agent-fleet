@@ -381,7 +381,7 @@ describe("member machine class", () => {
     useSizing(SIZING_CLASSES);
     await mount();
     await openEditor();
-    const warned = () => !!document.querySelector(".limit-edit .admin-hint.warn");
+    const warned = () => !!document.querySelector(".limit-edit .admin-hint.admin-hint--warn");
     expect(warned()).toBe(false);
 
     await act(async () => buttonWith("大きい（Intel）")!.click()); // x86_64 → x86_64
@@ -398,7 +398,7 @@ describe("member machine class", () => {
     const follower = { ...MEMBER, slot_class: "", slot_class_effective: "arm", slot_class_default: "arm" };
     await mount(follower);
     await openEditor();
-    const warned = () => !!document.querySelector(".limit-edit .admin-hint.warn");
+    const warned = () => !!document.querySelector(".limit-edit .admin-hint.admin-hint--warn");
     const units = () => Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) => (e.textContent || "").trim());
     expect(units()).toContain("→ m7g.large（2 vCPU / 8 GiB・専有）");
     expect(warned()).toBe(false);
@@ -415,7 +415,7 @@ describe("member machine class", () => {
     useSizing(SIZING_CLASSES);
     await mount({ ...MEMBER, slot_class: "standard", slot_class_effective: "standard", slot_class_default: "arm" });
     await openEditor();
-    const warned = () => !!document.querySelector(".limit-edit .admin-hint.warn");
+    const warned = () => !!document.querySelector(".limit-edit .admin-hint.admin-hint--warn");
     const units = () => Array.from(document.querySelectorAll(".limit-edit .af-unit")).map((e) => (e.textContent || "").trim());
     expect(warned()).toBe(false);
     await act(async () => buttonWith("テナントの既定")!.click()); // x86_64 → arm64
@@ -428,7 +428,7 @@ describe("member machine class", () => {
     await mount({ ...MEMBER, slot_class: "arm", slot_class_effective: "arm", slot_class_default: "arm" });
     await openEditor();
     await act(async () => buttonWith("テナントの既定")!.click()); // arm64 → arm64
-    expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(false);
+    expect(!!document.querySelector(".limit-edit .admin-hint.admin-hint--warn")).toBe(false);
   });
 
   // A stored id the deployment no longer offers is substituted by the CP; the editor must show
@@ -477,11 +477,11 @@ describe("saved values survive reopening the editor", () => {
     await mount();
     await openEditor();
     await act(async () => buttonWith("省コスト（Arm）")!.click());
-    expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(true);
+    expect(!!document.querySelector(".limit-edit .admin-hint.admin-hint--warn")).toBe(true);
     await act(async () => buttonWith("保存")!.click());
     await openEditor();
     // It is already arm, so on reopening there is nothing that would change.
-    expect(!!document.querySelector(".limit-edit .admin-hint.warn")).toBe(false);
+    expect(!!document.querySelector(".limit-edit .admin-hint.admin-hint--warn")).toBe(false);
   });
 });
 
@@ -622,14 +622,14 @@ describe("home resize outcome", () => {
     await saveWith({ outcome: "growing", from_gib: 50, to_gib: 100 });
     expect(note()).toContain("50");
     expect(note()).toContain("100");
-    expect(document.querySelector(".ws-size .admin-hint")!.className).toContain("ok");
+    expect(document.querySelector(".ws-size .admin-hint")!.className).toContain("admin-hint--ok");
   });
 
   // EBS cannot shrink. The number is stored and the disk is untouched, which is the one
   // outcome most likely to be read as "done" if it were not said.
   it("warns that a smaller number left the existing home alone", async () => {
     await saveWith({ outcome: "shrink", from_gib: 100, to_gib: 50 });
-    expect(document.querySelector(".ws-size .admin-hint")!.className).toContain("warn");
+    expect(document.querySelector(".ws-size .admin-hint")!.className).toContain("admin-hint--warn");
     expect(note()).toContain("100");
   });
 

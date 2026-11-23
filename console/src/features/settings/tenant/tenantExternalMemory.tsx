@@ -58,7 +58,7 @@ export function TenantExternalMemoryView({ slug }: { slug: string }) {
       <h4>{tr("tenant.ext_memory_title")}</h4>
       <p className="admin-hint">{tr("tenant.ext_memory_note")}</p>
       {enabled === null ? (
-        <p className={failed ? "admin-hint warn" : "muted"}>
+        <p className={failed ? "admin-hint admin-hint--warn" : "muted"}>
           {failed ? tr("tenant.ext_memory_load_failed") : tr("common.loading")}
         </p>
       ) : (

@@ -129,7 +129,7 @@ export function TenantBranchRulesView({ slug }: { slug: string }) {
   if (!view)
     return loadFailed ? (
       <div className="pad">
-        <p className="admin-hint warn" role="alert">
+        <p className="admin-hint admin-hint--warn" role="alert">
           {error}
         </p>
         <button onClick={load}>{tr("tenant.branch_rules_retry")}</button>
@@ -165,7 +165,7 @@ export function TenantBranchRulesView({ slug }: { slug: string }) {
         <p className="admin-hint">{tr("tenant.branch_rules_fields_hint")}</p>
         <p className="admin-hint">{tr("tenant.branch_rules_poll_hint")}</p>
         {error && (
-          <p className="admin-hint warn" role="alert">
+          <p className="admin-hint admin-hint--warn" role="alert">
             {error}
           </p>
         )}

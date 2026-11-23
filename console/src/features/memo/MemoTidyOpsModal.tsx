@@ -195,7 +195,7 @@ export function MemoTidyOpsModal({ memos, category, categories, allMemos, onDone
     <Modal title={tr("memo.tidyop_title")} onClose={onClose} className="memo-tidy-modal" lockClose={busy}>
       <div className="ui-modal-body">
         {phase === "loading" && <div className="ui-field-hint">{tr("sx.tidy_loading")}</div>}
-        {phase === "failed" && <div className="ui-field-hint warn">⚠ {err}</div>}
+        {phase === "failed" && <div className="ui-field-hint ui-field-hint--warn">⚠ {err}</div>}
         {phase === "done" && applied && (
           <div className="memo-tidy-done">
             <p>
@@ -210,8 +210,8 @@ export function MemoTidyOpsModal({ memos, category, categories, allMemos, onDone
         {phase === "preview" && review && (
           <>
             <div className="ui-field-hint">{tr("memo.tidyop_intro")}</div>
-            {mixed && <div className="ui-field-hint warn">⚠ {tr("memo.tidyop_mixed_states")}</div>}
-            {notice && <div className="ui-field-hint warn">⚠ {notice}</div>}
+            {mixed && <div className="ui-field-hint ui-field-hint--warn">⚠ {tr("memo.tidyop_mixed_states")}</div>}
+            {notice && <div className="ui-field-hint ui-field-hint--warn">⚠ {notice}</div>}
             {malformed > 0 && <div className="ui-field-hint">{tr("memo.tidyop_malformed", { count: malformed })}</div>}
             {review.items.length === 0 && review.leftOut.length === 0 && <div className="ui-field-hint">{tr("memo.tidyop_none")}</div>}
             <div className="memo-tidy-list">{review.items.map(row)}</div>

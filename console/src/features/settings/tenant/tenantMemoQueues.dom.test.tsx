@@ -75,6 +75,6 @@ describe("tenant memo auto-run switch", () => {
     api.mockResolvedValue({ error: { message: "x" } });
     await mount();
     expect(document.querySelectorAll(".seg .seg-btn").length).toBe(0);
-    expect(document.querySelector(".admin-hint.warn")).not.toBeNull();
+    expect(document.querySelector(".admin-hint.admin-hint--warn")).not.toBeNull();
   });
 });

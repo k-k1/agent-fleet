@@ -90,14 +90,14 @@ history button
   background: var(--bg);
   font-size: 12px;
 }
-.mirror-histsearch.failed {
+.mirror-histsearch.mirror-histsearch--failed {
   border-color: color-mix(in srgb, var(--warn) 55%, var(--border));
 }
 .mirror-histsearch-label {
   flex: none;
   color: var(--muted);
 }
-.mirror-histsearch.failed .mirror-histsearch-label {
+.mirror-histsearch.mirror-histsearch--failed .mirror-histsearch-label {
   color: var(--warn);
 }
 /* The query field carries no chrome of its own: the band around it is the affordance, and a

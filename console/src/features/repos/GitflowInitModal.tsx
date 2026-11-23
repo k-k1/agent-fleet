@@ -146,7 +146,7 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
       case "origin":
         return <span className="ui-field-hint gitflow-place">{tr("gitflow.origin_only", { branch: name })}</span>;
       default:
-        return <span className="ui-field-hint warn gitflow-place">{tr("gitflow.missing", { branch: name })}</span>;
+        return <span className="ui-field-hint ui-field-hint--warn gitflow-place">{tr("gitflow.missing", { branch: name })}</span>;
     }
   };
 
@@ -161,15 +161,15 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
     >
       <div className="ui-modal-body">
         <p className="ui-field-hint">{tr("gitflow.intro")}</p>
-        <p className="ui-field-hint warn">{tr("gitflow.shared")}</p>
+        <p className="ui-field-hint ui-field-hint--warn">{tr("gitflow.shared")}</p>
         {st === undefined && <p className="ui-field-hint">{tr("common.loading")}</p>}
         {st === null && <p className="ui-field-hint svn-auth-err">{tr("gitflow.unavailable")}</p>}
         {st && v && (
           <>
             {st.committed.length > 0 && (
-              <p className="ui-field-hint warn">{tr("gitflow.committed", { files: st.committed.join(", ") })}</p>
+              <p className="ui-field-hint ui-field-hint--warn">{tr("gitflow.committed", { files: st.committed.join(", ") })}</p>
             )}
-            {st.native && <p className="ui-field-hint warn">{tr("gitflow.native")}</p>}
+            {st.native && <p className="ui-field-hint ui-field-hint--warn">{tr("gitflow.native")}</p>}
             <datalist id={listId}>
               {options.map((b) => (
                 <option key={b} value={b} />
@@ -211,7 +211,7 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
             <p className="ui-field-hint">{tr("gitflow.bugfix_hint")}</p>
             {changes.length > 0 && (
               <div className="gitflow-changes" role="status">
-                <span className="ui-field-hint warn">{tr("gitflow.overwrites")}</span>
+                <span className="ui-field-hint ui-field-hint--warn">{tr("gitflow.overwrites")}</span>
                 <ul>
                   {changes.map((c) => (
                     <li key={c.key}>
