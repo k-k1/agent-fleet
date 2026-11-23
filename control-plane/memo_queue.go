@@ -654,6 +654,10 @@ func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Iden
 				continue
 			}
 			dto := memoQueueToDTO(q, c)
+			if !a.mgr.memoRepoSettings {
+				// The card that would show the difference is not offered: neither is a mark for it.
+				dto.RepoCheck = nil
+			}
 			// A destination whose queue settings are gone is not shown: apply ignores it the same way.
 			dto.TidyDestinations = []string{}
 			for _, id := range q.TidyDestinations {

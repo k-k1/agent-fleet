@@ -456,3 +456,50 @@ func TestAutorunInstructionRefusesBadInput(t *testing.T) {
 		}
 	}
 }
+
+// A name git could read as pathspec magic or a glob is the file of that name.
+func TestAutorunInstructionReadsPathsLiterally(t *testing.T) {
+	home, seed, _ := autorunClone(t, "version: 1\n")
+	writeFile(t, filepath.Join(seed, ":run.md"), "colon\n")
+	writeFile(t, filepath.Join(seed, "a.md"), "a\n")
+	gitAt(t, seed, "add", "--", ":(literal):run.md", "a.md")
+	gitAt(t, seed, "commit", "-m", "odd names")
+	gitAt(t, seed, "push", filepath.Join(home, "origin.git"), "main")
+	_, f, _ := getAutorunFile(t)
+	if code, in, body := getAutorunInstruction(t, f.Commit, ":run.md"); code != 200 || !in.Found || in.Content != "colon\n" {
+		t.Fatalf(":run.md: status %d, %+v (%s)", code, in, body)
+	}
+	if code, in, body := getAutorunInstruction(t, f.Commit, "*.md"); code != 200 || in.Found {
+		t.Fatalf("*.md matched a file: status %d, %+v (%s)", code, in, body)
+	}
+}
+
+// Only a commit's own full id: an annotated tag that peels to the commit is refused, and so is
+// a 40-digit prefix in a SHA-256 clone.
+func TestAutorunInstructionWantsAFullCommitID(t *testing.T) {
+	_, _, dir := autorunClone(t, "version: 1\n")
+	_, f, _ := getAutorunFile(t)
+	gitAt(t, dir, "tag", "-a", "-m", "t", "v1", f.Commit)
+	tag := strings.TrimSpace(gitAt(t, dir, "rev-parse", "v1"))
+	if code, _, body := getAutorunInstruction(t, tag, AutorunFilePath); code != 409 || !strings.Contains(body, "commit_missing") {
+		t.Fatalf("annotated tag: status %d: %s", code, body)
+	}
+
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, filepath.Dir(dir), "init", "-q", "--object-format=sha256", "-b", "main", dir)
+	writeFile(t, filepath.Join(dir, "run.md"), "x\n")
+	gitAt(t, dir, "add", "run.md")
+	gitAt(t, dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "c")
+	full := strings.TrimSpace(gitAt(t, dir, "rev-parse", "HEAD"))
+	if len(full) != 64 {
+		t.Skipf("no SHA-256 object format here (%q)", full)
+	}
+	if code, _, body := getAutorunInstruction(t, full[:40], "run.md"); code != 409 || !strings.Contains(body, "commit_missing") {
+		t.Fatalf("prefix: status %d: %s", code, body)
+	}
+	if code, in, body := getAutorunInstruction(t, full, "run.md"); code != 200 || in.Content != "x\n" {
+		t.Fatalf("full id: status %d, %+v (%s)", code, in, body)
+	}
+}

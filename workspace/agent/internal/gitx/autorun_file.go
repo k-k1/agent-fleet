@@ -42,8 +42,9 @@ type AutorunFile struct {
 }
 
 // autorunEnv keeps refs/replace out of every read: a run can write replace refs into the clone,
-// and with them make the right commit id show other content.
-var autorunEnv = []string{"GIT_NO_REPLACE_OBJECTS=1"}
+// and with them make the right commit id show other content. Paths are literal: a file named
+// ":x" or "*" is that file, never pathspec magic or a glob.
+var autorunEnv = []string{"GIT_NO_REPLACE_OBJECTS=1", "GIT_LITERAL_PATHSPECS=1"}
 
 // HandleAutorunFile reads the settings file from origin's default branch only, never from the
 // working tree or a working branch: a run in this workspace can write both, and must not be
@@ -89,10 +90,11 @@ type AutorunInstruction struct {
 	Content string `json:"content"`
 }
 
-// HandleAutorunInstruction reads ?path= from ?commit=, which must be a commit the clone already
-// holds: the one HandleAutorunFile answered, so the instruction comes from the same commit as the
-// settings beside it. Nothing is fetched and no ref is read, so a working branch or the working
-// tree can never stand in for it.
+// HandleAutorunInstruction reads ?path= from ?commit=, which must be the full id of a commit the
+// clone already holds: the one HandleAutorunFile answered, so the instruction comes from the same
+// commit as the settings beside it. No ref is read or fetched, so a working branch or the working
+// tree can never stand in for it. A partial clone may fetch the file's blob by its id, as the
+// settings read does: the id pins the content, and the read's deadline bounds the fetch.
 func HandleAutorunInstruction(w http.ResponseWriter, r *http.Request) {
 	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
@@ -111,7 +113,7 @@ func HandleAutorunInstruction(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	out := AutorunInstruction{Path: p, Commit: sha}
 	code := ""
-	if _, err := autorunGit(ctx, dir, "cat-file", "-e", sha+"^{commit}"); err != nil {
+	if !autorunIsCommit(ctx, dir, sha) {
 		code = "commit_missing"
 	} else {
 		out.Content, out.Found, code = readAutorunBlob(ctx, dir, sha, p, AutorunInstructionMaxBytes)
@@ -134,8 +136,20 @@ func HandleAutorunInstruction(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
+// autorunIsCommit says whether sha is the full id of a commit object in the clone. rev-parse
+// expands a unique prefix (a 40-digit one in a SHA-256 clone) and cat-file -t names the object's
+// own type, so neither a prefix nor an annotated tag that peels to a commit passes.
+func autorunIsCommit(ctx context.Context, dir, sha string) bool {
+	full, err := autorunGit(ctx, dir, "rev-parse", "--verify", "--quiet", sha)
+	if err != nil || strings.TrimSpace(string(full)) != sha {
+		return false
+	}
+	typ, err := autorunGit(ctx, dir, "cat-file", "-t", sha)
+	return err == nil && strings.TrimSpace(string(typ)) == "commit"
+}
+
 var autorunInstructionErrText = map[string]string{
-	"commit_missing":   "the working copy does not hold that commit; read the settings file again",
+	"commit_missing":   "the working copy holds no commit with that full id; read the settings file again",
 	"read_failed":      "the instruction file could not be read from the commit",
 	"timeout":          "reading the instruction file took too long",
 	"file_not_regular": "the instruction file is not a regular file",

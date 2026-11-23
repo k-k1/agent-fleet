@@ -477,6 +477,9 @@ func (m *manager) memoRepoReadEntry(ctx context.Context, res *resolved, repo str
 		return bad(why)
 	case !found:
 		return bad(fmt.Sprintf("instruction_file names %s, which the commit does not hold", v.Str))
+	case strings.ContainsRune(content, 0):
+		// Postgres cannot store the byte, so an approval would fail where the difference looked fine.
+		return bad("the instruction file holds a NUL byte, which an instruction cannot hold")
 	case autorunfile.LooksLikeCredential(content):
 		return bad("the instruction file looks like it holds a credential: the repository's settings hold names only, never a secret")
 	}
@@ -522,6 +525,8 @@ func (m *manager) memoRepoEvaluate(ctx context.Context, res *resolved, c store.M
 // one category. It needs the workspace running: the file is read there, from origin.
 func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resolved) {
 	ctx := r.Context()
+	// A read is ordered by when it began: one that began earlier never replaces it (memoRepoCheckFrom).
+	started := time.Now()
 	ld, aerr := a.loadRepoFile(ctx, res, r.PathValue("categoryId"))
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -552,7 +557,7 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 	out.ApprovalTag = memoRepoApprovalTag(c, cur, hasQueue, out.Diffs)
 	if hasQueue {
 		// What the member was shown is the queue's latest read; a failed write only leaves an older one.
-		_ = a.store.SetMemoQueueRepoCheck(ctx, res.mv.MembershipID, c.ID, memoRepoCheckFrom(c, cur, &out, time.Now()))
+		_ = a.store.SetMemoQueueRepoCheck(ctx, res.mv.MembershipID, c.ID, memoRepoCheckFrom(c, cur, &out, started))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -997,7 +1002,8 @@ func (m *manager) agentAutorunInstruction(ctx context.Context, res *resolved, re
 	case code == "file_not_utf8":
 		return "", false, "the instruction file is not UTF-8 text", nil
 	case resp.StatusCode == http.StatusNotFound && code == "not_found":
-		return "", false, "", &apiError{http.StatusNotFound, errCodeMemoQueueRepoUnreadable, "the workspace has no git working copy named " + repo}
+		// The settings file was just read from it: the working copy went away in between.
+		return unreadable("the workspace no longer has a git working copy named " + repo)
 	case resp.StatusCode == http.StatusNotFound && code == "":
 		// The route's own 404: an Agent from before instruction files.
 		return unreadable("the workspace's Agent is older than this Control Plane and cannot read instruction_file")
@@ -1043,8 +1049,13 @@ func memoRepoBasis(c store.MemoCategory, q store.MemoQueue) string {
 	return hex.EncodeToString(sum[:16])
 }
 
-// memoRepoCheckFrom is the record of what GET .../repo-settings answered for the queue cur.
-func memoRepoCheckFrom(c store.MemoCategory, cur store.MemoQueue, out *memoRepoSettingsWire, now time.Time) store.MemoRepoCheck {
+// memoRepoCheckTime is a read's time on the queue: fixed width, so that the store's comparison of
+// two as text orders them (SetMemoQueueRepoCheck keeps the read that began last).
+const memoRepoCheckTime = "2006-01-02T15:04:05.000000Z07:00"
+
+// memoRepoCheckFrom is the record of what a read that began at started found for the queue cur.
+// The time is the start, not the end: a slow read that began before another must not replace it.
+func memoRepoCheckFrom(c store.MemoCategory, cur store.MemoQueue, out *memoRepoSettingsWire, started time.Time) store.MemoRepoCheck {
 	state := memoRepoCheckSame
 	switch {
 	case len(out.Errors) > 0:
@@ -1055,7 +1066,7 @@ func memoRepoCheckFrom(c store.MemoCategory, cur store.MemoQueue, out *memoRepoS
 		state = memoRepoCheckDiffers
 	}
 	return store.MemoRepoCheck{State: state, Commit: out.Commit, Diffs: len(out.Diffs), Basis: memoRepoBasis(c, cur),
-		At: now.UTC().Format(time.RFC3339)}
+		At: started.UTC().Format(memoRepoCheckTime)}
 }
 
 // memoRepoCheckOf is the queue's last read as the Console sees it: nil when there is none, or it
@@ -1141,6 +1152,10 @@ func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string, qs
 	if len(work) == 0 {
 		return
 	}
+	// A member without a workspace is left alone: resolving one would create its record.
+	if _, ok, err := rc.mgr.store.GetWorkspaceByMembership(ctx, membershipID); err != nil || !ok {
+		return
+	}
 	identityID, ok, err := rc.mgr.store.IdentityIDForMembership(ctx, membershipID)
 	if err != nil || !ok {
 		return
@@ -1149,17 +1164,25 @@ func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string, qs
 	if aerr != nil || res.rt.State(ctx) != "running" {
 		return
 	}
-	if on, err := rc.mgr.store.GetTenantMemoQueues(ctx, res.mv.TenantID); err != nil || !on {
-		return
+	// The tenant's switch is asked again before each read and each write: turned off while a
+	// read waits on the workspace, nothing more is fetched and nothing is recorded.
+	on := func() bool {
+		v, err := rc.mgr.store.GetTenantMemoQueues(ctx, res.mv.TenantID)
+		return err == nil && v
 	}
-	files := map[string]*agentAutorunFile{}
+	type read struct {
+		file    agentAutorunFile
+		started time.Time
+	}
+	files := map[string]*read{}
 	failed := map[string]bool{}
 	for _, d := range work {
-		if failed[d.c.Repo] {
+		if failed[d.c.Repo] || !on() {
 			continue
 		}
-		file := files[d.c.Repo]
-		if file == nil {
+		rd := files[d.c.Repo]
+		if rd == nil {
+			started := rc.now()
 			f, aerr := rc.mgr.agentAutorunFile(ctx, res, d.c.Repo)
 			if aerr != nil {
 				// The last read stays as it was: an unreachable remote says nothing about the file.
@@ -1167,15 +1190,21 @@ func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string, qs
 				failed[d.c.Repo] = true
 				continue
 			}
-			file = &f
-			files[d.c.Repo] = file
+			rd = &read{f, started}
+			files[d.c.Repo] = rd
+			if !on() {
+				continue
+			}
 		}
-		out := memoRepoSettingsWire{Found: file.Found, Commit: file.Commit}
-		if aerr := rc.mgr.memoRepoEvaluate(ctx, res, d.c, *file, d.q, true, &out); aerr != nil {
+		out := memoRepoSettingsWire{Found: rd.file.Found, Commit: rd.file.Commit}
+		if aerr := rc.mgr.memoRepoEvaluate(ctx, res, d.c, rd.file, d.q, true, &out); aerr != nil {
 			log.Printf("memo repo recheck: %s: %s", membershipID, aerr.code)
 			continue
 		}
-		if err := rc.mgr.store.SetMemoQueueRepoCheck(ctx, membershipID, d.c.ID, memoRepoCheckFrom(d.c, d.q, &out, rc.now())); err != nil {
+		if !on() {
+			continue
+		}
+		if err := rc.mgr.store.SetMemoQueueRepoCheck(ctx, membershipID, d.c.ID, memoRepoCheckFrom(d.c, d.q, &out, rd.started)); err != nil {
 			log.Printf("memo repo recheck: %s: record: %v", membershipID, err)
 		}
 	}

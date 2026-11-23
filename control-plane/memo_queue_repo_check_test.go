@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -48,6 +49,10 @@ func TestMemoRepoInstructionFile(t *testing.T) {
 	if got := a.requested(); len(got) != 2 || got[1] != want {
 		t.Fatalf("Agent calls %v", got)
 	}
+	asked := testCommit + " .agent-fleet/rounds.md"
+	if got := a.instrAsked; len(got) != 1 || got[0] != asked {
+		t.Fatalf("instruction reads %v, want the settings file's commit", got)
+	}
 	if rec := e.approve(id, approveBody(out)); rec.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
 	}
@@ -55,8 +60,8 @@ func TestMemoRepoInstructionFile(t *testing.T) {
 		t.Fatalf("saved %+v", q)
 	}
 	// The approval read the instruction from the same commit again.
-	if got := a.requested(); len(got) != 4 || got[3] != want {
-		t.Fatalf("Agent calls %v", got)
+	if got := a.requested(); len(got) != 4 || got[3] != want || len(a.instrAsked) != 2 || a.instrAsked[1] != asked {
+		t.Fatalf("Agent calls %v, instruction reads %v", got, a.instrAsked)
 	}
 	// A file that changed between the look and the approval is not what the member saw.
 	a.instruction(".agent-fleet/rounds.md", "newer\n")
@@ -77,6 +82,7 @@ func TestMemoRepoInstructionFileRefusals(t *testing.T) {
 		"not UTF-8":   "!file_not_utf8",
 		"over limit":  strings.Repeat("x", memoQueueInstructionMax+1),
 		"credential":  "use ghp_" + strings.Repeat("A", 36),
+		"NUL":         "run\x00it",
 	} {
 		a.instruction("run.md", content)
 		rec, out := e.repoSettings(id)
@@ -91,11 +97,18 @@ func TestMemoRepoInstructionFileRefusals(t *testing.T) {
 	if _, out := e.repoSettings(id); len(out.Errors) != 1 || !strings.Contains(out.Errors[0].Reason, "does not hold") {
 		t.Fatalf("missing: %+v", out)
 	}
-	// The workspace cannot answer: nothing is compared.
-	a.instruction("run.md", "!commit_missing")
-	if rec, _ := e.repoSettings(id); rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), errCodeMemoQueueRepoUnreadable) {
-		t.Fatalf("commit missing: %d %s", rec.Code, rec.Body.String())
+	// The workspace cannot answer, or answers about another commit, or lost the working copy
+	// since the settings file was read: nothing is compared.
+	for _, code := range []string{"!commit_missing", "!not_found", "other commit"} {
+		a.instruction("run.md", code)
+		a.mu.Lock()
+		a.instrCommit = map[bool]string{true: strings.Repeat("d", 40)}[code == "other commit"]
+		a.mu.Unlock()
+		if rec, _ := e.repoSettings(id); rec.Code != http.StatusBadGateway || !strings.Contains(rec.Body.String(), errCodeMemoQueueRepoUnreadable) {
+			t.Fatalf("%s: %d %s", code, rec.Code, rec.Body.String())
+		}
 	}
+	a.instruction("run.md", "!commit_missing")
 	if rec := e.approve(id, map[string]any{"commit": testCommit, "approvalTag": "x", "keys": []string{"instruction"}}); rec.Code != http.StatusBadGateway {
 		t.Fatalf("approve, commit missing: %d %s", rec.Code, rec.Body.String())
 	}
@@ -206,6 +219,81 @@ func TestMemoRepoRecheck(t *testing.T) {
 	rc.tick(context.Background())
 	if c := e.queueDTO(id).RepoCheck; len(a.requested()) != 3 || c == nil || c.State != memoRepoCheckSame {
 		t.Fatalf("failed read: %v %+v", a.requested(), c)
+	}
+}
+
+// A read that began earlier never replaces one that began later: the loop's read waits on the
+// workspace while the member checks the file, and lands last.
+func TestMemoRepoRecheckKeepsTheLaterRead(t *testing.T) {
+	e, a := repoEnv(t, "")
+	id := putRounds(e)
+	differs := "version: 1\ncategories:\n  rounds:\n    max_active: 3\n"
+	a.file(differs)
+	// Not a sync.Once: the member's read comes back through this hook while the first call is
+	// still inside it.
+	var first atomic.Bool
+	a.onServe = func() {
+		if first.CompareAndSwap(false, true) {
+			a.file("version: 1\ncategories:\n  rounds:\n    max_active: 2\n")
+			e.repoSettings(id)
+			a.file(differs)
+		}
+	}
+	(&memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now}).tick(context.Background())
+	if got := a.requested(); len(got) != 2 {
+		t.Fatalf("Agent calls %v", got)
+	}
+	if c := e.queueDTO(id).RepoCheck; c == nil || c.State != memoRepoCheckSame {
+		t.Fatalf("the member's later read was replaced: %+v", c)
+	}
+}
+
+// Turned off while a read waits on the workspace, the tenant's switch stops the next read and
+// every write.
+func TestMemoRepoRecheckStopsWhenTheSwitchGoesOff(t *testing.T) {
+	e, a := repoEnv(t, "")
+	app := putRounds(e)
+	lib := e.category("lib", "rounds")
+	if rec := e.do("a", "PUT", "/api/memo-queues/"+lib, map[string]any{"instruction": "x", "enabled": true}); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+	}
+	a.file("version: 1\ncategories:\n  rounds:\n    max_active: 3\n")
+	a.onServe = func() { e.memoQueuesOn(false) }
+	(&memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now}).tick(context.Background())
+	if got := a.requested(); len(got) != 1 {
+		t.Fatalf("Agent calls %v", got)
+	}
+	for _, id := range []string{app, lib} {
+		if q, _ := e.queueOf(id); q.RepoCheck.State != "" {
+			t.Fatalf("recorded with the switch off: %+v", q.RepoCheck)
+		}
+	}
+}
+
+// A member who has never had a workspace gets none from the loop.
+func TestMemoRepoRecheckCreatesNoWorkspace(t *testing.T) {
+	e := newInboxEnv(t)
+	e.memoQueuesOn(true)
+	e.mgr.memoRepoSettings = true
+	putRounds(e)
+	(&memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now}).tick(context.Background())
+	if _, ok, err := e.st.GetWorkspaceByMembership(context.Background(), e.members["a"]); err != nil || ok {
+		t.Fatalf("workspace created: %v %v", ok, err)
+	}
+}
+
+// With repository settings turned off, a read kept from before is not shown.
+func TestMemoRepoCheckHiddenWhenTurnedOff(t *testing.T) {
+	e, a := repoEnv(t, "")
+	id := putRounds(e)
+	a.file("version: 1\ncategories:\n  rounds:\n    max_active: 3\n")
+	e.repoSettings(id)
+	if e.queueDTO(id).RepoCheck == nil {
+		t.Fatal("no read recorded")
+	}
+	e.mgr.memoRepoSettings = false
+	if c := e.queueDTO(id).RepoCheck; c != nil {
+		t.Fatalf("shown with the switch off: %+v", c)
 	}
 }
 

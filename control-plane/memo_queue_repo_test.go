@@ -26,10 +26,14 @@ type fakeAutorunAgent struct {
 	// onServe runs before each answer, outside the lock: a test changes state while the
 	// Control Plane waits for the workspace.
 	onServe func()
-	// instr answers GET .../autorun-file/instruction by path: a content, or an Agent error code
-	// written as "!code" (status 422, or 409 for commit_missing). A path it does not hold is
-	// found=false.
-	instr map[string]string
+	// instr answers GET .../autorun-file/instruction by path, for testCommit only: a content, or
+	// an Agent error code written as "!code" (status 422, 409 for commit_missing, 404 for
+	// not_found). A path it does not hold, or another commit, is found=false. instrCommit, when
+	// set, is the commit the answer names instead of the one asked for.
+	instr       map[string]string
+	instrCommit string
+	// instrAsked are the instruction reads' queries, "commit path".
+	instrAsked []string
 }
 
 // instruction sets what the fake Agent's instruction route answers for p.
@@ -83,14 +87,24 @@ func repoEnv(t *testing.T, state string) (*inboxEnv, *fakeAutorunAgent) {
 		w.Header().Set("Content-Type", "application/json")
 		if strings.HasSuffix(r.URL.Path, "/autorun-file/instruction") {
 			p, commit := r.URL.Query().Get("path"), r.URL.Query().Get("commit")
+			a.instrAsked = append(a.instrAsked, commit+" "+p)
 			content, found := a.instr[p]
+			if commit != testCommit {
+				content, found = "", false
+			}
 			if code, isErr := strings.CutPrefix(content, "!"); found && isErr {
 				status := http.StatusUnprocessableEntity
-				if code == "commit_missing" {
+				switch code {
+				case "commit_missing":
 					status = http.StatusConflict
+				case "not_found":
+					status = http.StatusNotFound
 				}
 				agentErr(w, status, code)
 				return
+			}
+			if a.instrCommit != "" {
+				commit = a.instrCommit
 			}
 			_ = json.NewEncoder(w).Encode(agentAutorunInstruction{Path: p, Commit: commit, Found: found, Content: content})
 			return
