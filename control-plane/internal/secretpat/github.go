@@ -88,15 +88,19 @@ func statelessAt(s string, p int, header, payload, sig *runEnds) int {
 		i++
 	}
 	h := i
-	head := false
+	open := 0
 	for _, o := range statelessHeads {
-		head = head || strings.HasPrefix(s[h:], o)
+		if strings.HasPrefix(s[h:], o) {
+			open = len(o)
+		}
 	}
-	if !head {
+	if open == 0 {
 		return 0
 	}
+	// The pattern takes the opening and then at least 12 more, so the minimum depends on which
+	// opening matched: 15 after `eyJ`, 16 after `eyAi`.
 	he := header.end(s, h)
-	if he-h < 16 || he-h > statelessMaxHeader || he >= len(s) || s[he] != '.' {
+	if he-h < open+12 || he-h > statelessMaxHeader || he >= len(s) || s[he] != '.' {
 		return 0
 	}
 	pe := payload.end(s, he+1)

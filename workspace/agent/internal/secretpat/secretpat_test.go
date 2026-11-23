@@ -2,6 +2,7 @@ package secretpat
 
 import (
 	"bytes"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -106,6 +107,40 @@ func TestGitHubTokenBoundaries(t *testing.T) {
 	}
 	if !githubStateless.MatchString(forged[strings.Index(forged, "ghs_"):]) {
 		t.Error("the eyJunk entry does not pass the pattern, so the decode check is untested")
+	}
+}
+
+// shortHeaderTokens are stateless tokens whose JWT header sits at the pattern's minimum, the
+// opening's length plus 12, or one below it, each with whether it is a token. Built at run
+// time so the literals do not trip the secret scan.
+func shortHeaderTokens() map[string]bool {
+	tok := func(header string) string {
+		return "gh" + "s_1_" + base64.RawURLEncoding.EncodeToString([]byte(header)) + "." +
+			strings.Repeat("P", 16) + "." + strings.Repeat("S", 32)
+	}
+	return map[string]bool{
+		tok(`{"alg":""}`):   false, // eyJ, 14
+		tok(`{"alg":"A"}`):  true,  // eyJ, 15
+		tok(`{"1":"ab"}`):   false, // eyI, 14
+		tok(`{"1":"abc"}`):  true,  // eyI, 15
+		tok(` {"a":"bc"}`):  false, // IHsi, 15
+		tok(` {"a":"bcd"}`): true,  // IHsi, 16
+		tok(`{ "a":"bc"}`):  false, // eyAi, 15
+		tok(`{ "a":"bcd"}`): true,  // eyAi, 16
+	}
+}
+
+// The header minimum follows the opening, as the pattern's does: 15 after a three-character
+// opening, 16 after a four-character one.
+func TestStatelessHeaderMinimumFollowsTheOpening(t *testing.T) {
+	for tok, want := range shortHeaderTokens() {
+		header, _, _ := strings.Cut(tok[len("ghs_1_"):], ".")
+		if got := IsGitHubStateless(tok); got != want {
+			t.Errorf("%d-character header %.10s…: IsGitHubStateless = %v", len(header), header, got)
+		}
+		if got := githubStateless.MatchString(tok); got != want {
+			t.Errorf("%d-character header %.10s…: the pattern says %v", len(header), header, got)
+		}
 	}
 }
 
