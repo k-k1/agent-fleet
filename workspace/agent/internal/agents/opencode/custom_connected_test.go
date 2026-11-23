@@ -12,6 +12,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
+func serveOK() bool {
+	ok, _ := serveGate()
+	return ok
+}
+
 func storeCustom(t *testing.T, c *secrets.CustomAPIConn) {
 	t.Helper()
 	if err := secrets.Update(func(s *secrets.Data) error { s.CustomAPI = c; return nil }); err != nil {
@@ -37,11 +42,11 @@ func TestServeConnectedOnOwnCountsTheApprovedCustomEndpoint(t *testing.T) {
 	}
 
 	useIsolationPolicy(t, approvedCustom())
-	if serveConnected() || status() {
+	if serveOK() || status() {
 		t.Fatal("connected on own with no connection stored at all")
 	}
 	storeCustom(t, selfHosted)
-	if !serveConnected() || !status() {
+	if !serveOK() || !status() {
 		t.Fatal("not connected on own although the approved custom endpoint is stored")
 	}
 	if Connected() {
@@ -49,27 +54,35 @@ func TestServeConnectedOnOwnCountsTheApprovedCustomEndpoint(t *testing.T) {
 	}
 
 	storeCustom(t, &secrets.CustomAPIConn{Provider: "mine", URL: "https://evil.example/v1", APIKey: "k"})
-	if serveConnected() || status() {
+	if serveOK() || status() {
 		t.Error("connected for a custom endpoint whose host the policy does not approve")
 	}
 	storeCustom(t, &secrets.CustomAPIConn{Provider: "anthropic", URL: selfHosted.URL, APIKey: "k"})
-	if serveConnected() || status() {
+	if serveOK() || status() {
 		t.Error("connected for a connection naming a provider another route owns")
 	}
 
 	storeCustom(t, selfHosted)
 	useIsolationPolicy(t, routepolicy.Policy{Revision: 1, Allowed: []string{}})
-	if serveConnected() || status() {
+	if serveOK() || status() {
 		t.Error("connected with no restriction held: nothing pins the custom provider then")
 	}
 
+	// The custom endpoint is only ever served by the shared serve, so a disabled serve takes it away.
+	useIsolationPolicy(t, approvedCustom())
+	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "1")
+	if serveOK() || status() {
+		t.Error("connected on the custom endpoint while the shared serve is disabled")
+	}
+	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "")
+
 	useIsolationPolicy(t, approvedCustom())
 	stubUsagePref(t, UsageZen)
-	if serveConnected() {
+	if serveOK() {
 		t.Error("the custom endpoint counted on a route other than own")
 	}
 	stubUsagePref(t, UsageOff)
-	if serveConnected() || status() {
+	if serveOK() || status() {
 		t.Error("connected under an explicit off")
 	}
 }
@@ -139,5 +152,23 @@ func TestSharedServeIsNotSpawnedWhenThePolicyIsLiftedAfterTheGate(t *testing.T) 
 	}
 	if env != "" {
 		t.Errorf("a serve was spawned with no pin:\n%s", env)
+	}
+}
+
+// A start the ordinary conditions allow (here a direct key on "own") does not lean on the custom
+// endpoint, so the spawn does not re-judge it against the policy view.
+func TestServeGateReportsWhetherOnlyTheCustomEndpointGotItThrough(t *testing.T) {
+	isolatedHome(t)
+	t.Setenv("AF_SECRET_KEY", "")
+	_ = newFakeDaemon(t)
+	stubUsagePref(t, UsageOwn)
+	useIsolationPolicy(t, approvedCustom())
+	storeCustom(t, selfHosted)
+	if ok, via := serveGate(); !ok || !via {
+		t.Fatalf("custom only: ok=%v viaCustom=%v, want true, true", ok, via)
+	}
+	storeKeys(t, map[string]string{"ANTHROPIC_API_KEY": "a"})
+	if ok, via := serveGate(); !ok || via {
+		t.Errorf("with a direct key: ok=%v viaCustom=%v, want true, false", ok, via)
 	}
 }

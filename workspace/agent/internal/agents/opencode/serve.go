@@ -342,8 +342,13 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	}
 	// Past this point a new process starts, i.e. new memory is paid for. Do not pay
 	// while unconnected. (An adopt is memory already paid for, so it passed above.)
-	if !allowUnauthed && !serveConnected() {
-		return "", 0, ErrNotConnected
+	viaCustom := false
+	if !allowUnauthed {
+		ok, via := serveGate()
+		if !ok {
+			return "", 0, ErrNotConnected
+		}
+		viaCustom = via
 	}
 	host, port, err := splitServeAddr(addr)
 	if err != nil {
@@ -399,11 +404,13 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		serveBeforeView()
 	}
 	view := readView() // one reading: the file check, the pin and the generation agree on the connection
-	// The gate above judged the connection on its own reading. On "own" a custom-only workspace
-	// is connected only while the policy that pins it is held, so a restriction lifted since would
-	// start a serve with no pin; judged again after the view, the answer matches the view's policy
-	// (a policy moving later is caught by the generation comparison below).
-	if !allowUnauthed && !serveConnected() {
+	// The gate above judged the connection on its own reading. A workspace that got through on the
+	// approved custom endpoint alone is connected only while the policy that pins it is held, so
+	// the view this spawn builds its pin from has to approve it too: a restriction lifted since
+	// would otherwise start a serve with no pin. Nothing else is read again, so a start the
+	// ordinary conditions allowed does not gain a new way to fail. (A policy moving after the view
+	// is caught by the generation comparison below.)
+	if viaCustom && (!view.restricted || allowedCustom(view.p, view.engines, view.custom) == nil) {
 		return "", 0, ErrNotConnected
 	}
 	if err := policyConfigErrFrom(globalConfigFiles(), view); err != nil {

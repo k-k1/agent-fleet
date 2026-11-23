@@ -142,7 +142,7 @@ func connected(s *secrets.Data, oa oauthState) bool {
 // assistant's headless runs, a Terminal launch) carries no such pin and keeps asking connected, so
 // a policy lifted after an availability answer was cached cannot send them anywhere new.
 func servable(s *secrets.Data, oa oauthState) bool {
-	return connected(s, oa) || (UsagePref() == UsageOwn && hasApprovedCustom(s))
+	return connected(s, oa) || (UsagePref() == UsageOwn && !Serve().Disabled() && hasApprovedCustom(s))
 }
 
 // hasApprovedCustom reports whether the stored custom connection is one the held policy approves:
@@ -180,14 +180,22 @@ func Connected() bool {
 	return connected(s, oauthStatus())
 }
 
-// serveConnected is the gate for starting the shared serve: Connected, or the approved custom
-// endpoint on "own" (servable).
-func serveConnected() bool {
+// serveGate is the gate for starting the shared serve: Connected, or the approved custom endpoint
+// on "own" (servable). viaCustom is set when only the custom endpoint got it through: the spawn
+// then has to find the same approval in the policy view its pin is built from.
+func serveGate() (ok, viaCustom bool) {
 	s, err := secrets.Load()
 	if err != nil {
 		s = &secrets.Data{}
 	}
-	return servable(s, oauthStatus())
+	oa := oauthStatus()
+	if connected(s, oa) {
+		return true, false
+	}
+	if servable(s, oa) {
+		return true, true
+	}
+	return false, false
 }
 
 // Status reports which provider env vars are configured (names only,
@@ -206,7 +214,8 @@ func Status(s *secrets.Data) map[string]any {
 	m := map[string]any{
 		// connected is what decides whether this kind can be launched (registry.ts): the formula
 		// Connected uses, plus the approved custom endpoint on "own" (servable), which only a
-		// Managed session on the shared serve can use. headlessAgentAvailable asks Connected.
+		// Managed session on the shared serve can use, so not while the serve is disabled.
+		// headlessAgentAvailable asks Connected.
 		"connected":      servable(s, oa),
 		"envs":           names,
 		"usage":          usage,
