@@ -14,6 +14,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/bridge"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -56,7 +57,9 @@ func Put(e Event) error {
 	if err := os.MkdirAll(dir(), 0o700); err != nil {
 		return err
 	}
-	b, err := json.Marshal(e)
+	stored := e
+	stored.Payload = boundPayload(e.Payload)
+	b, err := json.Marshal(stored)
 	if err != nil {
 		return err
 	}
@@ -82,6 +85,58 @@ func Put(e Event) error {
 		SessionKind: e.SessionKind, DisplayName: e.DisplayName, CreatedAt: e.CreatedAt,
 		Body: body, Questions: questions, PermissionToken: permTok})
 	return nil
+}
+
+// The bound on the payload one outbox entry keeps. The Control Plane reads the outbox with a byte
+// bound per response, and an entry it cannot read whole stays queued ahead of every later one, so
+// an entry has to stay far below that bound. The Control Plane also keeps at most twice this per
+// notification (maxNotificationPayload), so nothing that fits here is cut there. A healthy
+// payload is a few KiB; the largest, an answer's body, is capped at chatx.BridgeBodyCap runes.
+const (
+	maxPayloadBytes = 128 << 10
+	// maxPayloadValue bounds each value kept when an oversized payload is shrunk.
+	maxPayloadValue = 8 << 10
+)
+
+// payloadTruncatedKey marks a payload boundPayload had to shrink.
+const payloadTruncatedKey = "payloadTruncated"
+
+// boundPayload returns p when it encodes within maxPayloadBytes. Otherwise it keeps what fits:
+// strings cut to maxPayloadValue bytes, other values whose encoding fits maxPayloadValue, and
+// drops the rest (an oversized question list among them), marking the result with
+// payloadTruncatedKey. The identifiers the Console navigates by are short and survive. If even
+// that is over the bound, only the mark is kept. Only the outbox copy is bounded: the chat bridge
+// gets the event as given.
+func boundPayload(p map[string]any) map[string]any {
+	b, err := json.Marshal(p)
+	if err != nil || len(b) <= maxPayloadBytes {
+		return p // a marshal error fails the Put on its own
+	}
+	out := map[string]any{payloadTruncatedKey: true}
+	for k, v := range p {
+		if s, ok := v.(string); ok {
+			out[k] = headBytes(s, maxPayloadValue)
+			continue
+		}
+		if vb, err := json.Marshal(v); err == nil && len(vb) <= maxPayloadValue {
+			out[k] = v
+		}
+	}
+	if b, err := json.Marshal(out); err != nil || len(b) > maxPayloadBytes {
+		return map[string]any{payloadTruncatedKey: true}
+	}
+	return out
+}
+
+// headBytes cuts s to at most n bytes without splitting a UTF-8 sequence.
+func headBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // PutOnce persists an event only once for a stable source key. The marker is
@@ -188,8 +243,20 @@ func List() []Event {
 		if err != nil {
 			continue
 		}
-		var e Event
-		if json.Unmarshal(b, &e) != nil {
+		// The payload is decoded raw first, so an entry an older Agent wrote past maxPayloadBytes
+		// is listed with only the mark instead of being expanded. Listed, it is acked and
+		// removed rather than staying queued ahead of the entries after it.
+		var raw struct {
+			Event
+			Payload json.RawMessage `json:"payload"`
+		}
+		if json.Unmarshal(b, &raw) != nil {
+			continue
+		}
+		e := raw.Event
+		if len(raw.Payload) > maxPayloadBytes {
+			e.Payload = map[string]any{payloadTruncatedKey: true}
+		} else if len(raw.Payload) > 0 && json.Unmarshal(raw.Payload, &e.Payload) != nil {
 			continue
 		}
 		if ts, err := time.Parse(time.RFC3339, e.CreatedAt); err == nil && ts.Before(cutoff) {

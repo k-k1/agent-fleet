@@ -29,9 +29,10 @@ type notificationDTO struct {
 	Kind        string                `json:"kind"`
 	Target      notificationTargetDTO `json:"target"`
 	DisplayName string                `json:"displayName"`
-	Payload     map[string]any        `json:"payload"`
-	CreatedAt   string                `json:"createdAt"`
-	Seen        bool                  `json:"seen"`
+	// Payload is always a JSON object (boundedPayload): the Console reads its fields directly.
+	Payload   json.RawMessage `json:"payload"`
+	CreatedAt string          `json:"createdAt"`
+	Seen      bool            `json:"seen"`
 }
 
 type notificationAPI struct {
@@ -55,11 +56,71 @@ func notificationCutoff() string {
 }
 
 func notificationToDTO(n store.Notification) notificationDTO {
-	p := map[string]any{}
-	_ = json.Unmarshal([]byte(n.Payload), &p)
 	return notificationDTO{Seq: n.Seq, ID: n.EventID, Kind: n.Kind,
 		Target:      notificationTargetDTO{Type: n.TargetType, ID: n.TargetID, Kind: n.TargetKind},
-		DisplayName: n.DisplayName, Payload: p, CreatedAt: n.CreatedAt, Seen: n.SeenAt != ""}
+		DisplayName: n.DisplayName, Payload: json.RawMessage(boundedPayload([]byte(n.Payload))),
+		CreatedAt: n.CreatedAt, Seen: n.SeenAt != ""}
+}
+
+// The bounds on the payload one notification keeps. The payload is kept as raw JSON and never
+// expanded into a map: a response of many small values decodes to several times its byte size.
+// A healthy payload is a few KiB (the Agent caps its own at maxPayloadBytes in package notice,
+// half of this, so nothing it sends today is cut here).
+const (
+	maxNotificationPayload      = 256 << 10
+	maxNotificationPayloadDepth = 32
+)
+
+// omittedPayload replaces a payload that is not a JSON object within the bounds. The rest of the
+// notification is still stored and acked: dropping the whole entry would leave it queued at the
+// Agent, where it holds back every entry after it.
+const omittedPayload = `{"payloadOmitted":true}`
+
+// boundedPayload returns raw when it is a JSON object within maxNotificationPayload and
+// maxNotificationPayloadDepth, "{}" for an empty or null payload, and omittedPayload otherwise.
+// The result is always a valid JSON object, which notificationDTO relies on: an invalid
+// json.RawMessage fails the marshal of the whole list.
+func boundedPayload(raw []byte) string {
+	t := bytes.TrimSpace(raw)
+	if len(t) == 0 || string(t) == "null" {
+		return "{}"
+	}
+	if len(t) > maxNotificationPayload || t[0] != '{' || !jsonDepthWithin(t, maxNotificationPayloadDepth) || !json.Valid(t) {
+		return omittedPayload
+	}
+	return string(t)
+}
+
+// jsonDepthWithin reports whether no object or array in b nests deeper than max. It only counts
+// brackets outside strings, so it is meaningful for valid JSON alone; boundedPayload checks
+// validity as well. It runs first because it is cheaper than json.Valid and allocates nothing.
+func jsonDepthWithin(b []byte, max int) bool {
+	depth, inStr, esc := 0, false, false
+	for _, c := range b {
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{', '[':
+			depth++
+			if depth > max {
+				return false
+			}
+		case '}', ']':
+			depth--
+		}
+	}
+	return true
 }
 
 type agentNotification struct {
@@ -69,10 +130,12 @@ type agentNotification struct {
 	SessionKind string `json:"sessionKind"`
 	// Empty = "session" (see drainAgentOutbox): the Agent only learned to send
 	// workspace-level events later, and old Agents must keep their meaning.
-	TargetType  string         `json:"targetType"`
-	DisplayName string         `json:"displayName"`
-	CreatedAt   string         `json:"createdAt"`
-	Payload     map[string]any `json:"payload"`
+	TargetType  string `json:"targetType"`
+	DisplayName string `json:"displayName"`
+	CreatedAt   string `json:"createdAt"`
+	// Raw, not a map: any JSON value decodes, so a payload of the wrong type no longer fails the
+	// entry, and boundedPayload sees the bytes before anything is expanded.
+	Payload json.RawMessage `json:"payload"`
 }
 
 func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
@@ -91,7 +154,6 @@ const agentEventIDPrefix = "agent:"
 // id carries agentEventIDPrefix and the row is unique per (membership, id), so the same id sent
 // twice by one Agent is still one row, and another member's Agent cannot take it over.
 func agentNotificationRow(in agentNotification, membershipID string) store.Notification {
-	payload, _ := json.Marshal(in.Payload)
 	// The Agent's outbox was session-only until workspace-level events appeared
 	// (arch-residue). An empty targetType therefore has to keep meaning "session",
 	// or an older Agent's events would all become untargeted after a CP upgrade.
@@ -104,7 +166,7 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 	}
 	n := store.Notification{EventID: agentEventIDPrefix + in.ID, MembershipID: membershipID, Kind: in.Kind,
 		TargetType: targetType, TargetID: targetID, TargetKind: targetKind,
-		DisplayName: in.DisplayName, Payload: string(payload), CreatedAt: in.CreatedAt}
+		DisplayName: in.DisplayName, Payload: boundedPayload(in.Payload), CreatedAt: in.CreatedAt}
 	if n.CreatedAt == "" {
 		n.CreatedAt = store.NowTS()
 	}
@@ -112,9 +174,9 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 }
 
 // The bounds on one /notifications response, vars only so a test can lower them. The Agent
-// returns at most 100 entries but does not bound an entry's size, and the drain runs on a timer
-// for every workspace, so the CP stops reading at a byte count and an entry count far above
-// anything a healthy Agent sends. Entries read whole before a bound is hit are stored and
+// returns at most 100 entries and caps each entry's payload, but an older Agent does not, and the
+// drain runs on a timer for every workspace, so the CP stops reading at a byte count and an entry
+// count far above anything a healthy Agent sends. Entries read whole before a bound is hit are stored and
 // acked; the rest stays queued for the next drain.
 var (
 	maxOutboxBody    int64 = 64 << 20
@@ -189,6 +251,9 @@ func readOutboxEntries(r io.Reader, limit int64) (entries []agentNotification, m
 			if dec.Decode(&in) != nil {
 				return cut()
 			}
+			// Bounded here as well as in agentNotificationRow, so an oversized payload is not
+			// held while the rest of the response is read.
+			in.Payload = json.RawMessage(boundedPayload(in.Payload))
 			entries = append(entries, in)
 		}
 		if t, err := dec.Token(); err != nil || t != json.Delim(']') {
@@ -247,7 +312,8 @@ func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt ru
 		return "offline", false, ""
 	}
 	// Bounded by maxOutboxBody / maxOutboxEntries; see there. An unreadable first entry stores
-	// nothing, so a single entry past the byte bound stays queued.
+	// nothing, so a single entry past the byte bound stays queued; only an Agent without the
+	// payload cap in package notice can send one.
 	entries, more, ok := readOutboxEntries(resp.Body, maxOutboxBody)
 	resp.Body.Close() // before the ack, so one connection is not held across both requests
 	if !ok {
