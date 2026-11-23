@@ -737,6 +737,69 @@ describe("choosing what a note waits for by search", () => {
     expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox", after: ["a3", "a4"] });
   });
 
+  it("tells apart notes that come out the same from separate branches of the comparison", async () => {
+    servedCats = [queueCat];
+    const lead = "Handle the nightly accounting export of the webshop and its refunds, then report back, using the template: ";
+    servedMemos = [
+      aMemo({ id: "a1", body: "Alpha: " + lead + "retry imports", state: "pending", position: 0, reference: ref("acme/app#7") }),
+      aMemo({ id: "a2", body: "Alpha: " + lead + "skip bad rows", state: "pending", position: 1, reference: ref("acme/app#7") }),
+      aMemo({ id: "a3", body: "Beta: " + lead + "retry imports", state: "pending", position: 2, reference: ref("acme/app#7") }),
+      aMemo({ id: "a4", body: "Beta: " + lead + "skip bad rows", state: "pending", position: 3, reference: ref("acme/app#7") }),
+      aMemo({ id: "me", body: "the edited one", state: "held", position: 4, createdAt: "2026-09-09T00:00:03Z" }),
+    ];
+    servedMemos.forEach((x) => (x.createdAt = x.id === "me" ? x.createdAt : "2026-09-09T00:00:01Z"));
+    cacheSeven();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    await typeSearch("retry imports");
+    expect(opts()).toHaveLength(2);
+    // Two different memos, and nothing in what is shown or read out says which is which but the number.
+    expect(new Set(opts().map((o) => o.getAttribute("aria-label"))).size).toBe(2);
+    expect(opts().map(exOf).every((x) => /^#[12] /.test(x))).toBe(true);
+    // The number belongs to the memo: the same one is #1 (the earlier in the category) chosen or not.
+    const first = opts().find((o) => exOf(o).startsWith("#1"))!;
+    await click(first);
+    expect(chips().map(exOf)[0]).toMatch(/^#1 /);
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox", after: ["a1"] });
+  });
+
+  it("keeps the keyboard on the same memo when a poll puts a new candidate above it", async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    await pressKey("ArrowDown"); // a2, the second
+    expect(opts()[1].getAttribute("aria-selected")).toBe("true");
+    servedMemos = [...servedMemos, aMemo({ id: "a4", body: "newer job", state: "pending", position: 2.5, createdAt: "2026-09-09T00:00:02Z" })];
+    await bump();
+    expect(titles(opts())).toEqual(["newer job", "rotate the keys", "Importer docs", "Crash when saving"]);
+    const active = opts().filter((o) => o.getAttribute("aria-selected") === "true");
+    expect(titles(active)).toEqual(["Importer docs"]);
+    expect(search().getAttribute("aria-activedescendant")).toBe(active[0].id);
+    await pressKey("Enter");
+    expect(titles(chips())).toEqual(["Importer docs"]);
+  });
+
+  it("adds nothing on Enter when the memo the keyboard pointed at left the list, until another is pointed at", async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    await pressKey("ArrowDown"); // a2
+    servedMemos = servedMemos.map((x) => (x.id === "a2" ? { ...x, category: "elsewhere" } : x));
+    await bump();
+    expect(opts().some((o) => o.getAttribute("aria-selected") === "true")).toBe(false);
+    expect(search().getAttribute("aria-activedescendant")).toBeNull();
+    await pressKey("Enter");
+    expect(chips()).toHaveLength(0);
+    await pressKey("ArrowDown");
+    expect(opts()[0].getAttribute("aria-selected")).toBe("true");
+    await pressKey("Enter");
+    expect(titles(chips())).toEqual(["rotate the keys"]);
+  });
+
   it("moves the focus on when a chip is removed from the keyboard", async () => {
     seed();
     servedMemos = servedMemos.map((x) => (x.id === "me" ? { ...x, after: ["a1", "a2"] } : x));

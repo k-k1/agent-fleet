@@ -47,10 +47,11 @@ const flatten = (e: AfterEntry): string => e.text.replace(/\s+/g, " ").trim();
 const clip = (t: string): string => (t.length > 80 ? t.slice(0, 80) + "…" : t);
 
 /** What tells apart notes that read the same: their text from where they first differ (the start of
- *  a template is shared), and a running number for those whose whole text is the same. Index-aligned
- *  with `group`, which is in the category's order, so a note keeps its number whether or not it is
- *  chosen. Notes whose excerpts still collide are told apart again among themselves, so a short
- *  note that differs early does not hide where two long ones differ. */
+ *  a template is shared), and, for any that still read the same, a running number. Index-aligned with
+ *  `group`, which is in the category's order, so a note keeps its number whether or not it is chosen.
+ *  Notes whose excerpts collide are told apart again among themselves, so a short note that differs
+ *  early does not hide where two long ones differ; the last check is over the final words of the
+ *  whole group, because separate branches can come out the same. */
 function excerptsOf(group: AfterEntry[]): string[] {
   const texts = group.map(flatten);
   const excerpt = new Map<string, string>();
@@ -71,14 +72,15 @@ function excerptsOf(group: AfterEntry[]): string[] {
     }
   };
   refine([...new Set(texts)]);
+  const words = texts.map((t) => excerpt.get(t) ?? "");
   const total = new Map<string, number>();
-  for (const t of texts) total.set(t, (total.get(t) ?? 0) + 1);
+  for (const w of words) total.set(w, (total.get(w) ?? 0) + 1);
   const seen = new Map<string, number>();
-  return texts.map((t) => {
-    const n = (seen.get(t) ?? 0) + 1;
-    seen.set(t, n);
-    const ex = excerpt.get(t) ?? "";
-    return (total.get(t)! > 1 ? "#" + n + (ex ? " " : "") : "") + ex;
+  return words.map((w) => {
+    if (total.get(w)! < 2) return w;
+    const n = (seen.get(w) ?? 0) + 1;
+    seen.set(w, n);
+    return "#" + n + (w ? " " + w : "");
   });
 }
 
@@ -134,7 +136,9 @@ export function MemoAfterPicker({
   const searchRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
-  const [active, setActive] = useState(0);
+  // The note the keyboard points at, by its id: a poll that puts a new candidate above it must not
+  // move the pointer onto another note. null = the first of the list.
+  const [activeNote, setActiveNote] = useState<string | null>(null);
 
   const entryOf = (o: AfterOption): AfterEntry => {
     const ref = o.memo ? memoReference(o.memo) : null;
@@ -172,15 +176,17 @@ export function MemoAfterPicker({
   const chips = chosenEntries.map(shownOf);
   const shown = matches.map(shownOf);
 
-  const cur = Math.min(active, shown.length - 1);
-  const optId = (i: number) => baseId + "-o" + i;
+  // -1 when the pointed note has left the list: nothing is active, and Enter adds nothing until the
+  // member points at one again.
+  const cur = activeNote === null ? Math.min(0, shown.length - 1) : shown.findIndex((c) => c.entry.id === activeNote);
+  const optId = (id: string) => baseId + "-o-" + id;
   const listOpen = open && shown.length > 0;
 
   // The list scrolls (40vh): the active option has to follow into view when an arrow key moves it and
   // when a new search puts another note at the same index (the list may be scrolled away from it).
   const activeId = shown[cur]?.entry.id;
   useEffect(() => {
-    if (listOpen) document.getElementById(optId(cur))?.scrollIntoView?.({ block: "nearest" });
+    if (listOpen && cur >= 0) document.getElementById(optId(shown[cur].entry.id))?.scrollIntoView?.({ block: "nearest" });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only a change of the active note
   }, [activeId, listOpen, query]);
 
@@ -189,7 +195,7 @@ export function MemoAfterPicker({
   const add = (id: string) => {
     onChange(ordered((x) => x === id || value.includes(x)));
     setQuery("");
-    setActive(0);
+    setActiveNote(null);
   };
   const remove = (id: string, at: number) => {
     // The button being pressed goes with its chip, and the focus with it: it moves to the next
@@ -205,12 +211,16 @@ export function MemoAfterPicker({
     if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       if (!open) setOpen(true);
-      else if (shown.length > 0) setActive((cur + (e.key === "ArrowDown" ? 1 : shown.length - 1)) % shown.length);
+      else if (shown.length > 0) {
+        const n = shown.length;
+        const next = e.key === "ArrowDown" ? (cur < 0 ? 0 : (cur + 1) % n) : cur < 0 ? n - 1 : (cur + n - 1) % n;
+        setActiveNote(shown[next].entry.id);
+      }
     } else if (e.key === "Enter") {
       // Never reaches the editor's own Enter handling: this field only adds.
       e.preventDefault();
       e.stopPropagation();
-      if (listOpen && shown[cur]) add(shown[cur].entry.id);
+      if (listOpen && cur >= 0) add(shown[cur].entry.id);
     } else if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
@@ -248,13 +258,13 @@ export function MemoAfterPicker({
         aria-expanded={listOpen}
         aria-controls={listOpen ? baseId + "-list" : undefined}
         aria-autocomplete="list"
-        aria-activedescendant={listOpen ? optId(cur) : undefined}
+        aria-activedescendant={listOpen && cur >= 0 ? optId(shown[cur].entry.id) : undefined}
         placeholder={tr("memo.after_search_ph")}
         autoComplete="off"
         value={query}
         onChange={(e) => {
           setQuery(e.target.value);
-          setActive(0);
+          setActiveNote(null);
           setOpen(true);
         }}
         onFocus={() => setOpen(true)}
@@ -266,7 +276,7 @@ export function MemoAfterPicker({
           {shown.map((c, i) => (
             <li
               key={c.entry.id}
-              id={optId(i)}
+              id={optId(c.entry.id)}
               role="option"
               aria-selected={i === cur}
               aria-label={c.name}
