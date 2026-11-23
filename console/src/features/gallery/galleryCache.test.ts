@@ -137,6 +137,150 @@ describe("ギャラリーのフォルダキャッシュ", () => {
   });
 });
 
+describe("読み始めた順に一覧を書く（遅い答えが新しい一覧を上書きしない）", () => {
+  /** A fetch answer the test releases by hand, so two reads can finish in either order. */
+  const held = (names: string[]) => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => (release = r));
+    fetchMock.mockImplementationOnce(async () => {
+      await gate;
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ entries: names.map(entry) }),
+      };
+    });
+    return release;
+  };
+
+  it("先に始めた先読みが遅れて返っても、後から始めた画面の読みを上書きしない", async () => {
+    const releasePrefetch = held(["old.png"]);
+    prefetchGallery("gen", 512); // hover: begins first, answers last
+    const releaseView = held(["new.png"]);
+    const view = fetchGalleryListing("gen", 512); // the pane walked in: begins second
+    releaseView();
+    await view;
+    expect(readGallery("gen")?.entries).toEqual([entry("new.png")]);
+
+    releasePrefetch();
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setTimeout(r, 0)); // let the prefetch's answer be processed
+    expect(readGallery("gen")?.entries).toEqual([entry("new.png")]);
+  });
+
+  it("遅れた読みは、書かなくても自分の呼び出し元には一覧を返す", async () => {
+    const releaseOld = held(["old.png"]);
+    const old = fetchGalleryListing("gen", 512);
+    const releaseNew = held(["new.png"]);
+    const newer = fetchGalleryListing("gen", 512);
+    releaseNew();
+    await newer;
+    releaseOld();
+    expect(await old).toEqual({ ok: true, entries: [entry("old.png")] });
+    expect(readGallery("gen")?.entries).toEqual([entry("new.png")]);
+  });
+
+  it("後から始めた読みが先に始めた読みより早く返れば、そのまま書く（逆順は新しい方が勝つ）", async () => {
+    const releaseOld = held(["old.png"]);
+    const old = fetchGalleryListing("gen", 512);
+    const releaseNew = held(["new.png"]);
+    const newer = fetchGalleryListing("gen", 512);
+    releaseOld();
+    await old;
+    expect(readGallery("gen")?.entries).toEqual([entry("old.png")]); // nothing newer has landed yet
+    releaseNew();
+    await newer;
+    expect(readGallery("gen")?.entries).toEqual([entry("new.png")]);
+  });
+
+  it("順序はキーごと（別のフォルダの新しい読みは邪魔をしない）", async () => {
+    const releaseA = held(["a.png"]);
+    const a = fetchGalleryListing("a", 512);
+    const releaseB = held(["b.png"]);
+    const b = fetchGalleryListing("b", 512);
+    releaseB();
+    await b;
+    releaseA();
+    await a;
+    expect(readGallery("a")?.entries).toEqual([entry("a.png")]);
+    expect(readGallery("b")?.entries).toEqual([entry("b.png")]);
+  });
+
+  it("忘れた後に、忘れる前に始めた先読みの答えが来ても一覧を戻さない", async () => {
+    const releaseOld = held(["ghost.png"]);
+    const old = fetchGalleryListing("gone", 512); // a prefetch: no view has accepted it
+    forgetGallery("gone"); // a first read answered "not there"
+    releaseOld();
+    expect(await old).toEqual({ ok: true, entries: [entry("ghost.png")] });
+    expect(readGallery("gone")).toBeUndefined();
+
+    // A read that begins after the folder was forgotten is a fresh start and does write.
+    await fetchGalleryListing("gone", 512);
+    expect(readGallery("gone")).toBeDefined();
+  });
+
+  it("読みが出ている間は、他の 40 フォルダを忘れても忘れた印は消えない", async () => {
+    const releaseOld = held(["ghost.png"]);
+    const old = fetchGalleryListing("gone", 512);
+    forgetGallery("gone");
+    for (let i = 0; i < 40; i++) forgetGallery(`other${i}`);
+    releaseOld();
+    await old;
+    expect(readGallery("gone")).toBeUndefined();
+  });
+
+  it("読みが出ている間に新しい一覧が LRU で追い出されても、先読みの古い答えで書き戻さない", async () => {
+    const releaseOld = held(["old.png"]);
+    const old = fetchGalleryListing("gen", 512);
+    await fetchGalleryListing("gen", 512); // newer read, cached
+    for (let i = 0; i < 30; i++) writeGallery(`f${i}`, [entry(`${i}.png`)]); // pushes "gen" out
+    expect(readGallery("gen")).toBeUndefined();
+    releaseOld();
+    expect(await old).toEqual({ ok: true, entries: [entry("old.png")] });
+    expect(readGallery("gen")).toBeUndefined();
+  });
+
+  it("画面が受け入れた遅い読みは、一覧が無ければ書く（居場所の置き場が要る）が、あれば上書きしない", async () => {
+    // Forgotten by another pane's "gone" while this pane's first read was out.
+    const releaseA = held(["a.png"]);
+    const a = fetchGalleryListing("gen", 512, () => true);
+    forgetGallery("gen");
+    releaseA();
+    expect(await a).toEqual({ ok: true, entries: [entry("a.png")] });
+    expect(readGallery("gen")?.entries).toEqual([entry("a.png")]);
+    rememberGalleryView("gen", { scrollTop: 300, limit: 600 }); // the reader scrolls
+    expect(readGallery("gen")).toMatchObject({ scrollTop: 300, limit: 600 });
+
+    // A newer listing is cached: the slow accepted read leaves it alone.
+    const releaseOld = held(["old.png"]);
+    const old = fetchGalleryListing("gen", 512, () => true);
+    const releaseNew = held(["new.png"]);
+    const newer = fetchGalleryListing("gen", 512);
+    releaseNew();
+    await newer;
+    releaseOld();
+    await old;
+    expect(readGallery("gen")?.entries).toEqual([entry("new.png")]);
+    expect(readGallery("gen")).toMatchObject({ scrollTop: 300, limit: 600 });
+  });
+
+  it("読みが全部終わって一覧も無いフォルダは、次の読みが普通に書ける", async () => {
+    await fetchGalleryListing("gen", 512);
+    for (let i = 0; i < 30; i++) writeGallery(`f${i}`, [entry(`${i}.png`)]);
+    expect(readGallery("gen")).toBeUndefined();
+    await fetchGalleryListing("gen", 512);
+    expect(readGallery("gen")).toBeDefined();
+  });
+
+  it("writeGallery 単体は常に最新の読みとして書く", () => {
+    writeGallery("gen", [entry("a.png")]);
+    writeGallery("gen", [entry("b.png")]);
+    expect(readGallery("gen")?.entries).toEqual([entry("b.png")]);
+  });
+});
+
 describe("サブフォルダもまとめた一覧（flat）", () => {
   it("同じフォルダでも別の一覧として覚える（一段の一覧と混ざらない）", async () => {
     const answer = async (url?: unknown) => ({

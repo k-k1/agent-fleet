@@ -51,6 +51,24 @@ const PREFETCH_FRESH_MS = 10_000;
 // Insertion order IS the LRU order: a read re-inserts, so the first key is the oldest use.
 const cache = new Map<string, CacheEntry>();
 
+/**
+ * Read order, taken when a read STARTS. Answers can come back in any order (a hover prefetch
+ * that is slow while the view's own read of the same folder is fast), and the cache must end up
+ * holding the listing of the read that began last, not of the one that answered last. One
+ * counter for every key and every pane, so prefetches and several panes on one folder are
+ * ordered too.
+ */
+let readSeq = 0;
+
+/** Per key, the order of the newest read whose answer was written, or of the last forget. A
+ *  read that began before it cannot write. Separate from `cache` on purpose: LRU eviction of a
+ *  listing must not lift the barrier for a read still in flight. An entry lives while the key
+ *  is cached or has a read in flight (`active`), so it is bounded by what is actually open. */
+const barrier = new Map<string, { n: number; forgot: boolean }>();
+
+/** Reads in flight per key; the barrier of an uncached key is dropped when the last one ends. */
+const active = new Map<string, number>();
+
 /** In-flight prefetches, so sweeping the mouse across a row of folder cards asks once. */
 const inflight = new Map<string, Promise<unknown>>();
 
@@ -62,6 +80,16 @@ export function readGallery(path: string): CacheEntry | undefined {
   return hit;
 }
 
+/** Take a place in the read order. Call before the request is sent, never after the await. */
+function beginRead(): number {
+  return ++readSeq;
+}
+
+/** Drop a key's barrier once nothing can need it: not cached, and no read in flight. */
+function pruneBarrier(key: string): void {
+  if (!cache.has(key) && !active.has(key)) barrier.delete(key);
+}
+
 function put(path: string, next: CacheEntry): void {
   cache.delete(path);
   cache.set(path, next);
@@ -69,13 +97,26 @@ function put(path: string, next: CacheEntry): void {
     const oldest = cache.keys().next();
     if (oldest.done) break;
     cache.delete(oldest.value);
+    pruneBarrier(oldest.value);
   }
 }
 
-/** Remember a listing. The reader's place in the folder is kept — a background refresh that
- *  landed one new picture must not scroll them back to the top. */
-export function writeGallery(key: string, entries: FsEntry[], truncated?: boolean): void {
+function tryWrite(
+  key: string,
+  entries: FsEntry[],
+  truncated: boolean | undefined,
+  n: number,
+  onScreen = false,
+): boolean {
   const prev = cache.get(key);
+  const floor = barrier.get(key);
+  const refused = !!floor && floor.n > n;
+  // A refused listing that a view is about to draw still gets an entry when none is cached
+  // (the newer one was evicted, or the folder was forgotten): rememberGalleryView has nowhere
+  // to keep the reader's scroll position and page size otherwise. The barrier is not moved, so
+  // the next read to begin still writes over it.
+  if (refused && (prev || !onScreen)) return false;
+  if (!refused) barrier.set(key, { n, forgot: false });
   put(key, {
     entries,
     at: Date.now(),
@@ -83,6 +124,17 @@ export function writeGallery(key: string, entries: FsEntry[], truncated?: boolea
     limit: prev?.limit ?? PAGE_SIZE,
     ...(truncated ? { truncated } : {}),
   });
+  return !refused;
+}
+
+/** Remember a listing. The reader's place in the folder is kept — a background refresh that
+ *  landed one new picture must not scroll them back to the top.
+ *
+ *  `seq` is the order the read began in; the write is dropped when a read that began later has
+ *  already been written, or the folder was forgotten after this read began. Without `seq` the
+ *  write counts as the newest read. Returns whether it was kept. */
+export function writeGallery(key: string, entries: FsEntry[], truncated?: boolean, seq?: number): boolean {
+  return tryWrite(key, entries, truncated, seq ?? beginRead());
 }
 
 /** Remember where in the folder the reader is. Written from a scroll handler and from "show
@@ -100,12 +152,16 @@ export function rememberGalleryView(path: string, view: { scrollTop?: number; li
  */
 export function forgetGallery(path: string): void {
   cache.delete(path);
+  barrier.set(path, { n: ++readSeq, forgot: true }); // a read begun before this cannot bring the listing back
+  pruneBarrier(path);
 }
 
 /** Tests only — the cache outlives a component, which is the whole point. */
 export function clearGalleryCache(): void {
   cache.clear();
   inflight.clear();
+  barrier.clear();
+  active.clear();
 }
 
 /**
@@ -156,12 +212,39 @@ export type ListingResult =
  * (a newer read of the folder already landed, or the view moved on) never overwrites a newer
  * listing in the cache. Claiming later, after the await, would let an older answer write the
  * cache while a newer one is between its own write and its claim.
+ *
+ * `accept` only orders reads of ONE view. The cache orders the rest itself: a read that began
+ * before the one whose listing is already cached (a hover prefetch that answers late, another
+ * pane on the same folder) still returns its listing but does not overwrite it. A read the view
+ * accepted keeps one exception: with nothing cached for the folder it is written so the
+ * reader's place can be remembered.
  */
 export async function fetchGalleryListing(
   path: string,
   warm: number,
   accept?: () => boolean,
   flat?: boolean,
+): Promise<ListingResult> {
+  const key = galleryKey(path, flat);
+  const seq = beginRead();
+  active.set(key, (active.get(key) ?? 0) + 1);
+  try {
+    return await readListing(path, warm, accept, flat, key, seq);
+  } finally {
+    const left = (active.get(key) ?? 1) - 1;
+    if (left > 0) active.set(key, left);
+    else active.delete(key);
+    pruneBarrier(key);
+  }
+}
+
+async function readListing(
+  path: string,
+  warm: number,
+  accept: (() => boolean) | undefined,
+  flat: boolean | undefined,
+  key: string,
+  seq: number,
 ): Promise<ListingResult> {
   let d: { entries?: FsEntry[]; truncated?: boolean; error?: { code?: string } };
   try {
@@ -173,7 +256,9 @@ export async function fetchGalleryListing(
   if (d.error || !Array.isArray(d.entries)) return { ok: false, retry: false, hard: true };
   if (accept && !accept()) return { ok: false, retry: false, hard: false };
   const truncated = d.truncated === true;
-  writeGallery(galleryKey(path, flat), d.entries, truncated);
+  // A refused write is not a failure: the listing is still this caller's to show (`accept`,
+  // when given, already settled that it may be).
+  tryWrite(key, d.entries, truncated, seq, !!accept);
   return { ok: true, entries: d.entries, ...(truncated ? { truncated } : {}) };
 }
 
