@@ -2,7 +2,7 @@
 // promises a group the view does not show.
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
-import { isTerminalSession, shellPlaceKey, shellPlaceOf } from "../../lib/project.ts";
+import { isTerminalSession, placeRepos, shellPlaceKey, shellPlaceOf } from "../../lib/project.ts";
 import { repoInSet, sessionInSet } from "../../lib/workingSets.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 
@@ -14,10 +14,10 @@ export function visibleTerminals(sessions: Session[], repos: Repo[], set: Workin
   const terminals = sessions.filter(isTerminalSession);
   if (!set) return terminals;
   const byName = new Map(repos.map((r) => [r.name, r]));
-  const names = new Set(byName.keys());
+  const known = placeRepos(repos);
   return terminals.filter((s) => {
     if (set.sessions.includes(s.name)) return true;
-    const place = s.kind === "shell" ? shellPlaceOf(s, names) : null;
+    const place = s.kind === "shell" ? shellPlaceOf(s, known) : null;
     if (place?.kind === "repo") {
       const r = byName.get(place.folder);
       return !!r && repoInSet(set, r);
@@ -28,11 +28,11 @@ export function visibleTerminals(sessions: Session[], repos: Repo[], set: Workin
 
 /** Shells per group key (the chips link to a shell group; SSM logins are not in it). */
 export function shellCounts(visible: Session[], repos: Repo[]): Map<string, number> {
-  const names = new Set(repos.map((r) => r.name));
+  const known = placeRepos(repos);
   const out = new Map<string, number>();
   for (const s of visible) {
     if (s.kind !== "shell") continue;
-    const key = shellPlaceKey(shellPlaceOf(s, names));
+    const key = shellPlaceKey(shellPlaceOf(s, known));
     out.set(key, (out.get(key) ?? 0) + 1);
   }
   return out;

@@ -135,6 +135,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         title={
           // Full display name first — the row ellipsizes it in the narrow rail.
           displayName(s) +
+          (detail ? " · " + detail : "") +
           "\n" +
           (inert
             ? tr("srow.cant_resume")
@@ -171,7 +172,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           </span>
           {unread && <span className="unread-dot" role="img" aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />}
         </span>
-        <span className="sess-l1" title={detail ? `${displayName(s)} · ${detail}` : undefined}>
+        <span className="sess-l1">
           {displayName(s)}
           {detail && <span className="sess-detail"> · {detail}</span>}
         </span>

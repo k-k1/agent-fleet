@@ -45,6 +45,7 @@ const { useSpacesStore } = await import("../spaces/store.ts");
 const { useTerminalReveal } = await import("./store.ts");
 const { ViewShownContext } = await import("../../lib/viewShown.ts");
 const { setSettings } = await import("../../lib/settings.ts");
+const { useSettingsUI } = await import("../settings/store.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -80,6 +81,7 @@ beforeEach(() => {
   api.mockClear();
   sessionDelete.mockClear();
   tenant = "";
+  useSettingsUI.setState({ settingsOpen: false });
   hostsGate = null;
   HOSTS = [{ id: "h1", alias: "build box", profileId: "p", region: "ap-northeast-1", instanceId: "i-aaa", documentName: "" }];
   setSettings({ workingSets: [], workingSetActive: "" });
@@ -189,6 +191,27 @@ describe("Terminal view", () => {
     expect(heads()).toEqual(["build box"]);
     await render(true);
     expect(heads()).toEqual(["renamed"]);
+  });
+
+  it("reads the hosts again when the Settings dialog over the view closes, without leaving the view", async () => {
+    useSessionsStore.setState({ sessions: [ssm("m1", "i-aaa")] });
+    await render(true);
+    expect(heads()).toEqual(["build box"]);
+    // Rename the host in Settings, a dialog laid over this view: the view stays selected and shown.
+    await act(async () => useSettingsUI.setState({ settingsOpen: true }));
+    HOSTS = [{ id: "h1", alias: "renamed", profileId: "p", region: "ap-northeast-1", instanceId: "i-aaa", documentName: "" }];
+    await act(async () => useSettingsUI.setState({ settingsOpen: false }));
+    await flush();
+    expect(heads()).toEqual(["renamed"]);
+  });
+
+  it("names nothing when the profiles cannot be read, as the account of a host is in its profile", async () => {
+    useSessionsStore.setState({ sessions: [ssm("m1", "i-aaa")] });
+    const base = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string) => (url.startsWith("api/ssm/profiles") ? { error: { code: "http_500", status: 500 } } : base(url)));
+    await render(true);
+    expect(heads()).toEqual(["i-aaa"]);
+    api.mockImplementation(base);
   });
 
   it("does not name this workspace's machines with an answer that came from another", async () => {

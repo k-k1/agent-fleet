@@ -105,16 +105,33 @@ describe("NewShellModal", () => {
     expect(rowFor("Home").disabled).toBe(false);
   });
 
+  it("offers the retry for a failed read even when an older list is on screen", async () => {
+    await mount();
+    expect(rows().some((b) => b.textContent?.includes("Q3 report"))).toBe(true);
+    // A space made in another tab; the read made when the dialog opens again fails once.
+    act(() => root!.unmount());
+    root = createRoot(host);
+    spacesAnswer = () => ({ error: { code: "http_502", status: 502 } });
+    await mount();
+    expect(rows().some((b) => b.textContent?.includes("Q3 report"))).toBe(true);
+    expect(document.body.textContent).toContain("Could not read your spaces");
+    spacesAnswer = () => ({ root: "/home/dev/spaces", spaces: [...LIST.spaces, { folder: "new-zzzzzz", name: "Newer", dir: "/home/dev/spaces/new-zzzzzz" }] });
+    const retry = [...document.querySelectorAll<HTMLButtonElement>("button.linklike")].find((b) => b.textContent === "Try again")!;
+    await act(async () => retry.click());
+    await flush();
+    expect(rows().some((b) => b.textContent?.includes("Newer"))).toBe(true);
+  });
+
   it("says the spaces could not be read, and reads them again on request", async () => {
     spacesAnswer = () => ({ error: { code: "http_502", status: 502 } });
     await mount();
-    expect(document.body.textContent).toContain("Could not load your spaces");
+    expect(document.body.textContent).toContain("Could not read your spaces");
     expect(rows().some((b) => b.textContent?.includes("Q3 report"))).toBe(false);
     spacesAnswer = () => LIST;
     const retry = [...document.querySelectorAll<HTMLButtonElement>("button.linklike")].find((b) => b.textContent === "Try again")!;
     await act(async () => retry.click());
     await flush();
     expect(rows().some((b) => b.textContent?.includes("Q3 report"))).toBe(true);
-    expect(document.body.textContent).not.toContain("Could not load your spaces");
+    expect(document.body.textContent).not.toContain("Could not read your spaces");
   });
 });

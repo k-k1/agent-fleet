@@ -449,9 +449,12 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const waiting = useMemo(() => waitingSessions(sessions, wset), [sessions, wset]);
   // Selectors that answer a boolean: the notification list is replaced on every poll, and a
   // subscription to the list itself would re-render the column each time.
-  const unreadSessions = useNotificationStore((s) => hasUnreadSession(s.items, sessions, wset));
+  // Where a shell's notice leads depends on where its row is: the Terminal view lists it while the
+  // workspace runs, and the Sessions view's history lists every session while it is stopped.
+  const terminalsViewLive = useWorkspaceStore((s) => s.state) === "running";
+  const unreadSessions = useNotificationStore((s) => hasUnreadSession(s.items, sessions, wset, !terminalsViewLive));
   const reposForTerminals = useReposStore((s) => s.repos);
-  const unreadTerminals = useNotificationStore((s) => hasUnreadTerminal(s.items, sessions, reposForTerminals, wset));
+  const unreadTerminals = useNotificationStore((s) => terminalsViewLive && hasUnreadTerminal(s.items, sessions, reposForTerminals, wset));
   const unreadConversation = useNotificationStore((s) => hasUnreadConversation(s.items, wset));
   const payload = useWorkItemStore((s) => s.payload);
   const seen = useSeenStore((s) => s.map);

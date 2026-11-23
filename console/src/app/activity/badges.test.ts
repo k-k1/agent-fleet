@@ -53,6 +53,8 @@ describe("badges under a working set", () => {
     expect(hasUnreadSession(onAgent, list, null)).toBe(true);
     expect(hasUnreadTerminal(onAgent, list, repos, null)).toBe(false);
     // Under a set that lists the copy, and under one that does not.
+    // While the workspace is stopped the history lists the shell, so the Sessions icon carries it.
+    expect(hasUnreadSession(onShell, list, null, true)).toBe(true);
     expect(hasUnreadTerminal(onShell, list, repos, set)).toBe(true);
     expect(hasUnreadTerminal(onShell, list, repos, { ...set, repos: ["payments-api"] })).toBe(false);
   });

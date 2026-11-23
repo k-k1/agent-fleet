@@ -13,6 +13,7 @@ import {
   spaceGroups,
   terminalGroups,
   shellPlaceOf,
+  placeRepos,
   withoutTerminals,
   isTerminalSession,
   shellPlaceKey,
@@ -759,11 +760,15 @@ describe("terminals", () => {
     const clone = [repo("dev"), repo("app")];
     const home = shell("in-home", { repo: "dev", dir: "/home/dev" });
     const copy = shell("in-copy", { repo: "dev", dir: "/home/dev/repos/dev" });
-    const names = new Set(clone.map((r) => r.name));
+    const names = placeRepos(clone);
     expect(shellPlaceOf(home, names)).toEqual({ kind: "home" });
     expect(shellPlaceOf(copy, names)).toEqual({ kind: "repo", folder: "dev" });
     // A row without a dir (an older list) is taken at its word.
     expect(shellPlaceOf(shell("old", { repo: "app" }), names)).toEqual({ kind: "repo", folder: "app" });
+    // With the copy's real path in the list, another `repos/app` under home is not that copy.
+    const real = placeRepos([repo("app", { path: "/home/dev/repos/app" })]);
+    expect(shellPlaceOf(shell("a", { repo: "app", dir: "/home/dev/repos/app" }), real)).toEqual({ kind: "repo", folder: "app" });
+    expect(shellPlaceOf(shell("b", { repo: "app", dir: "/home/dev/notes/repos/app" }), real)).toEqual({ kind: "home" });
     expect(terminalGroups([home, copy], clone).shells.map((g) => [g.key, g.sessions.map((s) => s.name)])).toEqual([
       ["shell:home", ["in-home"]],
       ["shell:repo:dev", ["in-copy"]],

@@ -44,12 +44,13 @@ export function waitingSessions(sessions: Session[], set: WorkingSet | null = nu
 
 /** Is there an unseen notification on a session the Sessions view lists? Under a working set
  * a session the list does not know cannot be placed in it, so it does not count. */
-export function hasUnreadSession(items: FleetNotification[], sessions: Session[], set: WorkingSet | null): boolean {
+export function hasUnreadSession(items: FleetNotification[], sessions: Session[], set: WorkingSet | null, withTerminals = false): boolean {
   const names = unreadSessionNames(items);
   // A shell's or an SSM login's unread notice (an OSC desktop notification from a program in it)
   // is the Terminal view's: the Sessions view does not list the row, so its icon would point at
   // nothing there.
-  const listed = new Set(withoutTerminals(withoutUnattended(sessions)).map((s) => s.name));
+  // `withTerminals`: the stopped workspace's history lists every session, shells included.
+  const listed = new Set((withTerminals ? withoutUnattended(sessions) : withoutTerminals(withoutUnattended(sessions))).map((s) => s.name));
   const hidden = new Set(sessions.map((s) => s.name).filter((n) => !listed.has(n)));
   if (!set) return names.some((n) => !hidden.has(n));
   const byName = new Map(sessions.map((s) => [s.name, s] as const));

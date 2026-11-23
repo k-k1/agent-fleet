@@ -68,8 +68,10 @@ func TestWireSessionSSMTargetAccountOfAChainedProfile(t *testing.T) {
 		t.Fatalf("direct login's account = %q, want 111122223333", got)
 	}
 	// Not an ARN of a role: the stored account stands.
-	odd := session.Meta{Name: "s5", Kind: session.KindSSM, SSM: &session.SSMMeta{Target: "i-1", AccountID: "333344445555", RoleARN: "not-an-arn"}}
-	if got := wireSession(odd, false).SSM.AccountID; got != "333344445555" {
-		t.Fatalf("a malformed ARN changed the account: %q", got)
+	for _, bad := range []string{"not-an-arn", "arn:aws:iam::111122223333:user/alice", "arn:aws:iam:us-east-1:111122223333:role/x", "arn:aws:iam::1111:role/x", "arn:aws:iam::11112222333a:role/x", "arn:aws:s3:::bucket"} {
+		odd := session.Meta{Name: "s5", Kind: session.KindSSM, SSM: &session.SSMMeta{Target: "i-1", AccountID: "333344445555", RoleARN: bad}}
+		if got := wireSession(odd, false).SSM.AccountID; got != "333344445555" {
+			t.Fatalf("%q changed the account: %q", bad, got)
+		}
 	}
 }

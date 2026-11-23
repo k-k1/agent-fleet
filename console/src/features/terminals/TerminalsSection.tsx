@@ -12,6 +12,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useViewShown } from "../../lib/viewShown.ts";
+import { useSettingsUI } from "../settings/store.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { SessionRow } from "../sessions/SessionRow.tsx";
 import { useReposStore } from "../repos/store.ts";
@@ -57,6 +58,9 @@ export const TerminalsSection = memo(function TerminalsSection() {
   const machines = groups.ssm.map((g) => g.key).join("\n");
   const shown = useViewShown();
   const owner = spacesOwner();
+  // The hosts are renamed in Settings, a dialog over this view: the view stays selected and shown
+  // behind it, so the dialog closing is the moment to read them again.
+  const settingsOpen = useSettingsUI((s) => s.settingsOpen);
   const [names, setNames] = useState<{ owner: string; hosts: SsmHost[]; profiles: SsmProfileRef[] }>({ owner: "", hosts: [], profiles: [] });
   useEffect(() => {
     if (!machines || !shown) return;
@@ -64,13 +68,16 @@ export const TerminalsSection = memo(function TerminalsSection() {
     Promise.all([api("api/ssm/hosts"), api("api/ssm/profiles")])
       .then(([h, p]) => {
         if (!alive) return;
-        setNames({ owner, hosts: Array.isArray(h) ? h : [], profiles: Array.isArray(p) ? p : [] });
+        // One of the two failing leaves a name that cannot be settled (the account of a host is in
+        // its profile): the instance id says less and is never wrong.
+        const ok = Array.isArray(h) && Array.isArray(p);
+        setNames({ owner, hosts: ok ? h : [], profiles: ok ? p : [] });
       })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [machines, shown, owner]);
+  }, [machines, shown, owner, settingsOpen]);
   const hosts = names.owner === owner ? names.hosts : NO_HOSTS;
   const profiles = names.owner === owner ? names.profiles : NO_PROFILES;
 

@@ -1069,11 +1069,11 @@ func SSMTargetOf(m Meta) *SSMTarget {
 	return &SSMTarget{Target: m.SSM.Target, Region: m.SSM.Region, AccountID: acct, Profile: m.SSM.Profile, Document: m.SSM.Document}
 }
 
-// roleARNAccount is the account id of an IAM role ARN (arn:<partition>:iam::<account>:role/...);
-// "" for anything that is not one.
+// roleARNAccount is the account id of an IAM role ARN (arn:<partition>:iam::<12 digits>:role/<name>);
+// "" for anything else, so a malformed value leaves the stored account in force.
 func roleARNAccount(arn string) string {
 	parts := strings.SplitN(arn, ":", 6)
-	if len(parts) < 6 || parts[0] != "arn" || parts[2] != "iam" || parts[4] == "" {
+	if len(parts) < 6 || parts[0] != "arn" || parts[1] == "" || parts[2] != "iam" || parts[3] != "" || len(parts[4]) != 12 || !strings.HasPrefix(parts[5], "role/") {
 		return ""
 	}
 	for _, c := range parts[4] {

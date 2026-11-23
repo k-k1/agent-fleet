@@ -79,7 +79,7 @@ export function NewShellModal({ onClose }: { onClose: () => void }) {
             const tag = r.worktree ? worktreeTag(r.name, r) : "";
             return row(`repo:${r.name}`, "repo", project, tag, { kind: "repo", folder: r.name }, tr("proj.shell_title", { name: r.name }));
           })}
-          {failures > 0 && spaces.length === 0 && (
+          {failures > 0 && (
             <div className="start-row-desc term-spaces-failed" role="status">
               {tr("terms.spaces_failed")}{" "}
               <button type="button" className="linklike" onClick={() => void useSpacesStore.getState().refresh()}>
