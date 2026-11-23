@@ -9,6 +9,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { t } from "../../lib/i18n/index.ts";
 
 const scheduleList = vi.fn();
+const scheduleApprove = vi.fn();
 const scheduleRuns = vi.fn(async () => ({ runs: [] }));
 vi.mock("./api.ts", () => ({
   scheduleList: (...a: unknown[]) => scheduleList(...a),
@@ -18,7 +19,7 @@ vi.mock("./api.ts", () => ({
   scheduleRunNow: vi.fn(),
   scheduleDelete: vi.fn(),
   scheduleUpdate: vi.fn(),
-  scheduleApprove: vi.fn(),
+  scheduleApprove: (...a: unknown[]) => scheduleApprove(...a),
 }));
 // The conversation list is only needed to resolve working-set slugs — keep it off the network.
 vi.mock("../chat/api.ts", () => ({ chatList: vi.fn(async () => ({ conversations: [] })) }));
@@ -53,6 +54,7 @@ const ids = () => [...host.querySelectorAll<HTMLElement>(".sched-row")].map((r) 
 
 beforeEach(() => {
   scheduleList.mockReset();
+  scheduleApprove.mockReset();
   useTenantStore.setState({ tenant: "" });
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -667,5 +669,95 @@ describe("SchedulesSection held schedules (#4631)", () => {
     // The row's own key handler preventDefaults Enter to toggle the history: it must not see this one.
     expect(ev.defaultPrevented).toBe(false);
     expect(main.getAttribute("aria-expanded")).toBe("false");
+  });
+});
+
+// After a 409 on approve the modal closes at once, but the rejected generation stays on screen
+// until the re-read lands: its review button must not reopen it in that window (#4856).
+describe("SchedulesSection held row after a 409", () => {
+  const defer = () => {
+    let resolve!: (v: unknown) => void;
+    const p = new Promise((r) => (resolve = r));
+    return { p, resolve };
+  };
+  const held = (generation: number) => ({ ...sched, id: "sch_held", approval_pending: true, generation });
+  const reviewBtn = () => host.querySelector<HTMLButtonElement>(".sched-approve-btn")!;
+  const menuDetail = () =>
+    [...document.querySelectorAll<HTMLButtonElement>(".sched-menu .ui-menu-item")].find((b) => b.textContent?.includes(t("sched.detail")));
+  const modalApprove = () =>
+    [...document.querySelectorAll<HTMLButtonElement>(".sched-detail-modal button")].find((b) => b.textContent === t("sched.approve"));
+
+  it("blocks reopening the stale version until the re-read lands, then opens the new one", async () => {
+    const reread = defer();
+    scheduleList.mockResolvedValueOnce([held(2)]).mockReturnValueOnce(reread.p);
+    scheduleApprove
+      .mockResolvedValueOnce({ error: { code: "schedule_changed", message: "x" } })
+      .mockResolvedValue({ ...held(3), approval_pending: false });
+    await render();
+
+    await act(async () => reviewBtn().click());
+    expect(modalApprove()).toBeDefined();
+    await act(async () => modalApprove()!.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // The modal is gone, the re-read started right after the 409 and has not answered.
+    expect(document.querySelector(".sched-detail-modal")).toBeNull();
+    expect(scheduleList).toHaveBeenCalledTimes(2);
+    expect(reviewBtn().disabled).toBe(true);
+    await act(async () => reviewBtn().click());
+    expect(document.querySelector(".sched-detail-modal")).toBeNull();
+    // The ⋯ menu's Details item opens the same modal, so it is held too.
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-menu-btn")!.click());
+    expect(menuDetail()!.disabled).toBe(true);
+    await act(async () => menuDetail()!.click());
+    expect(document.querySelector(".sched-detail-modal")).toBeNull();
+
+    await act(async () => reread.resolve([held(3)]));
+    expect(reviewBtn().disabled).toBe(false);
+    expect(menuDetail()!.disabled).toBe(false);
+    await act(async () => reviewBtn().click());
+    expect(document.querySelector(".sched-detail-modal")).not.toBeNull();
+    await act(async () => modalApprove()!.click());
+    expect(scheduleApprove).toHaveBeenLastCalledWith("sch_held", 3);
+  });
+
+  it("keeps the first row held when a second one is refused before the re-read lands", async () => {
+    const reread = defer();
+    const second = defer();
+    scheduleList
+      .mockResolvedValueOnce([held(2), { ...held(5), id: "sch_b" }])
+      .mockReturnValueOnce(reread.p)
+      .mockReturnValueOnce(second.p);
+    scheduleApprove.mockResolvedValue({ error: { code: "schedule_changed", message: "x" } });
+    await render();
+    const btns = () => [...host.querySelectorAll<HTMLButtonElement>(".sched-approve-btn")];
+    // Rows are sorted; find each by its row id rather than by position.
+    const btnOf = (id: string) => host.querySelector<HTMLButtonElement>(`[data-sched-id="${id}"] .sched-approve-btn`)!;
+    expect(btns().length).toBe(2);
+
+    await act(async () => btnOf("sch_held").click());
+    await act(async () => modalApprove()!.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(btnOf("sch_held").disabled).toBe(true);
+    // The open row B is refused while A's re-read is still pending.
+    await act(async () => btnOf("sch_b").click());
+    await act(async () => modalApprove()!.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(btnOf("sch_held").disabled).toBe(true);
+    expect(btnOf("sch_b").disabled).toBe(true);
+    await act(async () => second.resolve([held(3), { ...held(6), id: "sch_b" }]));
+    expect(btns().map((b) => b.disabled)).toEqual([false, false]);
+  });
+
+  it("does not hold a row that was never refused", async () => {
+    scheduleList.mockResolvedValue([held(2), { ...held(5), id: "sch_other" }]);
+    await render();
+    expect([...host.querySelectorAll<HTMLButtonElement>(".sched-approve-btn")].map((b) => b.disabled)).toEqual([false, false]);
   });
 });
