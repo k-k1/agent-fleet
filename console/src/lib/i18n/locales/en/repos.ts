@@ -212,6 +212,8 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "pj.expand": "Expand",
   "rp.lineage_detached": "Listed elsewhere",
   "rp.lineage_detached_hint": "This copy was started from one of the copies below this row, or made by an auto-run, and the tree lists it elsewhere (for an auto-run, in the Auto-run view). It is part of this action.",
+  "pj.spaces": "Spaces",
+  "pj.space_folder_hint": "~/spaces/{folder}",
   "pj.other_sessions": "Other sessions",
   "pj.tidy_other_sessions": "Tidy other sessions (archive; shell/ssm are deleted)",
   "pj.session_history": "Session history",

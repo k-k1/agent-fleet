@@ -833,8 +833,13 @@ type sessionWire struct {
 	// Same relay caveat as the fields around it — absent here, the Console never sees
 	// which folder a session was launched in. The DB mirror has no column for it, so it is
 	// absent while stopped.
-	Subdir        string `json:"subdir,omitempty"`
-	Repo          string `json:"repo"`
+	Subdir string `json:"subdir,omitempty"`
+	Repo   string `json:"repo"`
+	// Space: the space folder the session runs in (ADR 0142), "" outside ~/spaces. Same relay
+	// caveat as its neighbours: absent here, the Console files a space session under the
+	// repository that happens to share its folder name. No DB-mirror column; a stopped
+	// Workspace's rail lists sessions without the Spaces section.
+	Space         string `json:"space,omitempty"`
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
 	// Title: the user-supplied display title, which the Console's displayName prefers above
 	// everything else. Dropping it in the relay barely shows for claude kinds (title is

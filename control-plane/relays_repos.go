@@ -9,6 +9,10 @@ var repoRelays = []agentRelay{
 	// New working copy with no import source (mkdir + git init); audited as repo.clone is.
 	{route: "POST /api/repos/init", audit: auditAs("repo.init", queryShaped("name", auditRepoNameHint))},
 	{route: "DELETE /api/repos/{name}", audit: auditByName("repo.delete")},
+	// Spaces (ADR 0142): folders under ~/spaces for work without a repository. The body's
+	// display name is never read, so the audit records the action alone.
+	{route: "GET /api/spaces"},
+	{route: "POST /api/spaces", audit: auditAs("space.create", nil)},
 	{route: "GET /api/repos/{name}/recreate"}, // deleted worktree back at its path (#1040)
 	{route: "POST /api/repos/{name}/recreate", audit: auditByName("repo.recreate")},
 	{route: "POST /api/repos/{name}/lock", audit: auditByName("repo.lock")}, // deletion lock (docs/log/45)

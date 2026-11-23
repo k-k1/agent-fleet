@@ -400,6 +400,8 @@ var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/agents/memory-consolidation/run":               true, // #3702
 	// ADR 0138 D14a: the member's removal of stored credentials the policy forbids.
 	"POST /api/connections/unusable/remove": true,
+	// ADR 0142 decision 1: a new, empty space under ~/spaces.
+	"POST /api/spaces": true,
 }
 
 // auditAddedSinceTheFreeze are routes that existed at the freeze and that the frozen switch

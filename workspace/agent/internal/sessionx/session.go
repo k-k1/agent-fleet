@@ -11,6 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/watch"
 )
@@ -94,7 +95,7 @@ func stoppedResumable(m session.Meta) bool {
 func wireArchivedRow(m session.Meta) session.Session {
 	return session.Session{
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
-		Repo: m.Repo, Title: m.Title, TitleSetBy: m.TitleSetBy,
+		Repo: m.Repo, Space: spacex.FolderOf(m.Dir), Title: m.Title, TitleSetBy: m.TitleSetBy,
 		Display: session.Display(m), Color: m.Color, Label: m.Label,
 		Started: startedLabel(m), CreatedAt: m.CreatedAt, Branch: m.Branch,
 		Resumable: stoppedResumable(m),
@@ -138,7 +139,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	s := session.Session{
 		Route: m.Route.Clone(), LaunchRoute: m.LaunchRoute.Clone(),
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
-		Repo: m.Repo, WorkingCopyID: gitx.WorkingCopyID(m.Dir), Title: m.Title, TitleSetBy: m.TitleSetBy,
+		Repo: m.Repo, Space: spacex.FolderOf(m.Dir), WorkingCopyID: gitx.WorkingCopyID(m.Dir), Title: m.Title, TitleSetBy: m.TitleSetBy,
 		PlanReviewers: planReviewersOrEmpty(m.PlanReviewers),
 		Display:       session.Display(m), Color: m.Color, Label: m.Label,
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,

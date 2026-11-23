@@ -372,6 +372,12 @@ func catalogEntry(m session.Meta, alive bool) session.CatalogEntry {
 	return e
 }
 
+// SpaceTarget is CreateReq.Space: an existing space by folder, or a new one by display name.
+type SpaceTarget struct {
+	Folder string `json:"folder,omitempty"`
+	Name   string `json:"name,omitempty"`
+}
+
 type CreateReq struct {
 	// Name is IGNORED: the server auto-allocates a unique slug as the session's
 	// identity. Kept in the wire struct only so older clients that still send it
@@ -518,6 +524,10 @@ type CreateReq struct {
 	// diverge from the branch — e.g. an auto branch temp/<x> in a wip-<x> folder. Empty
 	// => the folder is derived from the branch name.
 	Folder string `json:"folder"`
+	// Space runs the session in a space (ADR 0142): ~/spaces/<folder>, a place with no
+	// repository. {"folder": "<f>"} names an existing space; no folder makes a new one named
+	// "name". It replaces dir, so it is refused together with dir, worktree or remote_url.
+	Space *SpaceTarget `json:"space,omitempty"`
 	// WorkItem is the item a work-item launch was started for (ADR 0103 decision 8). It is
 	// recorded in the meta so a later rename through POST /repos/{name}/branch-name keeps
 	// {ref} and the kind. Every other launch leaves it nil.

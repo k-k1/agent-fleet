@@ -210,6 +210,8 @@ export const repos = {
   "pj.expand": "展開",
   "rp.lineage_detached": "別の場所に表示",
   "rp.lineage_detached_hint": "このコピーは、配下のコピーから起動されたか、自動実行が作ったもので、ツリーでは別の場所（自動実行のビューなど）に表示されます。この操作の対象に含まれます。",
+  "pj.spaces": "スペース",
+  "pj.space_folder_hint": "~/spaces/{folder}",
   "pj.other_sessions": "その他のセッション",
   "pj.tidy_other_sessions": "その他のセッションを整理（アーカイブ退避・shell/ssm は削除）",
   "pj.session_history": "セッション履歴",

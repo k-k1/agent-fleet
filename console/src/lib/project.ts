@@ -18,8 +18,12 @@ import { compareText } from "./intl.ts";
 // The working-copy folder a session runs in. Agent sessions carry `repo`
 // (the folder name); fall back to the working dir's basename so a session with a
 // dir but no repo field still lands under its folder. "" = no folder (e.g. a
-// shell in home) → an orphan.
+// shell in home, or a session in a space) → not under any repository.
+//
+// A space (ADR 0142) is no working copy, even when its folder shares a repository's
+// name: the Agent marks it by the directory's root (`space`), and the name never decides.
 export function sessionFolder(s: Session): string {
+  if (s.space) return "";
   if (s.repo) return s.repo;
   const dir = s.dir || "";
   return dir ? dir.split("/").filter(Boolean).pop() || "" : "";
@@ -528,8 +532,35 @@ export function orphanSessions(sessions: Session[], repos: Repo[]): Session[] {
   const names = new Set(repos.map((r) => r.name));
   return withoutUnattended(sessions)
     .filter((s) => {
+      if (s.space) return false; // the Spaces section's (spaceGroups)
       const f = sessionFolder(s);
       return !f || !names.has(f);
     })
     .sort((a, b) => compareText(b.createdAt || "", a.createdAt || ""));
+}
+
+/** One space of the Sessions view's Spaces section: its folder and its sessions, newest first. */
+export interface SpaceGroup {
+  folder: string;
+  sessions: Session[];
+}
+
+// spaceGroups groups the sessions that run in a space (ADR 0142 decision 9) by space. A space
+// whose newest session is newer comes first, so the space being worked in stays at the top;
+// the folder breaks ties. Unattended runs are left to their own views, as orphanSessions does.
+export function spaceGroups(sessions: Session[]): SpaceGroup[] {
+  const by = new Map<string, Session[]>();
+  for (const s of withoutUnattended(sessions)) {
+    if (!s.space) continue;
+    const list = by.get(s.space);
+    if (list) list.push(s);
+    else by.set(s.space, [s]);
+  }
+  const newest = (g: SpaceGroup) => g.sessions[0]?.createdAt || "";
+  return [...by.entries()]
+    .map(([folder, list]) => ({
+      folder,
+      sessions: list.sort((a, b) => compareText(b.createdAt || "", a.createdAt || "")),
+    }))
+    .sort((a, b) => compareText(newest(b), newest(a)) || compareText(a.folder, b.folder));
 }

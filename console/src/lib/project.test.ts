@@ -10,6 +10,7 @@ import {
   groupedRepos,
   sessionsInFolder,
   orphanSessions,
+  spaceGroups,
   isUnattendedOnlyFolder,
   withoutUnattended,
   workingCopyLabel,
@@ -395,6 +396,49 @@ describe("orphanSessions", () => {
       sess("gone", { repo: "removed-repo" }),
     ];
     expect(orphanSessions(sessions, repos).map((s) => s.name).sort()).toEqual(["gone", "shell"]);
+  });
+});
+
+// ADR 0142 decision 9: a space is told from a repository by the Agent's `space` (the directory's
+// root), never by the folder name, so a space named like a repository stays out of its node.
+describe("spaces", () => {
+  const repos = [repo("notes")];
+  const sessions = [
+    sess("in-repo", { repo: "notes", dir: "/home/dev/repos/notes", createdAt: "2026-11-01T00:00:00Z" }),
+    sess("in-space", { repo: "notes", dir: "/home/dev/spaces/notes", space: "notes", createdAt: "2026-11-02T00:00:00Z" }),
+    sess("other-space", { repo: "q3-abcdef", dir: "/home/dev/spaces/q3-abcdef", space: "q3-abcdef", createdAt: "2026-11-03T00:00:00Z" }),
+    sess("older-in-space", { repo: "notes", dir: "/home/dev/spaces/notes", space: "notes", createdAt: "2026-10-01T00:00:00Z" }),
+    sess("home-shell"),
+  ];
+
+  it("keeps space sessions out of the repository of the same name", () => {
+    expect(sessionFolder(sessions[1])).toBe("");
+    expect(sessionsInFolder(sessions, "notes").map((s) => s.name)).toEqual(["in-repo"]);
+  });
+
+  it("keeps space sessions out of Other", () => {
+    expect(orphanSessions(sessions, repos).map((s) => s.name)).toEqual(["home-shell"]);
+  });
+
+  it("groups space sessions by space, the most recently used space first", () => {
+    expect(spaceGroups(sessions).map((g) => [g.folder, g.sessions.map((s) => s.name)])).toEqual([
+      ["q3-abcdef", ["other-space"]],
+      ["notes", ["in-space", "older-in-space"]],
+    ]);
+  });
+
+  it("is empty without space sessions", () => {
+    expect(spaceGroups([sessions[0], sessions[4]])).toEqual([]);
+  });
+
+  it("puts the Spaces section between the repositories and Other in rail order", () => {
+    expect(railOrder(sessions, repos, null).map((s) => s.name)).toEqual([
+      "in-repo",
+      "other-space",
+      "in-space",
+      "older-in-space",
+      "home-shell",
+    ]);
   });
 });
 
