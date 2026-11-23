@@ -59,6 +59,12 @@ export class ReadGuard {
     old.abort();
   }
 
+  /** Back to a live, unnamed subject if the owner's cleanup left the guard dead; otherwise a
+   *  no-op, so reads already begun in the same commit stay live. */
+  revive(): void {
+    if (this.subject === GONE) this.reset();
+  }
+
   begin(subject?: unknown): ReadTicket {
     const live = Object.is(subject, this.subject);
     const g = live ? this.gen : -1;
@@ -77,9 +83,12 @@ export class ReadGuard {
 
 /**
  * A ReadGuard for the component's lifetime. Unmount (a layout cleanup, so before any passive
- * cleanup or timer can run) leaves it on a subject nothing matches; the setup re-arms it, since
+ * cleanup or timer can run) leaves it on a subject nothing matches; the setup revives it, since
  * StrictMode and a Suspense boundary that hides and re-shows the tree run the cleanup on a
- * component that stays mounted.
+ * component that stays mounted. Only a dead guard is revived: children's layout effects run
+ * before the owner's, and a read a child began in the same commit must stay live. On a re-setup
+ * those children's layout effects still see the dead guard, so a child handed the guard begins
+ * its reads from a passive effect or an event, not a layout effect.
  *
  * One-off reads (a retry button, an event) take their ticket when they begin, before the first
  * await, with the subject their callback was made for, and check it after every await. A
@@ -89,7 +98,7 @@ export class ReadGuard {
 export function useReadGuard(): ReadGuard {
   const [guard] = useState(() => new ReadGuard());
   useLayoutEffect(() => {
-    guard.reset();
+    guard.revive();
     return () => guard.reset(GONE);
   }, [guard]);
   return guard;

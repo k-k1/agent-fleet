@@ -148,4 +148,24 @@ describe("useReadGuard", () => {
     expect(later.current()).toBe(false);
     expect(guard!.begin().current()).toBe(false);
   });
+
+  it("keeps a read a child began in its layout effect during the owner's first commit", () => {
+    let child: ReadTicket | undefined;
+    function Child({ guard }: { guard: ReadGuard }) {
+      useLayoutEffect(() => {
+        child = guard.begin();
+      }, [guard]);
+      return null;
+    }
+    function Owner() {
+      const g = useReadGuard();
+      return <Child guard={g} />;
+    }
+    const root = createRoot(document.createElement("div"));
+    act(() => root.render(<Owner />));
+    expect(child!.current()).toBe(true);
+    expect(child!.signal.aborted).toBe(false);
+    act(() => root.unmount());
+    expect(child!.current()).toBe(false);
+  });
 });
