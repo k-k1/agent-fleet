@@ -1,13 +1,15 @@
 // Which icons the activity bar shows (ADR 0142 decision 11). The member turns a view's icon off in
 // the bar's context menu; the choice is the `railViewsOff` setting. Kept apart from the component so
 // each rule can be tested without a DOM.
+import { RAIL_VIEWS } from "../../core/store/leftRail.ts";
 import type { RailView } from "../../core/store/leftRail.ts";
 import type { RailBadge } from "./badges.ts";
 
-/** The icons to show: every usable view whose icon is not off, plus the view on screen. The view on
- * screen stays whatever the stored choice says (it may have been turned off on another browser), so
- * the pane the member is reading never loses its icon. Never empty while any view is usable. */
-export function shownViews(usable: readonly RailView[], off: readonly string[], onScreen: RailView): RailView[] {
+/** The icons to show: every usable view whose icon is not off, plus the view on screen (null while
+ * the left pane is folded away: nothing is on screen then, and any icon may go). The view on screen
+ * stays whatever the stored choice says (it may have been turned off on another browser), so the
+ * pane the member is reading never loses its icon. Never empty while any view is usable. */
+export function shownViews(usable: readonly RailView[], off: readonly string[], onScreen: RailView | null): RailView[] {
   const shown = usable.filter((v) => v === onScreen || !off.includes(v));
   return shown.length > 0 ? shown : usable.slice(0, 1);
 }
@@ -25,7 +27,7 @@ export interface MenuEntry {
 /** One entry per view the bar knows, in bar order. An unavailable view is never checked: it has no
  * icon whatever the stored choice says. Only an icon that is shown can be locked on. Turning an
  * icon back on is always allowed. */
-export function menuEntries(all: readonly RailView[], usable: readonly RailView[], off: readonly string[], onScreen: RailView): MenuEntry[] {
+export function menuEntries(all: readonly RailView[], usable: readonly RailView[], off: readonly string[], onScreen: RailView | null): MenuEntry[] {
   const shown = shownViews(usable, off, onScreen);
   return all.map((id) => {
     if (!usable.includes(id)) return { id, checked: false, lock: "unavailable" };
@@ -34,6 +36,17 @@ export function menuEntries(all: readonly RailView[], usable: readonly RailView[
     return { id, checked, lock };
   });
 }
+
+const known = (id: string): boolean => (RAIL_VIEWS as readonly string[]).includes(id);
+
+/** The off list after Reset: only the ids this build knows are cleared, so a newer build's choice
+ * (a view this build has no icon for) survives a reset made here. */
+export function resetOff(off: readonly string[]): string[] {
+  return off.filter((id) => !known(id));
+}
+
+/** Is there anything for Reset to clear? */
+export const canResetOff = (off: readonly string[]): boolean => off.some(known);
 
 /** The off list after switching `id`. Ids the build does not know stay, so a newer build's choice
  * survives. */

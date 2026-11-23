@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hiddenWaiting, menuEntries, shownViews, toggleOff } from "./visibility.ts";
+import { canResetOff, hiddenWaiting, menuEntries, resetOff, shownViews, toggleOff } from "./visibility.ts";
 import type { RailView } from "../../core/store/leftRail.ts";
 
 const ALL: RailView[] = ["sessions", "shared", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"];
@@ -21,8 +21,9 @@ describe("shownViews", () => {
   });
 });
 
+const find = (e: ReturnType<typeof menuEntries>, id: RailView) => e.find((x) => x.id === id)!;
+
 describe("menuEntries", () => {
-  const find = (e: ReturnType<typeof menuEntries>, id: RailView) => e.find((x) => x.id === id)!;
   it("checks what is shown and locks only the view on screen", () => {
     const e = menuEntries(ALL, NO_SCHED, ["memory"], "sessions");
     expect(find(e, "sessions")).toMatchObject({ checked: true, lock: "current" });
@@ -65,5 +66,27 @@ describe("hiddenWaiting", () => {
   });
   it("ignores a view that is not usable", () => {
     expect(hiddenWaiting(NO_SCHED, shown, { schedules: { tone: "waiting", count: 1 } })).toEqual([]);
+  });
+});
+
+describe("resetOff", () => {
+  it("clears the ids this build knows and keeps the rest", () => {
+    expect(resetOff(["future", "files", "memory"])).toEqual(["future"]);
+    expect(resetOff(["future"])).toEqual(["future"]);
+    expect(resetOff([])).toEqual([]);
+  });
+  it("is worth offering only when a known id is off", () => {
+    expect(canResetOff(["future"])).toBe(false);
+    expect(canResetOff(["future", "files"])).toBe(true);
+    expect(canResetOff([])).toBe(false);
+  });
+});
+
+describe("a folded left pane (nothing on screen)", () => {
+  it("lets any icon go, down to the last one", () => {
+    expect(shownViews(NO_SCHED, ["sessions"], null)).not.toContain("sessions");
+    expect(find(menuEntries(ALL, NO_SCHED, [], null), "sessions").lock).toBeNull();
+    const only = menuEntries(["sessions", "files"], ["sessions", "files"], ["files"], null);
+    expect(find(only, "sessions")).toMatchObject({ checked: true, lock: "last" });
   });
 });

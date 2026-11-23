@@ -371,6 +371,7 @@ export const common = {
   "rail.menu_reset": "アイコンを初期の状態に戻す",
   "rail.lock.current": "表示中",
   "rail.lock.last": "最後のアイコン",
+  "rail.lock.loading": "設定を読み込み中",
   "rail.lock.no_scheduler": "ここにはスケジューラがありません",
   "rail.hidden_waiting": "アイコンを消したビューに返事待ちがあります: {names}",
   "rail.view.sessions": "セッション",

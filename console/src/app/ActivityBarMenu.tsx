@@ -33,6 +33,7 @@ const LOCK_TEXT: Record<NonNullable<MenuEntry["lock"]>, MsgKey> = {
 export function ActivityBarMenu({
   anchor,
   rows,
+  busy,
   canReset,
   onToggle,
   onReset,
@@ -40,6 +41,8 @@ export function ActivityBarMenu({
 }: {
   anchor: BarMenuAnchor;
   rows: BarMenuRow[];
+  /** The saved choice has not been read yet: nothing can be changed until it has. */
+  busy: boolean;
   canReset: boolean;
   onToggle: (id: RailView, on: boolean) => void;
   onReset: () => void;
@@ -63,6 +66,7 @@ export function ActivityBarMenu({
     >
       <li className="ui-menu-caption" role="presentation">
         {tr("rail.menu_title")}
+        {busy && <span className="actbar-menu-reason"> · {tr("rail.lock.loading")}</span>}
       </li>
       {rows.map((r) => (
         <li key={r.id} role="none">
@@ -70,11 +74,11 @@ export function ActivityBarMenu({
             type="button"
             role="menuitemcheckbox"
             aria-checked={r.checked}
-            aria-disabled={r.lock ? true : undefined}
+            aria-disabled={r.lock || busy ? true : undefined}
             className="ui-menu-item actbar-menu-item"
             data-menu-view={r.id}
             onClick={() => {
-              if (!r.lock) onToggle(r.id, !r.checked);
+              if (!r.lock && !busy) onToggle(r.id, !r.checked);
             }}
           >
             <Icon name="check" className={r.checked ? "wset-check" : "wset-check wset-check--off"} />
@@ -90,11 +94,11 @@ export function ActivityBarMenu({
         <button
           type="button"
           role="menuitem"
-          aria-disabled={canReset ? undefined : true}
+          aria-disabled={canReset && !busy ? undefined : true}
           className="ui-menu-item actbar-menu-item"
           data-menu-reset=""
           onClick={() => {
-            if (canReset) onReset();
+            if (canReset && !busy) onReset();
           }}
         >
           <Icon name="discard" />

@@ -1,6 +1,6 @@
 // The activity bar's context menu (ADR 0142 decision 11): how it opens, what it lists and locks,
 // that the choice reaches the settings and the swipe, and the dot for a hidden view that waits.
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
@@ -18,7 +18,7 @@ import { useSessionsStore } from "../features/sessions/store.ts";
 import { useNotificationStore } from "../features/notifications/store.ts";
 import { useHandoffStore } from "../features/sharing/handoffStore.ts";
 import type { HandoffOffer } from "../features/sharing/handoffStore.ts";
-import { getSettings, setSettings } from "../lib/settings.ts";
+import { getSettings, hydrateUIPrefs, setSettings } from "../lib/settings.ts";
 import { LONG_PRESS_MS } from "../lib/longPress.ts";
 import { BAR_STEP_DIST, BAR_SWIPE_UP_IS_NEXT } from "./barSwipe.ts";
 import type { Session } from "../types/session.ts";
@@ -27,6 +27,11 @@ const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
+
+// The saved choice has been read, as it has by the time anyone opens the menu.
+beforeAll(async () => {
+  await hydrateUIPrefs();
+});
 
 beforeEach(() => {
   localStorage.clear();
@@ -149,7 +154,7 @@ describe("turning icons off", () => {
   });
 
   it("cannot turn off the last icon", async () => {
-    // Every icon but one is off, and the screen is on a view with no icon left to keep.
+    // Every icon but the one on screen is off.
     const others = ["shared", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"];
     setSettings({ railViewsOff: others });
     useLeftRail.setState({ view: "sessions" });
@@ -243,5 +248,213 @@ describe("a hidden view that waits on the member", () => {
     setSettings({ railViewsOff: ["sessions"] });
     await mount();
     expect(host!.querySelector("[data-hidden-waiting]")?.getAttribute("data-hidden-waiting")).toBe("sessions");
+  });
+});
+
+describe("keyboard focus over the icons", () => {
+  const key = (el: Element, k: string) => act(async () => void el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })));
+
+  it("moves focus over the shown view icons only, in both directions, skipping hidden icons and launchers", async () => {
+    setSettings({ railViewsOff: ["shared"] });
+    await mount();
+    btn("sessions").focus();
+    await key(btn("sessions"), "ArrowDown");
+    expect(document.activeElement).toBe(btn("assistant"));
+    await key(btn("assistant"), "ArrowUp");
+    expect(document.activeElement).toBe(btn("sessions"));
+    // Past the first icon it stays; past the last view icon it does not enter the launchers.
+    await key(btn("sessions"), "ArrowUp");
+    expect(document.activeElement).toBe(btn("sessions"));
+    btn("files").focus();
+    await key(btn("files"), "ArrowDown");
+    expect(document.activeElement).toBe(btn("files"));
+    // Moving focus does not choose the view.
+    expect(useLeftRail.getState().view).toBe("sessions");
+  });
+});
+
+describe("the left pane folded away", () => {
+  it("lets the view that was last chosen go, since nothing is on screen", async () => {
+    await mount({ shown: false });
+    await rightClick(bar());
+    expect(row("sessions").getAttribute("aria-disabled")).toBeNull();
+    await act(async () => row("sessions").click());
+    expect(icons()).not.toContain("sessions");
+  });
+
+  it("still keeps the last icon, saying so, and does not turn it off", async () => {
+    setSettings({ railViewsOff: ["shared", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"] });
+    await mount({ shown: false });
+    expect(icons()).toEqual(["sessions"]);
+    await rightClick(bar());
+    expect(row("sessions").getAttribute("aria-disabled")).toBe("true");
+    expect(row("sessions").textContent).toContain("the last icon");
+    await act(async () => row("sessions").click());
+    expect(icons()).toEqual(["sessions"]);
+  });
+
+  it("drops a stored-off view's icon while folded, and shows it again once on screen", async () => {
+    setSettings({ railViewsOff: ["sessions"] });
+    await mount({ shown: false });
+    expect(icons()).not.toContain("sessions");
+    await act(async () => root!.render(<Shell shown />));
+    expect(icons()).toContain("sessions");
+  });
+});
+
+describe("focus after the menu closes", () => {
+  const key = (el: Element, k: string) => act(async () => void el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })));
+  const esc = () => act(async () => void document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+
+  it("lands on the view on screen when the icon the menu was opened from was turned off", async () => {
+    await mount();
+    btn("files").focus();
+    await key(btn("files"), "ContextMenu");
+    await act(async () => row("files").click());
+    expect(icons()).not.toContain("files");
+    await esc();
+    expect(menu()).toBeNull();
+    expect(document.activeElement).toBe(btn("sessions"));
+  });
+
+  it("lands on the view on screen when the dot it was opened from went away", async () => {
+    useSessionsStore.setState({ sessions: [{ name: "w", state: "question", alive: true, kind: "claude" } as unknown as Session] });
+    useLeftRail.setState({ view: "files" });
+    setSettings({ railViewsOff: ["sessions"] });
+    await mount();
+    const dot = host!.querySelector<HTMLButtonElement>("[data-hidden-waiting]")!;
+    dot.focus();
+    await key(dot, "ContextMenu");
+    await act(async () => row("sessions").click());
+    expect(host!.querySelector("[data-hidden-waiting]")).toBeNull();
+    await esc();
+    expect(document.activeElement).toBe(btn("files"));
+  });
+
+  it("anchors a contextmenu with no pointer position (the keyboard's) on the focused icon", async () => {
+    await mount();
+    const b = btn("memo");
+    b.getBoundingClientRect = () => ({ left: 100, right: 140, top: 250, bottom: 300, width: 40, height: 50, x: 100, y: 250, toJSON: () => ({}) }) as DOMRect;
+    b.focus();
+    await act(async () => void b.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 0, clientY: 0 })));
+    expect(menu()!.style.left).toBe("120px");
+    expect(menu()!.style.top).toBe("296px");
+  });
+});
+
+describe("long press and the clicks after it", () => {
+  // The order a touch screen sends: pointerdown, then touchstart, a hold, then touchend.
+  const down = (target: Element, type: string, x: number, y: number) => {
+    const e = new Event(type, { bubbles: true, cancelable: true });
+    if (type === "pointerdown") Object.defineProperty(e, "pointerType", { value: "touch" });
+    else Object.defineProperty(e, "touches", { value: type === "touchend" ? [] : [{ clientX: x, clientY: y }] });
+    target.dispatchEvent(e);
+  };
+
+  async function longPress(target: Element) {
+    await act(async () => {
+      down(target, "pointerdown", 20, 200);
+      down(target, "touchstart", 20, 200);
+      vi.advanceTimersByTime(LONG_PRESS_MS + 20);
+    });
+  }
+
+  it("drops the click on lift, and a later mouse click on a menu row is not eaten", async () => {
+    vi.useFakeTimers();
+    await mount();
+    await longPress(btn("files"));
+    expect(menu()).not.toBeNull();
+    await act(async () => {
+      down(btn("files"), "touchend", 20, 200);
+      btn("files").click();
+    });
+    expect(useLeftRail.getState().view).toBe("sessions");
+    // The browser sent no click after touchend; a mouse click on the menu is a new action.
+    await act(async () => void vi.advanceTimersByTime(1000));
+    await act(async () => row("memory").click());
+    expect(getSettings().railViewsOff).toEqual(["memory"]);
+  });
+
+  it("does not eat the first menu click even when the lift's click never came and no time has passed", async () => {
+    vi.useFakeTimers();
+    await mount();
+    await longPress(btn("files"));
+    await act(async () => down(btn("files"), "touchend", 20, 200));
+    // The menu is outside the bar, so its click is not the one being dropped.
+    await act(async () => row("memory").click());
+    expect(getSettings().railViewsOff).toEqual(["memory"]);
+  });
+
+  it("does not drop an icon click that comes well after the lift", async () => {
+    vi.useFakeTimers();
+    await mount();
+    await longPress(btn("files"));
+    await act(async () => down(btn("files"), "touchend", 20, 200));
+    await act(async () => void vi.advanceTimersByTime(1000));
+    await act(async () => btn("memo").click());
+    expect(useLeftRail.getState().view).toBe("memo");
+  });
+});
+
+describe("re-measuring the bar when the dot appears", () => {
+  it("drops data-fits when the dot makes the column overflow, and restores it when the dot goes", async () => {
+    await mount();
+    const el = bar();
+    Object.defineProperty(el, "clientHeight", { value: 300, configurable: true });
+    Object.defineProperty(el, "scrollHeight", { configurable: true, get: () => (el.querySelector("[data-hidden-waiting]") ? 340 : 300) });
+    await act(async () => root!.render(<Shell />));
+    expect(el.hasAttribute("data-fits")).toBe(true);
+    useLeftRail.setState({ view: "files" });
+    setSettings({ railViewsOff: ["sessions"] });
+    await act(async () => void useSessionsStore.setState({ sessions: [{ name: "w", state: "question", alive: true, kind: "claude" } as unknown as Session] }));
+    expect(el.querySelector("[data-hidden-waiting]")).not.toBeNull();
+    expect(el.hasAttribute("data-fits")).toBe(false);
+    await act(async () => void useSessionsStore.setState({ sessions: [] }));
+    expect(el.querySelector("[data-hidden-waiting]")).toBeNull();
+    expect(el.hasAttribute("data-fits")).toBe(true);
+  });
+});
+
+describe("several hidden views waiting at once", () => {
+  const offer = (id: string) => ({ id, status: "pending" }) as unknown as HandoffOffer;
+  it("shows one dot, each row counts only its own view, and a view turned on moves its count to the icon", async () => {
+    useSessionsStore.setState({ sessions: [{ name: "w", state: "question", alive: true, kind: "claude" } as unknown as Session] });
+    useHandoffStore.setState({ received: [offer("a"), offer("b")] });
+    useLeftRail.setState({ view: "files" });
+    setSettings({ railViewsOff: ["sessions", "shared"] });
+    await mount();
+    expect(host!.querySelectorAll("[data-hidden-waiting]")).toHaveLength(1);
+    expect(host!.querySelector("[data-hidden-waiting]")!.getAttribute("data-hidden-waiting")).toBe("sessions shared");
+    await act(async () => host!.querySelector<HTMLButtonElement>("[data-hidden-waiting]")!.click());
+    expect(row("sessions").textContent).toContain("1 session waiting for your answer");
+    expect(row("shared").textContent).toContain("2 handoffs waiting for your decision");
+    await act(async () => row("sessions").click());
+    expect(host!.querySelectorAll("[data-hidden-waiting]")).toHaveLength(1);
+    expect(host!.querySelector("[data-hidden-waiting]")!.getAttribute("data-hidden-waiting")).toBe("shared");
+    expect(row("sessions").textContent).not.toContain("waiting for your answer");
+    expect(btn("sessions").querySelector(".actbar-badge")?.textContent).toBe("1");
+    expect(row("shared").textContent).toContain("2 handoffs waiting for your decision");
+  });
+});
+
+describe("ids this build does not know", () => {
+  it("Reset clears only the ids it knows, and is off when there are none to clear", async () => {
+    setSettings({ railViewsOff: ["future-view", "files"] });
+    await mount();
+    await rightClick(bar());
+    const reset = () => menu()!.querySelector<HTMLButtonElement>("[data-menu-reset]")!;
+    expect(reset().getAttribute("aria-disabled")).toBeNull();
+    await act(async () => reset().click());
+    expect(getSettings().railViewsOff).toEqual(["future-view"]);
+    expect(reset().getAttribute("aria-disabled")).toBe("true");
+    await act(async () => reset().click());
+    expect(getSettings().railViewsOff).toEqual(["future-view"]);
+  });
+  it("keeps an unknown id when an icon is turned off", async () => {
+    setSettings({ railViewsOff: ["future-view"] });
+    await mount();
+    await rightClick(bar());
+    await act(async () => row("files").click());
+    expect(getSettings().railViewsOff).toEqual(["future-view", "files"]);
   });
 });

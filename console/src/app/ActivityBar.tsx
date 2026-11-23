@@ -3,8 +3,8 @@
 // pane alone. Keeping those two apart is the point of the column: an icon either changes the
 // left pane or the main area, never both.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { KeyboardEvent as RKeyboardEvent, MouseEvent as RMouseEvent, PointerEvent as RPointerEvent, TouchEvent as RTouchEvent } from "react";
-import { useSettings, setSettings } from "../lib/settings.ts";
+import type { KeyboardEvent as RKeyboardEvent, MouseEvent as RMouseEvent, PointerEvent as RPointerEvent, RefObject, TouchEvent as RTouchEvent } from "react";
+import { setSettings, useSettings, useUIPrefsLoading } from "../lib/settings.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import type { RailView } from "../core/store/leftRail.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -39,7 +39,7 @@ import { createLongPress } from "../lib/longPress.ts";
 import { isContextMenuKey, menuAnchor } from "../features/project/contextMenuKey.ts";
 import { ActivityBarMenu } from "./ActivityBarMenu.tsx";
 import type { BarMenuAnchor, BarMenuRow } from "./ActivityBarMenu.tsx";
-import { hiddenWaiting, menuEntries, shownViews, toggleOff } from "./activity/visibility.ts";
+import { canResetOff, hiddenWaiting, menuEntries, resetOff, shownViews, toggleOff } from "./activity/visibility.ts";
 import { useBarSwipe } from "./useBarSwipe.ts";
 
 interface ViewDef {
@@ -84,6 +84,11 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
   const imagegenAvailable = useImagegenAvailable();
   const badges = useRailBadges(shown ? view : null);
 
+  // Phone only (a tablet's docked column keeps taps), and only while the drawer is out.
+  const barRef = useRef<HTMLDivElement>(null);
+  // The view on screen keeps its icon and cannot be turned off; with the left pane folded away
+  // nothing is on screen, so any icon may go (the last one excepted).
+  const onScreen = shown ? view : null;
   const usable = useMemo(() => (schedulerEnabled ? VIEWS : VIEWS.filter((v) => v.id !== "schedules")), [schedulerEnabled]);
   // The icons the member left on (its context menu). The swipe steps through these only.
   const { railViewsOff: off } = useSettings();
@@ -91,20 +96,23 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
     const ids = shownViews(
       usable.map((v) => v.id),
       off,
-      view,
+      onScreen,
     );
     return usable.filter((v) => ids.includes(v.id));
-  }, [usable, off, view]);
-  const menu = useBarMenu();
+  }, [usable, off, onScreen]);
+  // The list has not been read from the server yet: a change now would be built on the empty
+  // local copy and a save would drop what another browser stored.
+  const prefsLoading = useUIPrefsLoading();
+  const menu = useBarMenu(barRef);
   const entries = useMemo(
     () =>
       menuEntries(
         VIEWS.map((v) => v.id),
         usable.map((v) => v.id),
         off,
-        view,
+        onScreen,
       ),
-    [usable, off, view],
+    [usable, off, onScreen],
   );
   // Views with no icon that wait on the member: the bar carries one dot for them (ADR 0142).
   const waitingHidden = useMemo(
@@ -123,9 +131,7 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
     return { ...e, icon: def.icon, name: tr(def.label), waiting: w ? badgeText(w.badge, tr, e.id) : "" };
   });
 
-  // Phone only (a tablet's docked column keeps taps), and only while the drawer is out.
   // The list is the one rendered above, so a toggled scheduler is never stale.
-  const barRef = useRef<HTMLDivElement>(null);
   const [announced, setAnnounced] = useState("");
   const step = useCallback(
     (delta: 1 | -1) => {
@@ -150,9 +156,22 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
     const id = window.setTimeout(() => setAnnounced(""), 1000);
     return () => window.clearTimeout(id);
   }, [announced]);
-  useBarSwipe(barRef, { enabled: !foldable && shown, step }, [views.length, imagegenAvailable]);
+  // The dot adds height without changing the icon count: it has to re-measure whether the column
+  // still fits, or the bar keeps claiming touch-action that the swipe then refuses.
+  useBarSwipe(barRef, { enabled: !foldable && shown, step }, [views.length, imagegenAvailable, waitingHidden.length > 0]);
+
+  // Up / Down move focus over the view icons that are shown (not the launchers), without
+  // choosing the view: Enter or Space does that.
+  const moveFocus = (e: RKeyboardEvent<HTMLDivElement>) => {
+    if ((e.key !== "ArrowDown" && e.key !== "ArrowUp") || !(e.target instanceof HTMLElement) || !e.target.dataset.railView) return;
+    const icons = [...e.currentTarget.querySelectorAll<HTMLElement>(".actbar-btn[data-rail-view]")];
+    const next = icons[icons.indexOf(e.target) + (e.key === "ArrowDown" ? 1 : -1)];
+    e.preventDefault();
+    next?.focus();
+  };
 
   return (
+    <>
     <div
       ref={barRef}
       className="actbar"
@@ -160,6 +179,10 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
       aria-orientation="vertical"
       aria-label={tr("rail.bar_aria")}
       {...menu.barProps}
+      onKeyDown={(e) => {
+        menu.barProps.onKeyDown(e);
+        moveFocus(e);
+      }}
     >
       <LaunchButton id="home" icon="home" label={tr("wsbar.home_title") + hintSuffix("open.home")} name={tr("wsbar.home")} onClick={() => openHome()} />
       <span className="actbar-rule" />
@@ -237,47 +260,68 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
       <span className="actbar-live" role="status" aria-live="polite">
         {announced}
       </span>
-      {menu.anchor && (
-        <ActivityBarMenu
-          anchor={menu.anchor}
-          rows={rows}
-          canReset={off.length > 0}
-          onToggle={(id, on) => setSettings({ railViewsOff: toggleOff(off, id, on) })}
-          onReset={() => setSettings({ railViewsOff: [] })}
-          onClose={menu.close}
-        />
-      )}
     </div>
+    {/* A sibling of the bar, not a child: the menu's clicks and keys are React events that would
+        otherwise bubble through the portal into the bar's own gesture handlers. */}
+    {menu.anchor && (
+      <ActivityBarMenu
+        anchor={menu.anchor}
+        rows={rows}
+        busy={prefsLoading}
+        canReset={canResetOff(off)}
+        onToggle={(id, on) => setSettings({ railViewsOff: toggleOff(off, id, on) })}
+        onReset={() => setSettings({ railViewsOff: resetOff(off) })}
+        onClose={menu.close}
+      />
+    )}
+    </>
   );
 });
 
 // Opens the bar's menu: right-click, the context-menu key (the focused icon anchors it), and a long
-// press on a touch screen. Whatever opens it, the click a long press leaves on lift is dropped, or
-// it would also pick the icon under the finger.
-function useBarMenu() {
+// press on a touch screen. The click a long press leaves on lift is dropped, or it would also pick
+// the icon under the finger; the drop only covers that click (a short window after the lift, and
+// only for events inside the bar), never a later mouse or key action.
+const CLICK_SWALLOW_MS = 400;
+
+function useBarMenu(barRef: RefObject<HTMLElement | null>) {
   const [anchor, setAnchor] = useState<BarMenuAnchor | null>(null);
   const [press] = useState(createLongPress);
   const swallow = useRef(false);
+  const swallowTimer = useRef<number | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
+  const setSwallow = (on: boolean) => {
+    swallow.current = on;
+    if (swallowTimer.current !== null) window.clearTimeout(swallowTimer.current);
+    swallowTimer.current = null;
+  };
+  useEffect(() => () => setSwallow(false), []);
   const openAt = useCallback(
     (a: BarMenuAnchor) => {
       press.cancel();
       const active = document.activeElement;
-      returnFocus.current = active instanceof HTMLElement && active.closest(".actbar") ? active : null;
+      returnFocus.current = active instanceof HTMLElement && barRef.current?.contains(active) ? active : null;
       setAnchor(a);
     },
-    [press],
+    [press, barRef],
   );
   const close = useCallback(() => {
     press.cancel();
     setAnchor(null);
-    returnFocus.current?.focus();
+    // The opener may be gone by now (its icon was turned off, or the dot it opened from was
+    // cleared): land on the view on screen, or the first button, rather than on <body>.
+    const back = returnFocus.current;
     returnFocus.current = null;
-  }, [press]);
+    if (!back) return;
+    const bar = barRef.current;
+    const target = back.isConnected ? back : (bar?.querySelector<HTMLElement>(".actbar-btn[aria-pressed='true']") ?? bar?.querySelector<HTMLElement>(".actbar-btn"));
+    target?.focus();
+  }, [press, barRef]);
+  const inBar = (e: { currentTarget: Element; target: EventTarget }) => e.target instanceof Node && e.currentTarget.contains(e.target);
   const barProps = {
     onContextMenu: (e: RMouseEvent) => {
       e.preventDefault();
-      if ((e.nativeEvent as PointerEvent).pointerType === "touch") swallow.current = true;
+      if ((e.nativeEvent as PointerEvent).pointerType === "touch") setSwallow(true);
       // A keyboard-raised contextmenu carries no pointer position; anchor on the focused icon.
       const focused = document.activeElement;
       if (e.clientX === 0 && e.clientY === 0 && focused instanceof HTMLElement && e.currentTarget.contains(focused)) openAt(menuAnchor(focused));
@@ -288,18 +332,16 @@ function useBarMenu() {
       e.preventDefault();
       openAt(menuAnchor(e.target));
     },
-    onMouseDown: () => {
-      swallow.current = false;
-    },
+    onMouseDown: () => setSwallow(false),
     onPointerDown: (e: RPointerEvent) => press.pointerDown(e.pointerType),
     onTouchStart: (e: RTouchEvent) => {
-      swallow.current = false;
+      setSwallow(false);
       press.cancel();
       const t = e.touches[0];
       if (!t || e.touches.length > 1) return;
       const { clientX, clientY } = t;
       press.start(clientX, clientY, () => {
-        swallow.current = true;
+        setSwallow(true);
         openAt({ x: clientX, y: clientY });
       });
     },
@@ -309,13 +351,18 @@ function useBarMenu() {
       if (t) press.move(t.clientX, t.clientY);
     },
     onTouchEnd: (e: RTouchEvent) => {
-      if (swallow.current && e.cancelable) e.preventDefault();
+      if (swallow.current) {
+        if (e.cancelable) e.preventDefault();
+        // The lift's click, where the browser still sends one, comes right after; whatever
+        // arrives later is a different action.
+        swallowTimer.current = window.setTimeout(() => setSwallow(false), CLICK_SWALLOW_MS);
+      }
       press.end();
     },
     onTouchCancel: () => press.end(),
     onClickCapture: (e: RMouseEvent) => {
-      if (!swallow.current) return;
-      swallow.current = false;
+      if (!swallow.current || !inBar(e)) return;
+      setSwallow(false);
       e.preventDefault();
       e.stopPropagation();
     },

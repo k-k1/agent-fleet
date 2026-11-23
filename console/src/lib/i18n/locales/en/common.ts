@@ -369,6 +369,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "rail.menu_reset": "Reset to the default icons",
   "rail.lock.current": "on screen",
   "rail.lock.last": "the last icon",
+  "rail.lock.loading": "loading your settings",
   "rail.lock.no_scheduler": "no scheduler here",
   "rail.hidden_waiting": "Waiting for you, icon off: {names}",
   "rail.view.sessions": "Sessions",

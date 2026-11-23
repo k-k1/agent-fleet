@@ -149,8 +149,13 @@
 }
 /* The bar's context menu: the reason a row cannot be switched, and what waits in a view whose
    icon is off, sit at the row's end. */
+/* A long reason or waiting text wraps instead of running off a narrow screen. */
+.actbar-menu {
+  max-width: calc(100vw - 16px);
+}
 .actbar-menu-item {
-  min-width: 220px;
+  min-width: min(220px, 100%);
+  white-space: normal;
 }
 .actbar-menu-name {
   flex: 1;

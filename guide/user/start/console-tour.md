@@ -90,7 +90,8 @@ your other display settings, so it follows you to other browsers.
 - The view on screen and the last icon left cannot be turned off. A view this deployment cannot use (Schedules, where
   there is no scheduler) is listed greyed out with the reason beside it
 - **Reset to the default icons** turns every icon back on
-- On a phone, the vertical swipe steps through the icons that are shown only
+- On a phone, the vertical swipe steps through the icons that are shown only. With the keyboard, Up and Down move
+  focus over the icons that are shown
 - A view whose icon is off can still be reached: anything that reveals a row in it brings it on screen, and its icon
   shows while it is on screen
 - If a view whose icon is off has something waiting for you (a session stopped on your answer, a handoff, a memo or a
