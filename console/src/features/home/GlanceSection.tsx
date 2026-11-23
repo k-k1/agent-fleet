@@ -371,7 +371,7 @@ function ModelsTile({ m, failed, loading, reload }: { m: ModelUsage | null; fail
         <p className="glance-note">{failed ? tr("home.glance_load_error") : "—"}</p>
       ) : (
         <>
-          {m.folding && <p className="glance-badge">{tr("home.glance_folding")}</p>}
+          {m.folding && <p className="ui-badge ui-badge-accent glance-badge">{tr("home.glance_folding")}</p>}
           {m.state === "measured" ? (
             <ul className="glance-models">
               {m.rows.map((r) => (

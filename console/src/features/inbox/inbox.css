@@ -24,7 +24,8 @@
 .inbox-compose textarea { width: 100%; box-sizing: border-box; }
 .inbox-picker { display: flex; flex-direction: column; gap: 6px; }
 .inbox-chips, .inbox-hits { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px; }
-.inbox-chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-12); padding: 1px 4px 1px 8px; border-radius: 10px; border: 1px solid var(--border2, var(--border)); }
+.inbox-chips .inbox-chip:hover { border-color: var(--border); }
+.inbox-chips .inbox-chip { display: inline-flex; align-items: center; gap: 4px; font-size: var(--fs-12); padding: 1px 4px 1px 8px; cursor: default; }
 .inbox-chip button, .inbox-hits button { all: unset; cursor: pointer; }
 .inbox-hits button { font-size: var(--fs-12); padding: 2px 8px; border-radius: 10px; border: 1px dashed var(--border2, var(--border)); }
 .inbox-hits button:disabled { opacity: .5; cursor: default; }

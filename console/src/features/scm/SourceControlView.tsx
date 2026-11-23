@@ -297,7 +297,7 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
           <Icon name="git-branch" /> {status?.branch || current || "?"} {!path && <Icon name="chevron-down" />}
         </button>
         {status && (status.ahead || status.behind) ? (
-          <span className="repo-chip ab" title={tr("scm.ahead_behind", { ahead: status.ahead ?? 0, behind: status.behind ?? 0 })}>
+          <span className="ui-badge repo-chip ab" title={tr("scm.ahead_behind", { ahead: status.ahead ?? 0, behind: status.behind ?? 0 })}>
             <AheadBehind ahead={status.ahead} behind={status.behind} />
           </span>
         ) : null}

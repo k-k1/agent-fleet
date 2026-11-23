@@ -115,10 +115,9 @@ section.home-setup {
 .glance-note,
 .glance-sub,
 .glance-line,
-.glance-warn,
-.glance-badge {
+.glance-warn {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-12);
 }
 .glance-note,
 .glance-sub {
@@ -128,7 +127,8 @@ section.home-setup {
   color: var(--danger, #d33);
 }
 .glance-badge {
-  color: var(--accent);
+  margin: 0;
+  width: fit-content;
 }
 .glance-strip {
   display: flex;

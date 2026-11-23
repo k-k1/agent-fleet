@@ -88,3 +88,41 @@ describe(".usage-chip on .ui-chip", () => {
     expect(usage).not.toMatch(/font-size:\s*1[0-3]px/);
   });
 });
+
+describe("badges and chips moved onto the primitives (#4785)", () => {
+  const read = (rel: string) => readFileSync(path.resolve(__dirname, rel), "utf8");
+  const repos = strip(read("../features/repos/repos.css"));
+  const files = strip(read("../features/files/files.css"));
+  const sched = strip(read("../features/schedules/schedules.css"));
+  it("repo-chip keeps only layout and sets the tone through --badge", () => {
+    expect(rule(repos, ".repo-chip")).toBe("display: inline-flex; align-items: center; gap: 3px;");
+    expect(rule(repos, ".repo-chip.dirty")).toContain("--badge: var(--warn)");
+    expect(rule(repos, ".repo-chip.integration.repo-chip--contained")).toContain("--badge: var(--ok)");
+    expect(rule(repos, ".repo-chip.ab.ff")).toContain("--badge: var(--ok)");
+    expect(rule(repos, ".repo-chip.ab.diverged")).toContain("--badge: var(--warn)");
+  });
+  it("every repo-chip / chg-badge / sched-badge call site also carries ui-badge", () => {
+    for (const [f, cls] of [
+      ["../features/repos/RepoRow.tsx", "repo-chip"],
+      ["../features/overview/SessionCard.tsx", "repo-chip"],
+      ["../features/scm/SourceControlView.tsx", "repo-chip"],
+      ["../features/mirror/FileChangeStrip.tsx", "chg-badge"],
+      ["../features/project/FilesChanges.tsx", "chg-badge"],
+      ["../features/schedules/SchedulesSection.tsx", "sched-badge"],
+    ] as const) {
+      const src = read(f);
+      const all = src.match(new RegExp(`${cls}(?![-\\w])`, "g"))?.length ?? 0;
+      const withPrimitive = src.match(new RegExp(`ui-badge[\\w -]* ?${cls}(?![-\\w])`, "g"))?.length ?? 0;
+      expect(all, f).toBeGreaterThan(0);
+      expect(withPrimitive, f).toBe(all);
+    }
+  });
+  it("chg-badge tones and the sched badge keep colour out of their own rules", () => {
+    expect(rule(files, ".chg-badge.st-del")).toBe("--badge: var(--del); --badge-mix: 16%;");
+    expect(rule(sched, ".sched-badge")).not.toContain("color");
+    expect(read("../features/schedules/SchedulesSection.tsx")).toContain("ui-badge ui-badge-warn sched-badge");
+  });
+  it("inbox chips ride .ui-chip", () => {
+    expect(read("../features/inbox/InboxModal.tsx")).toContain('className="ui-chip inbox-chip"');
+  });
+});

@@ -521,40 +521,20 @@
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: var(--fs-10);
-  border-radius: 999px;
-  padding: 0 6px;
 }
-.repo-chip.dirty {
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-}
+.repo-chip.dirty { --badge: var(--warn); --badge-mix: 16%; }
 .repo-chip.dirty .codicon {
   font-size: 7px;
 }
 /* Linked worktree HEAD vs its parent working copy's current HEAD. Kept apart
    from .ab because that chip is relative to the configured remote upstream. */
-.repo-chip.integration.repo-chip--same,
-.repo-chip.integration.repo-chip--unknown {
-  color: var(--muted);
-  background: color-mix(in srgb, var(--muted) 10%, transparent);
-}
-.repo-chip.integration.repo-chip--contained {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-}
-.repo-chip.integration.repo-chip--unmerged {
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-}
-.repo-chip.integration.repo-chip--diverged {
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-}
+.repo-chip.integration.repo-chip--contained { --badge: var(--ok); --badge-mix: 16%; }
+.repo-chip.integration.repo-chip--unmerged { --badge: var(--accent); --badge-mix: 16%; }
+.repo-chip.integration.repo-chip--diverged { --badge: var(--warn); --badge-mix: 16%; }
 .repo-chip.ab {
   gap: 4px;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  --badge: var(--accent);
+  --badge-mix: 16%;
 }
 /* The UI font is monospace, which centres the thin arrow in a full cell; pull the count in so
    the arrow reads as part of its number rather than a separate word. */
@@ -562,15 +542,9 @@
   margin-right: -0.15em;
 }
 /* origin is ahead and fast-forwards cleanly (behind only) */
-.repo-chip.ab.ff {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 14%, transparent);
-}
+.repo-chip.ab.ff { --badge: var(--ok); }
 /* diverged from origin, so no fast-forward: a merge/rebase is needed (ahead + behind) */
-.repo-chip.ab.diverged {
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 14%, transparent);
-}
+.repo-chip.ab.diverged { --badge: var(--warn); }
 .repo-ords {
   padding: 0;
 }

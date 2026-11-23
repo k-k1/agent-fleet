@@ -410,7 +410,7 @@ function MemberPicker({ chosen, onChange, max }: { chosen: InboxPerson[]; onChan
     <div className="inbox-picker">
       <ul className="inbox-chips">
         {chosen.map((c) => (
-          <li key={c.userKey} className="inbox-chip">
+          <li key={c.userKey} className="ui-chip inbox-chip">
             {c.email || c.userKey}
             <button type="button" aria-label={tr("inbox.remove")} onClick={() => onChange(chosen.filter((x) => x.userKey !== c.userKey))}>
               <Icon name="close" />
