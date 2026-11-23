@@ -27,4 +27,16 @@ describe("memo.css pinned headers", () => {
     expect(b).toMatch(/z-index:\s*1/);
     expect(b).toMatch(/background-color:\s*var\(--leftpane-bg/);
   });
+  // The settings card once reused the sidebar band's names (.memo-repo / .memo-repo-head), so
+  // inside the dialog its heading stuck over its own hint. css-dup.mjs only compares files, so
+  // a same-file clash like this is pinned here.
+  it("keeps the repository settings card out of the sidebar band's class names", () => {
+    const tsx = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), "MemoRepoSettingsCard.tsx"),
+      "utf8",
+    );
+    expect(tsx).not.toMatch(/memo-repo(?![\w-]*set)(?=[\s"-])/);
+    expect(tsx).toMatch(/memo-reposet-head/);
+    expect(body(".memo-reposet-head,\n.memo-reposet-foot")).not.toMatch(/sticky/);
+  });
 });

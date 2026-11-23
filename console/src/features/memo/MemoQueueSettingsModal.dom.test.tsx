@@ -117,10 +117,10 @@ describe("MemoQueueSettingsModal repository settings card", () => {
     await flush();
   };
   const checkFile = async () => {
-    await act(async () => document.querySelector<HTMLButtonElement>(".memo-repo-head button")!.click());
+    await act(async () => document.querySelector<HTMLButtonElement>(".memo-reposet-head button")!.click());
     await flush();
   };
-  const approveBtn = () => document.querySelector<HTMLButtonElement>(".memo-repo-card .ui-btn-primary")!;
+  const approveBtn = () => document.querySelector<HTMLButtonElement>(".memo-reposet-card .ui-btn-primary")!;
 
   beforeEach(() => {
     liveKinds = [{ kind: "claude", usableRoutes: ["anthropic-api"] }];
@@ -145,7 +145,7 @@ describe("MemoQueueSettingsModal repository settings card", () => {
 
   it("is not shown for a category without a repository", async () => {
     await render("");
-    expect(document.querySelector(".memo-repo")).toBeNull();
+    expect(document.querySelector(".memo-reposet")).toBeNull();
   });
 
   it("does not save the dialog while an approval is on its way", async () => {
@@ -219,7 +219,7 @@ describe("MemoQueueSettingsModal repository settings card", () => {
     const box = acceptBox()!;
     await act(async () => box.click());
     expect(approveBtn().disabled).toBe(true);
-    expect(document.querySelector(".memo-repo-foot-hint")!.hasAttribute("data-invalid")).toBe(true);
+    expect(document.querySelector(".memo-reposet-foot-hint")!.hasAttribute("data-invalid")).toBe(true);
     await act(async () => box.click());
     expect(approveBtn().disabled).toBe(false);
   });
