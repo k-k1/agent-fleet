@@ -16,6 +16,7 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Diff } from "../../scm/GitDiff.tsx";
 import { Choice, OnOff, Row } from "../parts/controls.tsx";
 import { setSetting, useSettings } from "../../../lib/settings.ts";
+import type { ExternalMemoryMode } from "../../../lib/settings/normalize.ts";
 import { useT, tMaybe } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { AutoSyncPanel, useFlipAgentMemory } from "./memoryAutoSync.tsx";
@@ -52,7 +53,7 @@ export function ExternalMemorySwitch() {
   return (
     <>
       <Row label={tr("mem.ext_switch")}>
-        <Choice
+        <Choice<ExternalMemoryMode>
           value={mode}
           options={[
             ["off", tr("mem.ext_off")],
