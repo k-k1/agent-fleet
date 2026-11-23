@@ -76,6 +76,7 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 | [jq](https://jqlang.org/) | JSON processor | Debian 13 (trixie) package | [MIT](https://github.com/jqlang/jq/blob/master/COPYING) |
 | [uv](https://github.com/astral-sh/uv) | Python package and tool manager (`uv`, `uvx`) | Latest at image build | [MIT OR Apache-2.0](https://github.com/astral-sh/uv#license) |
 | [npm](https://github.com/npm/cli) | Node.js package manager | `11.21.2` | [Artistic-2.0](https://github.com/npm/cli/blob/v11.21.2/LICENSE) |
+| [gitleaks](https://github.com/gitleaks/gitleaks) | Scans a repository for committed credentials, for a check before you push | `8.30.1` | [MIT](https://github.com/gitleaks/gitleaks/blob/v8.30.1/LICENSE) |
 | [rtk](https://github.com/rtk-ai/rtk) | Shortens command output for agents to save tokens | `1.2.1` | [Apache-2.0](https://github.com/rtk-ai/rtk/blob/v1.2.1/LICENSE) |
 
 ## Language runtimes

@@ -765,6 +765,15 @@ What matters in both:
   unnoticed.
 - The first full-history audit (2026-08-01) found **zero real credentials**,
   cross-checked by expanding every reachable blob rather than walking the commit log.
+- **The Workspace image ships the same scanner** (`GITLEAKS_VERSION` in
+  `workspace/Dockerfile`, installed to `/usr/local/bin/gitleaks`, tarball checked against the
+  release's checksums file), so a session can scan before it pushes. Nothing runs it on its own
+  and no hook is installed into a member's repositories. **To bump it**, change `VERSION` and
+  `SHA256` in `ci.yml`'s `secret-scan` job and `GITLEAKS_VERSION` in the Dockerfile in the same
+  change: `TestGitleaksPinMatchesCI` (`workspace/agent`) fails when the two disagree. It is not
+  in `cli-pin-bump.sh` (that covers the agent CLIs), like `gh` and `bkt`; the image smoke
+  (`deploy/local/e2e-smoke.sh`) checks the pinned version, and the guide page is regenerated with
+  `python3 scripts/workspace_image.py`.
 
 ## 10.5 Commits and branches
 
