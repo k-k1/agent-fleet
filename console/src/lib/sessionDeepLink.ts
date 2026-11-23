@@ -12,7 +12,8 @@
 // names one opens the session only while that tenant is the active one; it never falls back to a
 // same-named session of another tenant.
 import { api, isTransientErr } from "../core/api/client.ts";
-import { useTenantStore } from "../core/store/tenant.ts";
+import { pushStamp } from "../core/push/events.ts";
+import { setLandingTenantHint, useTenantStore } from "../core/store/tenant.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { agentOf } from "../agents/registry.ts";
 import { openSessionChat, openSessionTerminal } from "../features/sessions/open.ts";
@@ -24,45 +25,60 @@ export function consumeSessionDeepLink(): void {
     const u = new URL(location.href);
     name = u.searchParams.get("session") || "";
     if (!name) return;
-    // `tenant` stays in the URL until the tenant store has settled on it (the store reads it as its
-    // landing hint while it boots); then it goes, or a reload would pull the tab back to it after
-    // the person switched away.
+    // The tenant store takes the tenant as its landing hint (kept in memory, so the retries of one
+    // boot share it); the URL loses it now, or a reload after the person switched away would pull
+    // the tab back to it.
     tenant = u.searchParams.get("tenant") || "";
     u.searchParams.delete("session");
+    u.searchParams.delete("tenant");
     history.replaceState(history.state, "", u.toString());
   } catch {
     return;
   }
-  openSessionByName(name, tenant, dropTenantParam);
-}
-
-function dropTenantParam(): void {
-  try {
-    const u = new URL(location.href);
-    if (!u.searchParams.has("tenant")) return;
-    u.searchParams.delete("tenant");
-    history.replaceState(history.state, "", u.toString());
-  } catch {
-    /* a URL that cannot be rewritten is left as it is */
-  }
+  if (tenant) setLandingTenantHint(tenant);
+  openSessionByName(name, tenant);
 }
 
 /** Opens a session's pane once it is in the list (a workspace still coming up is waited for).
- *  With `tenant`, only while that tenant is the active one (the tenant may still be resolving). */
-export function openSessionByName(name: string, tenant = "", settled?: () => void): void {
+ *
+ *  With `tenant`, the session is looked up only in that tenant's own list: the tenant must be the
+ *  active one, and the list is read from the server for it rather than taken from the store, whose
+ *  rows may still be the previous tenant's (the store keeps them across a switch, and a stream
+ *  frame or a slow answer can land in either order). */
+export function openSessionByName(name: string, tenant = ""): void {
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(name)) return;
   let tries = 0;
-  const tick = () => {
-    const wrongTenant = tenant !== "" && useTenantStore.getState().tenant !== tenant;
-    const s = wrongTenant ? undefined : useSessionsStore.getState().sessions.find((x) => x.name === name);
-    if (s) {
-      settled?.();
-      (agentOf(s.kind).caps.chat ? openSessionChat : openSessionTerminal)(name);
-      return;
-    }
+  const again = () => {
     // ~90s covers a workspace still coming up; beyond that the link is stale.
     if (++tries < 90) setTimeout(tick, 1000);
-    else settled?.();
+  };
+  const open = (kind: string) => (agentOf(kind).caps.chat ? openSessionChat : openSessionTerminal)(name);
+  const tick = () => {
+    if (!tenant) {
+      const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
+      if (s) open(s.kind);
+      else again();
+      return;
+    }
+    if (useTenantStore.getState().tenant !== tenant) return again();
+    void (async () => {
+      const stamp = pushStamp("sessions");
+      let list: { name: string; kind: string }[] | null = null;
+      try {
+        const d = await api("api/sessions");
+        if (d && !d.error && !isTransientErr(d)) list = d.sessions || [];
+      } catch {
+        /* retried below */
+      }
+      // The tenant may have moved on while the request was out: its answer is not this tenant's.
+      if (!list || useTenantStore.getState().tenant !== tenant) return again();
+      // Publish only when no newer frame arrived meanwhile (the store's own rule): a late, older
+      // answer must not overwrite it.
+      if (pushStamp("sessions") === stamp) useSessionsStore.getState().applyList(list as never);
+      const s = list.find((x) => x.name === name);
+      if (s) open(s.kind);
+      else again();
+    })();
   };
   tick();
 }
@@ -94,26 +110,13 @@ async function membershipsKnown(): Promise<boolean> {
 }
 
 /** A push belongs to the tenant of the membership it was sent to, which may not be the one this
- *  tab shows: switch to it (when the person is a member there and the switch is not declined)
- *  before opening. The target tenant's list is fetched here and published, because the store's
- *  own refresh keeps the previous tenant's rows on a failed or stale answer, and a row of the
- *  wrong tenant must never be what the name is looked up in. */
+ *  tab shows: switch to it first when the person is a member there and the switch is not declined. */
 async function openPushTarget(name: string, tenant: string): Promise<void> {
   if (tenant && useTenantStore.getState().tenant !== tenant) {
     if (!(await membershipsKnown())) return;
     if (!useTenantStore.getState().tenants.some((t) => t.slug === tenant)) return;
-    if (useTenantStore.getState().tenant !== tenant) {
-      await useTenantStore.getState().select(tenant);
-      if (useTenantStore.getState().tenant !== tenant) return;
-      try {
-        const d = await api("api/sessions");
-        if (isTransientErr(d) || d?.error) return;
-        if (useTenantStore.getState().tenant !== tenant) return;
-        useSessionsStore.getState().applyList(d.sessions || []);
-      } catch {
-        return;
-      }
-    }
+    await useTenantStore.getState().select(tenant);
+    if (useTenantStore.getState().tenant !== tenant) return;
   }
   openSessionByName(name, tenant);
 }
