@@ -143,4 +143,53 @@ describe("ChatView report poller", () => {
     expect(host!.textContent).not.toContain("late-report");
     expect(host!.textContent).toContain("hello there");
   });
+  // The reattach poller (1.4 s) and the report poller (5 s) read the same conversation; they
+  // share one ReadGuard, so the order of their reads holds across the two (#4902).
+  describe("with the reattach poller", () => {
+    const advance = async (ms: number) => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(ms);
+      });
+    };
+
+    it("drops a report read that answers in_progress after a reattach read saw the turn end", async () => {
+      let answerReport: (v: unknown) => void = () => {};
+      chatGet.mockResolvedValue(conv("c1", 1000, "running", true));
+      await render("c1");
+      await advance(4300); // reattach reads at 1.4 s, 2.8 s and 4.2 s; the report poller has not ticked
+      chatGet.mockImplementationOnce(() => new Promise((r) => (answerReport = r)));
+      await advance(800); // the report read begins at 5 s and hangs
+      chatGet.mockReset();
+      chatGet.mockResolvedValue(conv("c1", 2000, "finished", false));
+      await advance(1500); // the next reattach read sees the turn end and stops polling
+      expect(host!.textContent).toContain("finished");
+      const calls = chatGet.mock.calls.length;
+      await act(async () => {
+        // Older than what is on screen, but its in_progress differs and would be adopted.
+        answerReport(conv("c1", 1500, "stale-copy", true));
+        await Promise.resolve();
+      });
+      expect(host!.textContent).toContain("finished");
+      expect(host!.textContent).not.toContain("stale-copy");
+      await advance(3000); // a restarted reattach poller would read again within 1.4 s
+      expect(chatGet.mock.calls.length - calls).toBeLessThanOrEqual(1); // at most the report tick
+    });
+
+    it("drops a reattach read that answers after a newer report read landed", async () => {
+      let answerReattach: (v: unknown) => void = () => {};
+      chatGet.mockResolvedValueOnce(conv("c1", 1000, "running", true));
+      chatGet.mockImplementationOnce(() => new Promise((r) => (answerReattach = r)));
+      chatGet.mockResolvedValue(conv("c1", 3000, "newest", true));
+      await render("c1");
+      await advance(1500); // the reattach read begins at 1.4 s and hangs
+      await advance(4000); // the report read at 5 s lands the newest copy
+      expect(host!.textContent).toContain("newest");
+      await act(async () => {
+        answerReattach(conv("c1", 2000, "older-reattach", true));
+        await Promise.resolve();
+      });
+      expect(host!.textContent).toContain("newest");
+      expect(host!.textContent).not.toContain("older-reattach");
+    });
+  });
 });
