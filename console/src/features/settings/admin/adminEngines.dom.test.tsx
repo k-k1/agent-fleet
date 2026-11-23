@@ -32,7 +32,14 @@ const openEngineAdd = vi.fn();
 vi.mock("./openEngineAdd.ts", () => ({ openEngineAdd: (...args: unknown[]) => openEngineAdd(...args) }));
 
 import { EnginesAdminView, engineOfferResultKey } from "./adminEngines.tsx";
-import { beginEnginesRead, clearCatalogMemory, loadEngines, saveEnginesRead } from "./catalogMemory.ts";
+import { clearCatalogMemory, loadEngines } from "./catalogMemory.ts";
+import { useEngineRows } from "./useEngineRows.ts";
+
+// A second screen that holds its own rows, as the catalogue pane does.
+function EngineRowsProbe() {
+  useEngineRows();
+  return null;
+}
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -333,15 +340,31 @@ describe("EnginesAdminView", () => {
 
     it("an edit's cache write is not undone by another screen's older read answering after it", async () => {
       const a = row({ key: "image", mode: "ondemand", state: "running" });
-      api.mockResolvedValue({ super_admin: true, engines: [a] });
+      const c = row({ key: "llm", api: "chat", state: "starting", desired: 1 });
+      api.mockResolvedValueOnce({ super_admin: true, engines: [a, c] });
+      await mount(); // screen A
+      api.mockImplementationOnce(held); // screen B's read stays in flight
+      const hostB = document.createElement("div");
+      document.body.appendChild(hostB);
+      const rootB = createRoot(hostB);
+      await act(async () => {
+        rootB.render(<EngineRowsProbe />);
+      });
       apiJSON.mockImplementation(held);
-      await mount();
-      const otherScreenRead = beginEnginesRead(); // another screen's read, begun before the edit answered
-      await click(seg("常時稼働"));
-      await answer({ ...a, mode: "on" });
-      expect(loadEngines()?.rows[0].mode).toBe("on");
-      saveEnginesRead(otherScreenRead, [a], true, ["hf"]); // it answers with the pre-edit row
-      expect(loadEngines()?.rows[0].mode).toBe("on");
+      try {
+        await click(seg("常時稼働")); // A's PUT: pending[1]
+        await answer({ ...a, mode: "on" }, 1);
+        expect(loadEngines()?.rows.map((e) => e.mode)).toEqual(["on", "ondemand"]);
+        // B's read was served before the PUT: the old image row, and a changed llm row.
+        await answer({ super_admin: true, engines: [a, { ...c, state: "running", desired: 1 }] }, 0);
+        expect(loadEngines()?.rows.map((e) => `${e.key}:${e.mode}:${e.state}`)).toEqual([
+          "image:on:running",
+          "llm:ondemand:running",
+        ]);
+      } finally {
+        act(() => rootB.unmount());
+        hostB.remove();
+      }
     });
 
     it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {

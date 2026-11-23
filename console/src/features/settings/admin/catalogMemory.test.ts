@@ -153,4 +153,49 @@ describe("engine cache write order across screens", () => {
     saveEnginesRead(read, [eng("a", "ondemand")], true, ["hf"]);
     expect(loadEngines()).toBeNull();
   });
+
+  it("applies two edits of one row that overlap, whichever answers first", () => {
+    seed();
+    const mode = beginEnginesEdit("a");
+    const note = beginEnginesEdit("a");
+    mode({ mode: "on" } as Partial<EngineRow>);
+    note({ note: "x" } as unknown as Partial<EngineRow>);
+    expect(loadEngines()?.rows[0]).toMatchObject({ mode: "on", note: "x" });
+  });
+
+  it("keeps a row a later read wrote against an older read answering after a slow edit", () => {
+    seed();
+    const edit = beginEnginesEdit("a");
+    const r1 = beginEnginesRead();
+    const r2 = beginEnginesRead();
+    saveEnginesRead(r1, [{ ...eng("a", "on"), state: "running" } as EngineRow, eng("b", "ondemand")], true, ["hf"]);
+    edit({ mode: "on", state: "starting" } as unknown as Partial<EngineRow>); // not applied: r1 is newer
+    saveEnginesRead(r2, [{ ...eng("a", "on"), state: "starting" } as EngineRow, eng("b", "ondemand")], true, ["hf"]);
+    expect(loadEngines()?.rows[0]).toMatchObject({ mode: "on", state: "running" });
+  });
+
+  it("takes every row of a read begun after an edit, not only those the edit left alone", () => {
+    seed();
+    beginEnginesEdit("a")({ mode: "on" } as Partial<EngineRow>);
+    saveEnginesRead(
+      beginEnginesRead(),
+      [{ ...eng("a", "on"), state: "running" } as EngineRow, { ...eng("b", "ondemand"), state: "running" } as EngineRow],
+      true,
+      ["hf"],
+    );
+    expect(loadEngines()?.rows).toMatchObject([{ state: "running" }, { state: "running" }]);
+  });
+
+  it("does not let a read that gave up block the older answers that can still be written", () => {
+    saveEngines({ rows: [eng("b", "ondemand")], isSuper: true, sources: ["hf"] });
+    const editB = beginEnginesEdit("b");
+    const older = beginEnginesRead();
+    const newer = beginEnginesRead();
+    beginEnginesEdit("a")({ mode: "on" } as Partial<EngineRow>); // a row the cache does not hold
+    saveEnginesRead(newer, [eng("b", "ondemand"), eng("a", "ondemand")], true, ["hf"]); // gives up
+    saveEnginesRead(older, [{ ...eng("b", "ondemand"), state: "running" } as EngineRow], true, ["hf"]);
+    expect(loadEngines()?.rows).toMatchObject([{ key: "b", state: "running" }]);
+    editB({ mode: "on" } as Partial<EngineRow>); // older was begun after it: the read's row stands
+    expect(loadEngines()?.rows[0]).toMatchObject({ mode: "ondemand", state: "running" });
+  });
 });
