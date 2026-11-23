@@ -456,7 +456,7 @@ notificationDTO.createdAt string
 notificationDTO.displayName string
 notificationDTO.id string
 notificationDTO.kind string
-notificationDTO.payload object
+notificationDTO.payload raw
 notificationDTO.seen bool
 notificationDTO.seq number
 notificationDTO.target.id string
