@@ -45,7 +45,7 @@ export function consumeSessionDeepLink(): void {
  *  With `tenant`, the session is looked up only in that tenant's own list: the tenant must be the
  *  active one (the store's and the API client's selection both; a pop-out pins the client first),
  *  and the list is read from the server for it rather than taken from the store, whose rows may
- *  still be the previous tenant's. An answer is used only when no list frame arrived while it was
+ *  still be the previous tenant's. An answer is used only when no list was published while it was
  *  out and the tenant did not move: then it is the freshest list there is, it is published, and the
  *  pane is opened from the store it just filled (the pane looks the session's studio up there). A
  *  request that hangs is given up on after 10 s and asked again. */
@@ -77,6 +77,7 @@ export function openSessionByName(name: string, tenant = ""): void {
     busyUntil = Date.now() + 10_000;
     const mine = ++seq;
     const stamp = pushStamp("sessions");
+    const rows = useSessionsStore.getState().sessions;
     void (async () => {
       let list: { name: string; kind: string }[] | null = null;
       try {
@@ -89,7 +90,9 @@ export function openSessionByName(name: string, tenant = ""): void {
       // link: past the limit the answer is not used.
       if (done || mine !== seq || Date.now() >= deadline) return;
       busyUntil = 0;
-      if (!list || !here() || pushStamp("sessions") !== stamp) return;
+      // Any list published meanwhile (a frame, the poll, or this tab archiving the session and
+      // re-reading) is newer than this answer: it is not used, and the next tick asks again.
+      if (!list || !here() || pushStamp("sessions") !== stamp || useSessionsStore.getState().sessions !== rows) return;
       const s = list.find((x) => x.name === name);
       if (!s) return;
       done = true;

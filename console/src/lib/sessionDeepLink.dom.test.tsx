@@ -124,6 +124,17 @@ describe("listenPushOpen", () => {
     await vi.advanceTimersByTimeAsync(100_000);
     expect(opened).toEqual([]);
   });
+  it("does not reopen a session this tab archived while the answer was out", async () => {
+    let answer!: (v: unknown) => void;
+    apiAnswer = () => new Promise((r) => (answer = r));
+    await tap({ session: "work", tenant: "b" });
+    sessions = []; // the tab archived `work` and re-read the list (published without a stream frame)
+    apiAnswer = async () => ({ sessions: [] });
+    answer({ sessions: [{ name: "work", kind: "codex" }] }); // the older answer lands afterwards
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(opened).toEqual([]);
+    expect(applyList).not.toHaveBeenCalled();
+  });
   it("gives up on a request that hangs and asks again within the time limit", async () => {
     apiAnswer = () => new Promise(() => {}); // never answers
     await tap({ session: "work", tenant: "b" });
