@@ -44,11 +44,14 @@ func TestScrubSecretsKeepsEnclosingMatchesWhole(t *testing.T) {
 	}
 }
 
-// The GitHub patterns alone, not ScrubSecrets: its entropy fallback takes long mixed runs on
+// The GitHub shapes alone, not ScrubSecrets: its entropy fallback takes long mixed runs on
 // purpose, benign or not.
-// Stateless tokens cut short or run together go in the known-pattern pass itself, not only by
-// the entropy fallback's grace (which a letters-only body would not get).
-func TestKnownPatternsTakeCutAndJoinedStatelessTokens(t *testing.T) {
+// Stateless tokens run together go in the known-pattern pass itself, not only by the entropy
+// fallback's grace (which a letters-only body would not get).
+func TestKnownPassTakesJoinedStatelessTokens(t *testing.T) {
+	known := func(s string) string {
+		return secretpat.ReplaceSpans(s, "*", append(secretpat.Spans(s, knownSecretPatterns...), secretpat.GitHubStatelessSpans(s)...))
+	}
 	for name, tok := range secretpattest.All() {
 		if !strings.HasPrefix(name, "stateless") {
 			continue
@@ -56,9 +59,9 @@ func TestKnownPatternsTakeCutAndJoinedStatelessTokens(t *testing.T) {
 		for in, want := range map[string]string{
 			"x " + tok + tok + " y":       "x * y",
 			"x " + tok + "-" + tok + " y": "x * y",
-			"x " + tok[:120] + "… y":      "x *… y",
+			"x " + tok + ".md y":          "x *.md y",
 		} {
-			if got := secretpat.RedactAll(in, "*", knownSecretPatterns...); got != want {
+			if got := known(in); got != want {
 				t.Errorf("%s: %.80q", name, got)
 			}
 		}
@@ -78,7 +81,12 @@ func TestGitHubPatternsSkipBenignText(t *testing.T) {
 			}
 		}
 	}
-	if gh != 2 {
-		t.Fatalf("found %d GitHub patterns, want the classic and the stateless one", gh)
+	if gh != 1 {
+		t.Fatalf("found %d GitHub patterns, want the classic one", gh)
+	}
+	for _, s := range secretpattest.Benign {
+		if sp := secretpat.GitHubStatelessSpans(s); len(sp) != 0 {
+			t.Errorf("benign %q: stateless spans %v", s, sp)
+		}
 	}
 }

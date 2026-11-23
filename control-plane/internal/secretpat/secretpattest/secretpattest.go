@@ -62,11 +62,11 @@ func StatelessZeros() string { return StatelessApp("100000") }
 // header, all alphanumeric, which is all an alphanumeric-only pattern takes.
 func StatelessNoApp() string { return prefix("s") + JWT('n') }
 
-// StatelessEarlyPunct has a `-` and a `_` among the body's first 16 characters, where an
-// alphanumeric-only pattern with any minimum of 16 or more finds nothing.
+// StatelessEarlyPunct has a `_` and a `-` among the body's first 16 characters, where an
+// alphanumeric-only pattern with any minimum of 16 or more finds nothing: its header's first
+// value is `???>>>`, whose base64url is `Pz8_Pj4-`.
 func StatelessEarlyPunct() string {
-	r := rng('p')
-	return prefix("s") + "eyJ0-" + b64(randomBytes(r, 3)) + "_" + b64(randomBytes(r, 24)) + "." + b64(randomBytes(r, 105)) + "." + b64(randomBytes(r, 256))
+	return prefix("s") + jwt('p', `{"x":"???>>>","alg":"RS256","typ":"JWT"}`)
 }
 
 // Classic is a classic personal access token's shape: `ghp_` and 36 alphanumerics.
@@ -127,9 +127,13 @@ var Benign = []string{
 	"run `gh pr view` then open docs/user_guide.md and release-notes_2026.11.txt",
 	"open docs/ghs_status_dashboard_for_enterprise_repositories.md and ghp_release_notes_for_the_2026_cycle.txt",
 	"ghs_12_eyJ.short.x and gho_9_eyJ.too.short are not tokens either",
+	"cat docs/ghs_eyewash_station.md and ghs_eyJunk_notes.md",
 	// Split so the literals do not trip the secret scan's generic rules.
 	"docs/ghs_202610_" + "releasechecklist.productionrollout." + "902fbdd2b1df0c4f" + "82ab84e70d6c0e21.md",
 	"ghs_1_DeploymentChecklist.productionrollout." + "release_candidate_notes_for_review.md",
+	"docs/ghs_202610_" + "eyewashchecklist.productionrollout." + "902fbdd2b1df0c4f" + "82ab84e70d6c0e21.md",
+	// A JSON-object-like start (`eyJ`) that does not decode to a JSON object.
+	"docs/ghs_202610_" + "eyJunkchecklist.productionrollout." + "902fbdd2b1df0c4f" + "82ab84e70d6c0e21.md",
 	// Split so the literal does not trip the secret scan's own 36-alphanumeric ghs_ rule.
 	"docs/gh" + "s_statusdashboardforenterpriserepositories_enabled.md",
 	"ghs_1_short.config.yaml and ghp_2_release_notes.v2.md stay names",

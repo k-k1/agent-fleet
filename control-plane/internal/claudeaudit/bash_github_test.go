@@ -49,9 +49,9 @@ func TestMaskCommandSecretsKeepsEnclosingMatchesWhole(t *testing.T) {
 	}
 }
 
-// The audit records a Bash command's first line cut at 80 runes with "…" (the Agent's toolInfo),
-// which cuts a stateless token short of its signature; the part that is left still goes, and so
-// do stateless tokens run together.
+// The audit records a Bash command's first line cut at 80 runes with "…" appended (the Agent's
+// toolInfo), which can cut a token anywhere, even inside its header; whatever part is left still
+// goes. Stateless tokens run together go too, and what follows a token is kept.
 func TestBashTargetMasksCutAndJoinedStatelessTokens(t *testing.T) {
 	cut := func(s string) string {
 		if r := []rune(s); len(r) > 80 {
@@ -60,21 +60,31 @@ func TestBashTargetMasksCutAndJoinedStatelessTokens(t *testing.T) {
 		return s
 	}
 	for name, tok := range secretpattest.All() {
+		for pad := 0; pad < 80; pad++ {
+			info := cut("echo " + strings.Repeat("a", pad) + " " + tok + " done")
+			out := BashTarget(info, true)
+			if l := secretpattest.Leftover(out, tok); l != "" {
+				t.Fatalf("%s, cut %d runes into the command: %q survives in %q", name, 80-pad, l, out)
+			}
+			if strings.Contains(out, "gh"+tok[2:4]) {
+				t.Fatalf("%s: the prefix survives in %q", name, out)
+			}
+		}
 		if !strings.HasPrefix(name, "stateless") {
 			continue
 		}
-		for _, cmd := range []string{"echo " + tok, "gh api -H 'Authorization: token " + tok + "' /x", "curl -sS --data-binary " + tok} {
-			info := cut(cmd)
-			out := BashTarget(info, true)
-			if l := secretpattest.Leftover(out, tok); l != "" {
-				t.Errorf("%s: %q survives in %q", name, l, out)
+		for in, want := range map[string]string{
+			"echo " + tok + tok + " done":       "echo *** done",
+			"echo " + tok + "-" + tok + " done": "echo *** done",
+			"cp " + tok + ".md /tmp":            "cp ***.md /tmp",
+		} {
+			if got := MaskCommandSecrets(in); got != want {
+				t.Errorf("%s: %.120q, want %q", name, got, want)
 			}
 		}
-		for _, joined := range []string{tok + tok, tok + "-" + tok} {
-			if got := MaskCommandSecrets("echo " + joined + " done"); got != "echo *** done" {
-				t.Errorf("%s joined: %.120q", name, got)
-			}
-		}
+	}
+	if got := BashTarget("cat docs/ghs_eyewash_station.md", true); got != "cat docs/ghs_eyewash_station.md" {
+		t.Errorf("a plain file name masked to %q", got)
 	}
 }
 

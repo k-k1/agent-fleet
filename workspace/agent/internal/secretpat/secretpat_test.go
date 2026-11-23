@@ -11,8 +11,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat/secretpattest"
 )
 
-func TestGitHubTokenMatchesWholeToken(t *testing.T) {
-	frames := []string{"%s", "token: %s. Next sentence", "https://x-access-token:%s@github.com/o/r.git", `"%s"`, "GH_TOKEN=%s\n", "(%s)", "%s.example"}
+// redact is what a redactor does with the detectors' shapes: every span, merged.
+func redact(s string) string {
+	return ReplaceSpans(s, "***", append(Spans(s, githubClassic), GitHubStatelessSpans(s)...))
+}
+
+func TestGitHubTokensMatchWholeToken(t *testing.T) {
+	frames := []string{"%s", "token: %s. Next sentence", "https://x-access-token:%s@github.com/o/r.git", `"%s"`, "GH_TOKEN=%s\n", "(%s)", "%s.example", "see %s.md"}
 	for name, tok := range secretpattest.All() {
 		stateless := strings.HasPrefix(name, "stateless")
 		fs := append([]string(nil), frames...)
@@ -22,15 +27,32 @@ func TestGitHubTokenMatchesWholeToken(t *testing.T) {
 		}
 		for _, f := range fs {
 			in := strings.Replace(f, "%s", tok, 1)
-			if got := GitHubToken.FindString(in); got != tok {
+			if got := GitHubTokens.FindString(in); got != tok {
 				t.Errorf("%s in %q: matched %d of %d chars", name, f, len(got), len(tok))
 			}
-			if out := RedactAll(in, "***", GitHubToken); out != strings.Replace(f, "%s", "***", 1) {
+			if got := GitHubTokens.FindAllStringSubmatch(in, -1); len(got) != 1 || got[0][0] != tok {
+				t.Errorf("%s in %q: FindAllStringSubmatch found %d", name, f, len(got))
+			}
+			if out := redact(in); out != strings.Replace(f, "%s", "***", 1) {
 				t.Errorf("%s in %q: redacted to %.80q", name, f, out)
 			}
 		}
-		if got := GitHubStateless.FindString(tok) == tok; got != stateless {
-			t.Errorf("%s: GitHubStateless whole match = %v", name, got)
+		if IsGitHubStateless(tok) != stateless {
+			t.Errorf("%s: IsGitHubStateless = %v", name, !stateless)
+		}
+	}
+}
+
+// Every gh?_ is a start of its own, so tokens written back to back are all found.
+func TestGitHubStatelessSpansFindJoinedTokens(t *testing.T) {
+	for name, tok := range secretpattest.All() {
+		if !strings.HasPrefix(name, "stateless") {
+			continue
+		}
+		for _, joined := range []string{tok + tok, tok + "-" + secretpattest.StatelessSpacedHeader()} {
+			if got := redact("echo " + joined + " done"); got != "echo *** done" {
+				t.Errorf("%s joined: %.120q", name, got)
+			}
 		}
 	}
 }
@@ -50,6 +72,9 @@ func TestFixturesBeatTheOldPattern(t *testing.T) {
 			t.Errorf("%s is not JWT-shaped: %d chars", name, len(tok))
 		}
 	}
+	if m := old.FindString(secretpattest.StatelessEarlyPunct()); m != "" {
+		t.Errorf("the old pattern finds %.20q… in the early-punctuation fixture", m)
+	}
 	if !strings.Contains(secretpattest.StatelessZeros(), "_100000_") {
 		t.Error("the zeros fixture lost its APPID")
 	}
@@ -60,48 +85,27 @@ func TestFixturesBeatTheOldPattern(t *testing.T) {
 
 func TestGitHubTokenBoundaries(t *testing.T) {
 	for _, s := range secretpattest.Benign {
-		if m := GitHubToken.FindString(s); m != "" {
+		if m := GitHubTokens.FindString(s); m != "" {
 			t.Errorf("benign %q matched %q", s, m)
 		}
 	}
-	if m := GitHubToken.FindString("a" + secretpattest.Classic()); m != "" {
+	if m := GitHubTokens.FindString("a" + secretpattest.Classic()); m != "" {
 		t.Errorf("a classic token glued to a word matched %q", m)
 	}
 	// A JWT signature may hold `_`, so a stateless match runs on through a glued `_suffix`:
 	// over-redaction, on the safe side.
-	if tok := secretpattest.Stateless(); GitHubToken.FindString(tok+"_suffix") != tok+"_suffix" {
+	if tok := secretpattest.Stateless(); GitHubTokens.FindString(tok+"_suffix") != tok+"_suffix" {
 		t.Error("a stateless token's glued _suffix is not taken with it")
 	}
-}
-
-// The redactors' stateless form takes a token cut anywhere past its head, and tokens run
-// together, whole; it leaves benign text alone.
-func TestGitHubStatelessRedactTakesCutAndJoinedTokens(t *testing.T) {
-	for name, tok := range secretpattest.All() {
-		if !strings.HasPrefix(name, "stateless") {
-			continue
-		}
-		head := 4 // past `ghs_`, and past the APPID and its `_` when there is one
-		if tok[4] >= '0' && tok[4] <= '9' {
-			head += strings.IndexByte(tok[4:], '_') + 1
-		}
-		for cut := head + 8; cut <= len(tok); cut++ {
-			// A cut right after a dot leaves that dot, which is no part of a secret.
-			got := RedactAll("echo "+tok[:cut]+"…", "***", GitHubStatelessRedact)
-			if got != "echo ***…" && got != "echo ***.…" {
-				t.Fatalf("%s cut at %d: %.80q", name, cut, got)
-			}
-		}
-		for _, joined := range []string{tok + tok, tok + "-" + tok, tok + "." + tok, tok + "_" + secretpattest.Stateless()} {
-			if got := RedactAll("echo "+joined+" done", "***", GitHubStatelessRedact); got != "echo *** done" {
-				t.Errorf("%s joined: %.80q", name, got)
-			}
+	// The pattern's opening alone is not enough: the header must decode to a JSON object.
+	forged := ""
+	for _, s := range secretpattest.Benign {
+		if strings.Contains(s, "eyJunk") {
+			forged = s
 		}
 	}
-	for _, s := range secretpattest.Benign {
-		if m := GitHubStatelessRedact.FindString(s); m != "" {
-			t.Errorf("benign %q matched %q", s, m)
-		}
+	if !githubStateless.MatchString(forged[strings.Index(forged, "ghs_"):]) {
+		t.Error("the eyJunk entry does not pass the pattern, so the decode check is untested")
 	}
 }
 
@@ -118,10 +122,6 @@ func TestRedactAllMergesOverlaps(t *testing.T) {
 		if got := RedactAll(in, "*", a, b, c); got != want {
 			t.Errorf("RedactAll(%q) = %q, want %q", in, got, want)
 		}
-	}
-	classic, stateless := secretpattest.Classic(), secretpattest.Stateless()
-	if got := RedactAll(classic+stateless, "***", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{16,}`), GitHubStateless); got != "***" {
-		t.Errorf("a classic token running into a stateless one: %.80q", got)
 	}
 }
 

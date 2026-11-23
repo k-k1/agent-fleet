@@ -5,18 +5,22 @@
 package secretpat
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"regexp"
 	"sort"
 	"strings"
 )
 
-// githubStatelessHead is a stateless token up to its JWT header's first characters: `gh?_`,
-// an optional numeric APPID, and the start of a base64url JSON object: `{` (`e` then `y` or
-// `w`) or one whitespace byte and `{` (`IH`, `CX`, `Cn`, `DX`). That start is what tells a
-// token from a name with an APPID-like number and dotted parts
-// (`ghs_202610_releasechecklist.productionrollout.<digest>.md`); more than one leading
-// whitespace byte is not covered.
-const githubStatelessHead = `gh[pousr]_(?:[0-9]+_)?(?:e[yw]|IH|CX|Cn|DX)`
+// githubStatelessHead is a stateless token up to its JWT header's first key: `gh?_`, an optional
+// numeric APPID, and base64url of a JSON object's opening up to the key's quote: `{"` (`eyI`,
+// `eyJ`), `{` and one whitespace byte before the quote (`eyAi`, `ewoi`, `ewog`, `ewki`, `ew0i`,
+// `ew0K`), or one whitespace byte before the `{` (`IHsi`, `Cnsi`, `CXsi`, `DXsi`). That opening
+// is what tells a token from a name with an APPID-like number and dotted parts
+// (`ghs_202610_eyewashchecklist.productionrollout.<digest>.md`). The runtime also decodes the
+// header and requires a JSON object (GitHubStatelessSpans); gitleaks has only this pattern.
+const githubStatelessHead = `gh[pousr]_(?:[0-9]+_)?(?:ey[IJ]|eyAi|ewo[ig]|ewki|ew0[iK]|IHsi|Cnsi|CXsi|DXsi)`
 
 // GitHubStatelessPattern matches a stateless token whole: `ghs_APPID_JWT` as GitHub documents
 // it (about 520 characters, `.`, `-` and `_` in the body), and the same without the APPID. The
@@ -27,13 +31,7 @@ const githubStatelessHead = `gh[pousr]_(?:[0-9]+_)?(?:e[yw]|IH|CX|Cn|DX)`
 // also takes ordinary names such as `ghs_status_dashboard_for_enterprise_repositories.md`. It
 // has no leading `\b`: the structure is specific enough on its own, and a boundary would miss a
 // token glued to a word (`cache_ghs_…`) and leave it all in clear.
-const GitHubStatelessPattern = githubStatelessHead + `[A-Za-z0-9_-]{14,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{32,}`
-
-// GitHubStatelessRedactPattern is the redactors' form: a stateless token's head and the whole
-// run of base64url characters and inner dots after it. It also takes a token cut short (the
-// audit keeps a command's first 80 characters) and tokens run together, which the whole-token
-// pattern would stop short in or miss; a redactor errs towards masking a little more.
-const GitHubStatelessRedactPattern = githubStatelessHead + `[A-Za-z0-9_-]{6,}(?:\.?[A-Za-z0-9_-])*`
+const GitHubStatelessPattern = githubStatelessHead + `[A-Za-z0-9_-]{12,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{32,}`
 
 // GitHubClassicPattern is the classic token shape the detectors have always used: `gh?_` and
 // at least 36 alphanumerics, between word boundaries. The trailing boundary is what keeps a
@@ -41,15 +39,88 @@ const GitHubStatelessRedactPattern = githubStatelessHead + `[A-Za-z0-9_-]{6,}(?:
 const GitHubClassicPattern = `\bgh[pousr]_[A-Za-z0-9]{36,}\b`
 
 var (
-	// GitHubToken matches a GitHub token of either shape, for detectors (they only ask
-	// whether, never where).
-	GitHubToken = regexp.MustCompile(`(?:` + GitHubStatelessPattern + `|` + GitHubClassicPattern + `)`)
-	// GitHubStateless matches the stateless shape only, whole.
-	GitHubStateless = regexp.MustCompile(GitHubStatelessPattern)
-	// GitHubStatelessRedact is GitHubStatelessRedactPattern; redactors add it beside their own
-	// classic rule and replace through RedactAll.
-	GitHubStatelessRedact = regexp.MustCompile(GitHubStatelessRedactPattern)
+	githubClassic   = regexp.MustCompile(GitHubClassicPattern)
+	githubPrefix    = regexp.MustCompile(`gh[pousr]_`)
+	githubStateless = regexp.MustCompile(`^(?:` + GitHubStatelessPattern + `)`)
 )
+
+// GitHubStatelessSpans lists the stateless tokens in s as [start, end) byte offsets. Every
+// `gh?_` is tried as a start on its own, so a token that a previous match ran into (two tokens
+// written back to back: a signature takes the next token's head) is still found; RedactAll and
+// ReplaceSpans merge the overlap. A candidate whose header does not decode to a JSON object is
+// not a token.
+func GitHubStatelessSpans(s string) [][2]int {
+	var out [][2]int
+	for _, p := range githubPrefix.FindAllStringIndex(s, -1) {
+		m := githubStateless.FindStringIndex(s[p[0]:])
+		if m != nil && jwtHeaderIsObject(s[p[0]:p[0]+m[1]]) {
+			out = append(out, [2]int{p[0], p[0] + m[1]})
+		}
+	}
+	return out
+}
+
+// jwtHeaderIsObject reports whether a stateless candidate's header, the part between the APPID
+// (or the prefix) and the first dot, is base64url of a JSON object.
+func jwtHeaderIsObject(tok string) bool {
+	h := tok[len("ghs_"):]
+	if h != "" && h[0] >= '0' && h[0] <= '9' {
+		h = h[strings.IndexByte(h, '_')+1:]
+	}
+	h, _, _ = strings.Cut(h, ".")
+	b, err := base64.RawURLEncoding.DecodeString(h)
+	if err != nil {
+		return false
+	}
+	t := bytes.TrimLeft(b, " \t\r\n")
+	return len(t) > 0 && t[0] == '{' && json.Valid(b)
+}
+
+// GitHubTokens finds GitHub tokens of either shape, for detectors: the classic pattern and
+// GitHubStatelessSpans. It has the regexp methods the detectors call.
+var GitHubTokens githubTokens
+
+type githubTokens struct{}
+
+// spans are the tokens in s, merged where they overlap: without an APPID, a stateless token's
+// 36-character header is a classic match of its own.
+func (githubTokens) spans(s string) [][2]int {
+	return mergeSpans(append(Spans(s, githubClassic), GitHubStatelessSpans(s)...))
+}
+
+// MatchString reports whether s holds a GitHub token.
+func (g githubTokens) MatchString(s string) bool { return len(g.spans(s)) > 0 }
+
+// FindString returns the first GitHub token in s, "" for none.
+func (g githubTokens) FindString(s string) string {
+	if sp := g.spans(s); len(sp) > 0 {
+		return s[sp[0][0]:sp[0][1]]
+	}
+	return ""
+}
+
+// FindAllStringSubmatch returns every GitHub token in s, each as a one-element match; n < 0
+// means all, as with regexp.
+func (g githubTokens) FindAllStringSubmatch(s string, n int) [][]string {
+	var out [][]string
+	for _, sp := range g.spans(s) {
+		if n >= 0 && len(out) >= n {
+			break
+		}
+		out = append(out, []string{s[sp[0]:sp[1]]})
+	}
+	return out
+}
+
+// IsGitHubStateless reports whether v is, whole, one stateless token.
+func IsGitHubStateless(v string) bool {
+	for _, sp := range GitHubStatelessSpans(v) {
+		if sp[0] == 0 && sp[1] == len(v) {
+			return true
+		}
+	}
+	return false
+}
 
 // RedactAll replaces every match of every re in s with mark. Each re is matched against s as
 // given, and overlapping or touching matches become one replacement. Replacing one pattern's
@@ -74,27 +145,33 @@ func Spans(s string, res ...*regexp.Regexp) [][2]int {
 // ReplaceSpans replaces each span of s with mark, merging overlapping or touching spans into
 // one replacement first. Empty spans are ignored.
 func ReplaceSpans(s, mark string, spans [][2]int) string {
-	live := spans[:0:0]
+	var b strings.Builder
+	last := 0
+	for _, sp := range mergeSpans(spans) {
+		b.WriteString(s[last:sp[0]])
+		b.WriteString(mark)
+		last = sp[1]
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}
+
+// mergeSpans sorts spans and merges those that overlap or touch; empty spans are dropped.
+func mergeSpans(spans [][2]int) [][2]int {
+	var live [][2]int
 	for _, sp := range spans {
 		if sp[1] > sp[0] {
 			live = append(live, sp)
 		}
 	}
-	if len(live) == 0 {
-		return s
-	}
 	sort.Slice(live, func(i, j int) bool { return live[i][0] < live[j][0] })
-	var b strings.Builder
-	last := 0
-	for i := 0; i < len(live); {
-		from, to := live[i][0], live[i][1]
-		for i++; i < len(live) && live[i][0] <= to; i++ {
-			to = max(to, live[i][1])
+	var out [][2]int
+	for _, sp := range live {
+		if n := len(out); n > 0 && sp[0] <= out[n-1][1] {
+			out[n-1][1] = max(out[n-1][1], sp[1])
+			continue
 		}
-		b.WriteString(s[last:from])
-		b.WriteString(mark)
-		last = to
+		out = append(out, sp)
 	}
-	b.WriteString(s[last:])
-	return b.String()
+	return out
 }

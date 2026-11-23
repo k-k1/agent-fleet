@@ -330,9 +330,9 @@ var (
 // remoteSecretRules are the credential shapes the Control Plane refuses in the settings file
 // (control-plane/internal/autorunfile), which follow the memory scan
 // (internal/memoryx/memory_secrets.go): a remote that matches one is not shown.
-var remoteSecretRules = []*regexp.Regexp{
+var remoteSecretRules = []interface{ MatchString(string) bool }{
 	regexp.MustCompile(`\b(?:A3T[A-Z0-9]|AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b`),
-	secretpat.GitHubToken,
+	secretpat.GitHubTokens,
 	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{60,}\b`),
 	regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20,}\b`),
 	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9\-]{10,}\b`),

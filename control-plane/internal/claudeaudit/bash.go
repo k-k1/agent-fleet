@@ -178,14 +178,16 @@ var secretValueREs = []struct {
 	{regexp.MustCompile(`(://[^/\s:@]*):[^/\s@]+@`), "${1}:***@"},
 }
 
-// secretTokenREs are the vendor token shapes, each its own pattern and replaced through
-// secretpat.RedactAll: alternatives of one pattern cannot overlap, so a Slack token or a JWT
-// glued to a GitHub token would take its head and leave the rest in clear, and a replacement
-// made before the next pattern is matched would cut that one short the same way.
+// secretTokenREs are the vendor token shapes, each its own pattern; MaskCommandSecrets adds
+// secretpat.GitHubStatelessSpans and replaces all the spans together. Alternatives of one
+// pattern cannot overlap, so a Slack token or a JWT glued to a GitHub token would take its head
+// and leave the rest in clear, and a replacement made before the next pattern is matched would
+// cut that one short the same way.
 var secretTokenREs = []*regexp.Regexp{
-	// The redactors' form: an audited command is cut at 80 characters, which can cut a
-	// stateless token short of its signature.
-	secretpat.GitHubStatelessRedact,
+	// A GitHub token cut short by the audit's own truncation: the Agent records a command's
+	// first line cut at 80 runes with "…" appended, which can cut a stateless token anywhere,
+	// even inside its header. Only a word running into that final "…" is taken.
+	regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_.-]*…$`),
 	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{16,}`),
 	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`),
 	regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{10,}`),
@@ -202,7 +204,7 @@ func MaskCommandSecrets(s string) string {
 	for _, r := range secretValueREs {
 		s = r.re.ReplaceAllString(s, r.repl)
 	}
-	return secretpat.RedactAll(s, "***", secretTokenREs...)
+	return secretpat.ReplaceSpans(s, "***", append(secretpat.Spans(s, secretTokenREs...), secretpat.GitHubStatelessSpans(s)...))
 }
 
 // BashTarget is the audit Target for a Bash call.
