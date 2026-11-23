@@ -157,20 +157,24 @@ describe("a note that waits for other notes", () => {
     );
   });
 
-  it("offers the earlier notes of the category, and sends after only when the member changed it", async () => {
+  it("offers the other notes of the category, earlier and later, and sends after only when the member changed it", async () => {
     servedCats = [queueCat];
     servedMemos = [
       aMemo({ id: "p1", body: "first job", state: "pending", position: 0 }),
       aMemo({ id: "p2", body: "other job", state: "delivered", position: 1 }),
       aMemo({ id: "d1", body: "third job", state: "pending", position: 2, createdAt: "2026-09-09T00:00:01Z", after: ["p2"] }),
       aMemo({ id: "z9", body: "later job", state: "pending", position: 3, createdAt: "2026-09-09T00:00:02Z" }),
+      // Waits for the note being edited through z8, so picking it would make the two wait for each other.
+      aMemo({ id: "z7", body: "loop job", state: "pending", position: 4, createdAt: "2026-09-09T00:00:03Z", after: ["z8"] }),
+      aMemo({ id: "z8", body: "chained job", state: "pending", position: 5, createdAt: "2026-09-09T00:00:04Z", after: ["d1"] }),
     ];
     await renderSection();
     await openEditor("third job");
+    expect(editRow().textContent).toContain(t("memo.after_edit_label"));
     const choices = [...editRow().querySelectorAll<HTMLLabelElement>(".memo-edit-after-item")];
-    // The notes before it, in the category's order; never itself or a later one.
-    expect(choices.map((c) => c.textContent)).toEqual(["first job", "other job"]);
-    expect(choices.map((c) => c.querySelector("input")!.checked)).toEqual([false, true]);
+    // In the category's order, later ones too; never itself, nor one that already waits for it.
+    expect(choices.map((c) => c.textContent)).toEqual(["first job", "other job", "later job"]);
+    expect(choices.map((c) => c.querySelector("input")!.checked)).toEqual([false, true, false]);
     // A text edit alone leaves it out of the patch.
     await click(btn(editRow(), t("memo.save")));
     expect(memoUpdate).toHaveBeenLastCalledWith("d1", { body: "third job", category: "inbox" });
@@ -213,6 +217,56 @@ describe("a note that waits for other notes", () => {
     await click(items()[1].querySelector("input")!);
     await click(btn(editRow(), t("memo.save")));
     expect(memoUpdate).toHaveBeenLastCalledWith("d1", { body: "second job", category: "inbox", after: ["p1"] });
+  });
+
+  it("sends a later note as a prerequisite", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({ id: "d1", body: "first job", state: "held", position: 0 }),
+      aMemo({ id: "z9", body: "continuation job", state: "pending", position: 1, createdAt: "2026-09-09T00:00:02Z" }),
+    ];
+    await renderSection();
+    await openEditor("first job");
+    await click(editRow().querySelectorAll<HTMLInputElement>(".memo-edit-after-item input")[0]);
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("d1", { body: "first job", category: "inbox", after: ["z9"] });
+  });
+
+  it("says a run without a pull request waits for a Done: answer", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({
+        id: "d1",
+        body: "second job",
+        state: "pending",
+        after: ["p1"],
+        afterStatus: [{ id: "p1", label: "acme/app#7", state: "waiting", reason: "answer" }],
+      }),
+    ];
+    await renderSection();
+    expect(rowOf("second job").querySelector(".memo-after")!.textContent).toContain("acme/app#7: " + t("memo.after_r_answer"));
+  });
+
+  it("says a run that ended without a pull request and without Done: held it, with what that run said", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({
+        id: "d1",
+        body: "second job",
+        state: "held",
+        after: ["p1"],
+        afterStatus: [{ id: "p1", label: "acme/app#7", state: "failed", reason: "not_done", answer: "Stopped at part 3: #7" }],
+        heldReason: { after: "p1", reason: "not_done" },
+      }),
+    ];
+    await renderSection();
+    const row = rowOf("second job");
+    expect(row.querySelector(".memo-after-held")?.textContent).toBe(
+      t("memo.after_held", { label: "acme/app#7", reason: t("memo.after_r_not_done") }),
+    );
+    expect(row.querySelector(".memo-after")!.textContent).toContain(
+      "acme/app#7: " + t("memo.after_r_not_done_named", { answer: "Stopped at part 3: #7" }),
+    );
   });
 
   it("offers nothing outside an auto-run category", async () => {

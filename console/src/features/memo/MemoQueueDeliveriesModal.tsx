@@ -28,6 +28,7 @@ import {
   deferWords,
   deliveryStateKey,
   firstTurnWords,
+  answerWords,
   runRecipes,
   runWorkItems,
   heldNames,
@@ -252,6 +253,7 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
               const why = heldWords(d);
               const names = heldNames(d);
               const turn = firstTurnWords(d);
+              const answer = answerWords(d);
               const work = runWorkItems(messages ?? [], d);
               const at = (iso: string) => fmtDateTime(iso);
               const openSession = (name: string) => {
@@ -318,6 +320,15 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                     </button>
                   )}
                   {turn && <span className={"memo-d-turn" + (d.firstTurn?.outcome === "clean" ? "" : " memo-d-turn--bad")}>{tr(turn)}</span>}
+                  {answer && (
+                    <span
+                      className={"memo-d-answer" + (answer.done ? "" : " memo-d-answer--open")}
+                      title={[answer.head, tr("memo.d_answer_title")].filter(Boolean).join("\n")}
+                    >
+                      {tr(answer.key)}
+                      {answer.head && <span className="memo-d-answer-head">{answer.head}</span>}
+                    </span>
+                  )}
                   {d.retire === "released" && <span className="memo-d-tag">{tr("memo.d_taken_over")}</span>}
                   {d.defer && (
                     <span className={"memo-d-defer" + (!deferPending(d) && d.defer.result !== "applied" ? " dropped" : "")}>

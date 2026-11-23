@@ -186,6 +186,8 @@ export function readDeliveries(raw: unknown): MemoDelivery[] | null {
       auto: d.auto === true,
       retire: str(d.retire),
       firstTurn: isObj(d.firstTurn) ? { outcome: str(d.firstTurn.outcome), ms: num(d.firstTurn.ms, 0), endedAt: str(d.firstTurn.endedAt) } : null,
+      answer: str(d.answer),
+      answerClass: str(d.answerClass),
       defer: isObj(d.defer) ? { reason: str(d.defer.reason), notBefore: str(d.defer.notBefore), at: str(d.defer.at), result: str(d.defer.result) } : null,
       returnBlocked: Array.isArray(d.returnBlocked)
         ? d.returnBlocked.filter(isObj).map((b) => ({ id: str(b.id), by: str(b.by) })).filter((b) => b.id !== "")
@@ -313,6 +315,8 @@ const AFTER_REASONS = [
   "pr_closed",
   "no_pr",
   "session_gone",
+  "answer",
+  "not_done",
 ] as const;
 
 /** The words for how a note another waits for stands. A reason this Console does not know (a newer
@@ -381,7 +385,7 @@ const prNumberOf = (key: string) => {
 
 /** The words for how a note another waits for stands, with the PRs it waits for when its run's PRs
  *  are not all merged yet ("waiting for PR #12 to merge"). */
-export function afterItemMessage(it: Pick<MemoAfterItem, "state" | "reason" | "prs">): { key: MsgKey; params?: Record<string, string | number> } {
+export function afterItemMessage(it: Pick<MemoAfterItem, "state" | "reason" | "prs" | "answer">): { key: MsgKey; params?: Record<string, string | number> } {
   if (it.state === "waiting" && it.reason === "pr") {
     const open = (it.prs ?? []).filter((p) => p.state !== "merged");
     if (open.length > 0) return { key: "memo.after_r_pr_merge", params: { prs: open.map((p) => prNumberOf(p.key)).join(", ") } };
@@ -389,6 +393,12 @@ export function afterItemMessage(it: Pick<MemoAfterItem, "state" | "reason" | "p
   if (it.state === "failed" && it.reason === "pr_closed") {
     const closed = (it.prs ?? []).filter((p) => p.state === "closed");
     if (closed.length > 0) return { key: "memo.after_r_pr_closed_named", params: { prs: closed.map((p) => prNumberOf(p.key)).join(", ") } };
+  }
+  // The head is what the run said instead of Done:, so the member sees why it counts as unfinished.
+  // afterStatus reaches the list unparsed, so the head is checked for a string here.
+  const answer = typeof it.answer === "string" ? it.answer.trim() : "";
+  if (it.state === "failed" && it.reason === "not_done" && answer) {
+    return { key: "memo.after_r_not_done_named", params: { answer } };
   }
   return { key: afterItemWords(it) };
 }
@@ -400,13 +410,29 @@ export function afterLabelOf(m: Pick<Memo, "reference" | "body" | "refPath">): s
   return line.length > 60 ? line.slice(0, 60) + "…" : line;
 }
 
-/** The notes of m's category that m may wait for: those before it in the category's order (created
- *  time, then position, then id, as the Control Plane runs them) and not replaced by a tidy. */
+/** The notes of m's category that m may wait for, in the category's order (created time, then
+ *  position, then id, as the Control Plane runs them): earlier and later ones alike, never itself,
+ *  one replaced by a tidy, or one that already waits for m directly or through others. The last
+ *  would make the two wait for each other, which the Control Plane refuses (memo_after_invalid);
+ *  this list only sees the loaded notes, so the Control Plane's check stays the authority. */
 export function afterChoices(memos: Memo[], m: Memo): { id: string; label: string }[] {
   const before = (a: Memo, b: Memo) =>
     a.createdAt !== b.createdAt ? a.createdAt < b.createdAt : a.position !== b.position ? a.position < b.position : a.id < b.id;
+  const byId = new Map(memos.map((o) => [o.id, o]));
+  const waitsForM = (start: Memo): boolean => {
+    const seen = new Set<string>();
+    const stack = [...(start.after ?? [])];
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (id === m.id) return true;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      stack.push(...(byId.get(id)?.after ?? []));
+    }
+    return false;
+  };
   return memos
-    .filter((o) => o.id !== m.id && o.repo === m.repo && o.category === m.category && o.state && o.state !== "superseded" && before(o, m))
+    .filter((o) => o.id !== m.id && o.repo === m.repo && o.category === m.category && o.state && o.state !== "superseded" && !waitsForM(o))
     .sort((a, b) => (before(a, b) ? -1 : 1))
     .map((o) => ({ id: o.id, label: afterLabelOf(o) || o.id }));
 }
@@ -665,6 +691,21 @@ const TURN_KEYS: Record<string, MsgKey> = {
   "turn-failed": "memo.d_turn_failed",
   "turn-aborted": "memo.d_turn_aborted",
 };
+
+const ANSWER_KEYS: Record<string, MsgKey> = {
+  done: "memo.d_answer_done",
+  partial: "memo.d_answer_partial",
+  other: "memo.d_answer_other",
+  unknown: "memo.d_answer_unknown",
+};
+
+/** How the last answer of a run's session reads (#4876): its class's words and the first line it
+ *  began with ("" when none could be read). Null while it is not read, and for a run that started
+ *  no session. A class this Console does not know reads as a plain last answer. */
+export function answerWords(d: Pick<MemoDelivery, "answer" | "answerClass">): { key: MsgKey; head: string; done: boolean } | null {
+  if (!d.answerClass) return null;
+  return { key: ANSWER_KEYS[d.answerClass] ?? "memo.d_answer_plain", head: (d.answer ?? "").trim(), done: d.answerClass === "done" };
+}
 
 /** How the first turn of a run's session ended; null until it did. An outcome the kind does not
  *  record ("") reads as ended. */
