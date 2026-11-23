@@ -95,6 +95,19 @@ describe("useConsolRun", () => {
     expect(seen!.st).toBeNull();
   });
 
+  it("takes the new tenant's first answer after a switch during a run", async () => {
+    api.mockResolvedValue(status(true));
+    await render(true, "a");
+    expect(seen!.running).toBe(true);
+    let answerB: (v: unknown) => void = () => {};
+    api.mockImplementation(() => new Promise((resolve) => (answerB = resolve)));
+    await render(true, "b");
+    await act(async () => {});
+    await act(async () => answerB(status(false, 7)));
+    await act(async () => {});
+    expect((seen!.st as unknown as { run: { step: number } } | null)?.run.step).toBe(7);
+  });
+
   it("does not take a tenant switch during a run for the run ending", async () => {
     api.mockResolvedValue(status(true));
     await render(true, "a");
@@ -212,16 +225,41 @@ describe("useConsolRun", () => {
   });
 
   // "Run now": the re-read after the write belongs to the view the click was made in.
-  const confirmRun = async () => {
+  const openRun = async () => {
     let done: Promise<void> = Promise.resolve();
     await act(async () => {
       done = seen!.runNow(false);
     });
-    const ok = Array.from(document.body.querySelectorAll(".ui-confirm-actions button")).pop() as HTMLButtonElement;
-    await act(async () => ok.dispatchEvent(new MouseEvent("click", { bubbles: true })));
     // Wrapped: an async function returning the promise itself would wait for the whole run.
     return { done };
   };
+  const confirm = async () => {
+    const ok = Array.from(document.body.querySelectorAll(".ui-confirm-actions button")).pop() as HTMLButtonElement;
+    await act(async () => ok.dispatchEvent(new MouseEvent("click", { bubbles: true })));
+  };
+  const confirmRun = async () => {
+    const run = await openRun();
+    await confirm();
+    return run;
+  };
+
+  for (const [what, change] of [
+    ["the view is hidden", () => render(false, "a")],
+    ["the tenant changes", () => render(true, "b")],
+  ] as const) {
+    it(`sends no write when ${what} while the dialog is open`, async () => {
+      api.mockResolvedValue(status(false));
+      await render(true);
+      apiJSON.mockResolvedValue({ ok: true });
+      const { done } = await openRun();
+      await change();
+      const calls = api.mock.calls.length;
+      await confirm();
+      await act(async () => done);
+      expect(apiJSON).not.toHaveBeenCalled();
+      expect(api.mock.calls.length).toBe(calls);
+    });
+  }
 
   it("re-reads after run now", async () => {
     api.mockResolvedValue(status(false));

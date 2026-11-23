@@ -152,21 +152,29 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
   }, [tenant]);
   // The first read (and its retries), the run poll and the re-read after "run now" overlap, and
   // the poll's period does not restart with each answer: only a read newer than the last one
-  // landed may set the status. A tenant switch, the view going inactive, or the run starting or
-  // ending drops every read begun before it: the old poll's reads are gone with it, so a late
-  // failure cannot leave a warning nothing will clear once the poll has stopped.
+  // landed may set the status, and a tenant switch or the view going inactive drops every read
+  // begun before it.
   const guard = useReadGuard();
-  // Whether the run poll is on, as of the last commit: useInterval clears its timer in a passive
-  // cleanup, and a tick due in between must not start a read for a poll already switched off.
-  const polling = useRef(false);
   const running = st?.run?.running === true;
+  useLayoutEffect(() => guard.reset(tenant), [guard, tenant, active]);
+  // The run poll's own lifetime, set at commit: its reads are dropped once the run has ended, so a
+  // late failure cannot leave a warning nothing will clear with the poll stopped, and a tick due
+  // before useInterval's passive cleanup starts none. Not the shared guard: a run ending seen just
+  // after a tenant switch must not kill the new tenant's first read.
+  const pollSignal = useRef<AbortSignal | null>(null);
   useLayoutEffect(() => {
-    guard.reset(tenant);
-    polling.current = running && active;
-  }, [guard, tenant, active, running]);
+    if (!running || !active) return;
+    const ac = new AbortController();
+    pollSignal.current = ac.signal;
+    return () => {
+      ac.abort();
+      pollSignal.current = null;
+    };
+  }, [running, active, tenant]);
   const load = useCallback(async (tk: ReadTicket, signal?: AbortSignal) => {
     const res = await getConsolStatus();
-    // useRetryLoad aborts a read whose reload was superseded, even for the same tenant.
+    // useRetryLoad aborts a read whose reload was superseded, even for the same tenant; the poll's
+    // signal is aborted once the run has ended.
     if (signal?.aborted || !tk.current()) return true;
     // Right after a start the Agent answers 5xx for a moment: retried, never settled as a failure.
     if (isTransientErr(res)) return false;
@@ -193,7 +201,8 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
   // A failed read does not stop it: the next poll clears the warning by itself, whereas stopping would
   // leave a stale "running" that only a reload could end. The interval is bounded and cleared on unmount.
   useInterval(() => {
-    if (polling.current) void load(guard.begin(tenant));
+    const signal = pollSignal.current;
+    if (signal) void load(guard.begin(tenant), signal);
   }, running && active ? RUN_POLL_MS : null);
 
   const [starting, setStarting] = useState(false);
@@ -203,8 +212,8 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
   const askConfirm = useConfirm();
   const runNow = async (all: boolean) => {
     if (!st || inFlight.current || running) return;
-    // The view this click was made in: a tenant switch, the view being hidden or a run starting
-    // while the dialog is open (or before the re-read) leaves this ticket dead.
+    // The view this click was made in: a tenant switch or the view being hidden while the dialog is
+    // open (or before the re-read) leaves this ticket dead.
     const origin = guard.begin(tenant);
     const budget = st.config.tokenBudget;
     const ok = await askConfirm({
