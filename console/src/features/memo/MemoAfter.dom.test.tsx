@@ -643,9 +643,23 @@ describe("choosing what a note waits for by search", () => {
     expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox", after: ["a2", "a1"] });
   });
 
-  it("warns on a chosen memo that left the category while the editor was open", async () => {
+  it("warns on a chosen memo that left the offer while the editor was open", async () => {
     await chooseThenLose();
     expect(chips()[0].textContent).toContain(t("memo.after_gone"));
+  });
+
+  it("says the same, and nothing about the category, when it left the offer in the same category", async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    await click(opts()[2]); // a1
+    // Another device makes a1 wait for the edited memo: still in the category, but it would close a loop.
+    servedMemos = servedMemos.map((x) => (x.id === "a1" ? { ...x, after: ["me"] } : x));
+    await bump();
+    expect(chips()).toHaveLength(1);
+    expect(chips()[0].textContent).toContain(t("memo.after_gone"));
+    expect(t("memo.after_gone")).not.toMatch(/categor|カテゴリ/);
   });
 
   it("brings the active option into view when a new search puts another memo at the same index", async () => {
@@ -669,27 +683,58 @@ describe("choosing what a note waits for by search", () => {
     }
   });
 
-  it("tells apart memos whose text starts the same, from where they first differ, and numbers identical ones", async () => {
+  const cacheSeven = () =>
+    useWorkItemStore.setState({
+      payload: { items: [workItem("acme/app#7", "Crash when saving")], queries: [], sessions: [], fetchedAt: "", running: false } as never,
+      loaded: true,
+    });
+  const exOf = (o: HTMLElement) => o.querySelector(".memo-after-excerpt")?.textContent ?? "";
+
+  it("tells apart memos whose text starts the same, from where they first differ, even beside a short one that differs early", async () => {
     servedCats = [queueCat];
     const common = "Handle the import of the nightly accounting export for the webshop and report back with ";
     servedMemos = [
       aMemo({ id: "a1", body: common + "a retry plan", state: "pending", position: 0, reference: ref("acme/app#7") }),
       aMemo({ id: "a2", body: common + "a skip of the bad rows", state: "pending", position: 1, reference: ref("acme/app#7") }),
-      aMemo({ id: "a3", body: "same again", state: "pending", position: 2, reference: ref("acme/app#7") }),
-      aMemo({ id: "a4", body: "same again", state: "pending", position: 3, reference: ref("acme/app#7") }),
-      aMemo({ id: "me", body: "the edited one", state: "held", position: 4, createdAt: "2026-09-09T00:00:03Z" }),
+      // Differs from the first character: it must not hide where the long two differ.
+      aMemo({ id: "a3", body: "Rotate the keys", state: "pending", position: 2, reference: ref("acme/app#7") }),
+      aMemo({ id: "me", body: "the edited one", state: "held", position: 3, createdAt: "2026-09-09T00:00:03Z" }),
     ];
+    servedMemos.forEach((x) => (x.createdAt = x.id === "me" ? x.createdAt : "2026-09-09T00:00:01Z"));
+    cacheSeven();
     await renderSection();
     await openEditor("the edited one");
     await focusSearch();
-    const ex = opts().map((o) => o.querySelector(".memo-after-excerpt")?.textContent ?? "");
-    expect(new Set(ex).size).toBe(4);
+    const ex = opts().map(exOf);
+    expect(new Set(ex).size).toBe(3);
     const text = ex.join("\n");
     expect(text).toContain("a retry plan");
     expect(text).toContain("a skip of the bad rows");
-    expect(text).toContain("#1 same again");
-    expect(text).toContain("#2 same again");
-    expect(new Set(opts().map((o) => o.getAttribute("aria-label"))).size).toBe(4);
+    expect(new Set(opts().map((o) => o.getAttribute("aria-label"))).size).toBe(3);
+  });
+
+  it("numbers identical memos by their place in the category, chosen or not", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({ id: "a3", body: "same again", state: "pending", position: 0, reference: ref("acme/app#7") }),
+      aMemo({ id: "a4", body: "same again", state: "pending", position: 1, reference: ref("acme/app#7") }),
+      aMemo({ id: "me", body: "the edited one", state: "held", position: 2, createdAt: "2026-09-09T00:00:03Z" }),
+    ];
+    servedMemos.forEach((x) => (x.createdAt = x.id === "me" ? x.createdAt : "2026-09-09T00:00:01Z"));
+    cacheSeven();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    expect(opts().map(exOf)).toEqual(["#2 same again", "#1 same again"]);
+    await click(opts()[0]); // the one numbered #2
+    // It keeps its number in the chip, and the one left keeps #1.
+    expect(chips().map(exOf)).toEqual(["#2 same again"]);
+    expect(opts().map(exOf)).toEqual(["#1 same again"]);
+    expect(chips()[0].querySelector("button")!.getAttribute("aria-label")).toContain("#2");
+    await click(opts()[0]);
+    expect(chips().map(exOf)).toEqual(["#1 same again", "#2 same again"]);
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox", after: ["a3", "a4"] });
   });
 
   it("moves the focus on when a chip is removed from the keyboard", async () => {

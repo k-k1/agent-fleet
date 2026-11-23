@@ -48,21 +48,37 @@ const clip = (t: string): string => (t.length > 80 ? t.slice(0, 80) + "…" : t)
 
 /** What tells apart notes that read the same: their text from where they first differ (the start of
  *  a template is shared), and a running number for those whose whole text is the same. Index-aligned
- *  with `group`. */
+ *  with `group`, which is in the category's order, so a note keeps its number whether or not it is
+ *  chosen. Notes whose excerpts still collide are told apart again among themselves, so a short
+ *  note that differs early does not hide where two long ones differ. */
 function excerptsOf(group: AfterEntry[]): string[] {
   const texts = group.map(flatten);
-  let lcp = 0;
-  while (texts.every((t) => t.length > lcp && t[lcp] === texts[0][lcp])) lcp++;
-  const from = Math.max(0, lcp - 12);
-  const seen = new Map<string, number>();
+  const excerpt = new Map<string, string>();
+  const refine = (ts: string[]) => {
+    let lcp = 0;
+    while (ts.length > 1 && ts.every((t) => t.length > lcp && t[lcp] === ts[0][lcp])) lcp++;
+    const from = Math.max(0, lcp - 12);
+    const by = new Map<string, string[]>();
+    for (const t of ts) {
+      const ex = t ? (from > 0 ? "…" : "") + clip(t.slice(from)) : "";
+      by.set(ex, [...(by.get(ex) ?? []), t]);
+    }
+    for (const [ex, same] of by) {
+      if (same.length === 1) excerpt.set(same[0], ex);
+      // Still the same: a smaller group has a longer common start, so this ends.
+      else if (same.length < ts.length) refine(same);
+      else for (const t of same) excerpt.set(t, ex);
+    }
+  };
+  refine([...new Set(texts)]);
   const total = new Map<string, number>();
   for (const t of texts) total.set(t, (total.get(t) ?? 0) + 1);
+  const seen = new Map<string, number>();
   return texts.map((t) => {
     const n = (seen.get(t) ?? 0) + 1;
     seen.set(t, n);
-    const cut = t.slice(from);
-    const body = t ? (from > 0 ? "…" : "") + clip(cut) : "";
-    return (total.get(t)! > 1 ? "#" + n + (body ? " " : "") : "") + body;
+    const ex = excerpt.get(t) ?? "";
+    return (total.get(t)! > 1 ? "#" + n + (ex ? " " : "") : "") + ex;
   });
 }
 
@@ -125,26 +141,25 @@ export function MemoAfterPicker({
     const title = ref && items ? (findWorkItem(ref, items)?.title ?? "") : "";
     return { ...afterEntryOf(o.id, o.memo, o.label, title), why: o.why };
   };
-  const chosenEntries = options.filter((o) => value.includes(o.id)).map(entryOf);
+  // What the picker shows, in the category's order; a note that was removed again shows nowhere.
+  const entries = options.filter((o) => o.offered || value.includes(o.id)).map(entryOf);
+  const chosenEntries = entries.filter((e) => value.includes(e.id));
   // The nearest first: the notes closest to the end of the category's order, which is where a
   // follow-up is usually wanted.
-  const candidates = options
-    .filter((o) => o.offered && !value.includes(o.id))
-    .map(entryOf)
-    .reverse();
+  const candidates = entries.filter((e) => !value.includes(e.id)).reverse();
   const { items: matches, total } = searchAfterEntries(candidates, query, AFTER_RESULT_LIMIT);
 
   // Two notes that read the same (key, title, state, minute, marker) get a start of their text, so
   // they can be told apart on a touch screen, where no tooltip shows, and by a screen reader.
-  const metas = new Map([...chosenEntries, ...candidates].map((e) => [e.id, metaOf(e.memo)]));
+  const metas = new Map(entries.map((e) => [e.id, metaOf(e.memo)]));
   const reads = new Map<string, number>();
-  for (const e of [...chosenEntries, ...candidates]) {
+  for (const e of entries) {
     const k = [e.key, e.title, metas.get(e.id)].join("\x00");
     reads.set(k, (reads.get(k) ?? 0) + 1);
   }
   const excerpts = new Map<string, string>();
   const groups = new Map<string, AfterEntry[]>();
-  for (const e of [...chosenEntries, ...candidates]) {
+  for (const e of entries) {
     const k = [e.key, e.title, metas.get(e.id)].join("\x00");
     if ((reads.get(k) ?? 0) > 1) groups.set(k, [...(groups.get(k) ?? []), e]);
   }
