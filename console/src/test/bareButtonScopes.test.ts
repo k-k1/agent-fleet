@@ -50,21 +50,69 @@ describe("bare button scopes", () => {
     for (const u of used) expect(named.has(u), `${u} is carried by a root but skinned nowhere`).toBe(true);
   });
 
+  it("ui.css holds each scope's variant rules, with the declarations they exist for", () => {
+    const css = read("ui/ui.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const body = (selector: string): string => {
+      const at = css.indexOf(selector + " {");
+      expect(at, `no rule for ${selector}`).toBeGreaterThanOrEqual(0);
+      return css.slice(css.indexOf("{", at) + 1, css.indexOf("}", at));
+    };
+    const BARE = ":where(.ui-bare-btns) button.ghost";
+    expect(body(BARE)).toMatch(/background:\s*transparent/);
+    expect(body(BARE)).toMatch(/padding:\s*2px 6px/);
+    expect(body(BARE + ":hover:not(:disabled)")).toMatch(/background:\s*var\(--btn\)/);
+    const MIRROR_SHARED = ":where(.ui-bare-btns--mirror, .ui-bare-btns--shared) button.primary";
+    expect(body(MIRROR_SHARED)).toMatch(/background:\s*var\(--accent\)/);
+    expect(body(MIRROR_SHARED + ":hover:not(:disabled)")).toMatch(/background:/);
+    // The mirror's own primary fill, and its flat disabled skin: without it a send-answer button
+    // that is waiting to unlock washes out to ~2:1 against its label.
+    expect(body(".ui-bare-btns--mirror button.primary")).toMatch(/background:\s*var\(--chat-accent\)/);
+    expect(body(".ui-bare-btns--mirror button.primary:hover:not(:disabled)")).toMatch(/--chat-accent/);
+    const DISABLED = body(".ui-bare-btns--mirror button.primary:disabled");
+    expect(DISABLED).toMatch(/opacity:\s*1\b/);
+    expect(DISABLED).toMatch(/background:\s*var\(--btn\)/);
+    expect(DISABLED).toMatch(/color:\s*var\(--muted\)/);
+    const SETTINGS = ":where(.ui-bare-btns--settings) button.";
+    expect(body(SETTINGS + "primary")).toMatch(/--on-topbar-accent/);
+    expect(body(SETTINGS + "primary:hover:not(:disabled)")).toMatch(/background:/);
+    expect(body(SETTINGS + "danger:hover:not(:disabled)")).toMatch(/#4a2222/);
+  });
+
+  // A selector that names the variant as a class, whatever it is qualified by: `button.ghost`,
+  // `.scope .ghost`, `button.btn.ghost`, `.x:where(.ghost)`, `[class~="ghost"]`. `.ghost-x`,
+  // `.btn-ghost` and `.ui-btn-ghost` are other names.
+  const VARIANT = /\.(ghost|primary|danger)(?![\w-])|\[\s*class[~|^$*]?=\s*["']?[^\]"']*\b(ghost|primary|danger)\b/;
+
   it("no feature stylesheet restyles a bare ghost / primary / danger button", () => {
-    // `button.ghost`, `.scope button.primary`, … — the element-qualified form the shells used.
-    const BARE = /button\.(ghost|primary|danger)\b/;
+    const sheets = files(SRC, /\.css$/);
+    // The walk must actually reach the feature sheets the shells used to live in.
+    for (const must of ["features/chat/parts/shell.css", "features/mirror/parts/shell.css", "features/settings/parts/shell.css", "features/terminal/terminal.css"]) {
+      expect(sheets.map((f) => path.relative(SRC, f)), must).toContain(must);
+    }
     const found: string[] = [];
-    for (const f of files(SRC, /\.css$/)) {
+    for (const f of sheets) {
+      // ui.css is where the variants live; its .ui-menu-item.danger is a menu-item modifier.
       if (f.endsWith(path.join("ui", "ui.css"))) continue;
       const css = readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-      css.split("\n").forEach((l, i) => BARE.test(l) && found.push(`${path.relative(SRC, f)}:${i + 1}: ${l.trim()}`));
+      // Selectors only: the text before each `{`, so a declaration value is not read as one.
+      for (const m of css.matchAll(/([^{}]+)\{/g)) {
+        if (VARIANT.test(m[1])) found.push(`${path.relative(SRC, f)}: ${m[1].trim().split("\n").pop()}`);
+      }
     }
     expect(found).toEqual([]);
   });
 
-  it("the scan catches a feature rule that restyles one", () => {
-    const BARE = /button\.(ghost|primary|danger)\b/;
-    expect(BARE.test(":where(.chatview) button.ghost { color: red }")).toBe(true);
-    expect(BARE.test(".mt-perm-btn.mt-perm-btn--ghost { border: 0 }")).toBe(false);
+  it("the scan catches the equivalent ways to restyle one", () => {
+    for (const sel of [
+      ":where(.chatview) button.ghost",
+      ".scope .ghost",
+      "button.btn.ghost",
+      ".x:where(.primary)",
+      '.chatview button[class~="ghost"]',
+      "button.danger:hover",
+    ]) expect(VARIANT.test(sel), sel).toBe(true);
+    for (const sel of [".mt-perm-btn.mt-perm-btn--ghost", ".btn-ghost", ".ui-btn-ghost", ".danger-zone", ".fgraph-arrow--danger", ".primary-x"]) {
+      expect(VARIANT.test(sel), sel).toBe(false);
+    }
   });
 });

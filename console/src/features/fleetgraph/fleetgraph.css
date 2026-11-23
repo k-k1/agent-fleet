@@ -30,6 +30,13 @@
 .fgraph-toggle.fgraph-toggle--on {
   color: var(--accent);
 }
+/* The shared ViewHead collapses its action buttons to icons below 520px (the nearest container,
+   as scm.css does for its own header): the toggle and switch labels follow it. */
+@container (max-width: 520px) {
+  .view-head .ui-btn .fgraph-lbl {
+    display: none;
+  }
+}
 @container paneview (max-width: 460px) {
   .fgraph-toggle .fgraph-lbl,
   .fgraph-switch .fgraph-lbl {

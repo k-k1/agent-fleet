@@ -31,6 +31,13 @@
     display: none;
   }
 }
+/* The shared ViewHead collapses its action buttons to icons below 520px (the nearest container,
+   as scm.css does for its own header): this view's toggle labels follow it. */
+@container (max-width: 520px) {
+  .view-head .ui-btn .ovw-lbl {
+    display: none;
+  }
+}
 /* One section per repository (ADR 0078 decision 9). The body scrolls, not each grid, so a
    long project does not trap the next heading below a nested scrollbar. */
 .ovw-body {
