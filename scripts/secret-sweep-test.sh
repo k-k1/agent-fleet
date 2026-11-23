@@ -87,10 +87,23 @@ route() {
 for ref in refs/heads/Main refs/heads/MAIN refs/heads/main2 refs/heads/feature/main refs/tags/main refs/heads/main/x ""; do
   [ "$(route "$ref")" = is_main=false ] || fail "'$ref' must route to the branch job"
 done
-# Both sweep jobs must test for an explicit value of the route's output, so a route that
-# produced nothing (or failed) selects neither of them.
-grep -q "if: needs.route.outputs.is_main == 'true'" "$wf" || fail "sweep-main must require is_main == 'true'"
-grep -q "if: needs.route.outputs.is_main == 'false'" "$wf" || fail "sweep-branch must require is_main == 'false'"
+# The wiring, checked per job block (a condition that only appears somewhere in the file
+# proves nothing): the route job exposes the output of the very step run above, the main job
+# is selected by `true` and the branch job by `false`, and a route that succeeded with no
+# usable output is turned into a failure by route-check.
+job() { awk -v n="$1" '$0 ~ "^  " n ":$" {on=1; print; next} on && /^  [A-Za-z0-9_-]+:$/ {exit} on {print}' "$wf"; }
+step_id="$(job route | sed -n '/- id: /{s/.*- id: *//;p;q}')"
+[ -n "$step_id" ] || fail "the route job has no step id"
+job route | grep -q "^      is_main: \${{ steps\.$step_id\.outputs\.is_main }}\$" || fail "route's is_main output must be the route step's is_main"
+job route | grep -q '# route-begin' || fail "the route step run by this test must be in the route job"
+job sweep-main | grep -q "^    if: needs\.route\.outputs\.is_main == 'true'\$" || fail "sweep-main must run only for is_main == 'true'"
+job sweep-main | grep -q '^    needs: route$' || fail "sweep-main must need route"
+job sweep-main | grep -q 'issues: write' || fail "sweep-main is the job that writes issues"
+job sweep-branch | grep -q "^    if: needs\.route\.outputs\.is_main == 'false'\$" || fail "sweep-branch must run only for is_main == 'false'"
+job sweep-branch | grep -q '^    needs: route$' || fail "sweep-branch must need route"
+if job sweep-branch | grep -q 'issues: write'; then fail "sweep-branch must not be able to write issues"; fi
+job route-check | grep -q "needs\.route\.result == 'success' && needs\.route\.outputs\.is_main != 'true' && needs\.route\.outputs\.is_main != 'false'" || fail "route-check must fire when route succeeded without a usable output"
+job route-check | grep -q 'exit 1' || fail "route-check must fail"
 
 [ "$FAILED" = 0 ] && echo "secret-sweep controls ok"
 exit "$FAILED"
