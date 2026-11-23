@@ -33,6 +33,7 @@ vi.mock("./api.ts", () => ({
 }));
 
 const { MemoRepoSettingsCard } = await import("./MemoRepoSettingsCard.tsx");
+type MemoRepoCheck = import("../../types/memo.ts").MemoRepoCheck;
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 
 let root: Root | null = null;
@@ -68,7 +69,7 @@ const flush = async () => {
   for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
 };
 
-async function render(props: { hasQueue?: boolean; blocked?: boolean; dirty?: boolean } = {}): Promise<void> {
+async function render(props: { hasQueue?: boolean; blocked?: boolean; dirty?: boolean; lastCheck?: MemoRepoCheck } = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
@@ -76,6 +77,7 @@ async function render(props: { hasQueue?: boolean; blocked?: boolean; dirty?: bo
           categoryId="cat1"
           categoryName="rounds"
           hasQueue={props.hasQueue ?? true}
+          lastCheck={props.lastCheck}
           blocked={props.blocked ?? false}
           dirty={props.dirty ?? false}
           onBusy={(b) => busy.push(b)}
@@ -92,8 +94,8 @@ const click = async (el: HTMLElement) => {
   await act(async () => el.click());
   await flush();
 };
-const rowsOf = () => [...host.querySelectorAll<HTMLLIElement>(".memo-repo-diff")];
-const approveButton = () => host.querySelector<HTMLButtonElement>(".memo-repo-card .ui-btn-primary")!;
+const rowsOf = () => [...host.querySelectorAll<HTMLLIElement>(".memo-reposet-diff")];
+const approveButton = () => host.querySelector<HTMLButtonElement>(".memo-reposet-card .ui-btn-primary")!;
 
 beforeEach(() => {
   settings = answer();
@@ -117,7 +119,29 @@ describe("MemoRepoSettingsCard", () => {
   it("reads nothing until asked", async () => {
     await render();
     expect(memoRepoSettings).not.toHaveBeenCalled();
-    expect(host.querySelector(".memo-repo-card")).toBeNull();
+    expect(host.querySelector(".memo-reposet-card")).toBeNull();
+    expect(host.querySelector(".memo-reposet-last")).toBeNull();
+  });
+
+  it("shows the last read until the member checks again", async () => {
+    const at = "2026-11-23T00:00:00Z";
+    await render({ lastCheck: { state: "differs", commit, diffs: 2, checkedAt: at } });
+    expect(memoRepoSettings).not.toHaveBeenCalled();
+    const last = host.querySelector(".memo-reposet-last")!;
+    expect(last.textContent).toContain("c0ffeec");
+    expect(last.textContent).toContain("2");
+    await click(buttons()[0]);
+    expect(host.querySelector(".memo-reposet-last")).toBeNull();
+    expect(rowsOf()).toHaveLength(3);
+  });
+
+  it("says nothing about a last read that found no difference", async () => {
+    for (const state of ["same", "absent"] as const) {
+      await render({ lastCheck: { state, commit, diffs: 0, checkedAt: "2026-11-23T00:00:00Z" } });
+      expect(host.querySelector(".memo-reposet-last")).toBeNull();
+    }
+    await render({ lastCheck: { state: "invalid", commit, diffs: 0, checkedAt: "2026-11-23T00:00:00Z" } });
+    expect(host.querySelector(".memo-reposet-last")).not.toBeNull();
   });
 
   it("shows the difference and approves the ticked rows", async () => {
@@ -129,9 +153,9 @@ describe("MemoRepoSettingsCard", () => {
     expect(rows).toHaveLength(3);
     expect(rows.map((r) => r.querySelector<HTMLInputElement>("input")!.checked)).toEqual([true, true, true]);
     expect(rows[1].hasAttribute("data-raise")).toBe(true);
-    expect(rows[1].querySelector(".memo-repo-raise")).not.toBeNull();
-    expect(rows[0].querySelector(".memo-repo-raise")).toBeNull();
-    expect(host.querySelector(".memo-repo-warnings")!.textContent).toContain("enabled");
+    expect(rows[1].querySelector(".memo-reposet-raise")).not.toBeNull();
+    expect(rows[0].querySelector(".memo-reposet-raise")).toBeNull();
+    expect(host.querySelector(".memo-reposet-warnings")!.textContent).toContain("enabled");
 
     // Untick the raised limit.
     await click(rows[1].querySelector<HTMLInputElement>("input")!);
@@ -220,7 +244,7 @@ describe("MemoRepoSettingsCard", () => {
     await render();
     await click(buttons()[0]);
     expect(approveButton().disabled).toBe(true);
-    expect(host.querySelector(".memo-repo-foot-hint")!.textContent).toContain("other");
+    expect(host.querySelector(".memo-reposet-foot-hint")!.textContent).toContain("other");
     await click(approveButton());
     expect(memoRepoApprove).not.toHaveBeenCalled();
   });
@@ -241,15 +265,15 @@ describe("MemoRepoSettingsCard", () => {
     settings = answer({ errors: [{ line: 4, key: "max_active", reason: "maxActive must be 1 to 6" }] });
     await render();
     await click(buttons()[0]);
-    expect(host.querySelector(".memo-repo-errors")!.textContent).toContain("maxActive must be 1 to 6");
-    expect(host.querySelector(".memo-repo-card")).toBeNull();
+    expect(host.querySelector(".memo-reposet-errors")!.textContent).toContain("maxActive must be 1 to 6");
+    expect(host.querySelector(".memo-reposet-card")).toBeNull();
   });
 
   it("says when there is no file, and names a read failure", async () => {
     settings = answer({ found: false, entry: false, diffs: [], warnings: [] });
     await render();
     await click(buttons()[0]);
-    expect(host.querySelector(".memo-repo-card")).toBeNull();
+    expect(host.querySelector(".memo-reposet-card")).toBeNull();
     expect(host.textContent).toContain(".agent-fleet/autorun.yaml");
 
     settings = { error: { code: "workspace_not_running", message: "start your workspace" } };
@@ -263,6 +287,6 @@ describe("MemoRepoSettingsCard", () => {
     await render({ hasQueue: true });
     await click(buttons()[1]);
     expect(memoRepoExport).toHaveBeenCalledWith("cat1");
-    expect(host.querySelector<HTMLTextAreaElement>(".memo-repo-yaml")!.value).toContain("batch: 2");
+    expect(host.querySelector<HTMLTextAreaElement>(".memo-reposet-yaml")!.value).toContain("batch: 2");
   });
 });

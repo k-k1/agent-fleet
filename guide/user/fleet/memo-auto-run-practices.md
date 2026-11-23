@@ -61,8 +61,8 @@ Follow <the skill or file that holds the procedure> for each memo.
 Work only in this repository. Work on one memo's item and nothing else.
 Open a pull request for the change. <Say here whether the session may merge.>
 Before your last answer: stop any watch you started and any child session.
-Your last answer is a summary that starts with "Done:", "Partial:",
-"Deferred:" or "Too large:", then one line on what a person must decide.
+Your last answer is a summary that starts with "Done:" when the item is finished,
+else "Partial:", "Deferred:" or "Too large:", then one line on what a person must decide.
 ```
 
 A session reads its instructions when it starts. Editing the instruction or the file does not change a run that is already going; the next run reads the new text.
@@ -72,6 +72,7 @@ Write the procedure for a reader who is not there:
 - **Never end on a question.** "Tell me if I should continue" is never read in time, and the run stays open "waiting for you" and holds its place. Decide, or stop and say why
 - **Put what a person must decide on the pull request or the issue**, and say so in the summary. The chat of a stopped session is not where anyone looks
 - **Say when to skip an item**: the issue is closed, the problem is already fixed, or it waits on a decision that is not made. Skipping ends the run with a summary that starts with `Deferred:`, and that is a good result
+- **End a finished run with `Done:`.** A run that opened no pull request lets the memos that wait for it run only when its last answer starts with `Done:`; any other start, or no answer, sends them back for your approval ([Make a memo wait for another](../chat/memo-auto-run.md#make-a-memo-wait-for-another)). Tell the session to begin with `Done:` only when the item is finished, and not to put it in a quote, a list or a code block
 - **Clean up before the last answer.** Stop the watches and timers you started and the child sessions you started. A run ends only when nothing is left to wait for ([How long a run stays open](../chat/memo-auto-run.md#how-long-a-run-stays-open))
 - **Say what the session must not do**, as in [Use it more safely](../chat/memo-auto-run.md#use-it-more-safely). Do not put a password or a token in the instruction
 
@@ -96,7 +97,7 @@ Depends on: <item, or "none">
 
 - **Queue order is priority.** A run takes the oldest memos waiting to run, so put the item you want first at the top
 - **Do not run items that touch the same files at once.** Two runs working on the same files conflict when their pull requests meet. Set "Sessions at the same time" to 1 for such a category, or make one memo wait for the other
-- **A memo that waits for another takes no place.** The queue holds it, and memos behind it still run. It is released once the memo it waits for ended well and every pull request of that run is merged
+- **A memo that waits for another takes no place.** The queue holds it, and memos behind it still run. It is released once the memo it waits for ended well and every pull request of that run is merged, or, for a run that opened none, once that run's last answer started with `Done:`. A memo can also wait for a memo queued after it, such as a continuation added for work a run left undone
 - **A session that waits on a watch keeps its run open and holds a place.** A run that waits for a long time on a review or a build uses one of the "Sessions at the same time" the whole while. Where the order is known, prefer making the memo wait for the other one over a session that waits
 
 ## Large tasks
@@ -108,7 +109,7 @@ A task that does not fit in one run goes through the queue in parts.
 - **Record what is left on the issue before ending.** A checklist on the issue is enough. The queue does not run a started memo again by itself, so the issue is where the remainder survives. The one exception is a run that hands its memo back because the work cannot be done yet ([A run hands its memo back](../chat/memo-auto-run.md#a-run-hands-its-memo-back)); the memo then runs again later as a new run
 - **Let the run queue the next part, with a cap in the memo**, for example `Part 2 of at most 5`. Your approval of the first memo also covers up to the category's "Follow-ups a run may add without approval" (4 unless you changed it) follow-ups of it, for the same work item, so a five-part task needs one approval, not four ([follow-ups](../chat/memo-auto-run.md#follow-ups-of-an-approved-memo)). Set that number to at least the parts minus one. The number in the memo is advice to the run, and the category's number is what the Control Plane counts. Past it the next part waits on the approval card, where approving it starts a new chain. Tell the run to add the next part for the same work item (the same reference) only after its own pull request has merged, and to say when it reaches the cap and add nothing
 - **Do not queue the next part when this part did not merge.** Tell the run to add it only after its own pull request has merged. A run that stopped short, or whose pull request is still open, adds nothing, so no memo is left waiting on a pull request that may never merge
-- **Start the summary with `Partial:`** for a part that left work, `Deferred:` for an item it did not do, and `Too large:` for an item that needs cutting first. They read at a glance in [the run history](../chat/memo-auto-run.md#read-the-run-history)
+- **Start the summary with `Done:`** for a run that finished its item, `Partial:` for a part that left work, `Deferred:` for an item it did not do, and `Too large:` for an item that needs cutting first. They read at a glance in [the run history](../chat/memo-auto-run.md#read-the-run-history)
 
 ## Review and merge without a person per pull request
 

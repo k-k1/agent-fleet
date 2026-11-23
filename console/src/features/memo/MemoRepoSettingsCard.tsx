@@ -5,7 +5,8 @@
 // Nothing is applied without the approval, and the approval names settings only: the Control
 // Plane takes the values from the file at the commit the difference showed, and answers 409
 // memo_queue_repo_stale when the file or the settings moved since. Reading the file needs the
-// workspace (it fetches origin), so the check runs when the member asks for it, never on open.
+// workspace (it fetches origin), so the check runs when the member asks for it, never on open;
+// until then the card shows the queue's last read, which the Control Plane keeps.
 import { useId, useRef, useState } from "react";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -13,7 +14,7 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { errText, type ApiError } from "../../core/api/client.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
-import type { MemoRepoDiff, MemoRepoExport, MemoRepoIssue, MemoRepoSettings } from "../../types/memo.ts";
+import type { MemoRepoCheck, MemoRepoDiff, MemoRepoExport, MemoRepoIssue, MemoRepoSettings } from "../../types/memo.ts";
 import { memoRepoApprove, memoRepoExport, memoRepoSettings } from "./api.ts";
 import { readQueue } from "./queues.ts";
 import { queueScope, useQueueSettingsCache } from "./queueSettingsCache.ts";
@@ -24,6 +25,9 @@ interface Props {
   categoryName: string;
   /** The category has settings: only then is there something to export. */
   hasQueue: boolean;
+  /** The last read of the file against these settings (the member's own check, or the Control
+   *  Plane's periodic one), shown until the member checks again. */
+  lastCheck?: MemoRepoCheck;
   /** The tenant's switch is off, or the dialog is saving: the difference is shown, the approval
    *  is not offered. */
   blocked: boolean;
@@ -41,7 +45,7 @@ interface Props {
 
 type Check = { kind: "idle" } | { kind: "loading" } | { kind: "error"; message: string } | { kind: "loaded"; data: MemoRepoSettings };
 
-export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, blocked, dirty, onBusy, onApplied }: Props) {
+export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, lastCheck, blocked, dirty, onBusy, onApplied }: Props) {
   const tr = useT();
   const toast = useToast();
   const [check, setCheck] = useState<Check>({ kind: "idle" });
@@ -169,9 +173,9 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
   const picked = approvedKeys(rows, chosen).length;
 
   return (
-    <section className="ui-field memo-repo" aria-label={tr("memo.repo_title")}>
-      <div className="memo-repo-head">
-        <span className="ui-field-label memo-repo-title">{tr("memo.repo_title")}</span>
+    <section className="ui-field memo-reposet" aria-label={tr("memo.repo_title")}>
+      <div className="memo-reposet-head">
+        <span className="ui-field-label memo-reposet-title">{tr("memo.repo_title")}</span>
         <Button small type="button" disabled={check.kind === "loading" || approving} onClick={() => void load()}>
           {check.kind === "idle" ? tr("memo.repo_check") : tr("memo.repo_recheck")}
         </Button>
@@ -182,6 +186,13 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
         )}
       </div>
       <div className="ui-field-hint">{tr("memo.repo_hint", { path: ".agent-fleet/autorun.yaml" })}</div>
+      {check.kind === "idle" && (lastCheck?.state === "differs" || lastCheck?.state === "invalid") && (
+        <div className="ui-field-hint memo-reposet-last" role="status">
+          {lastCheck.state === "differs"
+            ? tr("memo.repo_last_differs", { when: fmtDateTime(lastCheck.checkedAt), commit: shortCommit(lastCheck.commit), count: lastCheck.diffs })
+            : tr("memo.repo_last_invalid", { when: fmtDateTime(lastCheck.checkedAt), commit: shortCommit(lastCheck.commit) })}
+        </div>
+      )}
 
       {check.kind === "loading" && (
         <div className="ui-field-hint" role="status">
@@ -194,7 +205,7 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
         </div>
       )}
       {loaded && (
-        <div className="memo-repo-result">
+        <div className="memo-reposet-result">
           <div className="ui-field-hint">
             {tr("memo.repo_source", { path: loaded.path, branch: loaded.branch, commit: shortCommit(loaded.commit) })}
             {loaded.approvedCommit &&
@@ -202,7 +213,7 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
           </div>
           {!loaded.found && <div className="ui-field-hint">{tr("memo.repo_no_file", { path: loaded.path })}</div>}
           {loaded.errors.length > 0 && (
-            <div className="memo-repo-errors" role="alert">
+            <div className="memo-reposet-errors" role="alert">
               <strong>{tr("memo.repo_invalid")}</strong>
               <ul>{loaded.errors.map(issue)}</ul>
             </div>
@@ -211,7 +222,7 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
             <div className="ui-field-hint">{tr("memo.repo_no_entry", { name: categoryName })}</div>
           )}
           {loaded.warnings.length > 0 && (
-            <div className="memo-repo-warnings">
+            <div className="memo-reposet-warnings">
               <strong>{tr("memo.repo_not_applied")}</strong>
               <ul>{loaded.warnings.map(issue)}</ul>
             </div>
@@ -222,12 +233,12 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
             </div>
           )}
           {rows.length > 0 && (
-            <div className="memo-repo-card" role="group" aria-label={tr("memo.repo_differ")}>
-              <strong className="memo-repo-card-title">{tr("memo.repo_differ")}</strong>
-              <ul className="memo-repo-diffs">
+            <div className="memo-reposet-card" role="group" aria-label={tr("memo.repo_differ")}>
+              <strong className="memo-reposet-card-title">{tr("memo.repo_differ")}</strong>
+              <ul className="memo-reposet-diffs">
                 {rows.map((r) => (
-                  <li key={r.id} className="memo-repo-diff" data-raise={r.raise || undefined}>
-                    <label className="memo-repo-diff-pick">
+                  <li key={r.id} className="memo-reposet-diff" data-raise={r.raise || undefined}>
+                    <label className="memo-reposet-diff-pick">
                       <input
                         type="checkbox"
                         checked={chosen.has(r.id)}
@@ -242,13 +253,13 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
                           })
                         }
                       />
-                      <span className="memo-repo-diff-name">{r.id === "firing" ? tr("memo.q_when") : label(r.keys[0])}</span>
-                      {r.raise && <span className="ui-badge ui-badge-warn memo-repo-raise">{tr("memo.repo_raise")}</span>}
+                      <span className="memo-reposet-diff-name">{r.id === "firing" ? tr("memo.q_when") : label(r.keys[0])}</span>
+                      {r.raise && <span className="ui-badge ui-badge-warn memo-reposet-raise">{tr("memo.repo_raise")}</span>}
                     </label>
                     <div id={`${ids}-${r.id}`}>
                     {r.diffs.map((d) =>
                       d.key === "instruction" ? (
-                        <div key={d.key} className="memo-repo-diff-text">
+                        <div key={d.key} className="memo-reposet-diff-text">
                           <div className="ui-field-hint">{tr("memo.repo_current")}</div>
                           {/* Focusable so a long text scrolls from the keyboard too. */}
                           <pre tabIndex={0}>{typeof d.current === "string" ? d.current : ""}</pre>
@@ -256,13 +267,13 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
                           <pre tabIndex={0}>{typeof d.file === "string" ? d.file : ""}</pre>
                         </div>
                       ) : (
-                        <div key={d.key} className="memo-repo-diff-values">
-                          {r.id === "firing" && <span className="memo-repo-diff-sub">{label(d.key)}</span>}
+                        <div key={d.key} className="memo-reposet-diff-values">
+                          {r.id === "firing" && <span className="memo-reposet-diff-sub">{label(d.key)}</span>}
                           {value(d, d.current)}
                           <span aria-hidden="true">
                             {" → "}
                           </span>
-                          <span className="memo-repo-sr">{" " + tr("memo.repo_becomes") + " "}</span>
+                          <span className="memo-reposet-sr">{" " + tr("memo.repo_becomes") + " "}</span>
                           {value(d, d.file)}
                           <span className="ui-field-hint"> {tr("memo.repo_line", { line: d.line })}</span>
                         </div>
@@ -272,8 +283,8 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
                   </li>
                 ))}
               </ul>
-              <div className="memo-repo-foot">
-                <span className="ui-field-hint memo-repo-foot-hint" data-invalid={held || undefined}>
+              <div className="memo-reposet-foot">
+                <span className="ui-field-hint memo-reposet-foot-hint" data-invalid={held || undefined}>
                   {renamed
                     ? tr("memo.repo_renamed", { name: loaded.category })
                     : dirty
@@ -296,10 +307,10 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
       )}
 
       {exported && (
-        <div className="memo-repo-export">
+        <div className="memo-reposet-export">
           <div className="ui-field-hint">{tr("memo.repo_export_hint", { path: exported.path })}</div>
           {exported.omitted.length > 0 && (
-            <ul className="memo-repo-warnings">
+            <ul className="memo-reposet-warnings">
               {exported.omitted.map((i, n) => (
                 <li key={n}>
                   <code>{i.key}</code> {tr("memo.repo_export_omitted")}
@@ -307,8 +318,8 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
               ))}
             </ul>
           )}
-          <textarea className="memo-repo-yaml" readOnly rows={12} value={exported.yaml} aria-label={tr("memo.repo_export")} spellCheck={false} />
-          <div className="memo-repo-foot">
+          <textarea className="memo-reposet-yaml" readOnly rows={12} value={exported.yaml} aria-label={tr("memo.repo_export")} spellCheck={false} />
+          <div className="memo-reposet-foot">
             <Button
               small
               type="button"

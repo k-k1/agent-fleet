@@ -899,6 +899,14 @@
 .memo-q-badge.memo-q-badge--off {
   color: var(--muted);
 }
+/* The repository's settings file differs from the queue's settings (#4881). */
+.memo-q-repo {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--warn, var(--accent));
+}
 .memo-qmeta {
   display: flex;
   flex-wrap: wrap;
@@ -1068,41 +1076,41 @@
   color: var(--warn, var(--accent));
 }
 /* Repository settings card (MemoRepoSettingsCard) */
-.memo-repo {
+.memo-reposet {
   border-bottom: 1px solid var(--border);
   padding-bottom: 10px;
 }
-.memo-repo-head,
-.memo-repo-foot {
+.memo-reposet-head,
+.memo-reposet-foot {
   display: flex;
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
 }
-.memo-repo-title,
-.memo-repo-foot-hint {
+.memo-reposet-title,
+.memo-reposet-foot-hint {
   flex: 1;
 }
-.memo-repo-result,
-.memo-repo-export {
+.memo-reposet-result,
+.memo-reposet-export {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin-top: 6px;
 }
-.memo-repo-errors {
+.memo-reposet-errors {
   color: var(--err);
 }
-.memo-repo-errors ul,
-.memo-repo-warnings ul,
-ul.memo-repo-warnings {
+.memo-reposet-errors ul,
+.memo-reposet-warnings ul,
+ul.memo-reposet-warnings {
   margin: 2px 0 0;
   padding-left: 18px;
 }
-.memo-repo-warnings {
+.memo-reposet-warnings {
   color: var(--warn, var(--accent));
 }
-.memo-repo-card {
+.memo-reposet-card {
   border: 1px solid var(--warn, var(--accent));
   border-radius: 6px;
   padding: 8px 10px;
@@ -1110,7 +1118,7 @@ ul.memo-repo-warnings {
   flex-direction: column;
   gap: 6px;
 }
-.memo-repo-diffs {
+.memo-reposet-diffs {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -1118,26 +1126,26 @@ ul.memo-repo-warnings {
   flex-direction: column;
   gap: 6px;
 }
-.memo-repo-diff-pick {
+.memo-reposet-diff-pick {
   display: flex;
   gap: 8px;
   align-items: center;
 }
-.memo-repo-diff-name {
+.memo-reposet-diff-name {
   font-weight: 600;
 }
-.memo-repo-diff[data-raise] .memo-repo-raise {
+.memo-reposet-diff[data-raise] .memo-reposet-raise {
   font-weight: 700;
 }
-.memo-repo-diff-values,
-.memo-repo-diff-text {
+.memo-reposet-diff-values,
+.memo-reposet-diff-text {
   padding-left: 24px;
 }
-.memo-repo-diff-sub {
+.memo-reposet-diff-sub {
   color: var(--muted);
   margin-right: 6px;
 }
-.memo-repo-diff-text pre {
+.memo-reposet-diff-text pre {
   margin: 2px 0 4px;
   max-height: 10em;
   overflow: auto;
@@ -1148,7 +1156,7 @@ ul.memo-repo-warnings {
   border-radius: 4px;
   padding: 4px 6px;
 }
-.memo-repo-sr {
+.memo-reposet-sr {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1156,7 +1164,7 @@ ul.memo-repo-warnings {
   clip: rect(0 0 0 0);
   white-space: nowrap;
 }
-.memo-repo-yaml {
+.memo-reposet-yaml {
   font-family: var(--mono, monospace);
   font-size: 12px;
   width: 100%;
