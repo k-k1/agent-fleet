@@ -205,7 +205,7 @@ describe("FleetGraphView", () => {
     expect(host.querySelectorAll("svg.fgraph-svg .fgraph-tail.archived")).toHaveLength(0);
     expect(host.querySelectorAll("svg.fgraph-svg .fgraph-seg.fgraph-seg--archived")).toHaveLength(0);
     // A STOPPED lane keeps its dashed tail: the amendment is about archived alone.
-    expect(host.querySelectorAll("svg.fgraph-svg .fgraph-tail.stopped").length).toBeGreaterThan(0);
+    expect(host.querySelectorAll("svg.fgraph-svg .fgraph-tail.fgraph-tail--stopped").length).toBeGreaterThan(0);
   });
 
   it("the activity band is coloured by STATE, with no per-kind colour written onto it", async () => {

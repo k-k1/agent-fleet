@@ -111,7 +111,7 @@ export function FileEditControls(props: {
           <button
             ref={props.viewTabRef}
             type="button"
-            className={"seg-btn" + (paneMode === "view" ? " active" : "")}
+            className={"seg-btn" + (paneMode === "view" ? " seg-btn--active" : "")}
             role="tab"
             aria-selected={paneMode === "view"}
             tabIndex={paneMode === "view" ? 0 : -1}
@@ -122,7 +122,7 @@ export function FileEditControls(props: {
           <button
             ref={props.editTabRef}
             type="button"
-            className={"seg-btn" + (paneMode === "edit" ? " active" : "")}
+            className={"seg-btn" + (paneMode === "edit" ? " seg-btn--active" : "")}
             role="tab"
             aria-selected={paneMode === "edit"}
             tabIndex={paneMode === "edit" ? 0 : -1}
@@ -181,7 +181,7 @@ export function FileDiagramControls(props: {
             key={control.mode}
             type="button"
             aria-pressed={control.pressed}
-            className={"seg-btn" + (control.pressed ? " active" : "")}
+            className={"seg-btn" + (control.pressed ? " seg-btn--active" : "")}
             onClick={() => props.onChangeMode(control.mode)}
           >
             {control.mode === "figure"
@@ -228,7 +228,7 @@ export function FileMarkdownControls(props: {
             key={control.mode}
             type="button"
             aria-pressed={control.pressed}
-            className={"seg-btn" + (control.pressed ? " active" : "")}
+            className={"seg-btn" + (control.pressed ? " seg-btn--active" : "")}
             onClick={() => props.onChangeMode(control.mode)}
           >
             {control.mode === "split"
@@ -250,7 +250,7 @@ export function FileMarkdownControls(props: {
               key={control.renderer}
               type="button"
               aria-pressed={control.pressed}
-              className={"seg-btn" + (control.pressed ? " active" : "")}
+              className={"seg-btn" + (control.pressed ? " seg-btn--active" : "")}
               onClick={() => props.onChangeRenderer(control.renderer)}
             >
               {control.renderer === "slides" ? tr("view.slides") : tr("editor.renderer.doc")}
@@ -271,10 +271,10 @@ export function FileImageModeToggle(props: {
   const { mode } = props;
   return (
     <span className="ui-seg sm md-toggle" role="group" aria-label={tr("view.image_display_mode")}>
-      <button type="button" aria-pressed={mode === "preview"} className={"seg-btn" + (mode === "preview" ? " active" : "")} onClick={() => props.onChange("preview")}>
+      <button type="button" aria-pressed={mode === "preview"} className={"seg-btn" + (mode === "preview" ? " seg-btn--active" : "")} onClick={() => props.onChange("preview")}>
         {tr("view.preview")}
       </button>
-      <button type="button" aria-pressed={mode === "source"} className={"seg-btn" + (mode === "source" ? " active" : "")} onClick={() => props.onChange("source")}>
+      <button type="button" aria-pressed={mode === "source"} className={"seg-btn" + (mode === "source" ? " seg-btn--active" : "")} onClick={() => props.onChange("source")}>
         {tr("view.source")}
       </button>
     </span>

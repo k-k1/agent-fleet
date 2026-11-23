@@ -162,7 +162,7 @@ export function McpAdminView({ tenants }: { tenants: Tenant[] }) {
               />
             ) : (
               <Fragment key={s.id}>
-                <div className={"adm-mcp-row" + (s.enabled ? "" : " off")}>
+                <div className={"adm-mcp-row" + (s.enabled ? "" : " adm-mcp-row--off")}>
                   <span className={"as-name" + (s.label ? "" : " mono")} title={s.name}>
                     {s.label || s.name}
                   </span>

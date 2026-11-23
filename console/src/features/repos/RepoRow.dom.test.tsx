@@ -237,7 +237,7 @@ describe("RepoRow quick launch that needs a route", () => {
       await Promise.resolve();
     });
     expect(onLaunch).toHaveBeenCalledWith("codex", false);
-    const active = document.querySelector(".ui-seg.big .seg-btn.active");
+    const active = document.querySelector(".ui-seg.big .seg-btn.seg-btn--active");
     expect(active?.textContent).toContain("Codex");
   });
 });

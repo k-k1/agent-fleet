@@ -154,7 +154,7 @@ function RunItem({ run, now, onDialog, openMenu, activeName }: { run: RunRow; no
     <li className={"autorun-run is-" + run.state} data-autorun-run={root.name} data-autorun-state={run.state}>
       <button
         type="button"
-        className={"autorun-run-main" + (root.name === activeName ? " active" : "")}
+        className={"autorun-run-main" + (root.name === activeName ? " autorun-run-main--active" : "")}
         aria-current={root.name === activeName ? "true" : undefined}
         data-rail-row=""
         onClick={() => openSessionChat(root.name)}
@@ -180,7 +180,7 @@ function RunItem({ run, now, onDialog, openMenu, activeName }: { run: RunRow; no
         <ul className="autorun-kids">
           {children.map((c) => (
             <li key={c.name}>
-              <button type="button" className={"autorun-kid" + (c.name === activeName ? " active" : "")} aria-current={c.name === activeName ? "true" : undefined} data-rail-row="" onClick={() => openSessionChat(c.name)} {...menuHandlers(c, openMenu)} title={tr("autorun.open", { name: c.name })}>
+              <button type="button" className={"autorun-kid" + (c.name === activeName ? " autorun-kid--active" : "")} aria-current={c.name === activeName ? "true" : undefined} data-rail-row="" onClick={() => openSessionChat(c.name)} {...menuHandlers(c, openMenu)} title={tr("autorun.open", { name: c.name })}>
                 <span className={"autorun-dot is-" + (waitsForMember(c) ? "waiting" : c.alive ? "running" : "ended")} aria-hidden="true" />
                 <span className="autorun-title">{displayName(c)}</span>
               </button>

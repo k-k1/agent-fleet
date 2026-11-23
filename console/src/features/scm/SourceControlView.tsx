@@ -183,7 +183,7 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
   };
 
   useEffect(() => {
-    if (selected) bodyRef.current?.querySelector(".cgraph-row.active")?.scrollIntoView({ block: "nearest" });
+    if (selected) bodyRef.current?.querySelector(".cgraph-row.cgraph-row--active")?.scrollIntoView({ block: "nearest" });
   }, [selected]);
 
   const fetchRepo = async () => {

@@ -50,8 +50,8 @@
   color: var(--muted);
   cursor: pointer;
 }
-.memrail-chip.active,
-.memrail-toggle.active {
+.memrail-chip.memrail-chip--active,
+.memrail-toggle.memrail-toggle--active {
   color: var(--fg);
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
@@ -87,7 +87,7 @@
 .memrail-row:hover {
   background: var(--hover, rgba(127, 127, 127, 0.08));
 }
-.memrail-row.active {
+.memrail-row.memrail-row--active {
   background: color-mix(in srgb, var(--accent) 16%, transparent);
 }
 .memrail-row:focus-visible {

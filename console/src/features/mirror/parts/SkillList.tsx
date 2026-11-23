@@ -136,7 +136,7 @@ export function SkillButton({
     <button
       type="button"
       ref={btnRef}
-      className={"ghost mirror-skill-btn" + (open ? " on" : "")}
+      className={"ghost mirror-skill-btn" + (open ? " mirror-skill-btn--on" : "")}
       title={tr("mirror.skills_btn")}
       disabled={disabled}
       onClick={onToggle}

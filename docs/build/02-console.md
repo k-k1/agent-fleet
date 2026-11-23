@@ -379,6 +379,9 @@ result).
   stylesheet reuses, so `is-<state>` / `tone-<tone>` would only move the collision; prefixing the
   owning block keeps each modifier unique to one file. Keep the `.block.block--state` compound so
   the specificity is unchanged.
+  A session's run state is the one place where the token list comes from data: `stateInfo().cls`
+  (`off question`, `on handoff`, …) stays a plain token list and `stateClass(block, cls)`
+  (`lib/sessionview.ts`) prefixes each token for the chip, card, tab or dot that shows it.
 - **CI** (`.github/workflows/ci.yml`, job `console`) runs typecheck, lint, i18n lint,
   the css-dup ceiling, vitest, two checks in real headless Chromium (`pdf:check`, `doc:check`) and the build.
 - The other scripts in `package.json` (screenshots, mirror and viewer scroll checks, the

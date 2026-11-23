@@ -650,7 +650,7 @@ function Knobbed({
 }) {
   const tr = useT();
   return (
-    <label className={"igen-field" + (on ? "" : " off") + extra}>
+    <label className={"igen-field" + (on ? "" : " igen-field--off") + extra}>
       <span className="igen-label">
         {label}
         {lock}
@@ -831,7 +831,7 @@ const LOCK_LABEL: Partial<Record<StudioKey, string>> = {
 function LockBadge() {
   const tr = useT();
   return (
-    <span className="igen-lock on" role="img" title={tr("imggen.lock_on")} aria-label={tr("imggen.lock_on")}>
+    <span className="igen-lock igen-lock--on" role="img" title={tr("imggen.lock_on")} aria-label={tr("imggen.lock_on")}>
       <Icon name="lock" />
     </span>
   );

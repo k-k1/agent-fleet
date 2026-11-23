@@ -124,7 +124,7 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
               type="button"
               role="radio"
               aria-checked={!r.members_only}
-              className={"seg-btn" + (!r.members_only ? " active" : "")}
+              className={"seg-btn" + (!r.members_only ? " seg-btn--active" : "")}
               disabled={busy || !r.tenant_allowed}
               onClick={() => r.members_only && put("", { role: r.role, members_only: false })}
             >
@@ -134,7 +134,7 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
               type="button"
               role="radio"
               aria-checked={r.members_only}
-              className={"seg-btn" + (r.members_only ? " active" : "")}
+              className={"seg-btn" + (r.members_only ? " seg-btn--active" : "")}
               disabled={busy || !r.tenant_allowed}
               onClick={() => !r.members_only && put("", { role: r.role, members_only: true })}
             >

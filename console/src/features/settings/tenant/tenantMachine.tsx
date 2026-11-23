@@ -88,14 +88,14 @@ export function TenantMachineView({ slug }: { slug: string }) {
       <p className="admin-hint">{tr("tenant.machine_note")}</p>
       <div className="le-presets">
         <button
-          className={pick === "" ? "chip on" : "chip"}
+          className={pick === "" ? "chip chip--on" : "chip"}
           disabled={busy}
           onClick={() => save("")}
         >
           {tr("tenant.machine_deploy_default")}
         </button>
         {view.classes.map((c) => (
-          <button key={c.id} className={pick === c.id ? "chip on" : "chip"} disabled={busy} onClick={() => save(c.id)}>
+          <button key={c.id} className={pick === c.id ? "chip chip--on" : "chip"} disabled={busy} onClick={() => save(c.id)}>
             {c.label}
           </button>
         ))}

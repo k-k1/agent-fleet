@@ -102,7 +102,7 @@
 .cgraph-row:hover {
   background: var(--hover-bg);
 }
-.cgraph-row.active {
+.cgraph-row.cgraph-row--active {
   background: var(--active-bg);
 }
 /* Off-branch commits fade only their message column. The graph keeps full opacity —
@@ -247,7 +247,7 @@
 .change:hover {
   background: var(--hover-bg);
 }
-.change.active {
+.change.change--active {
   background: var(--active-bg);
 }
 .chg {
@@ -286,7 +286,7 @@
   opacity: 0;
 }
 .change:hover .chg-acts,
-.change.active .chg-acts {
+.change.change--active .chg-acts {
   opacity: 1;
 }
 .chg-discard {
@@ -541,7 +541,7 @@
   margin: 0;
   padding: 0;
 }
-.svnlog-row.active {
+.svnlog-row.svnlog-row--active {
   background: var(--active-bg);
 }
 .svnlog-row:hover {

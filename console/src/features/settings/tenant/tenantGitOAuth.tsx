@@ -376,7 +376,7 @@ function GitHubOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuth
       </h4>
       <div className="gh-src" role="radiogroup" aria-label={tr("tenant.gh_source_label")}>
         {offered.map((s) => (
-          <label key={s} className={available(s) ? "" : "off"}>
+          <label key={s} className={available(s) ? "" : "gh-src--off"}>
             <input
               type="radio"
               name={`gh-src-${slug}`}

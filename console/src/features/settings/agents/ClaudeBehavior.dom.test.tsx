@@ -63,8 +63,8 @@ describe("ClaudeBehavior idle compaction", () => {
     const btns = idleRow();
     expect(btns).not.toBeNull();
     const [on, off] = btns!;
-    expect(on.classList.contains("active")).toBe(true);
-    expect(off.classList.contains("active")).toBe(false);
+    expect(on.classList.contains("seg-btn--active")).toBe(true);
+    expect(off.classList.contains("seg-btn--active")).toBe(false);
     await act(async () => off.click());
     expect(update).toHaveBeenCalledWith({ idleCompaction: false });
   });
@@ -72,8 +72,8 @@ describe("ClaudeBehavior idle compaction", () => {
   it("reflects off", async () => {
     await mount({ ...base, idleCompaction: false });
     const [on, off] = idleRow()!;
-    expect(on.classList.contains("active")).toBe(false);
-    expect(off.classList.contains("active")).toBe(true);
+    expect(on.classList.contains("seg-btn--active")).toBe(false);
+    expect(off.classList.contains("seg-btn--active")).toBe(true);
   });
 
   it("hides the row when the Agent does not report the field", async () => {

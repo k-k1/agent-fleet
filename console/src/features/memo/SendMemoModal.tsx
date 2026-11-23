@@ -231,7 +231,7 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
               <button
                 key={s.name}
                 type="button"
-                className={"memo-tgt" + (on({ type: "session", name: s.name }) ? " on" : "")}
+                className={"memo-tgt" + (on({ type: "session", name: s.name }) ? " memo-tgt--on" : "")}
                 onClick={() => setTarget({ type: "session", name: s.name })}
               >
                 <span className="memo-tgt-av">
@@ -250,7 +250,7 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
             {!mixed && <div className="memo-tgroup">{tr("memo.target_other")}</div>}
             {!mixed && <button
               type="button"
-              className={"memo-tgt" + (on({ type: "new" }) ? " on" : "")}
+              className={"memo-tgt" + (on({ type: "new" }) ? " memo-tgt--on" : "")}
               onClick={() => setTarget({ type: "new" })}
             >
               <span className="memo-tgt-av">
@@ -266,7 +266,7 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
               <button
                 key={a.id}
                 type="button"
-                className={"memo-tgt" + (on({ type: "assistant", id: a.id }) ? " on" : "")}
+                className={"memo-tgt" + (on({ type: "assistant", id: a.id }) ? " memo-tgt--on" : "")}
                 onClick={() => setTarget({ type: "assistant", id: a.id })}
               >
                 <span className="memo-tgt-av">

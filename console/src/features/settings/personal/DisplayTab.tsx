@@ -284,7 +284,7 @@ function FontSelect({
         <button
           key={f}
           type="button"
-          className={"font-chip" + (f === value ? " active" : "")}
+          className={"font-chip" + (f === value ? " font-chip--active" : "")}
           style={{ fontFamily: stack(f) }}
           onClick={() => onChange(f)}
         >
@@ -304,7 +304,7 @@ function ChipChoice({ value, options, onChange }: ChoiceProps) {
         <button
           key={String(v)}
           type="button"
-          className={"font-chip" + (v === value ? " active" : "")}
+          className={"font-chip" + (v === value ? " font-chip--active" : "")}
           onClick={() => onChange(v as never)}
         >
           {label as ReactNode}

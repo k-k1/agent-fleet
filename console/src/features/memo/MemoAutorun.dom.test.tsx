@@ -212,7 +212,7 @@ describe("the list", () => {
     const badge = (n: string) =>
       groups.find((g) => g.querySelector(".memo-cat-name")?.textContent === n)!.querySelector(".memo-q-badge");
     expect(badge("inbox-q")?.textContent).toContain(t("memo.autorun_badge"));
-    expect(badge("inbox-q")?.classList.contains("off")).toBe(false);
+    expect(badge("inbox-q")?.classList.contains("memo-q-badge--off")).toBe(false);
     expect(badge("plain")).toBeNull();
 
     servedQueues = { tenantEnabled: true, queues: [aQueue({ enabled: false })] };

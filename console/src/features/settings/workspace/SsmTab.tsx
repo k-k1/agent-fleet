@@ -1119,7 +1119,7 @@ function HostColorPicker({ hostId }: { hostId: string }) {
             <button
               key={c.id}
               type="button"
-              className={"ssm-swatch" + (cur === c.id ? " active" : "")}
+              className={"ssm-swatch" + (cur === c.id ? " ssm-swatch--active" : "")}
               title={c.id === "auto" ? tr("ssm.color_auto_title") : tr(c.labelKey)}
               style={{ background: base }}
               onClick={() => setColor(c.id)}

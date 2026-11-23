@@ -13,7 +13,7 @@ import { placeFixed } from "../../lib/placeFixed.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
 import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import { displayName, stateInfo, exitLabel, remainingShort } from "../../lib/sessionview.ts";
+import { stateClass, displayName, stateInfo, exitLabel, remainingShort } from "../../lib/sessionview.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { ordClass } from "../../layout/badges.ts";
@@ -104,10 +104,10 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
     <li
       className={
         "sess-row" +
-        (selected ? " active" : "") +
+        (selected ? " sess-row--active" : "") +
         (hl ? " hover" : "") +
-        (s.alive ? "" : " stopped") +
-        (inert ? " dead" : "") +
+        (s.alive ? "" : " sess-row--stopped") +
+        (inert ? " sess-row--dead" : "") +
         (lineage ? " lineage" : "") +
         (needsYou ? " sess-needs-you" : "") +
         (unread ? " sess-unread" : "") +
@@ -215,7 +215,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           <Icon name="pulse" className="sess-budget" title={tr("srow.budget_paused_hint")} />
         )}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
-        <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
+        <span className={stateClass("session-state", st.cls) + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
           {/* The rail is narrow, so a chip whose wording names both the run state and what is
               waiting shows its short form here and keeps the full one in the tooltip. */}

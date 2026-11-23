@@ -150,7 +150,7 @@ describe("CommandPalette memory mode", () => {
       act(() => {
         input().dispatchEvent(new KeyboardEvent("keydown", { key: "Tab", bubbles: true }));
       });
-      seen.add(document.querySelector(".cp-mode.on")?.textContent ?? "");
+      seen.add(document.querySelector(".cp-mode.cp-mode--on")?.textContent ?? "");
     }
     expect(seen.has("Memory") || seen.has("メモリ")).toBe(false);
     act(() => setSetting("agentMemory", true));
@@ -160,9 +160,9 @@ describe("CommandPalette memory mode", () => {
   it("leaves the mode when the switch goes off under it", async () => {
     await mount();
     await openMemoryMode();
-    expect(document.querySelector(".cp-mode.on")?.textContent).toMatch(/^(Memory|メモリ)$/);
+    expect(document.querySelector(".cp-mode.cp-mode--on")?.textContent).toMatch(/^(Memory|メモリ)$/);
     await act(async () => setSetting("agentMemory", false));
-    expect(document.querySelector(".cp-mode.on")?.textContent).not.toMatch(/^(Memory|メモリ)$/);
+    expect(document.querySelector(".cp-mode.cp-mode--on")?.textContent).not.toMatch(/^(Memory|メモリ)$/);
   });
 
   it("shows the hint for an empty query and asks the Agent for nothing but the list", async () => {
@@ -271,7 +271,7 @@ describe("CommandPalette memory mode — reverse chord (#2412)", () => {
         new KeyboardEvent("keydown", { code: "KeyP", key: "p", ctrlKey: true, shiftKey: true, bubbles: true, cancelable: true }),
       );
     });
-  const activeLabel = () => document.querySelector(".cp-mode.on")?.textContent;
+  const activeLabel = () => document.querySelector(".cp-mode.cp-mode--on")?.textContent;
 
   it("wraps from the first mode to the memory mode and steps back through it while the switch is on", async () => {
     await mount();

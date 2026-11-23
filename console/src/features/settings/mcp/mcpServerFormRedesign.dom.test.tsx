@@ -212,7 +212,7 @@ describe("switching the authentication mode keeps what was typed", () => {
 describe("edit form", () => {
   it("opens a stored Bearer token in Bearer mode and keeps it untouched", () => {
     mountServerForm(formOf(row({ headers: { Authorization: "Bearer ***" } })));
-    expect(seg("Bearer token").className).toContain("active");
+    expect(seg("Bearer token").className).toContain("seg-btn--active");
     expect(fieldInput("Token").value).toBe("");
     expect(fieldInput("Token").placeholder).toMatch(/Saved/);
     expect(bodyOf(latest!).headers).toEqual({ Authorization: "Bearer ***" });
@@ -222,7 +222,7 @@ describe("edit form", () => {
 
   it("opens a non-Bearer Authorization as Custom headers", () => {
     mountServerForm(formOf(row({ headers: { Authorization: "***" } })));
-    expect(seg("Custom headers").className).toContain("active");
+    expect(seg("Custom headers").className).toContain("seg-btn--active");
     expect(bodyOf(latest!).headers).toEqual({ Authorization: "***" });
   });
 

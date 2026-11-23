@@ -228,8 +228,8 @@ describe("MuseCard", () => {
     expect(row).toBeTruthy();
     const segs = [...row!.querySelectorAll("button.seg-btn")] as HTMLButtonElement[];
     expect(segs).toHaveLength(2);
-    const active = segs.find((b) => b.classList.contains("active"));
-    const on = segs.find((b) => !b.classList.contains("active"));
+    const active = segs.find((b) => b.classList.contains("seg-btn--active"));
+    const on = segs.find((b) => !b.classList.contains("seg-btn--active"));
     expect(active?.textContent).toMatch(/off|オフ/i);
     await act(async () => {
       on!.click();

@@ -63,7 +63,7 @@ export function EngineAddView({ engineKey, lora, initialView = "search", paneId,
           <div className="engine-catalog-role-tabs" role="tablist" aria-label={tr("admin.catalog_role_label" as never)}>
             {(rows || []).map((candidate) => (
               <Button key={candidate.key} variant="ghost" small role="tab" aria-selected={candidate.key === row.key}
-                className={candidate.key === row.key ? "active" : ""} onClick={() => setSelectedKey(candidate.key)}>
+                className={candidate.key === row.key ? "engine-catalog-role-tabs--active" : ""} onClick={() => setSelectedKey(candidate.key)}>
                 <Icon name={engineIsImage(candidate) ? "file-media" : "comment"} />
                 {tr(engineIsImage(candidate) ? "admin.engines_role_image" : "admin.engines_role_llm")}
               </Button>
@@ -72,7 +72,7 @@ export function EngineAddView({ engineKey, lora, initialView = "search", paneId,
           <div className="seg engine-catalog-view-tabs" role="tablist" aria-label={tr("admin.catalog_view_label" as never)}>
             {(["search", "registered"] as const).map((next) => (
               <Button key={next} variant="ghost" small role="tab" aria-selected={view === next}
-                className={"seg-btn" + (view === next ? " active" : "")} onClick={() => setView(next)}>
+                className={"seg-btn" + (view === next ? " seg-btn--active" : "")} onClick={() => setView(next)}>
                 {tr((`admin.catalog_view_${next}`) as never)}
               </Button>
             ))}

@@ -244,7 +244,7 @@
   cursor: pointer;
 }
 
-.gh-src label.off {
+.gh-src label.gh-src--off {
   opacity: 0.55;
   cursor: default;
 }

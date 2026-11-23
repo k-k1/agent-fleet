@@ -115,7 +115,7 @@ function CommitRow({
   const nodeColor = laneColor(nodeLane);
   return (
     <li
-      className={"cgraph-row" + (selected ? " active" : "") + (commit.inBranch ? "" : " dim")}
+      className={"cgraph-row" + (selected ? " cgraph-row--active" : "") + (commit.inBranch ? "" : " dim")}
       // Plain click selects; Ctrl/⌘-click opens the detail in a new pane.
       onClick={(e) => (e.ctrlKey || e.metaKey ? onOpen?.(commit.sha, true) : onSelect(commit.sha))}
       // Middle-click also opens in a new pane (suppress the autoscroll on mousedown).

@@ -117,7 +117,7 @@ export function TtsAdminView() {
           <span className="seg sm">
             <button
               type="button"
-              className={"seg-btn" + (mode === "off" ? " active" : "")}
+              className={"seg-btn" + (mode === "off" ? " seg-btn--active" : "")}
               disabled={busy || data === null || noEngine}
               onClick={() => setMode("off")}
             >
@@ -127,7 +127,7 @@ export function TtsAdminView() {
             {data?.managed && (
               <button
                 type="button"
-                className={"seg-btn" + (mode === "ondemand" ? " active" : "")}
+                className={"seg-btn" + (mode === "ondemand" ? " seg-btn--active" : "")}
                 disabled={busy || data === null}
                 onClick={() => setMode("ondemand")}
               >
@@ -136,7 +136,7 @@ export function TtsAdminView() {
             )}
             <button
               type="button"
-              className={"seg-btn" + (mode === "on" ? " active" : "")}
+              className={"seg-btn" + (mode === "on" ? " seg-btn--active" : "")}
               disabled={busy || data === null || noEngine}
               onClick={() => setMode("on")}
             >

@@ -138,6 +138,13 @@ export const exitLabel = (s: SessionState): { text: string; hint: string } | nul
   }
 };
 
+// stateClass turns a stateInfo `cls` ("off question", "on handoff", …) into the class list of a
+// chip of block `block`: every state token becomes `<block>--<token>` ("session-state
+// session-state--off session-state--question"). A bare `.off` / `.question` is a name many
+// feature stylesheets reuse, so each block owns its own modifiers.
+export const stateClass = (block: string, cls: string): string =>
+  [block, ...cls.split(" ").filter(Boolean).map((c) => `${block}--${c}`)].join(" ");
+
 // stateInfo maps a session to its status chip (codicon + label + color class).
 export const stateInfo = (s: SessionState): StateInfo => {
   if (!s.alive) {

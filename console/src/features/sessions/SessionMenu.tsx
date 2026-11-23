@@ -352,7 +352,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
               item(`wset-${w.id}`, () => {
                 onClose();
                 toggleWorkingSetMember(w.id, "sessions", s.name);
-              }, <Icon name="check" className={w.sessions.includes(s.name) ? "wset-check" : "wset-check off"} />, w.name),
+              }, <Icon name="check" className={w.sessions.includes(s.name) ? "wset-check" : "wset-check wset-check--off"} />, w.name),
             ),
           ]
         : [],

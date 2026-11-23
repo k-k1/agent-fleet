@@ -146,7 +146,7 @@ describe("AutoRunSection", () => {
       await mount();
       await focus("run-a");
       expect(marked()).toEqual([host.querySelector('[data-autorun-run="run-a"] .autorun-run-main')]);
-      expect(marked()[0].classList.contains("active")).toBe(true);
+      expect(marked()[0].className).toContain("autorun-run-main--active");
       await focus("rev-a");
       expect(marked()).toEqual([host.querySelector('[data-autorun-run="run-a"] .autorun-kid')]);
       await focus("hand");

@@ -275,7 +275,7 @@ export function AgentChangesPanel({ reload, onChanged }: { reload: number; onCha
               <li key={c.commit}>
                 <button
                   type="button"
-                  className={"mem-snap" + (c.commit === sel ? " active" : "")}
+                  className={"mem-snap" + (c.commit === sel ? " mem-snap--active" : "")}
                   aria-current={c.commit === sel ? "true" : undefined}
                   onClick={() => setSel(c.commit)}
                 >

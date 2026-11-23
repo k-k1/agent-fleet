@@ -490,7 +490,7 @@ export function ProposalsPanel({ reload, onChanged }: { reload: number; onChange
               <li key={p.id}>
                 <button
                   type="button"
-                  className={"mem-snap" + (p.id === sel ? " active" : "")}
+                  className={"mem-snap" + (p.id === sel ? " mem-snap--active" : "")}
                   aria-current={p.id === sel ? "true" : undefined}
                   onClick={() => setSel(p.id)}
                 >

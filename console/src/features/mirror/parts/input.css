@@ -154,7 +154,7 @@ history button
     display: inline-flex;
   }
 }
-.mirror-hsearch-btn.on {
+.mirror-hsearch-btn.mirror-hsearch-btn--on {
   border-color: var(--accent);
   color: var(--accent);
 }

@@ -728,7 +728,7 @@
 .memo-tgt:hover {
   border-color: var(--muted);
 }
-.memo-tgt.on {
+.memo-tgt.memo-tgt--on {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg));
   box-shadow: 0 0 0 1px var(--accent);
@@ -889,7 +889,7 @@
   border-radius: 9px;
   padding: 0 6px;
 }
-.memo-q-badge.off {
+.memo-q-badge.memo-q-badge--off {
   color: var(--muted);
 }
 .memo-qmeta {

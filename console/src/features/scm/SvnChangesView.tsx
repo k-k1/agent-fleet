@@ -72,7 +72,7 @@ export function SvnChangesView({ repo, headerActions }: { repo: string; headerAc
         <ul className="changes">
           {!err && changes.length === 0 && <EmptyState icon="check" title={tr("scm.no_changes")} />}
           {changes.map((c) => (
-            <li key={c.path} className={"change" + (selPath === c.path ? " active" : "")}>
+            <li key={c.path} className={"change" + (selPath === c.path ? " change--active" : "")}>
               <span className={"chg " + changeTone(c)} title={tr(statusKey(c.status))}>
                 {c.status}
               </span>

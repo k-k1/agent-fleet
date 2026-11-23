@@ -177,19 +177,19 @@ describe("segment selection wiring", () => {
     expect(parseFloat(value(baseBlock("light").body, "--sel-ring")!)).toBeGreaterThanOrEqual(1);
     expect(parseFloat(value(baseBlock("dark").body, "--sel-ring")!)).toBe(0);
   });
-  it("ui.css paints the ring on .seg-btn.active and on the big grid's active cell", () => {
+  it("ui.css paints the ring on .seg-btn.seg-btn--active and on the big grid's active cell", () => {
     const uiCss = readFileSync(path.resolve(__dirname, "../ui/ui.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
     const rule = (sel: string) =>
       [...uiCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].filter((m) => m[1].trim() === sel).map((m) => m[2]).join(";");
     const ring = /inset 0 0 0 var\(--sel-ring\) var\(--sel-fg\)/;
-    expect(rule(".seg-btn.active")).toMatch(ring);
-    const big = rule(".ui-seg.big .seg-btn.active");
+    expect(rule(".seg-btn.seg-btn--active")).toMatch(ring);
+    const big = rule(".ui-seg.big .seg-btn.seg-btn--active");
     expect(big).toMatch(ring);
     expect(big).toMatch(/inset -1px 0 0 var\(--btn-border\)/);
   });
   it("the move dialog's selected quota-left card keeps its green ring next to the selection ring", () => {
     const sessCss = readFileSync(path.resolve(__dirname, "../features/sessions/sessions.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-    const both = [...sessCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find((m) => m[1].trim() === ".move-form .ui-seg .seg-btn.quota-left.active")?.[2] ?? "";
+    const both = [...sessCss.matchAll(/([^{}]+)\{([^{}]*)\}/g)].find((m) => m[1].trim() === ".move-form .ui-seg .seg-btn.quota-left.move-quota-picked")?.[2] ?? "";
     expect(both).toMatch(/var\(--ok/);
     expect(both).toMatch(/var\(--sel-ring\)\) var\(--sel-fg\)/);
   });

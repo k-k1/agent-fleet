@@ -225,7 +225,7 @@ describe("PendingQuestions translation", () => {
     let pressed = 0;
     mountTranslated(false, () => pressed++);
     const btn = document.querySelector<HTMLButtonElement>(".mt-translate")!;
-    expect(btn.classList.contains("on")).toBe(false);
+    expect(btn.classList.contains("mt-translate--on")).toBe(false);
     click(btn);
     expect(pressed).toBe(1);
   });

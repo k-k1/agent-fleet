@@ -402,7 +402,7 @@ function PolicyEditor({
             type="button"
             role="radio"
             aria-checked={membersOnly === only}
-            className={"seg-btn" + (membersOnly === only ? " active" : "")}
+            className={"seg-btn" + (membersOnly === only ? " seg-btn--active" : "")}
             disabled={busy}
             onClick={() => {
               setMembersOnly(only);

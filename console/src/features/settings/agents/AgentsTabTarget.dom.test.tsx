@@ -85,7 +85,7 @@ describe("Settings > Agents", () => {
     const behavior = codex.querySelector<HTMLButtonElement>(".ps-disclosure")!;
     await act(async () => behavior.click());
     const row = [...codex.querySelectorAll(".ps-row")].find((r) => r.querySelector(".ps-label")?.textContent === t("agents.codex_remember_defaults"))!;
-    expect(row.querySelector("button.active")?.textContent).toBe(t("common.on"));
+    expect(row.querySelector("button.seg-btn--active")?.textContent).toBe(t("common.on"));
     const off = [...row.querySelectorAll("button")].find((b) => b.textContent === t("common.off"))!;
     await act(async () => off.click());
     expect(getSettings().codexRememberDefaults).toBe(false);

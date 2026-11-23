@@ -168,7 +168,7 @@ describe("AdminTab / the engines item", () => {
 // #1100: reopening the admin modal lands where it was left — the open tenant and the section
 // inside it included — and falls back to the entrance when what was stored no longer exists.
 describe("AdminTab / remembers where it was left", () => {
-  const active = () => host!.querySelector(".settings-rail-item.active")?.textContent;
+  const active = () => host!.querySelector(".settings-rail-item.settings-rail-item--active")?.textContent;
   const reopen = async () => {
     act(() => root?.unmount());
     host?.remove();

@@ -243,7 +243,7 @@ describe("TenantDialog", () => {
     useSettingsUI.getState().closeTenantSettings();
     api.mockClear();
     await mount("");
-    expect(document.querySelector(".settings-rail-item.active")?.textContent).toBe("メンバー");
+    expect(document.querySelector(".settings-rail-item.settings-rail-item--active")?.textContent).toBe("メンバー");
     expect(document.querySelector<HTMLSelectElement>(".tenant-picker")!.value).toBe("beta");
     expect(api).toHaveBeenCalledWith("api/admin/tenants/beta/members");
   });
@@ -261,7 +261,7 @@ describe("TenantDialog", () => {
     localStorage.setItem("af-tenant-section", "engines");
     respond(false);
     await mount("");
-    expect(document.querySelector(".settings-rail-item.active")?.textContent).toBe("サインイン方式");
+    expect(document.querySelector(".settings-rail-item.settings-rail-item--active")?.textContent).toBe("サインイン方式");
     expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/idp");
   });
 });

@@ -216,7 +216,7 @@ function KindPanel({
                   <li key={key}>
                     <button
                       type="button"
-                      className={"skills-row" + (active ? " active" : "") + (s.shadowedBy ? " skills-shadowed" : "")}
+                      className={"skills-row" + (active ? " skills-row--active" : "") + (s.shadowedBy ? " skills-shadowed" : "")}
                       aria-expanded={!!active}
                       onClick={() => onSelect(active ? null : s)}
                     >

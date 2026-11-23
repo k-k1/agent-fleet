@@ -57,7 +57,7 @@ export function ServerRow({
   const kinds = s.kinds && s.kinds.length > 0 ? s.kinds.map((k) => agentOf(k).label).join(" / ") : tr("mcp.kinds_all");
 
   return (
-    <li className={"ssm-item mcp-item" + (s.enabled ? "" : " off")}>
+    <li className={"ssm-item mcp-item" + (s.enabled ? "" : " mcp-item--off")}>
       <div className="ssm-item-head">
         <span className={"ssm-alias mcp-title" + (s.label ? "" : " mcp-name")} title={s.label ? s.name : undefined}>
           {s.label || s.name}

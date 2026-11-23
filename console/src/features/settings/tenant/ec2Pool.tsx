@@ -494,7 +494,7 @@ export function PoolView() {
                     <td className="mono">{s.instance_id}</td>
                     <td className="mono">{s.instance_type}<span className="pool-az muted" title={s.az}>{s.az}</span></td>
                     <td>
-                      <span className={"state-dot " + (s.terminable ? "off" : s.state === "running" ? "on" : "off")} />
+                      <span className={"state-dot " + (s.terminable ? "state-dot--off" : s.state === "running" ? "state-dot--on" : "state-dot--off")} />
                       {s.terminable ? (
                         <span className="warn-text" title={s.quarantine_reason || ""}>{tr("pool.state_quarantined")}</span>
                       ) : s.state === "stopped" ? (
@@ -870,7 +870,7 @@ function GoldenBake({ g, st, showArch }: { g: Golden; st: PoolStatus; showArch: 
       ) : at >= 0 ? (
         <>
           <p className="golden-head">
-            <span className="state-dot on" />
+            <span className="state-dot state-dot--on" />
             {tr("pool.bake_running", { image: running })}
             {g.phase_since && <span className="muted"> {fmtElapsed(g.phase_since, tr)}</span>}
           </p>

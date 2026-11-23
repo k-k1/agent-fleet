@@ -101,7 +101,7 @@ export function ForkAtModal({
                 type="button"
                 role="radio"
                 aria-checked={mode === k}
-                className={"seg-btn" + (mode === k ? " active" : "")}
+                className={"seg-btn" + (mode === k ? " seg-btn--active" : "")}
                 onClick={() => setMode(k)}
                 disabled={busy}
               >

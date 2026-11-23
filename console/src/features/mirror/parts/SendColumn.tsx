@@ -33,7 +33,7 @@ export function SendColumn({
       {showMode && (
         <button
           type="button"
-          className={"mirror-mode" + (isPlan ? " on" : "")}
+          className={"mirror-mode" + (isPlan ? " mirror-mode--on" : "")}
           disabled={modeDisabled}
           title={tr("mirror.toggle_mode")}
           onClick={onToggleMode}

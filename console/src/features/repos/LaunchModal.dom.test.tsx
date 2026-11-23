@@ -536,8 +536,8 @@ describe("LaunchModal driver choice — catalog arriving late", () => {
     await expand("More");
     expect(buttons().find((b) => b.textContent?.includes("Managed (recommended)"))).toBeUndefined();
     await act(async () => setKindCatalog(claudeManaged()));
-    expect(byText("Managed (recommended)").classList.contains("active")).toBe(true);
-    expect(byText("Terminal (CLI)").classList.contains("active")).toBe(false);
+    expect(byText("Managed (recommended)").classList.contains("seg-btn--active")).toBe(true);
+    expect(byText("Terminal (CLI)").classList.contains("seg-btn--active")).toBe(false);
   });
 
   it("leaves a driver the user picked alone", async () => {
@@ -546,7 +546,7 @@ describe("LaunchModal driver choice — catalog arriving late", () => {
     await expand("More");
     await click(byText("Terminal (CLI)"));
     await act(async () => setKindCatalog(parseKindCatalog({ kinds: [{ kind: "claude", managedOnly: false, managedDefault: true, mcpClient: "yes" }, { kind: "x", managedOnly: false, managedDefault: false, mcpClient: "no" }] })));
-    expect(byText("Terminal (CLI)").classList.contains("active")).toBe(true);
+    expect(byText("Terminal (CLI)").classList.contains("seg-btn--active")).toBe(true);
   });
 });
 
@@ -924,7 +924,7 @@ describe("tenant launch defaults", () => {
 
   it("fills in a late CP answer for untouched fields only (C2)", async () => {
     await render(["claude", "codex"]);
-    expect(buttons().find((b) => b.classList.contains("active") && /claude/i.test(b.textContent || ""))).toBeTruthy();
+    expect(buttons().find((b) => b.classList.contains("seg-btn--active") && /claude/i.test(b.textContent || ""))).toBeTruthy();
     await act(async () => useUIStateStore.setState({ state: answer("codex") as never }));
     await click(byText("Start in a worktree"));
     expect(launchedWith().kind).toBe("codex");

@@ -3495,7 +3495,7 @@ const SCENES = [
     name: "start-tour",
     guide: true,
     // Wait for the workspace to read as running and both panes to finish loading.
-    ready: `!!document.querySelector(".ws-power.on") && !/読み込み中|Loading/.test(document.body.innerText)`,
+    ready: `!!document.querySelector(".ws-power.ws-power--on") && !/読み込み中|Loading/.test(document.body.innerText)`,
     // The tour names the activity bar and "one view at a time": show the Sessions view with its
     // repositories, not the stack of tool sections the old left pane could open together.
     view: "sessions",
@@ -3516,7 +3516,7 @@ const SCENES = [
     name: "start-palette",
     guide: true,
     // Wait for the bar to read the workspace as running; before that the panes and the palette are empty.
-    ready: `!!document.querySelector(".ws-power.on")`,
+    ready: `!!document.querySelector(".ws-power.ws-power--on")`,
     clip: ".cp-panel",
     pad: 8,
     sections: FOCUS_TREE,
@@ -3534,7 +3534,7 @@ const SCENES = [
     name: "start-appearance",
     guide: true,
     // Wait for the bar to read the workspace as running; before that the panes and the palette are empty.
-    ready: `!!document.querySelector(".ws-power.on")`,
+    ready: `!!document.querySelector(".ws-power.ws-power--on")`,
     clip: [".appr-btn", ".appr-menu"],
     pad: 8,
     sections: FOCUS_TREE,
@@ -3549,7 +3549,7 @@ const SCENES = [
     name: "start-phone",
     guide: true,
     // Wait for the bar to read the workspace as running; before that the panes and the palette are empty.
-    ready: `!!document.querySelector(".ws-power.on")`,
+    ready: `!!document.querySelector(".ws-power.ws-power--on")`,
     mobile: true,
     sections: FOCUS_TREE,
     width: 390,

@@ -632,7 +632,7 @@
   border-radius: 6px;
   padding: 6px 8px;
 }
-.wi-qrow.off {
+.wi-qrow.wi-qrow--off {
   opacity: 0.55;
 }
 .wi-qinfo {

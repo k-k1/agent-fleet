@@ -292,7 +292,7 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
                 <button type="button" className="seg-btn" onClick={togglePause} title={paused ? tr("view.resume") : tr("view.pause")}>
                   <Icon name={paused ? "play" : "debug-pause"} /> {paused ? tr("view.resume") : tr("view.pause")}
                 </button>
-                <button type="button" className="seg-btn active" onClick={stop} title={tr("view.stop_reading")}>
+                <button type="button" className="seg-btn seg-btn--active" onClick={stop} title={tr("view.stop_reading")}>
                   <Icon name="debug-stop" /> {tr("view.stop")}
                 </button>
               </>
@@ -324,7 +324,7 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
           <span className="ui-seg sm md-toggle">
             <button
               type="button"
-              className={"seg-btn" + (vertical ? " active" : "")}
+              className={"seg-btn" + (vertical ? " seg-btn--active" : "")}
               onClick={() => setSetting("readerVertical", !vertical)}
               title={vertical ? tr("view.switch_horizontal") : tr("view.switch_vertical")}
             >
@@ -389,7 +389,7 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
               <span
                 key={ui}
                 data-si={si ?? undefined}
-                className={"reader-unit" + (si != null && si === active ? " active" : "")}
+                className={"reader-unit" + (si != null && si === active ? " reader-unit--active" : "")}
               >
                 {u.segs.map((s, j) =>
                   s.ruby !== undefined ? (

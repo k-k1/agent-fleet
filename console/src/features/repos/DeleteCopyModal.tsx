@@ -27,7 +27,7 @@ import { useReposStore } from "./store.ts";
 import { useFilesStore } from "../files/store.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import type { Session } from "../../types/session.ts";
-import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { stateClass, displayName, stateInfo } from "../../lib/sessionview.ts";
 import { kindIcon } from "../../lib/sessionkind.ts";
 import {
   planTree,
@@ -298,7 +298,7 @@ export function DeleteCopyModal({ node, nodes, onClose, onDeleted }: DeleteCopyM
                           <Icon name={kindIcon(s.kind)} className="wcdel-session-kind" />
                           <span className="wcdel-session-name">{displayName(s)}</span>
                           {st && (
-                            <span className={"session-state " + st.cls} title={st.text}>
+                            <span className={stateClass("session-state", st.cls)} title={st.text}>
                               <Icon name={st.icon} spin={st.spin} /> {st.short ?? st.text}
                             </span>
                           )}

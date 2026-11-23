@@ -188,7 +188,7 @@ export function TenantDialog() {
                   <button
                     key={key}
                     type="button"
-                    className={"settings-rail-item" + (shown === key ? " active" : "")}
+                    className={"settings-rail-item" + (shown === key ? " settings-rail-item--active" : "")}
                     aria-current={shown === key ? "page" : undefined}
                     onClick={() => {
                       setSection(key);

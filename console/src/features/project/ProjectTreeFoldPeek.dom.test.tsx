@@ -90,7 +90,7 @@ describe("folded node summary", () => {
     });
     await render();
     expect(peekText()).toBe("new");
-    expect(nodeHead("af")?.querySelector(".repo-peek.stopped")).toBeNull();
+    expect(nodeHead("af")?.querySelector(".repo-peek.repo-peek--stopped")).toBeNull();
     expect(badge()?.title).toContain("mid\nold");
   });
 
@@ -128,7 +128,7 @@ describe("folded node summary", () => {
     });
     await render();
     expect(peekText()).toBe("newer");
-    expect(nodeHead("af")?.querySelector(".repo-peek.stopped")).not.toBeNull();
+    expect(nodeHead("af")?.querySelector(".repo-peek.repo-peek--stopped")).not.toBeNull();
   });
 
   it("shows nothing for a node whose only live session is a descendant's", async () => {

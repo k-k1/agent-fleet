@@ -154,7 +154,7 @@
 .cp-mode:hover {
   color: var(--fg);
 }
-.cp-mode.on {
+.cp-mode.cp-mode--on {
   color: var(--fg);
   background: var(--active-bg);
   border-color: var(--border2);

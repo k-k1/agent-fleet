@@ -146,7 +146,7 @@ function TenantSummary({ tenant }: { tenant: Tenant | null }) {
         <span>
           <Icon name="person" /> {tr("admin.person_count", { n: tenant.users ?? 0 })}
         </span>
-        <span className={(tenant.running || 0) > 0 ? "tc-run on" : "tc-run"}>
+        <span className={(tenant.running || 0) > 0 ? "tc-run tc-run--on" : "tc-run"}>
           <Icon name="vm-running" /> {tr("admin.running_ws", { n: tenant.running ?? 0 })}
         </span>
       </div>

@@ -77,7 +77,7 @@
 .actbar-btn:hover {
   color: var(--fg);
 }
-.actbar-btn.active {
+.actbar-btn.actbar-btn--active {
   color: var(--fg);
   border-left-color: var(--actbar-accent);
   background: var(--actbar-active-bg);
@@ -97,7 +97,7 @@
   border-radius: 50%;
   background: var(--actbar-bg);
 }
-.actbar-btn.active > .actbar-mark {
+.actbar-btn.actbar-btn--active > .actbar-mark {
   background: var(--actbar-active-bg);
 }
 /* Badges sit at the upper right, the mark at the lower right: a count never covers it.

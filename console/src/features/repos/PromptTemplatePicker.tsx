@@ -72,7 +72,7 @@ export function PromptTemplateButton({
     <button
       type="button"
       ref={btnRef}
-      className={"ghost launch-tmpl-btn" + (open ? " on" : "")}
+      className={"ghost launch-tmpl-btn" + (open ? " launch-tmpl-btn--on" : "")}
       title={tr("launch.template_insert_title")}
       aria-haspopup="dialog"
       aria-expanded={open}

@@ -76,7 +76,7 @@
   flex: none;
   margin-left: auto;
 }
-.gal-flat.on {
+.gal-flat.gal-flat--on {
   color: var(--accent);
 }
 .gal-madeby {
@@ -130,7 +130,7 @@
   font-size: 11px;
   white-space: nowrap;
 }
-.gal-sort-btn.on {
+.gal-sort-btn.gal-sort-btn--on {
   color: var(--accent);
 }
 /* The body scrolls, not the grid, so "show more" stays reachable under a long folder. */

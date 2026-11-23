@@ -21,7 +21,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { raw, errText } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useSessionsStore } from "../sessions/store.ts";
-import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { stateClass, displayName, stateInfo } from "../../lib/sessionview.ts";
 import { kindIcon } from "../../lib/sessionkind.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import {
@@ -169,7 +169,7 @@ export function StopSessionsModal({ node, only, onClose, onDone }: StopSessionsM
                         />
                         <Icon name={kindIcon(r.session.kind)} className="wcstop-kind" />
                         <span className="wcstop-name">{displayName(r.session)}</span>
-                        <span className={"session-state " + st.cls} title={st.text}>
+                        <span className={stateClass("session-state", st.cls)} title={st.text}>
                           <Icon name={st.icon} spin={st.spin} /> {st.short ?? st.text}
                         </span>
                         {/* Only a ticked row names an action: an unticked one has none, and a

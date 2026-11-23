@@ -95,7 +95,7 @@ describe("BrandAdminView", () => {
     expect(s).toHaveLength(3);
     // rgb(), because the DOM normalises the inline hex.
     expect(s[1].style.background).toBe("rgb(124, 77, 255)");
-    expect(s[0].className).toContain("active"); // the colour in force
+    expect(s[0].className).toContain("swatch--active"); // the colour in force
   });
 
   it("saves the colour and label, and moves the tab and the top bar with it", async () => {

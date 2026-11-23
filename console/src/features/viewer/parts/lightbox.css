@@ -255,7 +255,7 @@
   flex-wrap: wrap;
 }
 
-.mirror-lightbox-props.on {
+.mirror-lightbox-props.mirror-lightbox-props--on {
   color: var(--accent);
 }
 /* image preview: fit to the pane, wheel/pinch zoom, drag to pan */

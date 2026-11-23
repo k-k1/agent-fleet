@@ -108,7 +108,7 @@
   cursor: pointer;
 }
 
-.igen-tab.active {
+.igen-tab.igen-tab--active {
   color: var(--fg);
   border-color: var(--accent);
 }
@@ -288,7 +288,7 @@
   vertical-align: middle;
 }
 
-.igen-lock.on {
+.igen-lock.igen-lock--on {
   color: var(--accent);
 }
 
@@ -590,7 +590,7 @@
   min-width: 0;
 }
 
-.igen-field.off {
+.igen-field.igen-field--off {
   opacity: 0.55;
 }
 

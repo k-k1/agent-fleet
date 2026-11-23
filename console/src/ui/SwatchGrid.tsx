@@ -24,7 +24,7 @@ export function SwatchGrid({
           <Button
             key={c.id}
             title={tr(c.labelKey)}
-            className={"swatch" + (c.id === value ? " active" : "") + (col ? "" : " swatch-default")}
+            className={"swatch" + (c.id === value ? " swatch--active" : "") + (col ? "" : " swatch-default")}
             style={col ? { background: col } : undefined}
             onClick={() => onChange(c.id)}
           >

@@ -52,7 +52,7 @@ export function CloneForm({ onChange }: CloneFormProps) {
           <button
             key={v}
             type="button"
-            className={"seg-btn" + (source === v ? " active" : "")}
+            className={"seg-btn" + (source === v ? " seg-btn--active" : "")}
             onClick={() => setSource(v)}
           >
             {label}

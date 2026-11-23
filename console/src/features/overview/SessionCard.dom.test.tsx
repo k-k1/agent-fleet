@@ -65,6 +65,9 @@ describe("SessionCard", () => {
     // A card has room, so the chip keeps its text even for the calm states.
     expect(host.querySelector(".session-state")?.textContent?.trim()).toBe(t("state.working"));
     expect(host.querySelector(".session-state")?.className).not.toContain("mini");
+    // The frame and the chip each carry the run state under their own block's name.
+    expect(card().classList.contains("ovw-card--working")).toBe(true);
+    expect(host.querySelector(".session-state")?.classList.contains("session-state--working")).toBe(true);
   });
 
   // ADR 0078 decision 13. The kind is the coloured square, not a word repeated down the grid;

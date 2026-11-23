@@ -120,7 +120,7 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
           <button
             key={v.id}
             type="button"
-            className={"actbar-btn" + (active ? " active" : "")}
+            className={"actbar-btn" + (active ? " actbar-btn--active" : "")}
             data-rail-view={v.id}
             aria-pressed={active}
             aria-label={name}

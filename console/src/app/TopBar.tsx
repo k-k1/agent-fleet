@@ -189,7 +189,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
             decision 10. Renders nothing when no role is visible to this tenant/deployment. */}
         <EnginesPill />
         <Button
-          className={"tts-status" + (ttsBusy ? " speaking" : s.ttsEnabled ? "" : " off")}
+          className={"tts-status" + (ttsBusy ? " speaking" : s.ttsEnabled ? "" : " tts-status--off")}
           title={
             ttsBusy
               ? tr("topbar.tts.stop_off")
@@ -271,7 +271,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                       <button
                         key={l.id}
                         type="button"
-                        className={"seg-btn" + (s.locale === l.id ? " active" : "")}
+                        className={"seg-btn" + (s.locale === l.id ? " seg-btn--active" : "")}
                         onClick={() => setSetting("locale", l.id)}
                       >
                         {l.label}
@@ -291,7 +291,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                       <button
                         key={p.id}
                         type="button"
-                        className={"seg-btn" + (s.paneLayout === p.id ? " active" : "")}
+                        className={"seg-btn" + (s.paneLayout === p.id ? " seg-btn--active" : "")}
                         onClick={() => setSetting("paneLayout", p.id)}
                       >
                         {tr(p.labelKey)}
@@ -306,7 +306,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                       <button
                         key={t.id}
                         type="button"
-                        className={"seg-btn" + (s.theme === t.id ? " active" : "")}
+                        className={"seg-btn" + (s.theme === t.id ? " seg-btn--active" : "")}
                         onClick={() => setSetting("theme", t.id)}
                       >
                         {tr(t.labelKey)}
@@ -322,7 +322,7 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
                         <button
                           key={String(on)}
                           type="button"
-                          className={"seg-btn" + (!!s.appearancePerTenant === on ? " active" : "")}
+                          className={"seg-btn" + (!!s.appearancePerTenant === on ? " seg-btn--active" : "")}
                           onClick={() => setSetting("appearancePerTenant", on)}
                         >
                           {tr(on ? "common.on" : "common.off")}

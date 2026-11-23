@@ -149,7 +149,7 @@ export function EngineUptimePanel({ engineKey }: { engineKey: string }) {
             <button
               key={m}
               type="button"
-              className={"uh-metric" + (metric === m ? " active" : "")}
+              className={"uh-metric" + (metric === m ? " uh-metric--active" : "")}
               aria-pressed={metric === m}
               onClick={() => setMetric(m)}
             >

@@ -180,7 +180,7 @@ export function AuthFields({
             <button
               key={m}
               type="button"
-              className={"seg-btn" + (auth === m ? " active" : "")}
+              className={"seg-btn" + (auth === m ? " seg-btn--active" : "")}
               onClick={() => onAuth(m)}
             >
               {tr(AUTH_LABEL[m])}

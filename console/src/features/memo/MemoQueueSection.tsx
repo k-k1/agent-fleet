@@ -1331,7 +1331,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           const b = queue?.paused
                             ? { cls: " paused", icon: "debug-pause", label: tr("memo.autorun_badge_paused"), title: tr("memo.autorun_badge_paused_title") }
                             : queue && !queue.enabled
-                              ? { cls: " off", icon: "circle-slash", label: tr("memo.autorun_badge_off"), title: tr("memo.autorun_badge_off_title") }
+                              ? { cls: " memo-q-badge--off", icon: "circle-slash", label: tr("memo.autorun_badge_off"), title: tr("memo.autorun_badge_off_title") }
                               : { cls: "", icon: "play-circle", label: tr("memo.autorun_badge"), title: tr("memo.autorun_badge_title") };
                           return (
                             <span className={"memo-q-badge" + b.cls} title={b.title} aria-label={b.label}>

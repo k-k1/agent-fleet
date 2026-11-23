@@ -66,7 +66,7 @@
 .sess-row.hover {
   background: var(--lp-hover-bg, var(--hover-bg));
 }
-.sess-row.active {
+.sess-row.sess-row--active {
   background: var(--lp-active-bg, var(--active-bg));
   box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
 }
@@ -89,7 +89,7 @@
 /* The selected row already paints an accent bar at the very edge (inset box-shadow
    above), which the stripe would sit straight on top of. Step it inside so the row
    keeps saying both "selected" and "family". */
-.sess-row.lineage.active::before {
+.sess-row.lineage.sess-row--active::before {
   left: 3px;
 }
 /* Waiting on the user's answer (question / plan / permission): a warn ring around the whole
@@ -108,7 +108,7 @@
 /* Keep the context menu outside the dead-row opacity. Applying opacity to the
    row itself creates a stacking context, which traps the fixed menu below
    later sticky section headers regardless of the menu's own z-index. */
-.sess-row.dead > :not(.sess-menu-wrap) {
+.sess-row.sess-row--dead > :not(.sess-menu-wrap) {
   opacity: 0.55;
 }
 .sess-btn {
@@ -125,10 +125,10 @@
   padding: 4px 6px 4px 8px;
   cursor: pointer;
 }
-.sess-row.stopped .sess-l1 {
+.sess-row.sess-row--stopped .sess-l1 {
   color: var(--muted);
 }
-.sess-row.stopped .sess-kic {
+.sess-row.sess-row--stopped .sess-kic {
   opacity: 0.55;
 }
 .sess-btn[aria-disabled="true"] {
@@ -209,15 +209,15 @@
    the chip for as long as the row stays selected — it makes room instead (next rule).
    :has(.sess-menu-wrap) — a readOnly row (the history rail) draws no ⋯ button, so hiding
    the chip there would leave nothing at all. Limit this to rows that have one. */
-.sess-row:has(.sess-menu-wrap):not(.active):hover .session-state,
-.sess-row:has(.sess-menu-wrap):not(.active).hover .session-state {
+.sess-row:has(.sess-menu-wrap):not(.sess-row--active):hover .session-state,
+.sess-row:has(.sess-menu-wrap):not(.sess-row--active).hover .session-state {
   opacity: 0;
 }
 /* Active row with a ⋯ button: keep the chip, and pad the button so the chip ends left of
    the overlaid ⋯ (30px = its 4px inset + the ~24px button + a 2px gap). While split, .sess-ords already
    reserves that room with its own margin, so the padding applies only when there are none —
    both would offset the chip twice. Horizontal only: the row height does not change. */
-.sess-row.active:has(.sess-menu-wrap):not(:has(.sess-ords)) .sess-btn {
+.sess-row.sess-row--active:has(.sess-menu-wrap):not(:has(.sess-ords)) .sess-btn {
   padding-right: 30px;
 }
 .sess-drift {
@@ -513,7 +513,7 @@
 }
 .sess-row:hover .sess-menu-btn,
 .sess-menu-btn:focus-visible,
-.sess-row.active .sess-menu-btn {
+.sess-row.sess-row--active .sess-menu-btn {
   opacity: 1;
   pointer-events: auto;
 }
@@ -562,7 +562,7 @@
   font-size: 12px;
   cursor: pointer;
 }
-.sm-prefix-chip.active {
+.sm-prefix-chip.sm-prefix-chip--active {
   color: var(--on-accent);
   background: var(--accent);
   border-color: var(--accent);
@@ -797,30 +797,30 @@
   border-radius: 999px;
   white-space: nowrap;
 }
-.session-state.on {
+.session-state.session-state--on {
   color: var(--ok);
   background: color-mix(in srgb, var(--ok) 12%, transparent);
   border-color: color-mix(in srgb, var(--ok) 38%, transparent);
 }
 /* Stopped: a quiet, un-tinted chip — a halted session is resumable, not an alert,
    so it shouldn't shout in warn orange. */
-.session-state.off {
+.session-state.session-state--off {
   color: var(--muted);
   border-color: var(--border2);
 }
 /* Abnormal end (crash / OOM): unlike a plain stop this IS worth flagging, so it takes
    the warn tint (overriding the muted .off above) to stand out in the stopped list. */
-.session-state.off.warn {
+.session-state.session-state--off.session-state--warn {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 12%, transparent);
   border-color: color-mix(in srgb, var(--warn) 38%, transparent);
 }
 /* dir-gone, can't be resumed: muted (the row itself is struck through / disabled). */
-.session-state.dead {
+.session-state.session-state--dead {
   color: var(--muted);
   border-color: var(--border2);
 }
-.session-state.working {
+.session-state.session-state--working {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
@@ -828,7 +828,7 @@
 }
 /* idle by hook, but a run_in_background task is still running — a calmer teal than
    the accent "working", since the session isn't awaiting a reply from claude. */
-.session-state.bg {
+.session-state.session-state--bg {
   color: #17a2a2;
   background: color-mix(in srgb, #17a2a2 12%, transparent);
   border-color: color-mix(in srgb, #17a2a2 38%, transparent);
@@ -836,10 +836,10 @@
 /* Light theme: the mid teal dips below AA as small text on white — darken it. One step
    further than the first pass, because the chip is not on white: it sits on a 12% tint
    of its own teal, where #15828a still read 3.7:1. */
-[data-theme="light"] .session-state.bg {
+[data-theme="light"] .session-state.session-state--bg {
   color: #0d6a70;
 }
-.session-state.question {
+.session-state.session-state--question {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 14%, transparent);
   border-color: color-mix(in srgb, var(--warn) 40%, transparent);
@@ -850,7 +850,13 @@
    is indistinguishable from a merely folded row. The bold is dropped again, though — at the
    same weight as a row whose modal is open right now (.question), "answer and it proceeds"
    and "answer and it resumes" stop being distinguishable. */
-.session-state.off.question {
+.session-state.session-state--off.session-state--question {
+  font-weight: 400;
+}
+/* Waiting for a usage limit to reset: the row still has to be readable, so it borrows the
+   question colour, but this says "wait", not "answer", so the bold is dropped — at the same
+   weight as an unanswered question, the rows that need action get buried among these. */
+.session-state.session-state--question.session-state--limited {
   font-weight: 400;
 }
 /* A handoff the session proposed and nobody has launched. It takes the accent colour rather
@@ -858,7 +864,7 @@
    next piece of work sitting there — but it does keep the bold and the visible text, because
    the row underneath is otherwise the calm "waiting for input" of a session with nothing left
    to do. Declared after .on / .off so it overrides their colours at equal specificity. */
-.session-state.handoff {
+.session-state.session-state--handoff {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-color: color-mix(in srgb, var(--accent) 40%, transparent);
@@ -866,7 +872,7 @@
 }
 /* Stopped and holding one: same reading as .off.question — at the weight of a session that is
    live and waiting, "start this when you like" would shout as loudly as work in progress. */
-.session-state.off.handoff {
+.session-state.session-state--off.session-state--handoff {
   font-weight: 400;
 }
 @keyframes af-pulse {
@@ -1046,11 +1052,12 @@
 .ui-seg .seg-btn.quota-left {
   box-shadow: inset 0 0 0 1px var(--ok, #4caf7d);
 }
-/* The selected card's outline rule (ui.css `.ui-seg.big .seg-btn.active`) outranks the one
+/* The selected card's outline rule (ui.css `.ui-seg.big .seg-btn.seg-btn--active`) outranks the one
    above and would drop the quota-left ring from the card the user picked, so the pair is drawn
    together: the green ring on the edge, the selection ring (--sel-ring, 0 in dark) inside it.
-   Scoped by .move-form rather than .big, which would add a class name to css-dup's ceiling. */
-.move-form .ui-seg .seg-btn.quota-left.active {
+   Scoped by .move-form rather than .big, which would add a class name to css-dup's ceiling;
+   the selection is carried by .move-quota-picked because `.seg-btn--active` is ui.css's alone. */
+.move-form .ui-seg .seg-btn.quota-left.move-quota-picked {
   box-shadow: inset 0 0 0 1px var(--ok, #4caf7d), inset 0 0 0 calc(1px + var(--sel-ring)) var(--sel-fg);
 }
 .ui-seg .move-quota-left {

@@ -109,7 +109,7 @@ function EngineBrowse({ sources }: { sources: CatalogSource[] }) {
             <button
               key={k}
               type="button"
-              className={"seg-btn" + (kind === k ? " active" : "")}
+              className={"seg-btn" + (kind === k ? " seg-btn--active" : "")}
               onClick={() => {
                 setKind(k);
                 setHits(null);
@@ -130,7 +130,7 @@ function EngineBrowse({ sources }: { sources: CatalogSource[] }) {
               <button
                 key={sr}
                 type="button"
-                className={"seg-btn" + (source === sr ? " active" : "")}
+                className={"seg-btn" + (source === sr ? " seg-btn--active" : "")}
                 onClick={() => {
                   setSource(sr);
                   setHits(null);
@@ -146,7 +146,7 @@ function EngineBrowse({ sources }: { sources: CatalogSource[] }) {
             <button
               key={sr}
               type="button"
-              className={"seg-btn" + (sort === sr ? " active" : "")}
+              className={"seg-btn" + (sort === sr ? " seg-btn--active" : "")}
               onClick={() => {
                 setSort(sr);
                 run({ sort: sr });

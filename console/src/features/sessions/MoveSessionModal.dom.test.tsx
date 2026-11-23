@@ -165,7 +165,7 @@ describe("MoveSessionModal: before the move", () => {
     expect(kindButtons()).toEqual(["muse", "opencode", "codex"]);
     const marked = [...document.querySelectorAll<HTMLElement>(".seg-btn.quota-left")].map((b) => b.dataset.kind);
     expect(marked).toEqual(["muse"]);
-    expect(document.querySelector(".seg-btn.active")?.getAttribute("data-kind")).toBe("muse");
+    expect(document.querySelector(".seg-btn.seg-btn--active")?.getAttribute("data-kind")).toBe("muse");
   });
 
   it("does not move the user's choice when usage reorders the picks", async () => {
@@ -179,7 +179,7 @@ describe("MoveSessionModal: before the move", () => {
     });
     await render(src, true);
     await click(document.querySelector('.seg-btn[data-kind="codex"]'));
-    expect(document.querySelector(".seg-btn.active")?.getAttribute("data-kind")).toBe("codex");
+    expect(document.querySelector(".seg-btn.seg-btn--active")?.getAttribute("data-kind")).toBe("codex");
   });
 
   it("points a same-kind source at fork when its kind can fork, and says another kind is needed when not", async () => {
@@ -240,7 +240,7 @@ describe("MoveSessionModal: before the move", () => {
     routes[PREVIEW] = preview();
     await render();
     const toggle = () => [...document.querySelectorAll(".seg-btn")].find((b) => b.textContent?.includes(t("launch.driver_managed")));
-    expect(toggle()?.classList.contains("active")).toBe(true); // the first offered target defaults to managed
+    expect(toggle()?.classList.contains("seg-btn--active")).toBe(true); // the first offered target defaults to managed
     await act(async () => setKindCatalog(parseKindCatalog({ kinds: ["codex", "opencode"].map((kind) => ({ kind, managedOnly: false, managedDefault: false, mcpClient: "yes" })) })));
     expect(toggle()).toBeUndefined(); // the catalog says the offered kinds have no managed default
     await act(async () => setKindCatalog(null));
