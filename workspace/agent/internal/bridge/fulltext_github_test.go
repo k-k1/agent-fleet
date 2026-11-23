@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
@@ -87,6 +88,61 @@ func TestGitHubPatternsSkipBenignText(t *testing.T) {
 	for _, s := range secretpattest.Benign {
 		if sp := secretpat.GitHubStatelessSpans(s); len(sp) != 0 {
 			t.Errorf("benign %q: stateless spans %v", s, sp)
+		}
+	}
+}
+
+// Text glued after a known token in the same value goes with it, for every shape the known
+// pass matches: the mark a known token leaves must not cut the assignment or entropy pass
+// short. A label before the token and a sentence's final full stop stay.
+func TestScrubSecretsTakesTextGluedAfterAKnownToken(t *testing.T) {
+	toks := secretpattest.All()
+	toks["slack"] = "xoxb-123456789012-AbCdEfGhIjKlMn"
+	toks["aws"] = "AKIAIOSFODNN7EXAMPLE"
+	toks["jwt"] = secretpattest.JWT('g')
+	for name, tok := range toks {
+		for in, want := range map[string]string{
+			"API_TOKEN=" + tok + ":private next": "API_TOKEN=" + redactedMark + " next",
+			"API_TOKEN=\"" + tok + "\" next":     "API_TOKEN=" + redactedMark + " next",
+			"GITHUB_TOKEN=" + tok:                "GITHUB_TOKEN=" + redactedMark,
+			"echo " + tok + "+private next":      "echo " + redactedMark + " next",
+			"echo " + tok + "/private.":          "echo " + redactedMark + ".",
+			"--token=" + tok + "-private next":   "--token=" + redactedMark + " next",
+			"pushed with " + tok + ". Done":      "pushed with " + redactedMark + ". Done",
+		} {
+			if got := ScrubSecrets(in); got != want {
+				t.Errorf("%s: ScrubSecrets(%.60q…) = %.120q, want %.120q", name, in, got, want)
+			}
+		}
+	}
+}
+
+// Without a known token the passes cannot cut each other short, so ScrubSecrets keeps the
+// output of the sequential assignment-then-entropy scan it replaced, byte for byte.
+func TestScrubSecretsWithoutKnownTokensKeepsSequentialOutput(t *testing.T) {
+	tokenRe := regexp.MustCompile(`[A-Za-z0-9+/=_.\-]{20,}`)
+	sequential := func(s string) string {
+		s = envAssignRe.ReplaceAllString(s, `$1$2`+redactedMark)
+		return tokenRe.ReplaceAllStringFunc(s, func(tok string) string {
+			if looksSecret(tok) {
+				return redactedMark
+			}
+			return tok
+		})
+	}
+	opaque := "aB3xK9mP2qR7sT1vW5yZ8nQ4"
+	for _, in := range []string{
+		"AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY next line",
+		"AWS2_SECRET_ACCESS_KEY=wJalrXUtnFEMIK7MDENGbPxRfiCYEXAMPLEKEY.",
+		"PASSWORD=hunter2 " + opaque + " and DB_PASS: 'hunter22'.",
+		"API_KEY=\"" + opaque + "\" " + opaque + " then MY_TOKEN = short",
+		"opaque " + opaque + ". Done, and " + opaque + "-" + opaque + "/x",
+		"internationalization and counterrevolutionary are long words.",
+		"see docs/user_guide.md and release-notes_2026.11.txt, PASS=abcdef",
+		"SECRET_KEY=" + opaque + "SECRET_KEY=" + opaque,
+	} {
+		if got, want := ScrubSecrets(in), sequential(in); got != want {
+			t.Errorf("ScrubSecrets(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

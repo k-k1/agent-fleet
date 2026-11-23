@@ -10,6 +10,7 @@ package bridge
 import (
 	"math"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat"
@@ -96,25 +97,91 @@ var knownSecretPatterns = []*regexp.Regexp{
 // `AWS_SECRET_ACCESS_KEY=…` / `PASSWORD=hunter2` regardless of value entropy.
 var envAssignRe = regexp.MustCompile(`\b([A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIAL)[A-Z0-9_]*)(\s*[=:]\s*)(['"]?)([^\s'"]{6,})(['"]?)`)
 
-// tokenRe finds opaque token candidates for the high-entropy fallback scan.
-var tokenRe = regexp.MustCompile(`[A-Za-z0-9+/=_.\-]{20,}`)
+// isTokenByte reports whether c can be part of an opaque token candidate for the high-entropy
+// fallback scan: [A-Za-z0-9+/=_.-].
+func isTokenByte(c byte) bool {
+	switch {
+	case c >= 'A' && c <= 'Z', c >= 'a' && c <= 'z', c >= '0' && c <= '9':
+		return true
+	}
+	return strings.IndexByte("+/=_.-", c) >= 0
+}
 
 // ScrubSecrets removes credentials from body text before it reaches a chat wire.
 // It is defense-in-depth over the primary guarantee (own both ends + opt-in,
-// docs/log/37 §security consistency): known provider token shapes, then UPPERCASE env
-// assignments, then a high-entropy standalone-token fallback. Best-effort — it
+// docs/log/37 §security consistency): known provider token shapes, UPPERCASE env
+// assignments, and a high-entropy standalone-token fallback. Best-effort — it
 // can over-redact a rare high-entropy prose token, which the user accepted as
 // the safer failure than leaking a key.
+//
+// The known and assignment spans are both taken on the raw input, and every span is replaced
+// in one go, so neither cuts the other short: replacing known tokens first would leave a mark
+// whose space ends the assignment's value early, and `:private` after a token would stay.
+// The run of token characters glued after a known token goes with it, for the same reason.
+// The entropy scan sees only the text outside those spans, as when a mark sat in their place;
+// it must not run on the raw input, where a run spans `NAME=value` and a sentence's final
+// full stop and would take both.
 func ScrubSecrets(s string) string {
-	s = secretpat.ReplaceSpans(s, redactedMark, append(secretpat.Spans(s, knownSecretPatterns...), secretpat.GitHubStatelessSpans(s)...))
-	s = envAssignRe.ReplaceAllString(s, `$1$2`+redactedMark)
-	s = tokenRe.ReplaceAllStringFunc(s, func(tok string) string {
-		if looksSecret(tok) {
-			return redactedMark
+	known := append(secretpat.Spans(s, knownSecretPatterns...), secretpat.GitHubStatelessSpans(s)...)
+	spans := append([][2]int(nil), known...)
+	for _, m := range envAssignRe.FindAllStringSubmatchIndex(s, -1) {
+		spans = append(spans, [2]int{m[6], m[11]}) // the value with its quotes; the name stays
+	}
+	for _, k := range known {
+		if end := gluedEnd(s, k[1]); end > k[1] {
+			spans = append(spans, [2]int{k[1], end})
 		}
-		return tok
-	})
-	return s
+	}
+	return secretpat.ReplaceSpans(s, redactedMark, append(spans, entropySpans(s, spans)...))
+}
+
+// entropySpans lists the high-entropy runs of token characters outside spans, which every
+// span ends as a non-token character would. Every span must be non-empty.
+func entropySpans(s string, spans [][2]int) [][2]int {
+	sorted := append([][2]int(nil), spans...)
+	sort.Slice(sorted, func(a, b int) bool { return sorted[a][0] < sorted[b][0] })
+	var out [][2]int
+	next, coveredTo := 0, 0
+	for i := 0; i < len(s); {
+		for next < len(sorted) && sorted[next][0] <= i {
+			coveredTo = max(coveredTo, sorted[next][1])
+			next++
+		}
+		if i < coveredTo {
+			i = coveredTo
+			continue
+		}
+		if !isTokenByte(s[i]) {
+			i++
+			continue
+		}
+		limit := len(s)
+		if next < len(sorted) {
+			limit = sorted[next][0]
+		}
+		j := i
+		for j < limit && isTokenByte(s[j]) {
+			j++
+		}
+		if looksSecret(s[i:j]) {
+			out = append(out, [2]int{i, j})
+		}
+		i = j
+	}
+	return out
+}
+
+// gluedEnd returns where the run of token characters starting at i ends, short of any final
+// full stops: a sentence that ends on a token keeps its full stop.
+func gluedEnd(s string, i int) int {
+	j := i
+	for j < len(s) && isTokenByte(s[j]) {
+		j++
+	}
+	for j > i && s[j-1] == '.' {
+		j--
+	}
+	return j
 }
 
 // looksSecret is the entropy heuristic: a long, opaque, mixed alphanumeric token
