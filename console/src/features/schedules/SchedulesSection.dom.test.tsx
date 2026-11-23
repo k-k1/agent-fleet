@@ -381,26 +381,39 @@ describe("SchedulesSection fold state lifetime", () => {
 });
 
 describe("SchedulesSection late list racing a section close", () => {
+  // The list answer is delivered from inside the click that closes the section, through a
+  // thenable that calls back synchronously: both updates take the click's lane and land in ONE
+  // commit. (A promise answer, or two separate acts, commit the close first and the list second:
+  // the carry then sees an already-reset fold and the race is never exercised.)
   it("does not carry a fold into a row when the section closes in the same commit as the late list", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
     useSessionsStore.setState({
       sessions: [{ name: "cron-old", title: "cron-old", kind: "claude", alive: false, origin: "schedule", scheduleId: "sch_1", createdAt: "2026-11-01T00:00:00Z" }] as never,
     });
-    let answer: (v: unknown) => void = () => {};
-    scheduleList.mockReturnValue(new Promise((r) => (answer = r)));
+    const waiting: ((v: unknown) => void)[] = [];
+    const thenable = { then: (cb: (v: unknown) => void) => (waiting.push(cb), { catch: () => {} }) };
+    scheduleList.mockReturnValue(thenable);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      await render();
+      await act(async () => {
+        root!.render(
+          <ToastProvider>
+            <ConfirmProvider>
+              <SchedulesSection />
+            </ConfirmProvider>
+          </ToastProvider>,
+        );
+      });
       await act(async () => {
         vi.advanceTimersByTime(5100);
       });
       await act(async () => host.querySelector<HTMLButtonElement>(".sched-sess-ended")!.click());
-      await act(async () => {
-        host.querySelector<HTMLButtonElement>(".ui-section-toggle")!.click(); // close, batched with the answer
-        answer([sched]);
-      });
+      expect(host.querySelector(".sched-sess-ended")!.getAttribute("aria-expanded")).toBe("true");
+      const toggle = host.querySelector<HTMLButtonElement>(".ui-section-toggle")!;
+      toggle.addEventListener("click", () => waiting.forEach((cb) => cb([sched])));
+      await act(async () => toggle.click());
       expect(host.querySelector(".sched-list")).toBeNull();
-      await act(async () => host.querySelector<HTMLButtonElement>(".ui-section-toggle")!.click());
+      await act(async () => toggle.click());
       expect(host.querySelector('[data-sched-sessions-of="sch_1"] .sched-sess-ended')!.getAttribute("aria-expanded")).toBe("false");
     } finally {
       localStorage.removeItem("af-section-schedules");
