@@ -58,7 +58,7 @@ const (
 	pushNoteQueueLen = 256
 	// pushReaders run the per-notification reads (membership, preferences, devices).
 	pushReaders = 4
-	// pushDropLogEvery is how often the count of notifications a full queue refused is logged.
+	// pushDropLogEvery is how often the counts of dropped notifications and messages are logged.
 	pushDropLogEvery = 10 * time.Second
 	// A question that waits an hour is stale for a phone; the service drops it after that.
 	pushTTL = time.Hour
@@ -77,10 +77,11 @@ type Service struct {
 	jobs     chan sendJob
 	// quit stops the workers; nil (never) outside tests.
 	quit chan struct{}
-	// droppedNotes counts notifications refused by a full notification queue. The refusal happens
-	// on the inserting caller, which must not wait on log output, so a ticker logs the count.
-	droppedNotes atomic.Int64
-	view         *viewing
+	// Drops are counted, and only the ticker logs the counts: a drop happens on the inserting caller
+	// (droppedNotes), a reader (droppedFull) or a send worker (droppedStale), and none of them may
+	// wait on a stalled log sink, which would stop later healthy deliveries behind it.
+	droppedNotes, droppedFull, droppedStale atomic.Int64
+	view                                    *viewing
 }
 
 // sendJob is one notification for one device, waiting for a send worker.
@@ -115,7 +116,7 @@ func (p *Service) start(workers, queueLen int) {
 		for {
 			select {
 			case <-t.C:
-				p.logDroppedNotes()
+				p.logDrops()
 			case <-p.quit:
 				return
 			}
@@ -212,9 +213,15 @@ func questionText(payload string) string {
 	return string(r)
 }
 
-func (p *Service) logDroppedNotes() {
+func (p *Service) logDrops() {
 	if d := p.droppedNotes.Swap(0); d > 0 {
 		log.Printf("web push: delivery queue full; %d notifications dropped", d)
+	}
+	if d := p.droppedFull.Swap(0); d > 0 {
+		log.Printf("web push: send queue full; %d messages dropped", d)
+	}
+	if d := p.droppedStale.Swap(0); d > 0 {
+		log.Printf("web push: %d messages waited over %s in the send queue; dropped", d, p.slotWait)
 	}
 }
 
@@ -299,7 +306,7 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 		select {
 		case p.jobs <- j:
 		default:
-			log.Printf("web push: send queue full; message for %s dropped", s.ID)
+			p.droppedFull.Add(1)
 			if j.done != nil {
 				j.done()
 			}
@@ -313,7 +320,7 @@ func (p *Service) run(j sendJob) {
 		defer j.done()
 	}
 	if waited := time.Since(j.queued); waited > p.slotWait {
-		log.Printf("web push: message for %s waited over %s in the send queue; dropped", j.sub.ID, p.slotWait)
+		p.droppedStale.Add(1)
 		return
 	}
 	// The row is read again just before the send: in the queue it may have moved to another member

@@ -560,16 +560,18 @@ func waitArrival(t *testing.T, arrived chan string) string {
 	}
 }
 
-// A burst past the queue is dropped at once rather than parked in a goroutine per device.
+// A burst past the queue is dropped at once rather than parked in a goroutine per device, and the
+// drop waits on nothing, log output included: with the log sink stalled, the reader still returns
+// and the next notification is sent once the queue has room.
 func TestFullSendQueueDrops(t *testing.T) {
-	f := newFixtureN(t, 1, 2, nil)
+	// Long budgets: this test is about room in the queue, not about staleness.
+	f := newFixtureN(t, 1, 2, func(f *fixture) { f.svc.slotWait, f.svc.timeout = time.Minute, time.Minute })
 	arrived, release := f.hold()
-	defer release()
-	// Occupy the only worker first, so the queue's two places are all there is.
-	f.subscribe(t, "m0")
 	var wg sync.WaitGroup
 	defer wg.Wait()
 	defer release()
+	// Occupy the only worker first, so the queue's two places are all there is.
+	f.subscribe(t, "m0")
 	first := note("question")
 	first.MembershipID = "m0"
 	f.svc.deliver(context.Background(), first, &wg)
@@ -577,17 +579,42 @@ func TestFullSendQueueDrops(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		f.subscribe(t, "m1")
 	}
-	var buf bytes.Buffer
-	log.SetOutput(&buf)
-	defer log.SetOutput(os.Stderr)
-	f.svc.deliver(context.Background(), note("question"), &wg)
-	if got := strings.Count(buf.String(), "send queue full"); got != 2 {
-		t.Fatalf("%d drops logged, want 2: %q", got, buf.String())
+	bw := blockedWriter{make(chan struct{})}
+	log.SetOutput(bw)
+	returned := make(chan struct{})
+	go func() {
+		f.svc.deliver(context.Background(), note("question"), &wg)
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		close(bw.gate)
+		log.SetOutput(os.Stderr)
+		t.Fatal("a reader waited on log output while dropping")
+	}
+	if got := f.svc.droppedFull.Load(); got != 2 {
+		t.Fatalf("%d drops counted, want 2", got)
 	}
 	release()
 	wg.Wait()
 	if f.count() != 3 {
 		t.Fatalf("%d sent, want the one in flight and the 2 that fit", f.count())
+	}
+	// The queue has room again: the next notification goes out with the log still stalled.
+	again := note("question")
+	again.MembershipID = "m0"
+	f.deliver(again)
+	close(bw.gate)
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	if f.count() != 4 {
+		t.Fatalf("%d sent; the notification after the burst was lost", f.count())
+	}
+	f.svc.logDrops()
+	if !strings.Contains(buf.String(), "send queue full; 2 messages dropped") {
+		t.Fatalf("log: %q", buf.String())
 	}
 }
 
@@ -617,8 +644,8 @@ func TestFullNotificationQueueDrops(t *testing.T) {
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
-	p.logDroppedNotes()
-	p.logDroppedNotes() // the count was taken; nothing more to say
+	p.logDrops()
+	p.logDrops() // the count was taken; nothing more to say
 	if strings.Count(buf.String(), "delivery queue full; 2 notifications dropped") != 1 || strings.Count(buf.String(), "\n") != 1 {
 		t.Fatalf("log: %q", buf.String())
 	}
@@ -631,14 +658,25 @@ func TestStaleQueuedSendIsDropped(t *testing.T) {
 	defer release()
 	f.subscribe(t, "m1")
 	f.subscribe(t, "m1")
+	// A stalled log sink must not hold the worker that drops the stale message.
+	bw := blockedWriter{make(chan struct{})}
+	log.SetOutput(bw)
+	defer log.SetOutput(os.Stderr)
+	defer close(bw.gate)
 	var wg sync.WaitGroup
 	f.svc.deliver(context.Background(), note("question"), &wg)
 	waitArrival(t, arrived)
 	time.Sleep(400 * time.Millisecond)
 	release()
-	wg.Wait()
-	if f.count() != 1 {
-		t.Fatalf("%d sent; the one queued past slotWait must be dropped", f.count())
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the worker waited on log output while dropping a stale message")
+	}
+	if f.count() != 1 || f.svc.droppedStale.Load() != 1 {
+		t.Fatalf("%d sent, %d counted stale; want 1 and 1", f.count(), f.svc.droppedStale.Load())
 	}
 }
 

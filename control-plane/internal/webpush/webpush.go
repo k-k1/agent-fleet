@@ -129,6 +129,13 @@ func origin(u *url.URL) string {
 	if strings.Contains(host, ":") {
 		host = "[" + host + "]"
 	} else {
+		// A host written in Unicode is first mapped the way net/http maps it to connect (NFC and
+		// the rest of UTS #46), so aud names the origin the request actually reaches.
+		if !isASCII(host) {
+			if a, err := idna.Lookup.ToASCII(host); err == nil {
+				host = a
+			}
+		}
 		labels := strings.Split(host, ".")
 		for i, l := range labels {
 			if strings.HasPrefix(l, "xn--") {
@@ -314,4 +321,13 @@ func (s *Sender) Send(ctx context.Context, sub Subscription, payload []byte, o O
 	default:
 		return fmt.Errorf("webpush: push service answered %d", resp.StatusCode)
 	}
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }
