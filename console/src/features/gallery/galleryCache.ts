@@ -26,6 +26,8 @@ interface CacheEntry {
   limit: number;
   /** A flattened listing that left pictures out (`api/fs/images`'s bounds). */
   truncated?: boolean;
+  /** The order the read that produced `entries` BEGAN in (see `beginRead`). */
+  seq: number;
 }
 
 /**
@@ -51,6 +53,20 @@ const PREFETCH_FRESH_MS = 10_000;
 // Insertion order IS the LRU order: a read re-inserts, so the first key is the oldest use.
 const cache = new Map<string, CacheEntry>();
 
+/**
+ * Read order, taken when a read STARTS. Answers can come back in any order (a hover prefetch
+ * that is slow while the view's own read of the same folder is fast), and the cache must end up
+ * holding the listing of the read that began last, not of the one that answered last. One
+ * counter for every key and every pane, so prefetches and several panes on one folder are
+ * ordered too.
+ */
+let readSeq = 0;
+
+/** A folder dropped by `forgetGallery`, with the order it was dropped at: a read that began
+ *  before it must not bring the listing back. Cleared by the next accepted write; trimmed to
+ *  MAX_FOLDERS so gone folders do not pile up. */
+const forgottenAt = new Map<string, number>();
+
 /** In-flight prefetches, so sweeping the mouse across a row of folder cards asks once. */
 const inflight = new Map<string, Promise<unknown>>();
 
@@ -60,6 +76,11 @@ export function readGallery(path: string): CacheEntry | undefined {
   cache.delete(path); // re-insert to refresh the LRU position
   cache.set(path, hit);
   return hit;
+}
+
+/** Take a place in the read order. Call before the request is sent, never after the await. */
+function beginRead(): number {
+  return ++readSeq;
 }
 
 function put(path: string, next: CacheEntry): void {
@@ -73,16 +94,29 @@ function put(path: string, next: CacheEntry): void {
 }
 
 /** Remember a listing. The reader's place in the folder is kept — a background refresh that
- *  landed one new picture must not scroll them back to the top. */
-export function writeGallery(key: string, entries: FsEntry[], truncated?: boolean): void {
+ *  landed one new picture must not scroll them back to the top.
+ *
+ *  `seq` is the order the read began in; the write is dropped when the cache already holds a
+ *  listing from a read that began later (or the folder was forgotten after this read began).
+ *  Without `seq` the write counts as the newest read. Returns whether it was kept. */
+export function writeGallery(key: string, entries: FsEntry[], truncated?: boolean, seq?: number): boolean {
+  const n = seq ?? beginRead();
   const prev = cache.get(key);
+  if (prev && prev.seq > n) return false;
+  const gone = forgottenAt.get(key);
+  if (gone !== undefined) {
+    if (gone > n) return false;
+    forgottenAt.delete(key);
+  }
   put(key, {
     entries,
     at: Date.now(),
     scrollTop: prev?.scrollTop ?? 0,
     limit: prev?.limit ?? PAGE_SIZE,
+    seq: n,
     ...(truncated ? { truncated } : {}),
   });
+  return true;
 }
 
 /** Remember where in the folder the reader is. Written from a scroll handler and from "show
@@ -100,12 +134,20 @@ export function rememberGalleryView(path: string, view: { scrollTop?: number; li
  */
 export function forgetGallery(path: string): void {
   cache.delete(path);
+  forgottenAt.delete(path); // re-insert: the oldest tombstone is the first key
+  forgottenAt.set(path, ++readSeq);
+  while (forgottenAt.size > MAX_FOLDERS) {
+    const oldest = forgottenAt.keys().next();
+    if (oldest.done) break;
+    forgottenAt.delete(oldest.value);
+  }
 }
 
 /** Tests only — the cache outlives a component, which is the whole point. */
 export function clearGalleryCache(): void {
   cache.clear();
   inflight.clear();
+  forgottenAt.clear();
 }
 
 /**
@@ -156,6 +198,10 @@ export type ListingResult =
  * (a newer read of the folder already landed, or the view moved on) never overwrites a newer
  * listing in the cache. Claiming later, after the await, would let an older answer write the
  * cache while a newer one is between its own write and its claim.
+ *
+ * `accept` only orders reads of ONE view. The cache orders the rest itself: a read that began
+ * before the one whose listing is already cached (a hover prefetch that answers late, another
+ * pane on the same folder) still returns its listing but does not write it.
  */
 export async function fetchGalleryListing(
   path: string,
@@ -163,6 +209,7 @@ export async function fetchGalleryListing(
   accept?: () => boolean,
   flat?: boolean,
 ): Promise<ListingResult> {
+  const seq = beginRead();
   let d: { entries?: FsEntry[]; truncated?: boolean; error?: { code?: string } };
   try {
     d = await api(flat ? galleryImagesURL(path, warm) : galleryTreeURL(path, warm));
@@ -173,7 +220,8 @@ export async function fetchGalleryListing(
   if (d.error || !Array.isArray(d.entries)) return { ok: false, retry: false, hard: true };
   if (accept && !accept()) return { ok: false, retry: false, hard: false };
   const truncated = d.truncated === true;
-  writeGallery(galleryKey(path, flat), d.entries, truncated);
+  // The answer is still the caller's to show; the cache keeps whichever read began last.
+  writeGallery(galleryKey(path, flat), d.entries, truncated, seq);
   return { ok: true, entries: d.entries, ...(truncated ? { truncated } : {}) };
 }
 
