@@ -69,7 +69,7 @@ beforeEach(() => {
   chatGet.mockReset();
   chatStream.mockClear();
   useWorkspaceStore.setState({ state: "running" });
-  vi.useFakeTimers({ shouldAdvanceTime: true });
+  vi.useFakeTimers();
 });
 afterEach(() => {
   vi.useRealTimers();
