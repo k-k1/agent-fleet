@@ -138,4 +138,17 @@ describe(".ui-card primitive", () => {
     const usage = strip(readFileSync(path.resolve(__dirname, "../features/usage/usage.css"), "utf8"));
     expect(rule(usage, ".usage-card")).toContain("--card-bg: var(--panel2)");
   });
+  it("every inbox-card and usage-card call site also carries ui-card", () => {
+    const sites: [string, string, number][] = [
+      ["../features/inbox/InboxModal.tsx", "inbox-card", 2],
+      ["../features/usage/UsageView.tsx", "usage-card", 5],
+    ];
+    for (const [f, cls, n] of sites) {
+      const src = readFileSync(path.resolve(__dirname, f), "utf8");
+      const all = src.match(new RegExp(`(?<![-\\w])${cls}(?![-\\w])`, "g"))?.length;
+      const withPrimitive = src.match(new RegExp(`ui-card ${cls}(?![-\\w])`, "g"))?.length;
+      expect(all).toBe(n);
+      expect(withPrimitive).toBe(n);
+    }
+  });
 });
