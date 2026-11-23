@@ -2195,13 +2195,26 @@ hasnt "cloudformation deploy --stack-name t-network"
 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3b7" 2>&1 </dev/null \
   || fail "WebPush=on with the key and a contact was refused: $(tail -3 "$WORK/out3b7")"
 grep -q "deploy --stack-name t-ingress .*WebPush=on" "$LOG" || fail "WebPush=on did not reach 30-ingress"
+grep -q "deploy --stack-name t-ingress .*WebPushSubject=mailto:ops@example.com" "$LOG" \
+  || fail "WebPushSubject did not reach 30-ingress with WebPush=on (the template's Rule would refuse it)"
+# A contact the CP would reject (pushsrv.validSubject) is refused up front, before anything is built.
+for bad in ops@example.com mailto:bogus mailto: "mailto:a b@example.com" https:// https:///missing-host http://example.com; do
+  cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
+  printf 'WebPush=on\nWebPushSubject=%s\n' "$bad" >> "$STATE/params/30-ingress"
+  : > "$LOG"
+  if "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes \
+       > "$WORK/out3b8" 2>&1 </dev/null; then
+    fail "standup went on although WebPushSubject '$bad' is not a contact the CP accepts"
+  fi
+  grep -q "WebPush=on needs WebPushSubject" "$WORK/out3b8" || fail "the bad contact '$bad' was not named: $(tail -3 "$WORK/out3b8")"
+  hasnt "cloudformation deploy --stack-name t-network"
+done
+# With the switch off the key is not needed and the knobs are not looked at.
 cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
-printf 'WebPush=on\nWebPushSubject=ops@example.com\n' >> "$STATE/params/30-ingress"
-if "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes \
-     > "$WORK/out3b8" 2>&1 </dev/null; then
-  fail "standup went on although WebPushSubject is neither mailto: nor https://"
-fi
-grep -q "WebPush=on needs WebPushSubject" "$WORK/out3b8" || fail "the bad contact was not named: $(tail -3 "$WORK/out3b8")"
+printf 'WebPush=off\nWebPushSubject=junk\n' >> "$STATE/params/30-ingress"
+: > "$LOG"
+STUB_NO_PUSH_KEY=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3b9" 2>&1 </dev/null \
+  || fail "WebPush=off was refused for the missing VAPID key or the contact: $(tail -3 "$WORK/out3b9")"
 cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
 
 echo "== case 3c: teardown empties the bucket before deleting 20-platform =="

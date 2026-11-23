@@ -232,13 +232,24 @@ fi
 for sw in GithubLoginSecret:github-login-client-secret ComfyApiKey:comfy-api-key RemoteEngineToken:remote-engine-token WebPush:web-push-vapid-key; do
   [ "$(p30 "${sw%%:*}")" != on ] || have_ssm "$SSM_PREFIX/${sw#*:}" || say_missing "no SSM $SSM_PREFIX/${sw#*:} (${sw%%:*}=on)"
 done
-# WebPush=on also needs the contact (the template's Rule refuses an empty one; the CP leaves Web
-# Push off, with a log warning, for a value that is neither mailto: nor https://).
+# WebPush=on also needs a contact the CP accepts (the template's Rule only refuses an empty
+# one): pushsrv.validSubject wants mailto:<address> or an https URL with a host, after trimming.
+# Anything else leaves Web Push off, with a log warning, after the deploy went through.
 if [ "$(p30 WebPush)" = on ]; then
-  case "$(p30 WebPushSubject)" in
-    mailto:?*|https://?*) ;;
-    *) say_missing "WebPush=on needs WebPushSubject as mailto:<address> or https://<url> (got '$(p30 WebPushSubject)')" ;;
+  push_subject="$(p30 WebPushSubject)"
+  push_subject="${push_subject#"${push_subject%%[![:space:]]*}"}"; push_subject="${push_subject%"${push_subject##*[![:space:]]}"}"
+  case "$push_subject" in
+    mailto:*@*) push_ok=1 ;;
+    https://*) push_ok=1 ;;
+    *) push_ok=0 ;;
   esac
+  if [ "$push_ok" = 1 ]; then
+    case "$push_subject" in
+      mailto:*[[:space:]]*|mailto:@*|mailto:*@|mailto:*@*@*) push_ok=0 ;;
+      https://|https://*[[:space:]]*|https:///*|https://\?*|https://\#*|https://:*) push_ok=0 ;;
+    esac
+  fi
+  [ "$push_ok" = 1 ] || say_missing "WebPush=on needs WebPushSubject as mailto:<address> or https://<host>… (got '$(p30 WebPushSubject)')"
 fi
 
 if [ -n "$HOSTED_ZONE" ]; then

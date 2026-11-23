@@ -44,7 +44,7 @@ If `AF_WEB_PUSH=true` is set but the key or the contact is missing or malformed,
 
 ## On ECS
 
-On the AWS ECS deployments (`ecs`, `ecs-ec2`) the Control Plane's environment is the `30-ingress` stack, so you set Web Push through its parameters. A variable added by hand to the task definition is reverted by the next `update.sh`.
+On the AWS ECS deployments (`ecs`, `ecs-ec2`) the Control Plane's environment is the `30-ingress` stack, so you set Web Push through its parameters. A variable added by hand to the task definition is reverted by the next update that registers a new task definition (a new image tag, for example).
 
 1. Make the key as in step 1 above and put it in SSM as a SecureString **before** you switch Web Push on. A switch pointing at a parameter that does not exist stops the task from starting, and `standup.sh` refuses to run without it
 
@@ -54,12 +54,14 @@ On the AWS ECS deployments (`ecs`, `ecs-ec2`) the Control Plane's environment is
      --value "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
    ```
 
-   `<SsmPrefix>` is `30-ingress`'s parameter, `/af-cp` by default, which the execution role already reads. Type or generate the value in your own terminal and keep a copy in your secret store: a lost or replaced key makes every member's subscription invalid
+   `<SsmPrefix>` is `30-ingress`'s parameter, `/af-cp` by default, which the execution role already reads. Keep the default: a prefix outside `/af-cp/` and `/af-ws/` needs the role's `ssm-read` policy widened, and `teardown.sh` always deletes everything under `/af-ws/`. Type or generate the value in your own terminal and keep a copy in your secret store: a lost or replaced key makes every member's subscription invalid
 
 2. Deploy `30-ingress` with the switch and the contact
 
    ```bash
-   aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
+   cd deploy/aws/ecs
+   aws cloudformation deploy --profile <profile> --region <region> \
+     --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
      --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides WebPush=on WebPushSubject=mailto:you@example.com
    ```
@@ -71,12 +73,12 @@ On the AWS ECS deployments (`ecs`, `ecs-ec2`) the Control Plane's environment is
    | `WebPushEndpointHosts` | Optional. `AF_WEB_PUSH_ENDPOINT_HOSTS` |
    | `NotificationDrainInterval` | Optional. `AF_NOTIFICATION_DRAIN_INTERVAL` |
 
-   The three below `WebPush` are read only while the switch is on. `update.sh` does not set or clear any of these, so the next update keeps them
+   Use the same `--profile` and `--region` as in step 1. `CFN_BUCKET` is `20-platform`'s output `CfnTemplatesBucket` ([Build on ECS](../aws-ecs/install.md#3-deploy-30-ingress)). The three parameters below `WebPush` are read only while the switch is on. `update.sh` does not set or clear any of these, so the next update keeps them
 3. Check the log for `web push enabled` and Settings → "Notifications" as in step 3 above
 
-Keep the key stable. To turn Web Push off, deploy `WebPush=off`; leave the SSM parameter in place so that switching it on again does not invalidate the devices. `teardown.sh --purge-secrets` deletes it with the other `/af-cp/*` secrets.
+Keep the key stable. To turn Web Push off, deploy `WebPush=off`; leave the SSM parameter in place so that switching it on again does not invalidate the devices. `teardown.sh --purge-secrets` deletes it with the other secrets under the default `/af-cp/`; without the flag it is kept.
 
-Nothing is needed for the egress on ECS, and no IAM change. The Control Plane task leaves through the VPC's NAT gateway, not the workspaces' egress gateway, so the hosts below are reachable as they are. The parameters are listed in [`cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#web-push), and the other options in [Set timers, GitHub sign-in and outside engines](../aws-ecs/options.md#set-timers-github-sign-in-and-outside-engines).
+Nothing is needed for the egress on ECS. With the default `SsmPrefix` and the AWS-managed `aws/ssm` key there is no IAM change either. The Control Plane task leaves through the VPC's NAT gateway, not the workspaces' egress gateway, so the hosts below are reachable as they are. The parameters are listed in [`cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#web-push), and the other options in [Set timers, GitHub sign-in and outside engines](../aws-ecs/options.md#set-timers-github-sign-in-and-outside-engines).
 
 ## Open the egress
 

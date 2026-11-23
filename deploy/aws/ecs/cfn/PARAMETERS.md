@@ -1221,7 +1221,7 @@ execution role's `ssm-read` policy to your prefix (least privilege: the prefix, 
 | Parameter | CP variable | Notes |
 |---|---|---|
 | `WebPush` (`off` / `on`) | `AF_WEB_PUSH=true`, and `AF_WEB_PUSH_VAPID_PRIVATE_KEY` from the SSM SecureString `<SsmPrefix>/web-push-vapid-key` | The switch. Create the parameter first: a `Secrets` entry for a missing one stops the task, and `standup.sh` refuses to run without it |
-| `WebPushSubject` | `AF_WEB_PUSH_SUBJECT` | `mailto:you@example.com` or an `https://` URL. Required with `WebPush=on`: a Rule refuses an empty value, and `standup.sh` refuses a value in any other form (the CP would leave Web Push off with a warning) |
+| `WebPushSubject` | `AF_WEB_PUSH_SUBJECT` | `mailto:you@example.com` or an `https://` URL. Required with `WebPush=on`: a Rule refuses an empty value, and `standup.sh` refuses a value the CP would reject (it would leave Web Push off with a warning): `mailto:` needs one address, `https:` a host |
 | `WebPushEndpointHosts` | `AF_WEB_PUSH_ENDPOINT_HOSTS` | Optional, comma list of extra push-service hosts. Empty = the CP's built-in list |
 | `NotificationDrainInterval` | `AF_NOTIFICATION_DRAIN_INTERVAL` | Optional, a Go duration. Empty = the CP default (15s) |
 

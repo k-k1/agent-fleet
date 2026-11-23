@@ -44,7 +44,7 @@ Web Push は、セッションが質問したとき・承認を求めたとき�
 
 ## ECS で使う
 
-AWS の ECS 配備（`ecs`・`ecs-ec2`）では、Control Plane の環境は `30-ingress` スタックなので、Web Push はそのパラメータで設定します。タスク定義に手で足した変数は、次の `update.sh` で元に戻ります。
+AWS の ECS 配備（`ecs`・`ecs-ec2`）では、Control Plane の環境は `30-ingress` スタックなので、Web Push はそのパラメータで設定します。タスク定義に手で足した変数は、新しいタスク定義を登録する更新（新しいイメージタグなど）で元に戻ります。
 
 1. 手順 1 と同じ方法で鍵を作り、Web Push をオンにする**前に** SSM に SecureString として入れます。存在しないパラメータを指すスイッチはタスクを起動できなくし、`standup.sh` も鍵がなければ止まります
 
@@ -54,12 +54,14 @@ AWS の ECS 配備（`ecs`・`ecs-ec2`）では、Control Plane の環境は `30
      --value "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
    ```
 
-   `<SsmPrefix>` は `30-ingress` のパラメータで、既定は `/af-cp` です。実行ロールはすでに読めます。値は自分の端末で生成し、控えをシークレットの保管場所に残してください。鍵をなくす・替えると、メンバーの購読はすべて無効になります
+   `<SsmPrefix>` は `30-ingress` のパラメータで、既定は `/af-cp` です。実行ロールはすでに読めます。既定のままにしてください。`/af-cp/` と `/af-ws/` の外にすると、実行ロールの `ssm-read` ポリシーを広げる必要があり、`teardown.sh` は `/af-ws/` の下をいつもすべて削除します。値は自分の端末で生成し、控えをシークレットの保管場所に残してください。鍵をなくす・替えると、メンバーの購読はすべて無効になります
 
 2. スイッチと連絡先を付けて `30-ingress` をデプロイします
 
    ```bash
-   aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
+   cd deploy/aws/ecs
+   aws cloudformation deploy --profile <profile> --region <region> \
+     --stack-name <ingress stack> --template-file cfn/30-ingress.yaml --s3-bucket "$CFN_BUCKET" --s3-prefix cfn \
      --capabilities CAPABILITY_NAMED_IAM \
      --parameter-overrides WebPush=on WebPushSubject=mailto:you@example.com
    ```
@@ -71,12 +73,12 @@ AWS の ECS 配備（`ecs`・`ecs-ec2`）では、Control Plane の環境は `30
    | `WebPushEndpointHosts` | 任意。`AF_WEB_PUSH_ENDPOINT_HOSTS` |
    | `NotificationDrainInterval` | 任意。`AF_NOTIFICATION_DRAIN_INTERVAL` |
 
-   `WebPush` 以外の 3 つは、スイッチがオンのときだけ読まれます。`update.sh` はこれらを設定も消去もしないので、次の更新でも値は残ります
+   手順 1 と同じ `--profile` と `--region` を使います。`CFN_BUCKET` は `20-platform` の出力 `CfnTemplatesBucket` です（[ECS に構築する](../aws-ecs/install.ja.md#3-30-ingress-をデプロイする)）。`WebPush` 以外の 3 つのパラメータは、スイッチがオンのときだけ読まれます。`update.sh` はこれらを設定も消去もしないので、次の更新でも値は残ります
 3. 手順 3 と同じように、ログの `web push enabled` と、設定 →「通知」を確かめます
 
-鍵は変えないでください。オフに戻すときは `WebPush=off` をデプロイします。SSM のパラメータは残しておくと、再びオンにしても端末の購読は無効になりません。`teardown.sh --purge-secrets` は、ほかの `/af-cp/*` のシークレットと一緒にこれも消します。
+鍵は変えないでください。オフに戻すときは `WebPush=off` をデプロイします。SSM のパラメータは残しておくと、再びオンにしても端末の購読は無効になりません。`teardown.sh --purge-secrets` は、既定の `/af-cp/` の下にあるほかのシークレットと一緒にこれも消します。フラグがなければ残ります。
 
-ECS では外向きの許可も IAM の変更も要りません。Control Plane のタスクは、ワークスペースの egress ゲートウェイではなく VPC の NAT ゲートウェイから出るので、下のホストにはそのまま届きます。パラメータの一覧は [`cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#web-push)、ほかのオプションは[タイマー・GitHub サインイン・外部のエンジンを設定する](../aws-ecs/options.ja.md#タイマーgithub-サインイン外部のエンジンを設定する)にあります。
+ECS では外向きの許可は要りません。既定の `SsmPrefix` と AWS 管理の `aws/ssm` キーなら、IAM の変更も要りません。Control Plane のタスクは、ワークスペースの egress ゲートウェイではなく VPC の NAT ゲートウェイから出るので、下のホストにはそのまま届きます。パラメータの一覧は [`cfn/PARAMETERS.md`](https://github.com/k-k1/agent-fleet/blob/main/deploy/aws/ecs/cfn/PARAMETERS.md#web-push)、ほかのオプションは[タイマー・GitHub サインイン・外部のエンジンを設定する](../aws-ecs/options.ja.md#タイマーgithub-サインイン外部のエンジンを設定する)にあります。
 
 ## 外向きの通信を開ける
 
