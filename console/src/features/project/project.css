@@ -369,3 +369,24 @@
   font-size: 12px;
   color: var(--muted);
 }
+
+/* Spaces section (ADR 0142 decision 9): one heading per space, its sessions beneath it in
+   the same nested list the repository nodes use. The heading is not a rail row (no
+   data-rail-row): a space has no actions of its own yet, so arrow keys skip it. */
+.space-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 4px 1px;
+  color: var(--muted);
+  font-size: 12px;
+  min-width: 0;
+}
+.space-group-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sess-list.space-list {
+  padding-top: 2px;
+}

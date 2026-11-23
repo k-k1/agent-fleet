@@ -45,6 +45,10 @@ export interface Session {
   color?: string; // terminal background hue (hex); SSM sessions carry their host color
   label?: string; // claude --name (with an "[AF] " tag); absent for shell
   repo?: string | null; // working-copy folder the (agent) session runs in
+  /** The space folder (~/spaces/<folder>, ADR 0142) the session runs in; absent outside a
+   *  space. Decided by the Agent from the directory's root, so a space never passes for the
+   *  repository that shares its folder name. */
+  space?: string;
   workingCopyId?: string;
   path?: string; // absolute working dir
   dir?: string; // working dir shown in the row tooltip

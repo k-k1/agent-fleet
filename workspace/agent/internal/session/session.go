@@ -288,8 +288,12 @@ type Session struct {
 	// InitialPromptReason says why InitialPromptState is failed when the Agent knows (Meta's).
 	InitialPromptReason string `json:"initialPromptReason,omitempty"`
 	Repo                string `json:"repo"` // working dir basename (display)
-	WorkingCopyID       string `json:"workingCopyId,omitempty"`
-	Title               string `json:"title"` // user-supplied display title (optional, any kind)
+	// Space is the space folder the session runs in (ADR 0142), "" outside ~/spaces. The Agent
+	// decides it from Dir's root, because a space and a repository can share a folder name and
+	// Repo alone cannot tell them apart. The Control Plane's sessionWire has to carry it too.
+	Space         string `json:"space,omitempty"`
+	WorkingCopyID string `json:"workingCopyId,omitempty"`
+	Title         string `json:"title"` // user-supplied display title (optional, any kind)
 	// Moving / MovedTo mirror Meta's (ADR 0115 decision 11.7): the row of a source whose move
 	// is under way or pending offers retry and cancel, and a moved one says where the
 	// conversation went. The Control Plane's sessionWire has to carry them too.

@@ -66,6 +66,9 @@ func TestAuditActionTarget(t *testing.T) {
 		{"GET", "/api/aws-confirm", "", "", "", false},
 		{"POST", "/api/connections/unusable/remove", "", "connection.unusable.remove", "", true},
 		{"GET", "/api/connections/unusable", "", "", "", false},
+		// ADR 0142 decision 1: making a space is audited; listing them is a read.
+		{"POST", "/api/spaces", "", "space.create", "", true},
+		{"GET", "/api/spaces", "", "", "", false},
 		{"GET", "/api/aws-login", "", "", "", false},
 		// ADR 0107 decision 3: the presses, the cancel and the code; the code route names the
 		// attempt by its reference only. Polls and lists are reads.

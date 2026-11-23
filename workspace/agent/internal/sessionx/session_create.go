@@ -18,6 +18,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
@@ -37,6 +38,9 @@ type createRun struct {
 	// createdWorktree is the worktree this create ran `git worktree add` for ("" when it reused
 	// one or made none); identify records the session's name on it once the name exists.
 	createdWorktree string
+	// createdSpace is the space directory this create made ("" when it named an existing one or
+	// none); a create that then fails removes it again while it is still empty.
+	createdSpace string
 	// idemKey is the idempotency key this create owns ("" when nothing is de-duplicated), and
 	// committed says its answer has been recorded under it.
 	idemKey   string
@@ -239,7 +243,60 @@ func (c *createRun) validateOptions() bool {
 			"this agent kind cannot surface tool approvals to the Console; skip_permissions must stay true")
 		return false
 	}
+	return c.validateSpace()
+}
+
+// validateSpace checks CreateReq.Space before any side effect: a space replaces dir, so it is
+// refused together with any other way of naming the working directory, and an existing space has
+// to exist. The new space itself is made in resolveWorkingCopy.
+func (c *createRun) validateSpace() bool {
+	sp := c.req.Space
+	if sp == nil {
+		return true
+	}
+	if strings.TrimSpace(c.req.Dir) != "" || c.req.Worktree || strings.TrimSpace(c.req.RemoteURL) != "" {
+		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_space", "space cannot be combined with dir, worktree or remote_url")
+		return false
+	}
+	if NormalizeKind(c.req.Kind) == session.KindSSM {
+		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_space", "an SSM session runs on another host, not in a space")
+		return false
+	}
+	sp.Folder = strings.TrimSpace(sp.Folder)
+	if sp.Folder != "" {
+		if strings.TrimSpace(sp.Name) != "" {
+			httpx.WriteErr(c.w, http.StatusBadRequest, "bad_space", "name is for a new space; an existing space is named by folder alone")
+			return false
+		}
+		if _, ok := spacex.Lookup(sp.Folder); !ok {
+			httpx.WriteErr(c.w, http.StatusNotFound, "space_not_found", "no such space: "+sp.Folder)
+			return false
+		}
+		return true
+	}
+	name, ok := spacex.CleanName(sp.Name)
+	if !ok {
+		httpx.WriteErr(c.w, http.StatusBadRequest, "bad_space",
+			fmt.Sprintf("space name is too long (max %d) or contains control characters", spacex.NameMaxRunes))
+		return false
+	}
+	sp.Name = name
 	return true
+}
+
+// dropUnusedSpace removes the space this create made when the create ended without a session
+// in it, so a refused launch does not leave an empty space in the list. It keeps a space that
+// anything was written to (spacex.RemoveIfUnused).
+func (c *createRun) dropUnusedSpace() {
+	if c.createdSpace == "" {
+		return
+	}
+	if c.name != "" {
+		if _, ok := session.ReadMeta(c.name); ok {
+			return
+		}
+	}
+	spacex.RemoveIfUnused(c.createdSpace)
 }
 
 // resolveDriver is stage 4's second half: driver validation up-front, before any side effect
@@ -434,6 +491,28 @@ func (c *createRun) ensureWorktree(parent, base, newBranch, folderSeg string) (s
 // clone, or the dir as sent, resolved against home — then the spawn working-copy check against
 // that RESOLVED dir, then the subdir beneath it. It leaves c.req.Dir resolved and sets c.subdir.
 func (c *createRun) resolveWorkingCopy() bool {
+	// Space-then-start (ADR 0142): the session runs in ~/spaces/<folder>, an existing space or
+	// one made here. validateSpace has refused every other way of naming the dir, so the plain
+	// dir path below takes it from here (existence, the spawn check, the subdir).
+	if sp := c.req.Space; sp != nil {
+		if sp.Folder != "" {
+			// Looked up again: the space can have been removed since validateSpace.
+			existing, ok := spacex.Lookup(sp.Folder)
+			if !ok {
+				httpx.WriteErr(c.w, http.StatusNotFound, "space_not_found", "no such space: "+sp.Folder)
+				return false
+			}
+			c.req.Dir = existing.Dir
+		} else {
+			made, err := spacex.Create(sp.Name)
+			if err != nil {
+				httpx.WriteErr(c.w, http.StatusInternalServerError, "space_create_failed", err.Error())
+				return false
+			}
+			c.req.Dir = made.Dir
+			c.createdSpace = made.Dir
+		}
+	}
 	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =
 	// the parent) and use it as the CWD, so a decided task branches into its own dir +
 	// session without touching the parent's running sessions.
