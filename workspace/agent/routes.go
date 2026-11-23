@@ -459,6 +459,9 @@ func buildMux() *http.ServeMux {
 	// Launch prompt templates (repo launch modal): .claude/commands, .claude/skills,
 	// .agent-fleet/launch-prompts.md — aggregated read-only from the working copy.
 	mux.HandleFunc("GET /repos/{name}/prompt-templates", handleRepoPromptTemplates)
+	// The memo queue settings file as committed on origin's default branch (#4881). The Control
+	// Plane asks for it and parses it; never the working tree.
+	mux.HandleFunc("GET /repos/{name}/autorun-file", gitx.HandleAutorunFile)
 	// The launch modal's skill picker: the mirror's list for a session not started yet
 	// (?kind=, ?subdir=). Registered in control-plane/routes.go too.
 	mux.HandleFunc("GET /repos/{name}/skills", sessionx.HandleRepoSkills)
