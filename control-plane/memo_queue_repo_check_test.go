@@ -4,9 +4,12 @@ import (
 	"context"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // putRounds gives category rounds of repository app enabled settings with instruction "old".
@@ -402,5 +405,158 @@ func TestMemoRepoRecheckLeavesStoppedWorkspaces(t *testing.T) {
 	(&memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now}).tick(context.Background())
 	if got := a.requested(); len(got) != 0 {
 		t.Fatalf("Agent calls %v", got)
+	}
+}
+
+// memberQueue gives member who an enabled queue on category rounds of repository repo.
+func (e *inboxEnv) memberQueue(who, repo string) string {
+	e.t.Helper()
+	rec := e.do(who, "POST", "/api/memo-categories", map[string]any{"repo": repo, "name": "rounds"})
+	if rec.Code != http.StatusCreated && rec.Code != http.StatusOK {
+		e.t.Fatalf("category: %d %s", rec.Code, rec.Body.String())
+	}
+	id := decode[memoCategoryDTO](e.t, rec).ID
+	put := map[string]any{"instruction": "old", "spendCapUsd": 60, "maxActive": 2, "enabled": true}
+	if rec := e.do(who, "PUT", "/api/memo-queues/"+id, put); rec.Code != http.StatusOK {
+		e.t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+	}
+	return id
+}
+
+func (e *inboxEnv) memberRepoCheck(who, categoryID string) store.MemoRepoCheck {
+	e.t.Helper()
+	qs, err := e.st.ListMemoQueues(context.Background(), e.members[who])
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	for _, q := range qs {
+		if q.CategoryID == categoryID {
+			return q.RepoCheck
+		}
+	}
+	return store.MemoRepoCheck{}
+}
+
+// holdReads makes the fake Agent's settings reads wait until the returned release is called, and
+// says on started when each one has begun.
+func (a *fakeAutorunAgent) holdReads(t *testing.T) (started <-chan struct{}, release func()) {
+	hold := make(chan struct{})
+	begun := make(chan struct{}, 8)
+	var once sync.Once
+	release = func() { once.Do(func() { close(hold) }) }
+	t.Cleanup(release)
+	a.onServe = func() {
+		begun <- struct{}{}
+		<-hold
+	}
+	return begun, release
+}
+
+// A member whose Git host does not answer holds neither another host's members nor the next
+// pass, and is not read twice while its read is still out.
+func TestMemoRepoRecheckSlowMemberHoldsNoOne(t *testing.T) {
+	e, slow := repoEnv(t, "")
+	slow.remotes = map[string]string{"app": "slow.example"}
+	putRounds(e)
+	slow.answer(http.StatusBadGateway, `{"error":{"code":"timeout","message":"x"}}`)
+	started, release := slow.holdReads(t)
+
+	fast := e.repoAgent("c", "")
+	fast.remotes = map[string]string{"lib": "fast.example"}
+	fast.file("version: 1\ncategories:\n  rounds:\n    max_active: 3\n")
+	lib := e.memberQueue("c", "lib")
+
+	rc := &memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now, reads: 2, perHost: 1}
+	ctx := context.Background()
+	rc.start(ctx)
+	<-started
+	waitFor(t, "the other host's member to be read", func() bool { return e.memberRepoCheck("c", lib).State == memoRepoCheckDiffers })
+
+	// The slow member is still out: a new pass leaves it alone. Its read fails, so it stays due,
+	// and a pass that did not leave it out would read it a second time.
+	rc.start(ctx)
+	release()
+	rc.wg.Wait()
+	rc.tick(ctx)
+	if got := slow.requested(); len(got) != 2 {
+		// One read held, then one by the last tick once the first had finished.
+		t.Fatalf("slow member's reads: %v", got)
+	}
+	if got := fast.requested(); len(got) != 1 {
+		t.Fatalf("fast member's reads: %v", got)
+	}
+}
+
+// Members on one Git host are read one after another when the host's bound is one.
+func TestMemoRepoRecheckBoundsAHost(t *testing.T) {
+	e, first := repoEnv(t, "")
+	first.remotes = map[string]string{"app": "git.example"}
+	putRounds(e)
+	first.file("version: 1\ncategories:\n  rounds:\n    max_active: 3\n")
+	started, release := first.holdReads(t)
+
+	rc := &memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now, reads: 4, perHost: 1}
+	ctx := context.Background()
+	rc.start(ctx)
+	<-started
+
+	// The second member's queue comes once the first read holds the host, so the next pass
+	// starts it while the host is taken.
+	second := e.repoAgent("c", "")
+	second.remotes = map[string]string{"lib": "GIT.example"}
+	second.file("version: 1\ncategories:\n  rounds:\n    max_active: 3\n")
+	lib := e.memberQueue("c", "lib")
+	rc.start(ctx)
+	time.Sleep(200 * time.Millisecond)
+	if got := second.requested(); len(got) != 0 {
+		t.Fatalf("read while the host's one slot was taken: %v", got)
+	}
+	release()
+	rc.tick(ctx)
+	if got := second.requested(); len(got) != 1 || e.memberRepoCheck("c", lib).State != memoRepoCheckDiffers {
+		t.Fatalf("not read once the slot was free: %v", got)
+	}
+}
+
+// acquireRead holds a host to its own bound and every host to the shared one, and forgets a host
+// once nobody holds or waits for it.
+func TestMemoRepoRecheckAcquireRead(t *testing.T) {
+	rc := &memoRepoRechecker{reads: 2, perHost: 1}
+	rc.setup()
+	ctx := context.Background()
+	blocked := func(host string) bool {
+		t.Helper()
+		c, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
+		defer cancel()
+		release, ok := rc.acquireRead(c, host)
+		if ok {
+			release()
+		}
+		return !ok
+	}
+	h1, ok := rc.acquireRead(ctx, "h")
+	if !ok {
+		t.Fatal("first read of h")
+	}
+	if !blocked("h") {
+		t.Fatal("a second read of h was let through")
+	}
+	g, ok := rc.acquireRead(ctx, "g")
+	if !ok {
+		t.Fatal("another host was held by h")
+	}
+	if !blocked("k") {
+		t.Fatal("a third read was let through past the shared bound")
+	}
+	h1()
+	if blocked("k") {
+		t.Fatal("k still blocked once h was released")
+	}
+	g()
+	rc.mu.Lock()
+	n := len(rc.hosts)
+	rc.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("hosts left: %d", n)
 	}
 }

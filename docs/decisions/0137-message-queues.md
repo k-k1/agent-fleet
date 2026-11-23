@@ -5,7 +5,7 @@ English | [日本語](0137-message-queues.ja.md)
 - Status: **accepted** (2026-11-14; proposed 2026-11-14). Nothing is built. Every `file:line` was read on
   `7ab3e1141`. Limit values are provisional.
 - Tracking: #4145.
-- Follow-ups: #4148, #4149, #4150, #4151, #4152 (steps 1 to 5 of §11); #4153 (open question 3); #4540, #4541 (addendum 2026-11-19); #4895, #4896, #4920, #4934 (addendum 2026-11-23, settings file).
+- Follow-ups: #4148, #4149, #4150, #4151, #4152 (steps 1 to 5 of §11); #4153 (open question 3); #4540, #4541 (addendum 2026-11-19); #4895, #4896, #4920, #4934 (addendum 2026-11-23, settings file); #5029 (addendum 2026-11-24).
 - Related: [0021](0021-scheduled-execution.md) (scheduled execution; this record amends its decision 10 and its
   2026-10-03 addendum) / [0061](0061-work-item-inbox.md) (work-item inbox; amends decision 8) /
   [0111](0111-member-collaboration.md) (member collaboration) / [0113](0113-member-origin-mark.md) (the member's
@@ -1169,3 +1169,9 @@ A team that kept its category settings in a runbook table and typed them into th
 - **Rejected.** Applying the file automatically, or on a commit (a change to a shared repository would change every member's unattended runs unseen). Reading the working branch (a run would choose its own settings). One shared settings row per repository (section 2 keeps queues per member). Parsing in the Agent (above). A separate child budget key: whether that is a queue limit at all is #4896.
 - **Rolling update.** A Control Plane that predates the columns ignores them. An Agent that predates the settings file route fails every read. One that has it but predates the instruction route answers 404 there: the API answers `502 memo_queue_repo_unreadable` with a message naming the older Agent (the Console shows its generic reading error), and entries without `instruction_file` are unaffected.
 - **Decided by the owner, 2026-11-23:** settings that switch something on stay Console-only; everything else may be in the file, and every change needs the member's approval.
+
+## Addendum 2026-11-24: the re-read runs members side by side (#4934)
+
+- A pass no longer reads members one after another. Each member is read on its own goroutine; at most six settings reads are in flight at once, and at most two against one Git host, the host the Agent's `GET /repos` names for the working copy (no remote is asked for it; a copy it does not list shares one bucket with every other unknown one). A read waits for its host's slot before it takes a shared one, so a host that does not answer holds two of the six and nothing else.
+- A member whose earlier pass is still running is left out of the next one instead of being waited for, so one member's 75-second read cannot hold the tick for the others, nor be read twice at once. Within a member the repositories are still read in turn.
+- The default stays off. Whether to turn it on, and at what interval, is #5029.
