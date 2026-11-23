@@ -258,6 +258,13 @@ describe("EnginesAdminView", () => {
       await answer({ super_admin: true, engines: [a, { ...b, state: "starting", desired: 1 }] });
       expect(segIn(panel(0), "常時稼働").className).toContain("active");
       expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
+
+      // Mounted again, the held rows are what was on screen, not the read's answer before the merge.
+      act(() => root?.unmount());
+      host?.remove();
+      await mount(); // its first read is held
+      expect(segIn(panel(0), "常時稼働").className).toContain("active");
+      expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
     });
 
     it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {

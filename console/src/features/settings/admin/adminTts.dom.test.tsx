@@ -192,6 +192,28 @@ describe("TtsAdminView", () => {
     expect(save().disabled).toBe(true);
   });
 
+  it("a mode change answering first keeps its mode and still takes the dictionary an older read brings", async () => {
+    let answerPoll: (v: unknown) => void = () => {};
+    api
+      .mockResolvedValueOnce(status("ondemand", "running", true))
+      .mockImplementationOnce(() => new Promise((r) => (answerPoll = r)));
+    apiJSON.mockResolvedValue({ ...status("on", "running", true), dict: "x=y" });
+    await mount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5100); // the read is in flight with another admin's dictionary
+    });
+    await click(seg("常時稼働")); // settled and pinned on: the poll stops
+    await act(async () => {
+      answerPoll({ ...status("ondemand", "running", true), dict: "x=y" });
+      await Promise.resolve();
+    });
+    expect(seg("常時稼働")!.className).toContain("active");
+    // The saved baseline moved to x=y while the box still holds the untouched "" draft, so the
+    // panel now reads as unsaved, exactly as main did.
+    const save = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === "保存") as HTMLButtonElement;
+    expect(save.disabled).toBe(false);
+  });
+
   it("discards the old state when a re-read answers a null body", async () => {
     api.mockResolvedValueOnce(status("ondemand", "starting")).mockResolvedValue(null);
     await mount();

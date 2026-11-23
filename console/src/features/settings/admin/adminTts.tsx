@@ -21,8 +21,9 @@ export function TtsAdminView() {
   const [dictBusy, setDictBusy] = useState(false);
 
   // The poll's period no longer restarts with every answer, so a read can still be in flight when
-  // a mode change or a dictionary save answers: those claim their lanes, and a read begun before
-  // that answer must not put the previous mode or dictionary back on screen.
+  // a mode change or a dictionary save answers: those claim their lanes ("data" for the status,
+  // "dict" for the saved dictionary), and a read begun before that answer must not put the
+  // previous mode or dictionary back on screen.
   const guard = useReadGuard();
   const load = useCallback(async () => {
     const tk = guard.begin();
@@ -38,11 +39,14 @@ export function TtsAdminView() {
         return;
       }
       if (tk.land("err")) setErr("");
-      if (!tk.land("data")) return;
-      setData(d);
-      const dv = typeof d.dict === "string" ? d.dict : "";
-      setSavedDict(dv);
-      setDict((cur) => (cur === null ? dv : cur)); // the poll must not clobber an in-progress edit
+      if (tk.land("data")) setData(d);
+      // Its own lane: only a dictionary save claims it, so a mode change answering first does
+      // not also drop the newer dictionary another administrator saved.
+      if (tk.land("dict")) {
+        const dv = typeof d.dict === "string" ? d.dict : "";
+        setSavedDict(dv);
+        setDict((cur) => (cur === null ? dv : cur)); // the poll must not clobber an in-progress edit
+      }
     } catch {
       if (tk.land("err")) setErr(tr("admin.load_error"));
     }
@@ -87,7 +91,7 @@ export function TtsAdminView() {
         setErr(errText(d.error));
         return;
       }
-      guard.claim("err", "data");
+      guard.claim("err", "data", "dict");
       setErr("");
       setData(d); // null stays a success, as it always did
       setSavedDict(dict);

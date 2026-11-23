@@ -66,7 +66,6 @@ export function useEngineRows() {
         edited.size ? answered.map((e) => (edited.has(e.key) ? (cur?.find((c) => c.key === e.key) ?? e) : e)) : answered,
       );
       setComfyLan(d?.comfy_lan ?? null);
-      saveEngines({ rows: answered, isSuper: superAdmin, sources: offered });
     } catch {
       if (tk.land("err")) setErr(tr("admin.load_error"));
     }
@@ -74,6 +73,11 @@ export function useEngineRows() {
   useEffect(() => {
     load();
   }, [load]);
+  // The cache holds what is on screen, after the merge above and after an edit, so a pane
+  // mounted again never draws a row an edit has already replaced.
+  useEffect(() => {
+    if (rows) saveEngines({ rows, isSuper, sources });
+  }, [rows, isSuper, sources]);
 
   // For the edits: their error (or its clearing) is newer than any read in flight.
   const setEditErr = useCallback(
