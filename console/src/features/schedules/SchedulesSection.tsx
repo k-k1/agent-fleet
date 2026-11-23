@@ -171,8 +171,8 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
         <div className="sched-info">
           <div className="sched-name" title={scheduleTitle(s)}>
             {scheduleTitle(s)}
-            {s.approval_pending && <span className="sched-badge sched-badge-held">{tr("sched.held_tag")}</span>}
-            {paused && <span className="sched-badge">{tr("sched.paused_tag")}</span>}
+            {s.approval_pending && <span className="ui-badge ui-badge-warn sched-badge">{tr("sched.held_tag")}</span>}
+            {paused && <span className="ui-badge sched-badge">{tr("sched.paused_tag")}</span>}
           </div>
           <div className="sched-sub">
             <code className="sched-spec">{specSummary(s)}</code>
