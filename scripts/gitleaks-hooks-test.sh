@@ -6,8 +6,9 @@
 # are copied in from this checkout. The credential-shaped values are built at run time so
 # this file itself never holds one: the pre-commit hook would refuse to commit it.
 #
-# Not wired into ci.yml (a change to the workflows is merged by a person, see #4906's
-# follow-up); run it by hand after touching the hooks: scripts/gitleaks-hooks-test.sh
+# ci.yml's `secret-scan` job runs it ("hook controls") and fails unless the last line is
+# "ok", because a missing gitleaks makes it print SKIP and exit 0. Run it by hand after
+# touching the hooks: scripts/gitleaks-hooks-test.sh
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
