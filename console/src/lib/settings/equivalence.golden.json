@@ -711,7 +711,8 @@
   "workingSets",
   "workingSetActive",
   "launchTemplates",
-  "launchHistory"
+  "launchHistory",
+  "railViewsOff"
  ],
  "defaults": {
   "termFont": "Source Code Pro",
@@ -952,7 +953,8 @@
   "workingSets": [],
   "workingSetActive": "",
   "launchTemplates": {},
-  "launchHistory": {}
+  "launchHistory": {},
+  "railViewsOff": []
  },
  "defaultSetting": {
   "termFont": "Source Code Pro",
@@ -1193,7 +1195,8 @@
   "workingSets": [],
   "workingSetActive": "",
   "launchTemplates": {},
-  "launchHistory": {}
+  "launchHistory": {},
+  "railViewsOff": []
  },
  "loadedFromNothing": {
   "gets": [],
@@ -1794,6 +1797,10 @@
   "launchHistory": {
    "deviceLocal": false,
    "accumulated": true
+  },
+  "railViewsOff": {
+   "deviceLocal": false,
+   "accumulated": false
   }
  },
  "load.valid": {
@@ -2110,7 +2117,10 @@
       "a"
      ]
     }
-   }
+   },
+   "railViewsOff": [
+    "x"
+   ]
   },
   "absent": []
  },
@@ -2677,7 +2687,10 @@
        "a"
       ]
      }
-    }
+    },
+    "railViewsOff": [
+     "x"
+    ]
    },
    "absent": []
   },
@@ -2989,7 +3002,10 @@
        "a"
       ]
      }
-    }
+    },
+    "railViewsOff": [
+     "x"
+    ]
    },
    "absent": []
   },
@@ -3579,7 +3595,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "termFont": "",
@@ -3903,7 +3920,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "termFont": "",
@@ -4227,7 +4245,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "termFont": "Source Code Pro-x",
@@ -4520,7 +4539,10 @@
          "a"
         ]
        }
-      }
+      },
+      "railViewsOff": [
+       "x"
+      ]
      },
      "absent": [
       "theme",
@@ -4862,7 +4884,10 @@
        "a"
       ]
      }
-    }
+    },
+    "railViewsOff": [
+     "x"
+    ]
    },
    "absent": []
   },
@@ -5117,7 +5142,10 @@
        "a"
       ]
      }
-    }
+    },
+    "railViewsOff": [
+     "x"
+    ]
    },
    "absent": []
   },
@@ -5254,7 +5282,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "termFont": "",
@@ -5757,7 +5786,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "claudeCustomModels": [
@@ -6196,7 +6226,10 @@
      "x"
     ],
     "workItemBranchTemplate": "x",
-    "workingSetActive": "x"
+    "workingSetActive": "x",
+    "railViewsOff": [
+     "x"
+    ]
    },
    "absent": []
   },
@@ -6334,7 +6367,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "termFont": "",
@@ -6814,7 +6848,10 @@
      "x"
     ],
     "workItemBranchTemplate": "x",
-    "workingSetActive": "x"
+    "workingSetActive": "x",
+    "railViewsOff": [
+     "x"
+    ]
    },
    "absent": []
   },
@@ -6952,7 +6989,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "termFont": "",
@@ -7455,7 +7493,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "claudeCustomModels": [
@@ -7985,7 +8024,10 @@
        "a"
       ]
      }
-    }
+    },
+    "railViewsOff": [
+     "x"
+    ]
    },
    "absent": []
   },
@@ -8240,7 +8282,10 @@
        "a"
       ]
      }
-    }
+    },
+    "railViewsOff": [
+     "x"
+    ]
    },
    "absent": []
   },
@@ -8377,7 +8422,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "termFont": "",
@@ -8880,7 +8926,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "claudeCustomModels": [
@@ -9220,7 +9267,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "termFont": "Source Code Pro-x",
@@ -9449,7 +9497,10 @@
          "a"
         ]
        }
-      }
+      },
+      "railViewsOff": [
+       "x"
+      ]
      },
      "absent": [
       "theme",
@@ -9728,7 +9779,10 @@
        "a"
       ]
      }
-    }
+    },
+    "railViewsOff": [
+     "x"
+    ]
    },
    "absent": []
   },
@@ -9875,7 +9929,8 @@
   "workingSets": 1,
   "workingSetActive": 1,
   "launchTemplates": 1,
-  "launchHistory": 1
+  "launchHistory": 1,
+  "railViewsOff": 1
  },
  "localChange.coalesced": {
   "mid": 0,
@@ -10010,7 +10065,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "tabSize": 2,
@@ -10220,7 +10276,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "chatSize": 18,
@@ -10414,7 +10471,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "iconSet": "seti"
@@ -10567,7 +10625,8 @@
       "workItemRepoMap",
       "workingSets",
       "launchTemplates",
-      "launchHistory"
+      "launchHistory",
+      "railViewsOff"
      ],
      "set": {
       "tabSize": 8,
@@ -10749,6 +10808,7 @@
       "workingSets",
       "launchTemplates",
       "launchHistory",
+      "railViewsOff",
       "zzServerUnknown"
      ],
      "set": {
@@ -11024,6 +11084,7 @@
     "workingSetActive",
     "launchTemplates",
     "launchHistory",
+    "railViewsOff",
     "zzServerUnknown"
    ],
    "set": {
@@ -11272,6 +11333,7 @@
       "workingSets",
       "launchTemplates",
       "launchHistory",
+      "railViewsOff",
       "zzServerUnknown"
      ],
      "set": {
@@ -11547,6 +11609,7 @@
     "workingSetActive",
     "launchTemplates",
     "launchHistory",
+    "railViewsOff",
     "zzServerUnknown"
    ],
    "set": {
@@ -11888,6 +11951,7 @@
      "workingSetActive",
      "launchTemplates",
      "launchHistory",
+     "railViewsOff",
      "assistantUtilityModels",
      "zzLocalUnknown"
     ],
@@ -12159,7 +12223,8 @@
      "workingSets",
      "workingSetActive",
      "launchTemplates",
-     "launchHistory"
+     "launchHistory",
+     "railViewsOff"
     ]
    },
    "storedOwner": "t|u"
@@ -12294,7 +12359,8 @@
        "workItemRepoMap",
        "workingSets",
        "launchTemplates",
-       "launchHistory"
+       "launchHistory",
+       "railViewsOff"
       ],
       "set": {
        "tabSize": 2,
@@ -12734,7 +12800,8 @@
     "workingSets",
     "workingSetActive",
     "launchTemplates",
-    "launchHistory"
+    "launchHistory",
+    "railViewsOff"
    ]
   },
   "storedOwner": "t|a"
@@ -12893,7 +12960,8 @@
        "workItemRepoMap",
        "workingSets",
        "launchTemplates",
-       "launchHistory"
+       "launchHistory",
+       "railViewsOff"
       ],
       "set": {},
       "absent": [

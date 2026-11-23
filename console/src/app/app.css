@@ -137,6 +137,39 @@
   padding: 0;
   background: var(--err);
 }
+/* The one dot for views whose icon is off but that wait on the member (ADR 0142): the same
+   amber as a waiting count, without a number, on a button that opens the bar's menu. */
+.actbar-hidden > .actbar-badge.tone-waiting {
+  top: 7px;
+  right: 8px;
+  min-width: 8px;
+  width: 8px;
+  height: 8px;
+  padding: 0;
+}
+/* The bar's context menu: the reason a row cannot be switched, and what waits in a view whose
+   icon is off, sit at the row's end. */
+.actbar-menu-item {
+  min-width: 220px;
+}
+.actbar-menu-name {
+  flex: 1;
+}
+.actbar-menu-reason {
+  font-size: 11px;
+  color: var(--muted);
+}
+.actbar-menu-waiting {
+  font-size: 11px;
+  color: var(--warn);
+}
+.actbar-menu .actbar-menu-item[aria-disabled="true"] {
+  opacity: 1;
+}
+.actbar-menu .actbar-menu-item[aria-disabled="true"] .codicon,
+.actbar-menu .actbar-menu-item[aria-disabled="true"] .actbar-menu-name {
+  opacity: 0.45;
+}
 .actbar-rule {
   flex: none;
   height: 1px;
