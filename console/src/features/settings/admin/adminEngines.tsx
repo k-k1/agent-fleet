@@ -56,7 +56,7 @@ import { useInterval } from "../../../lib/useInterval.ts";
 
 export function EnginesAdminView() {
   const tr = useT();
-  const { rows, isSuper, sources, comfyLan, err, setErr, setRows, load, guard } = useEngineRows();
+  const { rows, isSuper, sources, comfyLan, err, setErr, load, patchRow } = useEngineRows();
   const [busy, setBusy] = useState("");
   /** What the last class change did to the windows, so an automatic edit is never a silent one.
    *  Null until a rung is picked, and cleared by the next pick. */
@@ -83,9 +83,9 @@ export function EnginesAdminView() {
   // Poll only while something is actually moving. An engine parked at "off", or stopped under
   // on-demand with nobody asking, is a settled state, and a GPU panel that polls forever is a
   // request per five seconds for a screen nobody is watching.
-  // An edit below claims its row's lane when its answer arrives (and setErr claims "err"), so a
-  // poll read begun before that cannot put the row back the way it was, while the other rows
-  // in the same answer still land.
+  // An edit below lands its answer through patchRow, which claims that row's lane (and setErr
+  // claims "err"), so a poll read begun before that cannot put the row back the way it was,
+  // while the other rows in the same answer still land.
   const moving = !!rows?.some(
     (e) =>
       e.state === "starting" ||
@@ -103,8 +103,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
-      guard.claim("row:" + key);
-      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+      patchRow(key, d);
     } finally {
       setBusy("");
     }
@@ -122,8 +121,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
-      guard.claim("row:" + key);
-      setRows((cur) => (cur || []).map((x) => (x.key === key ? { ...x, ...d } : x)));
+      patchRow(key, d);
     } finally {
       setBusy("");
     }
@@ -216,8 +214,7 @@ export function EnginesAdminView() {
       }
       setErr("");
       const moved = { ...((rows || []).find((e) => e.key === key) || ({} as EngineRow)), ...d } as EngineRow;
-      guard.claim("row:" + key);
-      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+      patchRow(key, d);
       await refitToClass(key, moved);
     } finally {
       setBusy("");
@@ -239,8 +236,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
-      guard.claim("row:" + key);
-      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+      patchRow(key, d);
     } finally {
       setBusy("");
     }
@@ -261,8 +257,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
-      guard.claim("row:" + key);
-      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+      patchRow(key, d);
     } finally {
       setBusy("");
     }
@@ -277,8 +272,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
-      guard.claim("row:" + key);
-      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+      patchRow(key, d);
     } finally {
       setBusy("");
     }

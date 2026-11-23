@@ -62,10 +62,13 @@ export function useEngineRows() {
       const offered = catalogSources(d?.catalog_sources);
       setIsSuper(superAdmin);
       setSources(offered);
-      setRows((cur) =>
-        edited.size ? answered.map((e) => (edited.has(e.key) ? (cur?.find((c) => c.key === e.key) ?? e) : e)) : answered,
-      );
+      const keepEdited = (held: EngineRow[] | null | undefined) =>
+        edited.size ? answered.map((e) => (edited.has(e.key) ? (held?.find((c) => c.key === e.key) ?? e) : e)) : answered;
+      setRows((cur) => keepEdited(cur));
       setComfyLan(d?.comfy_lan ?? null);
+      // The cache is shared with the other screens that hold their own rows, so an edited row
+      // keeps the cache's copy, which patchRow already updated.
+      saveEngines({ rows: keepEdited(loadEngines()?.rows), isSuper: superAdmin, sources: offered });
     } catch {
       if (tk.land("err")) setErr(tr("admin.load_error"));
     }
@@ -73,11 +76,18 @@ export function useEngineRows() {
   useEffect(() => {
     load();
   }, [load]);
-  // The cache holds what is on screen, after the merge above and after an edit, so a pane
-  // mounted again never draws a row an edit has already replaced.
-  useEffect(() => {
-    if (rows) saveEngines({ rows, isSuper, sources });
-  }, [rows, isSuper, sources]);
+  /** Land an edit's answer for one row: newer than any read in flight for that row, and patched
+   *  into the shared cache for that key alone. Writing this screen's whole list there would put
+   *  back rows another screen has read since. */
+  const patchRow = useCallback(
+    (key: string, d: Partial<EngineRow>) => {
+      guard.claim("row:" + key);
+      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+      const cached = loadEngines();
+      if (cached) saveEngines({ ...cached, rows: cached.rows.map((e) => (e.key === key ? { ...e, ...d } : e)) });
+    },
+    [guard],
+  );
 
   // For the edits: their error (or its clearing) is newer than any read in flight.
   const setEditErr = useCallback(
@@ -88,5 +98,5 @@ export function useEngineRows() {
     [guard],
   );
 
-  return { rows, isSuper, sources, comfyLan, err, setErr: setEditErr, setRows, load, guard };
+  return { rows, isSuper, sources, comfyLan, err, setErr: setEditErr, load, patchRow };
 }

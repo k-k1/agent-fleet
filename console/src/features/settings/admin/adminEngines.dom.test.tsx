@@ -267,6 +267,31 @@ describe("EnginesAdminView", () => {
       expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
     });
 
+    it("an edit on one screen patches only its own row in the cache another screen has refreshed", async () => {
+      const a = row({ key: "image", mode: "ondemand", state: "running" });
+      const b = row({ key: "llm", api: "chat", provider: "vllm", models: ["m"], state: "stopped" });
+      api.mockResolvedValue({ super_admin: true, engines: [a, b] });
+      apiJSON.mockResolvedValue({ ...a, mode: "on" });
+      await mount();
+      const first = host!;
+      const firstRoot = root!;
+      await mount(); // a second screen with its own rows, sharing the cache
+      const second = host!;
+      api.mockResolvedValue({ super_admin: true, engines: [a, { ...b, state: "starting", desired: 1 }] });
+      const refresh = second.querySelector("section.admin-panel button.ghost[title='更新']") as HTMLButtonElement;
+      await click(refresh); // the second screen reads b starting
+      const firstPanel = first.querySelectorAll("section.admin-panel")[0] as HTMLElement;
+      await click(segIn(firstPanel, "常時稼働")); // the first screen, still holding b stopped, edits a
+      act(() => root?.unmount());
+      second.remove();
+      act(() => firstRoot.unmount());
+      first.remove();
+      api.mockImplementation(held);
+      await mount(); // its first read is held: what it draws is the cache
+      expect(segIn(panel(0), "常時稼働").className).toContain("active");
+      expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
+    });
+
     it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {
       api.mockResolvedValueOnce({ super_admin: true, engines: [row({ state: "starting", desired: 1 })] }).mockImplementation(held);
       apiJSON.mockResolvedValueOnce({ error: { code: "boom", message: "edit refused" } });
