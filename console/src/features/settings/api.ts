@@ -17,6 +17,17 @@ export function isOk<T>(r: Reply<T> | null | undefined): r is T {
   return !!r && !(r as { error?: unknown }).error;
 }
 
+/** An error reply that settles the question rather than reporting a fault: the subject is gone
+ *  (404) or the caller may no longer see it (403). A 5xx, a dropped connection or any other
+ *  error says nothing about the subject, so an older good answer may still stand after it.
+ *  `http_<status>` is the code api() synthesizes for a body that is not JSON. */
+export function isDefinitiveRefusal(r: unknown): boolean {
+  const err = (r as { error?: { code?: string; status?: number } } | null | undefined)?.error;
+  if (!err || typeof err !== "object") return false;
+  if (err.status === 404 || err.status === 403) return true;
+  return err.code === "http_404" || err.code === "http_403";
+}
+
 // --- CP-owned workspace settings: GET/PUT /api/env/ws-settings -----------------------------
 // control-plane/ws_settings.go assembles these as map[string]any (get / put / reissuePreview),
 // so the optionality below is what each handler actually emits. The core trio is always
