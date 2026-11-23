@@ -12,6 +12,8 @@ import { useWorkItemStore } from "../workitems/store.ts";
 import { findWorkItem, memoReference } from "./reference.ts";
 import { afterEntryOf, memoStateWords, searchAfterEntries, type AfterEntry } from "./queues.ts";
 
+const NO_NOTE = "";
+
 /** How many matches the list shows; the rest is reached by typing more. */
 export const AFTER_RESULT_LIMIT = 8;
 
@@ -47,11 +49,11 @@ const flatten = (e: AfterEntry): string => e.text.replace(/\s+/g, " ").trim();
 const clip = (t: string): string => (t.length > 80 ? t.slice(0, 80) + "…" : t);
 
 /** What tells apart notes that read the same: their text from where they first differ (the start of
- *  a template is shared), and, for any that still read the same, a running number. Index-aligned with
- *  `group`, which is in the category's order, so a note keeps its number whether or not it is chosen.
- *  Notes whose excerpts collide are told apart again among themselves, so a short note that differs
- *  early does not hide where two long ones differ; the last check is over the final words of the
- *  whole group, because separate branches can come out the same. */
+ *  a template is shared). Index-aligned with `group`. Notes whose excerpts collide are told apart
+ *  again among themselves, so a short note that differs early does not hide where two long ones
+ *  differ. Two notes can still end up with the same words (separate branches, or the same text), so
+ *  the picker also numbers every note of such a group, in a part of its own: a number can never be
+ *  mistaken for text of a note. */
 function excerptsOf(group: AfterEntry[]): string[] {
   const texts = group.map(flatten);
   const excerpt = new Map<string, string>();
@@ -72,16 +74,7 @@ function excerptsOf(group: AfterEntry[]): string[] {
     }
   };
   refine([...new Set(texts)]);
-  const words = texts.map((t) => excerpt.get(t) ?? "");
-  const total = new Map<string, number>();
-  for (const w of words) total.set(w, (total.get(w) ?? 0) + 1);
-  const seen = new Map<string, number>();
-  return words.map((w) => {
-    if (total.get(w)! < 2) return w;
-    const n = (seen.get(w) ?? 0) + 1;
-    seen.set(w, n);
-    return "#" + n + (w ? " " + w : "");
-  });
+  return texts.map((t) => excerpt.get(t) ?? "");
 }
 
 interface Shown {
@@ -89,13 +82,15 @@ interface Shown {
   meta: string;
   /** Only set when another note of the picker reads the same without it. */
   excerpt: string;
+  /** Its place among the notes that read the same, in the category's order; 0 when it reads alone. */
+  num: number;
   /** The whole name for a screen reader: everything the eye gets. */
   name: string;
 }
 
 function EntryName({ shown }: { shown: Shown }) {
   const tr = useT();
-  const { entry, meta, excerpt } = shown;
+  const { entry, meta, excerpt, num } = shown;
   return (
     <>
       <span className="memo-after-name">
@@ -108,7 +103,13 @@ function EntryName({ shown }: { shown: Shown }) {
           {entry.why && <span className="memo-edit-after-why">{(meta ? " · " : "") + tr(entry.why)}</span>}
         </span>
       )}
-      {excerpt && <span className="memo-after-excerpt">{excerpt}</span>}
+      {(num > 0 || excerpt) && (
+        <span className="memo-after-excerpt">
+          {num > 0 && <span className="memo-after-num">{"#" + num}</span>}
+          {num > 0 && excerpt ? " " : ""}
+          {excerpt}
+        </span>
+      )}
     </>
   );
 }
@@ -137,7 +138,9 @@ export function MemoAfterPicker({
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
   // The note the keyboard points at, by its id: a poll that puts a new candidate above it must not
-  // move the pointer onto another note. null = the first of the list.
+  // move the pointer onto another note, the automatically pointed first one included. null = not
+  // fixed yet (the first of the list, fixed right after the draw); NO_NOTE = the pointed note left
+  // the list, and stays unpointed, even if it comes back, until the member points at one again.
   const [activeNote, setActiveNote] = useState<string | null>(null);
 
   const entryOf = (o: AfterOption): AfterEntry => {
@@ -162,23 +165,29 @@ export function MemoAfterPicker({
     reads.set(k, (reads.get(k) ?? 0) + 1);
   }
   const excerpts = new Map<string, string>();
+  const nums = new Map<string, number>();
   const groups = new Map<string, AfterEntry[]>();
   for (const e of entries) {
     const k = [e.key, e.title, metas.get(e.id)].join("\x00");
     if ((reads.get(k) ?? 0) > 1) groups.set(k, [...(groups.get(k) ?? []), e]);
   }
-  for (const g of groups.values()) excerptsOf(g).forEach((x, i) => excerpts.set(g[i].id, x));
+  for (const g of groups.values())
+    excerptsOf(g).forEach((x, i) => {
+      excerpts.set(g[i].id, x);
+      nums.set(g[i].id, i + 1);
+    });
   const shownOf = (e: AfterEntry): Shown => {
     const meta = metas.get(e.id) ?? "";
     const excerpt = excerpts.get(e.id) ?? "";
-    return { entry: e, meta, excerpt, name: [e.key, e.title, meta, excerpt].filter(Boolean).join(", ") };
+    const num = nums.get(e.id) ?? 0;
+    return { entry: e, meta, excerpt, num, name: [e.key, e.title, meta, num > 0 ? "#" + num : "", excerpt].filter(Boolean).join(", ") };
   };
   const chips = chosenEntries.map(shownOf);
   const shown = matches.map(shownOf);
 
   // -1 when the pointed note has left the list: nothing is active, and Enter adds nothing until the
   // member points at one again.
-  const cur = activeNote === null ? Math.min(0, shown.length - 1) : shown.findIndex((c) => c.entry.id === activeNote);
+  const cur = activeNote === null ? Math.min(0, shown.length - 1) : activeNote === NO_NOTE ? -1 : shown.findIndex((c) => c.entry.id === activeNote);
   const optId = (id: string) => baseId + "-o-" + id;
   const listOpen = open && shown.length > 0;
 
@@ -189,6 +198,13 @@ export function MemoAfterPicker({
     if (listOpen && cur >= 0) document.getElementById(optId(shown[cur].entry.id))?.scrollIntoView?.({ block: "nearest" });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only a change of the active note
   }, [activeId, listOpen, query]);
+
+  // Fixes the pointer on a note once it is shown, and drops it when its note has left.
+  useEffect(() => {
+    if (activeNote === null) {
+      if (listOpen) setActiveNote(shown[0].entry.id);
+    } else if (activeNote !== NO_NOTE && !shown.some((c) => c.entry.id === activeNote)) setActiveNote(NO_NOTE);
+  });
 
   // Always the category's order, whatever order they were added or removed in.
   const ordered = (keep: (id: string) => boolean) => options.map((o) => o.id).filter(keep);

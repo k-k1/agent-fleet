@@ -756,7 +756,7 @@ describe("choosing what a note waits for by search", () => {
     expect(opts()).toHaveLength(2);
     // Two different memos, and nothing in what is shown or read out says which is which but the number.
     expect(new Set(opts().map((o) => o.getAttribute("aria-label"))).size).toBe(2);
-    expect(opts().map(exOf).every((x) => /^#[12] /.test(x))).toBe(true);
+    expect(opts().map(exOf).every((x) => /^#[13] /.test(x))).toBe(true);
     // The number belongs to the memo: the same one is #1 (the earlier in the category) chosen or not.
     const first = opts().find((o) => exOf(o).startsWith("#1"))!;
     await click(first);
@@ -798,6 +798,77 @@ describe("choosing what a note waits for by search", () => {
     expect(opts()[0].getAttribute("aria-selected")).toBe("true");
     await pressKey("Enter");
     expect(titles(chips())).toEqual(["rotate the keys"]);
+  });
+
+  it("never lets a number be mistaken for text: a memo whose text reads like a generated number", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({ id: "a1", body: "retry imports", state: "pending", position: 0, reference: ref("acme/app#7") }),
+      aMemo({ id: "a2", body: "retry imports", state: "pending", position: 1, reference: ref("acme/app#7") }),
+      aMemo({ id: "a3", body: "#1 retry imports", state: "pending", position: 2, reference: ref("acme/app#7") }),
+      aMemo({ id: "me", body: "the edited one", state: "held", position: 3, createdAt: "2026-09-09T00:00:03Z" }),
+    ];
+    servedMemos.forEach((x) => (x.createdAt = x.id === "me" ? x.createdAt : "2026-09-09T00:00:01Z"));
+    cacheSeven();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    await typeSearch("retry imports");
+    const nums = opts().map((o) => o.querySelector(".memo-after-num")!.textContent);
+    // The newest first: a3, a2, a1; every one has a number of its own, in a part of its own.
+    expect(nums).toEqual(["#3", "#2", "#1"]);
+    expect(new Set(opts().map((o) => o.getAttribute("aria-label"))).size).toBe(3);
+    // The one numbered #1 is the earliest, whatever the text of another one says.
+    await click(opts()[2]);
+    expect(chips()[0].querySelector(".memo-after-num")!.textContent).toBe("#1");
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox", after: ["a1"] });
+  });
+
+  it("fixes the automatically pointed first memo too, so a poll above it does not change what Enter adds", async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    expect(opts()[0].getAttribute("aria-selected")).toBe("true"); // a3, pointed without a key press
+    servedMemos = [...servedMemos, aMemo({ id: "a4", body: "newer job", state: "pending", position: 2.5, createdAt: "2026-09-09T00:00:02Z" })];
+    await bump();
+    expect(titles(opts())[0]).toBe("newer job");
+    expect(titles(opts().filter((o) => o.getAttribute("aria-selected") === "true"))).toEqual(["rotate the keys"]);
+    await pressKey("Enter");
+    expect(titles(chips())).toEqual(["rotate the keys"]);
+  });
+
+  it("the same with a typed search: what was first stays the pointed one", async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    await typeSearch("the");
+    expect(titles(opts())[0]).toBe("rotate the keys");
+    servedMemos = [...servedMemos, aMemo({ id: "a4", body: "the newer job", state: "pending", position: 2.5, createdAt: "2026-09-09T00:00:02Z" })];
+    await bump();
+    expect(titles(opts())[0]).toBe("the newer job");
+    await pressKey("Enter");
+    expect(titles(chips())).toEqual(["rotate the keys"]);
+  });
+
+  it("does not point at a memo again that left the list and came back, until the member does", async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    await pressKey("ArrowDown"); // a2
+    const away = servedMemos;
+    servedMemos = servedMemos.map((x) => (x.id === "a2" ? { ...x, category: "elsewhere" } : x));
+    await bump();
+    expect(opts().some((o) => o.getAttribute("aria-selected") === "true")).toBe(false);
+    servedMemos = away;
+    await bump();
+    expect(titles(opts())).toContain("Importer docs");
+    expect(opts().some((o) => o.getAttribute("aria-selected") === "true")).toBe(false);
+    await pressKey("Enter");
+    expect(chips()).toHaveLength(0);
   });
 
   it("moves the focus on when a chip is removed from the keyboard", async () => {
