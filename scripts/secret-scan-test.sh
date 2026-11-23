@@ -153,18 +153,37 @@ if ! jq -e --arg c "$named" 'length == 1 and .[0].Commit == $c' "$work/caller.js
   FAILED=1
 fi
 
-# A report that would put the path in the log (stdout) or that the finding lines cannot be
-# read from (a non-JSON format) is refused before anything is scanned, whatever the form.
-for refused in "--report-path -" "-r -" "--report-path=-" "--report-format sarif" "--report-format=csv" "-f junit"; do
+# Only `--report-format json`, `--report-path FILE` and `--verbose` are accepted. Every other
+# spelling, including the ones gitleaks' flag parser accepts for "report to stdout" and
+# "another format" (`-r-`, `-f=csv`, `--report-template`), is refused before anything is
+# scanned, with a fixed message that does not repeat the value (a rejected path may hold one).
+for refused in "--report-path -" "-r -" "-r-" "-r=-" "--report-path=-" "--report-format sarif" \
+  "--report-format=csv" "-f junit" "-f=csv" "-fcsv" "--report-template x.tmpl" "--no-banner"; do
   rc=0
   # shellcheck disable=SC2086 # the words are split on purpose
   "$HERE/secret-scan.sh" pr $refused >"$out" 2>&1 || rc=$?
   if [ "$rc" != 2 ] || grep -q -e "$key" -e ".env" "$out"; then
-    echo "FAIL: '$refused' must be refused with exit 2 and an empty log of findings (exit=$rc)"
+    echo "FAIL: '$refused' must be refused with exit 2 and no finding in the log (exit=$rc)"
     sed 's/^/    /' "$out"
     FAILED=1
   fi
 done
+rc=0
+"$HERE/secret-scan.sh" pr --report-format csv --report-path "$work/$key.csv" >"$out" 2>&1 || rc=$?
+if [ "$rc" != 2 ] || grep -q -e "$key" -e "AKIA" "$out"; then
+  echo "FAIL: a refused flag must not echo a path or value (exit=$rc)"
+  sed 's/^/    /' "$out"
+  FAILED=1
+fi
+# The accepted spellings still scan: they find the history's values (exit 42) and the report
+# lands where the caller said.
+for ok in "--report-format json" "--report-format=json" "--verbose"; do
+  # shellcheck disable=SC2086
+  expect "'$ok' must be accepted" 42 pr $ok
+done
+rm -f "$work/eq.json"
+expect "'--report-path=FILE' must be accepted" 42 pr --report-path="$work/eq.json"
+[ -s "$work/eq.json" ] || { echo "FAIL: --report-path=FILE must write the report"; FAILED=1; }
 
 # gitleaks exits 0 with no findings when its child `git log` fails. A shim that fails
 # `git log` stands in for an unreadable object; the wrapper must not report that as clean.
