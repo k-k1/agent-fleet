@@ -27,8 +27,10 @@
 // A textarea that offers a drag handle passes `respectResize`. The handle writes an inline height
 // that autoGrow did not write, which is how a member's own size is told from ours: while the inline
 // height differs from the last one written here, the member's size is kept (no keystroke snaps it
-// back) and the textarea scrolls past it (`data-resized`). Emptying it starts over, so the next
-// draft grows again. A touch browser has no handle, so its height is only ever ours.
+// back). Emptying it starts over, so the next draft grows again. A touch browser has no handle, so
+// its height is only ever ours. The box is border-box, so its borders are added to the content's
+// scrollHeight; the stylesheet gives it `overflow-y: auto`, which takes over past the CSS
+// max-height and straight after a drag to a smaller size.
 export function autoGrowTextarea(el: HTMLTextAreaElement | null, opts?: { respectResize?: boolean }): void {
   if (!el) return;
   const respect = !!opts?.respectResize;
@@ -37,7 +39,6 @@ export function autoGrowTextarea(el: HTMLTextAreaElement | null, opts?: { respec
     if (respect) {
       delete el.dataset.grown;
       delete el.dataset.resized;
-      delete el.dataset.capped;
     }
     return;
   }
@@ -47,7 +48,6 @@ export function autoGrowTextarea(el: HTMLTextAreaElement | null, opts?: { respec
       el.dataset.resized = "1";
       return;
     }
-    delete el.dataset.capped;
   }
   const row = el.parentElement;
   const frozen = row ? Math.ceil(row.getBoundingClientRect().height) : 0;
@@ -55,12 +55,9 @@ export function autoGrowTextarea(el: HTMLTextAreaElement | null, opts?: { respec
   if (row && frozen > 0) row.style.minHeight = frozen + "px";
   try {
     el.style.height = "auto";
-    el.style.height = el.scrollHeight + "px";
-    if (respect) {
-      el.dataset.grown = el.style.height;
-      // Held at the CSS max-height: the text scrolls inside from here on.
-      if (el.scrollHeight > el.clientHeight + 1) el.dataset.capped = "1";
-    }
+    // offsetHeight - clientHeight is the borders (a border-box height must include them).
+    el.style.height = el.scrollHeight + (respect ? el.offsetHeight - el.clientHeight : 0) + "px";
+    if (respect) el.dataset.grown = el.style.height;
   } finally {
     if (row && frozen > 0) row.style.minHeight = prevMin;
   }

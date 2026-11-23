@@ -53,7 +53,8 @@
   width: 100%;
   /* Vertical only: autoGrowTextarea keeps a height the member dragged to. */
   resize: vertical;
-  overflow-y: hidden;
+  /* Scrolls past the max-height and straight after a drag to a smaller size. */
+  overflow-y: auto;
   /* The rows height (2 rows, padding and border) is the floor a drag cannot go below. */
   min-height: calc(2lh + 12px);
   max-height: 50vh;
@@ -621,7 +622,8 @@
   width: 100%;
   /* Vertical only: autoGrowTextarea keeps a height the member dragged to. */
   resize: vertical;
-  overflow-y: hidden;
+  /* Scrolls past the max-height and straight after a drag to a smaller size. */
+  overflow-y: auto;
   /* The rows height (3 rows, padding and border) is the floor a drag cannot go below. */
   min-height: calc(3lh + 14px);
   max-height: 50vh;
@@ -633,12 +635,6 @@
   background: var(--bg);
   color: var(--fg);
   box-sizing: border-box;
-}
-.memo-add-text[data-resized],
-.memo-add-text[data-capped],
-.memo-edit-text[data-resized],
-.memo-edit-text[data-capped] {
-  overflow-y: auto;
 }
 .memo-edit-text:focus {
   outline: none;
@@ -1038,6 +1034,11 @@
 }
 .memo-after-key {
   font-weight: 600;
+}
+.memo-after-excerpt {
+  color: var(--muted);
+  font-size: 10.5px;
+  overflow-wrap: anywhere;
 }
 .memo-after-meta {
   color: var(--muted);

@@ -101,10 +101,12 @@ const groupKey = (repo: string, category: string) => repo + "\x00" + category;
 // Keep memo composition fields as compact as their content permits, while letting a
 // longer note grow without the user having to drag the resize handle first. Once the member drags
 // the handle their height is kept until the text is emptied or the editor closes (autoGrowTextarea).
-function useAutosizeTextarea(ref: RefObject<HTMLTextAreaElement | null>, value: string) {
+// `mounted` changes when the text area is mounted again with the same text (an editor opened on a long
+// note, a draft shown again), which would otherwise leave the new element at its rows height.
+function useAutosizeTextarea(ref: RefObject<HTMLTextAreaElement | null>, value: string, mounted: unknown = true) {
   useLayoutEffect(() => {
     autoGrowTextarea(ref.current, { respectResize: true });
-  }, [ref, value]);
+  }, [ref, value, mounted]);
 }
 
 // Group memos into repo → ordered categories. Category ORDER comes from the categories
@@ -271,7 +273,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const setOpen = setSectionOpen;
   const serRef = useRef("");
   const composerTextRef = useRef<HTMLTextAreaElement>(null);
-  useAutosizeTextarea(composerTextRef, newText);
 
   // While mounted this list is the one the activity bar's badge counts from (store.ts): the bar's
   // own feed stands down, so api/memos is read by one timer.
@@ -362,6 +363,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     return alive ? composeTarget : null;
   }, [composeTarget, blocks]);
   const targetKey = target ? groupKey(target.repo, target.category) : "";
+  useAutosizeTextarea(composerTextRef, newText, composerOpen + "\x00" + targetKey);
   const unsent = useMemo(() => memos.filter((m) => !m.sentAt), [memos]);
   const catNames = useMemo(() => [...new Set(cats.map((c) => c.name))], [cats]);
   const selectedIds = useMemo(() => memos.filter((m) => sel[m.id]).map((m) => m.id), [memos, sel]);
@@ -1799,6 +1801,7 @@ function MemoRow(props: MemoRowProps) {
   // The member asked to drop the note's reference; it is sent with the save, not before.
   const [clearRef, setClearRef] = useState(false);
   const [after, setAfter] = useState<string[]>(m.after ?? []);
+  const [afterBase, setAfterBase] = useState<string[]>(m.after ?? []);
   // The start time as the datetime-local input holds it, a wall time of the member's time zone, and
   // what it held when the edit began: a list refresh that brings a time set elsewhere must not read
   // as the member clearing it.
@@ -1809,23 +1812,40 @@ function MemoRow(props: MemoRowProps) {
   const [startBase, setStartBase] = useState(start);
   const [startBad, setStartBad] = useState(false);
   const ref = memoReference(m);
-  // The notes on offer, then any it already waits for that are no longer on offer (deleted, moved,
-  // replaced, or kept past the list's window): those stay visible as chips so they can be removed.
+  // The notes on offer, then every chosen one that is no longer on offer (deleted, moved, replaced,
+  // kept past the list's window, or gone while the editor was open): those stay visible as chips so
+  // they can be removed, and stay in the list so that no save can drop them. What was last seen of
+  // such a note names it when the Control Plane has nothing to say about it.
+  const seenRef = useRef(new Map<string, AfterOption>());
   const afterOptions: AfterOption[] | undefined =
-    props.afterChoices && [
-      ...props.afterChoices.map((c) => ({ ...c, memo: props.afterPool?.find((o) => o.id === c.id) })),
-      ...(m.after ?? [])
+    props.afterChoices &&
+    (() => {
+      const offered = props.afterChoices.map((c) => {
+        const o: AfterOption = { ...c, offered: true, memo: props.afterPool?.find((x) => x.id === c.id) };
+        seenRef.current.set(c.id, o);
+        return o;
+      });
+      const rest = [...new Set([...(m.after ?? []), ...after])]
         .filter((id) => !props.afterChoices!.some((c) => c.id === id))
-        .map((id) => {
+        .map((id): AfterOption => {
           const st = m.afterStatus?.find((a) => a.id === id);
-          return { id, label: st?.label || id, memo: props.afterPool?.find((o) => o.id === id), why: st ? afterItemWords(st) : undefined };
-        }),
-    ];
+          const seen = seenRef.current.get(id);
+          return {
+            id,
+            label: st?.label || seen?.label || id,
+            offered: false,
+            memo: props.afterPool?.find((x) => x.id === id) ?? seen?.memo,
+            why: st ? afterItemWords(st) : undefined,
+          };
+        });
+      return [...offered, ...rest];
+    })();
   // Sent only when it differs from what is stored, so a plain text edit never touches it.
-  const afterChanged = (): string[] | undefined => {
-    const was = m.after ?? [];
-    return after.length === was.length && after.every((id, i) => id === was[i]) ? undefined : after;
-  };
+  // The baseline is the choice when the edit began, so a refresh that brings another device's change
+  // is neither sent back as if it were ours nor reordered; the picker keeps the draft in the
+  // category's order, which is the order a changed choice is sent in.
+  const afterChanged = (): string[] | undefined =>
+    after.length === afterBase.length && after.every((id) => afterBase.includes(id)) ? undefined : after;
   // Sent only when the member changed the field, so an untouched one never re-sends a stored time
   // (which may have passed, and the Control Plane would then clear it) nor clears one set elsewhere.
   const save = () => {
@@ -1846,17 +1866,18 @@ function MemoRow(props: MemoRowProps) {
   const [recipeBase, setRecipeBase] = useState<RecipeDraft>(() => recipeDraftOf(m));
   const recipeApplies = props.isQueueCategory ? props.isQueueCategory(cat.trim()) : true;
   const taRef = useRef<HTMLTextAreaElement>(null);
-  useAutosizeTextarea(taRef, body);
+  useAutosizeTextarea(taRef, body, editing);
 
   useEffect(() => {
     if (editing) {
       setBody(m.body);
       setCat(currentCat);
       setClearRef(false);
-      setAfter(m.after ?? []);
       requestAnimationFrame(() => {
         const ta = taRef.current;
-        if (ta) {
+        // Not taken back from a field the member already moved on to inside the editor.
+        const elsewhere = document.activeElement;
+        if (ta && !(elsewhere && elsewhere !== ta && ta.closest(".memo-edit")?.contains(elsewhere))) {
           ta.focus();
           ta.setSelectionRange(ta.value.length, ta.value.length);
         }
@@ -1873,6 +1894,8 @@ function MemoRow(props: MemoRowProps) {
     setStart(startAfterInputValue(m.startAfter, zone));
     setStartBase(startAfterInputValue(m.startAfter, zone));
     setStartBad(false);
+    setAfter(m.after ?? []);
+    setAfterBase(m.after ?? []);
     setRecipe(recipeDraftOf(m));
     setRecipeBase(recipeDraftOf(m));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the start of an edit resets it
@@ -1946,7 +1969,7 @@ function MemoRow(props: MemoRowProps) {
                 <div className="memo-edit-hint">{tr("memo.after_edit_none")}</div>
               ) : (
                 <>
-                  <MemoAfterPicker options={afterOptions} value={after} onChange={setAfter} />
+                  <MemoAfterPicker options={afterOptions} value={after} onChange={setAfter} onEscape={props.onCancelEdit} />
                   <div className="memo-edit-hint">{tr("memo.after_edit_hint")}</div>
                 </>
               )}

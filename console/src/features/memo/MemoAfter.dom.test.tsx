@@ -93,8 +93,11 @@ const btn = (r: HTMLElement, label: string) => [...r.querySelectorAll<HTMLButton
 // The first click expands a row, the next one edits it; a row left expanded edits on one.
 const openEditor = async (text: string) => {
   for (let i = 0; i < 2 && !document.querySelector(".memo-row.editing"); i++) await click(rowOf(text).querySelector<HTMLElement>(".memo-body")!);
+  // The editor takes the focus for its text area on the next frame; let that pass.
+  await frame();
 };
 const editRow = () => document.querySelector<HTMLElement>(".memo-row.editing")!;
+const frame = () => act(async () => void (await new Promise((r) => requestAnimationFrame(() => r(null)))));
 
 // The prerequisite picker: chips for the chosen memos, a search field, a list of matches.
 const search = () => editRow().querySelector<HTMLInputElement>(".memo-after-search")!;
@@ -104,6 +107,7 @@ const titles = (els: HTMLElement[]) => els.map((e) => e.querySelector(".memo-aft
 const focusSearch = async () => {
   await act(async () => void search().focus());
   await settle();
+  expect(document.activeElement).toBe(search());
 };
 const typeSearch = async (v: string) => {
   await act(async () => {
@@ -119,6 +123,11 @@ const pressKey = async (key: string) => {
   return ev;
 };
 const removeChip = (i: number) => click(chips()[i].querySelector("button")!);
+const bump = async () => {
+  const { useMemoStore } = await import("./store.ts");
+  await act(async () => useMemoStore.getState().bump());
+  await settle();
+};
 const workItem = (key: string, title: string): WorkItem =>
   ({ id: key, queryId: "q", provider: "github", kind: "issue", key, title, state: "open", url: "", assignee: "", labels: [], labelColors: {}, repo: "", updatedAt: "", checks: { state: "", total: 0, failed: 0, pending: 0 }, mergeable: "" }) as WorkItem;
 
@@ -340,6 +349,21 @@ describe("a note that waits for other notes", () => {
   });
 });
 
+describe("the editor's text area", () => {
+  it("is sized to a long note as it opens, not left at its rows height until the next keystroke", async () => {
+    const spy = vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get").mockImplementation(() => 137);
+    try {
+      servedCats = [queueCat];
+      servedMemos = [aMemo({ id: "me", body: "line one\nline two\nline three\nline four\nline five", state: "held" })];
+      await renderSection();
+      await openEditor("line one");
+      expect(editRow().querySelector<HTMLTextAreaElement>(".memo-edit-text")!.style.height).toBe("137px");
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
 describe("choosing what a note waits for by search", () => {
   const ref = (key: string) => ({ provider: "github", key, url: "" });
   const seed = () => {
@@ -451,14 +475,160 @@ describe("choosing what a note waits for by search", () => {
     expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox", after: ["a1"] });
   });
 
-  it("a second Escape, with the list closed, still reaches the editor", async () => {
+  it("Escape closes the list first, and the next one cancels the edit", async () => {
     seed();
     await renderSection();
     await openEditor("the edited one");
     await focusSearch();
     await pressKey("Escape");
-    const second = await pressKey("Escape");
-    expect(second.defaultPrevented).toBe(false);
+    expect(opts()).toHaveLength(0);
+    expect(document.querySelector(".memo-row.editing")).not.toBeNull();
+    await pressKey("Escape");
+    expect(document.querySelector(".memo-row.editing")).toBeNull();
+    expect(memoUpdate).not.toHaveBeenCalled();
+  });
+
+  it("keeps the active option in view and wires the combobox only while the list is there", async () => {
+    seed();
+    const scrolled: (string | null)[] = [];
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      scrolled.push(this.getAttribute("aria-selected") === "true" ? this.id : null);
+    };
+    try {
+      await renderSection();
+      await openEditor("the edited one");
+      expect(search().getAttribute("aria-controls")).toBeNull();
+      await focusSearch();
+      const list = editRow().querySelector("[role=listbox]")!;
+      expect(search().getAttribute("aria-controls")).toBe(list.id);
+      // Only options inside the listbox.
+      expect([...list.children].every((c) => c.getAttribute("role") === "option")).toBe(true);
+      scrolled.length = 0;
+      await pressKey("ArrowUp"); // wraps to the last
+      expect(scrolled).toEqual([opts()[2].id]);
+      expect(search().getAttribute("aria-activedescendant")).toBe(opts()[2].id);
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
+  it("does not take the focus back from the search field when the editor's first frame comes later", async () => {
+    seed();
+    await renderSection();
+    // Open without waiting for the frame, and move on to the search field at once.
+    for (let i = 0; i < 2 && !document.querySelector(".memo-row.editing"); i++) await click(rowOf("the edited one").querySelector<HTMLElement>(".memo-body")!);
+    await act(async () => void search().focus());
+    await frame();
+    expect(document.activeElement).toBe(search());
+    expect(opts()).toHaveLength(3);
+  });
+
+  const chooseThenLose = async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    await click(opts()[2]); // a1, the oldest
+    expect(titles(chips())).toEqual(["Crash when saving"]);
+    // The poll brings a1 moved to another category: it is no longer a candidate.
+    servedMemos = servedMemos.map((x) => (x.id === "a1" ? { ...x, category: "elsewhere" } : x));
+    await bump();
+    expect(chips()).toHaveLength(1);
+  };
+
+  it("keeps a chosen memo that stops being a candidate while the editor is open, in the chips and in the save", async () => {
+    await chooseThenLose();
+    // Adding another keeps it; one no longer offered reads after the offered ones.
+    await focusSearch();
+    expect(titles(opts())).toEqual(["rotate the keys", "Importer docs"]);
+    await click(opts()[1]);
+    expect(chips()).toHaveLength(2);
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox", after: ["a2", "a1"] });
+  });
+
+  it("does not offer a memo that left again once its chip is removed, even with no reason given", async () => {
+    await chooseThenLose();
+    await removeChip(0);
+    await focusSearch();
+    expect(titles(opts())).toEqual(["rotate the keys", "Importer docs"]);
+    await click(btn(editRow(), t("memo.save")));
+    // Chosen at the start of the edit: none; none now.
+    expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox" });
+  });
+
+  it("sends a changed choice in the category's order, and nothing when the set is as it was", async () => {
+    seed();
+    servedMemos = servedMemos.map((x) => (x.id === "me" ? { ...x, after: ["a3", "a2", "a1"] } : x));
+    await renderSection();
+    await openEditor("the edited one");
+    // The chips read in the category's order, whatever order was stored.
+    expect(chips().map((c) => c.querySelector(".memo-after-title")!.textContent)).toEqual(["Crash when saving", "Importer docs", "rotate the keys"]);
+    // Taking one off and putting it back is no change: nothing is sent.
+    await removeChip(1);
+    await focusSearch();
+    await click(opts()[0]);
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox" });
+    // A real change is sent in the category's order.
+    await openEditor("the edited one");
+    await removeChip(1);
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox", after: ["a1", "a3"] });
+  });
+
+  it("does not send what another device changed meanwhile when only the text was edited", async () => {
+    seed();
+    await renderSection();
+    await openEditor("the edited one");
+    servedMemos = servedMemos.map((x) => (x.id === "me" ? { ...x, after: ["a1"] } : x));
+    await bump();
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one", category: "inbox" });
+  });
+
+  it("tells apart two memos of one issue that read the same, by the start of their text", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({ id: "a1", body: "first attempt: retry the import", state: "pending", position: 0, reference: ref("acme/app#7") }),
+      aMemo({ id: "a2", body: "second attempt: skip bad rows", state: "pending", position: 1, reference: ref("acme/app#7") }),
+      aMemo({ id: "me", body: "the edited one", state: "held", position: 2, createdAt: "2026-09-09T00:00:03Z" }),
+    ];
+    servedMemos[1].createdAt = servedMemos[0].createdAt;
+    useWorkItemStore.setState({
+      payload: { items: [workItem("acme/app#7", "Crash when saving")], queries: [], sessions: [], fetchedAt: "", running: false } as never,
+      loaded: true,
+    });
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    const names = opts().map((o) => o.textContent!);
+    expect(new Set(names).size).toBe(2);
+    expect(names[0]).toContain("second attempt: skip bad rows");
+    expect(names[1]).toContain("first attempt: retry the import");
+    expect(new Set(opts().map((o) => o.getAttribute("aria-label"))).size).toBe(2);
+    await click(opts()[0]);
+    await click(opts()[0]);
+    const labels = chips().map((c) => c.querySelector("button")!.getAttribute("aria-label"));
+    expect(new Set(labels).size).toBe(2);
+    expect(labels[0]).toContain("first attempt");
+  });
+
+  it("moves the focus on when a chip is removed from the keyboard", async () => {
+    seed();
+    servedMemos = servedMemos.map((x) => (x.id === "me" ? { ...x, after: ["a1", "a2"] } : x));
+    await renderSection();
+    await openEditor("the edited one");
+    const x = (i: number) => chips()[i].querySelector<HTMLButtonElement>(".memo-after-x")!;
+    await act(async () => void x(0).focus());
+    await click(x(0));
+    // The next chip's ×, then, when none is left, the search field.
+    expect(chips()).toHaveLength(1);
+    expect(document.activeElement).toBe(x(0));
+    await click(x(0));
+    expect(chips()).toHaveLength(0);
+    expect(document.activeElement).toBe(search());
   });
 });
 

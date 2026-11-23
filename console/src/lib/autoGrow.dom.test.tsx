@@ -121,6 +121,19 @@ describe("autoGrowTextarea", () => {
       expect(input.dataset.resized).toBeUndefined();
     });
 
+    it("sizes a border-box textarea to its content plus its borders, so a short text is not left scrolling", () => {
+      const { input } = composer();
+      input.value = "five\nlines\nof\nsome\ntext";
+      grown(input, 98);
+      Object.defineProperty(input, "offsetHeight", { configurable: true, get: () => 100 });
+      Object.defineProperty(input, "clientHeight", { configurable: true, get: () => 98 });
+      autoGrowTextarea(input, { respectResize: true });
+      expect(input.style.height).toBe("100px");
+      // The inputs that do not opt in are measured as before.
+      autoGrowTextarea(input);
+      expect(input.style.height).toBe("98px");
+    });
+
     it("leaves an input that does not opt in as it was (a height it did not write is overwritten)", () => {
       const { input } = composer();
       input.value = "a";
