@@ -125,17 +125,19 @@ func (k *Keys) authHeader(endpoint, subject string, now time.Time) (string, erro
 // IDNA refuses does not keep the others in punycode), a lower-case host, and no port when it is
 // the scheme's default. Every default push service is plain ASCII, where both serializations agree.
 func origin(u *url.URL) string {
-	host := strings.ToLower(u.Hostname())
+	host := u.Hostname()
 	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
+		host = "[" + strings.ToLower(host) + "]"
 	} else {
 		// A host written in Unicode is first mapped the way net/http maps it to connect (NFC and
-		// the rest of UTS #46), so aud names the origin the request actually reaches.
+		// the rest of UTS #46, before any lower-casing, whose result differs for some letters), so
+		// aud names the origin the request actually reaches.
 		if !isASCII(host) {
 			if a, err := idna.Lookup.ToASCII(host); err == nil {
 				host = a
 			}
 		}
+		host = strings.ToLower(host)
 		labels := strings.Split(host, ".")
 		for i, l := range labels {
 			if strings.HasPrefix(l, "xn--") {

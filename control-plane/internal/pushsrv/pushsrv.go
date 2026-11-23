@@ -81,7 +81,9 @@ type Service struct {
 	// (droppedNotes), a reader (droppedFull) or a send worker (droppedStale), and none of them may
 	// wait on a stalled log sink, which would stop later healthy deliveries behind it.
 	droppedNotes, droppedFull, droppedStale atomic.Int64
-	view                                    *viewing
+	// dropLogEvery is the ticker's period; 0 runs no ticker (tests call logDrops themselves).
+	dropLogEvery time.Duration
+	view         *viewing
 }
 
 // sendJob is one notification for one device, waiting for a send worker.
@@ -110,18 +112,20 @@ func (p *Service) start(workers, queueLen int) {
 			}
 		}()
 	}
-	go func() {
-		t := time.NewTicker(pushDropLogEvery)
-		defer t.Stop()
-		for {
-			select {
-			case <-t.C:
-				p.logDrops()
-			case <-p.quit:
-				return
+	if p.dropLogEvery > 0 {
+		go func() {
+			t := time.NewTicker(p.dropLogEvery)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					p.logDrops()
+				case <-p.quit:
+					return
+				}
 			}
-		}
-	}()
+		}()
+	}
 	for i := 0; i < workers; i++ {
 		go func() {
 			for {
@@ -172,7 +176,7 @@ func New(st *store.SQL) *Service {
 		}
 	}
 	p := &Service{store: st, sender: webpush.NewSender(keys, subject), pubKey: keys.PublicKey(),
-		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, view: newViewing()}
+		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, dropLogEvery: pushDropLogEvery, view: newViewing()}
 	p.start(pushMaxInFlight, pushQueueLen)
 	st.SetNotificationHook(p.onNotification)
 	log.Printf("web push enabled")

@@ -579,8 +579,7 @@ func TestFullSendQueueDrops(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		f.subscribe(t, "m1")
 	}
-	bw := blockedWriter{make(chan struct{})}
-	log.SetOutput(bw)
+	unstall := stallLog(t)
 	returned := make(chan struct{})
 	go func() {
 		f.svc.deliver(context.Background(), note("question"), &wg)
@@ -589,8 +588,6 @@ func TestFullSendQueueDrops(t *testing.T) {
 	select {
 	case <-returned:
 	case <-time.After(5 * time.Second):
-		close(bw.gate)
-		log.SetOutput(os.Stderr)
 		t.Fatal("a reader waited on log output while dropping")
 	}
 	if got := f.svc.droppedFull.Load(); got != 2 {
@@ -605,7 +602,7 @@ func TestFullSendQueueDrops(t *testing.T) {
 	again := note("question")
 	again.MembershipID = "m0"
 	f.deliver(again)
-	close(bw.gate)
+	unstall()
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
@@ -623,12 +620,27 @@ type blockedWriter struct{ gate chan struct{} }
 
 func (b blockedWriter) Write(p []byte) (int, error) { <-b.gate; return len(p), nil }
 
+// stallLog points the log at a sink that blocks every write until the returned func (or the
+// test's end, on every failure path) opens it once and puts stderr back.
+func stallLog(t *testing.T) (unstall func()) {
+	bw := blockedWriter{make(chan struct{})}
+	log.SetOutput(bw)
+	var once sync.Once
+	unstall = func() {
+		once.Do(func() {
+			close(bw.gate)
+			log.SetOutput(os.Stderr)
+		})
+	}
+	t.Cleanup(unstall)
+	return unstall
+}
+
 // A full notification queue drops the notification without waiting on anything, log output
 // included: it runs on the caller that inserted the notification.
 func TestFullNotificationQueueDrops(t *testing.T) {
 	p := &Service{notes: make(chan store.Notification)} // no reader takes from this one
-	bw := blockedWriter{make(chan struct{})}
-	log.SetOutput(bw)
+	unstall := stallLog(t)
 	returned := make(chan struct{})
 	go func() {
 		p.onNotification(note("question"))
@@ -640,7 +652,7 @@ func TestFullNotificationQueueDrops(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Error("onNotification blocked on a full queue")
 	}
-	close(bw.gate)
+	unstall()
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
@@ -659,10 +671,7 @@ func TestStaleQueuedSendIsDropped(t *testing.T) {
 	f.subscribe(t, "m1")
 	f.subscribe(t, "m1")
 	// A stalled log sink must not hold the worker that drops the stale message.
-	bw := blockedWriter{make(chan struct{})}
-	log.SetOutput(bw)
-	defer log.SetOutput(os.Stderr)
-	defer close(bw.gate)
+	stallLog(t)
 	var wg sync.WaitGroup
 	f.svc.deliver(context.Background(), note("question"), &wg)
 	waitArrival(t, arrived)
