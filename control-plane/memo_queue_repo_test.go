@@ -251,6 +251,13 @@ func TestMemoRepoSettingsRefusals(t *testing.T) {
 	if len(a.requested()) != 0 {
 		t.Errorf("switch off still asked the Agent")
 	}
+	// With the switch off a member without a workspace gets none made for them.
+	if rec := e.do("c", "GET", "/api/memo-queues/"+id+"/repo-settings", nil); rec.Code != http.StatusNotFound {
+		t.Errorf("switch off, no workspace: %d %s", rec.Code, rec.Body.String())
+	}
+	if _, ok, _ := e.st.GetWorkspaceByMembership(context.Background(), e.members["c"]); ok {
+		t.Errorf("switch off created a workspace")
+	}
 	e.mgr.memoRepoSettings = true
 
 	if rec, _ := e.repoSettings("nope"); rec.Code != http.StatusNotFound {
@@ -278,7 +285,9 @@ func TestMemoRepoSettingsRefusals(t *testing.T) {
 		part       string
 	}{
 		{"fetch failed", `{"error":{"code":"fetch_failed","message":"fatal: secret-host.invalid refused"}}`, 502, 502, "fetch_failed"},
-		{"too large", `{"error":{"code":"file_too_large","message":".agent-fleet/autorun.yaml is larger than 65536 bytes"}}`, 422, 422, "larger than"},
+		{"too large", `{"error":{"code":"file_too_large","message":"secret-host.invalid"}}`, 422, 422, "larger than"},
+		{"unknown code", `{"error":{"code":"Fatal: secret-host.invalid","message":"secret-host.invalid"}}`, 500, 502, "HTTP 500"},
+		{"empty answer", `{}`, 200, 502, "could not be read"},
 		{"no working copy", `{"error":{"code":"not_found","message":"no such repo: app"}}`, 404, 404, "no git working copy"},
 		{"old Agent", `404 page not found`, 404, 502, "404"},
 	} {
@@ -327,5 +336,95 @@ func TestMemoRepoFieldsCoverTheFileKeys(t *testing.T) {
 		if _, ok := wire[f.field]; !ok {
 			t.Errorf("%s maps to %q, which the settings do not have", f.key, f.field)
 		}
+	}
+}
+
+// Taking both the window and the threshold away is Console-only; switching one for the other is
+// an ordinary change, and the window's length and zone it clears are part of the difference.
+func TestMemoRepoSettingsFiringGate(t *testing.T) {
+	e, a := repoEnv(t, "")
+	thr := e.category("app", "thr")
+	win := e.category("app", "win")
+	for id, body := range map[string]map[string]any{
+		thr: {"instruction": "x", "openAfter": 3},
+		win: {"instruction": "x", "openCron": "0 9 * * *", "openMinutes": 60, "tz": "Asia/Tokyo"},
+	} {
+		if rec := e.do("a", "PUT", "/api/memo-queues/"+id, body); rec.Code != http.StatusOK {
+			t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	for _, c := range []struct {
+		name, id, file string
+	}{
+		{"threshold to always", thr, "  thr:\n    open_after: 0\n    batch: 2\n"},
+		{"window to always", win, "  win:\n    open_cron: ''\n    batch: 2\n"},
+	} {
+		a.file("version: 1\ncategories:\n" + c.file)
+		_, out := e.repoSettings(c.id)
+		if len(out.Errors) != 0 || len(out.Warnings) != 1 || out.Warnings[0].Line != 4 || !strings.Contains(out.Warnings[0].Reason, "Console only") {
+			t.Errorf("%s: errors %+v warnings %+v", c.name, out.Errors, out.Warnings)
+		}
+		if len(out.Diffs) != 1 || out.Diffs[0].Key != "batch" {
+			t.Errorf("%s: diffs %+v", c.name, out.Diffs)
+		}
+	}
+	for file, minutesLine := range map[string]int{
+		"  win:\n    open_cron: ''\n    open_after: 5\n": 4,
+		// What the Console itself sends for a threshold queue.
+		"  win:\n    open_cron: ''\n    open_minutes: 0\n    tz: ''\n    open_after: 5\n": 5,
+	} {
+		a.file("version: 1\ncategories:\n" + file)
+		_, out := e.repoSettings(win)
+		d := diffByKey(out.Diffs)
+		if len(out.Errors) != 0 || len(out.Warnings) != 0 || len(out.Diffs) != 4 ||
+			string(d["open_minutes"].Current) != "60" || string(d["open_minutes"].File) != "0" ||
+			string(d["tz"].Current) != `"Asia/Tokyo"` || string(d["tz"].File) != `""` || string(d["open_after"].File) != "5" ||
+			d["open_minutes"].Line != minutesLine {
+			t.Errorf("window to threshold %q: errors %+v warnings %+v diffs %+v", file, out.Errors, out.Warnings, out.Diffs)
+		}
+	}
+	a.file("version: 1\ncategories:\n  thr:\n    open_after: 0\n    open_cron: '0 8 * * *'\n    open_minutes: 30\n")
+	if _, out := e.repoSettings(thr); len(out.Errors) != 0 || len(out.Warnings) != 0 || len(out.Diffs) != 3 {
+		t.Errorf("threshold to window: %+v %+v %+v", out.Errors, out.Warnings, out.Diffs)
+	}
+}
+
+// A refusal lands on the key that causes it, also when the message names another field.
+func TestMemoRepoSettingsBlamesTheCause(t *testing.T) {
+	e, a := repoEnv(t, "")
+	id := e.category("app", "win")
+	if rec := e.do("a", "PUT", "/api/memo-queues/"+id, map[string]any{"instruction": "x", "openCron": "0 9 * * *", "openMinutes": 60}); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+	}
+	for _, c := range []struct {
+		entry string
+		line  int
+		key   string
+	}{
+		{"    agent_kind: nosuch\n", 4, "agent_kind"},
+		{"    route: nosuch\n", 4, "route"},
+		{"    batch: 2\n    route: nosuch\n", 5, "route"},
+		{"    batch: 2\n    open_after: 3\n", 5, "open_after"},
+	} {
+		a.file("version: 1\ncategories:\n  win:\n" + c.entry)
+		_, out := e.repoSettings(id)
+		if len(out.Errors) != 1 || out.Errors[0].Line != c.line || out.Errors[0].Key != c.key || len(out.Diffs) != 0 {
+			t.Errorf("%q: %+v", c.entry, out.Errors)
+		}
+	}
+}
+
+// The Agent's JSON may escape every byte of the largest file to six; that answer still reads.
+func TestMemoRepoSettingsLargestEscapedAnswer(t *testing.T) {
+	e, a := repoEnv(t, "")
+	id := e.category("app", "rounds")
+	content := "version: 1\ncategories:\n  rounds:\n    instruction: x\n#" + strings.Repeat("<", autorunfile.MaxBytes-100)
+	a.file(content)
+	if rec, out := e.repoSettings(id); rec.Code != http.StatusOK || !out.Entry {
+		t.Fatalf("%d %.200s", rec.Code, rec.Body.String())
+	}
+	a.answer(http.StatusOK, `{"path":".agent-fleet/autorun.yaml","branch":"main","commit":"c","found":true,"content":"`+strings.Repeat("x", memoRepoWireMax)+`"}`)
+	if rec, _ := e.repoSettings(id); rec.Code != http.StatusBadGateway {
+		t.Fatalf("oversized answer: %d", rec.Code)
 	}
 }

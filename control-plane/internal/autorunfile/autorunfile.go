@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"path"
 	"regexp"
 	"strconv"
@@ -168,7 +169,7 @@ func Parse(b []byte) File {
 	if root.Kind == yaml.DocumentNode && len(root.Content) == 1 {
 		root = deref(root.Content[0])
 	}
-	if root.Kind != yaml.MappingNode {
+	if !isMap(root) {
 		fail(root.Line, "", "the file must be a mapping with version and categories")
 		return f
 	}
@@ -176,25 +177,31 @@ func Parse(b []byte) File {
 	seen := map[string]bool{}
 	for i := 0; i+1 < len(root.Content); i += 2 {
 		k, v := root.Content[i], deref(root.Content[i+1])
-		if seen[k.Value] {
-			fail(k.Line, k.Value, "%s appears twice", k.Value)
+		key, msg := mapKey(k)
+		if msg != "" {
+			fail(k.Line, "", "%s", msg)
 			continue
 		}
-		seen[k.Value] = true
-		switch k.Value {
+		if seen[key] {
+			fail(k.Line, key, "%s appears twice", key)
+			continue
+		}
+		seen[key] = true
+		switch key {
 		case "version":
 			version = v
 		case "categories":
 			categories = v
 		default:
-			fail(k.Line, k.Value, "unknown key %q (this file knows version and categories)", k.Value)
+			fail(k.Line, key, "unknown key %q (this file knows version and categories)", key)
 		}
 	}
 	switch {
 	case version == nil:
 		fail(root.Line, "version", "version is missing (write version: %d)", Version)
 	case version.Kind != yaml.ScalarNode || version.Tag != "!!int" || version.Value != strconv.Itoa(Version):
-		fail(version.Line, "version", "version %s is not supported (this Control Plane reads version %d)", strconv.Quote(version.Value), Version)
+		// The value is not repeated: whatever was pasted there stays out of the answer.
+		fail(version.Line, "version", "this version is not supported (this Control Plane reads version %d)", Version)
 	}
 	if categories == nil {
 		fail(root.Line, "categories", "categories is missing")
@@ -203,42 +210,81 @@ func Parse(b []byte) File {
 	if categories.Kind == yaml.ScalarNode && categories.Tag == "!!null" {
 		return f
 	}
-	if categories.Kind != yaml.MappingNode {
+	if !isMap(categories) {
 		fail(categories.Line, "categories", "categories must map each category name to its settings")
 		return f
 	}
+	// An alias makes many categories share one settings node. Each node is read once and its
+	// result shared, so a small file of aliases cannot multiply the work or the findings.
+	parsed := map[*yaml.Node]*Entry{}
 	for i := 0; i+1 < len(categories.Content); i += 2 {
 		k, v := categories.Content[i], deref(categories.Content[i+1])
-		name := k.Value
-		if k.Kind != yaml.ScalarNode || strings.TrimSpace(name) == "" {
-			fail(k.Line, "", "a category name must be a non-empty string")
+		name, msg := mapKey(k)
+		if msg == "" && strings.TrimSpace(name) == "" {
+			msg = "a category name must not be empty"
+		}
+		if msg != "" {
+			fail(k.Line, "", "%s", msg)
 			continue
 		}
 		if _, dup := f.Categories[name]; dup {
 			fail(k.Line, "", "category %q appears twice", name)
 			continue
 		}
-		f.Categories[name] = parseEntry(name, k.Line, v)
+		shared, ok := parsed[v]
+		if !ok {
+			shared = parseEntry(v)
+			parsed[v] = shared
+		}
+		e := *shared
+		e.Name, e.Line = name, k.Line
+		f.Categories[name] = &e
 	}
 	return f
 }
 
-func parseEntry(name string, line int, v *yaml.Node) *Entry {
-	e := &Entry{Name: name, Line: line, Values: map[string]Value{}}
+// isMap accepts a plain mapping: a custom tag would give the mapping a meaning this parser
+// does not know.
+func isMap(n *yaml.Node) bool { return n.Kind == yaml.MappingNode && n.Tag == "!!map" }
+
+// mapKey reads a mapping key. msg is "" when it is a plain string key; it never repeats a key
+// that looks like a credential.
+func mapKey(k *yaml.Node) (string, string) {
+	k = deref(k)
+	switch {
+	case k.Kind != yaml.ScalarNode:
+		return "", "a key must be a plain string"
+	case k.Tag == "!!merge":
+		return "", "merge keys (<<) are not supported: write the settings out, or alias a whole entry"
+	case k.Tag != "!!str":
+		return "", "a key must be a string (quote it)"
+	case credentialRule(k.Value) != "":
+		return "", "a key looks like a credential: the file holds names only, never a secret"
+	}
+	return k.Value, ""
+}
+
+// parseEntry reads one category's settings node; the caller sets Name and Line.
+func parseEntry(v *yaml.Node) *Entry {
+	e := &Entry{Values: map[string]Value{}}
 	bad := func(line int, key, format string, args ...any) {
 		e.Errors = append(e.Errors, Issue{Line: line, Key: key, Reason: fmt.Sprintf(format, args...)})
 	}
 	if v.Kind == yaml.ScalarNode && v.Tag == "!!null" {
 		return e
 	}
-	if v.Kind != yaml.MappingNode {
-		bad(v.Line, "", "the settings of %q must be a mapping", name)
+	if !isMap(v) {
+		bad(v.Line, "", "a category's settings must be a mapping")
 		return e
 	}
 	seen := map[string]bool{}
 	for i := 0; i+1 < len(v.Content); i += 2 {
 		k, n := v.Content[i], deref(v.Content[i+1])
-		key := k.Value
+		key, msg := mapKey(k)
+		if msg != "" {
+			bad(k.Line, "", "%s", msg)
+			continue
+		}
 		if seen[key] {
 			bad(k.Line, key, "%s appears twice", key)
 			continue
@@ -308,8 +354,13 @@ func scalar(key string, typ Type, n *yaml.Node) (Value, string) {
 		if n.Tag != "!!int" && n.Tag != "!!float" {
 			return v, key + " must be a number"
 		}
-		if err := n.Decode(&v.Num); err != nil || v.Num != v.Num {
-			return v, key + " must be a number"
+		if err := n.Decode(&v.Num); err != nil || math.IsNaN(v.Num) || math.IsInf(v.Num, 0) {
+			return v, key + " must be a finite number"
+		}
+		// A value too small for a float reads as 0, which is "no cap": refuse it rather than
+		// turn an intended limit into none.
+		if v.Num == 0 && nonZeroMantissa(n.Value) {
+			return v, key + " is too small to be told from 0"
 		}
 	case Bool:
 		if n.Tag != "!!bool" || n.Decode(&v.Bool) != nil {
@@ -330,6 +381,15 @@ func checkRepoPath(p string) string {
 		return "instruction_file must be a clean path inside the repository (no .., no ./, no trailing /)"
 	}
 	return ""
+}
+
+// nonZeroMantissa says whether a YAML number's digits before its exponent hold anything but 0.
+func nonZeroMantissa(lit string) bool {
+	m := strings.ToLower(lit)
+	if i := strings.IndexByte(m, 'e'); i >= 0 && !strings.HasPrefix(m, "0x") {
+		m = m[:i]
+	}
+	return strings.ContainsAny(strings.TrimPrefix(m, "0x"), "123456789abcdef")
 }
 
 func deref(n *yaml.Node) *yaml.Node {

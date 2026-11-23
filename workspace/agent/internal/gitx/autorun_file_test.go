@@ -68,8 +68,56 @@ func TestAutorunFileReadsOnlyTheRemoteDefaultBranch(t *testing.T) {
 	if code != 200 {
 		t.Fatalf("status %d: %s", code, body)
 	}
-	if !f.Found || f.Content != "version: 1 # main v2\n" || f.Branch != "main" || f.Commit != want || f.Path != AutorunFilePath {
+	if !f.Found || f.Content != "version: 1 # main v2\n" || f.Branch != "main" || f.Commit != want || f.Path != AutorunFilePath ||
+		f.Remote != filepath.Join(home, "origin.git") {
 		t.Fatalf("got %+v, want main's v2 at %s", f, want)
+	}
+}
+
+// What the clone says after the fetch does not matter: a tracking ref repointed the moment the
+// fetch writes it, and a replace ref that swaps the file's blob, both leave the read on the
+// commit origin named and its genuine content.
+func TestAutorunFileIgnoresRefsTheCloneRewrites(t *testing.T) {
+	home, seed, dir := autorunClone(t, "version: 1 # old\n")
+	// main moves on origin, so the fetch writes origin/main and the hook runs.
+	writeFile(t, filepath.Join(seed, AutorunFilePath), "version: 1 # main\n")
+	gitAt(t, seed, "commit", "-am", "settings v2")
+	gitAt(t, seed, "push", filepath.Join(home, "origin.git"), "main")
+	want := strings.TrimSpace(gitAt(t, seed, "rev-parse", "main"))
+	other := strings.TrimSpace(gitAt(t, dir, "rev-parse", "origin/other"))
+	hook := filepath.Join(dir, ".git", "hooks", "reference-transaction")
+	writeFile(t, hook, "#!/bin/sh\n[ \"$1\" = committed ] || exit 0\n[ -n \"$AF_TEST_REPOINTED\" ] && exit 0\n"+
+		"grep -q refs/remotes/origin/main || exit 0\nAF_TEST_REPOINTED=1 git update-ref refs/remotes/origin/main "+other+"\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The replace ref is made ahead for the blob the new commit will bring.
+	blob := strings.TrimSpace(gitAt(t, seed, "rev-parse", want+":"+AutorunFilePath))
+	fake := strings.TrimSpace(gitAt(t, dir, "rev-parse", "origin/other:"+AutorunFilePath))
+	gitAt(t, dir, "update-ref", "refs/replace/"+blob, fake)
+
+	code, f, body := getAutorunFile(t)
+	if code != 200 {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	if got := strings.TrimSpace(gitAt(t, dir, "rev-parse", "origin/main")); got != other {
+		t.Fatalf("the hook did not repoint origin/main (%s): the test proves nothing", got)
+	}
+	if f.Commit != want || f.Content != "version: 1 # main\n" {
+		t.Fatalf("got %+v, want origin's %s with its own content", f, want)
+	}
+}
+
+func TestRedactRemote(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://user:tok@github.invalid/o/r.git": "https://github.invalid/o/r.git",
+		"https://github.invalid/o/r.git":          "https://github.invalid/o/r.git",
+		"git@github.invalid:o/r.git":              "git@github.invalid:o/r.git",
+		"/srv/git/r.git":                          "/srv/git/r.git",
+	} {
+		if got := redactRemote(in); got != want {
+			t.Errorf("%s: got %s", in, got)
+		}
 	}
 }
 
@@ -111,7 +159,7 @@ func TestAutorunFileRefusesASymlinkAndAnOversizedFile(t *testing.T) {
 func TestAutorunFileWithoutOrigin(t *testing.T) {
 	_, _, dir := autorunClone(t, "version: 1\n")
 	gitAt(t, dir, "remote", "remove", "origin")
-	if code, _, body := getAutorunFile(t); code != 502 || !strings.Contains(body, "no_default_branch") {
+	if code, _, body := getAutorunFile(t); code != 502 || !strings.Contains(body, "no_default_branch") || strings.Contains(body, "fatal") {
 		t.Fatalf("status %d: %s", code, body)
 	}
 }

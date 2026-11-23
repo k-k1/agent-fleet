@@ -686,7 +686,7 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/memo-queues/{categoryId}/fire", memo.withResolved(memo.fire))
 	// How the repository's settings file differs from the member's settings (#4881). Read only;
 	// 404 unless AF_MEMO_QUEUE_REPO_SETTINGS is on.
-	mux.HandleFunc("GET /api/memo-queues/{categoryId}/repo-settings", memo.withResolved(memo.repoSettings))
+	mux.HandleFunc("GET /api/memo-queues/{categoryId}/repo-settings", memo.repoSettingsRoute())
 	mux.HandleFunc("GET /api/memo-queues/{categoryId}/deliveries", memo.withMembership(memo.listDeliveries(console)))
 	// End an open run from the history: close it as "ended" and retire its session. Console only.
 	mux.HandleFunc("POST /api/memo-queues/{categoryId}/deliveries/{id}/end", memo.withMembership(memo.endDelivery))

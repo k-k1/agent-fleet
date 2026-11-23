@@ -3,9 +3,13 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,8 +54,10 @@ type memoRepoSettingsWire struct {
 	Repo       string `json:"repo"`
 	Category   string `json:"category"`
 	Path       string `json:"path"`
-	Branch     string `json:"branch"`
-	Commit     string `json:"commit"`
+	// Remote is origin's URL as the workspace's clone names it, credentials removed.
+	Remote string `json:"remote"`
+	Branch string `json:"branch"`
+	Commit string `json:"commit"`
 	// Found is whether the default branch holds the file, Entry whether it names this category.
 	Found bool `json:"found"`
 	Entry bool `json:"entry"`
@@ -67,6 +73,7 @@ type memoRepoSettingsWire struct {
 // (workspace/agent/internal/gitx/autorun_file.go).
 type agentAutorunFile struct {
 	Path    string `json:"path"`
+	Remote  string `json:"remote"`
 	Branch  string `json:"branch"`
 	Commit  string `json:"commit"`
 	Found   bool   `json:"found"`
@@ -83,6 +90,14 @@ type memoRepoField struct {
 }
 
 func intPtr(n int) *int { return &n }
+
+var memoRepoFieldByKey = func() map[string]memoRepoField {
+	m := make(map[string]memoRepoField, len(memoRepoFields))
+	for _, f := range memoRepoFields {
+		m[f.key] = f
+	}
+	return m
+}()
 
 // memoRepoFields covers every autorunfile.Keys entry except instruction_file, which is not read
 // yet (TestMemoRepoFieldsCoverTheFileKeys).
@@ -180,10 +195,17 @@ func memoQueueInFrom(q store.MemoQueue) memoQueueIn {
 		Tidy: q.Tidy, TidyDestinations: q.TidyDestinations}
 }
 
+// memoRepoOpenKeys are the settings that together decide when a queue fires by itself: a window
+// (open_cron, open_minutes, tz) or a threshold (open_after). They change as one.
+var memoRepoOpenKeys = map[string]bool{"open_cron": true, "open_minutes": true, "tz": true, "open_after": true}
+
+// memoQueueGated says whether a queue waits for a window or a threshold before it fires by itself.
+func memoQueueGated(q store.MemoQueue) bool { return q.OpenCron != "" || q.OpenAfter > 0 }
+
 // memoRepoCompare lays the entry's values over the member's settings (cur, or the defaults when
 // hasQueue is false), runs the result through the Console's own validation, and lists what
-// would change. A refusal comes back as an error on the line of the key it names.
-func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) ([]memoRepoDiff, []autorunfile.Issue) {
+// would change. A refusal comes back as an error on the line of the key that causes it.
+func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) ([]memoRepoDiff, []autorunfile.Issue, []autorunfile.Issue) {
 	base := memoQueueIn{}
 	if hasQueue {
 		base = memoQueueInFrom(cur)
@@ -193,42 +215,83 @@ func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) (
 		// Settings saved before a rule tightened: compare with them as stored.
 		curN = cur
 	}
-	in := base
-	for _, f := range memoRepoFields {
-		if v, ok := e.Values[f.key]; ok {
-			f.set(&in, v)
+	vals := make([]autorunfile.Value, 0, len(e.Values))
+	for _, v := range e.Values {
+		if _, known := memoRepoFieldByKey[v.Key]; known {
+			vals = append(vals, v)
 		}
 	}
-	next, aerr := in.validate()
+	sort.Slice(vals, func(i, j int) bool { return vals[i].Line < vals[j].Line })
+	overlay := func(vs []autorunfile.Value, skip int) (store.MemoQueue, *apiError) {
+		in := base
+		for i, v := range vs {
+			if i != skip {
+				memoRepoFieldByKey[v.Key].set(&in, v)
+			}
+		}
+		return in.validate()
+	}
+	next, aerr := overlay(vals, -1)
 	if aerr != nil {
-		line, key := e.Line, ""
-		for _, m := range memoQueueErrKeys {
-			if strings.HasPrefix(aerr.message, m.prefix) {
-				key = m.key
-				if v, ok := e.Values[m.key]; ok {
+		return nil, nil, []autorunfile.Issue{memoRepoBlame(vals, e.Line, aerr, overlay)}
+	}
+	var warns []autorunfile.Issue
+	// Taking the window and the threshold both away makes the queue fire whenever a message
+	// waits: that removes a gate, which only the Console may do (#4881).
+	if memoQueueGated(curN) && !memoQueueGated(next) {
+		kept := vals[:0:0]
+		line := 0
+		for _, v := range vals {
+			if memoRepoOpenKeys[v.Key] {
+				if line == 0 {
 					line = v.Line
 				}
-				break
+				continue
 			}
+			kept = append(kept, v)
 		}
-		return nil, []autorunfile.Issue{{Line: line, Key: key, Reason: aerr.message}}
+		warns = append(warns, autorunfile.Issue{Line: line, Key: "open_cron",
+			Reason: "removing the window and the threshold makes the queue fire whenever a message waits; that is set in the Console only, and the file's open_cron, open_minutes, tz and open_after are not applied"})
+		vals = kept
+		if next, aerr = overlay(vals, -1); aerr != nil {
+			return nil, warns, []autorunfile.Issue{memoRepoBlame(vals, e.Line, aerr, overlay)}
+		}
 	}
-	// validate drops a window's length and zone when there is no window; a file that sets them
-	// would otherwise see its values vanish without a word.
+	openLine := 0
+	for _, v := range vals {
+		if memoRepoOpenKeys[v.Key] {
+			openLine = v.Line
+			break
+		}
+	}
+	inFile := map[string]autorunfile.Value{}
+	for _, v := range vals {
+		inFile[v.Key] = v
+	}
+	// validate drops a window's length and zone when there is no window. A file that sets them to
+	// something else would see its values vanish without a word; zero and empty are what the
+	// Console itself sends for a threshold queue.
 	if next.OpenCron == "" {
 		var errs []autorunfile.Issue
-		for _, k := range []string{"open_minutes", "tz"} {
-			if v, ok := e.Values[k]; ok {
-				errs = append(errs, autorunfile.Issue{Line: v.Line, Key: k, Reason: k + " needs open_cron: without a window it has no effect"})
-			}
+		if v, ok := inFile["open_minutes"]; ok && v.Int != 0 {
+			errs = append(errs, autorunfile.Issue{Line: v.Line, Key: "open_minutes", Reason: "open_minutes needs open_cron: without a window it has no effect"})
+		}
+		if v, ok := inFile["tz"]; ok && v.Str != "" {
+			errs = append(errs, autorunfile.Issue{Line: v.Line, Key: "tz", Reason: "tz needs open_cron: without a window it has no effect"})
 		}
 		if len(errs) > 0 {
-			return nil, errs
+			return nil, warns, errs
 		}
 	}
 	diffs := []memoRepoDiff{}
 	for _, f := range memoRepoFields {
-		v, ok := e.Values[f.key]
+		v, ok := inFile[f.key]
+		line := v.Line
+		// The settings that decide when the queue fires change together: switching a window for a
+		// threshold also clears the window's length and zone, which the file need not mention.
+		if !ok && memoRepoOpenKeys[f.key] && openLine != 0 {
+			ok, line = true, openLine
+		}
 		if !ok {
 			continue
 		}
@@ -237,22 +300,73 @@ func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) (
 		if string(c) == string(n) {
 			continue
 		}
-		d := memoRepoDiff{Key: f.key, Field: f.field, Line: v.Line, Current: c, File: n}
+		d := memoRepoDiff{Key: f.key, Field: f.field, Line: line, Current: c, File: n}
 		if f.raise != nil {
 			d.Raise = f.raise(curN, next)
 		}
 		diffs = append(diffs, d)
 	}
-	return diffs, nil
+	return diffs, warns, nil
+}
+
+// memoRepoBlame puts a refusal on the key that causes it: the field the message names when the
+// file sets it and its removal alone makes the rest valid, else the first key whose removal does.
+// With no such key (two faults, or a fault in the stored settings) the message's own field is
+// used when the file sets it, and the category's line otherwise.
+func memoRepoBlame(vals []autorunfile.Value, entryLine int, aerr *apiError,
+	overlay func([]autorunfile.Value, int) (store.MemoQueue, *apiError)) autorunfile.Issue {
+	// The field the message names, when the file sets it and taking it away is enough.
+	for _, m := range memoQueueErrKeys {
+		if strings.HasPrefix(aerr.message, m.prefix) {
+			for i, v := range vals {
+				if v.Key != m.key {
+					continue
+				}
+				if _, err := overlay(vals, i); err == nil || len(vals) == 1 {
+					return autorunfile.Issue{Line: v.Line, Key: v.Key, Reason: aerr.message}
+				}
+			}
+			break
+		}
+	}
+	if len(vals) > 1 {
+		for i, v := range vals {
+			if _, err := overlay(vals, i); err == nil {
+				return autorunfile.Issue{Line: v.Line, Key: v.Key, Reason: aerr.message}
+			}
+		}
+	} else if len(vals) == 1 {
+		return autorunfile.Issue{Line: vals[0].Line, Key: vals[0].Key, Reason: aerr.message}
+	}
+	for _, m := range memoQueueErrKeys {
+		if strings.HasPrefix(aerr.message, m.prefix) {
+			for _, v := range vals {
+				if v.Key == m.key {
+					return autorunfile.Issue{Line: v.Line, Key: v.Key, Reason: aerr.message}
+				}
+			}
+			break
+		}
+	}
+	return autorunfile.Issue{Line: entryLine, Reason: aerr.message}
+}
+
+// repoSettingsRoute checks the switch before anything else, so that with the switch off the
+// route neither resolves nor creates a workspace.
+func (a memoAPI) repoSettingsRoute() http.HandlerFunc {
+	h := a.withResolved(a.repoSettings)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !a.mgr.memoRepoSettings {
+			writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "repository settings are not turned on"})
+			return
+		}
+		h(w, r)
+	}
 }
 
 // repoSettings answers how the repository's settings file differs from the member's settings for
 // one category. It needs the workspace running: the file is read there, from origin.
 func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resolved) {
-	if !a.mgr.memoRepoSettings {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "repository settings are not turned on"})
-		return
-	}
 	ctx := r.Context()
 	c, ok, err := a.store.GetCategory(ctx, r.PathValue("categoryId"))
 	if err != nil {
@@ -290,7 +404,7 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 		return
 	}
 	out := memoRepoSettingsWire{CategoryID: c.ID, Repo: c.Repo, Category: c.Name, Path: autorunfile.Path,
-		Branch: file.Branch, Commit: file.Commit, Found: file.Found, Queue: hasQueue,
+		Remote: file.Remote, Branch: file.Branch, Commit: file.Commit, Found: file.Found, Queue: hasQueue,
 		Errors: []autorunfile.Issue{}, Warnings: []autorunfile.Issue{}, Diffs: []memoRepoDiff{}}
 	if !file.Found {
 		writeJSON(w, http.StatusOK, out)
@@ -309,7 +423,8 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 		}
 	}
 	if len(out.Errors) == 0 && e != nil {
-		diffs, errs := memoRepoCompare(cur, hasQueue, e)
+		diffs, warns, errs := memoRepoCompare(cur, hasQueue, e)
+		out.Warnings = append(out.Warnings, warns...)
 		out.Errors = append(out.Errors, errs...)
 		if len(errs) == 0 {
 			out.Diffs = diffs
@@ -318,11 +433,20 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 	writeJSON(w, http.StatusOK, out)
 }
 
-// agentAutorunFile asks the workspace Agent for the settings file. A refusal about the file
-// itself (too large, not a regular file) keeps the Agent's message; anything else is reported by
-// code only, because a failed fetch's message carries git's own output.
+// memoRepoWireMax bounds the Agent's answer: the file at its largest, every byte escaped to six
+// in JSON (\u003c), and the envelope.
+const memoRepoWireMax = 6*autorunfile.MaxBytes + 8<<10
+
+var memoRepoAgentCodeRe = regexp.MustCompile(`^[a-z_]{1,40}$`)
+
+// agentAutorunFile asks the workspace Agent for the settings file. Every message is the Control
+// Plane's own: what the Agent says is never repeated, because a failed fetch's text carries
+// git's output, and only a well-formed code is named.
 func (m *manager) agentAutorunFile(ctx context.Context, res *resolved, repo string) (agentAutorunFile, *apiError) {
 	var out agentAutorunFile
+	unreadable := func(status int, msg string) (agentAutorunFile, *apiError) {
+		return agentAutorunFile{}, &apiError{status, errCodeMemoQueueRepoUnreadable, msg}
+	}
 	cctx, cancel := context.WithTimeout(ctx, memoRepoFileWait)
 	defer cancel()
 	req, err := http.NewRequestWithContext(cctx, http.MethodGet,
@@ -335,30 +459,36 @@ func (m *manager) agentAutorunFile(ctx context.Context, res *resolved, repo stri
 	}
 	resp, err := agentRelayClient.Do(req)
 	if err != nil {
-		return out, &apiError{http.StatusBadGateway, errCodeMemoQueueRepoUnreadable, "the workspace did not answer"}
+		return unreadable(http.StatusBadGateway, "the workspace did not answer")
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2*autorunfile.MaxBytes+4096))
-	switch {
-	case resp.StatusCode == http.StatusOK:
-		if err := json.Unmarshal(body, &out); err != nil {
-			return out, &apiError{http.StatusBadGateway, errCodeMemoQueueRepoUnreadable, "the workspace's answer could not be read"}
-		}
-		return out, nil
-	case resp.StatusCode == http.StatusNotFound && agentErrCode(body) == "not_found":
-		return out, &apiError{http.StatusNotFound, errCodeMemoQueueRepoUnreadable, "the workspace has no git working copy named " + repo}
-	case resp.StatusCode == http.StatusUnprocessableEntity:
-		var e struct {
-			Error struct {
-				Message string `json:"message"`
-			} `json:"error"`
-		}
-		_ = json.Unmarshal(body, &e)
-		return out, &apiError{http.StatusUnprocessableEntity, errCodeMemoQueueRepoUnreadable, e.Error.Message}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, memoRepoWireMax+1))
+	if err != nil {
+		return unreadable(http.StatusBadGateway, "the workspace's answer was cut off")
+	}
+	if len(body) > memoRepoWireMax {
+		return unreadable(http.StatusBadGateway, "the workspace's answer is larger than any settings file can be")
 	}
 	code := agentErrCode(body)
-	if code == "" {
-		code = resp.Status
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		if err := json.Unmarshal(body, &out); err != nil || out.Path != autorunfile.Path || out.Branch == "" || out.Commit == "" {
+			return unreadable(http.StatusBadGateway, "the workspace's answer could not be read")
+		}
+		if len(out.Content) > autorunfile.MaxBytes {
+			return unreadable(http.StatusUnprocessableEntity, fmt.Sprintf("%s is larger than %d bytes", autorunfile.Path, autorunfile.MaxBytes))
+		}
+		return out, nil
+	case resp.StatusCode == http.StatusNotFound && code == "not_found":
+		return unreadable(http.StatusNotFound, "the workspace has no git working copy named "+repo)
+	case code == "file_too_large":
+		return unreadable(http.StatusUnprocessableEntity, fmt.Sprintf("%s is larger than %d bytes", autorunfile.Path, autorunfile.MaxBytes))
+	case code == "file_not_regular":
+		return unreadable(http.StatusUnprocessableEntity, autorunfile.Path+" on the default branch is not a regular file")
 	}
-	return out, &apiError{http.StatusBadGateway, errCodeMemoQueueRepoUnreadable, "the workspace could not read the file from origin's default branch (" + code + ")"}
+	why := "HTTP " + strconv.Itoa(resp.StatusCode)
+	if memoRepoAgentCodeRe.MatchString(code) {
+		why = code
+	}
+	return unreadable(http.StatusBadGateway, "the workspace could not read the file from origin's default branch ("+why+")")
 }

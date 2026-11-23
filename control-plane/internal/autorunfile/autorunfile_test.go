@@ -231,3 +231,109 @@ categories:
 		t.Fatalf("%+v %+v", f.Errors, f.Categories["b"])
 	}
 }
+
+// Many categories aliasing one settings node read it once: their findings share one slice, so
+// a small file cannot multiply the parser's work or the answer's size.
+func TestParseAliasedEntriesAreReadOnce(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("version: 1\ncategories:\n  c0: &bad\n")
+	for i := 0; i < 200; i++ {
+		b.WriteString("    k" + strings.Repeat("x", i%7) + string(rune('a'+i%26)) + string(rune('a'+i/26)) + ": 1\n")
+	}
+	for i := 1; i < 2000; i++ {
+		b.WriteString("  c" + strings.Repeat("1", 0) + string(rune('A'+i%26)) + string(rune('A'+(i/26)%26)) + string(rune('A'+i/676)) + ": *bad\n")
+	}
+	f := Parse([]byte(b.String()))
+	if len(f.Categories) < 1000 {
+		t.Fatalf("only %d categories (errors %+v)", len(f.Categories), f.Errors)
+	}
+	first := f.Categories["c0"]
+	if len(first.Errors) != 200 {
+		t.Fatalf("c0 has %d errors", len(first.Errors))
+	}
+	for name, e := range f.Categories {
+		if len(e.Errors) != 200 || &e.Errors[0] != &first.Errors[0] {
+			t.Fatalf("%s: its findings were made again", name)
+		}
+	}
+}
+
+func TestParseRefusesMergeKeysTagsAndNonStringKeys(t *testing.T) {
+	for _, c := range []struct {
+		name, src string
+		line      int
+		part      string
+		entry     bool
+	}{
+		{"merge into categories", "version: 1\nbase: &b\n  q: {}\ncategories:\n  <<: *b\n", 2, "unknown key", false},
+		{"merge key in categories", "version: 1\ncategories:\n  <<: {q: {}}\n", 3, "merge keys", false},
+		{"merge key in an entry", "version: 1\ncategories:\n  q:\n    <<: {max_active: 2}\n", 4, "merge keys", true},
+		{"number as a category name", "version: 1\ncategories:\n  1: {}\n", 3, "must be a string", false},
+		{"bool as a key", "version: 1\ncategories:\n  q:\n    true: 1\n", 4, "must be a string", true},
+		{"tagged categories", "version: 1\ncategories: !custom\n  q: {}\n", 2, "map each", false},
+		{"tagged entry", "version: 1\ncategories:\n  q: !custom\n    max_active: 2\n", 3, "must be a mapping", true},
+		{"tagged root", "!custom\nversion: 1\ncategories: {}\n", 1, "must be a mapping", false},
+	} {
+		f := Parse([]byte(c.src))
+		is := f.Errors
+		if c.entry {
+			if f.Categories["q"] == nil {
+				t.Errorf("%s: no entry: %+v", c.name, f.Errors)
+				continue
+			}
+			is = f.Categories["q"].Errors
+		}
+		if !hasIssue(is, c.line, "", c.part) && !hasIssue(is, c.line, "base", c.part) && !hasIssue(is, c.line, "categories", c.part) {
+			t.Errorf("%s: want line %d %q, got %+v", c.name, c.line, c.part, is)
+		}
+		if f.Usable("q") {
+			t.Errorf("%s: q usable", c.name)
+		}
+	}
+}
+
+func TestParseNumbersThatAreNotLimits(t *testing.T) {
+	for _, v := range []string{"1e-400", "-1e-400", ".inf", "-.inf", ".nan", "1e400"} {
+		f := Parse([]byte("version: 1\ncategories:\n  q:\n    spend_cap_usd: " + v + "\n"))
+		if f.Usable("q") {
+			t.Errorf("%s accepted as %v", v, f.Categories["q"].Values["spend_cap_usd"].Num)
+		}
+	}
+	for v, want := range map[string]float64{"0": 0, "0.0": 0, "-0": 0, "0e10": 0, "12.5": 12.5, "1e2": 100} {
+		f := Parse([]byte("version: 1\ncategories:\n  q:\n    spend_cap_usd: " + v + "\n"))
+		if !f.Usable("q") || f.Categories["q"].Values["spend_cap_usd"].Num != want {
+			t.Errorf("%s: %+v", v, f.Categories["q"])
+		}
+	}
+	if f := Parse([]byte("version: 1\ncategories:\n  q:\n    max_active: 99999999999999999999\n")); f.Usable("q") {
+		t.Errorf("a huge integer accepted")
+	}
+}
+
+// A credential pasted where a key or the version belongs is refused without being repeated.
+func TestParseNeverEchoesAPastedCredential(t *testing.T) {
+	tok := "ghp_" + strings.Repeat("Z", 36)
+	for _, src := range []string{
+		"version: " + tok + "\ncategories: {}\n",
+		"version: 1\n" + tok + ": 1\ncategories: {}\n",
+		"version: 1\ncategories:\n  " + tok + ": {}\n",
+		"version: 1\ncategories:\n  q:\n    " + tok + ": 1\n",
+	} {
+		f := Parse([]byte(src))
+		all := append([]Issue{}, f.Errors...)
+		for _, e := range f.Categories {
+			all = append(all, e.Errors...)
+		}
+		if len(all) == 0 {
+			t.Errorf("%q: no error", src)
+		}
+		for _, i := range all {
+			if strings.Contains(i.Key+i.Reason, "ZZZZ") {
+				t.Errorf("%q: echoed in %+v", src, i)
+			}
+		}
+		if _, ok := f.Categories[tok]; ok {
+			t.Errorf("a credential became a category name")
+		}
+	}
+}
