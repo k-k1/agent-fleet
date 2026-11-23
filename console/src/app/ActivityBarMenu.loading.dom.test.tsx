@@ -21,7 +21,7 @@ import type { RailView } from "../core/store/leftRail.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { useNotificationStore } from "../features/notifications/store.ts";
 import { useHandoffStore } from "../features/sharing/handoffStore.ts";
-import { getSettings, hydrateUIPrefs, resyncAccumulatedForIdentitySwitch } from "../lib/settings.ts";
+import { getSettings, hydrateUIPrefs, resyncAccumulatedForIdentitySwitch, setPrefsOwnerSource } from "../lib/settings.ts";
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
@@ -41,6 +41,7 @@ afterEach(async () => {
   host?.remove();
   root = host = null;
   document.querySelectorAll(".actbar-menu").forEach((m) => m.remove());
+  setPrefsOwnerSource(() => "");
   vi.useRealTimers();
 });
 
@@ -80,8 +81,18 @@ describe("the menu before the saved choice has been read", () => {
     expect(getSettings().railViewsOff).toEqual(["shared", "future-view", "files"]);
   });
 
-  it("is read-only again while another tenant's copy is being read, and builds on that copy", async () => {
-    // The first test left this tab loaded for tenant A, whose list is shared + future-view + files.
+  it("stays read-only after a switch until the new owner's copy has been read, even when a read fails", async () => {
+    let owner = "tenant-a|u";
+    setPrefsOwnerSource(() => owner);
+    const prefs: Record<string, unknown> = { "tenant-a|u": { railViewsOff: ["shared", "future-view"] }, "tenant-b|u": { railViewsOff: ["workitems", "tenant-b-future"] } };
+    let failing = false;
+    api.mockImplementation((...a: unknown[]): Promise<any> =>
+      String(a[0]).includes("api/env/ui-prefs") ? (failing ? Promise.reject(new Error("down")) : Promise.resolve(structuredClone(prefs[owner]))) : Promise.resolve({}),
+    );
+    // Whatever an earlier test left unsaved is dropped, as a real owner change drops it.
+    await act(async () => void (await resyncAccumulatedForIdentitySwitch()));
+    expect(getSettings().railViewsOff).toEqual(["shared", "future-view"]);
+
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
@@ -89,18 +100,19 @@ describe("the menu before the saved choice has been read", () => {
     await act(async () => void host!.querySelector(".actbar")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 80 })));
     expect(row("memory").getAttribute("aria-disabled")).toBeNull();
 
-    let release!: (v: unknown) => void;
-    gate.p = new Promise((r) => (release = r));
-    const done = resyncAccumulatedForIdentitySwitch();
-    await act(async () => void (await Promise.resolve()));
+    // Switch to tenant B; its read fails once. The copy in memory is still A's.
+    owner = "tenant-b|u";
+    failing = true;
+    await act(async () => void (await resyncAccumulatedForIdentitySwitch()));
     expect(row("memory").getAttribute("aria-disabled")).toBe("true");
     await act(async () => row("memory").click());
-    expect(getSettings().railViewsOff).toEqual(["shared", "future-view", "files"]);
+    expect(getSettings().railViewsOff).toEqual(["shared", "future-view"]);
 
-    release({ railViewsOff: ["workitems", "tenant-b-future"] });
-    await act(async () => void (await done));
-    gate.p = null;
+    // The read that succeeds brings B's list, and an edit then builds on it.
+    failing = false;
+    await act(async () => void (await resyncAccumulatedForIdentitySwitch()));
     expect(getSettings().railViewsOff).toEqual(["workitems", "tenant-b-future"]);
+    expect(row("memory").getAttribute("aria-disabled")).toBeNull();
     await act(async () => row("memory").click());
     expect(getSettings().railViewsOff).toEqual(["workitems", "tenant-b-future", "memory"]);
   });
