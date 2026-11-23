@@ -320,6 +320,10 @@ CSS を持つ。一覧は `ls console/src/features`。製品が画面ごとに�
   列挙する。CI は今の件数を上限（`--max-dups` / `--max-bare`）にして走らせるので、件数は減っても
   増えはしない。減っても落ちず、スクリプトが `package.json` の `css:dup:ci` の上限を下げるよう案内する
   だけ。下げるのは任意で、整理の PR でまとめてよい。
+- **状態の修飾クラスは `<ブロック>--<状態>`**（`.res-tile.res-tile--warn`。データから付けるときは
+  `"res-tile res-tile--" + level`）。素の `.warn` / `.on` / `.failed` はどの機能の CSS も使う名前なので、
+  `is-<状態>` や `tone-<トーン>` にしても衝突が移るだけ。持ち主のブロック名を前に付けると、修飾クラスが
+  1 つのファイルに閉じる。`.block.block--state` の複合セレクタのまま書いて、詳細度を変えないこと。
 - **CI**（`.github/workflows/ci.yml` の `console` ジョブ）は型検査・lint・i18n lint・css-dup の上限・vitest・実物の
   headless Chromium での検査 2 つ（`pdf:check`・`doc:check`）・ビルドを走らせる。
 - `package.json` のほかのスクリプト（スクリーンショット・ミラーやビューアのスクロール検査・コントラスト

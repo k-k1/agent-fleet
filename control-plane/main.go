@@ -380,6 +380,7 @@ func main() {
 	mgr.githubBuiltinOff = githubBuiltinOffFromEnv(os.Getenv("AF_GITHUB_BUILTIN_APPS"))
 	mgr.previewDomain = strings.ToLower(strings.Trim(strings.TrimSpace(os.Getenv("AF_PREVIEW_DOMAIN")), "."))
 	mgr.devIdPEnvOff = !envBool("AF_DEV_IDP", true)
+	mgr.memoRepoSettings = envBool("AF_MEMO_QUEUE_REPO_SETTINGS", false)
 	cfg := config{
 		addr:          envx.Or("CP_ADDR", ":8080"),
 		consoleDir:    envx.Or("CONSOLE_DIR", "./console"),

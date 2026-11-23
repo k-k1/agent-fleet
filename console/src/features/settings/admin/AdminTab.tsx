@@ -317,27 +317,27 @@ export function AdminTab() {
           </span>
         </div>
         {warnings.includes("plaintext_secrets") && (
-          <p className="admin-hint warn" role="alert">
+          <p className="admin-hint admin-hint--warn" role="alert">
             {tr("admin.deploy_warn_plaintext_secrets")}
           </p>
         )}
         {warnings.includes("plaintext_sealed") && (
-          <p className="admin-hint warn" role="alert">
+          <p className="admin-hint admin-hint--warn" role="alert">
             {tr("admin.deploy_warn_plaintext_sealed")}
           </p>
         )}
         {warnings.includes("auth_dev") && (
-          <p className="admin-hint warn" role="alert">
+          <p className="admin-hint admin-hint--warn" role="alert">
             {tr("admin.deploy_warn_auth_dev")}
           </p>
         )}
         {warnings.includes("efs_backup_missing") && (
-          <p className="admin-hint warn" role="alert">
+          <p className="admin-hint admin-hint--warn" role="alert">
             {tr("admin.deploy_warn_efs_backup_missing")}
           </p>
         )}
         {warnings.includes("mcp_oauth_reg_cap") && (
-          <p className="admin-hint warn" role="alert">
+          <p className="admin-hint admin-hint--warn" role="alert">
             {tr("admin.deploy_warn_mcp_oauth_reg_cap")}
           </p>
         )}

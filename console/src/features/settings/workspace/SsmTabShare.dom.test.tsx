@@ -180,7 +180,7 @@ describe("Share one sign-in", () => {
     await run();
     expect(writes.map((w) => (w.body as Json).signIn)).toEqual(["team", "team"]);
     await act(async () => document.querySelector<HTMLButtonElement>(".ssm-share button.ghost")!.click());
-    expect(host.querySelectorAll(".ssm-signin .ssm-signin-head .ssm-login-state.relogin")).toHaveLength(1);
+    expect(host.querySelectorAll(".ssm-signin .ssm-signin-head .ssm-login-state.ssm-login-state--relogin")).toHaveLength(1);
   });
 
   it("refuses a name that is another profile's own sign-in, or another portal's sign-in, before any write", async () => {

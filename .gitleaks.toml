@@ -21,6 +21,9 @@ regexes = [
   # workspace/agent/internal/memconsol/run_test.go in ef15ff9b8: a made-up key in a note, to prove an
   # observation carrying a secret is never sent to a model. Later commits build it at run time.
   '''AKIAABCDEFGHIJKLMNOP''',
+  # control-plane/internal/autorunfile/autorunfile_test.go in 39caf2b7b and bfaf60cdd (#4881): a
+  # made-up key the settings file parser must refuse. Later commits build it at run time.
+  '''AKIAIOSFODNN7EXAMPLQ''',
   # internal/bridge/*_test.go（Discord/Slack へ流す本文の伏字化）
   '''xoxb-123456789012-[A-Za-z]+''',
   '''ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789''',

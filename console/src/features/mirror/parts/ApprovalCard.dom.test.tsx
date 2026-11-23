@@ -77,7 +77,7 @@ describe("ApprovalCard", () => {
 
   it("shows the runtime's own markings", () => {
     mount(APPROVAL);
-    expect(host!.querySelector(".mt-approval-flag.warn")).not.toBeNull();
+    expect(host!.querySelector(".mt-approval-flag.mt-approval-flag--warn")).not.toBeNull();
     expect(host!.querySelectorAll(".mt-approval-flag").length).toBe(2);
   });
 

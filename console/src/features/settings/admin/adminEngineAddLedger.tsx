@@ -58,8 +58,8 @@ export function EngineLedger({ objects, role, image, failed, checkedAt, busy, re
         <span className="mono engine-ledger-key">{object.key}</span>
         <span className="engine-ledger-tags">
           <span className="engines-model-tag">{object.role_dir}</span>
-          {object.placement === "misplaced" && <span className="engines-model-tag warn">{tr("admin.catalog_ledger_misplaced" as never)}</span>}
-          <span className={`engines-model-tag ${removing || taking ? "lead" : object.state === "present" ? "on" : object.state === "failed" || object.state === "missing" ? "bad" : "lead"}`}>
+          {object.placement === "misplaced" && <span className="engines-model-tag engines-model-tag--warn">{tr("admin.catalog_ledger_misplaced" as never)}</span>}
+          <span className={`engines-model-tag engines-model-tag--${removing || taking ? "lead" : object.state === "present" ? "on" : object.state === "failed" || object.state === "missing" ? "bad" : "lead"}`}>
             {tr((removing ? "admin.catalog_ledger_state_deleting"
               : taking ? "admin.catalog_ledger_state_uploading"
                 : `admin.catalog_ledger_state_${object.state}`) as never)}

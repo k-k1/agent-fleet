@@ -371,10 +371,10 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
           <strong>{name.title}</strong>
           {name.version && <span className="engine-registered-version">{name.version}</span>}
         </span>
-          <span className={`engines-model-tag ${model.enabled ? "on" : "off"}`}>{tr(model.enabled ? "admin.engines_model_is_on" : "admin.engines_model_is_off")}</span>
-          {started && <span className="engines-model-tag lead">{tr("admin.engines_model_started")}</span>}
-          <span className={`engines-model-tag ${status.tone}`}>{tr((`admin.catalog_registered_${status.state}`) as never, { present: status.present, total: status.total } as never)}</span>
-          {!!model.files_missing?.length && <span className="engines-model-tag warn">{(tr("admin.engines_model_files_missing_tag" as never) as string).replace("{f}", model.files_missing.join(" "))}</span>}</header>
+          <span className={`engines-model-tag engines-model-tag--${model.enabled ? "on" : "off"}`}>{tr(model.enabled ? "admin.engines_model_is_on" : "admin.engines_model_is_off")}</span>
+          {started && <span className="engines-model-tag engines-model-tag--lead">{tr("admin.engines_model_started")}</span>}
+          <span className={`engines-model-tag${status.tone ? " engines-model-tag--" + status.tone : ""}`}>{tr((`admin.catalog_registered_${status.state}`) as never, { present: status.present, total: status.total } as never)}</span>
+          {!!model.files_missing?.length && <span className="engines-model-tag engines-model-tag--warn">{(tr("admin.engines_model_files_missing_tag" as never) as string).replace("{f}", model.files_missing.join(" "))}</span>}</header>
         {/* The id keeps its own line under the title. It is the key the launch menu, the active
             set and every S3 path are written in, so it is on every card — and on a row whose
             title IS the id it is not repeated, because two copies of one string in two fonts
@@ -579,8 +579,8 @@ function ImageRegisteredCardBody({ model }: { model: EngineModel }) {
     {model.precision && <span className="engines-model-tag">{model.precision}</span>}
     {model.vram_need_mib && <span className="engines-model-tag">VRAM {model.vram_need_mib} MiB</span>}
     {(model.license_name || model.license) && <span className="engines-model-tag">{model.license_name || model.license}</span>}
-    {model.vae_missing && <span className="engines-model-tag warn">VAE</span>}
-    {model.commercial_use === "no" && <span className="engines-model-tag warn">{tr("admin.engines_model_noncommercial")}</span>}
+    {model.vae_missing && <span className="engines-model-tag engines-model-tag--warn">VAE</span>}
+    {model.commercial_use === "no" && <span className="engines-model-tag engines-model-tag--warn">{tr("admin.engines_model_noncommercial")}</span>}
   </div></div>;
 }
 
@@ -637,7 +637,7 @@ function RegisteredParts({ model, objects }: { model: EngineModel; objects: Engi
             that is on every line is one nobody reads. Every other state keeps it, which is what
             makes a chip mean "this line needs a hand"; `unknown` in particular is the whole
             card's state when the bucket could not be listed, and must stay visible. */}
-        {state !== "present" && <span className={`engines-model-tag ${state === "missing" || state === "failed" ? "bad" : ""}`}>{tr((`admin.catalog_file_${state}`) as never)}</span>}
+        {state !== "present" && <span className={`engines-model-tag${state === "missing" || state === "failed" ? " engines-model-tag--bad" : ""}`}>{tr((`admin.catalog_file_${state}`) as never)}</span>}
         {part.source_url ? <a href={part.source_url} target="_blank" rel="noopener noreferrer">{tr("admin.catalog_source_page" as never)}</a> : part.source ? <span className="muted mono">{part.source}</span> : null}
       </span>
     </li>;

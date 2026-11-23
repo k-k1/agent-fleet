@@ -287,7 +287,7 @@ function HitCard({ hit }: { hit: IngestHit }) {
             Civitai's own ranking puts on the first screen. Absent means the CP could not tell
             — never "anyone may have it" — so nothing is drawn for it. */}
         {hit.login_required === "yes" && (
-          <span className="engines-model-tag warn" title={tr("admin.engines_hit_login_note")}>
+          <span className="engines-model-tag engines-model-tag--warn" title={tr("admin.engines_hit_login_note")}>
             {tr("admin.engines_hit_login_required")}
           </span>
         )}
@@ -304,12 +304,12 @@ function HitCard({ hit }: { hit: IngestHit }) {
             it has had since P4 just because the field it now prefers is missing. */}
         {hit.restrictions?.length
           ? hit.restrictions.map((code) => (
-              <span key={code} className={"engines-model-tag" + (engineRestrictIsHard(code) ? " warn" : "")}>
+              <span key={code} className={"engines-model-tag" + (engineRestrictIsHard(code) ? " engines-model-tag--warn" : "")}>
                 {engineRestrictLabel(code)}
               </span>
             ))
           : hit.gated && (
-              <span className="engines-model-tag warn">{tr("admin.engines_ingest_hit_gated")}</span>
+              <span className="engines-model-tag engines-model-tag--warn">{tr("admin.engines_ingest_hit_gated")}</span>
             )}
         {lic && <span className="engines-model-tag">{lic}</span>}
         {hit.base_model && <span className="engines-model-tag">{hit.base_model}</span>}

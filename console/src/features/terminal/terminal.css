@@ -233,7 +233,7 @@
   font-size: 16px;
   color: var(--muted2);
 }
-.onboard-step.done .onboard-mark {
+.onboard-step.onboard-step--done .onboard-mark {
   color: var(--ok);
 }
 .onboard-step.next .onboard-mark {
@@ -249,7 +249,7 @@
 .onboard-label {
   font-size: 13px;
 }
-.onboard-step.done .onboard-label {
+.onboard-step.onboard-step--done .onboard-label {
   color: var(--muted);
   text-decoration: line-through;
 }

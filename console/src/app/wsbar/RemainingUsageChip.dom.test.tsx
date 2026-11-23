@@ -328,11 +328,11 @@ describe("RemainingUsageChip: equivalence with the chips it replaced", () => {
     const all = golden.html.join("\n");
     // Each of these is a branch some case has to have rendered for the comparison to cover it.
     for (const needle of [
-      "ws-usage-nums crit", // near cap
+      "ws-usage-nums ws-usage-nums--crit", // near cap
       "ws-usage-nums muted", // unavailable
       "wu-pct muted", // a stale row
-      "wu-pct crit",
-      "wu-pct warn",
+      "wu-pct wu-pct--crit",
+      "wu-pct wu-pct--warn",
       "wu-place",
       "ws-fold-list",
       "github.com/settings/copilot",

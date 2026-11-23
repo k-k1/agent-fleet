@@ -257,10 +257,10 @@ function Exceeds({
   return (
     <div className="mpol-exceeds" data-testid="exceeds">
       {x.routes.length > 0 && (
-        <p className="admin-hint warn">{tr("admin.mpol_exceeds_routes", { list: namesOf(tr, x.routes) })}</p>
+        <p className="admin-hint admin-hint--warn">{tr("admin.mpol_exceeds_routes", { list: namesOf(tr, x.routes) })}</p>
       )}
       {x.endpoints.length > 0 && (
-        <p className="admin-hint warn">
+        <p className="admin-hint admin-hint--warn">
           {tr("admin.mpol_exceeds_endpoints", { list: x.endpoints.join(tr("tenant.mpol_list_sep")) })}
         </p>
       )}
@@ -286,7 +286,7 @@ function HidesPreview({ preview }: { preview: Preview }) {
   if (groups.length === 0) return null;
   return (
     <div className="mpol-preview" data-testid="preview-hides">
-      <p className="admin-hint warn">{tr("admin.mpol_preview_hides")}</p>
+      <p className="admin-hint admin-hint--warn">{tr("admin.mpol_preview_hides")}</p>
       <ul>
         {groups.map(([g, title]) => (
           <li key={g} data-group={g}>
@@ -710,7 +710,7 @@ export function RuleEditor({
       )}
       {previewed && <HidesPreview preview={previewed} />}
       {refusal && (
-        <p className="admin-hint warn" role="alert">
+        <p className="admin-hint admin-hint--warn" role="alert">
           {tr("admin.mpol_refused", { reason: refusal })}
         </p>
       )}

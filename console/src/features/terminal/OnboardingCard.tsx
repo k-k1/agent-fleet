@@ -95,7 +95,7 @@ interface Step {
 
 function StepRow({ s, next }: { s: Step; next: boolean }) {
   return (
-    <li className={"onboard-step" + (s.done ? " done" : "") + (next ? " next" : "")}>
+    <li className={"onboard-step" + (s.done ? " onboard-step--done" : "") + (next ? " next" : "")}>
       <span className="onboard-mark">
         <Icon name={s.done ? "pass-filled" : next ? "arrow-right" : "circle-large-outline"} />
       </span>

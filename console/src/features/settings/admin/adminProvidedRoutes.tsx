@@ -156,7 +156,7 @@ export function AdminProvidedSourceCard({ read }: { read: SourceRead }) {
     return (
       <section className="admin-panel model-access-provided-source">
         <h4>{tr("admin.prov_source_title")}</h4>
-        <p className="admin-hint warn" role="alert">
+        <p className="admin-hint admin-hint--warn" role="alert">
           {load.reason ?? tr("admin.prov_load_failed")}
         </p>
       </section>

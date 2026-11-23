@@ -234,7 +234,7 @@ export function MemoryRailSection() {
             {tr(consol.st?.run?.manual ? "mem.cs_running_manual" : "mem.cs_running_auto")}
           </p>
         )}
-        {proposalsErr && <p className="memrail-note warn">{proposalsErr}</p>}
+        {proposalsErr && <p className="memrail-note memrail-note--warn">{proposalsErr}</p>}
         <ul className="memrail-list" aria-label={tr("mem.view_proposals")}>
           {proposals === null ? (
             <li className="memrail-note">{tr("common.loading")}</li>
@@ -300,13 +300,13 @@ export function MemoryRailSection() {
             ))}
           </div>
         </div>
-        {loadErr && <p className="memrail-note warn">{loadErr}</p>}
-        {withheld > 0 && filter !== "forgotten" && <p className="memrail-note warn">{tr("mem.br_withheld", { n: withheld })}</p>}
-        {search.failed && <p className="memrail-note warn">{tr("mem.br_search_failed")}</p>}
+        {loadErr && <p className="memrail-note memrail-note--warn">{loadErr}</p>}
+        {withheld > 0 && filter !== "forgotten" && <p className="memrail-note memrail-note--warn">{tr("mem.br_withheld", { n: withheld })}</p>}
+        {search.failed && <p className="memrail-note memrail-note--warn">{tr("mem.br_search_failed")}</p>}
         {partial && filter !== "forgotten" && <p className="memrail-note">{tr("mem.br_search_partial")}</p>}
         {filter === "forgotten" ? (
           <>
-            {forgotten.err && <p className="memrail-note warn">{tr("mem.br_forgotten_failed")}</p>}
+            {forgotten.err && <p className="memrail-note memrail-note--warn">{tr("mem.br_forgotten_failed")}</p>}
             <ul className="memrail-list" aria-label={tr("mem.md_f_forgotten")}>
               {forgotten.rows === null ? (
                 <li className="memrail-note">{tr("common.loading")}</li>
@@ -335,7 +335,7 @@ export function MemoryRailSection() {
                 ))
               )}
             </ul>
-            {forgotten.moreErr && <p className="memrail-note warn">{tr("mem.br_forgotten_more_failed")}</p>}
+            {forgotten.moreErr && <p className="memrail-note memrail-note--warn">{tr("mem.br_forgotten_more_failed")}</p>}
             {forgotten.next && (
               <button type="button" className="memrail-link" disabled={forgotten.moreBusy} onClick={() => void forgotten.more()}>
                 {tr("mem.br_forgotten_more")}

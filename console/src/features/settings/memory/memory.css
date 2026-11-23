@@ -433,7 +433,7 @@
   font-weight: 600;
 }
 
-.mem-wiz-step.done {
+.mem-wiz-step.mem-wiz-step--done {
   color: var(--accent);
 }
 

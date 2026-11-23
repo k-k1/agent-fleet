@@ -1001,7 +1001,7 @@ describe("registered rows and the bucket", () => {
     apiJSON.mockResolvedValue({ hits: [] });
     await mountRegistered();
     const card = document.querySelector<HTMLElement>('.engine-registered-card[aria-label="split"]')!;
-    expect(card.querySelector("header .warn")?.textContent).toContain("1/2");
+    expect(card.querySelector("header .engines-model-tag--warn")?.textContent).toContain("1/2");
     const parts = card.querySelectorAll<HTMLElement>(".engine-registered-parts li");
     expect(parts).toHaveLength(2);
     // The chip is the mark of a line that needs a hand: the header already counts the parts, so

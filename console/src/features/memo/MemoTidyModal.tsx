@@ -51,7 +51,7 @@ export function MemoTidyModal({ memos, categories, allMemos, onDone, onReload, o
     return (
       <Modal title={tr("memo.tidyop_title")} onClose={onClose} className="memo-tidy-modal">
         <div className="ui-modal-body">
-          <div className="ui-field-hint warn">⚠ {tr(plan.reason, { count: plan.count ?? 0 })}</div>
+          <div className="ui-field-hint ui-field-hint--warn">⚠ {tr(plan.reason, { count: plan.count ?? 0 })}</div>
         </div>
         <footer className="ui-modal-foot">
           <Button variant="primary" onClick={onClose}>
@@ -200,11 +200,11 @@ function InPlaceTidyModal({ memos, notice, onDone, onClose }: InPlaceProps) {
   return (
     <Modal title={tr("sx.tidy_title")} onClose={onClose} className="memo-tidy-modal" lockClose={busy}>
       <div className="ui-modal-body">
-        {notice && <div className="ui-field-hint warn">⚠ {tr(notice)}</div>}
+        {notice && <div className="ui-field-hint ui-field-hint--warn">⚠ {tr(notice)}</div>}
         {loading ? (
           <div className="ui-field-hint">{tr("sx.tidy_loading")}</div>
         ) : err ? (
-          <div className="ui-field-hint warn">⚠ {err}</div>
+          <div className="ui-field-hint ui-field-hint--warn">⚠ {err}</div>
         ) : (
           <div className="memo-tidy-list">
             {rows.map((row) => {

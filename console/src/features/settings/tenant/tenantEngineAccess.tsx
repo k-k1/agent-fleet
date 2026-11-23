@@ -101,7 +101,7 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
     return (
       <section className="admin-panel engine-access">
         <h4>{tr("tenant.engine_access_title")}</h4>
-        <p className={failed ? "admin-hint warn" : "muted"}>{failed ?? tr("common.loading")}</p>
+        <p className={failed ? "admin-hint admin-hint--warn" : "muted"}>{failed ?? tr("common.loading")}</p>
       </section>
     );
   }
@@ -116,7 +116,7 @@ export function TenantEngineAccessView({ slug }: { slug: string }) {
       {view.roles.map((r) => (
         <div key={r.role} className="admin-fgroup" data-role={r.role}>
           <h5 className="admin-subhead">{tr(ROLE_LABEL[r.role])}</h5>
-          {!r.tenant_allowed && <p className="admin-hint warn">{tr("tenant.engine_access_tenant_denied")}</p>}
+          {!r.tenant_allowed && <p className="admin-hint admin-hint--warn">{tr("tenant.engine_access_tenant_denied")}</p>}
           {/* The same segmented toggle as the other admin mode switches (egress log-only /
               enforce, the TTS mode), whose selected look is global in ui.css. */}
           <span className="seg sm" role="radiogroup" aria-label={tr(ROLE_LABEL[r.role])}>

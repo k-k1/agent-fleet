@@ -1005,7 +1005,7 @@ function SegmentRect({ seg, scale, y, tr }: { seg: GraphSegment; scale: GraphSca
   // beside it disagreeing about the same instant. Which agent it is stays readable: the
   // lane LINE is still the kind colour.
   return (
-    <rect className={cx("fgraph-seg", seg.kind)} x={x0} y={y - SEG_H / 2} width={w} height={SEG_H} rx={2}>
+    <rect className={cx("fgraph-seg", `fgraph-seg--${seg.kind}`)} x={x0} y={y - SEG_H / 2} width={w} height={SEG_H} rx={2}>
       <title>{title}</title>
     </rect>
   );
