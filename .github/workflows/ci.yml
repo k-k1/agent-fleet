@@ -70,10 +70,23 @@ jobs:
           ./scripts/ci-changes.sh < "$RUNNER_TEMP/changed.txt" | tee -a "$GITHUB_OUTPUT"
 
   # Credential-leak detection. In a public repository "committed" means "published" and
-  # there is no taking it back, so this scans the whole history every time rather than a
-  # diff (12 s for 2436 commits / 64 MB — cheap enough).
+  # there is no taking it back, so this scans history rather than a diff (12 s for 2436
+  # commits / 64 MB — cheap enough).
+  # Scope depends on the event (scripts/secret-scan.sh):
+  #   pull_request  what the PR's merge commit reaches: main's history plus the PR's own
+  #                 commits. A value pushed on an unrelated branch cannot fail this PR; the
+  #                 old `--all` scan let one fixture on any branch turn every open PR red
+  #                 until an allowlist entry reached main, and a re-run never helped because
+  #                 it re-scans the old merge commit (#4905).
+  #   push, manual  every ref, as before. secret-sweep.yml repeats that daily.
+  # What this gives up: a leak on a branch that never gets a PR is reported by the next push
+  # to main or the daily sweep, not by the next PR, and only while a branch or tag still
+  # reaches the commit when they run. Pushing it already published it, so the PR gate never
+  # prevented that leak; it only reported it.
   # `-m` is mandatory: without it gitleaks skips merge commits, and whatever entered while
   # resolving a conflict (138 commits' worth in this repository) stays unscanned and green.
+  # So is the `--` that ends the revision list, and so is failing on a logged git error:
+  # gitleaks reports a clean scan when its child `git log` fails (scripts/secret-scan.sh).
   # Allowlist and false-positive handling live in .gitleaks.toml.
   secret-scan:
     runs-on: ubuntu-latest
@@ -81,29 +94,16 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # the full history is required
-      - name: install gitleaks (version+checksum pinned)
-        env:
-          VERSION: 8.30.1
-          SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+      - uses: ./.github/actions/install-gitleaks
+      - name: scan controls
         run: |
-          set -euo pipefail
-          url="https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz"
-          # GitHub Releases has been down for over an hour at a time (#3642), longer than any
-          # sane retry window, so a download that still fails falls back to building the same
-          # version from the Go module proxy. The fallback is taken only when the download
-          # fails: a SHA-256 mismatch on a delivered tarball fails the step and never falls
-          # back. The fallback's integrity comes from sum.golang.org, not from ${SHA256}.
-          if curl -fsSL --retry 5 --retry-all-errors --retry-delay 10 --connect-timeout 20 --max-time 300 -o /tmp/gitleaks.tar.gz "$url"; then
-            echo "${SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
-            tar xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
-            echo "gitleaks source: GitHub release tarball (SHA-256 pinned)"
-          else
-            echo "::warning::gitleaks release download failed; building v${VERSION} from the Go module proxy (go.sum / sum.golang.org integrity)"
-            GOBIN=/tmp GOFLAGS=-mod=mod go install "github.com/zricethezav/gitleaks/v8@v${VERSION}"
-            echo "gitleaks source: go install from the module proxy"
-          fi
-      - name: scan full history
-        run: /tmp/gitleaks --version && /tmp/gitleaks git --log-opts="--all --full-history -m" --redact --verbose
+          ./scripts/secret-scan-test.sh
+          ./scripts/secret-sweep-issue-test.sh
+          ./scripts/secret-sweep-test.sh
+      - name: scan history
+        env:
+          SCOPE: ${{ github.event_name == 'pull_request' && 'pr' || 'all' }}
+        run: ./scripts/secret-scan.sh "$SCOPE"
 
   # Self-test of scripts/migration-versions.sh (#2046), on every event so a broken script
   # fails on its own PR. The `migration-version` status itself is posted by
