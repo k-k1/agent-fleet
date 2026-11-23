@@ -30,6 +30,7 @@
 - **[メモ]** 自動実行のビュー: PR の状態のバッジ、終了した実行の片付けで PR のないきれいなワークツリーも、削除ダイアログはすぐ開き横並びで同時に削除 ([#4897](https://github.com/k-k1/agent-fleet/issues/4897), [#4872](https://github.com/k-k1/agent-fleet/issues/4872), [#4832](https://github.com/k-k1/agent-fleet/issues/4832), [#4735](https://github.com/k-k1/agent-fleet/issues/4735), [#4736](https://github.com/k-k1/agent-fleet/issues/4736), [#4833](https://github.com/k-k1/agent-fleet/issues/4833))
 - **[bitbucket]** PR の行に CI とコンフリクトの状態 ([#4840](https://github.com/k-k1/agent-fleet/issues/4840))
 - **[接続]** Jira はクラシックの API トークンが必要と表示、Bitbucket のカードと `af-watch-hook` は webhook のスコープを示す ([#4714](https://github.com/k-k1/agent-fleet/issues/4714))
+- **[アシスタント]** チャットのタブの右クリックで左のペインの行と同じメニュー ([#4953](https://github.com/k-k1/agent-fleet/issues/4953))
 - **[セッション]** 自動実行・子のセッションのタイトルは封筒でなく作業の中身から ([#4804](https://github.com/k-k1/agent-fleet/issues/4804))
 
 **Fixed**

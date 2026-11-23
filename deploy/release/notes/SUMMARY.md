@@ -31,6 +31,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 - **[memos]** Auto-run view: PR state badge; Clear finished runs offers clean PR-less worktrees, opens the delete dialog at once, lists siblings flat and deletes in parallel ([#4897](https://github.com/k-k1/agent-fleet/issues/4897), [#4872](https://github.com/k-k1/agent-fleet/issues/4872), [#4832](https://github.com/k-k1/agent-fleet/issues/4832), [#4735](https://github.com/k-k1/agent-fleet/issues/4735), [#4736](https://github.com/k-k1/agent-fleet/issues/4736), [#4833](https://github.com/k-k1/agent-fleet/issues/4833))
 - **[bitbucket]** PR rows show CI and conflict status ([#4840](https://github.com/k-k1/agent-fleet/issues/4840))
 - **[connections]** Jira needs a classic API token; Bitbucket card and `af-watch-hook` name the webhook scopes ([#4714](https://github.com/k-k1/agent-fleet/issues/4714))
+- **[assistant]** Right-click on a chat tab opens the left pane row's menu ([#4953](https://github.com/k-k1/agent-fleet/issues/4953))
 - **[sessions]** Auto-run and spawned session titles come from the task, not the envelope ([#4804](https://github.com/k-k1/agent-fleet/issues/4804))
 
 **Fixed**
