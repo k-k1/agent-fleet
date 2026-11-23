@@ -34,7 +34,12 @@
   background-image: linear-gradient(var(--hover, rgba(127, 127, 127, 0.12)), var(--hover, rgba(127, 127, 127, 0.12)));
 }
 .autorun-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.autorun-elapsed, .autorun-pr { flex: none; font-size: 11px; opacity: 0.7; }
+.autorun-elapsed { flex: none; font-size: 11px; opacity: 0.7; }
+/* The dimming stays on the number: on the badge it would drop the text below the contrast its tokens were chosen for. */
+.autorun-pr { flex: none; display: inline-flex; align-items: center; gap: 4px; font-size: 11px; }
+.autorun-pr-n { opacity: 0.7; }
+.autorun-pr-merged { --badge: var(--pr-merged); --badge-mix: 16%; }
+.autorun-pr-closed { --badge: var(--err); --badge-mix: 16%; }
 .autorun-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: currentColor; opacity: 0.4; }
 .autorun-dot.is-running { background: var(--ok, #3fb950); opacity: 1; }
 .autorun-dot.is-waiting { background: var(--warn, #d29922); opacity: 1; }

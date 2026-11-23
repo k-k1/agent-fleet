@@ -115,6 +115,22 @@ describe("AutoRunSection", () => {
     expect(row.querySelector(".autorun-elapsed")!.textContent).toBe("12m");
   });
 
+  it.each([
+    [{ state: "open", draft: true }, "draft", "ui-badge"],
+    [{ state: "open" }, "open", "ui-badge-ok"],
+    [{ state: "merged" }, "merged", "autorun-pr-merged"],
+    [{ state: "closed" }, "closed", "autorun-pr-closed"],
+  ])("renders the PR state %j as a badge", async (pr, kind, cls) => {
+    useSessionsStore.setState({
+      sessions: useSessionsStore.getState().sessions.map((x) => (x.name === "run-a" ? { ...x, pr: { number: 30, url: "u", ...pr } as never } : x)),
+    });
+    await mount();
+    const badge = host.querySelector('[data-autorun-run="run-a"] .autorun-pr .ui-badge')!;
+    expect(badge.getAttribute("data-pr-state")).toBe(kind);
+    expect(badge.classList.contains(cls)).toBe(true);
+    expect(host.querySelector('[data-autorun-run="run-a"] .autorun-pr-n')!.textContent).toBe("#30");
+  });
+
   it("opens the run's session, and a session it started, on click", async () => {
     await mount();
     await act(async () => host.querySelector<HTMLButtonElement>('[data-autorun-run="run-a"] .autorun-run-main')!.click());
