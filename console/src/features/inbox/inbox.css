@@ -4,7 +4,6 @@
 .inbox-tabs { margin-bottom: 10px; }
 .inbox-group h4 { margin: 12px 0 6px; font-size: var(--fs-12); color: var(--muted); font-weight: 600; }
 .inbox-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.inbox-card { border: 1px solid var(--border); border-radius: 8px; background: var(--panel); }
 .inbox-card.is-unseen { border-color: var(--accent, var(--border2)); }
 .inbox-card-head { all: unset; box-sizing: border-box; width: 100%; cursor: pointer; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 8px; padding: 8px 10px; }
 .inbox-card-head:focus-visible { outline: 2px solid var(--accent, currentColor); outline-offset: -2px; border-radius: 8px; }
