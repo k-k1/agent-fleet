@@ -875,6 +875,28 @@ describe("choosing what a note waits for by search", () => {
     expect(titles(chips())).toEqual(["Importer docs"]);
   });
 
+  it("brings the pointed memo back into view when a poll moves it down the list", async () => {
+    seed();
+    const seen: string[] = [];
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      seen.push(this.textContent ?? "");
+    };
+    try {
+      await renderSection();
+      await openEditor("the edited one");
+      await focusSearch();
+      await pressKey("ArrowDown"); // Importer docs, index 1
+      seen.length = 0;
+      servedMemos = [...servedMemos, aMemo({ id: "a4", body: "newer job", state: "pending", position: 2.5, createdAt: "2026-09-09T00:00:02Z" })];
+      await bump();
+      // Same note, index 1 -> 2: the list may be scrolled away from where it now sits.
+      expect(seen.some((x) => x.includes("Importer docs"))).toBe(true);
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
+  });
+
   it("adds nothing on Enter when the memo the keyboard pointed at left the list, until another is pointed at", async () => {
     seed();
     await renderSection();
