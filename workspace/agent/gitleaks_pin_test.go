@@ -1,8 +1,12 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 )
 
@@ -11,17 +15,20 @@ import (
 // locally turns red in CI, or the reverse.
 var (
 	dockerGitleaksARG = regexp.MustCompile(`(?m)^ARG GITLEAKS_VERSION=(\S+)\s*$`)
-	// The pin sits in the step that installs the scanner: `VERSION: x.y.z` under `env:` of the
-	// step named "install gitleaks".
-	ciGitleaksVersion = regexp.MustCompile(`(?s)- name: install gitleaks[^\n]*\n.*?\n\s+VERSION:\s*(\S+)\s*\n`)
+	// The step that installs the scanner, up to the next step: the pin is searched only there,
+	// so a VERSION in a later step or job is never read as the scanner's.
+	ciGitleaksStep    = regexp.MustCompile(`(?s)- name: install gitleaks[^\n]*\n(.*?)(?:\n\s*- name:|\n\S|\z)`)
+	ciGitleaksVersion = regexp.MustCompile(`(?m)^\s+VERSION:\s*(\S+)\s*$`)
 )
 
 func gitleaksPins(dockerfile, ci string) (docker, workflow string) {
 	if m := dockerGitleaksARG.FindStringSubmatch(dockerfile); m != nil {
 		docker = m[1]
 	}
-	if m := ciGitleaksVersion.FindStringSubmatch(ci); m != nil {
-		workflow = m[1]
+	if step := ciGitleaksStep.FindStringSubmatch(ci); step != nil {
+		if m := ciGitleaksVersion.FindStringSubmatch(step[1]); m != nil {
+			workflow = m[1]
+		}
 	}
 	return docker, workflow
 }
@@ -59,7 +66,78 @@ func TestGitleaksPinsParse(t *testing.T) {
 	if d == w {
 		t.Errorf("a different Dockerfile pin parsed equal: %q == %q", d, w)
 	}
+	// A VERSION that moved out of the step must not be picked up from a later step.
+	const moved = "      - name: install gitleaks (x)\n        run: |\n          x\n      - name: other\n        env:\n          VERSION: 8.30.1\n"
+	if _, w = gitleaksPins("ARG GITLEAKS_VERSION=8.30.1\n", moved); w != "" {
+		t.Errorf("read a later step's VERSION as the scanner's: %q", w)
+	}
 	if d, w = gitleaksPins("ARG OTHER=1\n", "- name: something else\n  env:\n    VERSION: 1\n"); d != "" || w != "" {
 		t.Errorf("unrelated text parsed as a pin: docker=%q workflow=%q", d, w)
+	}
+}
+
+// The checksum check in the Dockerfile is what keeps a tampered tarball out of the image, so
+// it is run for real: the line is taken from the Dockerfile itself (a change to it is a change
+// to what is tested) and pointed at a scratch directory. A hash mismatch, an asset the
+// checksums file does not list, and one it lists twice must each fail; only a single matching
+// line passes.
+func TestGitleaksChecksumStep(t *testing.T) {
+	df, err := os.ReadFile("../Dockerfile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var step string
+	for _, line := range strings.Split(string(df), "\n") {
+		if strings.Contains(line, "/tmp/gitleaks && awk") && strings.Contains(line, "sha256sum -c") {
+			step = strings.TrimSuffix(strings.TrimSpace(line), "; \\")
+		}
+	}
+	if step == "" {
+		t.Fatal("no `cd /tmp/gitleaks && awk ... sha256sum -c` line in workspace/Dockerfile")
+	}
+	const asset = "gitleaks_1.2.3_linux_x64.tar.gz"
+	run := func(t *testing.T, checksums func(hash string) string) error {
+		t.Helper()
+		dir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(dir, asset), []byte("payload\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out, err := exec.Command("sha256sum", filepath.Join(dir, asset)).Output()
+		if err != nil {
+			t.Skipf("sha256sum unavailable: %v", err)
+		}
+		hash := strings.Fields(string(out))[0]
+		if err := os.WriteFile(filepath.Join(dir, "checksums.txt"), []byte(checksums(hash)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		script := fmt.Sprintf("set -eux; asset=%q; %s", asset, strings.ReplaceAll(step, "/tmp/gitleaks", dir))
+		cmd := exec.Command("bash", "-c", script)
+		if b, err := cmd.CombinedOutput(); err != nil {
+			t.Logf("output: %s", b)
+			return err
+		}
+		return nil
+	}
+	other := strings.Repeat("0", 64)
+	cases := []struct {
+		name      string
+		checksums func(hash string) string
+		wantFail  bool
+	}{
+		{"one matching line", func(h string) string { return h + "  other.tar.gz\n" + h + "  " + asset + "\n" }, false},
+		{"hash mismatch", func(string) string { return other + "  " + asset + "\n" }, true},
+		{"asset not listed", func(h string) string { return h + "  other.tar.gz\n" }, true},
+		{"asset listed twice", func(h string) string { return h + "  " + asset + "\n" + h + "  " + asset + "\n" }, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			err := run(t, c.checksums)
+			if c.wantFail && err == nil {
+				t.Error("the checksum step passed; it must fail")
+			}
+			if !c.wantFail && err != nil {
+				t.Errorf("the checksum step failed: %v", err)
+			}
+		})
 	}
 }
