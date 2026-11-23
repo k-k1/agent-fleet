@@ -103,6 +103,8 @@ function openRunSession(agentKind: string | undefined, name: string): void {
 interface ScheduleRowProps {
   s: ScheduleDTO;
   rowBusy: boolean;
+  /** The row got a 409 on approve and its refreshed copy has not arrived: its details stay shut. */
+  detailHeld: boolean;
   runsOpen: boolean;
   runs: ScheduleRun[] | undefined;
   /** Sessions this schedule started (and the ones they spawned), newest first. */
@@ -120,7 +122,7 @@ interface ScheduleRowProps {
   onDelete: (s: ScheduleDTO) => void;
 }
 
-function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEndedOpenChange, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
+function ScheduleRow({ s, rowBusy, detailHeld, runsOpen, runs, sessionRuns, endedOpen, onEndedOpenChange, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
   const tr = useT();
   const paused = !s.enabled;
   const tone = statusTone(s.last_status);
@@ -196,7 +198,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
           <button
             type="button"
             className="sched-approve-btn"
-            disabled={rowBusy}
+            disabled={rowBusy || detailHeld}
             onClick={(e) => {
               e.stopPropagation();
               onDetail(s);
@@ -223,7 +225,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
           {menuOpen &&
             createPortal(
               <div className="ui-menu sched-menu" ref={menuElRef} onMouseDown={(e) => e.stopPropagation()}>
-                <button type="button" className="ui-menu-item" onClick={() => runAction(onDetail)}>
+                <button type="button" className="ui-menu-item" disabled={detailHeld} onClick={() => runAction(onDetail)}>
                   <Icon name="edit" /> {tr("sched.detail")}
                 </button>
                 <button type="button" className="ui-menu-item" disabled={rowBusy} onClick={() => runAction(onPause)}>
@@ -373,6 +375,10 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const [openRuns, setOpenRuns] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ScheduleRun[]>>({});
   const [detail, setDetail] = useState<ScheduleDTO | null>(null);
+  // The row whose approve answered 409: the copy on screen is the rejected generation, so opening
+  // it again would only earn a second 409. Held from the 409 until a list read begun after it
+  // lands (the retry tick drops every older read), so no stale copy can reopen the details.
+  const [staleId, setStaleId] = useState<string | null>(null);
   // The section owns its open state (a controlled Section) because a reveal from a
   // notification has to open it. The key is the one Section persists to itself, so an
   // existing open/closed choice still applies.
@@ -426,6 +432,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
         }
         if (tk.land("status")) setLoadErr("");
         if (tk.land("list")) {
+          setStaleId(null);
           const ser = JSON.stringify(arr);
           if (ser !== serRef.current) {
             serRef.current = ser;
@@ -657,6 +664,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
               key={s.id}
               s={s}
               rowBusy={!!busy[s.id]}
+              detailHeld={staleId === s.id}
               runsOpen={openRuns === s.id}
               runs={openRuns === s.id ? runs[s.id] : undefined}
               sessionRuns={grouped.bySchedule.get(s.id) ?? []}
@@ -678,7 +686,10 @@ export const SchedulesSection = memo(function SchedulesSection() {
         <ScheduleDetailModal
           s={detail}
           onClose={() => setDetail(null)}
-          onStale={() => setReloadTick((n) => n + 1)}
+          onStale={() => {
+            setStaleId(detail.id);
+            setReloadTick((n) => n + 1);
+          }}
           onSaved={(dto) => {
             applyDTO(dto);
             setDetail(null);
