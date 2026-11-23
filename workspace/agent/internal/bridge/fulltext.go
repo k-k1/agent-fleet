@@ -198,20 +198,37 @@ func assignmentSpans(s string, known [][2]int) (spans, reach [][2]int, names []i
 		quoted bool
 	}
 	var cuts []cut
+	// Names only bound what reaches past a mark, which never passes whitespace or a quote, so
+	// they are looked for only from each mark to there (or to the next mark), plus the blanks and
+	// the one byte a name's `=` may need. The mark before each window is a word boundary, as the
+	// slice's start is taken to be.
+	for i, k := range known {
+		stop := len(s)
+		if i+1 < len(known) {
+			stop = known[i+1][0]
+		}
+		w := k[1]
+		for w < stop && !isSpaceOrQuote(s[w]) {
+			w++
+		}
+		e := w
+		for e < stop && (s[e] == ' ' || s[e] == '\t') {
+			e++
+		}
+		window := masked[markAt[i]+len(redactedMark):][:min(e+1, stop)-k[1]]
+		for p := 0; p < w-k[1]; {
+			m := nameRe.FindStringIndex(window[p:])
+			if m == nil || p+m[0] >= w-k[1] {
+				break
+			}
+			names = append(names, k[1]+p+m[0])
+			p += m[1]
+		}
+	}
 	// One match at a time, not FindAll: a dense body would hold every match's submatch slice.
 	// Searching the slice after a match finds what the regexp's own resume would: \b at the
 	// slice's start is judged without the byte before it, but a match ends at whitespace, at the
-	// end, on a quote or on a separator, and none of these lets a word run on across the cut.
-	// Names only bound what reaches past a mark; without one, skip the scan.
-	for p := 0; len(known) > 0 && p < len(masked); {
-		m := nameRe.FindStringIndex(masked[p:])
-		if m == nil {
-			break
-		}
-		name, _ := toRaw(p + m[0])
-		names = append(names, name)
-		p += m[1]
-	}
+	// end, or on a quote, and none of these lets a word run on across the cut.
 	for p := 0; p < len(masked); {
 		m := envAssignRe.FindStringSubmatchIndex(masked[p:])
 		if m == nil {
@@ -236,12 +253,13 @@ func assignmentSpans(s string, known [][2]int) (spans, reach [][2]int, names []i
 }
 
 // valueEnd returns where an assignment value that a mark cut short at from ends in s: at
-// whitespace, at a quote (taken with it when the value opened with one), at a shell
-// metacharacter, which starts another command (`;printf done`), or at the name starting at
-// limit (len(s) for none); unquoted, it stops short as trimEnd says.
+// whitespace, at a quote (taken with it when the value opened with one), or at the name starting
+// at limit (len(s) for none). Unquoted, it also ends at a comma, which starts another field
+// (`<token>,OK,42`), or at a shell metacharacter, which starts another command
+// (`;printf done`), and stops short as trimEnd says; inside quotes both are the value's own.
 func valueEnd(s string, from, limit int, quoted bool) int {
 	j := from
-	for j < limit && !isSpaceOrQuote(s[j]) && strings.IndexByte(";&|<>()`", s[j]) < 0 {
+	for j < limit && !isSpaceOrQuote(s[j]) && (quoted || strings.IndexByte(",;&|<>()`", s[j]) < 0) {
 		j++
 	}
 	if quoted && j < limit && (s[j] == '\'' || s[j] == '"') {
