@@ -3,8 +3,8 @@
 English | [日本語](0142-spaces-start-hub-terminal-view.ja.md)
 
 - Status: **accepted** (2026-11-24). Decided with the owner on a static mock. Nothing is built.
-  The four questions under "Open questions" are not decided.
-- Tracking: #4961.
+  Open questions 3 and 4 were decided the same day; 1 and 2 are not decided.
+- Tracking: #4961. Follow-ups: #4963, #4964, #4965, #4966, #4967, #4968.
 - Related: [0140](0140-console-activity-bar.md) (the activity bar this adds a view to; decisions 2,
   4 and 5) / [0081](0081-image-generation-pane.md) decision 1 (no engine, no button) /
   [0104](0104-long-lived-member-workspace.md) (one long-lived home per member) /
@@ -120,7 +120,7 @@ Five facts in the code shape the answer:
 - **P2**: recently used spaces and "pick an existing space"; attachments copied into the space;
   deleting a space through the trash; a home-usage category for `~/spaces`; the Terminal view,
   including the wire change SSM grouping needs.
-- **P3**: the activity-bar context menu; the decisions on the open questions; the guide pages.
+- **P3**: the activity-bar context menu; the decisions on open questions 1 and 2; the guide pages.
 
 ## Open questions
 
@@ -133,10 +133,10 @@ Five facts in the code shape the answer:
    short-lived and (c) would scatter memories over many small projects.
 3. **The badge of a view whose icon is off.** ADR 0140 decision 4 assumes every view has an icon.
    (a) drop the badge; (b) show a dot on the bar and name the view in the context menu.
-   Recommended: (b) for waiting badges (a session stopped on the member's answer), (a) for news.
+   **Decided: (b) for waiting badges** (a session stopped on the member's answer), **(a) for news.**
 4. **The wire change for SSM grouping.** The stored meta has the SSM target (`session.SSMMeta`:
    instance id, region, account id, profile), but the session list does not carry it. (a) add those
-   non-secret fields to the list; (b) group from the title. Recommended: (a). The title can be
+   non-secret fields to the list; (b) group from the title. **Decided: (a).** The title can be
    renamed, so (b) is not a grouping key.
 
 ## Alternatives set aside
