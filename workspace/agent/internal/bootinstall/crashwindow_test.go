@@ -694,6 +694,10 @@ func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 	if !ok {
 		t.Fatal("lock not taken")
 	}
+	// Cmd.Start reads the lock's descriptor; the ready file below orders it before the close only
+	// through the filesystem, which the race detector does not see.
+	started := make(chan struct{})
+	e.afterNPMStart = func() { close(started) }
 	done := make(chan error, 1)
 	go func() {
 		se, err := e.npmInstall([]string{"x"})
@@ -709,6 +713,7 @@ func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+	<-started
 	rel() // the caller's own hold goes, as a killed caller's would
 	e.npmLockFile.Close()
 	if _, _, busy := probeLock(f.env.npmLockPath()); !busy {
