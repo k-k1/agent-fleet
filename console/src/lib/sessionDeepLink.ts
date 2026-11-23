@@ -85,7 +85,9 @@ export function openSessionByName(name: string, tenant = ""): void {
       } catch {
         /* the next tick asks again */
       }
-      if (done || mine !== seq) return;
+      // A page that was suspended wakes with an answer ahead of the tick that would have expired the
+      // link: past the limit the answer is not used.
+      if (done || mine !== seq || Date.now() >= deadline) return;
       busyUntil = 0;
       if (!list || !here() || pushStamp("sessions") !== stamp) return;
       const s = list.find((x) => x.name === name);

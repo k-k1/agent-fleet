@@ -133,6 +133,17 @@ describe("listenPushOpen", () => {
     await vi.advanceTimersByTimeAsync(7000);
     expect(opened).toEqual(["term:work"]);
   });
+  it("does not open from an answer that arrives after the limit, even before the tick that would expire the link", async () => {
+    let answer!: (v: unknown) => void;
+    apiAnswer = () => new Promise((r) => (answer = r));
+    await tap({ session: "work", tenant: "b" });
+    // A suspended page: the clock moves on without the timers running, then the answer lands first.
+    vi.setSystemTime(Date.now() + 91_000);
+    answer({ sessions: [{ name: "work", kind: "codex" }] });
+    await flush();
+    expect(opened).toEqual([]);
+    expect(applyList).not.toHaveBeenCalled();
+  });
   it("sends no request while the API client is pinned to another tenant than the store shows (pop-out boot)", async () => {
     clientTenant = "b"; // pinned first; the store still holds the saved "a"
     openSessionByName("work", "a");
