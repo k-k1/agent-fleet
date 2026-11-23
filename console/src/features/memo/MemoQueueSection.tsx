@@ -1768,6 +1768,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             setSendOpen(false);
             bumpMemos();
           }}
+          onProgress={bumpMemos}
         />
       )}
     </>
