@@ -198,6 +198,8 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `AF_DATA_DURABLE_REQUIRED` | `1` は、この配備が Control Plane のデータ領域（`WS_DATA`）を永続ストレージに置く必要があると宣言する。設定されていて、その領域が `/tmp` の下、または `tmpfs` やコンテナのルート（`overlay`）ファイルシステム上にあると、内部 Git プロバイダを止める。リポジトリの作成と `/git/` 以下（clone・push・LFS）は 503 `git_data_not_durable` を返し、「内部リポジトリ」タブにその文面が出る。Console とセッションは影響を受けず、Control Plane は警告を出して起動する。未設定なら何も確認しない。ECS のスタックは、永続のデータ用ファイルシステムを用意するときにこれを設定する。起動時には、どのランタイムでも、一覧にあるのにディスク上のベアリポジトリが無い内部リポジトリをログに出す（何も削除しない） |
 | `AF_EFS_BACKUP` | 手で設定しない。`ecs` / `ecs-ec2` で `update.sh` と `standup.sh` が ingress スタックの `EfsBackup` パラメータ（`present`・`off`・`missing`）から埋め、`missing` なら管理画面に「日次の EFS バックアップがない」バナーが出る（[アップグレードする](../operate/run/upgrade.ja.md#efs-バックアップがないという通知)） |
 | `AF_SESSION_IDLE_TIMEOUT`・`AF_WS_IDLE_TIMEOUT`・`AF_BACKGROUND_HOLD_MAX`・`AF_WORKSPACE_START_DEADLINE` | アイドルのセッションとワークスペースを止めるタイミング。既定値は [上限](limits.ja.md#配備が決めるもの)、動きは [アイドル停止と強制停止を使う](../operate/run/idle-stop.ja.md#アイドル自動停止の時間を決める) |
+| `AF_MEMO_QUEUE_REPO_SETTINGS` | メンバーが、メモのカテゴリの自動実行の設定をリポジトリの `.agent-fleet/autorun.yaml` と比べ、違いを承認し、自分の設定を YAML で書き出せるか（[自動実行の設定をリポジトリに置く](../user/chat/memo-auto-run-repo-file.ja.md)）。既定はオン。`0`・`false`・`no`・`off` でオフになり、Console はカードを出さず、API は 404 を返す。承認済みの設定はそのまま残る。それ以外の値は既定のまま |
+| `AF_MEMO_QUEUE_REPO_RECHECK` | 「自動で実行する」がオンのカテゴリについて、Control Plane がそのファイルを読み直す間隔。ファイルがメンバーの設定と違うか誤りを含むカテゴリに、Console が印を付けられるようになる。Go の duration（`6h`）で書く。未設定、`0`、読めない値は**オフ**（既定）。ファイルはメンバーとリポジトリの組ごとに 1 回、メンバーのワークスペースで fetch する。止まっているワークスペースは起動せずに飛ばし、いまの名前と設定に対する確認から半間隔たっていないカテゴリと、メモの自動実行を止めているテナントのカテゴリも飛ばす。何も反映せず、読み取りに失敗すると前の記録が残るので、印がないことはファイルと同じことの証明にならない。`AF_MEMO_QUEUE_REPO_SETTINGS` がオンのときだけ動く。メンバーは 1 人ずつ順に読むので、大きな配備では間隔を長めにする（[#4934](https://github.com/k-k1/agent-fleet/issues/4934)） |
 
 ### AWS ECS の場合
 
@@ -211,6 +213,8 @@ Control Plane は自分の既定値のままです。
 | `AF_GITHUB_LOGIN_CLIENT_ID`・`AF_GITHUB_LABEL_JA`・`AF_GITHUB_LABEL_EN`・`AF_GITHUB_MEMBERSHIP_TTL`・`AF_GITHUB_MEMBERSHIP_GRACE` | `GithubLoginClientId`・`GithubLabelJa`・`GithubLabelEn`・`GithubMembershipTtl`・`GithubMembershipGrace` |
 | `AF_LLM_URL`・`AF_COMFY_URL`・`AF_REMOTE_ENGINE_URL`・`AF_REMOTE_ENGINE_KEYS` | `LlmUrl`・`ComfyUrl`・`RemoteEngineUrl`・`RemoteEngineKeys` |
 | `AF_GITHUB_LOGIN_CLIENT_SECRET`・`AF_COMFY_API_KEY`・`AF_REMOTE_ENGINE_TOKEN` | スイッチ `GithubLoginSecret`・`ComfyApiKey`・`RemoteEngineToken`（`on`）。値は SSM SecureString の `<SsmPrefix>/github-login-client-secret`・`/comfy-api-key`・`/remote-engine-token` から読むので、先に作っておきます |
+
+パラメータのない変数は、ECS では Control Plane の既定値のままです。`AF_MEMO_QUEUE_REPO_SETTINGS` はオン、`AF_MEMO_QUEUE_REPO_RECHECK` はオフです。
 
 `WS_ENV` には ECS 用のパラメータを意図して用意していません。自由形式の `KEY=VAL` で、シークレットの値も平文の環境変数に載るためです。パラメータは
 `30-ingress.yaml` に対する個別の `aws cloudformation deploy` で設定します（`update.sh` が上書きするのは `ImageTag` と、ほかのスタックから読む事実 `EfsBackup`・`WorkspaceSubnets`・`EgressProxyAddr`・`EgressTokenSecretArn`・`EgressArchiveBucket` だけです）。

@@ -11,6 +11,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
 )
 
+// routeNow is the clock the HTTP routes decide against. Tests pin it to their fixture time:
+// proposals expire ProposalTTL after creation, so a fixed fixture date read against the wall clock
+// turns every pending proposal into an expired one two weeks later.
+var routeNow = time.Now
+
 // DecideMaxRequest bounds the body memberorigin.Require buffers on the decision routes.
 const DecideMaxRequest = 4 << 10
 
@@ -127,7 +132,7 @@ func internalErr(w http.ResponseWriter, what string, err error) {
 
 // HandleStatus is GET /agents/memory-consolidation: read-only.
 func HandleStatus(w http.ResponseWriter, r *http.Request) {
-	v, err := BuildStatus(time.Now())
+	v, err := BuildStatus(routeNow())
 	if err != nil {
 		internalErr(w, "the status could not be read", err)
 		return
@@ -144,7 +149,7 @@ func HandleList(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "status is not a proposal status")
 		return
 	}
-	ps, err := ListProposals(status, time.Now())
+	ps, err := ListProposals(status, routeNow())
 	if err != nil {
 		internalErr(w, "the proposals could not be listed", err)
 		return
@@ -160,7 +165,7 @@ func HandleGet(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "id is not a proposal id")
 		return
 	}
-	v, err := View(id, time.Now())
+	v, err := View(id, routeNow())
 	switch {
 	case errors.Is(err, ErrNotFound):
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such proposal")
@@ -206,19 +211,19 @@ func decide(w http.ResponseWriter, r *http.Request, f func(id string) (any, erro
 
 // HandleApprove is POST /agents/memory-consolidation/proposals/approve {id}.
 func HandleApprove(w http.ResponseWriter, r *http.Request) {
-	decide(w, r, func(id string) (any, error) { return Approve(id, time.Now()) })
+	decide(w, r, func(id string) (any, error) { return Approve(id, routeNow()) })
 }
 
 // HandleReject is POST /agents/memory-consolidation/proposals/reject {id}.
 func HandleReject(w http.ResponseWriter, r *http.Request) {
-	decide(w, r, func(id string) (any, error) { return Reject(id, time.Now()) })
+	decide(w, r, func(id string) (any, error) { return Reject(id, routeNow()) })
 }
 
 // HandleRetry is POST /agents/memory-consolidation/proposals/retry {id}: reopen the observations
 // of a rejected, expired or refused proposal so the next run looks at the topic again.
 func HandleRetry(w http.ResponseWriter, r *http.Request) {
 	decide(w, r, func(id string) (any, error) {
-		p, n, err := Retry(id, time.Now())
+		p, n, err := Retry(id, routeNow())
 		if err != nil {
 			return nil, err
 		}

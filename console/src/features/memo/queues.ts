@@ -437,6 +437,44 @@ export function afterChoices(memos: Memo[], m: Memo): { id: string; label: strin
     .map((o) => ({ id: o.id, label: afterLabelOf(o) || o.id }));
 }
 
+/** One candidate (or chosen) prerequisite as the picker names it: enough to tell two notes of the
+ *  same work item apart. `memo` is absent for a chosen note this list no longer holds. */
+export interface AfterEntry {
+  id: string;
+  memo?: Memo;
+  /** The reference key; "" when the note has none. */
+  key: string;
+  /** The work item's title when the cache has it, else the first line of the note's text. */
+  title: string;
+  /** The note's whole text, for the tooltip and the search. */
+  text: string;
+  /** Why a chosen note is no longer on offer (deleted, moved, replaced ...). */
+  why?: MsgKey;
+}
+
+/** Builds the picker's name for a note. `fallback` names it when the note itself is not loaded
+ *  (the label the Control Plane gave it); `workTitle` is the cached title of its work item, "". */
+export function afterEntryOf(id: string, memo: Memo | undefined, fallback: string, workTitle: string): AfterEntry {
+  if (!memo) return { id, key: "", title: fallback || id, text: "" };
+  const text = (memo.body || memo.refPath || "").trim();
+  const line = text.split("\n")[0];
+  const key = memo.reference?.key ?? "";
+  const title = workTitle.trim() || (line.length > 80 ? line.slice(0, 80) + "…" : line);
+  return { id, memo, key, title: key || title ? title : id, text };
+}
+
+/** The entries whose key, title or text contain every word of the query (case-folded), at most
+ *  `limit` of them in the order given, and how many matched in all. An empty query matches all. */
+export function searchAfterEntries(entries: readonly AfterEntry[], query: string, limit: number): { items: AfterEntry[]; total: number } {
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const hit = (e: AfterEntry) => {
+    const hay = (e.key + "\n" + e.title + "\n" + e.text).toLowerCase();
+    return words.every((w) => hay.includes(w));
+  };
+  const all = entries.filter(hit);
+  return { items: all.slice(0, limit), total: all.length };
+}
+
 // ---- message state and origin ------------------------------------------------------------
 
 const STATE_KEYS: Record<string, [MsgKey, MsgKey]> = {

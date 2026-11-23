@@ -23,11 +23,31 @@
 // in scrollHeight, so an empty measure is "how many lines the placeholder wraps to at this width",
 // and the value then sticks until the next draft change. Seen on a phone in the image studio:
 // the composer came back one line tall with the placeholder's second line cut off.
-export function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
+//
+// A textarea that offers a drag handle passes `respectResize`. The handle writes an inline height
+// that autoGrow did not write, which is how a member's own size is told from ours: while the inline
+// height differs from the last one written here, the member's size is kept (no keystroke snaps it
+// back). Emptying it starts over, so the next draft grows again. A touch browser has no handle, so
+// its height is only ever ours. The box is border-box, so its borders are added to the content's
+// scrollHeight; the stylesheet gives it `overflow-y: auto`, which takes over past the CSS
+// max-height and straight after a drag to a smaller size.
+export function autoGrowTextarea(el: HTMLTextAreaElement | null, opts?: { respectResize?: boolean }): void {
   if (!el) return;
+  const respect = !!opts?.respectResize;
   if (!el.value) {
     el.style.height = "";
+    if (respect) {
+      delete el.dataset.grown;
+      delete el.dataset.resized;
+    }
     return;
+  }
+  if (respect) {
+    const h = el.style.height;
+    if (el.dataset.resized || (h && h !== el.dataset.grown)) {
+      el.dataset.resized = "1";
+      return;
+    }
   }
   const row = el.parentElement;
   const frozen = row ? Math.ceil(row.getBoundingClientRect().height) : 0;
@@ -35,7 +55,9 @@ export function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
   if (row && frozen > 0) row.style.minHeight = frozen + "px";
   try {
     el.style.height = "auto";
-    el.style.height = el.scrollHeight + "px";
+    // offsetHeight - clientHeight is the borders (a border-box height must include them).
+    el.style.height = el.scrollHeight + (respect ? el.offsetHeight - el.clientHeight : 0) + "px";
+    if (respect) el.dataset.grown = el.style.height;
   } finally {
     if (row && frozen > 0) row.style.minHeight = prevMin;
   }

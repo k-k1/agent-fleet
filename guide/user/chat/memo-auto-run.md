@@ -134,8 +134,9 @@ The agent, model and effort in the category's auto-run settings are the **defaul
 A memo can wait for other memos of the same auto-run category: it runs only after each of them has run, that run ended well, and every pull request that run opened is merged. Use it for work that builds on other work, such as an issue that needs another issue's change first.
 
 1. Click the memo to open its edit view
-2. Under "**Waits for (other memos of this category, earlier or later)**", tick the memos it waits for, then press "Save"
+2. Under "**Waits for (other memos of this category, earlier or later)**", click the search field and pick the memos it waits for, then press "Save". The memos it already waits for show above the field as chips; the "×" on a chip removes it
 
+- The search field matches the key, the title of the work item and the text of the memo, as you type, and lists at most 8 matches, the latest memos first (focus the empty field to see them). Use ↑ and ↓ and Enter to add one, Esc to close the list. Each memo is named by its key and the work item's title (or the first line of its text when it has no work item, or its title is not known yet), its state, its date, and "Follow-up N" when it is a follow-up, so two memos of one issue can be told apart. When two memos still read the same, the start of each one's text is added. Hover a name for the whole text. A memo it waits for that can no longer be chosen (deleted, moved or replaced by a tidy) stays as a chip until you remove it
 - Any other memo of the category that a tidy has not replaced can be chosen, earlier or later in its order (a memo that waits for a later one simply waits for it), but never one that would make two memos wait for each other: a memo that already waits for it, directly or through others, is not offered. A session sets the same with `add_memo` and `update_memo` (`after`), naming a memo by its id or by its work item's key (`owner/repo#12`), which means the newest memo of the category that points at that item and was not replaced by a tidy
 - Changing what a memo waits for counts as changing the memo: when a session does it to a memo you approved, the memo goes back to "Waits for approval"
 - A memo that waits takes no place among "Sessions at the same time", and memos behind it still run. It does not count towards "Notes waiting to run" until what it waits for has ended well
@@ -632,6 +633,7 @@ It says "An auto-run category cannot be renamed, merged or deleted from inside t
 ## Related
 
 - [Collect memos and hand them over](memos.md): how to write memos and send them together
+- [Keep auto-run settings in the repository](memo-auto-run-repo-file.md): keep these settings in `.agent-fleet/autorun.yaml` and approve the difference
 - [Run work unattended with memo auto-run](../fleet/memo-auto-run-practices.md): how to write the instruction and the memos, and how to run large tasks and merges
 - [Run at a set time](../fleet/schedules.md): for a fixed time, use a schedule
 - [Start child sessions from a session](../fleet/child-sessions.md)
