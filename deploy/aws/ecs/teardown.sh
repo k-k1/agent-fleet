@@ -105,6 +105,10 @@ captured_param() {  # captured_param <key> — a parameter of the captured 30-in
 }
 SSM_PREFIX="$(af_stack_param "$AF_STACK_INGRESS" SsmPrefix)"
 [ -n "$SSM_PREFIX" ] || SSM_PREFIX="$(captured_param SsmPrefix)"
+# Neither the live stack nor the capture named it. The /af-cp default is a guess, and step 6
+# must not sweep /af-ws/ on a guess: the real prefix may lie inside it.
+SSM_PREFIX_KNOWN=1
+[ -n "$SSM_PREFIX" ] || SSM_PREFIX_KNOWN=0
 : "${SSM_PREFIX:=/af-cp}"
 HOSTED_ZONE="$(af_stack_param "$AF_STACK_INGRESS" HostedZoneId)"
 [ -n "$HOSTED_ZONE" ] || HOSTED_ZONE="$(captured_param HostedZoneId)"
@@ -347,6 +351,11 @@ fi
 WS_PARAMS="$("${AWS[@]}" ssm describe-parameters --parameter-filters "Key=Name,Option=BeginsWith,Values=/af-ws/" \
   --query 'Parameters[].Name' --output text 2>/dev/null | txt || true)"
 WS_KEPT=""
+if [ "$PURGE_SECRETS" != 1 ] && [ -n "$WS_PARAMS" ] && [ "$SSM_PREFIX_KNOWN" != 1 ]; then
+  echo "==> 6. keeping /af-ws/* ($(count "$WS_PARAMS")): SsmPrefix could not be read from the stack or the capture," \
+    "and the secrets may be under /af-ws/. Re-run once it can be read, or with --purge-secrets"
+  WS_PARAMS=""
+fi
 if [ "$PURGE_SECRETS" != 1 ] && [ -n "$WS_PARAMS" ]; then
   case "$SSM_PREFIX/" in
     /af-ws/*)

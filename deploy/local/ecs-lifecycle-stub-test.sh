@@ -395,7 +395,7 @@ case "$args" in
   *"ParameterKey=='Persistence'"*) echo "delete" ;;
   *"ParameterKey=='CpArch'"*) echo "x86_64" ;;
   *"ParameterKey=='Ec2SlotLaunchTemplate'"*) echo "lt-OLD" ;;
-  *"ParameterKey=='SsmPrefix'"*) echo "${STUB_SSM_PREFIX:-/af-cp}" ;;
+  *"ParameterKey=='SsmPrefix'"*) if [ "${STUB_SSM_PREFIX_UNREADABLE:-0}" = 1 ]; then echo "An error occurred (Throttling)" >&2; exit 254; fi; echo "${STUB_SSM_PREFIX:-/af-cp}" ;;
   *"ParameterKey=='HostedZoneId'"*) echo "ZTEST" ;;
   *"ParameterKey=='Ec2SlotSleepSec'"*) echo "900" ;;
   # --- 20-platform through a change set (update.sh step 1a). `deploy --no-execute-changeset`
@@ -792,6 +792,26 @@ STUB_SSM_PREFIX=/af-ws "$ECS/teardown.sh" --profile p --region ap-northeast-1 --
 has "ssm delete-parameter --name /af-ws/alice"
 has "ssm delete-parameter --name /af-ws/engines/llm/active"
 has "ssm delete-parameter --name /af-ws/master-key"
+# The live SsmPrefix cannot be read: the capture's value is used, and with no value in the
+# capture either nothing under /af-ws/ is swept on the /af-cp guess.
+cp "$STATE/params/30-ingress" "$WORK/30-ingress.orig"
+sed -i 's|^SsmPrefix=.*|SsmPrefix=/af-ws/cp|' "$STATE/params/30-ingress"
+: > "$LOG"
+STUB_SSM_PREFIX=/af-ws/cp STUB_SSM_PREFIX_UNREADABLE=1 \
+  "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out2a6" </dev/null
+has "ssm delete-parameter --name /af-ws/alice"
+hasnt "ssm delete-parameter --name /af-ws/cp/"
+sed -i '/^SsmPrefix=/d' "$STATE/params/30-ingress"
+: > "$LOG"
+STUB_SSM_PREFIX=/af-ws/cp STUB_SSM_PREFIX_UNREADABLE=1 \
+  "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out2a7" </dev/null
+hasnt "ssm delete-parameter --name /af-ws/"
+grep -q "SsmPrefix could not be read" "$WORK/out2a7" || fail "an unread SsmPrefix kept /af-ws/ without saying why"
+: > "$LOG"
+STUB_SSM_PREFIX=/af-ws/cp STUB_SSM_PREFIX_UNREADABLE=1 \
+  "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --purge-secrets > "$WORK/out2a8" </dev/null
+has "ssm delete-parameter --name /af-ws/cp/cookie-secret"
+cp "$WORK/30-ingress.orig" "$STATE/params/30-ingress"
 
 echo "== case 2b: standup refuses a retain data stack name its backup vault cannot carry =="
 : > "$LOG"
