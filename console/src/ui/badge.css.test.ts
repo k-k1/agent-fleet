@@ -109,6 +109,7 @@ describe("badges and chips moved onto the primitives (#4785)", () => {
       ["../features/mirror/FileChangeStrip.tsx", "chg-badge"],
       ["../features/project/FilesChanges.tsx", "chg-badge"],
       ["../features/schedules/SchedulesSection.tsx", "sched-badge"],
+      ["../features/home/GlanceSection.tsx", "glance-badge"],
     ] as const) {
       const src = read(f);
       const all = src.match(new RegExp(`${cls}(?![-\\w])`, "g"))?.length ?? 0;
@@ -119,7 +120,10 @@ describe("badges and chips moved onto the primitives (#4785)", () => {
   });
   it("chg-badge tones and the sched badge keep colour out of their own rules", () => {
     expect(rule(files, ".chg-badge.st-del")).toBe("--badge: var(--del); --badge-mix: 16%;");
+    expect(rule(files, ".chg-badge")).toBe("flex: none; margin-right: 2px;");
     expect(rule(sched, ".sched-badge")).not.toContain("color");
+    expect(rule(sched, ".sched-badge")).not.toContain("font-size");
+    expect(rule(sched, ".sched-badge")).not.toContain("padding");
     expect(read("../features/schedules/SchedulesSection.tsx")).toContain("ui-badge ui-badge-warn sched-badge");
   });
   it("inbox chips ride .ui-chip", () => {
