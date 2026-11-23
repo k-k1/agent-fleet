@@ -50,6 +50,10 @@ import (
 // serveStartTimeout bounds the wait for a spawned daemon to answer its probe.
 var serveStartTimeout = 20 * time.Second
 
+// serveBeforeView runs between the connection gate and the policy reading a spawn builds its pin
+// from. A seam for tests of a policy that moves in that gap; nil in production.
+var serveBeforeView func()
+
 const serveAddrEnv = "AF_OPENCODE_SERVE_ADDR"
 
 // sharedServeEnv is set in the environment of a daemon af started for shared Terminal sessions.
@@ -391,7 +395,17 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		"OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
 	// Under a restriction the serve runs isolated (policy_isolation.go): no config file may
 	// override its provider pin, and it gets only the keys and providers the policy allows.
+	if serveBeforeView != nil {
+		serveBeforeView()
+	}
 	view := readView() // one reading: the file check, the pin and the generation agree on the connection
+	// The gate above judged the connection on its own reading. On "own" a custom-only workspace
+	// is connected only while the policy that pins it is held, so a restriction lifted since would
+	// start a serve with no pin; judged again after the view, the answer matches the view's policy
+	// (a policy moving later is caught by the generation comparison below).
+	if !allowUnauthed && !Connected() {
+		return "", 0, ErrNotConnected
+	}
 	if err := policyConfigErrFrom(globalConfigFiles(), view); err != nil {
 		return "", 0, err
 	}

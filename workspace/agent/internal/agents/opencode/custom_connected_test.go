@@ -3,6 +3,7 @@ package opencode
 import (
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -91,5 +92,37 @@ func TestSharedServeStartsForACustomOnlyWorkspaceOnOwn(t *testing.T) {
 	}
 	if !slices.Equal(pin.Enabled, []string{"mine"}) {
 		t.Errorf("enabled_providers = %v, want only the custom provider", pin.Enabled)
+	}
+}
+
+// The connection gate and the pin are two readings. A restriction lifted between them must not
+// start a custom-only serve: unrestricted there is no pin, and a launch would fall through to
+// opencode's own default model. Judged again after the policy reading, the spawn is refused.
+func TestSharedServeIsNotSpawnedWhenThePolicyIsLiftedAfterTheGate(t *testing.T) {
+	isolatedHome(t)
+	t.Setenv("AF_SECRET_KEY", "")
+	_ = newFakeDaemon(t)
+	useMajor(t, 2)
+	stubUsagePref(t, UsageOwn)
+	t.Setenv(standaloneEnv, "")
+	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "")
+	storeCustom(t, selfHosted)
+	useIsolationPolicy(t, approvedCustom())
+
+	lifted := routepolicy.Open(filepath.Join(t.TempDir(), "rp-lifted.json"), "")
+	if _, err := lifted.Accept(routepolicy.Policy{Revision: 6, Allowed: []string{}}); err != nil {
+		t.Fatal(err)
+	}
+	routepolicy.WaitListeners()
+	held := routepolicy.Active
+	serveBeforeView = func() { routepolicy.Active = func() *routepolicy.Store { return lifted } }
+	t.Cleanup(func() { serveBeforeView = nil; routepolicy.Active = held })
+
+	env, err := startServeForEnv(t)
+	if !errors.Is(err, ErrNotConnected) {
+		t.Fatalf("Ensure = %v, want ErrNotConnected", err)
+	}
+	if env != "" {
+		t.Errorf("a serve was spawned with no pin:\n%s", env)
 	}
 }

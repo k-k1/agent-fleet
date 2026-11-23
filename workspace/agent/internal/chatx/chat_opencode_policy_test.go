@@ -149,3 +149,53 @@ func TestOpencodeChatRunsIsolatedUnderThePolicy(t *testing.T) {
 		t.Errorf("the refused chat left %d ledger rows", n-before)
 	}
 }
+
+// On the "own" route a workspace whose only provider is the approved custom endpoint is connected
+// while that policy is held. headlessAgentAvailable's cached answer only picks the backend: a
+// policy lifted since must stop the run itself, because unrestricted it would run with no pin, on
+// the model the conversation names, whoever pays for it.
+func TestOpencodeChatRechecksTheConnectionAtItsOwnStart(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SECRET_KEY", "")
+	t.Setenv("AF_USAGE_DIR", t.TempDir())
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.CustomAPI = &secrets.CustomAPIConn{Provider: "mine", URL: "https://llm.internal.example/v1", APIKey: "k"}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	prevPref := opencode.UsagePref
+	opencode.UsagePref = func() string { return opencode.UsageOwn }
+	t.Cleanup(func() { opencode.UsagePref = prevPref })
+
+	fakeOpencode(t, "@opencode/cli", "2.0.28")
+	bin, runs := t.TempDir(), filepath.Join(t.TempDir(), "runs")
+	script := "#!/bin/sh\nif [ \"$1\" = run ]; then echo run >> '" + runs + "'; " +
+		`echo '{"type":"text","sessionID":"ses_1","part":{"id":"p1","type":"text","text":"ok"}}'; fi` + "\n"
+	if err := os.WriteFile(filepath.Join(bin, "opencode"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	count := func() int {
+		b, _ := os.ReadFile(runs)
+		return strings.Count(string(b), "run")
+	}
+	c := &ChatConversation{ID: "0b6f4c55-7c1f-4f4e-9a59-1d2f3e4a5b6d", Agent: session.KindOpencode, Model: "mine/m"}
+
+	useUtilityPolicy(t, routepolicy.Policy{Revision: 5, Restricted: true, Allowed: []string{},
+		Endpoints: []string{"llm.internal.example"}, EndpointRoutes: []string{routes.RouteCustomAPI}})
+	if _, err := (opencodeChat{}).Send(context.Background(), c, "hi"); err != nil {
+		t.Fatalf("control: a chat on the approved custom endpoint: %v", err)
+	}
+	if count() != 1 {
+		t.Fatalf("control: %d runs, want 1", count())
+	}
+
+	useUtilityPolicy(t, routepolicy.Policy{Revision: 6, Allowed: []string{}})
+	if _, err := (opencodeChat{}).Send(context.Background(), c, "hi"); !errors.Is(err, opencode.ErrNotConnected) {
+		t.Fatalf("a chat after the restriction was lifted: %v, want ErrNotConnected", err)
+	}
+	if count() != 1 {
+		t.Errorf("the CLI ran after the restriction was lifted (%d runs)", count())
+	}
+}

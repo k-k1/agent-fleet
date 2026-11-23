@@ -823,6 +823,12 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 	if call.Route, call.Connection = route, binding; policyErr != nil {
 		return "", policyErr
 	}
+	// headlessAgentAvailable's answer is a minute old at worst and only picks this backend. On the
+	// "own" route a custom-only workspace is connected while its policy is held, so a policy lifted
+	// since would otherwise run this call with no pin; the run asks again at its own start.
+	if !opencode.Connected() {
+		return "", opencode.ErrNotConnected
+	}
 	dir := opencodeChatDir(c)
 	spec := opencode.CurrentLaunch()
 	// Under a restriction the run is isolated like the shared serve (opencode.RunPolicyEnv); a
