@@ -3,9 +3,11 @@ package gitx
 import (
 	"bytes"
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"net/url"
+	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
@@ -43,10 +45,10 @@ var autorunEnv = []string{"GIT_NO_REPLACE_OBJECTS=1"}
 
 // HandleAutorunFile reads the settings file from origin's default branch only, never from the
 // working tree or a working branch: a run in this workspace can write both, and must not be
-// able to change the settings it runs under. origin's URL is read once and every network step
-// uses that URL, so one read cannot mix two repositories. Branch and commit are what that
-// remote answers, not refs/remotes/origin/*, which anything in the clone can repoint; the fetch
-// only brings the objects. This is a guard rail, not the boundary: a run holds the same git
+// able to change the settings it runs under. The network steps go through the named remote, and
+// origin's URL is compared before and after them (see readAutorunFile). Branch and commit are
+// what origin answers, not refs/remotes/origin/*, which anything in the clone can repoint; the
+// fetch only brings the objects. This is a guard rail, not the boundary: a run holds the same git
 // credentials and the same clone configuration, and the member's approval of each difference is
 // what applies anything (#4895). The Control Plane parses and validates the content.
 //
@@ -103,6 +105,11 @@ func autorunGit(ctx context.Context, dir string, args ...string) ([]byte, error)
 	go func() { done <- cmd.Wait() }()
 	select {
 	case err := <-done:
+		// git exited but something it started still held the output: that group is still
+		// alive, and is cleared like a deadline's.
+		if errors.Is(err, exec.ErrWaitDelay) {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
 		return out.Bytes(), err
 	case <-ctx.Done():
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
@@ -134,7 +141,10 @@ func readAutorunFile(ctx context.Context, dir string) (AutorunFile, string) {
 		return fail("no_default_branch")
 	}
 	out.Branch, out.Commit = branch, sha
-	if _, err := autorunGit(ctx, dir, "fetch", "--no-tags", "--no-recurse-submodules", "origin",
+	// A read changes nothing in the clone but the one tracking ref: no pruning of refs or tags the
+	// remote's settings may ask for, no configured ref mapping, no FETCH_HEAD.
+	if _, err := autorunGit(ctx, dir, "fetch", "--no-tags", "--no-prune", "--no-prune-tags", "--refmap=",
+		"--no-write-fetch-head", "--no-recurse-submodules", "origin",
 		"+refs/heads/"+branch+":refs/remotes/origin/"+branch); err != nil {
 		return fail("fetch_failed")
 	}
@@ -207,6 +217,21 @@ var (
 	remoteHidden = "(remote not shown)"
 )
 
+// remoteSecretRules are the credential shapes the Control Plane refuses in the settings file
+// (control-plane/internal/autorunfile), which follow the memory scan
+// (internal/memoryx/memory_secrets.go): a remote that matches one is not shown.
+var remoteSecretRules = []*regexp.Regexp{
+	regexp.MustCompile(`\b(?:A3T[A-Z0-9]|AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b`),
+	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`),
+	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{60,}\b`),
+	regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20,}\b`),
+	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9\-]{10,}\b`),
+	regexp.MustCompile(`\bsk-ant-[A-Za-z0-9_\-]{24,}`),
+	regexp.MustCompile(`\bsk-(?:proj-)?[A-Za-z0-9_\-]{32,}\b`),
+	regexp.MustCompile(`\bAIza[0-9A-Za-z_\-]{35}\b`),
+	regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}`),
+}
+
 var (
 	remoteTokenRe = regexp.MustCompile(`^(gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-ant-|sk-proj-|ATBB)[A-Za-z0-9_-]{8,}`)
 	remoteRunRe   = regexp.MustCompile(`^[A-Za-z0-9_]{32,}$`)
@@ -230,6 +255,11 @@ func displayRemote(raw string) string {
 	d := displayRemoteForm(raw)
 	if d == remoteHidden {
 		return d
+	}
+	for _, re := range remoteSecretRules {
+		if re.MatchString(d) {
+			return remoteHidden
+		}
 	}
 	network := !strings.HasPrefix(d, "/") && !strings.HasPrefix(d, "file://")
 	for _, seg := range strings.FieldsFunc(d, func(r rune) bool { return r == '/' || r == ':' }) {

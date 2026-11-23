@@ -170,6 +170,47 @@ func TestAutorunFileHidesATokenInTheRemotePath(t *testing.T) {
 	}
 }
 
+// Every credential shape the Control Plane refuses hides the remote on a successful read, not
+// only the token prefixes the path heuristic knows.
+func TestAutorunFileHidesEveryCredentialShapeInTheRemote(t *testing.T) {
+	home, _, dir := autorunClone(t, "version: 1\n")
+	key := "sk-" + strings.Repeat("A1", 20)
+	keyDir := filepath.Join(home, key)
+	if err := os.Rename(filepath.Join(home, "origin.git"), keyDir); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "remote", "set-url", "origin", keyDir)
+	code, f, body := getAutorunFile(t)
+	if code != 200 || !f.Found || f.Remote != remoteHidden || strings.Contains(body, "A1A1") {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	if got := displayRemote("https://git.invalid/" + key + "/r.git"); got != remoteHidden {
+		t.Fatalf("network remote: %s", got)
+	}
+}
+
+// A read changes nothing but the one tracking ref, whatever pruning the clone's settings ask for.
+func TestAutorunFileLeavesOtherRefsAlone(t *testing.T) {
+	_, _, dir := autorunClone(t, "version: 1\n")
+	gitAt(t, dir, "config", "fetch.prune", "true")
+	gitAt(t, dir, "config", "fetch.pruneTags", "true")
+	gitAt(t, dir, "config", "--add", "remote.origin.fetch", "+refs/tags/*:refs/tags/*")
+	gitAt(t, dir, "tag", "local-only")
+	gitAt(t, dir, "update-ref", "refs/remotes/origin/gone", "HEAD")
+	_ = os.Remove(filepath.Join(dir, ".git", "FETCH_HEAD"))
+	if code, _, body := getAutorunFile(t); code != 200 {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	for _, ref := range []string{"refs/tags/local-only", "refs/remotes/origin/gone"} {
+		if err := exec.Command("git", "-C", dir, "show-ref", "--verify", "--quiet", ref).Run(); err != nil {
+			t.Errorf("the read removed %s", ref)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".git", "FETCH_HEAD")); err == nil {
+		t.Errorf("the read wrote FETCH_HEAD")
+	}
+}
+
 // The named remote is used for the network: its URL rewriting applies once, and its own
 // upload-pack setting is honoured.
 func TestAutorunFileUsesTheNamedRemote(t *testing.T) {
