@@ -259,7 +259,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
         {queries.length > 0 && (
           <ul className="wi-qlist">
             {queries.map((q) => (
-              <li className={"wi-qrow" + (q.enabled ? "" : " off")} key={q.id}>
+              <li className={"wi-qrow" + (q.enabled ? "" : " wi-qrow--off")} key={q.id}>
                 <div className="wi-qinfo">
                   <div className="wi-qlabel">
                     <span className="wi-qprov">{q.provider}</span>
@@ -309,7 +309,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
                 <button
                   key={p.id}
                   type="button"
-                  className={"seg-btn" + (provider === p.id ? " active" : "")}
+                  className={"seg-btn" + (provider === p.id ? " seg-btn--active" : "")}
                   aria-pressed={provider === p.id}
                   onClick={() => pickProvider(p.id)}
                 >

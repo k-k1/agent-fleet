@@ -32,7 +32,7 @@ export function focusRegion(region: Region): void {
   if (coarsePointer()) return;
   if (region === "main") {
     const active =
-      document.querySelector<HTMLElement>(".pane.active") ?? document.querySelector<HTMLElement>(".panehost .pane");
+      document.querySelector<HTMLElement>(".pane.pane--active") ?? document.querySelector<HTMLElement>(".panehost .pane");
     (active?.querySelector<HTMLElement>(CONTENT_SELECTOR) ?? active)?.focus?.();
     return;
   }

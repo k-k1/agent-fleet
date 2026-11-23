@@ -726,7 +726,7 @@ function TranscriptTurnImpl({
         {txOffered && tx && (
           <button
             type="button"
-            className={"ghost xs mt-translate" + (txShown ? " on" : "")}
+            className={"ghost xs mt-translate" + (txShown ? " mt-translate--on" : "")}
             title={tr(txShown ? "mirror.translate_off_title" : "mirror.translate_title")}
             disabled={tx.busy(txKey)}
             onClick={() => tx.toggle(txKey, txTexts)}

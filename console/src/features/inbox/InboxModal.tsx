@@ -110,7 +110,7 @@ export function InboxModal({ onClose }: { onClose: () => void }) {
               type="button"
               role="tab"
               aria-selected={tab === t}
-              className={"seg-btn" + (tab === t ? " active" : "")}
+              className={"seg-btn" + (tab === t ? " seg-btn--active" : "")}
               onClick={() => setTab(t)}
             >
               {tr(TAB_LABEL[t])}
@@ -181,7 +181,7 @@ function HandoffItem({ offer, onClose }: { offer: HandoffOffer; onClose: () => v
   const tr = useT();
   const [open, setOpen] = useState(false);
   return (
-    <li className="inbox-card" data-state="handoff">
+    <li className="ui-card inbox-card" data-state="handoff">
       <button type="button" className="inbox-card-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
         <span className="inbox-kind inbox-kind-handoff">{tr("inbox.kind_handoff")}</span>
         <span className="inbox-who">{tr("inbox.from", { who: senderLabel(offer) })}</span>
@@ -228,7 +228,7 @@ export function ItemCard({ item }: { item: InboxItem }) {
       : tr("inbox.from", { who: personName(tr, item.sender) });
   const firstLine = item.body.split("\n", 1)[0];
   return (
-    <li className={"inbox-card" + (item.unseen ? " is-unseen" : "")} data-state={item.state || "dm"}>
+    <li className={"ui-card inbox-card" + (item.unseen ? " is-unseen" : "")} data-state={item.state || "dm"}>
       <button type="button" className="inbox-card-head" aria-expanded={open} onClick={expand}>
         <span className={"inbox-kind inbox-kind-" + item.kind}>{tr(isRequest ? "inbox.kind_request" : "inbox.kind_dm")}</span>
         {isRequest && item.state && <span className="inbox-state">{tr(STATE_LABEL[item.state])}</span>}
@@ -477,7 +477,7 @@ function Compose({ onSent }: { onSent: () => void }) {
         <span className="ui-field-label">{tr("inbox.compose_kind")}</span>
         <div className="ui-seg choice-seg">
           {(["request", "dm"] as const).map((k) => (
-            <button key={k} type="button" className={"seg-btn" + (kind === k ? " active" : "")} onClick={() => setKind(k)}>
+            <button key={k} type="button" className={"seg-btn" + (kind === k ? " seg-btn--active" : "")} onClick={() => setKind(k)}>
               {tr(k === "dm" ? "inbox.kind_dm" : "inbox.kind_request")}
             </button>
           ))}
@@ -554,7 +554,7 @@ function SettingsPane() {
             <button
               key={v}
               type="button"
-              className={"seg-btn" + (s.acceptFrom === v ? " active" : "")}
+              className={"seg-btn" + (s.acceptFrom === v ? " seg-btn--active" : "")}
               onClick={() => setS({ ...s, acceptFrom: v })}
             >
               {tr(v === "tenant" ? "inbox.accept_tenant" : "inbox.accept_chosen")}

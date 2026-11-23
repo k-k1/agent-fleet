@@ -70,13 +70,13 @@ export const WorkingSetBar = memo(function WorkingSetBar() {
           <ul className="ui-menu wset-menu" ref={menuRef} role="menu" onMouseDown={(e) => e.stopPropagation()}>
             <li>
               <button type="button" className="ui-menu-item" onClick={() => pick("")}>
-                <Icon name="check" className={active ? "wset-check off" : "wset-check"} /> {tr("wset.all")}
+                <Icon name="check" className={active ? "wset-check wset-check--off" : "wset-check"} /> {tr("wset.all")}
               </button>
             </li>
             {sets.map((w) => (
               <li key={w.id}>
                 <button type="button" className="ui-menu-item" onClick={() => pick(w.id)}>
-                  <Icon name="check" className={active?.id === w.id ? "wset-check" : "wset-check off"} /> {w.name}
+                  <Icon name="check" className={active?.id === w.id ? "wset-check" : "wset-check wset-check--off"} /> {w.name}
                 </button>
               </li>
             ))}

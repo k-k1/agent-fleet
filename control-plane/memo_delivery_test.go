@@ -135,6 +135,27 @@ type fakeQueueAgent struct {
 	// defers makes GET /sessions send the envelope's queueDefer marker (an Agent that reports the
 	// turn starts a hand-back is checked against).
 	defers bool
+	// answers answers GET /sessions/{name}/messages for a session: a status and a body. A session
+	// without one gets a plain 404 (a route this fake does not have). answerCalls is every read.
+	answers     map[string]func() (int, any)
+	answerCalls []string
+}
+
+// setAnswer makes the Agent answer the transcript reads of session with reply (nil: no route).
+func (a *fakeQueueAgent) setAnswer(session string, reply func() (int, any)) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.answers == nil {
+		a.answers = map[string]func() (int, any){}
+	}
+	a.answers[session] = reply
+}
+
+// answerCallsSoFar is a copy of the transcript reads made.
+func (a *fakeQueueAgent) answerCallsSoFar() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.answerCalls...)
 }
 
 // setPRs makes the Agent have the PR snapshot route, answering each read with reply.
@@ -437,6 +458,18 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		a.serveTidy(w, r)
 	case r.Method == "POST" && path == "/memos/pr-snapshot" && a.prs:
 		a.servePRSnapshot(w, r)
+	case r.Method == "GET" && strings.HasPrefix(path, "/sessions/") && strings.HasSuffix(path, "/messages"):
+		name := strings.TrimSuffix(strings.TrimPrefix(path, "/sessions/"), "/messages")
+		a.answerCalls = append(a.answerCalls, name+"?"+r.URL.RawQuery)
+		reply := a.answers[name]
+		if reply == nil {
+			http.NotFound(w, r)
+			return
+		}
+		status, body := reply()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(status)
+		_ = json.NewEncoder(w).Encode(body)
 	case r.Method == "POST" && path == "/sessions":
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)

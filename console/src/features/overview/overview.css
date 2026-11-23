@@ -10,17 +10,17 @@
 }
 .ovw-count {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
   white-space: nowrap;
 }
 .ovw-toggle {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   white-space: nowrap;
 }
-.ovw-toggle.on {
+.ovw-toggle.ovw-toggle--on {
   color: var(--accent);
 }
 /* A narrow pane (a side column) has no room for the toggle's wording next to the title;
@@ -53,7 +53,7 @@
   margin: 0 0 6px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border);
-  font-size: 11px;
+  font-size: var(--fs-11);
   font-weight: 600;
   color: var(--muted);
   /* The heading stays put while its own cards scroll past, so it is always clear which
@@ -116,23 +116,23 @@
 /* The states that need the person now colour the whole frame, not just the chip — in a
    grid of a dozen cards the chip alone is too small to be spotted from across the room.
    Same tones as .session-state so the frame and the chip agree. */
-.ovw-card.question {
+.ovw-card.ovw-card--question {
   border-color: color-mix(in srgb, var(--warn) 60%, transparent);
   background: color-mix(in srgb, var(--warn) 6%, var(--panel));
 }
-.ovw-card.question.limited {
+.ovw-card.ovw-card--question.ovw-card--limited {
   background: var(--panel);
 }
-.ovw-card.working {
+.ovw-card.ovw-card--working {
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
-.ovw-card.stopped {
+.ovw-card.ovw-card--stopped {
   opacity: 0.72;
 }
-.ovw-card.dead {
+.ovw-card.ovw-card--dead {
   cursor: default;
 }
-.ovw-card.dead .ovw-title {
+.ovw-card.ovw-card--dead .ovw-title {
   text-decoration: line-through;
 }
 /* Spawn lineage (ADR 0073): the family's colour as a left spine, as on the rail row. */
@@ -152,7 +152,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .ovw-menu-wrap {
   flex: none;
@@ -182,7 +182,7 @@
   gap: 6px;
   min-width: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
   white-space: nowrap;
 }
 .ovw-project {
@@ -197,7 +197,7 @@
   text-overflow: ellipsis;
 }
 .ovw-wt .codicon {
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 .ovw-row {
   display: flex;
@@ -218,13 +218,13 @@
 }
 /* A narrow card (4 columns in a wide pane, or a phone) cannot show a full title AND a full
    state. The calm states fold back to their icon, exactly as the rail's row does; the states
-   that need a person (question / plan / permission — all carry .question) keep their words,
+   that need a person (question / plan / permission — all carry .ovw-card--question) keep their words,
    because those are the cards the grid exists to find. */
 @container ovwcard (max-width: 320px) {
-  .ovw-head .session-state:not(.question) .lbl {
+  .ovw-card:where(:not(.ovw-card--question)) .ovw-head .session-state .lbl {
     display: none;
   }
-  .ovw-head .session-state:not(.question) {
+  .ovw-card:where(:not(.ovw-card--question)) .ovw-head .session-state {
     padding: 1px 4px;
   }
 }
@@ -232,7 +232,7 @@
 .ovw-where .repo-chip {
   flex: none;
 }
-.ovw-waited.on {
+.ovw-waited.ovw-waited--on {
   color: var(--warn);
 }
 .ovw-meta {
@@ -240,7 +240,7 @@
   flex-wrap: wrap;
   gap: 4px 10px;
   color: var(--muted2);
-  font-size: 11px;
+  font-size: var(--fs-11);
   min-width: 0;
 }
 .ovw-meta > span {
@@ -260,7 +260,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
   line-height: 1.4;
 }
 /* Family fold on a card (ADR 0078's families, folded the way the fleet graph folds its
@@ -278,7 +278,7 @@
   border-radius: 3px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
   cursor: pointer;
 }
 .ovw-fold:hover,
@@ -290,16 +290,9 @@
 .ovw-hidden {
   flex: none;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-10);
   padding: 0 4px;
   border: 1px solid var(--border2);
   border-radius: 999px;
   white-space: nowrap;
-}
-
-/* Waiting for a usage limit to reset: the row still has to be readable, so it borrows the
-   question colour, but this says "wait", not "answer", so the bold is dropped — at the same
-   weight as an unanswered question, the rows that need action get buried among these. */
-.session-state.question.limited {
-  font-weight: 400;
 }

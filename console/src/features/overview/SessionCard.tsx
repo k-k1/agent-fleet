@@ -22,7 +22,7 @@ import { usePaneHover } from "../../lib/panehover.tsx";
 import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { relTime } from "../../lib/intl.ts";
-import { displayName, stateInfo, exitLabel, remainingShort } from "../../lib/sessionview.ts";
+import { stateClass, displayName, stateInfo, exitLabel, remainingShort } from "../../lib/sessionview.ts";
 import { sessionFolder, lineageColorOf, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { isContextMenuKey, menuAnchor } from "../project/contextMenuKey.ts";
@@ -130,12 +130,11 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
     <article
       ref={cardRef}
       className={
-        "ovw-card " +
-        st.cls +
+        stateClass("ovw-card", st.cls) +
         (open ? " open" : "") +
         (hl ? " ovw-card-hover" : "") +
-        (s.alive ? "" : " stopped") +
-        (inert ? " dead" : "") +
+        (s.alive ? "" : " ovw-card--stopped") +
+        (inert ? " ovw-card--dead" : "") +
         (lineage ? " ovw-card-lineage" : "")
       }
       style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
@@ -193,7 +192,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             cards, and the row below is left for what only some cards carry. The label is its
             own element so a narrow card can fold the CALM states back to their icon and give
             the width to the title — the states that need a person keep their words (CSS). */}
-        <span className={"session-state " + st.cls} title={st.text}>
+        <span className={stateClass("session-state", st.cls)} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
           {" "}
           <span className="lbl">{st.text}</span>
@@ -286,7 +285,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         {model && <span title={model}>{model}</span>}
         {started && <span>{tr("ovw.started", { ago: started })}</span>}
         {waited && (
-          <span className={waitingNow ? "ovw-waited on" : "ovw-waited"} title={tr(waitingNow ? "ovw.waiting_hint" : "ovw.since_wait_hint")}>
+          <span className={waitingNow ? "ovw-waited ovw-waited--on" : "ovw-waited"} title={tr(waitingNow ? "ovw.waiting_hint" : "ovw.since_wait_hint")}>
             {tr(waitingNow ? "ovw.waiting_for" : "ovw.since_wait", { d: waited })}
           </span>
         )}

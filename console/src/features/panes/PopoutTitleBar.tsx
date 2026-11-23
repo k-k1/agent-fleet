@@ -8,7 +8,7 @@ import { activePane } from "../../layout/ops.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSharedSessionsStore } from "../sharing/store.ts";
 import { useChatTitles } from "../chat/store.ts";
-import { stateInfo } from "../../lib/sessionview.ts";
+import { stateClass, stateInfo } from "../../lib/sessionview.ts";
 import { setPopoutMode } from "../../lib/popoutMode.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { IconButton } from "../../ui/Button.tsx";
@@ -52,7 +52,7 @@ export function PopoutTitleBar() {
 
   return (
     <div className="popout-titlebar">
-      {st && <span className={"popout-dot " + st.cls} title={st.text} />}
+      {st && <span className={stateClass("popout-dot", st.cls)} title={st.text} />}
       <span className="popout-title" title={title}>
         {title}
       </span>

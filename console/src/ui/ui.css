@@ -516,7 +516,7 @@
 }
 /* Working set toggle rows: the off state keeps the check column's width so
    labels align whether or not the row is a member. */
-.ui-menu .wset-check.off {
+.ui-menu .wset-check.wset-check--off {
   visibility: hidden;
 }
 
@@ -678,7 +678,7 @@
 .model-combo-item.sel {
   background: color-mix(in srgb, var(--accent) 14%, var(--bg));
 }
-.model-combo-item.on .model-combo-label {
+.model-combo-item.model-combo-item--on .model-combo-label {
   font-weight: 600;
 }
 .model-combo-mark {
@@ -769,14 +769,14 @@
   gap: 2px;
   white-space: nowrap;
 }
-.ui-seg .seg-btn:hover:not(.active) {
+.ui-seg .seg-btn:hover:not(.seg-btn--active) {
   background: var(--btn-h);
   color: var(--fg);
 }
 /* Selected fill via the --sel-* tokens: a soft top-bar-tinted bg + legible text in dark
    (was a loud var(--accent) block that crushed the label), the soft tint + accent text in
    light. See styles/tokens.css. */
-.ui-seg .seg-btn.active {
+.ui-seg .seg-btn.seg-btn--active {
   background: var(--sel-bg);
   color: var(--sel-fg);
   font-weight: 600;
@@ -785,13 +785,13 @@
   font-size: 10px;
   color: var(--muted);
 }
-.ui-seg .seg-btn.active .seg-sub {
+.ui-seg .seg-btn.seg-btn--active .seg-sub {
   color: inherit;
   opacity: 0.75;
 }
 /* Light: the 10px sub sits on the pale --sel-bg tint — 0.75 of the (already softened)
    --sel-fg drops under 3:1 there; 0.9 keeps it secondary but legible. Dark keeps 0.75. */
-[data-theme="light"] .ui-seg .seg-btn.active .seg-sub {
+[data-theme="light"] .ui-seg .seg-btn.seg-btn--active .seg-sub {
   opacity: 0.9;
 }
 /* Agent picker (Start work / Get started / Handoff). A wrapping grid, not a
@@ -820,7 +820,7 @@
 }
 /* Inactive only — the active button keeps its --sel-fg (else this equal-specificity rule,
    ordered later, overrode the selected color and put light text on the fill). */
-.ui-seg.big .seg-btn:not(.active) {
+.ui-seg.big .seg-btn:not(.seg-btn--active) {
   color: var(--fg);
 }
 .ui-seg.big .seg-ic {
@@ -830,7 +830,7 @@
    the active fill carries its own contrast). */
 /* Hue from tokens.css (--kind); the light-theme var already carries the darker
    hue, so no separate light override is needed here. */
-.ui-seg.big .seg-btn.kind:not(.active) .seg-ic { color: var(--kind); }
+.ui-seg.big .seg-btn.kind:not(.seg-btn--active) .seg-ic { color: var(--kind); }
 
 /* Inline link-styled button (help text and hints that point at another screen). */
 .linklike {
@@ -1010,8 +1010,8 @@
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
 }
-.swatch.active,
-.swatch.active:focus-visible {
+.swatch.swatch--active,
+.swatch.swatch--active:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
@@ -1051,7 +1051,7 @@
   cursor: pointer;
   font-family: inherit;
 }
-.seg-btn.active {
+.seg-btn.seg-btn--active {
   background: var(--sel-bg);
   color: var(--sel-fg);
   font-weight: 600;
@@ -1062,10 +1062,10 @@
    so the control's clipped corners are unaffected. The big agent grid draws its cell
    separators with box-shadow at a higher specificity, so it gets its own rule that keeps
    them and adds the outline. */
-.seg-btn.active {
+.seg-btn.seg-btn--active {
   box-shadow: inset 0 0 0 var(--sel-ring) var(--sel-fg);
 }
-.ui-seg.big .seg-btn.active {
+.ui-seg.big .seg-btn.seg-btn--active {
   box-shadow: inset 0 0 0 var(--sel-ring) var(--sel-fg), inset -1px 0 0 var(--btn-border), inset 0 -1px 0 var(--btn-border);
 }
 /* Choice segmented control (`ui-seg|seg choice-seg`: account menu, inbox, Settings). Placed
@@ -1356,4 +1356,12 @@
 }
 .ui-chip:hover {
   border-color: var(--accent, var(--fg));
+}
+
+/* ---- Card ---- */
+/* Bordered panel surface. A feature sets --card-bg for another fill and adds its own padding and layout. */
+.ui-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card-bg, var(--panel));
 }

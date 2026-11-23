@@ -469,13 +469,23 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   }, [reveal.n, cats]);
 
   // ---- composer ----------------------------------------------------------------
+  // Each "+" is a toggle for its own target: touch keyboards have no Esc, so pressing the
+  // "+" that owns the open composer is how a phone closes it.
   const openComposer = () => {
+    if (composerOpen && !target) {
+      setComposerOpen(false);
+      return;
+    }
     setComposeTarget(null);
     setComposerOpen(true);
   };
   // "+" on a category header: write into that group, with the composer rendered under its
   // header (and the group unfolded, or the composer would be hidden with its memos).
   const openComposerFor = (repo: string, category: string) => {
+    if (composerOpen && targetKey === groupKey(repo, category)) {
+      setComposerOpen(false);
+      return;
+    }
     setComposeTarget({ repo, category });
     setComposerOpen(true);
     const key = groupKey(repo, category);
@@ -1079,6 +1089,16 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         </Button>
         <Button
           small
+          variant="ghost"
+          className="memo-add-close"
+          title={tr("common.close")}
+          aria-label={tr("common.close")}
+          onClick={() => setComposerOpen(false)}
+        >
+          <Icon name="close" />
+        </Button>
+        <Button
+          small
           variant="primary"
           disabled={(!newText.trim() && newImages.length === 0) || busy}
           onClick={() => void addMemo()}
@@ -1331,7 +1351,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           const b = queue?.paused
                             ? { cls: " paused", icon: "debug-pause", label: tr("memo.autorun_badge_paused"), title: tr("memo.autorun_badge_paused_title") }
                             : queue && !queue.enabled
-                              ? { cls: " off", icon: "circle-slash", label: tr("memo.autorun_badge_off"), title: tr("memo.autorun_badge_off_title") }
+                              ? { cls: " memo-q-badge--off", icon: "circle-slash", label: tr("memo.autorun_badge_off"), title: tr("memo.autorun_badge_off_title") }
                               : { cls: "", icon: "play-circle", label: tr("memo.autorun_badge"), title: tr("memo.autorun_badge_title") };
                           return (
                             <span className={"memo-q-badge" + b.cls} title={b.title} aria-label={b.label}>

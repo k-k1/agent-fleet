@@ -23,7 +23,7 @@ export function MirrorToggle({ mirror, onToggle, running = true }: MirrorToggleP
     <span className="ui-seg sm md-toggle mirror-toggle sel-scope">
       <button
         type="button"
-        className={"seg-btn" + (mirror ? " active" : "")}
+        className={"seg-btn" + (mirror ? " seg-btn--active" : "")}
         title={tr("mgr.chat")}
         onClick={() => onToggle?.(true)}
       >
@@ -32,7 +32,7 @@ export function MirrorToggle({ mirror, onToggle, running = true }: MirrorToggleP
       </button>
       <button
         type="button"
-        className={"seg-btn" + (!mirror ? " active" : "")}
+        className={"seg-btn" + (!mirror ? " seg-btn--active" : "")}
         // Switching to the terminal attaches (resumes) the session, which needs the
         // workspace running. While it's stopped, disable it — otherwise the resume
         // mask would spin on "resuming…" forever (attach is gated on running).

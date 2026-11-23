@@ -380,7 +380,7 @@
   color: var(--fg);
   background: var(--hover-bg);
 }
-.mt-translate.on {
+.mt-translate.mt-translate--on {
   color: var(--chat-accent);
 }
 .mt-translate-err {

@@ -107,7 +107,7 @@ export function RepoSkillsModal({ repo, onClose }: { repo: string; onClose?: () 
                       type="button"
                       role="tab"
                       aria-selected={k.kind === current.kind}
-                      className={"skills-kind" + (k.kind === current.kind ? " active" : "")}
+                      className={"skills-kind" + (k.kind === current.kind ? " skills-kind--active" : "")}
                       onClick={() => {
                         setKind(k.kind);
                         setSelected(null);
@@ -181,7 +181,7 @@ function KindPanel({
                   <li key={key}>
                     <button
                       type="button"
-                      className={"skills-row" + (active ? " active" : "") + (s.shadowedBy ? " skills-shadowed" : "")}
+                      className={"skills-row" + (active ? " skills-row--active" : "") + (s.shadowedBy ? " skills-shadowed" : "")}
                       aria-expanded={active}
                       onClick={() => onSelect(active ? null : s)}
                     >

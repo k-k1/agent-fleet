@@ -137,7 +137,7 @@ export function SvnLogView({ repo, path = "", headerActions }: { repo: string; p
           {revs.map((r) => {
             const side = revSide(r.rev, wcRev);
             return (
-              <li key={r.rev} className={"svnlog-row" + (selected === r.rev ? " active" : "") + (side === "newer" ? " newer" : "")}>
+              <li key={r.rev} className={"svnlog-row" + (selected === r.rev ? " svnlog-row--active" : "") + (side === "newer" ? " newer" : "")}>
                 <button type="button" className="svnlog-btn" onClick={() => select(r)}>
                   <code className="svnlog-rev">r{r.rev}</code>
                   <span className="svnlog-msg" title={r.message}>

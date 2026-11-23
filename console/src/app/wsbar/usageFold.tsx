@@ -107,7 +107,7 @@ export function UsageChipPlace({ kind }: { kind: string }) {
           <Button
             key={m.mode}
             variant="ghost"
-            className={mode === m.mode ? "on" : undefined}
+            className={mode === m.mode ? "wu-place-seg--on" : undefined}
             aria-pressed={mode === m.mode}
             title={tr(m.titleKey)}
             onClick={() => pick(m.mode)}

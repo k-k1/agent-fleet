@@ -70,10 +70,10 @@ describe("SharedProjectNode", () => {
     ]);
     const chips = [...host.querySelectorAll<HTMLElement>(".session-state")].map((el) => el.className);
     expect(chips).toEqual([
-      "session-state mini question",
-      "session-state mini working",
-      "session-state mini on",
-      "session-state mini off",
+      "session-state session-state--question mini",
+      "session-state session-state--working mini",
+      "session-state session-state--on mini",
+      "session-state session-state--off mini",
     ]);
     // With the owner's Workspace stopped, show that one fact instead of per-row state.
     await render([session({ id: "a", title: "会話", repo: "proj", workingCopyId: "wc", workspaceState: "stopped" })]);

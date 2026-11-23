@@ -106,6 +106,10 @@ type MemoDelivery struct {
 	// PRState* values, "" until a read answered). PRReadAt is the last read that answered,
 	// PRTriedAt the last read begun, PRChangedAt when the snapshot last changed.
 	PRSnapshot, PRState, PRReadAt, PRTriedAt, PRChangedAt string
+	// The last answer of the delivery's root session, read after the close (store_memo_answer.go):
+	// AnswerHead is its first line, AnswerClass how it reads (the Answer* values, "" until a read
+	// decided it), AnswerTriedAt the last read begun.
+	AnswerHead, AnswerClass, AnswerTriedAt string
 	// The hand-back the delivery's session asked for (store_memo_defer.go): DeferReason,
 	// DeferNotBefore and DeferAt (the Agent's clock) are "" for none. DeferResult is what the
 	// close made of it, ReturnBlocked the JSON array of the messages another message's reference
@@ -267,7 +271,7 @@ const memoDeliveryCols = `SELECT id, membership_id, queue_id, state, outcome, se
 	created_at, sent_at, opened_at, closed_at, updated_at,
 	held_by, held_session, held_seen_at, progress_seen_at, read_gen, held_gen, reported, overdue_at, retire_pending, retired_at, retire_result,
 	turn_outcome, turn_ms, turn_ended_at, auto, limit_kinds, drain, act_mark, retire_act_mark, retire_gen, act_incarnation, retire_act_incarnation, held_detail,
-	pr_snapshot, pr_state, pr_read_at, pr_tried_at, pr_changed_at,
+	pr_snapshot, pr_state, pr_read_at, pr_tried_at, pr_changed_at, answer_head, answer_class, answer_tried_at,
 	defer_reason, defer_not_before, defer_at, defer_result, return_blocked, returned_at FROM memo_delivery`
 
 func scanMemoDelivery(row scanner) (MemoDelivery, error) {
@@ -278,7 +282,7 @@ func scanMemoDelivery(row scanner) (MemoDelivery, error) {
 		&d.CreatedAt, &d.SentAt, &d.OpenedAt, &d.ClosedAt, &d.UpdatedAt,
 		&d.HeldBy, &d.HeldSession, &d.HeldSeenAt, &d.ProgressSeenAt, &d.ReadGen, &d.HeldGen, &reported, &d.OverdueAt, &retire, &d.RetiredAt, &d.RetireResult,
 		&d.TurnOutcome, &d.TurnMs, &d.TurnEndedAt, &auto, &d.LimitKinds, &drain, &d.ActMark, &d.RetireActMark, &d.RetireGen, &d.ActIncarnation, &d.RetireActIncarnation, &d.HeldDetail,
-		&d.PRSnapshot, &d.PRState, &d.PRReadAt, &d.PRTriedAt, &d.PRChangedAt,
+		&d.PRSnapshot, &d.PRState, &d.PRReadAt, &d.PRTriedAt, &d.PRChangedAt, &d.AnswerHead, &d.AnswerClass, &d.AnswerTriedAt,
 		&d.DeferReason, &d.DeferNotBefore, &d.DeferAt, &d.DeferResult, &d.ReturnBlocked, &d.ReturnedAt)
 	d.Reported, d.RetirePending, d.Auto, d.Drain = reported != 0, retire != 0, auto != 0, drain != 0
 	d.MessageIDs = []string{}

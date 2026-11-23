@@ -271,7 +271,7 @@ export function ModelCombo({ kind, options, value, onChange }: ModelComboProps) 
                   key={v || "default"}
                   id={`${listId}-${i}`}
                   ref={i === active ? activeRef : undefined}
-                  className={"model-combo-item" + (i === active ? " sel" : "") + (v === value ? " on" : "")}
+                  className={"model-combo-item" + (i === active ? " sel" : "") + (v === value ? " model-combo-item--on" : "")}
                   role="option"
                   aria-selected={v === value}
                   onMouseMove={() => setActive(i)}

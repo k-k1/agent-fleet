@@ -93,8 +93,8 @@ describe("tenant default machine class", () => {
       "標準（Intel）",
       "省コスト（Arm）",
     ]);
-    expect(chipWith("省コスト（Arm）")!.className).toContain("on");
-    expect(chipWith("配備の既定")!.className).not.toContain("on");
+    expect(chipWith("省コスト（Arm）")!.className).toContain("chip--on");
+    expect(chipWith("配備の既定")!.className).not.toContain("chip--on");
     // One line per class saying what it actually buys you.
     const specs = Array.from(document.querySelectorAll(".machine-specs li")).map((e) => e.textContent || "");
     expect(specs[0]).toContain("m7i.large–m7i.2xlarge");

@@ -75,7 +75,7 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.fs-file.active {
+.fs-file.fs-file--active {
   color: var(--lp-accent, var(--accent));
 }
 /* A name truncates in the middle (MiddleEllipsis): the head shrinks to "…" while

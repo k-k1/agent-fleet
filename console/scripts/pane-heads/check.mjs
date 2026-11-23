@@ -85,8 +85,8 @@ const ACTIONS = `<span class="tab-pane-actions">
     <button type="button" class="ui-btn ui-btn-ghost ui-iconbtn"><span class="codicon codicon-link-external"></span></button>
     <button type="button" class="ui-btn ui-btn-ghost ui-iconbtn pane-close"><span class="codicon codicon-close"></span></button>
   </span>`;
-const TOGGLE = `<div class="ui-seg sm mirror-toggle"><button class="seg-btn">チャット</button><button class="seg-btn active">ターミナル</button></div>`;
-const SESSION_CHIP = `<span class="pane-session"><span class="kind-tag kind kind-claude"><span class="codicon codicon-hubot"></span>claude</span><span class="pane-session-name">wip-sy7itrh</span><span class="session-state on">待機中</span></span>`;
+const TOGGLE = `<div class="ui-seg sm mirror-toggle"><button class="seg-btn">チャット</button><button class="seg-btn seg-btn--active">ターミナル</button></div>`;
+const SESSION_CHIP = `<span class="pane-session"><span class="kind-tag kind kind-claude"><span class="codicon codicon-hubot"></span>claude</span><span class="pane-session-name">wip-sy7itrh</span><span class="session-state session-state--on">待機中</span></span>`;
 
 // Where the mirror/terminal head puts the cluster RELATIVE to the switch is a JSX
 // decision, not a CSS one, so read it out of the source instead of transcribing it —
@@ -118,7 +118,7 @@ const VIEWS = {
     "chatview",
     `<header class="view-head fileinfo"><span class="fi-name">何ができるの？</span>` +
       `<button class="kind-tag kind-claude chat-agent-pick">Claude</button>` +
-      `<span class="session-state on">待機中</span>` +
+      `<span class="session-state session-state--on">待機中</span>` +
       `<button class="chat-plan-toggle">作業計画</button>` +
       `<span class="view-head-actions">${ACTIONS}</span></header>`,
   ],
@@ -167,7 +167,7 @@ ${sheets.map((p) => `<link rel="stylesheet" href="${pathToFileURL(p).href}">`).j
 ${kinds
   .map(
     ([kind, [rootClass, head]]) => `<div class="host" data-kind="${kind}">
-  <div class="pane tabbed active" style="--pane-ctl-n: 2">
+  <div class="pane tabbed pane--active" style="--pane-ctl-n: 2">
     <div class="pane-tabs" role="tablist">
       <div class="pane-tab selected"><button type="button" role="tab"><span class="pane-tab-title">タブ1</span></button><button class="pane-tab-close">×</button></div>
       <div class="pane-tab"><button type="button" role="tab"><span class="pane-tab-title">タブ2</span></button><button class="pane-tab-close">×</button></div>
@@ -182,7 +182,7 @@ ${kinds
      what every tabbed header above has to reproduce — so the expected value is
      derived from the shipping non-tabbed rule, not hard-coded here. -->
 <div class="host" data-kind="__reference__">
-  <div class="pane active" style="--pane-ctl-n: 2">
+  <div class="pane pane--active" style="--pane-ctl-n: 2">
     <button type="button" class="pane-grip pane-ord ord1">1</button>
     <div class="pane-controls">
       <button type="button" class="ui-btn ui-btn-ghost ui-iconbtn"><span class="codicon codicon-link-external"></span></button>

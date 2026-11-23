@@ -16,7 +16,7 @@ import { MemberMonthlyTable, usageMemberRows } from "../../../ui/MemberMonthly.t
 import { kindClasses, kindIcon, kindLabel } from "../../../lib/sessionkind.ts";
 import { fmtDateTime, DATETIME_FULL, compareText } from "../../../lib/intl.ts";
 import { tMaybe, useLocale, useT } from "../../../lib/i18n/index.ts";
-import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
+import { stateClass, stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { Tenant } from "../parts/adminShared.ts";
 import { UptimeAdminView } from "../../usage/UptimeHeatmap.tsx";
 import { useReadGuard } from "../../../lib/readGuard.ts";
@@ -144,7 +144,7 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
                           <span className="asx-user mono" title={s.email || ""}>{s.user_key || tr("admin.unknown")}</span>
                           <span className="as-name mono" title={s.dir || ""}>{s.label ? stripLabelTag(s.label) : s.name}</span>
                           <span className="as-repo muted">{s.repo || ""}</span>
-                          <span className={"session-state " + st.cls}>
+                          <span className={stateClass("session-state", st.cls)}>
                             <Icon name={st.icon} spin={st.spin} /> {st.text}
                           </span>
                           <span className="as-time muted">{s.started || ""}</span>

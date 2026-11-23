@@ -583,7 +583,7 @@ func TestMemoPRWaitsSkipsDeferredMessages(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			_, _, ok, err = memoPRWaits(tx, rows, time.Now())
+			_, _, _, ok, err = memoPRWaits(tx, rows, time.Now())
 			return err
 		})
 		if err != nil || !ok {

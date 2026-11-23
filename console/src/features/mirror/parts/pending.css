@@ -146,7 +146,7 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   opacity: 0.6;
   cursor: default;
 }
-.mirror-mode.on {
+.mirror-mode.mirror-mode--on {
   background: var(--accent, #6a7fdb);
   border-color: transparent;
   /* In dark mode --accent is a bright cyan, so white text lacks contrast; use the
@@ -160,7 +160,7 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   border-color: var(--accent, #6a7fdb);
   color: var(--fg);
 }
-.mirror-mode.on:hover:not(:disabled) {
+.mirror-mode.mirror-mode--on:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent, #6a7fdb) 82%, #000);
   border-color: transparent;
   color: var(--on-accent);

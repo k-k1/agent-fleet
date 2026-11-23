@@ -340,8 +340,10 @@ func memoRefSchemaJA(update bool) map[string]any {
 func memoAfterSchema(update bool) map[string]any {
 	desc := "The notes of the same auto-run category (queue=true) this note waits for: each a memo id from list_memos, " +
 		"or a work-item key such as owner/repo#12, which names the newest note of the category holding that item. " +
-		"Each must come before this note in the category. The note is started only after every one of them was run " +
-		"and its run ended cleanly; if one went wrong, the note goes back to wait for your user."
+		"Any note of the category may be one, earlier or later, but a note cannot wait for itself, directly or through " +
+		"the notes it waits for. The note is started only after every one of them was run and its run ended cleanly " +
+		"with every pull request merged, or, for a run that opened none, with a last answer that starts with Done:; " +
+		"if one went wrong, the note goes back to wait for your user."
 	if update {
 		desc += " Omit to keep them; [] removes them."
 	}

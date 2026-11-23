@@ -112,7 +112,7 @@ export function SessionsOverview({ paneId, showStopped, collapsed, headerActions
           <>
             <button
               type="button"
-              className={"ui-btn ui-btn-ghost ovw-toggle" + (showStopped ? " on" : "")}
+              className={"ui-btn ui-btn-ghost ovw-toggle" + (showStopped ? " ovw-toggle--on" : "")}
               aria-pressed={showStopped}
               title={tr("ovw.show_stopped_hint")}
               onClick={toggleStopped}

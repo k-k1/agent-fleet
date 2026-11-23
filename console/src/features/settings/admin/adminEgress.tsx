@@ -137,7 +137,7 @@ export function EgressView() {
           <span className="seg sm">
             <button
               type="button"
-              className={"seg-btn" + (!enforce ? " active" : "")}
+              className={"seg-btn" + (!enforce ? " seg-btn--active" : "")}
               disabled={busy}
               onClick={() => setMode(false)}
             >
@@ -145,7 +145,7 @@ export function EgressView() {
             </button>
             <button
               type="button"
-              className={"seg-btn" + (enforce ? " active" : "")}
+              className={"seg-btn" + (enforce ? " seg-btn--active" : "")}
               disabled={busy}
               onClick={() => setMode(true)}
             >
@@ -197,10 +197,10 @@ export function EgressView() {
         <h4>{tr("admin.egress_allowlist")}</h4>
         <form className="egress-add" onSubmit={addEntry}>
           <span className="seg sm">
-            <button type="button" className={"seg-btn" + (kind === "host" ? " active" : "")} onClick={() => setKind("host")}>
+            <button type="button" className={"seg-btn" + (kind === "host" ? " seg-btn--active" : "")} onClick={() => setKind("host")}>
               {tr("admin.egress_kind_host")}
             </button>
-            <button type="button" className={"seg-btn" + (kind === "tcp" ? " active" : "")} onClick={() => setKind("tcp")}>
+            <button type="button" className={"seg-btn" + (kind === "tcp" ? " seg-btn--active" : "")} onClick={() => setKind("tcp")}>
               {tr("admin.egress_kind_tcp")}
             </button>
           </span>

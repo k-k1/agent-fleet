@@ -70,10 +70,10 @@ afterEach(() => {
 describe("tenant engine access", () => {
   it("shows the mode per role and each member's ticks", async () => {
     await mount();
-    expect(seg("llm", "許可したメンバーだけ").className).toContain("active");
-    expect(seg("llm", "メンバー全員").className).not.toContain("active");
+    expect(seg("llm", "許可したメンバーだけ").className).toContain("seg-btn--active");
+    expect(seg("llm", "メンバー全員").className).not.toContain("seg-btn--active");
     // Positive control on the other role: an open role has the other button active.
-    expect(seg("image", "メンバー全員").className).toContain("active");
+    expect(seg("image", "メンバー全員").className).toContain("seg-btn--active");
     expect(tick("alice チャット（llm）").checked).toBe(true);
     expect(tick("bob チャット（llm）").checked).toBe(false);
   });

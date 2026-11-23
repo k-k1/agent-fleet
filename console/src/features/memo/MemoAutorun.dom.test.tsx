@@ -212,7 +212,7 @@ describe("the list", () => {
     const badge = (n: string) =>
       groups.find((g) => g.querySelector(".memo-cat-name")?.textContent === n)!.querySelector(".memo-q-badge");
     expect(badge("inbox-q")?.textContent).toContain(t("memo.autorun_badge"));
-    expect(badge("inbox-q")?.classList.contains("off")).toBe(false);
+    expect(badge("inbox-q")?.classList.contains("memo-q-badge--off")).toBe(false);
     expect(badge("plain")).toBeNull();
 
     servedQueues = { tenantEnabled: true, queues: [aQueue({ enabled: false })] };
@@ -466,6 +466,8 @@ describe("the release card", () => {
     expect(card.classList.contains("changed")).toBe(true);
     expect(card.querySelectorAll(".memo-release-changed")).toHaveLength(1);
     expect(card.textContent).toContain("edited");
+    // The tag sits inside the body so the text runs the full card width (#4901).
+    expect(card.querySelectorAll(".memo-release-body .memo-release-changed")).toHaveLength(1);
     // The text under the button is not the one first shown, so the first press only confirms.
     await click(must(card.querySelector("button"), "confirm button"));
     expect(memoRelease).toHaveBeenCalledTimes(1);

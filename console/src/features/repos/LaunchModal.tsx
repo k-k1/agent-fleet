@@ -926,7 +926,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                   key={k}
                   type="button"
                   title={tr(a.launchHintKey)}
-                  className={"seg-btn " + kindColorClasses(a.cssClass) + (kind === k ? " active" : "")}
+                  className={"seg-btn " + kindColorClasses(a.cssClass) + (kind === k ? " seg-btn--active" : "")}
                   onClick={() => pickKindByHand(k)}
                 >
                   <Icon name={a.icon} className="seg-ic" />
@@ -1219,11 +1219,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         >
             <div className="ui-field">
             <div className="ui-seg">
-              <button type="button" className={"seg-btn" + (worktree ? " active" : "")} onClick={() => setWorktree(true)}>
+              <button type="button" className={"seg-btn" + (worktree ? " seg-btn--active" : "")} onClick={() => setWorktree(true)}>
                 <Icon name="repo-forked" /> {tr("launch.new_worktree")}
                 <span className="seg-sub">{tr("launch.new_worktree_sub")}</span>
               </button>
-              <button type="button" className={"seg-btn" + (!worktree ? " active" : "")} onClick={() => setWorktree(false)}>
+              <button type="button" className={"seg-btn" + (!worktree ? " seg-btn--active" : "")} onClick={() => setWorktree(false)}>
                 <Icon name="repo" /> {tr("launch.direct_here")}
                 <span className="seg-sub">{tr("launch.direct_here_sub", { branch: branch || tr("launch.wc") })}</span>
               </button>
@@ -1246,7 +1246,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                   <div className="ui-seg">
                     <button
                       type="button"
-                      className={"seg-btn" + (branchMode === "new" ? " active" : "")}
+                      className={"seg-btn" + (branchMode === "new" ? " seg-btn--active" : "")}
                       onClick={() => {
                         setBranchMode("new");
                         setConflict(null);
@@ -1257,7 +1257,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                     </button>
                     <button
                       type="button"
-                      className={"seg-btn" + (branchMode === "existing" ? " active" : "")}
+                      className={"seg-btn" + (branchMode === "existing" ? " seg-btn--active" : "")}
                       onClick={() => {
                         setBranchMode("existing");
                         setConflict(null);
@@ -1412,7 +1412,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               <div className="ui-seg">
                 <button
                   type="button"
-                  className={"seg-btn" + (driver === "managed" ? " active" : "")}
+                  className={"seg-btn" + (driver === "managed" ? " seg-btn--active" : "")}
                   onClick={() => {
                     mark("driver");
                     setDriverPick("managed");
@@ -1423,7 +1423,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                 </button>
                 <button
                   type="button"
-                  className={"seg-btn" + (driver !== "managed" ? " active" : "")}
+                  className={"seg-btn" + (driver !== "managed" ? " seg-btn--active" : "")}
                   onClick={() => {
                     mark("driver");
                     setDriverPick("");

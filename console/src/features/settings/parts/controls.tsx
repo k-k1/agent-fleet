@@ -32,7 +32,7 @@ export function Choice({ value, options, onChange }: ChoiceProps) {
         <button
           key={String(v)}
           type="button"
-          className={"seg-btn" + (v === value ? " active" : "")}
+          className={"seg-btn" + (v === value ? " seg-btn--active" : "")}
           onClick={() => onChange(v as never)}
         >
           {label as ReactNode}

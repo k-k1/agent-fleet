@@ -35,7 +35,7 @@
 .chat-row.is-open {
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
 }
-.chat-row.active {
+.chat-row.chat-row--active {
   background: var(--lp-active-bg, var(--active-bg));
   box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
 }
@@ -86,7 +86,7 @@
 }
 .chat-row:hover .chat-menu-btn,
 .chat-menu-btn:focus-visible,
-.chat-row.active .chat-menu-btn {
+.chat-row.chat-row--active .chat-menu-btn {
   opacity: 1;
   pointer-events: auto;
 }

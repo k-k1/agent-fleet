@@ -34,7 +34,7 @@ async function open(section: string) {
   root = createRoot(host);
   await act(async () => root!.render(<SettingsDialog />));
 }
-const active = () => document.querySelector(".settings-rail-item.active")?.textContent;
+const active = () => document.querySelector(".settings-rail-item.settings-rail-item--active")?.textContent;
 const railItem = (label: string) =>
   [...document.querySelectorAll<HTMLElement>(".settings-rail-item")].find((e) => e.textContent === label)!;
 const note = () => document.querySelector<HTMLElement>("[data-testid=direction-note]")!;

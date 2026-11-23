@@ -20,7 +20,7 @@
 }
 .autorun-run-main:hover, .autorun-kid:hover { background: var(--hover, rgba(127, 127, 127, 0.12)); }
 /* The session open in the focused pane: the Sessions view's active-row look (.sess-row.active). */
-.autorun-run-main.active, .autorun-kid.active {
+.autorun-run-main.autorun-run-main--active, .autorun-kid.autorun-kid--active {
   background: var(--lp-active-bg, var(--active-bg));
   box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
 }

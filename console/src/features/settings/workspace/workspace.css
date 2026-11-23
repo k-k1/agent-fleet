@@ -900,7 +900,7 @@ button.mv-path:focus-visible {
   cursor: pointer;
 }
 
-.dip-tab.active {
+.dip-tab.dip-tab--active {
   color: var(--fg);
   border-bottom-color: var(--topbar-accent, var(--accent));
 }

@@ -34,7 +34,7 @@
 .mirror-skill-btn:disabled {
   opacity: 0.4;
 }
-.mirror-skill-btn.on {
+.mirror-skill-btn.mirror-skill-btn--on {
   border-color: var(--accent);
   color: var(--accent);
 }

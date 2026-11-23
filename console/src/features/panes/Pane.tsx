@@ -60,7 +60,7 @@ import { usePopoutMode } from "../../lib/popoutMode.ts";
 import type { PaneView } from "../../layout/types.ts";
 import { paneTitle } from "./paneTitle.ts";
 import { acceptsPaneDrag, setTabDragShield, tabOwnsDrop } from "./paneDnd.ts";
-import { stateInfo } from "../../lib/sessionview.ts";
+import { stateClass, stateInfo } from "../../lib/sessionview.ts";
 import { kindClass, kindColorClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { HomeView } from "../home/HomeView.tsx";
 import { openHome } from "../home/open.ts";
@@ -103,7 +103,7 @@ function EmptyPane({ cell, style, active, tabbed, canSplitRight, canSplitDown, c
   const tr = useT();
   return (
     <div
-      className={cx("pane", active && "active", tabbed && "tabbed", ordinal ? ordClass(ordinal) : "")}
+      className={cx("pane", active && "pane--active", tabbed && "tabbed", ordinal ? ordClass(ordinal) : "")}
       style={style}
       data-cell-id={cell.id}
       onMouseDownCapture={() => onActivate(cell.id)}
@@ -421,7 +421,7 @@ function PopulatedPane({
         <IconButton
           icon="word-wrap"
           label={wrapOn ? tr("ui.unwrap_lines") : tr("ui.wrap_lines")}
-          className={wrapOn ? "on" : ""}
+          className={wrapOn ? "ui-btn--on" : ""}
           onClick={() => setPaneWrap(pane.id, !wrapOn)}
         />
       )}
@@ -516,7 +516,7 @@ function PopulatedPane({
   return (
     <div
       ref={paneRef}
-      className={cx("pane", active && "active", tabbed && "tabbed", zone && "droptarget", hovered && "pane-hover", needsYou && "pane-needs-you", ordCls)}
+      className={cx("pane", active && "pane--active", tabbed && "tabbed", zone && "droptarget", hovered && "pane-hover", needsYou && "pane-needs-you", ordCls)}
       style={{ ...style, "--pane-ctl-n": ctlCount } as CSSProperties}
       data-pane-id={pane.id}
       data-cell-id={cell.id}
@@ -622,7 +622,7 @@ function PopulatedPane({
                       aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />
                   )}
                   {state && (
-                    <span className={cx("pane-tab-state", state.cls)} title={state.text}>
+                    <span className={stateClass("pane-tab-state", state.cls)} title={state.text}>
                       <Icon name={state.icon} spin={state.spin} />
                     </span>
                   )}
@@ -690,7 +690,7 @@ function PopulatedPane({
           <IconButton
             icon="word-wrap"
             label={wrapOn ? tr("ui.unwrap_lines") : tr("ui.wrap_lines")}
-            className={wrapOn ? "on" : ""}
+            className={wrapOn ? "ui-btn--on" : ""}
             onClick={() => setPaneWrap(pane.id, !wrapOn)}
           />
         )}

@@ -146,7 +146,7 @@ function ChangeRow({
   const tag = c.untracked ? "U" : staged ? c.index : c.worktree;
   const cls = c.untracked ? "untracked" : staged ? "staged" : "unstaged";
   return (
-    <li className={"change" + (selected ? " active" : "")}>
+    <li className={"change" + (selected ? " change--active" : "")}>
       <span className={"chg " + cls}>{tag}</span>
       <span className="chg-name" title={c.path} onClick={() => onOpen(c.path, staged)}>
         {c.path}

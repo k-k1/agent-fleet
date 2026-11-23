@@ -36,7 +36,7 @@
   font-size: var(--fs-12);
   cursor: pointer;
 }
-.provider-tabs .prov.active {
+.provider-tabs .prov.prov--active {
   color: var(--fg);
   border-color: var(--accent);
 }
@@ -398,7 +398,7 @@
 .repo-row:hover {
   background: var(--lp-hover-bg, var(--hover-bg));
 }
-.repo-row.active {
+.repo-row.repo-row--active {
   background: var(--lp-active-bg, var(--active-bg));
   box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
 }
@@ -459,7 +459,7 @@
   min-width: 0;
   font-size: var(--fs-13);
 }
-.repo-peek.stopped {
+.repo-peek.repo-peek--stopped {
   opacity: 0.55;
 }
 .repo-peek-title {
@@ -810,7 +810,7 @@
 .launch-stash-note.launch-stash-note--warn {
   color: var(--warn);
 }
-.launch-tmpl-btn.on {
+.launch-tmpl-btn.launch-tmpl-btn--on {
   border-color: var(--accent);
   color: var(--accent);
 }

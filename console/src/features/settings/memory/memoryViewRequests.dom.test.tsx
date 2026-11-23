@@ -38,7 +38,7 @@ async function mount() {
   await flush();
 }
 const selectedTab = () => document.querySelector("[role=tab][aria-selected=true]")?.id.replace(/^.*-tab-/, "");
-const activeRail = () => document.querySelector(".settings-rail-item.active")?.textContent;
+const activeRail = () => document.querySelector(".settings-rail-item.settings-rail-item--active")?.textContent;
 const entered = () => document.querySelector(".settings-layout")!.classList.contains("entered");
 const open = async (s: string) => {
   act(() => useSettingsUI.getState().openSettings(s));

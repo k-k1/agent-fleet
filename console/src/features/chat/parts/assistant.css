@@ -54,7 +54,7 @@
   flex-wrap: wrap;
   gap: 4px;
 }
-.assistant-icon-opt.active {
+.assistant-icon-opt.assistant-icon-opt--active {
   background: var(--accent-soft, var(--hover-bg));
   outline: 1px solid var(--accent, var(--border));
 }

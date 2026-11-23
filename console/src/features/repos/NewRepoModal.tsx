@@ -149,7 +149,7 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, onInit, repos = 
               <button
                 key={v}
                 type="button"
-                className={"seg-btn" + (vcs === v ? " active" : "")}
+                className={"seg-btn" + (vcs === v ? " seg-btn--active" : "")}
                 onClick={() => setVcs(v)}
               >
                 {label}

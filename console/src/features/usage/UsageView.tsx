@@ -291,7 +291,7 @@ export function UsageView() {
               // A locale-independent handle: the guide's screenshot harness selects the range by
               // it, and a label match silently leaves the default range on screen when it misses.
               data-range-hours={r.hours}
-              className={"uc-seg" + (hours === r.hours ? " active" : "")}
+              className={"uc-seg" + (hours === r.hours ? " uc-seg--active" : "")}
               aria-pressed={hours === r.hours}
               onClick={() => setHours(r.hours)}
             >
@@ -362,7 +362,7 @@ export function UsageView() {
         <div className={"usage-stage" + (loading ? " reloading" : "")} data-shown-hours={shownHours}>
           <KpiRow totals={totals} unmeasured={series?.unmeasured_calls || 0} />
 
-          <section className="usage-card">
+          <section className="ui-card usage-card">
             <div className="uc-head">
               <h4>{tr("usage.chart_title", { by: tr(("usage.by_" + by) as MsgKey) })}</h4>
               <div className="uc-head-actions">
@@ -373,7 +373,7 @@ export function UsageView() {
                 )}
                 <button
                   type="button"
-                  className={"uc-seg" + (tableView ? " active" : "")}
+                  className={"uc-seg" + (tableView ? " uc-seg--active" : "")}
                   aria-pressed={tableView}
                   onClick={() => setTableView((v) => !v)}
                 >
@@ -421,13 +421,13 @@ export function UsageView() {
             />
           </div>
 
-          <section className="usage-card">
+          <section className="ui-card usage-card">
             <div className="uc-head">
               <h4>{tr("usage.matrix_title")}</h4>
               <div className="uc-group" role="group" aria-label={tr("usage.matrix_title")}>
                 <button
                   type="button"
-                  className={"uc-seg" + (matrixBy === "feature" ? " active" : "")}
+                  className={"uc-seg" + (matrixBy === "feature" ? " uc-seg--active" : "")}
                   aria-pressed={matrixBy === "feature"}
                   onClick={() => setMatrixBy("feature")}
                 >
@@ -435,7 +435,7 @@ export function UsageView() {
                 </button>
                 <button
                   type="button"
-                  className={"uc-seg" + (matrixBy === "kind" ? " active" : "")}
+                  className={"uc-seg" + (matrixBy === "kind" ? " uc-seg--active" : "")}
                   aria-pressed={matrixBy === "kind"}
                   onClick={() => setMatrixBy("kind")}
                 >
@@ -531,7 +531,7 @@ function RtkGainCard({ reloadTick }: { reloadTick: number }) {
   const buckets = (gain?.[cur] || []).slice(-curN);
 
   return (
-    <section className="usage-card rtk-gain">
+    <section className="ui-card usage-card rtk-gain">
       <div className="uc-head">
         <h4>{tr("usage.rtk_gain_title")}</h4>
         <div className="uc-head-actions">
@@ -541,7 +541,7 @@ function RtkGainCard({ reloadTick }: { reloadTick: number }) {
                 <button
                   key={m.mode}
                   type="button"
-                  className={"uc-seg" + (cur === m.mode ? " active" : "")}
+                  className={"uc-seg" + (cur === m.mode ? " uc-seg--active" : "")}
                   aria-pressed={cur === m.mode}
                   onClick={() => setMode(m.mode)}
                 >
@@ -552,7 +552,7 @@ function RtkGainCard({ reloadTick }: { reloadTick: number }) {
           )}
           <button
             type="button"
-            className={"uc-seg" + (tableView ? " active" : "")}
+            className={"uc-seg" + (tableView ? " uc-seg--active" : "")}
             aria-pressed={tableView}
             onClick={() => setTableView((v) => !v)}
           >
@@ -637,7 +637,7 @@ function RtkChart({ buckets, mode }: { buckets: RtkGainBucket[]; mode: RtkMode }
             <button
               key={(b.date || b.week_start || b.month || "") + i}
               type="button"
-              className={"ux-col" + (hover === i ? " on" : "")}
+              className={"ux-col" + (hover === i ? " ux-col--on" : "")}
               onMouseEnter={() => setHover(i)}
               onMouseLeave={() => setHover((h) => (h === i ? null : h))}
               onFocus={() => setHover(i)}
@@ -865,7 +865,7 @@ function StackChart({ stack, by, metric, bucket }: ChartProps) {
             <button
               key={row.t}
               type="button"
-              className={"ux-col" + (hover === i ? " on" : "")}
+              className={"ux-col" + (hover === i ? " ux-col--on" : "")}
               // The tooltip is a supplement; the same values are in the table view, so nothing
               // depends on colour or hover alone.
               onMouseEnter={() => setHover(i)}
@@ -942,7 +942,7 @@ export function Legend({
         <button
           key={l.key}
           type="button"
-          className={"ulg" + (isOn(l.key) ? " on" : "")}
+          className={"ulg" + (isOn(l.key) ? " ulg--on" : "")}
           onClick={() => onPick(l.key)}
           title={
             l.key === OTHER_KEY
@@ -1016,7 +1016,7 @@ function Breakdown({
   const tr = useT();
   const rows = useMemo(() => breakdownRows(totals, dim, metric), [totals, dim, metric]);
   return (
-    <section className="usage-card ubd">
+    <section className="ui-card usage-card ubd">
       <div className="uc-head">
         <h4>{title}</h4>
       </div>
@@ -1028,7 +1028,7 @@ function Breakdown({
             <button
               key={r.key}
               type="button"
-              className={"ubd-row" + (isOn(dim, r.key) ? " on" : "")}
+              className={"ubd-row" + (isOn(dim, r.key) ? " ubd-row--on" : "")}
               onClick={() => onPick(dim, r.key)}
               title={tr("usage.calls_n", { n: fmtNum(r.agg.calls) })}
             >
@@ -1129,7 +1129,7 @@ function CoverageBanner({
   const unpricedPct = priced + unpriced > 0 ? Math.round((unpriced / (priced + unpriced)) * 100) : 0;
   if (!notes.length && unmeasured === 0 && unpriced === 0 && !catalog) return null;
   return (
-    <section className="usage-card usage-coverage">
+    <section className="ui-card usage-card usage-coverage">
       <div className="uc-head">
         <h4>
           <Icon name="info" /> {tr("usage.coverage_title")}

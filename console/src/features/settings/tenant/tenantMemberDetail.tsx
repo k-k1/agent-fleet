@@ -42,7 +42,7 @@ import { tCount, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, relTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { useNow } from "../../../lib/useNow.ts";
 import { useTenantStore } from "../../../core/store/tenant.ts";
-import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
+import { stateClass, stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, memberClassID, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
@@ -532,12 +532,12 @@ export function MemberView({
   return (
     <div className="admin-stage member-detail">
       <header className="member-head">
-        <span className={"state-dot " + (stats == null ? "" : running ? "on" : "off")} />
-        <span className={"state-word " + (stats == null ? "" : running ? "on" : "off")}>
+        <span className={"state-dot " + (stats == null ? "" : running ? "state-dot--on" : "state-dot--off")} />
+        <span className={"state-word " + (stats == null ? "" : running ? "state-word--on" : "state-word--off")}>
           {stats == null ? tr("admin.checking") : running ? tr("admin.running_state") : tr("admin.stopped_state")}
         </span>
         {agentSilent && (
-          <span className="state-word off" title={tr("admin.agent_silent_title")}>
+          <span className="state-word state-word--off" title={tr("admin.agent_silent_title")}>
             <Icon name="warning" /> {tr("admin.agent_silent")}
           </span>
         )}
@@ -661,7 +661,7 @@ export function MemberView({
               <div className="le-presets">
                 <span className="af-cap">{tr("admin.ws_machine")}</span>
                 <button
-                  className={slotClass === "" ? "chip on" : "chip"}
+                  className={slotClass === "" ? "chip chip--on" : "chip"}
                   onClick={() => setSlotClass("")}
                 >
                   {tr("admin.ws_machine_tenant_default")}
@@ -669,7 +669,7 @@ export function MemberView({
                 {classes.map((c) => (
                   <button
                     key={c.id}
-                    className={slotClass === c.id ? "chip on" : "chip"}
+                    className={slotClass === c.id ? "chip chip--on" : "chip"}
                     onClick={() => setSlotClass(c.id)}
                   >
                     {c.label}
@@ -718,7 +718,7 @@ export function MemberView({
                 ? ladder!.map((s) => (
                     <button
                       key={s.instance_type}
-                      className={+memMb === s.mem_mib ? "chip on" : "chip"}
+                      className={+memMb === s.mem_mib ? "chip chip--on" : "chip"}
                       onClick={() => setMemMb(s.mem_mib)}
                     >
                       {fmtGbHint(s.mem_mib)}
@@ -729,7 +729,7 @@ export function MemberView({
                     return (
                       <button
                         key={p.id}
-                        className={on ? "chip on" : "chip"}
+                        className={on ? "chip chip--on" : "chip"}
                         onClick={() => { setMemMb(p.mem); setCpuUnits(p.cpu); setDiskGb(p.disk); }}
                       >
                         {p.label}
@@ -812,7 +812,7 @@ export function MemberView({
                   </span>
                   <span className="as-name mono" title={s.dir || ""}>{s.label ? stripLabelTag(s.label) : s.name}</span>
                   <span className="as-repo muted">{s.repo || ""}</span>
-                  <span className={"session-state " + st.cls}>
+                  <span className={stateClass("session-state", st.cls)}>
                     <Icon name={st.icon} spin={st.spin} /> {st.text}
                   </span>
                   <span className="as-time muted">{s.started || ""}</span>

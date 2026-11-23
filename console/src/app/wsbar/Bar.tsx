@@ -369,7 +369,7 @@ export function WsBar() {
           caption: the state text beside the button says what it powers. */}
       <span className="ws-power-slot">
       <Button
-        className={"ws-power " + (running ? "on" : powerStops ? "starting" : "off") + (staleShown ? " stale" : "")}
+        className={"ws-power " + (running ? "ws-power--on" : powerStops ? "starting" : "ws-power--off") + (staleShown ? " stale" : "")}
         onClick={onToggle}
         disabled={inFlight}
         title={
@@ -405,7 +405,7 @@ export function WsBar() {
         )}
       </Button>
       </span>
-      <span className={"ws-dot " + (running ? "on" : "off")}>●</span>
+      <span className={"ws-dot " + (running ? "ws-dot--on" : "ws-dot--off")}>●</span>
       <span
         className={"ws-state" + (wsState === "stopped" && wsStats?.oom_killed ? " ws-state--warn" : "")}
         title={

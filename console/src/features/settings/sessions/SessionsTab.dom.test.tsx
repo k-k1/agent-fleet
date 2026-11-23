@@ -45,7 +45,7 @@ afterEach(() => {
 
 describe("停止中セッションのアーカイブ期間（#982）", () => {
   const label = () => t("agents.stopped_archive");
-  const active = () => buttonsOf(label()).filter((b) => b.classList.contains("active")).map((b) => b.textContent);
+  const active = () => buttonsOf(label()).filter((b) => b.classList.contains("seg-btn--active")).map((b) => b.textContent);
 
   // "Default" stores 0, not 7: the Agent then defers to the deployment's AF_SESSION_STOPPED_TTL,
   // which a stored 7 would silently override for every user who never touched the row.
@@ -96,7 +96,7 @@ describe("the session switches write the prefs the Agents page wrote", () => {
     await mount();
     expect(host!.textContent).not.toContain(t("agents.spawn_child_limit"));
     await pick(t("agents.fleet_spawn"), t("common.on"));
-    const other = buttonsOf(t("agents.spawn_child_limit")).find((b) => !b.classList.contains("active"))!;
+    const other = buttonsOf(t("agents.spawn_child_limit")).find((b) => !b.classList.contains("seg-btn--active"))!;
     await act(async () => other.click());
     expect(getSettings().sessionSpawnChildLimit).toBe(Number(other.textContent));
   });

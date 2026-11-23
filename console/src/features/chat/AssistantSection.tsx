@@ -363,7 +363,7 @@ export const AssistantSection = memo(function AssistantSection() {
               return (
                 <li
                   key={c.id}
-                  className={"chat-row" + (opens?.length ? " is-open" : "") + (current ? " active" : "")}
+                  className={"chat-row" + (opens?.length ? " is-open" : "") + (current ? " chat-row--active" : "")}
                 >
                   <button
                     type="button"
@@ -385,11 +385,11 @@ export const AssistantSection = memo(function AssistantSection() {
                     {/* Deletion-lock key badge (docs/log/45) — same vocabulary as a session row. */}
                     {c.locked && <Icon name="lock" className="sess-lock" title={tr("asst.locked_hint")} />}
                     {chatBusy[c.id] ? (
-                      <span className="session-state working mini" title={tr("asst.in_progress")}>
+                      <span className="session-state session-state--working mini" title={tr("asst.in_progress")}>
                         <Icon name="loading" spin />
                       </span>
                     ) : (
-                      <span className="session-state on mini" title={tr("asst.waiting")}>
+                      <span className="session-state session-state--on mini" title={tr("asst.waiting")}>
                         <Icon name="check" />
                       </span>
                     )}
@@ -478,7 +478,7 @@ export const AssistantSection = memo(function AssistantSection() {
                         className="ui-menu-item"
                         onClick={() => runConvMenu(() => toggleWorkingSetMember(w.id, "convs", convMenu.c.id))}
                       >
-                        <Icon name="check" className={convInSet(w, convMenu.c.id) ? "wset-check" : "wset-check off"} /> {w.name}
+                        <Icon name="check" className={convInSet(w, convMenu.c.id) ? "wset-check" : "wset-check wset-check--off"} /> {w.name}
                       </button>
                     </li>
                   ))}

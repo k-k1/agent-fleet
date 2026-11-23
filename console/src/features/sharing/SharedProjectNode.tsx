@@ -11,7 +11,7 @@
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
-import { stateInfo, stripLabelTag } from "../../lib/sessionview.ts";
+import { stateClass, stateInfo, stripLabelTag } from "../../lib/sessionview.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { openSharedSession } from "./open.ts";
 import type { SharedProjectGroup, SharedWorkingCopy } from "./sharedProject.ts";
@@ -57,7 +57,7 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
         {s.workspaceState !== "running" ? (
           <Icon name="debug-pause" title={tr("share.owner_stopped")} />
         ) : (
-          <span className={"session-state mini " + st.cls} title={st.text}>
+          <span className={stateClass("session-state", st.cls) + " mini"} title={st.text}>
             <Icon name={st.icon} spin={st.spin} />
           </span>
         )}

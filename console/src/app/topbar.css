@@ -101,7 +101,7 @@
 /* Audio-notification (ttsSessionNotify) quick toggle — mirrors Settings > Text-to-speech. */
 .notification-mute { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid var(--border2, var(--border)); border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
 .notification-mute .codicon { font-size: 13px; }
-.notification-mute.on { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
+.notification-mute.notification-mute--on { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
 .notification-permission { margin: 8px 10px 2px; padding: 3px 10px; justify-content: center; }
 .notification-list { overflow-y: auto; padding: 5px; }
 .notification-row { display: flex; align-items: center; border-radius: 4px; }
@@ -146,12 +146,12 @@
 .tts-status:hover {
   background: color-mix(in srgb, var(--accent, #6b8fc4) 26%, transparent);
 }
-.tts-status.off {
+.tts-status.tts-status--off {
   color: var(--muted);
   background: transparent;
   border-color: var(--btn-border);
 }
-.tts-status.off:hover {
+.tts-status.tts-status--off:hover {
   background: var(--btn-h);
 }
 .tts-status.speaking .tts-status-ic {

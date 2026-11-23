@@ -297,7 +297,7 @@ export function AdminTab() {
               <button
                 key={key}
                 type="button"
-                className={"settings-rail-item" + (section === key ? " active" : "")}
+                className={"settings-rail-item" + (section === key ? " settings-rail-item--active" : "")}
                 aria-current={section === key ? "page" : undefined}
                 onClick={() => pick(key)}
               >

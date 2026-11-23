@@ -59,16 +59,16 @@ describe("Tool permissions toggle", () => {
   it("shows Off and no approvals note while prompts are skipped (skipPermissions=true)", async () => {
     await mount(true);
     const [on, off] = toggle();
-    expect(on.classList.contains("active")).toBe(false);
-    expect(off.classList.contains("active")).toBe(true);
+    expect(on.classList.contains("seg-btn--active")).toBe(false);
+    expect(off.classList.contains("seg-btn--active")).toBe(true);
     expect(note()).toBe(false);
   });
 
   it("shows On with the approvals note when asking (skipPermissions=false)", async () => {
     await mount(false);
     const [on, off] = toggle();
-    expect(on.classList.contains("active")).toBe(true);
-    expect(off.classList.contains("active")).toBe(false);
+    expect(on.classList.contains("seg-btn--active")).toBe(true);
+    expect(off.classList.contains("seg-btn--active")).toBe(false);
     expect(note()).toBe(true);
   });
 

@@ -222,7 +222,7 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
             <Icon name="comment" /> {tr("onb.start_chat")}
           </button>
         </div>
-        <div className={"onboard-tile" + (track === "dev" ? " on" : "")}>
+        <div className={"onboard-tile" + (track === "dev" ? " onboard-tile--on" : "")}>
           <span className="onboard-tile-ic">
             <Icon name="repo" />
           </span>
