@@ -66,7 +66,8 @@ export function SlackCard({ st, reload }: { st: ChatConn | undefined; reload: ()
   // Poll the bot's channels while the app is being added to one. The period does not restart with
   // each answer, so reads can overlap: only an answer newer than the last one landed fills the
   // picker, and one still in flight when the poll stops (a list arrived, DM chosen, connected) or
-  // the bot token changes is dropped.
+  // the bot token changes is dropped. A user id the first answer resolves reads again at once: the
+  // Agent looks the user up after listing the channels, so the bot may have been invited since.
   const found = !!(chans && chans.length > 0);
   useGuardedPoll(
     (tk) => {
@@ -82,7 +83,7 @@ export function SlackCard({ st, reload }: { st: ChatConn | undefined; reload: ()
       });
     },
     insp && !dm && !found ? 3000 : null,
-    [insp, email],
+    [insp, email, userId],
   );
 
   const body = (botToken: string, appToken: string, over: Record<string, unknown> = {}) => ({

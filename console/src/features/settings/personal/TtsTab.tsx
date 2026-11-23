@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   useSettings,
   setSetting,
@@ -303,8 +303,15 @@ function EngineState({ engines, onChange }: { engines: TtsStatus | null; onChang
   // read begun before it, so a late "starting" cannot bring the spinner back.
   const moving = activity === "starting" || activity === "warming";
   const guard = useReadGuard();
-  useLayoutEffect(() => guard.reset(), [guard, moving]);
+  // As of the last commit: useInterval clears its timer in a passive cleanup, and a tick due in
+  // between must not start a read for a poll the settle already switched off.
+  const polling = useRef(false);
+  useLayoutEffect(() => {
+    guard.reset();
+    polling.current = moving;
+  }, [guard, moving]);
   useInterval(() => {
+    if (!polling.current) return;
     const tk = guard.begin();
     void refreshTtsStatus().then((st) => st && tk.land() && onChange(st));
   }, moving ? 5000 : null);

@@ -149,3 +149,17 @@ describe.each(cases)("$name channel poll", (c) => {
     expect(picker()).not.toBeNull();
   });
 });
+
+describe("SlackCard user lookup", () => {
+  // The Agent looks the user up by email after listing the channels, so the bot may have been
+  // invited in between: a user id resolved by an empty answer reads the channels again at once.
+  it("reads again at once when an answer resolves the user id", async () => {
+    const c = cases[0];
+    await verify(c);
+    expect(c.list).toHaveBeenCalledTimes(1);
+    await answer(0, { channels: [], resolvedUserId: "U1" });
+    expect(c.list).toHaveBeenCalledTimes(2);
+    await answer(1, c.reply(["general"]));
+    expect(picker()).not.toBeNull();
+  });
+});

@@ -353,4 +353,24 @@ describe("overlapping status requests", () => {
     await settle(1, answer(["image", "codex"], [IMAGE, CODEX]));
     expect(orderRows()).toEqual(["image (ComfyUI)", "Codex"]);
   });
+  it("ignores an older answer that arrives while a newer request is still out", async () => {
+    respond(["image", "codex"], [IMAGE, CODEX]);
+    await mount();
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Codex"]);
+    deferStatus();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_REFRESH_MS);
+    });
+    // The second request goes out as the first one's deadline closes the list.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_REFRESH_MS);
+    });
+    expect(pending.length).toBe(2);
+    expect(orderRows()).toEqual([]);
+    await settle(0, answer(["image", "agy", "codex"], [IMAGE, AGY, CODEX]));
+    expect(orderRows()).toEqual([]);
+    await settle(1, answer(["image", "codex"], [IMAGE, CODEX]));
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Codex"]);
+  });
+
 });
