@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.49.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.49.0) — 2026-11-23
+
+Console を閉じていても、セッションからの知らせが Web Push でスマートフォンやパソコンに届くように
+なりました。メモの自動実行では、メモごとにエージェント・モデル・エフォートと開始日時を決められ、
+リポジトリにキューの設定ファイルを置けます。セッションが書いたスケジュールは、あなたの承認を待つ
+ようになりました。
+
 ## [0.48.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.48.0) — 2026-11-21
 
 エージェントメモリが Console に専用のビューを持ち、メモリ一つずつをファイルのように開いて編集できる
