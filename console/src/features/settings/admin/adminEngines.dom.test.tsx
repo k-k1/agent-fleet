@@ -387,6 +387,21 @@ describe("EnginesAdminView", () => {
       expect(loadEngines()?.rows.map((e) => e.state)).toEqual(["starting"]);
     });
 
+    it("a read answering after its screen closed leaves the shared cache alone", async () => {
+      api.mockImplementation(held);
+      host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+      await act(async () => {
+        root!.render(<EngineRowsProbe />);
+      }); // the first read is in flight
+      act(() => root?.unmount());
+      host.remove();
+      root = null;
+      await answer({ super_admin: true, engines: [row({ key: "image" })] });
+      expect(loadEngines()).toBeNull();
+    });
+
     it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {
       api.mockResolvedValueOnce({ super_admin: true, engines: [row({ state: "starting", desired: 1 })] }).mockImplementation(held);
       apiJSON.mockResolvedValueOnce({ error: { code: "boom", message: "edit refused" } });
