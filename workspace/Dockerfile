@@ -323,8 +323,8 @@ RUN set -eux; \
 # gitleaks (gitleaks/gitleaks): scans a repository's history or working tree for committed
 # credentials, so a session can check before it pushes. Only the binary is installed; nothing
 # runs it and no hook is placed in a member's repositories. The tarball must match the release's
-# own checksums file, or the build fails. GITLEAKS_VERSION must equal the version `ci.yml`'s
-# `secret-scan` job pins (TestGitleaksPinMatchesCI fails otherwise); bump both together
+# own checksums file, or the build fails. GITLEAKS_VERSION must equal the version CI pins in
+# .github/actions/install-gitleaks/action.yml (TestGitleaksPinMatchesCI fails otherwise); bump both together
 # (docs/build/10 §10.4, credential leak detection).
 ARG GITLEAKS_VERSION=8.30.1
 RUN set -eux; \
