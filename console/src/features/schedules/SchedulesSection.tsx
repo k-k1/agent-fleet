@@ -333,10 +333,16 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
   );
 }
 
-// Rendered inside the Section body: its unmount is the real "body went away" signal.
-function BodyMark({ onUnmount }: { onUnmount: () => void }) {
+// Rendered inside the Section body: its unmount is the real "body went away" signal. `mounted`
+// is false from that unmount on, so a layout effect of the parent that runs in the same commit
+// (child cleanups run first) can tell the body is already gone.
+function BodyMark({ mounted, onUnmount }: { mounted: { current: boolean }; onUnmount: () => void }) {
   useLayoutEffect(() => {
-    return onUnmount;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      onUnmount();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return null;
@@ -467,6 +473,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // Section unmounts its body when closed, but never under SoloSection, so the section's own
   // open flag cannot tell: BodyMark's unmount resets every fold.
   const prevRestEnded = useRef<Map<string, string>>(new Map());
+  const bodyMounted = useRef(false);
   useLayoutEffect(() => {
     const prev = prevRestEnded.current;
     const next = new Map<string, string>();
@@ -477,8 +484,10 @@ export const SchedulesSection = memo(function SchedulesSection() {
     const keep = new Set<string>();
     if (grouped.rest.length) keep.add("");
     for (const [id, list] of grouped.bySchedule) if (list.length) keep.add(id);
+    // No carry once the body is gone: `endedOpen` here is the previous render's, and a carry
+    // queued after BodyMark's reset in the same commit would bring a fold back open on reopen.
     const carry = new Set<string>();
-    if (endedOpen[""]) {
+    if (bodyMounted.current && endedOpen[""]) {
       for (const [id, list] of grouped.bySchedule) {
         if (list.some((r) => !r.live && prev.get(r.root.name) === "")) carry.add(id);
       }
@@ -624,7 +633,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
       open={sectionOpen}
       onToggle={() => setSectionOpen(!sectionOpen)}
     >
-      <BodyMark onUnmount={() => setEndedOpen({})} />
+      <BodyMark mounted={bodyMounted} onUnmount={() => setEndedOpen({})} />
       {/* A failed fetch is shown as its own state, not as "empty" (the rows on screen stay). */}
       {loadErr && (
         <div className="sched-load-err" role="status" title={loadErr}>
