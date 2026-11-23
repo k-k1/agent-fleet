@@ -39,10 +39,10 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   padding: 4px 12px;
   border-radius: 6px;
 }
-.mt-perm-btn.ghost {
+.mt-perm-btn.mt-perm-btn--ghost {
   border: 1px solid var(--border);
 }
-.mt-perm-btn.ghost:hover {
+.mt-perm-btn.mt-perm-btn--ghost:hover {
   border-color: var(--chat-accent);
 }
 .mt-perm-hint {
@@ -88,25 +88,6 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
 }
 .mt-perm-tool {
   font-size: 11px;
-}
-/* Chat primary actions (allow / approve and run / send answer / send) follow the theme
-   accent instead of the fixed app blue. */
-.mirrorview button.primary {
-  background: var(--chat-accent);
-  border-color: var(--chat-accent);
-}
-.mirrorview button.primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--chat-accent) 82%, #ffffff);
-}
-/* A filled CTA can't be disabled with the shared flat fade: label and fill wash out
-   together, so the send-answer label sat at ~2:1 against its own button and you could not read the
-   action you were waiting to unlock. Give it the plain disabled-button skin instead —
-   still unmistakably unavailable (flat, no hover), but legible. */
-.mirrorview button.primary:disabled {
-  opacity: 1;
-  background: var(--btn);
-  border-color: var(--btn-border);
-  color: var(--muted);
 }
 /* "Claude is typing" indicator, shown while the session is working. */
 .mirror-typing {

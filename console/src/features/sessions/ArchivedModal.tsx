@@ -364,7 +364,7 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir, session: sco
                           <div className="arch-info" title={"ID: " + s.name}>
                             <span className="arch-name">{displayName(s)}</span>
                             <span className="arch-sub">
-                              <span className={"kind-tag " + kindClasses(s.kind)}>
+                              <span className={"kind-tag " + kindClasses(s.kind, "kind-tag")}>
                                 <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                               </span>
                               {s.started ? " · " + s.started : ""}

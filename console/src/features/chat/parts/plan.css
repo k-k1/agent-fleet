@@ -26,7 +26,7 @@
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: color-mix(in srgb, var(--accent) 10%, transparent);
 }
-.chat-plan-toggle.open {
+.chat-plan-toggle.chat-plan-toggle--open {
   color: var(--fg);
   border-color: color-mix(in srgb, var(--fg) 40%, transparent);
 }

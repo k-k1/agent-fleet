@@ -61,6 +61,7 @@ describe("SessionCard", () => {
   it("shows the session the way the rail row does: kind colour, name, full state text", async () => {
     await render({});
     expect(host.querySelector(".sess-kic")?.className).toContain("kind-claude");
+    expect(host.querySelector(".sess-kic")?.classList.contains("sess-kic--kind")).toBe(true);
     expect(host.querySelector(".ovw-title")?.textContent).toBe("決済の修正");
     // A card has room, so the chip keeps its text even for the calm states.
     expect(host.querySelector(".session-state")?.textContent?.trim()).toBe(t("state.working"));

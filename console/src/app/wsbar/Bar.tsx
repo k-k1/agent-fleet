@@ -446,7 +446,7 @@ export function WsBar() {
         onClick={() => void onStart()}
       >
         <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
-        <span className="lbl">{tr("wsbar.start_here")}</span>
+        <span className="ws-lbl">{tr("wsbar.start_here")}</span>
       </Button>
       {/* The pane buttons, as one icon-only group: "Start" is the bar's only labelled action.
           What opens a pane (Home, the sessions overview, the image studio) is on the activity

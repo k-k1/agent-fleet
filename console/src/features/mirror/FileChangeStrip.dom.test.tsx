@@ -83,7 +83,7 @@ describe("FileChangeStrip", () => {
     const el = await render("s1", [file()]);
     const strip = el.querySelector(".mirror-files");
     expect(strip).not.toBeNull();
-    expect(strip!.classList.contains("open")).toBe(false);
+    expect(strip!.classList.contains("mirror-files--open")).toBe(false);
     expect(el.querySelector(".mfl-count")!.textContent).toBe("1");
     expect(el.querySelector(".mfl-lead")!.textContent).toBe("a.ts");
     // The total +/- shows even while folded, so the scale is readable at a glance.
@@ -95,7 +95,8 @@ describe("FileChangeStrip", () => {
     await act(async () => {
       (el.querySelector(".mirror-files-toggle") as HTMLButtonElement).click();
     });
-    expect(el.querySelector(".mirror-files")!.classList.contains("open")).toBe(true);
+    expect(el.querySelector(".mirror-files")!.classList.contains("mirror-files--open")).toBe(true);
+    expect(el.querySelector(".mirror-files")!.classList.contains("mirror-disclosure--open")).toBe(true);
     const rows = el.querySelectorAll(".mfl-item");
     expect(rows).toHaveLength(1);
     expect(rows[0].classList.contains("mfl-unstaged")).toBe(true);
@@ -125,13 +126,13 @@ describe("FileChangeStrip", () => {
     act(() => root?.unmount());
     host?.remove();
     const again = await render("s1", [file()]);
-    expect(again.querySelector(".mirror-files")!.classList.contains("open")).toBe(true);
+    expect(again.querySelector(".mirror-files")!.classList.contains("mirror-files--open")).toBe(true);
 
     // Another session does not inherit that choice.
     act(() => root?.unmount());
     host?.remove();
     const other = await render("s2", [file()]);
-    expect(other.querySelector(".mirror-files")!.classList.contains("open")).toBe(false);
+    expect(other.querySelector(".mirror-files")!.classList.contains("mirror-files--open")).toBe(false);
   });
 
   it("marks a row with no diff but present in a commit as committed (docs/log/68 P2)", async () => {

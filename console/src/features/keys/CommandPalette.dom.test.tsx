@@ -141,10 +141,10 @@ describe("command palette — sessions mode", () => {
         input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
       });
     }
-    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("stopped");
+    expect(document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent).toBe("stopped");
     act(() => useKeysStore.getState().closePalette());
     act(() => useKeysStore.getState().openPalette());
-    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("askedLast");
+    expect(document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent).toBe("askedLast");
   });
 
   it("still orders by attention when the list only arrives after it opened", () => {
@@ -266,10 +266,10 @@ describe("command palette — ticket references (#1665)", () => {
       });
     });
     expect(titles()).toEqual(["busy", "PROJ-123-notes"]);
-    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("PROJ-123-notes");
+    expect(document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent).toBe("PROJ-123-notes");
     // A new query starts again at the top.
     type("PROJ-123 ");
-    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("busy");
+    expect(document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent).toBe("busy");
   });
 
   it("pulls the highlight back into range when its row disappears and the list shrinks below it", () => {
@@ -282,12 +282,12 @@ describe("command palette — ticket references (#1665)", () => {
     const key = (k: string) => act(() => void input.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true })));
     key("ArrowDown");
     key("ArrowDown");
-    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note3");
+    expect(document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent).toBe("note3");
     act(() => {
       useSessionsStore.setState({ sessions: [session("note1")] });
     });
     expect(titles()).toEqual(["note1"]);
-    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note1");
+    expect(document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent).toBe("note1");
     // An emptied list must still highlight the first row once rows come back.
     act(() => {
       useSessionsStore.setState({ sessions: [] });
@@ -296,7 +296,7 @@ describe("command palette — ticket references (#1665)", () => {
     act(() => {
       useSessionsStore.setState({ sessions: [session("note1")] });
     });
-    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("note1");
+    expect(document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent).toBe("note1");
     opened.length = 0;
     key("Enter");
     expect(opened).toEqual(["note1"]);
@@ -360,9 +360,9 @@ describe("command palette — session families (#1887)", () => {
   it("moves the selection through the rows in visual order", () => {
     mount();
     key("ArrowDown");
-    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("kidWaiting");
+    expect(document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent).toBe("kidWaiting");
     key("ArrowDown");
-    expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("kidIdle");
+    expect(document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent).toBe("kidIdle");
   });
 
   it("keeps a session born while open at the foot instead of slotting it into the block", () => {
@@ -419,7 +419,7 @@ describe("command palette — session families (#1887)", () => {
       type("Child");
       // (The fuzzy filter also admits the stopped parent, which sorts last.)
       expect(titles().slice(0, 2)).toEqual(["newWaitingChild", "oldWorkingChild"]);
-      expect(document.querySelector(".cp-item.sel .cp-title")?.textContent).toBe("newWaitingChild");
+      expect(document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent).toBe("newWaitingChild");
       opened.length = 0;
       key("Enter");
       expect(opened).toEqual(["newWaitingChild"]);
@@ -468,7 +468,7 @@ describe("command palette — reverse mode chord and paging (#2412)", () => {
     return ev;
   };
   const chordP = { code: "KeyP", key: "p", ctrlKey: true };
-  const selTitle = () => document.querySelector(".cp-item.sel .cp-title")?.textContent;
+  const selTitle = () => document.querySelector(".cp-item.cp-item--sel .cp-title")?.textContent;
 
   afterEach(() => setSetting("keybindings", {}));
 

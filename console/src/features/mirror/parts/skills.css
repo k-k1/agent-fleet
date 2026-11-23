@@ -97,7 +97,7 @@
   min-width: 0;
   line-height: 1.15;
 }
-.mirror-skill-item.sel {
+.mirror-skill-item.mirror-skill-item--sel {
   background: color-mix(in srgb, var(--accent) 18%, var(--btn));
 }
 /* Passive display (while arguments are being typed): a list that only shows the argument hint.
@@ -155,7 +155,7 @@
   font-size: 10px;
 }
 /* Source badge for a foreign skill: kind colour (--kind, set per kind in tokens.css). */
-.mirror-skill-src.kind {
+.mirror-skill-src.mirror-skill-src--kind {
   color: var(--kind);
   border-color: color-mix(in srgb, var(--kind) 55%, var(--border));
 }
@@ -178,7 +178,7 @@
   cursor: pointer;
   white-space: nowrap;
 }
-.mirror-skill-more.sel,
+.mirror-skill-more.mirror-skill-more--sel,
 .mirror-skill-more:hover {
   background: color-mix(in srgb, var(--accent) 18%, var(--btn));
   color: var(--fg);

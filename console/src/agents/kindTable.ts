@@ -83,7 +83,7 @@ export const SESSION_KINDS: readonly SessionKind[] = KIND_TABLE.map((r) => r.id)
 // The CSS the table stands for. styles/tokens.css holds only the markers
 // (`/* @af-kind-tokens dark */`, `light`, `map`); the build and the dev scripts expand them here.
 // The map is the one place a `.kind-<slug>` class resolves to its colour: the use sites paint
-// with var(--kind) behind the `kind` marker kindColorClasses() writes, and --kind is declared on
+// with var(--kind) behind the `<block>--kind` marker kindColorClasses() writes, and --kind is declared on
 // the element itself so --kind-<slug> resolves against the nearest theme container.
 export function kindTokenCss(part: "dark" | "light" | "map"): string {
   if (part === "map") return KIND_TABLE.map((r) => `.kind-${r.id} { --kind: var(--kind-${r.id}); }`).join("\n");

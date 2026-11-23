@@ -79,7 +79,7 @@
   align-items: center;
   padding: 0;
 }
-.mirror-files.open .mirror-files-head {
+.mirror-files.mirror-files--open .mirror-files-head {
   border-bottom: 1px solid var(--border);
 }
 .mirror-files-toggle {
@@ -327,7 +327,7 @@
 .mtk-dismiss .codicon {
   font-size: 13px;
 }
-.mirror-tasks.open .mirror-tasks-head {
+.mirror-tasks.mirror-tasks--open .mirror-tasks-head {
   border-bottom: 1px solid var(--border);
 }
 .mirror-tasks-list-wrap {

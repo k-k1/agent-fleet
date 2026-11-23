@@ -41,7 +41,7 @@ export function Meta({ k, v, mono = true, wide = false }: { k: ReactNode; v?: Re
   return (
     <div className={"ssm-meta-row" + (wide ? " wide" : "")}>
       <span className="ssm-meta-k">{k}</span>
-      <span className={"ssm-meta-v" + (mono ? " mono" : "")}>{v || "—"}</span>
+      <span className={"ssm-meta-v" + (mono ? " mono ssm-meta-v--mono" : "")}>{v || "—"}</span>
     </div>
   );
 }

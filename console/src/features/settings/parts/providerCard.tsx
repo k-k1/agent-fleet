@@ -160,7 +160,7 @@ export function ProviderCard({
   return (
     <div className="p-card" data-settings-target={id}>
       <div className="p-head">
-        <span className={"p-badge pb-" + id + " " + kindColorClasses(id)}>
+        <span className={"p-badge pb-" + id + " " + kindColorClasses(id, "p-badge")}>
           {brand ? <Icon name={brand} /> : BADGE_SHORT[id]}
         </span>
         <span className="p-name">{name}</span>

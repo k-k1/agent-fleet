@@ -33,36 +33,6 @@
   cursor: default;
 }
 
-:where(.settings-modal) button.ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--muted);
-  padding: 2px 6px;
-}
-
-:where(.settings-modal) button.ghost:hover:not(:disabled) {
-  background: var(--btn);
-  color: var(--fg);
-}
-
-:where(.settings-modal) button.primary {
-  background: var(--accent);
-  /* --accent is the user's top-bar accent here; the theme's --on-accent is not chosen for it. */
-  color: var(--on-topbar-accent, var(--on-accent));
-  border-color: var(--accent);
-  font-weight: 600;
-}
-
-:where(.settings-modal) button.primary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--accent) 85%, #fff);
-}
-
-:where(.settings-modal) button.danger:hover:not(:disabled) {
-  background: #4a2222;
-  border-color: #6a3030;
-  color: #f3b6b6;
-}
-
 :where(.settings-modal) input,
 :where(.settings-modal) select,
 :where(.settings-modal) textarea {
@@ -238,8 +208,8 @@
 /* The secondary/note text in the settings dialog was too faint at plain --muted.
    Lift it toward --fg so it stays legible while still reading as secondary. color-mix
    keeps it theme-adaptive (dark / light / custom color themes). Emphasized inline
-   spans (.ds-note span) stay full --fg via their own, equally-specific rule. */
-.settings-content .muted,
+   spans (.ds-note span) stay full --fg via their own, equally-specific rule.
+   (`.settings-content .muted` is in styles/base.css, next to the utility it adjusts.) */
 .settings-content .ds-hint,
 .settings-content .pat-tmpl-head {
   color: var(--dialog-muted);
@@ -497,7 +467,7 @@
   white-space: nowrap;
 }
 
-.ssm-meta-v.mono {
+.ssm-meta-v.ssm-meta-v--mono {
   font-family: var(--mono);
 }
 
@@ -692,7 +662,7 @@
   white-space: nowrap;
 }
 
-.mr-size.mono {
+.mr-size.mr-size--mono {
   color: var(--fg);
 }
 
@@ -773,12 +743,6 @@
 
 .adm-allow-row .as-repo {
   flex: 1;
-}
-
-.btn.xs,
-.ghost.xs {
-  font-size: 11px;
-  padding: 2px 8px;
 }
 
 /* Tenant-distributed MCP servers (docs/log/48 P4, AdminTab McpAdminView). Row layout
@@ -1072,11 +1036,11 @@ label.idp-flag {
   padding-left: 18px;
 }
 
-.mcp-probe .muted {
+.mcp-probe .mcp-probe-muted {
   color: var(--muted);
 }
 
-.mcp-probe .mono {
+.mcp-probe .mcp-probe-mono {
   font-family: var(--mono);
   word-break: break-all;
 }

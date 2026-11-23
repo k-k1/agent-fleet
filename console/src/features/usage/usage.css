@@ -213,7 +213,7 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.rtk-gain-headline .muted {
+.rtk-gain-headline .rtk-gain-headline-note {
   font-size: var(--fs-13);
   font-variant-numeric: normal;
 }

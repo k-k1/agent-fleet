@@ -220,7 +220,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
               {comments.map((c, i) => {
                 const open = expanded.has(c.id);
                 return (
-                  <li key={c.id} className={"doc-comment" + (c.sentAt ? " is-sent" : "") + (open ? " open" : "")}>
+                  <li key={c.id} className={"doc-comment" + (c.sentAt ? " is-sent" : "") + (open ? " doc-comment--open" : "")}>
                     <span className="doc-comment-n">{i + 1}</span>
                     <button
                       type="button"

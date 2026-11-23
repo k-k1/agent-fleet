@@ -139,7 +139,7 @@ export function StudioAgent({
   return (
     <div className="igen-agent">
       <div className="igen-agent-head">
-        <span className={"ui-chip igen-chip " + kindColorClasses(agentOf(meta.kind).cssClass)}>
+        <span className={"ui-chip igen-chip " + kindColorClasses(agentOf(meta.kind).cssClass, "ui-chip")}>
           <Icon name={agentOf(meta.kind).icon} /> {kindDisplayName(meta.kind)}
         </span>
         {/* The narrow pane keeps the head to one line (imagegen.css): these two chips go, and

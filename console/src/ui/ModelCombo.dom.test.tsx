@@ -164,9 +164,9 @@ describe("ModelCombo", () => {
   it("moves with the arrows and wraps", async () => {
     await mount();
     await key("ArrowUp"); // from the selected row (Default, index 0) to the last
-    expect(rows()[3].className).toContain("sel");
+    expect(rows()[3].className).toContain("model-combo-item--sel");
     await key("ArrowDown");
-    expect(rows()[0].className).toContain("sel");
+    expect(rows()[0].className).toContain("model-combo-item--sel");
   });
 
   it("wires the combobox to the listbox the way a screen reader reads it", async () => {

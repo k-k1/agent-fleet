@@ -95,7 +95,7 @@ const probe = (scroller) => `(() => {
     max: Math.round(el.scrollHeight - el.clientHeight),
     file: (document.querySelector(".fi-path") || {}).textContent || "",
     tabs: document.querySelectorAll(".pane-tab").length,
-    selected: [...document.querySelectorAll(".pane-tab")].findIndex((t) => t.classList.contains("selected")),
+    selected: [...document.querySelectorAll(".pane-tab")].findIndex((t) => t.classList.contains("pane-tab--selected")),
   };
 })()`;
 const center = (scroller) => `(() => {

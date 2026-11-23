@@ -118,7 +118,7 @@ export function CarriedBlock({
     <div className="mirror-turn assistant mt-carried" data-testid="carried-card">
       <div className="mirror-turn-head">
         <span className="mt-who">{agentName}</span>
-        <span className="mt-model muted">{title}</span>
+        <span className="mt-model muted mt-model--muted">{title}</span>
       </div>
       <div className="mirror-turn-body">
         {/* Say up front why this card is here: it can look like a question the user already

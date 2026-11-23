@@ -214,7 +214,7 @@ interface LaunchSectionProps {
 function LaunchSection({ label, summary, warn = false, open, onToggle, children }: LaunchSectionProps) {
   const tr = useT();
   return (
-    <section className={"launch-sec" + (open ? " open" : "")}>
+    <section className={"launch-sec" + (open ? " launch-sec--open" : "")}>
       <button type="button" className="launch-sec-head" aria-expanded={open} onClick={onToggle}>
         <Icon name={open ? "chevron-down" : "chevron-right"} className="launch-sec-chev" />
         <span className="launch-sec-label">{label}</span>
@@ -926,7 +926,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                   key={k}
                   type="button"
                   title={tr(a.launchHintKey)}
-                  className={"seg-btn " + kindColorClasses(a.cssClass) + (kind === k ? " seg-btn--active" : "")}
+                  className={"seg-btn " + kindColorClasses(a.cssClass, "seg-btn") + (kind === k ? " seg-btn--active" : "")}
                   onClick={() => pickKindByHand(k)}
                 >
                   <Icon name={a.icon} className="seg-ic" />

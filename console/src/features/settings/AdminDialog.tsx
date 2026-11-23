@@ -24,7 +24,7 @@ export function AdminDialog() {
         </>
       }
       onClose={closeAdmin}
-      className="settings-modal admin-modal"
+      className="settings-modal ui-bare-btns ui-bare-btns--settings admin-modal"
     >
       <div className="ui-modal-body settings-modal-body">
         <AdminTab />

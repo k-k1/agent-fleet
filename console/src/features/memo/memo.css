@@ -556,7 +556,7 @@
   color: var(--fg);
 }
 /* Memo row: selected gets an lp-accent spine (matches sessions/repos rows). */
-.memo-row.sel {
+.memo-row.memo-row--sel {
   background: color-mix(
     in srgb,
     var(--lp-accent, var(--accent)) 16%,

@@ -125,7 +125,7 @@
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-.mt-model.muted {
+.mt-model.mt-model--muted {
   color: var(--muted2);
 }
 /* Optimistic-echo chip: a just-sent prompt shown before claude logs it (queued while
@@ -270,7 +270,7 @@
   color: var(--muted);
 }
 .mt-work-head:hover,
-.mt-work.open .mt-work-head {
+.mt-work.mt-work--open .mt-work-head {
   color: var(--fg);
 }
 .mt-work-head .codicon {

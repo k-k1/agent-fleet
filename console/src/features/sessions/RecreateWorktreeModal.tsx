@@ -211,7 +211,7 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
                     <input type="checkbox" checked={chosen.has(s.name)} onChange={() => toggle(s.name)} disabled={busy} />
                     <span className="rwt-session-name">{displayName(s)}</span>
                     <span className="arch-sub">
-                      <span className={"kind-tag " + kindClasses(s.kind)}>
+                      <span className={"kind-tag " + kindClasses(s.kind, "kind-tag")}>
                         <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                       </span>
                       {s.started ? " · " + s.started : ""}

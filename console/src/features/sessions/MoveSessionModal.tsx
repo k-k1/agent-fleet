@@ -314,7 +314,7 @@ function MoveForm({
                 type="button"
                 data-kind={k}
                 title={tr(ag.launchHintKey)}
-                className={"seg-btn " + kindColorClasses(ag.cssClass) + (kind === k ? " seg-btn--active" : "") + (left ? " quota-left" : "") + (left && kind === k ? " move-quota-picked" : "")}
+                className={"seg-btn " + kindColorClasses(ag.cssClass, "seg-btn") + (kind === k ? " seg-btn--active" : "") + (left ? " quota-left" : "") + (left && kind === k ? " move-quota-picked" : "")}
                 onClick={() => {
                   chosen.current = true;
                   setKind(k);

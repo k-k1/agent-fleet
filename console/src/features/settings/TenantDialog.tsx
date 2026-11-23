@@ -154,7 +154,7 @@ export function TenantDialog() {
   };
 
   return (
-    <Modal title={tr("tenant.title")} onClose={closeTenantSettings} className="settings-modal tenant-modal">
+    <Modal title={tr("tenant.title")} onClose={closeTenantSettings} className="settings-modal ui-bare-btns ui-bare-btns--settings tenant-modal">
       <div className="ui-modal-body settings-modal-body">
         <div className={"settings-layout" + (entered ? " entered" : "")}>
           <nav className="settings-rail" aria-label={tr("tenant.title")}>

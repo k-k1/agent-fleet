@@ -253,7 +253,7 @@
   cursor: pointer;
 }
 
-.mcp-scopes > .mono {
+.mcp-scopes > .mcp-scopes-mono {
   margin-top: 2px;
   overflow-wrap: anywhere;
 }

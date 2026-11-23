@@ -31,8 +31,8 @@
   color: var(--accent);
 }
 @container paneview (max-width: 460px) {
-  .fgraph-toggle .lbl,
-  .fgraph-switch .lbl {
+  .fgraph-toggle .fgraph-lbl,
+  .fgraph-switch .fgraph-lbl {
     display: none;
   }
   /* The nav cluster (5 buttons) + toggle + count + err is a lot more header than the
@@ -194,7 +194,7 @@
    this one the pane, the constant the scroll box inside it — so they can disagree by a
    scrollbar's width right at the boundary, which costs a chip label and nothing else. */
 @container paneview (max-width: 560px) {
-  .fgraph-label .session-state .lbl {
+  .fgraph-label .session-state .fgraph-lbl {
     display: none;
   }
 }
@@ -311,7 +311,7 @@
   stroke-width: 2;
   stroke-linecap: round;
 }
-.fgraph-death.danger line {
+.fgraph-death.fgraph-death--danger line {
   stroke: var(--warn);
 }
 .fgraph-death.cut {
@@ -384,7 +384,7 @@
 .fgraph-arrow.peer line {
   stroke: var(--fgraph-peer);
 }
-.fgraph-arrow.danger line {
+.fgraph-arrow.fgraph-arrow--danger line {
   stroke: var(--warn);
 }
 .fgraph-arrow.family {
@@ -399,7 +399,7 @@
 .fgraph-arrow.peer {
   color: var(--fgraph-peer);
 }
-.fgraph-arrow.danger {
+.fgraph-arrow.fgraph-arrow--danger {
   color: var(--warn);
 }
 .fgraph-arrow.clickable {

@@ -168,7 +168,7 @@
   font-size: 11px;
   color: var(--fg);
 }
-.engine-row-line.muted {
+.engine-row-line.engine-row-line--muted {
   color: var(--muted);
 }
 

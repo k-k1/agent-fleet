@@ -697,7 +697,7 @@ export function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) 
   const out: ReactNode[] = [];
   if (box) {
     out.push(
-      <span key="box" className="mr-size mono" title={cls ? cls.label : undefined}>
+      <span key="box" className="mr-size mono mr-size--mono" title={cls ? cls.label : undefined}>
         {box.instance_type}
       </span>,
       ns && ns.source !== "stored" ? (

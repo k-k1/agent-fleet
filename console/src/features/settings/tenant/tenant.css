@@ -918,7 +918,7 @@
 }
 
 /* IDs, type/AZ and the action buttons never break mid-token. */
-.pool-table td.mono,
+.pool-table td.pool-td-mono,
 .pool-table td.pool-actions {
   white-space: nowrap;
 }

@@ -2067,7 +2067,7 @@ function MemoRow(props: MemoRowProps) {
     <div
       className={
         "memo-row" +
-        (selected ? " sel" : "") +
+        (selected ? " memo-row--sel" : "") +
         (m.sentAt ? " sent" : "") +
         (expanded ? " exp" : "") +
         (dragOver ? " dragover" : "")

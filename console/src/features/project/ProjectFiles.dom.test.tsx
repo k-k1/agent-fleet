@@ -139,7 +139,7 @@ describe("reveal", () => {
     await flushFrames();
     const row = host.querySelector<HTMLLIElement>('li[data-path="repos/agent-fleet/docs"]');
     expect(row).not.toBeNull();
-    expect(row!.className).toContain("selected");
+    expect(row!.className).toContain("fsrow--selected");
     // The folder itself is open too, so its contents are what you land on.
     expect(host.querySelector('li[data-path="repos/agent-fleet/docs/a.md"]')).not.toBeNull();
     expect(document.activeElement).toBe(host.querySelector("ul.fstree"));
@@ -154,7 +154,7 @@ describe("reveal", () => {
       useFilesStore.getState().revealInFiles("repos/agent-fleet/docs");
     });
     await flushFrames();
-    expect(host.querySelector('li[data-path="repos/agent-fleet/docs"]')?.className).toContain("selected");
+    expect(host.querySelector('li[data-path="repos/agent-fleet/docs"]')?.className).toContain("fsrow--selected");
     expect(document.activeElement).toBe(outside); // still typing wherever they were
     outside.remove();
   });

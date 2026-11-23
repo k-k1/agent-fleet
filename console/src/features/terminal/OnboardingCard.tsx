@@ -105,7 +105,7 @@ function StepRow({ s, next }: { s: Step; next: boolean }) {
       </span>
       {s.cta && (
         <button
-          className={"onboard-cta" + (next ? " primary" : "")}
+          className={"onboard-cta" + (next ? " primary onboard-cta--primary" : "")}
           disabled={s.cta.disabled}
           title={s.cta.title}
           onClick={s.cta.on}
@@ -214,7 +214,7 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
           <span className="onboard-tile-title">{tr("onb.tile_chat_title")}</span>
           <span className="onboard-tile-desc">{tr("onb.tile_chat_desc")}</span>
           <button
-            className={"onboard-cta" + (tilesHot ? " primary" : "")}
+            className={"onboard-cta" + (tilesHot ? " primary onboard-cta--primary" : "")}
             disabled={!setupDone}
             title={setupDone ? undefined : tr("onb.chat_needs_setup")}
             onClick={after(() => openAssistantDraft(AF_ASSISTANT_ID))}
@@ -297,7 +297,7 @@ export function SetupCard({ setup }: { setup: SetupState }) {
   const tr = useT();
   if (!setup.show) return null;
   return (
-    <section className="onboard-scope onboard-card home-setup">
+    <section className="onboard-scope ui-bare-btns onboard-card home-setup">
       <div className="onboard-title">{tr("onb.welcome")}</div>
       <div className="onboard-sub">{tr("onb.welcome_sub")}</div>
       <GuideBody g={setup.g} />
@@ -319,7 +319,7 @@ export function GuideModal() {
   const g = useGuideState();
   return (
     <Modal title={tr("onb.guide_title")} onClose={closeGuide} className="guide-modal">
-      <div className="ui-modal-body onboard-scope">
+      <div className="ui-modal-body onboard-scope ui-bare-btns">
         <div className="onboard-sub">{tr("onb.guide_sub")}</div>
         {g.conns !== null && <GuideBody g={g} onNavigate={closeGuide} />}
       </div>

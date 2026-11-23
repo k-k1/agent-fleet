@@ -807,7 +807,7 @@ export function MemberView({
               const st = stateInfo(s);
               return (
                 <div key={s.name} className="adm-session">
-                  <span className={"kind-tag " + kindClasses(s.kind)}>
+                  <span className={"kind-tag " + kindClasses(s.kind, "kind-tag")}>
                     <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                   </span>
                   <span className="as-name mono" title={s.dir || ""}>{s.label ? stripLabelTag(s.label) : s.name}</span>

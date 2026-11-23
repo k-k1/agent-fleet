@@ -179,7 +179,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             <Icon name={fold?.hidden ? "chevron-right" : "chevron-down"} />
           </button>
         )}
-        <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
+        <span className={"sess-kic " + kindClasses(s.kind, "sess-kic")} title={kindLabel(s.kind)}>
           <Icon name={kindIcon(s.kind)} />
         </span>
         <span className="ovw-title">{displayName(s)}</span>
@@ -195,7 +195,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         <span className={stateClass("session-state", st.cls)} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
           {" "}
-          <span className="lbl">{st.text}</span>
+          <span className="ovw-lbl">{st.text}</span>
         </span>
         <span className="ovw-menu-wrap" ref={menuWrapRef}>
           <button
