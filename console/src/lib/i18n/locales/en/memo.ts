@@ -431,6 +431,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.after_no_match": "No memo matches.",
   "memo.after_part": "Follow-up {seq}",
   "memo.after_part_plain": "Follow-up",
+  "memo.after_gone": "no longer in this category: remove it, or the save is refused",
   "memo.after_r_done": "done",
   "memo.after_r_waiting": "waiting",
   "memo.after_r_failed": "cannot finish well",

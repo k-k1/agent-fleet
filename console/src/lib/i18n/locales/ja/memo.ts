@@ -428,6 +428,7 @@ export const memo = {
   "memo.after_no_match": "一致するメモはありません。",
   "memo.after_part": "続き {seq}",
   "memo.after_part_plain": "続き",
+  "memo.after_gone": "このカテゴリにありません。外さないと保存が断られます",
   "memo.after_r_done": "完了",
   "memo.after_r_waiting": "待機中",
   "memo.after_r_failed": "うまく終われません",

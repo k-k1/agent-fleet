@@ -43,12 +43,28 @@ function useMetaOf() {
   };
 }
 
-/** The start of the text on one line: what tells apart two notes whose name and meta are the same. */
-const excerptOf = (e: AfterEntry): string => {
-  const flat = e.text.replace(/\s+/g, " ").trim();
-  if (!flat || flat === e.title) return "";
-  return flat.length > 80 ? flat.slice(0, 80) + "…" : flat;
-};
+const flatten = (e: AfterEntry): string => e.text.replace(/\s+/g, " ").trim();
+const clip = (t: string): string => (t.length > 80 ? t.slice(0, 80) + "…" : t);
+
+/** What tells apart notes that read the same: their text from where they first differ (the start of
+ *  a template is shared), and a running number for those whose whole text is the same. Index-aligned
+ *  with `group`. */
+function excerptsOf(group: AfterEntry[]): string[] {
+  const texts = group.map(flatten);
+  let lcp = 0;
+  while (texts.every((t) => t.length > lcp && t[lcp] === texts[0][lcp])) lcp++;
+  const from = Math.max(0, lcp - 12);
+  const seen = new Map<string, number>();
+  const total = new Map<string, number>();
+  for (const t of texts) total.set(t, (total.get(t) ?? 0) + 1);
+  return texts.map((t) => {
+    const n = (seen.get(t) ?? 0) + 1;
+    seen.set(t, n);
+    const cut = t.slice(from);
+    const body = t ? (from > 0 ? "…" : "") + clip(cut) : "";
+    return (total.get(t)! > 1 ? "#" + n + (body ? " " : "") : "") + body;
+  });
+}
 
 interface Shown {
   entry: AfterEntry;
@@ -126,9 +142,16 @@ export function MemoAfterPicker({
     const k = [e.key, e.title, metas.get(e.id)].join("\x00");
     reads.set(k, (reads.get(k) ?? 0) + 1);
   }
+  const excerpts = new Map<string, string>();
+  const groups = new Map<string, AfterEntry[]>();
+  for (const e of [...chosenEntries, ...candidates]) {
+    const k = [e.key, e.title, metas.get(e.id)].join("\x00");
+    if ((reads.get(k) ?? 0) > 1) groups.set(k, [...(groups.get(k) ?? []), e]);
+  }
+  for (const g of groups.values()) excerptsOf(g).forEach((x, i) => excerpts.set(g[i].id, x));
   const shownOf = (e: AfterEntry): Shown => {
     const meta = metas.get(e.id) ?? "";
-    const excerpt = (reads.get([e.key, e.title, meta].join("\x00")) ?? 0) > 1 ? excerptOf(e) : "";
+    const excerpt = excerpts.get(e.id) ?? "";
     return { entry: e, meta, excerpt, name: [e.key, e.title, meta, excerpt].filter(Boolean).join(", ") };
   };
   const chips = chosenEntries.map(shownOf);
@@ -138,11 +161,13 @@ export function MemoAfterPicker({
   const optId = (i: number) => baseId + "-o" + i;
   const listOpen = open && shown.length > 0;
 
-  // The list scrolls (40vh): the arrow keys move the active option, so it has to follow into view.
+  // The list scrolls (40vh): the active option has to follow into view when an arrow key moves it and
+  // when a new search puts another note at the same index (the list may be scrolled away from it).
+  const activeId = shown[cur]?.entry.id;
   useEffect(() => {
     if (listOpen) document.getElementById(optId(cur))?.scrollIntoView?.({ block: "nearest" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a change of the active option
-  }, [cur, listOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a change of the active note
+  }, [activeId, listOpen, query]);
 
   // Always the category's order, whatever order they were added or removed in.
   const ordered = (keep: (id: string) => boolean) => options.map((o) => o.id).filter(keep);

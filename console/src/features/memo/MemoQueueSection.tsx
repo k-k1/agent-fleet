@@ -1817,35 +1817,49 @@ function MemoRow(props: MemoRowProps) {
   // they can be removed, and stay in the list so that no save can drop them. What was last seen of
   // such a note names it when the Control Plane has nothing to say about it.
   const seenRef = useRef(new Map<string, AfterOption>());
+  // Only an open editor builds the list (and only it looks notes up): every row of a busy category
+  // would otherwise pay for it on each draw.
   const afterOptions: AfterOption[] | undefined =
-    props.afterChoices &&
-    (() => {
-      const offered = props.afterChoices.map((c) => {
-        const o: AfterOption = { ...c, offered: true, memo: props.afterPool?.find((x) => x.id === c.id) };
-        seenRef.current.set(c.id, o);
-        return o;
-      });
-      const rest = [...new Set([...(m.after ?? []), ...after])]
-        .filter((id) => !props.afterChoices!.some((c) => c.id === id))
-        .map((id): AfterOption => {
-          const st = m.afterStatus?.find((a) => a.id === id);
-          const seen = seenRef.current.get(id);
-          return {
-            id,
-            label: st?.label || seen?.label || id,
-            offered: false,
-            memo: props.afterPool?.find((x) => x.id === id) ?? seen?.memo,
-            why: st ? afterItemWords(st) : undefined,
-          };
-        });
-      return [...offered, ...rest];
-    })();
+    editing && props.afterChoices
+      ? (() => {
+          const byId = new Map((props.afterPool ?? []).map((x) => [x.id, x]));
+          const offeredIds = new Set(props.afterChoices.map((c) => c.id));
+          const offered = props.afterChoices.map((c): AfterOption => {
+            const o = { ...c, offered: true, memo: byId.get(c.id) };
+            // Kept only for a chosen note, which is the one that can leave the list under the member.
+            if (after.includes(c.id)) seenRef.current.set(c.id, o);
+            return o;
+          });
+          const rest = [...new Set([...(m.after ?? []), ...after])]
+            .filter((id) => !offeredIds.has(id))
+            .map((id): AfterOption => {
+              const st = m.afterStatus?.find((a) => a.id === id);
+              const seen = seenRef.current.get(id);
+              return {
+                id,
+                label: st?.label || seen?.label || id,
+                offered: false,
+                memo: byId.get(id) ?? seen?.memo,
+                // Without a word from the Control Plane, a note seen on offer that is gone now: the
+                // save would be refused, so the chip says so.
+                why: st ? afterItemWords(st) : seen ? "memo.after_gone" : undefined,
+              };
+            });
+          return [...offered, ...rest];
+        })()
+      : undefined;
   // Sent only when it differs from what is stored, so a plain text edit never touches it.
   // The baseline is the choice when the edit began, so a refresh that brings another device's change
   // is neither sent back as if it were ours nor reordered; the picker keeps the draft in the
   // category's order, which is the order a changed choice is sent in.
+  // Serialised with the list as it is at the save: the category's order may have moved while the
+  // editor was open (two notes made in the same second swap places), and the chips follow it.
   const afterChanged = (): string[] | undefined =>
-    after.length === afterBase.length && after.every((id) => afterBase.includes(id)) ? undefined : after;
+    after.length === afterBase.length && after.every((id) => afterBase.includes(id))
+      ? undefined
+      : afterOptions
+        ? afterOptions.map((o) => o.id).filter((id) => after.includes(id))
+        : after;
   // Sent only when the member changed the field, so an untouched one never re-sends a stored time
   // (which may have passed, and the Control Plane would then clear it) nor clears one set elsewhere.
   const save = () => {
