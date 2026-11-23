@@ -778,6 +778,12 @@ describe("terminals", () => {
     // ...and it leads to the copy even when the launch directory has another name: /home/dev/short
     // is a symlink to /home/dev/repos/app, and the Agent recorded repo "short".
     expect(shellPlaceOf(shell("f", { repo: "short", dir: "/home/dev/short", workingCopyId: "wc_1" }), withId)).toEqual({ kind: "repo", folder: "app" });
+    // A file copy of a clone carries the same id: two listed copies with one id are told apart by
+    // the directory, never by their order in the list.
+    const twins = placeRepos([repo("app", { path: "/home/dev/repos/app", workingCopyId: "wc_1" }), repo("app-copy", { path: "/home/dev/repos/app-copy", workingCopyId: "wc_1" })]);
+    expect(shellPlaceOf(shell("g", { repo: "app-copy", dir: "/home/dev/repos/app-copy", workingCopyId: "wc_1" }), twins)).toEqual({ kind: "repo", folder: "app-copy" });
+    expect(shellPlaceOf(shell("h", { repo: "app", dir: "/home/dev/repos/app", workingCopyId: "wc_1" }), twins)).toEqual({ kind: "repo", folder: "app" });
+    expect(terminalGroups([shell("g", { repo: "app-copy", dir: "/home/dev/repos/app-copy", workingCopyId: "wc_1" }), shell("h", { repo: "app", dir: "/home/dev/repos/app", workingCopyId: "wc_1" })], [repo("app", { path: "/home/dev/repos/app", workingCopyId: "wc_1" }), repo("app-copy", { path: "/home/dev/repos/app-copy", workingCopyId: "wc_1" })]).shells.map((g) => [g.key, g.sessions.map((x) => x.name)])).toEqual([["shell:repo:app", ["h"]], ["shell:repo:app-copy", ["g"]]]);
     expect(terminalGroups([shell("f", { repo: "short", dir: "/home/dev/short", workingCopyId: "wc_1" })], [repo("app", { path: "/home/dev/repos/app", workingCopyId: "wc_1" })]).shells.map((g) => g.key)).toEqual(["shell:repo:app"]);
     expect(terminalGroups([home, copy], clone).shells.map((g) => [g.key, g.sessions.map((s) => s.name)])).toEqual([
       ["shell:home", ["in-home"]],

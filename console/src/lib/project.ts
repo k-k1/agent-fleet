@@ -602,13 +602,19 @@ export function shellPlaceOf(s: Session, repos: PlaceRepos): ShellPlace {
   if (s.space) return { kind: "space", folder: s.space };
   // The id first, whatever the directory is called: a shell started through a symlink to a copy
   // has the link's name in `repo`, and only the id leads back to the copy.
-  if (s.workingCopyId) for (const [name, c] of repos) if (c.id === s.workingCopyId) return { kind: "repo", folder: name };
+  // Only when the id is the copy's alone: a file copy of a clone carries the same marker, and two
+  // listed copies with one id say nothing about which of them a shell ran in.
+  const byId = s.workingCopyId ? [...repos].filter(([, c]) => c.id === s.workingCopyId) : [];
+  if (byId.length === 1) return { kind: "repo", folder: byId[0][0] };
   const f = sessionFolder(s);
   const copy = f ? repos.get(f) : undefined;
   if (f && copy) {
     const dir = cleanPath(s.dir || "");
     const path = cleanPath(copy.path || "");
-    const same = !dir || (copy.id && s.workingCopyId ? copy.id === s.workingCopyId : path ? dir === path : dir.endsWith("/repos/" + f));
+    // An id the row and the list share but several copies carry decides nothing; one the list
+    // does not have at all is another copy's.
+    const idRule = !!(copy.id && s.workingCopyId) && byId.length === 0;
+    const same = !dir || (idRule ? false : path ? dir === path : dir.endsWith("/repos/" + f));
     if (same) return { kind: "repo", folder: f };
   }
   return { kind: "home" };
