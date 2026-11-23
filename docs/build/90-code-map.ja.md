@@ -21,7 +21,7 @@ source_of_truth: "コード"
 | パス | そこで探すもの |
 |---|---|
 | `.github/workflows/` | CI（`ci.yml`・`docs.yml`・`e2e.yml`）、契約ワークフロー（`*-contract.yml`）、イメージとリリースのワークフロー。それぞれが何を走らせるかは [10 §10.4](10-development.ja.md#104-テスト) |
-| `.githooks/pre-commit` | ステージした内容への禁止語スキャン。`ci.yml` の `release-scan` ジョブと同じスキャナ（`deploy/release/scan-forbidden.sh`）を走らせる |
+| `.githooks/` | `pre-commit`: ステージした内容への禁止語スキャン（`ci.yml` の `release-scan` ジョブと同じスキャナ `deploy/release/scan-forbidden.sh`）に続けて、ステージした差分への gitleaks。`pre-push`: push しようとするコミットへの gitleaks。どちらも `gitleaks-lib.sh` 経由で `.gitleaks.toml` を使う。テストは `scripts/gitleaks-hooks-test.sh` |
 
 ## 90.2 両方の Go モジュールで成り立つ 2 つの規則
 

@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Pre-push gate: gitleaks over the commits about to be pushed.
+#
+# pre-commit covers what a commit adds, but not a commit made with `--no-verify`, in a
+# checkout without core.hooksPath, or by a tool that skips hooks. This is the last point
+# before the value is public, so it scans exactly the outgoing commits and nothing else —
+# never the whole history, which is CI's secret-scan job. See gitleaks-lib.sh for the
+# rules shared with pre-commit (config, fail-open without gitleaks, version warning).
+#
+# Install once per clone — worktrees of that clone share it:
+#
+#     git config core.hooksPath .githooks
+#
+# git calls it as `pre-push <remote> <url>` and feeds one line per ref on stdin:
+#
+#     <local ref> <local sha> <remote ref> <remote sha>
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+# shellcheck source=gitleaks-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/gitleaks-lib.sh"
+
+# What a new branch is measured against: the default branch of the remote being pushed to,
+# which CI's secret-scan has already covered. Not `--remotes=<remote>`: a remote-tracking ref
+# can be stale (the server dropped or rewound the branch since the last fetch) and would then
+# exclude a commit the remote no longer has. $1 is a remote name or, for `git push <url>`, a
+# URL or path: a URL resolves to the configured remote that has it. A destination that is no
+# configured remote, or whose fetch and push URLs differ or are several, is a new place for the history to become public, so nothing of it is
+# excluded. Empty output means nothing to subtract, and the caller scans everything
+# reachable from the pushed commit — slower, never unsafe.
+#
+# Known limit: the default-branch ref is itself a local copy. If the server rewound that
+# branch past a leaked commit and this clone has not fetched since, the commit is still
+# excluded. The value was public on the default branch before, so this does not publish
+# anything new; checking the ref against the server would need a network round trip per push.
+default_branch_ref() {
+  local target="${1:-origin}" name r cand
+  if git remote get-url "$target" >/dev/null 2>&1; then
+    name="$target"
+  else
+    name=""
+    for r in $(git remote); do
+      if [ "$(git remote get-url "$r" 2>/dev/null)" = "$target" ]; then
+        name="$r"
+        break
+      fi
+    done
+  fi
+  [ -n "$name" ] || return 0
+  # A remote that fetches from one place and pushes to another (`pushurl`): its tracking refs
+  # describe the fetch side, which says nothing about what the push side already has.
+  # With several urls git fetches from the first and pushes to all of them, so those do not
+  # match either.
+  local fetch_url push_urls
+  fetch_url="$(git remote get-url --all "$name" 2>/dev/null)"
+  push_urls="$(git remote get-url --push --all "$name" 2>/dev/null)"
+  [ "$fetch_url" = "$push_urls" ] && [ "$(printf '%s\n' "$push_urls" | wc -l)" = 1 ] || return 0
+  for cand in "refs/remotes/$name/HEAD" "refs/remotes/$name/main" "refs/remotes/$name/master"; do
+    if git rev-parse -q --verify "$cand^{commit}" >/dev/null; then
+      echo "$cand"
+      return 0
+    fi
+  done
+}
+
+# One `gitleaks` run per pushed ref. `-m` is mandatory, as in ci.yml: without it gitleaks
+# skips merge commits, and whatever entered while resolving a conflict stays unscanned.
+pushes=()
+while read -r _ local_sha _ remote_sha; do
+  # A deletion sends no commits. An all-zero id is whatever width the object format has.
+  case "$local_sha" in *[!0]*) pushes+=("$local_sha $remote_sha") ;; esac
+done
+
+[ "${#pushes[@]}" -gt 0 ] || exit 0
+
+gitleaks_locate pre-push "$root" || exit 0
+
+base_ref="$(default_branch_ref "${1:-origin}")"
+ranges=()
+for push in "${pushes[@]}"; do
+  read -r local_sha remote_sha <<<"$push"
+  if case "$remote_sha" in *[!0]*) true ;; *) false ;; esac &&
+    git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    # An existing branch: what the remote does not have yet.
+    ranges+=("$remote_sha..$local_sha")
+  elif [ -n "$base_ref" ]; then
+    # A new branch, or a remote tip this clone has never fetched (it cannot be an
+    # ancestor to subtract): what the remote's default branch does not have.
+    ranges+=("$local_sha --not $base_ref")
+  else
+    ranges+=("$local_sha")
+  fi
+done
+
+status=0
+for range in "${ranges[@]}"; do
+  rc=0
+  gitleaks_run "$root" "--log-opts=-m $range" || rc=$?
+  case "$rc" in
+    0) ;;
+    2) status=1 ;;
+    *) echo "pre-push: gitleaks failed to run — skipping the credential scan for $range" >&2 ;;
+  esac
+done
+
+if [ "$status" != 0 ]; then
+  echo >&2
+  echo "pre-push: gitleaks found a credential-shaped value in the commits being pushed." >&2
+  gitleaks_advice
+  echo "  The value is already in a commit here: rewrite that commit (amend, or an interactive" >&2
+  echo "  rebase of your own unpushed commits) so it never reaches the remote." >&2
+  exit 1
+fi
