@@ -143,6 +143,7 @@ export {
   subscribePrefsSync,
   uiPrefsLoaded,
   useUIPrefsLoading,
+  useUIPrefsUnsettled,
   usePrefsSyncState,
   waitPrefsSaved,
   type PrefsSyncState,

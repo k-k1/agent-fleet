@@ -414,6 +414,17 @@ describe("long press and the clicks after it", () => {
     expect(getSettings().railViewsOff).toEqual(["memory"]);
   });
 
+  it("treats a press that began on the icon inside the button as a press on the button", async () => {
+    vi.useFakeTimers();
+    await mount();
+    const icon = btn("files").querySelector(".codicon")!;
+    await longPress(icon);
+    await act(async () => down(icon, "touchend", 20, 200));
+    // The compatibility click lands on the button itself, not on the icon.
+    await act(async () => btn("files").click());
+    expect(useLeftRail.getState().view).toBe("sessions");
+  });
+
   it("drops only the click on the button the press began on, and none after a touchcancel", async () => {
     vi.useFakeTimers();
     await mount();

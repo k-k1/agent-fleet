@@ -341,6 +341,22 @@ export function useUIPrefsLoading(): boolean {
   );
 }
 
+/** Reactive "a screen that edits a synced key must wait": true until the first read has succeeded
+ * and again while any later read (a tenant or user switch resyncs through one) is in flight, since
+ * an edit made then is recorded against the new owner and wins over what the read brings. Unlike
+ * useUIPrefsLoading it does not stop at the first success. */
+export function useUIPrefsUnsettled(): boolean {
+  const get = (): boolean => !prefsLoaded || hydrateInFlight > 0;
+  return useSyncExternalStore(
+    (fn) => {
+      loadingSubs.add(fn);
+      return () => void loadingSubs.delete(fn);
+    },
+    get,
+    get,
+  );
+}
+
 /** Exported for tests: has the server copy been read at least once this session? */
 export const uiPrefsLoaded = (): boolean => prefsLoaded;
 

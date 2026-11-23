@@ -4,7 +4,7 @@
 // left pane or the main area, never both.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as RKeyboardEvent, MouseEvent as RMouseEvent, PointerEvent as RPointerEvent, RefObject, TouchEvent as RTouchEvent } from "react";
-import { setSettings, uiPrefsLoaded, useSettings, useUIPrefsLoading } from "../lib/settings.ts";
+import { setSettings, useSettings, useUIPrefsUnsettled } from "../lib/settings.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import type { RailView } from "../core/store/leftRail.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -100,10 +100,10 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
     );
     return usable.filter((v) => ids.includes(v.id));
   }, [usable, off, onScreen]);
-  // The list has not been read from the server yet (not started, or still in flight): a change now
-  // would be built on the empty local copy and the next save would drop what another browser
-  // stored. The hook re-renders when a read starts and ends, which is when this answer changes.
-  const prefsLoading = useUIPrefsLoading() || !uiPrefsLoaded();
+  // The list has not been read from the server yet, or is being read again (a tenant switch): a
+  // change now would be built on the previous copy, recorded against the new owner, and win over
+  // what the read brings, so the next save would drop ids another browser stored.
+  const prefsLoading = useUIPrefsUnsettled();
   const menu = useBarMenu(barRef);
   const entries = useMemo(
     () =>
@@ -311,8 +311,10 @@ function useBarMenu(barRef: RefObject<HTMLElement | null>) {
   const swallow = useRef(false);
   const swallowTimer = useRef<number | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
-  // The button a long press began on: the only one whose click is dropped.
+  // The button a long press began on: the only one whose click is dropped. The press may start on
+  // the icon inside it and the compatibility click may land on the button, so both are the button.
   const pressed = useRef<Element | null>(null);
+  const buttonOf = (t: EventTarget | null): Element | null => (t instanceof Element ? t.closest(".actbar-btn") : null);
   const setSwallow = (on: boolean) => {
     swallow.current = on;
     if (swallowTimer.current !== null) window.clearTimeout(swallowTimer.current);
@@ -346,7 +348,7 @@ function useBarMenu(barRef: RefObject<HTMLElement | null>) {
       e.preventDefault();
       if ((e.nativeEvent as PointerEvent).pointerType === "touch") {
         setSwallow(true);
-        pressed.current = e.target instanceof Element ? e.target : null;
+        pressed.current = buttonOf(e.target);
       }
       // A keyboard-raised contextmenu carries no pointer position; anchor on the focused icon.
       const focused = document.activeElement;
@@ -363,7 +365,7 @@ function useBarMenu(barRef: RefObject<HTMLElement | null>) {
     onTouchStart: (e: RTouchEvent) => {
       setSwallow(false);
       press.cancel();
-      pressed.current = e.target instanceof Element ? e.target : null;
+      pressed.current = buttonOf(e.target);
       const t = e.touches[0];
       if (!t || e.touches.length > 1) return;
       const { clientX, clientY } = t;
@@ -399,7 +401,8 @@ function useBarMenu(barRef: RefObject<HTMLElement | null>) {
         setSwallow(false);
         return;
       }
-      if (!(e.target instanceof Node) || !pressed.current?.contains(e.target)) return;
+      const hit = buttonOf(e.target);
+      if (!hit || hit !== pressed.current) return;
       setSwallow(false);
       e.preventDefault();
       e.stopPropagation();

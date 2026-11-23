@@ -21,7 +21,7 @@ import type { RailView } from "../core/store/leftRail.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { useNotificationStore } from "../features/notifications/store.ts";
 import { useHandoffStore } from "../features/sharing/handoffStore.ts";
-import { getSettings, hydrateUIPrefs } from "../lib/settings.ts";
+import { getSettings, hydrateUIPrefs, resyncAccumulatedForIdentitySwitch } from "../lib/settings.ts";
 
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 g.IS_REACT_ACT_ENVIRONMENT = true;
@@ -78,5 +78,30 @@ describe("the menu before the saved choice has been read", () => {
     expect(row("files").getAttribute("aria-disabled")).toBeNull();
     await act(async () => row("files").click());
     expect(getSettings().railViewsOff).toEqual(["shared", "future-view", "files"]);
+  });
+
+  it("is read-only again while another tenant's copy is being read, and builds on that copy", async () => {
+    // The first test left this tab loaded for tenant A, whose list is shared + future-view + files.
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => root!.render(<Shell />));
+    await act(async () => void host!.querySelector(".actbar")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 80 })));
+    expect(row("memory").getAttribute("aria-disabled")).toBeNull();
+
+    let release!: (v: unknown) => void;
+    gate.p = new Promise((r) => (release = r));
+    const done = resyncAccumulatedForIdentitySwitch();
+    await act(async () => void (await Promise.resolve()));
+    expect(row("memory").getAttribute("aria-disabled")).toBe("true");
+    await act(async () => row("memory").click());
+    expect(getSettings().railViewsOff).toEqual(["shared", "future-view", "files"]);
+
+    release({ railViewsOff: ["workitems", "tenant-b-future"] });
+    await act(async () => void (await done));
+    gate.p = null;
+    expect(getSettings().railViewsOff).toEqual(["workitems", "tenant-b-future"]);
+    await act(async () => row("memory").click());
+    expect(getSettings().railViewsOff).toEqual(["workitems", "tenant-b-future", "memory"]);
   });
 });
