@@ -86,6 +86,7 @@ if [ "${1:-}" = "--inner" ]; then
   check_ver go       "$EXPECT_GO"       /usr/local/go/bin/go version
   check_ver gh       "$EXPECT_GH"       /usr/local/libexec/gh --version
   check_ver bkt      "$EXPECT_BKT"      /usr/local/libexec/bkt --version
+  check_ver gitleaks "$EXPECT_GITLEAKS" gitleaks version
   check_ver jira     "$EXPECT_JIRA"     /usr/local/libexec/jira version
 
   # Chromium is pinned down to the Debian revision, so compare the dpkg version too —
@@ -349,6 +350,7 @@ EXPECT_RTK_VER="${EXPECT_RTK_VER:-$(arg_pin RTK_VERSION)}"
 EXPECT_GO="$(arg_pin GO_VERSION)"
 EXPECT_GH="$(arg_pin GH_VERSION)"
 EXPECT_BKT="$(arg_pin BKT_VERSION)"
+EXPECT_GITLEAKS="$(arg_pin GITLEAKS_VERSION)"
 EXPECT_JIRA="$(arg_pin JIRA_CLI_VERSION)"
 EXPECT_CHROMIUM="$(arg_pin CHROMIUM_VERSION)"
 EXPECT_CHROMIUM_CFT="$(arg_pin CHROMIUM_CFT_VERSION)"
@@ -391,6 +393,7 @@ exec docker run --rm -i --init --network none --memory "$SMOKE_MEMORY" --cap-add
   -e EXPECT_GO="$EXPECT_GO" \
   -e EXPECT_GH="$EXPECT_GH" \
   -e EXPECT_BKT="$EXPECT_BKT" \
+  -e EXPECT_GITLEAKS="$EXPECT_GITLEAKS" \
   -e EXPECT_JIRA="$EXPECT_JIRA" \
   -e EXPECT_CHROMIUM="$EXPECT_CHROMIUM" \
   -e EXPECT_CHROMIUM_CFT="$EXPECT_CHROMIUM_CFT" \

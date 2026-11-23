@@ -371,7 +371,7 @@ npm --prefix console run build
   | `control-plane`, `workspace-agent` | `gofmt -l`, `go vet`, `go build` (also cross-compiled for arm64), `go test`, and `go vet` over the build-tagged files. The agent job also syntax-checks `entrypoint.sh` |
   | `console` | typecheck, lint, the i18n lint, the model-id lint, vitest, two real-browser checks (`pdf:check`, `doc:check`) and the production build |
   | `deploy-scripts` | the deployment scripts and the release watcher's decisions against stubbed `aws` / `npm` / `curl` / `gh`, and that the CloudFormation templates are ASCII-only |
-  | `secret-scan` | credential leaks over the whole history (below) |
+  | `secret-scan` | credential leaks: what a PR's merge commit reaches on a PR, every ref on a push to `main` (below) |
   | `release-scan` | the forbidden-token gate over the tracked tree — the same scanner the pre-commit hook runs over staged content |
   | `model-id-lint` | no model-id-shaped string literal in either Go module outside `workspace/agent/internal/modelfallback`; `// model-id-lint:allow <reason>` marks one that chooses no model |
   | `migration-versions` | sets the `migration-version` commit status on every open PR into `main`: failure when a migration the PR adds takes a version `main` already holds (compared as the runner reads it, so `95_x` and `0095_y` collide), shares its version with another new file of the same PR, or has no readable version. This job is the script's self-test; the status is posted by `migration-version.yml`, which has no cancel-in-progress, on the PR's own events (including a retarget to `main`) and again for every open PR on each push to `main`. `scripts/migration-versions.sh` |
@@ -730,13 +730,34 @@ encrypted in the repository settings — and the following must stay true:
   default.
 
 **Credential leak detection** (`ci.yml`'s `secret-scan`, gitleaks). In a public
-repository a leak is instantly public and cannot be undone, so the scan covers **the
-entire history every time**, not the diff. What matters:
+repository a leak is instantly public and cannot be undone, so the scan covers history,
+not the diff. The scope depends on who is asking (`scripts/secret-scan.sh`):
+
+- **A PR** scans what its merge commit reaches: `main`'s history plus the PR's own
+  commits. A credential-shaped value on an unrelated branch cannot fail it. (The scan used
+  to cover every ref on every PR, so one fixture pushed on any branch turned all open PRs
+  red until an allowlist entry reached `main`, and a re-run did not help because it
+  re-scans the old merge commit.)
+- **A push to `main`, and a manual run,** scan every ref, and so does the daily
+  `secret-sweep.yml`. A finding fails that run; the sweep also opens (or refreshes) one
+  issue (rule and commit only, never a value or a path), which the first clean sweep
+  closes. Only a scan that completed touches that issue, and only a run on `main`.
+- **What this gives up:** a leak on a branch that has no PR is reported by the next push
+  to `main` or the daily sweep, not by the next PR, and only while a branch or tag still
+  reaches the commit when they run. Pushing it already published it, so the PR gate never
+  prevented that leak; it only reported it.
+
+What matters in both:
 
 - **Always pass `-m`.** Without it the scanner skips merge commits, and **anything
   introduced while resolving a conflict stays unscanned behind a green check** — when
   the scan was introduced this repository had 138 such merges, and the first scan
   really did have that hole.
+- **End the revision list with `--`.** A tracked file named `HEAD` at the repository root
+  makes `git log HEAD` ambiguous; git errors, and the scanner reports a clean scan of 0
+  commits. For the same reason `scripts/secret-scan.sh` treats a failed `git log` (the
+  scanner drops that failure when git printed nothing on stderr) or an error the scanner
+  logs as an incomplete scan (exit 3), not a clean one.
 - **Pin the scanner's version and checksum**; do not depend on a marketplace action.
 - **Exclude false positives by the value, with a regular expression — never by a path
   alone** (`.gitleaks.toml`; a rule may narrow a value to one file with
@@ -744,6 +765,15 @@ entire history every time**, not the diff. What matters:
   unnoticed.
 - The first full-history audit (2026-08-01) found **zero real credentials**,
   cross-checked by expanding every reachable blob rather than walking the commit log.
+- **The Workspace image ships the same scanner** (`GITLEAKS_VERSION` in
+  `workspace/Dockerfile`, installed to `/usr/local/bin/gitleaks`, tarball checked against the
+  release's checksums file), so a session can scan before it pushes. Nothing runs it on its own
+  and no hook is installed into a member's repositories. **To bump it**, change `VERSION` and
+  `SHA256` in `ci.yml`'s `secret-scan` job and `GITLEAKS_VERSION` in the Dockerfile in the same
+  change: `TestGitleaksPinMatchesCI` (`workspace/agent`) fails when the two disagree. It is not
+  in `cli-pin-bump.sh` (that covers the agent CLIs), like `gh` and `bkt`; the image smoke
+  (`deploy/local/e2e-smoke.sh`) checks the pinned version, and the guide page is regenerated with
+  `python3 scripts/workspace_image.py`.
 
 ## 10.5 Commits and branches
 
