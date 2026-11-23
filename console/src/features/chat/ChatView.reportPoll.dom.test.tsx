@@ -153,12 +153,13 @@ describe("ChatView report poller", () => {
     };
 
     it("drops a report read that answers in_progress after a reattach read saw the turn end", async () => {
-      let answerReport: (v: unknown) => void = () => {};
+      let answerReport: ((v: unknown) => void) | null = null;
       chatGet.mockResolvedValue(conv("c1", 1000, "running", true));
       await render("c1");
       await advance(4300); // reattach reads at 1.4 s, 2.8 s and 4.2 s; the report poller has not ticked
       chatGet.mockImplementationOnce(() => new Promise((r) => (answerReport = r)));
       await advance(800); // the report read begins at 5 s and hangs
+      expect(answerReport).not.toBeNull();
       chatGet.mockReset();
       chatGet.mockResolvedValue(conv("c1", 2000, "finished", false));
       await advance(1500); // the next reattach read sees the turn end and stops polling
@@ -166,13 +167,13 @@ describe("ChatView report poller", () => {
       const calls = chatGet.mock.calls.length;
       await act(async () => {
         // Older than what is on screen, but its in_progress differs and would be adopted.
-        answerReport(conv("c1", 1500, "stale-copy", true));
+        answerReport!(conv("c1", 1500, "stale-copy", true));
         await Promise.resolve();
       });
       expect(host!.textContent).toContain("finished");
       expect(host!.textContent).not.toContain("stale-copy");
-      await advance(3000); // a restarted reattach poller would read again within 1.4 s
-      expect(chatGet.mock.calls.length - calls).toBeLessThanOrEqual(1); // at most the report tick
+      await advance(3000); // a restarted reattach poller would read again within 1.4 s; the next report tick is at 10 s
+      expect(chatGet.mock.calls.length - calls).toBe(0);
     });
 
     it("drops a reattach read that answers after a newer report read landed", async () => {
@@ -190,6 +191,29 @@ describe("ChatView report poller", () => {
       });
       expect(host!.textContent).toContain("newest");
       expect(host!.textContent).not.toContain("older-reattach");
+    });
+
+    it("keeps polling after it drops a stale reattach answer, even one that says the turn ended", async () => {
+      let answerReattach: (v: unknown) => void = () => {};
+      chatGet.mockResolvedValueOnce(conv("c1", 1000, "running", true));
+      chatGet.mockImplementationOnce(() => new Promise((r) => (answerReattach = r)));
+      chatGet.mockResolvedValue(conv("c1", 3000, "newest", true));
+      await render("c1");
+      await advance(1500); // the reattach read begins at 1.4 s and hangs
+      await advance(4000); // the report read at 5 s lands the newest copy
+      expect(host!.textContent).toContain("newest");
+      chatGet.mockReset();
+      chatGet.mockResolvedValue(conv("c1", 4000, "finished", false));
+      await act(async () => {
+        // Older than what is on screen: dropped, so it must not stop the poller either.
+        answerReattach(conv("c1", 2000, "older-done", false));
+        await Promise.resolve();
+      });
+      expect(host!.textContent).toContain("newest");
+      expect(host!.textContent).not.toContain("older-done");
+      await advance(1500); // the next reattach read, before the report tick at 10 s
+      expect(chatGet).toHaveBeenCalledTimes(1);
+      expect(host!.textContent).toContain("finished");
     });
   });
 });
