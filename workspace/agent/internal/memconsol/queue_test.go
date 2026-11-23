@@ -183,6 +183,25 @@ func TestReadRoutes(t *testing.T) {
 	}
 }
 
+// The routes read routeNow, not the wall clock: the same proposal lists as pending at the fixture
+// time and as expired once routeNow passes ProposalTTL, whatever today's date is.
+func TestReadRoutesFollowTheRouteClock(t *testing.T) {
+	f := env(t)
+	p := queued(t, f)
+	list := func() string {
+		w := httptest.NewRecorder()
+		HandleList(w, httptest.NewRequest(http.MethodGet, "/agents/memory-consolidation/proposals?status=pending", nil))
+		return w.Body.String()
+	}
+	if got := list(); !strings.Contains(got, p.ID) {
+		t.Fatalf("pending list at the fixture time: %s", got)
+	}
+	routeNow = func() time.Time { return t0.Add(DefaultConfig().ProposalTTL + time.Hour) }
+	if got := list(); strings.Contains(got, p.ID) {
+		t.Fatalf("pending list past the TTL still holds the proposal: %s", got)
+	}
+}
+
 // ---- the trigger -------------------------------------------------------------------------------
 
 func TestDecide(t *testing.T) {
