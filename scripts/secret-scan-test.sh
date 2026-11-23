@@ -120,6 +120,39 @@ commit "a value in a file whose name says ERR"
 expect "pr must report a finding in a file named ... ERR ..." 42 pr
 expect "all must report a finding in a file named ... ERR ..." 42 all
 
+# The log of a public repository is public: a finding whose file name contains the matched
+# value must not put that value (or the path) in the output, yet the log must still say which
+# rule and which commit failed. Both report destinations are covered: the scan's own, and the
+# caller's `--report-path` (the sweep's), which must still be written for the caller.
+git switch -q -c valuename "$base"
+printf 'aws_access_key_id = %s\n' "$key" >"$key.env"
+commit "a value that is also part of a file name"
+named="$(git rev-parse HEAD)"
+for variant in own caller; do
+  args=()
+  [ "$variant" = caller ] && args=(--report-format json --report-path "$work/caller.json")
+  rc=0
+  "$HERE/secret-scan.sh" pr ${args[@]+"${args[@]}"} >"$out" 2>&1 || rc=$?
+  if [ "$rc" != 42 ]; then
+    echo "FAIL: a value in a file name must be found ($variant report, exit=$rc, want 42)"
+    FAILED=1
+  fi
+  if grep -q -e "$key" -e "AKIA" -e ".env" "$out"; then
+    echo "FAIL: the log must not carry the file name or the value ($variant report)"
+    sed 's/^/    /' "$out"
+    FAILED=1
+  fi
+  if ! grep -q "rule=aws-access-token commit=${named:0:12} line=1" "$out"; then
+    echo "FAIL: the log must name the rule and the commit ($variant report)"
+    sed 's/^/    /' "$out"
+    FAILED=1
+  fi
+done
+if ! jq -e --arg c "$named" 'length == 1 and .[0].Commit == $c' "$work/caller.json" >/dev/null 2>&1; then
+  echo "FAIL: the caller's --report-path must still receive the report"
+  FAILED=1
+fi
+
 # gitleaks exits 0 with no findings when its child `git log` fails. A shim that fails
 # `git log` stands in for an unreadable object; the wrapper must not report that as clean.
 mkdir "$work/shim"

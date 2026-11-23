@@ -22,6 +22,15 @@
 # while resolving a conflict stays unscanned.
 # The trailing `--` is mandatory too: a tracked file named HEAD at the repository root makes
 # `git log HEAD` ambiguous, git errors out, and gitleaks reports a clean scan of 0 commits.
+# What the log carries: the scan runs without `--verbose` and prints one line per finding,
+# `rule=<id> commit=<sha12> line=<n>`, built from the JSON report. A finding's file name is
+# left out on purpose: the log of a public repository is public, gitleaks redacts the matched
+# text but not the path, and a credential-shaped value that is also part of a file name would
+# be published through it (so would the `Fingerprint:` line of the verbose output, which is
+# `commit:file:rule:line`). The commit and the rule are enough to find the finding: `git show
+# --stat <commit>`, or rerun locally with `--verbose` (extra flags are passed through) to see
+# the path. The report goes to the caller's `--report-path` when one is given (secret-sweep.sh
+# reads it), else to a file of the scan's own.
 # GITLEAKS names the binary (default /tmp/gitleaks, where the install-gitleaks action puts it).
 set -euo pipefail
 
@@ -56,12 +65,34 @@ exit "\$rc"
 SHIM
 chmod +x "$work/shim/git"
 
+report=""
+prev=""
+for a in "$@"; do
+  case "$prev" in --report-path | -r) report="$a" ;; esac
+  case "$a" in --report-path=*) report="${a#--report-path=}" ;; esac
+  prev="$a"
+done
+extra=()
+if [ -z "$report" ]; then
+  report="$work/report.json"
+  extra=(--report-format json --report-path "$report")
+fi
+
 set +e
-PATH="$work/shim:$PATH" "$bin" --no-color git --log-opts="$opts" --redact --verbose --exit-code 42 "$@" >"$work/out" 2>"$work/err"
+PATH="$work/shim:$PATH" "$bin" --no-color git --log-opts="$opts" --redact --exit-code 42 ${extra[@]+"${extra[@]}"} "$@" >"$work/out" 2>"$work/err"
 rc=$?
 set -e
 cat "$work/out"
 cat "$work/err" >&2
+
+if [ "$rc" -eq 42 ]; then
+  # Every field is reduced to a safe alphabet: the report is data, and this line is read by
+  # people and by workflow log parsers.
+  if ! jq -r '.[] | "secret-scan: finding: rule=\(.RuleID | tostring | gsub("[^A-Za-z0-9._-]"; "?")) commit=\(.Commit[0:12] | gsub("[^0-9a-f]"; "?")) line=\(.StartLine | tostring | gsub("[^0-9]"; "?"))"' "$report" 2>/dev/null; then
+    echo "secret-scan: leaks were found but the report could not be read; rerun locally with --verbose" >&2
+  fi
+  echo "secret-scan: file names are not printed (public log); see the commit, or rerun locally with --verbose" >&2
+fi
 
 incomplete=""
 [ -s "$work/git-failed" ] && incomplete="a git process failed: $(head -n 3 "$work/git-failed" | tr '\n' ';')"
