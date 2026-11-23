@@ -58,8 +58,37 @@ describe("bare button scopes", () => {
       body: m[2],
     }));
 
+  // The text with every at-rule block (`@media`, `@container`, ...) removed: what applies on every
+  // device and width.
+  const withoutAtRules = (css: string): string => {
+    let out = "";
+    let i = 0;
+    while (i < css.length) {
+      if (css[i] !== "@") {
+        out += css[i++];
+        continue;
+      }
+      // An at-rule runs to its `;` (`@import`) or to the `}` that closes its block.
+      const semi = css.indexOf(";", i);
+      const open = css.indexOf("{", i);
+      if (open < 0 || (semi >= 0 && semi < open)) {
+        i = (semi < 0 ? css.length : semi) + 1;
+        continue;
+      }
+      let depth = 0;
+      for (i = open; i < css.length; i++) {
+        if (css[i] === "{") depth++;
+        else if (css[i] === "}" && --depth === 0) break;
+      }
+      i++;
+    }
+    return out;
+  };
+
   it("ui.css holds each scope's variant rules, with the declarations they exist for", () => {
-    const rules = rulesOf(read("ui/ui.css"));
+    // Top level only: a rule moved into an at-rule (`@media (hover: hover)`) would stop applying on
+    // other devices and widths.
+    const rules = rulesOf(withoutAtRules(read("ui/ui.css").replace(/\/\*[\s\S]*?\*\//g, "")));
     // The whole selector, not a substring: a rule that gained an ancestor would stop matching
     // the root that carries only the marker.
     const body = (selector: string): string => {
@@ -100,9 +129,14 @@ describe("bare button scopes", () => {
     rulesOf(css)
       .map((r) => r.selector)
       .filter((sel) => {
-        if (AS_CLASS.test(sel)) return true;
+        // `.ghost` is read outside attribute selectors only: `[data-testid="chat.ghost"]` names no class.
+        if (AS_CLASS.test(sel.replace(/\[[^\]]*\]/g, "[]"))) return true;
         return [...sel.matchAll(AS_ATTR)].some(([, op, value]) =>
-          op === "" || op === "~" ? new RegExp(`^(${NAMES})$`).test(value.trim()) : new RegExp(`(^|[^\\w])(${NAMES})([^\\w]|$)`).test(value),
+          op === "" || op === "~"
+            ? // `=` matches the whole attribute (`[class="ghost cm-copy"]`), `~=` one token: either way a
+              // variant is named when any whitespace-separated token is exactly its name.
+              value.split(/\s+/).some((t) => new RegExp(`^(${NAMES})$`).test(t))
+            : new RegExp(`(^|[^\\w])(${NAMES})([^\\w]|$)`).test(value),
         );
       });
 
@@ -132,6 +166,7 @@ describe("bare button scopes", () => {
       '.chatview button[class ~= "ghost"]',
       "button[ class~=ghost ]",
       '[class="danger"]',
+      '.chatview button[class="ghost cm-copy"]',
       '[class*="primary"]',
       '[class^="ghost "]',
       "button.danger:hover",
@@ -145,6 +180,8 @@ describe("bare button scopes", () => {
       ".primary-x",
       'button[class~="ui-btn-ghost"]',
       '[class ~= "mt-perm-btn--ghost"]',
+      'button[data-testid="chat.ghost"]',
+      "button[data-kind='x.primary']",
     ]) expect(hits(sel), sel).toBe(0);
   });
 
