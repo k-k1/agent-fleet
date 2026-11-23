@@ -10,7 +10,8 @@ import type { ShellPlace } from "../../lib/project.ts";
 import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useStartWork } from "../repos/useStartWork.ts";
-import { spaceLabel, spacesFor, spacesOwner, useSpacesStore } from "../spaces/store.ts";
+import { failuresFor, spaceLabel, spacesFor, spacesOwner, useSpacesStore } from "../spaces/store.ts";
+import { useToast } from "../../ui/ToastProvider.tsx";
 
 // Where each place starts, as the `dir` of the create: relative to home, as "Open shell here" sends it.
 export const shellDirOf = (p: ShellPlace): string =>
@@ -22,6 +23,8 @@ export function NewShellModal({ onClose }: { onClose: () => void }) {
   const owner = spacesOwner();
   const spaces = useSpacesStore((s) => spacesFor(s, owner));
   const startWork = useStartWork();
+  const toast = useToast();
+  const failures = useSpacesStore((s) => failuresFor(s, owner));
   const [busy, setBusy] = useState(false);
   // Every space, not only the ones a session names: the list is asked for when the dialog opens.
   useEffect(() => {
@@ -40,6 +43,9 @@ export function NewShellModal({ onClose }: { onClose: () => void }) {
       // repo-less too and has no copy to inherit from.
       if (r.ok && r.name && place.kind === "space") autoAddToActiveWorkingSet("sessions", r.name);
       if (r.ok) onClose();
+    } catch {
+      // The create never got an answer (the network): useStartWork toasts the Agent's refusals itself.
+      toast(tr("rp.launch_failed", { err: tr("err.network") }));
     } finally {
       setBusy(false);
     }
@@ -73,6 +79,14 @@ export function NewShellModal({ onClose }: { onClose: () => void }) {
             const tag = r.worktree ? worktreeTag(r.name, r) : "";
             return row(`repo:${r.name}`, "repo", project, tag, { kind: "repo", folder: r.name }, tr("proj.shell_title", { name: r.name }));
           })}
+          {failures > 0 && spaces.length === 0 && (
+            <div className="start-row-desc term-spaces-failed" role="status">
+              {tr("terms.spaces_failed")}{" "}
+              <button type="button" className="linklike" onClick={() => void useSpacesStore.getState().refresh()}>
+                {tr("terms.spaces_retry")}
+              </button>
+            </div>
+          )}
           {spaces.map((sp) =>
             row(`space:${sp.folder}`, "folder", spaceLabel(sp.folder, spaces), tr("pj.space_folder_hint", { folder: sp.folder }), { kind: "space", folder: sp.folder }, tr("proj.shell_title", { name: sp.folder })),
           )}

@@ -223,6 +223,8 @@ export const repos = {
   "terms.tidy": "停止中のシェル・SSM セッションを整理（削除されます）",
   "terms.ssm_unknown": "不明なマシン",
   "terms.chip_title": "ここで開いた {n} 件のシェル / SSM セッションをターミナルで表示",
+  "terms.spaces_failed": "スペースの一覧を読み込めませんでした。",
+  "terms.spaces_retry": "再読み込み",
   "pj.other_sessions": "その他のセッション",
   "pj.tidy_other_sessions": "その他のセッションを整理（アーカイブ退避）",
   "pj.session_history": "セッション履歴",

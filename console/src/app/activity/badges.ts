@@ -22,7 +22,9 @@ import { seenId, unreadOf } from "../../features/workitems/seen.ts";
 import type { FleetNotification } from "../../features/notifications/store.ts";
 import { opensConversation, unreadSessionNames } from "../../features/notifications/read.ts";
 import { convInSet, sessionInSet } from "../../lib/workingSets.ts";
-import { withoutUnattended } from "../../lib/project.ts";
+import { withoutTerminals, withoutUnattended } from "../../lib/project.ts";
+import { visibleTerminals } from "../../features/terminals/visible.ts";
+import type { Repo } from "../../features/repos/store.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 
 export type RailBadge =
@@ -44,7 +46,10 @@ export function waitingSessions(sessions: Session[], set: WorkingSet | null = nu
  * a session the list does not know cannot be placed in it, so it does not count. */
 export function hasUnreadSession(items: FleetNotification[], sessions: Session[], set: WorkingSet | null): boolean {
   const names = unreadSessionNames(items);
-  const listed = new Set(withoutUnattended(sessions).map((s) => s.name));
+  // A shell's or an SSM login's unread notice (an OSC desktop notification from a program in it)
+  // is the Terminal view's: the Sessions view does not list the row, so its icon would point at
+  // nothing there.
+  const listed = new Set(withoutTerminals(withoutUnattended(sessions)).map((s) => s.name));
   const hidden = new Set(sessions.map((s) => s.name).filter((n) => !listed.has(n)));
   if (!set) return names.some((n) => !hidden.has(n));
   const byName = new Map(sessions.map((s) => [s.name, s] as const));
@@ -52,6 +57,13 @@ export function hasUnreadSession(items: FleetNotification[], sessions: Session[]
     const s = byName.get(n);
     return !!s && listed.has(n) && sessionInSet(set, s);
   });
+}
+
+/** Is there an unseen notification on a shell or SSM login the Terminal view lists? The same rows,
+ * under the same working set, as the view itself shows and its chips count. */
+export function hasUnreadTerminal(items: FleetNotification[], sessions: Session[], repos: Repo[], set: WorkingSet | null): boolean {
+  const names = new Set(unreadSessionNames(items));
+  return visibleTerminals(sessions, repos, set).some((s) => names.has(s.name));
 }
 
 /** Is there an unseen notice that opens a conversation the Assistants view lists? */

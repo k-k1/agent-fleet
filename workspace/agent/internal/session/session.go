@@ -1053,11 +1053,35 @@ type SSMTarget struct {
 }
 
 // SSMTargetOf is the list's view of m's SSM target; nil when m is not an SSM session.
+//
+// AccountID is the account the instance lives in. For a role-chained profile SSMMeta.AccountID
+// describes the SOURCE sign-in (ssm.go of the Control Plane stores src.AccountID) and the target
+// account is the one in RoleARN, so a direct login and an assume-role login to one machine group
+// together instead of splitting by the account that happened to sign in.
 func SSMTargetOf(m Meta) *SSMTarget {
 	if m.SSM == nil {
 		return nil
 	}
-	return &SSMTarget{Target: m.SSM.Target, Region: m.SSM.Region, AccountID: m.SSM.AccountID, Profile: m.SSM.Profile, Document: m.SSM.Document}
+	acct := m.SSM.AccountID
+	if a := roleARNAccount(m.SSM.RoleARN); a != "" {
+		acct = a
+	}
+	return &SSMTarget{Target: m.SSM.Target, Region: m.SSM.Region, AccountID: acct, Profile: m.SSM.Profile, Document: m.SSM.Document}
+}
+
+// roleARNAccount is the account id of an IAM role ARN (arn:<partition>:iam::<account>:role/...);
+// "" for anything that is not one.
+func roleARNAccount(arn string) string {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 || parts[0] != "arn" || parts[2] != "iam" || parts[4] == "" {
+		return ""
+	}
+	for _, c := range parts[4] {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	return parts[4]
 }
 
 // DriverKind normalizes Meta.Driver ("" → tui). Always branch through it: comparing raw

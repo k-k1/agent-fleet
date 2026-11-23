@@ -10,7 +10,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { SessionRow } from "../sessions/SessionRow.tsx";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
-import { shellPlaceKey, spaceGroups, terminalsInSpace } from "../../lib/project.ts";
+import { shellPlaceKey, spaceGroups } from "../../lib/project.ts";
 import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useRefIndex } from "../sessions/useRefIndex.ts";
@@ -19,6 +19,8 @@ import { useUnreadSessions } from "../notifications/unread.ts";
 import { spaceLabel } from "../spaces/store.ts";
 import { useSpaceNames } from "../spaces/useSpaceNames.ts";
 import { TerminalChip } from "../terminals/TerminalChip.tsx";
+import { useTerminalView } from "../terminals/useTerminalView.ts";
+import type { Session } from "../../types/session.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
 export const SpacesSection = memo(function SpacesSection() {
@@ -33,24 +35,29 @@ export const SpacesSection = memo(function SpacesSection() {
   // A space session is repo-less, so a working set holds it by direct assignment only. The
   // search box matches a session's own text or the name its space is shown under.
   const wset = useActiveWorkingSet();
-  const groups = spaceGroups(sessions)
+  // A space that only has shells keeps its row: the count chip on it is how the Sessions view
+  // still leads to them. It is listed for the shells the Terminal view lists (under the working
+  // set), and found by the name it is shown under, never by a shell's title.
+  const { counts } = useTerminalView();
+  const shellSpaces = [...counts.keys()].filter((k) => k.startsWith("shell:space:")).map((k) => k.slice("shell:space:".length));
+  const base = spaceGroups(sessions);
+  const known = new Set(base.map((g) => g.folder));
+  const groups = [...base, ...shellSpaces.filter((f) => !known.has(f)).sort().map((folder) => ({ folder, sessions: [] as Session[] }))]
     .map((g) => {
       const label = spaceLabel(g.folder, spaces);
       const byLabel = !!nq && label.toLowerCase().includes(nq);
-      return {
-        ...g,
-        label,
-        sessions: g.sessions.filter((s) => (!wset || sessionInSet(wset, s)) && (byLabel || sessionMatches(s, nq, refs))),
-      };
+      const shells = counts.get(shellPlaceKey({ kind: "space", folder: g.folder })) ?? 0;
+      const own = g.sessions.filter((s) => (!wset || sessionInSet(wset, s)) && (byLabel || sessionMatches(s, nq, refs)));
+      return { ...g, label, sessions: own, listed: own.length > 0 || (shells > 0 && (!nq || byLabel)) };
     })
-    .filter((g) => g.sessions.length > 0);
+    .filter((g) => g.listed);
 
   const idBase = useId();
   const unreadSessions = useUnreadSessions();
   const count = groups.reduce((n, g) => n + g.sessions.length, 0);
   const unread = groups.some((g) => g.sessions.some((s) => unreadSessions.has(s.name)));
 
-  if (count === 0) return null;
+  if (groups.length === 0) return null;
 
   return (
     <Section id="spaces" title={tr("pj.spaces")} icon="folder" count={count} unread={unread}>
@@ -72,30 +79,32 @@ export const SpacesSection = memo(function SpacesSection() {
               <div
                 className="space-group-row"
                 role="treeitem"
-                aria-expanded={true}
-                aria-owns={`${idBase}-${g.folder}`}
+                aria-expanded={g.sessions.length > 0 ? true : undefined}
+                aria-owns={g.sessions.length > 0 ? `${idBase}-${g.folder}` : undefined}
                 tabIndex={-1}
                 data-rail-row=""
                 title={tr("pj.space_folder_hint", { folder: g.folder })}
               >
                 <Icon name="folder" />
                 <span className="space-group-name">{g.label}</span>
-                <TerminalChip count={terminalsInSpace(sessions, g.folder).length} groupKey={shellPlaceKey({ kind: "space", folder: g.folder })} />
+                <TerminalChip groupKey={shellPlaceKey({ kind: "space", folder: g.folder })} />
               </div>
             </div>
-            <ul id={`${idBase}-${g.folder}`} className="sess-list proj-sub-list" role="group" aria-label={g.label}>
-              {g.sessions.map((s) => (
-                <SessionRow
-                  key={s.name}
-                  s={s}
-                  selected={ctx.activeSession === s.name}
-                  opens={ctx.sPanes?.get(s.name) || []}
-                  multi={ctx.multiPane}
-                  running={ctx.running}
-                  actions={actions}
-                />
-              ))}
-            </ul>
+            {g.sessions.length > 0 && (
+              <ul id={`${idBase}-${g.folder}`} className="sess-list proj-sub-list" role="group" aria-label={g.label}>
+                {g.sessions.map((s) => (
+                  <SessionRow
+                    key={s.name}
+                    s={s}
+                    selected={ctx.activeSession === s.name}
+                    opens={ctx.sPanes?.get(s.name) || []}
+                    multi={ctx.multiPane}
+                    running={ctx.running}
+                    actions={actions}
+                  />
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ul>

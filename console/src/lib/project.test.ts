@@ -12,8 +12,7 @@ import {
   orphanSessions,
   spaceGroups,
   terminalGroups,
-  terminalsInFolder,
-  terminalsInSpace,
+  shellPlaceOf,
   withoutTerminals,
   isTerminalSession,
   shellPlaceKey,
@@ -750,11 +749,25 @@ describe("terminals", () => {
     ]);
   });
 
-  it("leaves agents out and counts a place's terminals for the chip", () => {
+  it("leaves agents out", () => {
     expect(terminalGroups([sess("a", { repo: "app" })], repos)).toEqual({ shells: [], ssm: [] });
-    expect(terminalsInFolder(sessions, "app").map((s) => s.name)).toEqual(["in-app"]);
-    expect(terminalsInSpace(sessions, "notes").map((s) => s.name)).toEqual(["in-space"]);
-    expect(terminalsInSpace(sessions, "app")).toEqual([]);
+  });
+
+  // Session.repo is the base name of the launch directory: a shell in the home directory of a
+  // member called "dev" has repo "dev", which is also the name of a clone.
+  it("does not mistake the home directory for a working copy of the same name", () => {
+    const clone = [repo("dev"), repo("app")];
+    const home = shell("in-home", { repo: "dev", dir: "/home/dev" });
+    const copy = shell("in-copy", { repo: "dev", dir: "/home/dev/repos/dev" });
+    const names = new Set(clone.map((r) => r.name));
+    expect(shellPlaceOf(home, names)).toEqual({ kind: "home" });
+    expect(shellPlaceOf(copy, names)).toEqual({ kind: "repo", folder: "dev" });
+    // A row without a dir (an older list) is taken at its word.
+    expect(shellPlaceOf(shell("old", { repo: "app" }), names)).toEqual({ kind: "repo", folder: "app" });
+    expect(terminalGroups([home, copy], clone).shells.map((g) => [g.key, g.sessions.map((s) => s.name)])).toEqual([
+      ["shell:home", ["in-home"]],
+      ["shell:repo:dev", ["in-copy"]],
+    ]);
   });
 
   it("names the group a chip reveals the way the view keys it", () => {

@@ -49,3 +49,27 @@ func TestWireSessionOfAShellHasNoSSMTarget(t *testing.T) {
 		t.Fatalf("a shell row emits an ssm key: %s", b)
 	}
 }
+
+// A role-chained profile stores the SOURCE sign-in's account in SSMMeta.AccountID; the machine's
+// account is the one in the role ARN. Without it a direct login and an assume-role login to the
+// same instance would be two groups, the second headed by the account that signed in.
+func TestWireSessionSSMTargetAccountOfAChainedProfile(t *testing.T) {
+	chained := session.Meta{Name: "s3", Kind: session.KindSSM, SSM: &session.SSMMeta{
+		Profile: "via-b", Target: "i-0abc123", Region: "ap-northeast-1",
+		AccountID: "222222222222", RoleARN: "arn:aws:iam::111122223333:role/ops", SourceProfile: "b-sso",
+	}}
+	direct := session.Meta{Name: "s4", Kind: session.KindSSM, SSM: &session.SSMMeta{
+		Profile: "a-sso", Target: "i-0abc123", Region: "ap-northeast-1", AccountID: "111122223333",
+	}}
+	if got := wireSession(chained, false).SSM.AccountID; got != "111122223333" {
+		t.Fatalf("chained login's account = %q, want the role's 111122223333", got)
+	}
+	if got := wireSession(direct, false).SSM.AccountID; got != "111122223333" {
+		t.Fatalf("direct login's account = %q, want 111122223333", got)
+	}
+	// Not an ARN of a role: the stored account stands.
+	odd := session.Meta{Name: "s5", Kind: session.KindSSM, SSM: &session.SSMMeta{Target: "i-1", AccountID: "333344445555", RoleARN: "not-an-arn"}}
+	if got := wireSession(odd, false).SSM.AccountID; got != "333344445555" {
+		t.Fatalf("a malformed ARN changed the account: %q", got)
+	}
+}

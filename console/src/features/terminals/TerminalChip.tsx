@@ -5,9 +5,12 @@
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { useTerminalReveal } from "./store.ts";
+import { useTerminalView } from "./useTerminalView.ts";
 
-export function TerminalChip({ count, groupKey }: { count: number; groupKey: string }) {
+export function TerminalChip({ groupKey }: { groupKey: string }) {
   const tr = useT();
+  // The count is the view's own: what the working set lets the Terminal view list for this place.
+  const count = useTerminalView().counts.get(groupKey) ?? 0;
   if (count <= 0) return null;
   const label = tr("terms.chip_title", { n: count });
   return (

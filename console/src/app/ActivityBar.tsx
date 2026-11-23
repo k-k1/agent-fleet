@@ -29,7 +29,7 @@ import { hintSuffix } from "../features/keys/keyHint.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
-import { hasUnreadConversation, hasUnreadSession, pendingNews, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
+import { hasUnreadConversation, hasUnreadSession, hasUnreadTerminal, pendingNews, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
 import type { RailBadge } from "./activity/badges.ts";
 import { useAutoRunFeed, useScopedAutoRuns } from "../features/autorun/store.ts";
 import { waitingScheduledCount } from "../features/schedules/scheduledSessions.ts";
@@ -450,6 +450,8 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   // Selectors that answer a boolean: the notification list is replaced on every poll, and a
   // subscription to the list itself would re-render the column each time.
   const unreadSessions = useNotificationStore((s) => hasUnreadSession(s.items, sessions, wset));
+  const reposForTerminals = useReposStore((s) => s.repos);
+  const unreadTerminals = useNotificationStore((s) => hasUnreadTerminal(s.items, sessions, reposForTerminals, wset));
   const unreadConversation = useNotificationStore((s) => hasUnreadConversation(s.items, wset));
   const payload = useWorkItemStore((s) => s.payload);
   const seen = useSeenStore((s) => s.map);
@@ -505,6 +507,7 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const out: Partial<Record<RailView, RailBadge>> = {};
   if (waiting > 0) out.sessions = { tone: "waiting", count: waiting };
   else if (unreadSessions) out.sessions = { tone: "unread" };
+  if (unreadTerminals) out.terminals = { tone: "unread" };
   if (unreadConversation) out.assistant = { tone: "unread" };
   const news = onScreen === "workitems" ? 0 : pendingNews(workItemKeys, acked.workitems).length;
   if (news > 0) out.workitems = { tone: "news", count: news };

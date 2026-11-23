@@ -582,6 +582,22 @@ export type ShellPlace = { kind: "home" } | { kind: "repo"; folder: string } | {
 /** The key of a place's group in the Terminal view; the reveal request names the same key. */
 export const shellPlaceKey = (p: ShellPlace): string => (p.kind === "home" ? "shell:home" : `shell:${p.kind}:${p.folder}`);
 
+/** Where a shell was opened: its space, else the listed working copy it runs in, else home.
+ *
+ *  `Session.repo` is the base name of the launch directory, so a shell started in the home
+ *  directory carries the home folder's own name (a member called `dev` has repo "dev") and would
+ *  pass for a working copy of that name. A repository needs the directory to be that copy too:
+ *  `<root>/repos/<folder>`. A session whose row has no `dir` (an older list) is taken at its word. */
+export function shellPlaceOf(s: Session, repoNames: ReadonlySet<string>): ShellPlace {
+  if (s.space) return { kind: "space", folder: s.space };
+  const f = sessionFolder(s);
+  if (f && repoNames.has(f)) {
+    const dir = (s.dir || "").replace(/\/+$/, "");
+    if (!dir || dir.endsWith("/repos/" + f)) return { kind: "repo", folder: f };
+  }
+  return { kind: "home" };
+}
+
 /** The shells opened in one place, newest first. */
 export interface ShellGroup {
   key: string;
@@ -621,11 +637,7 @@ const newestFirst = (a: Session, b: Session) => compareText(b.createdAt || "", a
 // shell first.
 export function terminalGroups(sessions: Session[], repos: Repo[]): TerminalGroups {
   const names = new Set(repos.map((r) => r.name));
-  const placeOf = (s: Session): ShellPlace => {
-    if (s.space) return { kind: "space", folder: s.space };
-    const f = sessionFolder(s);
-    return f && names.has(f) ? { kind: "repo", folder: f } : { kind: "home" };
-  };
+  const placeOf = (s: Session) => shellPlaceOf(s, names);
   const shellBy = new Map<string, ShellGroup>();
   const ssmBy = new Map<string, SsmGroup>();
   for (const s of sessions) {
@@ -657,14 +669,4 @@ export function terminalGroups(sessions: Session[], repos: Repo[]): TerminalGrou
   // key breaks ties, and a group with no target (nothing to say about it) goes last.
   ssm.sort((a, b) => Number(!a.target) - Number(!b.target) || compareText(b.sessions[0]?.createdAt || "", a.sessions[0]?.createdAt || "") || compareText(a.key, b.key));
   return { shells, ssm };
-}
-
-/** The shell and SSM sessions that run in one working-copy folder (the Sessions view's count chip). */
-export function terminalsInFolder(sessions: Session[], folder: string): Session[] {
-  return sessionsInFolder(sessions, folder).filter(isTerminalSession);
-}
-
-/** The shell and SSM sessions that run in one space. */
-export function terminalsInSpace(sessions: Session[], folder: string): Session[] {
-  return sessions.filter((s) => isTerminalSession(s) && s.space === folder);
 }

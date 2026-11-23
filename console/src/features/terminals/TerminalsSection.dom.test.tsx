@@ -6,18 +6,33 @@ import { createRoot, type Root } from "react-dom/client";
 import type { Session } from "../../types/session.ts";
 
 const LIST = { root: "/home/dev/spaces", spaces: [{ folder: "q3-abcdef", name: "Q3 report", dir: "/home/dev/spaces/q3-abcdef" }] };
-const HOSTS = [{ id: "h1", alias: "build box", profileId: "p", region: "ap-northeast-1", instanceId: "i-aaa", documentName: "" }];
+let HOSTS: unknown[] = [{ id: "h1", alias: "build box", profileId: "p", region: "ap-northeast-1", instanceId: "i-aaa", documentName: "" }];
+const PROFILES = [{ id: "p", accountId: "111122223333", region: "ap-northeast-1" }];
+let tenant = "";
+let hostsGate: Promise<void> | null = null;
 const api = vi.fn(async (url: string): Promise<unknown> => {
   if (url.startsWith("api/spaces")) return LIST;
-  if (url.startsWith("api/ssm/hosts")) return HOSTS;
+  if (url.startsWith("api/ssm/hosts")) {
+    const answer = HOSTS;
+    if (hostsGate) await hostsGate;
+    return answer;
+  }
+  if (url.startsWith("api/ssm/profiles")) return PROFILES;
   return {};
 });
+const sessionDelete = vi.fn(async (..._a: unknown[]) => ({ ok: true, status: 200 }));
 
 vi.mock("../../core/api/client.ts", () => ({
   apiJSON: async () => ({}),
   api: (url: string) => api(url),
+  raw: async () => ({ ok: true, status: 200 }),
+  sessionDelete: (...a: unknown[]) => sessionDelete(...a),
+  errText: () => "",
+  sessionSetLock: async () => ({ ok: true }),
+  sessionKeepAwake: async () => ({ ok: true }),
+  sessionStopAfterTurn: async () => ({ ok: true }),
   isTransientErr: (d: { error?: { status?: number } }) => (d?.error?.status ?? 0) >= 500,
-  getTenant: () => "",
+  getTenant: () => tenant,
   getUser: () => "",
 }));
 
@@ -28,6 +43,8 @@ const { useSessionsStore } = await import("../sessions/store.ts");
 const { useReposStore } = await import("../repos/store.ts");
 const { useSpacesStore } = await import("../spaces/store.ts");
 const { useTerminalReveal } = await import("./store.ts");
+const { ViewShownContext } = await import("../../lib/viewShown.ts");
+const { setSettings } = await import("../../lib/settings.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -37,12 +54,14 @@ const flush = () =>
     await new Promise((r) => setTimeout(r, 5));
   });
 
-async function render(): Promise<void> {
+async function render(shown = true): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <TerminalsSection />
+          <ViewShownContext.Provider value={shown}>
+            <TerminalsSection />
+          </ViewShownContext.Provider>
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -59,6 +78,11 @@ const subs = () => [...host.querySelectorAll(".term-group-sub")].map((e) => e.te
 beforeEach(() => {
   localStorage.clear();
   api.mockClear();
+  sessionDelete.mockClear();
+  tenant = "";
+  hostsGate = null;
+  HOSTS = [{ id: "h1", alias: "build box", profileId: "p", region: "ap-northeast-1", instanceId: "i-aaa", documentName: "" }];
+  setSettings({ workingSets: [], workingSetActive: "" });
   useSpacesStore.getState().clear();
   useTerminalReveal.setState({ key: null, n: 0 });
   useReposStore.setState({ repos: [{ name: "app" }] });
@@ -143,5 +167,68 @@ describe("Terminal view", () => {
     // The confirmation names what it will delete: the two stopped, unlocked ones.
     const confirm = [...document.querySelectorAll("button")].find((b) => b.textContent === "Clean up 2");
     expect(confirm).toBeTruthy();
+    await act(async () => confirm!.click());
+    // Without `stop`: a session that was resumed while the dialog was open is refused by the
+    // Agent instead of being stopped and trashed.
+    expect(sessionDelete.mock.calls.map(([n, o]) => [n, o]).sort()).toEqual([
+      ["down1", { stop: false }],
+      ["down2", { stop: false }],
+    ]);
+  });
+
+  it("asks for the hosts again when the view comes back on screen, and names the machine by the new alias", async () => {
+    useSessionsStore.setState({ sessions: [ssm("m1", "i-aaa")] });
+    await render(false);
+    // Nothing is read while the view is off screen.
+    expect(api).not.toHaveBeenCalledWith("api/ssm/hosts");
+    await render(true);
+    expect(heads()).toEqual(["build box"]);
+    // A host renamed in Settings meanwhile.
+    HOSTS = [{ id: "h1", alias: "renamed", profileId: "p", region: "ap-northeast-1", instanceId: "i-aaa", documentName: "" }];
+    await render(false);
+    expect(heads()).toEqual(["build box"]);
+    await render(true);
+    expect(heads()).toEqual(["renamed"]);
+  });
+
+  it("does not name this workspace's machines with an answer that came from another", async () => {
+    useSessionsStore.setState({ sessions: [ssm("m1", "i-aaa")] });
+    tenant = "t1";
+    await render(true);
+    expect(heads()).toEqual(["build box"]);
+    // The tenant changes; the other workspace's answer is still on its way.
+    let release!: () => void;
+    hostsGate = new Promise((r) => (release = r));
+    HOSTS = [];
+    tenant = "t2";
+    // A tenant switch replaces the session list, which is what re-renders the view.
+    await act(async () => useSessionsStore.setState({ sessions: [ssm("m1", "i-aaa")] }));
+    expect(heads()).toEqual(["i-aaa"]);
+    release();
+    await flush();
+    expect(heads()).toEqual(["i-aaa"]);
+  });
+
+  it("shows a worktree's shells under a set that lists its parent, and leaves out a set's strangers", async () => {
+    useReposStore.setState({ repos: [{ name: "app" }, { name: "scratch", worktree: true, parent: "app" }, { name: "other" }] });
+    useSessionsStore.setState({
+      sessions: [
+        sess("w", { repo: "scratch", dir: "/home/dev/repos/scratch" }),
+        sess("o", { repo: "other", dir: "/home/dev/repos/other" }),
+      ],
+    });
+    setSettings({ workingSets: [{ id: "w1", name: "A", repos: ["app"], convs: [], sessions: [], schedules: [] }], workingSetActive: "w1" });
+    await render();
+    expect(heads()).toEqual(["app"]);
+  });
+
+  it("consumes a reveal, so a view mounted again later does not jump back", async () => {
+    useSessionsStore.setState({ sessions: [sess("h", { dir: "/home/dev" })] });
+    act(() => useTerminalReveal.getState().reveal("shell:home"));
+    await render();
+    await act(async () => {
+      await new Promise((r) => requestAnimationFrame(() => r(null)));
+    });
+    expect(useTerminalReveal.getState().key).toBeNull();
   });
 });

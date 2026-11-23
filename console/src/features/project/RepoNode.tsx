@@ -21,7 +21,7 @@ import { useRepoReveal } from "../repos/store.ts";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Session } from "../../types/session.ts";
 import { displayName } from "../../lib/sessionview.ts";
-import { childNodes, sessionsInFolder, shellPlaceKey, terminalsInFolder, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
+import { childNodes, sessionsInFolder, shellPlaceKey, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
@@ -57,7 +57,6 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   // delete read the full list through `detached`). The shells of this copy show as a count chip.
   const shown = useMemo(() => withoutTerminals(withoutUnattended(sessions)), [sessions]);
   const mine = sessionsInFolder(shown, r.name);
-  const termCount = terminalsInFolder(sessions, r.name).length;
   const below = descendantFolders(n);
   // Empty repos (no sessions anywhere under them, worktrees included) default
   // folded — an unused clone shouldn't take up rail space. The default is live
@@ -172,7 +171,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
             node={n}
             onToggle={openState.toggle}
             sess={{ alive: sessAlive, total: sessTotal }}
-            termChip={<TerminalChip count={termCount} groupKey={shellPlaceKey({ kind: "repo", folder: r.name })} />}
+            termChip={<TerminalChip groupKey={shellPlaceKey({ kind: "repo", folder: r.name })} />}
             unread={unread}
             peek={peek}
             alsoRunning={alsoRunning}

@@ -56,6 +56,7 @@ running.
 - While the workspace is stopped the view says it starts when the workspace is running. Stopped shells and SSM
   sessions appear again once it is.
 - A working set narrows the view the same way it narrows Sessions.
+- Only the Sessions view of the left pane leaves shells out. The sessions overview and the command palette still list running shells and SSM sessions.
 - A session list read while the workspace was stopped, or from an Agent older than this view, carries no SSM target.
   Those SSM sessions are listed together under **Unknown machine** until the list is read again.
 

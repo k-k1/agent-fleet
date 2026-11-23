@@ -11,22 +11,27 @@ import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { IconButton } from "../../ui/Button.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useViewShown } from "../../lib/viewShown.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { SessionRow } from "../sessions/SessionRow.tsx";
 import { useReposStore } from "../repos/store.ts";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
 import { terminalGroups, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
 import type { ShellGroup, SsmGroup } from "../../lib/project.ts";
-import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useRailRoving } from "../project/useRailRoving.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
-import { spaceLabel } from "../spaces/store.ts";
+import { spaceLabel, spacesOwner } from "../spaces/store.ts";
 import { useSpaceNames } from "../spaces/useSpaceNames.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import type { SsmHost } from "../../types/session.ts";
 import { NewShellModal } from "./NewShellModal.tsx";
 import { machineLabel, ssmRowDetail } from "./ssmLabel.ts";
+import type { SsmProfileRef } from "./ssmLabel.ts";
+import { useTerminalView } from "./useTerminalView.ts";
 import { useTerminalReveal } from "./store.ts";
+
+const NO_HOSTS: SsmHost[] = [];
+const NO_PROFILES: SsmProfileRef[] = [];
 
 export const TerminalsSection = memo(function TerminalsSection() {
   const tr = useT();
@@ -39,30 +44,35 @@ export const TerminalsSection = memo(function TerminalsSection() {
   const openStartAt = useSessionsStore((s) => s.openStartAt);
   const [newShell, setNewShell] = useState(false);
 
-  // A working set holds a shell the way it holds any repo-less session: by direct assignment, or
-  // through the repository its folder names.
-  const wset = useActiveWorkingSet();
-  const groups = useMemo(() => {
-    const own = sessions.filter((s) => !wset || sessionInSet(wset, s));
-    return terminalGroups(own, repos);
-  }, [sessions, repos, wset]);
+  // What the view lists is what the chips count: the working set narrows both the same way.
+  const { visible } = useTerminalView();
+  const groups = useMemo(() => terminalGroups(visible, repos), [visible, repos]);
   const all = useMemo(() => [...groups.shells.flatMap((g) => g.sessions), ...groups.ssm.flatMap((g) => g.sessions)], [groups]);
   const stopped = all.filter((s) => !s.alive && !s.locked);
 
-  // The registered hosts name the machines. Read again whenever the set of machines changes, so a
-  // host registered since the last read names its group.
+  // The registered hosts and their profiles name the machines. Read again whenever the view comes
+  // on screen (a host renamed in Settings since, or a read that failed), when the set of machines
+  // changes, and for another workspace; an answer is kept with the workspace it came from, so a
+  // late one from the previous tenant never names this one's machines.
   const machines = groups.ssm.map((g) => g.key).join("\n");
-  const [hosts, setHosts] = useState<SsmHost[]>([]);
+  const shown = useViewShown();
+  const owner = spacesOwner();
+  const [names, setNames] = useState<{ owner: string; hosts: SsmHost[]; profiles: SsmProfileRef[] }>({ owner: "", hosts: [], profiles: [] });
   useEffect(() => {
-    if (!machines) return;
+    if (!machines || !shown) return;
     let alive = true;
-    api("api/ssm/hosts")
-      .then((h) => alive && setHosts(Array.isArray(h) ? h : []))
+    Promise.all([api("api/ssm/hosts"), api("api/ssm/profiles")])
+      .then(([h, p]) => {
+        if (!alive) return;
+        setNames({ owner, hosts: Array.isArray(h) ? h : [], profiles: Array.isArray(p) ? p : [] });
+      })
       .catch(() => {});
     return () => {
       alive = false;
     };
-  }, [machines]);
+  }, [machines, shown, owner]);
+  const hosts = names.owner === owner ? names.hosts : NO_HOSTS;
+  const profiles = names.owner === owner ? names.profiles : NO_PROFILES;
 
   // Reveal request from a count chip: scroll to the group and say which one it is. Read on mount
   // too, because the view mounts on the very request that shows it.
@@ -71,16 +81,24 @@ export const TerminalsSection = memo(function TerminalsSection() {
   useEffect(() => {
     const key = useTerminalReveal.getState().key;
     if (!key) return;
+    let flash: ReturnType<typeof setTimeout> | undefined;
     const raf = requestAnimationFrame(() => {
       const el = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-term-group]") ?? []).find((e) => e.dataset.termGroup === key);
       if (!el) return;
       el.scrollIntoView({ block: "nearest" });
       el.focus();
-      el.classList.remove("term-flash");
+      // One request, one reveal: a view that mounts again later (a restart) must not jump back.
+      useTerminalReveal.setState({ key: null });
+      for (const f of rootRef.current?.querySelectorAll(".term-flash") ?? []) f.classList.remove("term-flash");
       void el.offsetWidth; // restart the animation for a repeat reveal of the same group
       el.classList.add("term-flash");
+      // Gone after the animation, so a reduced-motion rule that leaves a background does not keep it.
+      flash = setTimeout(() => el.classList.remove("term-flash"), 1400);
     });
-    return () => cancelAnimationFrame(raf);
+    return () => {
+      cancelAnimationFrame(raf);
+      clearTimeout(flash);
+    };
   }, [revealN]);
 
   const idBase = useRef(Math.random().toString(36).slice(2, 8)).current;
@@ -96,7 +114,7 @@ export const TerminalsSection = memo(function TerminalsSection() {
   };
   const ssmLabel = (g: SsmGroup): { label: string; sub: string } => {
     if (!g.target) return { label: tr("terms.ssm_unknown"), sub: "" };
-    const label = machineLabel(g.target, g.region, hosts);
+    const label = machineLabel(g.target, g.region, g.accountId, hosts, profiles);
     // The instance id only when the alias took the name's place; account and region tell
     // two machines with one id apart (a copy in another account).
     return { label, sub: [label !== g.target ? g.target : "", g.accountId, g.region].filter(Boolean).join(" · ") };

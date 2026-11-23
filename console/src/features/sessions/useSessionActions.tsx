@@ -23,10 +23,13 @@ import type { Session } from "../../types/session.ts";
 // of its conversation, or is being resumed or switched by another request.
 const SWITCH_REFUSALS = new Set(["codex_stop_first", "codex_releasing", "driver_switching"]);
 
-const tidyOne = (s: Session, op: "archive" | "delete") =>
+// `stop`: a delete stops a running session first. A tidy of rows the member saw as stopped passes
+// false, so a session resumed since (another tab, an Agent that answered late) is refused by the
+// Agent (409, counted as failed) instead of being stopped and trashed.
+const tidyOne = (s: Session, op: "archive" | "delete", stop = true) =>
   (op === "archive"
     ? raw(`api/sessions/${encodeURIComponent(s.name)}/archive`, { method: "POST" })
-    : sessionDelete(s.name, { stop: true })
+    : sessionDelete(s.name, { stop })
   )
     .then((res) => ({ s, ok: res.ok }))
     .catch(() => ({ s, ok: false }));
@@ -220,7 +223,7 @@ export function useSessionActions(): SessionActions {
       return;
     const results = await Promise.all([
       ...keepable.map((s) => tidyOne(s, "archive")),
-      ...ephemeral.map((s) => tidyOne(s, "delete")),
+      ...ephemeral.map((s) => tidyOne(s, "delete", false)),
     ]);
     const done = results.filter((r) => r.ok).length;
     const failed = results.length - done;

@@ -225,6 +225,8 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "terms.tidy": "Tidy stopped shells and SSM sessions (they are deleted)",
   "terms.ssm_unknown": "Unknown machine",
   "terms.chip_title": "{n} shell or SSM session(s) here — show them in Terminals",
+  "terms.spaces_failed": "Could not load your spaces.",
+  "terms.spaces_retry": "Try again",
   "pj.other_sessions": "Other sessions",
   "pj.tidy_other_sessions": "Tidy other sessions (archive)",
   "pj.session_history": "Session history",

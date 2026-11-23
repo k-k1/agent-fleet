@@ -171,7 +171,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           </span>
           {unread && <span className="unread-dot" role="img" aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />}
         </span>
-        <span className="sess-l1">
+        <span className="sess-l1" title={detail ? `${displayName(s)} · ${detail}` : undefined}>
           {displayName(s)}
           {detail && <span className="sess-detail"> · {detail}</span>}
         </span>
