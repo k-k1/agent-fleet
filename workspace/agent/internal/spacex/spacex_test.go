@@ -263,6 +263,16 @@ func TestSymlinkedFolderIsNoSpace(t *testing.T) {
 	}
 }
 
+// The filesystem root, in any spelling, is no space and must not panic: every session row asks.
+func TestFolderOfRootSpellings(t *testing.T) {
+	withHome(t)
+	for _, d := range []string{"/", "/.", "/./", "//", "/.//.", "/..", "/../."} {
+		if got := FolderOf(d); got != "" {
+			t.Errorf("FolderOf(%q) = %q, want \"\"", d, got)
+		}
+	}
+}
+
 // A symlink under Root that points at a real space is refused the same way however the path is
 // spelt: the last element is never followed, only the parent is resolved.
 func TestSymlinkToASpaceIsRefusedInEverySpelling(t *testing.T) {

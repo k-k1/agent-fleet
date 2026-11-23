@@ -73,6 +73,9 @@ func FolderOf(dir string) string {
 	// them first, or ~/spaces/link/. would resolve through the link that ~/spaces/link refuses.
 	last := trimSelf(dir)
 	f := filepath.Base(last)
+	if f != ".." && !ValidFolder(f) {
+		return ""
+	}
 	var parent string
 	if f == ".." {
 		// The directory above something: resolving the whole path yields a real directory, with
@@ -114,7 +117,8 @@ func trimSelf(p string) string {
 		case strings.HasSuffix(p, "/"):
 			p = p[:len(p)-1]
 		case strings.HasSuffix(p, "/."):
-			p = p[:len(p)-2]
+			// Drop the "." alone: the "/" before it may be the root's own.
+			p = p[:len(p)-1]
 		default:
 			return p
 		}
