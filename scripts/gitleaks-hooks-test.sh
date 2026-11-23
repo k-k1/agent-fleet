@@ -190,6 +190,10 @@ g switch -q -C after
 commit_file "clean-value" || fail "clean commit failed"
 g push -q origin after 2> "$TMP/err" || fail "pre-push rescanned history already on the remote's main: $(cat "$TMP/err")"
 g push -q "$REMOTE" after:refs/heads/after-url 2> "$TMP/err" || fail "pre-push rescanned published history on a push by URL: $(cat "$TMP/err")"
+# ...but a destination that is no configured remote has none of it: the same history, which
+# reaches origin/main, is scanned in full there.
+git init -q --template= --bare "$TMP/fresh.git"
+if g push "$TMP/fresh.git" after:refs/heads/x 2> "$TMP/err"; then fail "pre-push excluded origin/main's history from a push to an unknown destination"; else expect_refused "pre-push unknown destination, published history" "$TMP/err"; fi
 
 if [ "$FAILED" = 0 ]; then
   echo "ok"

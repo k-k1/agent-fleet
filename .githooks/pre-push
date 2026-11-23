@@ -24,9 +24,15 @@ root="$(git rev-parse --show-toplevel)"
 # which CI's secret-scan has already covered. Not `--remotes=<remote>`: a remote-tracking ref
 # can be stale (the server dropped or rewound the branch since the last fetch) and would then
 # exclude a commit the remote no longer has. $1 is a remote name or, for `git push <url>`, a
-# URL or path: resolve a URL to the configured remote that has it, else fall back to origin.
-# Empty output means nothing trustworthy to subtract, and the caller scans everything
+# URL or path: a URL resolves to the configured remote that has it. A destination that is no
+# configured remote is a new place for the history to become public, so nothing of it is
+# excluded. Empty output means nothing to subtract, and the caller scans everything
 # reachable from the pushed commit — slower, never unsafe.
+#
+# Known limit: the default-branch ref is itself a local copy. If the server rewound that
+# branch past a leaked commit and this clone has not fetched since, the commit is still
+# excluded. The value was public on the default branch before, so this does not publish
+# anything new; checking the ref against the server would need a network round trip per push.
 default_branch_ref() {
   local target="${1:-origin}" name r cand
   if git remote get-url "$target" >/dev/null 2>&1; then
@@ -39,7 +45,6 @@ default_branch_ref() {
         break
       fi
     done
-    [ -n "$name" ] || { git remote get-url origin >/dev/null 2>&1 && name=origin; }
   fi
   [ -n "$name" ] || return 0
   for cand in "refs/remotes/$name/HEAD" "refs/remotes/$name/main" "refs/remotes/$name/master"; do
