@@ -99,7 +99,7 @@ describe("AWS profiles chip", () => {
     await mount();
     expect(chip()!.textContent).toContain("2/3");
     expect(chip()!.title).toBe("AWS profiles: 2 of 3 signed in");
-    expect(chip()!.className).toContain("ok");
+    expect(chip()!.className).toContain("ws-aws-btn--ok");
     // The usage chips' own classes give it their font, padding and height.
     expect(chip()!.classList.contains("kind-tag")).toBe(true);
     expect(chip()!.classList.contains("ws-usage-btn")).toBe(true);

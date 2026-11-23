@@ -168,13 +168,13 @@ try {
     };
   })()`);
   check(!!palette.active && palette.active === palette.want, "the working band is the same colour as the working state chip", `band ${palette.active} vs chip ${palette.want}`);
-  check(!palette.waiting || palette.waiting === palette.wantWaiting, "and the waiting band matches the question chip", `band ${palette.waiting} vs chip ${palette.wantWaiting}`);
+  check(!!palette.waiting && palette.waiting === palette.wantWaiting, "and the waiting band matches the question chip", `band ${palette.waiting} vs chip ${palette.wantWaiting}`);
   check(palette.inlineStyled === 0, "no band carries an inline per-kind colour any more", `${palette.inlineStyled} styled`);
 
   // --- archived draws nothing past its × (decision 12's amendment) -------------------
   const archived = await cdp.evaluate(`(() => ({
     tails: document.querySelectorAll("svg.fgraph-svg .fgraph-tail.archived").length,
-    bands: document.querySelectorAll("svg.fgraph-svg .fgraph-seg.archived").length,
+    bands: document.querySelectorAll("svg.fgraph-svg .fgraph-seg.fgraph-seg--archived").length,
     stoppedTails: document.querySelectorAll("svg.fgraph-svg .fgraph-tail.stopped").length,
     chips: [...document.querySelectorAll(".fgraph-label .session-state")].map((e) => e.textContent.trim()),
   }))()`);

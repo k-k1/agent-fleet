@@ -70,7 +70,7 @@ export function CloudRunGroup({ runs, attached = false }: { runs: CloudRun[]; at
     <div className={cls + (open ? " open" : "")} {...label}>
       <button
         type="button"
-        className={"cloud-run cloud-run-head" + (failed ? " failed" : "")}
+        className={"cloud-run cloud-run-head" + (failed ? " cloud-run--failed" : "")}
         aria-expanded={open}
         title={open ? tr("cloudruns.collapse") : tr("cloudruns.expand")}
         onClick={() => setOpen((o) => !o)}

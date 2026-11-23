@@ -304,7 +304,7 @@ function HitCard({ hit }: { hit: IngestHit }) {
             it has had since P4 just because the field it now prefers is missing. */}
         {hit.restrictions?.length
           ? hit.restrictions.map((code) => (
-              <span key={code} className={"engines-model-tag" + (engineRestrictIsHard(code) ? " warn" : "")}>
+              <span key={code} className={"engines-model-tag" + (engineRestrictIsHard(code) ? " engines-model-tag--warn" : "")}>
                 {engineRestrictLabel(code)}
               </span>
             ))
