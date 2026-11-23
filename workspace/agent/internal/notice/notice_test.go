@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -182,16 +183,19 @@ func TestPutOnceKilledMidwayDoesNotSuppressKey(t *testing.T) {
 }
 
 // An oversized payload is shrunk in the outbox copy: short identifiers survive, long strings
-// are cut on a rune boundary, a large value is dropped, and the entry is marked. The chat
-// bridge still gets the event as given.
+// are cut on a rune boundary, a long question list keeps each question's text (Web Push reads
+// it), and the entry is marked even when the caller set the mark itself. The chat bridge still
+// gets the event as given.
 func TestPutBoundsTheOutboxPayload(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	e := New("question", "s1", "claude", "Project")
 	e.Payload["conversation_id"] = "c1"
 	e.Payload["count"] = 3
+	e.Payload[payloadTruncatedKey] = false
 	e.Payload["body"] = strings.Repeat("あ", maxPayloadValue) // 3 bytes per rune
-	e.Payload["questions"] = json.RawMessage(`[` + strings.Repeat(`{"q":"x"},`, maxPayloadBytes/10) + `{"q":"x"}]`)
+	preview := strings.Repeat("p", maxPayloadBytes)
+	e.Payload["questions"] = json.RawMessage(`[{"question":"Which way?","header":"Way","options":[{"label":"A","preview":"` + preview + `"}]}]`)
 	if err := Put(e); err != nil {
 		t.Fatal(err)
 	}
@@ -209,17 +213,21 @@ func TestPutBoundsTheOutboxPayload(t *testing.T) {
 	p := got[0].Payload
 	body, _ := p["body"].(string)
 	if p[payloadTruncatedKey] != true || p["conversation_id"] != "c1" || p["count"] != float64(3) ||
-		p["questions"] != nil || len(body) > maxPayloadValue || !utf8.ValidString(body) || body == "" {
-		t.Fatalf("bounded payload: truncated=%v conversation_id=%v count=%v questions=%v body=%d bytes valid=%v",
-			p[payloadTruncatedKey], p["conversation_id"], p["count"], p["questions"] != nil, len(body), utf8.ValidString(body))
+		len(body) > maxPayloadValue || !utf8.ValidString(body) || body == "" {
+		t.Fatalf("bounded payload: truncated=%v conversation_id=%v count=%v body=%d bytes valid=%v",
+			p[payloadTruncatedKey], p["conversation_id"], p["count"], len(body), utf8.ValidString(body))
+	}
+	qb, _ := json.Marshal(p["questions"])
+	if string(qb) != `[{"header":"Way","question":"Which way?"}]` {
+		t.Fatalf("questions = %s, want the question text and header only", qb)
 	}
 	bq, _ := os.ReadDir(filepath.Join(home, ".local", "state", "agent-fleet", "bridge-queue"))
 	if len(bq) != 1 {
 		t.Fatalf("bridge queue entries=%d, want 1", len(bq))
 	}
-	qb, _ := os.ReadFile(filepath.Join(home, ".local", "state", "agent-fleet", "bridge-queue", bq[0].Name()))
-	if !strings.Contains(string(qb), `"questions":[`) {
-		t.Fatalf("bridge queue entry lost the questions")
+	bb, _ := os.ReadFile(filepath.Join(home, ".local", "state", "agent-fleet", "bridge-queue", bq[0].Name()))
+	if !strings.Contains(string(bb), preview) {
+		t.Fatalf("bridge queue entry lost the full questions")
 	}
 }
 
@@ -237,10 +245,12 @@ func TestPutKeepsAPayloadWithinTheBound(t *testing.T) {
 	}
 }
 
-// An entry an older Agent wrote past the bound is listed with only the mark, and so can be
-// acked, instead of staying queued ahead of the entries after it. One with no payload at all
-// still lists.
-func TestListMarksAnOversizedStoredPayload(t *testing.T) {
+// What List does with each shape an outbox file's payload can have. An object an older Agent
+// wrote past the bound is listed shrunk, and so can be acked, instead of staying queued ahead of
+// the entries after it. A missing or null payload lists as before. A payload that is not an
+// object, at any size, is skipped as before (it never decoded into the map), so it is never
+// acked and removed.
+func TestListBoundsEachStoredPayloadShape(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	d := filepath.Join(home, ".local", "state", "agent-fleet", "notification-outbox")
@@ -248,24 +258,44 @@ func TestListMarksAnOversizedStoredPayload(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	big := `{"id":"old","kind":"question","sessionName":"s","createdAt":"` + now + `","payload":{"questions":"` + strings.Repeat("q", 2*maxPayloadBytes) + `"}}`
-	bare := `{"id":"bare","kind":"question","sessionName":"s","createdAt":"` + now + `"}`
-	for name, body := range map[string]string{"old.json": big, "bare.json": bare} {
-		if err := os.WriteFile(filepath.Join(d, name), []byte(body), 0o600); err != nil {
+	long := strings.Repeat("q", 2*maxPayloadBytes)
+	files := map[string]string{
+		"big":         `{"questions":[{"question":"Q?","options":"` + long + `"}],"key":"k"}`,
+		"bare":        ``,
+		"null":        `null`,
+		"small":       `{"a":1}`,
+		"string":      `"` + long + `"`,
+		"array":       `[1,2]`,
+		"smallstring": `"x"`,
+	}
+	for id, payload := range files {
+		body := `{"id":"` + id + `","kind":"question","sessionName":"s","createdAt":"` + now + `"`
+		if payload != "" {
+			body += `,"payload":` + payload
+		}
+		if err := os.WriteFile(filepath.Join(d, id+".json"), []byte(body+"}"), 0o600); err != nil {
 			t.Fatal(err)
 		}
+	}
+	if err := os.WriteFile(filepath.Join(d, "broken.json"), []byte(`{"id":"broken","payload":{`), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	got := map[string]Event{}
 	for _, e := range List() {
 		got[e.ID] = e
 	}
-	if len(got) != 2 {
-		t.Fatalf("listed %d events, want 2", len(got))
+	ids := make([]string, 0, len(got))
+	for id := range got {
+		ids = append(ids, id)
 	}
-	if p := got["old"].Payload; len(p) != 1 || p[payloadTruncatedKey] != true {
-		t.Fatalf("oversized stored payload listed as %d keys, want only the mark", len(p))
+	sort.Strings(ids)
+	if strings.Join(ids, ",") != "bare,big,null,small" {
+		t.Fatalf("listed %v, want bare,big,null,small", ids)
 	}
-	if got["bare"].Payload != nil {
-		t.Fatalf("bare entry payload = %v", got["bare"].Payload)
+	if b, _ := json.Marshal(got["big"].Payload); string(b) != `{"key":"k","payloadTruncated":true,"questions":[{"question":"Q?"}]}` {
+		t.Fatalf("oversized stored payload listed as %s", b)
+	}
+	if got["bare"].Payload != nil || got["null"].Payload != nil || got["small"].Payload["a"] != float64(1) {
+		t.Fatalf("bare=%v null=%v small=%v", got["bare"].Payload, got["null"].Payload, got["small"].Payload)
 	}
 }

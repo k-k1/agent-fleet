@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -69,31 +70,131 @@ func notificationToDTO(n store.Notification) notificationDTO {
 const (
 	maxNotificationPayload      = 256 << 10
 	maxNotificationPayloadDepth = 32
+	// maxNotificationPayloadValue bounds each member shrinkPayload keeps of an oversized payload.
+	maxNotificationPayloadValue = 8 << 10
 )
 
-// omittedPayload replaces a payload that is not a JSON object within the bounds. The rest of the
-// notification is still stored and acked: dropping the whole entry would leave it queued at the
-// Agent, where it holds back every entry after it.
+// omittedPayload replaces a payload that is not a JSON object. The rest of the notification is
+// still stored and acked: dropping the whole entry would leave it queued at the Agent, where it
+// holds back every entry after it.
 const omittedPayload = `{"payloadOmitted":true}`
 
+// payloadTruncatedKey marks a payload shrinkPayload cut; the Agent uses the same key.
+const payloadTruncatedKey = "payloadTruncated"
+
 // boundedPayload returns raw when it is a JSON object within maxNotificationPayload and
-// maxNotificationPayloadDepth, "{}" for an empty or null payload, and omittedPayload otherwise.
-// The result is always a valid JSON object, which notificationDTO relies on: an invalid
-// json.RawMessage fails the marshal of the whole list.
+// maxNotificationPayloadDepth, "{}" for an empty or null payload, the shrunk object for one past
+// a bound, and omittedPayload for anything else. The result is always a valid UTF-8 JSON object,
+// which notificationDTO relies on: an invalid json.RawMessage fails the marshal of the whole
+// list, and Postgres refuses invalid UTF-8 in a TEXT column, which would refuse the entry on
+// every drain.
 func boundedPayload(raw []byte) string {
-	t := bytes.TrimSpace(raw)
+	t := bytes.Trim(raw, " \t\r\n") // JSON's whitespace only
 	if len(t) == 0 || string(t) == "null" {
 		return "{}"
 	}
-	if len(t) > maxNotificationPayload || t[0] != '{' || !jsonDepthWithin(t, maxNotificationPayloadDepth) || !json.Valid(t) {
+	if t[0] != '{' {
 		return omittedPayload
 	}
-	return string(t)
+	// json.Valid accepts invalid UTF-8 inside a string, and RawMessage keeps it. A map decode
+	// replaced it with U+FFFD; do the same.
+	if !utf8.Valid(t) {
+		t = bytes.ToValidUTF8(t, []byte("\uFFFD"))
+	}
+	if !json.Valid(t) {
+		return omittedPayload
+	}
+	if len(t) <= maxNotificationPayload && jsonDepthWithin(t, maxNotificationPayloadDepth) {
+		return string(t)
+	}
+	return string(shrinkPayload(t, maxNotificationPayload, maxNotificationPayloadValue, maxNotificationPayloadDepth))
+}
+
+// shrinkPayload keeps what fits of a valid JSON object past a bound, in order: each top-level
+// member whose value encodes within maxValue (and nests within maxDepth), a long string cut to
+// maxValue bytes, and a long "questions" list reduced to each question's text, which Web Push
+// shows (pushsrv.questionText). What the Console navigates by and the short reasons it words
+// (a schedule's status beside a long spec) survive this way. The result carries
+// payloadTruncatedKey and stays within max. Each member is decoded raw, so nothing is expanded.
+func shrinkPayload(obj []byte, max, maxValue, maxDepth int) []byte {
+	const mark = `"` + payloadTruncatedKey + `":true}`
+	dec := json.NewDecoder(bytes.NewReader(obj))
+	out := []byte{'{'}
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return []byte(omittedPayload)
+	}
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			break
+		}
+		var v json.RawMessage
+		if dec.Decode(&v) != nil {
+			break
+		}
+		k, _ := kt.(string)
+		if k == payloadTruncatedKey || len(k) > 256 {
+			continue
+		}
+		var keep []byte
+		switch {
+		case len(v) <= maxValue && jsonDepthWithin(v, maxDepth-1):
+			keep = v
+		case v[0] == '"':
+			var s string
+			if json.Unmarshal(v, &s) == nil {
+				keep, _ = json.Marshal(headBytes(s, maxValue))
+			}
+		case k == "questions":
+			keep = questionHeads(v, maxValue)
+		}
+		if keep == nil {
+			continue
+		}
+		kb, _ := json.Marshal(k)
+		if len(out)+len(kb)+len(keep)+2+len(mark) > max {
+			continue
+		}
+		out = append(append(append(append(out, kb...), ':'), keep...), ',')
+	}
+	return append(out, mark...)
+}
+
+// questionHeads reduces a questions list to the first questions' text and header, or nil when it
+// is not a list of objects.
+func questionHeads(v []byte, maxValue int) []byte {
+	var qs []struct {
+		Question string `json:"question"`
+		Header   string `json:"header,omitempty"`
+	}
+	if json.Unmarshal(v, &qs) != nil || len(qs) == 0 {
+		return nil
+	}
+	const maxQuestions = 4
+	if len(qs) > maxQuestions {
+		qs = qs[:maxQuestions]
+	}
+	for i := range qs {
+		qs[i].Question = headBytes(qs[i].Question, maxValue/maxQuestions-256)
+		qs[i].Header = headBytes(qs[i].Header, 128)
+	}
+	b, _ := json.Marshal(qs)
+	return b
+}
+
+// headBytes cuts s to at most n bytes without splitting a UTF-8 sequence.
+func headBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // jsonDepthWithin reports whether no object or array in b nests deeper than max. It only counts
-// brackets outside strings, so it is meaningful for valid JSON alone; boundedPayload checks
-// validity as well. It runs first because it is cheaper than json.Valid and allocates nothing.
+// brackets outside strings, so it is meaningful for valid JSON alone; callers check validity.
 func jsonDepthWithin(b []byte, max int) bool {
 	depth, inStr, esc := 0, false, false
 	for _, c := range b {
