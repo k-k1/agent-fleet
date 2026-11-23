@@ -163,15 +163,20 @@ export function useConsolRun(reload: number, active: boolean, tenant: string) {
   // The run poll's own lifetime, set at commit: its reads are dropped once the run has ended, so a
   // late failure cannot leave a warning nothing will clear with the poll stopped, and a tick due
   // before useInterval's passive cleanup starts none. Not the shared guard: a run ending seen just
-  // after a tenant switch must not kill the new tenant's first read.
-  const pollSignal = useRef<AbortSignal | null>(null);
+  // after a tenant switch must not kill the new tenant's first read. `load` also aborts it the
+  // moment it adopts a finished status: the layout cleanup only runs at commit, and a failure
+  // answered in the same batch would otherwise still pass. A running status adopted right after
+  // in that batch replaces the aborted controller, since `running` never changes across the commit
+  // and the layout effect would not start a new lifetime.
+  const pollAc = useRef<AbortController | null>(null);
   useLayoutEffect(() => {
     if (!running || !active) return;
     const ac = new AbortController();
-    pollSignal.current = ac.signal;
+    pollAc.current = ac;
     return () => {
       ac.abort();
-      pollSignal.current = null;
+      pollAc.current?.abort();
+      pollAc.current = null;
     };
   }, [running, active, tenant]);
   const load = useCallback(async (tk: ReadTicket, signal?: AbortSignal) => {
@@ -190,6 +195,8 @@ export function useConsolRun(reload: number, active: boolean, tenant: string) {
     if (!tk.land()) return true;
     setErr(false);
     setSt(res);
+    if (res?.run?.running !== true) pollAc.current?.abort();
+    else if (pollAc.current?.signal.aborted) pollAc.current = new AbortController();
     return true;
   }, []);
   useRetryLoad(async (signal) => (active ? load(guard.begin(tenant), signal) : true), [reload, active, tenant, load]);
@@ -204,8 +211,8 @@ export function useConsolRun(reload: number, active: boolean, tenant: string) {
   // A failed read does not stop it: the next poll clears the warning by itself, whereas stopping would
   // leave a stale "running" that only a reload could end. The interval is bounded and cleared on unmount.
   useInterval(() => {
-    const signal = pollSignal.current;
-    if (signal) void load(guard.begin(tenant), signal);
+    const signal = pollAc.current?.signal;
+    if (signal && !signal.aborted) void load(guard.begin(tenant), signal);
   }, running && active ? RUN_POLL_MS : null);
 
   const [starting, setStarting] = useState(false);

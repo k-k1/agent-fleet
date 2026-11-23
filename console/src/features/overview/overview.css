@@ -235,7 +235,7 @@
     padding: 1px 4px;
   }
 }
-/* Parent-diff chip: the rail's own chip, one size down to sit in a card's caption line. */
+/* Parent-diff chip: the rail's own chip; `flex: none` keeps it whole in a card's caption line. */
 .ovw-where .repo-chip {
   flex: none;
 }
