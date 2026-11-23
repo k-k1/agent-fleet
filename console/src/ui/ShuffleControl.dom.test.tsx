@@ -24,7 +24,7 @@ describe("ShuffleControl", () => {
     const btn = (label: string) =>
       [...host.querySelectorAll("button")].find((b) => b.textContent === label) as HTMLButtonElement;
 
-    expect(btn("Off").className).toContain("active");
+    expect(btn("Off").className).toContain("seg-btn--active");
     const dice = host.querySelector<HTMLButtonElement>(".shuffle-dice")!;
     expect(dice.getAttribute("aria-label")).toBe("Change colors now");
 
@@ -41,7 +41,7 @@ describe("ShuffleControl", () => {
 
     await act(async () => btn("Daily").click());
     expect(getSettings().appearanceShuffle).toBe("daily");
-    expect(btn("Daily").className).toContain("active");
+    expect(btn("Daily").className).toContain("seg-btn--active");
     // Switching on from off picks at once.
     expect(getSettings().topbarColor).not.toBe(first);
     expect(getSettings().theme).toBe("dark");

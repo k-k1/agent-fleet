@@ -195,7 +195,7 @@ describe("EnginesAdminView", () => {
         answerPoll(before); // started before the click, answered after it
         await Promise.resolve();
       });
-      expect(seg("無効")?.className).toContain("active");
+      expect(seg("無効")?.className).toContain("seg-btn--active");
       expect(host!.textContent).toContain("停止処理中");
     } finally {
       vi.useRealTimers();
@@ -242,7 +242,7 @@ describe("EnginesAdminView", () => {
       await answer(row({ mode: "off", enabled: false, state: "stopping" }), 0);
       expect(host!.textContent).toContain("停止処理中");
       await answer(before, 1); // served before the server applied the PUT
-      expect(seg("無効")?.className).toContain("active");
+      expect(seg("無効")?.className).toContain("seg-btn--active");
       expect(host!.textContent).toContain("停止処理中");
     });
 
@@ -254,16 +254,16 @@ describe("EnginesAdminView", () => {
       await mount();
       await tick(); // the poll read begins: it will see b starting, and a before the edit
       await click(segIn(panel(0), "常時稼働"));
-      expect(segIn(panel(0), "常時稼働").className).toContain("active");
+      expect(segIn(panel(0), "常時稼働").className).toContain("seg-btn--active");
       await answer({ super_admin: true, engines: [a, { ...b, state: "starting", desired: 1 }] });
-      expect(segIn(panel(0), "常時稼働").className).toContain("active");
+      expect(segIn(panel(0), "常時稼働").className).toContain("seg-btn--active");
       expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
 
       // Mounted again, the held rows are what was on screen, not the read's answer before the merge.
       act(() => root?.unmount());
       host?.remove();
       await mount(); // its first read is held
-      expect(segIn(panel(0), "常時稼働").className).toContain("active");
+      expect(segIn(panel(0), "常時稼働").className).toContain("seg-btn--active");
       expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
     });
 
@@ -288,7 +288,7 @@ describe("EnginesAdminView", () => {
       first.remove();
       api.mockImplementation(held);
       await mount(); // its first read is held: what it draws is the cache
-      expect(segIn(panel(0), "常時稼働").className).toContain("active");
+      expect(segIn(panel(0), "常時稼働").className).toContain("seg-btn--active");
       expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
     });
 
@@ -310,7 +310,7 @@ describe("EnginesAdminView", () => {
       api.mockImplementation(held);
       await mount(); // its first read is held: what it draws is the cache
       expect(panel(0).querySelector(".engines-model-tag")!.textContent).not.toContain("起動中");
-      expect(seg("常時稼働")?.className).toContain("active");
+      expect(seg("常時稼働")?.className).toContain("seg-btn--active");
     });
 
     it("a slow edit answer does not take back a later state this screen's read already cached", async () => {
@@ -328,7 +328,7 @@ describe("EnginesAdminView", () => {
       api.mockImplementation(held);
       await mount(); // its first read is held: what it draws is the cache
       expect(panel(0).querySelector(".engines-model-tag")!.textContent).not.toContain("起動中");
-      expect(seg("常時稼働")?.className).toContain("active");
+      expect(seg("常時稼働")?.className).toContain("seg-btn--active");
     });
 
     it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {
@@ -355,8 +355,8 @@ describe("EnginesAdminView", () => {
     // The disagreement window: mode off, task still going away.
     api.mockResolvedValue({ super_admin: true, engines: [row({ mode: "off", enabled: false, state: "stopping" })] });
     await mount();
-    expect(seg("無効")?.className).toContain("active");
-    expect(seg("常時稼働")?.className).not.toContain("active");
+    expect(seg("無効")?.className).toContain("seg-btn--active");
+    expect(seg("常時稼働")?.className).not.toContain("seg-btn--active");
   });
 
   // ADR 0083 decision 5: a row naming an images provider this build does not implement a client
@@ -594,8 +594,8 @@ describe("EnginesAdminView", () => {
     expect(now).toContain("Spot");
     // Marked on the row it is, rather than by moving it to the top: that it is the SECOND offer
     // is the fact worth seeing.
-    expect(offerRows()[1].className).toContain("on");
-    expect(offerRows()[0].className).not.toContain("on");
+    expect(offerRows()[1].className).toContain("engines-offer--on");
+    expect(offerRows()[0].className).not.toContain("engines-offer--on");
   });
 
   it("shows how far down the list this demand walked, and why each offer was left", async () => {

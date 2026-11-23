@@ -136,7 +136,7 @@ describe("SessionCard", () => {
     const since = Date.now() - 12 * 60_000;
     await render({ state: "question" }, true, since);
     expect(host.querySelector(".ovw-waited")?.textContent).toBe(t("ovw.waiting_for", { d: "12m" }));
-    expect(host.querySelector(".ovw-waited")?.className).toContain("on");
+    expect(host.querySelector(".ovw-waited")?.className).toContain("ovw-waited--on");
     // Answered: the same instant now reads as "working since you replied".
     await render({ state: "working" }, true, since);
     expect(host.querySelector(".ovw-waited")?.textContent).toBe(t("ovw.since_wait", { d: "12m" }));
