@@ -200,6 +200,12 @@ func (p *Service) deliver(ctx context.Context, n store.Notification) {
 	}
 	pl := pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName, Tenant: dc.TenantSlug}
 	body, _ := json.Marshal(pl)
+	if len(body) > webpush.MaxPayload {
+		// The display name is stored as the Agent sent it. A name that makes even the base payload
+		// unencryptable is dropped, not the push: the session and the tenant are what a tap needs.
+		pl.Name = ""
+		body, _ = json.Marshal(pl)
+	}
 	if includeText && n.Kind == "question" {
 		// The text is optional, the question is not: JSON escaping can make 140 runes several
 		// times longer, so a text that would push the payload past what can be encrypted is dropped.

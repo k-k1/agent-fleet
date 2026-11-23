@@ -252,6 +252,23 @@ func TestPayloadCarriesTheTenantSlug(t *testing.T) {
 	}
 }
 
+// A display name so long that even the base payload cannot be encrypted must not cost the push:
+// the name goes, the session and the tenant stay.
+func TestOverlongNameDropsTheNameNotThePush(t *testing.T) {
+	f := newFixture(t)
+	f.st.tenantSlug = "acme"
+	d := f.subscribe(t, "m1")
+	n := note("question")
+	n.DisplayName = strings.Repeat("x", 3930) // main's base JSON is 3980 bytes; the tenant tips it past 3993
+	f.svc.deliver(context.Background(), n)
+	if f.count() != 1 {
+		t.Fatalf("the push was lost to a long name: %d", f.count())
+	}
+	if got := d.open(t, f.bodies[0]); got != `{"v":1,"kind":"question","session":"s1","tenant":"acme"}` {
+		t.Fatalf("payload %s", got)
+	}
+}
+
 // failingCtxStore fails the delivery-context read: the push still goes out, without a tenant.
 type failingCtxStore struct{ *memStore }
 

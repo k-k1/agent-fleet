@@ -142,8 +142,8 @@ func (s *SQL) PutPushOffKinds(ctx context.Context, membershipID string, kinds []
 func (s *SQL) PushDeliveryContext(ctx context.Context, membershipID string) (PushDelivery, error) {
 	var inc sql.NullInt64
 	var slug string
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(t.include_text, 0), tn.slug FROM membership m
-		JOIN tenant tn ON tn.id = m.tenant_id
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(t.include_text, 0), COALESCE(tn.slug, '') FROM membership m
+		LEFT JOIN tenant tn ON tn.id = m.tenant_id
 		LEFT JOIN tenant_push_setting t ON t.tenant_id = m.tenant_id
 		WHERE m.id=? AND m.status='active'`, membershipID).Scan(&inc, &slug)
 	if err == sql.ErrNoRows {

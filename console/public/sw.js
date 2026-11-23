@@ -209,7 +209,9 @@ function handOff(win, session, tenant, cancelled) {
       resolve(true);
     };
     try {
-      win.postMessage({ type: "af-open-session", session, tenant }, [ch.port2]);
+      // A hand-off that names a tenant has its own type: an open Console that predates it
+      // ignores the type, and the tap then opens a window that carries the tenant instead.
+      win.postMessage(tenant ? { type: "af-open-tenant-session", session, tenant } : { type: "af-open-session", session }, [ch.port2]);
     } catch {
       clearTimeout(timer);
       resolve(false);
