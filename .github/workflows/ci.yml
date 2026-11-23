@@ -100,6 +100,15 @@ jobs:
           ./scripts/secret-scan-test.sh
           ./scripts/secret-sweep-issue-test.sh
           ./scripts/secret-sweep-test.sh
+      # The hooks' gitleaks half (.githooks/pre-commit, pre-push). The script exits 0 with
+      # "SKIP" when gitleaks is not on PATH, and the install action puts it in /tmp, so a
+      # missing PATH entry would leave this step green while testing nothing: the last
+      # output line has to be "ok". No path filter: this job runs on every event.
+      - name: hook controls
+        run: |
+          out="$(PATH="/tmp:$PATH" ./scripts/gitleaks-hooks-test.sh)"
+          echo "$out"
+          [ "$(printf '%s\n' "$out" | tail -n 1)" = ok ]
       - name: scan history
         env:
           SCOPE: ${{ github.event_name == 'pull_request' && 'pr' || 'all' }}
