@@ -33,13 +33,14 @@ type Turn struct {
 	TS string `json:"ts"`
 }
 
-// TurnsBefore is turns up to the first user turn of the session itself (not a subagent's) written
-// after pin: what a person started after the run ended is not the run's, nor is anything after it.
-// cut reports whether such a turn was found. A turn whose time is missing or does not parse is
-// kept, as nothing tells it apart: such a kind reads as it did without the pin.
+// TurnsBefore is turns up to the first turn of the session itself (not a subagent's) written
+// after pin: every turn of the run was written before its end, so what was written after it is a
+// later turn's, whether its user turn is in these turns or on a page before them. cut reports
+// whether such a turn was found. A turn whose time is missing or does not parse is kept, as
+// nothing tells it apart: such a kind reads as it did without the pin.
 func TurnsBefore(turns []Turn, pin time.Time) (kept []Turn, cut bool) {
 	for i, t := range turns {
-		if t.Role != "user" || t.Sidechain {
+		if t.Sidechain {
 			continue
 		}
 		if at, err := time.Parse(time.RFC3339Nano, t.TS); err == nil && at.After(pin) {

@@ -170,8 +170,9 @@ func TestLastAnswer(t *testing.T) {
 	}
 }
 
-// The pin drops everything from the first user turn of the session itself stamped after it; a
-// subagent's turn, an assistant turn and a turn without a time never cut.
+// The pin drops everything from the first turn of the session itself stamped after it, a user's or
+// an assistant's (a page that starts inside a later turn); a subagent's turn and a turn without a
+// time never cut.
 func TestTurnsBefore(t *testing.T) {
 	pin := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
 	at := func(d time.Duration) string { return pin.Add(d).Format(time.RFC3339Nano) }
@@ -190,7 +191,7 @@ func TestTurnsBefore(t *testing.T) {
 		{"another zone, same instant after", []Turn{{Role: "user", TS: pin.Add(time.Second).In(time.FixedZone("JST", 9*3600)).Format(time.RFC3339), Text: "more"}}, 2, true},
 		{"a user turn at the pin itself", []Turn{{Role: "user", TS: at(0), Text: "same"}}, 3, false},
 		{"a subagent's user turn", []Turn{{Role: "user", Sidechain: true, TS: at(time.Minute)}}, 3, false},
-		{"an assistant turn after the pin", []Turn{{Role: "assistant", TS: at(time.Minute), Text: "late line"}}, 3, false},
+		{"a later turn's assistant lines alone", []Turn{{Role: "assistant", TS: at(time.Minute), Text: "Done: other work"}}, 2, true},
 		{"a user turn without a time", []Turn{{Role: "user", Text: "more"}, {Role: "user", TS: "yesterday", Text: "more"}}, 4, false},
 	} {
 		turns := append(append([]Turn{}, run...), c.tail...)
