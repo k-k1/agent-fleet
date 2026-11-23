@@ -178,7 +178,7 @@ func TestParseFileLevelErrors(t *testing.T) {
 
 func TestParseRefusesCredentials(t *testing.T) {
 	for _, v := range []string{
-		"AKIAIOSFODNN7EXAMPLQ",
+		"AKIA" + "IOSFODNN7EXAMPLQ",
 		"ghp_" + strings.Repeat("a", 36),
 		"call it with sk-ant-" + strings.Repeat("b", 30),
 		`password: "correcthorsebattery42"`,
