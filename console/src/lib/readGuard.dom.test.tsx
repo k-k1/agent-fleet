@@ -1,7 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act, StrictMode, Suspense, startTransition } from "react";
+import {
+  act,
+  StrictMode,
+  Suspense,
+  startTransition,
+  useLayoutEffect,
+} from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { useGuardedPoll, type ReadTicket } from "./readGuard.ts";
+import {
+  useGuardedPoll,
+  useReadGuard,
+  type ReadGuard,
+  type ReadTicket,
+} from "./readGuard.ts";
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -104,5 +115,37 @@ describe("useGuardedPoll", () => {
     act(() => void vi.advanceTimersByTime(1000));
     expect(reads.map((r) => r.subject)).toEqual(["a", "a"]);
     expect(reads[0].t.current()).toBe(true);
+  });
+});
+
+describe("useReadGuard", () => {
+  it("is live again after StrictMode's cleanup and re-setup, and dead after a real unmount", () => {
+    let guard: ReadGuard | undefined;
+    const setupTickets: ReadTicket[] = [];
+    function Owner() {
+      const g = useReadGuard();
+      guard = g;
+      useLayoutEffect(() => {
+        setupTickets.push(g.begin());
+      }, [g]);
+      return null;
+    }
+    const root = createRoot(document.createElement("div"));
+    act(() =>
+      root.render(
+        <StrictMode>
+          <Owner />
+        </StrictMode>,
+      ),
+    );
+    expect(setupTickets).toHaveLength(2);
+    expect(setupTickets[0].current()).toBe(false);
+    expect(setupTickets[1].current()).toBe(true);
+    const later = guard!.begin(); // e.g. a button pressed after the commit
+    expect(later.current()).toBe(true);
+    expect(later.signal.aborted).toBe(false);
+    act(() => root.unmount());
+    expect(later.current()).toBe(false);
+    expect(guard!.begin().current()).toBe(false);
   });
 });

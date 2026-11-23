@@ -33,7 +33,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { isBusySession } from "../files/sessionRefresh.ts";
 import { REVALIDATE_GAP_MS, WORKING_TICK_MS } from "../files/refreshPolicy.ts";
-import { useReadGuard } from "../../lib/readGuard.ts";
+import { useReadGuard, type ReadTicket } from "../../lib/readGuard.ts";
 import { useInterval } from "../../lib/useInterval.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
@@ -306,20 +306,22 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
    * settles the read and touches nothing. Only the first read moves `stale` and `failed`: a
    * background read that fails while the first one is still out says nothing about it.
    *
-   * Returns true when settled, which is what the mount effect's backoff wants.
+   * Returns the read's ticket when it should be retried, null when settled: the mount effect's
+   * backoff retries only while that ticket is still fresh, so a later read that lands while the
+   * retry is waiting ends the retries.
    */
   const load = useCallback(
-    async (initial: boolean): Promise<boolean> => {
+    async (initial: boolean): Promise<ReadTicket | null> => {
       const tk = guard.begin(key);
-      if (!tk.current()) return true;
+      if (!tk.current()) return null;
       // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
       // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
       // it the first look at a fresh folder trickles in card by card.
       const r = await fetchGalleryListing(path, thumbEdge(tileRef.current), () => tk.land(), flat);
       // A listing was claimed inside fetchGalleryListing; a newer read may have landed since.
-      if (!tk.fresh()) return true;
+      if (!tk.fresh()) return null;
       if (!r.ok) {
-        if (!initial) return !r.retry;
+        if (!initial) return r.retry ? tk : null;
         if (r.hard) {
           tk.land(); // "gone" is newer than any listing begun before it
           forgetGallery(key);
@@ -331,7 +333,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
           setFailed(true);
         }
         if (!r.retry) setStale(false);
-        return !r.retry;
+        return r.retry ? tk : null;
       }
       const next = r.entries;
       const names = new Set(next.map((e) => e?.name).filter(Boolean) as string[]);
@@ -354,7 +356,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
           freshTimer.current = window.setTimeout(() => setFresh(new Set()), FRESH_MS);
         }
       }
-      return true;
+      return null;
     },
     [path, flat, key, guard],
   );
@@ -368,9 +370,11 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
     let tries = 0;
     const run = () => {
       load(true)
-        .then((done) => {
-          if (stopped || done) return;
-          timer = window.setTimeout(run, Math.min(5000, 700 * 2 ** Math.min(tries++, 3)));
+        .then((failed) => {
+          if (stopped || !failed) return;
+          timer = window.setTimeout(() => {
+            if (failed.fresh()) run();
+          }, Math.min(5000, 700 * 2 ** Math.min(tries++, 3)));
         })
         .catch(() => {});
     };

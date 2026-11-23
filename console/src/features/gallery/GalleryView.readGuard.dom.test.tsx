@@ -245,4 +245,23 @@ describe("GalleryView failures around a cached folder's first read", () => {
     expect(cached("b")).toEqual(["b1.png", "b2.png"]);
     expect(failedState()).toBe(false);
   });
+
+  it("does not retry a first read whose failure was overtaken by a tick landing during the backoff", async () => {
+    writeGallery("b", listing("b1.png").entries);
+    await switchAtTick("b");
+    await answer(1, { error: { code: "http_502", message: "bad gateway" } }); // backoff armed
+    await answer(2, listing("b1.png", "b2.png"));
+    await act(async () => void vi.advanceTimersByTime(5000));
+    expect(pending).toHaveLength(3);
+    expect(names()).toEqual(["b1.png", "b2.png"]);
+  });
+
+  it("still retries a first read that failed while nothing newer has landed", async () => {
+    await show("b");
+    await answer(1, { error: { code: "http_502", message: "bad gateway" } });
+    await act(async () => void vi.advanceTimersByTime(700));
+    expect(pending).toHaveLength(3);
+    await answer(2, listing("b1.png"));
+    expect(names()).toEqual(["b1.png"]);
+  });
 });

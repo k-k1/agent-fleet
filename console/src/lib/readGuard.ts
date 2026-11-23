@@ -75,11 +75,23 @@ export class ReadGuard {
   }
 }
 
-/** A ReadGuard for the component's lifetime. Unmount (a layout cleanup, so before any passive
- *  cleanup or timer can run) leaves it on a subject nothing matches. */
+/**
+ * A ReadGuard for the component's lifetime. Unmount (a layout cleanup, so before any passive
+ * cleanup or timer can run) leaves it on a subject nothing matches; the setup re-arms it, since
+ * StrictMode and a Suspense boundary that hides and re-shows the tree run the cleanup on a
+ * component that stays mounted.
+ *
+ * One-off reads (a retry button, an event) take their ticket when they begin, before the first
+ * await, with the subject their callback was made for, and check it after every await. A
+ * ticket taken later, after a confirm dialog say, belongs to whatever subject is current by
+ * then: pass the subject so a callback that outlived its own gets a dead ticket.
+ */
 export function useReadGuard(): ReadGuard {
   const [guard] = useState(() => new ReadGuard());
-  useLayoutEffect(() => () => guard.reset(GONE), [guard]);
+  useLayoutEffect(() => {
+    guard.reset();
+    return () => guard.reset(GONE);
+  }, [guard]);
   return guard;
 }
 
@@ -92,7 +104,9 @@ export function useReadGuard(): ReadGuard {
  * The callback, the on/off state and the reset are all taken at commit (layout phase), so a
  * tick never runs a render that was not committed, and the previous subject's reads are dead
  * from the commit that replaced it.
- * Returns the guard so one-off reads (a retry button, an event) can take tickets from it too.
+ * Returns the guard so one-off reads can take tickets from it too (see useReadGuard). Its
+ * subject is unnamed, so a one-off read must take its ticket before its first await: a ticket
+ * begun later cannot tell that the subject it was meant for has gone.
  */
 export function useGuardedPoll(
   read: (t: ReadTicket) => void,
