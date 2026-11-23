@@ -22,15 +22,33 @@ var (
 	ciGitleaksStep = regexp.MustCompile(`(?s)- name: install gitleaks[^\n]*\n(.*?)(?:\n\s*- |\n\S|\z)`)
 	// A step line that uses the action, exactly (not a comment, not a longer path).
 	gitleaksActionStep = regexp.MustCompile(`(?m)^\s*(?:- )?uses: \./\.github/actions/install-gitleaks\s*$`)
-	// ci.yml's secret-scan job, up to the next job (a two-space key) or the end.
-	ciSecretScanJob   = regexp.MustCompile(`(?s)\n  secret-scan:\n(.*?)(?:\n  [A-Za-z0-9_-]+:\n|\z)`)
-	ciGitleaksVersion = regexp.MustCompile(`(?m)^\s+VERSION:\s*(\S+)\s*$`)
+	ciGitleaksVersion  = regexp.MustCompile(`(?m)^\s+VERSION:\s*(\S+)\s*$`)
 )
 
 const (
 	gitleaksActionUse  = "./.github/actions/install-gitleaks"
 	gitleaksActionFile = ".github/actions/install-gitleaks/action.yml"
 )
+
+// workflowJob returns the body of job name in a workflow, up to the next job header (a
+// two-space key, with or without a trailing comment) or the end; ok is false when it is absent.
+func workflowJob(wf, name string) (body string, ok bool) {
+	start := regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(name) + `:[ \t]*(?:#[^\n]*)?\n`).FindStringIndex(wf)
+	if start == nil {
+		return "", false
+	}
+	rest := wf[start[1]:]
+	if next := regexp.MustCompile(`(?m)^  [A-Za-z0-9_-]+:[ \t]*(?:#[^\n]*)?$`).FindStringIndex(rest); next != nil {
+		rest = rest[:next[0]]
+	}
+	return rest, true
+}
+
+// usesGitleaksAction reports whether job name of wf has a step that uses the action.
+func usesGitleaksAction(wf, name string) bool {
+	body, ok := workflowJob(wf, name)
+	return ok && gitleaksActionStep.MatchString(body)
+}
 
 func gitleaksPins(dockerfile, ci string) (docker, workflow string) {
 	if m := dockerGitleaksARG.FindStringSubmatch(dockerfile); m != nil {
@@ -55,15 +73,17 @@ func TestGitleaksPinMatchesCI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if job := ciSecretScanJob.FindStringSubmatch(string(ci)); job == nil || !gitleaksActionStep.MatchString(job[1]) {
+	if !usesGitleaksAction(string(ci), "secret-scan") {
 		t.Fatalf(".github/workflows/ci.yml: the secret-scan job no longer installs gitleaks with `uses: %s`; point this test at where the pin is now", gitleaksActionUse)
 	}
 	sweep, err := os.ReadFile("../../.github/workflows/secret-sweep.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := len(gitleaksActionStep.FindAllString(string(sweep), -1)); n != 2 {
-		t.Fatalf(".github/workflows/secret-sweep.yml: %d steps use %s, want 2 (sweep-main and sweep-branch)", n, gitleaksActionUse)
+	for _, job := range []string{"sweep-main", "sweep-branch"} {
+		if !usesGitleaksAction(string(sweep), job) {
+			t.Fatalf(".github/workflows/secret-sweep.yml: job %s does not install gitleaks with `uses: %s`", job, gitleaksActionUse)
+		}
 	}
 	action, err := os.ReadFile("../../" + gitleaksActionFile)
 	if err != nil {
@@ -112,6 +132,14 @@ func TestGitleaksPinsParse(t *testing.T) {
 		if got := gitleaksActionStep.MatchString(in); got != want {
 			t.Errorf("action guard on %q = %v, want %v", in, got, want)
 		}
+	}
+	// The job guard sees only its own job: the next header ends it, trailing comment or not.
+	const jobs = "jobs:\n  secret-scan:\n    steps:\n      - run: x\n  other: # comment\n    steps:\n      - uses: ./.github/actions/install-gitleaks\n"
+	if usesGitleaksAction(jobs, "secret-scan") {
+		t.Error("credited secret-scan with the next job's use of the action")
+	}
+	if !usesGitleaksAction(jobs, "other") || usesGitleaksAction(jobs, "missing") {
+		t.Error("job guard: wanted other=true, missing=false")
 	}
 	// A VERSION that moved out of the step must not be picked up from a later step.
 	const moved = "      - name: install gitleaks (x)\n        run: |\n          x\n      - name: other\n        env:\n          VERSION: 8.30.1\n"
