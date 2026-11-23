@@ -73,12 +73,24 @@ for spec in "0:" "42:$FINDING" "3:"; do
   touched && fail "SYNC_ISSUE=false, scan exit $code must not touch the issue"
 done
 
-# Routing: exactly refs/heads/main gets the issue-writing job, nothing else, whatever its case.
-route() { "$HERE/secret-sweep-route.sh" "$1"; }
+# Routing: runs the workflow's own route step (the lines between its markers) with a given
+# GITHUB_REF. Exactly refs/heads/main gets the issue-writing job, nothing else, whatever its case.
+wf="$HERE/../.github/workflows/secret-sweep.yml"
+sed -n '/# route-begin/,/# route-end/p' "$wf" | sed 's/^ *//' >"$work/route.sh"
+grep -q 'GITHUB_OUTPUT' "$work/route.sh" || fail "the route step was not found in secret-sweep.yml"
+route() {
+  : >"$work/gh-out"
+  GITHUB_REF="$1" GITHUB_OUTPUT="$work/gh-out" bash -e "$work/route.sh" || return 1
+  cat "$work/gh-out"
+}
 [ "$(route refs/heads/main)" = is_main=true ] || fail "refs/heads/main must route to the main job"
 for ref in refs/heads/Main refs/heads/MAIN refs/heads/main2 refs/heads/feature/main refs/tags/main refs/heads/main/x ""; do
-  [ "$(route "$ref")" = is_main=false ] || fail "'$ref' must not route to the main job"
+  [ "$(route "$ref")" = is_main=false ] || fail "'$ref' must route to the branch job"
 done
+# Both sweep jobs must test for an explicit value of the route's output, so a route that
+# produced nothing (or failed) selects neither of them.
+grep -q "if: needs.route.outputs.is_main == 'true'" "$wf" || fail "sweep-main must require is_main == 'true'"
+grep -q "if: needs.route.outputs.is_main == 'false'" "$wf" || fail "sweep-branch must require is_main == 'false'"
 
 [ "$FAILED" = 0 ] && echo "secret-sweep controls ok"
 exit "$FAILED"
