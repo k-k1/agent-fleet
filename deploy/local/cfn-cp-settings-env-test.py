@@ -183,11 +183,15 @@ def check(tpl, size, patterns):
     for switch in ("off", "on"):
         for r in range(len(names) + 1):
             for given in itertools.combinations(names, r):
-                if switch == "on" and "WebPushSubject" not in given:
-                    continue  # refused by the Rule (checked below)
                 params = {"WebPush": switch}
                 params.update({n: "x-" + n for n in given})
                 ev = dek.Ev(tpl, params)
+                # Only "on without a contact" is refused, whatever else is set.
+                refused = switch == "on" and "WebPushSubject" not in given
+                if ev.rules_ok() == refused:
+                    fails.append("WebPush=%s %s: the Rule %s it" % (switch, list(given), "allows" if refused else "refuses"))
+                if refused:
+                    continue
                 env, sec = ev.cp_env_names(), secrets(ev)
                 tag = "WebPush=%s %s" % (switch, list(given))
                 if key_var in env:
@@ -307,6 +311,11 @@ def main():
             if "!If" in e and e["!If"][0] == "WebPushOn":
                 e["!If"][1]["ValueFrom"] = e["!If"][1]["ValueFrom"]["!Sub"]
 
+    def knob_stands_in_for_contact(t):
+        t["Rules"]["WebPushNeedsSubject"]["Assertions"][0]["Assert"] = {"!Or": [
+            {"!Not": [{"!Equals": [{"!Ref": "WebPushSubject"}, ""]}]},
+            {"!Not": [{"!Equals": [{"!Ref": "WebPushEndpointHosts"}, ""]}]}]}
+
     def no_subject_rule(t):
         t["Rules"].pop("WebPushNeedsSubject")
 
@@ -328,6 +337,7 @@ def main():
         "Web Push knob set while the switch is off": gated_without_switch,
         "Web Push always on": push_always_on,
         "Web Push without a contact is allowed": no_subject_rule,
+        "a knob stands in for the contact in the Rule": knob_stands_in_for_contact,
         "contact rule applies with the switch off": rule_always,
         "endpoint hosts dropped without a drain interval": endpoint_hosts_needs_drain,
         "key injected for a knob alone": key_for_hosts_alone,
