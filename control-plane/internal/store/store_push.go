@@ -43,11 +43,18 @@ type PushSubscriptionStore interface {
 	// GetPushOffKinds returns the notification kinds the member turned off for push (none by default).
 	GetPushOffKinds(ctx context.Context, membershipID string) ([]string, error)
 	PutPushOffKinds(ctx context.Context, membershipID string, kinds []string) error
-	// PushDeliveryContext answers, for one send: whether the membership is still active, and
-	// whether its tenant allows a question's text in the push (default false).
-	PushDeliveryContext(ctx context.Context, membershipID string) (active, includeText bool, err error)
+	// PushDeliveryContext answers, for one send: whether the membership is still active, whether
+	// its tenant allows a question's text in the push (default false), and the tenant's slug (the
+	// name the Console selects a tenant by). An inactive or unknown membership is the zero value.
+	PushDeliveryContext(ctx context.Context, membershipID string) (PushDelivery, error)
 	GetTenantPushIncludeText(ctx context.Context, tenantID string) (bool, error)
 	PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error
+}
+
+// PushDelivery is what one push send needs to know about the receiving membership.
+type PushDelivery struct {
+	Active, IncludeText bool
+	TenantSlug          string
 }
 
 const pushCols = `SELECT id, membership_id, endpoint, p256dh, auth, user_agent, created_at, last_ok_at FROM push_subscription`
@@ -181,18 +188,20 @@ func (s *SQL) PutPushOffKinds(ctx context.Context, membershipID string, kinds []
 	return err
 }
 
-func (s *SQL) PushDeliveryContext(ctx context.Context, membershipID string) (active, includeText bool, err error) {
+func (s *SQL) PushDeliveryContext(ctx context.Context, membershipID string) (PushDelivery, error) {
 	var inc sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(t.include_text, 0) FROM membership m
+	var slug string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(t.include_text, 0), COALESCE(tn.slug, '') FROM membership m
+		LEFT JOIN tenant tn ON tn.id = m.tenant_id
 		LEFT JOIN tenant_push_setting t ON t.tenant_id = m.tenant_id
-		WHERE m.id=? AND m.status='active'`, membershipID).Scan(&inc)
+		WHERE m.id=? AND m.status='active'`, membershipID).Scan(&inc, &slug)
 	if err == sql.ErrNoRows {
-		return false, false, nil
+		return PushDelivery{}, nil
 	}
 	if err != nil {
-		return false, false, err
+		return PushDelivery{}, err
 	}
-	return true, inc.Int64 != 0, nil
+	return PushDelivery{Active: true, IncludeText: inc.Int64 != 0, TenantSlug: slug}, nil
 }
 
 func (s *SQL) GetTenantPushIncludeText(ctx context.Context, tenantID string) (bool, error) {
