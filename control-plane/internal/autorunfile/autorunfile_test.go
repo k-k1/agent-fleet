@@ -339,24 +339,31 @@ func TestParseNeverEchoesAPastedCredential(t *testing.T) {
 	}
 }
 
-// One long string named by an alias from many settings maps is scanned once, and a key cannot be
-// an alias at all.
-func TestParseScansAnAliasedValueOnce(t *testing.T) {
+// A value an alias names from many settings maps is read once, whatever its type, and a key
+// cannot be an alias at all.
+func TestParseReadsAnAliasedValueOnce(t *testing.T) {
 	var b strings.Builder
-	b.WriteString("version: 1\nlong: &long '" + strings.Repeat("y", 20000) + "'\ncategories:\n")
-	for i := 0; i < 500; i++ {
-		b.WriteString("  c" + string(rune('A'+i%26)) + string(rune('A'+i/26)) + ":\n    instruction: *long\n")
+	b.WriteString("version: 1\nlong: &long '" + strings.Repeat("y", 10000) + "'\n" +
+		"num: &num 1" + strings.Repeat("0", 2000) + "\npath: &path " + strings.Repeat("a/", 3000) + "x.md\ncategories:\n")
+	for i := 0; i < 300; i++ {
+		b.WriteString("  c" + string(rune('A'+i%26)) + string(rune('A'+i/26)) + ":\n    instruction: *long\n    spend_cap_usd: *num\n")
+		b.WriteString("  p" + string(rune('A'+i%26)) + string(rune('A'+i/26)) + ":\n    instruction_file: *path\n")
 	}
-	calls := 0
-	saved := credentialScan
-	credentialScan = func(s string) string { calls++; return saved(s) }
-	t.Cleanup(func() { credentialScan = saved })
+	reads := 0
+	saved := valueRead
+	valueRead = func() { reads++ }
+	t.Cleanup(func() { valueRead = saved })
 	f := Parse([]byte(b.String()))
-	if len(f.Categories) != 500 {
+	if len(f.Categories) != 600 {
 		t.Fatalf("%d categories, errors %+v", len(f.Categories), f.Errors)
 	}
-	if calls > 2 {
-		t.Fatalf("the aliased value was scanned %d times", calls)
+	if reads != 3 {
+		t.Fatalf("%d value reads for three aliased values", reads)
+	}
+	// The number is too large for a float: the same error on every category that names it.
+	if e := f.Categories["cAA"]; e == nil || !hasIssue(e.Errors, 3, "spend_cap_usd", "number") ||
+		len(f.Categories["pAA"].Errors) != 0 || f.Categories["pAA"].Values["instruction_file"].Str == "" {
+		t.Fatalf("aliased values not read: %d errors", len(f.Categories["cAA"].Errors))
 	}
 
 	k := Parse([]byte("version: 1\ncategories:\n  q:\n    &k max_active: 1\n    *k : 2\n"))

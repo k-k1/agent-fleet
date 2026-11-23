@@ -407,6 +407,10 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 		writeAPIErr(w, aerr)
 		return
 	}
+	// The Agent shows host and path only; a token pasted into the path is not passed on either.
+	if autorunfile.LooksLikeCredential(file.Remote) {
+		file.Remote = memoRepoRemoteHidden
+	}
 	out := memoRepoSettingsWire{CategoryID: c.ID, Repo: c.Repo, Category: c.Name, Path: autorunfile.Path,
 		Remote: file.Remote, Branch: file.Branch, Commit: file.Commit, Found: file.Found, Queue: hasQueue,
 		Errors: []autorunfile.Issue{}, Warnings: []autorunfile.Issue{}, Diffs: []memoRepoDiff{}}
@@ -436,6 +440,9 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 	}
 	writeJSON(w, http.StatusOK, out)
 }
+
+// memoRepoRemoteHidden is the Agent's own text for a remote it does not show.
+const memoRepoRemoteHidden = "(remote not shown)"
 
 // memoRepoWireMax bounds the Agent's answer: the file at its largest, every byte escaped to six
 // in JSON (\u003c), and the envelope.

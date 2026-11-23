@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"bytes"
 	"context"
 	"log"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
@@ -74,22 +76,45 @@ var autorunErrText = map[string]string{
 	"no_default_branch": "origin did not name its default branch",
 	"fetch_failed":      "fetching origin's default branch failed",
 	"origin_moved":      "origin's default branch moved while it was read; try again",
+	"origin_changed":    "the working copy's origin changed while it was read; try again",
 	"read_failed":       "the settings file could not be read from the fetched commit",
 	"timeout":           "reading the settings file took too long",
 	"file_not_regular":  AutorunFilePath + " on the default branch is not a regular file",
 	"file_too_large":    AutorunFilePath + " is larger than " + strconv.Itoa(AutorunFileMaxBytes) + " bytes",
 }
 
-// autorunGit runs one git step under the read's deadline. On the deadline the process is killed
-// and, if a child it started still holds the pipes, the wait ends a moment later anyway.
+// autorunGit runs one git step under the read's deadline, in its own process group: on the
+// deadline the whole group is killed, so a transport helper or a lazy fetch git started does not
+// outlive the request.
 func autorunGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := CmdContext(ctx, dir, args...)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	cmd := Cmd(dir, args...)
 	cmd.Env = append(cmd.Env, autorunEnv...)
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = 2 * time.Second
-	return cmd.Output()
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err := <-done:
+		return out.Bytes(), err
+	case <-ctx.Done():
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		<-done
+		return nil, ctx.Err()
+	}
 }
 
-// readAutorunFile answers the file, or the code of what went wrong.
+// readAutorunFile answers the file, or the code of what went wrong. The network steps go through
+// the named remote, so its own settings (proxy, upload-pack, URL rewriting) apply once, as for any
+// fetch; origin's URL is read before and after them, and a change in between fails the read
+// rather than show one repository's settings under another's name.
 func readAutorunFile(ctx context.Context, dir string) (AutorunFile, string) {
 	out := AutorunFile{Path: AutorunFilePath}
 	fail := func(code string) (AutorunFile, string) {
@@ -104,14 +129,17 @@ func readAutorunFile(ctx context.Context, dir string) (AutorunFile, string) {
 		return fail("no_origin")
 	}
 	out.Remote = displayRemote(remote)
-	branch, sha, ok := remoteDefaultHead(ctx, dir, remote)
+	branch, sha, ok := remoteDefaultHead(ctx, dir)
 	if !ok {
 		return fail("no_default_branch")
 	}
 	out.Branch, out.Commit = branch, sha
-	if _, err := autorunGit(ctx, dir, "fetch", "--no-tags", "--no-recurse-submodules", "--", remote,
+	if _, err := autorunGit(ctx, dir, "fetch", "--no-tags", "--no-recurse-submodules", "origin",
 		"+refs/heads/"+branch+":refs/remotes/origin/"+branch); err != nil {
 		return fail("fetch_failed")
+	}
+	if again, err := autorunGit(ctx, dir, "remote", "get-url", "origin"); err != nil || strings.TrimSpace(string(again)) != remote {
+		return fail("origin_changed")
 	}
 	// The commit the remote named, not whatever the tracking ref says now. Missing means the
 	// branch moved between the two calls past that commit (a force push).
@@ -151,16 +179,16 @@ func readAutorunFile(ctx context.Context, dir string) (AutorunFile, string) {
 	return out, ""
 }
 
-// remoteDefaultHead asks the remote which branch its HEAD names and the commit it points at.
-func remoteDefaultHead(ctx context.Context, dir, remote string) (branch, sha string, ok bool) {
-	b, err := autorunGit(ctx, dir, "ls-remote", "--symref", "--", remote, "HEAD")
+// remoteDefaultHead asks origin which branch its HEAD names and the commit it points at.
+func remoteDefaultHead(ctx context.Context, dir string) (branch, sha string, ok bool) {
+	b, err := autorunGit(ctx, dir, "ls-remote", "--symref", "origin", "HEAD")
 	if err != nil {
 		return "", "", false
 	}
 	for _, ln := range strings.Split(string(b), "\n") {
 		if rest, found := strings.CutPrefix(ln, "ref: refs/heads/"); found {
 			name, _, _ := strings.Cut(rest, "\t")
-			if name != "" && Cmd(dir, "check-ref-format", "--branch", name).Run() == nil {
+			if _, err := autorunGit(ctx, dir, "check-ref-format", "--branch", name); name != "" && err == nil {
 				branch = name
 			}
 		} else if id, ref, found := strings.Cut(ln, "\t"); found && ref == "HEAD" && autorunSHARe.MatchString(id) {
@@ -179,10 +207,43 @@ var (
 	remoteHidden = "(remote not shown)"
 )
 
+var (
+	remoteTokenRe = regexp.MustCompile(`^(gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-ant-|sk-proj-|ATBB)[A-Za-z0-9_-]{8,}`)
+	remoteRunRe   = regexp.MustCompile(`^[A-Za-z0-9_]{32,}$`)
+	digitRe       = regexp.MustCompile(`[0-9]`)
+	letterRe      = regexp.MustCompile(`[A-Za-z]`)
+)
+
+// remoteTokenLike says whether a path segment looks like a token rather than a name: a known
+// token prefix, or, on a network remote, a long run that mixes letters and digits (a name rarely
+// does; a local directory, a temporary one say, often does and carries no credential).
+func remoteTokenLike(seg string, network bool) bool {
+	return remoteTokenRe.MatchString(seg) ||
+		(network && remoteRunRe.MatchString(seg) && digitRe.MatchString(seg) && letterRe.MatchString(seg))
+}
+
 // displayRemote names a remote by host and path only: what the approval card needs, and nothing
-// a URL can carry besides (user, password, query, fragment). A form it cannot take apart safely is
-// not shown.
+// a URL can carry besides (user, password, query, fragment). A form it cannot take apart safely,
+// percent-encoding included (it would show another path than the one fetched), or a path segment
+// that looks like a token, is not shown.
 func displayRemote(raw string) string {
+	d := displayRemoteForm(raw)
+	if d == remoteHidden {
+		return d
+	}
+	network := !strings.HasPrefix(d, "/") && !strings.HasPrefix(d, "file://")
+	for _, seg := range strings.FieldsFunc(d, func(r rune) bool { return r == '/' || r == ':' }) {
+		if remoteTokenLike(seg, network) {
+			return remoteHidden
+		}
+	}
+	return d
+}
+
+func displayRemoteForm(raw string) string {
+	if strings.Contains(raw, "%") {
+		return remoteHidden
+	}
 	if m := scpRemoteRe.FindStringSubmatch(raw); m != nil && !strings.Contains(raw, "://") {
 		return m[1] + ":" + m[2]
 	}

@@ -221,7 +221,7 @@ func Parse(b []byte) File {
 	// An alias makes many categories share one settings node. Each node is read once and its
 	// result shared, so a small file of aliases cannot multiply the work or the findings.
 	parsed := map[*yaml.Node]*Entry{}
-	p := &parser{cred: map[*yaml.Node]string{}}
+	p := &parser{values: map[valueKey]valueOutcome{}}
 	for i := 0; i+1 < len(categories.Content); i += 2 {
 		k, v := categories.Content[i], deref(categories.Content[i+1])
 		name, msg := mapKey(k)
@@ -272,18 +272,42 @@ func mapKey(k *yaml.Node) (string, string) {
 
 // parser holds what one Parse shares between entries.
 type parser struct {
-	// cred is the credential rule each string node matched ("" for none). An alias can name one
-	// long string from many places; it is scanned once.
-	cred map[*yaml.Node]string
+	// values is each (value node, key) read once: an alias can name one long value from many
+	// places, and its decoding, credential scan and path check must not run per reference.
+	values map[valueKey]valueOutcome
 }
 
-func (p *parser) credOf(n *yaml.Node) string {
-	r, ok := p.cred[n]
-	if !ok {
-		r = credentialScan(n.Value)
-		p.cred[n] = r
+type valueKey struct {
+	n   *yaml.Node
+	key string
+}
+
+// valueOutcome is a value as read for a key, or why it cannot be used.
+type valueOutcome struct {
+	val Value
+	bad string
+}
+
+// valueRead is called on each value read that is not shared; a test counts them.
+var valueRead = func() {}
+
+func (p *parser) value(key string, typ Type, n *yaml.Node) valueOutcome {
+	vk := valueKey{n, key}
+	if o, ok := p.values[vk]; ok {
+		return o
 	}
-	return r
+	valueRead()
+	val, msg := scalar(key, typ, n)
+	o := valueOutcome{val: val, bad: msg}
+	if msg == "" && typ == String {
+		if rule := credentialRule(val.Str); rule != "" {
+			o.bad = fmt.Sprintf("%s looks like a credential (%s): the file holds names only, never a secret", key, rule)
+		} else if key == "instruction_file" {
+			o.bad = checkRepoPath(val.Str)
+		}
+	}
+	p.values[vk] = o
+	return o
 }
 
 // parseEntry reads one category's settings node; the caller sets Name and Line.
@@ -322,26 +346,17 @@ func (p *parser) parseEntry(v *yaml.Node) *Entry {
 			bad(k.Line, key, "unknown key %q", key)
 			continue
 		}
-		val, err := scalar(key, typ, n)
-		if err != "" {
-			bad(n.Line, key, "%s", err)
+		o := p.value(key, typ, n)
+		if o.bad != "" {
+			bad(n.Line, key, "%s", o.bad)
 			continue
 		}
+		val := o.val
 		val.Line = k.Line
-		if rule := p.credOf(n); typ == String && rule != "" {
-			bad(n.Line, key, "%s looks like a credential (%s): the file holds names only, never a secret", key, rule)
-			continue
-		}
 		if c, ok := consoleOnlyValue[key]; ok && val.Bool == c.value {
 			e.Warnings = append(e.Warnings, Issue{Line: k.Line, Key: key,
 				Reason: fmt.Sprintf("%s: %t is set in the Console only (%s); the file's value is not applied", key, c.value, c.reason)})
 			continue
-		}
-		if key == "instruction_file" {
-			if msg := checkRepoPath(val.Str); msg != "" {
-				bad(n.Line, key, "%s", msg)
-				continue
-			}
 		}
 		e.Values[key] = val
 	}
@@ -457,8 +472,8 @@ var credentialRules = []struct {
 	{"secret-assignment", regexp.MustCompile(`(?i)\b(?:api[_\-]?key|secret[_\-]?key|access[_\-]?token|auth[_\-]?token|client[_\-]?secret|password|passwd)\b\s*[:=]\s*["'` + "`" + `]([^"'` + "`" + `\s]{16,})["'` + "`" + `]`)},
 }
 
-// credentialScan is credentialRule as the parser calls it for values; a test counts the calls.
-var credentialScan = credentialRule
+// LooksLikeCredential says whether s matches one of the credential shapes this file refuses.
+func LooksLikeCredential(s string) bool { return credentialRule(s) != "" }
 
 // credentialRule names the first rule s matches, "" for none.
 func credentialRule(s string) string {

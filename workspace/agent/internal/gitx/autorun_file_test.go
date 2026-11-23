@@ -112,17 +112,22 @@ func TestAutorunFileIgnoresRefsTheCloneRewrites(t *testing.T) {
 
 func TestDisplayRemote(t *testing.T) {
 	for in, want := range map[string]string{
-		"https://user:tok@github.invalid/o/r.git":       "https://github.invalid/o/r.git",
-		"https://github.invalid/o/r.git?token=abc#frag": "https://github.invalid/o/r.git",
-		"ssh://git@github.invalid:22/o/r.git":           "ssh://github.invalid:22/o/r.git",
-		"git@github.invalid:o/r.git":                    "github.invalid:o/r.git",
-		"/srv/git/r.git":                                "/srv/git/r.git",
-		"file:///srv/git/r.git":                         "file:///srv/git/r.git",
-		"https://github.invalid/o/r%20x.git":            remoteHidden,
-		"ext::sh -c 'curl secret'":                      remoteHidden,
-		"https://github.invalid/o/r.git;tok=abc":        remoteHidden,
-		"/srv/git/r.git?x":                              remoteHidden,
-		"weird remote with spaces":                      remoteHidden,
+		"https://user:tok@github.invalid/o/r.git":                                  "https://github.invalid/o/r.git",
+		"https://github.invalid/o/r.git?token=abc#frag":                            "https://github.invalid/o/r.git",
+		"ssh://git@github.invalid:22/o/r.git":                                      "ssh://github.invalid:22/o/r.git",
+		"git@github.invalid:o/r.git":                                               "github.invalid:o/r.git",
+		"/srv/git/r.git":                                                           "/srv/git/r.git",
+		"file:///srv/git/r.git":                                                    "file:///srv/git/r.git",
+		"https://github.invalid/o/r%20x.git":                                       remoteHidden,
+		"ext::sh -c 'curl secret'":                                                 remoteHidden,
+		"https://github.invalid/o/r.git;tok=abc":                                   remoteHidden,
+		"/srv/git/r.git?x":                                                         remoteHidden,
+		"weird remote with spaces":                                                 remoteHidden,
+		"https://git.invalid/o%2Fr/x.git":                                          remoteHidden,
+		"https://git.invalid/ghp_abcdefghijklmnop/o/r.git":                         remoteHidden,
+		"git.invalid:a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8/r.git":                   remoteHidden,
+		"https://git.invalid/sk-tools/r.git":                                       "https://git.invalid/sk-tools/r.git",
+		"https://git.invalid/o/a-very-long-repository-name-without-any-digits.git": "https://git.invalid/o/a-very-long-repository-name-without-any-digits.git",
 	} {
 		if got := displayRemote(in); got != want {
 			t.Errorf("%s: got %s, want %s", in, got, want)
@@ -151,6 +156,69 @@ func TestAutorunFileFailureLeavesGitOutputOut(t *testing.T) {
 	}
 }
 
+// A remote path that carries a token is not shown on a successful read either.
+func TestAutorunFileHidesATokenInTheRemotePath(t *testing.T) {
+	home, _, dir := autorunClone(t, "version: 1\n")
+	tokDir := filepath.Join(home, "ghp_"+strings.Repeat("Q", 36))
+	if err := os.Rename(filepath.Join(home, "origin.git"), tokDir); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "remote", "set-url", "origin", tokDir)
+	code, f, body := getAutorunFile(t)
+	if code != 200 || !f.Found || f.Remote != remoteHidden || strings.Contains(body, "QQQQ") {
+		t.Fatalf("status %d: %s", code, body)
+	}
+}
+
+// The named remote is used for the network: its URL rewriting applies once, and its own
+// upload-pack setting is honoured.
+func TestAutorunFileUsesTheNamedRemote(t *testing.T) {
+	home, seed, dir := autorunClone(t, "version: 1 # old\n")
+	// origin moves after the clone: only a fetch from origin itself brings the new commit.
+	writeFile(t, filepath.Join(seed, AutorunFilePath), "version: 1 # real\n")
+	gitAt(t, seed, "commit", "-am", "real")
+	gitAt(t, seed, "push", filepath.Join(home, "origin.git"), "main")
+	// A second repository that a second rewrite would reach.
+	evil := filepath.Join(home, "evil")
+	gitInit(t, filepath.Join(home, "evilseed"))
+	writeFile(t, filepath.Join(home, "evilseed", AutorunFilePath), "version: 1 # evil\n")
+	gitAt(t, filepath.Join(home, "evilseed"), "add", AutorunFilePath)
+	gitAt(t, filepath.Join(home, "evilseed"), "commit", "-m", "evil")
+	if err := os.MkdirAll(evil, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, evil, "clone", "--bare", filepath.Join(home, "evilseed"), "origin.git")
+	gitAt(t, dir, "config", "url."+home+"/.insteadOf", "alias:")
+	gitAt(t, dir, "config", "url."+evil+"/.insteadOf", home+"/")
+	gitAt(t, dir, "remote", "set-url", "origin", "alias:origin.git")
+	marker := filepath.Join(home, "upload-pack-ran")
+	gitAt(t, dir, "config", "remote.origin.uploadpack", "echo x >> "+marker+"; git-upload-pack")
+
+	code, f, body := getAutorunFile(t)
+	if code != 200 || f.Content != "version: 1 # real\n" {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	if b, _ := os.ReadFile(marker); strings.Count(string(b), "x") != 2 {
+		t.Fatalf("origin's upload-pack ran %d times, want 2 (ls-remote and fetch)", strings.Count(string(b), "x"))
+	}
+}
+
+// origin repointed while the read runs fails the read.
+func TestAutorunFileOriginChangedDuringTheRead(t *testing.T) {
+	home, seed, dir := autorunClone(t, "version: 1 # old\n")
+	writeFile(t, filepath.Join(seed, AutorunFilePath), "version: 1 # new\n")
+	gitAt(t, seed, "commit", "-am", "v2")
+	gitAt(t, seed, "push", filepath.Join(home, "origin.git"), "main")
+	hook := filepath.Join(dir, ".git", "hooks", "reference-transaction")
+	writeFile(t, hook, "#!/bin/sh\n[ \"$1\" = committed ] || exit 0\ngit remote set-url origin "+filepath.Join(home, "seed")+"\n")
+	if err := os.Chmod(hook, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, body := getAutorunFile(t); code != 502 || !strings.Contains(body, "origin_changed") {
+		t.Fatalf("status %d: %s", code, body)
+	}
+}
+
 // A lazy fetch of a missing blob that hangs ends with the read's deadline, not after it.
 func TestAutorunFileLazyFetchIsBoundedByTheDeadline(t *testing.T) {
 	home, seed, _ := autorunClone(t, "version: 1\n")
@@ -161,8 +229,15 @@ func TestAutorunFileLazyFetchIsBoundedByTheDeadline(t *testing.T) {
 	}
 	gitAt(t, home, "clone", "--filter=blob:none", "--no-checkout", "file://"+filepath.Join(home, "origin.git"), dir)
 	_ = seed
-	// The promisor remote's upload-pack now sleeps: the blob's lazy fetch hangs.
-	gitAt(t, dir, "config", "remote.origin.uploadpack", "sleep 30; git-upload-pack")
+	// origin's upload-pack answers ls-remote and the fetch, then hangs: the third call is the
+	// lazy fetch cat-file makes for the blob the partial clone lacks.
+	script := filepath.Join(home, "upload-pack.sh")
+	writeFile(t, script, "#!/bin/sh\nc="+filepath.Join(home, "calls")+"\nn=$(cat $c 2>/dev/null || echo 0)\necho $((n+1)) > $c\n"+
+		"[ $n -ge 2 ] && sleep 30.4817\nexec git-upload-pack \"$@\"\n")
+	if err := os.Chmod(script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, dir, "config", "remote.origin.uploadpack", script)
 	old := autorunWait
 	autorunWait = 3 * time.Second
 	t.Cleanup(func() { autorunWait = old })
@@ -174,6 +249,29 @@ func TestAutorunFileLazyFetchIsBoundedByTheDeadline(t *testing.T) {
 	if code != 502 || !strings.Contains(body, "timeout") {
 		t.Fatalf("status %d: %s", code, body)
 	}
+	if b, _ := os.ReadFile(filepath.Join(home, "calls")); strings.TrimSpace(string(b)) != "3" {
+		t.Fatalf("upload-pack ran %q times: the hang was not the lazy fetch", b)
+	}
+	// The whole process group went with it: no sleeping upload-pack is left behind.
+	deadline := time.Now().Add(3 * time.Second)
+	for sleepersLeft("30.4817") {
+		if time.Now().After(deadline) {
+			t.Fatalf("the lazy fetch's upload-pack outlived the read")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func sleepersLeft(marker string) bool {
+	ents, _ := os.ReadDir("/proc")
+	for _, e := range ents {
+		b, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		// The sleep itself, not a shell whose script mentions it.
+		if err == nil && string(b) == "sleep\x00"+marker+"\x00" {
+			return true
+		}
+	}
+	return false
 }
 
 func TestAutorunFileAbsent(t *testing.T) {

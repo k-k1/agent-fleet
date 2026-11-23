@@ -233,6 +233,13 @@ func TestMemoRepoSettingsFileAbsentOrWithoutTheCategory(t *testing.T) {
 	if rec.Code != http.StatusOK || out.Found || out.Entry || len(out.Diffs) != 0 || out.Commit != testCommit {
 		t.Fatalf("absent: %d %+v", rec.Code, out)
 	}
+	// A token in the remote's path is not passed on.
+	b, _ := json.Marshal(agentAutorunFile{Path: autorunfile.Path, Remote: "https://git.invalid/ghp_" + strings.Repeat("R", 36) + "/o/r.git",
+		Branch: "main", Commit: testCommit, Found: false})
+	a.answer(http.StatusOK, string(b))
+	if rec, out := e.repoSettings(id); out.Remote != memoRepoRemoteHidden || strings.Contains(rec.Body.String(), "RRRR") {
+		t.Fatalf("remote: %s", rec.Body.String())
+	}
 	// An empty file on the branch is a file, and an error, not "no file".
 	a.file("")
 	if _, out = e.repoSettings(id); !out.Found || len(out.Errors) != 1 || !strings.Contains(out.Errors[0].Reason, "empty") {
