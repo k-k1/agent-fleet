@@ -76,6 +76,22 @@ func TestCreateIdempotencyKey(t *testing.T) {
 	if c := createIdempotencyKey(&CreateReq{ReportTo: "conv2", Dir: "/x", Kind: "claude", InitialPrompt: "go"}); c == a {
 		t.Fatal("different conversation must yield a different key")
 	}
+	// A space (ADR 0142) is part of the intent, and only when present: a fingerprint without one
+	// stays what it was.
+	home := createIdempotencyKey(&CreateReq{ReportTo: "conv1", Kind: "claude", InitialPrompt: "go"})
+	inA := createIdempotencyKey(&CreateReq{ReportTo: "conv1", Kind: "claude", InitialPrompt: "go", Space: &SpaceTarget{Folder: "a-abcdef"}})
+	inB := createIdempotencyKey(&CreateReq{ReportTo: "conv1", Kind: "claude", InitialPrompt: "go", Space: &SpaceTarget{Folder: "b-abcdef"}})
+	inNew := createIdempotencyKey(&CreateReq{ReportTo: "conv1", Kind: "claude", InitialPrompt: "go", Space: &SpaceTarget{Name: "notes"}})
+	again := createIdempotencyKey(&CreateReq{ReportTo: "conv1", Kind: "claude", InitialPrompt: "go", Space: &SpaceTarget{Folder: " a-abcdef "}})
+	if inA == home || inA == inB || inA == inNew || inNew == home {
+		t.Fatalf("a space must be part of the key: home %q, a %q, b %q, new %q", home, inA, inB, inNew)
+	}
+	if again != inA {
+		t.Fatal("the same space spelled with spaces around it must keep the key")
+	}
+	if home != createIdempotencyKey(&CreateReq{ReportTo: "conv1", Kind: "claude", InitialPrompt: "go", Space: nil}) {
+		t.Fatal("no space must keep the old key")
+	}
 }
 
 // TestCreateSessionKeyStable pins the tool-side key: deterministic across identical args

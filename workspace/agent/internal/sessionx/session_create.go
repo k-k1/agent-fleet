@@ -38,9 +38,6 @@ type createRun struct {
 	// createdWorktree is the worktree this create ran `git worktree add` for ("" when it reused
 	// one or made none); identify records the session's name on it once the name exists.
 	createdWorktree string
-	// createdSpace is the space directory this create made ("" when it named an existing one or
-	// none); a create that then fails removes it again while it is still empty.
-	createdSpace string
 	// idemKey is the idempotency key this create owns ("" when nothing is de-duplicated), and
 	// committed says its answer has been recorded under it.
 	idemKey   string
@@ -284,21 +281,6 @@ func (c *createRun) validateSpace() bool {
 	return true
 }
 
-// dropUnusedSpace removes the space this create made when the create ended without a session
-// in it, so a refused launch does not leave an empty space in the list. It keeps a space that
-// anything was written to (spacex.RemoveIfUnused).
-func (c *createRun) dropUnusedSpace() {
-	if c.createdSpace == "" {
-		return
-	}
-	if c.name != "" {
-		if _, ok := session.ReadMeta(c.name); ok {
-			return
-		}
-	}
-	spacex.RemoveIfUnused(c.createdSpace)
-}
-
 // resolveDriver is stage 4's second half: driver validation up-front, before any side effect
 // (clone / worktree). The default tui is normalized to "" when persisted, keeping metas
 // byte-identical to existing ones — except for a kind with no Terminal(CLI) route at all
@@ -509,8 +491,11 @@ func (c *createRun) resolveWorkingCopy() bool {
 				httpx.WriteErr(c.w, http.StatusInternalServerError, "space_create_failed", err.Error())
 				return false
 			}
+			// A create that fails after this point keeps the space it made. Removing it again
+			// is not safe: the space is listed from the moment its marker exists, so another
+			// create can already have started in it, and a launch that succeeded can still
+			// fail to publish its meta. An empty space costs a row in the list, nothing more.
 			c.req.Dir = made.Dir
-			c.createdSpace = made.Dir
 		}
 	}
 	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =

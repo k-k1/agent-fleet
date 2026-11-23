@@ -10,12 +10,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -56,22 +59,53 @@ type marker struct {
 // the home directory.
 func Root() string { return filepath.Join(paths.HomeDir(), "spaces") }
 
-// FolderOf answers the space folder a working directory is, or "" when dir is not directly
-// under Root. Spaces are told from repositories by this root, never by the folder name: a space
-// and a repository can share a basename.
+// FolderOf answers the space a working directory is, or "" when it is none: dir has to sit
+// directly under Root (compared after cleaning, and against Root's resolved path too, so a
+// symlinked home or a directory recorded through the other spelling still matches) and carry
+// MarkerFile. Spaces are told from repositories by this, never by the folder name: a space and a
+// repository can share a basename, and a folder made by hand under ~/spaces is no space.
 func FolderOf(dir string) string {
 	if dir == "" || !filepath.IsAbs(dir) {
 		return ""
 	}
 	dir = filepath.Clean(dir)
-	if filepath.Dir(dir) != Root() {
+	parent := filepath.Dir(dir)
+	if parent != Root() && parent != realRoot() {
 		return ""
 	}
 	f := filepath.Base(dir)
-	if !ValidFolder(f) {
+	if !ValidFolder(f) || !markerPresent(filepath.Join(parent, f)) {
 		return ""
 	}
 	return f
+}
+
+// realRoots caches Root's resolved path per Root. Every session row asks FolderOf, so resolving
+// the symlinks each time would put a chain of lstat calls on every poll; home does not move
+// under a running Agent. A Root that does not resolve (no ~/spaces yet) is not cached.
+var realRoots sync.Map
+
+func realRoot() string {
+	root := Root()
+	if v, ok := realRoots.Load(root); ok {
+		return v.(string)
+	}
+	real, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return root
+	}
+	realRoots.Store(root, real)
+	return real
+}
+
+// markerPresent reports whether dir is a real directory (not a symlink) holding a regular
+// MarkerFile.
+func markerPresent(dir string) bool {
+	if fi, err := os.Lstat(dir); err != nil || !fi.IsDir() {
+		return false
+	}
+	fi, err := os.Lstat(filepath.Join(dir, MarkerFile))
+	return err == nil && fi.Mode().IsRegular()
 }
 
 // ValidFolder reports whether f can name a space folder: lower-case letters, digits and '-',
@@ -165,9 +199,10 @@ func Create(name string) (Space, error) {
 		}
 		m := marker{Name: name, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
 		if err := writeMarker(dir, m); err != nil {
-			// The folder is ours (Mkdir made it) and still empty but for a partial marker, so
-			// removing it leaves nothing behind for the next attempt to trip over.
-			_ = os.RemoveAll(dir)
+			// writeMarker leaves nothing behind, so the folder Mkdir made is empty and unmarked:
+			// no Lookup can have handed it out. os.Remove, not RemoveAll, so a folder something
+			// did write to is kept.
+			_ = os.Remove(dir)
 			return Space{}, err
 		}
 		return Space{Folder: folder, Name: m.Name, Dir: dir, CreatedAt: m.CreatedAt}, nil
@@ -199,28 +234,55 @@ func writeMarker(dir string, m marker) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	return os.Rename(tmp.Name(), filepath.Join(dir, MarkerFile))
+	if err := os.Rename(tmp.Name(), filepath.Join(dir, MarkerFile)); err != nil {
+		os.Remove(tmp.Name())
+		return err
+	}
+	return nil
 }
 
-// Lookup answers the space in folder, and false when there is none (no such folder, or a folder
-// without the marker).
+// markerMaxBytes bounds what readMarker reads: a display name is at most NameMaxRunes runes.
+const markerMaxBytes = 4096
+
+// readMarker reads dir's MarkerFile without following a symlink and only when it is a regular
+// file, so a link or a FIFO planted in its place cannot point the read elsewhere or hang the
+// list.
+func readMarker(dir string) (marker, bool) {
+	f, err := os.OpenFile(filepath.Join(dir, MarkerFile), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return marker{}, false
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil || !fi.Mode().IsRegular() {
+		return marker{}, false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, markerMaxBytes+1))
+	if err != nil {
+		return marker{}, false
+	}
+	var m marker
+	if len(b) > markerMaxBytes || json.Unmarshal(b, &m) != nil {
+		// A marker that does not parse still marks the space; only its name is lost.
+		m = marker{}
+	}
+	return m, true
+}
+
+// Lookup answers the space in folder, and false when there is none: no such folder, a symlink
+// in its place (List skips those too, so both agree on what a space is), or no marker.
 func Lookup(folder string) (Space, bool) {
 	if !ValidFolder(folder) {
 		return Space{}, false
 	}
 	dir := filepath.Join(Root(), folder)
-	fi, err := os.Stat(dir)
+	fi, err := os.Lstat(dir)
 	if err != nil || !fi.IsDir() {
 		return Space{}, false
 	}
-	b, err := os.ReadFile(filepath.Join(dir, MarkerFile))
-	if err != nil {
+	m, ok := readMarker(dir)
+	if !ok {
 		return Space{}, false
-	}
-	var m marker
-	if json.Unmarshal(b, &m) != nil {
-		// A marker that does not parse still marks the space; only its name is lost.
-		m = marker{}
 	}
 	name, ok := CleanName(m.Name)
 	if !ok {
@@ -255,25 +317,6 @@ func List() ([]Space, error) {
 		return out[i].Folder < out[j].Folder
 	})
 	return out, nil
-}
-
-// RemoveIfUnused removes a space that holds nothing but its marker. A create that made a space
-// and then failed calls it, so a refused launch leaves no empty space behind; a space anything
-// was written to is kept.
-func RemoveIfUnused(dir string) {
-	if FolderOf(dir) == "" {
-		return
-	}
-	ents, err := os.ReadDir(dir)
-	if err != nil {
-		return
-	}
-	for _, e := range ents {
-		if e.Name() != MarkerFile {
-			return
-		}
-	}
-	_ = os.RemoveAll(dir)
 }
 
 // listResponse is GET /spaces.

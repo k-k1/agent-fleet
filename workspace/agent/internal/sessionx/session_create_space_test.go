@@ -85,16 +85,22 @@ func TestCreateInAnExistingSpace(t *testing.T) {
 	}
 }
 
-// A create that made a space and then failed takes the space away again: a refused launch must
-// not leave an empty space in the list.
-func TestCreateInANewSpaceThatFailsLeavesNoSpace(t *testing.T) {
+// A create that made a space and then failed keeps the space: it is listed from the moment its
+// marker exists, so another create may already run in it, and removing it is never safe. It
+// leaves no session behind.
+func TestCreateInANewSpaceThatFailsKeepsTheSpace(t *testing.T) {
 	p := newCreateProbe(t)
-	rec := p.post(map[string]any{"kind": "shell", "space": map[string]any{"name": "doomed"}}, "")
+	metas := len(session.ListMetas())
+	rec := p.post(map[string]any{"kind": "shell", "space": map[string]any{"name": "kept"}}, "")
 	if rec.Code < 400 {
 		t.Fatalf("the probe's launch was meant to fail: %d %s", rec.Code, rec.Body)
 	}
-	if got := spaceFolders(t); len(got) != 0 {
-		t.Fatalf("the failed create left spaces behind: %v", got)
+	sps, _ := spacex.List()
+	if len(sps) != 1 || sps[0].Name != "kept" {
+		t.Fatalf("spaces = %+v, want the one the create made", sps)
+	}
+	if got := len(session.ListMetas()); got != metas {
+		t.Fatalf("the failed create left a meta: %d -> %d", metas, got)
 	}
 }
 

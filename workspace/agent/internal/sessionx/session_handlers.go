@@ -850,8 +850,6 @@ func createSession(w http.ResponseWriter, r *http.Request, req CreateReq) {
 	// The failure net for a reserved slot: every path that ends without a meta. A no-op for a
 	// create that is not a spawn.
 	defer c.slot.release()
-	// The same net for a space this create made (validateSpace / resolveWorkingCopy).
-	defer c.dropUnusedSpace()
 	if !c.validateOptions() || !c.resolveDriver() || !c.checkModel() || !c.checkRoute() || !c.resolveWorkingCopy() || !c.identify() || !c.composeQueue() {
 		return
 	}

@@ -7,7 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 func withHome(t *testing.T) string {
@@ -132,20 +134,127 @@ func TestCleanName(t *testing.T) {
 	}
 }
 
-func TestRemoveIfUnusedKeepsASpaceWithFiles(t *testing.T) {
-	withHome(t)
-	empty, _ := Create("empty")
-	used, _ := Create("used")
-	if err := os.WriteFile(filepath.Join(used.Dir, "notes.md"), []byte("x"), 0o644); err != nil {
+// FolderOf answers the same space whichever way its directory is spelled, and only for a
+// marked folder.
+func TestFolderOfSpellings(t *testing.T) {
+	real := t.TempDir()
+	alias := filepath.Join(t.TempDir(), "home")
+	if err := os.Symlink(real, alias); err != nil {
 		t.Fatal(err)
 	}
-	RemoveIfUnused(empty.Dir)
-	RemoveIfUnused(used.Dir)
-	if _, err := os.Stat(empty.Dir); !os.IsNotExist(err) {
-		t.Fatalf("the unused space is still there: %v", err)
+	t.Setenv("HOME", alias)
+	sp, err := Create("x")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, ok := Lookup(used.Folder); !ok {
-		t.Fatal("a space with a file in it was removed")
+	for _, dir := range []string{
+		sp.Dir,
+		sp.Dir + "/",
+		filepath.Join(real, "spaces", sp.Folder), // through the symlink's target
+		alias + "/spaces/./" + sp.Folder,
+		alias + "/spaces/sub/../" + sp.Folder,
+	} {
+		if got := FolderOf(dir); got != sp.Folder {
+			t.Errorf("FolderOf(%q) = %q, want %q", dir, got, sp.Folder)
+		}
+	}
+	for _, dir := range []string{"", "spaces/" + sp.Folder, filepath.Join(sp.Dir, "sub")} {
+		if got := FolderOf(dir); got != "" {
+			t.Errorf("FolderOf(%q) = %q, want empty", dir, got)
+		}
+	}
+}
+
+// A folder under ~/spaces with no marker is no space: a session that already ran there before
+// spaces existed keeps its place in the Console.
+func TestFolderOfNeedsTheMarker(t *testing.T) {
+	home := withHome(t)
+	dir := filepath.Join(home, "spaces", "by-hand")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := FolderOf(dir); got != "" {
+		t.Fatalf("FolderOf(unmarked) = %q, want empty", got)
+	}
+	// A marker that is a directory, not a file, does not count either.
+	if err := os.Mkdir(filepath.Join(dir, MarkerFile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := FolderOf(dir); got != "" {
+		t.Fatalf("FolderOf(directory marker) = %q, want empty", got)
+	}
+}
+
+// A symlink in ~/spaces is no space for Lookup, FolderOf or List alike, so a link to a marked
+// folder outside the root cannot be started in as an existing space.
+func TestSymlinkedFolderIsNoSpace(t *testing.T) {
+	home := withHome(t)
+	outside := filepath.Join(home, "elsewhere")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, MarkerFile), []byte(`{"name":"x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(Root(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(Root(), "link-abcdef")
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Lookup("link-abcdef"); ok {
+		t.Fatal("Lookup followed a symlink out of the root")
+	}
+	if got := FolderOf(link); got != "" {
+		t.Fatalf("FolderOf(symlink) = %q", got)
+	}
+	if got, _ := List(); len(got) != 0 {
+		t.Fatalf("List() = %+v", got)
+	}
+}
+
+// A marker replaced by a FIFO or a symlink is skipped without blocking the list; the space
+// beside it is still listed.
+func TestOddMarkersDoNotHangTheList(t *testing.T) {
+	withHome(t)
+	good, _ := Create("good")
+	fifo, _ := Create("fifo")
+	link, _ := Create("link")
+	os.Remove(filepath.Join(fifo.Dir, MarkerFile))
+	if err := syscall.Mkfifo(filepath.Join(fifo.Dir, MarkerFile), 0o644); err != nil {
+		t.Skip("no mkfifo here:", err)
+	}
+	os.Remove(filepath.Join(link.Dir, MarkerFile))
+	if err := os.Symlink(filepath.Join(good.Dir, MarkerFile), filepath.Join(link.Dir, MarkerFile)); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan []Space, 1)
+	go func() { got, _ := List(); done <- got }()
+	select {
+	case got := <-done:
+		if len(got) != 1 || got[0].Folder != good.Folder {
+			t.Fatalf("List() = %+v, want only %s", got, good.Folder)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("List() blocked on a FIFO marker")
+	}
+	if FolderOf(fifo.Dir) != "" || FolderOf(link.Dir) != "" {
+		t.Fatal("a FIFO or symlink marker made a space")
+	}
+}
+
+// An oversized marker still marks the space; its name is dropped rather than read whole.
+func TestOversizedMarkerLosesOnlyTheName(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("big")
+	big := `{"name":"` + strings.Repeat("a", markerMaxBytes) + `"}`
+	if err := os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := Lookup(sp.Folder)
+	if !ok || got.Name != "" {
+		t.Fatalf("Lookup = %+v, %v", got, ok)
 	}
 }
 
