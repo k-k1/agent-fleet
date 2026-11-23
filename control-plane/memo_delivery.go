@@ -1751,7 +1751,6 @@ const (
 	// memoAnswersPerTick bounds the reads a tick makes; memoAnswersListed is a page of either of
 	// its two lists, memoAnswerListPages the pages of one list a tick goes through.
 	memoAnswersPerTick  = 20
-	memoAnswersListed   = 200
 	memoAnswerListPages = 10
 	// memoAnswerPage is the transcript lines asked for at a time, memoAnswerPages the pages read
 	// back from the end before the read gives up for now: claude counts raw log lines, and
@@ -1776,9 +1775,10 @@ type memoAnswerReply struct {
 
 // collectAnswers reads the answers that are due: first those a pending message waits for, then
 // the rest, which only the run history shows. A waited-for one is not stamped while its workspace
-// is stopped, so it is read as soon as the workspace runs (a dependent's wait wakes it, prWake),
-// and the list is paged past such rows, so they cannot hide a running workspace's behind them.
-// Any other is stamped either way, so stopped workspaces rotate through that list.
+// is known to be stopped, so it is read as soon as the workspace runs (a dependent's wait wakes
+// it, prWake), and the list is paged past such rows, so they cannot hide a running workspace's
+// behind them. Every other row is stamped when it is reached, read or not: an Agent that does not
+// answer is tried again after memoAnswerEvery, and the rows behind it are reached meanwhile.
 func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
 	read := 0
 	for _, waited := range []bool{true, false} {
@@ -1802,6 +1802,10 @@ func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*
 	}
 }
 
+// memoAnswersListed is a page of collectAnswers' lists. A variable only so a test can page with
+// a handful of rows.
+var memoAnswersListed = 200
+
 // readAnswersOf reads the answers of one page of collectAnswers' list, read being the reads the
 // tick made so far, and answers the new count.
 func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, waited bool, read int, now time.Time) int {
@@ -1811,8 +1815,8 @@ func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*m
 		}
 		v := r.view(ctx, views, d.MembershipID)
 		live := v != nil && v.liveOK
-		if !live && waited {
-			continue
+		if waited && v != nil && v.mirrorOK {
+			continue // stopped: read at the start
 		}
 		sctx, cancel := memoProgressCtx(ctx)
 		err := r.mgr.store.MarkAnswerTried(sctx, d.ID, store.DeliveryTS(now))

@@ -466,22 +466,84 @@ func TestMemoAnswerWakeUnderAThreshold(t *testing.T) {
 	})
 }
 
-// The waited-for list is paged by its order: a page past the rows of stopped workspaces reaches a
-// running workspace's row behind them.
+// collectAnswers pages its waited-for list past the rows of a stopped workspace: they stay
+// unstamped (read at the start), and a running workspace's row behind them is read in the tick.
 func TestMemoAnswerListPages(t *testing.T) {
+	saved := memoAnswersListed
+	memoAnswersListed = 1
+	t.Cleanup(func() { memoAnswersListed = saved })
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
-		_, _, da, _ := e.noPRChain(now.Add(-time.Minute))
-		after := store.MemoDelivery{AnswerTriedAt: "", ClosedAt: "0000", ID: "0"}
-		ds, err := e.st.ListAnswersDue(context.Background(), store.DeliveryTS(now.Add(-memoAnswerWindow)),
-			store.DeliveryTS(now.Add(-memoAnswerEvery)), true, &after, memoAnswersListed)
-		if err != nil || len(ds) != 1 || ds[0].ID != da.ID {
-			t.Fatalf("listed %+v %v, want a past the cursor", ds, err)
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: behind the stopped row"))
+		// A second chain, closed earlier so it is listed first, moved to member b, whose
+		// workspace is stopped.
+		p2 := e.pending("app", "impl", "p2")
+		d2rec := e.do("a", "POST", "/api/memos", afterMemo("app", "impl", "waits for p2", p2.ID))
+		if d2rec.Code != http.StatusCreated {
+			t.Fatalf("dependent: %d %s", d2rec.Code, d2rec.Body.String())
 		}
-		late := store.MemoDelivery{AnswerTriedAt: "", ClosedAt: da.ClosedAt, ID: da.ID}
-		if ds, _ := e.st.ListAnswersDue(context.Background(), store.DeliveryTS(now.Add(-memoAnswerWindow)),
-			store.DeliveryTS(now.Add(-memoAnswerEvery)), true, &late, memoAnswersListed); len(ds) != 0 {
-			t.Fatalf("listed %+v at or before the cursor", ds)
+		dep2 := decode[memoDTO](t, d2rec)
+		d2 := e.fired(q)
+		if !sameIDs(d2.MessageIDs, p2.ID) {
+			t.Fatalf("claimed %v, want p2", d2.MessageIDs)
+		}
+		e.closeWithPRs(d2.ID, "clean", 90_000, now.Add(-2*time.Minute), store.PRStateNone)
+		db := e.st.DB()
+		for _, stmt := range []string{
+			`UPDATE memo_delivery SET session='q-b', membership_id=? WHERE id=?`,
+		} {
+			if _, err := db.ExecContext(context.Background(), stmt, e.members["b"], d2.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		for _, id := range []string{p2.ID, dep2.ID} {
+			if _, err := db.ExecContext(context.Background(), `UPDATE memo SET membership_id=? WHERE id=?`, e.members["b"], id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		views := map[string]*memoMemberView{e.members["b"]: {mirrorOK: true}}
+		e.runner().collectAnswers(context.Background(), views, now)
+		if got := e.delivery(d2.ID); got.AnswerTriedAt != "" || got.AnswerClass != "" {
+			t.Fatalf("the stopped workspace's row was stamped or read: %+v", got)
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the running workspace's row behind it: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// An Agent that reports its workspace running but does not answer the session list costs one try:
+// the row is stamped, so the next ticks reach the rows behind it.
+func TestMemoAnswerUnansweredAgentIsStamped(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.mu.Lock()
+		agent.sessionsDown = true
+		agent.mu.Unlock()
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerTriedAt == "" {
+			t.Fatal("a row of an Agent that did not answer was left unstamped")
+		}
+	})
+}
+
+// With a threshold of two, one message that could fire and one that waits on a read: the read
+// wakes the workspace (the two together would open the queue), and nothing fires before it.
+func TestMemoAnswerWakeWithAnEligibleMessageBelowTheThreshold(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		e.setPRs(da.ID, store.PRStateNone)
+		e.pending("app", "impl", "x, free")
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_queue SET open_after=2 WHERE category_id=?`, q); err != nil {
+			t.Fatal(err)
+		}
+		e.setRuntime(agent, "stopped")
+		fired, wakes := e.autoTick(now.Add(5 * time.Minute))
+		if len(wakes) != 1 || len(fired) != 0 {
+			t.Fatalf("%d wakes and %d fires, want one wake and no fire", len(wakes), len(fired))
 		}
 	})
 }

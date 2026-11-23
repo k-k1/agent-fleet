@@ -1439,8 +1439,8 @@ func earlierTS(a, b string) string {
 // (the PR snapshot) or answer (the last answer, issue #4876). Each message is judged on its own:
 // one that waits on something else (a message that has not run, a first turn, a run still open)
 // neither asks for a wake nor keeps one from the messages that do, so a chain A <- B <- C wakes
-// for the read B waits for. ok is false when none waits on reads alone, and when a message is
-// eligible (its fire starts the workspace).
+// for the read B waits for. ok is false when none waits on reads alone. An eligible message is
+// left to the caller, which knows whether the queue would fire it.
 //
 // since is, per delivery, when the longest-waiting of those messages began to wait, and reading
 // the messages that wait on reads alone.
@@ -1462,10 +1462,7 @@ func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []sto
 			return nil, nil, nil, false, err
 		}
 		eligible, failed := memoafter.Verdict(items)
-		if eligible {
-			return nil, nil, nil, false, nil
-		}
-		if failed != nil {
+		if eligible || failed != nil {
 			continue
 		}
 		var reads []memoafter.Item
@@ -1507,7 +1504,7 @@ func (r *memoQueueRunner) prWake(ctx context.Context, views map[string]*memoMemb
 	// An Agent found without the queue report could not fire the message once its PRs merged.
 	// The queue's window and threshold are judged inside, against the messages the reads could
 	// let run: a threshold the waiting messages would meet must not keep their reads from happening.
-	if q.Paused || !q.Enabled || q.NoReportAt != "" || w.pending.Count == 0 || w.pending.Eligible > 0 {
+	if q.Paused || !q.Enabled || q.NoReportAt != "" || w.pending.Count == 0 {
 		return false
 	}
 	v := r.viewOf(ctx, views, q.MembershipID)
@@ -1538,8 +1535,11 @@ func (r *memoQueueRunner) prWake(ctx context.Context, views map[string]*memoMemb
 		}
 		eligible := memoRecipeEligible(cur, memoafter.EligibleIn(memoafter.TxLookup(tx, rows, now)))
 		pending := pendingOf(rows, eligible, now)
-		if pending.Count == 0 || pending.Eligible > 0 {
+		if pending.Count == 0 {
 			return nil
+		}
+		if open, _ := openState(cur, pending, now); open && pending.Eligible > 0 {
+			return nil // a message fires as things stand, and its fire starts the workspace
 		}
 		ds, since, reading, ok, err := memoPRWaits(tx, rows, now)
 		if err != nil || !ok {
