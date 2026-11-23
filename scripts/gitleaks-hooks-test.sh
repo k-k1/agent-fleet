@@ -216,9 +216,16 @@ g remote set-url --add multi "$TMP/second.git"
 g fetch -q multi
 if g push multi after:refs/heads/main 2> "$TMP/err"; then fail "pre-push trusted the first url of a remote with several"; else expect_refused "pre-push several urls" "$TMP/err"; fi
 git -C "$TMP/second.git" rev-parse -q --verify refs/heads/main > /dev/null && fail "the second url received the ref"
+# The refusal has to come from the second url. A hook that rejected at the first one would
+# pass every check above while the second url's scan never ran, so the first url must hold
+# the pushed commit.
+[ "$(git -C "$TMP/src.git" rev-parse -q --verify refs/heads/main || true)" = "$(g rev-parse after)" ] ||
+  fail "the first url did not receive the update: the refusal did not come from the second url"
 
-# Several refs in one push: every one is checked whatever its position, a deletion between
-# them is skipped without ending the scan, and one finding refuses the whole push.
+# Several refs in one push: every one is checked whatever its position and one finding
+# refuses the whole push. A deletion between two refs is covered separately below, because git
+# itself sends an existing ref's deletion before the new refs whatever order the refspecs are
+# written in (git 2.47.3), so a real push never puts it in the middle.
 root_sha="$(g rev-list --max-parents=0 HEAD | head -n1)"
 git init -q --template= --bare "$TMP/refs.git"
 g remote add mr "$TMP/refs.git"
@@ -240,6 +247,28 @@ if g push mr ca:refs/heads/a2 :refs/heads/del lk:refs/heads/lk1 2> "$TMP/err"; t
 if g push mr lk:refs/heads/lk2 :refs/heads/del cb:refs/heads/b2 2> "$TMP/err"; then fail "pre-push missed a leak in the first ref"; else expect_refused "pre-push leak first" "$TMP/err"; fi
 if ! mr_has del; then fail "a refused push still deleted the branch"; fi
 for r in a2 b2 lk1 lk2; do if mr_has "$r"; then fail "a refused push still created $r"; fi; done
+
+# The hook's stdin, written out so the order is fixed: a clean ref, a deletion, then a leak.
+# (`del` on the remote is at `ca`'s commit, see the setup push above.)
+# A hook that stopped reading or scanning at a deletion that follows an accepted ref would
+# let the leak through.
+zero="$(printf '%040d' 0)"
+sha_of() { g rev-parse "$1"; }
+prepush_in() { # <third line: the ref after the deletion>
+  printf 'refs/heads/ca %s refs/heads/a3 %s\n' "$(sha_of ca)" "$zero"
+  printf '(delete) %s refs/heads/del %s\n' "$zero" "$(sha_of ca)"
+  printf '%s\n' "$1"
+}
+run_prepush() { (cd "$WORK" && .githooks/pre-push mr "$TMP/refs.git" 2> "$TMP/err"); }
+prepush_in "refs/heads/lk $(sha_of lk) refs/heads/lk3 $zero" > "$TMP/in-leak"
+prepush_in "refs/heads/cb $(sha_of cb) refs/heads/b3 $zero" > "$TMP/in-clean"
+# The control is only worth anything if the deletion really sits between two pushed refs.
+for f in in-leak in-clean; do
+  [ "$(sed -n 2p "$TMP/$f" | cut -d' ' -f2)" = "$zero" ] && [ "$(sed -n 1p "$TMP/$f" | cut -d' ' -f2)" != "$zero" ] &&
+    [ "$(sed -n 3p "$TMP/$f" | cut -d' ' -f2)" != "$zero" ] || fail "$f: the deletion is not between two refs"
+done
+if run_prepush < "$TMP/in-leak"; then fail "pre-push stopped at a deletion between a clean ref and a leak"; else expect_refused "pre-push leak after a deletion" "$TMP/err"; fi
+run_prepush < "$TMP/in-clean" || fail "pre-push refused clean refs around a deletion: $(cat "$TMP/err")"
 
 if [ "$FAILED" = 0 ]; then
   echo "ok"
