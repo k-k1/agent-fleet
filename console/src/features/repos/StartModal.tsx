@@ -605,7 +605,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
                   <span className="ui-field-hint">
                     <Trans k="start.ssm_auth_note" components={[<code />]} />
                   </span>
-                  <span className="ui-field-hint warn">
+                  <span className="ui-field-hint ui-field-hint--warn">
                     <Trans k="start.ssm_auth_warn" components={[<b />]} />
                   </span>
                 </>

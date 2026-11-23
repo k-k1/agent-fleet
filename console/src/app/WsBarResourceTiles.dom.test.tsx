@@ -76,19 +76,19 @@ describe("WsBar resources popover", () => {
   it("dedicated box: a member sees LD and a disk tile", async () => {
     const tiles = await open({ ...base, load1: 1.5, ncpu: 2, disk_used: 95, disk_total: 100, home_own: true });
     expect(tiles.get("ld")?.querySelector(".ws-graph-v")?.textContent).toBe("1.50");
-    expect(tiles.get("ld")?.className).toContain("warn"); // 1.5 / 2 cores = 0.75
+    expect(tiles.get("ld")?.className).toContain("ws-graph--warn"); // 1.5 / 2 cores = 0.75
   });
 
   it("shared host: no LD tile, and the disk tile carries no level", async () => {
     const tiles = await open({ ...base, disk_used: 99, disk_total: 100 });
     expect(tiles.has("ld")).toBe(false);
     expect(tiles.get("dsk")?.querySelector(".ws-graph-v")?.textContent).toBe("99%");
-    expect(tiles.get("dsk")?.className).not.toMatch(/warn|crit/);
+    expect(tiles.get("dsk")?.className).not.toMatch(/ws-graph--(warn|crit)/);
   });
 
   it("own volume: disk crosses crit", async () => {
     const tiles = await open({ ...base, disk_used: 95, disk_total: 100, home_own: true });
-    expect(tiles.get("dsk")?.className).toContain("crit");
+    expect(tiles.get("dsk")?.className).toContain("ws-graph--crit");
   });
 
   it("missing disk_total renders no dsk tile", async () => {

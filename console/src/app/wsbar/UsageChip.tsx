@@ -98,9 +98,9 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
       >
         <Icon name={kindIcon(src.kind)} />
         <span className="ws-usage-name">{kindLabel(src.kind)}</span>
-        <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
+        <span className={"ws-usage-nums" + (bind ? " ws-usage-nums--crit" : unavailable ? " muted" : "")}>{label}</span>
         {!!resetCount && (
-          <span className={"ws-reset-count" + (fullResets.length && new Date(fullResets[0].expiresAt).getTime() - Date.now() <= 7 * 86400000 ? " warn" : "")}
+          <span className={"ws-reset-count" + (fullResets.length && new Date(fullResets[0].expiresAt).getTime() - Date.now() <= 7 * 86400000 ? " ws-reset-count--warn" : "")}
             title={tCount("wsbar.usage.full_reset", resetCount) + (fullResets.length ? tr("wsbar.usage.full_reset_soonest", { when: whenText(fullResets[0].expiresAt) }) : "")}>
             +{resetCount}
           </span>
@@ -128,7 +128,7 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
                   {fullResets.map((reset, i) => (
                     <div className="wu-expiry" key={`${reset.expiresAt}-${i}`}>
                       <span>{tr("wsbar.usage.expires", { date: whenText(reset.expiresAt).split(" ")[0] })}</span>
-                      <span className={new Date(reset.expiresAt).getTime() - Date.now() <= 7 * 86400000 ? "warn" : "muted"}>{expiryText(reset.expiresAt)}</span>
+                      <span className={new Date(reset.expiresAt).getTime() - Date.now() <= 7 * 86400000 ? "wu-expiry--warn" : "muted"}>{expiryText(reset.expiresAt)}</span>
                     </div>
                   ))}
                 </div>

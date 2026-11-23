@@ -419,7 +419,7 @@ function LimitsTile({ rows }: { rows: LimitRowModel[] }) {
           {r.windows.map((w, i) => (
             <div key={i} className="glance-win">
               <span className="muted">{w.label}</span>
-              <span className={w.pct == null ? "muted" : w.pct >= 95 ? "crit" : w.pct >= 80 ? "warn" : ""}>
+              <span className={w.pct == null ? "muted" : w.pct >= 95 ? "glance-win--crit" : w.pct >= 80 ? "glance-win--warn" : ""}>
                 {w.pct == null ? "—" : `${w.pct}%`}
               </span>
               {w.note && (

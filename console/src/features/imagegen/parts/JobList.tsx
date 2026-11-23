@@ -140,7 +140,7 @@ function QueueRow({
         {row.trial && <span className="igen-badge trial">{tr("imggen.trial_row")}</span>}
         <span className="igen-qrow-label">{row.label || row.jobs[0]?.model || row.key}</span>
         <span className="igen-qrow-counts">{tr("imggen.group_counts", { done: row.done, total: row.total })}</span>
-        {row.failed > 0 && <span className="igen-badge failed">{tr("imggen.group_failed", { n: row.failed })}</span>}
+        {row.failed > 0 && <span className="igen-badge igen-badge--failed">{tr("imggen.group_failed", { n: row.failed })}</span>}
       </div>
       <div className="igen-bar" role="progressbar" aria-valuemin={0} aria-valuemax={row.total} aria-valuenow={row.done}>
         <span className="igen-bar-done" style={{ width: `${seg.done * 100}%` }} />

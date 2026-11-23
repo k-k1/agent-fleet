@@ -57,7 +57,7 @@
 }
 /* Stopped because the container was OOM-killed: flag the state chip so it stands out
    from a plain "stopped" (detail rides the tooltip). */
-.ws-state.warn {
+.ws-state.ws-state--warn {
   color: var(--warn);
   font-weight: 600;
 }
@@ -178,10 +178,10 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.ws-graph.warn {
+.ws-graph.ws-graph--warn {
   color: var(--warn);
 }
-.ws-graph.crit {
+.ws-graph.ws-graph--crit {
   color: var(--err);
 }
 .ws-graph-k {
@@ -230,7 +230,7 @@ button.ws-usage-btn:hover {
 }
 /* Near the cap: when the chip shows a reset time instead of a %, tint that value crit so
    being blocked reads at a glance (the outlined icon stays as it is). */
-.ws-usage-nums.crit {
+.ws-usage-nums.ws-usage-nums--crit {
   color: var(--err);
   font-weight: 600;
 }
@@ -241,7 +241,7 @@ button.ws-usage-btn:hover {
   font-size: 10px;
   font-weight: 600;
 }
-.ws-reset-count.warn {
+.ws-reset-count.ws-reset-count--warn {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 18%, transparent);
 }
@@ -284,7 +284,7 @@ button.ws-usage-btn:hover {
   justify-content: space-between;
   margin-top: 6px;
 }
-.wu-expiry .warn { color: var(--warn); font-weight: 600; }
+.wu-expiry .wu-expiry--warn { color: var(--warn); font-weight: 600; }
 .wu-row-head {
   display: flex;
   justify-content: space-between;
@@ -295,10 +295,10 @@ button.ws-usage-btn:hover {
   font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
-.wu-pct.warn {
+.wu-pct.wu-pct--warn {
   color: var(--warn);
 }
-.wu-pct.crit {
+.wu-pct.wu-pct--crit {
   color: var(--err);
 }
 .wu-bar {
@@ -884,10 +884,10 @@ button.ws-aws-btn {
   color: var(--aws-tone);
   font-variant-numeric: tabular-nums;
 }
-button.ws-aws-btn.ok {
+button.ws-aws-btn.ws-aws-btn--ok {
   --aws-tone: var(--ok);
 }
-button.ws-aws-btn.warn {
+button.ws-aws-btn.ws-aws-btn--warn {
   --aws-tone: var(--warn);
 }
 /* No fill when nothing is signed in: the frame says "there is a chip", the empty inside says
@@ -961,7 +961,7 @@ button.ws-aws-btn.ws-gcp-btn .codicon:not(.codicon-chevron-down) {
   margin-top: 4px;
   font-size: 11px;
 }
-.ws-aws-foot .warn {
+.ws-aws-foot .ws-aws-foot--warn {
   color: var(--warn);
   font-weight: 600;
 }
@@ -974,11 +974,11 @@ button.ws-aws-btn.ws-gcp-btn .codicon:not(.codicon-chevron-down) {
   color: var(--muted);
   white-space: nowrap;
 }
-.ws-aws-state.signed_in {
+.ws-aws-state.ws-aws-state--signed_in {
   color: var(--ok);
   border-color: currentColor;
 }
-.ws-aws-state.source_unavailable {
+.ws-aws-state.ws-aws-state--source_unavailable {
   color: var(--warn);
   border-color: currentColor;
 }

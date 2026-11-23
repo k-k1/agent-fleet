@@ -145,14 +145,14 @@ try {
   // while the two variables pointed at different colours.
   const palette = await cdp.evaluate(`(() => {
     const cs = (el) => el && getComputedStyle(el);
-    const band = document.querySelector("svg.fgraph-svg .fgraph-seg.active");
+    const band = document.querySelector("svg.fgraph-svg .fgraph-seg.fgraph-seg--active");
     const probe = document.createElement("span");
     probe.className = "session-state working";
     probe.style.position = "absolute";
     document.body.appendChild(probe);
     const want = cs(probe).color;
     probe.remove();
-    const waiting = document.querySelector("svg.fgraph-svg .fgraph-seg.waiting");
+    const waiting = document.querySelector("svg.fgraph-svg .fgraph-seg.fgraph-seg--waiting");
     const probe2 = document.createElement("span");
     probe2.className = "session-state question";
     probe2.style.position = "absolute";

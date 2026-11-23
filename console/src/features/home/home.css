@@ -171,10 +171,10 @@ section.home-setup {
   justify-content: space-between;
   font-weight: 600;
 }
-.glance-win .crit {
+.glance-win .glance-win--crit {
   color: var(--danger, #d33);
 }
-.glance-win .warn {
+.glance-win .glance-win--warn {
   color: var(--warn, #c80);
 }
 .glance-win-note {

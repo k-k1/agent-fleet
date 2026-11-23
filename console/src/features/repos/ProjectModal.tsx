@@ -135,7 +135,7 @@ function ProjectMcpSection({ repo, snap, onApplied }: ProjectMcpSectionProps) {
             ))}
             {!f.exists && <span className="pmcp-file-state muted">{tr("pmcp.file_missing")}</span>}
             {f.exists && !f.parsable && (
-              <span className="pmcp-file-state warn" title={f.note}>
+              <span className="pmcp-file-state pmcp-file-state--warn" title={f.note}>
                 <Icon name="warning" /> {tr("pmcp.file_unparsable")}
               </span>
             )}

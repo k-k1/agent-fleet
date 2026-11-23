@@ -95,10 +95,10 @@ describe("Google Cloud profiles chip", () => {
     await mount();
     expect(chip()!.textContent).toContain("2/3");
     expect(chip()!.title).toBe("Google Cloud profiles: 2 of 3 logged in");
-    expect(chip()!.className).toContain("ok");
+    expect(chip()!.className).toContain("ws-aws-btn--ok");
     expect(chip()!.classList.contains("kind-tag")).toBe(true);
     expect(chip()!.classList.contains("ws-usage-btn")).toBe(true);
-    expect(chip()!.className).not.toMatch(/warn|muted/);
+    expect(chip()!.className).not.toMatch(/ws-aws-btn--warn|muted/);
   });
 
   it("names the profile when exactly one is logged in, and is muted when none is", async () => {
@@ -162,11 +162,11 @@ describe("Google Cloud profiles chip", () => {
     await act(async () => void useGcpLoginStore.getState().refresh());
     await tick(0);
     expect(asks()).toBe(before + 1);
-    expect(chip()!.className).toContain("warn");
+    expect(chip()!.className).toContain("ws-aws-btn--warn");
     expect(chip()!.title).toBe("Google Cloud profiles: an agent is waiting for a login");
     await openPop();
-    expect(rows()[2].querySelector(".ws-aws-foot .warn")!.textContent).toBe("An agent is waiting for this login");
-    expect(rows()[0].querySelector(".ws-aws-foot .warn")).toBeNull();
+    expect(rows()[2].querySelector(".ws-aws-foot .ws-aws-foot--warn")!.textContent).toBe("An agent is waiting for this login");
+    expect(rows()[0].querySelector(".ws-aws-foot .ws-aws-foot--warn")).toBeNull();
 
     // The same list read again costs nothing; the request going away asks once more.
     const mid = asks();
@@ -178,7 +178,7 @@ describe("Google Cloud profiles chip", () => {
     await act(async () => void useGcpLoginStore.getState().refresh());
     await tick(0);
     expect(asks()).toBe(mid + 1);
-    expect(chip()!.className).not.toContain("warn");
+    expect(chip()!.className).not.toContain("ws-aws-btn--warn");
     expect(chip()!.textContent).toContain("3/3");
   });
 

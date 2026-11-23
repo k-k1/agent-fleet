@@ -344,23 +344,23 @@
 .fgraph-seg {
   stroke: none;
 }
-.fgraph-seg.active {
+.fgraph-seg.fgraph-seg--active {
   fill: var(--accent);
 }
-.fgraph-seg.idle {
+.fgraph-seg.fgraph-seg--idle {
   fill: var(--muted2);
   opacity: 0.5;
 }
-.fgraph-seg.waiting {
+.fgraph-seg.fgraph-seg--waiting {
   fill: var(--warn);
 }
-.fgraph-seg.stopped {
+.fgraph-seg.fgraph-seg--stopped {
   fill: var(--muted2);
   opacity: 0.3;
 }
 /* "unknown" covers BOTH not-observed and observed-unrecognised (the tooltip text is what
    tells them apart — see SegmentRect); the hatch reads as "uncertain" either way. */
-.fgraph-seg.unknown {
+.fgraph-seg.fgraph-seg--unknown {
   fill: url(#fgraph-hatch);
   opacity: 0.55;
 }

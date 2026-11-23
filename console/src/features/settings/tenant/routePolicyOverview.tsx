@@ -120,7 +120,7 @@ function MemberUse({ view }: { view: TenantPolicyView }) {
     <section className="admin-panel model-access-use">
       <h4>{tr("tenant.mpol_use_title")}</h4>
       {use.state === "unavailable" ? (
-        <p className="admin-hint warn" role="alert">
+        <p className="admin-hint admin-hint--warn" role="alert">
           {tr("tenant.mpol_use_unavailable")}
         </p>
       ) : (

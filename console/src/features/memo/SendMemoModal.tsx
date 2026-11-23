@@ -241,7 +241,7 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
                   <span className="memo-tgt-name">{displayName(s)}</span>
                   <span className="memo-tgt-sub">{s.name}</span>
                 </span>
-                <span className={"memo-tgt-state" + (isWaiting(s) ? " ok" : "")}>
+                <span className={"memo-tgt-state" + (isWaiting(s) ? " memo-tgt-state--ok" : "")}>
                   {isWaiting(s) ? tr("memo.state_waiting") : stateInfo(s).text}
                 </span>
               </button>

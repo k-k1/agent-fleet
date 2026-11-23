@@ -203,7 +203,7 @@ describe("FleetGraphView", () => {
     await render();
     // fx-child2 is the archived lane in the fixture (death, then archived:true).
     expect(host.querySelectorAll("svg.fgraph-svg .fgraph-tail.archived")).toHaveLength(0);
-    expect(host.querySelectorAll("svg.fgraph-svg .fgraph-seg.archived")).toHaveLength(0);
+    expect(host.querySelectorAll("svg.fgraph-svg .fgraph-seg.fgraph-seg--archived")).toHaveLength(0);
     // A STOPPED lane keeps its dashed tail: the amendment is about archived alone.
     expect(host.querySelectorAll("svg.fgraph-svg .fgraph-tail.stopped").length).toBeGreaterThan(0);
   });
@@ -214,7 +214,7 @@ describe("FleetGraphView", () => {
     expect(bands.length).toBeGreaterThan(0);
     // The kind colour used to arrive as an inline `--seg-color` custom property on the
     // "active" band. Its absence is what says the band now reads from the state palette
-    // (.fgraph-seg.active → --accent), the same one the row's chip uses.
+    // (.fgraph-seg.fgraph-seg--active → --accent), the same one the row's chip uses.
     for (const b of bands) expect(b.getAttribute("style")).toBeNull();
   });
 

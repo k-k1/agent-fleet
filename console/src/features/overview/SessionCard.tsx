@@ -231,7 +231,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             because "親+2・FF可" must not mean two things in one Console. */}
         {repo?.integration && (
           <span
-            className={"repo-chip integration " + repo.integration.relation}
+            className={"repo-chip integration repo-chip--" + repo.integration.relation}
             title={parentSyncTitle(repo.integration)}
           >
             {parentSyncLabel(repo.integration)}

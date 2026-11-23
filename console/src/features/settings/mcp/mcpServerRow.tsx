@@ -162,7 +162,7 @@ export function ProbeView({ probe, onSignIn }: { probe?: ProbeResult; onSignIn?:
   if (isOAuthRequired(probe) && probe.oauth) return <OAuthProbeView report={probe.oauth} onSignIn={onSignIn} />;
   if (!probe.ok) {
     return (
-      <div className="mcp-probe bad">
+      <div className="mcp-probe mcp-probe--bad">
         <Icon name="error" />
         <div>
           <div>{probeErrText(probe) || tr("mcp.test_failed")}</div>
@@ -172,7 +172,7 @@ export function ProbeView({ probe, onSignIn }: { probe?: ProbeResult; onSignIn?:
     );
   }
   return (
-    <div className="mcp-probe ok">
+    <div className="mcp-probe mcp-probe--ok">
       <Icon name="pass" />
       <div>
         <div>

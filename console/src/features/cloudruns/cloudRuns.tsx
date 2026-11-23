@@ -34,7 +34,7 @@ function ProviderIcon({ provider }: { provider: string }) {
 export function CloudRunLine({ run, session, time, brief }: { run: CloudRun; session?: boolean; time?: boolean; brief?: boolean }) {
   const title = brief ? cloudRunParts(run).join(" · ") + "\n" + tr("cloudruns.title") : tr("cloudruns.title");
   return (
-    <div className={"cloud-run" + (failedRun(run) ? " failed" : "")} role="note" title={title}>
+    <div className={"cloud-run" + (failedRun(run) ? " cloud-run--failed" : "")} role="note" title={title}>
       <ProviderIcon provider={run.provider} />
       {time && (
         <time className="cloud-run-time" dateTime={run.startedAt}>

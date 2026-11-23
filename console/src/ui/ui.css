@@ -1026,7 +1026,7 @@
 }
 
 /* Warning variant of a field hint (e.g. a stopped send target). */
-.ui-field-hint.warn {
+.ui-field-hint.ui-field-hint--warn {
   color: var(--warn, #e0a030);
 }
 

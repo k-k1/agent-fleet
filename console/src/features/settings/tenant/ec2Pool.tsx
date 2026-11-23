@@ -912,7 +912,7 @@ function BakeSteps({ at }: { at: number }) {
   return (
     <ol className="bake-steps">
       {BAKE_STEPS.map((s, i) => (
-        <li key={s} className={"bake-step" + (i < at ? " done" : i === at ? " now" : "")}>
+        <li key={s} className={"bake-step" + (i < at ? " bake-step--done" : i === at ? " now" : "")}>
           <span className="bake-dot" />
           <span className="bake-label">{tr(STEP_LABEL[s])}</span>
         </li>
@@ -972,7 +972,7 @@ function fmtElapsed(since: string, tr: TR): string {
 
 function PoolTile({ label, value, sub, warn }: { label: string; value: string; sub: string; warn?: boolean }) {
   return (
-    <div className={"res-tile" + (warn ? " warn" : "")}>
+    <div className={"res-tile" + (warn ? " res-tile--warn" : "")}>
       <div className="rt-label">{label}</div>
       <div className="rt-value">{value}</div>
       <div className="rt-sub muted">{sub}</div>

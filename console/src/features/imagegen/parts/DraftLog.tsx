@@ -53,7 +53,7 @@ export function DraftLog({
                         : tr(e.author === "agent" ? "imggen.log_by_agent" : "imggen.log_by_human")}
                   </span>
                   {v && (
-                    <span className={"igen-log-state " + (pending ? "record_pending" : v.state)} title={v.error || undefined}>
+                    <span className={"igen-log-state igen-log-state--" + (pending ? "record_pending" : v.state)} title={v.error || undefined}>
                       {tr(pending ? "imggen.version_record_pending" : (`imggen.version_${v.state}` as "imggen.version_ok"))}
                     </span>
                   )}

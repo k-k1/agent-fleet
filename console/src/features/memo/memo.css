@@ -771,7 +771,7 @@
   color: var(--muted);
   background: color-mix(in srgb, var(--muted) 16%, transparent);
 }
-.memo-tgt-state.ok {
+.memo-tgt-state.memo-tgt-state--ok {
   color: var(--ok);
   background: color-mix(in srgb, var(--ok) 20%, transparent);
 }
@@ -831,7 +831,7 @@
   font-size: 10px;
 }
 .memo-thumb.loading,
-.memo-thumb.failed {
+.memo-thumb.memo-thumb--failed {
   cursor: default;
 }
 .memo-thumb-del {
@@ -1150,7 +1150,7 @@
   border-radius: 9px;
   padding: 0 6px;
 }
-.memo-d-turn.bad {
+.memo-d-turn.memo-d-turn--bad {
   color: var(--warn, var(--accent));
 }
 

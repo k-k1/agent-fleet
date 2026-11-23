@@ -534,20 +534,20 @@
 }
 /* Linked worktree HEAD vs its parent working copy's current HEAD. Kept apart
    from .ab because that chip is relative to the configured remote upstream. */
-.repo-chip.integration.same,
-.repo-chip.integration.unknown {
+.repo-chip.integration.repo-chip--same,
+.repo-chip.integration.repo-chip--unknown {
   color: var(--muted);
   background: color-mix(in srgb, var(--muted) 10%, transparent);
 }
-.repo-chip.integration.contained {
+.repo-chip.integration.repo-chip--contained {
   color: var(--ok);
   background: color-mix(in srgb, var(--ok) 14%, transparent);
 }
-.repo-chip.integration.unmerged {
+.repo-chip.integration.repo-chip--unmerged {
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
-.repo-chip.integration.diverged {
+.repo-chip.integration.repo-chip--diverged {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 14%, transparent);
 }
@@ -741,7 +741,7 @@
   white-space: nowrap;
 }
 /* A state that cannot be launched as-is, e.g. "existing branch, none selected". */
-.launch-sec-sum.warn {
+.launch-sec-sum.launch-sec-sum--warn {
   color: var(--warn);
 }
 /* Branch-rule warnings under the new-branch field (ADR 0103 decision 8). Advisory: the launch
@@ -833,7 +833,7 @@
   color: var(--muted);
   margin-bottom: 4px;
 }
-.launch-stash-note.warn {
+.launch-stash-note.launch-stash-note--warn {
   color: var(--warn);
 }
 .launch-tmpl-btn.on {
@@ -1229,7 +1229,7 @@
   font-size: var(--fs-11);
   color: var(--muted);
 }
-.pmcp-file-state.warn {
+.pmcp-file-state.pmcp-file-state--warn {
   color: var(--warn);
 }
 .pmcp-matrix-wrap {

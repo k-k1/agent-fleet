@@ -102,7 +102,7 @@ function tile({
   return (
     // The key is the static k only: title carries live values (memory use and the like),
     // so folding it in would remount on every change and make the sparkline flicker.
-    <span className={"ws-graph" + (level === 2 ? " crit" : level === 1 ? " warn" : "")} title={title} key={k}>
+    <span className={"ws-graph" + (level === 2 ? " ws-graph--crit" : level === 1 ? " ws-graph--warn" : "")} title={title} key={k}>
       <span className="ws-graph-k">{k}</span>
       <Sparkline data={series} max={max} track={track} />
       <span className="ws-graph-v">{value}</span>
@@ -407,7 +407,7 @@ export function WsBar() {
       </span>
       <span className={"ws-dot " + (running ? "on" : "off")}>●</span>
       <span
-        className={"ws-state" + (wsState === "stopped" && wsStats?.oom_killed ? " warn" : "")}
+        className={"ws-state" + (wsState === "stopped" && wsStats?.oom_killed ? " ws-state--warn" : "")}
         title={
           noTenant
             ? tr(superAdmin ? "wsbar.state_title.no_tenant_admin" : "wsbar.state_title.no_tenant")

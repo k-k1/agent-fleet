@@ -108,7 +108,7 @@ function TenantRow({
     <tr data-tenant={tenant.slug}>
       <td className="prov-member-name">{tenant.name || tenant.slug}</td>
       {!view ? (
-        <td colSpan={2} className={failed ? "admin-hint warn" : "muted"}>
+        <td colSpan={2} className={failed ? "admin-hint admin-hint--warn" : "muted"}>
           {failed ?? tr("common.loading")}
         </td>
       ) : (
@@ -148,7 +148,7 @@ function GrantCell({ slug }: { slug: string }) {
   if (!load) return <span className="muted">{tr("common.loading")}</span>;
   if (load.state !== "ok")
     return (
-      <span className="admin-hint warn">
+      <span className="admin-hint admin-hint--warn">
         {(load.state === "failed" && load.reason) || tr("admin.prov_load_failed")}
       </span>
     );
@@ -279,7 +279,7 @@ function AdminOverview({ view, source }: { view: DeploymentPolicyView; source: S
             <OverviewLink view="tenants" label={tr("admin.model_access_go_tenants")} />
             {counts !== undefined && counts !== "off" && (
               <p
-                className={counts ? "admin-hint" : "admin-hint warn"}
+                className={counts ? "admin-hint" : "admin-hint admin-hint--warn"}
                 role={counts ? undefined : "alert"}
                 data-testid="overview-tenant-counts"
               >
@@ -321,7 +321,7 @@ function ProvidedSourceLine({ read }: { read: SourceRead }) {
       <h4>{tr("admin.model_access_view_provided")}</h4>
       <p>
         {load.state === "failed" ? (
-          <span className="admin-hint warn" role="alert">
+          <span className="admin-hint admin-hint--warn" role="alert">
             {load.reason ?? tr("admin.prov_load_failed")}
           </span>
         ) : src === null ? (
@@ -358,7 +358,7 @@ export function AdminModelAccessView({
     return (
       <section className="admin-panel model-access">
         <h4>{tr("admin.model_access_title")}</h4>
-        <p className={failed ? "admin-hint warn" : "muted"} role={failed ? "alert" : undefined}>
+        <p className={failed ? "admin-hint admin-hint--warn" : "muted"} role={failed ? "alert" : undefined}>
           {failed ?? tr("common.loading")}
         </p>
       </section>

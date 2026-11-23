@@ -56,7 +56,7 @@ export function TenantMemoQueuesView({ slug }: { slug: string }) {
       <h4>{tr("tenant.memo_queues_title")}</h4>
       <p className="admin-hint">{tr("tenant.memo_queues_note")}</p>
       {enabled === null ? (
-        <p className={failed ? "admin-hint warn" : "muted"}>
+        <p className={failed ? "admin-hint admin-hint--warn" : "muted"}>
           {failed ? tr("tenant.memo_queues_load_failed") : tr("common.loading")}
         </p>
       ) : (

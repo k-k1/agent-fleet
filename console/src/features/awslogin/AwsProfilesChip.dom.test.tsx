@@ -103,7 +103,7 @@ describe("AWS profiles chip", () => {
     // The usage chips' own classes give it their font, padding and height.
     expect(chip()!.classList.contains("kind-tag")).toBe(true);
     expect(chip()!.classList.contains("ws-usage-btn")).toBe(true);
-    expect(chip()!.className).not.toMatch(/warn|muted/);
+    expect(chip()!.className).not.toMatch(/ws-aws-btn--warn|muted/);
   });
 
   it("names the profile when exactly one is signed in", async () => {
@@ -153,12 +153,12 @@ describe("AWS profiles chip", () => {
   it("warns for an expiring login and opens its login modal from the row", async () => {
     profiles = [{ ...prod, expiresAt: "2026-10-02T03:10:00Z", expiring: true }, dev];
     await mount();
-    expect(chip()!.className).toContain("warn");
+    expect(chip()!.className).toContain("ws-aws-btn--warn");
     expect(chip()!.className).not.toMatch(/\bok\b/);
     expect(chip()!.title).toBe("AWS profiles: a login ends soon");
     await openPop();
     const row = rows()[0];
-    expect(row.querySelector(".ws-aws-foot .warn")!.textContent).toMatch(/^Ends /);
+    expect(row.querySelector(".ws-aws-foot .ws-aws-foot--warn")!.textContent).toMatch(/^Ends /);
     await act(async () => (row.querySelector(".ws-aws-login") as HTMLButtonElement).click());
     expect(useAwsLoginStore.getState().profileModal?.name).toBe("prod");
     expect(host.querySelector(".ws-aws-pop")).toBeNull();

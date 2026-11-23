@@ -81,7 +81,7 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   font-size: 11px;
   opacity: 0.8;
 }
-.mt-approval-flag.warn {
+.mt-approval-flag.mt-approval-flag--warn {
   border-color: var(--warn);
   color: var(--warn);
   opacity: 1;
