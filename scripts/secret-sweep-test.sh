@@ -73,5 +73,12 @@ for spec in "0:" "42:$FINDING" "3:"; do
   touched && fail "SYNC_ISSUE=false, scan exit $code must not touch the issue"
 done
 
+# Routing: exactly refs/heads/main gets the issue-writing job, nothing else, whatever its case.
+route() { "$HERE/secret-sweep-route.sh" "$1"; }
+[ "$(route refs/heads/main)" = is_main=true ] || fail "refs/heads/main must route to the main job"
+for ref in refs/heads/Main refs/heads/MAIN refs/heads/main2 refs/heads/feature/main refs/tags/main refs/heads/main/x ""; do
+  [ "$(route "$ref")" = is_main=false ] || fail "'$ref' must not route to the main job"
+done
+
 [ "$FAILED" = 0 ] && echo "secret-sweep controls ok"
 exit "$FAILED"
