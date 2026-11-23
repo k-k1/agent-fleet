@@ -134,9 +134,9 @@ The agent, model and effort in the category's auto-run settings are the **defaul
 A memo can wait for other memos of the same auto-run category: it runs only after each of them has run, that run ended well, and every pull request that run opened is merged. Use it for work that builds on other work, such as an issue that needs another issue's change first.
 
 1. Click the memo to open its edit view
-2. Under "**Waits for (memos of this category that come before it)**", tick the memos it waits for, then press "Save"
+2. Under "**Waits for (other memos of this category, earlier or later)**", tick the memos it waits for, then press "Save"
 
-- Only memos that come before it in the category can be chosen, so two memos never wait for each other. A session sets the same with `add_memo` and `update_memo` (`after`), naming a memo by its id or by its work item's key (`owner/repo#12`), which means the newest memo of the category that points at that item
+- Any other memo of the category can be chosen, earlier or later in its order (a memo that waits for a later one simply waits for it), but never one that would make two memos wait for each other: a memo that already waits for it, directly or through others, is not offered. A session sets the same with `add_memo` and `update_memo` (`after`), naming a memo by its id or by its work item's key (`owner/repo#12`), which means the newest memo of the category that points at that item
 - Changing what a memo waits for counts as changing the memo: when a session does it to a memo you approved, the memo goes back to "Waits for approval"
 - A memo that waits takes no place among "Sessions at the same time", and memos behind it still run. It does not count towards "Notes waiting to run" until what it waits for has ended well
 - It never runs in the same session as a memo it waits for
