@@ -101,6 +101,7 @@ The Control Plane POSTs each push to the endpoint the member's browser registere
 - The payload carries the session name and the kind. The text of a question is added only when a tenant administrator allows it under the tenant's "Limits & idle" settings, and it is cut short. The setting is stored even while Web Push is off, but the switch itself appears in the Console only once Web Push is on, so set it after switching on
 - A session on screen in another Console of the same member is not pushed, and members can switch each kind off. Members who are no longer active are never pushed
 - A push the service cannot deliver within an hour is dropped. One member can register up to 20 devices
+- A burst goes through two bounded queues: notifications wait for their reads (the member, their settings and devices), then each device waits for one of 32 senders. A push that finds either queue full is dropped, and so is one that waited more than 30 seconds for a sender (the 30 seconds count from the second queue only). Drops are logged as `web push: ... dropped`
 
 ## When something goes wrong
 

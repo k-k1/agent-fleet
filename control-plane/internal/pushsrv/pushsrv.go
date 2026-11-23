@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
@@ -42,12 +43,23 @@ var pushKinds = map[string]bool{
 const (
 	// pushSendTimeout bounds one device; the HTTP client's own 15 s sits inside it.
 	pushSendTimeout = 20 * time.Second
-	// pushMaxInFlight caps concurrent sends CP-wide, and pushMaxPerMember the devices one member
-	// may register, so a burst of notifications cannot fan out without bound.
-	// pushSlotWait is how long a send waits for a slot; a message queued longer is stale for a phone.
-	pushSlotWait     = 30 * time.Second
+	// pushMaxInFlight is the number of send workers, so concurrent sends CP-wide; pushMaxPerMember
+	// the devices one member may register.
 	pushMaxInFlight  = 32
 	pushMaxPerMember = 20
+	// pushSlotWait is how long a send may wait in the queue; a message queued longer is stale for a
+	// phone and dropped.
+	pushSlotWait = 30 * time.Second
+	// pushQueueLen bounds the sends waiting for a worker, and pushNoteQueueLen the notifications
+	// waiting for their reads, so a burst costs bounded memory and goroutines instead of one waiting
+	// goroutine per notification and device. Past either bound a message is dropped and logged.
+	// 1024 is about fifty members' worth of a full device list for one notification each.
+	pushQueueLen     = 1024
+	pushNoteQueueLen = 256
+	// pushReaders run the per-notification reads (membership, preferences, devices).
+	pushReaders = 4
+	// pushDropLogEvery is how often the counts of dropped notifications and messages are logged.
+	pushDropLogEvery = 10 * time.Second
 	// A question that waits an hour is stale for a phone; the service drops it after that.
 	pushTTL = time.Hour
 )
@@ -61,8 +73,71 @@ type Service struct {
 	check    func(string) error
 	timeout  time.Duration
 	slotWait time.Duration
-	slots    chan struct{}
-	view     *viewing
+	notes    chan store.Notification
+	jobs     chan sendJob
+	// quit stops the workers; nil (never) outside tests.
+	quit chan struct{}
+	// Drops are counted, and only the ticker logs the counts: a drop happens on the inserting caller
+	// (droppedNotes), a reader (droppedFull) or a send worker (droppedStale), and none of them may
+	// wait on a stalled log sink, which would stop later healthy deliveries behind it.
+	droppedNotes, droppedFull, droppedStale atomic.Int64
+	// dropLogEvery is the ticker's period; 0 runs no ticker (tests call logDrops themselves).
+	dropLogEvery time.Duration
+	view         *viewing
+}
+
+// sendJob is one notification for one device, waiting for a send worker.
+type sendJob struct {
+	membershipID string
+	sub          store.PushSubscription
+	body         []byte
+	queued       time.Time
+	// done, when set, is called once the job is sent or dropped (tests wait on it).
+	done func()
+}
+
+// start makes the queues and runs the readers and the send workers for the life of the process.
+func (p *Service) start(workers, queueLen int) {
+	p.notes = make(chan store.Notification, pushNoteQueueLen)
+	p.jobs = make(chan sendJob, queueLen)
+	for i := 0; i < pushReaders; i++ {
+		go func() {
+			for {
+				select {
+				case n := <-p.notes:
+					p.deliver(context.Background(), n, nil)
+				case <-p.quit:
+					return
+				}
+			}
+		}()
+	}
+	if p.dropLogEvery > 0 {
+		go func() {
+			t := time.NewTicker(p.dropLogEvery)
+			defer t.Stop()
+			for {
+				select {
+				case <-t.C:
+					p.logDrops()
+				case <-p.quit:
+					return
+				}
+			}
+		}()
+	}
+	for i := 0; i < workers; i++ {
+		go func() {
+			for {
+				select {
+				case j := <-p.jobs:
+					p.run(j)
+				case <-p.quit:
+					return
+				}
+			}
+		}()
+	}
 }
 
 // validSubject accepts mailto:<addr with @> or an https URL with a host: services that check the
@@ -101,7 +176,8 @@ func New(st *store.SQL) *Service {
 		}
 	}
 	p := &Service{store: st, sender: webpush.NewSender(keys, subject), pubKey: keys.PublicKey(),
-		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, slots: make(chan struct{}, pushMaxInFlight), view: newViewing()}
+		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, dropLogEvery: pushDropLogEvery, view: newViewing()}
+	p.start(pushMaxInFlight, pushQueueLen)
 	st.SetNotificationHook(p.onNotification)
 	log.Printf("web push enabled")
 	return p
@@ -145,23 +221,42 @@ func questionText(payload string) string {
 	return string(r)
 }
 
-// onNotification runs on the inserting caller, so it only starts the delivery.
+func (p *Service) logDrops() {
+	if d := p.droppedNotes.Swap(0); d > 0 {
+		log.Printf("web push: delivery queue full; %d notifications dropped", d)
+	}
+	if d := p.droppedFull.Swap(0); d > 0 {
+		log.Printf("web push: send queue full; %d messages dropped", d)
+	}
+	if d := p.droppedStale.Swap(0); d > 0 {
+		log.Printf("web push: %d messages waited over %s in the send queue; dropped", d, p.slotWait)
+	}
+}
+
+// onNotification runs on the inserting caller, so it only queues the delivery and never blocks,
+// not even on log output.
 func (p *Service) onNotification(n store.Notification) {
 	if !pushKinds[n.Kind] || n.TargetType != "session" || n.TargetID == "" {
 		return
 	}
-	go func() {
-		p.deliver(context.Background(), n)
-	}()
+	select {
+	case p.notes <- n:
+	default:
+		p.droppedNotes.Add(1)
+	}
 }
 
-// deliver has three separate budgets so that none eats another's: the list read, the wait for a
-// free slot (slotWait), and each send once it holds a slot (timeout, started after the wait).
+// deliver does the reads for one notification and queues one send per device. It has its own
+// budget per read, and run gives each queued send two more: the time it may wait in the queue
+// (slotWait) and the send itself (timeout, started when a worker takes it), so none eats another's.
+// done, when set, gets one Add per queued send and one Done when that send ends or is dropped.
 //
 // Before any send, in order: the member must still be active (a removed member gets nothing), the
 // kind must not be one the member turned off, and the session must not be on screen in an active
-// Console. Every doubt resolves to "send": a lost question costs more than a redundant buzz.
-func (p *Service) deliver(ctx context.Context, n store.Notification) {
+// Console. For these checks every doubt resolves to "send": a lost question costs more than a
+// redundant buzz. Which devices hold the member is not such a check: a device list or a device
+// that cannot be read is not sent to, since the browser may belong to someone else by now.
+func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.WaitGroup) {
 	// Each read has its own deadline: one that stalls until its deadline must not leave the next
 	// read (the subscription list) with an expired context.
 	read := func() (context.Context, context.CancelFunc) { return context.WithTimeout(ctx, p.timeout) }
@@ -214,31 +309,54 @@ func (p *Service) deliver(ctx context.Context, n store.Notification) {
 			body = withText
 		}
 	}
-	var wg sync.WaitGroup
 	for _, s := range subs {
 		// An endpoint the allowlist refuses is skipped, not deleted: a missing AF_WEB_PUSH_ENDPOINT_HOSTS
 		// entry after a restart must not cost the member their subscriptions.
 		if p.check(s.Endpoint) != nil {
 			continue
 		}
-		wg.Add(1)
-		go func(s store.PushSubscription) {
-			defer wg.Done()
-			wait := time.NewTimer(p.slotWait)
-			select {
-			case p.slots <- struct{}{}:
-				wait.Stop()
-				defer func() { <-p.slots }()
-			case <-wait.C:
-				log.Printf("web push: no free send slot for %s within %s; dropped", s.ID, p.slotWait)
-				return
+		j := sendJob{membershipID: n.MembershipID, sub: s, body: body, queued: time.Now()}
+		if done != nil {
+			done.Add(1)
+			j.done = done.Done
+		}
+		select {
+		case p.jobs <- j:
+		default:
+			p.droppedFull.Add(1)
+			if j.done != nil {
+				j.done()
 			}
-			sctx, cancel := context.WithTimeout(ctx, p.timeout)
-			defer cancel()
-			p.send(sctx, n.MembershipID, s, body)
-		}(s)
+		}
 	}
-	wg.Wait()
+}
+
+// run is one worker's turn on a queued send.
+func (p *Service) run(j sendJob) {
+	if j.done != nil {
+		defer j.done()
+	}
+	if waited := time.Since(j.queued); waited > p.slotWait {
+		p.droppedStale.Add(1)
+		return
+	}
+	// The row is read again just before the send: in the queue it may have moved to another member
+	// (the same browser signed in as someone else) or been removed, and this member's message must
+	// not reach that browser. A failed read skips the send, as a failed list read does. A move that
+	// commits after this read can still get the one message being sent.
+	rctx, rcancel := context.WithTimeout(context.Background(), p.timeout)
+	cur, held, err := p.store.GetPushSubscription(rctx, j.membershipID, j.sub.Endpoint)
+	rcancel()
+	if err != nil {
+		log.Printf("web push: re-read %s before the send: %v", j.sub.ID, err)
+		return
+	}
+	if !held {
+		return
+	}
+	sctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+	defer cancel()
+	p.send(sctx, j.membershipID, cur, j.body)
 }
 
 func (p *Service) send(ctx context.Context, membershipID string, s store.PushSubscription, body []byte) {
@@ -372,32 +490,27 @@ func (p *Service) Subscribe(w http.ResponseWriter, r *http.Request, membershipID
 		writeErr(w, http.StatusBadRequest, "bad_keys", "invalid subscription keys")
 		return
 	}
-	if rows, err := p.store.ListPushSubscriptions(r.Context(), membershipID); err == nil && len(rows) >= pushMaxPerMember {
-		held := false
-		for _, s := range rows {
-			held = held || s.Endpoint == in.Endpoint
-		}
-		if !held {
-			// The browser presents the subscription's own keys, so it has left its previous
-			// member: stop delivering that member's notifications to it even though this member
-			// has no room (otherwise a switch at the cap would keep the old association).
-			if err := p.store.ReleasePushEndpoint(r.Context(), in.Endpoint, in.Keys.P256dh, in.Keys.Auth); err != nil {
-				// Not released: answering 409 would leave the old member's notifications flowing to
-				// this browser, so say it is retryable instead.
-				internalErr(w, err)
-				return
-			}
-			writeErr(w, http.StatusConflict, "too_many_devices", "too many registered devices; remove one first")
-			return
-		}
-	}
 	ua := r.UserAgent()
 	if len(ua) > 200 {
 		ua = ua[:200]
 	}
-	if err := p.store.UpsertPushSubscription(r.Context(), store.PushSubscription{MembershipID: membershipID,
-		Endpoint: in.Endpoint, P256dh: in.Keys.P256dh, Auth: in.Keys.Auth, UserAgent: ua}); err != nil {
+	added, err := p.store.AddPushSubscription(r.Context(), store.PushSubscription{MembershipID: membershipID,
+		Endpoint: in.Endpoint, P256dh: in.Keys.P256dh, Auth: in.Keys.Auth, UserAgent: ua}, pushMaxPerMember)
+	if err != nil {
 		internalErr(w, err)
+		return
+	}
+	if !added {
+		// The browser presents the subscription's own keys, so it has left its previous member:
+		// stop delivering that member's notifications to it even though this member has no room
+		// (otherwise a switch at the cap would keep the old association).
+		if err := p.store.ReleasePushEndpoint(r.Context(), in.Endpoint, in.Keys.P256dh, in.Keys.Auth); err != nil {
+			// Not released: answering 409 would leave the old member's notifications flowing to
+			// this browser, so say it is retryable instead.
+			internalErr(w, err)
+			return
+		}
+		writeErr(w, http.StatusConflict, "too_many_devices", "too many registered devices; remove one first")
 		return
 	}
 	writeJSON(w, http.StatusCreated, createdWire{ID: store.PushSubscriptionID(in.Endpoint)})

@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
@@ -125,6 +128,112 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 0 {
 		t.Fatalf("rows=%+v", rows)
 	}
+	checkPushCap(t, st, a, b)
+}
+
+// checkPushCap covers AddPushSubscription: the cap, the refresh of a held endpoint at the cap, a
+// move from another member, GetPushSubscription, and concurrent registrations that must not
+// overshoot.
+func checkPushCap(t *testing.T, st *SQL, a, b string) {
+	t.Helper()
+	ctx := context.Background()
+	const max = 3
+	add := func(mid, ep string) bool {
+		t.Helper()
+		ok, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: mid, Endpoint: ep, P256dh: "k", Auth: "a"}, max)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	ep := func(i int) string { return fmt.Sprintf("https://fcm.googleapis.com/fcm/send/cap-%d", i) }
+	for i := 0; i < max; i++ {
+		if !add(a, ep(i)) {
+			t.Fatalf("device %d refused under the cap", i)
+		}
+	}
+	if add(a, ep(max)) {
+		t.Fatal("a device over the cap was stored")
+	}
+	if !add(a, ep(0)) {
+		t.Fatal("re-registering a held endpoint at the cap was refused")
+	}
+	// A member already past the cap (rows written before it was atomic) can still refresh a device.
+	if err := st.UpsertPushSubscription(ctx, PushSubscription{MembershipID: a, Endpoint: ep(99), P256dh: "k", Auth: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if !add(a, ep(1)) {
+		t.Fatal("refreshing a held endpoint past the cap was refused")
+	}
+	if _, err := st.DeletePushSubscription(ctx, a, PushSubscriptionID(ep(99))); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || !ok || got.Endpoint != ep(0) || got.MembershipID != a {
+		t.Fatalf("get: %+v %v %v", got, ok, err)
+	}
+	// Moving one of a's endpoints to b frees a slot for a and is itself under b's cap.
+	if !add(b, ep(0)) {
+		t.Fatal("b could not take over an endpoint")
+	}
+	if _, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || ok {
+		t.Fatalf("a still holds the moved endpoint: %v %v", ok, err)
+	}
+	if !add(a, ep(max)) {
+		t.Fatal("the slot freed by the move was not reusable")
+	}
+
+	// Concurrent registrations of one member: exactly max of them are stored. A few rounds, since
+	// one round of a non-atomic count can happen to run in order.
+	for _, rows := range [][]PushSubscription{mustList(t, st, a), mustList(t, st, b)} {
+		for _, r := range rows {
+			if _, err := st.DeletePushSubscription(ctx, r.MembershipID, r.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for round := 0; round < 5; round++ {
+		var wg sync.WaitGroup
+		var stored atomic.Int32
+		errs := make(chan error, 16)
+		for i := 0; i < 16; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				ok, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: a,
+					Endpoint: fmt.Sprintf("https://fcm.googleapis.com/fcm/send/race-%d-%d", round, i), P256dh: "k", Auth: "a"}, max)
+				if err != nil {
+					errs <- err
+					return
+				}
+				if ok {
+					stored.Add(1)
+				}
+			}(i)
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatal(err)
+		}
+		rows := mustList(t, st, a)
+		if len(rows) != max || stored.Load() != max {
+			t.Fatalf("round %d: concurrent registrations stored %d rows (%d reported), want %d", round, len(rows), stored.Load(), max)
+		}
+		for _, r := range rows {
+			if _, err := st.DeletePushSubscription(ctx, a, r.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func mustList(t *testing.T, st *SQL, mid string) []PushSubscription {
+	t.Helper()
+	rows, err := st.ListPushSubscriptions(context.Background(), mid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
 }
 
 func TestNotificationHookFiresOncePerRow(t *testing.T) {

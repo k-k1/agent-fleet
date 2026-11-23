@@ -31,6 +31,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/net/idna"
 )
 
 // MaxPayload is the plaintext limit of RFC 8291 §4: a push service must accept a 4096-byte body,
@@ -118,12 +120,33 @@ func (k *Keys) authHeader(endpoint, subject string, now time.Time) (string, erro
 	return "vapid t=" + signing + "." + b64.EncodeToString(raw) + ", k=" + k.PublicKey(), nil
 }
 
-// origin serialises u as RFC 6454 §6.1 does, which RFC 8292 §2 requires for aud: lower-case host,
-// and no port when it is the scheme's default.
+// origin serialises u as RFC 6454 §6.1 does, which RFC 8292 §2 requires for aud: the Unicode
+// serialization (each punycode label turned back into Unicode, label by label so that one label
+// IDNA refuses does not keep the others in punycode), a lower-case host, and no port when it is
+// the scheme's default. Every default push service is plain ASCII, where both serializations agree.
 func origin(u *url.URL) string {
-	host := strings.ToLower(u.Hostname())
+	host := u.Hostname()
 	if strings.Contains(host, ":") {
-		host = "[" + host + "]"
+		host = "[" + strings.ToLower(host) + "]"
+	} else {
+		// A host written in Unicode is first mapped the way net/http maps it to connect (NFC and
+		// the rest of UTS #46, before any lower-casing, whose result differs for some letters), so
+		// aud names the origin the request actually reaches.
+		if !isASCII(host) {
+			if a, err := idna.Lookup.ToASCII(host); err == nil {
+				host = a
+			}
+		}
+		host = strings.ToLower(host)
+		labels := strings.Split(host, ".")
+		for i, l := range labels {
+			if strings.HasPrefix(l, "xn--") {
+				if uni, err := idna.Lookup.ToUnicode(l); err == nil {
+					labels[i] = uni
+				}
+			}
+		}
+		host = strings.Join(labels, ".")
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if port := u.Port(); port != "" && !(scheme == "https" && port == "443") && !(scheme == "http" && port == "80") {
@@ -300,4 +323,13 @@ func (s *Sender) Send(ctx context.Context, sub Subscription, payload []byte, o O
 	default:
 		return fmt.Errorf("webpush: push service answered %d", resp.StatusCode)
 	}
+}
+
+func isASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			return false
+		}
+	}
+	return true
 }

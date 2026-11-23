@@ -15,11 +15,11 @@ func TestOffKindIsNotPushedOthersAre(t *testing.T) {
 	f := newFixture(t)
 	f.subscribe(t, "m1")
 	_ = f.st.PutPushOffKinds(context.Background(), "m1", []string{"answer-ready"})
-	f.svc.deliver(context.Background(), note("answer-ready"))
+	f.deliver(note("answer-ready"))
 	if f.count() != 0 {
 		t.Fatal("a kind the member turned off was pushed")
 	}
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 1 {
 		t.Fatalf("a kind left on was not pushed: %d", f.count())
 	}
@@ -29,7 +29,7 @@ func TestRemovedMemberGetsNothing(t *testing.T) {
 	f := newFixture(t)
 	f.subscribe(t, "m1")
 	f.st.inactive = map[string]bool{"m1": true}
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 0 {
 		t.Fatal("an inactive member was pushed")
 	}
@@ -40,13 +40,13 @@ func TestOnScreenSessionIsNotPushed(t *testing.T) {
 	f.subscribe(t, "m1")
 	now := time.Now()
 	f.svc.view.set("m1", "desk", "s1", now)
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 0 {
 		t.Fatal("pushed for a session on screen")
 	}
 	other := note("question")
 	other.TargetID = "s2"
-	f.svc.deliver(context.Background(), other)
+	f.deliver(other)
 	if f.count() != 1 {
 		t.Fatal("a different session was suppressed")
 	}
@@ -54,18 +54,18 @@ func TestOnScreenSessionIsNotPushed(t *testing.T) {
 	f.svc.view.set("m2", "desk", "s3", now)
 	third := note("question")
 	third.TargetID = "s3"
-	f.svc.deliver(context.Background(), third)
+	f.deliver(third)
 	if f.count() != 2 {
 		t.Fatal("another member's view suppressed the push")
 	}
 	// Clearing, and expiry, both end the suppression.
 	f.svc.view.set("m1", "desk", "", now)
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 3 {
 		t.Fatal("still suppressed after the device cleared")
 	}
 	f.svc.view.set("m1", "desk", "s1", now.Add(-2*viewTTL))
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 4 {
 		t.Fatal("a stale report still suppressed the push")
 	}
@@ -76,19 +76,19 @@ func TestQuestionTextOnlyWhenTenantAllows(t *testing.T) {
 	d := f.subscribe(t, "m1")
 	n := note("question")
 	n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
-	f.svc.deliver(context.Background(), n)
+	f.deliver(n)
 	if got := d.open(t, f.bodies[0]); strings.Contains(got, "Deploy") {
 		t.Fatalf("text sent with the setting off: %s", got)
 	}
 	f.st.includeTxt = true
-	f.svc.deliver(context.Background(), n)
+	f.deliver(n)
 	if got := d.open(t, f.bodies[1]); !strings.Contains(got, `"text":"Deploy to prod?"`) {
 		t.Fatalf("text missing with the setting on: %s", got)
 	}
 	// Only a question carries text; an answer's body never does.
 	a := note("answer-ready")
 	a.Payload = `{"body":"SECRET","questions":[{"question":"x"}]}`
-	f.svc.deliver(context.Background(), a)
+	f.deliver(a)
 	if got := d.open(t, f.bodies[2]); strings.Contains(got, "SECRET") || strings.Contains(got, `"text"`) {
 		t.Fatalf("answer-ready carried text: %s", got)
 	}
@@ -167,7 +167,7 @@ func TestReleaseNeedsTheSubscriptionsKeys(t *testing.T) {
 	if subs, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(subs) != 0 {
 		t.Fatal("still subscribed after release")
 	}
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 0 {
 		t.Fatal("pushed after release")
 	}
@@ -180,7 +180,7 @@ func TestOneDeviceClearingKeepsTheOthersSuppression(t *testing.T) {
 	f.svc.view.set("m1", "phone", "s1", now)
 	f.svc.view.set("m1", "desk", "s1", now)
 	f.svc.view.set("m1", "phone", "", now)
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 0 {
 		t.Fatal("clearing one device lifted the other device's suppression")
 	}
@@ -210,7 +210,7 @@ func TestOversizedTextIsDroppedNotTheQuestion(t *testing.T) {
 	n := note("question")
 	n.DisplayName = strings.Repeat("a", 3600)
 	n.Payload = `{"questions":[{"question":"` + strings.Repeat("<", 140) + `"}]}`
-	f.svc.deliver(context.Background(), n)
+	f.deliver(n)
 	if f.count() != 1 {
 		t.Fatal("the push was lost to an over-long text")
 	}
@@ -257,7 +257,7 @@ func TestStalledReadStillDeliversTheQuestion(t *testing.T) {
 			f.svc.timeout = 300 * time.Millisecond
 			n := note("question")
 			n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
-			f.svc.deliver(context.Background(), n)
+			f.deliver(n)
 			if f.count() != 1 {
 				t.Fatalf("a stalled %s read cost the member the notification", stall)
 			}

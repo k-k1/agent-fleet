@@ -61,6 +61,13 @@ const MemoOriginUser = "user"
 // most two minutes each), so a live flush is never swept.
 const MemoSendStaleAfter = 10 * time.Minute
 
+// MemoSendKeepPrefix starts the send token of a flush the member asked to keep the memos
+// after (store.NewID is lowercase hex, so no other token starts with it). The flag rides on the
+// token because it is a property of the reservation, and it must outlive the CP that made it:
+// a kept send leaves a queue message as it was, so a reclaim of its reservation must not turn
+// the message unconfirmed.
+const MemoSendKeepPrefix = "keep-"
+
 // MemoQueue is the settings row that makes a memo category a queue. Only the member's Console
 // writes it. Generation is the compare-and-set counter the reservation of a later step uses.
 type MemoQueue struct {
@@ -278,18 +285,23 @@ func endEmptyDrains(ctx context.Context, q memoQuerier, membershipID string) err
 // sweepStaleMemoSends takes back the send reservations older than MemoSendStaleAfter. Whether
 // such a send reached the session is unknown, so a held or pending message becomes unconfirmed:
 // shown to the person and never fired by itself, since a second send could do the work twice.
-// A plain note is simply unsent again, as it was before any reservation existed.
+// A plain note is simply unsent again, as it was before any reservation existed. A kept send
+// (MemoSendKeepPrefix) only loses its reservation: the member chose to leave the message to the
+// queue whatever the send did, which is what its settle would have recorded.
 func sweepStaleMemoSends(ctx context.Context, q memoQuerier, membershipID string) error {
 	cutoff := time.Now().UTC().Add(-MemoSendStaleAfter).Format(time.RFC3339)
+	keep := MemoSendKeepPrefix + "%"
 	_, err := q.ExecContext(ctx, `UPDATE memo SET
-		  state=CASE WHEN state IN (?,?) THEN ? ELSE state END,
-		  release_hash=CASE WHEN state IN (?,?) THEN '' ELSE release_hash END,
-		  released_at=CASE WHEN state IN (?,?) THEN '' ELSE released_at END,
-		  released_by=CASE WHEN state IN (?,?) THEN '' ELSE released_by END,
+		  state=CASE WHEN state IN (?,?) AND send_token NOT LIKE ? THEN ? ELSE state END,
+		  release_hash=CASE WHEN state IN (?,?) AND send_token NOT LIKE ? THEN '' ELSE release_hash END,
+		  released_at=CASE WHEN state IN (?,?) AND send_token NOT LIKE ? THEN '' ELSE released_at END,
+		  released_by=CASE WHEN state IN (?,?) AND send_token NOT LIKE ? THEN '' ELSE released_by END,
 		  send_token='', send_started_at=''
 		WHERE membership_id=? AND send_token<>'' AND send_started_at<?`,
-		MemoStateHeld, MemoStatePending, MemoStateUnconfirmed,
-		MemoStateHeld, MemoStatePending, MemoStateHeld, MemoStatePending, MemoStateHeld, MemoStatePending,
+		MemoStateHeld, MemoStatePending, keep, MemoStateUnconfirmed,
+		MemoStateHeld, MemoStatePending, keep,
+		MemoStateHeld, MemoStatePending, keep,
+		MemoStateHeld, MemoStatePending, keep,
 		membershipID, cutoff)
 	return err
 }

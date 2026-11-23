@@ -3,6 +3,7 @@
 package notice
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -56,7 +57,14 @@ func Put(e Event) error {
 	if err := os.MkdirAll(dir(), 0o700); err != nil {
 		return err
 	}
-	b, err := json.Marshal(e)
+	payload, err := boundPayload(e.Payload)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(struct {
+		Event
+		Payload json.RawMessage `json:"payload"` // shadows Event.Payload
+	}{e, payload})
 	if err != nil {
 		return err
 	}
@@ -188,9 +196,28 @@ func List() []Event {
 		if err != nil {
 			continue
 		}
-		var e Event
-		if json.Unmarshal(b, &e) != nil {
+		// The payload is decoded raw first, so an entry an older Agent wrote past maxPayloadBytes
+		// is listed shrunk instead of being expanded. Listed, it is acked and removed rather than
+		// staying queued ahead of the entries after it. A payload that is not an object never
+		// decoded into the map, and is still skipped.
+		var raw struct {
+			Event
+			Payload json.RawMessage `json:"payload"`
+		}
+		if json.Unmarshal(b, &raw) != nil {
 			continue
+		}
+		e := raw.Event
+		if p := bytes.Trim(raw.Payload, " \t\r\n"); len(p) > 0 && string(p) != "null" {
+			if p[0] != '{' {
+				continue
+			}
+			if len(p) > maxPayloadBytes {
+				p = shrinkPayload(p, maxPayloadBytes, maxPayloadValue)
+			}
+			if json.Unmarshal(p, &e.Payload) != nil {
+				continue
+			}
 		}
 		if ts, err := time.Parse(time.RFC3339, e.CreatedAt); err == nil && ts.Before(cutoff) {
 			_ = os.Remove(path)
