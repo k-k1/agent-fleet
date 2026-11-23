@@ -166,6 +166,11 @@ describe("MoveSessionModal: before the move", () => {
     const marked = [...document.querySelectorAll<HTMLElement>(".seg-btn.quota-left")].map((b) => b.dataset.kind);
     expect(marked).toEqual(["muse"]);
     expect(document.querySelector(".seg-btn.seg-btn--active")?.getAttribute("data-kind")).toBe("muse");
+    // The selected quota-left card carries the class the combined ring rule keys on (sessions.css).
+    const picked = () => [...document.querySelectorAll<HTMLElement>(".seg-btn.move-quota-picked")].map((b) => b.dataset.kind);
+    expect(picked()).toEqual(["muse"]);
+    await click(document.querySelector('.seg-btn[data-kind="codex"]'));
+    expect(picked()).toEqual([]);
   });
 
   it("does not move the user's choice when usage reorders the picks", async () => {

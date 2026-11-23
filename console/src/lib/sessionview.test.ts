@@ -379,15 +379,18 @@ describe("stateClass", () => {
     expect(stateClass("popout-dot", "")).toBe("popout-dot");
   });
 
-  it("covers every cls stateInfo produces, with no bare token left behind", () => {
-    const chips = [
-      stateInfo({ kind: "claude", alive: false, resumable: false }),
-      stateInfo({ kind: "claude", alive: true, state: "auth" }),
-      stateInfo({ kind: "claude", alive: true, state: "limited" }),
+  it("keeps every token of the cls stateInfo produces, in order", () => {
+    const cases: [ReturnType<typeof stateInfo>, string][] = [
+      [
+        stateInfo({ kind: "claude", alive: false, resumable: false }),
+        "session-state session-state--off session-state--dead",
+      ],
+      [stateInfo({ kind: "claude", alive: true, state: "auth" }), "session-state session-state--question"],
+      [
+        stateInfo({ kind: "claude", alive: true, state: "limited" }),
+        "session-state session-state--question session-state--limited",
+      ],
     ];
-    for (const c of chips) {
-      const cls = stateClass("session-state", c.cls);
-      expect(cls.split(" ").slice(1).every((x) => x.startsWith("session-state--"))).toBe(true);
-    }
+    for (const [chip, want] of cases) expect(stateClass("session-state", chip.cls)).toBe(want);
   });
 });
