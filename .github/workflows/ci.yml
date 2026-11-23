@@ -80,10 +80,13 @@ jobs:
   #                 it re-scans the old merge commit (#4905).
   #   push, manual  every ref, as before. secret-sweep.yml repeats that daily.
   # What this gives up: a leak on a branch that never gets a PR is reported by the next push
-  # to main or the daily sweep, not by the next PR. Pushing it already published it, so the
-  # PR gate never prevented that leak; it only reported it.
+  # to main or the daily sweep, not by the next PR, and only while a branch or tag still
+  # reaches the commit when they run. Pushing it already published it, so the PR gate never
+  # prevented that leak; it only reported it.
   # `-m` is mandatory: without it gitleaks skips merge commits, and whatever entered while
   # resolving a conflict (138 commits' worth in this repository) stays unscanned and green.
+  # So is the `--` that ends the revision list, and so is failing on a logged git error:
+  # gitleaks reports a clean scan when its child `git log` fails (scripts/secret-scan.sh).
   # Allowlist and false-positive handling live in .gitleaks.toml.
   secret-scan:
     runs-on: ubuntu-latest
@@ -96,6 +99,7 @@ jobs:
         run: |
           ./scripts/secret-scan-test.sh
           ./scripts/secret-sweep-issue-test.sh
+          ./scripts/secret-sweep-test.sh
       - name: scan history
         env:
           SCOPE: ${{ github.event_name == 'pull_request' && 'pr' || 'all' }}

@@ -4,8 +4,9 @@
 #
 # Layout: `main` is clean; `other` is an unrelated branch carrying a credential-shaped
 # value; `pr` is a clean branch whose merge into main is checked out, as in a pull_request
-# run. `pr` mode must pass there and `all` mode must fail (the other branch is reachable);
-# once the PR's own commit carries the value, `pr` mode must fail too.
+# run. `pr` mode must pass there and `all` mode must find the value (the other branch is
+# reachable); once the PR's own commit carries the value, `pr` mode must find it too.
+# Exit statuses are checked exactly: 0 clean, 42 leaks, 3 incomplete scan.
 # The value is assembled at run time so this file holds nothing a scanner would flag.
 set -euo pipefail
 
@@ -26,17 +27,13 @@ git config commit.gpgsign false
 
 key="AKIA$(printf '%s' QYLPMN5HHHFPZAM2)"
 commit() { git add -A && git commit -q -m "$1"; }
-# Runs the script quietly; echoes its exit status without tripping `set -e`.
-scan() {
-  local rc=0
-  "$HERE/secret-scan.sh" "$1" >"$out" 2>&1 || rc=$?
-  echo "$rc"
-}
-expect() { # <label> <want-nonzero 0|1> <mode>
-  local label="$1" want="$2" mode="$3" rc
-  rc="$(scan "$mode")"
-  if { [ "$want" = 1 ] && [ "$rc" = 0 ]; } || { [ "$want" = 0 ] && [ "$rc" != 0 ]; }; then
-    echo "FAIL: $label (mode=$mode exit=$rc)"
+# expect <label> <want exit status> <mode> [extra scan flags...]
+expect() {
+  local label="$1" want="$2" mode="$3" rc=0
+  shift 3
+  "$HERE/secret-scan.sh" "$mode" "$@" >"$out" 2>&1 || rc=$?
+  if [ "$rc" != "$want" ]; then
+    echo "FAIL: $label (mode=$mode exit=$rc, want $want)"
     sed 's/^/    /' "$out"
     FAILED=1
   fi
@@ -44,10 +41,16 @@ expect() { # <label> <want-nonzero 0|1> <mode>
 
 echo "base" >README.txt
 commit "base"
+base="$(git rev-parse HEAD)"
+
+# Negative control: a clean history is clean in both modes, so a non-zero below means a find.
+expect "all must pass on a clean history" 0 all
+expect "pr must pass on a clean history" 0 pr
 
 git switch -q -c other
 printf 'aws_access_key_id = %s\n' "$key" >leak.env
 commit "credential-shaped value on an unrelated branch"
+other="$(git rev-parse HEAD)"
 git switch -q main
 
 git switch -q -c pr
@@ -59,19 +62,25 @@ commit "main moves on"
 git switch -q --detach main
 git merge -q --no-ff -m "merge pr" pr
 
-# Positive control: the other branch's value is really there for `all` to find.
-expect "all mode must see the value on the other branch" 1 all
+# Positive control: the other branch's value is really there for `all` to find, and the
+# report names the right file and commit.
+expect "all must find the value on the other branch" 42 all --report-format json --report-path "$work/all.json"
+if ! jq -e --arg c "$other" 'length == 1 and .[0].File == "leak.env" and .[0].Commit == $c' "$work/all.json" >/dev/null 2>&1; then
+  echo "FAIL: the all-mode report must name leak.env and the other branch's commit"
+  cat "$work/all.json" 2>&1 | sed 's/^/    /'
+  FAILED=1
+fi
 # The point of the change: that value is unreachable from the PR's merge commit.
-expect "pr mode must not fail on another branch's value" 0 pr
+expect "pr must not fail on another branch's value" 0 pr
 
-# The PR's own commit carries the value: both modes must fail.
+# The PR's own commit carries the value: both modes must find it.
 git switch -q pr
 printf 'aws_access_key_id = %s\n' "$key" >own.env
 commit "the PR itself carries the value"
 git switch -q --detach main
 git merge -q --no-ff -m "merge pr again" pr
-expect "pr mode must fail on the PR's own commit" 1 pr
-expect "all mode must fail too" 1 all
+expect "pr must find the PR's own commit" 42 pr
+expect "all must find it too" 42 all
 
 # A value removed again in a later commit of the same PR is still in its history.
 git switch -q pr
@@ -79,7 +88,7 @@ git rm -q own.env
 commit "remove it again"
 git switch -q --detach main
 git merge -q --no-ff -m "merge pr third time" pr
-expect "pr mode must fail on a value the PR added and removed" 1 pr
+expect "pr must find a value the PR added and removed" 42 pr
 
 # A value that enters only in a merge commit (a conflict resolution) is why `-m` exists.
 git switch -q -c pr2 main
@@ -92,12 +101,36 @@ git switch -q --detach pr2
 git merge -q --no-ff --no-commit side >/dev/null
 printf 'aws_access_key_id = %s\n' "$key" >evil.env
 commit "merge that adds the value"
-expect "pr mode must fail on a value that only a merge commit adds" 1 pr
+expect "pr must find a value that only a merge commit adds" 42 pr
 
-if [ "$("$HERE/secret-scan.sh" bogus >/dev/null 2>&1 || echo $?)" != 2 ]; then
-  echo "FAIL: an unknown mode must exit 2"
-  FAILED=1
-fi
+# A tracked file named HEAD makes a bare `git log HEAD` ambiguous; gitleaks then logs the
+# git error and still reports a clean scan, so the revision list must end in `--`.
+git switch -q -c headfile "$base"
+echo "not a ref" >HEAD
+printf 'aws_access_key_id = %s\n' "$key" >headfile.env
+commit "a file named HEAD next to a value"
+expect "pr must find the value when a file is named HEAD" 42 pr
+expect "all must find the value when a file is named HEAD" 42 all
+
+# gitleaks exits 0 with no findings when its child `git log` fails. A shim that fails
+# `git log` stands in for an unreadable object; the wrapper must not report that as clean.
+mkdir "$work/shim"
+real_git="$(command -v git)"
+cat >"$work/shim/git" <<EOF
+#!/bin/sh
+for a in "\$@"; do
+  if [ "\$a" = log ]; then echo "fatal: simulated object read failure" >&2; exit 128; fi
+done
+exec "$real_git" "\$@"
+EOF
+chmod +x "$work/shim/git"
+git switch -q main
+PATH="$work/shim:$PATH" expect "a failing child git must not read as a clean scan (all)" 3 all
+PATH="$work/shim:$PATH" expect "a failing child git must not read as a clean scan (pr)" 3 pr
+
+rc=0
+"$HERE/secret-scan.sh" bogus >/dev/null 2>&1 || rc=$?
+[ "$rc" = 2 ] || { echo "FAIL: an unknown mode must exit 2 (got $rc)"; FAILED=1; }
 
 [ "$FAILED" = 0 ] && echo "secret-scan controls ok"
 exit "$FAILED"

@@ -10,14 +10,22 @@ trap 'rm -rf "$work"' EXIT
 mkdir "$work/bin"
 export GITHUB_REPOSITORY=o/r
 export CALLS="$work/calls.log"
+export ISSUES="$work/issues.json"
 
-# The stub answers `issue list` with $EXISTING (an issue number, or nothing) and, for
-# `api ... -F body=@file` and `issue create --body-file file`, copies the body to $work/body.
+TITLE="secret-scan: credential-shaped value found in the repository history"
+MARKER="<!-- af-secret-sweep -->"
+
+# The stub serves `gh api --paginate repos/o/r/issues?...` from $ISSUES, applying the real
+# --jq expression with jq, so the ownership filter in the script is what gets tested. For
+# `api -X PATCH ... -F body=@file` and `issue create --body-file file` it copies the body.
 cat >"$work/bin/gh" <<'EOF'
 #!/usr/bin/env bash
 echo "gh $*" >>"$CALLS"
 case "$1 $2" in
-  "issue list") echo "${EXISTING:-}" ;;
+  "api --paginate")
+    expr=""
+    while [ $# -gt 0 ]; do [ "$1" = --jq ] && expr="$2"; shift; done
+    jq -r "$expr" "$ISSUES" ;;
   "issue create")
     while [ $# -gt 0 ]; do [ "$1" = --body-file ] && cp "$2" "$CALLS.body"; shift; done ;;
   "api -X")
@@ -27,53 +35,94 @@ EOF
 chmod +x "$work/bin/gh"
 export PATH="$work/bin:$PATH"
 
+# A report whose file names and match text hold values that must never reach the issue.
 cat >"$work/report.json" <<'EOF'
 [
  {"RuleID":"aws-access-token","File":"a/b.go","StartLine":12,"Commit":"0123456789abcdef0123","Fingerprint":"f1","Secret":"SECRETVALUE-1","Match":"MATCHTEXT-1"},
- {"RuleID":"aws-access-token","File":"a/b.go","StartLine":12,"Commit":"0123456789abcdef0123","Fingerprint":"f1","Secret":"SECRETVALUE-1","Match":"MATCHTEXT-1"},
- {"RuleID":"curl-auth-user","File":"c.sh","StartLine":3,"Commit":"fedcba9876543210fedc","Fingerprint":"f2","Secret":"SECRETVALUE-2","Match":"MATCHTEXT-2"}
+ {"RuleID":"aws-access-token","File":"a/b.go","StartLine":13,"Commit":"0123456789abcdef0123","Fingerprint":"f1b","Secret":"SECRETVALUE-1","Match":"MATCHTEXT-1"},
+ {"RuleID":"curl-auth-user","File":"FILENAMEVALUE-2`.env","StartLine":3,"Commit":"fedcba9876543210fedc","Fingerprint":"f2","Secret":"SECRETVALUE-2","Match":"MATCHTEXT-2"}
 ]
 EOF
+
+issue() { # <number> <login> <title> <body> [pull_request]
+  jq -n --argjson n "$1" --arg u "$2" --arg t "$3" --arg b "$4" --arg pr "${5:-}" \
+    '{number:$n, user:{login:$u}, title:$t, body:$b} + (if $pr == "" then {} else {pull_request:{}} end)'
+}
+# issues <json objects...> writes the open-issue list the stub serves.
+issues() { printf '%s\n' "$@" | jq -s '.' >"$ISSUES"; }
+OURS="$(issue 77 'github-actions[bot]' "$TITLE" "$MARKER
+old body")"
+# Lookalikes that must never be changed: same title by someone else (with and without the
+# marker), the bot's issue without the marker, a pull request carrying the same text, and a
+# different title.
+LOOK1="$(issue 11 someone "$TITLE" "$MARKER
+copied")"
+LOOK2="$(issue 12 someone "$TITLE" "plain")"
+LOOK3="$(issue 13 'github-actions[bot]' "$TITLE" "no marker")"
+LOOK4="$(issue 14 'github-actions[bot]' "$TITLE" "$MARKER" pr)"
+LOOK5="$(issue 15 'github-actions[bot]' "another title" "$MARKER")"
 
 fail() { echo "FAIL: $*"; FAILED=1; }
 reset() { rm -f "$CALLS" "$CALLS.body"; }
 calls() { cat "$CALLS" 2>/dev/null || true; }
+run() { "$HERE/secret-sweep-issue.sh" "$@" >/dev/null 2>"$work/err" ; }
 
-# open, no issue yet: one create with both labels and the findings, without any value.
+# open, nothing of ours (only lookalikes): one create, never a touch on a lookalike.
 reset
-EXISTING='' "$HERE/secret-sweep-issue.sh" open "$work/report.json" https://example.invalid/run/1 >/dev/null
-calls | grep -q '^gh issue create ' || fail "open without an issue must create one"
+issues "$LOOK1" "$LOOK2" "$LOOK3" "$LOOK4" "$LOOK5"
+run open "$work/report.json" https://example.invalid/run/1 || fail "open must succeed"
+calls | grep -q '^gh issue create ' || fail "open without our issue must create one"
 calls | grep -q -- '--label bug --label priority: high' || fail "create must carry both labels"
-grep -q 'aws-access-token. in .a/b.go:12. (commit .0123456789ab.)' "$CALLS.body" || fail "body must list rule, file:line and commit"
-grep -q 'curl-auth-user' "$CALLS.body" || fail "body must list every finding"
-[ "$(grep -c 'a/b.go:12' "$CALLS.body")" = 1 ] || fail "a repeated fingerprint must be listed once"
-grep -q 'SECRETVALUE\|MATCHTEXT' "$CALLS.body" && fail "the body must never quote a matched value"
+calls | grep -q 'issues/1[1-5]' && fail "a lookalike issue was touched"
+grep -qF "$MARKER" "$CALLS.body" || fail "the body must carry the marker"
+grep -q 'aws-access-token. in commit .0123456789ab.' "$CALLS.body" || fail "body must list rule and commit"
+grep -q 'curl-auth-user. in commit .fedcba987654.' "$CALLS.body" || fail "body must list every finding"
+[ "$(grep -c 'aws-access-token' "$CALLS.body")" = 1 ] || fail "one rule in one commit must be listed once"
+grep -q 'SECRETVALUE\|MATCHTEXT\|FILENAMEVALUE\|a/b.go' "$CALLS.body" && fail "the body must carry no value, file name or path"
 grep -q 'https://example.invalid/run/1' "$CALLS.body" || fail "body must link the run"
 
-# open, issue exists: refresh it, never create a second one.
+# open, ours exists among lookalikes: refresh exactly it, never create a second one.
 reset
-EXISTING=77 "$HERE/secret-sweep-issue.sh" open "$work/report.json" https://example.invalid/run/2 >/dev/null
-calls | grep -q '^gh api -X PATCH repos/o/r/issues/77 ' || fail "open with an issue must patch it"
-calls | grep -q '^gh issue create' && fail "open with an issue must not create another"
+issues "$LOOK1" "$LOOK2" "$OURS" "$LOOK3" "$LOOK4" "$LOOK5"
+run open "$work/report.json" https://example.invalid/run/2 || fail "open must succeed"
+calls | grep -q '^gh api -X PATCH repos/o/r/issues/77 ' || fail "open must patch our issue"
+calls | grep -q '^gh issue create' && fail "open with our issue must not create another"
+calls | grep -q 'issues/1[1-5]' && fail "a lookalike issue was touched"
+grep -qF "$MARKER" "$CALLS.body" || fail "a refreshed body must keep the marker"
+grep -q 'SECRETVALUE\|MATCHTEXT\|FILENAMEVALUE\|a/b.go' "$CALLS.body" && fail "the refreshed body must carry no value, file name or path"
+
+# open, two issues that both look like ours: change nothing, fail.
+reset
+issues "$OURS" "$(issue 78 'github-actions[bot]' "$TITLE" "$MARKER")"
+if run open "$work/report.json" https://example.invalid/run/3; then fail "two candidates must fail"; fi
+calls | grep -q 'api -X\|issue create' && fail "two candidates must change nothing"
 
 # open, empty or missing report: nothing is filed.
 reset
+issues "$OURS"
 echo '[]' >"$work/empty.json"
 for r in "$work/empty.json" "$work/missing.json"; do
-  EXISTING='' "$HERE/secret-sweep-issue.sh" open "$r" https://example.invalid/run/3 >/dev/null
+  run open "$r" https://example.invalid/run/4 || fail "an empty report must not fail the issue step"
 done
 calls | grep -q 'issue create\|api -X' && fail "an empty report must file nothing"
 
-# close: only when an issue is open.
+# close: only our issue, and only when it is open.
 reset
-EXISTING=77 "$HERE/secret-sweep-issue.sh" close https://example.invalid/run/4 >/dev/null
-calls | grep -q '^gh issue comment 77 ' || fail "close must comment on the open issue"
-calls | grep -q '^gh issue close 77' || fail "close must close the open issue"
+issues "$LOOK1" "$LOOK2" "$OURS" "$LOOK3" "$LOOK4" "$LOOK5"
+run close https://example.invalid/run/5 || fail "close must succeed"
+calls | grep -q '^gh issue comment 77 ' || fail "close must comment on our issue"
+calls | grep -q '^gh issue close 77' || fail "close must close our issue"
+calls | grep -q 'issue \(comment\|close\) 1[1-5]' && fail "a lookalike issue was closed"
 reset
-EXISTING='' "$HERE/secret-sweep-issue.sh" close https://example.invalid/run/5 >/dev/null
-calls | grep -q 'issue comment\|issue close' && fail "close with no open issue must do nothing"
+issues "$LOOK1" "$LOOK2" "$LOOK3" "$LOOK4" "$LOOK5"
+run close https://example.invalid/run/6 || fail "close must succeed with nothing to close"
+calls | grep -q 'issue comment\|issue close' && fail "close with only lookalikes must do nothing"
+reset
+issues "$OURS" "$(issue 78 'github-actions[bot]' "$TITLE" "$MARKER")"
+if run close https://example.invalid/run/7; then fail "close with two candidates must fail"; fi
+calls | grep -q 'issue comment\|issue close' && fail "close with two candidates must change nothing"
 
-if "$HERE/secret-sweep-issue.sh" bogus >/dev/null 2>&1; then fail "an unknown mode must fail"; fi
+if run bogus; then fail "an unknown mode must fail"; fi
 
 [ "$FAILED" = 0 ] && echo "secret-sweep-issue controls ok"
 exit "$FAILED"

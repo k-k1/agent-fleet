@@ -740,10 +740,12 @@ not the diff. The scope depends on who is asking (`scripts/secret-scan.sh`):
   re-scans the old merge commit.)
 - **A push to `main`, and a manual run,** scan every ref, and so does the daily
   `secret-sweep.yml`. A finding fails that run; the sweep also opens (or refreshes) one
-  issue, which the first clean sweep closes.
+  issue (rule and commit only, never a value or a path), which the first clean sweep
+  closes. Only a scan that completed touches that issue, and only a run on `main`.
 - **What this gives up:** a leak on a branch that has no PR is reported by the next push
-  to `main` or the daily sweep, not by the next PR. Pushing it already published it, so
-  the PR gate never prevented that leak; it only reported it.
+  to `main` or the daily sweep, not by the next PR, and only while a branch or tag still
+  reaches the commit when they run. Pushing it already published it, so the PR gate never
+  prevented that leak; it only reported it.
 
 What matters in both:
 
@@ -751,6 +753,10 @@ What matters in both:
   introduced while resolving a conflict stays unscanned behind a green check** — when
   the scan was introduced this repository had 138 such merges, and the first scan
   really did have that hole.
+- **End the revision list with `--`.** A tracked file named `HEAD` at the repository root
+  makes `git log HEAD` ambiguous; git errors, and the scanner reports a clean scan of 0
+  commits. For the same reason `scripts/secret-scan.sh` treats any error the scanner logs
+  as an incomplete scan (exit 3), not a clean one.
 - **Pin the scanner's version and checksum**; do not depend on a marketplace action.
 - **Exclude false positives by the value, with a regular expression — never by a path
   alone** (`.gitleaks.toml`; a rule may narrow a value to one file with
