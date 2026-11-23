@@ -633,7 +633,7 @@ export const memo = {
   "autorun.delete_worktree": "ワークツリーを削除",
   "autorun.clear": "終了した実行を片付ける",
   "autorun.clear_do": "アーカイブ",
-  "autorun.clear_confirm": "終了した実行の停止済みセッション {count} 件をアーカイブします。マージ済みのワークツリーは、続けて削除を確認します",
+  "autorun.clear_confirm": "終了した実行の停止済みセッション {count} 件をアーカイブします。マージ済みの実行と、プルリクエストなしで終わり未保存の作業がない実行のワークツリーは、続けて削除を確認します",
   "autorun.cleared": "{count} 件のセッションをアーカイブしました",
   "autorun.clear_failed": "{name} をアーカイブできませんでした: {err}",
   "autorun.resumed": "再開",

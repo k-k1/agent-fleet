@@ -32,7 +32,7 @@ get_memo_queue_runs	memo	Read an auto-run category's run history	自動実行カ
 flush_memos	memo	Send the chosen memos to a session as one message; refused in an auto-run category	選んだメモを 1 通にまとめてセッションへ送ります。自動実行のカテゴリでは断られます
 list_schedules	schedule	List the schedules	定時実行のスケジュールを一覧します
 get_schedule_runs	schedule	Show a schedule's latest 50 runs	スケジュールの実行履歴（最新 50 件）を返します
-create_schedule	schedule	Register a schedule	定時実行のスケジュールを登録します
+create_schedule	schedule	Register a schedule; it waits for the member's approval before it runs	定時実行のスケジュールを登録します。メンバーが承認するまで動きません
 update_schedule	schedule	Edit a schedule	既存のスケジュールを編集します
 delete_schedule	schedule	Delete a schedule	スケジュールを削除します
 pause_schedule	schedule	Pause a schedule	スケジュールを一時停止します

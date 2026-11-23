@@ -95,7 +95,7 @@ How to read a cell:
 |---|---|---|---|---|---|
 | `list_schedules` | List the schedules | — | ✓ AF read | — | — |
 | `get_schedule_runs` | Show a schedule's latest 50 runs | — | ✓ AF read | — | `id` |
-| `create_schedule` | Register a schedule | — | ✓ AF write | — | `spec_kind`, `spec`, `prompt` |
+| `create_schedule` | Register a schedule; it waits for the member's approval before it runs | — | ✓ AF write | — | `spec_kind`, `spec`, `prompt` |
 | `update_schedule` | Edit a schedule | — | ✓ AF write | — | `id` |
 | `delete_schedule` | Delete a schedule | — | ✓ AF write | — | `id` |
 | `pause_schedule` | Pause a schedule | — | ✓ AF write | — | `id` |

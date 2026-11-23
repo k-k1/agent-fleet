@@ -39,7 +39,7 @@ af-watch-hook --help
 ## Behaviour
 
 - **The secret is never shown.** The Control Plane returns it once; it goes to the repository's webhook settings and nowhere else
-- **Admin rights are required** on the repository. When the token lacks them, `add` exits 1 with what to grant, and no hook is left at the Control Plane
+- **Admin rights are required** on the repository; on Bitbucket the token needs `read:webhook:bitbucket` and `write:webhook:bitbucket` for `add`, and `delete:webhook:bitbucket` for `rm`. When the token lacks them, `add` exits 1 with what to grant, and no hook is left at the Control Plane
 - **Idempotent.** `add` for a repository that already has a hook changes nothing and prints the existing id
 - **`rm` always retires the Control Plane hook**, even when the repository step fails (no token, no admin rights). It then prints a warning with the URL of the webhook to delete by hand; that webhook no longer verifies, so it is harmless until you do
 - At most 20 hooks per member

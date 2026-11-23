@@ -39,7 +39,7 @@ af-watch-hook --help
 ## 動き
 
 - **シークレットは表示しない。** Control Plane が一度だけ返し、リポジトリの Webhook 設定にだけ渡します
-- **リポジトリの管理者権限が要る。** 足りないと `add` は終了コード 1 で終わり、何を付与すればよいかを伝え、Control Plane にフックを残しません
+- **リポジトリの管理者権限が要る。** Bitbucket では、トークンに `add` 用の `read:webhook:bitbucket` と `write:webhook:bitbucket`、`rm` 用の `delete:webhook:bitbucket` が要ります。足りないと `add` は終了コード 1 で終わり、何を付与すればよいかを伝え、Control Plane にフックを残しません
 - **何度実行しても同じ。** すでにフックのあるリポジトリへの `add` は何も変えず、既存の ID を表示します
 - **`rm` は必ず Control Plane のフックを消す。** リポジトリ側が失敗しても（トークンがない、管理者権限がない）消し、手で消す Webhook の URL を警告で示します。その Webhook はもう検証を通らないので、消すまでの間も害はありません
 - 1 人あたり最大 20 件

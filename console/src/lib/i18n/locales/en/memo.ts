@@ -636,7 +636,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "autorun.delete_worktree": "Delete the worktree",
   "autorun.clear": "Clear finished runs",
   "autorun.clear_do": "Archive",
-  "autorun.clear_confirm": "Archive {count} stopped sessions of finished runs? Merged worktrees are offered for deletion next.",
+  "autorun.clear_confirm": "Archive {count} stopped sessions of finished runs? The worktrees of merged runs, and of runs without a pull request that hold no unsaved work, are offered for deletion next.",
   "autorun.cleared": "Archived {count} sessions",
   "autorun.clear_failed": "Could not archive {name}: {err}",
   "autorun.resumed": "resumed",
