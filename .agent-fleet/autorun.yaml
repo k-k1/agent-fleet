@@ -1,0 +1,29 @@
+# Memo auto-run settings for this repository's categories.
+# Nothing here takes effect until each member reviews the difference and approves it in the
+# Console (Memo queue > category > Auto-run settings > Check file).
+# Guide: guide/user/chat/memo-auto-run-repo-file.md
+#
+# Console-only settings are deliberately absent: turning auto-run on, "accept memos from my own
+# sessions without approval", and tidy destinations.
+version: 1
+categories:
+  # Unattended implementer: one GitHub issue per run, implemented, reviewed and merged by the
+  # queue-implementer skill.
+  issue-rounds:
+    agent_kind: claude
+    model: sonnet
+    # 0 = no spend cap.
+    spend_cap_usd: 0
+    max_active: 4
+    batch: 1
+    # Runs start whenever a memo is runnable and a slot is free: no window, no threshold.
+    open_cron: ""
+    open_after: 0
+    max_fires_per_day: 200
+    max_task_hours: 12
+    continuation_max: 5
+    worktree: true
+    tidy: false
+    instruction: >-
+      Use the `queue-implementer` skill (Skill tool) for the queue item and follow it as
+      written. If the skill is not available, stop, say so in one line, and do nothing else.
