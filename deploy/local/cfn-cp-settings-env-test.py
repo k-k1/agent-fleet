@@ -25,6 +25,7 @@ exit 0 pass, 1 a check failed, 2 the check could not run.
 import copy
 import fnmatch
 import importlib.util
+import itertools
 import json
 import os
 import sys
@@ -174,32 +175,38 @@ def check(tpl, size, patterns):
             fails.append("%s must default to empty: %r" % (n, P.get(n)))
     contact = {"WebPushSubject": "mailto:a@example.com"}
     gated_vars = set(GATED.values()) | {"AF_WEB_PUSH"}
-    for n in GATED:
-        ev = dek.Ev(tpl, {n: "x-" + n})
-        if (set(ev.cp_env_names()) | set(secrets(ev))) & (gated_vars | {SECRETS["WebPush"][0]}):
-            fails.append("%s alone (WebPush=off) reaches the CP: %s" % (n, sorted(ev.cp_env_names())))
-        ev = dek.Ev(tpl, dict(contact, **{n: "x-" + n}))
-        if (set(ev.cp_env_names()) | set(secrets(ev))) & (gated_vars | {SECRETS["WebPush"][0]}):
-            fails.append("%s with a contact (WebPush=off) reaches the CP" % n)
-    for given in ({"WebPushSubject"}, {"WebPushEndpointHosts"}, {"NotificationDrainInterval"},
-                  {"WebPushSubject", "WebPushEndpointHosts"}, set(GATED)):
-        params = dict(contact, WebPush="on")
-        params.update({n: "x-" + n for n in given})
-        ev = dek.Ev(tpl, params)
-        env, sec = ev.cp_env_names(), secrets(ev)
-        if env.get("AF_WEB_PUSH") != "true":
-            fails.append("WebPush=on %s: AF_WEB_PUSH is %r, want 'true'" % (sorted(given), env.get("AF_WEB_PUSH")))
-        for n, var in GATED.items():
-            want = ev.params[n]
-            if (var in env) != (want != ""):
-                fails.append("WebPush=on %s: %s present=%s but %s is %r" % (sorted(given), var, var in env, n, want))
-            elif var in env and env[var] != {"!Ref": n} and ev.val(env[var]) != want:
-                fails.append("WebPush=on: %s does not arrive verbatim in %s: %r" % (n, var, env[var]))
-        want_arn = "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/web-push-vapid-key"
-        if sub_text(sec.get("AF_WEB_PUSH_VAPID_PRIVATE_KEY")) != want_arn:
-            fails.append("WebPush=on %s: the key is %r" % (sorted(given), sec.get("AF_WEB_PUSH_VAPID_PRIVATE_KEY")))
-        if set(sec) - {"AF_WEB_PUSH_VAPID_PRIVATE_KEY", "AF_DB_PASSWORD", "AF_COOKIE_SECRET", "AF_MASTER_KEY"}:
-            fails.append("WebPush=on pulled in other secrets: %s" % sorted(sec))
+    key_var = SECRETS["WebPush"][0]
+    want_arn = "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/web-push-vapid-key"
+    names = sorted(GATED)
+    # Every subset of the knobs, switch off and on: Environment AND Secrets each time. With the
+    # switch off nothing of Web Push arrives, whatever is set; with it on, exactly the set ones do.
+    for switch in ("off", "on"):
+        for r in range(len(names) + 1):
+            for given in itertools.combinations(names, r):
+                if switch == "on" and "WebPushSubject" not in given:
+                    continue  # refused by the Rule (checked below)
+                params = {"WebPush": switch}
+                params.update({n: "x-" + n for n in given})
+                ev = dek.Ev(tpl, params)
+                env, sec = ev.cp_env_names(), secrets(ev)
+                tag = "WebPush=%s %s" % (switch, list(given))
+                if key_var in env:
+                    fails.append("%s: the key %s is in plain Environment" % (tag, key_var))
+                if switch == "off":
+                    if (set(env) | set(sec)) & (gated_vars | {key_var}):
+                        fails.append("%s reaches the CP: %s" % (tag, sorted((set(env) | set(sec)) & (gated_vars | {key_var}))))
+                    continue
+                if env.get("AF_WEB_PUSH") != "true":
+                    fails.append("%s: AF_WEB_PUSH is %r, want 'true'" % (tag, env.get("AF_WEB_PUSH")))
+                for n, var in GATED.items():
+                    if (var in env) != (n in given):
+                        fails.append("%s: %s present=%s" % (tag, var, var in env))
+                    elif var in env and env[var] != {"!Ref": n} and ev.val(env[var]) != "x-" + n:
+                        fails.append("%s: %s does not arrive verbatim in %s: %r" % (tag, n, var, env[var]))
+                if sub_text(sec.get(key_var)) != want_arn:
+                    fails.append("%s: the key is %r" % (tag, sec.get(key_var)))
+                if set(sec) - {key_var, "AF_DB_PASSWORD", "AF_COOKIE_SECRET", "AF_MASTER_KEY"}:
+                    fails.append("%s pulled in other secrets: %s" % (tag, sorted(sec)))
     if dek.Ev(tpl, {"WebPush": "on"}).rules_ok():
         fails.append("WebPush=on with an empty WebPushSubject is not refused by a Rule")
     if not dek.Ev(tpl, {"WebPush": "on", "WebPushSubject": "mailto:a@example.com"}).rules_ok():
@@ -278,9 +285,22 @@ def main():
             {"!Not": [{"!Equals": [{"!Ref": "WebPushEndpointHosts"}, ""]}]}]}
 
     def key_for_hosts_alone(t):
-        t["Conditions"]["WebPushOn"] = {"!Or": [
+        # Only the Secrets entry gets the wider condition; the Environment side stays correct.
+        t["Conditions"]["WebPushKeyOn"] = {"!Or": [
             {"!Equals": [{"!Ref": "WebPush"}, "on"]},
             {"!Not": [{"!Equals": [{"!Ref": "WebPushEndpointHosts"}, ""]}]}]}
+        for e in sec(t):
+            if "!If" in e and e["!If"][0] == "WebPushOn":
+                e["!If"][0] = "WebPushKeyOn"
+
+    def hosts_with_both_knobs_off(t):
+        t["Conditions"]["HasWebPushEndpointHosts"] = {"!And": [
+            {"!Not": [{"!Equals": [{"!Ref": "WebPushEndpointHosts"}, ""]}]},
+            {"!Not": [{"!Equals": [{"!Ref": "NotificationDrainInterval"}, ""]}]}]}
+
+    def key_in_env_with_hosts(t):
+        t["Conditions"]["HasWebPushEndpointHostsOn"] = {"!Condition": "HasWebPushEndpointHosts"}
+        env(t).append({"!If": ["HasWebPushEndpointHostsOn", {"Name": "AF_WEB_PUSH_VAPID_PRIVATE_KEY", "Value": "x"}, {"!Ref": "AWS::NoValue"}]})
 
     def key_unexpanded(t):
         for e in sec(t):
@@ -311,6 +331,8 @@ def main():
         "contact rule applies with the switch off": rule_always,
         "endpoint hosts dropped without a drain interval": endpoint_hosts_needs_drain,
         "key injected for a knob alone": key_for_hosts_alone,
+        "both knobs set while the switch is off reach the CP": hosts_with_both_knobs_off,
+        "key in plain Environment beside a knob": key_in_env_with_hosts,
         "key ARN left unexpanded": key_unexpanded,
     }
     for name, m in controls.items():

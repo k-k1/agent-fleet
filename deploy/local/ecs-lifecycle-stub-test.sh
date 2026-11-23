@@ -2198,7 +2198,7 @@ grep -q "deploy --stack-name t-ingress .*WebPush=on" "$LOG" || fail "WebPush=on 
 grep -q "deploy --stack-name t-ingress .*WebPushSubject=mailto:ops@example.com" "$LOG" \
   || fail "WebPushSubject did not reach 30-ingress with WebPush=on (the template's Rule would refuse it)"
 # A contact the CP would reject (pushsrv.validSubject) is refused up front, before anything is built.
-for bad in ops@example.com mailto:bogus mailto: "mailto:a b@example.com" https:// https:///missing-host http://example.com; do
+for bad in ops@example.com mailto:bogus mailto: "mailto:a b@example.com" "mailto:a@example.com,broken" https:// https:///missing-host https://example.com:invalid http://example.com; do
   cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
   printf 'WebPush=on\nWebPushSubject=%s\n' "$bad" >> "$STATE/params/30-ingress"
   : > "$LOG"
@@ -2208,6 +2208,16 @@ for bad in ops@example.com mailto:bogus mailto: "mailto:a b@example.com" https:/
   fi
   grep -q "WebPush=on needs WebPushSubject" "$WORK/out3b8" || fail "the bad contact '$bad' was not named: $(tail -3 "$WORK/out3b8")"
   hasnt "cloudformation deploy --stack-name t-network"
+done
+# Contacts the CP accepts go through: an https URL (any case of the scheme, with a port), and
+# surrounding blanks (the CP trims them).
+for good in "https://example.com:8443/contact" "HTTPS://example.com" " mailto:ops@example.com "; do
+  cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
+  printf 'WebPush=on\nWebPushSubject=%s\n' "$good" >> "$STATE/params/30-ingress"
+  : > "$LOG"
+  "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3b8" 2>&1 </dev/null \
+    || fail "WebPushSubject '$good' was refused: $(tail -3 "$WORK/out3b8")"
+  grep -qF "WebPushSubject=$good" "$LOG" || fail "WebPushSubject '$good' did not reach 30-ingress"
 done
 # With the switch off the key is not needed and the knobs are not looked at.
 cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
