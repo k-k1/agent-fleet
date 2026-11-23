@@ -57,6 +57,7 @@ import { MemoProducerText } from "./MemoProducerText.tsx";
 import { MemoQueueRuns } from "./MemoQueueRuns.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
 import { CatHeadMenu, type CatHeadMenuAt } from "./CatHeadMenu.tsx";
+import { memoRunNowWhy, runMemoNow, type RunNowResult } from "./runNow.ts";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
 import { MemoRecipeBadge, MemoRecipeFields, recipeDraftOf, recipePatch, type RecipeDraft } from "./MemoRecipe.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
@@ -395,6 +396,22 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       toast(t("memo.continuation_stop_failed"), { kind: "warn" });
     }
     bumpMemos();
+  };
+
+  // What a press of Run now did, for the category head and a memo's menu alike: the refusal for a
+  // taken slot is explained by the history, which names who holds them.
+  const onRunResult = (catId: string, r: RunNowResult) => {
+    if (r === "started") bumpMemos();
+    if (r === "no_slot") {
+      setSlotsFullFor(true);
+      setDeliveriesFor(catId);
+    }
+  };
+  // The category of a waiting memo that sits in an auto-run category; undefined for any other memo.
+  const runOneCat = (m: Memo) => {
+    if (m.state !== "pending" && m.state !== "held") return undefined;
+    const cat = cats.find((c) => c.repo === m.repo && c.name === m.category);
+    return cat && (queueByCat.get(cat.id) || cat.queue) ? cat : undefined;
   };
 
   const release = async (cardKey: string, items: Memo[]) => {
@@ -1496,14 +1513,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
               settingsNote={note}
               onClose={() => setCatMenu(null)}
               onSend={() => sendGroup(sendIds)}
-              onRunResult={(r) => {
-                if (r === "started") bumpMemos();
-                // The refusal says a slot is taken; the history names who holds it.
-                if (r === "no_slot") {
-                  setSlotsFullFor(true);
-                  setDeliveriesFor(c.id);
-                }
-              }}
+              onRunResult={(r) => onRunResult(c.id, r)}
               onHistory={() => setDeliveriesFor(c.id)}
               onSettings={() => setSettingsFor(c.id)}
               onRename={() => setRenameCat(c.id)}
@@ -1545,6 +1555,34 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   </li>
                 </>
               )}
+              {menuLive && (() => {
+                const cat = runOneCat(menuLive);
+                if (!cat) return null;
+                const why = memoRunNowWhy(menuLive, queueByCat.get(cat.id), Date.now(), (iso) => fmtDateTime(iso));
+                const reason = why ? tr(why.key, why.params) : "";
+                return (
+                  <li>
+                    <button
+                      type="button"
+                      className="ui-menu-item memo-cat-menu-item memo-menu-runone"
+                      role="menuitem"
+                      disabled={reason !== ""}
+                      title={reason ? tr("memo.run_one_blocked", { why: reason }) : tr("memo.run_one_hint")}
+                      onClick={() => {
+                        if (reason) return;
+                        const id = menuLive.id;
+                        runMemoMenu(() => void runMemoNow(cat.id, id).then((r) => r && onRunResult(cat.id, r)));
+                      }}
+                    >
+                      <Icon name="play" />
+                      <span className="memo-cat-menu-txt">
+                        {tr("memo.run_one")}
+                        {reason && <span className="memo-cat-menu-why">{reason}</span>}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })()}
               {canStartFromMemo(memoMenu.m) && (
                 <li>
                   <button type="button" className="ui-menu-item" onClick={() => {

@@ -1515,8 +1515,10 @@ export const memoStopChain = (id: string): Promise<MemoWriteResult> =>
 // 409 memo_tidy_stale (error.stale names the changed notes) and 400 memo_tidy_invalid
 // (error.tidyCode is the validator's code) both change nothing.
 export const memoTidyApply = (body: unknown): Promise<MemoWriteResult> => apiJSON("api/memo-tidy/apply", "POST", body);
-export const memoQueueFire = (categoryId: string): Promise<MemoWriteResult> =>
-  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/fire`, "POST", {});
+// With memoId the press claims that one waiting memo alone (409 memo_queue_memo_not_ready says why it
+// cannot run now, 404 when it is not in this category); without it, the oldest waiting memos.
+export const memoQueueFire = (categoryId: string, memoId?: string): Promise<MemoWriteResult> =>
+  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/fire`, "POST", memoId ? { memoId } : {});
 // Lifts a pause: the Control Plane stopped starting runs by itself after two in a row failed at
 // their first turn. 204 without a body on success.
 export const memoQueueResume = (categoryId: string): Promise<MemoWriteResult> =>
