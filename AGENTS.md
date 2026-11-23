@@ -34,6 +34,15 @@ git config core.hooksPath .githooks   # once per clone; worktrees share it
 Anything it flags is fixed in the file *before* the commit, never in a follow-up
 one. Don't reach for `--no-verify`.
 
+Two hooks run, and both run gitleaks with the repository's `.gitleaks.toml` after the
+forbidden-token scan: `pre-commit` over what the commit adds, and `pre-push` over the
+commits about to be pushed (the last point before a value is public; it catches
+`--no-verify` and checkouts without the hooks). `git config core.hooksPath .githooks`
+installs both. A credential-shaped test fixture is built at run time, or its exact value
+is allowlisted in `.gitleaks.toml` — never a path. With no gitleaks on `PATH` the hooks
+warn once and let the work through; another version than `ci.yml` pins only warns.
+After touching the hooks, run `scripts/gitleaks-hooks-test.sh`.
+
 ## Comments
 
 **Write every comment in English** — Go, TypeScript, CSS, SQL, shell alike. (Commit

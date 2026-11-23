@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Pre-commit half of the forbidden-token gate (deploy/release/scan-forbidden.sh).
+# Pre-commit gates: the forbidden-token scan (deploy/release/scan-forbidden.sh) and gitleaks.
 #
 # CI's release-scan job scans the whole tracked tree at HEAD, so it only speaks
 # up once the string is already in the history — and taking it out then costs a
@@ -13,47 +13,57 @@
 #
 # Run it by hand any time: .githooks/pre-commit
 #
-# This is an early warning, not the authority. CI still scans the full tree,
+# The second gate is gitleaks over the staged diff, with the repository's .gitleaks.toml
+# (see gitleaks-lib.sh). .githooks/pre-push repeats it over the outgoing commits.
+#
+# This is an early warning, not the authority. CI still scans the full tree and history,
 # `git commit --no-verify` skips it, and it deliberately lets the commit through
-# when it cannot run at all (no Go toolchain) rather than blocking work on a
-# machine that cannot build the scanner.
+# when it cannot run at all (no Go toolchain, no gitleaks) rather than blocking work on a
+# machine that cannot build or find the scanner.
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
-scan="$root/deploy/release/scan-forbidden.sh"
-[ -x "$scan" ] || exit 0
+# shellcheck source=gitleaks-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/gitleaks-lib.sh"
 
-if ! command -v go >/dev/null 2>&1; then
-  echo "pre-commit: no go toolchain — skipping the forbidden-token scan" >&2
-  exit 0
-fi
+# Runs in a subshell, so its `exit`s and its trap end the scan and not the hook: gitleaks
+# below still runs when this one has nothing to look at.
+forbidden_scan() (
+  set -e # the caller turns -e off to collect the status, and a subshell inherits that
+  scan="$root/deploy/release/scan-forbidden.sh"
+  [ -x "$scan" ] || exit 0
 
-# Only what this commit adds or changes. Deletions carry no bytes, and the rest
-# of the tree was already scanned by whatever commit put it there.
-if git rev-parse --verify -q HEAD >/dev/null; then
-  base=HEAD
-else
-  base="$(git hash-object -t tree /dev/null)" # unborn branch: diff the empty tree
-fi
+  if ! command -v go >/dev/null 2>&1; then
+    echo "pre-commit: no go toolchain — skipping the forbidden-token scan" >&2
+    exit 0
+  fi
 
-tmp="$(mktemp -d)"
-trap 'rm -rf "$tmp"' EXIT
+  # Only what this commit adds or changes. Deletions carry no bytes, and the rest
+  # of the tree was already scanned by whatever commit put it there.
+  if git rev-parse --verify -q HEAD >/dev/null; then
+    base=HEAD
+  else
+    base="$(git hash-object -t tree /dev/null)" # unborn branch: diff the empty tree
+  fi
 
-# The staged bytes, not the working tree's — those may already have moved on,
-# and it is the index that becomes the commit. --prefix creates the leading
-# directories, so the scanner reports a repo-relative path you can act on.
-git diff --cached --name-only --diff-filter=ACMR -z "$base" |
-  git checkout-index --prefix="$tmp/staged/" -z --stdin -f
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
 
-# Nothing with content staged (a pure deletion or mode change) — nothing to scan,
-# and handing the scanner an empty directory is an error, not a pass.
-[ -n "$(find "$tmp/staged" -type f -print -quit 2>/dev/null)" ] || exit 0
+  # The staged bytes, not the working tree's — those may already have moved on,
+  # and it is the index that becomes the commit. --prefix creates the leading
+  # directories, so the scanner reports a repo-relative path you can act on.
+  git diff --cached --name-only --diff-filter=ACMR -z "$base" |
+    git checkout-index --prefix="$tmp/staged/" -z --stdin -f
 
-if ! "$scan" "$tmp/staged" >"$tmp/out" 2>&1; then
-  # Strip the temp prefix and the GitHub annotation markers: this output is
-  # being read in a terminal, not by a workflow log.
-  sed -e "s#$tmp/staged/##g" -e 's/^::\(error\|warning\):://' "$tmp/out" >&2
-  cat >&2 <<'EOF'
+  # Nothing with content staged (a pure deletion or mode change) — nothing to scan,
+  # and handing the scanner an empty directory is an error, not a pass.
+  [ -n "$(find "$tmp/staged" -type f -print -quit 2>/dev/null)" ] || exit 0
+
+  if ! "$scan" "$tmp/staged" >"$tmp/out" 2>&1; then
+    # Strip the temp prefix and the GitHub annotation markers: this output is
+    # being read in a terminal, not by a workflow log.
+    sed -e "s#$tmp/staged/##g" -e 's/^::\(error\|warning\):://' "$tmp/out" >&2
+    cat >&2 <<'EOF'
 
 pre-commit: a forbidden token is in the staged content (path and offset above).
   Take the string out of the file and stage it again. Do not commit it and fix
@@ -62,5 +72,30 @@ pre-commit: a forbidden token is in the staged content (path and offset above).
   Third-party content that legitimately contains the word: add the narrowest
   path glob that works to deploy/release/forbidden.allow.
 EOF
-  exit 1
+    exit 1
+  fi
+)
+
+# Both gates run even when the first fails, so one commit attempt reports everything.
+set +e
+forbidden_scan
+status=$?
+set -e
+[ "$status" = 0 ] || status=1
+
+if gitleaks_locate pre-commit "$root"; then
+  rc=0
+  gitleaks_run "$root" --pre-commit --staged || rc=$?
+  case "$rc" in
+    0) ;;
+    2)
+      echo >&2
+      echo "pre-commit: gitleaks found a credential-shaped value in the staged changes." >&2
+      gitleaks_advice
+      status=1
+      ;;
+    *) echo "pre-commit: gitleaks failed to run — skipping the credential scan" >&2 ;;
+  esac
 fi
+
+exit "$status"

@@ -22,7 +22,7 @@ level down. Two things outside those directories are also worth knowing:
 | Path | What to look for there |
 |---|---|
 | `.github/workflows/` | CI (`ci.yml`, `docs.yml`, `e2e.yml`), the contract workflows (`*-contract.yml`), and the image and release workflows. What each runs is [10 §10.4](10-development.md#104-testing) |
-| `.githooks/pre-commit` | The forbidden-token scan over what you stage. It runs the same scanner as `ci.yml`'s `release-scan` job (`deploy/release/scan-forbidden.sh`) |
+| `.githooks/` | `pre-commit`: the forbidden-token scan over what you stage (the same scanner as `ci.yml`'s `release-scan` job, `deploy/release/scan-forbidden.sh`), then gitleaks over the staged diff. `pre-push`: gitleaks over the commits being pushed. Both use `.gitleaks.toml` through `gitleaks-lib.sh`; `scripts/gitleaks-hooks-test.sh` tests them |
 
 ## 90.2 Two rules that hold in both Go modules
 

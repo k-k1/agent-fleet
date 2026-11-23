@@ -26,6 +26,10 @@ patent grant; no separate CLA is required.
   tracked tree on PRs and pushes, when the string is already in a commit. The
   local hook catches it before it enters history. Deliberate exception:
   a path glob in `deploy/release/forbidden.allow` — third-party content only.
+  The same hook runs gitleaks (with `.gitleaks.toml`) over the staged diff, and
+  a `pre-push` hook runs it over the commits being pushed, so a credential-shaped
+  value is caught before the push publishes it. Without a `gitleaks` binary on
+  `PATH` both warn once and let you through.
 - **Keep the core deploy-agnostic.** Don't bake Docker/compose assumptions into
   the Control Plane. Deployment specifics belong behind the ports (Runtime,
   KeyCustodian, MetadataStore, AuthGateway) — see `docs/build/09-deploy.md`.

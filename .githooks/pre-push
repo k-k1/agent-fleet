@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# Pre-push gate: gitleaks over the commits about to be pushed.
+#
+# pre-commit covers what a commit adds, but not a commit made with `--no-verify`, in a
+# checkout without core.hooksPath, or by a tool that skips hooks. This is the last point
+# before the value is public, so it scans exactly the outgoing commits and nothing else —
+# never the whole history, which is CI's secret-scan job. See gitleaks-lib.sh for the
+# rules shared with pre-commit (config, fail-open without gitleaks, version warning).
+#
+# Install once per clone — worktrees of that clone share it:
+#
+#     git config core.hooksPath .githooks
+#
+# git calls it as `pre-push <remote> <url>` and feeds one line per ref on stdin:
+#
+#     <local ref> <local sha> <remote ref> <remote sha>
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+# shellcheck source=gitleaks-lib.sh
+. "$(dirname "${BASH_SOURCE[0]}")/gitleaks-lib.sh"
+
+remote="${1:-origin}"
+
+# One `gitleaks` run per pushed ref. `-m` is mandatory, as in ci.yml: without it gitleaks
+# skips merge commits, and whatever entered while resolving a conflict stays unscanned.
+ranges=()
+while read -r _ local_sha _ remote_sha; do
+  # A deletion sends no commits. An all-zero id is whatever width the object format has.
+  case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+  if case "$remote_sha" in *[!0]*) true ;; *) false ;; esac &&
+    git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
+    # An existing branch: what the remote does not have yet.
+    ranges+=("$remote_sha..$local_sha")
+  else
+    # A new branch, or a remote tip this clone has never fetched (it cannot be an
+    # ancestor to subtract): everything not already on one of the remote's branches.
+    ranges+=("$local_sha --not --remotes=$remote")
+  fi
+done
+
+[ "${#ranges[@]}" -gt 0 ] || exit 0
+
+gitleaks_locate pre-push "$root" || exit 0
+
+status=0
+for range in "${ranges[@]}"; do
+  rc=0
+  gitleaks_run "$root" "--log-opts=-m $range" || rc=$?
+  case "$rc" in
+    0) ;;
+    2) status=1 ;;
+    *) echo "pre-push: gitleaks failed to run — skipping the credential scan for $range" >&2 ;;
+  esac
+done
+
+if [ "$status" != 0 ]; then
+  echo >&2
+  echo "pre-push: gitleaks found a credential-shaped value in the commits being pushed." >&2
+  gitleaks_advice
+  echo "  The value is already in a commit here: rewrite that commit (amend, or an interactive" >&2
+  echo "  rebase of your own unpushed commits) so it never reaches the remote." >&2
+  exit 1
+fi
