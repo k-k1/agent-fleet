@@ -8,7 +8,7 @@
 // not a full parser): that keeps a quote inside a regex from opening a string.
 
 interface Token {
-  k: "id" | "p" | "s" | "t";
+  k: "id" | "p" | "s" | "t" | "n";
   v: string;
 }
 
@@ -98,6 +98,10 @@ function lex(src: string): Lexed {
         readString(c);
       } else if (c === "`") {
         readTemplate();
+      } else if (/[0-9]/.test(c)) {
+        // A number ends an expression, so a following `/` divides.
+        while (i < n && /[\w.]/.test(src[i])) code += src[i++];
+        tokens.push({ k: "n", v: "" });
       } else if (/[A-Za-z_$]/.test(c)) {
         const s = i;
         while (i < n && /[\w$]/.test(src[i])) code += src[i++];
@@ -141,9 +145,9 @@ export function importsRawClient(src: string): boolean {
     if (head.k !== "id") continue;
 
     if (head.v === "require" || head.v === "import") {
-      // `typeof import("…")` is a type reference and `obj.require(…)` is someone else's method:
+      // `typeof import("…")` is a type reference (`typeof require(…)` still loads) and `obj.require(…)` is someone else's method:
       // neither loads the module.
-      const notLoad = isP(t[i - 1], ".") || isId(t[i - 1], "typeof");
+      const notLoad = isP(t[i - 1], ".") || (head.v === "import" && isId(t[i - 1], "typeof"));
       if (!notLoad && isP(t[i + 1], "(") && t[i + 2]?.k === "s" && CLIENT.test(t[i + 2].v)) return true;
     }
     if (head.v !== "import" && head.v !== "export") continue;

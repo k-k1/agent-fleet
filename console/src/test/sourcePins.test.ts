@@ -38,6 +38,10 @@ describe("importsRawClient", () => {
     // A type reference or someone else's require() loads nothing.
     [`type Client = typeof import(${C});`, false],
     [`custom.require(${C});`, false],
+    [`const x = typeof require(${C});`, true],
+    // A division after a number is not a regex.
+    [`const half = 1 / 2; require(${C});`, true],
+    [`const half = 1 / 2; // "\nrequire(${C});`, true],
     [`const m = require(${C});`, true],
   ])("%s", (src, want) => {
     expect(importsRawClient(src)).toBe(want);
@@ -56,6 +60,9 @@ describe("codeOnly / hasCodeLiteral", () => {
     expect(hasCodeLiteral("const a = `hello ${ v // api/old\n }`;", "api/old")).toBe(false);
     expect(hasCodeLiteral("const a = `x/${ v }/api/new`;", "api/new")).toBe(true);
     expect(hasCodeLiteral("const a = `x/${ `n/${ w }` }/api/new`;", "${ w }")).toBe(true);
+  });
+  it("reads the comment after a numeric division as a comment", () => {
+    expect(hasCodeLiteral("const half = 1 / 2; // api/old", "api/old")).toBe(false);
   });
   it("keeps a // inside a string", () => {
     expect(codeOnly('const u = "http://x"; // tail')).toContain("http://x");
