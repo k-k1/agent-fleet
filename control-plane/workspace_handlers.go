@@ -841,6 +841,10 @@ type sessionWire struct {
 	// Workspace's rail lists sessions without the Spaces section.
 	Space         string `json:"space,omitempty"`
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
+	// SSM: the non-secret target of an SSM session (ADR 0142 decision 10). Same relay caveat as
+	// its neighbours: absent here, the Terminal view cannot group SSM sessions by machine. No
+	// DB-mirror column; a stopped Workspace's list carries none.
+	SSM *sessionSSMTarget `json:"ssm,omitempty"`
 	// Title: the user-supplied display title, which the Console's displayName prefers above
 	// everything else. Dropping it in the relay barely shows for claude kinds (title is
 	// baked into label too) — only shell/ssm, which use no label, fall back to a wrong
@@ -1114,6 +1118,15 @@ type sessionWakerHolder struct {
 	Source  string `json:"source"`
 	Builtin bool   `json:"builtin,omitempty"`
 	Timer   bool   `json:"timer,omitempty"`
+}
+
+// sessionSSMTarget mirrors the Agent's session.SSMTarget.
+type sessionSSMTarget struct {
+	Target    string `json:"target"`
+	Region    string `json:"region,omitempty"`
+	AccountID string `json:"accountId,omitempty"`
+	Profile   string `json:"profile,omitempty"`
+	Document  string `json:"document,omitempty"`
 }
 
 // sessionQueueTurn is the end of a queue delivery's first turn. Outcome is clean, turn-failed or

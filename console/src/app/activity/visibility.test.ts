@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import { canResetOff, hiddenWaiting, menuEntries, resetOff, shownViews, toggleOff } from "./visibility.ts";
 import type { RailView } from "../../core/store/leftRail.ts";
 
-const ALL: RailView[] = ["sessions", "shared", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"];
+const ALL: RailView[] = ["sessions", "shared", "terminals", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"];
 const NO_SCHED = ALL.filter((v) => v !== "schedules");
 
 describe("shownViews", () => {
   it("drops the views turned off and keeps the rest in bar order", () => {
-    expect(shownViews(NO_SCHED, ["shared", "memory"], "sessions")).toEqual(["sessions", "assistant", "workitems", "memo", "autorun", "files"]);
+    expect(shownViews(NO_SCHED, ["shared", "memory"], "sessions")).toEqual(["sessions", "terminals", "assistant", "workitems", "memo", "autorun", "files"]);
   });
   it("keeps the view on screen even when its icon is stored as off", () => {
     expect(shownViews(NO_SCHED, ["shared"], "shared")).toContain("shared");

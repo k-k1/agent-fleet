@@ -11,6 +11,13 @@ import {
   sessionsInFolder,
   orphanSessions,
   spaceGroups,
+  terminalGroups,
+  shellPlaceOf,
+  placeRepos,
+  withoutTerminals,
+  isTerminalSession,
+  shellPlaceKey,
+  ssmMachineKey,
   isUnattendedOnlyFolder,
   withoutUnattended,
   workingCopyLabel,
@@ -685,5 +692,125 @@ describe("a filter and a mixed copy an auto-run's title matches", () => {
     const f = filterRepoTree(repoTree(repos, sessions), (r) => r.name === "af", (r) => r.name === "af" || r.name === "af@mix");
     expect(planStopTree(f[0], sessions).map((g) => g.repo.name)).toEqual(["af@mix"]);
     expect(planTree(f[0], sessions).map((p) => p.repo.name).sort()).toEqual(["af", "af@mix"]);
+  });
+});
+
+// ADR 0142 decision 10: shells and SSM logins are the Terminal view's. The Sessions view's helpers
+// leave them out, and terminalGroups files them by place and by machine.
+describe("terminals", () => {
+  const repos = [repo("app"), wt("app@wip-x", "app"), repo("notes")];
+  const shell = (name: string, extra: Partial<Session> = {}): Session => sess(name, { kind: "shell", ...extra });
+  const ssm = (name: string, target: string, extra: Partial<Session> = {}, over: Partial<NonNullable<Session["ssm"]>> = {}): Session =>
+    sess(name, { kind: "ssm", ssm: { target, region: "ap-northeast-1", accountId: "111122223333", profile: "ops", ...over }, ...extra });
+  const sessions: Session[] = [
+    shell("home1", { repo: "dev", dir: "/home/dev", createdAt: "2026-11-01T00:00:00Z" }),
+    shell("home-db", { createdAt: "2026-11-02T00:00:00Z" }), // af-db connect: no dir at all
+    shell("in-app", { repo: "app", dir: "/home/dev/repos/app", createdAt: "2026-11-03T00:00:00Z" }),
+    shell("in-wt", { repo: "app@wip-x", dir: "/home/dev/repos/app@wip-x", createdAt: "2026-11-04T00:00:00Z" }),
+    // A space that shares a repository's folder name is still a space.
+    shell("in-space", { repo: "notes", dir: "/home/dev/spaces/notes", space: "notes", createdAt: "2026-11-05T00:00:00Z" }),
+    shell("gone", { repo: "removed", dir: "/home/dev/repos/removed", createdAt: "2026-11-06T00:00:00Z" }),
+    ssm("m1-old", "i-aaa", { createdAt: "2026-11-01T00:00:00Z" }),
+    ssm("m1-new", "i-aaa", { createdAt: "2026-11-07T00:00:00Z" }, { profile: "other-profile", document: "AF-Shell" }),
+    ssm("m2", "i-bbb", { createdAt: "2026-11-03T00:00:00Z" }),
+    ssm("m2-other-account", "i-bbb", { createdAt: "2026-11-04T00:00:00Z" }, { accountId: "999900001111" }),
+    sess("agent", { repo: "app", dir: "/home/dev/repos/app" }),
+  ];
+
+  it("files shells by the place they were opened in: home, a repository, a space", () => {
+    const { shells } = terminalGroups(sessions, repos);
+    expect(shells.map((g) => [g.key, g.sessions.map((s) => s.name)])).toEqual([
+      // a removed repository's shell and the database tab's shell have no place of their own
+      ["shell:home", ["gone", "home-db", "home1"]],
+      ["shell:repo:app", ["in-app"]],
+      ["shell:repo:app@wip-x", ["in-wt"]],
+      ["shell:space:notes", ["in-space"]],
+    ]);
+  });
+
+  it("does not file a space's shell under the repository of the same name", () => {
+    const { shells } = terminalGroups(sessions, repos);
+    expect(shells.some((g) => g.key === "shell:repo:notes")).toBe(false);
+  });
+
+  it("groups SSM logins by account, region and instance, and keeps a different profile or document in its group", () => {
+    const { ssm: groups } = terminalGroups(sessions, repos);
+    expect(groups.map((g) => [g.key, g.sessions.map((s) => s.name)])).toEqual([
+      ["ssm:111122223333|ap-northeast-1|i-aaa", ["m1-new", "m1-old"]],
+      ["ssm:999900001111|ap-northeast-1|i-bbb", ["m2-other-account"]],
+      ["ssm:111122223333|ap-northeast-1|i-bbb", ["m2"]],
+    ]);
+  });
+
+  it("puts an SSM login whose row names no target in a group of its own, last", () => {
+    const { ssm: groups } = terminalGroups([sess("old", { kind: "ssm", createdAt: "2027-01-01T00:00:00Z" }), ssm("m", "i-aaa", { createdAt: "2026-01-01T00:00:00Z" })], repos);
+    expect(groups.map((g) => [g.key, g.target])).toEqual([
+      ["ssm:111122223333|ap-northeast-1|i-aaa", "i-aaa"],
+      ["ssm:?", ""],
+    ]);
+  });
+
+  it("leaves agents out", () => {
+    expect(terminalGroups([sess("a", { repo: "app" })], repos)).toEqual({ shells: [], ssm: [] });
+  });
+
+  // Session.repo is the base name of the launch directory: a shell in the home directory of a
+  // member called "dev" has repo "dev", which is also the name of a clone.
+  it("does not mistake the home directory for a working copy of the same name", () => {
+    const clone = [repo("dev"), repo("app")];
+    const home = shell("in-home", { repo: "dev", dir: "/home/dev" });
+    const copy = shell("in-copy", { repo: "dev", dir: "/home/dev/repos/dev" });
+    const names = placeRepos(clone);
+    expect(shellPlaceOf(home, names)).toEqual({ kind: "home" });
+    expect(shellPlaceOf(copy, names)).toEqual({ kind: "repo", folder: "dev" });
+    // A row without a dir (an older list) is taken at its word.
+    expect(shellPlaceOf(shell("old", { repo: "app" }), names)).toEqual({ kind: "repo", folder: "app" });
+    // With the copy's real path in the list, another `repos/app` under home is not that copy.
+    const real = placeRepos([repo("app", { path: "/home/dev/repos/app" })]);
+    expect(shellPlaceOf(shell("a", { repo: "app", dir: "/home/dev/repos/app" }), real)).toEqual({ kind: "repo", folder: "app" });
+    expect(shellPlaceOf(shell("b", { repo: "app", dir: "/home/dev/notes/repos/app" }), real)).toEqual({ kind: "home" });
+    // Another spelling of the same path is the same copy: the Agent keeps a launch dir as written.
+    expect(shellPlaceOf(shell("c", { repo: "app", dir: "/home/dev//repos/app/" }), real)).toEqual({ kind: "repo", folder: "app" });
+    // The working-copy id both sides carry settles it whatever the path looks like (a symlink).
+    const withId = placeRepos([repo("app", { path: "/home/dev/repos/app", workingCopyId: "wc_1" })]);
+    expect(shellPlaceOf(shell("d", { repo: "app", dir: "/srv/link/app", workingCopyId: "wc_1" }), withId)).toEqual({ kind: "repo", folder: "app" });
+    expect(shellPlaceOf(shell("e", { repo: "app", dir: "/home/dev/repos/app", workingCopyId: "wc_other" }), withId)).toEqual({ kind: "home" });
+    // ...and it leads to the copy even when the launch directory has another name: /home/dev/short
+    // is a symlink to /home/dev/repos/app, and the Agent recorded repo "short".
+    expect(shellPlaceOf(shell("f", { repo: "short", dir: "/home/dev/short", workingCopyId: "wc_1" }), withId)).toEqual({ kind: "repo", folder: "app" });
+    // A file copy of a clone carries the same id: two listed copies with one id are told apart by
+    // the directory, never by their order in the list.
+    const twins = placeRepos([repo("app", { path: "/home/dev/repos/app", workingCopyId: "wc_1" }), repo("app-copy", { path: "/home/dev/repos/app-copy", workingCopyId: "wc_1" })]);
+    expect(shellPlaceOf(shell("g", { repo: "app-copy", dir: "/home/dev/repos/app-copy", workingCopyId: "wc_1" }), twins)).toEqual({ kind: "repo", folder: "app-copy" });
+    expect(shellPlaceOf(shell("h", { repo: "app", dir: "/home/dev/repos/app", workingCopyId: "wc_1" }), twins)).toEqual({ kind: "repo", folder: "app" });
+    expect(terminalGroups([shell("g", { repo: "app-copy", dir: "/home/dev/repos/app-copy", workingCopyId: "wc_1" }), shell("h", { repo: "app", dir: "/home/dev/repos/app", workingCopyId: "wc_1" })], [repo("app", { path: "/home/dev/repos/app", workingCopyId: "wc_1" }), repo("app-copy", { path: "/home/dev/repos/app-copy", workingCopyId: "wc_1" })]).shells.map((g) => [g.key, g.sessions.map((x) => x.name)])).toEqual([["shell:repo:app", ["h"]], ["shell:repo:app-copy", ["g"]]]);
+    expect(terminalGroups([shell("f", { repo: "short", dir: "/home/dev/short", workingCopyId: "wc_1" })], [repo("app", { path: "/home/dev/repos/app", workingCopyId: "wc_1" })]).shells.map((g) => g.key)).toEqual(["shell:repo:app"]);
+    expect(terminalGroups([home, copy], clone).shells.map((g) => [g.key, g.sessions.map((s) => s.name)])).toEqual([
+      ["shell:home", ["in-home"]],
+      ["shell:repo:dev", ["in-copy"]],
+    ]);
+  });
+
+  it("names the group a chip reveals the way the view keys it", () => {
+    expect(shellPlaceKey({ kind: "home" })).toBe("shell:home");
+    expect(shellPlaceKey({ kind: "repo", folder: "app" })).toBe("shell:repo:app");
+    expect(shellPlaceKey({ kind: "space", folder: "notes" })).toBe("shell:space:notes");
+    expect(ssmMachineKey({ target: "i-aaa" })).toBe("ssm:||i-aaa");
+  });
+
+  it("keeps terminals out of the Sessions view's lists", () => {
+    expect(isTerminalSession(sessions[0])).toBe(true);
+    expect(withoutTerminals(sessions).map((s) => s.name)).toEqual(["agent"]);
+    // Other: neither the home shells nor the removed repository's shell.
+    expect(orphanSessions(sessions, repos).map((s) => s.name)).toEqual([]);
+    // Spaces: a space with only a shell has no row.
+    expect(spaceGroups(sessions)).toEqual([]);
+    // The tree: the node's rows carry no shell. The swipe rotation keeps them in its order, as a
+    // position to step on from (a shell pane has to keep its place).
+    const node = repoTree(repos, sessions).find((n) => n.repo.name === "app")!;
+    const byName = new Map(sessions.map((s) => [s.name, s]));
+    expect(railNodeSessions(node, sessions, byName).map((s) => s.name)).toEqual(["agent"]);
+    expect(railNodeSessions(node, sessions, byName, true).map((s) => s.name)).toEqual(["in-app", "agent", "in-wt"]);
+    expect(railOrder(sessions, repos, null).map((s) => s.name)).toContain("in-space");
   });
 });

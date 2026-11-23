@@ -315,6 +315,20 @@ describe("ActivityBar badges", () => {
     expect(badge("sessions")?.textContent).toBe("");
   });
 
+  // A program in a shell can raise a desktop notification. While the workspace runs the shell's
+  // row is in the Terminal view; stopped, the Sessions view's history lists every session.
+  it("sends a shell's unread notice to Terminals while running and to Sessions once stopped", async () => {
+    useSessionsStore.setState({ sessions: [{ name: "sh", kind: "shell", alive: true, dir: "/home/dev" } as Session] });
+    useNotificationStore.setState({ items: [note({ target: { type: "session", id: "sh" } })] });
+    useWorkspaceStore.setState({ state: "running" });
+    await mount();
+    expect(badge("terminals")?.dataset.badge).toBe("unread");
+    expect(badge("sessions")).toBeNull();
+    await act(async () => useWorkspaceStore.setState({ state: "stopped" }));
+    expect(badge("terminals")).toBeNull();
+    expect(badge("sessions")?.dataset.badge).toBe("unread");
+  });
+
   it("marks the assistant for an unseen notice that opens a conversation", async () => {
     useNotificationStore.setState({ items: [note({ kind: "session-report", payload: { conversation_id: "c1" } })] });
     await mount();

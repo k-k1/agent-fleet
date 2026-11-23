@@ -4,6 +4,7 @@
 // / clone-target / delete / fast-forward / open-SCM logic that used to live inline
 // in ReposSection lives here once.
 import { useMemo, useState } from "react";
+import type { ReactNode } from "react";
 import { apiJSON, errDetail, errText, repoSetLock } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -44,6 +45,8 @@ interface RepoRowConnectedProps {
   onToggle?: () => void;
   /** Session tally badge (see RepoRow.sess) — computed by the owning node. */
   sess?: { alive: number; total: number };
+  /** The shells' count chip (see RepoRow.termChip). */
+  termChip?: ReactNode;
   /** Unread-notification dot for the sessions this row currently hides (see RepoRow.unread). */
   unread?: boolean;
   /** Session summary shown on the folded row (see RepoRow.peek). */
@@ -56,7 +59,7 @@ interface RepoRowConnectedProps {
   stoppedCount?: number;
 }
 
-export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, alsoRunning, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
+export function RepoRowConnected({ r, ctx, node, onToggle, sess, termChip, unread, peek, alsoRunning, onArchiveStopped, stoppedCount }: RepoRowConnectedProps) {
   const settings = useSettings(); // default model for a claude launch
   const tr = useT();
   const toast = useToast();
@@ -111,6 +114,7 @@ export function RepoRowConnected({ r, ctx, node, onToggle, sess, unread, peek, a
       active={ctx.scmRepo === r.name}
       selected={r.name === ctx.activeRepo}
       sess={sess}
+      termChip={termChip}
       unread={unread}
       peek={peek}
       alsoRunning={alsoRunning}

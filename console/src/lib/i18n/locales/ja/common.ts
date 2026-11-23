@@ -375,6 +375,7 @@ export const common = {
   "rail.lock.no_scheduler": "ここにはスケジューラがありません",
   "rail.hidden_waiting": "アイコンを消したビューに返事待ちがあります: {names}",
   "rail.view.sessions": "セッション",
+  "rail.view.terminals": "ターミナル",
   "rail.badge.waiting_one": "返事待ちのセッション {count} 件",
   "rail.badge.waiting_other": "返事待ちのセッション {count} 件",
   "rail.badge.news_one": "新着 {count} 件",

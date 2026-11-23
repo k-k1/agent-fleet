@@ -207,4 +207,35 @@ describe("Spaces section", () => {
     expect(new Set(parents.map((p) => p.getAttribute("aria-owns"))).size).toBe(2);
     expect(owned.sort()).toEqual([1, 2]);
   });
+
+  // ADR 0142 decision 10: the Sessions view lists no shell, so a space that only has shells keeps
+  // its row for the count chip that leads to them.
+  describe("a space with shells", () => {
+    const shellIn = (name: string, folder: string): Session => sess(name, { kind: "shell", repo: folder, dir: "/home/dev/spaces/" + folder, space: folder });
+
+    it("keeps the row of a space that only has shells, with the chip, and lists no shell", async () => {
+      useSessionsStore.setState({ sessions: [shellIn("sh1", "q3-abcdef"), shellIn("sh2", "q3-abcdef")] });
+      await render();
+      expect(heads()).toEqual(["Q3 report"]);
+      expect(host.querySelector(".term-chip")?.textContent).toBe("2");
+      expect(host.querySelectorAll(".sess-row").length).toBe(0);
+      // The chip leads to the group of that space.
+      const { useTerminalReveal } = await import("../terminals/store.ts");
+      act(() => host.querySelector<HTMLButtonElement>(".term-chip")!.click());
+      expect(useTerminalReveal.getState().key).toBe("shell:space:q3-abcdef");
+    });
+
+    it("puts the chip on a space that also has agent sessions, and finds the space by its name only", async () => {
+      useSessionsStore.setState({ sessions: [inSpace("a1", "q3-abcdef"), shellIn("sh1", "q3-abcdef"), shellIn("sh2", "notes-ghijkl")] });
+      await render();
+      expect(heads().sort()).toEqual(["Q3 report", "notes-ghijkl"]);
+      expect(host.querySelectorAll(".term-chip").length).toBe(2);
+      expect(host.querySelectorAll(".sess-row").length).toBe(1);
+      // The search box matches the shown name, not a shell's own title.
+      await act(async () => useProjectFilter.setState({ q: "notes" }));
+      expect(heads()).toEqual(["notes-ghijkl"]);
+      await act(async () => useProjectFilter.setState({ q: "shell title" }));
+      expect(host.querySelector(".ui-section")).toBeNull();
+    });
+  });
 });

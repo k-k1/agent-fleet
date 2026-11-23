@@ -140,6 +140,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		Route: m.Route.Clone(), LaunchRoute: m.LaunchRoute.Clone(),
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
 		Repo: m.Repo, Space: spacex.FolderOf(m.Dir), WorkingCopyID: gitx.WorkingCopyID(m.Dir), Title: m.Title, TitleSetBy: m.TitleSetBy,
+		SSM:           session.SSMTargetOf(m),
 		PlanReviewers: planReviewersOrEmpty(m.PlanReviewers),
 		Display:       session.Display(m), Color: m.Color, Label: m.Label,
 		Started: started, CreatedAt: m.CreatedAt, Branch: m.Branch,

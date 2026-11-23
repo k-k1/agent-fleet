@@ -66,6 +66,7 @@ import { SchedulesSection } from "../features/schedules/SchedulesSection.tsx";
 import { ProjectTree } from "../features/project/ProjectTree.tsx";
 import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
 import { SpacesSection } from "../features/project/SpacesSection.tsx";
+import { TerminalsSection } from "../features/terminals/TerminalsSection.tsx";
 import { useSpacesStore } from "../features/spaces/store.ts";
 import { StoppedSessionsSection } from "../features/project/StoppedSessionsSection.tsx";
 import { AutoRunSection } from "../features/autorun/AutoRunSection.tsx";
@@ -636,6 +637,20 @@ export function App() {
                   </SoloSection>
                   <StoppedSessionsSection />
                 </>
+              )}
+            </RailView>
+            {/* Shells and SSM logins (ADR 0142 decision 10). Mounted on first show: it reads the
+                registered SSM hosts, which a member who never opens the view has no use for. A
+                working set narrows it as it narrows the sessions it was split from. */}
+            <RailView id="terminals" active={railView} shown={railShown} scoped lazy>
+              {workspaceRunning ? (
+                <SoloSection>
+                  <TerminalsSection />
+                </SoloSection>
+              ) : (
+                <SoloSection>
+                  <StoppedRailSection id="terminals" title={tr("rail.view.terminals")} icon="terminal" />
+                </SoloSection>
               )}
             </RailView>
             {/* Not scoped: a shared session belongs to another member's working copy, so a
