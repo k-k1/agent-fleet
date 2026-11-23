@@ -755,8 +755,9 @@ What matters in both:
   really did have that hole.
 - **End the revision list with `--`.** A tracked file named `HEAD` at the repository root
   makes `git log HEAD` ambiguous; git errors, and the scanner reports a clean scan of 0
-  commits. For the same reason `scripts/secret-scan.sh` treats any error the scanner logs
-  as an incomplete scan (exit 3), not a clean one.
+  commits. For the same reason `scripts/secret-scan.sh` treats a failed `git log` (the
+  scanner drops that failure when git printed nothing on stderr) or an error the scanner
+  logs as an incomplete scan (exit 3), not a clean one.
 - **Pin the scanner's version and checksum**; do not depend on a marketplace action.
 - **Exclude false positives by the value, with a regular expression — never by a path
   alone** (`.gitleaks.toml`; a rule may narrow a value to one file with

@@ -112,6 +112,14 @@ commit "a file named HEAD next to a value"
 expect "pr must find the value when a file is named HEAD" 42 pr
 expect "all must find the value when a file is named HEAD" 42 all
 
+# A finding whose file name says ERR is a finding, not a scan error: the findings are on
+# stdout, and only gitleaks' own log lines on stderr may mark the scan incomplete.
+git switch -q -c errname "$base"
+printf 'aws_access_key_id = %s\n' "$key" >"service ERR config.env"
+commit "a value in a file whose name says ERR"
+expect "pr must report a finding in a file named ... ERR ..." 42 pr
+expect "all must report a finding in a file named ... ERR ..." 42 all
+
 # gitleaks exits 0 with no findings when its child `git log` fails. A shim that fails
 # `git log` stands in for an unreadable object; the wrapper must not report that as clean.
 mkdir "$work/shim"
@@ -124,9 +132,23 @@ done
 exec "$real_git" "\$@"
 EOF
 chmod +x "$work/shim/git"
-git switch -q main
 PATH="$work/shim:$PATH" expect "a failing child git must not read as a clean scan (all)" 3 all
 PATH="$work/shim:$PATH" expect "a failing child git must not read as a clean scan (pr)" 3 pr
+
+# The same failure with nothing on stderr (a killed git, exit 137): gitleaks says nothing at
+# all, so only the wrapper around git can tell. The repository holds a value, as the real
+# scenario does, so "clean" would be a wrong answer.
+mkdir "$work/shim2"
+cat >"$work/shim2/git" <<EOF
+#!/bin/sh
+for a in "\$@"; do
+  if [ "\$a" = log ]; then exit 137; fi
+done
+exec "$real_git" "\$@"
+EOF
+chmod +x "$work/shim2/git"
+PATH="$work/shim2:$PATH" expect "a silently killed child git must not read as a clean scan (all)" 3 all
+PATH="$work/shim2:$PATH" expect "a silently killed child git must not read as a clean scan (pr)" 3 pr
 
 rc=0
 "$HERE/secret-scan.sh" bogus >/dev/null 2>&1 || rc=$?

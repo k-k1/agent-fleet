@@ -29,8 +29,11 @@ mode="${1:-}"
 # several.
 existing() {
   local found
+  # `|| return`: inside the caller's $(...) errexit is off, so without it a failed or
+  # truncated listing would read as "no issue of ours" (or as the first page's answer) and
+  # the caller would create a duplicate, or patch or close on an incomplete view.
   found="$(gh api --paginate "repos/$repo/issues?state=open&per_page=100" --jq \
-    ".[] | select(.pull_request == null) | select(.user.login == \"$BOT\") | select(.title == \"$TITLE\") | select((.body // \"\") | contains(\"$MARKER\")) | .number")"
+    ".[] | select(.pull_request == null) | select(.user.login == \"$BOT\") | select(.title == \"$TITLE\") | select((.body // \"\") | contains(\"$MARKER\")) | .number")" || return 1
   if [ "$(printf '%s' "$found" | grep -c .)" -gt 1 ]; then
     echo "several open issues look like the sweep's ($(printf '%s' "$found" | tr '\n' ' ')); not touching any" >&2
     return 1

@@ -25,7 +25,11 @@ case "$1 $2" in
   "api --paginate")
     expr=""
     while [ $# -gt 0 ]; do [ "$1" = --jq ] && expr="$2"; shift; done
-    jq -r "$expr" "$ISSUES" ;;
+    # API_FAIL=first: fail with no output; API_FAIL=later: answer, then fail (a later page).
+    [ "${API_FAIL:-}" = first ] && exit 1
+    jq -r "$expr" "$ISSUES"
+    [ "${API_FAIL:-}" = later ] && exit 1
+    exit 0 ;;
   "issue create")
     while [ $# -gt 0 ]; do [ "$1" = --body-file ] && cp "$2" "$CALLS.body"; shift; done ;;
   "api -X")
@@ -121,6 +125,18 @@ reset
 issues "$OURS" "$(issue 78 'github-actions[bot]' "$TITLE" "$MARKER")"
 if run close https://example.invalid/run/7; then fail "close with two candidates must fail"; fi
 calls | grep -q 'issue comment\|issue close' && fail "close with two candidates must change nothing"
+
+# A failed or truncated listing: nothing may be created, patched, commented on or closed,
+# whichever operation asked and whatever the pages that did arrive said.
+for fault in first later; do
+  for listing in "$OURS" "$LOOK1"; do
+    reset
+    issues "$listing"
+    if API_FAIL="$fault" run open "$work/report.json" https://example.invalid/run/8; then fail "open must fail when the listing fails ($fault)"; fi
+    if API_FAIL="$fault" run close https://example.invalid/run/8; then fail "close must fail when the listing fails ($fault)"; fi
+    calls | grep -q 'api -X\|issue create\|issue comment\|issue close' && fail "a failed listing ($fault) must change nothing"
+  done
+done
 
 if run bogus; then fail "an unknown mode must fail"; fi
 
