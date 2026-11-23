@@ -156,10 +156,13 @@ func TestScrubSecretsMatchesAssignmentsAroundMarks(t *testing.T) {
 		"API_TOKEN=" + cl + ":x|tee out.log": "API_TOKEN=" + redactedMark + "|tee out.log",
 		// Inside quotes a metacharacter or a comma is the value's own; outside, a comma starts
 		// another field.
-		"API_TOKEN='" + cl + ":part&tail' next": "API_TOKEN=" + redactedMark + " next",
-		"API_TOKEN=\"" + cl + ":a,b\" next":     "API_TOKEN=" + redactedMark + " next",
-		"API_TOKEN=" + cl + ",OK,42":            "API_TOKEN=" + redactedMark + ",OK,42",
-		"API_TOKEN=" + cl + ":a,OK,42":          "API_TOKEN=" + redactedMark + ",OK,42",
+		"API_TOKEN='" + cl + ":part&tail' next":      "API_TOKEN=" + redactedMark + " next",
+		"API_TOKEN=\"" + cl + ":a,b\" next":          "API_TOKEN=" + redactedMark + " next",
+		"API_TOKEN=" + cl + ",OK,42":                 "API_TOKEN=" + redactedMark + ",OK,42",
+		"API_TOKEN=" + cl + ":a,OK,42":               "API_TOKEN=" + redactedMark + ",OK,42",
+		"API_TOKEN=\"" + cl + ":a,mode=debug\" next": "API_TOKEN=" + redactedMark + " next",
+		"API_TOKEN=" + cl + ":a,mode=debug next":     "API_TOKEN=" + redactedMark + ",mode=debug next",
+		"API_TOKEN=" + cl + ":a-mode=debug next":     "API_TOKEN=" + redactedMark + "-mode=debug next",
 		// What the entropy scan takes between marks stays taken where a tail stops early: here
 		// the run after the token is one high-entropy run on main, `-code=9a3Z` included.
 		"API_TOKEN=" + cl + ":aB3xK9mP2qR7sT1vW5yZ8nQ4-code=9a3Z": "API_TOKEN=" + redactedMark + redactedMark,
@@ -208,19 +211,25 @@ func TestScrubSecretsAllocatesForTheOutput(t *testing.T) {
 	}
 }
 
-// Names are looked for only where a span reaches past a mark, not over the whole body. Measured
-// on 256 KB of `a=1` after one token: 0.5 MB allocated, 4.1 MB with every name kept.
+// Names are looked for only where a span reaches past a mark, and only the first after each
+// mark is kept. Measured on 256 KB of `a=` after one token: 0.5 MB allocated, 4.1 MB with every
+// name in the body kept, 7.8 MB with every name glued to the token kept.
 func TestScrubSecretsCollectsNamesOnlyNearMarks(t *testing.T) {
-	in := secretpattest.Classic() + " " + strings.Repeat("a=1 ", 64000)
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	got := ScrubSecrets(in)
-	runtime.ReadMemStats(&after)
-	if want := redactedMark + in[len(secretpattest.Classic()):]; got != want {
-		t.Fatalf("ScrubSecrets = %.80q", got)
-	}
-	if n := after.TotalAlloc - before.TotalAlloc; n > 3*uint64(len(in)) {
-		t.Errorf("ScrubSecrets(%d bytes) allocated %d bytes", len(in), n)
+	cl := secretpattest.Classic()
+	for name, in := range map[string]string{
+		"spaced": cl + " " + strings.Repeat("a=1 ", 64000),
+		"glued":  cl + "+" + strings.Repeat("a=", 128000),
+	} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		got := ScrubSecrets(in)
+		runtime.ReadMemStats(&after)
+		if want := redactedMark + in[len(cl):]; got != want {
+			t.Fatalf("%s: ScrubSecrets = %.80q", name, got)
+		}
+		if n := after.TotalAlloc - before.TotalAlloc; n > 3*uint64(len(in)) {
+			t.Errorf("%s: ScrubSecrets(%d bytes) allocated %d bytes", name, len(in), n)
+		}
 	}
 }
 

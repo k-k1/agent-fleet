@@ -200,8 +200,9 @@ func assignmentSpans(s string, known [][2]int) (spans, reach [][2]int, names []i
 	var cuts []cut
 	// Names only bound what reaches past a mark, which never passes whitespace or a quote, so
 	// they are looked for only from each mark to there (or to the next mark), plus the blanks and
-	// the one byte a name's `=` may need. The mark before each window is a word boundary, as the
-	// slice's start is taken to be.
+	// the one byte a name's `=` may need. Only the first in each window is kept: whatever reaches
+	// from a mark stops at the first name after it, and a window ends at the next mark. The mark
+	// before each window is a word boundary, as the slice's start is taken to be.
 	for i, k := range known {
 		stop := len(s)
 		if i+1 < len(known) {
@@ -216,13 +217,8 @@ func assignmentSpans(s string, known [][2]int) (spans, reach [][2]int, names []i
 			e++
 		}
 		window := masked[markAt[i]+len(redactedMark):][:min(e+1, stop)-k[1]]
-		for p := 0; p < w-k[1]; {
-			m := nameRe.FindStringIndex(window[p:])
-			if m == nil || p+m[0] >= w-k[1] {
-				break
-			}
-			names = append(names, k[1]+p+m[0])
-			p += m[1]
+		if m := nameRe.FindStringIndex(window); m != nil && m[0] < w-k[1] {
+			names = append(names, k[1]+m[0])
 		}
 	}
 	// One match at a time, not FindAll: a dense body would hold every match's submatch slice.
@@ -256,8 +252,12 @@ func assignmentSpans(s string, known [][2]int) (spans, reach [][2]int, names []i
 // whitespace, at a quote (taken with it when the value opened with one), or at the name starting
 // at limit (len(s) for none). Unquoted, it also ends at a comma, which starts another field
 // (`<token>,OK,42`), or at a shell metacharacter, which starts another command
-// (`;printf done`), and stops short as trimEnd says; inside quotes both are the value's own.
+// (`;printf done`), and stops short as trimEnd says. Inside quotes all three are the value's
+// own (`"<token>:a,mode=debug"`), up to the closing quote.
 func valueEnd(s string, from, limit int, quoted bool) int {
+	if quoted {
+		limit = len(s)
+	}
 	j := from
 	for j < limit && !isSpaceOrQuote(s[j]) && (quoted || strings.IndexByte(",;&|<>()`", s[j]) < 0) {
 		j++
