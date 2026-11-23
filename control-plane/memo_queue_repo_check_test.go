@@ -248,6 +248,75 @@ func TestMemoRepoRecheckKeepsTheLaterRead(t *testing.T) {
 	}
 }
 
+// A read computed against settings that changed before it was kept is not kept: the loop read
+// one queue's settings, then the member changed them and checked the file, then the loop read the
+// file for that queue.
+func TestMemoRepoRecheckDropsAReadOfOldSettings(t *testing.T) {
+	e, a := repoEnv(t, "")
+	lib := e.category("lib", "rounds")
+	if rec := e.do("a", "PUT", "/api/memo-queues/"+lib, map[string]any{"instruction": "x", "enabled": true}); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+	}
+	app := putRounds(e) // maxActive 2
+	a.file("version: 1\ncategories:\n  rounds:\n    max_active: 3\n")
+	var first atomic.Bool
+	a.onServe = func() {
+		// The loop's first read is lib's; app's settings change before app's read begins.
+		if first.CompareAndSwap(false, true) {
+			put := map[string]any{"instruction": "old", "spendCapUsd": 60, "maxActive": 3, "enabled": true}
+			if rec := e.do("a", "PUT", "/api/memo-queues/"+app, put); rec.Code != http.StatusOK {
+				t.Errorf("put: %d %s", rec.Code, rec.Body.String())
+			}
+			e.repoSettings(app)
+		}
+	}
+	(&memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now}).tick(context.Background())
+	if got := a.requested(); len(got) != 3 {
+		t.Fatalf("Agent calls %v", got)
+	}
+	if c := e.queueDTO(app).RepoCheck; c == nil || c.State != memoRepoCheckSame {
+		t.Fatalf("the member's read was replaced by one of the old settings: %+v", c)
+	}
+}
+
+// Nothing is kept once memo queues are off, however late the switch turns.
+func TestMemoRepoRecordWaitsForTheSwitch(t *testing.T) {
+	e, a := repoEnv(t, "")
+	id := putRounds(e)
+	a.file("version: 1\ncategories:\n  rounds:\n    max_active: 3\n")
+	q, _ := e.queueOf(id)
+	c, _, _ := e.st.GetCategory(context.Background(), id)
+	rc := memoRepoCheckFrom(c, q, &memoRepoSettingsWire{Found: true, Entry: true, Commit: testCommit}, time.Now())
+	e.memoQueuesOn(false)
+	if err := e.mgr.memoRepoRecord(context.Background(), e.members["a"], rc, id); err != nil {
+		t.Fatal(err)
+	}
+	if q, _ := e.queueOf(id); q.RepoCheck.State != "" {
+		t.Fatalf("kept with the switch off: %+v", q.RepoCheck)
+	}
+	e.memoQueuesOn(true)
+	if err := e.mgr.memoRepoRecord(context.Background(), e.members["a"], rc, id); err != nil {
+		t.Fatal(err)
+	}
+	if q, _ := e.queueOf(id); q.RepoCheck.State != memoRepoCheckSame {
+		t.Fatalf("not kept with the switch on: %+v", q.RepoCheck)
+	}
+}
+
+// A path the parser refuses is an error on its line, and nothing is asked of the Agent for it.
+func TestMemoRepoInstructionFileControlCharacter(t *testing.T) {
+	e, a := repoEnv(t, "")
+	id := putRounds(e)
+	a.file("version: 1\ncategories:\n  rounds:\n    instruction_file: \"a\\0b.md\"\n")
+	rec, out := e.repoSettings(id)
+	if rec.Code != http.StatusOK || len(out.Errors) != 1 || out.Errors[0].Key != "instruction_file" || out.Errors[0].Line != 4 {
+		t.Fatalf("%d %+v", rec.Code, out)
+	}
+	if len(a.instrAsked) != 0 {
+		t.Fatalf("asked the Agent: %v", a.instrAsked)
+	}
+}
+
 // Turned off while a read waits on the workspace, the tenant's switch stops the next read and
 // every write.
 func TestMemoRepoRecheckStopsWhenTheSwitchGoesOff(t *testing.T) {

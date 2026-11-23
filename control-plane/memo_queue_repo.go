@@ -557,7 +557,7 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 	out.ApprovalTag = memoRepoApprovalTag(c, cur, hasQueue, out.Diffs)
 	if hasQueue {
 		// What the member was shown is the queue's latest read; a failed write only leaves an older one.
-		_ = a.store.SetMemoQueueRepoCheck(ctx, res.mv.MembershipID, c.ID, memoRepoCheckFrom(c, cur, &out, started))
+		_ = a.mgr.memoRepoRecord(ctx, res.mv.MembershipID, memoRepoCheckFrom(c, cur, &out, started), c.ID)
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1069,6 +1069,28 @@ func memoRepoCheckFrom(c store.MemoCategory, cur store.MemoQueue, out *memoRepoS
 		At: started.UTC().Format(memoRepoCheckTime)}
 }
 
+// memoRepoRecord keeps a read on the queue, in one transaction behind the tenant row's lock: not
+// once memo queues are turned off, and not when the category or the settings changed since the
+// read compared them (its basis is not theirs any more), so a read taken against old settings
+// never replaces one taken against the current ones. Between two reads of the same basis the one
+// that began later stays.
+func (m *manager) memoRepoRecord(ctx context.Context, membershipID string, rc store.MemoRepoCheck, categoryID string) error {
+	return m.store.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
+		if on, err := tx.LockTenantSwitch(); err != nil || !on {
+			return err
+		}
+		c, ok, err := tx.GetCategory(categoryID)
+		if err != nil || !ok {
+			return err
+		}
+		q, ok, err := tx.GetQueue(categoryID)
+		if err != nil || !ok || memoRepoBasis(c, q) != rc.Basis {
+			return err
+		}
+		return tx.SetQueueRepoCheck(categoryID, rc)
+	})
+}
+
 // memoRepoCheckOf is the queue's last read as the Console sees it: nil when there is none, or it
 // was taken against another name or other settings.
 func memoRepoCheckOf(q store.MemoQueue, c store.MemoCategory) *memoRepoCheckWire {
@@ -1152,16 +1174,17 @@ func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string, qs
 	if len(work) == 0 {
 		return
 	}
-	// A member without a workspace is left alone: resolving one would create its record.
-	if _, ok, err := rc.mgr.store.GetWorkspaceByMembership(ctx, membershipID); err != nil || !ok {
-		return
-	}
+	// A member without a workspace is left alone: resolving one must not create its record.
 	identityID, ok, err := rc.mgr.store.IdentityIDForMembership(ctx, membershipID)
 	if err != nil || !ok {
 		return
 	}
-	res, aerr := rc.mgr.resolveByMembership(ctx, identityID, membershipID)
-	if aerr != nil || res.rt.State(ctx) != "running" {
+	ident, mv, aerr := rc.mgr.activeMembership(ctx, identityID, membershipID)
+	if aerr != nil {
+		return
+	}
+	res, found, aerr := rc.mgr.buildResolvedExisting(ctx, ident, mv)
+	if aerr != nil || !found || res.rt.State(ctx) != "running" {
 		return
 	}
 	// The tenant's switch is asked again before each read and each write: turned off while a
@@ -1201,10 +1224,7 @@ func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string, qs
 			log.Printf("memo repo recheck: %s: %s", membershipID, aerr.code)
 			continue
 		}
-		if !on() {
-			continue
-		}
-		if err := rc.mgr.store.SetMemoQueueRepoCheck(ctx, membershipID, d.c.ID, memoRepoCheckFrom(d.c, d.q, &out, rd.started)); err != nil {
+		if err := rc.mgr.memoRepoRecord(ctx, membershipID, memoRepoCheckFrom(d.c, d.q, &out, rd.started), d.c.ID); err != nil {
 			log.Printf("memo repo recheck: %s: record: %v", membershipID, err)
 		}
 	}

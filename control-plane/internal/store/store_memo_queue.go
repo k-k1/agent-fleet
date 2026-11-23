@@ -143,9 +143,6 @@ type MemoQueueStore interface {
 	SetMemoQueueNoRefs(ctx context.Context, queueID, at string) error
 	// SetMemoQueueNoTidy writes NoTidyAt, '' to clear it.
 	SetMemoQueueNoTidy(ctx context.Context, queueID, at string) error
-	// SetMemoQueueRepoCheck records a read of the repository's settings file on the member's queue,
-	// unless the queue holds one that began later (At is fixed-width text, so it orders as text).
-	SetMemoQueueRepoCheck(ctx context.Context, membershipID, categoryID string, c MemoRepoCheck) error
 	// MemoTx runs f in one transaction that holds the membership's lock first, so every
 	// queue-relevant memo write of a member is serialized behind the others. Before f it
 	// takes back the member's stale send reservations, so f never sees one. f's error
@@ -193,6 +190,9 @@ type MemoTxOps interface {
 	PutQueue(q MemoQueue) error
 	// SetQueueRepoApproval records the settings file commit the member approved for a queue.
 	SetQueueRepoApproval(categoryID, commit, at string) error
+	// SetQueueRepoCheck records a read of the repository's settings file on a queue, unless the
+	// queue holds one that began later (At is fixed-width text, so it orders as text).
+	SetQueueRepoCheck(categoryID string, c MemoRepoCheck) error
 	DeleteQueue(categoryID string) error
 	// SetQueueDraining writes the draining state inside the transaction of a fire.
 	SetQueueDraining(categoryID string, on bool) error
@@ -632,10 +632,10 @@ func (s *SQL) SetMemoQueueNoTidy(ctx context.Context, queueID, at string) error 
 	return err
 }
 
-func (s *SQL) SetMemoQueueRepoCheck(ctx context.Context, membershipID, categoryID string, c MemoRepoCheck) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE memo_queue SET repo_check_state=?, repo_check_commit=?, repo_check_diffs=?,
+func (t memoTx) SetQueueRepoCheck(categoryID string, c MemoRepoCheck) error {
+	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_queue SET repo_check_state=?, repo_check_commit=?, repo_check_diffs=?,
 		repo_check_basis=?, repo_checked_at=? WHERE category_id=? AND membership_id=? AND repo_checked_at<=?`,
-		c.State, c.Commit, c.Diffs, c.Basis, c.At, categoryID, membershipID, c.At)
+		c.State, c.Commit, c.Diffs, c.Basis, c.At, categoryID, t.mid, c.At)
 	return err
 }
 
