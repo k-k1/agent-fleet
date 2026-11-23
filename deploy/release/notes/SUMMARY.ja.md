@@ -12,6 +12,35 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.49.0](0.49.0.ja.md) — 2026-11-23
+
+**CLI ピン** — Antigravity 1.5.15 / gitleaks 8.30.1（新規）
+
+**New / Improved**
+
+- **[通知]** Console を閉じた端末へ Web Push。端末ごとの選択、画面で見ているセッションは送らない、質問の文面はテナントの設定 ([#4750](https://github.com/k-k1/agent-fleet/issues/4750))
+- **[スケジュール]** セッションが作った・実行先を変えたスケジュールは、スケジュールのビューの「確認して承認」まで待つ ([#4631](https://github.com/k-k1/agent-fleet/issues/4631))
+- **[メモ]** メモごとのエージェント・モデル・エフォート（「実行する設定」、`add_memo` / `update_memo`） ([#4845](https://github.com/k-k1/agent-fleet/issues/4845))
+- **[メモ]** キューのメモに「この日時より前は実行しない」、承認しても残る ([#4777](https://github.com/k-k1/agent-fleet/issues/4777))
+- **[メモ]** リポジトリの設定ファイル `.agent-fleet/autorun.yaml`: 違いの表示、項目ごとの承認、書き出し ([#4881](https://github.com/k-k1/agent-fleet/issues/4881))
+- **[ワークスペース]** ホームの空きが少ないと Go のビルドキャッシュを古い順に整理、設定 →「マシン」で切り替え ([#4560](https://github.com/k-k1/agent-fleet/issues/4560))
+- **[ワークスペース]** イメージに gitleaks ([#4904](https://github.com/k-k1/agent-fleet/issues/4904))
+- **[メモ]** カテゴリ見出しのメニューと「完了したメモを削除…」、まとめて削除、1 件をすぐ実行、「先に終わるべきメモ」は検索で後ろのメモも、入力欄の大きさ、送信後もメモを残す、連鎖を止める・キューに戻すはメモのメニューへ、チェックしたメモだけ承認、実行履歴に作業項目、入力欄の閉じるボタン ([#4816](https://github.com/k-k1/agent-fleet/issues/4816), [#4817](https://github.com/k-k1/agent-fleet/issues/4817), [#4919](https://github.com/k-k1/agent-fleet/issues/4919), [#4927](https://github.com/k-k1/agent-fleet/issues/4927), [#4818](https://github.com/k-k1/agent-fleet/issues/4818), [#4823](https://github.com/k-k1/agent-fleet/issues/4823), [#4878](https://github.com/k-k1/agent-fleet/issues/4878), [#4877](https://github.com/k-k1/agent-fleet/issues/4877), [#4899](https://github.com/k-k1/agent-fleet/issues/4899))
+- **[メモ]** PR のない実行は最後の回答が `Done:` のときだけ後続を動かす、履歴に回答の 1 行目 ([#4876](https://github.com/k-k1/agent-fleet/issues/4876))
+- **[メモ]** 自動実行のビュー: PR の状態のバッジ、終了した実行の片付けで PR のないきれいなワークツリーも、削除ダイアログはすぐ開き横並びで同時に削除 ([#4897](https://github.com/k-k1/agent-fleet/issues/4897), [#4872](https://github.com/k-k1/agent-fleet/issues/4872), [#4832](https://github.com/k-k1/agent-fleet/issues/4832), [#4735](https://github.com/k-k1/agent-fleet/issues/4735), [#4736](https://github.com/k-k1/agent-fleet/issues/4736), [#4833](https://github.com/k-k1/agent-fleet/issues/4833))
+- **[bitbucket]** PR の行に CI とコンフリクトの状態 ([#4840](https://github.com/k-k1/agent-fleet/issues/4840))
+- **[接続]** Jira はクラシックの API トークンが必要と表示、Bitbucket のカードと `af-watch-hook` は webhook のスコープを示す ([#4714](https://github.com/k-k1/agent-fleet/issues/4714))
+- **[セッション]** 自動実行・子のセッションのタイトルは封筒でなく作業の中身から ([#4804](https://github.com/k-k1/agent-fleet/issues/4804))
+
+**Fixed**
+
+- **[メモ]** 自動実行のビュー: 終わった実行の順番が入れ替わる、スケジュール一覧が遅れると「終了」の折りたたみが閉じる ([#4795](https://github.com/k-k1/agent-fleet/issues/4795), [#4706](https://github.com/k-k1/agent-fleet/issues/4706))
+- **[メモリ]** ペインの切り替えで保存前の文字が失われる、作り直した忘れたメモリが空と表示・保存で競合 ([#4619](https://github.com/k-k1/agent-fleet/issues/4619), [#4754](https://github.com/k-k1/agent-fleet/issues/4754), [#4666](https://github.com/k-k1/agent-fleet/issues/4666))
+- **[ウォッチ]** 断られた Bitbucket の PR が webhook のあとも open と読まれた ([#4712](https://github.com/k-k1/agent-fleet/issues/4712))
+- **[claude]** やり直したフォークのセッションや一部の起動オプションで auto モードで始まった ([#4718](https://github.com/k-k1/agent-fleet/issues/4718), [#4742](https://github.com/k-k1/agent-fleet/issues/4742))
+- **[ワークスペース]** 中断した Cursor / npm の CLI 更新が手で入れたものを巻き戻す・バックアップが残る ([#4723](https://github.com/k-k1/agent-fleet/issues/4723), [#4632](https://github.com/k-k1/agent-fleet/issues/4632), [#4770](https://github.com/k-k1/agent-fleet/issues/4770), [#4716](https://github.com/k-k1/agent-fleet/issues/4716))
+- **[console]** 回答済みの質問カードのコントラスト、画像スタジオのワークツリーが「セッションなし」 ([#4835](https://github.com/k-k1/agent-fleet/issues/4835), [#4709](https://github.com/k-k1/agent-fleet/issues/4709))
+
 ## [0.48.0](0.48.0.ja.md) — 2026-11-21
 
 **CLI ピン** — Claude Code 2.1.330 / Codex 0.171.0 / Copilot 1.0.114 / Antigravity 1.5.14 / Muse Code 1.4.25-R9361.1 / rtk 1.2.1

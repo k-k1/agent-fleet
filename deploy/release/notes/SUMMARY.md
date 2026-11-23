@@ -13,6 +13,35 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.49.0](0.49.0.md) — 2026-11-23
+
+**CLI pins** — Antigravity 1.5.15 / gitleaks 8.30.1 (new)
+
+**New / Improved**
+
+- **[notifications]** Web Push to a phone or computer with the Console closed: per-device choices, no push for a session on screen, question text by tenant setting ([#4750](https://github.com/k-k1/agent-fleet/issues/4750))
+- **[schedules]** Schedules a session creates or retargets wait for "Review & approve" in the Schedules view ([#4631](https://github.com/k-k1/agent-fleet/issues/4631))
+- **[memos]** Per-memo agent, model and effort ("Runs with", `add_memo` / `update_memo`) ([#4845](https://github.com/k-k1/agent-fleet/issues/4845))
+- **[memos]** "Do not run before" start time on a queue memo, kept by approval ([#4777](https://github.com/k-k1/agent-fleet/issues/4777))
+- **[memos]** Repository settings file `.agent-fleet/autorun.yaml`: diff, per-field approval, export ([#4881](https://github.com/k-k1/agent-fleet/issues/4881))
+- **[workspace]** Go build cache trimmed by last use when home runs low; switch in Settings → Machine ([#4560](https://github.com/k-k1/agent-fleet/issues/4560))
+- **[workspace]** gitleaks installed in the image ([#4904](https://github.com/k-k1/agent-fleet/issues/4904))
+- **[memos]** Category head menu with "Clear finished memos…"; bulk delete; run one memo now; "Waits for" by search, later memos allowed; resizable text; keep memos after sending; Stop chain and return-run in the memo menu; approve ticked memos only; run history names work items; composer close button ([#4816](https://github.com/k-k1/agent-fleet/issues/4816), [#4817](https://github.com/k-k1/agent-fleet/issues/4817), [#4919](https://github.com/k-k1/agent-fleet/issues/4919), [#4927](https://github.com/k-k1/agent-fleet/issues/4927), [#4818](https://github.com/k-k1/agent-fleet/issues/4818), [#4823](https://github.com/k-k1/agent-fleet/issues/4823), [#4878](https://github.com/k-k1/agent-fleet/issues/4878), [#4877](https://github.com/k-k1/agent-fleet/issues/4877), [#4899](https://github.com/k-k1/agent-fleet/issues/4899))
+- **[memos]** A run without a PR releases its dependents only on a `Done:` last answer; history shows the answer's first line ([#4876](https://github.com/k-k1/agent-fleet/issues/4876))
+- **[memos]** Auto-run view: PR state badge; Clear finished runs offers clean PR-less worktrees, opens the delete dialog at once, lists siblings flat and deletes in parallel ([#4897](https://github.com/k-k1/agent-fleet/issues/4897), [#4872](https://github.com/k-k1/agent-fleet/issues/4872), [#4832](https://github.com/k-k1/agent-fleet/issues/4832), [#4735](https://github.com/k-k1/agent-fleet/issues/4735), [#4736](https://github.com/k-k1/agent-fleet/issues/4736), [#4833](https://github.com/k-k1/agent-fleet/issues/4833))
+- **[bitbucket]** PR rows show CI and conflict status ([#4840](https://github.com/k-k1/agent-fleet/issues/4840))
+- **[connections]** Jira needs a classic API token; Bitbucket card and `af-watch-hook` name the webhook scopes ([#4714](https://github.com/k-k1/agent-fleet/issues/4714))
+- **[sessions]** Auto-run and spawned session titles come from the task, not the envelope ([#4804](https://github.com/k-k1/agent-fleet/issues/4804))
+
+**Fixed**
+
+- **[memos]** Auto-run view: ended runs swapped order; "Finished" fold closed on a late schedule list ([#4795](https://github.com/k-k1/agent-fleet/issues/4795), [#4706](https://github.com/k-k1/agent-fleet/issues/4706))
+- **[memory]** Unsaved text lost on a pane switch; re-created forgotten memory read blank or conflicted on save ([#4619](https://github.com/k-k1/agent-fleet/issues/4619), [#4754](https://github.com/k-k1/agent-fleet/issues/4754), [#4666](https://github.com/k-k1/agent-fleet/issues/4666))
+- **[watch]** A declined Bitbucket PR kept reading open after its webhook ([#4712](https://github.com/k-k1/agent-fleet/issues/4712))
+- **[claude]** A retried forked session or some launch options started in auto mode ([#4718](https://github.com/k-k1/agent-fleet/issues/4718), [#4742](https://github.com/k-k1/agent-fleet/issues/4742))
+- **[workspace]** Interrupted Cursor / npm CLI updates rolled back over manual installs or left backups ([#4723](https://github.com/k-k1/agent-fleet/issues/4723), [#4632](https://github.com/k-k1/agent-fleet/issues/4632), [#4770](https://github.com/k-k1/agent-fleet/issues/4770), [#4716](https://github.com/k-k1/agent-fleet/issues/4716))
+- **[console]** Answered question card contrast; image-studio worktree showed "no session" ([#4835](https://github.com/k-k1/agent-fleet/issues/4835), [#4709](https://github.com/k-k1/agent-fleet/issues/4709))
+
 ## [0.48.0](0.48.0.md) — 2026-11-21
 
 **CLI pins** — Claude Code 2.1.330 / Codex 0.171.0 / Copilot 1.0.114 / Antigravity 1.5.14 / Muse Code 1.4.25-R9361.1 / rtk 1.2.1

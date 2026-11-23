@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.49.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.49.0) — 2026-11-23
+
+Sessions can reach your phone or computer with Web Push while the Console is closed. Memo auto-run
+memos can each name their own agent, model and effort and a start time, and a repository can carry
+its queue settings in a file. Schedules that a session writes now wait for your approval.
+
 ## [0.48.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.48.0) — 2026-11-21
 
 Agent memory gets its own view in the Console, and each memory opens and edits like a file. Memo
