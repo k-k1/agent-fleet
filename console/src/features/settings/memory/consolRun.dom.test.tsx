@@ -212,6 +212,25 @@ describe("useConsolRun", () => {
     expect(seen!.err).toBe(false);
   });
 
+  it("drops a poll's failure answered in the same batch as the run ending", async () => {
+    api.mockResolvedValue(status(true));
+    await render(true);
+    const answers: Array<(v: unknown) => void> = [];
+    api.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    await act(async () => vi.advanceTimersByTime(3000));
+    await act(async () => vi.advanceTimersByTime(3000));
+    expect(answers.length).toBe(2);
+    // One act: both answers are processed before React commits, so the layout cleanup that ends
+    // the poll's lifetime has not run when the failure is handled.
+    await act(async () => {
+      answers[0](status(false));
+      answers[1](failure);
+    });
+    await act(async () => {});
+    expect(seen!.running).toBe(false);
+    expect(seen!.err).toBe(false);
+  });
+
   it("keeps the later progress when two running answers arrive out of order", async () => {
     const answer = await twoPolls();
     await answer(1, status(true, 2));
