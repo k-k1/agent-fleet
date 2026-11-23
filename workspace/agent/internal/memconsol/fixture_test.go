@@ -181,7 +181,9 @@ func env(t *testing.T) *fakeStore {
 	f := newFake()
 	old := store
 	store = f
-	t.Cleanup(func() { store = old })
+	oldNow := routeNow
+	routeNow = func() time.Time { return t0.Add(time.Minute) }
+	t.Cleanup(func() { store, routeNow = old, oldNow })
 	return f
 }
 
