@@ -173,6 +173,8 @@ var cpOwnedResolvedRoutes = routeReasons(
 		"POST /api/memos/flush",
 		// A queue fire: the CP reserves and claims, and the send happens on the scheduler's tick.
 		"POST /api/memo-queues/{categoryId}/fire",
+		// The CP asks the Agent for the settings file and compares it with the member's settings.
+		"GET /api/memo-queues/{categoryId}/repo-settings",
 		"POST /api/ssm/instances",
 		"POST /api/mcp-servers/{id}/oauth/start",
 	}},
