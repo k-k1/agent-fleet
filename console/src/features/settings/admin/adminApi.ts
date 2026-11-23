@@ -197,5 +197,5 @@ export const addEngineModel = (key: string, body: Record<string, unknown>): Prom
 
 // --- Provided routes (deployment source) ------------------------------------------------------
 // The read goes through useProvided in the tenant area, which takes the path; only the write is here.
-export const putProvidedDeployment = (body: unknown): Promise<Reply<Record<string, unknown>>> =>
+export const putProvidedDeployment = (body: unknown): Promise<Reply<{ warnings?: string[] }>> =>
   apiJSON("api/admin/provided-routes/deployment", "PUT", body);

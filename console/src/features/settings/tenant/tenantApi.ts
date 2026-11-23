@@ -132,8 +132,11 @@ export const saveTenantIdp = (slug: string, id: string | undefined, body: object
     : rawApiJSON(`api/admin/tenants/${T(slug)}/idp`, "POST", body);
 export const deleteTenantIdp = (slug: string, id: string): Promise<Reply<Ack> | null> =>
   rawApiJSON(`api/admin/tenants/${T(slug)}/idp/${encodeURIComponent(id)}`, "DELETE");
-/** A refusal that needs confirming carries `error.code` and the member count next to it. */
-export type IdpStatusReply = { error?: ApiError; members?: number };
+/** Success is the row's new `{ id, status }`; a refusal that needs confirming (409) carries
+ *  `error.code` and the member count next to it. `error?: undefined` lets a caller test `res.error`. */
+export type IdpStatusReply =
+  | { id?: string; status?: string; error?: undefined; members?: undefined }
+  | { error: ApiError; members?: number };
 export const setTenantIdpStatus = (
   slug: string,
   id: string,
@@ -143,12 +146,14 @@ export const setTenantIdpStatus = (
   rawApiJSON(`api/admin/tenants/${T(slug)}/idp/${encodeURIComponent(id)}/status${confirm ? "?confirm=1" : ""}`, "POST", { status });
 
 // --- Provided routes (the caller owns the base path; see providedRoutes.ts) ---------------------
+/** What the three PUTs answer on success: the saved view's fields plus the CP's notes on it. */
+export type ProvidedSaved = Loose & { warnings?: string[] };
 export const getProvided = (path: string): Promise<Loose | null> => rawApi(path);
-export const putProvidedGrant = (path: string, body: unknown): Promise<Loose | null> =>
+export const putProvidedGrant = (path: string, body: unknown): Promise<ProvidedSaved | null> =>
   rawApiJSON(`${path}/grant`, "PUT", body);
-export const putProvidedPolicy = (path: string, body: unknown): Promise<Loose | null> =>
+export const putProvidedPolicy = (path: string, body: unknown): Promise<ProvidedSaved | null> =>
   rawApiJSON(`${path}/policy`, "PUT", body);
-export const putProvidedMembers = (path: string, body: unknown): Promise<Loose | null> =>
+export const putProvidedMembers = (path: string, body: unknown): Promise<ProvidedSaved | null> =>
   rawApiJSON(`${path}/members`, "PUT", body);
 
 // --- Model route policy ---------------------------------------------------------------------------
@@ -159,7 +164,7 @@ export const putRoutePolicyRule = (path: string, body: RouteRule, revision: numb
   rawApiJSON(path, "PUT", body, { "If-Match": `"${revision}"` });
 
 // --- One member --------------------------------------------------------------------------------------
-export const getMemberLiveStats = (slug: string, key: string, signal: AbortSignal): Promise<Loose | null> =>
+export const getMemberLiveStats = (slug: string, key: string, signal: AbortSignal): Promise<Reply<MemberStats> | null> =>
   rawApi(`api/admin/tenants/${T(slug)}/members/${T(key)}/stats?disk=0`, { signal });
 export const getMemberStats = (slug: string, key: string): Promise<Reply<MemberStats> | null> =>
   rawApi(`api/admin/tenants/${T(slug)}/members/${T(key)}/stats`);
@@ -189,7 +194,7 @@ export const destroyMemberWorkspace = (
   rawApiJSON("api/admin/workspaces", "DELETE", who(slug, key));
 export const removeMembership = (slug: string, key: string, purge: boolean): Promise<Reply<{ pending?: boolean }> | null> =>
   rawApiJSON("api/admin/memberships", "DELETE", { ...who(slug, key), purge });
-export type UserLimitsReply = { slot_class?: unknown; slot_class_effective?: unknown; home_resize?: HomeResize | null };
+export type UserLimitsReply = { slot_class?: string; slot_class_effective?: string; home_resize?: HomeResize | null };
 export const putUserLimits = (body: object): Promise<Reply<UserLimitsReply> | null> =>
   rawApiJSON("api/admin/user-limits", "PUT", body);
 export const putMembershipRole = (slug: string, key: string, role: string): Promise<Reply<Ack> | null> =>
