@@ -41,6 +41,8 @@ function Layout({ during }: { during?: () => void }) {
   return null;
 }
 async function render(active: boolean, tenant = "a", reload = 0, during?: () => void) {
+  // The selection and the tenant the screen shows agree, as they do once a switch has rendered.
+  setTenant(tenant);
   await act(async () =>
     root!.render(
       <ToastProvider>
@@ -61,6 +63,7 @@ beforeEach(() => {
   root = createRoot(host);
 });
 afterEach(async () => {
+  setTenant("");
   if (root) await act(async () => root!.unmount());
   host?.remove();
   root = host = null;
@@ -273,6 +276,15 @@ describe("useConsolRun", () => {
 
   // The ticket dies only when React re-renders after a switch; the selection itself changes first.
   // With no tenant the write carries no header, so the wrapper would fill in the new selection.
+  it("opens no dialog when the selection moved before the hook re-rendered", async () => {
+    api.mockResolvedValue(status(false));
+    await render(true, "");
+    setTenant("beta");
+    await openRun();
+    expect(document.body.querySelector(".ui-confirm-actions")).toBeNull();
+    expect(apiJSON).not.toHaveBeenCalled();
+  });
+
   it("sends no write when the selection changes before the hook re-renders", async () => {
     api.mockResolvedValue(status(false));
     await render(true, "");

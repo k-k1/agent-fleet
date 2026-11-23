@@ -220,8 +220,10 @@ export function useConsolRun(reload: number, active: boolean, tenant: string) {
     const origin = guard.begin(tenant);
     const confirmedFor = tenant;
     // The selection itself, read live: the ticket only dies once React re-renders after a switch,
-    // and an empty `tenant` sends no header, so the wrapper would fill in the new selection.
+    // and an empty `tenant` sends no header, so the wrapper would fill in the new selection. A
+    // click made while the screen still shows another tenant is refused too, dialog included.
     const selectedAtClick = getTenant();
+    if (selectedAtClick !== confirmedFor) return;
     const budget = st.config.tokenBudget;
     const ok = await askConfirm({
       title: tr("mem.cs_run_title"),
