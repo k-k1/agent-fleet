@@ -28,6 +28,17 @@ describe("importsRawClient", () => {
     [`const example = 'import { api } from ${C}';`, false],
     [`const s = \`\${ 1 }\`;\nimport { api } from ${C}`, true],
     [`const m = "import(" + ${C};`, false],
+    // A quote inside a regex literal does not open a string.
+    [`const re = /"/;\nimport { api } from ${C};`, true],
+    [`const re = /[/"]+/g;\nimport { api } from ${C};`, true],
+    [`const half = a / b;\nimport { api } from ${C};`, true],
+    // An interpolation-free template is a plain specifier.
+    ["const m = await import(`../../../core/api/client.ts`);", true],
+    ["const m = await import(`../../../core/api/${x}.ts`);", false],
+    // A type reference or someone else's require() loads nothing.
+    [`type Client = typeof import(${C});`, false],
+    [`custom.require(${C});`, false],
+    [`const m = require(${C});`, true],
   ])("%s", (src, want) => {
     expect(importsRawClient(src)).toBe(want);
   });

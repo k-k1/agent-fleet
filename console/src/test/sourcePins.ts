@@ -4,8 +4,8 @@
 // lex the source (comments dropped, strings and templates kept whole, `${…}` read as code) and
 // read import/export declarations from the tokens, never across declarations.
 //
-// Regex literals are not lexed: a quote inside one would derail the scan. Settings sources do
-// not use one next to an import or a path literal.
+// A `/` starts a regex literal when the token before it cannot end an expression (a heuristic,
+// not a full parser): that keeps a quote inside a regex from opening a string.
 
 interface Token {
   k: "id" | "p" | "s" | "t";
@@ -17,6 +17,8 @@ interface Lexed {
   code: string;
   tokens: Token[];
 }
+
+const REGEX_AFTER_ID = new Set(["return", "typeof", "case", "in", "of", "delete", "void", "throw", "new", "else", "do", "instanceof"]);
 
 function lex(src: string): Lexed {
   const n = src.length;
@@ -36,10 +38,13 @@ function lex(src: string): Lexed {
   };
 
   const readTemplate = () => {
-    code += src[i++];
+    const start = ++i;
+    let plain = true;
+    code += "`";
     while (i < n && src[i] !== "`") {
       if (src[i] === "\\") code += src[i++];
       else if (src[i] === "$" && src[i + 1] === "{") {
+        plain = false;
         code += "${";
         i += 2;
         lexCode(true);
@@ -49,8 +54,17 @@ function lex(src: string): Lexed {
       }
       if (i < n) code += src[i++];
     }
-    tokens.push({ k: "t", v: "" });
+    // A template without `${` is a plain string for a module specifier.
+    tokens.push(plain ? { k: "s", v: src.slice(start, i) } : { k: "t", v: "" });
     if (i < n) code += src[i++];
+  };
+
+  const regexAllowed = () => {
+    const last = tokens[tokens.length - 1];
+    if (!last) return true;
+    if (last.k === "id") return REGEX_AFTER_ID.has(last.v);
+    if (last.k === "p") return ![")", "]", "}", "/re/"].includes(last.v);
+    return false;
   };
 
   // Lexes code up to the end of the file, or (inTemplate) up to the `}` that closes a `${`.
@@ -69,6 +83,17 @@ function lex(src: string): Lexed {
         }
         i += 2;
         code += "  ";
+      } else if (c === "/" && regexAllowed()) {
+        code += src[i++];
+        let inClass = false;
+        while (i < n && src[i] !== "\n" && (inClass || src[i] !== "/")) {
+          if (src[i] === "\\") code += src[i++];
+          else if (src[i] === "[") inClass = true;
+          else if (src[i] === "]") inClass = false;
+          if (i < n) code += src[i++];
+        }
+        if (i < n && src[i] === "/") code += src[i++];
+        tokens.push({ k: "p", v: "/re/" });
       } else if (c === '"' || c === "'") {
         readString(c);
       } else if (c === "`") {
@@ -116,7 +141,10 @@ export function importsRawClient(src: string): boolean {
     if (head.k !== "id") continue;
 
     if (head.v === "require" || head.v === "import") {
-      if (isP(t[i + 1], "(") && t[i + 2]?.k === "s" && CLIENT.test(t[i + 2].v)) return true;
+      // `typeof import("…")` is a type reference and `obj.require(…)` is someone else's method:
+      // neither loads the module.
+      const notLoad = isP(t[i - 1], ".") || isId(t[i - 1], "typeof");
+      if (!notLoad && isP(t[i + 1], "(") && t[i + 2]?.k === "s" && CLIENT.test(t[i + 2].v)) return true;
     }
     if (head.v !== "import" && head.v !== "export") continue;
 
