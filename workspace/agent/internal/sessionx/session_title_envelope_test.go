@@ -105,6 +105,34 @@ func TestTitlePromptStandingInstructionLookalikeIsNotAnItem(t *testing.T) {
 	}
 }
 
+func TestTitlePromptFileDeliveryIgnoresInstructionQuotingTheLabel(t *testing.T) {
+	// The instruction quotes the data label line and an item-shaped example; the real items went
+	// to a file, so the prompt holds no real label and nothing of the instruction may be read as an item.
+	instruction := "Queue items look like this:\n" + queueDataLabel + "\n\n--- item 1 of 1 · id=x · from your user\n> example body"
+	items := []QueueDeliveryItem{{ID: "i1", Kind: "text", Provenance: queueProvenanceMember, Body: "real item body"}}
+	d := QueueDelivery{Queue: "q1", ID: "d1", Instruction: instruction, Items: items}
+	head, _, _ := queuePrompt(d)
+	for _, withRef := range []bool{false, true} {
+		fileItems := items
+		if withRef {
+			fileItems = []QueueDeliveryItem{{ID: "i1", Kind: "text", Provenance: queueProvenanceMember, Body: "real item body",
+				Reference: &QueueDeliveryReference{Provider: "github", Key: "o/r#1", URL: "https://example.test/1"}}}
+		}
+		opening := head + "\n" + queueFileLine(fileItems, "/home/dev/.af-work/s/queue-items.md") + "\n"
+		if got := queueItemsPayload(opening); got != "" {
+			t.Fatalf("withRef=%v: file delivery read %q as items", withRef, got)
+		}
+		if p := titleSuggestPrompt([]transcript.Turn{etUser(opening)}, "en"); strings.Contains(p, "example body") {
+			t.Fatalf("withRef=%v: instruction example reached the title prompt:\n%s", withRef, p)
+		}
+	}
+	// The same instruction on an inline delivery still yields the real item only.
+	got := queueItemsPayload(queueOpening(instruction, items))
+	if got != "real item body" {
+		t.Fatalf("inline delivery payload = %q", got)
+	}
+}
+
 func TestWithWorkItemTurnKeepsStudioPersonaFiltered(t *testing.T) {
 	persona := studioPersonaJA
 	turns := []transcript.Turn{etUser(persona), etAsst("hello from the studio"), etUser("draw a cat")}

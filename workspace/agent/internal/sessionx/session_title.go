@@ -17,6 +17,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -383,14 +384,30 @@ func envelopePayload(text string) (payload string, queue bool) {
 	return text, false
 }
 
+// queueFileLineRe matches the line queueFileLine appends in place of items written to a file.
+var queueFileLineRe = regexp.MustCompile(`^Queue items: \d+, written to `)
+
+// lastLine returns the last non-blank line of text.
+func lastLine(text string) string {
+	text = strings.TrimRight(text, " \t\r\n")
+	return text[strings.LastIndex(text, "\n")+1:]
+}
+
 // queueItemsPayload returns the quoted lines (queueQuote's "> " prefix) under each
 // "--- item" header, which is where queueItemsSection puts a reference and the item body.
 // The boilerplate before the first header, and the origin lines, are dropped. An items file
 // leaves nothing: the prompt then holds no item text at all.
 func queueItemsPayload(text string) string {
+	// Items that went to a file leave the file line (queueFileLine) as the prompt's last line and no
+	// data label at all, so a label the standing instruction quotes would be the only one found
+	// below. The delivery form is decided here, from that last line. An item's own lines carry the
+	// "> " prefix, so none of them can start with "Queue items: ".
+	if queueFileLineRe.MatchString(lastLine(text)) {
+		return ""
+	}
 	// Items follow the data label, which Agent Fleet writes after the member's standing
 	// instruction. The last occurrence at a line start is the real one: the instruction may quote
-	// anything, and an item's own lines carry the "> " prefix. An items file has no label.
+	// anything, and an item's own lines carry the "> " prefix.
 	i := strings.LastIndex(text, "\n"+queueDataLabel)
 	if i < 0 {
 		return ""
