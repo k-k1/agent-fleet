@@ -54,7 +54,7 @@ On the AWS ECS deployments (`ecs`, `ecs-ec2`) the Control Plane's environment is
      --value "$(openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n')"
    ```
 
-   `<SsmPrefix>` is `30-ingress`'s parameter, `/af-cp` by default, which the execution role already reads. Keep the default: a prefix outside `/af-cp/` and `/af-ws/` needs the role's `ssm-read` policy widened, and `teardown.sh` always deletes everything under `/af-ws/`. Type or generate the value in your own terminal and keep a copy in your secret store: a lost or replaced key makes every member's subscription invalid
+   `<SsmPrefix>` is `30-ingress`'s parameter, `/af-cp` by default, which the execution role already reads. Keep the default: a prefix outside `/af-cp/` and `/af-ws/` needs the role's `ssm-read` policy widened. Type or generate the value in your own terminal and keep a copy in your secret store: a lost or replaced key makes every member's subscription invalid
 
 2. Deploy `30-ingress` with the switch and the contact
 

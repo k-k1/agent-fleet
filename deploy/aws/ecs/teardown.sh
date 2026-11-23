@@ -25,7 +25,8 @@
 #  4. Deregister the container instances (leftovers make the cluster deletion fail;
 #     measured: 3 of 4)
 #  5. EFS access points (forget them and the 10-data deletion stalls)
-#  6. SSM `/af-ws/*` (`/af-cp/*` is kept by default, so the same account can be rebuilt into)
+#  6. SSM `/af-ws/*` (`<SsmPrefix>/*`, `/af-cp/*` by default, is kept unless --purge-secrets,
+#     also when SsmPrefix lies inside `/af-ws/`, so the same account can be rebuilt into)
 #  7. Snapshots (golden, hibernation, backup)
 #  8. Stacks in reverse order, one at a time, waiting for each. Issued together, the
 #     deletion of an exporting stack is cancelled silently while an importer is alive and
@@ -41,7 +42,7 @@
 #
 # ## What this never touches
 #
-# The hosted zone itself; `/af-cp/*` (deleted only with `--purge-secrets`); the RDS final
+# The hosted zone itself; `<SsmPrefix>/*` (deleted only with `--purge-secrets`); the RDS final
 # snapshot, EFS and EFS backup vault that retain kept (only with `--purge-retained`); and
 # anything that does not match this deployment's tags or names — under Control Tower the
 # account also holds `StackSet-*`, `<org>-baseline-*` and Account Factory VPCs.
@@ -63,7 +64,7 @@ usage: teardown.sh --profile <p> --region <r> [--yes] [--purge-retained] [--purg
   --purge-retained  also delete what Persistence=retain deliberately kept (RDS final
                     snapshot, EFS filesystem, the EFS backup vault and its recovery
                     points). Ignored when persistence=delete
-  --purge-secrets   also delete /af-cp/* (cookie-secret, master-key, IdP client secret, and any optional one such as the Web Push key).
+  --purge-secrets   also delete <SsmPrefix>/*, /af-cp/* by default (cookie-secret, master-key, IdP client secret, and any optional one such as the Web Push key).
                     Keep them to redeploy into the same account
   --dry-run         print every write instead of making it
 EOF
@@ -104,6 +105,10 @@ captured_param() {  # captured_param <key> — a parameter of the captured 30-in
 }
 SSM_PREFIX="$(af_stack_param "$AF_STACK_INGRESS" SsmPrefix)"
 [ -n "$SSM_PREFIX" ] || SSM_PREFIX="$(captured_param SsmPrefix)"
+# Neither the live stack nor the capture named it. The /af-cp default is a guess, and step 6
+# must not sweep /af-ws/ on a guess: the real prefix may lie inside it.
+SSM_PREFIX_KNOWN=1
+[ -n "$SSM_PREFIX" ] || SSM_PREFIX_KNOWN=0
 : "${SSM_PREFIX:=/af-cp}"
 HOSTED_ZONE="$(af_stack_param "$AF_STACK_INGRESS" HostedZoneId)"
 [ -n "$HOSTED_ZONE" ] || HOSTED_ZONE="$(captured_param HostedZoneId)"
@@ -339,8 +344,40 @@ fi
 # Control Plane publishes at /af-ws/engines/<key>/active (ADR 0072 decision 2). Left in place
 # they are read by the NEXT deployment's engine boxes, which would sync a checkpoint from a
 # bucket that no longer exists.
+#
+# 30-ingress accepts an SsmPrefix inside /af-ws/, so the sweep can reach the CP secrets
+# (cookie-secret, master-key, ...). Those go only with --purge-secrets: without it the
+# SsmPrefix subtree is left out here, exactly what 6b would otherwise delete.
 WS_PARAMS="$("${AWS[@]}" ssm describe-parameters --parameter-filters "Key=Name,Option=BeginsWith,Values=/af-ws/" \
   --query 'Parameters[].Name' --output text 2>/dev/null | txt || true)"
+WS_KEPT=""
+if [ "$PURGE_SECRETS" != 1 ] && [ -n "$WS_PARAMS" ] && [ "$SSM_PREFIX_KNOWN" != 1 ]; then
+  echo "==> 6. keeping /af-ws/* ($(count "$WS_PARAMS")): SsmPrefix could not be read from the stack or the capture," \
+    "and the secrets may be under /af-ws/. Re-run once it can be read, or with --purge-secrets"
+  WS_PARAMS=""
+fi
+if [ "$PURGE_SECRETS" != 1 ] && [ -n "$WS_PARAMS" ]; then
+  case "$SSM_PREFIX/" in
+    /af-ws/*)
+      ws_swept=""
+      for p in $WS_PARAMS; do
+        case "$p" in
+          "$SSM_PREFIX"/*) WS_KEPT="$WS_KEPT${WS_KEPT:+$'\n'}$p" ;;
+          *) ws_swept="$ws_swept${ws_swept:+$'\n'}$p" ;;
+        esac
+      done
+      WS_PARAMS="$ws_swept" ;;
+  esac
+fi
+if [ -n "$WS_KEPT" ]; then
+  echo "==> 6. keeping $SSM_PREFIX/* ($(count "$WS_KEPT")) inside /af-ws/ — SsmPrefix; --purge-secrets deletes them"
+  if [ "$SSM_PREFIX" = /af-ws ]; then
+    # Here the secrets share one subtree with the per-workspace keys and the engine active
+    # sets, so nothing can be swept without taking the secrets too.
+    echo "    ⚠️ SsmPrefix is /af-ws itself: every /af-ws/* parameter is kept, including the engine" \
+      "active sets a later deployment's engine boxes would read. Re-run with --purge-secrets to delete them"
+  fi
+fi
 if [ -n "$WS_PARAMS" ]; then
   echo "==> 6. deleting /af-ws/* ($(count "$WS_PARAMS"))"
   for p in $WS_PARAMS; do

@@ -395,7 +395,7 @@ case "$args" in
   *"ParameterKey=='Persistence'"*) echo "delete" ;;
   *"ParameterKey=='CpArch'"*) echo "x86_64" ;;
   *"ParameterKey=='Ec2SlotLaunchTemplate'"*) echo "lt-OLD" ;;
-  *"ParameterKey=='SsmPrefix'"*) echo "/af-cp" ;;
+  *"ParameterKey=='SsmPrefix'"*) if [ "${STUB_SSM_PREFIX_UNREADABLE:-0}" = 1 ]; then echo "An error occurred (Throttling)" >&2; exit 254; fi; echo "${STUB_SSM_PREFIX:-/af-cp}" ;;
   *"ParameterKey=='HostedZoneId'"*) echo "ZTEST" ;;
   *"ParameterKey=='Ec2SlotSleepSec'"*) echo "900" ;;
   # --- 20-platform through a change set (update.sh step 1a). `deploy --no-execute-changeset`
@@ -565,6 +565,18 @@ case "$args" in
   *"ec2 describe-volumes"*) echo "vol-1" ;;
   *"ec2 describe-snapshots"*) echo "snap-1" ;;
   *"efs describe-access-points"*) echo "fsap-1" ;;
+  # STUB_SSM_PREFIX puts the CP secrets inside /af-ws/ (#4894): the /af-ws/ sweep then lists
+  # them next to a workspace key and an engine active set, and the SsmPrefix listing of 6b
+  # finds the same two secrets.
+  *"ssm describe-parameters"*"Values=/af-ws/ "*)
+    case "${STUB_SSM_PREFIX:-}" in
+      # /af-ws/cpx/stale only shares a name prefix with /af-ws/cp and is not its subtree.
+      /af-ws/*) printf '/af-ws/alice\t/af-ws/cpx/stale\t%s/cookie-secret\t%s/master-key\n' "$STUB_SSM_PREFIX" "$STUB_SSM_PREFIX" ;;
+      /af-ws) printf '/af-ws/alice\t/af-ws/engines/llm/active\t%s/cookie-secret\t%s/master-key\n' "$STUB_SSM_PREFIX" "$STUB_SSM_PREFIX" ;;
+      *) echo "/af-ws/alice" ;;
+    esac ;;
+  *"ssm describe-parameters"*"Values=${STUB_SSM_PREFIX:-/af-cp}/ "*)
+    printf '%s/cookie-secret\t%s/master-key\n' "${STUB_SSM_PREFIX:-/af-cp}" "${STUB_SSM_PREFIX:-/af-cp}" ;;
   *"ssm describe-parameters"*) echo "/af-ws/alice" ;;
   # af-engine-tools has its own knob, separate from the release images: the case that matters
   # is "the release tag IS in ECR and this one is not", which is exactly what happened on the
@@ -748,6 +760,58 @@ hasnt "ssm delete-parameter --name /af-cp"
 # 7. ACM's validation CNAME is sent back with the TTL and value matching exactly
 has '"TTL":300'
 has "val.acm-validations.aws."
+
+echo "== case 2a: an SsmPrefix inside /af-ws/ survives the sweep unless --purge-secrets (#4894) =="
+# The default prefix: --purge-secrets deletes /af-cp/*, and without it case 2 above showed
+# none of it goes.
+: > "$LOG"
+"$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --purge-secrets > "$WORK/out2a0" </dev/null
+has "ssm delete-parameter --name /af-cp/cookie-secret"
+has "ssm delete-parameter --name /af-cp/master-key"
+# A prefix below /af-ws/: the rest of /af-ws/ is swept, the secrets are not.
+: > "$LOG"
+STUB_SSM_PREFIX=/af-ws/cp "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out2a1" </dev/null
+has "ssm delete-parameter --name /af-ws/alice"
+has "ssm delete-parameter --name /af-ws/cpx/stale"
+hasnt "ssm delete-parameter --name /af-ws/cp/"
+grep -q "keeping /af-ws/cp/\* (2) inside /af-ws/" "$WORK/out2a1" || fail "the sweep did not say it kept the SsmPrefix subtree"
+grep -q "kept: .*/af-ws/cp/\*" "$WORK/out2a1" || fail "the summary did not name the kept SsmPrefix"
+: > "$LOG"
+STUB_SSM_PREFIX=/af-ws/cp "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --purge-secrets > "$WORK/out2a2" </dev/null
+has "ssm delete-parameter --name /af-ws/alice"
+has "ssm delete-parameter --name /af-ws/cp/cookie-secret"
+has "ssm delete-parameter --name /af-ws/cp/master-key"
+# SsmPrefix=/af-ws itself: everything under it is the secrets' subtree, so nothing is swept
+# and the operator is told what that leaves behind.
+: > "$LOG"
+STUB_SSM_PREFIX=/af-ws "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out2a4" </dev/null
+hasnt "ssm delete-parameter --name /af-ws/"
+grep -q "SsmPrefix is /af-ws itself" "$WORK/out2a4" || fail "SsmPrefix=/af-ws kept the whole sweep without saying so"
+: > "$LOG"
+STUB_SSM_PREFIX=/af-ws "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --purge-secrets > "$WORK/out2a5" </dev/null
+has "ssm delete-parameter --name /af-ws/alice"
+has "ssm delete-parameter --name /af-ws/engines/llm/active"
+has "ssm delete-parameter --name /af-ws/master-key"
+# The live SsmPrefix cannot be read: the capture's value is used, and with no value in the
+# capture either nothing under /af-ws/ is swept on the /af-cp guess.
+cp "$STATE/params/30-ingress" "$WORK/30-ingress.orig"
+sed -i 's|^SsmPrefix=.*|SsmPrefix=/af-ws/cp|' "$STATE/params/30-ingress"
+: > "$LOG"
+STUB_SSM_PREFIX=/af-ws/cp STUB_SSM_PREFIX_UNREADABLE=1 \
+  "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out2a6" </dev/null
+has "ssm delete-parameter --name /af-ws/alice"
+hasnt "ssm delete-parameter --name /af-ws/cp/"
+sed -i '/^SsmPrefix=/d' "$STATE/params/30-ingress"
+: > "$LOG"
+STUB_SSM_PREFIX=/af-ws/cp STUB_SSM_PREFIX_UNREADABLE=1 \
+  "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out2a7" </dev/null
+hasnt "ssm delete-parameter --name /af-ws/"
+grep -q "SsmPrefix could not be read" "$WORK/out2a7" || fail "an unread SsmPrefix kept /af-ws/ without saying why"
+: > "$LOG"
+STUB_SSM_PREFIX=/af-ws/cp STUB_SSM_PREFIX_UNREADABLE=1 \
+  "$ECS/teardown.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --purge-secrets > "$WORK/out2a8" </dev/null
+has "ssm delete-parameter --name /af-ws/cp/cookie-secret"
+cp "$WORK/30-ingress.orig" "$STATE/params/30-ingress"
 
 echo "== case 2b: standup refuses a retain data stack name its backup vault cannot carry =="
 : > "$LOG"
