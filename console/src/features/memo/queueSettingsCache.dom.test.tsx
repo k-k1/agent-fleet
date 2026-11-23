@@ -47,3 +47,17 @@ describe("a write whose outcome is unknown", () => {
     expect(useQueueSettingsCache.getState().unsure).toEqual([]);
   });
 });
+
+describe("an unknown outcome answered after a scope switch", () => {
+  it("does not mark the scope now shown", () => {
+    const c = useQueueSettingsCache.getState();
+    c.reset();
+    c.publish(queueScope(), c.begin(), { tenantEnabled: true, repoSettings: true, queues: [] });
+    const inFlight = c.begin();
+    c.markUnsure("another-scope", "c1");
+    expect(useQueueSettingsCache.getState().unsure).toEqual([]);
+    // The read of the scope shown still lands.
+    c.publish(queueScope(), inFlight, { tenantEnabled: true, repoSettings: true, queues: [readQueue({ categoryId: "c9" })!] });
+    expect(useQueueSettingsCache.getState().queues.map((q) => q.categoryId)).toEqual(["c9"]);
+  });
+});

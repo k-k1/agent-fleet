@@ -124,6 +124,7 @@ describe("MemoQueueSettingsModal repository settings card", () => {
 
   beforeEach(() => {
     liveKinds = [{ kind: "claude", usableRoutes: ["anthropic-api"] }];
+    useQueueSettingsCache.getState().reset();
     useQueueSettingsCache.setState({ repoSettings: true });
     memoQueuePut.mockClear();
     memoRepoApprove.mockClear();
@@ -138,7 +139,9 @@ describe("MemoQueueSettingsModal repository settings card", () => {
       diffs: [{ key: "batch", field: "batch", line: 4, current: 1, file: 2, raise: false }],
     };
   });
-  afterEach(() => useQueueSettingsCache.setState({ repoSettings: false }));
+  // The cache is shared by every test of the file: a test that leaves a category unsure would
+  // open the next one's dialog on the "reading again" screen.
+  afterEach(() => useQueueSettingsCache.getState().reset());
 
   it("is not shown for a category without a repository", async () => {
     await render("");
@@ -170,8 +173,8 @@ describe("MemoQueueSettingsModal repository settings card", () => {
     await act(async () => approveBtn().click());
     await flush();
     expect(closed).toBe(1);
-    // The form is gone until the settings are read again; a submit from it, if still there, sends nothing.
-    if (document.querySelector("form")) await submit();
+    // The form is gone until the settings are read again, so nothing can be sent from it.
+    expect(document.querySelector("form")).toBeNull();
     expect(memoQueuePut).not.toHaveBeenCalled();
   });
 

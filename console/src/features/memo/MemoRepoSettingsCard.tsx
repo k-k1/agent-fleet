@@ -75,9 +75,11 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
 
   // The dialog is closed rather than left open on a draft that may predate a saved approval: a
   // save from it would write the old values back. The caller refetches the settings.
-  const uncertain = () => {
+  // scope is the one the approval was sent from: an answer lost after a switch to another scope
+  // must not mark that scope's cache or drop its reads.
+  const uncertain = (scope: string) => {
     // Before onApplied, whose refetch must be a read begun after the mark.
-    useQueueSettingsCache.getState().markUnsure(queueScope(), categoryId);
+    useQueueSettingsCache.getState().markUnsure(scope, categoryId);
     toast(t("memo.repo_approve_unknown"), { kind: "warn" });
     onApplied();
   };
@@ -87,8 +89,8 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
     if (keys.length === 0 || approving || blocked || dirty || (data.category !== "" && data.category !== categoryName)) return;
     setApproving(true);
     onBusy(true);
+    const scope = queueScope();
     try {
-      const scope = queueScope();
       const res = await memoRepoApprove(categoryId, { commit: data.commit, approvalTag: data.approvalTag, keys });
       // The client names an answer that is not the Control Plane's (a proxy's page, a gateway)
       // http_<status>: that one says nothing about whether the write happened.
@@ -100,7 +102,7 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
         return;
       }
       if (res?.error) {
-        uncertain();
+        uncertain(scope);
         return;
       }
       const saved = readQueue(res);
@@ -109,7 +111,7 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
       onApplied();
     } catch {
       // The answer was lost: the approval may have been saved.
-      uncertain();
+      uncertain(scope);
     } finally {
       setApproving(false);
       onBusy(false);
