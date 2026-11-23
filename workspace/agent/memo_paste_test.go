@@ -60,6 +60,8 @@ func TestMemoImageGCSparesYoungFiles(t *testing.T) {
 	// last write, and so the mtime, is old, but the name's stamp is not. Kept.
 	stalled := fmt.Sprintf("paste-%d-build.log", time.Now().UnixNano())
 	write(stalled, old)
+	stalledImage := fmt.Sprintf("paste-%d.png", time.Now().UnixNano())
+	write(stalledImage, old)
 
 	if got := postMemoImageGC(t, []string{"paste-2.png"}); got != 1 {
 		t.Errorf("removed = %d, want 1", got)
@@ -71,6 +73,7 @@ func TestMemoImageGCSparesYoungFiles(t *testing.T) {
 		".paste-tmp":  true,
 		"notes.txt":   true,
 		stalled:       true,
+		stalledImage:  true,
 	} {
 		_, err := os.Stat(filepath.Join(dir, name))
 		if got := err == nil; got != want {
