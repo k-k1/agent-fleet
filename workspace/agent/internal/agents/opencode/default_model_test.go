@@ -24,6 +24,9 @@ func TestDefaultModelLaunchStaysUnresolved(t *testing.T) {
 		return nil, UsageZen, oauthState{known: true}, nil
 	}
 	m := session.Meta{Name: "s", Kind: session.KindOpencode, Dir: t.TempDir()}
+	origProbe := oauthProbe
+	t.Cleanup(func() { oauthProbe = origProbe })
+	oauthProbe = func() (string, bool) { return "", false }
 	cfg := []byte(`{"model":"opencode/a-free"}`)
 	if err := os.WriteFile(filepath.Join(m.Dir, "opencode.json"), cfg, 0o600); err != nil {
 		t.Fatal(err)

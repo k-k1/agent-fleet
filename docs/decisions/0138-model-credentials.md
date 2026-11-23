@@ -273,18 +273,30 @@ not see muse or cursor at all.
   always reports that provider is **not measured**. Having no credential to fingerprint, they carry the one fixed
   binding `opencode-zen@free` (D5b) wherever their credentials are resolved when the call starts: the launch record
   and the assistant chat's rows.
-- **An opencode launch with no model named does not resolve.** Nothing af reads at launch proves which model it will
-  run:
+- **An opencode launch with no model named resolves only when the running serve proves it.** Nothing af reads from
+  files proves which model it will run:
   - opencode falls back from a configured `model` that is unavailable or disabled
     (https://opencode.ai/docs/models/#defaults);
   - an agent's own model, from JSON or Markdown and global or project files, overrides it;
   - the last model used, and opencode's own priority, depend on what the project and opencode's credential store make
     available.
-  - Its record stays `{}`, and an unresolved record is no record. Under a restriction a create follows D11b's order (the
-    member's default route, else `route_required`, which tells the member to name a model or set a default route). A
-    resume or a running session is judged as having none.
-  - Follow-ups: #4227 (an authoritative per-directory answer from opencode) and #4228 (per-call bindings for
-    opencode's session rows).
+  - So the Agent asks the running `opencode serve` (never starting one) about the session's directory
+    (`GET /api/provider`, `/api/model/default` and `/api/plugin` with `location[directory]`, within the 500 ms launch
+    budget) and resolves one case: the directory's providers are the built-in `opencode` provider alone, running
+    keyless (`settings.apiKey` is `public`), and its default model costs nothing. That launch carries
+    `{opencode-zen, opencode-zen@free}`, resolved as a named free model is. The default model alone proves nothing: with
+    an `ANTHROPIC_API_KEY` in the serve's environment the provider list gains `anthropic` while the default stays a free
+    opencode model.
+  - The provider list of a directory is partial until its plugins have loaded (`[]`, then `[opencode]`, then
+    `[opencode, <the project's>]`; measured on 2.4.0), so it is read only after `/api/plugin` lists them, and a plugin
+    that failed leaves the launch unresolved. A cold directory settled in 0.3–0.7 s on a loaded host: it can miss the
+    budget, and that launch then records `{}` as before.
+  - Everything else records `{}`: several providers, a key on the opencode provider, a paid or missing default, no
+    running serve, an answer for another directory, and the assistant chat (it has no directory). An unresolved
+    record is no record. Under a restriction a create follows D11b's order (the member's default route, else
+    `route_required`, which tells the member to name a model or set a default route). A resume or a running session
+    is judged as having none.
+  - Follow-ups: #4228 (per-call bindings for opencode's session rows).
 - **A kind with more than one login mode resolves per mode, at execution.** muse resolves to `muse-login` or
   `meta-api` from its `mechanism` (`muse/auth.go:96-130`, with `META_API_KEY` in the Agent's environment counting as
   `meta-api`, since it overrides the login); codex resolves to `chatgpt-subscription` or `openai-api` from
@@ -821,7 +833,7 @@ pi's routes enter at M0's level when ADR 0136's P1 lands; they need no phase of 
   source. So one tenant's settings are in one place, and the cap has exactly one editor.
 - 2026-11-18, D11b (#4280): a create that names an opencode model whose payer cannot be proven is refused
   `route_forbidden` when every route the model might run on (Zen or Go, and the account) is forbidden; it stays
-  `route_required` when any of them is allowed or none can be listed. The default model (#4227) is not covered.
+  `route_required` when any of them is allowed or none can be listed. A launch with no model named is covered only where the serve proves it (D2, #4227).
 - 2026-11-18, D10a (#4323): the hosted MCP `create_session` texts (`route`, `route_connection`, and the
   Bedrock clause of `model`) name only the routes the caller's tenant policy allows, read per call from the tenant
   view's `owners[].allowed`; an unreadable policy names none. Enforcement is unchanged: a create naming a
