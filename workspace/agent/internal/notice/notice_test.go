@@ -332,3 +332,16 @@ func TestPutBoundsThePayloadOnDisk(t *testing.T) {
 		t.Fatalf("listed %d events", len(got))
 	}
 }
+
+// The Agent's copy of the shrink rule (control-plane/notification.go has the same): a mistyped
+// header costs only the header, and fitString keeps the longest head that fits.
+func TestShrinkRuleMatchesTheControlPlane(t *testing.T) {
+	got := questionHeads([]byte(`[{"question":"Which way?","header":7,"options":[]},{"question":3,"header":"H"},{},{},5]`), maxPayloadValue)
+	if string(got) != `[{"question":"Which way?"},{"question":"","header":"H"},{"question":""},{"question":""}]` {
+		t.Fatalf("questionHeads = %s", got)
+	}
+	head := strings.Repeat("😀", 160)
+	if b := fitString(head+strings.Repeat("<", 1216), 1856); len(b) > 1856 || len(b) < 1850 || !strings.HasPrefix(string(b), `"`+head) {
+		t.Fatalf("fitString kept %d bytes", len(b))
+	}
+}

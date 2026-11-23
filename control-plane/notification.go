@@ -172,19 +172,24 @@ func questionHeads(v []byte, maxValue int) []byte {
 	}
 	out := []byte{'['}
 	for n := 0; n < maxQuestions && dec.More(); n++ {
+		// Raw fields, so a field of the wrong type costs only that field, as it does in
+		// pushsrv.questionText, which reads the question alone.
 		var q struct {
-			Question string `json:"question"`
-			Header   string `json:"header"`
+			Question json.RawMessage `json:"question"`
+			Header   json.RawMessage `json:"header"`
 		}
 		if dec.Decode(&q) != nil {
 			return nil
 		}
+		var question, header string
+		_ = json.Unmarshal(q.Question, &question)
+		_ = json.Unmarshal(q.Header, &header)
 		if n > 0 {
 			out = append(out, ',')
 		}
-		out = append(append(out, `{"question":`...), fitString(strings.TrimSpace(q.Question), maxValue/maxQuestions-192)...)
-		if q.Header != "" {
-			out = append(append(out, `,"header":`...), fitString(q.Header, 128)...)
+		out = append(append(out, `{"question":`...), fitString(strings.TrimSpace(question), maxValue/maxQuestions-192)...)
+		if header != "" {
+			out = append(append(out, `,"header":`...), fitString(header, 128)...)
 		}
 		out = append(out, '}')
 	}
@@ -194,21 +199,25 @@ func questionHeads(v []byte, maxValue int) []byte {
 	return append(out, ']')
 }
 
-// fitString is s encoded as a JSON string within n bytes, cut from the end. The bound is on the
-// encoding, not the text: an escaped character such as '<' takes six bytes.
+// fitString is the longest head of s, cut on a rune boundary, whose encoding as a JSON string
+// fits n bytes. The bound is on the encoding, not the text: an escaped character such as '<'
+// takes six bytes. The encoded length only grows with the head, so a binary search finds it.
 func fitString(s string, n int) []byte {
 	s = headBytes(s, n)
-	for {
-		b, _ := json.Marshal(s)
-		if len(b) <= n || s == "" {
-			return b
-		}
-		m := len(s) * n / len(b)
-		if m >= len(s) {
-			m = len(s) - 1
-		}
-		s = headBytes(s, m)
+	if b, _ := json.Marshal(s); len(b) <= n {
+		return b
 	}
+	lo, hi := 0, len(s) // the head of lo bytes fits, the head of hi does not
+	for hi-lo > 1 {
+		mid := (lo + hi) / 2
+		if b, _ := json.Marshal(headBytes(s, mid)); len(b) <= n {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	b, _ := json.Marshal(headBytes(s, lo))
+	return b
 }
 
 // repairUTF8 replaces each byte that is not part of valid UTF-8 with U+FFFD, one per byte, which

@@ -251,3 +251,33 @@ func TestQuestionHeads(t *testing.T) {
 		t.Fatal("a list that does not start with an object must give nil")
 	}
 }
+
+// fitString keeps the longest head that fits, also when the escaping characters are all at the
+// end; a proportional cut would have taken the plain head with them.
+func TestFitStringKeepsTheLongestHead(t *testing.T) {
+	head := strings.Repeat("😀", 160)
+	for _, s := range []string{head + strings.Repeat("<", 1216), strings.Repeat("x", 4000), strings.Repeat("<", 4000), "short"} {
+		b := fitString(s, 1856)
+		var got string
+		if err := json.Unmarshal(b, &got); err != nil {
+			t.Fatalf("%.20q: %s does not decode: %v", s, b, err)
+		}
+		if len(b) > 1856 || !strings.HasPrefix(s, got) {
+			t.Fatalf("%.20q: %d bytes, head %v", s, len(b), strings.HasPrefix(s, got))
+		}
+		if got != s && len(b) < 1856-6 {
+			t.Errorf("%.20q: cut to %d encoded bytes, want the longest head within 1856", s, len(b))
+		}
+	}
+	if got := fitString(head+strings.Repeat("<", 1216), 1856); !strings.HasPrefix(string(got), `"`+head) {
+		t.Error("the plain head was cut")
+	}
+}
+
+// A header of the wrong type costs only the header: the question text Web Push shows survives.
+func TestQuestionHeadsIgnoresAMistypedField(t *testing.T) {
+	got := questionHeads([]byte(`[{"question":"Which way?","header":7,"options":[]},{"question":3,"header":"H"}]`), maxNotificationPayloadValue)
+	if string(got) != `[{"question":"Which way?"},{"question":"","header":"H"}]` {
+		t.Fatalf("got %s", got)
+	}
+}
