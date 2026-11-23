@@ -159,15 +159,16 @@ func TestMarksFollowSymlinksAndSurviveTheFolderGoing(t *testing.T) {
 	}
 }
 
-// A session's stored Dir is matched against the delete's path both as stored and cleaned (#4852):
-// `..` after a symlink can clean to outside the copy while the OS resolves it inside.
+// A session's stored Dir is matched against the delete's path both as stored and cleaned: `..`
+// after a symlink can clean to outside the copy while the OS resolves it inside, and a Dir such as
+// `/r/./app@a/sub` reaches the copy only once cleaned.
 func TestSessionUnderDeletionMatchesTheStoredDir(t *testing.T) {
 	end, ok, _ := BeginDelete("/r/app@a", "/r/app")
 	if !ok {
 		t.Fatal("delete refused")
 	}
 	defer end()
-	for _, dir := range []string{"/r/app@a", "/r/app@a/sub", "/r/app@a/jump/../../kept", "/r/app@a/sub/../x", "/r/app@a//sub"} {
+	for _, dir := range []string{"/r/app@a", "/r/app@a/sub", "/r/app@a/jump/../../kept", "/r/app@a/sub/../x", "/r/app@a//sub", "/r/./app@a/sub"} {
 		if !SessionUnderDeletion("other", dir) {
 			t.Errorf("SessionUnderDeletion(%q) = false, want true", dir)
 		}

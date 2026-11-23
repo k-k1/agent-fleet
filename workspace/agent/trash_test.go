@@ -925,8 +925,8 @@ func TestLockDuringADeleteIsRefusedAndTheCopyIsDeleted(t *testing.T) {
 	}
 }
 
-// A session restored after the delete decided whose stored Dir climbs out of a symlink with `..`
-// (#4852): `<copy>/jump/../../kept` with jump -> `<copy>/a/b` cleans to a path outside the copy,
+// A session restored after the delete decided whose stored Dir climbs out of a symlink with `..`:
+// `<copy>/jump/../../kept` with jump -> `<copy>/a/b` cleans to a path outside the copy,
 // but the OS resolves it to `<copy>/kept`. Its lock is refused by the stored string, as the
 // delete's guards match it. The path is built by concatenation: filepath.Join would clean it.
 func TestLockOnALateSessionWhoseDirClimbsOutOfALinkIsRefused(t *testing.T) {
