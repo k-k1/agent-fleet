@@ -29,7 +29,9 @@ vi.mock("../core/push/events.ts", () => ({ pushStamp: () => stamp }));
 
 const apiCalls: string[] = [];
 let apiAnswer: () => Promise<unknown> = async () => ({ sessions: [{ name: "work", kind: "codex" }] });
+let clientTenant: string | null = null; // the API client's own selection; null = follows the store
 vi.mock("../core/api/client.ts", () => ({
+  getTenant: () => clientTenant ?? tenantState.tenant,
   api: (path: string) => {
     apiCalls.push(path);
     return apiAnswer();
@@ -56,6 +58,7 @@ beforeEach(() => {
   apiCalls.length = 0;
   declineSwitch = false;
   stamp = 0;
+  clientTenant = null;
   tenantState.tenant = "a";
   tenantState.tenants = [{ slug: "a" }, { slug: "b" }];
   tenantState.select.mockClear();
@@ -97,15 +100,48 @@ describe("listenPushOpen", () => {
     expect(tenantState.tenant).toBe("b");
     expect(applyList).toHaveBeenCalledWith([{ name: "work", kind: "codex" }]);
   });
-  it("does not let a late, older answer overwrite a newer pushed list", async () => {
+  it("discards an answer that a newer pushed list overtook, and asks again", async () => {
     let answer!: (v: unknown) => void;
     apiAnswer = () => new Promise((r) => (answer = r));
     await tap({ session: "work", tenant: "b" });
-    stamp = 1; // a stream frame for b arrived while the request was out
+    stamp = 1; // a stream frame arrived while the request was out
+    apiAnswer = async () => ({ sessions: [{ name: "work", kind: "codex" }] });
     answer({ sessions: [{ name: "work", kind: "codex" }] });
     await flush();
+    expect(opened).toEqual([]);
     expect(applyList).not.toHaveBeenCalled();
-    expect(opened).toEqual(["term:work"]); // still matched against b's own answer
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(opened).toEqual(["term:work"]);
+    expect(applyList).toHaveBeenCalledOnce();
+  });
+  it("does not open a session that a newer pushed list shows as gone", async () => {
+    let answer!: (v: unknown) => void;
+    apiAnswer = () => new Promise((r) => (answer = r));
+    await tap({ session: "work", tenant: "b" });
+    stamp = 1;
+    apiAnswer = async () => ({ sessions: [] }); // deleted meanwhile
+    answer({ sessions: [{ name: "work", kind: "codex" }] }); // the stale answer
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(opened).toEqual([]);
+  });
+  it("gives up on a request that hangs and asks again within the time limit", async () => {
+    apiAnswer = () => new Promise(() => {}); // never answers
+    await tap({ session: "work", tenant: "b" });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(opened).toEqual([]);
+    apiAnswer = async () => ({ sessions: [{ name: "work", kind: "codex" }] });
+    await vi.advanceTimersByTimeAsync(7000);
+    expect(opened).toEqual(["term:work"]);
+  });
+  it("sends no request while the API client is pinned to another tenant than the store shows (pop-out boot)", async () => {
+    clientTenant = "b"; // pinned first; the store still holds the saved "a"
+    openSessionByName("work", "a");
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(apiCalls).toEqual([]);
+    expect(opened).toEqual([]);
+    clientTenant = "a";
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(opened).toEqual(["term:work"]);
   });
   it("keeps looking while b has no such session yet (a workspace coming up), and opens it once it appears", async () => {
     apiAnswer = async () => ({ sessions: [] });

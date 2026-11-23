@@ -11,7 +11,7 @@
 // `tenant` of the hand-off message). A session name is only unique within a tenant, so a link that
 // names one opens the session only while that tenant is the active one; it never falls back to a
 // same-named session of another tenant.
-import { api, isTransientErr } from "../core/api/client.ts";
+import { api, getTenant, isTransientErr } from "../core/api/client.ts";
 import { pushStamp } from "../core/push/events.ts";
 import { setLandingTenantHint, useTenantStore } from "../core/store/tenant.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -39,45 +39,61 @@ export function consumeSessionDeepLink(): void {
   openSessionByName(name, tenant);
 }
 
-/** Opens a session's pane once it is in the list (a workspace still coming up is waited for).
+/** Opens a session's pane once it is in the list (a workspace still coming up is waited for, up to
+ *  ~90 s).
  *
  *  With `tenant`, the session is looked up only in that tenant's own list: the tenant must be the
- *  active one, and the list is read from the server for it rather than taken from the store, whose
- *  rows may still be the previous tenant's (the store keeps them across a switch, and a stream
- *  frame or a slow answer can land in either order). */
+ *  active one (the store's and the API client's selection both; a pop-out pins the client first),
+ *  and the list is read from the server for it rather than taken from the store, whose rows may
+ *  still be the previous tenant's. An answer is used only when no list frame arrived while it was
+ *  out and the tenant did not move: then it is the freshest list there is, it is published, and the
+ *  pane is opened from the store it just filled (the pane looks the session's studio up there). A
+ *  request that hangs is given up on after 10 s and asked again. */
 export function openSessionByName(name: string, tenant = ""): void {
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(name)) return;
-  let tries = 0;
-  const again = () => {
-    // ~90s covers a workspace still coming up; beyond that the link is stale.
-    if (++tries < 90) setTimeout(tick, 1000);
-  };
   const open = (kind: string) => (agentOf(kind).caps.chat ? openSessionChat : openSessionTerminal)(name);
-  const tick = () => {
-    if (!tenant) {
+  const deadline = Date.now() + 90_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let done = false;
+  if (!tenant) {
+    const plain = () => {
       const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
-      if (s) open(s.kind);
-      else again();
+      if (s) return open(s.kind);
+      if (Date.now() < deadline) setTimeout(plain, 1000);
+    };
+    return plain();
+  }
+  const here = () => useTenantStore.getState().tenant === tenant && getTenant() === tenant;
+  let busyUntil = 0;
+  let seq = 0;
+  const tick = () => {
+    if (done) return;
+    if (Date.now() >= deadline) {
+      done = true;
       return;
     }
-    if (useTenantStore.getState().tenant !== tenant) return again();
+    timer = setTimeout(tick, 1000);
+    if (!here() || busyUntil > Date.now()) return;
+    busyUntil = Date.now() + 10_000;
+    const mine = ++seq;
+    const stamp = pushStamp("sessions");
     void (async () => {
-      const stamp = pushStamp("sessions");
       let list: { name: string; kind: string }[] | null = null;
       try {
         const d = await api("api/sessions");
         if (d && !d.error && !isTransientErr(d)) list = d.sessions || [];
       } catch {
-        /* retried below */
+        /* the next tick asks again */
       }
-      // The tenant may have moved on while the request was out: its answer is not this tenant's.
-      if (!list || useTenantStore.getState().tenant !== tenant) return again();
-      // Publish only when no newer frame arrived meanwhile (the store's own rule): a late, older
-      // answer must not overwrite it.
-      if (pushStamp("sessions") === stamp) useSessionsStore.getState().applyList(list as never);
+      if (done || mine !== seq) return;
+      busyUntil = 0;
+      if (!list || !here() || pushStamp("sessions") !== stamp) return;
       const s = list.find((x) => x.name === name);
-      if (s) open(s.kind);
-      else again();
+      if (!s) return;
+      done = true;
+      clearTimeout(timer);
+      useSessionsStore.getState().applyList(list as never);
+      open(s.kind);
     })();
   };
   tick();
