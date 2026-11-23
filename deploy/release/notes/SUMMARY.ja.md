@@ -39,6 +39,7 @@
 - **[ウォッチ]** 断られた Bitbucket の PR が webhook のあとも open と読まれた ([#4712](https://github.com/k-k1/agent-fleet/issues/4712))
 - **[claude]** やり直したフォークのセッションや一部の起動オプションで auto モードで始まった ([#4718](https://github.com/k-k1/agent-fleet/issues/4718), [#4742](https://github.com/k-k1/agent-fleet/issues/4742))
 - **[ワークスペース]** 中断した Cursor / npm の CLI 更新が手で入れたものを巻き戻す・バックアップが残る ([#4723](https://github.com/k-k1/agent-fleet/issues/4723), [#4632](https://github.com/k-k1/agent-fleet/issues/4632), [#4770](https://github.com/k-k1/agent-fleet/issues/4770), [#4716](https://github.com/k-k1/agent-fleet/issues/4716))
+- **[セキュリティ]** GitHub の JWT 形の `ghs_` トークンを見分けて丸ごと伏せる（メモリ、Slack/Discord 中継、監査ログ、設定ファイル） ([#4929](https://github.com/k-k1/agent-fleet/issues/4929))
 - **[console]** 回答済みの質問カードのコントラスト、画像スタジオのワークツリーが「セッションなし」 ([#4835](https://github.com/k-k1/agent-fleet/issues/4835), [#4709](https://github.com/k-k1/agent-fleet/issues/4709))
 
 ## [0.48.0](0.48.0.ja.md) — 2026-11-21

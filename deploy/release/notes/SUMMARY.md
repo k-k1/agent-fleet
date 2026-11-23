@@ -40,6 +40,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 - **[watch]** A declined Bitbucket PR kept reading open after its webhook ([#4712](https://github.com/k-k1/agent-fleet/issues/4712))
 - **[claude]** A retried forked session or some launch options started in auto mode ([#4718](https://github.com/k-k1/agent-fleet/issues/4718), [#4742](https://github.com/k-k1/agent-fleet/issues/4742))
 - **[workspace]** Interrupted Cursor / npm CLI updates rolled back over manual installs or left backups ([#4723](https://github.com/k-k1/agent-fleet/issues/4723), [#4632](https://github.com/k-k1/agent-fleet/issues/4632), [#4770](https://github.com/k-k1/agent-fleet/issues/4770), [#4716](https://github.com/k-k1/agent-fleet/issues/4716))
+- **[security]** GitHub's JWT-shaped `ghs_` tokens are detected and masked whole (memory, Slack/Discord relay, audit log, settings file) ([#4929](https://github.com/k-k1/agent-fleet/issues/4929))
 - **[console]** Answered question card contrast; image-studio worktree showed "no session" ([#4835](https://github.com/k-k1/agent-fleet/issues/4835), [#4709](https://github.com/k-k1/agent-fleet/issues/4709))
 
 ## [0.48.0](0.48.0.md) — 2026-11-21
