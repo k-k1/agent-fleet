@@ -600,6 +600,9 @@ const cleanPath = (p: string): string => p.replace(/\/{2,}/g, "/").replace(/\/+$
  *  paths. A row with no `dir` (an older list) is taken at its word. */
 export function shellPlaceOf(s: Session, repos: PlaceRepos): ShellPlace {
   if (s.space) return { kind: "space", folder: s.space };
+  // The id first, whatever the directory is called: a shell started through a symlink to a copy
+  // has the link's name in `repo`, and only the id leads back to the copy.
+  if (s.workingCopyId) for (const [name, c] of repos) if (c.id === s.workingCopyId) return { kind: "repo", folder: name };
   const f = sessionFolder(s);
   const copy = f ? repos.get(f) : undefined;
   if (f && copy) {

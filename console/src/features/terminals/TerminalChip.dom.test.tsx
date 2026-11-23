@@ -59,6 +59,13 @@ describe("TerminalChip", () => {
     expect(rowClick).not.toHaveBeenCalled();
   });
 
+  it("counts a shell started through a symlink to the copy, which the Agent filed under the link's name", () => {
+    useReposStore.setState({ repos: [{ name: "app", path: "/home/dev/repos/app", workingCopyId: "wc_1" }] });
+    useSessionsStore.setState({ sessions: [shell("l", { repo: "short", dir: "/home/dev/short", workingCopyId: "wc_1" })] });
+    act(() => root!.render(<TerminalChip groupKey="shell:repo:app" />));
+    expect(host.querySelector(".term-chip")?.textContent).toBe("1");
+  });
+
   // The view lists a worktree's shells by the parent copy the tree files it under; a chip that
   // counted by folder name would promise a group the view then does not show.
   it("counts under a working set by the same rule as the view", () => {
