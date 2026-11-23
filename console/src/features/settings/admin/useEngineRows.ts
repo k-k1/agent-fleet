@@ -56,20 +56,23 @@ export function useEngineRows() {
         return;
       }
       if (tk.land("err")) setErr("");
-      if (!tk.land("rows")) return;
       const answered = Array.isArray(d?.engines) ? d.engines : [];
-      const edited = new Set(answered.filter((e) => !tk.land("row:" + e.key)).map((e) => e.key));
       const superAdmin = !!d?.super_admin;
       const offered = catalogSources(d?.catalog_sources);
+      // The cache is shared with the other screens, which order their own writes; see
+      // saveEnginesRead for why this screen's guard cannot speak for them. Offered before this
+      // screen's own "rows" lane is judged: an answer this screen drops as older than one it
+      // already drew can still be newer than what the cache holds, because that newer one may have
+      // been refused there.
+      if (tk.current()) saveEnginesRead(cacheTk, answered, superAdmin, offered);
+      if (!tk.land("rows")) return;
+      const edited = new Set(answered.filter((e) => !tk.land("row:" + e.key)).map((e) => e.key));
       setIsSuper(superAdmin);
       setSources(offered);
       const keepEdited = (held: EngineRow[] | null | undefined) =>
         edited.size ? answered.map((e) => (edited.has(e.key) ? (held?.find((c) => c.key === e.key) ?? e) : e)) : answered;
       setRows((cur) => keepEdited(cur));
       setComfyLan(d?.comfy_lan ?? null);
-      // The cache is shared with the other screens, which order their own writes; see
-      // saveEnginesRead for why this screen's guard cannot speak for them.
-      saveEnginesRead(cacheTk, answered, superAdmin, offered);
     } catch {
       if (tk.land("err")) setErr(tr("admin.load_error"));
     }

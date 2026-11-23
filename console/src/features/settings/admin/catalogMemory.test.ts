@@ -154,12 +154,15 @@ describe("engine cache write order across screens", () => {
     expect(loadEngines()).toBeNull();
   });
 
-  it("applies two edits of one row that overlap, whichever answers first", () => {
+  it.each([
+    ["in the order they began", false],
+    ["in the reverse order", true],
+  ])("applies two edits of one row that overlap, answering %s", (_name, reverse) => {
     seed();
     const mode = beginEnginesEdit("a");
     const note = beginEnginesEdit("a");
-    mode({ mode: "on" } as Partial<EngineRow>);
-    note({ note: "x" } as unknown as Partial<EngineRow>);
+    const answers = [() => mode({ mode: "on" } as Partial<EngineRow>), () => note({ note: "x" } as unknown as Partial<EngineRow>)];
+    for (const answer of reverse ? answers.reverse() : answers) answer();
     expect(loadEngines()?.rows[0]).toMatchObject({ mode: "on", note: "x" });
   });
 
@@ -188,14 +191,15 @@ describe("engine cache write order across screens", () => {
 
   it("does not let a read that gave up block the older answers that can still be written", () => {
     saveEngines({ rows: [eng("b", "ondemand")], isSuper: true, sources: ["hf"] });
-    const editB = beginEnginesEdit("b");
     const older = beginEnginesRead();
+    const editB = beginEnginesEdit("b"); // begun after the older read, before the newer one
     const newer = beginEnginesRead();
     beginEnginesEdit("a")({ mode: "on" } as Partial<EngineRow>); // a row the cache does not hold
     saveEnginesRead(newer, [eng("b", "ondemand"), eng("a", "ondemand")], true, ["hf"]); // gives up
     saveEnginesRead(older, [{ ...eng("b", "ondemand"), state: "running" } as EngineRow], true, ["hf"]);
     expect(loadEngines()?.rows).toMatchObject([{ key: "b", state: "running" }]);
-    editB({ mode: "on" } as Partial<EngineRow>); // older was begun after it: the read's row stands
-    expect(loadEngines()?.rows[0]).toMatchObject({ mode: "ondemand", state: "running" });
+    // The older read began before this edit, so it did not stop it, and the gave-up read marked nothing.
+    editB({ mode: "on" } as Partial<EngineRow>);
+    expect(loadEngines()?.rows[0]).toMatchObject({ mode: "on", state: "running" });
   });
 });

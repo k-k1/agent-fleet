@@ -32,12 +32,13 @@ const openEngineAdd = vi.fn();
 vi.mock("./openEngineAdd.ts", () => ({ openEngineAdd: (...args: unknown[]) => openEngineAdd(...args) }));
 
 import { EnginesAdminView, engineOfferResultKey } from "./adminEngines.tsx";
-import { clearCatalogMemory, loadEngines } from "./catalogMemory.ts";
+import { beginEnginesEdit, clearCatalogMemory, loadEngines } from "./catalogMemory.ts";
 import { useEngineRows } from "./useEngineRows.ts";
 
 // A second screen that holds its own rows, as the catalogue pane does.
+let probeLoad: () => Promise<void> = async () => {};
 function EngineRowsProbe() {
-  useEngineRows();
+  probeLoad = useEngineRows().load;
   return null;
 }
 
@@ -365,6 +366,25 @@ describe("EnginesAdminView", () => {
         act(() => rootB.unmount());
         hostB.remove();
       }
+    });
+
+    it("an older read this screen drops locally still reaches the cache after a newer one was refused there", async () => {
+      const b = row({ key: "llm", api: "chat", state: "stopped" });
+      const a = row({ key: "image" });
+      api.mockResolvedValueOnce({ super_admin: true, engines: [b] }).mockImplementation(held);
+      host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+      await act(async () => {
+        root!.render(<EngineRowsProbe />);
+      });
+      expect(loadEngines()?.rows.map((e) => e.state)).toEqual(["stopped"]);
+      act(() => void probeLoad()); // R1: served before a was added
+      act(() => void probeLoad()); // R2: begun later, sees a
+      beginEnginesEdit("image")({ mode: "on" }); // another screen's edit of a row this cache lacks
+      await answer({ super_admin: true, engines: [{ ...b, state: "starting" }, a] }, 1); // R2: cache gives up
+      await answer({ super_admin: true, engines: [{ ...b, state: "starting" }] }, 0); // R1: this screen drops it
+      expect(loadEngines()?.rows.map((e) => e.state)).toEqual(["starting"]);
     });
 
     it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {
