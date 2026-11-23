@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -127,15 +128,23 @@ func TestScrubSecretsTakesTextGluedAfterAKnownToken(t *testing.T) {
 // bracket is a word boundary before a name glued after a token, and a raw match could start
 // inside a token and take the text after it.
 func TestScrubSecretsMatchesAssignmentsAroundMarks(t *testing.T) {
-	slack := "xoxb-123456789012-AbCdEfGhIjKlMn"
+	slack, cl := "xoxb-123456789012-AbCdEfGhIjKlMn", secretpattest.Classic()
 	for in, want := range map[string]string{
 		slack + "_PASSWORD: hunter2":                             redactedMark + "_PASSWORD: " + redactedMark,
 		"Authorization: Bearer abcdefghij0123-PASSWORD= proceed": "Authorization: " + redactedMark + " proceed",
 		"Authorization: Bearer abcdefghij0123-PASSWORD=":         "Authorization: " + redactedMark,
-		// A classic token ends at a word boundary, so the next assignment's name and value
-		// survive the mark; what is glued between goes with the token.
-		"API_TOKEN=" + secretpattest.Classic() + "-PASSWORD='hunter2'":    "API_TOKEN=" + redactedMark + "PASSWORD=" + redactedMark,
-		"API_TOKEN=" + secretpattest.Classic() + ":NEXT_PASSWORD=hunter2": "API_TOKEN=" + redactedMark + "NEXT_PASSWORD=" + redactedMark,
+		// A classic token ends at a word boundary, so the next assignment survives the mark, and
+		// so does the separator in front of it, whatever the value; what is glued before the
+		// separator goes with the token.
+		"API_TOKEN=" + cl + "-PASSWORD='hunter2'":         "API_TOKEN=" + redactedMark + "-PASSWORD=" + redactedMark,
+		"API_TOKEN=" + cl + ":NEXT_PASSWORD=hunter2":      "API_TOKEN=" + redactedMark + ":NEXT_PASSWORD=" + redactedMark,
+		"API_TOKEN=" + cl + ";PASSWORD=hunter2":           "API_TOKEN=" + redactedMark + ";PASSWORD=" + redactedMark,
+		"API_TOKEN=" + cl + ",PASSWORD=hunter2":           "API_TOKEN=" + redactedMark + ",PASSWORD=" + redactedMark,
+		"API_TOKEN=" + cl + ":private;PASSWORD=hunter2 x": "API_TOKEN=" + redactedMark + ";PASSWORD=" + redactedMark + " x",
+		"API_TOKEN=" + cl + ":private,COUNT=42":           "API_TOKEN=" + redactedMark + ",COUNT=42",
+		cl + ".NEXT_API_TOKEN=short":                      redactedMark + ".NEXT_API_TOKEN=short",
+		cl + ".COUNT=42":                                  redactedMark + ".COUNT=42",
+		"echo " + cl + "+private-count=42":                "echo " + redactedMark + "-count=42",
 	} {
 		if got := ScrubSecrets(in); got != want {
 			t.Errorf("ScrubSecrets(%q) = %q, want %q", in, got, want)
@@ -153,6 +162,25 @@ func TestScrubSecretsJoinedTokensAreLinear(t *testing.T) {
 	}
 	if d := time.Since(start); d > 20*time.Second {
 		t.Errorf("ScrubSecrets(joined) took %s", d)
+	}
+}
+
+// The buffers are sized for what they hold: a body that is one key costs about its mark, not
+// two copies of the body. Measured on 1 MiB: 17 KB allocated, 2.1 MB with buffers of the
+// input's size.
+func TestScrubSecretsAllocatesForTheOutput(t *testing.T) {
+	// Built at run time so the literal does not trip the secret scan.
+	pk := "PRIVATE " + "KEY-----"
+	in := "-----BEGIN RSA " + pk + "\n" + strings.Repeat("MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MaW\n", 20000) + "-----END RSA " + pk
+	var before, after runtime.MemStats
+	runtime.ReadMemStats(&before)
+	got := ScrubSecrets(in)
+	runtime.ReadMemStats(&after)
+	if got != redactedMark {
+		t.Fatalf("ScrubSecrets(key) = %.80q", got)
+	}
+	if n := after.TotalAlloc - before.TotalAlloc; n > uint64(len(in))/4 {
+		t.Errorf("ScrubSecrets(%d-byte key) allocated %d bytes", len(in), n)
 	}
 }
 

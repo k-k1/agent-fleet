@@ -121,22 +121,27 @@ func isTokenByte(c byte) bool {
 // on past it. Its spans are mapped back to the raw input. Two spans then reach past the mark:
 // a value the mark's space cut short runs on over the rest of the raw value
 // (`API_TOKEN=<token>:private`), and a known token takes the run of token characters glued
-// after it (`<token>+private`). Both stop at the next assignment's name and short of a final
-// full stop. The entropy scan sees only the text between spans, as when marks sat in their
+// after it (`<token>+private`). Both stop short of a final full stop, and short of the next
+// name an assignment starts with, separator included (`<token>;COUNT=42` keeps `;COUNT=42`). The entropy scan sees only the text between spans, as when marks sat in their
 // place: run on the raw input it would take `NAME=value` and a sentence's final full stop.
 // Without a known token the output is the same as running the passes in sequence.
 func ScrubSecrets(s string) string {
 	known := sortedMerged(append(secretpat.Spans(s, knownSecretPatterns...), secretpat.GitHubStatelessSpans(s)...))
 	spans, names := assignmentSpans(s, known)
 	spans = append(spans, gluedTails(s, known, names)...)
-	return replaceSpansScanning(s, append(spans, known...))
+	return replaceSpansScanning(s, sortedMerged(append(spans, known...)))
 }
 
-// sortedMerged sorts spans and merges those that overlap or touch, dropping empty ones, as
-// secretpat.ReplaceSpans does before it places one mark per merged span.
+// nameRe finds where an assignment starts, whatever its value: a secret-word name as envAssignRe
+// takes it, or any identifier followed by `=`. It bounds how far past a mark a span reaches.
+var nameRe = regexp.MustCompile(`\b(?:[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIAL)[A-Z0-9_]*\s*[=:]|[A-Za-z_][A-Za-z0-9_]*=)`)
+
+// sortedMerged sorts spans in place and merges those that overlap or touch, dropping empty ones,
+// as secretpat.ReplaceSpans does before it places one mark per merged span. It reuses spans'
+// array.
 func sortedMerged(spans [][2]int) [][2]int {
 	sort.Slice(spans, func(a, b int) bool { return spans[a][0] < spans[b][0] })
-	var out [][2]int
+	out := spans[:0]
 	for _, sp := range spans {
 		if sp[1] <= sp[0] {
 			continue
@@ -151,13 +156,17 @@ func sortedMerged(spans [][2]int) [][2]int {
 }
 
 // assignmentSpans finds the UPPERCASE assignments in s with each known span (sorted, merged)
-// masked, and returns each value's span (quotes included, the name kept) and each name's start,
-// both ascending and in s's offsets.
+// masked, and returns each value's span (quotes included, the name kept), and the start of each
+// nameRe match, both ascending and in s's offsets.
 func assignmentSpans(s string, known [][2]int) (spans [][2]int, names []int) {
 	masked, markAt := s, []int(nil)
 	if len(known) > 0 {
 		var b strings.Builder
-		b.Grow(len(s))
+		size := len(s)
+		for _, k := range known {
+			size += len(redactedMark) - (k[1] - k[0])
+		}
+		b.Grow(size)
 		last := 0
 		for _, k := range known {
 			b.WriteString(s[last:k[0]])
@@ -188,20 +197,28 @@ func assignmentSpans(s string, known [][2]int) (spans [][2]int, names []int) {
 	// One match at a time, not FindAll: a dense body would hold every match's submatch slice.
 	// Searching the slice after a match finds what the regexp's own resume would: \b at the
 	// slice's start is judged without the byte before it, but a match ends at whitespace, at the
-	// end, or on a quote, and none of these lets a word run on across the cut.
+	// end, on a quote or on a separator, and none of these lets a word run on across the cut.
+	// Names only bound what reaches past a mark; without one, skip the scan.
+	for p := 0; len(known) > 0 && p < len(masked); {
+		m := nameRe.FindStringIndex(masked[p:])
+		if m == nil {
+			break
+		}
+		name, _ := toRaw(p + m[0])
+		names = append(names, name)
+		p += m[1]
+	}
 	for p := 0; p < len(masked); {
 		m := envAssignRe.FindStringSubmatchIndex(masked[p:])
 		if m == nil {
 			break
 		}
-		name, _ := toRaw(p + m[2])
 		start, _ := toRaw(p + m[6])
 		end, in := toRaw(p + m[11])
 		if in >= 0 {
 			end = known[in][1]
 			cuts = append(cuts, cut{len(spans), m[7] > m[6]})
 		}
-		names = append(names, name)
 		spans = append(spans, [2]int{start, end})
 		p += m[1]
 	}
@@ -213,8 +230,8 @@ func assignmentSpans(s string, known [][2]int) (spans [][2]int, names []int) {
 }
 
 // valueEnd returns where an assignment value that a mark cut short at from ends in s: at
-// whitespace, at a quote (taken with it when the value opened with one), or at limit, and short
-// of a final full stop when unquoted.
+// whitespace, at a quote (taken with it when the value opened with one), or at the name starting
+// at limit (len(s) for none); unquoted, it stops short as trimEnd says.
 func valueEnd(s string, from, limit int, quoted bool) int {
 	j := from
 	for j < limit && !isSpaceOrQuote(s[j]) {
@@ -223,30 +240,34 @@ func valueEnd(s string, from, limit int, quoted bool) int {
 	if quoted && j < limit && (s[j] == '\'' || s[j] == '"') {
 		return j + 1
 	}
-	for j > from && s[j-1] == '.' {
-		j--
+	return trimEnd(s, from, j, j < len(s) && j == limit)
+}
+
+// trimEnd steps end back towards from over a final full stop or, when a name starts at end,
+// over every non-word byte before it, so the separator in front of the next assignment stays.
+func trimEnd(s string, from, end int, beforeName bool) int {
+	for end > from && (s[end-1] == '.' || beforeName && !isWordByte(s[end-1])) {
+		end--
 	}
-	return j
+	return end
 }
 
 // gluedTails returns, for each known span (sorted, merged), the run of token characters glued
-// after it, up to the next assignment name and short of a final full stop. Known spans in one
+// after it, stopping short as trimEnd says at the run's end or the next name. Known spans in one
 // run share its scan, so a long run of joined tokens costs one pass, not one per token.
 func gluedTails(s string, known [][2]int, names []int) [][2]int {
 	var tails [][2]int
-	runEnd, trimEnd, trimAt := -1, -1, 0
+	runEnd, trimKey, trimAt := -1, -1, 0
 	for _, k := range known {
 		from := k[1]
 		if from >= runEnd {
 			for runEnd = from; runEnd < len(s) && isTokenByte(s[runEnd]); runEnd++ {
 			}
 		}
-		end := min(runEnd, nextAt(names, from, len(s)))
-		if end != trimEnd {
-			trimEnd, trimAt = end, end
-			for trimAt > from && s[trimAt-1] == '.' {
-				trimAt--
-			}
+		limit := nextAt(names, from, len(s))
+		end := min(runEnd, limit)
+		if end != trimKey {
+			trimKey, trimAt = end, trimEnd(s, from, end, limit < runEnd)
 		}
 		if at := max(trimAt, from); at > from {
 			tails = append(tails, [2]int{from, at})
@@ -263,25 +284,22 @@ func nextAt(offsets []int, x, def int) int {
 	return def
 }
 
-// replaceSpansScanning replaces each span of s with the mark, merging overlapping or touching
-// spans first, and each high-entropy run of token characters between them. A span ends a run
-// as a mark's brackets would.
+// replaceSpansScanning replaces each span of s (sorted, merged) with the mark, and each
+// high-entropy run of token characters between them. A span ends a run as a mark's brackets
+// would. The buffer is sized for the output, not for s: a body that is all one key shrinks to
+// one mark.
 func replaceSpansScanning(s string, spans [][2]int) string {
-	sort.Slice(spans, func(a, b int) bool { return spans[a][0] < spans[b][0] })
+	size := len(s)
+	for _, sp := range spans {
+		size += len(redactedMark) - (sp[1] - sp[0])
+	}
 	var b strings.Builder
-	b.Grow(len(s))
+	b.Grow(size)
 	last := 0
-	for i := 0; i < len(spans); {
-		start, end := spans[i][0], spans[i][1]
-		for i++; i < len(spans) && spans[i][0] <= end; i++ {
-			end = max(end, spans[i][1])
-		}
-		if end <= start {
-			continue
-		}
-		writeScanned(&b, s[last:start])
+	for _, sp := range spans {
+		writeScanned(&b, s[last:sp[0]])
 		b.WriteString(redactedMark)
-		last = end
+		last = sp[1]
 	}
 	writeScanned(&b, s[last:])
 	return b.String()
@@ -302,6 +320,11 @@ func writeScanned(b *strings.Builder, g string) {
 		}
 		i = j
 	}
+}
+
+// isWordByte reports an ASCII word character, as regexp's \b sees one.
+func isWordByte(c byte) bool {
+	return c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
 }
 
 // isSpaceOrQuote reports what ends an assignment value: regexp's \s, or a quote.
