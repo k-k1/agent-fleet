@@ -356,15 +356,11 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	if only != "" {
 		// The target comes before every constraint of the queue: a message that is not here is a 404
 		// whatever the queue's slots and quota say, so a stale id never reads as "slots full".
-		inCategory, err := tx.ListMemosIn(c.Repo, c.Name)
+		target, found, err := tx.GetMemo(only)
 		if err != nil {
 			return none, nil, err
 		}
-		found := false
-		for _, m := range inCategory {
-			found = found || m.ID == only
-		}
-		if !found {
+		if !found || target.Repo != c.Repo || target.Category != c.Name {
 			return none, &apiError{http.StatusNotFound, "not_found", "message not found in this queue"}, nil
 		}
 	}
