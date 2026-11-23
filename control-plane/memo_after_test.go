@@ -68,9 +68,34 @@ func TestMemoAfterWrite(t *testing.T) {
 				t.Fatalf("%s: %d %s", name, rec.Code, rec.Body.String())
 			}
 		}
-		// A prerequisite must come before its dependent: a cycle cannot form.
+		// A prerequisite may come later in the queue (issue #4876), but no message may wait for
+		// itself, directly or through the messages it waits for.
 		if code, _ := console.update(a.ID, map[string]any{"after": []string{c.ID}}); code != http.StatusBadRequest {
-			t.Fatalf("a prerequisite after its dependent: %d", code)
+			t.Fatalf("two messages waiting for each other: %d", code)
+		}
+		if code, up := console.update(a.ID, map[string]any{"after": []string{b.ID}}); code != http.StatusOK || !sameIDs(up.After, b.ID) {
+			t.Fatalf("a later prerequisite: %d %+v", code, up)
+		}
+		if row := e.memoRow(a.ID); row.AfterIDs == "" || row.State != store.MemoStatePending {
+			t.Fatalf("stored %+v", row)
+		}
+		for name, after := range map[string]string{"by id": c.ID, "by key": "acme/app#1"} {
+			// c waits for a, a for b: b waiting for c (or for a, by a's key) closes a cycle.
+			rec := e.do("a", "PATCH", "/api/memos/"+b.ID, map[string]any{"after": []string{after}})
+			if rec.Code != http.StatusBadRequest || deliveryErrCode(t, rec) != errCodeMemoAfterInvalid {
+				t.Fatalf("a cycle through three messages %s: %d %s", name, rec.Code, rec.Body.String())
+			}
+		}
+		if row := e.memoRow(b.ID); row.AfterIDs != "" {
+			t.Fatalf("a refused list was stored: %+v", row)
+		}
+		if code, _ := console.update(a.ID, map[string]any{"after": []string{}}); code != http.StatusOK {
+			t.Fatalf("clear a: %d", code)
+		}
+		// The /mcp face takes a later prerequisite too.
+		_, later := console.create(textMemo("r", "q", "later"))
+		if code, up := (memoFaceClient{"mcp", e}).update(b.ID, map[string]any{"after": []string{later.ID}}); code != http.StatusOK || !sameIDs(up.After, later.ID) {
+			t.Fatalf("mcp: a later prerequisite: %d %+v", code, up)
 		}
 		if code, _ := console.update(c.ID, map[string]any{"after": []string{c.ID}}); code != http.StatusBadRequest {
 			t.Fatalf("a message waiting for itself: %d", code)
@@ -188,6 +213,22 @@ func (e *deliveryEnv) closeWithPRs(id, turn string, ms int64, closedAt time.Time
 	e.setPRs(id, prState)
 }
 
+// setAnswer writes a delivery's last answer as the answer pass would leave it.
+func (e *deliveryEnv) setAnswer(id, head, class string) {
+	e.t.Helper()
+	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET answer_head=?, answer_class=? WHERE id=?`,
+		head, class, id); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// closeNoPR is closeWithPRs with no PR and a last answer of class ("" for none read).
+func (e *deliveryEnv) closeNoPR(id, turn string, ms int64, closedAt time.Time, class string) {
+	e.t.Helper()
+	e.closeWithPRs(id, turn, ms, closedAt, store.PRStateNone)
+	e.setAnswer(id, "head of a "+class+" answer", class)
+}
+
 // setPRs writes a delivery's PR snapshot as a read of the Agent would leave it.
 func (e *deliveryEnv) setPRs(id, prState string) {
 	e.t.Helper()
@@ -228,7 +269,8 @@ func (e *deliveryEnv) statsOf(queueID string) (sql, goSide store.QueuePending) {
 }
 
 // The SQL statistics and the Go rule agree on every state a prerequisite can be in, and only a
-// clean close with a good first turn satisfies it.
+// clean close with a good first turn satisfies it, and a run without a PR only when its last answer
+// reads as done.
 func TestMemoAfterSQLAgreesWithGo(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
@@ -244,7 +286,18 @@ func TestMemoAfterSQLAgreesWithGo(t *testing.T) {
 				e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET state='open' WHERE id=?`, d.ID)
 				e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state='delivered', sent_at=? WHERE id=?`, store.NowTS(), p.ID)
 			}, false},
-			{"clean, clean turn, no PR", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "clean", 5_000, now, store.PRStateNone) }, true},
+			{"clean, clean turn, no PR, answer done", func(_ memoDTO, q string) { e.closeNoPR(e.fired(q).ID, "clean", 5_000, now, store.AnswerDone) }, true},
+			// A run without a PR that did not say Done: (issue #4876), or whose answer is not read.
+			{"clean, clean turn, no PR, answer not read", func(_ memoDTO, q string) { e.closeNoPR(e.fired(q).ID, "clean", 5_000, now, "") }, false},
+			{"clean, clean turn, no PR, answer partial", func(_ memoDTO, q string) { e.closeNoPR(e.fired(q).ID, "clean", 5_000, now, store.AnswerPartial) }, false},
+			{"clean, clean turn, no PR, answer other", func(_ memoDTO, q string) { e.closeNoPR(e.fired(q).ID, "clean", 5_000, now, store.AnswerOther) }, false},
+			{"clean, clean turn, no PR, answer unknown", func(_ memoDTO, q string) { e.closeNoPR(e.fired(q).ID, "clean", 5_000, now, store.AnswerUnknown) }, false},
+			// A merged PR satisfies whatever the answer says.
+			{"clean, clean turn, merged, answer partial", func(_ memoDTO, q string) {
+				d := e.fired(q)
+				e.closeWithPRs(d.ID, "clean", 5_000, now, store.PRStateMerged)
+				e.setAnswer(d.ID, "Partial: part 1", store.AnswerPartial)
+			}, true},
 			{"clean, clean turn, merged", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "clean", 5_000, now, store.PRStateMerged) }, true},
 			// Step 2: a snapshot not taken, a PR open, closed unmerged or a session gone.
 			{"clean, clean turn, no snapshot", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "clean", "clean", 5_000, now) }, false},
@@ -254,7 +307,8 @@ func TestMemoAfterSQLAgreesWithGo(t *testing.T) {
 			// A first turn not recorded: only a merged PR shows a success.
 			{"clean, no turn, merged", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "", 0, now, store.PRStateMerged) }, true},
 			{"clean, no turn, no PR", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "", 0, now, store.PRStateNone) }, false},
-			{"clean, quiet kind, long turn", func(_ memoDTO, q string) { e.closeWithPRs(e.fired(q).ID, "none", 120_000, now, store.PRStateNone) }, true},
+			{"clean, no turn, no PR, answer done", func(_ memoDTO, q string) { e.closeNoPR(e.fired(q).ID, "", 0, now, store.AnswerDone) }, false},
+			{"clean, quiet kind, long turn", func(_ memoDTO, q string) { e.closeNoPR(e.fired(q).ID, "none", 120_000, now, store.AnswerDone) }, true},
 			{"clean, quiet kind, quick turn", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "clean", "none", 30_000, now) }, false},
 			{"clean, failed turn", func(_ memoDTO, q string) { e.closeDeliveryAs(e.fired(q).ID, "clean", "turn-failed", 120_000, now) }, false},
 			// The duration alone never stands in for a first turn that was not recorded.
@@ -272,7 +326,7 @@ func TestMemoAfterSQLAgreesWithGo(t *testing.T) {
 		}
 		e.useQueueAgent("")
 		for i, c := range cases {
-			name := "q" + string(rune('a'+i))
+			name := "q" + itoaTest(i)
 			q := e.queueWith("app", name, map[string]any{"maxActive": 6})
 			p := e.pending("app", name, "prerequisite")
 			rec := e.do("a", "POST", "/api/memos", afterMemo("app", name, "dependent", p.ID))
@@ -636,6 +690,57 @@ func TestMemoAfterHoldSkipsAHandSend(t *testing.T) {
 		e.runner().checkAfter(context.Background(), e.queueRow(q), time.Now())
 		if got := e.memoRow(d.ID); got.State != store.MemoStatePending || got.SendToken != "tok" {
 			t.Fatalf("a row in a hand send became %+v", got)
+		}
+	})
+}
+
+// A message may wait for one queued after it: the dispatcher passes over the older one, runs the
+// newer, and runs the older on the tick after the newer is satisfied.
+func TestMemoAfterALaterPrerequisiteDispatches(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, _ = e.autoQueue("app", "impl", map[string]any{"maxActive": 3}, 0)
+		a := e.pending("app", "impl", "a, older")
+		b := e.pending("app", "impl", "b, newer")
+		if rec := e.do("a", "PATCH", "/api/memos/"+a.ID, map[string]any{"after": []string{b.ID}}); rec.Code != http.StatusOK {
+			t.Fatalf("a waits for b: %d %s", rec.Code, rec.Body.String())
+		}
+		now := time.Now()
+		fired, _ := e.autoTick(now)
+		if len(fired) != 1 || !sameIDs(fired[0].MessageIDs, b.ID) {
+			t.Fatalf("fired %+v, want b alone", fired)
+		}
+		if again, _ := e.autoTick(now.Add(time.Minute)); len(again) != 0 {
+			t.Fatalf("fired %+v while b runs", again)
+		}
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET held_by='', held_session='' WHERE id=?`, fired[0].ID); err != nil {
+			t.Fatal(err)
+		}
+		e.closeWithPRs(fired[0].ID, "clean", 90_000, now.Add(2*time.Minute), store.PRStateMerged)
+		if next, _ := e.autoTick(now.Add(3 * time.Minute)); len(next) != 1 || !sameIDs(next[0].MessageIDs, a.ID) {
+			t.Fatalf("fired %+v, want a", next)
+		}
+	})
+}
+
+// The cycle walk follows a link into another category: a cycle that a later merge of the two
+// categories would close is refused when its last link is written.
+func TestMemoAfterCycleAcrossCategories(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q1"))
+		e.queue(e.category("r", "q2"))
+		console := memoFaceClient{"console", e}
+		_, a := console.create(textMemo("r", "q1", "a"))
+		_, b := console.create(textMemo("r", "q1", "b"))
+		_, c := console.create(textMemo("r", "q2", "c"))
+		if code, _ := console.update(a.ID, map[string]any{"after": []string{b.ID}}); code != http.StatusOK {
+			t.Fatalf("a waits for b: %d", code)
+		}
+		if code, up := console.update(b.ID, map[string]any{"category": "q2", "after": []string{c.ID}}); code != http.StatusOK || !sameIDs(up.After, c.ID) {
+			t.Fatalf("b moves to q2 and waits for c: %d %+v", code, up)
+		}
+		rec := e.do("a", "PATCH", "/api/memos/"+c.ID, map[string]any{"category": "q1", "after": []string{a.ID}})
+		if rec.Code != http.StatusBadRequest || deliveryErrCode(t, rec) != errCodeMemoAfterInvalid {
+			t.Fatalf("c waits for a through b in another category: %d %s", rec.Code, rec.Body.String())
 		}
 	})
 }

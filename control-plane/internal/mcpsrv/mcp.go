@@ -1190,7 +1190,7 @@ func memoRefSchema(update bool) map[string]any {
 // memoAfterSchema is the `after` argument of add_memo and update_memo.
 func memoAfterSchema(update bool) map[string]any {
 	desc := "Optional: the notes of the same auto-run category this one waits for, each a memo id (from list_memos) or a work-item key such as owner/repo#12 (it names the newest note of the category holding that item). " +
-		"Each must come before this note in the category. A note with prerequisites is started only after every one of them was run and its run ended cleanly; if one went wrong the note goes back to wait for the user."
+		"Any note of the category may be one, earlier or later, but a note cannot wait for itself, directly or through the notes it waits for. A note with prerequisites is started only after every one of them was run and its run ended cleanly with every pull request merged, or, for a run that opened none, with a last answer that starts with Done:; if one went wrong the note goes back to wait for the user."
 	if update {
 		desc += " Omit to leave them as they are; [] clears them. Changing them on a released note sends it back to wait for release."
 	}
