@@ -89,6 +89,8 @@ List them with `describe-access-points --file-system-id <efs>` and delete each.
 
 The per-workspace DEK and token. `/af-cp/*` are the out-of-band Control Plane secrets you created before `30-ingress`: keep them to redeploy into the same account, delete them to rehearse the prerequisites from scratch.
 
+The secrets live under `30-ingress`'s `SsmPrefix` (`/af-cp` by default). When it lies inside `/af-ws/`, leave that subtree out of this step unless you mean to delete the secrets: `teardown.sh` skips it without `--purge-secrets`. With `SsmPrefix=/af-ws` itself that keeps every `/af-ws/*` parameter, the engine active sets included.
+
 ### 7. Delete the golden snapshots
 
 List them with `describe-snapshots --owner-ids self` and delete each: 50 GiB per baked home, one per image tag. `teardown.sh` also deletes the hibernation and backup snapshots.
