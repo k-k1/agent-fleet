@@ -758,6 +758,12 @@ What matters in both:
   commits. For the same reason `scripts/secret-scan.sh` treats a failed `git log` (the
   scanner drops that failure when git printed nothing on stderr) or an error the scanner
   logs as an incomplete scan (exit 3), not a clean one.
+- **Keep file names out of the public log.** The scan runs without `--verbose` and prints one
+  line per finding with the rule, the commit and the line number, taken from the JSON report.
+  A finding's path is not printed: the scanner redacts the matched text but not the path, and a
+  credential-shaped value that is also part of a file name would be published through it.
+  To see the path, run `scripts/secret-scan.sh pr --verbose` locally or `git show --stat <commit>`.
+  The script accepts only `--report-format json`, `--report-path FILE` and `--verbose`; any other flag is refused (exit 2), because gitleaks has too many spellings of "report to stdout" and "other format" to refuse one by one.
 - **Pin the scanner's version and checksum**; do not depend on a marketplace action.
 - **Exclude false positives by the value, with a regular expression — never by a path
   alone** (`.gitleaks.toml`; a rule may narrow a value to one file with
