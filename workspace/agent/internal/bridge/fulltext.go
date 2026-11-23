@@ -114,74 +114,199 @@ func isTokenByte(c byte) bool {
 // can over-redact a rare high-entropy prose token, which the user accepted as
 // the safer failure than leaking a key.
 //
-// The known and assignment spans are both taken on the raw input, and every span is replaced
-// in one go, so neither cuts the other short: replacing known tokens first would leave a mark
-// whose space ends the assignment's value early, and `:private` after a token would stay.
-// The run of token characters glued after a known token goes with it, for the same reason.
-// The entropy scan sees only the text outside those spans, as when a mark sat in their place;
-// it must not run on the raw input, where a run spans `NAME=value` and a sentence's final
-// full stop and would take both.
+// The passes agree on spans, all in the raw input's offsets, and every span is replaced in one
+// go. The assignment pass runs on the text with each known token masked, as it always has,
+// and never on the raw input: the mark's brackets are what put a word boundary before a name
+// glued after a token (`<token>_PASSWORD: x`), and a raw match can start inside a token and run
+// on past it. Its spans are mapped back to the raw input. Two spans then reach past the mark:
+// a value the mark's space cut short runs on over the rest of the raw value
+// (`API_TOKEN=<token>:private`), and a known token takes the run of token characters glued
+// after it (`<token>+private`). Both stop at the next assignment's name and short of a final
+// full stop. The entropy scan sees only the text between spans, as when marks sat in their
+// place: run on the raw input it would take `NAME=value` and a sentence's final full stop.
+// Without a known token the output is the same as running the passes in sequence.
 func ScrubSecrets(s string) string {
-	known := append(secretpat.Spans(s, knownSecretPatterns...), secretpat.GitHubStatelessSpans(s)...)
-	spans := append([][2]int(nil), known...)
-	for _, m := range envAssignRe.FindAllStringSubmatchIndex(s, -1) {
-		spans = append(spans, [2]int{m[6], m[11]}) // the value with its quotes; the name stays
-	}
-	for _, k := range known {
-		if end := gluedEnd(s, k[1]); end > k[1] {
-			spans = append(spans, [2]int{k[1], end})
-		}
-	}
-	return secretpat.ReplaceSpans(s, redactedMark, append(spans, entropySpans(s, spans)...))
+	known := sortedMerged(append(secretpat.Spans(s, knownSecretPatterns...), secretpat.GitHubStatelessSpans(s)...))
+	spans, names := assignmentSpans(s, known)
+	spans = append(spans, gluedTails(s, known, names)...)
+	return replaceSpansScanning(s, append(spans, known...))
 }
 
-// entropySpans lists the high-entropy runs of token characters outside spans, which every
-// span ends as a non-token character would. Every span must be non-empty.
-func entropySpans(s string, spans [][2]int) [][2]int {
-	sorted := append([][2]int(nil), spans...)
-	sort.Slice(sorted, func(a, b int) bool { return sorted[a][0] < sorted[b][0] })
+// sortedMerged sorts spans and merges those that overlap or touch, dropping empty ones, as
+// secretpat.ReplaceSpans does before it places one mark per merged span.
+func sortedMerged(spans [][2]int) [][2]int {
+	sort.Slice(spans, func(a, b int) bool { return spans[a][0] < spans[b][0] })
 	var out [][2]int
-	next, coveredTo := 0, 0
-	for i := 0; i < len(s); {
-		for next < len(sorted) && sorted[next][0] <= i {
-			coveredTo = max(coveredTo, sorted[next][1])
-			next++
-		}
-		if i < coveredTo {
-			i = coveredTo
+	for _, sp := range spans {
+		if sp[1] <= sp[0] {
 			continue
 		}
-		if !isTokenByte(s[i]) {
-			i++
+		if n := len(out); n > 0 && sp[0] <= out[n-1][1] {
+			out[n-1][1] = max(out[n-1][1], sp[1])
 			continue
 		}
-		limit := len(s)
-		if next < len(sorted) {
-			limit = sorted[next][0]
-		}
-		j := i
-		for j < limit && isTokenByte(s[j]) {
-			j++
-		}
-		if looksSecret(s[i:j]) {
-			out = append(out, [2]int{i, j})
-		}
-		i = j
+		out = append(out, sp)
 	}
 	return out
 }
 
-// gluedEnd returns where the run of token characters starting at i ends, short of any final
-// full stops: a sentence that ends on a token keeps its full stop.
-func gluedEnd(s string, i int) int {
-	j := i
-	for j < len(s) && isTokenByte(s[j]) {
+// assignmentSpans finds the UPPERCASE assignments in s with each known span (sorted, merged)
+// masked, and returns each value's span (quotes included, the name kept) and each name's start,
+// both ascending and in s's offsets.
+func assignmentSpans(s string, known [][2]int) (spans [][2]int, names []int) {
+	masked, markAt := s, []int(nil)
+	if len(known) > 0 {
+		var b strings.Builder
+		b.Grow(len(s))
+		last := 0
+		for _, k := range known {
+			b.WriteString(s[last:k[0]])
+			markAt = append(markAt, b.Len())
+			b.WriteString(redactedMark)
+			last = k[1]
+		}
+		b.WriteString(s[last:])
+		masked = b.String()
+	}
+	// toRaw maps an offset of masked to s; inside is the mark the offset falls strictly within,
+	// whose start in s it then returns, or -1.
+	toRaw := func(x int) (raw, inside int) {
+		i := sort.Search(len(markAt), func(i int) bool { return markAt[i] >= x }) - 1
+		if i < 0 {
+			return x, -1
+		}
+		if end := markAt[i] + len(redactedMark); x >= end {
+			return x - end + known[i][1], -1
+		}
+		return known[i][0], i
+	}
+	type cut struct {
+		span   int
+		quoted bool
+	}
+	var cuts []cut
+	// One match at a time, not FindAll: a dense body would hold every match's submatch slice.
+	// Searching the slice after a match finds what the regexp's own resume would: \b at the
+	// slice's start is judged without the byte before it, but a match ends at whitespace, at the
+	// end, or on a quote, and none of these lets a word run on across the cut.
+	for p := 0; p < len(masked); {
+		m := envAssignRe.FindStringSubmatchIndex(masked[p:])
+		if m == nil {
+			break
+		}
+		name, _ := toRaw(p + m[2])
+		start, _ := toRaw(p + m[6])
+		end, in := toRaw(p + m[11])
+		if in >= 0 {
+			end = known[in][1]
+			cuts = append(cuts, cut{len(spans), m[7] > m[6]})
+		}
+		names = append(names, name)
+		spans = append(spans, [2]int{start, end})
+		p += m[1]
+	}
+	for _, c := range cuts {
+		from := spans[c.span][1]
+		spans[c.span][1] = valueEnd(s, from, nextAt(names, from, len(s)), c.quoted)
+	}
+	return spans, names
+}
+
+// valueEnd returns where an assignment value that a mark cut short at from ends in s: at
+// whitespace, at a quote (taken with it when the value opened with one), or at limit, and short
+// of a final full stop when unquoted.
+func valueEnd(s string, from, limit int, quoted bool) int {
+	j := from
+	for j < limit && !isSpaceOrQuote(s[j]) {
 		j++
 	}
-	for j > i && s[j-1] == '.' {
+	if quoted && j < limit && (s[j] == '\'' || s[j] == '"') {
+		return j + 1
+	}
+	for j > from && s[j-1] == '.' {
 		j--
 	}
 	return j
+}
+
+// gluedTails returns, for each known span (sorted, merged), the run of token characters glued
+// after it, up to the next assignment name and short of a final full stop. Known spans in one
+// run share its scan, so a long run of joined tokens costs one pass, not one per token.
+func gluedTails(s string, known [][2]int, names []int) [][2]int {
+	var tails [][2]int
+	runEnd, trimEnd, trimAt := -1, -1, 0
+	for _, k := range known {
+		from := k[1]
+		if from >= runEnd {
+			for runEnd = from; runEnd < len(s) && isTokenByte(s[runEnd]); runEnd++ {
+			}
+		}
+		end := min(runEnd, nextAt(names, from, len(s)))
+		if end != trimEnd {
+			trimEnd, trimAt = end, end
+			for trimAt > from && s[trimAt-1] == '.' {
+				trimAt--
+			}
+		}
+		if at := max(trimAt, from); at > from {
+			tails = append(tails, [2]int{from, at})
+		}
+	}
+	return tails
+}
+
+// nextAt returns the first of the ascending offsets at or after x, or def.
+func nextAt(offsets []int, x, def int) int {
+	if i := sort.SearchInts(offsets, x); i < len(offsets) {
+		return offsets[i]
+	}
+	return def
+}
+
+// replaceSpansScanning replaces each span of s with the mark, merging overlapping or touching
+// spans first, and each high-entropy run of token characters between them. A span ends a run
+// as a mark's brackets would.
+func replaceSpansScanning(s string, spans [][2]int) string {
+	sort.Slice(spans, func(a, b int) bool { return spans[a][0] < spans[b][0] })
+	var b strings.Builder
+	b.Grow(len(s))
+	last := 0
+	for i := 0; i < len(spans); {
+		start, end := spans[i][0], spans[i][1]
+		for i++; i < len(spans) && spans[i][0] <= end; i++ {
+			end = max(end, spans[i][1])
+		}
+		if end <= start {
+			continue
+		}
+		writeScanned(&b, s[last:start])
+		b.WriteString(redactedMark)
+		last = end
+	}
+	writeScanned(&b, s[last:])
+	return b.String()
+}
+
+// writeScanned writes g with each run of token characters that looks secret replaced by the mark.
+func writeScanned(b *strings.Builder, g string) {
+	for i := 0; i < len(g); {
+		j := i
+		tok := isTokenByte(g[i])
+		for j < len(g) && isTokenByte(g[j]) == tok {
+			j++
+		}
+		if tok && looksSecret(g[i:j]) {
+			b.WriteString(redactedMark)
+		} else {
+			b.WriteString(g[i:j])
+		}
+		i = j
+	}
+}
+
+// isSpaceOrQuote reports what ends an assignment value: regexp's \s, or a quote.
+func isSpaceOrQuote(c byte) bool {
+	return strings.IndexByte(" \t\n\f\r'\"", c) >= 0
 }
 
 // looksSecret is the entropy heuristic: a long, opaque, mixed alphanumeric token

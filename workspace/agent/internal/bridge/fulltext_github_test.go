@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat/secretpattest"
@@ -109,6 +110,11 @@ func TestScrubSecretsTakesTextGluedAfterAKnownToken(t *testing.T) {
 			"echo " + tok + "/private.":          "echo " + redactedMark + ".",
 			"--token=" + tok + "-private next":   "--token=" + redactedMark + " next",
 			"pushed with " + tok + ". Done":      "pushed with " + redactedMark + ". Done",
+			"API_TOKEN=" + tok + ". Done":        "API_TOKEN=" + redactedMark + ". Done",
+			"API_TOKEN='" + tok + ":x.y' next":   "API_TOKEN=" + redactedMark + " next",
+			"x " + tok + ".md y":                 "x " + redactedMark + " y",
+			"echo " + tok + "+" + tok + " next":  "echo " + redactedMark + " next",
+			tok + ".NEXT_API_TOKEN=hunter2":      redactedMark + ".NEXT_API_TOKEN=" + redactedMark,
 		} {
 			if got := ScrubSecrets(in); got != want {
 				t.Errorf("%s: ScrubSecrets(%.60q…) = %.120q, want %.120q", name, in, got, want)
@@ -117,8 +123,41 @@ func TestScrubSecretsTakesTextGluedAfterAKnownToken(t *testing.T) {
 	}
 }
 
-// Without a known token the passes cannot cut each other short, so ScrubSecrets keeps the
-// output of the sequential assignment-then-entropy scan it replaced, byte for byte.
+// The assignment pass runs where the known tokens are masked, never on the raw input: a mark's
+// bracket is a word boundary before a name glued after a token, and a raw match could start
+// inside a token and take the text after it.
+func TestScrubSecretsMatchesAssignmentsAroundMarks(t *testing.T) {
+	slack := "xoxb-123456789012-AbCdEfGhIjKlMn"
+	for in, want := range map[string]string{
+		slack + "_PASSWORD: hunter2":                             redactedMark + "_PASSWORD: " + redactedMark,
+		"Authorization: Bearer abcdefghij0123-PASSWORD= proceed": "Authorization: " + redactedMark + " proceed",
+		"Authorization: Bearer abcdefghij0123-PASSWORD=":         "Authorization: " + redactedMark,
+		// A classic token ends at a word boundary, so the next assignment's name and value
+		// survive the mark; what is glued between goes with the token.
+		"API_TOKEN=" + secretpattest.Classic() + "-PASSWORD='hunter2'":    "API_TOKEN=" + redactedMark + "PASSWORD=" + redactedMark,
+		"API_TOKEN=" + secretpattest.Classic() + ":NEXT_PASSWORD=hunter2": "API_TOKEN=" + redactedMark + "NEXT_PASSWORD=" + redactedMark,
+	} {
+		if got := ScrubSecrets(in); got != want {
+			t.Errorf("ScrubSecrets(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// A run of joined tokens is scanned once, not once per token. Measured on 840 KB: 0.3 s with
+// one scan, 99 s with a scan per token; the bound leaves a busy host room.
+func TestScrubSecretsJoinedTokensAreLinear(t *testing.T) {
+	in := strings.Repeat("AKIAIOSFODNN7EXAMPLE.", 40000)
+	start := time.Now()
+	if got := ScrubSecrets(in); got != redactedMark+"." {
+		t.Errorf("ScrubSecrets(joined) = %.80q", got)
+	}
+	if d := time.Since(start); d > 20*time.Second {
+		t.Errorf("ScrubSecrets(joined) took %s", d)
+	}
+}
+
+// Without a known token nothing reaches past a mark, so ScrubSecrets keeps the output of the
+// sequential assignment-then-entropy scan, byte for byte, two touching marks included.
 func TestScrubSecretsWithoutKnownTokensKeepsSequentialOutput(t *testing.T) {
 	tokenRe := regexp.MustCompile(`[A-Za-z0-9+/=_.\-]{20,}`)
 	sequential := func(s string) string {
@@ -140,6 +179,8 @@ func TestScrubSecretsWithoutKnownTokensKeepsSequentialOutput(t *testing.T) {
 		"internationalization and counterrevolutionary are long words.",
 		"see docs/user_guide.md and release-notes_2026.11.txt, PASS=abcdef",
 		"SECRET_KEY=" + opaque + "SECRET_KEY=" + opaque,
+		"API_KEY=\"" + opaque + "\"" + opaque + " and A1B2C3D4E5F6G7H8TOKEN=abcdef",
+		"x KEY=abcdef\nKEY=abcdef PASSWORD='a b' PWD=\"" + opaque + "'",
 	} {
 		if got, want := ScrubSecrets(in), sequential(in); got != want {
 			t.Errorf("ScrubSecrets(%q) = %q, want %q", in, got, want)
