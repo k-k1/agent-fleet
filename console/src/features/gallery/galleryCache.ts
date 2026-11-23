@@ -101,13 +101,22 @@ function put(path: string, next: CacheEntry): void {
   }
 }
 
-type WriteOutcome = "kept" | "superseded" | "forgotten";
-
-function tryWrite(key: string, entries: FsEntry[], truncated: boolean | undefined, n: number): WriteOutcome {
+function tryWrite(
+  key: string,
+  entries: FsEntry[],
+  truncated: boolean | undefined,
+  n: number,
+  onScreen = false,
+): boolean {
   const prev = cache.get(key);
   const floor = barrier.get(key);
-  if (floor && floor.n > n) return floor.forgot ? "forgotten" : "superseded";
-  barrier.set(key, { n, forgot: false });
+  const refused = !!floor && floor.n > n;
+  // A refused listing that a view is about to draw still gets an entry when none is cached
+  // (the newer one was evicted, or the folder was forgotten): rememberGalleryView has nowhere
+  // to keep the reader's scroll position and page size otherwise. The barrier is not moved, so
+  // the next read to begin still writes over it.
+  if (refused && (prev || !onScreen)) return false;
+  if (!refused) barrier.set(key, { n, forgot: false });
   put(key, {
     entries,
     at: Date.now(),
@@ -115,7 +124,7 @@ function tryWrite(key: string, entries: FsEntry[], truncated: boolean | undefine
     limit: prev?.limit ?? PAGE_SIZE,
     ...(truncated ? { truncated } : {}),
   });
-  return "kept";
+  return !refused;
 }
 
 /** Remember a listing. The reader's place in the folder is kept — a background refresh that
@@ -125,7 +134,7 @@ function tryWrite(key: string, entries: FsEntry[], truncated: boolean | undefine
  *  already been written, or the folder was forgotten after this read began. Without `seq` the
  *  write counts as the newest read. Returns whether it was kept. */
 export function writeGallery(key: string, entries: FsEntry[], truncated?: boolean, seq?: number): boolean {
-  return tryWrite(key, entries, truncated, seq ?? beginRead()) === "kept";
+  return tryWrite(key, entries, truncated, seq ?? beginRead());
 }
 
 /** Remember where in the folder the reader is. Written from a scroll handler and from "show
@@ -206,7 +215,9 @@ export type ListingResult =
  *
  * `accept` only orders reads of ONE view. The cache orders the rest itself: a read that began
  * before the one whose listing is already cached (a hover prefetch that answers late, another
- * pane on the same folder) still returns its listing but does not write it.
+ * pane on the same folder) still returns its listing but does not overwrite it. A read the view
+ * accepted keeps one exception: with nothing cached for the folder it is written so the
+ * reader's place can be remembered.
  */
 export async function fetchGalleryListing(
   path: string,
@@ -245,13 +256,9 @@ async function readListing(
   if (d.error || !Array.isArray(d.entries)) return { ok: false, retry: false, hard: true };
   if (accept && !accept()) return { ok: false, retry: false, hard: false };
   const truncated = d.truncated === true;
-  const outcome = tryWrite(key, d.entries, truncated, seq);
-  // The folder was reported gone after this read began, and nothing is cached to keep the
-  // reader's place in it: showing the listing would leave a grid whose scroll position and
-  // page size are never remembered. Settle it as the same "no" the other answer got.
-  if (outcome === "forgotten") return { ok: false, retry: false, hard: true };
-  // "superseded": a newer listing is cached (it keeps the place), and this one is still the
-  // caller's to show.
+  // A refused write is not a failure: the listing is still this caller's to show (`accept`,
+  // when given, already settled that it may be).
+  tryWrite(key, d.entries, truncated, seq, !!accept);
   return { ok: true, entries: d.entries, ...(truncated ? { truncated } : {}) };
 }
 

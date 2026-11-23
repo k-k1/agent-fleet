@@ -208,13 +208,12 @@ describe("読み始めた順に一覧を書く（遅い答えが新しい一覧�
     expect(readGallery("b")?.entries).toEqual([entry("b.png")]);
   });
 
-  it("忘れた後に、忘れる前に始めた読みの答えが来ても一覧を戻さない（「無い」と同じ答えにする）", async () => {
+  it("忘れた後に、忘れる前に始めた先読みの答えが来ても一覧を戻さない", async () => {
     const releaseOld = held(["ghost.png"]);
-    const old = fetchGalleryListing("gone", 512);
+    const old = fetchGalleryListing("gone", 512); // a prefetch: no view has accepted it
     forgetGallery("gone"); // a first read answered "not there"
     releaseOld();
-    // Not shown either: a grid with no cache entry would never remember its scroll position.
-    expect(await old).toEqual({ ok: false, retry: false, hard: true });
+    expect(await old).toEqual({ ok: true, entries: [entry("ghost.png")] });
     expect(readGallery("gone")).toBeUndefined();
 
     // A read that begins after the folder was forgotten is a fresh start and does write.
@@ -222,17 +221,17 @@ describe("読み始めた順に一覧を書く（遅い答えが新しい一覧�
     expect(readGallery("gone")).toBeDefined();
   });
 
-  it("読みが出ている間は、他の 30 フォルダを忘れても忘れた印は消えない", async () => {
+  it("読みが出ている間は、他の 40 フォルダを忘れても忘れた印は消えない", async () => {
     const releaseOld = held(["ghost.png"]);
     const old = fetchGalleryListing("gone", 512);
     forgetGallery("gone");
     for (let i = 0; i < 40; i++) forgetGallery(`other${i}`);
     releaseOld();
-    expect(await old).toEqual({ ok: false, retry: false, hard: true });
+    await old;
     expect(readGallery("gone")).toBeUndefined();
   });
 
-  it("読みが出ている間に新しい一覧が LRU で追い出されても、古い答えで書き戻さない", async () => {
+  it("読みが出ている間に新しい一覧が LRU で追い出されても、先読みの古い答えで書き戻さない", async () => {
     const releaseOld = held(["old.png"]);
     const old = fetchGalleryListing("gen", 512);
     await fetchGalleryListing("gen", 512); // newer read, cached
@@ -241,6 +240,30 @@ describe("読み始めた順に一覧を書く（遅い答えが新しい一覧�
     releaseOld();
     expect(await old).toEqual({ ok: true, entries: [entry("old.png")] });
     expect(readGallery("gen")).toBeUndefined();
+  });
+
+  it("画面が受け入れた遅い読みは、一覧が無ければ書く（居場所の置き場が要る）が、あれば上書きしない", async () => {
+    // Forgotten by another pane's "gone" while this pane's first read was out.
+    const releaseA = held(["a.png"]);
+    const a = fetchGalleryListing("gen", 512, () => true);
+    forgetGallery("gen");
+    releaseA();
+    expect(await a).toEqual({ ok: true, entries: [entry("a.png")] });
+    expect(readGallery("gen")?.entries).toEqual([entry("a.png")]);
+    rememberGalleryView("gen", { scrollTop: 300, limit: 600 }); // the reader scrolls
+    expect(readGallery("gen")).toMatchObject({ scrollTop: 300, limit: 600 });
+
+    // A newer listing is cached: the slow accepted read leaves it alone.
+    const releaseOld = held(["old.png"]);
+    const old = fetchGalleryListing("gen", 512, () => true);
+    const releaseNew = held(["new.png"]);
+    const newer = fetchGalleryListing("gen", 512);
+    releaseNew();
+    await newer;
+    releaseOld();
+    await old;
+    expect(readGallery("gen")?.entries).toEqual([entry("new.png")]);
+    expect(readGallery("gen")).toMatchObject({ scrollTop: 300, limit: 600 });
   });
 
   it("読みが全部終わって一覧も無いフォルダは、次の読みが普通に書ける", async () => {
