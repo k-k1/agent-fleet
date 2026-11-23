@@ -1086,6 +1086,73 @@ func TestMemoFlushKeepSendsWithoutStamping(t *testing.T) {
 	})
 }
 
+// A kept send whose settle never landed (the CP died, or its transaction failed) leaves its
+// reservation behind. The reservation records the keep, so the reclaim after MemoSendStaleAfter
+// only releases it: a held or pending message stays as it was, where the same leftover of a plain
+// send makes it unconfirmed.
+func TestMemoQueueKeptReservationReclaimLeavesStateAlone(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		h := e.useHookAgent()
+		console, tok := memoFaceClient{"console", e}, memoFaceClient{"token", e}
+		_, pending := console.create(textMemo("r", "q", "released and kept"))
+		_, held := tok.create(textMemo("r", "q", "held and kept"))
+		_, plainSend := console.create(textMemo("r", "q", "released, plain send"))
+		if pending.State != store.MemoStatePending || held.State != store.MemoStateHeld || plainSend.State != store.MemoStatePending {
+			t.Fatalf("setup: %q %q %q", pending.State, held.State, plainSend.State)
+		}
+
+		// The token a flush reserved with, read while its send is in flight.
+		flushToken := func(id string, keep bool) string {
+			var token string
+			h.onTurn = func() { token = e.memoRow(id).SendToken }
+			body := map[string]any{"sessionName": "s1", "ids": []string{id}}
+			if keep {
+				body["keep"] = true
+			}
+			if r := e.do("a", "POST", "/api/memos/flush", body); r.Code != http.StatusOK {
+				t.Fatalf("flush %s keep=%v: %d %s", id, keep, r.Code, r.Body.String())
+			}
+			if token == "" {
+				t.Fatalf("flush %s held no reservation during its send", id)
+			}
+			return token
+		}
+		keptP, keptH := flushToken(pending.ID, true), flushToken(held.ID, true)
+		if !strings.HasPrefix(keptP, store.MemoSendKeepPrefix) || !strings.HasPrefix(keptH, store.MemoSendKeepPrefix) {
+			t.Fatalf("a kept send's reservation does not record the keep: %q %q", keptP, keptH)
+		}
+		// A plain send reserves as it always did. Its token, left on a queue message that was never
+		// sent, stands for the leftover of a plain send of it.
+		_, note := console.create(textMemo("r", "", "a plain note"))
+		plainTok := flushToken(note.ID, false)
+		if strings.HasPrefix(plainTok, store.MemoSendKeepPrefix) {
+			t.Fatalf("a plain send's reservation reads as kept: %q", plainTok)
+		}
+		beforeP := e.memoRow(pending.ID)
+
+		// Leave each reservation behind, older than the bound, as a settle that never landed would.
+		stale := time.Now().UTC().Add(-store.MemoSendStaleAfter - time.Minute).Format(time.RFC3339)
+		for id, token := range map[string]string{pending.ID: keptP, held.ID: keptH, plainSend.ID: plainTok} {
+			if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET send_token=?, send_started_at=? WHERE id=?`, token, stale, id); err != nil {
+				t.Fatal(err)
+			}
+		}
+		_ = decode[[]memoDTO](t, e.do("a", "GET", "/api/memos", nil))
+
+		if got := e.memoRow(pending.ID); got.State != store.MemoStatePending || got.ReleaseHash != pending.ContentHash || got.ReleasedAt != beforeP.ReleasedAt || got.SendToken != "" || got.SentAt != "" {
+			t.Fatalf("kept pending message after the reclaim: %+v", got)
+		}
+		if got := e.memoRow(held.ID); got.State != store.MemoStateHeld || got.SendToken != "" || got.SentAt != "" {
+			t.Fatalf("kept held message after the reclaim: %+v", got)
+		}
+		if got := e.memoRow(plainSend.ID); got.State != store.MemoStateUnconfirmed || got.ReleaseHash != "" || got.SendToken != "" {
+			t.Fatalf("plain send's message after the reclaim: %+v", got)
+		}
+		e.assertPendingReleaseMatches()
+	})
+}
+
 // A send the Agent refuses leaves every row as it was: a note unsent, a pending message
 // pending under its release, a held one held, and no reservation behind.
 func TestMemoQueueRefusedFlushLeavesRowsAsTheyWere(t *testing.T) {
