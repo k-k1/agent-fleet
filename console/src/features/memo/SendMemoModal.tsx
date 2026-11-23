@@ -70,27 +70,31 @@ type Batch = { key: string; ids: string[]; text: string };
  *  the list or the selection looks like by then. */
 type Plan = { target: string; batches: Batch[] };
 
-type BatchOutcome = { sent: number } | { error?: ApiError; unknown: boolean };
+type BatchOutcome = { sent: string[] } | { error?: ApiError; unknown: boolean };
 
 /** Whether a failed flush may still have reached the session. The CP could not tell
- *  (flush_failed); the Agent typed the text but its Enter failed (tmux_failed) or it could not
- *  confirm the delivery (502/504, passed through with the Agent's own code); a proxy answered a
- *  5xx without the CP's body; or the request itself was lost. Anything else is a refusal that
- *  sent nothing: the CP answers 200 once the send went, even when recording it failed. */
+ *  (flush_failed); the Agent typed the text but its Enter failed (tmux_failed) or could not
+ *  confirm the delivery (delivery_unconfirmed), both passed through by the CP; a proxy answered a
+ *  5xx without the CP's body; or the request itself was lost. Any other code is a refusal that
+ *  sent nothing, as the CP's own settle reads it (memoSendUnknown): runtime_failed in particular
+ *  is mostly a runtime that could not be resumed before the send, and calling it unknown would
+ *  pin the dialog to a session that never got the text. The CP answers 200 once the send went,
+ *  even when recording it failed. */
 function flushOutcomeUnknown(err: ApiError | undefined): boolean {
   const code = err?.code ?? "";
-  return (
-    code === "flush_failed" || code === "tmux_failed" || err?.status === 502 || err?.status === 504 || /^http_5\d\d$/.test(code)
-  );
+  return code === "flush_failed" || code === "tmux_failed" || code === "delivery_unconfirmed" || /^http_5\d\d$/.test(code);
 }
 
 async function flushBatch(session: string, b: Batch, keep: boolean): Promise<BatchOutcome> {
   try {
     const r = await memoFlush(session, b.ids, b.text, keep);
     if (r.error) return { error: r.error, unknown: flushOutcomeUnknown(r.error) };
-    // The CP's answer to a send that went always carries the count and the ids. Anything else
-    // (an empty 2xx, a proxy's JSON, a login page) says nothing about the send.
-    if (Number.isInteger(r.sent) && (r.sent as number) > 0 && Array.isArray(r.ids)) return { sent: r.sent as number };
+    // The CP's answer to a send that went carries the count and the ids it sent: the requested
+    // ones it still found (a memo deleted meanwhile is left out). Anything else (an empty 2xx,
+    // a proxy's JSON, a login page, ids it was not asked for) says nothing about the send.
+    const asked = new Set(b.ids);
+    const ids = Array.isArray(r.ids) ? [...new Set(r.ids)] : [];
+    if (ids.length > 0 && r.sent === ids.length && ids.every((id) => asked.has(id))) return { sent: ids };
     return { unknown: true };
   } catch {
     return { unknown: true };
@@ -124,16 +128,13 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
   const [busy, setBusy] = useState(false);
   const [keepChoice, setKeepChoice] = useState(loadKeep);
   // A send of a mixed selection that stopped part way: the plan it ran, the batches of it that
-  // went (with how many memos each sent) and the ones whose outcome is unknown. A retry skips
+  // went (with the ids the CP confirmed for each) and the ones whose outcome is unknown. A retry skips
   // what went: sending it again would deliver its text twice, and with keep nothing on the
   // server records that it went. An unknown batch stays flagged until a send of it succeeds.
   const [plan, setPlan] = useState<Plan | null>(null);
-  const [done, setDone] = useState<ReadonlyMap<string, number>>(() => new Map());
+  const [done, setDone] = useState<ReadonlyMap<string, string[]>>(() => new Map());
   const [unknown, setUnknown] = useState<ReadonlySet<string>>(() => new Set());
-  const doneIds = useMemo(
-    () => new Set((plan?.batches ?? []).filter((b) => done.has(b.key)).flatMap((b) => b.ids)),
-    [plan, done],
-  );
+  const doneIds = useMemo(() => new Set([...done.values()].flat()), [done]);
   const pending = memos.filter((m) => !doneIds.has(m.id));
   // A memo that was already sent keeps its old sent_at when kept and would be swept on that
   // date, so keep is offered for unsent selections only (the server refuses it too). A batch
@@ -205,11 +206,13 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
         const went = new Map(done);
         const unsure = new Set(unknown);
         let dropped = 0;
+        let droppedUnsure = false;
         for (const b of run.batches) {
           if (went.has(b.key)) continue;
           const live = b.ids.filter((id) => listed.has(id));
           if (live.length === 0) {
             dropped += b.ids.length;
+            droppedUnsure ||= unsure.has(b.key);
             continue;
           }
           const r = await flushBatch(run.target, { ...b, ids: live }, keep);
@@ -230,7 +233,7 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
           if (went.size > done.size) onProgress?.();
           return;
         }
-        const sent = [...went.values()].reduce((a, n) => a + n, 0);
+        const sent = [...went.values()].reduce((a, ids) => a + ids.length, 0);
         const opens = sessionPanes(layout).get(run.target) || [];
         toast(
           <span className="toast-sent">
@@ -243,7 +246,10 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
           </span>,
           { kind: "success" },
         );
-        if (dropped > 0) toast(t("memo.send_dropped", { count: String(dropped) }));
+        // A memo whose last send may have gone and that has left the list since cannot be sent
+        // again, but whether it reached the session is still open: say so, not just "not sent".
+        if (droppedUnsure) toast(t("memo.send_dropped_unknown", { target: targetLabel(run.target) }));
+        else if (dropped > 0) toast(t("memo.send_dropped", { count: String(dropped) }));
         onSent();
         onClose();
       } else if (target.type === "new") {

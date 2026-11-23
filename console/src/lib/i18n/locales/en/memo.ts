@@ -90,6 +90,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.send_unknown": "It is not known whether the message reached {target}. Check the session before sending again.",
   "memo.send_unknown_hint": "A message may already have reached {target}. Check that session before you press Send: Send sends it again.",
   "memo.send_dropped": "{count} memos were no longer in the list and were not sent.",
+  "memo.send_dropped_unknown": "A memo whose last send may have reached {target} is no longer in the list, so it was not sent again. Check that session for it.",
   "memo.content_label": "Content",
   "memo.content_hint": "Edit freely before sending",
   "memo.target_label": "Destination",

@@ -88,6 +88,7 @@ export const memo = {
   "memo.send_unknown": "メッセージが {target} に届いたかどうか分かりません。もう一度送る前にセッションを確かめてください。",
   "memo.send_unknown_hint": "{target} にはメッセージがすでに届いている可能性があります。送信を押すともう一度送るので、先にそのセッションを確かめてください。",
   "memo.send_dropped": "{count} 件のメモは一覧から無くなっていたため送信しませんでした。",
+  "memo.send_dropped_unknown": "{target} に届いた可能性のあるメモが一覧から無くなっていたため、再送していません。そのセッションで届いたかどうかを確かめてください。",
   "memo.content_label": "内容",
   "memo.content_hint": "送信前に自由に編集できます",
   "memo.target_label": "送信先",

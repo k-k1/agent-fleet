@@ -280,6 +280,9 @@ describe("SendMemoModal retry keeps the first attempt's plan", () => {
       async (): Promise<FlushResult> => ({}),
       async (): Promise<FlushResult> => ({ message: "Bad Gateway" }),
       async (): Promise<FlushResult> => ({ sent: 1 }),
+      async (): Promise<FlushResult> => ({ sent: 1, ids: [] }),
+      async (): Promise<FlushResult> => ({ sent: 1, ids: ["not-asked"] }),
+      async (): Promise<FlushResult> => ({ sent: 2, ids: ["t1"] }),
     ]) {
       await render([own, t1, t2]);
       failOn("t1", odd);
@@ -293,11 +296,12 @@ describe("SendMemoModal retry keeps the first attempt's plan", () => {
     }
   });
 
-  it("treats tmux_failed and an Agent's 502 as unknown, a CP refusal as not", async () => {
+  it("treats tmux_failed and delivery_unconfirmed as unknown, a refusal as not", async () => {
     const cases: [FlushResult["error"], boolean][] = [
       [{ code: "tmux_failed", status: 500 }, true],
       [{ code: "delivery_unconfirmed", status: 502 }, true],
-      [{ code: "turn_timeout", status: 504 }, true],
+      [{ code: "http_504", status: 504 }, true],
+      [{ code: "runtime_failed", status: 502 }, false],
       [{ code: "internal", status: 500 }, false],
       [{ code: "not_running", status: 409 }, false],
     ];
@@ -326,5 +330,50 @@ describe("SendMemoModal retry keeps the first attempt's plan", () => {
     allGo();
     await act(async () => sendBtn().click());
     expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["t1"], ["t2"]]);
+  });
+
+  it("leaves a send refused before it went free to go elsewhere", async () => {
+    // runtime_failed is mostly a runtime that could not be resumed before the send: nothing is
+    // pinned, and the same text can go to another session as it could before.
+    await render([memo({ id: "a", body: "one" })], { sessions: ["s1", "s2"] });
+    failOn("a", async () => ({ error: { code: "runtime_failed", status: 502 } }));
+    await act(async () => sendBtn().click());
+    expect(document.body.textContent).not.toContain("届いたかどうか分かりません");
+    const s2 = [...document.querySelectorAll<HTMLButtonElement>(".memo-tgt")].find((b) => b.textContent?.includes("s2"))!;
+    expect(s2.disabled).toBe(false);
+    await act(async () => s2.click());
+    expect(document.querySelector<HTMLTextAreaElement>(".memo-send-text")!.readOnly).toBe(false);
+    allGo();
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls.map((c) => [c[0], c[1]])).toEqual([["s2", ["a"]]]);
+  });
+
+  it("counts the ids the CP confirmed, not the ones asked for", async () => {
+    // A was deleted elsewhere just before the send: the CP sends the own text for B alone.
+    const a = memo({ id: "a", body: "one" });
+    const b = memo({ id: "b", body: "two" });
+    await render([a, b, t1]);
+    memoFlush.mockImplementation((async (_s: string, ids: string[]) =>
+      ids.includes("t1") ? { error: { code: "not_running", status: 409 } } : went(ids.filter((id) => id !== "a"))) as never);
+    await act(async () => sendBtn().click());
+    expect(document.body.textContent).toMatch(/3 件中 1 件は s1\b/);
+    await rerender([b, t1]);
+    allGo();
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["t1"]]);
+    expect(document.body.textContent).toMatch(/2 件を s1\b/);
+  });
+
+  it("says a dropped memo's last send may have gone", async () => {
+    await render([own, t1, t2]);
+    failOn("t1", async () => ({ error: { code: "flush_failed", status: 502 } }));
+    await act(async () => sendBtn().click());
+    // t1 is deleted elsewhere: it cannot be sent again, and whether it went is still open.
+    await rerender([own, t2]);
+    allGo();
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["t2"]]);
+    expect(document.body.textContent).toMatch(/s1\b.*に届いた可能性のあるメモが一覧から無くなっていたため/);
+    expect(document.body.textContent).not.toContain("件のメモは一覧から無くなっていたため送信しませんでした");
   });
 });
