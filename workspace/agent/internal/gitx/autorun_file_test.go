@@ -350,6 +350,15 @@ func TestAutorunFileRefusesASymlinkAndAnOversizedFile(t *testing.T) {
 	}
 }
 
+// A byte that is not UTF-8 refuses the file: JSON would turn it into U+FFFD and the Control
+// Plane would compare text the commit does not hold.
+func TestAutorunFileRefusesBytesThatAreNotUTF8(t *testing.T) {
+	autorunClone(t, "version: 1\ncategories:\n  q:\n    instruction: caf\xe9\n")
+	if code, f, body := getAutorunFile(t); code != 422 || !strings.Contains(body, "file_not_utf8") || f.Content != "" {
+		t.Fatalf("status %d: %s", code, body)
+	}
+}
+
 func TestAutorunFileWithoutOrigin(t *testing.T) {
 	_, _, dir := autorunClone(t, "version: 1\n")
 	gitAt(t, dir, "remote", "remove", "origin")

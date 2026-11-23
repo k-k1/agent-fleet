@@ -521,6 +521,8 @@ func (m *manager) agentAutorunFile(ctx context.Context, res *resolved, repo stri
 		return unreadable(http.StatusUnprocessableEntity, fmt.Sprintf("%s is larger than %d bytes", autorunfile.Path, autorunfile.MaxBytes))
 	case code == "file_not_regular":
 		return unreadable(http.StatusUnprocessableEntity, autorunfile.Path+" on the default branch is not a regular file")
+	case code == "file_not_utf8":
+		return unreadable(http.StatusUnprocessableEntity, autorunfile.Path+" on the default branch is not UTF-8 text")
 	}
 	why := "HTTP " + strconv.Itoa(resp.StatusCode)
 	if memoRepoAgentCodeRe.MatchString(code) {

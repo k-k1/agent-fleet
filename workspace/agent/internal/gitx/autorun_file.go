@@ -13,6 +13,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -64,7 +65,7 @@ func HandleAutorunFile(w http.ResponseWriter, r *http.Request) {
 	if code != "" {
 		log.Printf("autorun file: %s: %s", r.PathValue("name"), code)
 		status := http.StatusBadGateway
-		if code == "file_too_large" || code == "file_not_regular" {
+		if code == "file_too_large" || code == "file_not_regular" || code == "file_not_utf8" {
 			status = http.StatusUnprocessableEntity
 		}
 		httpx.WriteErr(w, status, code, autorunErrText[code])
@@ -83,6 +84,7 @@ var autorunErrText = map[string]string{
 	"timeout":           "reading the settings file took too long",
 	"file_not_regular":  AutorunFilePath + " on the default branch is not a regular file",
 	"file_too_large":    AutorunFilePath + " is larger than " + strconv.Itoa(AutorunFileMaxBytes) + " bytes",
+	"file_not_utf8":     AutorunFilePath + " on the default branch is not UTF-8 text",
 }
 
 // autorunGit runs one git step under the read's deadline, in its own process group: on the
@@ -184,6 +186,11 @@ func readAutorunFile(ctx context.Context, dir string) (AutorunFile, string) {
 	}
 	if len(body) > AutorunFileMaxBytes {
 		return fail("file_too_large")
+	}
+	// JSON would carry a byte that is not UTF-8 as U+FFFD, and the Control Plane would compare
+	// text the commit does not hold.
+	if !utf8.Valid(body) {
+		return fail("file_not_utf8")
 	}
 	out.Found, out.Content = true, string(body)
 	return out, ""

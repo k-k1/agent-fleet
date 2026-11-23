@@ -301,6 +301,7 @@ func TestMemoRepoSettingsRefusals(t *testing.T) {
 	}{
 		{"fetch failed", `{"error":{"code":"fetch_failed","message":"fatal: secret-host.invalid refused"}}`, 502, 502, "fetch_failed"},
 		{"too large", `{"error":{"code":"file_too_large","message":"secret-host.invalid"}}`, 422, 422, "larger than"},
+		{"not UTF-8", `{"error":{"code":"file_not_utf8","message":"secret-host.invalid"}}`, 422, 422, "not UTF-8"},
 		{"unknown code", `{"error":{"code":"Fatal: secret-host.invalid","message":"secret-host.invalid"}}`, 500, 502, "HTTP 500"},
 		{"empty answer", `{}`, 200, 502, "could not be read"},
 		{"found missing", `{"path":".agent-fleet/autorun.yaml","remote":"","branch":"main","commit":"` + strings.Repeat("c", 40) + `","content":"version: 1"}`, 200, 502, "could not be read"},
