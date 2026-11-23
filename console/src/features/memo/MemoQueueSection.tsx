@@ -469,13 +469,23 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   }, [reveal.n, cats]);
 
   // ---- composer ----------------------------------------------------------------
+  // Each "+" is a toggle for its own target: touch keyboards have no Esc, so pressing the
+  // "+" that owns the open composer is how a phone closes it.
   const openComposer = () => {
+    if (composerOpen && !target) {
+      setComposerOpen(false);
+      return;
+    }
     setComposeTarget(null);
     setComposerOpen(true);
   };
   // "+" on a category header: write into that group, with the composer rendered under its
   // header (and the group unfolded, or the composer would be hidden with its memos).
   const openComposerFor = (repo: string, category: string) => {
+    if (composerOpen && targetKey === groupKey(repo, category)) {
+      setComposerOpen(false);
+      return;
+    }
     setComposeTarget({ repo, category });
     setComposerOpen(true);
     const key = groupKey(repo, category);
@@ -1076,6 +1086,16 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
           onClick={() => imgInputRef.current?.click()}
         >
           <Icon name="device-camera" />
+        </Button>
+        <Button
+          small
+          variant="ghost"
+          className="memo-add-close"
+          title={tr("common.close")}
+          aria-label={tr("common.close")}
+          onClick={() => setComposerOpen(false)}
+        >
+          <Icon name="close" />
         </Button>
         <Button
           small

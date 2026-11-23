@@ -355,6 +355,13 @@
   color: var(--muted2);
   margin-top: 5px;
 }
+/* The hint names Ctrl+Enter and Esc; a touch keyboard has neither, and the close button
+   covers Esc there. */
+@media (pointer: coarse) {
+  .memo-add-hint {
+    display: none;
+  }
+}
 /* Composer moved under a category header: it belongs to that group, so it indents with
    the memos and drops the category field for a read-only label of where it writes. */
 .memo-add.targeted {

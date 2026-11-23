@@ -466,4 +466,32 @@ describe("repository group + button", () => {
     expect(memoCategoryCreate).toHaveBeenCalledTimes(1);
     expect(memoCategoryCreate.mock.calls[0][0].repo).toBe("");
   });
+
+  it("closes with the close button and keeps the draft for the next open", async () => {
+    servedCats = [aCat({ id: "c1", name: "P1" })];
+    await render();
+    await click(addBtn("P1"));
+    await type("draft text");
+    await click(must(document.querySelector(".memo-add-close"), "close button"));
+    expect(composer()).toBe(null);
+    await click(addBtn("P1"));
+    expect(must(composer()?.querySelector<HTMLTextAreaElement>(".memo-add-text"), "textarea").value).toBe("draft text");
+  });
+
+  it("toggles: the same + closes, another + moves the composer", async () => {
+    servedCats = [aCat({ id: "c1", name: "P1" }), aCat({ id: "c2", name: "P2", position: 1 })];
+    await render();
+    await click(addBtn("P1"));
+    expect(groupFor("P1").contains(composer())).toBe(true);
+    await click(addBtn("P2"));
+    expect(groupFor("P2").contains(composer())).toBe(true);
+    await click(addBtn("P2"));
+    expect(composer()).toBe(null);
+
+    const top = must(document.querySelector<HTMLButtonElement>('button[aria-label^="Add memo"], button[aria-label^="メモを追加"]'), "section +");
+    await click(top);
+    expect(composer()).not.toBe(null);
+    await click(top);
+    expect(composer()).toBe(null);
+  });
 });
