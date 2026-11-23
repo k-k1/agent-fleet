@@ -126,12 +126,17 @@ func underMarkLocked(p string) bool {
 // recorded by name when the delete decided, or one whose own Meta.Dir (dir, as stored) lies under
 // the path the delete was asked for, so a session that came back after the names were taken
 // (restored from the trash on its own) is covered too.
+//
+// dir is matched both as stored and cleaned. The delete's guards match the stored string, and
+// cleaning alone is not enough: `<copy>/link/../../kept` with link -> `<copy>/a/b` cleans to a
+// path outside the copy while the OS resolves it to `<copy>/kept`.
 func SessionUnderDeletion(name, dir string) bool {
 	deleteMarks.mu.Lock()
 	defer deleteMarks.mu.Unlock()
-	if dir = filepath.Clean(dir); dir != "." {
+	if dir != "" {
+		clean := filepath.Clean(dir)
 		for _, raw := range deleteMarks.raw {
-			if underPath(dir, raw) {
+			if underPath(dir, raw) || underPath(clean, raw) {
 				return true
 			}
 		}

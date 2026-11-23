@@ -925,6 +925,59 @@ func TestLockDuringADeleteIsRefusedAndTheCopyIsDeleted(t *testing.T) {
 	}
 }
 
+// A session restored after the delete decided whose stored Dir climbs out of a symlink with `..`
+// (#4852): `<copy>/jump/../../kept` with jump -> `<copy>/a/b` cleans to a path outside the copy,
+// but the OS resolves it to `<copy>/kept`. Its lock is refused by the stored string, as the
+// delete's guards match it. The path is built by concatenation: filepath.Join would clean it.
+func TestLockOnALateSessionWhoseDirClimbsOutOfALinkIsRefused(t *testing.T) {
+	_, _, wt1, _ := twoWorktrees(t)
+	srv := httptest.NewServer(lockAndRecreateMux())
+	defer srv.Close()
+	for _, d := range []string{filepath.Join(wt1, "a", "b"), filepath.Join(wt1, "kept")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(wt1, "a", "b"), filepath.Join(wt1, "jump")); err != nil {
+		t.Fatal(err)
+	}
+	dir := wt1 + "/jump/../../kept"
+	if real, err := filepath.EvalSymlinks(dir); err != nil || real != filepath.Join(mustEval(t, wt1), "kept") {
+		t.Fatalf("the stored Dir resolves to %q (%v), want inside the copy", real, err)
+	}
+	if strings.HasPrefix(filepath.Clean(dir), wt1+string(filepath.Separator)) {
+		t.Fatalf("the stored Dir %q cleans to inside the copy; the test would not exercise the raw match", dir)
+	}
+	release := make(chan struct{})
+	arrived := holdDeleteAt(t, "git-remove", release)
+	defer releaseOnce(release)
+
+	done := make(chan int, 1)
+	go func() { c, _ := codeWithin(srv, "DELETE", "/repos/app@one?force=1", nil); done <- c }()
+	waitArrivals(t, arrived, 1, release)
+	// Restored from the trash on its own after the mark was taken: its name is not in the mark.
+	session.WriteMeta(session.Meta{Name: "climb01", Dir: dir, Kind: session.KindCodex})
+	if code, raw := codeWithin(srv, "POST", "/sessions/climb01/lock", map[string]any{"locked": true}); code != http.StatusConflict || !strings.Contains(raw, "delete_in_progress") {
+		t.Fatalf("lock on a session behind `..` through a link during a delete = %d %s, want 409 delete_in_progress", code, raw)
+	}
+	releaseOnce(release)
+	if code := <-done; code != http.StatusOK {
+		t.Fatalf("delete = %d, want 200", code)
+	}
+	if m, ok := session.ReadMeta("climb01"); ok && m.Locked {
+		t.Fatal("the session was locked although its copy was deleted")
+	}
+}
+
+func mustEval(t *testing.T, p string) string {
+	t.Helper()
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r
+}
+
 // A failed delete clears its mark too: the refusal leaves the copy lockable and deletable.
 func TestRefusedDeleteClearsItsMark(t *testing.T) {
 	_, _, wt1, _ := twoWorktrees(t)
