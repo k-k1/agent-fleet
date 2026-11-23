@@ -27,7 +27,8 @@ import { DocView } from "../viewer/DocView.tsx";
 import { DiffView } from "../viewer/DiffView.tsx";
 import type { DiffEdit } from "../viewer/DiffView.tsx";
 import { ChatView } from "../chat/ChatView.tsx";
-import { ensureConvs, useChatTitles } from "../chat/store.ts";
+import { ensureConvs, useChatStore, useChatTitles } from "../chat/store.ts";
+import { ConversationMenu } from "../chat/ConversationMenu.tsx";
 import { useSettings } from "../../lib/settings.ts";
 import { coarsePointer } from "../../lib/device.ts";
 import { findScroller, VIEWER_KINDS } from "../../lib/keyScroll.ts";
@@ -38,6 +39,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { cx } from "../../ui/cx.ts";
 import { isManagedSession } from "../../types/session.ts";
 import type { Session } from "../../types/session.ts";
+import type { ConversationMeta } from "../../types/chat.ts";
 import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
@@ -299,6 +301,13 @@ function PopulatedPane({
   const sessionActions = useSessionActions();
   const [tabMenu, setTabMenu] = useState<{ session: string; x: number; y: number; open: boolean } | null>(null);
   const tabMenuSession = tabMenu ? sessionByName.get(tabMenu.session) ?? null : null;
+  // Right-click on an assistant chat tab: the left rail's conversation menu. Kept apart from
+  // tabMenu because it is keyed by conversation, not session. A tab whose conversation is not
+  // in the list (a draft, or one deleted elsewhere) has no menu and keeps the browser's.
+  // The opened meta is kept as a snapshot: the menu owns the rename dialog, and a list that
+  // empties while it is open (workspace stopped) must not unmount it and drop the typed title.
+  const convList = useChatStore((s) => s.convs);
+  const [convTabMenu, setConvTabMenu] = useState<{ c: ConversationMeta; x: number; y: number; open: boolean } | null>(null);
   const settings = useSettings();
   const wrapOn = pane.wrap ?? settings.wrap;
   const canWrap =
@@ -543,11 +552,13 @@ function PopulatedPane({
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
         >
           {tabInfo.map(({ view, label, state, kic, unread }) => {
-            // Only session tabs get a menu; SCM/file tabs and a stopped workspace keep the
-            // browser default. Resolved once here so right-click and the menu key look at the
+            // Only session tabs and assistant chat tabs (a listed conversation) get a menu;
+            // SCM/file tabs, drafts and a stopped workspace keep the browser default. Resolved once here so right-click and the menu key look at the
             // same decision.
             const tabSession = view.content.kind === "imagegen" ? studioSession(view)?.name : view.session;
             const menuSession = wsRunning && tabSession && sessionByName.has(tabSession) ? tabSession : null;
+            const chatId = view.content.kind === "chat" ? view.content.conversationId : null;
+            const menuConv = (wsRunning && chatId && convList?.find((c) => c.id === chatId)) || null;
             return (
               <div
                 className={cx("pane-tab", view.id === cell.selectedViewId && "pane-tab--selected")}
@@ -557,9 +568,15 @@ function PopulatedPane({
                 // because opening on mousedown would be closed at once by the outside-click
                 // check. Same on the close (x).
                 onContextMenu={(e) => {
-                  if (!menuSession) return;
-                  e.preventDefault();
-                  setTabMenu({ session: menuSession, x: e.clientX, y: e.clientY, open: true });
+                  if (menuSession) {
+                    e.preventDefault();
+                    setConvTabMenu((m) => (m ? { ...m, open: false } : m));
+                    setTabMenu({ session: menuSession, x: e.clientX, y: e.clientY, open: true });
+                  } else if (menuConv) {
+                    e.preventDefault();
+                    setTabMenu((m) => (m ? { ...m, open: false } : m));
+                    setConvTabMenu({ c: menuConv, x: e.clientX, y: e.clientY, open: true });
+                  }
                 }}
               >
                 <button
@@ -605,7 +622,7 @@ function PopulatedPane({
                   // above handle it, so there is only one way to open the menu. A tab without a
                   // menu does not prevent the default, leaving the browser's own menu intact.
                   onKeyDown={(e) => {
-                    if (!menuSession || !isContextMenuKey(e)) return;
+                    if (!(menuSession || menuConv) || !isContextMenuKey(e)) return;
                     e.preventDefault();
                     synthContextMenu(e.currentTarget);
                   }}
@@ -663,6 +680,14 @@ function PopulatedPane({
           // to the pane.
           place={(el) => tabMenu && placeFixed(el, tabMenu.x, tabMenu.y)}
           onClose={() => setTabMenu((m) => (m ? { ...m, open: false } : m))}
+        />
+      )}
+      {convTabMenu && (
+        <ConversationMenu
+          c={convList?.find((c) => c.id === convTabMenu.c.id) ?? convTabMenu.c}
+          open={convTabMenu.open}
+          place={(el) => placeFixed(el, convTabMenu.x, convTabMenu.y)}
+          onClose={() => setConvTabMenu((m) => (m ? { ...m, open: false } : m))}
         />
       )}
       {canDrag && (
