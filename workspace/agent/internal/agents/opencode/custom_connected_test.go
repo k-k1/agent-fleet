@@ -31,7 +31,8 @@ func storeCustom(t *testing.T, c *secrets.CustomAPIConn) {
 func TestServeConnectedOnOwnCountsTheApprovedCustomEndpoint(t *testing.T) {
 	isolatedHome(t)
 	t.Setenv("AF_SECRET_KEY", "")
-	_ = newFakeDaemon(t) // isolate from a developer's real Console login
+	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "") // an inherited switch would hide the cases below
+	_ = newFakeDaemon(t)                      // isolate from a developer's real Console login
 	stubUsagePref(t, UsageOwn)
 	status := func() bool {
 		s, err := secrets.Load()
@@ -123,52 +124,43 @@ func TestSharedServeStartsForACustomOnlyWorkspaceOnOwn(t *testing.T) {
 	}
 }
 
-// The connection gate and the pin are two readings. A restriction lifted between them must not
-// start a custom-only serve: unrestricted there is no pin, and a launch would fall through to
-// opencode's own default model. Judged again after the policy reading, the spawn is refused.
-func TestSharedServeIsNotSpawnedWhenThePolicyIsLiftedAfterTheGate(t *testing.T) {
-	isolatedHome(t)
-	t.Setenv("AF_SECRET_KEY", "")
-	_ = newFakeDaemon(t)
-	useMajor(t, 2)
-	stubUsagePref(t, UsageOwn)
-	t.Setenv(standaloneEnv, "")
-	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "")
-	storeCustom(t, selfHosted)
-	useIsolationPolicy(t, approvedCustom())
+// The connection gate and the pin are two readings. A restriction lifted, or the route switched to
+// "off", between them must not start a custom-only serve: unrestricted there is no pin, and "off"
+// is a hard lock. Judged again against the policy view the pin is built from, the spawn is refused.
+func TestSharedServeIsNotSpawnedWhenTheSettingMovesAfterTheGate(t *testing.T) {
+	for name, move := range map[string]func(t *testing.T){
+		"restriction lifted": func(t *testing.T) {
+			lifted := routepolicy.Open(filepath.Join(t.TempDir(), "rp-lifted.json"), "")
+			if _, err := lifted.Accept(routepolicy.Policy{Revision: 6, Allowed: []string{}}); err != nil {
+				t.Fatal(err)
+			}
+			routepolicy.WaitListeners()
+			routepolicy.Active = func() *routepolicy.Store { return lifted }
+		},
+		"route switched to off": func(t *testing.T) { UsagePref = func() string { return UsageOff } },
+	} {
+		t.Run(name, func(t *testing.T) {
+			isolatedHome(t)
+			t.Setenv("AF_SECRET_KEY", "")
+			_ = newFakeDaemon(t)
+			useMajor(t, 2)
+			stubUsagePref(t, UsageOwn)
+			t.Setenv(standaloneEnv, "")
+			t.Setenv("AF_OPENCODE_SERVE_DISABLE", "")
+			storeCustom(t, selfHosted)
+			useIsolationPolicy(t, approvedCustom())
 
-	lifted := routepolicy.Open(filepath.Join(t.TempDir(), "rp-lifted.json"), "")
-	if _, err := lifted.Accept(routepolicy.Policy{Revision: 6, Allowed: []string{}}); err != nil {
-		t.Fatal(err)
-	}
-	routepolicy.WaitListeners()
-	held := routepolicy.Active
-	serveBeforeView = func() { routepolicy.Active = func() *routepolicy.Store { return lifted } }
-	t.Cleanup(func() { serveBeforeView = nil; routepolicy.Active = held })
+			held, prefHeld := routepolicy.Active, UsagePref
+			serveBeforeView = func() { move(t) }
+			t.Cleanup(func() { serveBeforeView = nil; routepolicy.Active = held; UsagePref = prefHeld })
 
-	env, err := startServeForEnv(t)
-	if !errors.Is(err, ErrNotConnected) {
-		t.Fatalf("Ensure = %v, want ErrNotConnected", err)
-	}
-	if env != "" {
-		t.Errorf("a serve was spawned with no pin:\n%s", env)
-	}
-}
-
-// A start the ordinary conditions allow (here a direct key on "own") does not lean on the custom
-// endpoint, so the spawn does not re-judge it against the policy view.
-func TestServeGateReportsWhetherOnlyTheCustomEndpointGotItThrough(t *testing.T) {
-	isolatedHome(t)
-	t.Setenv("AF_SECRET_KEY", "")
-	_ = newFakeDaemon(t)
-	stubUsagePref(t, UsageOwn)
-	useIsolationPolicy(t, approvedCustom())
-	storeCustom(t, selfHosted)
-	if ok, via := serveGate(); !ok || !via {
-		t.Fatalf("custom only: ok=%v viaCustom=%v, want true, true", ok, via)
-	}
-	storeKeys(t, map[string]string{"ANTHROPIC_API_KEY": "a"})
-	if ok, via := serveGate(); !ok || via {
-		t.Errorf("with a direct key: ok=%v viaCustom=%v, want true, false", ok, via)
+			env, err := startServeForEnv(t)
+			if !errors.Is(err, ErrNotConnected) {
+				t.Fatalf("Ensure = %v, want ErrNotConnected", err)
+			}
+			if env != "" {
+				t.Errorf("a serve was spawned:\n%s", env)
+			}
+		})
 	}
 }

@@ -405,12 +405,12 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	}
 	view := readView() // one reading: the file check, the pin and the generation agree on the connection
 	// The gate above judged the connection on its own reading. A workspace that got through on the
-	// approved custom endpoint alone is connected only while the policy that pins it is held, so
-	// the view this spawn builds its pin from has to approve it too: a restriction lifted since
-	// would otherwise start a serve with no pin. Nothing else is read again, so a start the
+	// approved custom endpoint alone is connected only on "own" and while the policy that pins it
+	// is held, so the view this spawn builds its pin from has to say the same: a restriction lifted
+	// or the route switched (to "off" above all) since would otherwise start the serve anyway. Nothing else is read again, so a start the
 	// ordinary conditions allowed does not gain a new way to fail. (A policy moving after the view
 	// is caught by the generation comparison below.)
-	if viaCustom && (!view.restricted || allowedCustom(view.p, view.engines, view.custom) == nil) {
+	if viaCustom && (!view.restricted || view.pref != UsageOwn || allowedCustom(view.p, view.engines, view.custom) == nil) {
 		return "", 0, ErrNotConnected
 	}
 	if err := policyConfigErrFrom(globalConfigFiles(), view); err != nil {
