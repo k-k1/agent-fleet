@@ -3,7 +3,7 @@
 // Other sessions. Which sessions belong here is the Agent's answer (Session.space, decided by
 // the directory's root), never the folder name, so a space that shares a repository's name
 // stays out of the repository tree.
-import { memo, useEffect, useMemo } from "react";
+import { memo, useEffect, useId, useMemo } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -65,6 +65,7 @@ export const SpacesSection = memo(function SpacesSection() {
     return () => clearTimeout(t);
   }, [want, unknown, owner, storeOwner, failures]);
 
+  const idBase = useId();
   const unreadSessions = useUnreadSessions();
   const count = groups.reduce((n, g) => n + g.sessions.length, 0);
   const unread = groups.some((g) => g.sessions.some((s) => unreadSessions.has(s.name)));
@@ -83,13 +84,16 @@ export const SpacesSection = memo(function SpacesSection() {
         {groups.map((g) => (
           // Built like a repository node (RepoNode): the space's own row is the parent treeitem,
           // focusable and a rail row, so arrow keys reach it and Left from a session returns to
-          // it (useRailRoving looks for .proj-node > .proj-node-head).
+          // it (useRailRoving looks for .proj-node > .proj-node-head). The group sits outside the
+          // row for that lookup, so aria-owns is what tells a screen reader the sessions belong
+          // to this space.
           <li key={g.folder} className="proj-node space-group">
             <div className="proj-node-head space-group-head">
               <div
                 className="space-group-row"
                 role="treeitem"
                 aria-expanded={true}
+                aria-owns={`${idBase}-${g.folder}`}
                 tabIndex={-1}
                 data-rail-row=""
                 title={tr("pj.space_folder_hint", { folder: g.folder })}
@@ -98,7 +102,7 @@ export const SpacesSection = memo(function SpacesSection() {
                 <span className="space-group-name">{g.label}</span>
               </div>
             </div>
-            <ul className="sess-list proj-sub-list" role="group" aria-label={g.label}>
+            <ul id={`${idBase}-${g.folder}`} className="sess-list proj-sub-list" role="group" aria-label={g.label}>
               {g.sessions.map((s) => (
                 <SessionRow
                   key={s.name}

@@ -189,4 +189,22 @@ describe("Spaces section", () => {
     await key(rows[2], "ArrowLeft");
     expect(document.activeElement).toBe(rows[0]);
   });
+
+  it("has each space row own the group of its sessions", async () => {
+    useSessionsStore.setState({
+      sessions: [inSpace("s1", "q3-abcdef"), inSpace("s2", "q3-abcdef"), inSpace("s3", "notes-ghijkl")],
+    });
+    await render();
+    const parents = [...host.querySelectorAll<HTMLElement>("[role=tree] [aria-expanded]")];
+    expect(parents.length).toBe(2);
+    const owned = parents.map((p) => {
+      const id = p.getAttribute("aria-owns") ?? "";
+      const group = id ? document.getElementById(id) : null;
+      expect(group?.getAttribute("role")).toBe("group");
+      return [...group!.querySelectorAll("[role=treeitem]")].length;
+    });
+    // Two ids, one per space, each naming that space's own sessions.
+    expect(new Set(parents.map((p) => p.getAttribute("aria-owns"))).size).toBe(2);
+    expect(owned.sort()).toEqual([1, 2]);
+  });
 });

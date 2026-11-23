@@ -68,26 +68,58 @@ func FolderOf(dir string) string {
 	if dir == "" || !filepath.IsAbs(dir) {
 		return ""
 	}
-	clean := filepath.Clean(dir)
-	if clean != dir && clean+"/" != dir {
-		// Clean drops a ".." lexically, and after a symlink the real parent is another one:
-		// ~/spaces/link/../notes runs wherever link's target's parent is. Only a spelling that
-		// is not already clean pays for resolving it.
-		real, err := filepath.EvalSymlinks(dir)
+	// The last element is checked as it is, never followed: a symlink under Root is no space
+	// whichever way the path is spelt. A trailing "/" or "/." names that same element, so strip
+	// them first, or ~/spaces/link/. would resolve through the link that ~/spaces/link refuses.
+	last := trimSelf(dir)
+	f := filepath.Base(last)
+	var parent string
+	if f == ".." {
+		// The directory above something: resolving the whole path yields a real directory, with
+		// no symlink left to follow.
+		real, err := filepath.EvalSymlinks(last)
 		if err != nil {
 			return ""
 		}
-		clean = real
+		parent, f = filepath.Dir(real), filepath.Base(real)
+	} else {
+		parent = strings.TrimRight(last[:len(last)-len(f)], "/")
+		if parent == "" {
+			parent = "/"
+		}
+		if clean := filepath.Clean(parent); clean != parent {
+			// Clean drops a ".." lexically, and after a symlink the real parent is another one:
+			// ~/spaces/link/../notes runs wherever link's target's parent is. Only a spelling
+			// that is not already clean pays for resolving it.
+			real, err := filepath.EvalSymlinks(parent)
+			if err != nil {
+				return ""
+			}
+			parent = real
+		}
 	}
-	parent := filepath.Dir(clean)
 	if parent != Root() && parent != realRoot() {
 		return ""
 	}
-	f := filepath.Base(clean)
 	if !ValidFolder(f) || !markerPresent(filepath.Join(parent, f)) {
 		return ""
 	}
 	return f
+}
+
+// trimSelf drops trailing "/" and "/." elements, which name the directory before them.
+func trimSelf(p string) string {
+	for len(p) > 1 {
+		switch {
+		case strings.HasSuffix(p, "/"):
+			p = p[:len(p)-1]
+		case strings.HasSuffix(p, "/."):
+			p = p[:len(p)-2]
+		default:
+			return p
+		}
+	}
+	return p
 }
 
 // realRoots caches Root's resolved path per Root. Every session row asks FolderOf, so resolving

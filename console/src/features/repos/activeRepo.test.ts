@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("../../core/api/client.ts", () => ({ api: async () => ({}), getTenant: () => "", getUser: () => "" }));
+vi.mock("../../core/api/client.ts", () => ({ apiJSON: async () => ({}), api: async () => ({}), getTenant: () => "", getUser: () => "" }));
 const { activeRepoOf } = await import("./useRepoRail.ts");
 
 // ADR 0142 decision 9: a space session that shares a repository's folder name must not select

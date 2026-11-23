@@ -263,6 +263,44 @@ func TestSymlinkedFolderIsNoSpace(t *testing.T) {
 	}
 }
 
+// A symlink under Root that points at a real space is refused the same way however the path is
+// spelt: the last element is never followed, only the parent is resolved.
+func TestSymlinkToASpaceIsRefusedInEverySpelling(t *testing.T) {
+	withHome(t)
+	sp, err := Create("notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(Root(), "link-abcdef")
+	if err := os.Symlink(sp.Dir, link); err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{
+		link,
+		link + "/",
+		link + "/.",
+		link + "/./",
+		Root() + "/./link-abcdef",
+		Root() + "//link-abcdef",
+		Root() + "/x/../link-abcdef",
+	} {
+		if strings.Contains(d, "/x/") {
+			if err := os.MkdirAll(filepath.Join(Root(), "x"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := FolderOf(d); got != "" {
+			t.Errorf("FolderOf(%q) = %q, want \"\" (a link is no space)", d, got)
+		}
+	}
+	// The same spellings of the real folder still find it.
+	for _, d := range []string{sp.Dir, sp.Dir + "/", sp.Dir + "/.", Root() + "/./" + sp.Folder} {
+		if got := FolderOf(d); got != sp.Folder {
+			t.Errorf("FolderOf(%q) = %q, want %q", d, got, sp.Folder)
+		}
+	}
+}
+
 // A marker replaced by a FIFO or a symlink is skipped without blocking the list; the space
 // beside it is still listed.
 func TestOddMarkersDoNotHangTheList(t *testing.T) {
