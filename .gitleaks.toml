@@ -122,3 +122,16 @@ value, in those test files, is excluded; later commits use an af-test-fixture- v
 condition = "AND"
 paths = ['''workspace/agent/internal/routegw/.*_test\.go''']
 regexes = ['''SECRETKEYsecretkeySECRETKEYsecretkey0000''']
+
+# GitHub's stateless installation tokens (ghs_, user-to-server ghu_ announced next) are about 520
+# characters and JWT-shaped, with `.`, `-` and `_` in the body. The default github-app-token rule
+# of gitleaks 8.30.1, the pinned version and the latest release, matches exactly 36
+# alphanumerics, so it misses such a token or catches only a 36-character JWT header; no
+# release fixes it yet. Pattern as GitHub recommends; the last character is not a `.` so a
+# sentence's full stop stays out. A classic token is reported by both rules.
+[[rules]]
+id = "github-app-token-stateless"
+description = "GitHub App installation or user-to-server token, including the stateless JWT-shaped form"
+regex = '''\b(?:ghs|ghu)_[A-Za-z0-9._-]{35,}[A-Za-z0-9_-]'''
+entropy = 3
+keywords = ["ghs_", "ghu_"]

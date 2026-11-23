@@ -31,6 +31,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat"
 )
 
 // memorySecretRule is one detection rule. Name goes to the Console verbatim and is not
@@ -46,7 +48,7 @@ type memorySecretRule struct {
 var memorySecretRules = []memorySecretRule{
 	{"aws-access-key-id", regexp.MustCompile(`\b(?:A3T[A-Z0-9]|AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b`)},
 	{"aws-secret-access-key", regexp.MustCompile(`(?i)aws[^\n]{0,24}?secret[^\n]{0,24}?[:=]\s*["'` + "`" + `]?([A-Za-z0-9/+=]{40})`)},
-	{"github-token", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`)},
+	{"github-token", secretpat.GitHubToken},
 	{"github-fine-grained-pat", regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{60,}\b`)},
 	{"gitlab-token", regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20,}\b`)},
 	{"slack-token", regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9\-]{10,}\b`)},

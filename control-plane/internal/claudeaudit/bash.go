@@ -13,6 +13,8 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/secretpat"
 )
 
 // knownSubcommands lists, per program, the words that may follow it into the ledger.
@@ -174,7 +176,7 @@ var secretValueREs = []struct {
 	{regexp.MustCompile(`(?i)(authorization:?\s*)(bearer\s+|basic\s+|token\s+)?[^\s"']+`), "${1}${2}***"},
 	{regexp.MustCompile(`(?i)\b(bearer)\s+[^\s"']+`), "${1} ***"},
 	{regexp.MustCompile(`(://[^/\s:@]*):[^/\s@]+@`), "${1}:***@"},
-	{regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?)`), "***"},
+	{regexp.MustCompile(secretpat.GitHubTokenPattern(16) + `|\b(?:github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?)`), "***"},
 }
 
 // MaskCommandSecrets replaces secret-looking values in a command line with "***".

@@ -11,6 +11,8 @@ import (
 	"math"
 	"regexp"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat"
 )
 
 // discordContentLimit is a conservative cap below Discord's real 2000-char
@@ -78,7 +80,7 @@ func mrkdwnFromGFM(s string) string {
 // verbatim regardless of entropy so short, structured credentials still go.
 var knownSecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`),                                             // Slack tokens
-	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`),                                           // GitHub tokens
+	regexp.MustCompile(secretpat.GitHubTokenPattern(20)),                                           // GitHub tokens, classic and stateless
 	regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`),                                            // AWS access key id
 	regexp.MustCompile(`\bsk-[A-Za-z0-9_\-]{20,}`),                                                 // OpenAI-style secret keys
 	regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/\-]{10,}=*`),                                 // Authorization: Bearer …

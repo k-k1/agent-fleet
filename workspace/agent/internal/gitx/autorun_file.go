@@ -16,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat"
 )
 
 // AutorunFilePath is where a repository keeps its memo queue settings (#4881).
@@ -229,7 +230,7 @@ var (
 // (internal/memoryx/memory_secrets.go): a remote that matches one is not shown.
 var remoteSecretRules = []*regexp.Regexp{
 	regexp.MustCompile(`\b(?:A3T[A-Z0-9]|AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b`),
-	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`),
+	secretpat.GitHubToken,
 	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{60,}\b`),
 	regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20,}\b`),
 	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9\-]{10,}\b`),
@@ -240,7 +241,7 @@ var remoteSecretRules = []*regexp.Regexp{
 }
 
 var (
-	remoteTokenRe = regexp.MustCompile(`^(gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-ant-|sk-proj-|ATBB)[A-Za-z0-9_-]{8,}`)
+	remoteTokenRe = regexp.MustCompile(`^(gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-ant-|sk-proj-|ATBB)[A-Za-z0-9._-]{8,}`)
 	remoteRunRe   = regexp.MustCompile(`^[A-Za-z0-9_]{32,}$`)
 	digitRe       = regexp.MustCompile(`[0-9]`)
 	letterRe      = regexp.MustCompile(`[A-Za-z]`)
