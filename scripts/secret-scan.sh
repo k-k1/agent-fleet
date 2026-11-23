@@ -30,7 +30,9 @@
 # `commit:file:rule:line`). The commit and the rule are enough to find the finding: `git show
 # --stat <commit>`, or rerun locally with `--verbose` (extra flags are passed through) to see
 # the path. The report goes to the caller's `--report-path` when one is given (secret-sweep.sh
-# reads it), else to a file of the scan's own.
+# reads it), else to a file of the scan's own; a non-JSON `--report-format` or a report sent to
+# stdout (`--report-path -`) is refused with exit 2, since the first leaves no finding line to
+# print and the second would print the paths.
 # GITLEAKS names the binary (default /tmp/gitleaks, where the install-gitleaks action puts it).
 set -euo pipefail
 
@@ -66,12 +68,25 @@ SHIM
 chmod +x "$work/shim/git"
 
 report=""
+format="json"
 prev=""
 for a in "$@"; do
-  case "$prev" in --report-path | -r) report="$a" ;; esac
-  case "$a" in --report-path=*) report="${a#--report-path=}" ;; esac
+  case "$prev" in
+    --report-path | -r) report="$a" ;;
+    --report-format | -f) format="$a" ;;
+  esac
+  case "$a" in
+    --report-path=*) report="${a#--report-path=}" ;;
+    --report-format=*) format="${a#--report-format=}" ;;
+  esac
   prev="$a"
 done
+# The finding lines are read from a JSON report, and a report sent to stdout (`-`) would
+# put the paths into the very log this keeps them out of. Refuse both before scanning.
+if [ "$format" != json ] || [ "$report" = "-" ]; then
+  echo "secret-scan: only a JSON report written to a file is supported (got format '$format', path '${report:-<default>}')" >&2
+  exit 2
+fi
 extra=()
 if [ -z "$report" ]; then
   report="$work/report.json"

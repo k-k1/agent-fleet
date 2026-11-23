@@ -665,6 +665,7 @@ opencode・copilot・cursor で、kiro（ログインが要る）と agy（ラ�
   ルール・コミット・行番号を 1 行で出す。パスは出さない：スキャナは一致した文字列は伏せるがパスは
   伏せないので、資格情報の形をした値がファイル名にも含まれていると、ログ経由で公開されてしまう。
   パスを見るにはローカルで `scripts/secret-scan.sh pr --verbose` を回すか `git show --stat <commit>`。
+  JSON 以外の `--report-format` と、標準出力へのレポート（`--report-path -`）は終了コード 2 で拒否する。
 - **スキャナの版とチェックサムを固定する。** marketplace action に依存しない。
 - **偽陽性は値そのものを正規表現で外す——パスだけでの除外はしない**（`.gitleaks.toml`。
   `condition = "AND"` で値を 1 ファイルに絞ることはある）。パスで外すと、そのファイルに

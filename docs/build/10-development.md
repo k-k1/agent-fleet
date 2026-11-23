@@ -763,6 +763,7 @@ What matters in both:
   A finding's path is not printed: the scanner redacts the matched text but not the path, and a
   credential-shaped value that is also part of a file name would be published through it.
   To see the path, run `scripts/secret-scan.sh pr --verbose` locally or `git show --stat <commit>`.
+  A non-JSON `--report-format`, or a report sent to stdout (`--report-path -`), is refused (exit 2).
 - **Pin the scanner's version and checksum**; do not depend on a marketplace action.
 - **Exclude false positives by the value, with a regular expression — never by a path
   alone** (`.gitleaks.toml`; a rule may narrow a value to one file with

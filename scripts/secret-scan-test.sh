@@ -153,6 +153,19 @@ if ! jq -e --arg c "$named" 'length == 1 and .[0].Commit == $c' "$work/caller.js
   FAILED=1
 fi
 
+# A report that would put the path in the log (stdout) or that the finding lines cannot be
+# read from (a non-JSON format) is refused before anything is scanned, whatever the form.
+for refused in "--report-path -" "-r -" "--report-path=-" "--report-format sarif" "--report-format=csv" "-f junit"; do
+  rc=0
+  # shellcheck disable=SC2086 # the words are split on purpose
+  "$HERE/secret-scan.sh" pr $refused >"$out" 2>&1 || rc=$?
+  if [ "$rc" != 2 ] || grep -q -e "$key" -e ".env" "$out"; then
+    echo "FAIL: '$refused' must be refused with exit 2 and an empty log of findings (exit=$rc)"
+    sed 's/^/    /' "$out"
+    FAILED=1
+  fi
+done
+
 # gitleaks exits 0 with no findings when its child `git log` fails. A shim that fails
 # `git log` stands in for an unreadable object; the wrapper must not report that as clean.
 mkdir "$work/shim"
