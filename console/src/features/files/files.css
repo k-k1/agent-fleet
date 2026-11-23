@@ -191,23 +191,11 @@
 }
 .chg-badge {
   flex: none;
-  font-size: 10px;
-  border-radius: 3px;
-  padding: 0 4px;
   margin-right: 2px;
 }
-.chg-badge.st-add {
-  color: var(--ok);
-  background: color-mix(in srgb, var(--ok) 15%, transparent);
-}
-.chg-badge.st-mod {
-  color: var(--warn);
-  background: color-mix(in srgb, var(--warn) 15%, transparent);
-}
-.chg-badge.st-del {
-  color: var(--del);
-  background: color-mix(in srgb, var(--del) 15%, transparent);
-}
+.chg-badge.st-add { --badge: var(--ok); --badge-mix: 16%; }
+.chg-badge.st-mod { --badge: var(--warn); --badge-mix: 16%; }
+.chg-badge.st-del { --badge: var(--del); --badge-mix: 16%; }
 /* ⋯ menu — overlaid on the row's right edge (like the session rows'), so a
    resting row spends its whole width on the path instead of reserving a button
    column; `background: inherit` picks up the hover fill that reveals it, which
