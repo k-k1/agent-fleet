@@ -10,7 +10,7 @@
 // row shows the outcome (succeeded/failed/skipped), whether it was a manual run-now or a scheduled
 // fire, and opens the session that fire drove.
 import { createPortal } from "react-dom";
-import { useInterval } from "../../lib/useInterval.ts";
+import { useGuardedPoll, type ReadTicket } from "../../lib/readGuard.ts";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -404,53 +404,39 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // no push). A failed fetch keeps the rows already on screen and surfaces the reason: it
   // must never read as "there are no schedules" (readScheduleList).
   //
-  // gen is bumped on every refetch trigger and on unmount, so a read started under an older
-  // tenant never lands; a read lands only if it started after the last one that did, so a slow
-  // older answer cannot overwrite a newer one while answers slower than the period still show.
-  const gen = useRef(0);
-  const seq = useRef(0);
-  const applied = useRef(0);
-  const load = () => {
-    const g = gen.current;
-    const n = ++seq.current;
-    return scheduleList()
+  // The guard drops a read started under an older tenant (or before a retry) and a read older
+  // than one that already landed, while answers slower than the period still show. The list and
+  // the banner are separate lanes: a failed tick must not stop the switch's own first read,
+  // started just before it, from replacing the previous tenant's rows (#4815).
+  const load = (tk: ReadTicket) =>
+    scheduleList()
       .then((res) => {
-        if (g !== gen.current || n < applied.current) return;
+        if (!tk.current()) return;
         const { items: arr, error } = readScheduleList(res);
         if (!arr) {
-          applied.current = n;
-          setLoadErr(errText(error) || t("sched.load_failed"));
+          if (tk.land("status")) setLoadErr(errText(error) || t("sched.load_failed"));
           setFirstReadDone(true);
           return;
         }
-        applied.current = n;
-        setLoadErr("");
-        const ser = JSON.stringify(arr);
-        if (ser !== serRef.current) {
-          serRef.current = ser;
-          setItems(arr);
+        if (tk.land("status")) setLoadErr("");
+        if (tk.land("list")) {
+          const ser = JSON.stringify(arr);
+          if (ser !== serRef.current) {
+            serRef.current = ser;
+            setItems(arr);
+          }
+          setLoaded(true);
+          setLoadedFor(tenant);
         }
-        setLoaded(true);
-        setLoadedFor(tenant);
         setFirstReadDone(true);
       })
       .catch(() => {
         // Thrown = the network dropped (api() resolves CP errors instead).
-        if (g === gen.current && n >= applied.current) {
-          applied.current = n;
-          setLoadErr(t("sched.load_failed"));
-          setFirstReadDone(true);
-        }
+        if (!tk.current()) return;
+        if (tk.land("status")) setLoadErr(t("sched.load_failed"));
+        setFirstReadDone(true);
       });
-  };
-  useEffect(() => {
-    gen.current++;
-    void load();
-    return () => {
-      gen.current++;
-    };
-  }, [tenant, reloadTick]);
-  useInterval(() => void load(), POLL_MS);
+  useGuardedPoll((tk) => void load(tk), POLL_MS, [tenant, reloadTick]);
 
   const sorted = useMemo(() => sortSchedules(items), [items]);
   const scoped = useMemo(() => (wset ? sorted.filter((s) => scheduleInSet(wset, s, wctx)) : sorted), [sorted, wset, wctx]);

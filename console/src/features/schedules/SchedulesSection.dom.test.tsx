@@ -26,6 +26,7 @@ vi.mock("../chat/api.ts", () => ({ chatList: vi.fn(async () => ({ conversations:
 const { SchedulesSection } = await import("./SchedulesSection.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
+const { useTenantStore } = await import("../../core/store/tenant.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -48,9 +49,11 @@ async function render(): Promise<void> {
 const text = () => host.textContent || "";
 const rows = () => host.querySelectorAll(".sched-row").length;
 const failed = () => !!host.querySelector(".sched-load-err");
+const ids = () => [...host.querySelectorAll<HTMLElement>(".sched-row")].map((r) => r.dataset.schedId);
 
 beforeEach(() => {
   scheduleList.mockReset();
+  useTenantStore.setState({ tenant: "" });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -117,6 +120,69 @@ describe("SchedulesSection load failures", () => {
     expect(scheduleList).toHaveBeenCalledTimes(2);
     expect(failed()).toBe(false);
     expect(rows()).toBe(1);
+  });
+});
+
+// A tenant switch no longer restarts the poll period, so a tick can fire right after the switch.
+// Its read must not keep the switch's own first read from replacing the previous tenant's rows
+// when it fails first and the first read then succeeds (#4815).
+describe("SchedulesSection tenant switch at a tick", () => {
+  it("shows the new tenant's rows when the tick's read fails before the switch's first read answers", async () => {
+    vi.useFakeTimers();
+    useTenantStore.setState({ tenant: "t1" });
+    scheduleList.mockResolvedValue([sched]);
+    await render();
+    expect(ids()).toEqual(["sch_1"]);
+
+    const pending: ((v: unknown) => void)[] = [];
+    scheduleList.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(14000);
+    });
+    await act(async () => {
+      useTenantStore.setState({ tenant: "t2" });
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1000); // the tick, on the period started at mount
+    });
+    expect(pending).toHaveLength(2); // the switch's first read, then the tick's
+
+    await act(async () => pending[1]!({ error: { code: "http_502", message: "bad gateway" } }));
+    expect(failed()).toBe(true);
+    await act(async () => pending[0]!([{ ...sched, id: "sch_t2" }]));
+    expect(ids()).toEqual(["sch_t2"]);
+    // The banner still reports the newest read, which failed.
+    expect(failed()).toBe(true);
+  });
+
+  it("drops a read of the previous tenant that answers after the switch", async () => {
+    useTenantStore.setState({ tenant: "t1" });
+    const pending: ((v: unknown) => void)[] = [];
+    scheduleList.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+    await render();
+    await act(async () => {
+      useTenantStore.setState({ tenant: "t2" });
+    });
+    expect(pending).toHaveLength(2);
+    // The previous tenant's read answers first, while nothing for t2 has landed yet.
+    await act(async () => pending[0]!([{ ...sched, id: "sch_t1" }]));
+    expect(ids()).toEqual([]);
+    await act(async () => pending[1]!([{ ...sched, id: "sch_t2" }]));
+    expect(ids()).toEqual(["sch_t2"]);
+  });
+
+  it("keeps the newer list when an older read of the same tenant answers last", async () => {
+    vi.useFakeTimers();
+    const pending: ((v: unknown) => void)[] = [];
+    scheduleList.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+    await render();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000);
+    });
+    expect(pending).toHaveLength(2);
+    await act(async () => pending[1]!([{ ...sched, id: "newer" }]));
+    await act(async () => pending[0]!([{ ...sched, id: "older" }]));
+    expect(ids()).toEqual(["newer"]);
   });
 });
 
