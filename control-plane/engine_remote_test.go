@@ -261,7 +261,11 @@ func TestEngineCatalogSourceFailureKeepsThePreviousAnswer(t *testing.T) {
 // refuses — fired from the admin panel on every load, and on a row whose URL contains the engine
 // path it buys a GPU box — and answering false would report every borrowed engine cold for ever.
 func TestBorrowedWarmComesFromTheMirror(t *testing.T) {
-	rem := engine.NewRemote("image")
+	remotes := engine.NewRemotesFor("https://af.example.invalid", "afei_borrower", nil, catalogOverlay{
+		catalog: `{"engines":[{"key":"image","negative_always":"  watermark  ","model_rows":[{"id":"sdxl","warm":true}]}]}`,
+		next:    engineClient,
+	})
+	rem := remotes.ForKey("image")
 	e := &engineRuntimeState{
 		def:    engineDef{Key: "image", URL: "https://af.example.invalid", Lifecycle: engineLifecycleRemote},
 		remote: rem,
@@ -271,14 +275,12 @@ func TestBorrowedWarmComesFromTheMirror(t *testing.T) {
 	if e.warm(t.Context()) {
 		t.Error("warm() = true before the far side reported anything")
 	}
-	rem.SetMirror(engine.RemoteCatalogRow{Key: "image",
-		Models: []engine.RemoteCatalogModel{{ID: "sdxl", Warm: true}}})
+	remotes.RefreshAll(t.Context(), nopRemoteHost{})
 	if !e.warm(t.Context()) {
 		t.Error("warm() = false while the far catalogue reports a warm model")
 	}
 	// And the far administrator's exclusion list is read from the same place rather than from a
 	// local setting nobody over there can see.
-	rem.SetNegativeAlways("  watermark  ")
 	if got := e.negativeAlways(t.Context()); got != "watermark" {
 		t.Errorf("negativeAlways() = %q, want the far side's list", got)
 	}

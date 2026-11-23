@@ -21,7 +21,7 @@ func TestRemoteWireVectors(t *testing.T) {
 	var cat remoteCatalog
 	raw := `{"engines":[{"key":"image","api":"images","provider":"comfy","base_url":"/b","negative_always":"x",
 	  "model_rows":[{"id":"m","context_tokens":1,"max_output_tokens":2,"description":"d","sizes":["1x1"],
-	    "base_model":"sdxl","negative":"n","selected":true,"default":true,"warm":true,
+	    "base_model":"sdxl","negative":"n","params":{"steps":30},"selected":true,"default":true,"warm":true,
 	    "files":[{"flag":"f","s3_key":"k/a.safetensors"}],
 	    "trained_words":["w"],"license_name":"l","license_url":"u"}],
 	  "loras":[{"id":"l1"}]}]}`
@@ -41,7 +41,7 @@ func TestRemoteWireVectors(t *testing.T) {
 		len(row.Loras) != 1 || row.Loras[0].ID != "l1" ||
 		m.ID != "m" || m.ContextTokens != 1 || m.MaxOutputTokens != 2 || !m.Selected || !m.Default || !m.Warm ||
 		m.Files[0].S3Key != "k/a.safetensors" || m.Files[0].Flag != "f" ||
-		m.TrainedWords[0] != "w" || m.LicenseName != "l" || m.LicenseURL != "u" || m.BaseModel != "sdxl" || m.Negative != "n" {
+		m.Params == nil || m.Params.Steps != 30 || m.TrainedWords[0] != "w" || m.LicenseName != "l" || m.LicenseURL != "u" || m.BaseModel != "sdxl" || m.Negative != "n" {
 		t.Fatalf("decoded row = %+v", row)
 	}
 }

@@ -82,7 +82,7 @@ type Remote struct {
 	loaded bool
 	// sig is the fingerprint of that mirror, so the poll can tell "the far side answered again"
 	// from "the far side answers something else now" — only the second is worth waking every
-	// running workspace for (MirrorSignature).
+	// running workspace for (mirrorSignature).
 	sig string
 	// warmModel is the id the FAR deployment last saw its engine answer with, as its catalogue
 	// reports it. It is the only honest answer to "is this warm" available here: probing would be
@@ -167,16 +167,6 @@ func (e *Remote) Parent() *Remotes {
 		return nil
 	}
 	return e.parent
-}
-
-// SeedMirror installs rows as the loaded mirror without a fetch.
-func (e *Remote) SeedMirror(rows []store.EngineModel) {
-	if e == nil {
-		return
-	}
-	e.mu.Lock()
-	e.rows, e.loaded, e.sig = rows, true, MirrorSignature(rows)
-	e.mu.Unlock()
 }
 
 // Wants reports whether this role is one the operator asked to borrow.
@@ -318,13 +308,13 @@ func (r *Remotes) RefreshAll(ctx context.Context, host RemoteHost) {
 		if !r.Wants(row.Key) {
 			continue
 		}
-		r.ForKey(row.Key).SetNegativeAlways(row.NegativeAlways)
+		r.ForKey(row.Key).setNegativeAlways(row.NegativeAlways)
 		r.applyCatalogRow(ctx, host, row)
 	}
 }
 
-// SetNegativeAlways records the far administrator's exclusion list for this role.
-func (e *Remote) SetNegativeAlways(v string) {
+// setNegativeAlways records the far administrator's exclusion list for this role.
+func (e *Remote) setNegativeAlways(v string) {
 	if e == nil {
 		return
 	}

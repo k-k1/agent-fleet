@@ -75,7 +75,7 @@ ECS アダプタを持たない行に対して `ensureStarted` は即座に拒�
 「`parseEngineTable` は運用者が `image-2` と書くのを止めない」と明言している
 （`control-plane/engines.go:966-975`）。`registry.list()` は未知のキーを運び、admin の経路は
 すべて `{key}` 汎用（`engine_admin.go:77-145`）、借用側の衝突検査はキーだけを見る
-（`engine_remote_catalog.go:205-216`）。**2 本目の images 行を宣言することは既に可能で、
+（`internal/engine/remote_catalog.go:211-221`）。**2 本目の images 行を宣言することは既に可能で、
 そこへ届くことだけができない。**
 
 ### 今日の運用者が得られるもの（コード変更なし）
@@ -261,7 +261,7 @@ id を持ち続ける（`IMAGE_PROVIDER_FLEET_GROUP`、`console/src/lib/settings
    provider の `Studio` の答えから来る（`imagegen.go:376-435`）。同じ種類の 2 行は id が重なり
    得る 2 つのモデル一覧を出すし、どのエンジンで描かれたのかが結果に残らなければならない。
 3. **ローカル行と借用行のキー衝突は、もっと大きな声で答えるべき運用者の誤りか。** 今は poll ごと
-   にログ 1 行を繰り返す（`engine_remote_catalog.go:205-216`）。行が N 本になると、運用者はそれを
+   にログ 1 行を繰り返す（`internal/engine/remote_catalog.go:211-221`）。行が N 本になると、運用者はそれを
    （見る手段のないログではなく）パネルで見る必要がある。
 4. **利用者は fleet の行を個別に順位付けする必要があるのか、「配備自身のエンジン、表の順」で
    足りるのか。** 後者は設定のリストが 1 行で保存順序の移行も不要、前者が決定 3 の記述である。
@@ -302,7 +302,7 @@ id を持ち続ける（`IMAGE_PROVIDER_FLEET_GROUP`、`console/src/lib/settings
 - `control-plane/engine_catalog.go:231-246` — ファイル flag と `base_model` の語彙。どちらも
   `provider == "comfy"` を鍵にしている。
 - `control-plane/engine_family_guess.go` — ファミリーの提案と、推測ではなく "" を返す理由。
-- `control-plane/engine_remote_catalog.go:205-216` — 借用行の衝突検査。キーだけを見る。
+- `control-plane/internal/engine/remote_catalog.go:211-221` — 借用行の衝突検査。キーだけを見る。
 - `control-plane/engine_admin.go:77-145` — admin の経路。すべて `{key}` 汎用。
 - `console/src/lib/settings.ts:723-800` — `IMAGE_PROVIDERS_RANKED`・`imageProviderLabel`・
   `normalizeImageProviderOrder`、`console/src/features/settings/agents/AgentsTab.tsx:150` —
