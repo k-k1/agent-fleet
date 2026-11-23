@@ -65,21 +65,33 @@ type Target = { type: "session"; name: string } | { type: "new" } | { type: "ass
  *  taken-in memo (keyed by its id). */
 type Batch = { key: string; ids: string[]; text: string };
 
+/** The batches of a send that went part way, and the session they went to. Fixed once a batch
+ *  went or may have gone: a retry sends the rest of the same plan to the same session, whatever
+ *  the list or the selection looks like by then. */
+type Plan = { target: string; batches: Batch[] };
+
 type BatchOutcome = { sent: number } | { error?: ApiError; unknown: boolean };
 
-/** Whether a failed flush may still have reached the session: the CP could not tell (flush_failed),
- *  a proxy answered a 5xx without the CP's own body, or the request itself was lost. A structured
- *  refusal (not_running, question_pending, a memo conflict) sent nothing. */
+/** Whether a failed flush may still have reached the session. The CP could not tell
+ *  (flush_failed); the Agent typed the text but its Enter failed (tmux_failed) or it could not
+ *  confirm the delivery (502/504, passed through with the Agent's own code); a proxy answered a
+ *  5xx without the CP's body; or the request itself was lost. Anything else is a refusal that
+ *  sent nothing: the CP answers 200 once the send went, even when recording it failed. */
 function flushOutcomeUnknown(err: ApiError | undefined): boolean {
   const code = err?.code ?? "";
-  return code === "flush_failed" || /^http_5\d\d$/.test(code);
+  return (
+    code === "flush_failed" || code === "tmux_failed" || err?.status === 502 || err?.status === 504 || /^http_5\d\d$/.test(code)
+  );
 }
 
 async function flushBatch(session: string, b: Batch, keep: boolean): Promise<BatchOutcome> {
   try {
     const r = await memoFlush(session, b.ids, b.text, keep);
     if (r.error) return { error: r.error, unknown: flushOutcomeUnknown(r.error) };
-    return { sent: r.sent ?? b.ids.length };
+    // The CP's answer to a send that went always carries the count and the ids. Anything else
+    // (an empty 2xx, a proxy's JSON, a login page) says nothing about the send.
+    if (Number.isInteger(r.sent) && (r.sent as number) > 0 && Array.isArray(r.ids)) return { sent: r.sent as number };
+    return { unknown: true };
   } catch {
     return { unknown: true };
   }
@@ -111,14 +123,18 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
   const [target, setTarget] = useState<Target | null>(null);
   const [busy, setBusy] = useState(false);
   const [keepChoice, setKeepChoice] = useState(loadKeep);
-  // The batches of a mixed selection that already went, with how many memos each sent. A
-  // retry after a later batch failed skips them: sending them again would deliver their text
-  // twice, and with keep nothing on the server records that they went.
+  // A send of a mixed selection that stopped part way: the plan it ran, the batches of it that
+  // went (with how many memos each sent) and the ones whose outcome is unknown. A retry skips
+  // what went: sending it again would deliver its text twice, and with keep nothing on the
+  // server records that it went. An unknown batch stays flagged until a send of it succeeds.
+  const [plan, setPlan] = useState<Plan | null>(null);
   const [done, setDone] = useState<ReadonlyMap<string, number>>(() => new Map());
-  // The batch whose last attempt may or may not have reached the session.
-  const [unknownKey, setUnknownKey] = useState("");
-  const batchKey = (m: Memo) => (!mixed ? "all" : m.origin ? m.id : "own");
-  const pending = memos.filter((m) => !done.has(batchKey(m)));
+  const [unknown, setUnknown] = useState<ReadonlySet<string>>(() => new Set());
+  const doneIds = useMemo(
+    () => new Set((plan?.batches ?? []).filter((b) => done.has(b.key)).flatMap((b) => b.ids)),
+    [plan, done],
+  );
+  const pending = memos.filter((m) => !doneIds.has(m.id));
   // A memo that was already sent keeps its old sent_at when kept and would be swept on that
   // date, so keep is offered for unsent selections only (the server refuses it too). A batch
   // that already went is not sent again, so its stamp does not count.
@@ -154,7 +170,8 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
   }, [aliveSessions, target, mixed]);
 
   const isNew = target?.type === "new";
-  const canSend = !!target && !busy && (text.trim().length > 0 || (mixed && own.length === 0)) && (!mixed || target.type === "session");
+  const canSend =
+    !busy && (!!plan || (!!target && (text.trim().length > 0 || (mixed && own.length === 0)) && (!mixed || target.type === "session")));
 
   const targetLabel = (name: string) => {
     const s = sessions.find((x) => x.name === name);
@@ -168,37 +185,53 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
     // agent opens them; a no-op when the selection has no image attachments.
     const outText = appendImagePaths(text, memos);
     try {
-      if (target.type === "session") {
+      if (plan || target.type === "session") {
         // Only a send to a running session consumes memos, so only there is the choice made.
         saveKeep(keepChoice);
         // A mixed selection: the member's own memos as edited, then each taken-in memo as a
         // message of its own; the server composes those and heads them with their origin.
-        const batches: Batch[] = !mixed
-          ? [{ key: "all", ids, text: outText }]
-          : [
-              ...(own.length > 0 ? [{ key: "own", ids: own.map((m) => m.id), text: appendImagePaths(text, own) }] : []),
-              ...origins.map((o) => ({ key: o.id, ids: [o.id], text: "" })),
-            ];
+        const run: Plan = plan ?? {
+          target: (target as { name: string }).name,
+          batches: !mixed
+            ? [{ key: "all", ids, text: outText }]
+            : [
+                ...(own.length > 0 ? [{ key: "own", ids: own.map((m) => m.id), text: appendImagePaths(text, own) }] : []),
+                ...origins.map((o) => ({ key: o.id, ids: [o.id], text: "" })),
+              ],
+        };
+        // A memo deleted or moved out of the selection since the plan was made is not sent:
+        // a batch left with none is dropped, and the own text still goes for what is left of it.
+        const listed = new Set(memos.map((m) => m.id));
         const went = new Map(done);
-        for (const b of batches) {
+        const unsure = new Set(unknown);
+        let dropped = 0;
+        for (const b of run.batches) {
           if (went.has(b.key)) continue;
-          const r = await flushBatch(target.name, b, keep);
-          if ("sent" in r) {
-            went.set(b.key, r.sent);
+          const live = b.ids.filter((id) => listed.has(id));
+          if (live.length === 0) {
+            dropped += b.ids.length;
             continue;
           }
+          const r = await flushBatch(run.target, { ...b, ids: live }, keep);
+          if ("sent" in r) {
+            went.set(b.key, r.sent);
+            unsure.delete(b.key);
+            continue;
+          }
+          if (r.unknown) unsure.add(b.key);
           setDone(went);
-          setUnknownKey(r.unknown ? b.key : "");
+          setUnknown(unsure);
+          if (went.size > 0 || unsure.size > 0) setPlan(run);
           toast(
             r.unknown
-              ? t("memo.send_unknown", { target: targetLabel(target.name) })
+              ? t("memo.send_unknown", { target: targetLabel(run.target) })
               : errText(r.error) || t("common.send_failed"),
           );
           if (went.size > done.size) onProgress?.();
           return;
         }
         const sent = [...went.values()].reduce((a, n) => a + n, 0);
-        const opens = sessionPanes(layout).get(target.name) || [];
+        const opens = sessionPanes(layout).get(run.target) || [];
         toast(
           <span className="toast-sent">
             {opens.map((o) => (
@@ -206,10 +239,11 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
                 {o.ordinal}
               </span>
             ))}
-            {tr("memo.sent_n", { count: sent, target: targetLabel(target.name) })}
+            {tr("memo.sent_n", { count: sent, target: targetLabel(run.target) })}
           </span>,
           { kind: "success" },
         );
+        if (dropped > 0) toast(t("memo.send_dropped", { count: String(dropped) }));
         onSent();
         onClose();
       } else if (target.type === "new") {
@@ -254,7 +288,7 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
             className="memo-send-text"
             value={text}
             onChange={(e) => setText(e.target.value)}
-            readOnly={done.has("own")}
+            readOnly={!!plan}
             spellCheck={false}
             rows={9}
           />
@@ -269,6 +303,7 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
                 key={s.name}
                 type="button"
                 className={"memo-tgt" + (on({ type: "session", name: s.name }) ? " memo-tgt--on" : "")}
+                disabled={!!plan && s.name !== plan.target}
                 onClick={() => setTarget({ type: "session", name: s.name })}
               >
                 <span className="memo-tgt-av">
@@ -288,6 +323,7 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
             {!mixed && <button
               type="button"
               className={"memo-tgt" + (on({ type: "new" }) ? " memo-tgt--on" : "")}
+              disabled={!!plan}
               onClick={() => setTarget({ type: "new" })}
             >
               <span className="memo-tgt-av">
@@ -304,6 +340,7 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
                 key={a.id}
                 type="button"
                 className={"memo-tgt" + (on({ type: "assistant", id: a.id }) ? " memo-tgt--on" : "")}
+                disabled={!!plan}
                 onClick={() => setTarget({ type: "assistant", id: a.id })}
               >
                 <span className="memo-tgt-av">
@@ -328,14 +365,18 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
             </label>
           )}
           {target?.type === "session" && hasSent && <div className="ui-field-hint">{tr("memo.send_keep_sent")}</div>}
-          {done.size > 0 && (
+          {plan && done.size > 0 && (
             <div className="ui-field-hint" role="note">
-              {tr("memo.send_partial", { count: String(memos.length - pending.length), total: String(memos.length) })}
+              {tr("memo.send_partial", {
+                count: String(doneIds.size),
+                total: String(plan.batches.reduce((a, b) => a + b.ids.length, 0)),
+                target: targetLabel(plan.target),
+              })}
             </div>
           )}
-          {unknownKey && (
+          {plan && unknown.size > 0 && (
             <div className="ui-field-hint" role="alert">
-              {tr("memo.send_unknown_hint")}
+              {tr("memo.send_unknown_hint", { target: targetLabel(plan.target) })}
             </div>
           )}
           {target?.type === "session" && keep && memos.some((m) => m.state) && (

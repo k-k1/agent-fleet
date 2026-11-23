@@ -5,7 +5,9 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-const memoFlush = vi.fn(async (_s: string, ids: string[], _text: string, _keep?: boolean) => ({ sent: ids.length }));
+// The CP's answer to a send that went: the count and the ids, as memoFlushFor writes them.
+const went = (ids: string[]) => ({ sent: ids.length, sentAt: "2026-11-24T00:00:00Z", ids });
+const memoFlush = vi.fn(async (_s: string, ids: string[], _text: string, _keep?: boolean): Promise<unknown> => went(ids));
 vi.mock("./api.ts", () => ({ memoFlush: (s: string, ids: string[], text: string, keep?: boolean) => memoFlush(s, ids, text, keep) }));
 vi.mock("../chat/api.ts", () => ({ assistantList: async () => ({ assistants: [] }), chatCreate: vi.fn() }));
 
@@ -21,8 +23,10 @@ const memo = (over: Partial<Memo>): Memo => ({
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
 
-async function render(memos: Memo[], cb: { onSent?: () => void; onProgress?: () => void } = {}) {
-  useSessionsStore.setState({ sessions: [{ name: "s1", kind: "claude", alive: true, state: "idle" } as never] });
+async function render(memos: Memo[], cb: { onSent?: () => void; onProgress?: () => void; sessions?: string[] } = {}) {
+  useSessionsStore.setState({
+    sessions: (cb.sessions ?? ["s1"]).map((name) => ({ name, kind: "claude", alive: true, state: "idle" }) as never),
+  });
   host = document.createElement("div");
   document.body.appendChild(host);
   await act(async () => {
@@ -41,7 +45,7 @@ afterEach(() => {
   root = null;
   host = null;
   memoFlush.mockReset();
-  memoFlush.mockImplementation(async (_s: string, ids: string[]) => ({ sent: ids.length }));
+  memoFlush.mockImplementation(async (_s: string, ids: string[]) => went(ids));
   localStorage.clear();
 });
 
@@ -125,7 +129,7 @@ describe("SendMemoModal retry after a failed batch", () => {
   ];
   type FlushResult = { sent?: number; error?: { code: string; message?: string } };
   const failOn = (id: string, fail: () => Promise<FlushResult>) =>
-    memoFlush.mockImplementation((async (_s: string, ids: string[]) => (ids.includes(id) ? fail() : { sent: ids.length })) as never);
+    memoFlush.mockImplementation((async (_s: string, ids: string[]) => (ids.includes(id) ? fail() : went(ids))) as never);
 
   it("skips the batches that went when a refused one is retried", async () => {
     const onSent = vi.fn();
@@ -136,13 +140,13 @@ describe("SendMemoModal retry after a failed batch", () => {
     expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["own"], ["t1"], ["t2"]]);
     expect(onSent).not.toHaveBeenCalled();
     expect(onProgress).toHaveBeenCalledTimes(1);
-    expect(document.body.textContent).toContain("3 件中 2 件は送信済み");
+    expect(document.body.textContent).toMatch(/3 件中 2 件は s1\b.*送信済み/);
     expect(document.body.textContent).not.toContain("届いている可能性");
     // The own text already went, so it is no longer edited.
     expect(document.querySelector<HTMLTextAreaElement>(".memo-send-text")!.readOnly).toBe(true);
 
     memoFlush.mockClear();
-    memoFlush.mockImplementation(async (_s: string, ids: string[]) => ({ sent: ids.length }));
+    memoFlush.mockImplementation(async (_s: string, ids: string[]) => went(ids));
     await act(async () => sendBtn().click());
     expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["t2"]]);
     expect(onSent).toHaveBeenCalledTimes(1);
@@ -166,7 +170,7 @@ describe("SendMemoModal retry after a failed batch", () => {
       expect(document.body.textContent).toContain("届いている可能性");
       // A retry sends the unknown batch again (the person was told) but never the own batch.
       memoFlush.mockClear();
-      memoFlush.mockImplementation(async (_s: string, ids: string[]) => ({ sent: ids.length }));
+      memoFlush.mockImplementation(async (_s: string, ids: string[]) => went(ids));
       await act(async () => sendBtn().click());
       expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["t1"], ["t2"]]);
       act(() => root?.unmount());
@@ -194,7 +198,7 @@ describe("SendMemoModal retry after a failed batch", () => {
     expect(keepBox.disabled).toBe(false);
     await act(async () => keepBox.click());
     memoFlush.mockClear();
-    memoFlush.mockImplementation(async (_s: string, ids: string[]) => ({ sent: ids.length }));
+    memoFlush.mockImplementation(async (_s: string, ids: string[]) => went(ids));
     await act(async () => sendBtn().click());
     expect(memoFlush.mock.calls.map((c) => [c[1], c[3]])).toEqual([
       [["t1"], true],
@@ -208,8 +212,119 @@ describe("SendMemoModal retry after a failed batch", () => {
     await act(async () => sendBtn().click());
     expect(document.body.textContent).not.toContain("送信済みです");
     memoFlush.mockClear();
-    memoFlush.mockImplementation(async (_s: string, ids: string[]) => ({ sent: ids.length }));
+    memoFlush.mockImplementation(async (_s: string, ids: string[]) => went(ids));
     await act(async () => sendBtn().click());
     expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["a", "b"]]);
+  });
+});
+
+// The plan of a send that went part way is fixed: the batches, their memos and the session. A
+// list refresh, a memo removed elsewhere or another target picked cannot make a retry send a
+// batch that went, or send the rest somewhere else.
+describe("SendMemoModal retry keeps the first attempt's plan", () => {
+  const sendBtn = () => [...document.querySelectorAll("footer button")].at(-1) as HTMLButtonElement;
+  const own = memo({ id: "own", body: "my note" });
+  const t1 = memo({ id: "t1", origin: { itemId: "i1", sender: "a" } });
+  const t2 = memo({ id: "t2", origin: { itemId: "i2", sender: "b" } });
+  type FlushResult = { sent?: number; ids?: string[]; error?: { code: string; message?: string; status?: number }; message?: string };
+  const failOn = (id: string, fail: () => Promise<FlushResult>) =>
+    memoFlush.mockImplementation((async (_s: string, ids: string[]) => (ids.includes(id) ? fail() : went(ids))) as never);
+  const allGo = () => {
+    memoFlush.mockClear();
+    memoFlush.mockImplementation(async (_s: string, ids: string[]) => went(ids));
+  };
+  const rerender = (memos: Memo[], onSent: () => void = () => {}) =>
+    act(async () =>
+      root!.render(
+        <ToastProvider>
+          <SendMemoModal memos={memos} onClose={() => {}} onSent={onSent} />
+        </ToastProvider>,
+      ),
+    );
+
+  it("does not resend a batch that went when the rest left the list", async () => {
+    const onSent = vi.fn();
+    await render([own, t1], { onSent });
+    await act(async () => document.querySelector<HTMLInputElement>(".memo-send-keep input")!.click());
+    failOn("t1", async () => ({ error: { code: "no_memos", status: 404 } }));
+    await act(async () => sendBtn().click());
+    // The refresh after the partial send: t1 was deleted elsewhere, the selection is own alone.
+    await rerender([own], onSent);
+    expect(document.body.textContent).toMatch(/2 件中 1 件は s1\b/);
+    allGo();
+    await act(async () => sendBtn().click());
+    expect(memoFlush).not.toHaveBeenCalled();
+    expect(onSent).toHaveBeenCalledTimes(1);
+    expect(document.body.textContent).toContain("1 件のメモは一覧から無くなっていた");
+  });
+
+  it("sends the rest to the session the first batches went to", async () => {
+    await render([own, t1, t2], { sessions: ["s1", "s2"] });
+    const tgt = (name: string) =>
+      [...document.querySelectorAll<HTMLButtonElement>(".memo-tgt")].find((b) => b.textContent?.includes(name))!;
+    expect(memoFlush).not.toHaveBeenCalled();
+    failOn("t2", async () => ({ error: { code: "question_pending", status: 409 } }));
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls.map((c) => c[0])).toEqual(["s1", "s1", "s1"]);
+    // Another session cannot be picked for the rest.
+    expect(tgt("s2").disabled).toBe(true);
+    await act(async () => tgt("s2").click());
+    allGo();
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls.map((c) => [c[0], c[1]])).toEqual([["s1", ["t2"]]]);
+    expect(document.body.textContent).toMatch(/3 件を s1\b/);
+  });
+
+  it("treats an answer without the count and ids as unknown", async () => {
+    for (const odd of [
+      async (): Promise<FlushResult> => ({}),
+      async (): Promise<FlushResult> => ({ message: "Bad Gateway" }),
+      async (): Promise<FlushResult> => ({ sent: 1 }),
+    ]) {
+      await render([own, t1, t2]);
+      failOn("t1", odd);
+      await act(async () => sendBtn().click());
+      // The send stops at t1: t2 is not sent while t1's outcome is unknown.
+      expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["own"], ["t1"]]);
+      expect(document.body.textContent).toContain("届いたかどうか分かりません");
+      act(() => root?.unmount());
+      host?.remove();
+      memoFlush.mockClear();
+    }
+  });
+
+  it("treats tmux_failed and an Agent's 502 as unknown, a CP refusal as not", async () => {
+    const cases: [FlushResult["error"], boolean][] = [
+      [{ code: "tmux_failed", status: 500 }, true],
+      [{ code: "delivery_unconfirmed", status: 502 }, true],
+      [{ code: "turn_timeout", status: 504 }, true],
+      [{ code: "internal", status: 500 }, false],
+      [{ code: "not_running", status: 409 }, false],
+    ];
+    for (const [error, isUnknown] of cases) {
+      await render([own, t1]);
+      failOn("t1", async () => ({ error }));
+      await act(async () => sendBtn().click());
+      expect(document.body.textContent?.includes("届いている可能性"), error!.code).toBe(isUnknown);
+      act(() => root?.unmount());
+      host?.remove();
+      memoFlush.mockClear();
+    }
+  });
+
+  it("keeps an unknown batch flagged when its retry is refused", async () => {
+    await render([own, t1, t2]);
+    failOn("t1", async () => ({ error: { code: "flush_failed", status: 502 } }));
+    await act(async () => sendBtn().click());
+    expect(document.body.textContent).toMatch(/s1\b.*にはメッセージがすでに届いている可能性/);
+    memoFlush.mockClear();
+    failOn("t1", async () => ({ error: { code: "question_pending", status: 409 } }));
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["t1"]]);
+    // The refusal says nothing about the first attempt, which may still have gone.
+    expect(document.body.textContent).toMatch(/s1\b.*にはメッセージがすでに届いている可能性/);
+    allGo();
+    await act(async () => sendBtn().click());
+    expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["t1"], ["t2"]]);
   });
 });

@@ -1129,7 +1129,15 @@ func TestMemoQueueKeptReservationReclaimLeavesStateAlone(t *testing.T) {
 		if strings.HasPrefix(plainTok, store.MemoSendKeepPrefix) {
 			t.Fatalf("a plain send's reservation reads as kept: %q", plainTok)
 		}
+		// A message the queue's own-sessions switch released carries who released it; the reclaim
+		// must keep that too.
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET released_by=? WHERE id=?`, store.MemoReleasedBySetting, pending.ID); err != nil {
+			t.Fatal(err)
+		}
 		beforeP := e.memoRow(pending.ID)
+		if beforeP.ReleasedBy == "" || beforeP.ReleasedAt == "" {
+			t.Fatalf("setup: want a pending message with its release recorded, got %+v", beforeP)
+		}
 
 		// Leave each reservation behind, older than the bound, as a settle that never landed would.
 		stale := time.Now().UTC().Add(-store.MemoSendStaleAfter - time.Minute).Format(time.RFC3339)
@@ -1140,13 +1148,16 @@ func TestMemoQueueKeptReservationReclaimLeavesStateAlone(t *testing.T) {
 		}
 		_ = decode[[]memoDTO](t, e.do("a", "GET", "/api/memos", nil))
 
-		if got := e.memoRow(pending.ID); got.State != store.MemoStatePending || got.ReleaseHash != pending.ContentHash || got.ReleasedAt != beforeP.ReleasedAt || got.SendToken != "" || got.SentAt != "" {
+		if got := e.memoRow(pending.ID); got.State != store.MemoStatePending || got.ReleaseHash != pending.ContentHash ||
+			got.ReleasedAt != beforeP.ReleasedAt || got.ReleasedBy != beforeP.ReleasedBy ||
+			got.SendToken != "" || got.SendStartedAt != "" || got.SentAt != "" {
 			t.Fatalf("kept pending message after the reclaim: %+v", got)
 		}
-		if got := e.memoRow(held.ID); got.State != store.MemoStateHeld || got.SendToken != "" || got.SentAt != "" {
+		if got := e.memoRow(held.ID); got.State != store.MemoStateHeld || got.SendToken != "" || got.SendStartedAt != "" || got.SentAt != "" {
 			t.Fatalf("kept held message after the reclaim: %+v", got)
 		}
-		if got := e.memoRow(plainSend.ID); got.State != store.MemoStateUnconfirmed || got.ReleaseHash != "" || got.SendToken != "" {
+		if got := e.memoRow(plainSend.ID); got.State != store.MemoStateUnconfirmed || got.ReleaseHash != "" || got.ReleasedBy != "" ||
+			got.SendToken != "" || got.SendStartedAt != "" {
 			t.Fatalf("plain send's message after the reclaim: %+v", got)
 		}
 		e.assertPendingReleaseMatches()
