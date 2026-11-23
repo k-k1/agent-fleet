@@ -371,7 +371,7 @@ npm --prefix console run build
   | `control-plane`, `workspace-agent` | `gofmt -l`, `go vet`, `go build` (also cross-compiled for arm64), `go test`, and `go vet` over the build-tagged files. The agent job also syntax-checks `entrypoint.sh` |
   | `console` | typecheck, lint, the i18n lint, the model-id lint, vitest, two real-browser checks (`pdf:check`, `doc:check`) and the production build |
   | `deploy-scripts` | the deployment scripts and the release watcher's decisions against stubbed `aws` / `npm` / `curl` / `gh`, and that the CloudFormation templates are ASCII-only |
-  | `secret-scan` | credential leaks over the whole history (below) |
+  | `secret-scan` | credential leaks: what a PR's merge commit reaches on a PR, every ref on a push to `main` (below) |
   | `release-scan` | the forbidden-token gate over the tracked tree — the same scanner the pre-commit hook runs over staged content |
   | `model-id-lint` | no model-id-shaped string literal in either Go module outside `workspace/agent/internal/modelfallback`; `// model-id-lint:allow <reason>` marks one that chooses no model |
   | `migration-versions` | sets the `migration-version` commit status on every open PR into `main`: failure when a migration the PR adds takes a version `main` already holds (compared as the runner reads it, so `95_x` and `0095_y` collide), shares its version with another new file of the same PR, or has no readable version. This job is the script's self-test; the status is posted by `migration-version.yml`, which has no cancel-in-progress, on the PR's own events (including a retarget to `main`) and again for every open PR on each push to `main`. `scripts/migration-versions.sh` |
@@ -730,8 +730,22 @@ encrypted in the repository settings — and the following must stay true:
   default.
 
 **Credential leak detection** (`ci.yml`'s `secret-scan`, gitleaks). In a public
-repository a leak is instantly public and cannot be undone, so the scan covers **the
-entire history every time**, not the diff. What matters:
+repository a leak is instantly public and cannot be undone, so the scan covers history,
+not the diff. The scope depends on who is asking (`scripts/secret-scan.sh`):
+
+- **A PR** scans what its merge commit reaches: `main`'s history plus the PR's own
+  commits. A credential-shaped value on an unrelated branch cannot fail it. (The scan used
+  to cover every ref on every PR, so one fixture pushed on any branch turned all open PRs
+  red until an allowlist entry reached `main`, and a re-run did not help because it
+  re-scans the old merge commit.)
+- **A push to `main`, and a manual run,** scan every ref, and so does the daily
+  `secret-sweep.yml`. A finding fails that run; the sweep also opens (or refreshes) one
+  issue, which the first clean sweep closes.
+- **What this gives up:** a leak on a branch that has no PR is reported by the next push
+  to `main` or the daily sweep, not by the next PR. Pushing it already published it, so
+  the PR gate never prevented that leak; it only reported it.
+
+What matters in both:
 
 - **Always pass `-m`.** Without it the scanner skips merge commits, and **anything
   introduced while resolving a conflict stays unscanned behind a green check** — when

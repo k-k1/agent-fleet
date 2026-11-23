@@ -331,7 +331,7 @@ npm --prefix console run build
   | `control-plane`・`workspace-agent` | `gofmt -l`・`go vet`・`go build`（arm64 へのクロスコンパイルも）・`go test`、build tag 付きファイルの `go vet`。Agent 側は `entrypoint.sh` の構文も検査する |
   | `console` | 型検査・lint・i18n lint・モデル ID lint・vitest・実ブラウザの検査 2 つ（`pdf:check`・`doc:check`）・本番ビルド |
   | `deploy-scripts` | デプロイ用スクリプトとリリース監視の判断を、スタブの `aws` / `npm` / `curl` / `gh` に当てて検査。CloudFormation テンプレートが ASCII のみであることも |
-  | `secret-scan` | 全履歴に対する資格情報の混入検知（後述）|
+  | `secret-scan` | 資格情報の混入検知。PR では PR のマージコミットから辿れる範囲、`main` への push では全 ref（後述）|
   | `release-scan` | 追跡ツリーに対する禁止トークンのゲート——pre-commit フックがステージ内容にかけるのと同じスキャナ |
   | `model-id-lint` | 両 Go モジュールで `workspace/agent/internal/modelfallback` の外にモデル ID の形の文字列リテラルが無いこと。モデルを選ばないものは `// model-id-lint:allow <理由>` で印を付ける |
   | `migration-versions` | `main` 向けの開いている PR すべてに `migration-version` コミットステータスを付ける。PR が足すマイグレーションのバージョンを `main` が既に持っている（ランナーと同じく数値で比べるので `95_x` と `0095_y` も衝突）、同じ PR の別ファイルも同じバージョンを取っている、または読めるバージョンが無い、のどれかなら failure。このジョブはスクリプトの自己テストで、ステータスを付けるのは cancel-in-progress の無い `migration-version.yml`。PR 自身のイベント（`main` への付け替えも含む）で回り、`main` への push のたびに開いている全 PR を検査し直す。`scripts/migration-versions.sh` |
@@ -636,7 +636,21 @@ opencode・copilot・cursor で、kiro（ログインが要る）と agy（ラ�
 - **`permissions:` を全ワークフローで明示する。** 既定が変わっても最小権限が残るように。
 
 **資格情報の混入検知**（`ci.yml` の `secret-scan`・gitleaks）。公開リポジトリでは混入は
-即公開で取り返しがつかないので、差分ではなく**毎回全履歴**を走査する。押さえどころ:
+即公開で取り返しがつかないので、差分ではなく履歴を走査する。範囲は誰が走らせるかで変わる
+（`scripts/secret-scan.sh`）:
+
+- **PR** は、そのマージコミットから辿れる範囲（`main` の履歴＋PR 自身のコミット）を走査する。
+  無関係なブランチにある資格情報らしい値では落ちない。（以前は全 PR が全 ref を走査していたので、
+  どのブランチに push した 1 件のフィクスチャでも、許可リストの項目が `main` に入るまで開いている
+  PR がすべて赤くなり、再実行しても古いマージコミットを走査し直すだけで直らなかった。）
+- **`main` への push と手動実行**は全 ref を走査する。毎日走る `secret-sweep.yml` も同じ。
+  見つかるとその実行が失敗し、sweep は Issue を 1 件作る（または更新する）。最初に clean になった
+  sweep がそれを閉じる。
+- **手放したもの:** PR の無いブランチへの混入は、次の PR ではなく、次の `main` への push か毎日の
+  sweep が報告する。push した時点で公開済みなので、PR のゲートはもともと混入を防げておらず、
+  報告していただけだった。
+
+どちらでも押さえどころは同じ:
 
 - **`-m` を必ず付ける。** 無いとスキャナは merge commit を飛ばし、**衝突解決で入った内容が
   未走査のまま緑になる**——導入時点でこのリポジトリには該当する merge が 138 件あり、初回の
