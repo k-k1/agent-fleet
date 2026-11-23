@@ -7,7 +7,7 @@
 // mark, ADR 0113), so a session cannot decide a proposal. The list, detail and diff reuse the
 // change list's layout (memoryChanges.tsx) on purpose.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { errDetail, isTransientErr } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
 import {
@@ -19,6 +19,8 @@ import {
 } from "./memoryApi.ts";
 import { useMemoryStore } from "../../memory/store.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
+import { useReadGuard, type ReadTicket } from "../../../lib/readGuard.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Choice, OnOff, Row } from "../parts/controls.tsx";
@@ -148,21 +150,46 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
     setSt(null);
     setErr(false);
   }, [tenant]);
-  const load = useCallback(async (signal: AbortSignal) => {
+  // The first read (and its retries), the run poll and the re-read after "run now" overlap, and
+  // the poll's period does not restart with each answer: only a read newer than the last one
+  // landed may set the status, and a tenant switch or the view going inactive drops every read
+  // begun before it.
+  const guard = useReadGuard();
+  const running = st?.run?.running === true;
+  useLayoutEffect(() => guard.reset(tenant), [guard, tenant, active]);
+  // The run poll's own lifetime, set at commit: its reads are dropped once the run has ended, so a
+  // late failure cannot leave a warning nothing will clear with the poll stopped, and a tick due
+  // before useInterval's passive cleanup starts none. Not the shared guard: a run ending seen just
+  // after a tenant switch must not kill the new tenant's first read.
+  const pollSignal = useRef<AbortSignal | null>(null);
+  useLayoutEffect(() => {
+    if (!running || !active) return;
+    const ac = new AbortController();
+    pollSignal.current = ac.signal;
+    return () => {
+      ac.abort();
+      pollSignal.current = null;
+    };
+  }, [running, active, tenant]);
+  const load = useCallback(async (tk: ReadTicket, signal?: AbortSignal) => {
     const res = await getConsolStatus();
-    if (signal.aborted) return true;
+    // useRetryLoad aborts a read whose reload was superseded, even for the same tenant; the poll's
+    // signal is aborted once the run has ended.
+    if (signal?.aborted || !tk.current()) return true;
     // Right after a start the Agent answers 5xx for a moment: retried, never settled as a failure.
     if (isTransientErr(res)) return false;
     if (res !== null && !isOk(res)) {
-      setErr(true);
+      // Shown but not landed: an older read that does succeed still clears it and sets the status
+      // (the next poll clears it too, see below).
+      if (tk.fresh()) setErr(true);
       return true;
     }
+    if (!tk.land()) return true;
     setErr(false);
     setSt(res);
     return true;
   }, []);
-  useRetryLoad(async (signal) => (active ? load(signal) : true), [reload, active, tenant, load]);
-  const running = st?.run?.running === true;
+  useRetryLoad(async (signal) => (active ? load(guard.begin(tenant), signal) : true), [reload, active, tenant, load]);
   // A run that just finished may have queued proposals: everything memory-shaped reads again, the
   // list and the activity bar's count included, instead of waiting for the next poll.
   useEffect(() => {
@@ -173,15 +200,10 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
   // without a page action; it stops by itself once the Agent says nothing is running.
   // A failed read does not stop it: the next poll clears the warning by itself, whereas stopping would
   // leave a stale "running" that only a reload could end. The interval is bounded and cleared on unmount.
-  useEffect(() => {
-    if (!running || !active) return;
-    const ac = new AbortController();
-    const h = setInterval(() => void load(ac.signal), RUN_POLL_MS);
-    return () => {
-      ac.abort();
-      clearInterval(h);
-    };
-  }, [running, active, load]);
+  useInterval(() => {
+    const signal = pollSignal.current;
+    if (signal) void load(guard.begin(tenant), signal);
+  }, running && active ? RUN_POLL_MS : null);
 
   const [starting, setStarting] = useState(false);
   // setStarting is asynchronous state; the ref stops a second click that lands before it renders.
@@ -190,6 +212,9 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
   const askConfirm = useConfirm();
   const runNow = async (all: boolean) => {
     if (!st || inFlight.current || running) return;
+    // The view this click was made in: a tenant switch or the view being hidden while the dialog is
+    // open (or before the re-read) leaves this ticket dead.
+    const origin = guard.begin(tenant);
     const budget = st.config.tokenBudget;
     const ok = await askConfirm({
       title: tr("mem.cs_run_title"),
@@ -202,7 +227,7 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
       ),
       confirmLabel: tr("mem.cs_run_confirm"),
     });
-    if (!ok || inFlight.current) return;
+    if (!ok || inFlight.current || !origin.current()) return;
     inFlight.current = true;
     setStarting(true);
     try {
@@ -216,7 +241,7 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
     } finally {
       inFlight.current = false;
       setStarting(false);
-      await load(new AbortController().signal);
+      if (origin.current()) await load(guard.begin(tenant));
     }
   };
   return { st, err, running, starting, runNow };

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   useSettings,
   setSetting,
@@ -31,6 +31,8 @@ import { Button } from "../../../ui/Button.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Choice, OnOff, Row, Slider } from "../parts/controls.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
+import { useReadGuard } from "../../../lib/readGuard.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 // TtsTab — the settings tab for text-to-speech (TTS, docs/log/24 + ADR0013). The items are
 // grouped by concern rather than left flat: voice (what reads), auto-read (when it reads),
@@ -296,18 +298,23 @@ function EngineState({ engines, onChange }: { engines: TtsStatus | null; onChang
 
   // While the engine is on its way, follow it: a start takes 70-80 seconds (measured), which
   // is a long time to look at a screen that says "stopped" because the answer is 30 s old.
+  // The period does not restart with each answer, so reads can overlap: only one newer than the
+  // last landed may move the state, and the engine settling (or the wake answering) drops every
+  // read begun before it, so a late "starting" cannot bring the spinner back.
   const moving = activity === "starting" || activity === "warming";
-  useEffect(() => {
-    if (!moving) return;
-    let alive = true;
-    const t = setInterval(() => {
-      void refreshTtsStatus().then((st) => alive && st && onChange(st));
-    }, 5000);
-    return () => {
-      alive = false;
-      clearInterval(t);
-    };
-  }, [moving, onChange]);
+  const guard = useReadGuard();
+  // As of the last commit: useInterval clears its timer in a passive cleanup, and a tick due in
+  // between must not start a read for a poll the settle already switched off.
+  const polling = useRef(false);
+  useLayoutEffect(() => {
+    guard.reset();
+    polling.current = moving;
+  }, [guard, moving]);
+  useInterval(() => {
+    if (!polling.current) return;
+    const tk = guard.begin();
+    void refreshTtsStatus().then((st) => st && tk.land() && onChange(st));
+  }, moving ? 5000 : null);
 
   if (activity === "unknown" || activity === "unavailable" || activity === "ready") return null;
 
@@ -320,7 +327,10 @@ function EngineState({ engines, onChange }: { engines: TtsStatus | null; onChang
         setErr(r.message || tr("tts.wake_failed"));
         return;
       }
-      if (r.status) onChange(r.status);
+      if (r.status) {
+        guard.claim();
+        onChange(r.status);
+      }
     } finally {
       setBusy(false);
     }

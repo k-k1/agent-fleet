@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { isTransientErr } from "../../../core/api/client.ts";
 import { OnOff, OrderList, Row } from "../parts/controls.tsx";
 import { useSettings, setSetting } from "../../../lib/settings.ts";
@@ -8,6 +8,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { imagegenStatus } from "../../imagegen/api.ts";
 import { LEGACY_ALIASES, mergeVisibleOrder } from "./visibleOrder.ts";
 import { isPreAdr0082Status, type ImagegenProvider } from "../../imagegen/wire.ts";
+import { useGuardedPoll, type ReadTicket } from "../../../lib/readGuard.ts";
 
 // ImagegenTab is Settings > Image generation (ADR 0138 D16): the generate_image tool af's own MCP
 // server gives every kind, and the order its providers are tried in. A feature that uses
@@ -34,64 +35,66 @@ export function ImagegenTab() {
   // unfiltered list would name providers the policy hides.
   const [status, setStatus] = useState<ImagegenStatusView | null>(null);
 
+  // With no answer taken for a whole refresh period since a request went out, the list fails
+  // closed: the fetch itself has no deadline, and a list kept past the bound may no longer be
+  // allowed. The deadline runs from the oldest unanswered request, so requests that keep hanging
+  // do not push it back.
+  const deadline = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  // Only the newest request may set the list: a slower, older answer (perhaps from before a
+  // tightening) landing after a newer one would bring back providers the policy now hides. This is
+  // stricter than the guard's own rule, which lets an older answer land while no newer one has: the
+  // deadline above is cleared only by the newest request's answer.
+  const newest = useRef<ReadTicket | null>(null);
+  const load = (tk: ReadTicket) => {
+    newest.current = tk;
+    if (deadline.current === undefined) {
+      deadline.current = setTimeout(() => {
+        deadline.current = undefined;
+        if (tk.current()) setStatus(null);
+      }, STATUS_REFRESH_MS);
+    }
+    const settle = (next: ImagegenStatusView | null) => {
+      if (tk !== newest.current || !tk.current()) return;
+      clearTimeout(deadline.current);
+      deadline.current = undefined;
+      setStatus(next);
+    };
+    imagegenStatus()
+      .then((st) => {
+        if (!st || isTransientErr(st) || st.error || st.orderFiltered !== true) return settle(null);
+        const providers = Array.isArray(st.providers) ? st.providers : [];
+        if (isPreAdr0082Status(providers)) return settle(null);
+        // `order` is policy-filtered, ready or not, so an allowed provider that is not
+        // connected yet keeps its rank; absent means the policy leaves none.
+        // A kind name with no declared row (the base order's placeholder for a kind this
+        // deployment does not run) is no provider: it is left out of the list, and so keeps its
+        // stored slot like a hidden entry.
+        const kinds = st.orderKinds && typeof st.orderKinds === "object" ? st.orderKinds : {};
+        const order = (Array.isArray(st.order) ? st.order : []).filter(
+          (id) => id in kinds || !LEGACY_ALIASES.includes(id),
+        );
+        settle({ order, kinds, providers });
+      })
+      .catch(() => settle(null));
+  };
   // Load while the workspace is running, and again every STATUS_REFRESH_MS: a policy changed by
   // an administrator while this page stays open reaches it within the same bound the Agent's own
-  // policy refresh has, rather than leaving a now-forbidden provider listed.
+  // policy refresh has, rather than leaving a now-forbidden provider listed. A stop drops every
+  // request still in flight.
+  useGuardedPoll(load, running ? STATUS_REFRESH_MS : null, []);
+  // The deadline goes with the requests it watches. A layout cleanup, so it runs before the
+  // poll's first read of the same commit arms the next one (StrictMode's re-setup included).
+  useLayoutEffect(
+    () => () => {
+      clearTimeout(deadline.current);
+      deadline.current = undefined;
+    },
+    [running],
+  );
   useEffect(() => {
-    if (!running) {
-      // The Agent that answered is gone with it: fail closed rather than keep rows that may no
-      // longer be allowed.
-      setStatus(null);
-      return;
-    }
-    let live = true;
-    // Only the newest request may set the list: a slower, older answer (perhaps from before a
-    // tightening) landing after a newer one would bring back providers the policy now hides.
-    let latest = 0;
-    let deadline: ReturnType<typeof setTimeout> | undefined;
-    const load = () => {
-      const seq = ++latest;
-      // With no answer taken for a whole refresh period since a request went out, the list fails
-      // closed: the fetch itself has no deadline, and a list kept past the bound may no longer be
-      // allowed. The deadline runs from the oldest unanswered request, so requests that keep
-      // hanging do not push it back.
-      if (deadline === undefined) {
-        deadline = setTimeout(() => {
-          deadline = undefined;
-          if (live) setStatus(null);
-        }, STATUS_REFRESH_MS);
-      }
-      const settle = (next: ImagegenStatusView | null) => {
-        if (!live || seq !== latest) return;
-        clearTimeout(deadline);
-        deadline = undefined;
-        setStatus(next);
-      };
-      imagegenStatus()
-        .then((st) => {
-          if (!st || isTransientErr(st) || st.error || st.orderFiltered !== true) return settle(null);
-          const providers = Array.isArray(st.providers) ? st.providers : [];
-          if (isPreAdr0082Status(providers)) return settle(null);
-          // `order` is policy-filtered, ready or not, so an allowed provider that is not
-          // connected yet keeps its rank; absent means the policy leaves none.
-          // A kind name with no declared row (the base order's placeholder for a kind this
-          // deployment does not run) is no provider: it is left out of the list, and so keeps its
-          // stored slot like a hidden entry.
-          const kinds = st.orderKinds && typeof st.orderKinds === "object" ? st.orderKinds : {};
-          const order = (Array.isArray(st.order) ? st.order : []).filter(
-            (id) => id in kinds || !LEGACY_ALIASES.includes(id),
-          );
-          settle({ order, kinds, providers });
-        })
-        .catch(() => settle(null));
-    };
-    load();
-    const timer = setInterval(load, STATUS_REFRESH_MS);
-    return () => {
-      live = false;
-      clearInterval(timer);
-      clearTimeout(deadline);
-    };
+    // The Agent that answered is gone with it: fail closed rather than keep rows that may no
+    // longer be allowed.
+    if (!running) setStatus(null);
   }, [running]);
 
   const imageOrder = status?.order ?? [];
