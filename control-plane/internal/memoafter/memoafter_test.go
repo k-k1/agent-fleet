@@ -170,11 +170,11 @@ func TestLastAnswer(t *testing.T) {
 	}
 }
 
-// The pin drops everything from the first turn of the session itself stamped after it, a user's or
-// an assistant's (a page that starts inside a later turn); a subagent's turn and a turn without a
-// time never cut.
+// The pin drops everything from the first user turn of the session itself stamped at or after it;
+// a subagent's turn, an assistant turn (it may be stamped when read) and a turn without a time
+// never cut.
 func TestTurnsBefore(t *testing.T) {
-	pin := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
+	pin := time.Date(2026, 11, 24, 10, 0, 1, 0, time.UTC)
 	at := func(d time.Duration) string { return pin.Add(d).Format(time.RFC3339Nano) }
 	run := []Turn{
 		{Role: "user", TS: at(-time.Hour), Text: "the task"},
@@ -184,20 +184,49 @@ func TestTurnsBefore(t *testing.T) {
 		name string
 		tail []Turn
 		keep int
-		cut  bool
 	}{
-		{"nothing after the run", nil, 2, false},
-		{"a person's turn after the pin", []Turn{{Role: "user", TS: at(time.Minute), Text: "more"}, {Role: "assistant", TS: at(2 * time.Minute), Text: "Partial: x"}}, 2, true},
-		{"another zone, same instant after", []Turn{{Role: "user", TS: pin.Add(time.Second).In(time.FixedZone("JST", 9*3600)).Format(time.RFC3339), Text: "more"}}, 2, true},
-		{"a user turn at the pin itself", []Turn{{Role: "user", TS: at(0), Text: "same"}}, 3, false},
-		{"a subagent's user turn", []Turn{{Role: "user", Sidechain: true, TS: at(time.Minute)}}, 3, false},
-		{"a later turn's assistant lines alone", []Turn{{Role: "assistant", TS: at(time.Minute), Text: "Done: other work"}}, 2, true},
-		{"a user turn without a time", []Turn{{Role: "user", Text: "more"}, {Role: "user", TS: "yesterday", Text: "more"}}, 4, false},
+		{"nothing after the run", nil, 2},
+		{"a person's turn after the pin", []Turn{{Role: "user", TS: at(time.Minute), Text: "more"}, {Role: "assistant", TS: at(2 * time.Minute), Text: "Partial: x"}}, 2},
+		{"a user turn at the pin itself, to the second", []Turn{{Role: "user", TS: pin.Format(time.RFC3339), Text: "same"}}, 2},
+		{"another zone, after", []Turn{{Role: "user", TS: pin.Add(time.Second).In(time.FixedZone("JST", 9*3600)).Format(time.RFC3339), Text: "more"}}, 2},
+		{"a user turn just before the pin", []Turn{{Role: "user", TS: at(-time.Millisecond), Text: "peer"}}, 3},
+		{"a subagent's user turn", []Turn{{Role: "user", Sidechain: true, TS: at(time.Minute)}}, 3},
+		{"an assistant turn stamped when read", []Turn{{Role: "assistant", TS: at(time.Hour), Text: "[error] refused"}}, 3},
+		{"a user turn without a time", []Turn{{Role: "user", Text: "more"}, {Role: "user", TS: "yesterday", Text: "more"}}, 4},
 	} {
 		turns := append(append([]Turn{}, run...), c.tail...)
-		kept, cut := TurnsBefore(turns, pin)
-		if len(kept) != c.keep || cut != c.cut {
-			t.Errorf("%s: kept %d cut %v, want %d %v", c.name, len(kept), cut, c.keep, c.cut)
+		if kept := TurnsBefore(turns, pin); len(kept) != c.keep {
+			t.Errorf("%s: kept %d, want %d", c.name, len(kept), c.keep)
+		}
+	}
+}
+
+// An answer before the pin counts once a user turn of the session is seen before it, or the turns
+// start at the transcript's first line.
+func TestPinnedAnswer(t *testing.T) {
+	pin := time.Date(2026, 11, 24, 10, 0, 1, 0, time.UTC)
+	at := func(d time.Duration) string { return pin.Add(d).Format(time.RFC3339Nano) }
+	text := func(s string) []TurnPart { return []TurnPart{{Kind: "text", Text: s}} }
+	user := func(d time.Duration) Turn { return Turn{Role: "user", TS: at(d), Parts: text("input")} }
+	said := func(s string) Turn { return Turn{Role: "assistant", Parts: text(s)} } // kiro: no time
+	for _, c := range []struct {
+		name    string
+		turns   []Turn
+		atStart bool
+		want    string
+		found   bool
+	}{
+		{"the run's answer", []Turn{user(-time.Hour), said("Done: run")}, false, "Done: run", true},
+		{"a page inside a later turn", []Turn{said("Done: other"), user(time.Minute), said("Done: more")}, false, "", false},
+		{"the page before it read", []Turn{user(-time.Hour), said("Partial: run"), user(time.Minute), said("Done: other"), user(2 * time.Minute), said("Done: more")}, false, "Partial: run", true},
+		{"the first line", []Turn{said("Done: run")}, true, "Done: run", true},
+		{"only later turns", []Turn{user(time.Minute), said("Done: other")}, true, "", false},
+		{"a subagent's input is no anchor", []Turn{{Role: "user", Sidechain: true, TS: at(-time.Hour)}, said("Done: other"), user(time.Minute)}, false, "", false},
+		{"the run's error stamped when read", []Turn{user(-time.Hour), said("Done: first"), user(-time.Minute),
+			{Role: "assistant", TS: at(time.Hour), Parts: []TurnPart{{Kind: "error", Text: "refused"}}}}, false, "", true},
+	} {
+		if got, found := PinnedAnswer(c.turns, pin, c.atStart); got != c.want || found != c.found {
+			t.Errorf("%s: %q/%v, want %q/%v", c.name, got, found, c.want, c.found)
 		}
 	}
 }

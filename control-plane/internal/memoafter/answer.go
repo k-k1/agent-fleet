@@ -33,21 +33,43 @@ type Turn struct {
 	TS string `json:"ts"`
 }
 
-// TurnsBefore is turns up to the first turn of the session itself (not a subagent's) written
-// after pin: every turn of the run was written before its end, so what was written after it is a
-// later turn's, whether its user turn is in these turns or on a page before them. cut reports
-// whether such a turn was found. A turn whose time is missing or does not parse is kept, as
-// nothing tells it apart: such a kind reads as it did without the pin.
-func TurnsBefore(turns []Turn, pin time.Time) (kept []Turn, cut bool) {
+// TurnsBefore is turns up to the first user turn of the session itself (not a subagent's) stamped
+// at or after pin, the first instant past the run's end: a person's input that came later, and
+// everything after it, is not the run's. Only a user turn cuts: an assistant turn may be stamped
+// when it is read rather than when it was written (measured: codex's synthetic error turn of a
+// refused turn/start is stamped time.Now()), and dropping the run's own last error would read an
+// earlier Done:. A turn whose time is missing or does not parse is kept, as nothing tells it
+// apart: such a kind reads as it did without the pin.
+func TurnsBefore(turns []Turn, pin time.Time) []Turn {
 	for i, t := range turns {
-		if t.Sidechain {
+		if t.Role != "user" || t.Sidechain {
 			continue
 		}
-		if at, err := time.Parse(time.RFC3339Nano, t.TS); err == nil && at.After(pin) {
-			return turns[:i], true
+		if at, err := time.Parse(time.RFC3339Nano, t.TS); err == nil && !at.Before(pin) {
+			return turns[:i]
 		}
 	}
-	return turns, false
+	return turns
+}
+
+// PinnedAnswer is LastAnswer of the turns before pin (TurnsBefore), turns being the transcript
+// from some line to its end. An answer counts only once a user turn of the session itself is seen
+// before it: a page can start inside a person's later turn, whose input, stamped after pin, is on
+// the page before, and whose assistant turns may carry no time at all (kiro). found is false until
+// then, so the caller reads back a page; atStart says turns begin at the transcript's first line,
+// where nothing earlier can be such an input.
+func PinnedAnswer(turns []Turn, pin time.Time, atStart bool) (text string, found bool) {
+	kept := TurnsBefore(turns, pin)
+	text, at, found := lastAnswerAt(kept)
+	if !found || atStart {
+		return text, found
+	}
+	for _, t := range kept[:at] {
+		if t.Role == "user" && !t.Sidechain {
+			return text, true
+		}
+	}
+	return "", false
 }
 
 // LastAnswer is the text of the session's last answer in turns: of the last assistant turn of the
@@ -58,6 +80,12 @@ func TurnsBefore(turns []Turn, pin time.Time) (kept []Turn, cut bool) {
 // not taken for one. found is false when turns hold no such assistant turn at all (an older page
 // may hold it); text is "" for one that ended without an answer.
 func LastAnswer(turns []Turn) (text string, found bool) {
+	text, _, found = lastAnswerAt(turns)
+	return text, found
+}
+
+// lastAnswerAt is LastAnswer and the index of the turn it was read from.
+func lastAnswerAt(turns []Turn) (text string, at int, found bool) {
 	for i := len(turns) - 1; i >= 0; i-- {
 		t := turns[i]
 		if t.Role != "assistant" || t.Sidechain {
@@ -67,7 +95,7 @@ func LastAnswer(turns []Turn) (text string, found bool) {
 			if strings.TrimSpace(t.Text) == "" {
 				continue
 			}
-			return t.Text, true
+			return t.Text, i, true
 		}
 		var texts []string
 		seen := false
@@ -85,9 +113,9 @@ func LastAnswer(turns []Turn) (text string, found bool) {
 		if !seen {
 			continue
 		}
-		return strings.Join(texts, "\n"), true
+		return strings.Join(texts, "\n"), i, true
 	}
-	return "", false
+	return "", -1, false
 }
 
 // ClassifyAnswer is the head an answer is kept by (its first line that holds anything, at most
