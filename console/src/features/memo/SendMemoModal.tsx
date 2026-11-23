@@ -93,8 +93,13 @@ async function flushBatch(session: string, b: Batch, keep: boolean): Promise<Bat
     // ones it still found (a memo deleted meanwhile is left out). Anything else (an empty 2xx,
     // a proxy's JSON, a login page, ids it was not asked for) says nothing about the send.
     const asked = new Set(b.ids);
-    const ids = Array.isArray(r.ids) ? [...new Set(r.ids)] : [];
-    if (ids.length > 0 && r.sent === ids.length && ids.every((id) => asked.has(id))) return { sent: ids };
+    const ids: unknown[] = Array.isArray(r.ids) ? r.ids : [];
+    const fine =
+      ids.length > 0 &&
+      r.sent === ids.length &&
+      new Set(ids).size === ids.length &&
+      ids.every((id) => typeof id === "string" && asked.has(id));
+    if (fine) return { sent: ids as string[] };
     return { unknown: true };
   } catch {
     return { unknown: true };
@@ -136,6 +141,12 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
   const [unknown, setUnknown] = useState<ReadonlySet<string>>(() => new Set());
   const doneIds = useMemo(() => new Set([...done.values()].flat()), [done]);
   const pending = memos.filter((m) => !doneIds.has(m.id));
+  // An unknown batch still in the list is sent again by the next Send; one that left the list
+  // is not, and the note must not say it will be.
+  const listedIds = new Set(memos.map((m) => m.id));
+  const unknownBatches = (plan?.batches ?? []).filter((b) => unknown.has(b.key));
+  const unknownListed = unknownBatches.some((b) => b.ids.some((id) => listedIds.has(id)));
+  const unknownGone = unknownBatches.some((b) => !b.ids.some((id) => listedIds.has(id)));
   // A memo that was already sent keeps its old sent_at when kept and would be swept on that
   // date, so keep is offered for unsent selections only (the server refuses it too). A batch
   // that already went is not sent again, so its stamp does not count.
@@ -380,9 +391,14 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
               })}
             </div>
           )}
-          {plan && unknown.size > 0 && (
+          {unknownListed && (
             <div className="ui-field-hint" role="alert">
-              {tr("memo.send_unknown_hint", { target: targetLabel(plan.target) })}
+              {tr("memo.send_unknown_hint", { target: targetLabel(plan!.target) })}
+            </div>
+          )}
+          {unknownGone && (
+            <div className="ui-field-hint" role="alert">
+              {tr("memo.send_unknown_gone_hint", { target: targetLabel(plan!.target) })}
             </div>
           )}
           {target?.type === "session" && keep && memos.some((m) => m.state) && (

@@ -283,6 +283,8 @@ describe("SendMemoModal retry keeps the first attempt's plan", () => {
       async (): Promise<FlushResult> => ({ sent: 1, ids: [] }),
       async (): Promise<FlushResult> => ({ sent: 1, ids: ["not-asked"] }),
       async (): Promise<FlushResult> => ({ sent: 2, ids: ["t1"] }),
+      async (): Promise<FlushResult> => ({ sent: 2, ids: ["t1", "t1"] }),
+      async (): Promise<FlushResult> => ({ sent: 1, ids: ["t1", "t1"] }),
     ]) {
       await render([own, t1, t2]);
       failOn("t1", odd);
@@ -368,8 +370,11 @@ describe("SendMemoModal retry keeps the first attempt's plan", () => {
     await render([own, t1, t2]);
     failOn("t1", async () => ({ error: { code: "flush_failed", status: 502 } }));
     await act(async () => sendBtn().click());
+    expect(document.body.textContent).toContain("送信を押すともう一度送る");
     // t1 is deleted elsewhere: it cannot be sent again, and whether it went is still open.
     await rerender([own, t2]);
+    expect(document.body.textContent).not.toContain("送信を押すともう一度送る");
+    expect(document.body.textContent).toContain("送信を押しても再送しない");
     allGo();
     await act(async () => sendBtn().click());
     expect(memoFlush.mock.calls.map((c) => c[1])).toEqual([["t2"]]);
