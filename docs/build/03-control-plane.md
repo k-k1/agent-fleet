@@ -409,7 +409,12 @@ Memos you accumulate and send to a session in one go (the tables are
   switch off, no instruction, the `max_sessions` quota (running sessions plus the
   deliveries not yet sent), or a message the Agent would refuse (`memo_queue_item_invalid`:
   a text over 64 KiB, more than 20 attachments, a path over 4 KiB). `enabled` does not
-  gate it. The quota is checked again in the move to `sending`, under the membership lock,
+  gate it. `POST /api/memo-queues/{categoryId}/fire/{memoId}` (#4919) is the same press for one named
+  message: a batch of exactly that message through the same checks, refused with
+  `memo_queue_memo_not_ready` and the reason (held, already in a run, prerequisites, start time,
+  hand-back time) instead of taking another one, and a 404 for a message that is not in the
+  category (checked before the queue's limits). It is a route of its own so that a replica that
+  predates it answers 404 and starts nothing. The quota is checked again in the move to `sending`, under the membership lock,
   so two sends of one member cannot both pass it. The send runs on the scheduler's
   next tick (§3.7): wake and wait as a schedule does, reserve the durable Agent key
   `q_<delivery>`, move the delivery to `sending` with a conditional write on its state,

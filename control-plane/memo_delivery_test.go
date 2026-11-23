@@ -960,7 +960,7 @@ func TestMemoDeliveryReservationHoldsAcrossControlPlanes(t *testing.T) {
 			var aerr *apiError
 			err := st.MemoTx(context.Background(), mid, func(tx store.MemoTxOps) error {
 				var err error
-				_, aerr, err = memoReserveAndClaim(tx, q, -1, 0, false)
+				_, aerr, err = memoReserveAndClaim(tx, q, "", -1, 0, false)
 				return err
 			})
 			if err != nil {

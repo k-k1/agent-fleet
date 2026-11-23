@@ -9,6 +9,7 @@ import type { Memo, MemoCategory } from "../../types/memo.ts";
 
 let servedMemos: Memo[] = [];
 let memoListRejects = false;
+let memoListCalls = 0;
 let servedCats: MemoCategory[] = [];
 let servedQueues: unknown = { tenantEnabled: true, queues: [] };
 let queuesFail = false;
@@ -18,6 +19,7 @@ const memoRelease = vi.fn();
 const memoQueuePut = vi.fn();
 const memoQueueDelete = vi.fn();
 const memoQueueFire = vi.fn();
+const memoQueueFireOne = vi.fn();
 const memoCategoryUpdateMock = vi.fn(async (_id: string, _patch: unknown) => ({}));
 const memoQueueResume = vi.fn();
 const memoUpdateMock = vi.fn(async (_id: string, _patch: unknown) => ({}));
@@ -32,6 +34,7 @@ const memoQueueList = vi.fn(async () => {
 
 vi.mock("./api.ts", () => ({
   memoList: async () => {
+    memoListCalls++;
     if (memoListRejects) throw new Error("connection reset");
     return servedMemos;
   },
@@ -50,6 +53,7 @@ vi.mock("./api.ts", () => ({
   memoQueuePut: (id: string, body: unknown) => memoQueuePut(id, body),
   memoQueueDelete: (id: string) => memoQueueDelete(id),
   memoQueueFire: (id: string) => memoQueueFire(id),
+  memoQueueFireOne: (id: string, memoId: string) => memoQueueFireOne(id, memoId),
   memoQueueResume: (id: string) => memoQueueResume(id),
   memoQueueDeliveries: (id: string, openToo?: boolean, since?: string) => (openToo === undefined ? memoQueueDeliveries(id) : memoQueueDeliveries(id, openToo, since)),
   memoQueueDeliveryEnd: (id: string, did: string) => memoQueueDeliveryEnd(id, did),
@@ -183,11 +187,12 @@ beforeEach(() => {
   servedQueues = { tenantEnabled: true, queues: [aQueue()] };
   queuesFail = false;
   servedDeliveries = [];
-  for (const m of [memoCategoryUpdateMock, memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueDeliveryReturn, memoQueueList, memoStopChain, openSessionChat]) m.mockClear();
+  for (const m of [memoCategoryUpdateMock, memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueFireOne, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueDeliveryReturn, memoQueueList, memoStopChain, openSessionChat]) m.mockClear();
   memoRelease.mockResolvedValue({ released: [], stale: [] });
   memoQueuePut.mockResolvedValue(aQueue());
   memoQueueDelete.mockResolvedValue({ ok: true });
   memoQueueFire.mockResolvedValue({ id: "d1" });
+  memoQueueFireOne.mockResolvedValue({ id: "d1" });
   memoQueueResume.mockResolvedValue({});
   memoQueueDeliveryEnd.mockResolvedValue({});
   memoQueueDeliveryReturn.mockResolvedValue({});
@@ -2154,5 +2159,168 @@ describe("Stop chain in the memo menu", () => {
       await click(btn);
     }
     expect(memoStopChain).not.toHaveBeenCalled();
+  });
+});
+
+describe("Run now for one memo in the memo menu (#4919)", () => {
+  const rowMenuBtn = () => must(document.querySelector<HTMLElement>(".memo-row .memo-menu-btn"), "row menu button");
+  const runItem = () => document.querySelector<HTMLButtonElement>(".ui-menu .memo-menu-runone");
+  const waiting = (over: Partial<Memo> = {}) => aMemo({ id: "a", state: "pending", provenance: "member", ...over });
+  const open = async () => {
+    await render();
+    await click(rowMenuBtn());
+  };
+  const inAnHour = () => new Date(Date.now() + 3600_000).toISOString();
+
+  for (const lang of ["en", "ja"] as const) {
+    it(`starts only that memo (${lang})`, async () => {
+      setLocale(lang);
+      try {
+        servedMemos = [waiting()];
+        await open();
+        const item = must(runItem(), "run item");
+        expect(item.textContent).toContain(t("memo.run_one"));
+        expect(item.getAttribute("aria-disabled")).toBeNull();
+        await click(item);
+        expect(memoQueueFireOne).toHaveBeenCalledWith("c1", "a");
+        expect(memoQueueFire).not.toHaveBeenCalled();
+        expect(document.body.textContent).toContain(t("memo.d_fire_started"));
+        expect(document.querySelector(".ui-menu")).toBeNull();
+      } finally {
+        setLocale("en");
+      }
+    });
+  }
+
+  it("is absent in a category that is not auto-run, and on a memo that already ran", async () => {
+    servedCats = [aCat({})];
+    servedQueues = { tenantEnabled: true, queues: [] };
+    servedMemos = [waiting()];
+    await open();
+    expect(runItem()).toBeNull();
+    servedCats = [aCat({ queue: true })];
+    servedQueues = { tenantEnabled: true, queues: [aQueue()] };
+    servedMemos = [waiting({ state: "claimed" })];
+    await bump();
+    expect(runItem()).toBeNull();
+  });
+
+  const disabledFor = async (memo: Memo, why: string, queue: Record<string, unknown> = {}) => {
+    servedQueues = { tenantEnabled: true, queues: [aQueue(queue)] };
+    servedMemos = [memo];
+    await open();
+    const item = must(runItem(), "run item");
+    // Reachable by keyboard (not natively disabled), says why, and a press sends nothing.
+    expect(item.disabled).toBe(false);
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    expect(item.querySelector(".memo-cat-menu-why")?.textContent).toBe(why);
+    await click(item);
+    expect(memoQueueFireOne).not.toHaveBeenCalled();
+    expect(memoQueueFire).not.toHaveBeenCalled();
+  };
+
+  it("is disabled, with the reason, on a memo held for approval", async () => {
+    await disabledFor(waiting({ state: "held", provenance: "workspace" }), t("memo.run_one_held"));
+  });
+  it("is disabled while a prerequisite is not finished", async () => {
+    await disabledFor(
+      waiting({ after: ["x"], afterStatus: [{ id: "x", state: "waiting", reason: "running" }] }),
+      t("memo.run_one_prerequisites"),
+    );
+  });
+  it("is disabled until its start time", async () => {
+    const at = inAnHour();
+    await disabledFor(waiting({ startAfter: at }), t("memo.run_one_scheduled", { at: fmtDateTime(at) }));
+  });
+  it("is disabled until a hand-back's time", async () => {
+    const at = inAnHour();
+    await disabledFor(waiting({ notBefore: at }), t("memo.run_one_deferred", { at: fmtDateTime(at) }));
+  });
+  it("is disabled while the category has no free slot, with the category's own words", async () => {
+    await disabledFor(waiting(), t("memo.waiting_no_place"), { fireBlock: { reason: "no_place", detail: { by: "category" } } });
+  });
+  it("is enabled once a start time has passed", async () => {
+    servedMemos = [waiting({ startAfter: "2020-01-01T00:00:00Z" })];
+    await open();
+    expect(must(runItem(), "run item").getAttribute("aria-disabled")).toBeNull();
+  });
+  it("says a slot is taken when the Control Plane refuses for one, and opens the history", async () => {
+    servedMemos = [waiting()];
+    memoQueueFireOne.mockResolvedValueOnce({ error: { code: "memo_queue_no_slot", message: "every slot of this queue is taken (2 of 2)" } });
+    await open();
+    await click(must(runItem(), "run item"));
+    expect(dialog().querySelector(".memo-d-slots-full")).not.toBeNull();
+  });
+  it("shows the Control Plane's refusal of a memo that cannot run, and reads the list again", async () => {
+    servedMemos = [waiting()];
+    // The memo was held after the list was drawn: the refusal is the first the Console hears of it.
+    memoQueueFireOne.mockImplementationOnce(async () => {
+      servedMemos = [waiting({ state: "held", provenance: "workspace" })];
+      return { error: { code: "memo_queue_memo_not_ready", message: "x" } };
+    });
+    await open();
+    const reads = memoListCalls;
+    await click(must(runItem(), "run item"));
+    expect(document.body.textContent).toContain(t("err.memo_queue_memo_not_ready"));
+    // The list is read again, so the next menu shows what the memo is now.
+    expect(memoListCalls).toBeGreaterThan(reads);
+    await click(rowMenuBtn());
+    const item = must(runItem(), "run item after the refusal");
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    expect(item.textContent).toContain(t("memo.run_one_held"));
+  });
+
+  it("is unavailable while a press of the category is in flight, and available again after it", async () => {
+    servedMemos = [waiting({ id: "a" }), waiting({ id: "b", position: 1 })];
+    let finish: (v: unknown) => void = () => {};
+    memoQueueFireOne.mockReturnValueOnce(new Promise((r) => (finish = r)));
+    await render();
+    const rows = () => [...document.querySelectorAll<HTMLElement>(".memo-row .memo-menu-btn")];
+    await click(rows()[0]!);
+    await click(must(runItem(), "run item"));
+    expect(memoQueueFireOne).toHaveBeenCalledTimes(1);
+    // The menu of another memo of the same category, opened while the press runs.
+    await click(rows()[1]!);
+    const busy = must(runItem(), "run item while busy");
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
+    expect(busy.textContent).toContain(t("memo.run_one_busy"));
+    await click(busy);
+    expect(memoQueueFireOne).toHaveBeenCalledTimes(1);
+    // The category's own button is off too, and a press of it is not sent.
+    await act(async () => finish({ id: "d1" }));
+    await settle();
+    expect(must(runItem(), "run item after").getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("the category's Run now is unavailable while a press from a memo's menu is in flight", async () => {
+    servedMemos = [waiting({ id: "a" })];
+    let finish: (v: unknown) => void = () => {};
+    memoQueueFireOne.mockReturnValueOnce(new Promise((r) => (finish = r)));
+    await open();
+    await click(must(runItem(), "run item"));
+    expect(memoQueueFireOne).toHaveBeenCalledTimes(1);
+    const head = headMenuItem({ cls: "memo-cat-run" });
+    expect(head.getAttribute("aria-disabled")).toBe("true");
+    await click(head);
+    expect(memoQueueFire).not.toHaveBeenCalled();
+    await act(async () => finish({ id: "d1" }));
+    await settle();
+    expect(headMenuItem({ cls: "memo-cat-run" }).getAttribute("aria-disabled")).toBeNull();
+  });
+
+  it("a menu press does not start while the category's own Run now is in flight", async () => {
+    servedMemos = [waiting({ id: "a" })];
+    let finish: (v: unknown) => void = () => {};
+    memoQueueFire.mockReturnValueOnce(new Promise((r) => (finish = r)));
+    await render();
+    await click(headMenuItem({ cls: "memo-cat-run" }));
+    expect(memoQueueFire).toHaveBeenCalledTimes(1);
+    await click(rowMenuBtn());
+    const item = must(runItem(), "run item");
+    expect(item.getAttribute("aria-disabled")).toBe("true");
+    await click(item);
+    expect(memoQueueFireOne).not.toHaveBeenCalled();
+    await act(async () => finish({ id: "d1" }));
+    await settle();
   });
 });

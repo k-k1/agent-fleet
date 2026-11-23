@@ -651,7 +651,7 @@ func (r *memoQueueRunner) fireQueue(ctx context.Context, views map[string]*memoM
 				return nil
 			}
 		}
-		d, aerr, err := memoReserveAndClaim(tx, q.CategoryID, running, limit, true)
+		d, aerr, err := memoReserveAndClaim(tx, q.CategoryID, "", running, limit, true)
 		if err != nil {
 			return err
 		}

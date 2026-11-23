@@ -308,6 +308,14 @@ It is all or nothing, and it is refused once a result has been used. The history
 - A stopped workspace is started
 - It is refused when the category already has as many runs as "Sessions at the same time", when all your categories together have 4, when you are at your session limit, when the instruction is empty, or when the organisation has not allowed auto-run. The screen says which
 
+### Run one memo now
+
+To start one particular memo instead of the oldest ones, open the memo's menu (the **⋯** on its row, or right-click) and choose "**Run now**". It starts a session with that memo alone, whatever "Memos per session" says, and the memos waiting before it stay where they are. It works with "Run by itself" off, as the category's "Run now" does, and it shows the same messages, including the one that says every place is taken.
+
+- It is greyed out, with the reason under it, when the memo is held for your approval, when it waits for other memos to finish ("Waits for"), when its start time or a hand-back's time has not come, or when the category has no free place
+- It is offered only for waiting or held memos of an auto-run category
+- The Control Plane still decides when you press. A memo that cannot run is refused, never replaced by another one
+
 ### See the runs
 
 The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lists the runs of every auto-run category, one row per run and not one per working copy. Its head shows the title and the number of runs that are running or waiting for you, with "**Clear finished runs**" and a refresh button.

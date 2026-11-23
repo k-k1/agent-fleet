@@ -261,7 +261,19 @@ func memoQueueRepoDir(repo string) (string, bool) {
 // happens on the scheduler's next tick: a cold wake does not fit in a request. enabled gates
 // the automatic fires of a later step, not this press. An instruction is required.
 func (a memoAPI) fire(w http.ResponseWriter, r *http.Request, res *resolved) {
-	d, aerr := memoFireNow(r.Context(), a.mgr, res, r.PathValue("categoryId"))
+	a.fireTarget(w, r, res, "")
+}
+
+// fireOne (POST /api/memo-queues/{categoryId}/fire/{memoId}) is the same press for one named
+// message: it claims that message alone (see memoReserveAndClaim). It is a route of its own, not
+// a body on fire, because a Control Plane that predates it must answer 404 and start nothing: a
+// replica that ignored the body would claim the oldest messages instead and answer 202.
+func (a memoAPI) fireOne(w http.ResponseWriter, r *http.Request, res *resolved) {
+	a.fireTarget(w, r, res, r.PathValue("memoId"))
+}
+
+func (a memoAPI) fireTarget(w http.ResponseWriter, r *http.Request, res *resolved, only string) {
+	d, aerr := memoFireNow(r.Context(), a.mgr, res, r.PathValue("categoryId"), only)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
@@ -269,10 +281,11 @@ func (a memoAPI) fire(w http.ResponseWriter, r *http.Request, res *resolved) {
 	writeJSON(w, http.StatusAccepted, memoDeliveryToDTO(d))
 }
 
-// memoFireNow is the reservation and the claim. The running-session count of the quota is read
+// memoFireNow is the reservation and the claim. only, when set, is the one message the press is
+// for (see memoReserveAndClaim). The running-session count of the quota is read
 // before the transaction (an Agent call does not belong under the membership lock), and the
 // deliveries not yet sent are added to it inside, where they cannot change.
-func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID string) (store.MemoDelivery, *apiError) {
+func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID, only string) (store.MemoDelivery, *apiError) {
 	on, err := mgr.store.GetTenantMemoQueues(ctx, res.mv.TenantID)
 	if err != nil {
 		return store.MemoDelivery{}, internalErr(err)
@@ -292,7 +305,7 @@ func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID st
 	var out store.MemoDelivery
 	var refusal *apiError
 	err = mgr.store.MemoTx(ctx, res.mv.MembershipID, func(tx store.MemoTxOps) error {
-		d, aerr, err := memoReserveAndClaim(tx, categoryID, running, limit, false)
+		d, aerr, err := memoReserveAndClaim(tx, categoryID, only, running, limit, false)
 		if err != nil {
 			return err
 		}
@@ -306,10 +319,25 @@ func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID st
 	return out, refusal
 }
 
-// memoReserveAndClaim runs inside a MemoTx. auto marks a delivery the dispatcher fires by itself. running is the member's running metered sessions
+// The reasons a press for one message is refused with errCodeMemoQueueMemoNotReady. They are the
+// answer's text for an API client; the Console words the refusal from its own catalogue and reads
+// the list again, which then shows the memo's actual state.
+const (
+	memoNotReadyHeld          = "it is held and has to be released first"
+	memoNotReadyClaimed       = "it is already part of a run"
+	memoNotReadyPrerequisites = "its prerequisites are not finished"
+	memoNotReadyScheduled     = "its start time has not come"
+	memoNotReadyDeferred      = "it was handed back and waits for its time"
+)
+
+// memoReserveAndClaim runs inside a MemoTx. only, when set, makes the claim a batch of exactly that
+// message: it goes through every check a message of the oldest-first claim goes through, and one it
+// fails is refused with the reason (errCodeMemoQueueMemoNotReady), never replaced by another
+// message. A message that is not in this queue (or not this member's) is a 404.
+// auto marks a delivery the dispatcher fires by itself. running is the member's running metered sessions
 // (-1 when unknown, then the quota is not checked, as the Console's create does), limit the
 // max_sessions cap (0 = none).
-func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit int, auto bool) (store.MemoDelivery, *apiError, error) {
+func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, limit int, auto bool) (store.MemoDelivery, *apiError, error) {
 	none := store.MemoDelivery{}
 	c, ok, err := tx.GetCategory(categoryID)
 	if err != nil {
@@ -324,6 +352,17 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 	}
 	if !ok {
 		return none, &apiError{http.StatusNotFound, "not_found", "queue not found"}, nil
+	}
+	if only != "" {
+		// The target comes before every constraint of the queue: a message that is not here is a 404
+		// whatever the queue's slots and quota say, so a stale id never reads as "slots full".
+		target, found, err := tx.GetMemo(only)
+		if err != nil {
+			return none, nil, err
+		}
+		if !found || target.Repo != c.Repo || target.Category != c.Name {
+			return none, &apiError{http.StatusNotFound, "not_found", "message not found in this queue"}, nil
+		}
 	}
 	if strings.TrimSpace(q.Instruction) == "" {
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueNoInstruction, "a queue without an instruction cannot fire"}, nil
@@ -384,17 +423,44 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 	// and waits for its own run.
 	var batchRecipe memorecipe.Recipe
 	eligible := memoafter.EligibleIn(memoafter.TxLookup(tx, rows, time.Now()))
+	// A press for one message names it: the batch is that message alone, and where the oldest-first
+	// claim would skip it the press is refused with the reason instead.
+	limitBatch := q.Batch
+	if only != "" {
+		limitBatch = 1
+	}
+	notReady := func(why string) (store.MemoDelivery, *apiError, error) {
+		return none, &apiError{http.StatusConflict, errCodeMemoQueueMemoNotReady, "this message cannot run now: " + why}, nil
+	}
 	for _, m := range rows {
-		if len(batch) >= q.Batch {
+		if len(batch) >= limitBatch {
 			break
 		}
+		if only != "" && m.ID != only {
+			continue
+		}
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
+			if only != "" {
+				if m.State == store.MemoStateHeld {
+					return notReady(memoNotReadyHeld)
+				}
+				return notReady(memoNotReadyClaimed)
+			}
 			continue
 		}
 		// A message whose prerequisites are not all satisfied is skipped, a press included: it holds
 		// no slot and does not stop the messages behind it. A prerequisite in this same batch is
 		// pending, so not satisfied, and a dependent never rides with it.
 		if !eligible(m) {
+			if only != "" {
+				switch now := time.Now(); {
+				case memoafter.Deferred(m, now):
+					return notReady(memoNotReadyDeferred)
+				case memoafter.Scheduled(m, now):
+					return notReady(memoNotReadyScheduled)
+				}
+				return notReady(memoNotReadyPrerequisites)
+			}
 			continue
 		}
 		// A fire by itself leaves a reference where it is while the Agent cannot show one: the
@@ -415,6 +481,9 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 			if err := tx.WriteMemo(m); err != nil {
 				return none, nil, err
 			}
+			if only != "" {
+				return notReady(memoNotReadyHeld)
+			}
 			continue
 		}
 		// A recipe the run could not be created with (a route another agent does not take, after
@@ -422,6 +491,9 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID string, running, limit i
 		if why := memoRecipeEffectiveProblem(q, m); why != "" {
 			if err := memoHoldForRecipe(tx, m, why); err != nil {
 				return none, nil, err
+			}
+			if only != "" {
+				return notReady(memoNotReadyHeld)
 			}
 			continue
 		}

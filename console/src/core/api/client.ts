@@ -1517,6 +1517,12 @@ export const memoStopChain = (id: string): Promise<MemoWriteResult> =>
 export const memoTidyApply = (body: unknown): Promise<MemoWriteResult> => apiJSON("api/memo-tidy/apply", "POST", body);
 export const memoQueueFire = (categoryId: string): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/fire`, "POST", {});
+// The same press for one waiting memo, on a route of its own: a Control Plane that predates it
+// answers 404 and starts nothing, where a body on the plain route would be ignored and the oldest
+// memos started instead. 409 memo_queue_memo_not_ready when the memo cannot run now, 404 when it is
+// not in this category.
+export const memoQueueFireOne = (categoryId: string, memoId: string): Promise<MemoWriteResult> =>
+  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/fire/${encodeURIComponent(memoId)}`, "POST", {});
 // Lifts a pause: the Control Plane stopped starting runs by itself after two in a row failed at
 // their first turn. 204 without a body on success.
 export const memoQueueResume = (categoryId: string): Promise<MemoWriteResult> =>
