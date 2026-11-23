@@ -320,6 +320,27 @@ RUN set -eux; \
     rm -rf /tmp/bkt; \
     /usr/local/libexec/bkt --version
 
+# gitleaks (gitleaks/gitleaks): scans a repository's history or working tree for committed
+# credentials, so a session can check before it pushes. Only the binary is installed; nothing
+# runs it and no hook is placed in a member's repositories. The tarball must match the release's
+# own checksums file, or the build fails. GITLEAKS_VERSION must equal the version `ci.yml`'s
+# `secret-scan` job pins (TestGitleaksPinMatchesCI fails otherwise); bump both together
+# (docs/build/10 §10.4, credential leak detection).
+ARG GITLEAKS_VERSION=8.30.1
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    case "$arch" in amd64) glarch=x64 ;; arm64) glarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
+    base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"; \
+    asset="gitleaks_${GITLEAKS_VERSION}_linux_${glarch}.tar.gz"; \
+    mkdir /tmp/gitleaks; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${base}/${asset}" -o "/tmp/gitleaks/${asset}"; \
+    curl -fsSL --retry 5 --retry-delay 2 --retry-all-errors "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt" -o /tmp/gitleaks/checksums.txt; \
+    (cd /tmp/gitleaks && awk -v a="${asset}" '$2 == a { print; n++ } END { exit n != 1 }' checksums.txt >sum && sha256sum -c sum); \
+    tar -C /tmp/gitleaks -xzf "/tmp/gitleaks/${asset}" gitleaks; \
+    install -D -m 0755 /tmp/gitleaks/gitleaks /usr/local/bin/gitleaks; \
+    rm -rf /tmp/gitleaks; \
+    gitleaks version
+
 # Jira CLI (jira, ankitpokhrel/jira-cli): same shape as bkt, but built from source in the
 # jirabuild stage (see there for why). The real binary goes to /usr/local/libexec/jira and
 # /usr/local/bin/jira is the transparent-auth wrapper (jira-auth-wrapper.sh). Bump

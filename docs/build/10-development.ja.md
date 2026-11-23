@@ -647,6 +647,15 @@ opencode・copilot・cursor で、kiro（ログインが要る）と agy（ラ�
   本物が入っても気づけない。
 - 最初の全履歴監査（2026-08-01）は**本物の資格情報ゼロ**。コミットログを辿るのでなく、到達
   可能な全 blob を展開して走査する方法でも裏を取った。
+- **Workspace イメージにも同じスキャナを入れている**（`workspace/Dockerfile` の
+  `GITLEAKS_VERSION`。`/usr/local/bin/gitleaks` に置き、tarball はリリースのチェックサム
+  ファイルで検証する）。セッションが push 前に走査できるようにするためで、自動では何も走らせず、
+  利用者のリポジトリにフックも入れない。**版を上げるときは** `ci.yml` の `secret-scan` の
+  `VERSION` と `SHA256`、Dockerfile の `GITLEAKS_VERSION` を同じ変更で直す。2 つがずれると
+  `TestGitleaksPinMatchesCI`（`workspace/agent`）が落ちる。`cli-pin-bump.sh` の対象外
+  （あちらはエージェント CLI）で、`gh`・`bkt` と同じ扱い。イメージのスモーク
+  （`deploy/local/e2e-smoke.sh`）が固定した版を確かめ、ガイドのページは
+  `python3 scripts/workspace_image.py` で作り直す。
 
 ## 10.5 コミットとブランチ
 
