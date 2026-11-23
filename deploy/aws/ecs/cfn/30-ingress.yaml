@@ -416,6 +416,23 @@ Parameters:
     Default: "off"
     AllowedValues: ["off", "on"]
     Description: "on = AF_REMOTE_ENGINE_TOKEN from SSM remote-engine-token. PARAMETERS.md"
+  WebPush:
+    Type: String
+    Default: "off"
+    AllowedValues: ["off", "on"]
+    Description: "on = AF_WEB_PUSH=true, with the VAPID key from SSM web-push-vapid-key. PARAMETERS.md"
+  WebPushSubject:
+    Type: String
+    Default: ""
+    Description: "AF_WEB_PUSH_SUBJECT (mailto: or https:); read only with WebPush=on. PARAMETERS.md"
+  WebPushEndpointHosts:
+    Type: String
+    Default: ""
+    Description: "AF_WEB_PUSH_ENDPOINT_HOSTS; read only with WebPush=on; empty = default. PARAMETERS.md"
+  NotificationDrainInterval:
+    Type: String
+    Default: ""
+    Description: "AF_NOTIFICATION_DRAIN_INTERVAL; read only with WebPush=on; empty = default. PARAMETERS.md"
 
 Rules:
   McpOAuthNeedsMcp:
@@ -429,6 +446,12 @@ Rules:
     Assertions:
       - Assert: !Not [!Equals [!Ref CustodianKmsKeyArn, ""]]
         AssertDescription: WorkspaceDekRandom=on needs CustodianKmsKeyArn (AF_KEY_CUSTODIAN=kms).
+  # The CP runs with Web Push off (and a warning) when the contact is empty; fail the deploy instead.
+  WebPushNeedsSubject:
+    RuleCondition: !Equals [!Ref WebPush, "on"]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref WebPushSubject, ""]]
+        AssertDescription: WebPush=on needs WebPushSubject (AF_WEB_PUSH_SUBJECT).
 
 Conditions:
   HasWorkspaceSubnets: !Not [!Equals [!Ref WorkspaceSubnets, ""]]
@@ -483,6 +506,10 @@ Conditions:
   GithubLoginSecretOn: !Equals [!Ref GithubLoginSecret, "on"]
   ComfyApiKeyOn: !Equals [!Ref ComfyApiKey, "on"]
   RemoteEngineTokenOn: !Equals [!Ref RemoteEngineToken, "on"]
+  # Web Push: the optional knobs mean something only while the switch is on (the CP ignores them otherwise).
+  WebPushOn: !Equals [!Ref WebPush, "on"]
+  HasWebPushEndpointHosts: !And [!Condition WebPushOn, !Not [!Equals [!Ref WebPushEndpointHosts, ""]]]
+  HasNotificationDrainInterval: !And [!Condition WebPushOn, !Not [!Equals [!Ref NotificationDrainInterval, ""]]]
   HasCpAlarms: !Not [!Equals [!Ref CpAlarmEmail, ""]]
   HasAlbLogs: !Not [!Equals [!Ref AlbAccessLogBucket, ""]]
   HasWaf: !Not [!Equals [!Ref WafRateLimitPer5Min, 0]]
@@ -944,6 +971,10 @@ Resources:
             - !If [HasComfyUrl, {Name: AF_COMFY_URL, Value: !Ref ComfyUrl}, !Ref "AWS::NoValue"]
             - !If [HasRemoteEngineUrl, {Name: AF_REMOTE_ENGINE_URL, Value: !Ref RemoteEngineUrl}, !Ref "AWS::NoValue"]
             - !If [HasRemoteEngineKeys, {Name: AF_REMOTE_ENGINE_KEYS, Value: !Ref RemoteEngineKeys}, !Ref "AWS::NoValue"]
+            - !If [WebPushOn, {Name: AF_WEB_PUSH, Value: "true"}, !Ref "AWS::NoValue"]
+            - !If [WebPushOn, {Name: AF_WEB_PUSH_SUBJECT, Value: !Ref WebPushSubject}, !Ref "AWS::NoValue"]
+            - !If [HasWebPushEndpointHosts, {Name: AF_WEB_PUSH_ENDPOINT_HOSTS, Value: !Ref WebPushEndpointHosts}, !Ref "AWS::NoValue"]
+            - !If [HasNotificationDrainInterval, {Name: AF_NOTIFICATION_DRAIN_INTERVAL, Value: !Ref NotificationDrainInterval}, !Ref "AWS::NoValue"]
             # No BITBUCKET_OAUTH_* / workspace GITHUB_OAUTH_CLIENT_ID (per-tenant rows). AF_RUNTIME and AF_ECS_*: PARAMETERS.md.
             - {Name: AF_RUNTIME, Value: !Ref WsRuntime}
             - {Name: AF_ECS_REGION, Value: !Ref "AWS::Region"}
@@ -1032,6 +1063,11 @@ Resources:
               - RemoteEngineTokenOn
               - Name: AF_REMOTE_ENGINE_TOKEN
                 ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/remote-engine-token"
+              - !Ref "AWS::NoValue"
+            - !If
+              - WebPushOn
+              - Name: AF_WEB_PUSH_VAPID_PRIVATE_KEY
+                ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/web-push-vapid-key"
               - !Ref "AWS::NoValue"
             - Name: AF_COOKIE_SECRET
               ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/cookie-secret"

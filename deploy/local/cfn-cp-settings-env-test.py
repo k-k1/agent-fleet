@@ -25,6 +25,7 @@ exit 0 pass, 1 a check failed, 2 the check could not run.
 import copy
 import fnmatch
 import importlib.util
+import itertools
 import json
 import os
 import sys
@@ -60,8 +61,15 @@ SECRETS = {
     "GithubLoginSecret": ("AF_GITHUB_LOGIN_CLIENT_SECRET", "github-login-client-secret"),
     "ComfyApiKey": ("AF_COMFY_API_KEY", "comfy-api-key"),
     "RemoteEngineToken": ("AF_REMOTE_ENGINE_TOKEN", "remote-engine-token"),
+    "WebPush": ("AF_WEB_PUSH_VAPID_PRIVATE_KEY", "web-push-vapid-key"),
 }
-NEW_VARS = set(PLAIN.values()) | {v for v, _ in SECRETS.values()}
+# Parameters that reach the CP only while WebPush=on (#4883); AF_WEB_PUSH itself is set by the switch.
+GATED = {
+    "WebPushSubject": "AF_WEB_PUSH_SUBJECT",
+    "WebPushEndpointHosts": "AF_WEB_PUSH_ENDPOINT_HOSTS",
+    "NotificationDrainInterval": "AF_NOTIFICATION_DRAIN_INTERVAL",
+}
+NEW_VARS = set(PLAIN.values()) | {v for v, _ in SECRETS.values()} | set(GATED.values()) | {"AF_WEB_PUSH"}
 # 30-ingress is deployed after 20-platform, whose bucket af_cfn_deploy hands anything over 51,200
 # bytes through (the S3 limit is 1 MB), so the budget is not the inline limit. 64 KiB leaves
 # ~14 KiB (about thirty parameters) before the next deliberate edit of this constant.
@@ -89,7 +97,8 @@ def secrets(ev):
 
 
 def sub_text(x):
-    return x.get("!Sub") if isinstance(x, dict) else x
+    """The text of a `!Sub`; None when x is not one (an unexpanded ARN would not resolve ${...})."""
+    return x.get("!Sub") if isinstance(x, dict) else None
 
 
 def exec_role_patterns():
@@ -141,7 +150,7 @@ def check(tpl, size, patterns):
     for n, (var, leaf) in SECRETS.items():
         # The sibling non-secret parameter set, the switch off: no Secrets entry.
         sib = {"GithubLoginSecret": "GithubLoginClientId", "ComfyApiKey": "ComfyUrl",
-               "RemoteEngineToken": "RemoteEngineUrl"}[n]
+               "RemoteEngineToken": "RemoteEngineUrl", "WebPush": "WebPushSubject"}[n]
         ev = dek.Ev(tpl, {sib: "https://engine.example.com"})
         if var in secrets(ev):
             fails.append("%s got a Secrets entry from %s alone, without %s=on" % (var, sib, n))
@@ -158,6 +167,57 @@ def check(tpl, size, patterns):
         full = P["SsmPrefix"]["Default"] + "/" + leaf
         if not any(fnmatch.fnmatchcase(full, pat) for pat in patterns):
             fails.append("%s is outside the ExecRole ssm-read grant %s" % (full, patterns))
+    # Web Push: the knobs do nothing while the switch is off (neither Environment nor Secrets);
+    # with it on, each arrives verbatim on its own, the switch sets AF_WEB_PUSH=true, and an
+    # empty contact is refused at deploy time (never with the switch off).
+    for n in GATED:
+        if (P.get(n) or {}).get("Default") != "" or "AllowedValues" in P[n]:
+            fails.append("%s must default to empty: %r" % (n, P.get(n)))
+    contact = {"WebPushSubject": "mailto:a@example.com"}
+    gated_vars = set(GATED.values()) | {"AF_WEB_PUSH"}
+    key_var = SECRETS["WebPush"][0]
+    want_arn = "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${SsmPrefix}/web-push-vapid-key"
+    names = sorted(GATED)
+    # Every subset of the knobs, switch off and on: Environment AND Secrets each time. With the
+    # switch off nothing of Web Push arrives, whatever is set; with it on, exactly the set ones do.
+    for switch in ("off", "on"):
+        for r in range(len(names) + 1):
+            for given in itertools.combinations(names, r):
+                params = {"WebPush": switch}
+                params.update({n: "x-" + n for n in given})
+                ev = dek.Ev(tpl, params)
+                # Only "on without a contact" is refused, whatever else is set.
+                refused = switch == "on" and "WebPushSubject" not in given
+                if ev.rules_ok() == refused:
+                    fails.append("WebPush=%s %s: the Rule %s it" % (switch, list(given), "allows" if refused else "refuses"))
+                if refused:
+                    continue
+                env, sec = ev.cp_env_names(), secrets(ev)
+                tag = "WebPush=%s %s" % (switch, list(given))
+                if key_var in env:
+                    fails.append("%s: the key %s is in plain Environment" % (tag, key_var))
+                if switch == "off":
+                    if (set(env) | set(sec)) & (gated_vars | {key_var}):
+                        fails.append("%s reaches the CP: %s" % (tag, sorted((set(env) | set(sec)) & (gated_vars | {key_var}))))
+                    continue
+                if env.get("AF_WEB_PUSH") != "true":
+                    fails.append("%s: AF_WEB_PUSH is %r, want 'true'" % (tag, env.get("AF_WEB_PUSH")))
+                for n, var in GATED.items():
+                    if (var in env) != (n in given):
+                        fails.append("%s: %s present=%s" % (tag, var, var in env))
+                    elif var in env and env[var] != {"!Ref": n} and ev.val(env[var]) != "x-" + n:
+                        fails.append("%s: %s does not arrive verbatim in %s: %r" % (tag, n, var, env[var]))
+                if sub_text(sec.get(key_var)) != want_arn:
+                    fails.append("%s: the key is %r" % (tag, sec.get(key_var)))
+                if set(sec) - {key_var, "AF_DB_PASSWORD", "AF_COOKIE_SECRET", "AF_MASTER_KEY"}:
+                    fails.append("%s pulled in other secrets: %s" % (tag, sorted(sec)))
+    if dek.Ev(tpl, {"WebPush": "on"}).rules_ok():
+        fails.append("WebPush=on with an empty WebPushSubject is not refused by a Rule")
+    if not dek.Ev(tpl, {"WebPush": "on", "WebPushSubject": "mailto:a@example.com"}).rules_ok():
+        fails.append("WebPush=on with a subject is refused by a Rule")
+    for params in ({}, {"WebPush": "off"}, {"WebPush": "off", "WebPushSubject": ""}, {"ImageTag": "1.2.3"}):
+        if not dek.Ev(tpl, params).rules_ok():
+            fails.append("a stack without WebPush=on (%r) is refused by a Rule: an empty contact must be fine" % params)
     # GitHub sign-in secrets: the dedicated App replaces the legacy secret (injecting both would
     # need both in SSM and stop the task when only one exists); the legacy one is unchanged.
     for params, legacy, login in (({}, False, False),
@@ -214,6 +274,51 @@ def main():
     def default_on(t):
         t["Parameters"]["ComfyApiKey"]["Default"] = "on"
 
+    def gated_without_switch(t):
+        t["Conditions"]["HasWebPushEndpointHosts"] = {"!Not": [{"!Equals": [{"!Ref": "WebPushEndpointHosts"}, ""]}]}
+
+    def push_always_on(t):
+        t["Conditions"]["WebPushOn"] = {"!Equals": ["a", "a"]}
+
+    def rule_always(t):
+        t["Rules"]["WebPushNeedsSubject"].pop("RuleCondition")
+
+    def endpoint_hosts_needs_drain(t):
+        t["Conditions"]["HasWebPushEndpointHosts"] = {"!And": [
+            {"!Condition": "HasNotificationDrainInterval"}, {"!Condition": "WebPushOn"},
+            {"!Not": [{"!Equals": [{"!Ref": "WebPushEndpointHosts"}, ""]}]}]}
+
+    def key_for_hosts_alone(t):
+        # Only the Secrets entry gets the wider condition; the Environment side stays correct.
+        t["Conditions"]["WebPushKeyOn"] = {"!Or": [
+            {"!Equals": [{"!Ref": "WebPush"}, "on"]},
+            {"!Not": [{"!Equals": [{"!Ref": "WebPushEndpointHosts"}, ""]}]}]}
+        for e in sec(t):
+            if "!If" in e and e["!If"][0] == "WebPushOn":
+                e["!If"][0] = "WebPushKeyOn"
+
+    def hosts_with_both_knobs_off(t):
+        t["Conditions"]["HasWebPushEndpointHosts"] = {"!And": [
+            {"!Not": [{"!Equals": [{"!Ref": "WebPushEndpointHosts"}, ""]}]},
+            {"!Not": [{"!Equals": [{"!Ref": "NotificationDrainInterval"}, ""]}]}]}
+
+    def key_in_env_with_hosts(t):
+        t["Conditions"]["HasWebPushEndpointHostsOn"] = {"!Condition": "HasWebPushEndpointHosts"}
+        env(t).append({"!If": ["HasWebPushEndpointHostsOn", {"Name": "AF_WEB_PUSH_VAPID_PRIVATE_KEY", "Value": "x"}, {"!Ref": "AWS::NoValue"}]})
+
+    def key_unexpanded(t):
+        for e in sec(t):
+            if "!If" in e and e["!If"][0] == "WebPushOn":
+                e["!If"][1]["ValueFrom"] = e["!If"][1]["ValueFrom"]["!Sub"]
+
+    def knob_stands_in_for_contact(t):
+        t["Rules"]["WebPushNeedsSubject"]["Assertions"][0]["Assert"] = {"!Or": [
+            {"!Not": [{"!Equals": [{"!Ref": "WebPushSubject"}, ""]}]},
+            {"!Not": [{"!Equals": [{"!Ref": "WebPushEndpointHosts"}, ""]}]}]}
+
+    def no_subject_rule(t):
+        t["Rules"].pop("WebPushNeedsSubject")
+
     def ws_env(t):
         env(t).append({"Name": "WS_ENV", "Value": "A=b"})
 
@@ -229,6 +334,16 @@ def main():
         "secret outside the ExecRole grant": wrong_leaf,
         "switch defaults on": default_on,
         "WS_ENV exposed": ws_env,
+        "Web Push knob set while the switch is off": gated_without_switch,
+        "Web Push always on": push_always_on,
+        "Web Push without a contact is allowed": no_subject_rule,
+        "a knob stands in for the contact in the Rule": knob_stands_in_for_contact,
+        "contact rule applies with the switch off": rule_always,
+        "endpoint hosts dropped without a drain interval": endpoint_hosts_needs_drain,
+        "key injected for a knob alone": key_for_hosts_alone,
+        "both knobs set while the switch is off reach the CP": hosts_with_both_knobs_off,
+        "key in plain Environment beside a knob": key_in_env_with_hosts,
+        "key ARN left unexpanded": key_unexpanded,
     }
     for name, m in controls.items():
         t = copy.deepcopy(tpl)
