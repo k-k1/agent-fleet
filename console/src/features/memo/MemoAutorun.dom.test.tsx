@@ -1345,6 +1345,29 @@ describe("the run history of a run that is still open", () => {
     expect(row.textContent).not.toContain(t("memo.d_overdue"));
   });
 
+  it.each([
+    ["done", "memo.d_answer_done", false],
+    ["partial", "memo.d_answer_partial", true],
+    ["other", "memo.d_answer_other", true],
+    ["unknown", "memo.d_answer_unknown", true],
+    ["a-class-from-a-newer-cp", "memo.d_answer_plain", true],
+  ] as const)("shows the run's last answer head with its class %s (#4876)", async (answerClass, key, open) => {
+    const head = answerClass === "unknown" ? "" : "Partial: #4876 part 2, next part queued";
+    const row = await rowText({ state: "closed", outcome: "clean", answer: head, answerClass });
+    const el = must(row.querySelector<HTMLElement>(".memo-d-answer"), "answer");
+    expect(el.textContent).toBe(t(key) + head);
+    expect(el.querySelector(".memo-d-answer-head")?.textContent ?? "").toBe(head);
+    expect(el.classList.contains("memo-d-answer--open")).toBe(open);
+    expect(el.title).toContain(t("memo.d_answer_title"));
+  });
+
+  it("says nothing of a last answer before it was read", async () => {
+    const row = await rowText({ answer: "", answerClass: "" });
+    expect(row.querySelector(".memo-d-answer")).toBeNull();
+    const old = await rowText({});
+    expect(old.querySelector(".memo-d-answer")).toBeNull();
+  });
+
   it("shows the start in the Console's local form, never the raw timestamp (#4208)", async () => {
     const row = await rowText({});
     const at = row.querySelector(".memo-d-at")!.textContent!;
