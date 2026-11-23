@@ -233,6 +233,18 @@ export interface MemoQueue {
    *  prerequisites, deferred or no_place. Absent when a press would start a run, and from a
    *  Control Plane that does not send it; the claim stays the authority. */
   fireBlock?: MemoQueueWaiting;
+  /** The last read of the repository's .agent-fleet/autorun.yaml against these settings (#4881).
+   *  Absent when it was never read, or was read against other settings or another name. */
+  repoCheck?: MemoRepoCheck;
+}
+
+/** What a read of the repository's settings file found: differs (diffs settings differ), same,
+ *  invalid (the file or the category's entry has errors) or absent (no file, or no entry). */
+export interface MemoRepoCheck {
+  state: "differs" | "same" | "invalid" | "absent";
+  commit: string;
+  diffs: number;
+  checkedAt: string;
 }
 
 /** The reasons the Control Plane gives, in the order it checks them (the first that holds). */

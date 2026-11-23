@@ -617,6 +617,13 @@ func main() {
 		logSchedulerFirerNote(firer)
 		log.Printf("scheduler: enabled (interval=%s settle=%s wake_timeout=%s jitter=%s)", iv, settle, ready, scheduleJitterMax)
 	}
+	// AF_MEMO_QUEUE_REPO_RECHECK reads each enabled queue's repository settings file again on this
+	// interval, in running workspaces only, so the Console can say the file differs (#4881). Off
+	// (0) by default: every read fetches origin's default branch in the member's workspace.
+	if every := intervalOff(os.Getenv("AF_MEMO_QUEUE_REPO_RECHECK"), 0); every > 0 && mgr.memoRepoSettings {
+		go (&memoRepoRechecker{mgr: mgr, every: every, now: time.Now}).run(context.Background())
+		log.Printf("memo queue repo settings: re-read every %s", every)
+	}
 
 	// Login providers (docs/log/61 §61.6): Google (historical env names) plus every id
 	// listed in AF_OIDC_PROVIDERS. A provider with incomplete config is dropped

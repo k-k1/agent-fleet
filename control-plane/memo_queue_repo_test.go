@@ -26,6 +26,20 @@ type fakeAutorunAgent struct {
 	// onServe runs before each answer, outside the lock: a test changes state while the
 	// Control Plane waits for the workspace.
 	onServe func()
+	// instr answers GET .../autorun-file/instruction by path: a content, or an Agent error code
+	// written as "!code" (status 422, or 409 for commit_missing). A path it does not hold is
+	// found=false.
+	instr map[string]string
+}
+
+// instruction sets what the fake Agent's instruction route answers for p.
+func (a *fakeAutorunAgent) instruction(p, content string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.instr == nil {
+		a.instr = map[string]string{}
+	}
+	a.instr[p] = content
 }
 
 func (a *fakeAutorunAgent) answer(status int, body string) {
@@ -67,6 +81,20 @@ func repoEnv(t *testing.T, state string) (*inboxEnv, *fakeAutorunAgent) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/autorun-file/instruction") {
+			p, commit := r.URL.Query().Get("path"), r.URL.Query().Get("commit")
+			content, found := a.instr[p]
+			if code, isErr := strings.CutPrefix(content, "!"); found && isErr {
+				status := http.StatusUnprocessableEntity
+				if code == "commit_missing" {
+					status = http.StatusConflict
+				}
+				agentErr(w, status, code)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(agentAutorunInstruction{Path: p, Commit: commit, Found: found, Content: content})
+			return
+		}
 		w.WriteHeader(a.status)
 		_, _ = w.Write([]byte(a.body))
 	}))
@@ -258,10 +286,6 @@ func TestMemoRepoSettingsFileAbsentOrWithoutTheCategory(t *testing.T) {
 	if _, out = e.repoSettings(id); !out.Found || out.Entry || len(out.Diffs) != 0 || len(out.Errors) != 0 {
 		t.Fatalf("no entry: %+v", out)
 	}
-	a.file("version: 1\ncategories:\n  rounds:\n    instruction_file: .agent-fleet/rounds.md\n")
-	if _, out = e.repoSettings(id); len(out.Warnings) != 1 || out.Warnings[0].Key != "instruction_file" || len(out.Diffs) != 0 {
-		t.Fatalf("instruction_file: %+v", out)
-	}
 }
 
 func TestMemoRepoSettingsRefusals(t *testing.T) {
@@ -342,7 +366,7 @@ func TestMemoRepoSettingsNeedsARunningWorkspace(t *testing.T) {
 	}
 }
 
-// Every key the file may hold is compared, except instruction_file, which is not read yet.
+// Every key the file may hold is compared, except instruction_file, which is read into instruction.
 func TestMemoRepoFieldsCoverTheFileKeys(t *testing.T) {
 	have := map[string]bool{}
 	for _, f := range memoRepoFields {

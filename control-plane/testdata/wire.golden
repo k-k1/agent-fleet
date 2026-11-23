@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 667
+# count: 675
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -353,6 +353,10 @@ memoQueueDTO.paused bool
 memoQueueDTO.pausedAt string
 memoQueueDTO.pausedReason string
 memoQueueDTO.repo string
+memoQueueDTO.repoCheck.checkedAt string
+memoQueueDTO.repoCheck.commit string
+memoQueueDTO.repoCheck.diffs number
+memoQueueDTO.repoCheck.state string
 memoQueueDTO.route string
 memoQueueDTO.spendCapUsd number
 memoQueueDTO.tidy bool
@@ -404,6 +408,10 @@ memoQueuesWire.queues[].paused bool
 memoQueuesWire.queues[].pausedAt string
 memoQueuesWire.queues[].pausedReason string
 memoQueuesWire.queues[].repo string
+memoQueuesWire.queues[].repoCheck.checkedAt string
+memoQueuesWire.queues[].repoCheck.commit string
+memoQueuesWire.queues[].repoCheck.diffs number
+memoQueuesWire.queues[].repoCheck.state string
 memoQueuesWire.queues[].route string
 memoQueuesWire.queues[].spendCapUsd number
 memoQueuesWire.queues[].tidy bool

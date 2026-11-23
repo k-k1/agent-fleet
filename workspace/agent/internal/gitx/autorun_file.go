@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os/exec"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -72,6 +73,82 @@ func HandleAutorunFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, f)
+}
+
+// AutorunInstructionMaxBytes bounds a category's instruction file: the Control Plane's own bound
+// on a queue's instruction (memoQueueInstructionMax), which refuses anything longer anyway.
+const AutorunInstructionMaxBytes = 16 << 10
+
+// AutorunInstruction is GET /repos/{name}/autorun-file/instruction: the file a category's
+// instruction_file names, as the commit the settings file was read from holds it. Found is false
+// when that commit has no such file.
+type AutorunInstruction struct {
+	Path    string `json:"path"`
+	Commit  string `json:"commit"`
+	Found   bool   `json:"found"`
+	Content string `json:"content"`
+}
+
+// HandleAutorunInstruction reads ?path= from ?commit=, which must be a commit the clone already
+// holds: the one HandleAutorunFile answered, so the instruction comes from the same commit as the
+// settings beside it. Nothing is fetched and no ref is read, so a working branch or the working
+// tree can never stand in for it.
+func HandleAutorunInstruction(w http.ResponseWriter, r *http.Request) {
+	dir, ok := RepoDirFromPath(w, r)
+	if !ok {
+		return
+	}
+	sha, p := r.URL.Query().Get("commit"), r.URL.Query().Get("path")
+	if !autorunSHARe.MatchString(sha) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_commit", "commit must be a full commit id")
+		return
+	}
+	if !autorunRepoPath(p) {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_path", "path must be a clean relative path inside the repository")
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), autorunWait)
+	defer cancel()
+	out := AutorunInstruction{Path: p, Commit: sha}
+	code := ""
+	if _, err := autorunGit(ctx, dir, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		code = "commit_missing"
+	} else {
+		out.Content, out.Found, code = readAutorunBlob(ctx, dir, sha, p, AutorunInstructionMaxBytes)
+	}
+	if code != "" && ctx.Err() != nil {
+		code = "timeout"
+	}
+	if code != "" {
+		log.Printf("autorun instruction: %s: %s", r.PathValue("name"), code)
+		status := http.StatusBadGateway
+		switch code {
+		case "file_too_large", "file_not_regular", "file_not_utf8":
+			status = http.StatusUnprocessableEntity
+		case "commit_missing":
+			status = http.StatusConflict
+		}
+		httpx.WriteErr(w, status, code, autorunInstructionErrText[code])
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+var autorunInstructionErrText = map[string]string{
+	"commit_missing":   "the working copy does not hold that commit; read the settings file again",
+	"read_failed":      "the instruction file could not be read from the commit",
+	"timeout":          "reading the instruction file took too long",
+	"file_not_regular": "the instruction file is not a regular file",
+	"file_too_large":   "the instruction file is larger than " + strconv.Itoa(AutorunInstructionMaxBytes) + " bytes",
+	"file_not_utf8":    "the instruction file is not UTF-8 text",
+}
+
+// autorunRepoPath accepts what the Control Plane's parser accepts for instruction_file: a clean
+// relative path with / as the separator that stays inside the repository. git would read a
+// leading "-" or a pathspec's magic otherwise, and "--" plus the literal checks keep both out.
+func autorunRepoPath(p string) bool {
+	return p != "" && p != "." && p != ".." && !strings.HasPrefix(p, "/") && !strings.HasPrefix(p, "../") &&
+		!strings.Contains(p, "\\") && !strings.ContainsRune(p, 0) && path.Clean(p) == p
 }
 
 var autorunErrText = map[string]string{
@@ -158,42 +235,53 @@ func readAutorunFile(ctx context.Context, dir string) (AutorunFile, string) {
 	if _, err := autorunGit(ctx, dir, "cat-file", "-e", sha+"^{commit}"); err != nil {
 		return fail("origin_moved")
 	}
-	// ls-tree names the entry's mode: a symbolic link would hand back its target's path as the
-	// content, and a submodule or a directory has none.
-	ls, err := autorunGit(ctx, dir, "ls-tree", "--full-tree", sha, "--", AutorunFilePath)
+	content, found, code := readAutorunBlob(ctx, dir, sha, AutorunFilePath, AutorunFileMaxBytes)
+	if code != "" {
+		return fail(code)
+	}
+	out.Found, out.Content = found, content
+	return out, ""
+}
+
+// readAutorunBlob reads one file of a commit the clone holds. found is false when the commit has
+// no entry at p. ls-tree names the entry's mode: a symbolic link would hand back its target's
+// path as the content, and a submodule or a directory has none.
+func readAutorunBlob(ctx context.Context, dir, sha, p string, max int) (content string, found bool, code string) {
+	ls, err := autorunGit(ctx, dir, "ls-tree", "-z", "--full-tree", sha, "--", p)
 	if err != nil {
-		return fail("read_failed")
+		return "", false, "read_failed"
 	}
 	if len(ls) == 0 {
-		return out, ""
+		return "", false, ""
 	}
-	meta, _, _ := strings.Cut(string(ls), "\t")
+	meta, name, _ := strings.Cut(strings.TrimSuffix(string(ls), "\x00"), "\t")
 	parts := strings.Fields(meta)
-	if len(parts) != 3 || parts[1] != "blob" || (parts[0] != "100644" && parts[0] != "100755") {
-		return fail("file_not_regular")
+	// -z leaves the name unquoted, so it is compared as it is: ls-tree matches a directory's
+	// entry when p names one, which is no file either.
+	if name != p || len(parts) != 3 || parts[1] != "blob" || (parts[0] != "100644" && parts[0] != "100755") {
+		return "", false, "file_not_regular"
 	}
 	oid := parts[2]
 	sz, err := autorunGit(ctx, dir, "cat-file", "-s", oid)
 	if err != nil {
-		return fail("read_failed")
+		return "", false, "read_failed"
 	}
-	if n, err := strconv.Atoi(strings.TrimSpace(string(sz))); err != nil || n > AutorunFileMaxBytes {
-		return fail("file_too_large")
+	if n, err := strconv.Atoi(strings.TrimSpace(string(sz))); err != nil || n > max {
+		return "", false, "file_too_large"
 	}
 	body, err := autorunGit(ctx, dir, "cat-file", "blob", oid)
 	if err != nil {
-		return fail("read_failed")
+		return "", false, "read_failed"
 	}
-	if len(body) > AutorunFileMaxBytes {
-		return fail("file_too_large")
+	if len(body) > max {
+		return "", false, "file_too_large"
 	}
 	// JSON would carry a byte that is not UTF-8 as U+FFFD, and the Control Plane would compare
 	// text the commit does not hold.
 	if !utf8.Valid(body) {
-		return fail("file_not_utf8")
+		return "", false, "file_not_utf8"
 	}
-	out.Found, out.Content = true, string(body)
-	return out, ""
+	return string(body), true, ""
 }
 
 // remoteDefaultHead asks origin which branch its HEAD names and the commit it points at.

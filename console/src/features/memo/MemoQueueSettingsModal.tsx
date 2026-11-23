@@ -228,6 +228,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             categoryId={categoryId}
             categoryName={categoryName}
             hasQueue={!!queue}
+            lastCheck={queue?.repoCheck}
             blocked={blocked || busy}
             dirty={dirty}
             onBusy={setRepoBusy}

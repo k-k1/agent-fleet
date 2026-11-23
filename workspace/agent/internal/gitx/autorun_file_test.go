@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -364,5 +365,94 @@ func TestAutorunFileWithoutOrigin(t *testing.T) {
 	gitAt(t, dir, "remote", "remove", "origin")
 	if code, _, body := getAutorunFile(t); code != 502 || !strings.Contains(body, "no_origin") || strings.Contains(body, "fatal") {
 		t.Fatalf("status %d: %s", code, body)
+	}
+}
+
+func getAutorunInstruction(t *testing.T, commit, p string) (int, AutorunInstruction, string) {
+	t.Helper()
+	q := url.Values{"commit": {commit}, "path": {p}}
+	req := httptest.NewRequest("GET", "/repos/app/autorun-file/instruction?"+q.Encode(), nil)
+	req.SetPathValue("name", "app")
+	rec := httptest.NewRecorder()
+	HandleAutorunInstruction(rec, req)
+	var f AutorunInstruction
+	_ = json.Unmarshal(rec.Body.Bytes(), &f)
+	return rec.Code, f, rec.Body.String()
+}
+
+// The instruction comes from the commit the settings file was read at, not from the working
+// tree, a working branch or a later commit of the default branch.
+func TestAutorunInstructionReadsTheSettingsCommit(t *testing.T) {
+	home, seed, dir := autorunClone(t, "version: 1\n")
+	writeFile(t, filepath.Join(seed, "docs/run.md"), "Run it.\n")
+	writeFile(t, filepath.Join(seed, "docs/指示.md"), "日本語\n")
+	gitAt(t, seed, "add", "docs")
+	gitAt(t, seed, "commit", "-m", "instruction")
+	gitAt(t, seed, "push", filepath.Join(home, "origin.git"), "main")
+	code, f, body := getAutorunFile(t)
+	if code != 200 {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	// After the read: origin moves on, and a run edits the file on its own branch and in the tree.
+	writeFile(t, filepath.Join(seed, "docs/run.md"), "Later.\n")
+	gitAt(t, seed, "commit", "-am", "later")
+	gitAt(t, seed, "push", filepath.Join(home, "origin.git"), "main")
+	gitAt(t, dir, "fetch", "origin")
+	gitAt(t, dir, "checkout", "-b", "work", "origin/main")
+	writeFile(t, filepath.Join(dir, "docs/run.md"), "Local.\n")
+	gitAt(t, dir, "commit", "-am", "local")
+	writeFile(t, filepath.Join(dir, "docs/run.md"), "Tree.\n")
+
+	code, in, body := getAutorunInstruction(t, f.Commit, "docs/run.md")
+	if code != 200 || !in.Found || in.Content != "Run it.\n" || in.Commit != f.Commit || in.Path != "docs/run.md" {
+		t.Fatalf("status %d, %+v (%s): want the settings commit's text", code, in, body)
+	}
+	if code, in, body := getAutorunInstruction(t, f.Commit, "docs/指示.md"); code != 200 || in.Content != "日本語\n" {
+		t.Fatalf("non-ASCII name: status %d, %+v (%s)", code, in, body)
+	}
+	if code, in, body := getAutorunInstruction(t, f.Commit, "docs/none.md"); code != 200 || in.Found || in.Content != "" {
+		t.Fatalf("missing file: status %d, %+v (%s)", code, in, body)
+	}
+	if code, _, body := getAutorunInstruction(t, f.Commit, "docs"); code != 422 || !strings.Contains(body, "file_not_regular") {
+		t.Fatalf("directory: status %d: %s", code, body)
+	}
+}
+
+func TestAutorunInstructionRefusesBadInput(t *testing.T) {
+	home, seed, _ := autorunClone(t, "version: 1\n")
+	code, f, body := getAutorunFile(t)
+	if code != 200 {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	for _, p := range []string{"", ".", "..", "../x", "/etc/passwd", "a/../b", "./a", "a/", `a\b`, "a//b"} {
+		if code, _, body := getAutorunInstruction(t, f.Commit, p); code != 400 || !strings.Contains(body, "bad_path") {
+			t.Errorf("path %q: status %d: %s", p, code, body)
+		}
+	}
+	for _, c := range []string{"", "HEAD", "main", strings.Repeat("a", 39), "-" + strings.Repeat("a", 39)} {
+		if code, _, body := getAutorunInstruction(t, c, "a.md"); code != 400 || !strings.Contains(body, "bad_commit") {
+			t.Errorf("commit %q: status %d: %s", c, code, body)
+		}
+	}
+	// A well-formed id the clone does not hold.
+	if code, _, body := getAutorunInstruction(t, strings.Repeat("0", 40), "a.md"); code != 409 || !strings.Contains(body, "commit_missing") {
+		t.Fatalf("unknown commit: status %d: %s", code, body)
+	}
+	// A symbolic link, an oversized file and bytes that are not UTF-8.
+	if err := os.Symlink("../f", filepath.Join(seed, "link.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(seed, "big.md"), strings.Repeat("#", AutorunInstructionMaxBytes+1))
+	writeFile(t, filepath.Join(seed, "latin1.md"), "caf\xe9")
+	gitAt(t, seed, "add", ".")
+	gitAt(t, seed, "commit", "-m", "bad files")
+	gitAt(t, seed, "push", filepath.Join(home, "origin.git"), "main")
+	if code, f, body = getAutorunFile(t); code != 200 {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	for p, want := range map[string]string{"link.md": "file_not_regular", "big.md": "file_too_large", "latin1.md": "file_not_utf8"} {
+		if code, in, body := getAutorunInstruction(t, f.Commit, p); code != 422 || !strings.Contains(body, want) || in.Content != "" {
+			t.Errorf("%s: status %d: %s", p, code, body)
+		}
 	}
 }
