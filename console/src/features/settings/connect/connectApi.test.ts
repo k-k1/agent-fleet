@@ -12,6 +12,7 @@ vi.mock("../../../core/api/client.ts", () => ({
 }));
 
 import * as A from "./connectApi.ts";
+import { hasCodeLiteral, importsRawClient } from "../../../test/sourcePins.ts";
 
 beforeEach(() => {
   api.mockReset().mockResolvedValue({ ok: 1 });
@@ -73,12 +74,12 @@ describe("connectApi wrappers added for the tracker, token and connected-app scr
 describe("connect typed API layer: source pins", () => {
   const dir = fileURLToPath(new URL("./", import.meta.url));
   const read = (name: string) => readFileSync(dir + name, "utf8");
-  const files = readdirSync(dir).filter((f) => /\.tsx?$/.test(f) && !/\.test\./.test(f) && !/Api\.ts$/.test(f));
+  const files = readdirSync(dir).filter((f) => /\.tsx?$/.test(f) && !/\.test\./.test(f) && f !== "connectApi.ts");
 
   it("no component in the area imports api() / apiJSON() from the client", () => {
     expect(files.length).toBeGreaterThan(5);
     const offenders = files.filter((f) =>
-      /import\s*\{[^}]*\b(api|apiJSON)\b[^}]*\}\s*from\s*["'][^"']*core\/api\/client\.ts["']/.test(read(f)),
+      importsRawClient(read(f)),
     );
     expect(offenders).toEqual([]);
   });
@@ -94,7 +95,7 @@ describe("connect typed API layer: source pins", () => {
       '"api/mcp-oauth/grants"',
       "api/mcp-oauth/grants/${encodeURIComponent(id)}",
     ]) {
-      expect(src).toContain(p);
+      expect(hasCodeLiteral(src, p)).toBe(true);
     }
   });
 });

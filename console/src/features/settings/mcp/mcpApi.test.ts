@@ -11,6 +11,7 @@ vi.mock("../../../core/api/client.ts", () => ({
 }));
 
 import * as A from "./mcpApi.ts";
+import { hasCodeLiteral, importsRawClient } from "../../../test/sourcePins.ts";
 
 beforeEach(() => {
   api.mockReset().mockResolvedValue({ servers: [] });
@@ -72,10 +73,10 @@ describe("mcp typed API layer: source pins", () => {
   const read = (name: string) => readFileSync(dir + name, "utf8");
 
   it("no component in the area imports api() / apiJSON() from the client (mcpOAuthApi.ts and mcpApi.ts are the wrappers)", () => {
-    const files = readdirSync(dir).filter((f) => /\.tsx?$/.test(f) && !/\.test\./.test(f) && !/Api\.ts$/.test(f));
+    const files = readdirSync(dir).filter((f) => /\.tsx?$/.test(f) && !/\.test\./.test(f) && f !== "mcpApi.ts" && f !== "mcpOAuthApi.ts");
     expect(files.length).toBeGreaterThan(8);
     const offenders = files.filter((f) =>
-      /import\s*\{[^}]*\b(api|apiJSON)\b[^}]*\}\s*from\s*["'][^"']*core\/api\/client\.ts["']/.test(read(f)),
+      importsRawClient(read(f)),
     );
     expect(offenders).toEqual([]);
   });
@@ -94,7 +95,7 @@ describe("mcp typed API layer: source pins", () => {
       '"api/egress/check?"',
       '"api/egress/propose"',
     ]) {
-      expect(src).toContain(p);
+      expect(hasCodeLiteral(src, p)).toBe(true);
     }
   });
 });

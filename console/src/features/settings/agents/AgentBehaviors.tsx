@@ -46,7 +46,7 @@ export function ClaudeBehavior({
         </SettingRow>
         <p className="ps-note">{tr("agents.note_claude_abort_resume")}</p>
         <SettingRow label={tr("agents.rate_limit_resume")}>
-          <Choice
+          <Choice<"af" | "native" | "off">
             value={s.claudeLimitResumeMode === "inherit" ? (s.rateLimitAutoResume ? "af" : "off") : s.claudeLimitResumeMode}
             options={[
               ["af", tr("agents.claude_limit_resume_af")],
