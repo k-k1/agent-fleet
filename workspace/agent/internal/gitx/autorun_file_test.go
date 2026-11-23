@@ -2,12 +2,14 @@ package gitx
 
 import (
 	"encoding/json"
+	"log"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // autorunClone builds origin (default branch main, plus a branch "other") and a clone in
@@ -108,16 +110,69 @@ func TestAutorunFileIgnoresRefsTheCloneRewrites(t *testing.T) {
 	}
 }
 
-func TestRedactRemote(t *testing.T) {
+func TestDisplayRemote(t *testing.T) {
 	for in, want := range map[string]string{
-		"https://user:tok@github.invalid/o/r.git": "https://github.invalid/o/r.git",
-		"https://github.invalid/o/r.git":          "https://github.invalid/o/r.git",
-		"git@github.invalid:o/r.git":              "git@github.invalid:o/r.git",
-		"/srv/git/r.git":                          "/srv/git/r.git",
+		"https://user:tok@github.invalid/o/r.git":       "https://github.invalid/o/r.git",
+		"https://github.invalid/o/r.git?token=abc#frag": "https://github.invalid/o/r.git",
+		"ssh://git@github.invalid:22/o/r.git":           "ssh://github.invalid:22/o/r.git",
+		"git@github.invalid:o/r.git":                    "github.invalid:o/r.git",
+		"/srv/git/r.git":                                "/srv/git/r.git",
+		"file:///srv/git/r.git":                         "file:///srv/git/r.git",
+		"https://github.invalid/o/r%20x.git":            remoteHidden,
+		"ext::sh -c 'curl secret'":                      remoteHidden,
+		"https://github.invalid/o/r.git;tok=abc":        remoteHidden,
+		"/srv/git/r.git?x":                              remoteHidden,
+		"weird remote with spaces":                      remoteHidden,
 	} {
-		if got := redactRemote(in); got != want {
-			t.Errorf("%s: got %s", in, got)
+		if got := displayRemote(in); got != want {
+			t.Errorf("%s: got %s, want %s", in, got, want)
 		}
+	}
+}
+
+// A failed step logs its code only: git's output, which can carry a URL or a credential, stays
+// out of the log and out of the answer.
+func TestAutorunFileFailureLeavesGitOutputOut(t *testing.T) {
+	_, _, dir := autorunClone(t, "version: 1\n")
+	secretPath := "/nonexistent/ghp_" + strings.Repeat("Q", 36)
+	gitAt(t, dir, "remote", "set-url", "origin", secretPath)
+	var logged strings.Builder
+	log.SetOutput(&logged)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+	code, _, body := getAutorunFile(t)
+	if code != 502 || !strings.Contains(body, "no_default_branch") {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	if !strings.Contains(logged.String(), "no_default_branch") {
+		t.Fatalf("nothing logged: %q", logged.String())
+	}
+	if strings.Contains(logged.String()+body, "QQQQ") {
+		t.Fatalf("git output leaked: log %q body %s", logged.String(), body)
+	}
+}
+
+// A lazy fetch of a missing blob that hangs ends with the read's deadline, not after it.
+func TestAutorunFileLazyFetchIsBoundedByTheDeadline(t *testing.T) {
+	home, seed, _ := autorunClone(t, "version: 1\n")
+	gitAt(t, filepath.Join(home, "origin.git"), "config", "uploadpack.allowFilter", "true")
+	dir := filepath.Join(home, "repos", "app")
+	if err := os.RemoveAll(dir); err != nil {
+		t.Fatal(err)
+	}
+	gitAt(t, home, "clone", "--filter=blob:none", "--no-checkout", "file://"+filepath.Join(home, "origin.git"), dir)
+	_ = seed
+	// The promisor remote's upload-pack now sleeps: the blob's lazy fetch hangs.
+	gitAt(t, dir, "config", "remote.origin.uploadpack", "sleep 30; git-upload-pack")
+	old := autorunWait
+	autorunWait = 3 * time.Second
+	t.Cleanup(func() { autorunWait = old })
+	start := time.Now()
+	code, _, body := getAutorunFile(t)
+	if took := time.Since(start); took > 10*time.Second {
+		t.Fatalf("took %v (status %d: %s)", took, code, body)
+	}
+	if code != 502 || !strings.Contains(body, "timeout") {
+		t.Fatalf("status %d: %s", code, body)
 	}
 }
 
@@ -159,7 +214,7 @@ func TestAutorunFileRefusesASymlinkAndAnOversizedFile(t *testing.T) {
 func TestAutorunFileWithoutOrigin(t *testing.T) {
 	_, _, dir := autorunClone(t, "version: 1\n")
 	gitAt(t, dir, "remote", "remove", "origin")
-	if code, _, body := getAutorunFile(t); code != 502 || !strings.Contains(body, "no_default_branch") || strings.Contains(body, "fatal") {
+	if code, _, body := getAutorunFile(t); code != 502 || !strings.Contains(body, "no_origin") || strings.Contains(body, "fatal") {
 		t.Fatalf("status %d: %s", code, body)
 	}
 }

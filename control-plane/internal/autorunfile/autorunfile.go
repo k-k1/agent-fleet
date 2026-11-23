@@ -156,6 +156,10 @@ func Parse(b []byte) File {
 			fail(0, "", "the file is empty")
 		} else {
 			line, reason := yamlErrLine(err)
+			// The parser's message can quote the file (an anchor's name): never a credential.
+			if credentialRule(reason) != "" {
+				reason = "the file is not valid YAML"
+			}
 			fail(line, "", "%s", reason)
 		}
 		return f
@@ -217,6 +221,7 @@ func Parse(b []byte) File {
 	// An alias makes many categories share one settings node. Each node is read once and its
 	// result shared, so a small file of aliases cannot multiply the work or the findings.
 	parsed := map[*yaml.Node]*Entry{}
+	p := &parser{cred: map[*yaml.Node]string{}}
 	for i := 0; i+1 < len(categories.Content); i += 2 {
 		k, v := categories.Content[i], deref(categories.Content[i+1])
 		name, msg := mapKey(k)
@@ -233,7 +238,7 @@ func Parse(b []byte) File {
 		}
 		shared, ok := parsed[v]
 		if !ok {
-			shared = parseEntry(v)
+			shared = p.parseEntry(v)
 			parsed[v] = shared
 		}
 		e := *shared
@@ -250,8 +255,9 @@ func isMap(n *yaml.Node) bool { return n.Kind == yaml.MappingNode && n.Tag == "!
 // mapKey reads a mapping key. msg is "" when it is a plain string key; it never repeats a key
 // that looks like a credential.
 func mapKey(k *yaml.Node) (string, string) {
-	k = deref(k)
 	switch {
+	case k.Kind == yaml.AliasNode:
+		return "", "a key cannot be an alias"
 	case k.Kind != yaml.ScalarNode:
 		return "", "a key must be a plain string"
 	case k.Tag == "!!merge":
@@ -264,8 +270,24 @@ func mapKey(k *yaml.Node) (string, string) {
 	return k.Value, ""
 }
 
+// parser holds what one Parse shares between entries.
+type parser struct {
+	// cred is the credential rule each string node matched ("" for none). An alias can name one
+	// long string from many places; it is scanned once.
+	cred map[*yaml.Node]string
+}
+
+func (p *parser) credOf(n *yaml.Node) string {
+	r, ok := p.cred[n]
+	if !ok {
+		r = credentialScan(n.Value)
+		p.cred[n] = r
+	}
+	return r
+}
+
 // parseEntry reads one category's settings node; the caller sets Name and Line.
-func parseEntry(v *yaml.Node) *Entry {
+func (p *parser) parseEntry(v *yaml.Node) *Entry {
 	e := &Entry{Values: map[string]Value{}}
 	bad := func(line int, key, format string, args ...any) {
 		e.Errors = append(e.Errors, Issue{Line: line, Key: key, Reason: fmt.Sprintf(format, args...)})
@@ -306,7 +328,7 @@ func parseEntry(v *yaml.Node) *Entry {
 			continue
 		}
 		val.Line = k.Line
-		if rule := credentialRule(val.Str); rule != "" {
+		if rule := p.credOf(n); typ == String && rule != "" {
 			bad(n.Line, key, "%s looks like a credential (%s): the file holds names only, never a secret", key, rule)
 			continue
 		}
@@ -357,10 +379,13 @@ func scalar(key string, typ Type, n *yaml.Node) (Value, string) {
 		if err := n.Decode(&v.Num); err != nil || math.IsNaN(v.Num) || math.IsInf(v.Num, 0) {
 			return v, key + " must be a finite number"
 		}
-		// A value too small for a float reads as 0, which is "no cap": refuse it rather than
-		// turn an intended limit into none.
-		if v.Num == 0 && nonZeroMantissa(n.Value) {
+		// A decimal too small for a float reads as 0, which is "no cap": refuse it rather than
+		// turn an intended limit into none. Integers cannot underflow.
+		if v.Num == 0 && n.Tag == "!!float" && nonZeroMantissa(n.Value) {
 			return v, key + " is too small to be told from 0"
+		}
+		if v.Num == 0 {
+			v.Num = 0 // -0 is 0: the two must not compare as different caps
 		}
 	case Bool:
 		if n.Tag != "!!bool" || n.Decode(&v.Bool) != nil {
@@ -383,13 +408,13 @@ func checkRepoPath(p string) string {
 	return ""
 }
 
-// nonZeroMantissa says whether a YAML number's digits before its exponent hold anything but 0.
+// nonZeroMantissa says whether a YAML decimal's digits before its exponent hold anything but 0.
 func nonZeroMantissa(lit string) bool {
 	m := strings.ToLower(lit)
-	if i := strings.IndexByte(m, 'e'); i >= 0 && !strings.HasPrefix(m, "0x") {
+	if i := strings.IndexByte(m, 'e'); i >= 0 {
 		m = m[:i]
 	}
-	return strings.ContainsAny(strings.TrimPrefix(m, "0x"), "123456789abcdef")
+	return strings.ContainsAny(m, "123456789")
 }
 
 func deref(n *yaml.Node) *yaml.Node {
@@ -431,6 +456,9 @@ var credentialRules = []struct {
 	// Quotes and a 16-plus-character value are required so prose like "token: usage count" passes.
 	{"secret-assignment", regexp.MustCompile(`(?i)\b(?:api[_\-]?key|secret[_\-]?key|access[_\-]?token|auth[_\-]?token|client[_\-]?secret|password|passwd)\b\s*[:=]\s*["'` + "`" + `]([^"'` + "`" + `\s]{16,})["'` + "`" + `]`)},
 }
+
+// credentialScan is credentialRule as the parser calls it for values; a test counts the calls.
+var credentialScan = credentialRule
 
 // credentialRule names the first rule s matches, "" for none.
 func credentialRule(s string) string {

@@ -2,7 +2,6 @@ package gitx
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"net/url"
@@ -20,13 +19,13 @@ const AutorunFilePath = ".agent-fleet/autorun.yaml"
 // AutorunFileMaxBytes bounds the file. The Control Plane, which parses it, holds the same bound.
 const AutorunFileMaxBytes = 64 << 10
 
-// autorunFetchWait bounds the two network calls; an unreachable remote must not hold the
-// Console's request open.
-const autorunFetchWait = 60 * time.Second
+// autorunWait bounds the whole read, every git step included: an unreachable remote, or a lazy
+// fetch a partial clone makes for a missing blob, must not outlive the Console's request.
+var autorunWait = 60 * time.Second
 
 // AutorunFile is GET /repos/{name}/autorun-file: the settings file as committed on origin's
-// default branch. Found is false when that commit has no such file. Remote is origin's URL with
-// any credentials removed, so the person approving the settings sees where they came from.
+// default branch. Found is false when that commit has no such file. Remote names where it was
+// read from (host and path only), so the person approving the settings sees it.
 type AutorunFile struct {
 	Path    string `json:"path"`
 	Remote  string `json:"remote"`
@@ -36,29 +35,30 @@ type AutorunFile struct {
 	Content string `json:"content"`
 }
 
-// autorunNoReplace keeps refs/replace out of every read: a run can write replace refs into the
-// clone, and with them make the right commit id show other content.
-var autorunNoReplace = []string{"GIT_NO_REPLACE_OBJECTS=1"}
+// autorunEnv keeps refs/replace out of every read: a run can write replace refs into the clone,
+// and with them make the right commit id show other content.
+var autorunEnv = []string{"GIT_NO_REPLACE_OBJECTS=1"}
 
 // HandleAutorunFile reads the settings file from origin's default branch only, never from the
 // working tree or a working branch: a run in this workspace can write both, and must not be
-// able to change the settings it runs under. Branch and commit are what origin answers, not
-// refs/remotes/origin/*, which anything in the clone can repoint; the fetch only brings the
-// objects. This is a guard rail, not the boundary: a run holds the same git credentials and the
-// same clone configuration, and the member's approval of each difference is what applies
-// anything. The Control Plane parses and validates the content; this only reads it.
+// able to change the settings it runs under. origin's URL is read once and every network step
+// uses that URL, so one read cannot mix two repositories. Branch and commit are what that
+// remote answers, not refs/remotes/origin/*, which anything in the clone can repoint; the fetch
+// only brings the objects. This is a guard rail, not the boundary: a run holds the same git
+// credentials and the same clone configuration, and the member's approval of each difference is
+// what applies anything (#4895). The Control Plane parses and validates the content.
 //
-// Error messages are fixed: git's own output may name hosts or carry a URL, and goes to the log.
+// Messages and log lines are fixed per code: git's output may name hosts or carry credentials.
 func HandleAutorunFile(w http.ResponseWriter, r *http.Request) {
 	dir, ok := RepoDirFromPath(w, r)
 	if !ok {
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), autorunFetchWait)
+	ctx, cancel := context.WithTimeout(r.Context(), autorunWait)
 	defer cancel()
-	f, code, err := readAutorunFile(ctx, dir)
-	if err != nil {
-		log.Printf("autorun file: %s: %s: %v", r.PathValue("name"), code, err)
+	f, code := readAutorunFile(ctx, dir)
+	if code != "" {
+		log.Printf("autorun file: %s: %s", r.PathValue("name"), code)
 		status := http.StatusBadGateway
 		if code == "file_too_large" || code == "file_not_regular" {
 			status = http.StatusUnprocessableEntity
@@ -70,100 +70,142 @@ func HandleAutorunFile(w http.ResponseWriter, r *http.Request) {
 }
 
 var autorunErrText = map[string]string{
+	"no_origin":         "the working copy has no origin remote",
 	"no_default_branch": "origin did not name its default branch",
 	"fetch_failed":      "fetching origin's default branch failed",
 	"origin_moved":      "origin's default branch moved while it was read; try again",
 	"read_failed":       "the settings file could not be read from the fetched commit",
+	"timeout":           "reading the settings file took too long",
 	"file_not_regular":  AutorunFilePath + " on the default branch is not a regular file",
 	"file_too_large":    AutorunFilePath + " is larger than " + strconv.Itoa(AutorunFileMaxBytes) + " bytes",
 }
 
-func readAutorunFile(ctx context.Context, dir string) (AutorunFile, string, error) {
+// autorunGit runs one git step under the read's deadline. On the deadline the process is killed
+// and, if a child it started still holds the pipes, the wait ends a moment later anyway.
+func autorunGit(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	cmd := CmdContext(ctx, dir, args...)
+	cmd.Env = append(cmd.Env, autorunEnv...)
+	cmd.WaitDelay = 2 * time.Second
+	return cmd.Output()
+}
+
+// readAutorunFile answers the file, or the code of what went wrong.
+func readAutorunFile(ctx context.Context, dir string) (AutorunFile, string) {
 	out := AutorunFile{Path: AutorunFilePath}
-	if u, err := Run(dir, "remote", "get-url", "origin"); err == nil {
-		out.Remote = redactRemote(u)
+	fail := func(code string) (AutorunFile, string) {
+		if ctx.Err() != nil {
+			code = "timeout"
+		}
+		return out, code
 	}
-	branch, sha, err := remoteDefaultHead(ctx, dir)
-	if err != nil {
-		return out, "no_default_branch", err
+	raw, err := autorunGit(ctx, dir, "remote", "get-url", "origin")
+	remote := strings.TrimSpace(string(raw))
+	if err != nil || remote == "" {
+		return fail("no_origin")
+	}
+	out.Remote = displayRemote(remote)
+	branch, sha, ok := remoteDefaultHead(ctx, dir, remote)
+	if !ok {
+		return fail("no_default_branch")
 	}
 	out.Branch, out.Commit = branch, sha
-	fetch := CmdContext(ctx, dir, "fetch", "--no-tags", "--no-recurse-submodules", "origin",
-		"+refs/heads/"+branch+":refs/remotes/origin/"+branch)
-	if b, err := fetch.CombinedOutput(); err != nil {
-		return out, "fetch_failed", fmt.Errorf("%v: %s", err, strings.TrimSpace(string(b)))
+	if _, err := autorunGit(ctx, dir, "fetch", "--no-tags", "--no-recurse-submodules", "--", remote,
+		"+refs/heads/"+branch+":refs/remotes/origin/"+branch); err != nil {
+		return fail("fetch_failed")
 	}
-	// The commit origin named, not whatever the tracking ref says now. Missing means the branch
-	// moved between the two calls past that commit (a force push).
-	if _, err := runEnv(dir, autorunNoReplace, "cat-file", "-e", sha+"^{commit}"); err != nil {
-		return out, "origin_moved", err
+	// The commit the remote named, not whatever the tracking ref says now. Missing means the
+	// branch moved between the two calls past that commit (a force push).
+	if _, err := autorunGit(ctx, dir, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		return fail("origin_moved")
 	}
 	// ls-tree names the entry's mode: a symbolic link would hand back its target's path as the
 	// content, and a submodule or a directory has none.
-	ls, err := runEnv(dir, autorunNoReplace, "ls-tree", "--full-tree", sha, "--", AutorunFilePath)
+	ls, err := autorunGit(ctx, dir, "ls-tree", "--full-tree", sha, "--", AutorunFilePath)
 	if err != nil {
-		return out, "read_failed", err
+		return fail("read_failed")
 	}
-	if ls == "" {
-		return out, "", nil
+	if len(ls) == 0 {
+		return out, ""
 	}
-	meta, _, _ := strings.Cut(ls, "\t")
+	meta, _, _ := strings.Cut(string(ls), "\t")
 	parts := strings.Fields(meta)
 	if len(parts) != 3 || parts[1] != "blob" || (parts[0] != "100644" && parts[0] != "100755") {
-		return out, "file_not_regular", fmt.Errorf("mode %q", meta)
+		return fail("file_not_regular")
 	}
 	oid := parts[2]
-	sz, err := runEnv(dir, autorunNoReplace, "cat-file", "-s", oid)
+	sz, err := autorunGit(ctx, dir, "cat-file", "-s", oid)
 	if err != nil {
-		return out, "read_failed", err
+		return fail("read_failed")
 	}
-	if n, err := strconv.Atoi(sz); err != nil || n > AutorunFileMaxBytes {
-		return out, "file_too_large", fmt.Errorf("size %s", sz)
+	if n, err := strconv.Atoi(strings.TrimSpace(string(sz))); err != nil || n > AutorunFileMaxBytes {
+		return fail("file_too_large")
 	}
-	cmd := Cmd(dir, "cat-file", "blob", oid)
-	cmd.Env = append(cmd.Env, autorunNoReplace...)
-	body, err := cmd.Output()
+	body, err := autorunGit(ctx, dir, "cat-file", "blob", oid)
 	if err != nil {
-		return out, "read_failed", err
+		return fail("read_failed")
 	}
 	if len(body) > AutorunFileMaxBytes {
-		return out, "file_too_large", fmt.Errorf("read %d bytes", len(body))
+		return fail("file_too_large")
 	}
 	out.Found, out.Content = true, string(body)
-	return out, "", nil
+	return out, ""
 }
 
-// remoteDefaultHead asks origin which branch its HEAD names and the commit it points at.
-func remoteDefaultHead(ctx context.Context, dir string) (branch, sha string, err error) {
-	b, err := CmdContext(ctx, dir, "ls-remote", "--symref", "origin", "HEAD").Output()
+// remoteDefaultHead asks the remote which branch its HEAD names and the commit it points at.
+func remoteDefaultHead(ctx context.Context, dir, remote string) (branch, sha string, ok bool) {
+	b, err := autorunGit(ctx, dir, "ls-remote", "--symref", "--", remote, "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("ls-remote: %v", err)
+		return "", "", false
 	}
 	for _, ln := range strings.Split(string(b), "\n") {
-		if rest, ok := strings.CutPrefix(ln, "ref: refs/heads/"); ok {
+		if rest, found := strings.CutPrefix(ln, "ref: refs/heads/"); found {
 			name, _, _ := strings.Cut(rest, "\t")
 			if name != "" && Cmd(dir, "check-ref-format", "--branch", name).Run() == nil {
 				branch = name
 			}
-		} else if id, ref, ok := strings.Cut(ln, "\t"); ok && ref == "HEAD" && autorunSHARe.MatchString(id) {
+		} else if id, ref, found := strings.Cut(ln, "\t"); found && ref == "HEAD" && autorunSHARe.MatchString(id) {
 			sha = id
 		}
 	}
-	if branch == "" || sha == "" {
-		return "", "", fmt.Errorf("origin named no default branch and commit")
-	}
-	return branch, sha, nil
+	return branch, sha, branch != "" && sha != ""
 }
 
 var autorunSHARe = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
 
-// redactRemote drops the user and password of a URL remote. An scp-like remote (user@host:path)
-// carries no secret and is kept.
-func redactRemote(raw string) string {
-	u, err := url.Parse(raw)
-	if err != nil || u.Scheme == "" || u.Host == "" {
-		return raw
+var (
+	scpRemoteRe  = regexp.MustCompile(`^(?:[A-Za-z0-9._-]+@)?([A-Za-z0-9.-]+):([A-Za-z0-9._~/-]+)$`)
+	safeHostRe   = regexp.MustCompile(`^[A-Za-z0-9.-]+(:[0-9]{1,5})?$`)
+	safePathRe   = regexp.MustCompile(`^/[A-Za-z0-9._~/-]*$`)
+	remoteHidden = "(remote not shown)"
+)
+
+// displayRemote names a remote by host and path only: what the approval card needs, and nothing
+// a URL can carry besides (user, password, query, fragment). A form it cannot take apart safely is
+// not shown.
+func displayRemote(raw string) string {
+	if m := scpRemoteRe.FindStringSubmatch(raw); m != nil && !strings.Contains(raw, "://") {
+		return m[1] + ":" + m[2]
 	}
-	u.User = nil
-	return u.String()
+	if strings.HasPrefix(raw, "/") {
+		if safePathRe.MatchString(raw) {
+			return raw
+		}
+		return remoteHidden
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return remoteHidden
+	}
+	switch u.Scheme {
+	case "https", "http", "ssh", "git":
+		if !safeHostRe.MatchString(u.Host) || (u.Path != "" && !safePathRe.MatchString(u.Path)) {
+			return remoteHidden
+		}
+		return u.Scheme + "://" + u.Host + u.Path
+	case "file":
+		if safePathRe.MatchString(u.Path) {
+			return "file://" + u.Path
+		}
+	}
+	return remoteHidden
 }

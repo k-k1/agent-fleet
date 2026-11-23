@@ -1,6 +1,7 @@
 package autorunfile
 
 import (
+	"math"
 	"strings"
 	"testing"
 )
@@ -334,6 +335,55 @@ func TestParseNeverEchoesAPastedCredential(t *testing.T) {
 		}
 		if _, ok := f.Categories[tok]; ok {
 			t.Errorf("a credential became a category name")
+		}
+	}
+}
+
+// One long string named by an alias from many settings maps is scanned once, and a key cannot be
+// an alias at all.
+func TestParseScansAnAliasedValueOnce(t *testing.T) {
+	var b strings.Builder
+	b.WriteString("version: 1\nlong: &long '" + strings.Repeat("y", 20000) + "'\ncategories:\n")
+	for i := 0; i < 500; i++ {
+		b.WriteString("  c" + string(rune('A'+i%26)) + string(rune('A'+i/26)) + ":\n    instruction: *long\n")
+	}
+	calls := 0
+	saved := credentialScan
+	credentialScan = func(s string) string { calls++; return saved(s) }
+	t.Cleanup(func() { credentialScan = saved })
+	f := Parse([]byte(b.String()))
+	if len(f.Categories) != 500 {
+		t.Fatalf("%d categories, errors %+v", len(f.Categories), f.Errors)
+	}
+	if calls > 2 {
+		t.Fatalf("the aliased value was scanned %d times", calls)
+	}
+
+	k := Parse([]byte("version: 1\ncategories:\n  q:\n    &k max_active: 1\n    *k : 2\n"))
+	if k.Usable("q") || !hasIssue(k.Categories["q"].Errors, 5, "", "alias") {
+		t.Fatalf("alias key: %+v", k.Categories["q"])
+	}
+}
+
+func TestParseZerosAreZero(t *testing.T) {
+	for _, v := range []string{"0b0", "0o0", "0x0", "-0", "-0.0", "0.0e-400"} {
+		f := Parse([]byte("version: 1\ncategories:\n  q:\n    spend_cap_usd: " + v + "\n"))
+		n := f.Categories["q"].Values["spend_cap_usd"].Num
+		if !f.Usable("q") || n != 0 || math.Signbit(n) {
+			t.Errorf("%s: usable=%v num=%v errors %+v", v, f.Usable("q"), n, f.Categories["q"].Errors)
+		}
+	}
+}
+
+func TestParseSyntaxErrorDoesNotEchoACredential(t *testing.T) {
+	tok := "ghp_" + strings.Repeat("Z", 36)
+	f := Parse([]byte("version: 1\ncategories:\n  q: *" + tok + "\n"))
+	if len(f.Errors) == 0 {
+		t.Fatalf("no error")
+	}
+	for _, i := range f.Errors {
+		if strings.Contains(i.Reason, "ZZZZ") {
+			t.Fatalf("echoed: %+v", i)
 		}
 	}
 }

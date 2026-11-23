@@ -13,6 +13,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
+// testCommit is a well-formed commit id for the fake Agent's answers.
+const testCommit = "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff"
+
 // fakeAutorunAgent answers GET /repos/{name}/autorun-file the way the Agent does.
 type fakeAutorunAgent struct {
 	mu     sync.Mutex
@@ -29,7 +32,7 @@ func (a *fakeAutorunAgent) answer(status int, body string) {
 }
 
 func (a *fakeAutorunAgent) file(content string) {
-	b, _ := json.Marshal(agentAutorunFile{Path: autorunfile.Path, Branch: "main", Commit: "c0ffee", Found: true, Content: content})
+	b, _ := json.Marshal(agentAutorunFile{Path: autorunfile.Path, Branch: "main", Commit: testCommit, Found: true, Content: content})
 	a.answer(http.StatusOK, string(b))
 }
 
@@ -118,7 +121,7 @@ categories:
 	if got := a.requested(); len(got) != 1 || got[0] != "GET /repos/app/autorun-file" {
 		t.Fatalf("Agent calls %v", got)
 	}
-	if !out.Found || !out.Entry || !out.Queue || out.Commit != "c0ffee" || out.Branch != "main" || out.Path != autorunfile.Path ||
+	if !out.Found || !out.Entry || !out.Queue || out.Commit != testCommit || out.Branch != "main" || out.Path != autorunfile.Path ||
 		out.Repo != "app" || out.Category != "rounds" || out.CategoryID != id {
 		t.Fatalf("header %+v", out)
 	}
@@ -225,10 +228,15 @@ func TestMemoRepoSettingsRefusesWhatTheConsoleWouldRefuse(t *testing.T) {
 func TestMemoRepoSettingsFileAbsentOrWithoutTheCategory(t *testing.T) {
 	e, a := repoEnv(t, "")
 	id := e.category("app", "rounds")
-	a.answer(http.StatusOK, `{"path":".agent-fleet/autorun.yaml","branch":"main","commit":"c0ffee","found":false,"content":""}`)
+	a.answer(http.StatusOK, `{"path":".agent-fleet/autorun.yaml","remote":"","branch":"main","commit":"`+testCommit+`","found":false,"content":""}`)
 	rec, out := e.repoSettings(id)
-	if rec.Code != http.StatusOK || out.Found || out.Entry || len(out.Diffs) != 0 || out.Commit != "c0ffee" {
+	if rec.Code != http.StatusOK || out.Found || out.Entry || len(out.Diffs) != 0 || out.Commit != testCommit {
 		t.Fatalf("absent: %d %+v", rec.Code, out)
+	}
+	// An empty file on the branch is a file, and an error, not "no file".
+	a.file("")
+	if _, out = e.repoSettings(id); !out.Found || len(out.Errors) != 1 || !strings.Contains(out.Errors[0].Reason, "empty") {
+		t.Fatalf("empty file: %+v", out)
 	}
 	a.file("version: 1\ncategories:\n  other: {}\n")
 	if _, out = e.repoSettings(id); !out.Found || out.Entry || len(out.Diffs) != 0 || len(out.Errors) != 0 {
@@ -288,6 +296,10 @@ func TestMemoRepoSettingsRefusals(t *testing.T) {
 		{"too large", `{"error":{"code":"file_too_large","message":"secret-host.invalid"}}`, 422, 422, "larger than"},
 		{"unknown code", `{"error":{"code":"Fatal: secret-host.invalid","message":"secret-host.invalid"}}`, 500, 502, "HTTP 500"},
 		{"empty answer", `{}`, 200, 502, "could not be read"},
+		{"found missing", `{"path":".agent-fleet/autorun.yaml","remote":"","branch":"main","commit":"` + strings.Repeat("c", 40) + `","content":"version: 1"}`, 200, 502, "could not be read"},
+		{"content missing", `{"path":".agent-fleet/autorun.yaml","remote":"","branch":"main","commit":"` + strings.Repeat("c", 40) + `","found":true}`, 200, 502, "could not be read"},
+		{"not found with content", `{"path":".agent-fleet/autorun.yaml","remote":"","branch":"main","commit":"` + strings.Repeat("c", 40) + `","found":false,"content":"x"}`, 200, 502, "could not be read"},
+		{"commit not a sha", `{"path":".agent-fleet/autorun.yaml","remote":"","branch":"main","commit":"HEAD","found":false,"content":""}`, 200, 502, "could not be read"},
 		{"no working copy", `{"error":{"code":"not_found","message":"no such repo: app"}}`, 404, 404, "no git working copy"},
 		{"old Agent", `404 page not found`, 404, 502, "404"},
 	} {
@@ -354,14 +366,18 @@ func TestMemoRepoSettingsFiringGate(t *testing.T) {
 		}
 	}
 	for _, c := range []struct {
-		name, id, file string
+		name, id  string
+		key, file string
+		line      int
 	}{
-		{"threshold to always", thr, "  thr:\n    open_after: 0\n    batch: 2\n"},
-		{"window to always", win, "  win:\n    open_cron: ''\n    batch: 2\n"},
+		{"threshold to always", thr, "open_after", "  thr:\n    open_after: 0\n    batch: 2\n", 4},
+		{"threshold to always, zone first", thr, "open_after", "  thr:\n    tz: ''\n    open_after: 0\n    batch: 2\n", 5},
+		{"window to always", win, "open_cron", "  win:\n    open_cron: ''\n    batch: 2\n", 4},
 	} {
 		a.file("version: 1\ncategories:\n" + c.file)
 		_, out := e.repoSettings(c.id)
-		if len(out.Errors) != 0 || len(out.Warnings) != 1 || out.Warnings[0].Line != 4 || !strings.Contains(out.Warnings[0].Reason, "Console only") {
+		if len(out.Errors) != 0 || len(out.Warnings) != 1 || out.Warnings[0].Line != c.line || out.Warnings[0].Key != c.key ||
+			!strings.Contains(out.Warnings[0].Reason, "Console only") {
 			t.Errorf("%s: errors %+v warnings %+v", c.name, out.Errors, out.Warnings)
 		}
 		if len(out.Diffs) != 1 || out.Diffs[0].Key != "batch" {

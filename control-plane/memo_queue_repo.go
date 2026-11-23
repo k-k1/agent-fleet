@@ -240,17 +240,21 @@ func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) (
 	// waits: that removes a gate, which only the Console may do (#4881).
 	if memoQueueGated(curN) && !memoQueueGated(next) {
 		kept := vals[:0:0]
-		line := 0
+		// The warning points at the key that takes the queue's gate away (open_cron for a window,
+		// open_after for a threshold), else at the first firing key the file sets.
+		var gate autorunfile.Value
+		removes := false
 		for _, v := range vals {
-			if memoRepoOpenKeys[v.Key] {
-				if line == 0 {
-					line = v.Line
-				}
+			if !memoRepoOpenKeys[v.Key] {
+				kept = append(kept, v)
 				continue
 			}
-			kept = append(kept, v)
+			r := (v.Key == "open_cron" && curN.OpenCron != "") || (v.Key == "open_after" && curN.OpenAfter > 0)
+			if gate.Key == "" || (r && !removes) {
+				gate, removes = v, r
+			}
 		}
-		warns = append(warns, autorunfile.Issue{Line: line, Key: "open_cron",
+		warns = append(warns, autorunfile.Issue{Line: gate.Line, Key: gate.Key,
 			Reason: "removing the window and the threshold makes the queue fire whenever a message waits; that is set in the Console only, and the file's open_cron, open_minutes, tz and open_after are not applied"})
 		vals = kept
 		if next, aerr = overlay(vals, -1); aerr != nil {
@@ -437,7 +441,31 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 // in JSON (\u003c), and the envelope.
 const memoRepoWireMax = 6*autorunfile.MaxBytes + 8<<10
 
-var memoRepoAgentCodeRe = regexp.MustCompile(`^[a-z_]{1,40}$`)
+var (
+	memoRepoAgentCodeRe = regexp.MustCompile(`^[a-z_]{1,40}$`)
+	memoRepoCommitRe    = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+)
+
+// decodeAgentAutorunFile reads a 200 answer strictly: every field present with its type, and
+// found agreeing with content, so a cut or half-written answer never reads as "no file".
+func decodeAgentAutorunFile(body []byte) (agentAutorunFile, bool) {
+	var raw struct {
+		Path    *string `json:"path"`
+		Remote  *string `json:"remote"`
+		Branch  *string `json:"branch"`
+		Commit  *string `json:"commit"`
+		Found   *bool   `json:"found"`
+		Content *string `json:"content"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil ||
+		raw.Path == nil || raw.Remote == nil || raw.Branch == nil || raw.Commit == nil || raw.Found == nil || raw.Content == nil ||
+		*raw.Path != autorunfile.Path || *raw.Branch == "" || !memoRepoCommitRe.MatchString(*raw.Commit) ||
+		(!*raw.Found && *raw.Content != "") {
+		return agentAutorunFile{}, false
+	}
+	return agentAutorunFile{Path: *raw.Path, Remote: *raw.Remote, Branch: *raw.Branch, Commit: *raw.Commit,
+		Found: *raw.Found, Content: *raw.Content}, true
+}
 
 // agentAutorunFile asks the workspace Agent for the settings file. Every message is the Control
 // Plane's own: what the Agent says is never repeated, because a failed fetch's text carries
@@ -472,7 +500,8 @@ func (m *manager) agentAutorunFile(ctx context.Context, res *resolved, repo stri
 	code := agentErrCode(body)
 	switch {
 	case resp.StatusCode == http.StatusOK:
-		if err := json.Unmarshal(body, &out); err != nil || out.Path != autorunfile.Path || out.Branch == "" || out.Commit == "" {
+		var ok bool
+		if out, ok = decodeAgentAutorunFile(body); !ok {
 			return unreadable(http.StatusBadGateway, "the workspace's answer could not be read")
 		}
 		if len(out.Content) > autorunfile.MaxBytes {
