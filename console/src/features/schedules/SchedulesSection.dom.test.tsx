@@ -682,6 +682,8 @@ describe("SchedulesSection held row after a 409", () => {
   };
   const held = (generation: number) => ({ ...sched, id: "sch_held", approval_pending: true, generation });
   const reviewBtn = () => host.querySelector<HTMLButtonElement>(".sched-approve-btn")!;
+  const menuDetail = () =>
+    [...document.querySelectorAll<HTMLButtonElement>(".sched-menu .ui-menu-item")].find((b) => b.textContent?.includes(t("sched.detail")));
   const modalApprove = () =>
     [...document.querySelectorAll<HTMLButtonElement>(".sched-detail-modal button")].find((b) => b.textContent === t("sched.approve"));
 
@@ -706,13 +708,51 @@ describe("SchedulesSection held row after a 409", () => {
     expect(reviewBtn().disabled).toBe(true);
     await act(async () => reviewBtn().click());
     expect(document.querySelector(".sched-detail-modal")).toBeNull();
+    // The ⋯ menu's Details item opens the same modal, so it is held too.
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-menu-btn")!.click());
+    expect(menuDetail()!.disabled).toBe(true);
+    await act(async () => menuDetail()!.click());
+    expect(document.querySelector(".sched-detail-modal")).toBeNull();
 
     await act(async () => reread.resolve([held(3)]));
     expect(reviewBtn().disabled).toBe(false);
+    expect(menuDetail()!.disabled).toBe(false);
     await act(async () => reviewBtn().click());
     expect(document.querySelector(".sched-detail-modal")).not.toBeNull();
     await act(async () => modalApprove()!.click());
     expect(scheduleApprove).toHaveBeenLastCalledWith("sch_held", 3);
+  });
+
+  it("keeps the first row held when a second one is refused before the re-read lands", async () => {
+    const reread = defer();
+    const second = defer();
+    scheduleList
+      .mockResolvedValueOnce([held(2), { ...held(5), id: "sch_b" }])
+      .mockReturnValueOnce(reread.p)
+      .mockReturnValueOnce(second.p);
+    scheduleApprove.mockResolvedValue({ error: { code: "schedule_changed", message: "x" } });
+    await render();
+    const btns = () => [...host.querySelectorAll<HTMLButtonElement>(".sched-approve-btn")];
+    // Rows are sorted; find each by its row id rather than by position.
+    const btnOf = (id: string) => host.querySelector<HTMLButtonElement>(`[data-sched-id="${id}"] .sched-approve-btn`)!;
+    expect(btns().length).toBe(2);
+
+    await act(async () => btnOf("sch_held").click());
+    await act(async () => modalApprove()!.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(btnOf("sch_held").disabled).toBe(true);
+    // The open row B is refused while A's re-read is still pending.
+    await act(async () => btnOf("sch_b").click());
+    await act(async () => modalApprove()!.click());
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(btnOf("sch_held").disabled).toBe(true);
+    expect(btnOf("sch_b").disabled).toBe(true);
+    await act(async () => second.resolve([held(3), { ...held(6), id: "sch_b" }]));
+    expect(btns().map((b) => b.disabled)).toEqual([false, false]);
   });
 
   it("does not hold a row that was never refused", async () => {

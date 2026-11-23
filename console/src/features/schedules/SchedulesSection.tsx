@@ -375,10 +375,11 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const [openRuns, setOpenRuns] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ScheduleRun[]>>({});
   const [detail, setDetail] = useState<ScheduleDTO | null>(null);
-  // The row whose approve answered 409: the copy on screen is the rejected generation, so opening
+  // The rows whose approve answered 409: the copy on screen is the rejected generation, so opening
   // it again would only earn a second 409. Held from the 409 until a list read begun after it
-  // lands (the retry tick drops every older read), so no stale copy can reopen the details.
-  const [staleId, setStaleId] = useState<string | null>(null);
+  // lands (the retry tick drops every older read), so no stale copy can reopen the details. A Set
+  // because a second row can be refused while the first one's re-read is still out.
+  const [staleIds, setStaleIds] = useState<ReadonlySet<string>>(() => new Set());
   // The section owns its open state (a controlled Section) because a reveal from a
   // notification has to open it. The key is the one Section persists to itself, so an
   // existing open/closed choice still applies.
@@ -432,7 +433,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
         }
         if (tk.land("status")) setLoadErr("");
         if (tk.land("list")) {
-          setStaleId(null);
+          setStaleIds((cur) => (cur.size ? new Set() : cur));
           const ser = JSON.stringify(arr);
           if (ser !== serRef.current) {
             serRef.current = ser;
@@ -664,7 +665,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
               key={s.id}
               s={s}
               rowBusy={!!busy[s.id]}
-              detailHeld={staleId === s.id}
+              detailHeld={staleIds.has(s.id)}
               runsOpen={openRuns === s.id}
               runs={openRuns === s.id ? runs[s.id] : undefined}
               sessionRuns={grouped.bySchedule.get(s.id) ?? []}
@@ -687,7 +688,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
           s={detail}
           onClose={() => setDetail(null)}
           onStale={() => {
-            setStaleId(detail.id);
+            setStaleIds((cur) => new Set(cur).add(detail.id));
             setReloadTick((n) => n + 1);
           }}
           onSaved={(dto) => {
