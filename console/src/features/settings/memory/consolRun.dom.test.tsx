@@ -261,6 +261,15 @@ describe("useConsolRun", () => {
     });
   }
 
+  it("sends the write to the tenant that was confirmed", async () => {
+    api.mockResolvedValue(status(false));
+    await render(true, "a");
+    apiJSON.mockResolvedValue({ ok: true });
+    const { done } = await confirmRun();
+    await act(async () => done);
+    expect(apiJSON).toHaveBeenCalledWith(expect.stringContaining("/run"), "POST", {}, { "X-AF-Tenant": "a" });
+  });
+
   it("re-reads after run now", async () => {
     api.mockResolvedValue(status(false));
     await render(true);
