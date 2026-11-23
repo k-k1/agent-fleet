@@ -298,19 +298,31 @@ func TestMemoPRSnapshotWakes(t *testing.T) {
 	})
 }
 
-// No wake when anything else holds the message: a slot taken, another prerequisite still running,
-// or a message that is eligible.
+// No wake for a message that waits on anything but a read: a prerequisite still running asks for
+// none. Such a message does not keep a wake from one that waits on a read alone either: each
+// message is judged on its own (issue #4876).
 func TestMemoPRSnapshotWakeOnlyForSnapshots(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q := e.autoQueue("app", "impl", map[string]any{"maxActive": 3}, 0)
+		x := e.pending("app", "impl", "x")
+		e.do("a", "POST", "/api/memos", afterMemo("app", "impl", "y waits for x", x.ID))
+		e.fired(q) // x runs: y waits for a running delivery, not a snapshot
+		e.setRuntime(agent, "stopped")
+		if _, wakes := e.autoTick(now); len(wakes) != 0 || e.prWakes(now.Add(-time.Hour)) != 0 {
+			t.Fatalf("woken while the only message waits for a running prerequisite: %d", len(wakes))
+		}
+	})
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, q, _, _ := e.prChain("clean", now.Add(-time.Minute))
 		e.setRuntime(agent, "running")
 		x := e.pending("app", "impl", "x")
 		e.do("a", "POST", "/api/memos", afterMemo("app", "impl", "y waits for x", x.ID))
-		e.fired(q) // x runs: y waits for a running delivery, not a snapshot
+		e.fired(q) // x runs, a slot stays free: b still waits on a's snapshot alone
 		e.setRuntime(agent, "stopped")
-		if _, wakes := e.autoTick(now); len(wakes) != 0 || e.prWakes(now.Add(-time.Hour)) != 0 {
-			t.Fatalf("woken while a message waits for a running prerequisite: %d", len(wakes))
+		if _, wakes := e.autoTick(now); len(wakes) != 1 || e.prWakes(now.Add(-time.Hour)) != 1 {
+			t.Fatalf("%d wakes, want one for b's read beside y's running prerequisite", len(wakes))
 		}
 	})
 }

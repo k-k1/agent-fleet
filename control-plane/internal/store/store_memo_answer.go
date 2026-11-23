@@ -22,9 +22,11 @@ const AnswerHeadMax = 200
 // lock: no slot and no message is written by it.
 type MemoAnswerStore interface {
 	// ListAnswersDue returns, of every member, the deliveries closed at or after since with a
-	// session and no answer decided, last tried before before (never tried first), at most limit:
-	// with waited, those a pending message of the same bucket waits for, else the others.
-	ListAnswersDue(ctx context.Context, since, before string, waited bool, limit int) ([]MemoDelivery, error)
+	// session and no answer decided, last tried before before (never tried first), at most limit,
+	// in (answer_tried_at, closed_at, id) order and past after when it is given (the last row of
+	// the page before): with waited, those a pending message of the same bucket waits for, else
+	// the others.
+	ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, limit int) ([]MemoDelivery, error)
 	// MarkAnswerTried stamps a delivery whose answer is about to be read.
 	MarkAnswerTried(ctx context.Context, id, at string) error
 	// RecordAnswer keeps a read's answer on a closed delivery that has none and closed at or after
@@ -40,14 +42,20 @@ const memoDeliveryWaitedSQL = `EXISTS (SELECT 1 FROM memo p JOIN memo m ON m.mem
 	  WHERE p.membership_id=memo_delivery.membership_id AND p.delivery_id=memo_delivery.id AND p.state='delivered'
 	    AND m.state='pending' AND m.after_ids LIKE '%"' || p.id || '"%')`
 
-func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, limit int) ([]MemoDelivery, error) {
+func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, limit int) ([]MemoDelivery, error) {
 	cond := memoDeliveryWaitedSQL
 	if !waited {
 		cond = `NOT ` + cond
 	}
+	args := []any{DeliveryClosed, since, before}
+	if after != nil {
+		cond += ` AND (answer_tried_at>? OR (answer_tried_at=? AND (closed_at>? OR (closed_at=? AND id>?))))`
+		args = append(args, after.AnswerTriedAt, after.AnswerTriedAt, after.ClosedAt, after.ClosedAt, after.ID)
+	}
+	args = append(args, limit)
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state=? AND session<>'' AND answer_class=''
 		  AND closed_at>=? AND answer_tried_at<? AND `+cond+`
-		ORDER BY answer_tried_at, closed_at, id LIMIT ?`, DeliveryClosed, since, before, limit))
+		ORDER BY answer_tried_at, closed_at, id LIMIT ?`, args...))
 }
 
 func (s *SQL) MarkAnswerTried(ctx context.Context, id, at string) error {

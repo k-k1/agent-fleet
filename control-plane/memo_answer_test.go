@@ -406,22 +406,82 @@ func TestMemoAnswerWakeJudgesEachMessage(t *testing.T) {
 	})
 }
 
-// A person who took the session over before the retire (the retire answered released) leaves no
-// answer of the run to read.
-func TestMemoAnswerReleasedRetire(t *testing.T) {
+// A retire answered released (keys typed in the session count for it) is no turn: with no turn
+// started after the close, the run's answer is read as usual.
+func TestMemoAnswerReleasedRetireStillReads(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
 		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET retire_result='released' WHERE id=?`, da.ID); err != nil {
 			t.Fatal(err)
 		}
-		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: the person's task"))
+		agent.addSession("q-a", map[string]any{"alive": true, "state": "idle",
+			"lastTurnStartAt": now.Add(-20 * time.Minute).UTC().Format(time.RFC3339)})
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: the run's own"))
 		e.settleNow(now)
-		if n := len(agent.answerCallsSoFar()); n != 0 {
-			t.Fatalf("%d transcript reads of a released session", n)
-		}
-		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerUnknown {
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
 			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// A 404 decides nothing even for a session the Agent's list lacks (it leaves archived sessions
+// out): the next read that answers is kept, and the dependent fires.
+func TestMemoAnswer404ThenAnswer(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, b := e.noPRChain(now.Add(-time.Minute))
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusNotFound, map[string]any{"error": map[string]any{"code": "not_found", "message": "x"}}
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != "" {
+			t.Fatalf("kept %q from a 404", got.AnswerClass)
+		}
+		agent.setAnswer("q-a", transcriptReply("stopped", false, "Done: archived"))
+		e.settleNow(now.Add(6 * time.Minute))
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+		if d := e.fired(q); !sameIDs(d.MessageIDs, b.ID) {
+			t.Fatalf("claimed %v, want b", d.MessageIDs)
+		}
+	})
+}
+
+// A threshold the waiting messages would meet once their reads answer does not keep the reads
+// from waking the workspace; the fire still counts only what is satisfied.
+func TestMemoAnswerWakeUnderAThreshold(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		e.setPRs(da.ID, store.PRStateNone)
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_queue SET open_after=1 WHERE category_id=?`, q); err != nil {
+			t.Fatal(err)
+		}
+		e.setRuntime(agent, "stopped")
+		if _, wakes := e.autoTick(now.Add(5 * time.Minute)); len(wakes) != 1 { // past the quiet minute
+			t.Fatalf("%d wakes, want one for b's read", len(wakes))
+		}
+	})
+}
+
+// The waited-for list is paged by its order: a page past the rows of stopped workspaces reaches a
+// running workspace's row behind them.
+func TestMemoAnswerListPages(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		_, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		after := store.MemoDelivery{AnswerTriedAt: "", ClosedAt: "0000", ID: "0"}
+		ds, err := e.st.ListAnswersDue(context.Background(), store.DeliveryTS(now.Add(-memoAnswerWindow)),
+			store.DeliveryTS(now.Add(-memoAnswerEvery)), true, &after, memoAnswersListed)
+		if err != nil || len(ds) != 1 || ds[0].ID != da.ID {
+			t.Fatalf("listed %+v %v, want a past the cursor", ds, err)
+		}
+		late := store.MemoDelivery{AnswerTriedAt: "", ClosedAt: da.ClosedAt, ID: da.ID}
+		if ds, _ := e.st.ListAnswersDue(context.Background(), store.DeliveryTS(now.Add(-memoAnswerWindow)),
+			store.DeliveryTS(now.Add(-memoAnswerEvery)), true, &late, memoAnswersListed); len(ds) != 0 {
+			t.Fatalf("listed %+v at or before the cursor", ds)
 		}
 	})
 }
