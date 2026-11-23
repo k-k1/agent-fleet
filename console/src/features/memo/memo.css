@@ -561,7 +561,7 @@
   color: var(--fg);
 }
 /* Memo row: selected gets an lp-accent spine (matches sessions/repos rows). */
-.memo-row.sel {
+.memo-row.memo-row--sel {
   background: color-mix(
     in srgb,
     var(--lp-accent, var(--accent)) 16%,
@@ -908,6 +908,14 @@
 }
 .memo-q-badge.memo-q-badge--off {
   color: var(--muted);
+}
+/* The repository's settings file differs from the queue's settings (#4881). */
+.memo-q-repo {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  font-size: 11px;
+  color: var(--warn, var(--accent));
 }
 .memo-qmeta {
   display: flex;

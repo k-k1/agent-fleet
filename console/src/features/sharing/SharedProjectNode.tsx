@@ -38,7 +38,7 @@ function SharedSessionRow({ s }: { s: SharedSession }) {
       >
         {/* The same kind-coloured icon as the owner-side SessionRow, so which agent the
             conversation is with reads at a glance — the recipient has no other clue. */}
-        <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
+        <span className={"sess-kic " + kindClasses(s.kind, "sess-kic")} title={kindLabel(s.kind)}>
           <Icon name={kindIcon(s.kind)} />
         </span>
         {/* A label coming from claude's --name can carry an "[AF:<name>] " prefix. */}

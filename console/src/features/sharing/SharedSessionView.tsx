@@ -539,7 +539,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
   const sharedAccent = surfaceAccent(settings.sharedColor);
   return (
     <div
-      className="shared-view"
+      className="shared-view ui-bare-btns ui-bare-btns--shared"
       data-theme={settings.sharedTheme !== "inherit" ? settings.sharedTheme : undefined}
       style={{
         // Unlike colour, font size and family are not split per surface: legibility is the

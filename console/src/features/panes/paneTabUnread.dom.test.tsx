@@ -70,7 +70,7 @@ describe("tabbed pane: unread dot", () => {
     // Both tabs are in the strip and only one of them is selected — otherwise the assertions
     // below would hold for the wrong reason.
     expect(host!.querySelectorAll(".pane-tab")).toHaveLength(2);
-    expect(host!.querySelectorAll(".pane-tab.selected")).toHaveLength(1);
+    expect(host!.querySelectorAll(".pane-tab.pane-tab--selected")).toHaveLength(1);
     expect(dotAt(0)).toBeNull(); // v-front is the selected tab
     expect(dotAt(1)).not.toBeNull();
   });

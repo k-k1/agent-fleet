@@ -128,7 +128,7 @@ function RepoPeek({ s }: { s: Session }) {
   const st = stateInfo(s);
   return (
     <span className={"repo-peek" + (s.alive ? "" : " repo-peek--stopped")} title={displayName(s)}>
-      <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
+      <span className={"sess-kic " + kindClasses(s.kind, "sess-kic")} title={kindLabel(s.kind)}>
         <Icon name={kindIcon(s.kind)} />
       </span>
       <span className="repo-peek-title">{displayName(s)}</span>
@@ -298,7 +298,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
           </div>
           {/* Right after the name in DOM order so Tab / screen readers meet it where the touch layout shows it. Hidden until the row is hovered/focused (kept while the quick menu is
               open); touch devices show it always — see repos.css. */}
-          <div className={"launch-wrap" + (showLaunch ? " open" : "")} ref={wrapRef} onClick={(e) => e.stopPropagation()}>
+          <div className={"launch-wrap" + (showLaunch ? " launch-wrap--open" : "")} ref={wrapRef} onClick={(e) => e.stopPropagation()}>
             {/* Split button: launch opens the modal; the ▼ caret opens the quick
                 per-kind dropdown (instant launch, no prompt). */}
             <div className="launch-split">

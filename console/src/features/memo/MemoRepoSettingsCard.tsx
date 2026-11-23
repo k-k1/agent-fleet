@@ -5,7 +5,8 @@
 // Nothing is applied without the approval, and the approval names settings only: the Control
 // Plane takes the values from the file at the commit the difference showed, and answers 409
 // memo_queue_repo_stale when the file or the settings moved since. Reading the file needs the
-// workspace (it fetches origin), so the check runs when the member asks for it, never on open.
+// workspace (it fetches origin), so the check runs when the member asks for it, never on open;
+// until then the card shows the queue's last read, which the Control Plane keeps.
 import { useId, useRef, useState } from "react";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -13,7 +14,7 @@ import { t, useT } from "../../lib/i18n/index.ts";
 import { errText, type ApiError } from "../../core/api/client.ts";
 import { copyText } from "../../lib/clipboard.ts";
 import { fmtDateTime } from "../../lib/intl.ts";
-import type { MemoRepoDiff, MemoRepoExport, MemoRepoIssue, MemoRepoSettings } from "../../types/memo.ts";
+import type { MemoRepoCheck, MemoRepoDiff, MemoRepoExport, MemoRepoIssue, MemoRepoSettings } from "../../types/memo.ts";
 import { memoRepoApprove, memoRepoExport, memoRepoSettings } from "./api.ts";
 import { readQueue } from "./queues.ts";
 import { queueScope, useQueueSettingsCache } from "./queueSettingsCache.ts";
@@ -24,6 +25,9 @@ interface Props {
   categoryName: string;
   /** The category has settings: only then is there something to export. */
   hasQueue: boolean;
+  /** The last read of the file against these settings (the member's own check, or the Control
+   *  Plane's periodic one), shown until the member checks again. */
+  lastCheck?: MemoRepoCheck;
   /** The tenant's switch is off, or the dialog is saving: the difference is shown, the approval
    *  is not offered. */
   blocked: boolean;
@@ -41,7 +45,7 @@ interface Props {
 
 type Check = { kind: "idle" } | { kind: "loading" } | { kind: "error"; message: string } | { kind: "loaded"; data: MemoRepoSettings };
 
-export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, blocked, dirty, onBusy, onApplied }: Props) {
+export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, lastCheck, blocked, dirty, onBusy, onApplied }: Props) {
   const tr = useT();
   const toast = useToast();
   const [check, setCheck] = useState<Check>({ kind: "idle" });
@@ -182,6 +186,13 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
         )}
       </div>
       <div className="ui-field-hint">{tr("memo.repo_hint", { path: ".agent-fleet/autorun.yaml" })}</div>
+      {check.kind === "idle" && (lastCheck?.state === "differs" || lastCheck?.state === "invalid") && (
+        <div className="ui-field-hint memo-repo-last" role="status">
+          {lastCheck.state === "differs"
+            ? tr("memo.repo_last_differs", { when: fmtDateTime(lastCheck.checkedAt), commit: shortCommit(lastCheck.commit), count: lastCheck.diffs })
+            : tr("memo.repo_last_invalid", { when: fmtDateTime(lastCheck.checkedAt), commit: shortCommit(lastCheck.commit) })}
+        </div>
+      )}
 
       {check.kind === "loading" && (
         <div className="ui-field-hint" role="status">

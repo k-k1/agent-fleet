@@ -163,7 +163,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
             is narrow, and a leading dot would indent the unread rows alone and break the
             icon alignment down the list. */}
         <span className="sess-kic-wrap">
-          <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
+          <span className={"sess-kic " + kindClasses(s.kind, "sess-kic")} title={kindLabel(s.kind)}>
             <Icon name={kindIcon(s.kind)} />
           </span>
           {unread && <span className="unread-dot" role="img" aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />}

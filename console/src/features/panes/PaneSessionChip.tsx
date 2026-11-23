@@ -24,7 +24,7 @@ export function PaneSessionChip({ session, state }: PaneSessionChipProps) {
     // The name ellipsizes in a narrow pane and the slug stays hidden (it is an
     // internal id) — the hover tip carries both in full.
     <span className="pane-session" title={displayName(session) + "\nID: " + session.name}>
-      <span className={"kind-tag " + kindClasses(session.kind)}>
+      <span className={"kind-tag " + kindClasses(session.kind, "kind-tag")}>
         <Icon name={kindIcon(session.kind)} />
         <span className="kt-full">{kindLabel(session.kind)}</span>
         <span className="kt-short">{kindShort(session.kind)}</span>

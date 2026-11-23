@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/autorunfile"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -108,8 +110,8 @@ var memoRepoFieldByKey = func() map[string]memoRepoField {
 	return m
 }()
 
-// memoRepoFields covers every autorunfile.Keys entry except instruction_file, which is not read
-// yet (TestMemoRepoFieldsCoverTheFileKeys).
+// memoRepoFields covers every autorunfile.Keys entry except instruction_file, which is read into
+// instruction before anything is compared (TestMemoRepoFieldsCoverTheFileKeys).
 var memoRepoFields = []memoRepoField{
 	{key: "agent_kind", field: "agentKind",
 		set: func(in *memoQueueIn, v autorunfile.Value) { in.AgentKind = v.Str },
@@ -446,18 +448,86 @@ func memoRepoEntry(content, category string) (e *autorunfile.Entry, errs, warns 
 	if e != nil {
 		errs = append(errs, e.Errors...)
 		warns = append(warns, e.Warnings...)
-		if v, ok := e.Values["instruction_file"]; ok {
-			warns = append(warns, autorunfile.Issue{Line: v.Line, Key: "instruction_file",
-				Reason: "instruction_file is not read yet; the instruction is left as it is"})
-		}
 	}
 	return e, errs, warns
+}
+
+// memoRepoReadEntry is memoRepoEntry with instruction_file read: the file it names comes from the
+// commit the settings file was read at, and stands in the entry as instruction. A file that
+// cannot be used is an error on the instruction_file line. errs is set when the entry cannot be
+// compared; aerr when the workspace could not be asked.
+func (m *manager) memoRepoReadEntry(ctx context.Context, res *resolved, repo string, file agentAutorunFile, category string) (
+	e *autorunfile.Entry, errs, warns []autorunfile.Issue, aerr *apiError) {
+	e, errs, warns = memoRepoEntry(file.Content, category)
+	if e == nil || len(errs) > 0 {
+		return e, errs, warns, nil
+	}
+	v, ok := e.Values["instruction_file"]
+	if !ok {
+		return e, errs, warns, nil
+	}
+	content, found, why, aerr := m.agentAutorunInstruction(ctx, res, repo, file.Commit, v.Str)
+	if aerr != nil {
+		return nil, nil, nil, aerr
+	}
+	bad := func(reason string) (*autorunfile.Entry, []autorunfile.Issue, []autorunfile.Issue, *apiError) {
+		return e, append(errs, autorunfile.Issue{Line: v.Line, Key: "instruction_file", Reason: reason}), warns, nil
+	}
+	switch {
+	case why != "":
+		return bad(why)
+	case !found:
+		return bad(fmt.Sprintf("instruction_file names %s, which the commit does not hold", v.Str))
+	case strings.ContainsRune(content, 0):
+		// Postgres cannot store the byte, so an approval would fail where the difference looked fine.
+		return bad("the instruction file holds a NUL byte, which an instruction cannot hold")
+	case autorunfile.LooksLikeCredential(content):
+		return bad("the instruction file looks like it holds a credential: the repository's settings hold names only, never a secret")
+	}
+	// The entry may be shared with other categories through an alias: its values are copied, not
+	// changed in place.
+	out := *e
+	out.Values = make(map[string]autorunfile.Value, len(e.Values))
+	for k, val := range e.Values {
+		if k != "instruction_file" {
+			out.Values[k] = val
+		}
+	}
+	out.Values["instruction"] = autorunfile.Value{Key: "instruction", Line: v.Line, Str: content}
+	return &out, errs, warns, nil
+}
+
+// memoRepoEvaluate fills what the file says against the member's settings: the findings and the
+// difference. The caller has filled the file's own fields.
+func (m *manager) memoRepoEvaluate(ctx context.Context, res *resolved, c store.MemoCategory, file agentAutorunFile,
+	cur store.MemoQueue, hasQueue bool, out *memoRepoSettingsWire) *apiError {
+	if !file.Found {
+		return nil
+	}
+	e, errs, warns, aerr := m.memoRepoReadEntry(ctx, res, c.Repo, file, c.Name)
+	if aerr != nil {
+		return aerr
+	}
+	out.Entry = e != nil
+	out.Errors = append(out.Errors, errs...)
+	out.Warnings = append(out.Warnings, warns...)
+	if len(out.Errors) == 0 && e != nil {
+		r := memoRepoCompare(cur, hasQueue, e)
+		out.Warnings = append(out.Warnings, r.Warnings...)
+		out.Errors = append(out.Errors, r.Errors...)
+		if len(r.Errors) == 0 {
+			out.Diffs = r.Diffs
+		}
+	}
+	return nil
 }
 
 // repoSettings answers how the repository's settings file differs from the member's settings for
 // one category. It needs the workspace running: the file is read there, from origin.
 func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resolved) {
 	ctx := r.Context()
+	// A read is ordered by when it began: one that began earlier never replaces it (memoRepoCheckFrom).
+	started := time.Now()
 	ld, aerr := a.loadRepoFile(ctx, res, r.PathValue("categoryId"))
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -481,23 +551,15 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 		Remote: file.Remote, Branch: file.Branch, Commit: file.Commit, Found: file.Found, Queue: hasQueue,
 		ApprovedCommit: cur.RepoCommit, ApprovedAt: cur.RepoApprovedAt,
 		Errors: []autorunfile.Issue{}, Warnings: []autorunfile.Issue{}, Diffs: []memoRepoDiff{}}
-	if !file.Found {
-		writeJSON(w, http.StatusOK, out)
+	if aerr := a.mgr.memoRepoEvaluate(ctx, res, c, file, cur, hasQueue, &out); aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
-	e, errs, warns := memoRepoEntry(file.Content, c.Name)
-	out.Entry = e != nil
-	out.Errors = append(out.Errors, errs...)
-	out.Warnings = append(out.Warnings, warns...)
-	if len(out.Errors) == 0 && e != nil {
-		res := memoRepoCompare(cur, hasQueue, e)
-		out.Warnings = append(out.Warnings, res.Warnings...)
-		out.Errors = append(out.Errors, res.Errors...)
-		if len(res.Errors) == 0 {
-			out.Diffs = res.Diffs
-		}
-	}
 	out.ApprovalTag = memoRepoApprovalTag(c, cur, hasQueue, out.Diffs)
+	if hasQueue {
+		// What the member was shown is the queue's latest read; a failed write only leaves an older one.
+		_ = a.mgr.memoRepoRecord(ctx, res.mv.MembershipID, memoRepoCheckFrom(c, cur, &out, started), c.ID)
+	}
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -585,7 +647,11 @@ func (a memoAPI) repoApprove(w http.ResponseWriter, r *http.Request, res *resolv
 		writeAPIErr(w, memoRepoStale(changed))
 		return
 	}
-	e, errs, _ := memoRepoEntry(ld.file.Content, ld.c.Name)
+	e, errs, _, aerr := a.mgr.memoRepoReadEntry(ctx, res, ld.c.Repo, ld.file, ld.c.Name)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	if e == nil || len(errs) > 0 {
 		writeAPIErr(w, memoRepoStale(changed))
 		return
@@ -864,4 +930,316 @@ func (m *manager) agentAutorunFile(ctx context.Context, res *resolved, repo stri
 		why = code
 	}
 	return unreadable(http.StatusBadGateway, "the workspace could not read the file from origin's default branch ("+why+")")
+}
+
+// agentAutorunInstruction is the Agent's GET /repos/{name}/autorun-file/instruction
+// (workspace/agent/internal/gitx/autorun_file.go).
+type agentAutorunInstruction struct {
+	Path    string `json:"path"`
+	Commit  string `json:"commit"`
+	Found   bool   `json:"found"`
+	Content string `json:"content"`
+}
+
+// memoRepoInstructionWireMax bounds the Agent's answer about an instruction file, as
+// memoRepoWireMax does the settings file's.
+const memoRepoInstructionWireMax = 6*memoQueueInstructionMax + 8<<10
+
+// agentAutorunInstruction asks the workspace Agent for the file at p in commit, the commit the
+// settings file was read at. why is set when the file is there but cannot be an instruction; aerr
+// when the workspace could not answer. As for the settings file, the Agent's text is never
+// repeated.
+func (m *manager) agentAutorunInstruction(ctx context.Context, res *resolved, repo, commit, p string) (
+	content string, found bool, why string, aerr *apiError) {
+	unreadable := func(msg string) (string, bool, string, *apiError) {
+		return "", false, "", &apiError{http.StatusBadGateway, errCodeMemoQueueRepoUnreadable, msg}
+	}
+	cctx, cancel := context.WithTimeout(ctx, memoRepoFileWait)
+	defer cancel()
+	q := url.Values{"commit": {commit}, "path": {p}}
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet,
+		res.rt.Endpoint()+"/repos/"+url.PathEscape(repo)+"/autorun-file/instruction?"+q.Encode(), nil)
+	if err != nil {
+		return "", false, "", internalErr(err)
+	}
+	if res.rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+res.rt.Token())
+	}
+	resp, err := agentRelayClient.Do(req)
+	if err != nil {
+		return unreadable("the workspace did not answer")
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, memoRepoInstructionWireMax+1))
+	if err != nil {
+		return unreadable("the workspace's answer was cut off")
+	}
+	if len(body) > memoRepoInstructionWireMax {
+		return unreadable("the workspace's answer is larger than any instruction can be")
+	}
+	code := agentErrCode(body)
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		var raw struct {
+			Path    *string `json:"path"`
+			Commit  *string `json:"commit"`
+			Found   *bool   `json:"found"`
+			Content *string `json:"content"`
+		}
+		// Strict, as for the settings file: an answer about another file or commit, or a cut one,
+		// never reads as the instruction.
+		if err := json.Unmarshal(body, &raw); err != nil || raw.Path == nil || raw.Commit == nil || raw.Found == nil ||
+			raw.Content == nil || *raw.Path != p || *raw.Commit != commit || (!*raw.Found && *raw.Content != "") {
+			return unreadable("the workspace's answer could not be read")
+		}
+		if len(*raw.Content) > memoQueueInstructionMax {
+			return "", false, fmt.Sprintf("the instruction file is larger than %d bytes", memoQueueInstructionMax), nil
+		}
+		return *raw.Content, *raw.Found, "", nil
+	case code == "file_too_large":
+		return "", false, fmt.Sprintf("the instruction file is larger than %d bytes", memoQueueInstructionMax), nil
+	case code == "file_not_regular":
+		return "", false, "instruction_file must name a regular file, not a link, a directory or a submodule", nil
+	case code == "file_not_utf8":
+		return "", false, "the instruction file is not UTF-8 text", nil
+	case resp.StatusCode == http.StatusNotFound && code == "not_found":
+		// The settings file was just read from it: the working copy went away in between.
+		return unreadable("the workspace no longer has a git working copy named " + repo)
+	case resp.StatusCode == http.StatusNotFound && code == "":
+		// The route's own 404: an Agent from before instruction files.
+		return unreadable("the workspace's Agent is older than this Control Plane and cannot read instruction_file")
+	}
+	why = "HTTP " + strconv.Itoa(resp.StatusCode)
+	if memoRepoAgentCodeRe.MatchString(code) {
+		why = code
+	}
+	return unreadable("the workspace could not read the instruction file from the settings' commit (" + why + ")")
+}
+
+// The last read of a repository's settings file, kept on the member's queue (#4881). A read is
+// taken when the member checks the file in the Console, and, with AF_MEMO_QUEUE_REPO_RECHECK set,
+// again on that interval for every enabled queue whose workspace is running. The Console shows
+// "Repository settings differ" from it. It only ever informs: nothing is applied without the
+// member's approval, which reads the file again.
+
+// Repo check states. The same words go to the Console.
+const (
+	memoRepoCheckDiffers = "differs"
+	memoRepoCheckSame    = "same"
+	memoRepoCheckInvalid = "invalid"
+	memoRepoCheckAbsent  = "absent"
+)
+
+// memoRepoCheckWire is a queue's last read of the file, on the queue's wire.
+type memoRepoCheckWire struct {
+	State     string `json:"state"`
+	Commit    string `json:"commit"`
+	Diffs     int    `json:"diffs"`
+	CheckedAt string `json:"checkedAt"`
+}
+
+// memoRepoBasis names what a read was compared with: the category as named now (a rename makes
+// another entry of the file apply) and the member's settings by their content. A read whose basis
+// is not the queue's current one says nothing about it.
+func memoRepoBasis(c store.MemoCategory, q store.MemoQueue) string {
+	b, _ := json.Marshal(struct {
+		Repo, Name string
+		Settings   memoQueueIn
+	}{c.Repo, c.Name, memoQueueInFrom(q)})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:16])
+}
+
+// memoRepoCheckTime is a read's time on the queue: fixed width, so that the store's comparison of
+// two as text orders them (SetMemoQueueRepoCheck keeps the read that began last).
+const memoRepoCheckTime = "2006-01-02T15:04:05.000000Z07:00"
+
+// memoRepoCheckFrom is the record of what a read that began at started found for the queue cur.
+// The time is the start, not the end: a slow read that began before another must not replace it.
+func memoRepoCheckFrom(c store.MemoCategory, cur store.MemoQueue, out *memoRepoSettingsWire, started time.Time) store.MemoRepoCheck {
+	state := memoRepoCheckSame
+	switch {
+	case len(out.Errors) > 0:
+		state = memoRepoCheckInvalid
+	case !out.Found || !out.Entry:
+		state = memoRepoCheckAbsent
+	case len(out.Diffs) > 0:
+		state = memoRepoCheckDiffers
+	}
+	return store.MemoRepoCheck{State: state, Commit: out.Commit, Diffs: len(out.Diffs), Basis: memoRepoBasis(c, cur),
+		At: started.UTC().Format(memoRepoCheckTime)}
+}
+
+// memoRepoRecord keeps a read on the queue, in one transaction behind the tenant row's lock: not
+// once memo queues are turned off, and not when the category or the settings changed since the
+// read compared them (its basis is not theirs any more), so a read taken against old settings
+// never replaces one taken against the current ones. Between two reads of the same basis the one
+// that began later stays.
+func (m *manager) memoRepoRecord(ctx context.Context, membershipID string, rc store.MemoRepoCheck, categoryID string) error {
+	return m.store.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
+		if on, err := tx.LockTenantSwitch(); err != nil || !on {
+			return err
+		}
+		c, ok, err := tx.GetCategory(categoryID)
+		if err != nil || !ok {
+			return err
+		}
+		q, ok, err := tx.GetQueue(categoryID)
+		if err != nil || !ok || memoRepoBasis(c, q) != rc.Basis {
+			return err
+		}
+		return tx.SetQueueRepoCheck(categoryID, rc)
+	})
+}
+
+// memoRepoCheckOf is the queue's last read as the Console sees it: nil when there is none, or it
+// was taken against another name or other settings.
+func memoRepoCheckOf(q store.MemoQueue, c store.MemoCategory) *memoRepoCheckWire {
+	rc := q.RepoCheck
+	if rc.State == "" || c.Repo == "" || rc.Basis != memoRepoBasis(c, q) {
+		return nil
+	}
+	return &memoRepoCheckWire{State: rc.State, Commit: rc.Commit, Diffs: rc.Diffs, CheckedAt: rc.At}
+}
+
+// memoRepoRechecker reads the settings file again for every enabled queue on an interval.
+type memoRepoRechecker struct {
+	mgr   *manager
+	every time.Duration
+	now   func() time.Time
+}
+
+func (rc *memoRepoRechecker) run(ctx context.Context) {
+	t := time.NewTicker(rc.every)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			rc.tick(ctx)
+		}
+	}
+}
+
+// tick reads each member's files once per repository and records the result on each enabled
+// queue of that repository. A workspace that is not running is left alone: a read never starts
+// one. A queue read less than half an interval ago (by the member, or by the last tick) is
+// skipped.
+func (rc *memoRepoRechecker) tick(ctx context.Context) {
+	if !rc.mgr.memoRepoSettings {
+		return
+	}
+	qs, err := rc.mgr.store.ListEnabledMemoQueues(ctx)
+	if err != nil {
+		log.Printf("memo repo recheck: list queues: %v", err)
+		return
+	}
+	byMember := map[string][]store.MemoQueue{}
+	var order []string
+	for _, q := range qs {
+		if !q.Enabled {
+			continue
+		}
+		if _, ok := byMember[q.MembershipID]; !ok {
+			order = append(order, q.MembershipID)
+		}
+		byMember[q.MembershipID] = append(byMember[q.MembershipID], q)
+	}
+	for _, mid := range order {
+		if ctx.Err() != nil {
+			return
+		}
+		rc.member(ctx, mid, byMember[mid])
+	}
+}
+
+func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string, qs []store.MemoQueue) {
+	now := rc.now()
+	type due struct {
+		q store.MemoQueue
+		c store.MemoCategory
+	}
+	var work []due
+	for _, q := range qs {
+		c, ok, err := rc.mgr.store.GetCategory(ctx, q.CategoryID)
+		if err != nil || !ok || c.Repo == "" || c.MembershipID != membershipID {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339, q.RepoCheck.At); err == nil && q.RepoCheck.Basis == memoRepoBasis(c, q) &&
+			now.Sub(at) < rc.every/2 {
+			continue
+		}
+		work = append(work, due{q, c})
+	}
+	if len(work) == 0 {
+		return
+	}
+	// The workspace row is read, never built: resolving it for a start would create a missing one,
+	// make a stopped one's keys and publish a runtime in the cache. A read needs the Agent's
+	// address and token only. Whether it runs is the runtime's answer below, not the row's state
+	// column, which a failed state write or an adopted container can leave at stopped.
+	ws, ok, err := rc.mgr.store.GetWorkspaceByMembership(ctx, membershipID)
+	if err != nil || !ok {
+		return
+	}
+	identityID, ok, err := rc.mgr.store.IdentityIDForMembership(ctx, membershipID)
+	if err != nil || !ok {
+		return
+	}
+	ident, mv, aerr := rc.mgr.activeMembership(ctx, identityID, membershipID)
+	if aerr != nil {
+		return
+	}
+	var rt runtime.Runtime
+	if c, ok := rc.mgr.cachedRTFor(membershipID); ok && c.ws.ID == ws.ID {
+		rt = c.rt
+	} else {
+		rt = rc.mgr.runtimeFor(ws, noSecretKeys)
+	}
+	if rt == nil || rt.Endpoint() == "" || rt.State(ctx) != "running" {
+		return
+	}
+	res := &resolved{rt: rt, ws: ws, ident: ident, mv: mv}
+	// The tenant's switch is asked again before each read and each write: turned off while a
+	// read waits on the workspace, nothing more is fetched and nothing is recorded.
+	on := func() bool {
+		v, err := rc.mgr.store.GetTenantMemoQueues(ctx, res.mv.TenantID)
+		return err == nil && v
+	}
+	type read struct {
+		file    agentAutorunFile
+		started time.Time
+	}
+	files := map[string]*read{}
+	failed := map[string]bool{}
+	for _, d := range work {
+		if failed[d.c.Repo] || !on() {
+			continue
+		}
+		rd := files[d.c.Repo]
+		if rd == nil {
+			started := rc.now()
+			f, aerr := rc.mgr.agentAutorunFile(ctx, res, d.c.Repo)
+			if aerr != nil {
+				// The last read stays as it was: an unreachable remote says nothing about the file.
+				log.Printf("memo repo recheck: %s: %s", membershipID, aerr.code)
+				failed[d.c.Repo] = true
+				continue
+			}
+			rd = &read{f, started}
+			files[d.c.Repo] = rd
+			if !on() {
+				continue
+			}
+		}
+		out := memoRepoSettingsWire{Found: rd.file.Found, Commit: rd.file.Commit}
+		if aerr := rc.mgr.memoRepoEvaluate(ctx, res, d.c, rd.file, d.q, true, &out); aerr != nil {
+			log.Printf("memo repo recheck: %s: %s", membershipID, aerr.code)
+			continue
+		}
+		if err := rc.mgr.memoRepoRecord(ctx, membershipID, memoRepoCheckFrom(d.c, d.q, &out, rd.started), d.c.ID); err != nil {
+			log.Printf("memo repo recheck: %s: record: %v", membershipID, err)
+		}
+	}
 }

@@ -101,7 +101,7 @@ function ChatToolRun({ tools }: { tools: string[] }) {
   }
   const summary = tally.map(([n, c]) => (c > 1 ? `${n}×${c}` : n)).join(" · ");
   return (
-    <div className={"mt-toolrun" + (open ? " open" : "")}>
+    <div className={"mt-toolrun" + (open ? " mt-toolrun--open" : "")}>
       <button
         type="button"
         className="mt-tool mt-toolrun-head"

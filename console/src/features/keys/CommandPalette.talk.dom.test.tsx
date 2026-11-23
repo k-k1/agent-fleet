@@ -296,7 +296,7 @@ describe("CommandPalette conversations mode — PageDown on an empty list (#2412
       await new Promise((r) => setTimeout(r, 3300));
     });
     expect(snippets()).toHaveLength(1);
-    expect(document.querySelector(".cp-item.sel")).not.toBeNull();
+    expect(document.querySelector(".cp-item.cp-item--sel")).not.toBeNull();
     pressEnter();
     expect(opened.map((o) => o.name)).toEqual(["fixer"]);
   }, 10_000);
@@ -319,7 +319,7 @@ describe("CommandPalette conversations mode — arrow keys on an empty list (#25
         await new Promise((r) => setTimeout(r, 3300));
       });
       expect(snippets()).toHaveLength(1);
-      expect(document.querySelector(".cp-item.sel")).not.toBeNull();
+      expect(document.querySelector(".cp-item.cp-item--sel")).not.toBeNull();
       pressEnter();
       expect(opened.map((o) => o.name)).toEqual(["fixer"]);
     },

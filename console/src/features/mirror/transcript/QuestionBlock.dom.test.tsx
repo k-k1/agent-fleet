@@ -64,7 +64,7 @@ describe("QuestionBlock — declined AskUserQuestion", () => {
     // The plan card's "Rejected" read as the agent turning the question down; the user cancelled it.
     expect(el.querySelector(".mq-done")?.textContent).not.toBe(tr("mirror.rejected"));
     expect(el.querySelector(".mq-done")?.textContent).not.toBe(tr("mirror.answered"));
-    expect(el.querySelectorAll(".mq-opt.selected").length).toBe(0);
+    expect(el.querySelectorAll(".mq-opt.mq-opt--selected").length).toBe(0);
   });
 
   it("does not dump claude's rejection prose into the card as a free-text answer", () => {
@@ -117,7 +117,7 @@ describe("QuestionBlock — declined AskUserQuestion", () => {
     const el = render(turns, OWNER);
     expect(el.querySelector(".mt-question.declined")).toBeNull();
     expect(el.querySelector(".mq-done")?.textContent).toBe(tr("mirror.answered"));
-    const selected = el.querySelectorAll(".mq-opt.selected");
+    const selected = el.querySelectorAll(".mq-opt.mq-opt--selected");
     expect(selected.length).toBe(1);
     expect(selected[0].textContent).toContain("案B");
     expect(el.querySelector(".mq-declined-note")).toBeNull();

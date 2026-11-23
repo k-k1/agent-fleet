@@ -138,7 +138,7 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
                       const st = stateInfo(s);
                       return (
                         <div key={s.tenant + "|" + s.user_key + "|" + s.name} className="adm-session">
-                          <span className={"kind-tag " + kindClasses(s.kind)}>
+                          <span className={"kind-tag " + kindClasses(s.kind, "kind-tag")}>
                             <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
                           </span>
                           <span className="asx-user mono" title={s.email || ""}>{s.user_key || tr("admin.unknown")}</span>

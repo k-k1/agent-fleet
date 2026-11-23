@@ -550,7 +550,7 @@ function PopulatedPane({
             const menuSession = wsRunning && tabSession && sessionByName.has(tabSession) ? tabSession : null;
             return (
               <div
-                className={cx("pane-tab", view.id === cell.selectedViewId && "selected")}
+                className={cx("pane-tab", view.id === cell.selectedViewId && "pane-tab--selected")}
                 role="presentation"
                 key={view.id}
                 // Same shape as a left-rail row: open on the contextmenu event that follows,
@@ -627,7 +627,7 @@ function PopulatedPane({
                     </span>
                   )}
                   {kic && (
-                    <span className={cx("pane-tab-kic sess-kic", kindColorClasses(kic.cls))} title={kic.label}>
+                    <span className={cx("pane-tab-kic sess-kic", kindColorClasses(kic.cls, "sess-kic"))} title={kic.label}>
                       <Icon name={kic.icon} />
                     </span>
                   )}

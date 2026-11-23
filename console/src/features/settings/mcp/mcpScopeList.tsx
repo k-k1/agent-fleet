@@ -12,20 +12,22 @@ export function ScopeList({
   inlineKey,
   summaryKey,
   className,
+  monoClassName,
 }: {
   scopes: string[];
   inlineKey: MsgKey; // takes {scopes}
   summaryKey: MsgKey; // takes {n}
   className?: string;
+  monoClassName?: string; // for the element that holds the scope names themselves
 }) {
   const tr = useT();
   if (scopes.length <= SCOPE_INLINE_MAX) {
-    return <div className={`mono ${className || ""}`.trim()}>{tr(inlineKey, { scopes: scopes.join(" ") })}</div>;
+    return <div className={`mono ${monoClassName || ""} ${className || ""}`.replace(/ +/g, " ").trim()}>{tr(inlineKey, { scopes: scopes.join(" ") })}</div>;
   }
   return (
     <details className={`mcp-scopes ${className || ""}`.trim()} data-testid="mcp-scope-list">
       <summary>{tr(summaryKey, { n: scopes.length })}</summary>
-      <div className="mono">{scopes.join(" ")}</div>
+      <div className={`mono mcp-scopes-mono ${monoClassName || ""}`.trim()}>{scopes.join(" ")}</div>
     </details>
   );
 }

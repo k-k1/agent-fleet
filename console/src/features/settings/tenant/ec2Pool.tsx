@@ -491,8 +491,8 @@ export function PoolView() {
               <tbody>
                 {slots.map((s) => (
                   <tr key={s.instance_id}>
-                    <td className="mono">{s.instance_id}</td>
-                    <td className="mono">{s.instance_type}<span className="pool-az muted" title={s.az}>{s.az}</span></td>
+                    <td className="mono pool-td-mono">{s.instance_id}</td>
+                    <td className="mono pool-td-mono">{s.instance_type}<span className="pool-az muted" title={s.az}>{s.az}</span></td>
                     <td>
                       <span className={"state-dot " + (s.terminable ? "state-dot--off" : s.state === "running" ? "state-dot--on" : "state-dot--off")} />
                       {s.terminable ? (
@@ -536,7 +536,7 @@ export function PoolView() {
                         </span>
                       )}
                     </td>
-                    <td className="mono pool-ws-cell">
+                    <td className="mono pool-td-mono pool-ws-cell">
                       {s.workspace ? <WsName name={s.workspace} /> : <span className="muted">{tr("pool.free_slot")}</span>}
                       {bakeWS.has(s.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
                     </td>
@@ -638,11 +638,11 @@ export function PoolView() {
               <tbody>
                 {homes.map((h) => (
                   <tr key={h.volume_id || h.workspace}>
-                    <td className="mono pool-ws-cell">
+                    <td className="mono pool-td-mono pool-ws-cell">
                       <WsName name={h.workspace} />
                       {bakeWS.has(h.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
                     </td>
-                    <td className="mono">
+                    <td className="mono pool-td-mono">
                       {h.volume_id ? <>{h.volume_id}<span className="pool-az muted">{h.size_gib} GiB</span></> : <span className="muted">{tr("pool.no_volume")}</span>}
                     </td>
                     <td>

@@ -415,6 +415,8 @@ func checkRepoPath(p string) string {
 	switch {
 	case p == "":
 		return "instruction_file is empty"
+	case strings.ContainsFunc(p, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+		return "instruction_file must not hold control characters"
 	case strings.HasPrefix(p, "/") || strings.Contains(p, "\\"):
 		return "instruction_file must be a relative path inside the repository, with / as the separator"
 	case path.Clean(p) != p || p == "." || p == ".." || strings.HasPrefix(p, "../"):

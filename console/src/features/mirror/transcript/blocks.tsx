@@ -131,7 +131,7 @@ export function TaskChecklist({ tasks, session }: { tasks: TaskItem[]; session: 
   if (dismissedSig === sig) return null; // this exact list was dismissed
 
   return (
-    <section className={"mirror-tasks mirror-disclosure" + (open ? " open" : "")}>
+    <section className={"mirror-tasks mirror-disclosure" + (open ? " mirror-disclosure--open mirror-tasks--open" : "")}>
       <div className="mirror-tasks-head">
         <button
           type="button"
@@ -289,7 +289,7 @@ export function ThinkingBlock({
   if (!text) return null;
   const label = tr("mirror.thinking_label");
   return (
-    <section className={"mirror-thinking mirror-disclosure" + (open ? " open" : "")}>
+    <section className={"mirror-thinking mirror-disclosure" + (open ? " mirror-disclosure--open" : "")}>
       <button
         type="button"
         ref={head}
@@ -522,7 +522,7 @@ export function WorkDisclosure({
 }) {
   const head = useRef<HTMLButtonElement>(null);
   return (
-    <section className={"mt-work mirror-disclosure" + (open ? " open" : "")}>
+    <section className={"mt-work mirror-disclosure" + (open ? " mirror-disclosure--open mt-work--open" : "")}>
       <button type="button" ref={head} className="mt-work-head" aria-expanded={open} onClick={onToggle}>
         <Icon name={open ? "chevron-down" : "chevron-right"} />
         <span className="mt-work-title">{tr("chat.work_process")}</span>
@@ -911,7 +911,7 @@ export function ToolRun({
   }
   const summary = tally.map(([n, c]) => (c > 1 ? `${n}×${c}` : n)).join(" · ");
   return (
-    <div className={"mt-toolrun" + (open ? " open" : "")}>
+    <div className={"mt-toolrun" + (open ? " mt-toolrun--open" : "")}>
       <button
         type="button"
         className="mt-tool mt-toolrun-head"
@@ -1026,7 +1026,7 @@ export function QuestionBlock({
                 return (
                   <button
                     type="button"
-                    className={"mq-opt" + (sel ? " selected" : "")}
+                    className={"mq-opt" + (sel ? " mq-opt--selected" : "")}
                     key={oi}
                     disabled
                     title={od.description || od.label}

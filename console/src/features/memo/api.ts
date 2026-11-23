@@ -23,6 +23,7 @@ export {
   memoStopChain,
   memoTidyApply,
   memoQueueFire,
+  memoQueueFireOne,
   memoQueueResume,
   memoQueueDeliveries,
   memoQueueDeliveryEnd,

@@ -224,7 +224,7 @@ function MemberChatPill({ conn }: { conn: MemberChatConn }) {
             <span className={"engine-row-state engine-row-state-" + tone}>{stateLabel}</span>
           </div>
           <div className="engine-row">
-            <div className="engine-row-line muted">{tr("engine.member_conn_hint")}</div>
+            <div className="engine-row-line muted engine-row-line--muted">{tr("engine.member_conn_hint")}</div>
             {conn.url && <div className="engine-row-line mono">{conn.url}</div>}
             {modelLine && <div className="engine-row-line">{modelLine}</div>}
           </div>
@@ -372,7 +372,7 @@ function EngineRowLine({
         </div>
       )}
       {sinceSecs !== null && (
-        <div className="engine-row-line muted">{tr("engine.last_used", { d: dur(sinceSecs) })}</div>
+        <div className="engine-row-line muted engine-row-line--muted">{tr("engine.last_used", { d: dur(sinceSecs) })}</div>
       )}
       {/* stop_eta absent => no countdown line at all (decision 4) — never a fallback. */}
       {leftSecs !== null && leftSecs > 0 && (
@@ -386,9 +386,9 @@ function EngineRowLine({
           『利用可』とだけ言う" is categorical for an external/remote row, so this does not
           trust the wire to have already omitted idle_secs for one. */}
       {!row.lifecycle && row.idle_secs !== undefined && (
-        <div className="engine-row-line muted">{tr("engine.idle_policy", { d: dur(row.idle_secs) })}</div>
+        <div className="engine-row-line muted engine-row-line--muted">{tr("engine.idle_policy", { d: dur(row.idle_secs) })}</div>
       )}
-      {showsColdHint(row) && <div className="engine-row-line muted">{tr("engine.cold_hint")}</div>}
+      {showsColdHint(row) && <div className="engine-row-line muted engine-row-line--muted">{tr("engine.cold_hint")}</div>}
       {queued !== undefined && <div className="engine-row-line">{tr("engine.queue_shared", { n: queued })}</div>}
     </div>
   );

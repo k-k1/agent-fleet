@@ -56,6 +56,73 @@
   background: color-mix(in srgb, var(--err) 16%, var(--btn));
   border-color: color-mix(in srgb, var(--err) 65%, transparent);
 }
+
+/* ---- Bare-button variants (ghost / primary / danger) ----
+   The views that host raw <button className="ghost|primary|danger"> markup (the chat and mirror
+   transcripts, the settings modal, the onboarding card) carry `ui-bare-btns` on their root and
+   get those variants skinned here, once, instead of from a feature stylesheet each: the three
+   names would otherwise be styled in every one of those files. `--mirror` / `--shared` /
+   `--settings` pick the primary fill that surface uses. :where() keeps the scope at zero
+   specificity, so ui/Button's .ui-btn-* rules still win where a Button is used. */
+:where(.ui-bare-btns) button.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--muted);
+  padding: 2px 6px;
+}
+:where(.ui-bare-btns) button.ghost:hover:not(:disabled) {
+  background: var(--btn);
+  color: var(--fg);
+}
+.btn.xs,
+.ghost.xs {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+:where(.ui-bare-btns--mirror, .ui-bare-btns--shared) button.primary {
+  background: var(--accent);
+  color: var(--on-accent);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+:where(.ui-bare-btns--mirror, .ui-bare-btns--shared) button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, #fff);
+}
+/* Chat primary actions (allow / approve and run / send answer / send) follow the theme
+   accent instead of the fixed app blue. */
+.ui-bare-btns--mirror button.primary {
+  background: var(--chat-accent);
+  border-color: var(--chat-accent);
+}
+.ui-bare-btns--mirror button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--chat-accent) 82%, #ffffff);
+}
+/* A filled CTA can't be disabled with the shared flat fade: label and fill wash out
+   together, so the send-answer label sat at ~2:1 against its own button and you could not read the
+   action you were waiting to unlock. Give it the plain disabled-button skin instead —
+   still unmistakably unavailable (flat, no hover), but legible. */
+.ui-bare-btns--mirror button.primary:disabled {
+  opacity: 1;
+  background: var(--btn);
+  border-color: var(--btn-border);
+  color: var(--muted);
+}
+
+:where(.ui-bare-btns--settings) button.primary {
+  background: var(--accent);
+  /* --accent is the user's top-bar accent here; the theme's --on-accent is not chosen for it. */
+  color: var(--on-topbar-accent, var(--on-accent));
+  border-color: var(--accent);
+  font-weight: 600;
+}
+:where(.ui-bare-btns--settings) button.primary:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 85%, #fff);
+}
+:where(.ui-bare-btns--settings) button.danger:hover:not(:disabled) {
+  background: #4a2222;
+  border-color: #6a3030;
+  color: #f3b6b6;
+}
 .ui-iconbtn {
   padding: 3px 6px;
 }
@@ -147,7 +214,6 @@
 }
 .ui-modal .ui-field-label,
 .ui-modal .ui-field-hint,
-.ui-modal .muted,
 .ui-modal .ssm-check,
 .ui-modal .ui-btn-ghost {
   color: var(--dialog-muted);
@@ -675,7 +741,7 @@
 /* The keyboard's position and the stored selection are different things and can sit on
    different rows, so they read differently: a fill for where the keyboard is, a check for
    what is currently chosen. */
-.model-combo-item.sel {
+.model-combo-item.model-combo-item--sel {
   background: color-mix(in srgb, var(--accent) 14%, var(--bg));
 }
 .model-combo-item.model-combo-item--on .model-combo-label {
@@ -830,7 +896,7 @@
    the active fill carries its own contrast). */
 /* Hue from tokens.css (--kind); the light-theme var already carries the darker
    hue, so no separate light override is needed here. */
-.ui-seg.big .seg-btn.kind:not(.seg-btn--active) .seg-ic { color: var(--kind); }
+.ui-seg.big .seg-btn.seg-btn--kind:not(.seg-btn--active) .seg-ic { color: var(--kind); }
 
 /* Inline link-styled button (help text and hints that point at another screen). */
 .linklike {

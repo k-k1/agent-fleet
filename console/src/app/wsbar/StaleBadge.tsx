@@ -23,7 +23,7 @@ export function StaleBadge({ onRestart }: { onRestart: () => Promise<void> }) {
         title={tr("wsbar.stale.title")}
       >
         <Icon name="refresh" />
-        <span className="lbl">{tr("wsbar.stale.badge")}</span>
+        <span className="ws-lbl">{tr("wsbar.stale.badge")}</span>
       </Button>
       {open && (
         <div className="ws-stale-pop">

@@ -14,6 +14,7 @@ import type {
   MemoDelivery,
   MemoQueue,
   MemoQueueInput,
+  MemoRepoCheck,
   MemoQueueWaiting,
   MemoQueuesWire,
   MemoTidyBlocked,
@@ -126,6 +127,21 @@ export function readQueue(v: unknown): MemoQueue | null {
     updatedAt: str(v.updatedAt),
     waiting: readWaiting(v.waiting),
     fireBlock: readWaiting(v.fireBlock),
+    repoCheck: readRepoCheck(v.repoCheck),
+  };
+}
+
+const REPO_CHECK_STATES: readonly MemoRepoCheck["state"][] = ["differs", "same", "invalid", "absent"];
+
+/** A queue's last read of its repository's settings file; undefined for a state this Console
+ *  does not know (a newer Control Plane) rather than a guess. */
+function readRepoCheck(v: unknown): MemoRepoCheck | undefined {
+  if (!isObj(v) || !REPO_CHECK_STATES.includes(v.state as MemoRepoCheck["state"])) return undefined;
+  return {
+    state: v.state as MemoRepoCheck["state"],
+    commit: str(v.commit),
+    diffs: num(v.diffs, 0),
+    checkedAt: str(v.checkedAt),
   };
 }
 

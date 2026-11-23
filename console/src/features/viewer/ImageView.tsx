@@ -213,7 +213,7 @@ export function ImageView({ src, alt, placeholder, onLoad, onZoom, ref }: ImageV
     onZoomRef.current?.(scale);
   }, [scale]);
 
-  if (broken) return <div className="imgview muted">{tr("view.cannot_show_image")}</div>;
+  if (broken) return <div className="imgview muted imgview--muted">{tr("view.cannot_show_image")}</div>;
 
   return (
     <div

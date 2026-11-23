@@ -10,7 +10,7 @@ export function SkillOriginBadge({ origin }: { origin: string }) {
   const k = originKind(origin);
   if (!k) return <span className="mirror-skill-src" title={origin}>{tr("mirror.skills_src_shared")}</span>;
   return (
-    <span className={"mirror-skill-src " + kindClasses(k)} title={origin}>
+    <span className={"mirror-skill-src " + kindClasses(k, "mirror-skill-src")} title={origin}>
       <Icon name={kindIcon(k)} /> {kindLabel(k)}
     </span>
   );

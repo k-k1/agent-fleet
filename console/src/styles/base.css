@@ -88,6 +88,13 @@ textarea {
   color: var(--muted2);
   font-size: 12px;
 }
+/* Inside a dialog the secondary text is lifted toward --fg: plain --muted2 is too faint on the
+   dialog surface. These overrides sit with the utility they adjust; --dialog-muted is a
+   color-mix, so it follows the dark / light / custom themes. */
+.ui-modal .muted,
+.settings-content .muted {
+  color: var(--dialog-muted);
+}
 .mono {
   font-family: var(--mono);
 }

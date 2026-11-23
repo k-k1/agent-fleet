@@ -63,6 +63,18 @@ describe("readMemoQueues", () => {
   it("defaults a missing worktree to on, like the Control Plane", () => {
     expect(readMemoQueues({ queues: [{ categoryId: "c1" }] })?.queues[0].worktree).toBe(true);
   });
+  it("reads the last repository settings read, and drops a state it does not know", () => {
+    const rc = { state: "differs", commit: "abc", diffs: 2, checkedAt: "2026-11-23T00:00:00Z" };
+    expect(readMemoQueues({ queues: [{ categoryId: "c1", repoCheck: rc }] })?.queues[0].repoCheck).toEqual(rc);
+    expect(readMemoQueues({ queues: [{ categoryId: "c1", repoCheck: { ...rc, state: "later" } }] })?.queues[0].repoCheck).toBeUndefined();
+    expect(readMemoQueues({ queues: [{ categoryId: "c1", repoCheck: null }] })?.queues[0].repoCheck).toBeUndefined();
+    expect(readMemoQueues({ queues: [{ categoryId: "c1", repoCheck: { state: "same" } }] })?.queues[0].repoCheck).toEqual({
+      state: "same",
+      commit: "",
+      diffs: 0,
+      checkedAt: "",
+    });
+  });
 });
 
 describe("readDeliveries", () => {

@@ -72,10 +72,10 @@ export function CommitDetailView({ repo, path, sha, vcs = "git", wrap, headerAct
         </span>
         <span className="view-spacer" />
         <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" title={tr("scm.expand_all_diffs")} onClick={() => foldAll(true)}>
-          <Icon name="expand-all" /> <span className="lbl">{tr("scm.expand_all")}</span>
+          <Icon name="expand-all" /> <span className="scm-lbl">{tr("scm.expand_all")}</span>
         </button>
         <button type="button" className="ui-btn ui-btn-ghost ui-btn-sm" title={tr("scm.collapse_all_diffs")} onClick={() => foldAll(false)}>
-          <Icon name="collapse-all" /> <span className="lbl">{tr("scm.collapse_all")}</span>
+          <Icon name="collapse-all" /> <span className="scm-lbl">{tr("scm.collapse_all")}</span>
         </button>
         <button
           type="button"
@@ -84,7 +84,7 @@ export function CommitDetailView({ repo, path, sha, vcs = "git", wrap, headerAct
           aria-pressed={effWrap}
           onClick={() => setLocalWrap(!effWrap)}
         >
-          <Icon name="word-wrap" /> <span className="lbl">{tr("scm.wrap")}</span>
+          <Icon name="word-wrap" /> <span className="scm-lbl">{tr("scm.wrap")}</span>
         </button>
       </ViewHead>
       <div className="scm-scroll">

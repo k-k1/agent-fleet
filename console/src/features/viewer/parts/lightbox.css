@@ -274,7 +274,7 @@
 .imgview.zoomed {
   cursor: grab;
 }
-.imgview.muted {
+.imgview.imgview--muted {
   font: 12px var(--mono);
   color: var(--muted);
 }

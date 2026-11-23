@@ -74,7 +74,7 @@
 /* Narrow pane: header action buttons collapse to icons (the commit detail's expand all /
    collapse all / wrap etc. — the icon + tooltip carry the meaning). */
 @container (max-width: 520px) {
-  .view-head .ui-btn .lbl {
+  .view-head .ui-btn .scm-lbl {
     display: none;
   }
 }

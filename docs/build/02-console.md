@@ -382,6 +382,19 @@ result).
   A session's run state is the one place where the token list comes from data: `stateInfo().cls`
   (`off question`, `on handoff`, …) stays a plain token list and `stateClass(block, cls)`
   (`lib/sessionview.ts`) prefixes each token for the chip, card, tab or dot that shows it.
+  The same goes for the kind colour: for a registered kind `kindColorClasses(slug, block)` writes
+  `<block>--kind kind-<slug>` (`lib/sessionkind.ts`; any other slug gets `kind-<slug>` alone), so
+  each chip that paints with `var(--kind)` selects on its own marker.
+  The global text utilities `.muted` / `.mono` live in `styles/base.css` (with the two dialog
+  overrides of `.muted`); a block that needs to adjust one keeps the utility on the element and adds
+  its own `<block>--muted` / `<block>--mono`. A rule that styled the utility inside a container
+  (`.mcp-probe .muted`) names a class of its own on the children instead (`mcp-probe-muted`).
+- **Button variants** (`.ghost`, `.primary`, `.danger` on a raw `<button>`) are skinned once, in
+  `ui/ui.css`, for the views that carry `ui-bare-btns` on their root (chat, mirror, shared view,
+  settings, onboarding; `--mirror` / `--shared` / `--settings` pick the primary fill). Do not
+  restyle them from a feature stylesheet: that is what put the names in five files. A button that
+  needs more than that variant adds a `<block>--ghost` modifier next to `ghost`. The size modifier `.ghost.xs` /
+  `.btn.xs` is the one global exception: it applies outside the scopes too.
 - **CI** (`.github/workflows/ci.yml`, job `console`) runs typecheck, lint, i18n lint,
   the css-dup ceiling, vitest, two checks in real headless Chromium (`pdf:check`, `doc:check`) and the build.
 - The other scripts in `package.json` (screenshots, mirror and viewer scroll checks, the

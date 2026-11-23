@@ -183,8 +183,8 @@ export function ProbeView({ probe, onSignIn }: { probe?: ProbeResult; onSignIn?:
             ms: probe.elapsedMs,
           })}
         </div>
-        {probe.revision && <div className="muted">{tr("mcp.test_revision", { rev: probe.revision })}</div>}
-        {probe.tools && probe.tools.length > 0 && <div className="muted mono">{probe.tools.join(", ")}</div>}
+        {probe.revision && <div className="muted mcp-probe-muted">{tr("mcp.test_revision", { rev: probe.revision })}</div>}
+        {probe.tools && probe.tools.length > 0 && <div className="muted mono mcp-probe-muted mcp-probe-mono">{probe.tools.join(", ")}</div>}
       </div>
     </div>
   );
@@ -216,21 +216,21 @@ function OAuthProbeView({ report, onSignIn }: { report: OAuthReport; onSignIn?: 
             {tr("mcp.oauth_probe_signin")}
           </button>
         ) : (
-          <div className="muted">{tr("mcp.oauth_soon")}</div>
+          <div className="muted mcp-probe-muted">{tr("mcp.oauth_soon")}</div>
         )}
-        {report.challengedScope && <div className="muted mono">{tr("mcp.oauth_scope", { scope: report.challengedScope })}</div>}
+        {report.challengedScope && <div className="muted mono mcp-probe-muted mcp-probe-mono">{tr("mcp.oauth_scope", { scope: report.challengedScope })}</div>}
         {report.scopesSupported && report.scopesSupported.length > 0 && (
-          <ScopeList scopes={report.scopesSupported} inlineKey="mcp.oauth_scopes" summaryKey="mcp.oauth_scopes_summary" className="muted" />
+          <ScopeList scopes={report.scopesSupported} inlineKey="mcp.oauth_scopes" summaryKey="mcp.oauth_scopes_summary" className="muted mcp-probe-muted" monoClassName="mcp-probe-mono" />
         )}
         {(report.servers || []).map((s) => (
           <div className="mcp-probe-as" key={s.issuer}>
-            <div className="mono">
+            <div className="mono mcp-probe-mono">
               {tr("mcp.oauth_as", { issuer: s.issuer })}
               {report.selected === s.issuer && <> {tr("mcp.oauth_as_selected")}</>}
             </div>
-            <div className="muted">{tr("mcp.oauth_reg", { paths: regLabel(s.registration || []) })}</div>
-            <div className="muted">{tr(s.s256 ? "mcp.oauth_s256_yes" : "mcp.oauth_s256_no")}</div>
-            <div className="muted">{tr(s.issParam ? "mcp.oauth_iss_yes" : "mcp.oauth_iss_no")}</div>
+            <div className="muted mcp-probe-muted">{tr("mcp.oauth_reg", { paths: regLabel(s.registration || []) })}</div>
+            <div className="muted mcp-probe-muted">{tr(s.s256 ? "mcp.oauth_s256_yes" : "mcp.oauth_s256_no")}</div>
+            <div className="muted mcp-probe-muted">{tr(s.issParam ? "mcp.oauth_iss_yes" : "mcp.oauth_iss_no")}</div>
           </div>
         ))}
         {problems.length > 0 && (

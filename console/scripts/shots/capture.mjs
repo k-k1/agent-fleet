@@ -1297,7 +1297,7 @@ const SCENES = [
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
     action: `(async () => {
       const s = document.querySelector(".mirror-files");
-      if (s && !s.classList.contains("open")) s.querySelector(".mirror-files-toggle")?.click();
+      if (s && !s.classList.contains("mirror-files--open")) s.querySelector(".mirror-files-toggle")?.click();
     })()`,
     settle: 1500,
   },
@@ -1359,7 +1359,7 @@ const SCENES = [
     // the base branch and the working directory.
     name: "sessions-location",
     guide: true,
-    clip: ".launch-sec.open",
+    clip: ".launch-sec.launch-sec--open",
     pad: 0,
     sections: FOCUS_TREE,
     width: 1400,
@@ -1371,7 +1371,7 @@ const SCENES = [
       // The first section in the dialog is Location.
       document.querySelector(".launch-sec-head")?.click();
       await wait(600);
-      document.querySelector(".launch-sec.open")?.scrollIntoView({ block: "center" });
+      document.querySelector(".launch-sec.launch-sec--open")?.scrollIntoView({ block: "center" });
     })()`,
     settle: 1800,
   },

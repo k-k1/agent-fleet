@@ -147,7 +147,7 @@ button.mt-tool-outhead {
 }
 /* Open: the head collapses to the gutter icon. 20px wide = the body's left padding; the height
    matches the first line of the Markdown (13.5px x 1.5) so the icon sits on that line. */
-.mirror-thinking.open > .mirror-thinking-head {
+.mirror-thinking.mirror-disclosure--open > .mirror-thinking-head {
   position: absolute;
   top: 0;
   left: 0;
@@ -157,8 +157,8 @@ button.mt-tool-outhead {
   padding: 2px 0 0 3px;
   opacity: 0.8;
 }
-.mirror-thinking.open > .mirror-thinking-head .mth-title,
-.mirror-thinking.open > .mirror-thinking-head .mth-preview {
+.mirror-thinking.mirror-disclosure--open > .mirror-thinking-head .mth-title,
+.mirror-thinking.mirror-disclosure--open > .mirror-thinking-head .mth-preview {
   display: none;
 }
 .mirror-thinking-body {
@@ -175,7 +175,7 @@ button.mt-tool-outhead {
   opacity: 0;
   transition: grid-template-rows 140ms ease-out, opacity 100ms ease-out;
 }
-.mirror-disclosure.open > .mirror-disclosure-panel {
+.mirror-disclosure.mirror-disclosure--open > .mirror-disclosure-panel {
   grid-template-rows: 1fr;
   opacity: 1;
 }

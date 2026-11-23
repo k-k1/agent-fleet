@@ -27,7 +27,14 @@
    the icon and its tooltip carry it. Container, not viewport: a popped-out tab is narrow
    at any window size. */
 @container paneview (max-width: 460px) {
-  .ovw-toggle .lbl {
+  .ovw-toggle .ovw-lbl {
+    display: none;
+  }
+}
+/* The shared ViewHead collapses its action buttons to icons below 520px (the nearest container,
+   as scm.css does for its own header): this view's toggle labels follow it. */
+@container (max-width: 520px) {
+  .view-head .ui-btn .ovw-lbl {
     display: none;
   }
 }
@@ -221,7 +228,7 @@
    that need a person (question / plan / permission — all carry .ovw-card--question) keep their words,
    because those are the cards the grid exists to find. */
 @container ovwcard (max-width: 320px) {
-  .ovw-card:where(:not(.ovw-card--question)) .ovw-head .session-state .lbl {
+  .ovw-card:where(:not(.ovw-card--question)) .ovw-head .session-state .ovw-lbl {
     display: none;
   }
   .ovw-card:where(:not(.ovw-card--question)) .ovw-head .session-state {

@@ -374,9 +374,9 @@
 }
 
 /* --kind: the hue of the kind an element shows, the one place a kind class maps to its colour.
-   The registry's kindColorClasses() (lib/sessionkind.ts) writes `kind kind-<slug>`; the use
-   sites (.kind-tag, .sess-kic, the launch seg icon, .mirror-skill-src, .mem-kind) select on the
-   `kind` marker and paint with var(--kind), so a new kind adds nothing here: the marker below expands to one rule per kind
+   The registry's kindColorClasses() (lib/sessionkind.ts) writes `<block>--kind kind-<slug>`; the use
+   sites (.kind-tag, .sess-kic, the launch seg icon, .mirror-skill-src, .mem-kind) select on their
+   own `<block>--kind` marker and paint with var(--kind), so a new kind adds nothing here: the marker below expands to one rule per kind
    (agents/kindTable.ts).
    The marker keeps those rules at the specificity the per-kind rules had, and an element with
    no registered kind (no marker) keeps its uncoloured base. --kind is declared on the element

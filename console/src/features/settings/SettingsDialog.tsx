@@ -248,7 +248,7 @@ export function SettingsDialog() {
   );
 
   return (
-    <Modal title={tr("set.title")} onClose={closeSettings} className="settings-modal">
+    <Modal title={tr("set.title")} onClose={closeSettings} className="settings-modal ui-bare-btns ui-bare-btns--settings">
       <div className="ui-modal-body settings-modal-body">
         <div className={"settings-layout" + (entered ? " entered" : "")}>
           <nav className="settings-rail" ref={railRef} aria-label={tr("set.title")}>

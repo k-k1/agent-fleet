@@ -94,7 +94,7 @@ export function GcpProfilesChip({ hidden = false, passive = false }: { hidden?: 
 
   const active = profiles.filter(isLoggedIn);
   const anyWaiting = profiles.some((p) => waiting.has(p.name));
-  const tone = anyWaiting ? " ws-aws-btn--warn" : active.length === 0 ? " muted" : " ws-aws-btn--ok";
+  const tone = anyWaiting ? " ws-aws-btn--warn" : active.length === 0 ? " muted ws-aws-btn--muted" : " ws-aws-btn--ok";
   // One logged-in profile is named, since "which one" is the question; more get a count.
   const label = active.length === 1 ? active[0].label || active[0].name : `${active.length}/${profiles.length}`;
   const title = anyWaiting

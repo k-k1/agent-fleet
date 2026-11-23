@@ -36,7 +36,7 @@ export function MarkStrip({ marks, storageKey }: { marks: TranscriptMarksWiring;
   const authors = new Set(marks.all.map((m) => m.author || ""));
 
   return (
-    <section className={"mirror-marks mirror-disclosure" + (open ? " open" : "")}>
+    <section className={"mirror-marks mirror-disclosure" + (open ? " mirror-disclosure--open" : "")}>
       <div className={"mirror-marks-head" + (open ? " mirror-marks-head-open" : "")}>
         <button
           type="button"

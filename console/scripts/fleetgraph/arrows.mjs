@@ -72,7 +72,7 @@ try {
       out.push({
         h: Math.abs(y2 - y1),
         external: !!g.querySelector(".fgraph-edge-pt"),
-        variant: [...g.classList].find((c) => c !== "fgraph-arrow" && c !== "clickable" && c !== "danger") || "",
+        variant: [...g.classList].find((c) => c !== "fgraph-arrow" && c !== "clickable" && c !== "fgraph-arrow--danger") || "",
       });
     }
     return { figureH: figure.height, arrows: out };

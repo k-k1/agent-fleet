@@ -563,7 +563,7 @@ function RtkGainCard({ reloadTick }: { reloadTick: number }) {
       <div className="rtk-gain-head">
         <div className="rtk-gain-headline">
           <b>{fmtTok(saved)}</b>
-          <span className="muted">{tr("usage.rtk_cumulative")}</span>
+          <span className="muted rtk-gain-headline-note">{tr("usage.rtk_cumulative")}</span>
         </div>
         <div className="rtk-gain-meter">
           <div className="wu-row-head">
@@ -1159,7 +1159,7 @@ function CoverageBanner({
       <ul className="ucov-list">
         {notes.map((n) => (
           <li key={n.kind}>
-            <span className={"kind-tag " + kindColorClasses(n.kind)}>{n.kind}</span>
+            <span className={"kind-tag " + kindColorClasses(n.kind, "kind-tag")}>{n.kind}</span>
             <span className="muted">
               {tMaybe("usage.cov_tokens_" + n.tokens) ?? n.tokens} /{" "}
               {tMaybe("usage.cov_model_" + n.model) ?? n.model}

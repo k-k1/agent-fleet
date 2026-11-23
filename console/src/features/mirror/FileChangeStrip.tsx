@@ -81,7 +81,7 @@ function FileChangeStripImpl({ session, files }: { session: string; files: Sessi
   const repo = rows.find((r) => r.repo && r.scope !== "other-repo")?.repo;
 
   return (
-    <section className={"mirror-files mirror-disclosure" + (open ? " open" : "")}>
+    <section className={"mirror-files mirror-disclosure" + (open ? " mirror-disclosure--open mirror-files--open" : "")}>
       <div className="mirror-files-head">
         <button
           type="button"

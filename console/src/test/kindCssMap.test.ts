@@ -1,5 +1,5 @@
 // Kind colours have one place (ADR 0124 Phase 3): styles/tokens.css maps each `.kind-<slug>` to
-// --kind, and the use sites paint with var(--kind) behind the `kind` marker that
+// --kind, and the use sites paint with var(--kind) behind the `<block>--kind` marker that
 // kindColorClasses() writes. These checks keep it that way: the map covers exactly the
 // registry's slugs, no other stylesheet names a kind, and no component spells the class itself.
 import { describe, expect, it } from "vitest";
@@ -92,10 +92,10 @@ describe("kind colour map", () => {
 
 describe("kindColorClasses", () => {
   it("marks every registered slug and nothing else", () => {
-    for (const s of SLUGS) expect(kindColorClasses(s)).toBe(`kind kind-${s}`);
-    expect(kindColorClasses("generic")).toBe("kind-generic");
-    expect(kindColorClasses("other")).toBe("kind-other");
-    expect(kindClasses("codex")).toBe("kind kind-codex");
-    expect(kindClasses("Codex")).toBe("kind kind-claude"); // agentOf's own fallback, as kindClass
+    for (const s of SLUGS) expect(kindColorClasses(s, "chip")).toBe(`chip--kind kind-${s}`);
+    expect(kindColorClasses("generic", "chip")).toBe("kind-generic");
+    expect(kindColorClasses("other", "chip")).toBe("kind-other");
+    expect(kindClasses("codex", "chip")).toBe("chip--kind kind-codex");
+    expect(kindClasses("Codex", "chip")).toBe("chip--kind kind-claude"); // agentOf's own fallback, as kindClass
   });
 });

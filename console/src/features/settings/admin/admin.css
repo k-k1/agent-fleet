@@ -424,16 +424,6 @@
   white-space: nowrap;
 }
 
-/* Forgetting a row is the destructive one, and it says so on hover rather than permanently:
-   the list is five rows long and five red buttons down the trailing edge out-shout the two
-   actions somebody actually came for. The confirm step below it is where the decision is
-   made anyway, so this only has to be recognisable at the moment of reaching for it.
-   (The shell's own `button.danger:hover` is a dark-theme fill; this is the light one too.) */
-.engines-model-actions button.danger:hover:not(:disabled) {
-  color: var(--err);
-  border-color: color-mix(in srgb, var(--err) 45%, var(--btn-border));
-  background: color-mix(in srgb, var(--err) 10%, var(--btn));
-}
 
 /* The badges. One pill, four tones — a tone is a claim, so an unknown state keeps the neutral
    one rather than borrowing a colour (engineJobTone). */

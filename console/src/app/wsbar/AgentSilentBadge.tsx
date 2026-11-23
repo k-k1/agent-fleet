@@ -17,7 +17,7 @@ export function AgentSilentBadge({ onStop }: { onStop: () => Promise<void> }) {
     <div className="ws-stale ws-agentsilent" ref={ref}>
       <Button className="ws-stale-pill" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={tr("wsbar.agentsilent.title")}>
         <Icon name="warning" />
-        <span className="lbl">{tr("wsbar.agentsilent.badge")}</span>
+        <span className="ws-lbl">{tr("wsbar.agentsilent.badge")}</span>
       </Button>
       {open && (
         <div className="ws-stale-pop">

@@ -97,18 +97,18 @@
    quieter by border, background and the ○ marker, never by fading its text: text opacity stacks
    on the card's colour and escapes the Text contrast setting (tokens.css), which only moves
    --fg / --muted / --muted2. A disabled option that is .checked keeps its accent look. */
-.mq-opt:disabled:not(.selected):not(.checked) {
+.mq-opt:disabled:not(.mq-opt--selected):not(.checked) {
   border-color: color-mix(in srgb, var(--border) 60%, transparent);
   background: transparent;
 }
-.mq-opt:disabled:not(.selected):not(.checked) .mq-opt-label {
+.mq-opt:disabled:not(.mq-opt--selected):not(.checked) .mq-opt-label {
   color: var(--muted);
 }
-.mq-opt.selected {
+.mq-opt.mq-opt--selected {
   border-color: var(--chat-accent);
   background: color-mix(in srgb, var(--chat-accent) 14%, var(--bg));
 }
-.mq-opt.selected .mq-opt-label {
+.mq-opt.mq-opt--selected .mq-opt-label {
   color: var(--chat-accent);
 }
 /* Answered card: --muted on the card; --fg on the picked option, whose accent tint costs --muted
@@ -116,7 +116,7 @@
 .mt-question.answered .mq-opt-desc {
   color: var(--muted);
 }
-.mt-question.answered .mq-opt.selected .mq-opt-desc {
+.mt-question.answered .mq-opt.mq-opt--selected .mq-opt-desc {
   color: var(--fg);
 }
 .mq-done {
@@ -174,10 +174,10 @@
   line-height: 1.35;
   color: color-mix(in srgb, var(--fg) 90%, transparent);
 }
-.mq-opt:disabled:not(.selected):not(.checked) .mq-mark {
+.mq-opt:disabled:not(.mq-opt--selected):not(.checked) .mq-mark {
   color: var(--muted);
 }
-.mq-opt.selected .mq-mark,
+.mq-opt.mq-opt--selected .mq-mark,
 .mq-opt.checked .mq-mark {
   color: var(--chat-accent);
 }

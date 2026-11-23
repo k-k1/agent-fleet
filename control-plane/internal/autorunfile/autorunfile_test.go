@@ -217,6 +217,13 @@ func TestParseInstructionFile(t *testing.T) {
 			t.Errorf("%q accepted", p)
 		}
 	}
+	// A control character comes in through a double-quoted escape; the Agent would refuse the path.
+	for _, esc := range []string{`a\0b.md`, `a\tb.md`, `a\x7fb.md`} {
+		f := Parse([]byte("version: 1\ncategories:\n  q:\n    instruction_file: \"" + esc + "\"\n"))
+		if f.Usable("q") || !hasIssue(f.Categories["q"].Errors, 4, "instruction_file", "control characters") {
+			t.Errorf("%s: %+v", esc, f.Categories["q"].Errors)
+		}
+	}
 	both := Parse([]byte("version: 1\ncategories:\n  q:\n    instruction: x\n    instruction_file: q.md\n"))
 	if both.Usable("q") || !hasIssue(both.Categories["q"].Errors, 5, "instruction_file", "not both") {
 		t.Errorf("both: %+v", both.Categories["q"].Errors)
