@@ -28,7 +28,7 @@ The key pair belongs to this deployment. There is no relay: the Control Plane si
    openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'
    ```
 
-2. Put the variables in the Control Plane's environment (for compose, in `.env`) and restart it. With compose, `docker compose restart` does not re-read `.env`: run `docker compose up -d` so the Control Plane container is recreated
+2. Put the variables in the Control Plane's environment and restart it: for compose in `.env`; on Kubernetes in the overlay's `cp.env`, with the private key in the `af-cp-secrets` Secret; on the native runtime in the environment of `af start` or as `Environment=` lines of the systemd unit. On AWS ECS use the stack parameters below. With compose, `docker compose restart` does not re-read `.env`: run `docker compose up -d` so the Control Plane container is recreated
 
    | Variable | Meaning |
    |---|---|
@@ -109,6 +109,7 @@ The Control Plane POSTs each push to the endpoint the member's browser registere
 | The section is missing in Settings | Web Push is off or its settings are invalid. Check `AF_WEB_PUSH`, the key and the contact, and the log line at start |
 | Devices register but nothing arrives | Outbound HTTPS to the push hosts is blocked. Test from the Control Plane's network. On an iPhone the Console must be opened from the Home Screen icon |
 | Every device says it was set up before the push key changed | The private key was replaced. Every subscription is invalid by design: each member turns push off and on again on each device. Keep the key stable |
+| Every browser says it cannot receive push notifications | The Console is not served over HTTPS. Browsers offer push only on a secure origin, so `PUBLIC_BASE_URL` must be `https://` |
 | A device registered on an unusual host is skipped | Add the host to `AF_WEB_PUSH_ENDPOINT_HOSTS`. The subscription is kept, not deleted, so it works once the host is allowed |
 
 ## Related

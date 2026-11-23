@@ -113,6 +113,10 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   `ps -eo pid,args` for `go build`/`go test`/`npm ci` first, since they share these caches.
   The user can do the same from Settings > Machine > Tool caches, which refuses while a
   build is running.
+  The Agent also trims `~/.cache/go-build` by itself when home has less than 15% free: entries
+  unused for more than 24 h go, oldest first, until 20% is free; nothing used in the last day is
+  touched, and a cache on `/scratch` is skipped. The member's switch is Settings > Machine > Tool
+  caches > "Trim the Go build cache when home runs low" (on by default).
 - **Go builds run with `GOFLAGS=-trimpath`** (set in the image), so worktrees at different paths
   share `~/.cache/go-build` entries instead of each adding its own copy. Anything that needs a
   source file's real path at run time must not use `runtime.Caller` (under `-trimpath` it returns
@@ -121,8 +125,8 @@ a **cgroup v2** container: read *your own* numbers from inside and do NOT trust 
   shadowed by it, so `go env GOFLAGS` shows what a build really uses.
   To get real paths back (a debugger, a stack trace you need to open), run that command with
   `GOFLAGS=` or add `-trimpath=false`. Entries already in `~/.cache/go-build` from before this
-  default were built untrimmed and stay until Go's own 5-day trim or a manual `go clean -cache`
-  (Settings > Machine > Tool caches); only new builds share.
+  default were built untrimmed and stay until Go's own 5-day trim, the Agent's low-space trim, or
+  a manual `go clean -cache` (Settings > Machine > Tool caches); only new builds share.
 - N worktrees means N copies of every per-project dependency tree unless the ecosystem shares one
   (Go, Gradle/Maven and Cargo do; **npm does not** — 300 MB+ per worktree). Sharing a
   `node_modules` between worktrees has its own hazards: `/usr/local/share/agent-fleet/notes/worktrees.md`.

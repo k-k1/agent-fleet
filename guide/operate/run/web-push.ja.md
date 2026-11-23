@@ -28,7 +28,7 @@ Web Push は、セッションが質問したとき・承認を求めたとき�
    openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'
    ```
 
-2. Control Plane の環境（compose なら `.env`）に次の変数を入れ、再起動します。compose では `docker compose restart` は `.env` を読み直しません。`docker compose up -d` で Control Plane のコンテナを作り直してください
+2. Control Plane の環境に次の変数を入れ、再起動します。compose なら `.env`、Kubernetes ならオーバーレイの `cp.env`（秘密鍵は Secret `af-cp-secrets`）、ネイティブ実行なら `af start` の環境か systemd ユニットの `Environment=` 行です。AWS ECS では下のスタックパラメータを使います。compose では `docker compose restart` は `.env` を読み直しません。`docker compose up -d` で Control Plane のコンテナを作り直してください
 
    | 変数 | 意味 |
    |---|---|
@@ -109,6 +109,7 @@ Control Plane は、メンバーのブラウザが登録した宛先へ、プッ
 | 設定に項目が出ない | Web Push がオフか、設定が不正です。`AF_WEB_PUSH`・鍵・連絡先と、起動時のログを確かめます |
 | 端末は登録されるが何も届かない | プッシュのホストへの外向き HTTPS が塞がれています。Control Plane のネットワークから試します。iPhone では、ホーム画面のアイコンから Console を開いている必要があります |
 | どの端末にも「プッシュ用の鍵が変わる前に設定されています」と出る | 秘密鍵を入れ替えました。購読はすべて無効になる仕様で、メンバーが端末ごとにオフ・オンし直します。鍵は変えないでください |
+| どのブラウザでも「このブラウザはプッシュ通知を受け取れません」と出る | Console が HTTPS で配信されていません。ブラウザは安全なオリジンでしかプッシュを使わせないので、`PUBLIC_BASE_URL` を `https://` にします |
 | 見慣れないホストで登録した端末に届かない | そのホストを `AF_WEB_PUSH_ENDPOINT_HOSTS` に足します。購読は消さずに残してあるので、許可すれば届きます |
 
 ## 関連

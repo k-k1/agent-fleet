@@ -129,7 +129,7 @@ What Agent Fleet keeps in `~/.cache/agent-fleet` (generated images, thumbnails, 
 ### Tool caches
 
 The caches go, npm (npx included), uv, pip, Maven and Gradle keep in your home. They grow without limit and are never removed
-on their own.
+on their own, except the Go build cache while **Trim the Go build cache when home runs low** is on (below).
 
 1. Press **Measure** to count them (it reads every file, so it runs only when you press it)
 2. Press **Empty** and confirm to delete one
@@ -143,6 +143,8 @@ on their own.
 - "Not pinned" only covers `~/repos`: projects elsewhere, a plain `gradle` run without a wrapper, and a custom `GRADLE_USER_HOME` or `-g` are not looked at, so a version they use can be removed (the next build downloads it again, which fails offline)
 - A removed Gradle version is downloaded again by the next build that needs it, which needs access to `services.gradle.org`
 - `~/.m2/repository` or `~/.npm/_npx` do not appear when they are symbolic links. Delete them from a terminal
+
+**Trim the Go build cache when home runs low** (on by default): when free space in home drops below 15%, the Agent deletes Go build cache entries not used for more than a day, oldest first, until 20% is free. It checks every 10 minutes. Go rebuilds what it needs, so the next build is slower once. Switch it off to empty the cache by hand only. A Go cache on the `/scratch` task disk is not trimmed, since that would free nothing in home. When a trim ran since the Agent last started, **Clean regenerable items…** says how much it removed and when.
 
 ### Leftover files
 
