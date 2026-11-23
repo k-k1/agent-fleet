@@ -9,6 +9,12 @@
 // showed them (`edited`), and which of those the person has still to confirm (`awaiting`): while
 // any is awaiting, the button confirms instead of approving. A card that never changed approves
 // in one press.
+//
+// Each row of a card with more than one note carries a checkbox, all ticked until the person says
+// otherwise: the approval covers exactly the ticked notes, each with its own hash, and the rest
+// stay held on the card. Whether a note is unticked is kept by id, so a note that arrives on a later
+// poll starts ticked like the others, as the card shows it.
+import { useEffect, useId, useState } from "react";
 import { MemoProducerText } from "./MemoProducerText.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -53,10 +59,35 @@ export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edite
       : card.producer
         ? tr("memo.release_title_session", { name: card.producer })
         : tr("memo.release_title_unknown");
+  const [unticked, setUnticked] = useState<ReadonlySet<string>>(new Set());
+  const uid = useId();
+  // A note that left the card (approved, deleted, moved) takes its untick with it, so one that comes
+  // back later (edited and held again) starts ticked like any other arrival.
+  useEffect(() => {
+    setUnticked((s) => {
+      if (s.size === 0) return s;
+      const here = new Set(card.items.map((m) => m.id));
+      const kept = [...s].filter((id) => here.has(id));
+      return kept.length === s.size ? s : new Set(kept);
+    });
+  }, [card.items]);
+  const total = card.items.length;
+  // A lone note has no checkbox, so a tick left over from when the card held more must not count:
+  // otherwise the last note could be neither approved nor ticked again.
+  const pickable = total > 1;
+  const isTicked = (id: string) => !pickable || !unticked.has(id);
+  const ticked = card.items.filter((m) => isTicked(m.id));
+  const toggle = (id: string) =>
+    setUnticked((s) => {
+      const n = new Set(s);
+      if (!n.delete(id)) n.add(id);
+      return n;
+    });
   const marked = (id: string) => changedIds.has(id) || edited.has(id);
   const anyChanged = card.items.some((m) => marked(m.id));
-  const anyEdited = card.items.some((m) => edited.has(m.id));
-  const mustConfirm = card.items.some((m) => awaiting.has(m.id));
+  // Only what the approval would cover decides whether it needs a confirming press first.
+  const anyEdited = ticked.some((m) => edited.has(m.id));
+  const mustConfirm = ticked.some((m) => awaiting.has(m.id));
   return (
     <div className={"memo-release" + (anyChanged ? " changed" : "")} role="group" aria-label={title}>
       <div className="memo-release-head">
@@ -74,7 +105,18 @@ export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edite
           const ref = memoReference(m);
           return (
             <li key={m.id} className="memo-release-item">
-              <div className="memo-release-body">
+              {pickable && (
+                <input
+                  type="checkbox"
+                  className="memo-release-check"
+                  checked={isTicked(m.id)}
+                  disabled={busy}
+                  aria-label={tr("memo.release_pick")}
+                  aria-describedby={uid + m.id}
+                  onChange={() => toggle(m.id)}
+                />
+              )}
+              <div className="memo-release-body" id={uid + m.id}>
                 {m.kind === "file" && m.refPath && <code className="memo-release-ref">{m.refPath}</code>}
                 {ref && <MemoReferenceLink reference={ref} />}
                 {tidyMarks(m).map((k) => (
@@ -130,17 +172,22 @@ export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edite
       <div className="memo-release-foot">
         <span className="memo-release-hint">
           {tr("memo.release_hint")}
+          {ticked.length < total && " " + tr("memo.release_partial_hint")}
           {card.items.some((m) => memoReference(m)) && " " + tr("memo.ref_card_hint")}
           {card.items.some((m) => m.tidyFrom?.id) && " " + tr("memo.release_tidy_hint")}
           {(continuationMax ?? 0) > 0 && card.items.some((m) => memoReference(m)) && " " + tr("memo.release_continuation_hint", { max: continuationMax! })}
         </span>
         {mustConfirm ? (
-          <Button small variant="primary" disabled={busy} onClick={() => onConfirm(card.items)}>
+          <Button small variant="primary" disabled={busy || ticked.length === 0} onClick={() => onConfirm(ticked)}>
             {tr("memo.release_confirm")}
           </Button>
         ) : (
-          <Button small variant="primary" disabled={busy} onClick={() => onRelease(card.items)}>
-            {busy ? tr("memo.release_busy") : tr("memo.release_button", { count: card.items.length })}
+          <Button small variant="primary" disabled={busy || ticked.length === 0} onClick={() => onRelease(ticked)}>
+            {busy
+              ? tr("memo.release_busy")
+              : ticked.length < total
+                ? tr("memo.release_button_partial", { count: ticked.length, total })
+                : tr("memo.release_button", { count: total })}
           </Button>
         )}
       </div>

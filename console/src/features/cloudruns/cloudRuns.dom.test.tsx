@@ -152,7 +152,7 @@ describe("CloudRunGroup", () => {
     const runs = [run("a", "2026-10-30T12:00:01Z"), run("b", "2026-10-30T12:00:02Z", { refused: "login_required" })];
     await render(<CloudRunGroup runs={runs as never} />);
     const head = host.querySelector("button.cloud-run-head")!;
-    expect(head.className).toContain("failed");
+    expect(head.classList.contains("cloud-run--failed")).toBe(true);
     expect(head.querySelector(".cloud-run-failed")?.textContent).toBe("1 failed");
   });
   it("draws one run as its own line, with nothing to open", async () => {

@@ -124,7 +124,7 @@ describe("SessionCard", () => {
     });
     await render({ repo: "app@wip-x" });
     const chip = host.querySelector(".ovw-where .repo-chip.integration");
-    expect(chip?.className).toContain("contained");
+    expect(chip?.className).toContain("repo-chip--contained");
     expect(chip?.textContent).toBe(t("repo.sync.contained", { n: 2 }));
     expect(chip?.getAttribute("title")).toContain("develop");
   });

@@ -369,7 +369,7 @@
 
    🔴 It must not be DIMMED to say so: `opacity: 0.6` on a whole row is the look of a disabled
    control ("you cannot touch this" rather than "this one is off"), and in the light theme it
-   was barely a difference at all. The state is a badge (.engines-model-tag.off); the row keeps
+   was barely a difference at all. The state is a badge (.engines-model-tag.engines-model-tag--off); the row keeps
    full contrast, and an enabled one is marked by the accent rule down its leading edge. */
 .engines-model {
   border: 1px solid var(--border);
@@ -448,30 +448,30 @@
   white-space: nowrap;
 }
 
-.engines-model-tag.on {
+.engines-model-tag.engines-model-tag--on {
   color: var(--ok, #1a7f37);
   border-color: color-mix(in srgb, var(--ok, #1a7f37) 40%, var(--border));
   background: color-mix(in srgb, var(--ok, #1a7f37) 10%, var(--bg));
 }
 
-.engines-model-tag.off {
+.engines-model-tag.engines-model-tag--off {
   color: var(--dialog-muted);
 }
 
-.engines-model-tag.lead {
+.engines-model-tag.engines-model-tag--lead {
   color: var(--accent);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: color-mix(in srgb, var(--accent) 12%, var(--bg));
   font-weight: 600;
 }
 
-.engines-model-tag.warn {
+.engines-model-tag.engines-model-tag--warn {
   color: var(--warn, #d29922);
   border-color: color-mix(in srgb, var(--warn, #d29922) 45%, var(--border));
   background: color-mix(in srgb, var(--warn, #d29922) 12%, var(--bg));
 }
 
-.engines-model-tag.bad {
+.engines-model-tag.engines-model-tag--bad {
   color: var(--err);
   border-color: color-mix(in srgb, var(--err) 40%, var(--border));
   background: color-mix(in srgb, var(--err) 10%, var(--bg));
@@ -1660,8 +1660,7 @@ a.engines-model-source:hover {
 .engine-operation-grid input, .engine-operation-grid select { width: 100%; min-width: 0; color: var(--fg); }
 .engine-operation-facts { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px; border-radius: 7px; background: var(--panel2); font-size: 12px; }
 .engine-operation-facts span { padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px; }
-.engine-operation-facts .warn, .engine-operation-check.warn { color: var(--warn, #d29922); }
-.engine-operation-facts .ok { color: var(--ok, #1a7f37); }
+.engine-operation-facts .engine-operation-fact--warn { color: var(--warn, #d29922); }
 .engine-operation-hint { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .engine-operation-hint p, .engine-operation-fit, .engine-operation-vram-measured { margin: 0; font-size: 12px; }
 .engine-operation-check { display: flex; align-items: flex-start; gap: 8px; font-size: 12px; }

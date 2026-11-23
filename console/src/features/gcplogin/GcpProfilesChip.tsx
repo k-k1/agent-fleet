@@ -94,7 +94,7 @@ export function GcpProfilesChip({ hidden = false, passive = false }: { hidden?: 
 
   const active = profiles.filter(isLoggedIn);
   const anyWaiting = profiles.some((p) => waiting.has(p.name));
-  const tone = anyWaiting ? " warn" : active.length === 0 ? " muted" : " ok";
+  const tone = anyWaiting ? " ws-aws-btn--warn" : active.length === 0 ? " muted" : " ws-aws-btn--ok";
   // One logged-in profile is named, since "which one" is the question; more get a count.
   const label = active.length === 1 ? active[0].label || active[0].name : `${active.length}/${profiles.length}`;
   const title = anyWaiting
@@ -130,7 +130,7 @@ export function GcpProfilesChip({ hidden = false, passive = false }: { hidden?: 
                       {p.label || p.name}
                     </span>
                     <span
-                      className={"ws-aws-state " + (on ? "signed_in" : "none")}
+                      className={"ws-aws-state ws-aws-state--" + (on ? "signed_in" : "none")}
                       title={tr(on ? "wsbar.gcp.state_signed_in_title" : "wsbar.gcp.state_none_title")}
                     >
                       {tr(on ? "wsbar.gcp.state_signed_in" : "wsbar.gcp.state_none")}
@@ -140,7 +140,7 @@ export function GcpProfilesChip({ hidden = false, passive = false }: { hidden?: 
                     {[p.label && p.label !== p.name ? p.name : "", p.project, on ? p.account : ""].filter(Boolean).join(" · ")}
                   </div>
                   <div className="ws-aws-foot">
-                    {waiting.has(p.name) ? <span className="warn">{tr("wsbar.gcp.waiting")}</span> : <span />}
+                    {waiting.has(p.name) ? <span className="ws-aws-foot--warn">{tr("wsbar.gcp.waiting")}</span> : <span />}
                     <span className="ws-aws-actions">
                       <Button
                         variant="ghost"

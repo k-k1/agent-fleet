@@ -227,7 +227,7 @@ describe("SessionRow link line", () => {
       ],
     });
     const chips = [...host.querySelectorAll<HTMLButtonElement>(".sess-item")];
-    expect(chips.map((c) => [c.textContent, c.classList.contains("done")])).toEqual([
+    expect(chips.map((c) => [c.textContent, c.classList.contains("sess-item--done")])).toEqual([
       ["o/r#4", false],
       ["o/r#3", true],
     ]);

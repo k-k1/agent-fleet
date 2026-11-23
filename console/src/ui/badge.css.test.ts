@@ -97,7 +97,7 @@ describe("badges and chips moved onto the primitives (#4785)", () => {
   it("repo-chip keeps only layout and sets the tone through --badge", () => {
     expect(rule(repos, ".repo-chip")).toBe("display: inline-flex; align-items: center; gap: 3px;");
     expect(rule(repos, ".repo-chip.dirty")).toContain("--badge: var(--warn)");
-    expect(rule(repos, ".repo-chip.integration.contained")).toContain("--badge: var(--ok)");
+    expect(rule(repos, ".repo-chip.integration.repo-chip--contained")).toContain("--badge: var(--ok)");
     expect(rule(repos, ".repo-chip.ab.ff")).toContain("--badge: var(--ok)");
     expect(rule(repos, ".repo-chip.ab.diverged")).toContain("--badge: var(--warn)");
   });

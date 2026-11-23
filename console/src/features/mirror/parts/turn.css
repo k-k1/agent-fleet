@@ -56,13 +56,13 @@
   background: color-mix(in srgb, var(--fg) 7%, transparent);
   white-space: nowrap;
 }
-.mt-delegation-status.running {
+.mt-delegation-status.mt-delegation-status--running {
   color: var(--accent);
 }
-.mt-delegation-status.completed {
+.mt-delegation-status.mt-delegation-status--completed {
   color: var(--success, #4ec97a);
 }
-.mt-delegation-status.failed {
+.mt-delegation-status.mt-delegation-status--failed {
   /* The error colour is --err (there is no --danger token). */
   color: var(--err);
 }

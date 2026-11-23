@@ -177,7 +177,7 @@ export function ApprovalCard({
         )}
         {(req.protectedWrite || req.judgeEscalated) && (
           <div className="mt-approval-flags">
-            {req.protectedWrite && <span className="mt-approval-flag warn">{tr("mirror.approval_protected")}</span>}
+            {req.protectedWrite && <span className="mt-approval-flag mt-approval-flag--warn">{tr("mirror.approval_protected")}</span>}
             {req.judgeEscalated && <span className="mt-approval-flag">{tr("mirror.approval_escalated")}</span>}
           </div>
         )}

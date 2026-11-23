@@ -828,12 +828,12 @@ function ProfileSection({
           <span className="ssm-alias">{si.name}</span>
           <span className="ssm-signin-tag">{tr("ssm.sign_in_tag", { n: members.length })}</span>
           {relogin ? (
-            <span className="ssm-login-state relogin" title={tr("ssm.state_relogin_title")}>
+            <span className="ssm-login-state ssm-login-state--relogin" title={tr("ssm.state_relogin_title")}>
               {tr("ssm.state_relogin")}
             </span>
           ) : (
             STATE_KEYS[st] && (
-              <span className={"ssm-login-state " + st} title={tr(STATE_KEYS[st].title)}>
+              <span className={"ssm-login-state ssm-login-state--" + st} title={tr(STATE_KEYS[st].title)}>
                 {tr(STATE_KEYS[st].label)}
               </span>
             )
@@ -902,14 +902,14 @@ function ProfileSection({
         )}
         <span className="ssm-alias">{p.label}</span>
         {grouped ? null : reloginNeeded.has(p.id) ? (
-          <span className="ssm-login-state relogin" title={tr("ssm.state_relogin_title")}>
+          <span className="ssm-login-state ssm-login-state--relogin" title={tr("ssm.state_relogin_title")}>
             {tr("ssm.state_relogin")}
           </span>
         ) : (
           p.name &&
           STATE_KEYS[states[p.name]] && (
           <span
-            className={"ssm-login-state " + states[p.name]}
+            className={"ssm-login-state ssm-login-state--" + states[p.name]}
             title={tr(STATE_KEYS[states[p.name]].title)}
           >
             {tr(STATE_KEYS[states[p.name]].label)}

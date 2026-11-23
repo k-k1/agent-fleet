@@ -219,10 +219,10 @@ describe("編集履歴カード（決定 9）", () => {
     const rows = [...host.querySelectorAll<HTMLElement>(".igen-log-row")];
     expect(rows.map((r) => r.dataset.seq)).toEqual(["5", "3", "2", "6"]);
     const press = rows.find((r) => r.dataset.seq === "3")!;
-    expect(press.querySelector(".igen-log-state")?.className).toContain("ok");
+    expect(press.querySelector(".igen-log-state")?.className).toContain("igen-log-state--ok");
     // v-2 has no result yet and its record did not append: "record pending".
     const pending = rows.find((r) => r.dataset.seq === "6")!;
-    expect(pending.querySelector(".igen-log-state")?.className).toContain("record_pending");
+    expect(pending.querySelector(".igen-log-state")?.className).toContain("igen-log-state--record_pending");
     const edit = rows.find((r) => r.dataset.seq === "2")!;
     expect(edit.querySelector(".igen-log-changes")?.textContent).toBe("cfg 7→5");
     await act(async () => edit.querySelector<HTMLButtonElement>(".igen-log-rewind")!.click());

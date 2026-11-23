@@ -493,6 +493,54 @@ func TestMemoQueueReleaseBoundToContentHash(t *testing.T) {
 	})
 }
 
+// A release card approves the ticked notes only: the endpoint takes any subset of what one producer
+// held, leaves the rest held, and still refuses the whole request when a stale hash is among the
+// named ones.
+func TestMemoQueueReleaseOfASubsetLeavesTheRestHeld(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		tok := memoFaceClient{"token", e}
+		_, a := tok.create(textMemo("r", "q", "start now"))
+		_, b := tok.create(textMemo("r", "q", "wait for a date"))
+		_, c := tok.create(textMemo("r", "q", "start now too"))
+		item := func(m memoDTO, hash string) map[string]any { return map[string]any{"id": m.ID, "contentHash": hash} }
+		release := func(items ...map[string]any) *httptest.ResponseRecorder {
+			return e.do("a", "POST", "/api/memos/release", map[string]any{"items": items})
+		}
+		// A stale hash among the named ones refuses the request; the other named note stays held too.
+		r := release(item(a, a.ContentHash), item(c, strings.Repeat("0", 64)))
+		if r.Code != http.StatusConflict || !strings.Contains(r.Body.String(), c.ID) {
+			t.Fatalf("stale among the subset: %d %s", r.Code, r.Body.String())
+		}
+		for _, m := range []memoDTO{a, b, c} {
+			if got := e.memoRow(m.ID); got.State != store.MemoStateHeld {
+				t.Fatalf("%s after the refused subset: %q", m.ID, got.State)
+			}
+		}
+		// The two ticked notes are released with their own hashes; the third is not named and stays held.
+		r = release(item(a, a.ContentHash), item(c, c.ContentHash))
+		if r.Code != http.StatusOK {
+			t.Fatalf("subset release: %d %s", r.Code, r.Body.String())
+		}
+		if got := decode[memoReleaseOut](t, r); len(got.Released) != 2 {
+			t.Fatalf("released: %+v", got)
+		}
+		if got := e.memoRow(b.ID); got.State != store.MemoStateHeld || got.ReleaseHash != "" || got.ReleasedAt != "" {
+			t.Fatalf("the unnamed note: %+v", got)
+		}
+		for _, m := range []memoDTO{a, c} {
+			if got := e.memoRow(m.ID); got.State != store.MemoStatePending || got.ReleaseHash != m.ContentHash {
+				t.Fatalf("%s: %+v", m.ID, got)
+			}
+		}
+		// What stayed held is still releasable on its own.
+		if r := release(item(b, b.ContentHash)); r.Code != http.StatusOK || e.memoRow(b.ID).State != store.MemoStatePending {
+			t.Fatalf("the rest: %d %s", r.Code, r.Body.String())
+		}
+		e.assertPendingReleaseMatches()
+	})
+}
+
 // A workspace edit racing the member's release can never leave a pending message whose
 // release does not match its content: the release is one conditional write on the row. Both
 // requests must answer as one of the two orders allows, and the edit always lands.

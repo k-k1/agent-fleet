@@ -145,14 +145,14 @@ try {
   // while the two variables pointed at different colours.
   const palette = await cdp.evaluate(`(() => {
     const cs = (el) => el && getComputedStyle(el);
-    const band = document.querySelector("svg.fgraph-svg .fgraph-seg.active");
+    const band = document.querySelector("svg.fgraph-svg .fgraph-seg.fgraph-seg--active");
     const probe = document.createElement("span");
     probe.className = "session-state working";
     probe.style.position = "absolute";
     document.body.appendChild(probe);
     const want = cs(probe).color;
     probe.remove();
-    const waiting = document.querySelector("svg.fgraph-svg .fgraph-seg.waiting");
+    const waiting = document.querySelector("svg.fgraph-svg .fgraph-seg.fgraph-seg--waiting");
     const probe2 = document.createElement("span");
     probe2.className = "session-state question";
     probe2.style.position = "absolute";
@@ -168,13 +168,13 @@ try {
     };
   })()`);
   check(!!palette.active && palette.active === palette.want, "the working band is the same colour as the working state chip", `band ${palette.active} vs chip ${palette.want}`);
-  check(!palette.waiting || palette.waiting === palette.wantWaiting, "and the waiting band matches the question chip", `band ${palette.waiting} vs chip ${palette.wantWaiting}`);
+  check(!!palette.waiting && palette.waiting === palette.wantWaiting, "and the waiting band matches the question chip", `band ${palette.waiting} vs chip ${palette.wantWaiting}`);
   check(palette.inlineStyled === 0, "no band carries an inline per-kind colour any more", `${palette.inlineStyled} styled`);
 
   // --- archived draws nothing past its × (decision 12's amendment) -------------------
   const archived = await cdp.evaluate(`(() => ({
     tails: document.querySelectorAll("svg.fgraph-svg .fgraph-tail.archived").length,
-    bands: document.querySelectorAll("svg.fgraph-svg .fgraph-seg.archived").length,
+    bands: document.querySelectorAll("svg.fgraph-svg .fgraph-seg.fgraph-seg--archived").length,
     stoppedTails: document.querySelectorAll("svg.fgraph-svg .fgraph-tail.stopped").length,
     chips: [...document.querySelectorAll(".fgraph-label .session-state")].map((e) => e.textContent.trim()),
   }))()`);

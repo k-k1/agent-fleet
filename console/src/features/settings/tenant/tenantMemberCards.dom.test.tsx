@@ -150,7 +150,7 @@ describe("member cards", () => {
     const card = (t: string) => cards().find((c) => c.querySelector(".mcard-title")?.textContent === t)!;
     const gina = card("gina@x.com");
     expect(gina.querySelector(".mc-disk-text")?.textContent).toBe("Disk 19.0 / 20.0 GiB (95%)");
-    expect(gina.querySelector(".mc-disk")?.classList.contains("error")).toBe(true);
+    expect(gina.querySelector(".mc-disk")?.classList.contains("mc-disk--error")).toBe(true);
     expect(gina.querySelector(".mc-disk")?.textContent).toContain("as of");
     expect(gina.classList.contains("attn")).toBe(true);
     // No total (no quota): the used figure alone, no bar, no level.

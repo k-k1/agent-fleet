@@ -134,7 +134,7 @@ export function Refusal({ text }: { text: string | null }) {
   const tr = useT();
   if (!text) return null;
   return (
-    <p className="admin-hint warn" role="alert">
+    <p className="admin-hint admin-hint--warn" role="alert">
       {tr("admin.mpol_refused", { reason: text })}
     </p>
   );
@@ -144,7 +144,7 @@ export function Refusal({ text }: { text: string | null }) {
 export function Warnings({ list }: { list: string[] }) {
   if (list.length === 0) return null;
   return (
-    <ul className="admin-hint warn prov-warnings" role="status">
+    <ul className="admin-hint admin-hint--warn prov-warnings" role="status">
       {list.map((w) => (
         <li key={w}>{w}</li>
       ))}
@@ -246,7 +246,7 @@ function TenantProvidedSummary({ view }: { view: ProvidedTenantView }) {
     <div className="prov-summary" data-testid="prov-grant">
       {sourceDown ? (
         <div
-          className="admin-hint warn prov-banner"
+          className="admin-hint admin-hint--warn prov-banner"
           role="status"
           data-state={src === "off" ? "source-off" : "source-unregistered"}
         >
@@ -261,7 +261,7 @@ function TenantProvidedSummary({ view }: { view: ProvidedTenantView }) {
           )}
         </p>
       ) : (
-        <div className="admin-hint warn prov-banner" data-state="not-granted">
+        <div className="admin-hint admin-hint--warn prov-banner" data-state="not-granted">
           <p>{tr("tenant.prov_status_off")}</p>
           <p>{tr("tenant.prov_status_off_hint")}</p>
         </div>
@@ -579,7 +579,7 @@ function TenantProvidedRoutesBody({ slug, onServed, ruleStops, isSuper = false, 
     return (
       <section className="admin-panel model-access-provided">
         <h4>{tr("admin.prov_title")}</h4>
-        <p className="admin-hint warn" role="alert">
+        <p className="admin-hint admin-hint--warn" role="alert">
           {load.reason ?? tr("admin.prov_load_failed")}
         </p>
       </section>
@@ -599,7 +599,7 @@ function TenantProvidedRoutesBody({ slug, onServed, ruleStops, isSuper = false, 
       <h4>{tr("admin.prov_title")}</h4>
       <p className="admin-hint">{tr("admin.prov_note")}</p>
       {ruleStops && (
-        <div className="admin-hint warn prov-banner" data-testid="prov-rule-stops">
+        <div className="admin-hint admin-hint--warn prov-banner" data-testid="prov-rule-stops">
           <p>{tr("tenant.prov_rule_stops", { who: ruleStops })}</p>
           {showRestrictions && (
             <button type="button" className="btn sm" onClick={showRestrictions}>

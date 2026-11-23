@@ -96,7 +96,7 @@ export function AwsProfilesChip({ hidden = false, passive = false }: { hidden?: 
   const counted = profiles.filter(ownsLogin);
   const active = counted.filter(isActive);
   const expiring = profiles.some((p) => p.expiring);
-  const tone = expiring ? " warn" : active.length === 0 ? " muted" : " ok";
+  const tone = expiring ? " ws-aws-btn--warn" : active.length === 0 ? " muted" : " ws-aws-btn--ok";
   // One signed-in profile is named, since "which one" is the question; more get a count.
   const label = active.length === 1 ? active[0].label || active[0].name : `${active.length}/${counted.length}`;
   const title = expiring
@@ -136,7 +136,7 @@ export function AwsProfilesChip({ hidden = false, passive = false }: { hidden?: 
                       {p.label || p.name}
                     </span>
                     {st && (
-                      <span className={"ws-aws-state " + p.state} title={tr(st.title)}>
+                      <span className={"ws-aws-state ws-aws-state--" + p.state} title={tr(st.title)}>
                         {tr(st.label)}
                       </span>
                     )}
@@ -152,7 +152,7 @@ export function AwsProfilesChip({ hidden = false, passive = false }: { hidden?: 
                   {(end || (p.state !== "signed_in" && p.state !== "source_unavailable") || isActive(p)) && (
                     <div className="ws-aws-foot">
                       {end ? (
-                        <span className={p.expiring ? "warn" : "muted"}>
+                        <span className={p.expiring ? "ws-aws-foot--warn" : "muted"}>
                           {tr("wsbar.aws.ends", { time: fmtDateTime(end, TIME_HM) })}
                         </span>
                       ) : (

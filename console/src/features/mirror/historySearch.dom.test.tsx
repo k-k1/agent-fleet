@@ -135,7 +135,7 @@ describe("Ctrl+R history search", () => {
     type("npm");
     type("npmx");
     expect(composer().value).toBe("npm run build"); // bash leaves the line as it was
-    expect(bar()!.className).toContain("failed");
+    expect(bar()!.className).toContain("mirror-histsearch--failed");
     expect(count()).toBe("0");
   });
 

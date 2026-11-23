@@ -317,7 +317,7 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                       {tr("memo.d_held_in", { name: d.heldSession })}
                     </button>
                   )}
-                  {turn && <span className={"memo-d-turn" + (d.firstTurn?.outcome === "clean" ? "" : " bad")}>{tr(turn)}</span>}
+                  {turn && <span className={"memo-d-turn" + (d.firstTurn?.outcome === "clean" ? "" : " memo-d-turn--bad")}>{tr(turn)}</span>}
                   {d.retire === "released" && <span className="memo-d-tag">{tr("memo.d_taken_over")}</span>}
                   {d.defer && (
                     <span className={"memo-d-defer" + (!deferPending(d) && d.defer.result !== "applied" ? " dropped" : "")}>

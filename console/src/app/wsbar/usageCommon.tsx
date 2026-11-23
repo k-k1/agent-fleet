@@ -125,17 +125,18 @@ export function UsageRow({ label, w }: { label: string; w: { pct: number; until:
   // than render the template with empty placeholders. Both halves must be non-blank: an
   // unparseable instant yields until "" but a pass-through when, which would print "Resets  (—)".
   const hasReset = !!(w.until.trim() && w.when.trim());
-  const level = w.stale ? "" : w.pct >= 95 ? " crit" : w.pct >= 80 ? " warn" : "";
+  const level = w.stale ? "" : w.pct >= 95 ? "crit" : w.pct >= 80 ? "warn" : "";
+  const mod = (block: string) => (level ? ` ${block}--${level}` : "");
   return (
     <div className="wu-row">
       <div className="wu-row-head">
         <span className="wu-label">{label}</span>
-        <span className={"wu-pct" + (w.stale ? " muted" : level)} title={w.stale ? t("wsbar.usage.stale_note") : undefined}>
+        <span className={"wu-pct" + (w.stale ? " muted" : mod("wu-pct"))} title={w.stale ? t("wsbar.usage.stale_note") : undefined}>
           {w.stale ? "—" : `${w.pct}%`}
         </span>
       </div>
       <div className="wu-bar">
-        <span className={"wu-bar-fill" + level} style={{ width: (w.stale ? 0 : Math.min(100, w.pct)) + "%" }} />
+        <span className={"wu-bar-fill" + mod("wu-bar-fill")} style={{ width: (w.stale ? 0 : Math.min(100, w.pct)) + "%" }} />
       </div>
       {hasReset && <div className="wu-reset muted">{t("wsbar.usage.reset_at", { until: w.until, when: w.when })}</div>}
       {w.stale && <div className="wu-note muted">{t("wsbar.usage.stale_note")}</div>}

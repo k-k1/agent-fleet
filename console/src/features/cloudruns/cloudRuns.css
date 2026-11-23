@@ -14,7 +14,7 @@
   color: var(--muted);
   min-width: 0;
 }
-.cloud-run.failed {
+.cloud-run.cloud-run--failed {
   border-color: color-mix(in srgb, var(--err) 45%, transparent);
 }
 .cloud-run-text {

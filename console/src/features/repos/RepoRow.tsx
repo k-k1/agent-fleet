@@ -383,7 +383,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
               )}
               {r.integration && (
                 <span
-                  className={`ui-badge repo-chip integration ${r.integration.relation}`}
+                  className={`ui-badge repo-chip integration repo-chip--${r.integration.relation}`}
                   title={parentSyncTitle(r.integration)}
                 >
                   {parentSyncLabel(r.integration)}

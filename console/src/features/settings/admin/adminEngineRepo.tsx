@@ -31,7 +31,7 @@ export function FitTag({ fit }: { fit: Fit }) {
   const label = fit.state === "over" && fit.nextClass
     ? (tr("admin.fit_over_next" as never) as string).replace("{c}", fit.nextClass.label || fit.nextClass.id)
     : (tr((`admin.fit_${fit.state}`) as never) as string).replace("{p}", String(Math.round(fit.used * 100)));
-  return <span className={`engines-model-tag ${tone}`}>{label}</span>;
+  return <span className={`engines-model-tag engines-model-tag--${tone}`}>{label}</span>;
 }
 
 /** Which of a repository's files this deployment already holds.
@@ -139,7 +139,7 @@ export function RepoQuantLadder({ engine, repo, rows, readOnly, startOpen, onTak
           <span className="muted">{fit.kvMiB ? `+ ${formatMiB(fit.kvMiB)} = ${formatMiB(fit.needMiB)}` : ""}</span>
           <FitTag fit={fit} />
           {have
-            ? <span className="engines-model-tag on">{tr("admin.repo_ladder_held" as never)}</span>
+            ? <span className="engines-model-tag engines-model-tag--on">{tr("admin.repo_ladder_held" as never)}</span>
             : !readOnly && <Button small variant={fit.state === "fits" ? "primary" : undefined}
               aria-label={`${tr("admin.catalog_add" as never)}: ${file.name}`}
               onClick={() => onTakeIn(file.name)}>{tr("admin.catalog_add" as never)}</Button>}
@@ -213,7 +213,7 @@ export function CivitaiVersionLadder({ engine, versionRef, rows, readOnly, onTak
           <span className="muted">{version.published_at ? fmtDateTime(version.published_at) : ""}</span>
           <FitTag fit={fit} />
           {have
-            ? <span className="engines-model-tag on">{tr("admin.repo_ladder_held" as never)}</span>
+            ? <span className="engines-model-tag engines-model-tag--on">{tr("admin.repo_ladder_held" as never)}</span>
             : !readOnly && <Button small variant={fit.state === "fits" ? "primary" : undefined}
               aria-label={`${tr("admin.catalog_add" as never)}: ${version.name}`}
               onClick={() => onTakeIn(modelRef, version)}>{tr("admin.catalog_add" as never)}</Button>}

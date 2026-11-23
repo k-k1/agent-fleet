@@ -342,7 +342,7 @@ export function EnginesAdminView() {
               the reduced row does not carry the fields it is drawn from. */}
           {isSuper && (
           <div className="engines-state">
-            <span className={"engines-model-tag " + engineStateTone(e)}>{engineStateLabel(e, tr)}</span>
+            <span className={"engines-model-tag" + (engineStateTone(e) ? " engines-model-tag--" + engineStateTone(e) : "")}>{engineStateLabel(e, tr)}</span>
             {/* Where an engine this deployment does not own points. The one fact this panel can
                 give about a machine it does not own — and without it "externally managed" names
                 nothing an operator could go and look at. Printed verbatim, as the CP composed it.
@@ -775,7 +775,7 @@ function EngineClassPicker({
                     written to: dimming a whole row reads as "you may not touch this" rather than
                     as the state it is in, and in the light theme it barely reads at all. */}
                 {spotBlocked(o) && (
-                  <span className="engines-model-tag off">{tr("admin.engines_spot_blocked")}</span>
+                  <span className="engines-model-tag engines-model-tag--off">{tr("admin.engines_spot_blocked")}</span>
                 )}
               </li>
             ))}

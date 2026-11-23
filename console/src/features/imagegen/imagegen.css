@@ -156,7 +156,7 @@
   padding: 4px 0;
 }
 
-.igen-persona.failed {
+.igen-persona.igen-persona--failed {
   color: var(--warn);
 }
 
@@ -347,9 +347,9 @@
   border: 1px solid var(--border);
 }
 
-.igen-log-state.failed,
-.igen-log-state.lost,
-.igen-log-state.record_pending {
+.igen-log-state.igen-log-state--failed,
+.igen-log-state.igen-log-state--lost,
+.igen-log-state.igen-log-state--record_pending {
   color: var(--warn);
 }
 
@@ -1014,7 +1014,7 @@
   border: 1px solid var(--border);
 }
 
-.igen-badge.failed {
+.igen-badge.igen-badge--failed {
   color: var(--err);
   border-color: currentColor;
 }

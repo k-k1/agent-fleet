@@ -218,7 +218,7 @@ function LaunchSection({ label, summary, warn = false, open, onToggle, children 
       <button type="button" className="launch-sec-head" aria-expanded={open} onClick={onToggle}>
         <Icon name={open ? "chevron-down" : "chevron-right"} className="launch-sec-chev" />
         <span className="launch-sec-label">{label}</span>
-        <span className={"launch-sec-sum" + (warn ? " warn" : "")}>{open ? "" : summary}</span>
+        <span className={"launch-sec-sum" + (warn ? " launch-sec-sum--warn" : "")}>{open ? "" : summary}</span>
         <span className="launch-sec-edit">{tr(open ? "launch.sec_done" : "launch.sec_edit")}</span>
       </button>
       {open && <div className="launch-sec-body">{children}</div>}
@@ -968,7 +968,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                 );
               })}
             </select>
-            <span className={"ui-field-hint" + (savedUnusable || routeMissing ? " warn" : "")}>
+            <span className={"ui-field-hint" + (savedUnusable || routeMissing ? " ui-field-hint--warn" : "")}>
               {tr(prefsLoading ? "launch.route_loading" : savedUnusable ? "launch.route_default_unusable" : routeMissing ? "launch.route_required_hint" : "launch.route_hint")}
             </span>
             {someNoKey && (
@@ -982,7 +982,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           </div>
         )}
         {policyErr && (
-          <div className="ui-field-hint warn launch-policy-err" role="alert">
+          <div className="ui-field-hint ui-field-hint--warn launch-policy-err" role="alert">
             {tr(policyRefusalKey(policyErr))}
           </div>
         )}
@@ -1141,12 +1141,12 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             />
           )}
           {(stash === "done" || stash === "failed" || stash === "too_large") && (
-            <div className={"launch-stash-note" + (stash === "done" ? "" : " warn")} role="status">
+            <div className={"launch-stash-note" + (stash === "done" ? "" : " launch-stash-note--warn")} role="status">
               {tr(stash === "done" ? "launch.stash_done" : stash === "too_large" ? "launch.stash_too_large" : "launch.stash_failed")}
             </div>
           )}
           {seedMissing > 0 && (
-            <div className="launch-stash-note warn" role="status">
+            <div className="launch-stash-note launch-stash-note--warn" role="status">
               {tr("launch.memo_attach_missing", { count: seedMissing })}
             </div>
           )}
@@ -1524,7 +1524,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             )}
             {ownState === "saved" && <span className="saved-note">{tr("launch.own_default_saved")}</span>}
             {ownState === "failed" && (
-              <span className="ui-field-hint warn" role="alert">
+              <span className="ui-field-hint ui-field-hint--warn" role="alert">
                 {tr("launch.own_default_failed")}
               </span>
             )}

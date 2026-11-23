@@ -76,7 +76,7 @@ export function TenantModelAccessView({ slug, isSuper = false }: { slug: string;
     return (
       <section className="admin-panel model-access">
         <h4>{tr("tenant.model_access_title")}</h4>
-        <p className={failed ? "admin-hint warn" : "muted"} role={failed ? "alert" : undefined}>
+        <p className={failed ? "admin-hint admin-hint--warn" : "muted"} role={failed ? "alert" : undefined}>
           {failed ?? tr("common.loading")}
         </p>
       </section>

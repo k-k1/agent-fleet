@@ -19,6 +19,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
+import { tMaybe } from "../../../lib/i18n/index.ts";
 import { EngineModelsAdminView } from "./adminEngineModels.tsx";
 import { clearCatalogMemory } from "./catalogMemory.ts";
 
@@ -93,6 +94,20 @@ describe("EnginesAdminView / browsing with no engine deployed", () => {
     // to take anything into. The note says so instead of offering a button that cannot work.
     expect(ui().querySelector(".engines-search-hits li button")).toBeNull();
     expect(ui().textContent).toContain("閲覧だけです");
+  });
+
+  it("draws a hard restriction badge in the warning style and a soft one plain", async () => {
+    apiJSON.mockResolvedValue({
+      hits: [{ source: "hf", ref: "o/m", name: "o/m", downloads: 1, restrictions: ["gated_manual", "commercial_no"] }],
+    });
+    await mount();
+    await click(button("人気を見る"));
+    const tags = [...ui().querySelectorAll<HTMLElement>(".engines-search-hits .engines-model-tag")];
+    const hard = tags.find((t) => t.textContent === (tMaybe("admin.engines_limit_gated_manual") ?? "gated_manual"));
+    const soft = tags.find((t) => t.textContent === (tMaybe("admin.engines_limit_commercial_no") ?? "commercial_no"));
+    expect(hard?.classList.contains("engines-model-tag--warn")).toBe(true);
+    expect(soft).toBeDefined();
+    expect(soft?.classList.contains("engines-model-tag--warn")).toBe(false);
   });
 
   it("asks for the kind, because there is no engine to derive it from", async () => {

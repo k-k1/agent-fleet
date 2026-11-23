@@ -100,9 +100,9 @@ export function TenantNetworkView({ slug }: { slug: string }) {
           </div>
         </div>
         {view.reason === "proxy_not_configured" && (
-          <p className="admin-hint warn">{tr("tenant.net_proxy_not_configured")}</p>
+          <p className="admin-hint admin-hint--warn">{tr("tenant.net_proxy_not_configured")}</p>
         )}
-        {view.reason === "client_ip_unknown" && <p className="admin-hint warn">{tr("tenant.net_ip_unknown_hint")}</p>}
+        {view.reason === "client_ip_unknown" && <p className="admin-hint admin-hint--warn">{tr("tenant.net_ip_unknown_hint")}</p>}
         <p className="admin-hint">{tr("tenant.net_scope_hint")}</p>
         <p className="admin-hint">{tr("tenant.net_exempt_hint")}</p>
         <p className="admin-hint">{tr("tenant.net_layers_hint")}</p>

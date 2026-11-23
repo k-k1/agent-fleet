@@ -51,7 +51,7 @@ export function MemoImageThumb({ name, onRemove }: { name: string; onRemove?: ()
           <span className="memo-thumb-name">{memoAttachmentLabel(name)}</span>
         </span>
       ) : failed ? (
-        <span className="memo-thumb failed" title={tr("memo.image_failed")}>
+        <span className="memo-thumb memo-thumb--failed" title={tr("memo.image_failed")}>
           <Icon name="file-media" />
         </span>
       ) : !url ? (

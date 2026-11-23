@@ -385,7 +385,7 @@ function MemberDisk({ m, now }: { m: Member; now: number }) {
   const stopped = m.state !== "running" && m.state !== "starting";
   const ago = stopped && d.observed_at ? relTime(d.observed_at, now) : "";
   return (
-    <span className={"mc-disk" + (level && level !== "ok" ? " " + level : "")}>
+    <span className={"mc-disk" + (level && level !== "ok" ? " mc-disk--" + level : "")}>
       {level && level !== "ok" && <Icon name="warning" />}
       {ratio !== null && (
         <span

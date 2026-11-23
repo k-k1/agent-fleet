@@ -347,8 +347,8 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
         {/* The "no" verdict is deliberately NOT a chip here: it is the red sentence below, and
             saying it twice in two wordings reads as two different restrictions. */}
         {resolved.commercial_use && resolved.commercial_use !== "no" && <span>{tr((`admin.catalog_commercial_${resolved.commercial_use}`) as never)}</span>}
-        {resolved.restrictions?.map((code) => <span key={code} className={CATALOG_HARD_RESTRICTIONS.has(code) ? "warn" : ""}>{tMaybe(`admin.engines_limit_${code}`) ?? code}</span>)}
-        {resolved.gated && !resolved.restrictions?.length && <span className="warn">{tr("admin.engines_ingest_hit_gated")}</span>}</div>}
+        {resolved.restrictions?.map((code) => <span key={code} className={CATALOG_HARD_RESTRICTIONS.has(code) ? "engine-operation-fact--warn" : ""}>{tMaybe(`admin.engines_limit_${code}`) ?? code}</span>)}
+        {resolved.gated && !resolved.restrictions?.length && <span className="engine-operation-fact--warn">{tr("admin.engines_ingest_hit_gated")}</span>}</div>}
       {resolved?.commercial_use === "no" && <p className="form-err">{tr("admin.engines_ingest_noncommercial")}</p>}
       {/* 🔴 The wall is a REFUSAL only while nobody can answer it. With an account registered the
           download is attempted as that account, and the CP cannot say in advance whether it

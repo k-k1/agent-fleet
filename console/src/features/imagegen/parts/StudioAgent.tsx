@@ -164,7 +164,7 @@ export function StudioAgent({
         </div>
       )}
       {(state === "failed" || state === "unknown") && resentFor !== session && (
-        <div className="igen-persona failed">
+        <div className="igen-persona igen-persona--failed">
           <Icon name="warning" /> {tr(state === "failed" ? "imggen.persona_state_failed" : "imggen.persona_state_unknown")}
           <button type="button" className="ui-btn ui-btn-sm" disabled={resending} onClick={() => void resend()}>
             {tr("imggen.persona_resend")}

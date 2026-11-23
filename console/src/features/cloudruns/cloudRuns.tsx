@@ -34,7 +34,7 @@ function ProviderIcon({ provider }: { provider: string }) {
 export function CloudRunLine({ run, session, time, brief }: { run: CloudRun; session?: boolean; time?: boolean; brief?: boolean }) {
   const title = brief ? cloudRunParts(run).join(" · ") + "\n" + tr("cloudruns.title") : tr("cloudruns.title");
   return (
-    <div className={"cloud-run" + (failedRun(run) ? " failed" : "")} role="note" title={title}>
+    <div className={"cloud-run" + (failedRun(run) ? " cloud-run--failed" : "")} role="note" title={title}>
       <ProviderIcon provider={run.provider} />
       {time && (
         <time className="cloud-run-time" dateTime={run.startedAt}>
@@ -70,7 +70,7 @@ export function CloudRunGroup({ runs, attached = false }: { runs: CloudRun[]; at
     <div className={cls + (open ? " open" : "")} {...label}>
       <button
         type="button"
-        className={"cloud-run cloud-run-head" + (failed ? " failed" : "")}
+        className={"cloud-run cloud-run-head" + (failed ? " cloud-run--failed" : "")}
         aria-expanded={open}
         title={open ? tr("cloudruns.collapse") : tr("cloudruns.expand")}
         onClick={() => setOpen((o) => !o)}
