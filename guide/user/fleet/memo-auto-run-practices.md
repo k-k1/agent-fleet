@@ -67,6 +67,8 @@ else "Partial:", "Deferred:" or "Too large:", then one line on what a person mus
 
 A session reads its instructions when it starts. Editing the instruction or the file does not change a run that is already going; the next run reads the new text.
 
+The category's settings, the instruction included, can live in the repository too: [Keep auto-run settings in the repository](../chat/memo-auto-run-repo-file.md). A change there applies only after you approve it in the Console.
+
 Write the procedure for a reader who is not there:
 
 - **Never end on a question.** "Tell me if I should continue" is never read in time, and the run stays open "waiting for you" and holds its place. Decide, or stop and say why
@@ -145,6 +147,7 @@ The instruction states which of these the session may do. A session that must no
 ## Related
 
 - [Run memos automatically](../chat/memo-auto-run.md): every screen, state and limit
+- [Keep auto-run settings in the repository](../chat/memo-auto-run-repo-file.md)
 - [Ways to use the Fleet Operator](operator-patterns.md)
 - [Run at a set time](schedules.md)
 - [Start child sessions from a session](child-sessions.md)
