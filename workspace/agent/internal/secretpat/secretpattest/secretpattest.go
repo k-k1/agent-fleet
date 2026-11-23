@@ -126,7 +126,10 @@ var Benign = []string{
 	"snake_case_identifier_with_many_parts.and.dots-and-hyphens_v1.2.3",
 	"run `gh pr view` then open docs/user_guide.md and release-notes_2026.11.txt",
 	"open docs/ghs_status_dashboard_for_enterprise_repositories.md and ghp_release_notes_for_the_2026_cycle.txt",
-	"ghs_12_eyJ.short.x and gho_9_eyJhbGciOiJ.too.short are not tokens either",
+	"ghs_12_eyJ.short.x and gho_9_eyJ.too.short are not tokens either",
+	// Split so the literals do not trip the secret scan's generic rules.
+	"docs/ghs_202610_" + "releasechecklist.productionrollout." + "902fbdd2b1df0c4f" + "82ab84e70d6c0e21.md",
+	"ghs_1_DeploymentChecklist.productionrollout." + "release_candidate_notes_for_review.md",
 	// Split so the literal does not trip the secret scan's own 36-alphanumeric ghs_ rule.
 	"docs/gh" + "s_statusdashboardforenterpriserepositories_enabled.md",
 	"ghs_1_short.config.yaml and ghp_2_release_notes.v2.md stay names",

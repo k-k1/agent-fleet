@@ -74,6 +74,37 @@ func TestGitHubTokenBoundaries(t *testing.T) {
 	}
 }
 
+// The redactors' stateless form takes a token cut anywhere past its head, and tokens run
+// together, whole; it leaves benign text alone.
+func TestGitHubStatelessRedactTakesCutAndJoinedTokens(t *testing.T) {
+	for name, tok := range secretpattest.All() {
+		if !strings.HasPrefix(name, "stateless") {
+			continue
+		}
+		head := 4 // past `ghs_`, and past the APPID and its `_` when there is one
+		if tok[4] >= '0' && tok[4] <= '9' {
+			head += strings.IndexByte(tok[4:], '_') + 1
+		}
+		for cut := head + 8; cut <= len(tok); cut++ {
+			// A cut right after a dot leaves that dot, which is no part of a secret.
+			got := RedactAll("echo "+tok[:cut]+"…", "***", GitHubStatelessRedact)
+			if got != "echo ***…" && got != "echo ***.…" {
+				t.Fatalf("%s cut at %d: %.80q", name, cut, got)
+			}
+		}
+		for _, joined := range []string{tok + tok, tok + "-" + tok, tok + "." + tok, tok + "_" + secretpattest.Stateless()} {
+			if got := RedactAll("echo "+joined+" done", "***", GitHubStatelessRedact); got != "echo *** done" {
+				t.Errorf("%s joined: %.80q", name, got)
+			}
+		}
+	}
+	for _, s := range secretpattest.Benign {
+		if m := GitHubStatelessRedact.FindString(s); m != "" {
+			t.Errorf("benign %q matched %q", s, m)
+		}
+	}
+}
+
 func TestRedactAllMergesOverlaps(t *testing.T) {
 	a, b, c := regexp.MustCompile(`a+`), regexp.MustCompile(`ab+`), regexp.MustCompile(`c`)
 	for in, want := range map[string]string{

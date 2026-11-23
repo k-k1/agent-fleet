@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat/secretpattest"
 )
 
@@ -45,6 +46,25 @@ func TestScrubSecretsKeepsEnclosingMatchesWhole(t *testing.T) {
 
 // The GitHub patterns alone, not ScrubSecrets: its entropy fallback takes long mixed runs on
 // purpose, benign or not.
+// Stateless tokens cut short or run together go in the known-pattern pass itself, not only by
+// the entropy fallback's grace (which a letters-only body would not get).
+func TestKnownPatternsTakeCutAndJoinedStatelessTokens(t *testing.T) {
+	for name, tok := range secretpattest.All() {
+		if !strings.HasPrefix(name, "stateless") {
+			continue
+		}
+		for in, want := range map[string]string{
+			"x " + tok + tok + " y":       "x * y",
+			"x " + tok + "-" + tok + " y": "x * y",
+			"x " + tok[:120] + "… y":      "x *… y",
+		} {
+			if got := secretpat.RedactAll(in, "*", knownSecretPatterns...); got != want {
+				t.Errorf("%s: %.80q", name, got)
+			}
+		}
+	}
+}
+
 func TestGitHubPatternsSkipBenignText(t *testing.T) {
 	gh := 0
 	for _, re := range knownSecretPatterns {

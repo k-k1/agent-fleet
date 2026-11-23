@@ -82,7 +82,7 @@ func mrkdwnFromGFM(s string) string {
 var knownSecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`),                                             // Slack tokens
 	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`),                                           // GitHub tokens, classic
-	secretpat.GitHubStateless,                                                                      // GitHub tokens, stateless (ghs_APPID_JWT)
+	secretpat.GitHubStatelessRedact,                                                                // GitHub tokens, stateless (ghs_APPID_JWT), cut short or run together too
 	regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`),                                            // AWS access key id
 	regexp.MustCompile(`\bsk-[A-Za-z0-9_\-]{20,}`),                                                 // OpenAI-style secret keys
 	regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/\-]{10,}=*`),                                 // Authorization: Bearer …

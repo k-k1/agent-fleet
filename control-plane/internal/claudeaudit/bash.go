@@ -183,7 +183,9 @@ var secretValueREs = []struct {
 // glued to a GitHub token would take its head and leave the rest in clear, and a replacement
 // made before the next pattern is matched would cut that one short the same way.
 var secretTokenREs = []*regexp.Regexp{
-	secretpat.GitHubStateless,
+	// The redactors' form: an audited command is cut at 80 characters, which can cut a
+	// stateless token short of its signature.
+	secretpat.GitHubStatelessRedact,
 	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{16,}`),
 	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`),
 	regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{10,}`),

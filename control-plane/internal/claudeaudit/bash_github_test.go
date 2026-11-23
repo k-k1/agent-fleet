@@ -49,6 +49,35 @@ func TestMaskCommandSecretsKeepsEnclosingMatchesWhole(t *testing.T) {
 	}
 }
 
+// The audit records a Bash command's first line cut at 80 runes with "…" (the Agent's toolInfo),
+// which cuts a stateless token short of its signature; the part that is left still goes, and so
+// do stateless tokens run together.
+func TestBashTargetMasksCutAndJoinedStatelessTokens(t *testing.T) {
+	cut := func(s string) string {
+		if r := []rune(s); len(r) > 80 {
+			return string(r[:80]) + "…"
+		}
+		return s
+	}
+	for name, tok := range secretpattest.All() {
+		if !strings.HasPrefix(name, "stateless") {
+			continue
+		}
+		for _, cmd := range []string{"echo " + tok, "gh api -H 'Authorization: token " + tok + "' /x", "curl -sS --data-binary " + tok} {
+			info := cut(cmd)
+			out := BashTarget(info, true)
+			if l := secretpattest.Leftover(out, tok); l != "" {
+				t.Errorf("%s: %q survives in %q", name, l, out)
+			}
+		}
+		for _, joined := range []string{tok + tok, tok + "-" + tok} {
+			if got := MaskCommandSecrets("echo " + joined + " done"); got != "echo *** done" {
+				t.Errorf("%s joined: %.120q", name, got)
+			}
+		}
+	}
+}
+
 func TestMaskCommandSecretsLeavesBenignTextAlone(t *testing.T) {
 	// The audit's classic rule has had no trailing boundary since before the stateless shape,
 	// so it masks a long gh?_ name; that is not this change's to narrow.
