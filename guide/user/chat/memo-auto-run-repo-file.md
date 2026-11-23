@@ -19,7 +19,7 @@ The file is reviewed and versioned like the rest of the code, and nothing in it 
 | Untick what you do not want, and approve the rest | Saves the file's values for the ticked settings to your category, and records which commit you approved |
 
 - The settings are yours. Each member who has a category with that name in that repository approves for themself, and an approval changes nobody else's settings
-- The file is read from the default branch on the remote, never from your working copy or a working branch, so an edit there is not picked up by itself. That is a guard rail, not a guarantee: a session in your workspace uses the same git sign-in as you. What applies is only what you approve, after the card has shown you where it read the file from and every difference
+- The file is read from the default branch on the remote, never from your working copy or a working branch, so an edit there is not picked up by itself. That is a guard rail, not a guarantee: a session in your workspace uses the same git sign-in as you. What applies is only what you approve, after the card has shown you every difference and the file's path, branch and commit. The card does not show which remote the file came from: if you doubt it, check the repository's `origin` in your workspace
 - Some settings are never read from the file (below). Turning auto-run on is one of them
 
 ## Before you start
@@ -27,6 +27,7 @@ The file is reviewed and versioned like the rest of the code, and nothing in it 
 - The category must belong to a repository. "**Repository settings file**" does not show for a category without one
 - Your workspace must be running when you check the file and when you approve: the file is read there each time
 - The deployment can switch the feature off. Then "Repository settings file" does not show ([deployment variables](../../ref/settings.md#deployment-variables))
+- To approve, a tenant administrator must have allowed memo auto-run ([Allow memo auto-run](../../admin/defaults/memo-auto-run.md)). Until then you can check the file and see the difference, but not approve it
 
 ## Write the file
 
@@ -90,8 +91,8 @@ A time window and a threshold cannot both be set, and the file is laid over each
 - A threshold: `open_after` with `open_cron: ""` (as in the example). Without `open_cron: ""`, a member who has a time window gets an error, because the window would stay
 - A time window: `open_cron`, `open_minutes` and `tz` with `open_after: 0`
 
-Switching from a window to a threshold also clears the window's length and time zone, which the file does not need to mention. `open_minutes` or `tz` without a window is an error.
-The file cannot leave a category with neither, which would start a run whenever a memo is ready and there is room: that is a Console-only change (next sections).
+Switching from a window to a threshold also clears the window's length and time zone, which the file does not need to mention. Without a window, `open_minutes` other than `0` or `tz` other than `""` is an error.
+The file cannot take a category that has a window or a threshold to neither, which would start a run whenever a memo is ready and there is room: that is a Console-only change (next sections). A category that already has neither can stay so.
 
 ### Keep the instruction in its own file
 
@@ -129,28 +130,29 @@ That check is a net, not a scanner. It misses other shapes, and it does not read
 
 - A row marked "**Increase**" raises a limit: a higher spend limit or none at all, more sessions at the same time, more follow-ups, more runs per day. Untick it unless you mean it
 - "**When it runs**" is one row: the window and the threshold settings are approved together, or not at all
-- Settings that depend on each other are approved together. An agent and a route only that agent takes, for example: approving one without the other is refused
+- Approving one setting without another is refused when the result is a combination the Console would not save. An agent with a route only another agent takes, for example: tick the agent and the route together
 - The approval reads the file again and applies exactly what you were shown. If the default branch got a new commit (even one that does not touch the file), or your settings or the category's name changed, the approval is refused and the card reads the file again. **The new difference starts with every row ticked again**: untick what you do not want before you approve
 - Save or cancel your own edits in the dialog before approving
+- If the category was renamed (in another tab, for example), the card says so and the approval waits: close the dialog and open the category's "Auto-run settings" again
 - After the approval the dialog closes. Open it again to see the saved settings
 
-When the file has an error, the card says "**The file cannot be applied. Your current settings stay in force.**" and lists each error, with its line when there is one. An error in another category's entry does not stop yours from being compared; an error in the file as a whole does. Nothing is compared until it is fixed on the default branch.
-A file that cannot be read at all (larger than 64 KiB, not UTF-8 text, or the remote cannot be reached) shows a reading error instead of the card.
+When the file as a whole, or this category's entry, has an error, the card says "**The file cannot be applied. Your current settings stay in force.**" and lists each error, with its line when there is one. An error in another category's entry does not stop yours from being compared. Nothing is compared until it is fixed on the default branch.
+When the file cannot be read at all, the card shows a reading error in place of the difference (next table).
 
 ## See that the file changed
 
-The category keeps the result of the last read that got an answer. When that read found a difference, or an error in the file, the category's header in the Memo queue shows a mark, and "Auto-run settings" says when it was read and at which commit.
+A category whose auto-run settings are saved keeps the result of its last read that got an answer. When that read found a difference, or an error in the file, the category's header in the Memo queue shows a mark, and "Auto-run settings" says when it was read and at which commit. A category without saved settings keeps nothing.
 
 That record is made when you press "Check the file", and, on deployments that turn it on, by a periodic re-read of the categories with "Run by itself" on whose workspace is running. The re-read never starts a workspace and never applies anything.
 
-No mark does not prove the file matches. There is no mark when:
+The mark is about that last read, not about the file now:
 
-- the last read found no difference, or found no file or no entry for the category
-- a read failed (the remote could not be reached, the file is too large or not UTF-8 text): the earlier record stays
-- you renamed the category or changed its settings since the last read: that record no longer applies
-- the deployment does not re-read, and the file got a commit since you last checked
+- No mark when the last read found no difference, or found no file or no entry for the category
+- No mark once you renamed the category or changed its settings since the last read: that record no longer applies
+- A read that failed (the remote could not be reached, the file is too large or not UTF-8 text) changes nothing: the earlier record, mark or no mark, stays
+- A commit to the file is not seen until the next read: by you, or by the re-read where the deployment has one
 
-Press "Check the file" to know for sure.
+Press "Check the file" ("Check again" after the first time) to know for sure.
 
 ## When it goes wrong
 
@@ -159,10 +161,10 @@ Press "Check the file" to know for sure.
 | "The owner's workspace must be running." | Start your workspace and check again |
 | "The default branch has no .agent-fleet/autorun.yaml." | The file is not on the remote's default branch yet. Merge it there; a working branch is never read |
 | "The file has no entry for “…”." | The file has no key with the category's exact name |
-| "The settings file could not be read from the repository's default branch. Your current settings stay as they are." | The remote could not be reached, or the file is larger than 64 KiB or not UTF-8 text. Fix it and check again |
+| "The settings file could not be read from the repository's default branch. Your current settings stay as they are." in the card | A reading error. For example: the remote cannot be reached, the file is larger than 64 KiB or not UTF-8 text, your workspace has no clone of the repository, or the workspace's Agent is too old to read `instruction_file` (restart the workspace to update it). Fix it and check again |
 | An error on `instruction_file` | The commit has no such file, or it is not a regular UTF-8 text file, is larger than 16 KiB, holds a NUL, looks like it holds a credential, or the path is not in its plain form |
-| An error on `open_after` or `open_cron` | The file sets one of the two while your settings use the other. Write the other as off ([When it runs](#when-it-runs)) |
-| "The repository settings file or your settings changed since you looked at the difference. Check again before approving." | The default branch, your settings or the category's name moved after the check. The card reads the file again: check the ticks and approve what it shows now |
+| "a queue opens in a window or after a number of messages, not both" | The file sets one of the two while your settings use the other. Write the other as off ([When it runs](#when-it-runs)) |
+| "The repository settings file or your settings changed since you looked at the difference. Check again before approving." | The default branch or your settings moved after the check. The card reads the file again: check the ticks and approve what it shows now. If the category was renamed, open its "Auto-run settings" again first |
 
 ## Related
 
