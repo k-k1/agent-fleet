@@ -7,6 +7,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // putRounds gives category rounds of repository app enabled settings with instruction "old".
@@ -248,34 +250,48 @@ func TestMemoRepoRecheckKeepsTheLaterRead(t *testing.T) {
 	}
 }
 
-// A read computed against settings that changed before it was kept is not kept: the loop read
-// one queue's settings, then the member changed them and checked the file, then the loop read the
-// file for that queue.
+// A read computed against settings that changed before it was kept is not kept: the loop took
+// the queue's settings, then the member changed them and checked the file, then the loop's read
+// began. The loop's read begins later, so only the basis keeps it out.
 func TestMemoRepoRecheckDropsAReadOfOldSettings(t *testing.T) {
 	e, a := repoEnv(t, "")
-	lib := e.category("lib", "rounds")
-	if rec := e.do("a", "PUT", "/api/memo-queues/"+lib, map[string]any{"instruction": "x", "enabled": true}); rec.Code != http.StatusOK {
-		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
-	}
 	app := putRounds(e) // maxActive 2
 	a.file("version: 1\ncategories:\n  rounds:\n    max_active: 3\n")
-	var first atomic.Bool
-	a.onServe = func() {
-		// The loop's first read is lib's; app's settings change before app's read begins.
-		if first.CompareAndSwap(false, true) {
+	calls := 0
+	now := func() time.Time {
+		// The first call dates the queue snapshot's freshness, the second the start of its read.
+		if calls++; calls == 2 {
 			put := map[string]any{"instruction": "old", "spendCapUsd": 60, "maxActive": 3, "enabled": true}
 			if rec := e.do("a", "PUT", "/api/memo-queues/"+app, put); rec.Code != http.StatusOK {
 				t.Errorf("put: %d %s", rec.Code, rec.Body.String())
 			}
 			e.repoSettings(app)
 		}
+		return time.Now()
 	}
-	(&memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now}).tick(context.Background())
-	if got := a.requested(); len(got) != 3 {
-		t.Fatalf("Agent calls %v", got)
+	(&memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: now}).tick(context.Background())
+	if got := a.requested(); calls != 2 || len(got) != 2 {
+		t.Fatalf("now called %d times, Agent calls %v", calls, got)
 	}
 	if c := e.queueDTO(app).RepoCheck; c == nil || c.State != memoRepoCheckSame {
 		t.Fatalf("the member's read was replaced by one of the old settings: %+v", c)
+	}
+}
+
+// A stopped workspace is not resolved for a start: nothing is cached, and its Agent is not asked.
+func TestMemoRepoRecheckLeavesTheRuntimeCacheAlone(t *testing.T) {
+	e := newInboxEnv(t)
+	e.memoQueuesOn(true)
+	e.mgr.memoRepoSettings = true
+	putRounds(e)
+	ws := store.Workspace{ID: "ws-a", TenantID: e.t1.ID, MembershipID: e.members["a"], ContainerName: "a",
+		Network: "n", DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "stopped", CreatedAt: store.NowTS()}
+	if err := e.st.CreateWorkspace(context.Background(), ws); err != nil {
+		t.Fatal(err)
+	}
+	(&memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now}).tick(context.Background())
+	if _, ok := e.mgr.cachedRTFor(e.members["a"]); ok {
+		t.Fatal("the loop cached a runtime")
 	}
 }
 

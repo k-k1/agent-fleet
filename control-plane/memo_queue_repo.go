@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/autorunfile"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -1174,7 +1175,13 @@ func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string, qs
 	if len(work) == 0 {
 		return
 	}
-	// A member without a workspace is left alone: resolving one must not create its record.
+	// The workspace row is read, never built: resolving it for a start would create a missing one,
+	// make a stopped one's keys and publish a runtime in the cache. A read needs the Agent's
+	// address and token only.
+	ws, ok, err := rc.mgr.store.GetWorkspaceByMembership(ctx, membershipID)
+	if err != nil || !ok || ws.State != "running" {
+		return
+	}
 	identityID, ok, err := rc.mgr.store.IdentityIDForMembership(ctx, membershipID)
 	if err != nil || !ok {
 		return
@@ -1183,10 +1190,16 @@ func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string, qs
 	if aerr != nil {
 		return
 	}
-	res, found, aerr := rc.mgr.buildResolvedExisting(ctx, ident, mv)
-	if aerr != nil || !found || res.rt.State(ctx) != "running" {
+	var rt runtime.Runtime
+	if c, ok := rc.mgr.cachedRTFor(membershipID); ok && c.ws.ID == ws.ID {
+		rt = c.rt
+	} else {
+		rt = rc.mgr.runtimeFor(ws, noSecretKeys)
+	}
+	if rt == nil || rt.Endpoint() == "" || rt.State(ctx) != "running" {
 		return
 	}
+	res := &resolved{rt: rt, ws: ws, ident: ident, mv: mv}
 	// The tenant's switch is asked again before each read and each write: turned off while a
 	// read waits on the workspace, nothing more is fetched and nothing is recorded.
 	on := func() bool {

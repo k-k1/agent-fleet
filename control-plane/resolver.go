@@ -389,42 +389,28 @@ func selectMembership(ms []store.MembershipView, tenantSel string) (store.Member
 // that follows it holding the old env. That is within the existing semantics — a policy
 // change applies at the next container start.
 func (m *manager) buildResolved(ctx context.Context, ident store.Identity, mv store.MembershipView) (*resolved, *apiError) {
-	res, _, aerr := m.buildResolvedOpt(ctx, ident, mv, true)
-	return res, aerr
-}
-
-// buildResolvedExisting is buildResolved for a caller that must never create a workspace (a
-// background read): found is false when the membership has none, checked under the build lock.
-func (m *manager) buildResolvedExisting(ctx context.Context, ident store.Identity, mv store.MembershipView) (*resolved, bool, *apiError) {
-	return m.buildResolvedOpt(ctx, ident, mv, false)
-}
-
-func (m *manager) buildResolvedOpt(ctx context.Context, ident store.Identity, mv store.MembershipView, create bool) (*resolved, bool, *apiError) {
 	if c, ok := m.cachedRTFor(mv.MembershipID); ok {
-		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv, gitEpoch: c.gitEpoch}, true, nil
+		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv, gitEpoch: c.gitEpoch}, nil
 	}
 	bl := m.buildLockFor(mv.MembershipID)
 	bl.Lock()
 	defer bl.Unlock()
 	if c, ok := m.cachedRTFor(mv.MembershipID); ok { // built while we waited
-		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv, gitEpoch: c.gitEpoch}, true, nil
+		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv, gitEpoch: c.gitEpoch}, nil
 	}
 	ws, ok, err := m.store.GetWorkspaceByMembership(ctx, mv.MembershipID)
 	if err != nil {
-		return nil, false, internalErr(err)
+		return nil, internalErr(err)
 	}
 	if !ok {
-		if !create {
-			return nil, false, nil
-		}
 		ws, err = m.createWorkspace(ctx, mv, ident.UserKey)
 		if err != nil {
-			return nil, false, internalErr(err)
+			return nil, internalErr(err)
 		}
 	}
 	keys, err := m.resolveDEK(ctx, ws, ident.UserKey)
 	if err != nil {
-		return nil, false, internalErr(err)
+		return nil, internalErr(err)
 	}
 	// Resolve the per-workspace size axes (0 = deployment default) so the factory can
 	// size the next container start; the built runtime captures them by value.
@@ -435,7 +421,7 @@ func (m *manager) buildResolvedOpt(ctx context.Context, ident store.Identity, mv
 	m.mu.Lock()
 	m.rts[mv.MembershipID] = cachedRT{rt: rt, ws: ws, gitEpoch: gitEpoch, sizeUntil: m.sizeUntil(ctx, ws)}
 	m.mu.Unlock()
-	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv, gitEpoch: gitEpoch}, true, nil
+	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv, gitEpoch: gitEpoch}, nil
 }
 
 // cachedRTFor reads the runtime cache under the (now cache-only) manager lock.
