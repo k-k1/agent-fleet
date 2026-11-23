@@ -408,7 +408,10 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 			// A new message joins the end of the queue: every message already there comes before it.
 			self := m
 			self.ID, self.CreatedAt, self.Position = "", now, math.MaxInt
-			after, aerr := memoAfterResolve(self, rows, in.After, inQ)
+			after, aerr, err := memoAfterResolve(tx, self, rows, in.After, inQ)
+			if err != nil {
+				return err
+			}
 			if aerr != nil {
 				return memoTxFail(aerr)
 			}
@@ -575,7 +578,10 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 			if err != nil {
 				return err
 			}
-			if next.AfterIDs, aerr = memoAfterResolve(next, rows, *in.After, inNext); aerr != nil {
+			if next.AfterIDs, aerr, err = memoAfterResolve(tx, next, rows, *in.After, inNext); err != nil {
+				return err
+			}
+			if aerr != nil {
 				return memoTxFail(aerr)
 			}
 		case moved && next.AfterIDs != "":

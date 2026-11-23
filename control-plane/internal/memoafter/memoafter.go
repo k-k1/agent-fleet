@@ -6,7 +6,8 @@
 // SQL statistics mirror): the prerequisite was delivered by a delivery (not sent by hand) that
 // closed as clean and was not retired as overdue, and the PR snapshot of its session, read from
 // the running Agent after the close, is final with every PR merged, or with no PR when the first
-// turn is recorded and was not bad. A first turn that is never recorded (a kind whose ledger
+// turn is recorded and was not bad and the session's last answer starts with Done: (issue #4876).
+// A first turn that is never recorded (a kind whose ledger
 // records none, a void ledger, a session gone before the collection window ended) cannot show a
 // success, so only a merged PR satisfies then. A dependent is never fired over a prerequisite
 // that went wrong.
@@ -62,6 +63,12 @@ const (
 	WhyPRClosed    = "pr_closed"    // a PR of its session was closed unmerged
 	WhyNoPR        = "no_pr"        // no first turn was recorded, and its session opened no PR
 	WhySessionGone = "session_gone" // the Agent no longer had its session before its PRs were read
+
+	// WhyAnswer waits: the run opened no PR, and its session's last answer is not read yet.
+	WhyAnswer = "answer"
+	// WhyNotDone fails: the run opened no PR, and its last answer does not start with Done:, or
+	// could not be read before the window ended.
+	WhyNotDone = "not_done"
 )
 
 // PR is one PR of a delivery's snapshot, as memo_delivery.pr_snapshot keeps it and as the list
@@ -120,6 +127,9 @@ type Item struct {
 	// PRs is the snapshot behind a reason of pr or pr_closed: the PRs it waits for, or the one
 	// closed unmerged among them. Empty while no read answered.
 	PRs []PR `json:"prs,omitempty"`
+	// Answer is the first line of the last answer behind a reason of not_done, "" when none could
+	// be read.
+	Answer string `json:"answer,omitempty"`
 	// Delivery is the prerequisite's delivery, for the dispatcher's wakes. Never on the wire.
 	Delivery string `json:"-"`
 }
@@ -170,8 +180,7 @@ func Encode(ids []string) string {
 	return string(b)
 }
 
-// OrderLess is the queue's order, (created_at, position, id), the order the claim sorts by: a
-// prerequisite comes before its dependent in it, so no cycle can form.
+// OrderLess is the queue's order, (created_at, position, id), the order the claim sorts by.
 func OrderLess(a, b store.Memo) bool {
 	if a.CreatedAt != b.CreatedAt {
 		return a.CreatedAt < b.CreatedAt
@@ -191,18 +200,21 @@ func invalid(format string, a ...any) *Invalid { return &Invalid{fmt.Sprintf(for
 
 // Resolve turns the `after` a write gave into the column it stores. An entry is a message id of
 // the same queue, or a reference key (owner/repo#12, PROJ-12) that resolves to the newest message
-// of the queue holding it that is not superseded. Every prerequisite must come before self in the
-// queue's order and must not be superseded; one named twice is kept once. rows is self's bucket
-// as it is now (self itself may be among them, or not yet inserted). An empty list clears.
-func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (string, *Invalid) {
+// of the queue holding it that is not superseded. A prerequisite may come before or after self in
+// the queue's order (a dependent whose prerequisite comes later simply waits for it), must not be
+// superseded, and must not wait for self, directly or through its own prerequisites; one named
+// twice is kept once. rows is self's bucket as it is now (self itself may be among them, or not
+// yet inserted), and get reads any other row of the member: the cycle walk follows a link into
+// another bucket too. An empty list clears.
+func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool, get func(id string) (store.Memo, bool, error)) (string, *Invalid, error) {
 	if len(in) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 	if !inQueue {
-		return "", invalid("prerequisites are for a message in an auto-run category")
+		return "", invalid("prerequisites are for a message in an auto-run category"), nil
 	}
 	if len(in) > Max {
-		return "", invalid("at most %d prerequisites", Max)
+		return "", invalid("at most %d prerequisites", Max), nil
 	}
 	byID := make(map[string]store.Memo, len(rows))
 	for _, r := range rows {
@@ -213,7 +225,7 @@ func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (str
 	for _, raw := range in {
 		s := strings.TrimSpace(raw)
 		if s == "" {
-			return "", invalid("an empty prerequisite")
+			return "", invalid("an empty prerequisite"), nil
 		}
 		p, ok := byID[s]
 		if !ok {
@@ -228,18 +240,15 @@ func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (str
 				}
 			}
 			if best == nil {
-				return "", invalid("no message of this category is %s", s)
+				return "", invalid("no message of this category is %s", s), nil
 			}
 			p = *best
 		}
 		if p.ID == self.ID {
-			return "", invalid("a message cannot wait for itself")
+			return "", invalid("a message cannot wait for itself"), nil
 		}
 		if p.State == store.MemoStateSuperseded {
-			return "", invalid("message %s was replaced by a tidy run", p.ID)
-		}
-		if !OrderLess(p, self) {
-			return "", invalid("message %s comes after this one in the queue: a prerequisite must come before", p.ID)
+			return "", invalid("message %s was replaced by a tidy run", p.ID), nil
 		}
 		if seen[p.ID] {
 			continue
@@ -247,31 +256,48 @@ func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (str
 		seen[p.ID] = true
 		out = append(out, p.ID)
 	}
-	// The order rule keeps the graph acyclic as long as created_at and position never move a
-	// prerequisite behind its dependent; a reorder can, so a cycle is refused outright.
-	if reaches(byID, out, self.ID) {
-		return "", invalid("this would make two messages wait for each other")
+	// Every write of a list goes through here inside the member's MemoTx, and the walk follows links
+	// across buckets, so the member's whole graph stays acyclic: no move or merge of a category can
+	// then close a cycle either. Two messages waiting for each other would never run.
+	if self.ID != "" {
+		cyc, err := reaches(byID, get, out, self.ID)
+		if err != nil {
+			return "", nil, err
+		}
+		if cyc {
+			return "", invalid("this would make two messages wait for each other"), nil
+		}
 	}
-	return Encode(out), nil
+	return Encode(out), nil, nil
 }
 
-// reaches reports whether target is reachable from start along after lists.
-func reaches(byID map[string]store.Memo, start []string, target string) bool {
+// reaches reports whether target is reachable from start along after lists. A row not in byID is
+// read with get; one that is gone ends its path.
+func reaches(byID map[string]store.Memo, get func(id string) (store.Memo, bool, error), start []string, target string) (bool, error) {
 	seen := map[string]bool{}
 	stack := append([]string(nil), start...)
 	for len(stack) > 0 {
 		id := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		if id == target {
-			return true
+			return true, nil
 		}
 		if seen[id] {
 			continue
 		}
 		seen[id] = true
-		stack = append(stack, IDs(byID[id])...)
+		m, ok := byID[id]
+		if !ok && get != nil {
+			var err error
+			if m, ok, err = get(id); err != nil {
+				return false, err
+			}
+		}
+		if ok {
+			stack = append(stack, IDs(m)...)
+		}
 	}
-	return false
+	return false, nil
 }
 
 // Lookup finds what a dependent's prerequisites are now. Memo answers a row of the member by id
@@ -383,8 +409,11 @@ func prereq(m store.Memo, id string, lk Lookup) (Item, error) {
 		}
 		it.Delivery = p.DeliveryID
 		it.State, it.Reason = DeliveryState(d, ok, lk.Now)
-		if it.Reason == WhyPR || it.Reason == WhyPRClosed {
+		switch it.Reason {
+		case WhyPR, WhyPRClosed:
 			it.PRs = ParseSnapshot(d.PRSnapshot)
+		case WhyNotDone:
+			it.Answer = d.AnswerHead
 		}
 	default:
 		// A plain note: the queue's settings were removed, or it was moved out and back.
@@ -423,14 +452,27 @@ func DeliveryState(d store.MemoDelivery, found bool, now time.Time) (state, reas
 		return Failed, WhyPRClosed
 	case store.PRStateMerged:
 	case store.PRStateNone:
+		closed, err := time.Parse("2006-01-02T15:04:05.000000Z", d.ClosedAt)
+		late := err == nil && now.Sub(closed) > ClosedTurnWindow
 		if d.TurnEndedAt == "" {
 			// No PR cannot stand in for a first turn: it satisfies only once the turn is recorded,
 			// and never when the window closes without one.
-			closed, err := time.Parse("2006-01-02T15:04:05.000000Z", d.ClosedAt)
-			if err == nil && now.Sub(closed) > ClosedTurnWindow {
+			if late {
 				return Failed, WhyNoPR
 			}
 			return Waiting, WhyFirstTurn
+		}
+		// A run that stopped part way ends clean too, often without a PR: only its last answer
+		// says it finished. One never read is not taken for done.
+		switch d.AnswerClass {
+		case store.AnswerDone:
+		case "":
+			if late {
+				return Failed, WhyNotDone
+			}
+			return Waiting, WhyAnswer
+		default:
+			return Failed, WhyNotDone
 		}
 	default:
 		// Not read yet, or a PR is open or of unknown state.
