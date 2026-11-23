@@ -108,7 +108,7 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 
 | Tool | What it is for | Version | Licence |
 |---|---|---|---|
-| [Chromium](https://www.chromium.org/) | Headless browser that agents use for screenshots and page checks | `156.0.8078.79` | [BSD-3-Clause](https://github.com/chromium/chromium/blob/156.0.8078.79/LICENSE) |
+| [Chromium](https://www.chromium.org/) | Headless browser that agents use for screenshots and page checks | `156.0.8078.108` | [BSD-3-Clause](https://github.com/chromium/chromium/blob/156.0.8078.108/LICENSE) |
 | [Noto Sans CJK](https://github.com/notofonts/noto-cjk) | Fonts for Japanese, Chinese and Korean pages | Debian 13 (trixie) package | [OFL-1.1](https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE) |
 
 ## Licence
