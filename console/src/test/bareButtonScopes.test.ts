@@ -91,7 +91,8 @@ describe("bare button scopes", () => {
       let j = i;
       for (; j < css.length; j++) {
         const c = css[j];
-        if (c === '"' || c === "'") j = skipString(j) - 1;
+        if (c === "\\") j++;
+        else if (c === '"' || c === "'") j = skipString(j) - 1;
         else if (c === "{") depth++;
         else if (c === "}" && --depth <= 0) break;
         else if (c === ";" && depth === 0) break;
@@ -108,6 +109,7 @@ describe("bare button scopes", () => {
     expect(rules('.a { content: "\\"@" } .b { color: red }')).toEqual([".a", ".b"]);
     expect(rules("@media (hover: hover) { .a { color: red } } .b { color: red }")).toEqual([".b"]);
     expect(rules(".foo\\'bar { color: red } @media (hover: hover) { .wanted { color: red } }")).toEqual([".foo\\'bar"]);
+    expect(rules("@media (hover: hover) { .foo\\'bar { color: red } } .wanted { color: red }")).toEqual([".wanted"]);
     expect(rules('@import "x;y.css"; .b { color: red }')).toEqual([".b"]);
     expect(rules('@media (x) { .a { content: "}" } } .b { color: red }')).toEqual([".b"]);
   });
