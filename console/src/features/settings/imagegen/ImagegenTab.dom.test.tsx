@@ -319,4 +319,38 @@ describe("overlapping status requests", () => {
     });
     expect(orderRows()).toEqual([]);
   });
+  it("drops a request still in flight when the workspace stops", async () => {
+    deferStatus();
+    await mount();
+    expect(pending.length).toBe(1);
+    wsState = "stopped";
+    await act(async () => {
+      root!.render(<ImagegenTab />);
+    });
+    await settle(0, answer(["image", "agy", "codex"], [IMAGE, AGY, CODEX]));
+    expect(orderRows()).toEqual([]);
+    // No poll while stopped.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(STATUS_REFRESH_MS * 2);
+    });
+    expect(pending.length).toBe(1);
+  });
+
+  it("drops a request begun before a stop that answers after the restart", async () => {
+    deferStatus();
+    await mount();
+    wsState = "stopped";
+    await act(async () => {
+      root!.render(<ImagegenTab />);
+    });
+    wsState = "running";
+    await act(async () => {
+      root!.render(<ImagegenTab />);
+    });
+    expect(pending.length).toBe(2);
+    await settle(0, answer(["image", "agy", "codex"], [IMAGE, AGY, CODEX]));
+    expect(orderRows()).toEqual([]);
+    await settle(1, answer(["image", "codex"], [IMAGE, CODEX]));
+    expect(orderRows()).toEqual(["image (ComfyUI)", "Codex"]);
+  });
 });

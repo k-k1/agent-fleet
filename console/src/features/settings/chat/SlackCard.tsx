@@ -8,6 +8,7 @@ import { getLocale, useT } from "../../../lib/i18n/index.ts";
 import { assertBody } from "../workspace/workspaceApi.ts";
 import { inspectSlack, listSlackChannels, putSlackConn, type ChatConn } from "./chatApi.ts";
 import { SettingsPanel, PsRow, CHAT_EVENTS, ALL_EVENTS } from "./chatCardParts.tsx";
+import { useGuardedPoll } from "../../../lib/readGuard.ts";
 
 // SlackCard — the Socket-Mode twin of DiscordCard (docs/log/37 Slack follow-up). Two tokens (bot
 // xoxb- + app-level xapp-) → verify → pick channel → connect; details auto-save afterward.
@@ -62,26 +63,27 @@ export function SlackCard({ st, reload }: { st: ChatConn | undefined; reload: ()
     }
   };
 
+  // Poll the bot's channels while the app is being added to one. The period does not restart with
+  // each answer, so reads can overlap: only an answer newer than the last one landed fills the
+  // picker, and one still in flight when the poll stops (a list arrived, DM chosen, connected) or
+  // the bot token changes is dropped.
   const found = !!(chans && chans.length > 0);
-  useEffect(() => {
-    if (!insp || dm || found) return;
-    let stopped = false;
-    const load = async () => {
-      const res = await listSlackChannels(insp.botToken, email);
-      if (stopped || !res || res.error) return;
-      const opts = (Array.isArray(res.channels) ? res.channels : []).map((c) => ({ id: c.id, label: "#" + c.name }));
-      setChans(opts);
-      if (res.resolvedUserId && userId === "") setUserId(res.resolvedUserId);
-      if (opts.length === 1) setChannel(opts[0].id);
-    };
-    void load();
-    const t = setInterval(load, 3000);
-    return () => {
-      stopped = true;
-      clearInterval(t);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [insp, dm, found, email, userId]);
+  useGuardedPoll(
+    (tk) => {
+      if (!insp) return;
+      void listSlackChannels(insp.botToken, email).then((res) => {
+        if (!res || res.error || !tk.land()) return;
+        const opts = (Array.isArray(res.channels) ? res.channels : []).map((c) => ({ id: c.id, label: "#" + c.name }));
+        setChans(opts);
+        const resolved = res.resolvedUserId;
+        // An update, not the closure's userId: the answer may arrive after a render that set one.
+        if (resolved) setUserId((cur) => (cur === "" ? resolved : cur));
+        if (opts.length === 1) setChannel(opts[0].id);
+      });
+    },
+    insp && !dm && !found ? 3000 : null,
+    [insp, email],
+  );
 
   const body = (botToken: string, appToken: string, over: Record<string, unknown> = {}) => ({
     botToken,

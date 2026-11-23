@@ -99,4 +99,37 @@ describe("useConsolRun", () => {
     await act(async () => {});
     expect(useMemoryStore.getState().version).toBe(before + 1);
   });
+  // Reads overlap: the first read and its retries, the run poll on its fixed period, the re-read
+  // after "run now". Only the newest landed answer may set the status.
+  it("drops one tenant's read still in flight after a switch", async () => {
+    const answers: Array<(v: unknown) => void> = [];
+    api.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    await render(true, "a");
+    await render(true, "b");
+    expect(answers.length).toBe(2);
+    // Tenant a's answer arrives first, while b's own read is still out.
+    await act(async () => answers[0](status(true)));
+    await act(async () => {});
+    expect(seen!.st).toBeNull();
+    await act(async () => answers[1](status(false)));
+    await act(async () => {});
+    expect(seen!.st).not.toBeNull();
+    expect(seen!.running).toBe(false);
+  });
+
+  it("does not take an older poll answer over a newer one", async () => {
+    api.mockResolvedValue(status(true));
+    await render(true);
+    const answers: Array<(v: unknown) => void> = [];
+    api.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    await act(async () => vi.advanceTimersByTime(3000));
+    await act(async () => vi.advanceTimersByTime(3000));
+    expect(answers.length).toBe(2);
+    await act(async () => answers[1](status(false)));
+    await act(async () => {});
+    expect(seen!.running).toBe(false);
+    await act(async () => answers[0](status(true)));
+    await act(async () => {});
+    expect(seen!.running).toBe(false);
+  });
 });

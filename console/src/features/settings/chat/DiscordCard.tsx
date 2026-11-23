@@ -7,6 +7,7 @@ import { getLocale, useT } from "../../../lib/i18n/index.ts";
 import { assertBody } from "../workspace/workspaceApi.ts";
 import { inspectDiscord, listDiscordGuilds, putDiscordConn, type ChatConn } from "./chatApi.ts";
 import { SettingsPanel, PsRow, CHAT_EVENTS, ALL_EVENTS } from "./chatCardParts.tsx";
+import { useGuardedPoll } from "../../../lib/readGuard.ts";
 
 // DiscordCard — connect = token → verify → invite → pick channel → connect (adjacent). The
 // detail settings appear only AFTER connect, in the collapsible SettingsPanel that
@@ -76,34 +77,32 @@ export function DiscordCard({ st, reload }: { st: ChatConn | undefined; reload: 
     }
   };
 
-  // Poll the bot's guilds while the invite is pending; fill the channel picker on arrival.
+  // Poll the bot's guilds while the invite is pending; fill the channel picker on arrival. The
+  // period does not restart with each answer, so reads can overlap: only an answer newer than the
+  // last one landed fills the picker, and one still in flight when the poll stops (a list arrived,
+  // DM chosen, connected) or the token changes is dropped.
   const found = !!(chans && chans.length > 0);
-  useEffect(() => {
-    if (!insp || dm || found) return;
-    let stopped = false;
-    const load = async () => {
-      const res = await listDiscordGuilds(insp.token);
-      if (stopped || !res || res.error) return;
-      const guilds = Array.isArray(res.guilds) ? res.guilds : [];
-      const opts = guilds.flatMap((g) =>
-        (g.channels || []).map((c) => ({
-          id: c.id,
-          label: (guilds.length > 1 ? g.name + " / " : "") + "#" + c.name,
-          ownerId: g.ownerId,
-          ownerName: g.ownerName,
-        })),
-      );
-      setChans(opts);
-      if (opts.length === 1) pickChannel(opts[0].id, opts);
-    };
-    void load();
-    const t = setInterval(load, 3000);
-    return () => {
-      stopped = true;
-      clearInterval(t);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [insp, dm, found]);
+  useGuardedPoll(
+    (tk) => {
+      if (!insp) return;
+      void listDiscordGuilds(insp.token).then((res) => {
+        if (!res || res.error || !tk.land()) return;
+        const guilds = Array.isArray(res.guilds) ? res.guilds : [];
+        const opts = guilds.flatMap((g) =>
+          (g.channels || []).map((c) => ({
+            id: c.id,
+            label: (guilds.length > 1 ? g.name + " / " : "") + "#" + c.name,
+            ownerId: g.ownerId,
+            ownerName: g.ownerName,
+          })),
+        );
+        setChans(opts);
+        if (opts.length === 1) pickChannel(opts[0].id, opts);
+      });
+    },
+    insp && !dm && !found ? 3000 : null,
+    [insp],
+  );
 
   // Build the PUT body from the current settings; `token` empty = edit (reuse stored).
   const body = (token: string, over: Record<string, unknown> = {}) => ({

@@ -155,3 +155,61 @@ describe("TtsTab engine state", () => {
     expect(host!.textContent).toContain("呼び出せません（上限）");
   });
 });
+
+// The follow-up poll runs on a fixed period, so a slow read can still be in flight when a newer
+// one answers: an older answer must not move the state back.
+describe("TtsTab engine state, overlapping polls", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  // The tab's own first load answers at once; every poll after it waits for answer(i, …).
+  const pending: Array<(st: TtsStatus) => void> = [];
+  const deferPolls = () => {
+    loadTtsStatus.mockImplementationOnce(async () => status);
+    loadTtsStatus.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+  };
+  const answer = async (i: number, st: TtsStatus) => {
+    await act(async () => {
+      pending[i](st);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  };
+  const tickPoll = async () => {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+  };
+  afterEach(() => {
+    pending.length = 0;
+  });
+
+  it("does not take an older answer over a newer one", async () => {
+    status = managed({ state: "starting" });
+    deferPolls();
+    await mount();
+    await tickPoll();
+    await tickPoll();
+    expect(pending.length).toBe(2);
+    await answer(1, managed({ state: "running", ready: false }));
+    expect(host!.textContent).toContain("最初の声の準備中");
+    await answer(0, managed({ state: "starting" }));
+    expect(host!.textContent).toContain("最初の声の準備中");
+    expect(host!.textContent).not.toContain("起動しています");
+  });
+
+  it("drops a read begun before the engine became ready", async () => {
+    status = managed({ state: "running", ready: false });
+    deferPolls();
+    await mount();
+    await tickPoll();
+    await tickPoll();
+    await answer(1, managed({ state: "running", ready: true }));
+    expect(host!.textContent).not.toContain("最初の声の準備中");
+    await answer(0, managed({ state: "running", ready: false }));
+    expect(host!.textContent).not.toContain("最初の声の準備中");
+    // Settled: no more polls.
+    await tickPoll();
+    expect(pending.length).toBe(2);
+  });
+});

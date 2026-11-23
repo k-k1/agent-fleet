@@ -7,7 +7,7 @@
 // mark, ADR 0113), so a session cannot decide a proposal. The list, detail and diff reuse the
 // change list's layout (memoryChanges.tsx) on purpose.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { errDetail, isTransientErr } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
 import {
@@ -19,6 +19,8 @@ import {
 } from "./memoryApi.ts";
 import { useMemoryStore } from "../../memory/store.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
+import { useReadGuard, type ReadTicket } from "../../../lib/readGuard.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Choice, OnOff, Row } from "../parts/controls.tsx";
@@ -148,20 +150,27 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
     setSt(null);
     setErr(false);
   }, [tenant]);
-  const load = useCallback(async (signal: AbortSignal) => {
+  // The first read (and its retries), the run poll and the re-read after "run now" overlap, and
+  // the poll's period does not restart with each answer: only a read newer than the last one
+  // landed may set the status, and a tenant switch or the view going inactive drops every read
+  // begun before it. The warning has its own lane, so a failure does not stop an older successful
+  // read from landing the status it owns.
+  const guard = useReadGuard();
+  useLayoutEffect(() => guard.reset(tenant), [guard, tenant, active]);
+  const load = useCallback(async (tk: ReadTicket) => {
     const res = await getConsolStatus();
-    if (signal.aborted) return true;
+    if (!tk.current()) return true;
     // Right after a start the Agent answers 5xx for a moment: retried, never settled as a failure.
     if (isTransientErr(res)) return false;
     if (res !== null && !isOk(res)) {
-      setErr(true);
+      if (tk.land("err")) setErr(true);
       return true;
     }
-    setErr(false);
-    setSt(res);
+    if (tk.land("err")) setErr(false);
+    if (tk.land("st")) setSt(res);
     return true;
   }, []);
-  useRetryLoad(async (signal) => (active ? load(signal) : true), [reload, active, tenant, load]);
+  useRetryLoad(async () => (active ? load(guard.begin(tenant)) : true), [reload, active, tenant, load]);
   const running = st?.run?.running === true;
   // A run that just finished may have queued proposals: everything memory-shaped reads again, the
   // list and the activity bar's count included, instead of waiting for the next poll.
@@ -173,15 +182,7 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
   // without a page action; it stops by itself once the Agent says nothing is running.
   // A failed read does not stop it: the next poll clears the warning by itself, whereas stopping would
   // leave a stale "running" that only a reload could end. The interval is bounded and cleared on unmount.
-  useEffect(() => {
-    if (!running || !active) return;
-    const ac = new AbortController();
-    const h = setInterval(() => void load(ac.signal), RUN_POLL_MS);
-    return () => {
-      ac.abort();
-      clearInterval(h);
-    };
-  }, [running, active, load]);
+  useInterval(() => void load(guard.begin(tenant)), running && active ? RUN_POLL_MS : null);
 
   const [starting, setStarting] = useState(false);
   // setStarting is asynchronous state; the ref stops a second click that lands before it renders.
@@ -216,7 +217,8 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
     } finally {
       inFlight.current = false;
       setStarting(false);
-      await load(new AbortController().signal);
+      // The tenant this click was made for: a switch while the dialog was open kills the re-read.
+      await load(guard.begin(tenant));
     }
   };
   return { st, err, running, starting, runNow };
