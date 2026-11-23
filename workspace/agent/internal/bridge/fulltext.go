@@ -114,27 +114,30 @@ func isTokenByte(c byte) bool {
 // can over-redact a rare high-entropy prose token, which the user accepted as
 // the safer failure than leaking a key.
 //
-// The passes agree on spans, all in the raw input's offsets, and every span is replaced in one
-// go. The assignment pass runs on the text with each known token masked, as it always has,
-// and never on the raw input: the mark's brackets are what put a word boundary before a name
-// glued after a token (`<token>_PASSWORD: x`), and a raw match can start inside a token and run
-// on past it. Its spans are mapped back to the raw input. Two spans then reach past the mark:
-// a value the mark's space cut short runs on over the rest of the raw value
-// (`API_TOKEN=<token>:private`), and a known token takes the run of token characters glued
-// after it (`<token>+private`). Both stop short of a final full stop, and short of the next
-// name an assignment starts with, separator included (`<token>;COUNT=42` keeps `;COUNT=42`). The entropy scan sees only the text between spans, as when marks sat in their
-// place: run on the raw input it would take `NAME=value` and a sentence's final full stop.
+// The passes agree on spans, all in the raw input's offsets. What main's sequential passes mask
+// is the floor: known tokens on the raw input; assignments on the text with each known token
+// masked, never on the raw input (the mark's bracket is what puts a word boundary before a name
+// glued after a token, `<token>_PASSWORD: x`, and a raw match can start inside a token and run
+// on past it); and high-entropy runs between those spans, as when marks sat in their place (run
+// on the raw input, the scan would take `NAME=value` and a sentence's final full stop). Two
+// spans then reach past a mark: a value the mark's space cut short runs on over the rest of the
+// raw value (`API_TOKEN=<token>:private`), and a known token takes the run of token characters
+// glued after it (`<token>+private`). Both stop short of a final full stop and of the next
+// assignment's name with the separator in front of it (`<token>;COUNT=42` keeps `;COUNT=42`).
+// Reaching never shrinks the floor: an entropy run it cuts through keeps the rest of its mark.
 // Without a known token the output is the same as running the passes in sequence.
 func ScrubSecrets(s string) string {
 	known := sortedMerged(append(secretpat.Spans(s, knownSecretPatterns...), secretpat.GitHubStatelessSpans(s)...))
-	spans, names := assignmentSpans(s, known)
-	spans = append(spans, gluedTails(s, known, names)...)
-	return replaceSpansScanning(s, sortedMerged(append(spans, known...)))
+	values, reach, names := assignmentSpans(s, known)
+	floor := sortedMerged(append(values, known...))
+	entropy := entropySpans(s, floor)
+	spans := append(append(floor, reach...), gluedTails(s, known, names)...)
+	return writeRedacted(s, sortedMerged(spans), entropy)
 }
 
 // nameRe finds where an assignment starts, whatever its value: a secret-word name as envAssignRe
 // takes it, or any identifier followed by `=`. It bounds how far past a mark a span reaches.
-var nameRe = regexp.MustCompile(`\b(?:[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIAL)[A-Z0-9_]*\s*[=:]|[A-Za-z_][A-Za-z0-9_]*=)`)
+var nameRe = regexp.MustCompile(`\b(?:[A-Z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|PASSWD|PASS|PWD|CREDENTIAL)[A-Z0-9_]*\s*[=:]|[A-Za-z_][A-Za-z0-9_]*[ \t]*=)`)
 
 // sortedMerged sorts spans in place and merges those that overlap or touch, dropping empty ones,
 // as secretpat.ReplaceSpans does before it places one mark per merged span. It reuses spans'
@@ -156,9 +159,10 @@ func sortedMerged(spans [][2]int) [][2]int {
 }
 
 // assignmentSpans finds the UPPERCASE assignments in s with each known span (sorted, merged)
-// masked, and returns each value's span (quotes included, the name kept), and the start of each
-// nameRe match, both ascending and in s's offsets.
-func assignmentSpans(s string, known [][2]int) (spans [][2]int, names []int) {
+// masked. It returns each value's span as main masks it (quotes included, the name kept), the
+// rest of each value a mark cut short, and the start of each nameRe match, all ascending and in
+// s's offsets.
+func assignmentSpans(s string, known [][2]int) (spans, reach [][2]int, names []int) {
 	masked, markAt := s, []int(nil)
 	if len(known) > 0 {
 		var b strings.Builder
@@ -224,17 +228,20 @@ func assignmentSpans(s string, known [][2]int) (spans [][2]int, names []int) {
 	}
 	for _, c := range cuts {
 		from := spans[c.span][1]
-		spans[c.span][1] = valueEnd(s, from, nextAt(names, from, len(s)), c.quoted)
+		if end := valueEnd(s, from, nextAt(names, from, len(s)), c.quoted); end > from {
+			reach = append(reach, [2]int{from, end})
+		}
 	}
-	return spans, names
+	return spans, reach, names
 }
 
 // valueEnd returns where an assignment value that a mark cut short at from ends in s: at
-// whitespace, at a quote (taken with it when the value opened with one), or at the name starting
-// at limit (len(s) for none); unquoted, it stops short as trimEnd says.
+// whitespace, at a quote (taken with it when the value opened with one), at a shell
+// metacharacter, which starts another command (`;printf done`), or at the name starting at
+// limit (len(s) for none); unquoted, it stops short as trimEnd says.
 func valueEnd(s string, from, limit int, quoted bool) int {
 	j := from
-	for j < limit && !isSpaceOrQuote(s[j]) {
+	for j < limit && !isSpaceOrQuote(s[j]) && strings.IndexByte(";&|<>()`", s[j]) < 0 {
 		j++
 	}
 	if quoted && j < limit && (s[j] == '\'' || s[j] == '"') {
@@ -244,9 +251,10 @@ func valueEnd(s string, from, limit int, quoted bool) int {
 }
 
 // trimEnd steps end back towards from over a final full stop or, when a name starts at end,
-// over every non-word byte before it, so the separator in front of the next assignment stays.
+// over the ASCII punctuation before it, so the separator in front of the next assignment
+// stays. It never steps over a letter, a digit or a non-ASCII byte: those are the value.
 func trimEnd(s string, from, end int, beforeName bool) int {
-	for end > from && (s[end-1] == '.' || beforeName && !isWordByte(s[end-1])) {
+	for end > from && (s[end-1] == '.' || beforeName && isPunct(s[end-1])) {
 		end--
 	}
 	return end
@@ -284,47 +292,78 @@ func nextAt(offsets []int, x, def int) int {
 	return def
 }
 
-// replaceSpansScanning replaces each span of s (sorted, merged) with the mark, and each
-// high-entropy run of token characters between them. A span ends a run as a mark's brackets
-// would. The buffer is sized for the output, not for s: a body that is all one key shrinks to
-// one mark.
-func replaceSpansScanning(s string, spans [][2]int) string {
-	size := len(s)
-	for _, sp := range spans {
-		size += len(redactedMark) - (sp[1] - sp[0])
+// entropySpans lists the high-entropy runs of token characters between spans (sorted, merged),
+// each of which ends a run as a mark's brackets would.
+func entropySpans(s string, spans [][2]int) [][2]int {
+	var out [][2]int
+	scan := func(a, b int) {
+		for i := a; i < b; {
+			if !isTokenByte(s[i]) {
+				i++
+				continue
+			}
+			j := i
+			for j < b && isTokenByte(s[j]) {
+				j++
+			}
+			if looksSecret(s[i:j]) {
+				out = append(out, [2]int{i, j})
+			}
+			i = j
+		}
 	}
-	var b strings.Builder
-	b.Grow(size)
 	last := 0
 	for _, sp := range spans {
-		writeScanned(&b, s[last:sp[0]])
-		b.WriteString(redactedMark)
+		scan(last, sp[0])
 		last = sp[1]
 	}
-	writeScanned(&b, s[last:])
-	return b.String()
+	scan(last, len(s))
+	return out
 }
 
-// writeScanned writes g with each run of token characters that looks secret replaced by the mark.
-func writeScanned(b *strings.Builder, g string) {
-	for i := 0; i < len(g); {
-		j := i
-		tok := isTokenByte(g[i])
-		for j < len(g) && isTokenByte(g[j]) == tok {
-			j++
+// writeRedacted replaces each span of s (sorted, merged) with the mark, and the part of each
+// entropy span (sorted, disjoint) that lies between them with another, so an entropy run a span
+// cut through keeps a mark over the rest. It measures the output before it writes, so the
+// string it returns holds no spare buffer: a body that is all one key or one entropy run
+// shrinks to one mark.
+func writeRedacted(s string, spans, entropy [][2]int) string {
+	walk := func(out func(seg string)) {
+		ei, last := 0, 0
+		gap := func(a, b int) {
+			for ei < len(entropy) && entropy[ei][1] <= a {
+				ei++
+			}
+			pos := a
+			for e := ei; e < len(entropy) && entropy[e][0] < b; e++ {
+				out(s[pos:max(entropy[e][0], a)])
+				out(redactedMark)
+				pos = min(entropy[e][1], b)
+			}
+			out(s[pos:b])
 		}
-		if tok && looksSecret(g[i:j]) {
-			b.WriteString(redactedMark)
-		} else {
-			b.WriteString(g[i:j])
+		for _, sp := range spans {
+			gap(last, sp[0])
+			out(redactedMark)
+			last = sp[1]
 		}
-		i = j
+		gap(last, len(s))
 	}
+	size := 0
+	walk(func(seg string) { size += len(seg) })
+	var b strings.Builder
+	b.Grow(size)
+	walk(func(seg string) { b.WriteString(seg) })
+	return b.String()
 }
 
 // isWordByte reports an ASCII word character, as regexp's \b sees one.
 func isWordByte(c byte) bool {
 	return c == '_' || c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9'
+}
+
+// isPunct reports printable ASCII punctuation.
+func isPunct(c byte) bool {
+	return c > ' ' && c < 0x7f && !isWordByte(c)
 }
 
 // isSpaceOrQuote reports what ends an assignment value: regexp's \s, or a quote.

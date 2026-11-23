@@ -144,7 +144,21 @@ func TestScrubSecretsMatchesAssignmentsAroundMarks(t *testing.T) {
 		"API_TOKEN=" + cl + ":private,COUNT=42":           "API_TOKEN=" + redactedMark + ",COUNT=42",
 		cl + ".NEXT_API_TOKEN=short":                      redactedMark + ".NEXT_API_TOKEN=short",
 		cl + ".COUNT=42":                                  redactedMark + ".COUNT=42",
-		"echo " + cl + "+private-count=42":                "echo " + redactedMark + "-count=42",
+		cl + ".COUNT =42":                                 redactedMark + ".COUNT =42",
+		"--token=" + cl + "-count=42 x":                   "--token=" + redactedMark + "-count=42 x",
+		// The separator steps back over punctuation only, never into the value.
+		"API_TOKEN=" + cl + ":secret,PASSWORD=hunter2": "API_TOKEN=" + redactedMark + ",PASSWORD=" + redactedMark,
+		"API_TOKEN=" + cl + ":秘密,PASSWORD=hunter2":     "API_TOKEN=" + redactedMark + ",PASSWORD=" + redactedMark,
+		"API_TOKEN=" + cl + ":秘密;PASSWORD=hunter2":     "API_TOKEN=" + redactedMark + ";PASSWORD=" + redactedMark,
+		// A shell metacharacter starts another command, which the value does not take.
+		"API_TOKEN=" + cl + ";printf done":   "API_TOKEN=" + redactedMark + ";printf done",
+		"API_TOKEN=" + cl + ":x&&echo ok":    "API_TOKEN=" + redactedMark + "&&echo ok",
+		"API_TOKEN=" + cl + ":x|tee out.log": "API_TOKEN=" + redactedMark + "|tee out.log",
+		// What the entropy scan takes between marks stays taken where a tail stops early: here
+		// the run after the token is one high-entropy run on main, `-code=9a3Z` included.
+		"API_TOKEN=" + cl + ":aB3xK9mP2qR7sT1vW5yZ8nQ4-code=9a3Z": "API_TOKEN=" + redactedMark + redactedMark,
+		cl + "+aB3xK9mP2qR7sT1vW5yZ8nQ4-code=9a3Z":                redactedMark + redactedMark,
+		"echo " + cl + "+private-count=42":                        "echo " + redactedMark + "-count=42",
 	} {
 		if got := ScrubSecrets(in); got != want {
 			t.Errorf("ScrubSecrets(%q) = %q, want %q", in, got, want)
@@ -165,22 +179,26 @@ func TestScrubSecretsJoinedTokensAreLinear(t *testing.T) {
 	}
 }
 
-// The buffers are sized for what they hold: a body that is one key costs about its mark, not
-// two copies of the body. Measured on 1 MiB: 17 KB allocated, 2.1 MB with buffers of the
-// input's size.
+// The buffers are sized for what they hold: a body that is one key or one entropy run costs
+// about its mark, and the mark returned holds no buffer the size of the body. Measured on
+// 1 MiB: 17 KB allocated, 2.1 MB with buffers of the input's size.
 func TestScrubSecretsAllocatesForTheOutput(t *testing.T) {
 	// Built at run time so the literal does not trip the secret scan.
 	pk := "PRIVATE " + "KEY-----"
-	in := "-----BEGIN RSA " + pk + "\n" + strings.Repeat("MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MaW\n", 20000) + "-----END RSA " + pk
-	var before, after runtime.MemStats
-	runtime.ReadMemStats(&before)
-	got := ScrubSecrets(in)
-	runtime.ReadMemStats(&after)
-	if got != redactedMark {
-		t.Fatalf("ScrubSecrets(key) = %.80q", got)
-	}
-	if n := after.TotalAlloc - before.TotalAlloc; n > uint64(len(in))/4 {
-		t.Errorf("ScrubSecrets(%d-byte key) allocated %d bytes", len(in), n)
+	for name, in := range map[string]string{
+		"key":     "-----BEGIN RSA " + pk + "\n" + strings.Repeat("MIIEowIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MaW\n", 20000) + "-----END RSA " + pk,
+		"entropy": strings.Repeat("aB3xK9mP2qR7sT1vW5yZ8nQ4", 40000),
+	} {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
+		got := ScrubSecrets(in)
+		runtime.ReadMemStats(&after)
+		if got != redactedMark {
+			t.Fatalf("%s: ScrubSecrets = %.80q", name, got)
+		}
+		if n := after.TotalAlloc - before.TotalAlloc; n > uint64(len(in))/4 {
+			t.Errorf("%s: ScrubSecrets(%d bytes) allocated %d bytes", name, len(in), n)
+		}
 	}
 }
 
