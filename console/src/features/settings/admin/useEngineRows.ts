@@ -76,18 +76,23 @@ export function useEngineRows() {
   useEffect(() => {
     load();
   }, [load]);
-  /** Land an edit's answer for one row: newer than any read in flight for that row, and patched
-   *  into the shared cache for that key alone. Writing this screen's whole list there would put
-   *  back rows another screen has read since. */
-  const patchRow = useCallback(
-    (key: string, d: Partial<EngineRow>) => {
-      // A screen closed while its edit was in flight writes nothing: by now the cache may hold a
-      // newer read from a screen still open.
-      if (!guard.begin().current()) return;
-      guard.claim("row:" + key);
-      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
-      const cached = loadEngines();
-      if (cached) saveEngines({ ...cached, rows: cached.rows.map((e) => (e.key === key ? { ...e, ...d } : e)) });
+  /** Begin an edit of one row, before its request is sent; the function returned lands the
+   *  answer. The answer is newer than any read in flight for that row, so it claims the row's
+   *  lane and replaces the row on screen. The shared cache takes it, for that key alone, only
+   *  when no read of the row has landed here since the edit began: such a read may hold a later
+   *  state (a box that finished starting) than the answer, and the cache must not go back to
+   *  what main never wrote there. A screen closed meanwhile writes nothing. */
+  const editRow = useCallback(
+    (key: string) => {
+      const tk = guard.begin();
+      return (d: Partial<EngineRow>) => {
+        if (!tk.current()) return;
+        const cacheOlder = tk.fresh("row:" + key);
+        guard.claim("row:" + key);
+        setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+        const cached = cacheOlder ? loadEngines() : null;
+        if (cached) saveEngines({ ...cached, rows: cached.rows.map((e) => (e.key === key ? { ...e, ...d } : e)) });
+      };
     },
     [guard],
   );
@@ -101,5 +106,5 @@ export function useEngineRows() {
     [guard],
   );
 
-  return { rows, isSuper, sources, comfyLan, err, setErr: setEditErr, load, patchRow };
+  return { rows, isSuper, sources, comfyLan, err, setErr: setEditErr, load, editRow };
 }

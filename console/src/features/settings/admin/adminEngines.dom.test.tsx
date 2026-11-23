@@ -313,6 +313,24 @@ describe("EnginesAdminView", () => {
       expect(seg("常時稼働")?.className).toContain("active");
     });
 
+    it("a slow edit answer does not take back a later state this screen's read already cached", async () => {
+      const a = row({ key: "image", mode: "ondemand", state: "starting", desired: 1 });
+      api.mockResolvedValueOnce({ super_admin: true, engines: [a] });
+      apiJSON.mockImplementation(held);
+      await mount();
+      await click(seg("常時稼働")); // the PUT is in flight, its answer made while still starting
+      api.mockResolvedValueOnce({ super_admin: true, engines: [{ ...a, mode: "on", state: "running" }] });
+      await tick(); // the poll reads the box running and caches it
+      await answer({ ...a, mode: "on", state: "starting", desired: 1 }); // the slow PUT answer
+      act(() => root?.unmount());
+      host?.remove();
+      root = null;
+      api.mockImplementation(held);
+      await mount(); // its first read is held: what it draws is the cache
+      expect(panel(0).querySelector(".engines-model-tag")!.textContent).not.toContain("起動中");
+      expect(seg("常時稼働")?.className).toContain("active");
+    });
+
     it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {
       api.mockResolvedValueOnce({ super_admin: true, engines: [row({ state: "starting", desired: 1 })] }).mockImplementation(held);
       apiJSON.mockResolvedValueOnce({ error: { code: "boom", message: "edit refused" } });

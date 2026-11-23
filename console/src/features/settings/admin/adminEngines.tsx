@@ -56,7 +56,7 @@ import { useInterval } from "../../../lib/useInterval.ts";
 
 export function EnginesAdminView() {
   const tr = useT();
-  const { rows, isSuper, sources, comfyLan, err, setErr, load, patchRow } = useEngineRows();
+  const { rows, isSuper, sources, comfyLan, err, setErr, load, editRow } = useEngineRows();
   const [busy, setBusy] = useState("");
   /** What the last class change did to the windows, so an automatic edit is never a silent one.
    *  Null until a rung is picked, and cleared by the next pick. */
@@ -83,9 +83,9 @@ export function EnginesAdminView() {
   // Poll only while something is actually moving. An engine parked at "off", or stopped under
   // on-demand with nobody asking, is a settled state, and a GPU panel that polls forever is a
   // request per five seconds for a screen nobody is watching.
-  // An edit below lands its answer through patchRow, which claims that row's lane (and setErr
-  // claims "err"), so a poll read begun before that cannot put the row back the way it was,
-  // while the other rows in the same answer still land.
+  // An edit below begins with editRow and lands its answer through it, which claims that row's
+  // lane (and setErr claims "err"), so a poll read begun before that cannot put the row back the
+  // way it was, while the other rows in the same answer still land.
   const moving = !!rows?.some(
     (e) =>
       e.state === "starting" ||
@@ -96,6 +96,7 @@ export function EnginesAdminView() {
 
   const setMode = async (key: string, mode: string) => {
     setBusy(key);
+    const landRow = editRow(key);
     try {
       const d = await putEngineMode(key, mode);
       if (!isOk(d)) {
@@ -103,7 +104,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
-      patchRow(key, d);
+      landRow(d);
     } finally {
       setBusy("");
     }
@@ -114,6 +115,7 @@ export function EnginesAdminView() {
    *  request, and the control plane holds that start until the old box has left the cluster. */
   const replaceBox = async (key: string) => {
     setBusy(key);
+    const landRow = editRow(key);
     try {
       const d = await replaceEngineBox(key);
       if (!isOk(d)) {
@@ -121,7 +123,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
-      patchRow(key, d);
+      landRow(d);
     } finally {
       setBusy("");
     }
@@ -200,6 +202,7 @@ export function EnginesAdminView() {
    *  turns that into an explicit "replace it now", which costs a cold start. */
   const setClass = async (key: string, cls: string) => {
     setBusy(key);
+    const landRow = editRow(key);
     try {
       const d = await putEngineClass(key, cls);
       if (!isOk(d)) {
@@ -214,7 +217,7 @@ export function EnginesAdminView() {
       }
       setErr("");
       const moved = { ...((rows || []).find((e) => e.key === key) || ({} as EngineRow)), ...d } as EngineRow;
-      patchRow(key, d);
+      landRow(d);
       await refitToClass(key, moved);
     } finally {
       setBusy("");
@@ -229,6 +232,7 @@ export function EnginesAdminView() {
    * right now keeps answering, which the panel says rather than implying the opposite. */
   const setSpot = async (key: string, spot: boolean) => {
     setBusy(key);
+    const landRow = editRow(key);
     try {
       const d = await putEngineSpot(key, spot);
       if (!isOk(d)) {
@@ -236,7 +240,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
-      patchRow(key, d);
+      landRow(d);
     } finally {
       setBusy("");
     }
@@ -250,6 +254,7 @@ export function EnginesAdminView() {
    * families do not have at all. It is a default, not a gate. */
   const setNegative = async (key: string, negative: string) => {
     setBusy(key + "/negative");
+    const landRow = editRow(key);
     try {
       const d = await putEngineNegative(key, negative);
       if (!isOk(d)) {
@@ -257,7 +262,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
-      patchRow(key, d);
+      landRow(d);
     } finally {
       setBusy("");
     }
@@ -265,6 +270,7 @@ export function EnginesAdminView() {
 
   const setIdle = async (key: string, idleSecs: number) => {
     setBusy(key + "/idle");
+    const landRow = editRow(key);
     try {
       const d = await putEngineIdle(key, idleSecs);
       if (!isOk(d)) {
@@ -272,7 +278,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
-      patchRow(key, d);
+      landRow(d);
     } finally {
       setBusy("");
     }
