@@ -716,10 +716,10 @@ func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 	select {
 	case <-started:
 	case <-time.After(10 * time.Second):
-		// npm runs without the supervisor (its start failed and npmInstall fell back to npm
-		// directly): let npm finish before failing, or the test blocks until go test's timeout.
-		// Without the release file npm gives up on its own after about 30 s, so fail at once; the
-		// lock stays open until the test binary exits, as closing it here could race Cmd.Start.
+		// The hook did not run (the supervisor failed to start and npm ran directly, or the hook
+		// was never called): release the fake npm so the failure is reported without waiting out
+		// its own bound. If the release cannot be written, the lock stays open until the binary
+		// exits, as closing it here could race Cmd.Start.
 		if err := os.WriteFile(release, nil, 0o644); err != nil {
 			t.Fatalf("supervisor start hook did not fire, and npm cannot be released: %v", err)
 		}
