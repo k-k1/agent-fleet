@@ -3,6 +3,7 @@ package notice
 import (
 	"bufio"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -297,5 +298,37 @@ func TestListBoundsEachStoredPayloadShape(t *testing.T) {
 	}
 	if got["bare"].Payload != nil || got["null"].Payload != nil || got["small"].Payload["a"] != float64(1) {
 		t.Fatalf("bare=%v null=%v small=%v", got["bare"].Payload, got["null"].Payload, got["small"].Payload)
+	}
+}
+
+// The bound holds on the file Put writes, not on an earlier encoding: invalid UTF-8 inside a
+// json.RawMessage value grows threefold when repaired, and is repaired before the payload is
+// measured and shrunk.
+func TestPutBoundsThePayloadOnDisk(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	e := New("answer-ready", "s1", "claude", "Project")
+	e.Payload["body"] = strings.Repeat("x", maxPayloadBytes)
+	for i := 0; i < 8; i++ {
+		e.Payload[fmt.Sprintf("raw%d", i)] = json.RawMessage(`"` + strings.Repeat("\xff", 6000) + `"`)
+	}
+	if err := Put(e); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(home, ".local", "state", "agent-fleet", "notification-outbox", e.ID+".json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Payload json.RawMessage `json:"payload"`
+	}
+	if err := json.Unmarshal(b, &f); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Payload) > maxPayloadBytes || !utf8.Valid(f.Payload) {
+		t.Fatalf("payload on disk is %d bytes (bound %d), valid UTF-8 %v", len(f.Payload), maxPayloadBytes, utf8.Valid(f.Payload))
+	}
+	if got := List(); len(got) != 1 || got[0].Payload[payloadTruncatedKey] != true {
+		t.Fatalf("listed %d events", len(got))
 	}
 }

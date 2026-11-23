@@ -57,9 +57,14 @@ func Put(e Event) error {
 	if err := os.MkdirAll(dir(), 0o700); err != nil {
 		return err
 	}
-	stored := e
-	stored.Payload = boundPayload(e.Payload)
-	b, err := json.Marshal(stored)
+	payload, err := boundPayload(e.Payload)
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(struct {
+		Event
+		Payload json.RawMessage `json:"payload"` // shadows Event.Payload
+	}{e, payload})
 	if err != nil {
 		return err
 	}

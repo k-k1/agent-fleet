@@ -3,6 +3,7 @@ package notice
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -20,22 +21,27 @@ const (
 // payloadTruncatedKey marks a payload shrinkPayload cut; the Control Plane uses the same key.
 const payloadTruncatedKey = "payloadTruncated"
 
-// boundPayload returns p when it encodes within maxPayloadBytes, and what shrinkPayload keeps of
-// it otherwise. Only the outbox copy is bounded: the chat bridge gets the event as given.
-func boundPayload(p map[string]any) map[string]any {
+// boundPayload is p encoded as the outbox file keeps it: invalid UTF-8 a json.RawMessage value
+// carried repaired, and shrunk by shrinkPayload past maxPayloadBytes. Put writes these bytes as
+// they are, so the bound holds on disk; decoding them into the map and encoding again would not
+// (a repaired byte or a number literal can grow). Only the outbox copy is bounded: the chat
+// bridge gets the event as given.
+func boundPayload(p map[string]any) (json.RawMessage, error) {
 	b, err := json.Marshal(p)
-	if err != nil || len(b) <= maxPayloadBytes {
-		return p // a marshal error fails the Put on its own
+	if err != nil {
+		return nil, err
 	}
-	var out map[string]any
-	if json.Unmarshal(shrinkPayload(b, maxPayloadBytes, maxPayloadValue), &out) != nil {
-		return map[string]any{payloadTruncatedKey: true}
+	if !utf8.Valid(b) {
+		b = repairUTF8(b)
 	}
-	return out
+	if len(b) > maxPayloadBytes {
+		b = shrinkPayload(b, maxPayloadBytes, maxPayloadValue)
+	}
+	return b, nil
 }
 
 // shrinkPayload keeps what fits of a JSON object past the bound, in order: each top-level member
-// whose value encodes within maxValue, a long string cut to maxValue bytes, and a long
+// whose value encodes within maxValue, a long string cut to an encoding of maxValue bytes, and a long
 // "questions" list reduced to each question's text, which Web Push shows. The identifiers the
 // Console navigates by are short and survive. The result carries payloadTruncatedKey and stays
 // within max. Each member is decoded raw, so nothing is expanded. The Control Plane applies the
@@ -67,7 +73,7 @@ func shrinkPayload(obj []byte, max, maxValue int) []byte {
 		case v[0] == '"':
 			var s string
 			if json.Unmarshal(v, &s) == nil {
-				keep, _ = json.Marshal(headBytes(s, maxValue))
+				keep = fitString(s, maxValue)
 			}
 		case k == "questions":
 			keep = questionHeads(v, maxValue)
@@ -84,30 +90,78 @@ func shrinkPayload(obj []byte, max, maxValue int) []byte {
 	return append(out, mark...)
 }
 
-// questionHeads reduces a questions list to the first questions' text and header, or nil when it
-// is not a list of objects.
+// questionHeads reduces a questions list to the first questions' text (leading space trimmed,
+// as Web Push trims it) and header, encoded within maxValue, or nil when it does not start as a
+// list of objects. It reads the list element by element and stops after maxQuestions, so a list
+// of millions of small elements is never decoded.
 func questionHeads(v []byte, maxValue int) []byte {
-	var qs []struct {
-		Question string `json:"question"`
-		Header   string `json:"header,omitempty"`
-	}
-	if json.Unmarshal(v, &qs) != nil || len(qs) == 0 {
+	const maxQuestions = 4
+	dec := json.NewDecoder(bytes.NewReader(v))
+	if t, err := dec.Token(); err != nil || t != json.Delim('[') {
 		return nil
 	}
-	const maxQuestions = 4
-	if len(qs) > maxQuestions {
-		qs = qs[:maxQuestions]
+	out := []byte{'['}
+	for n := 0; n < maxQuestions && dec.More(); n++ {
+		var q struct {
+			Question string `json:"question"`
+			Header   string `json:"header"`
+		}
+		if dec.Decode(&q) != nil {
+			return nil
+		}
+		if n > 0 {
+			out = append(out, ',')
+		}
+		out = append(append(out, `{"question":`...), fitString(strings.TrimSpace(q.Question), maxValue/maxQuestions-192)...)
+		if q.Header != "" {
+			out = append(append(out, `,"header":`...), fitString(q.Header, 128)...)
+		}
+		out = append(out, '}')
 	}
-	for i := range qs {
-		qs[i].Question = headBytes(qs[i].Question, maxValue/maxQuestions-256)
-		qs[i].Header = headBytes(qs[i].Header, 128)
+	if len(out) == 1 {
+		return nil
 	}
-	b, _ := json.Marshal(qs)
-	return b
+	return append(out, ']')
+}
+
+// fitString is s encoded as a JSON string within n bytes, cut from the end. The bound is on the
+// encoding, not the text: an escaped character such as '<' takes six bytes.
+func fitString(s string, n int) []byte {
+	s = headBytes(s, n)
+	for {
+		b, _ := json.Marshal(s)
+		if len(b) <= n || s == "" {
+			return b
+		}
+		m := len(s) * n / len(b)
+		if m >= len(s) {
+			m = len(s) - 1
+		}
+		s = headBytes(s, m)
+	}
+}
+
+// repairUTF8 replaces each byte that is not part of valid UTF-8 with U+FFFD, one per byte, which
+// is what decoding the JSON into a Go string does.
+func repairUTF8(b []byte) []byte {
+	out := make([]byte, 0, len(b)+len(b)/8)
+	for len(b) > 0 {
+		r, size := utf8.DecodeRune(b)
+		if r == utf8.RuneError && size == 1 {
+			out = append(out, "\uFFFD"...)
+		} else {
+			out = append(out, b[:size]...)
+		}
+		b = b[size:]
+	}
+	return out
 }
 
 // headBytes cuts s to at most n bytes without splitting a UTF-8 sequence.
 func headBytes(s string, n int) string {
+	if n < 0 {
+		n = 0
+	}
 	if len(s) <= n {
 		return s
 	}

@@ -41,12 +41,12 @@ func TestBoundedPayload(t *testing.T) {
 		{"past depth bound", `{"id":"k",` + nested(maxNotificationPayloadDepth + 1)[1:],
 			`{"id":"k","payloadTruncated":true}`},
 		{"oversized string cut", `{"spec_label":"L","status":"skipped_overlap","spec":"` + long + `"}`,
-			`{"spec_label":"L","status":"skipped_overlap","spec":"` + long[:maxNotificationPayloadValue] + `","payloadTruncated":true}`},
+			`{"spec_label":"L","status":"skipped_overlap","spec":"` + long[:maxNotificationPayloadValue-2] + `","payloadTruncated":true}`},
 		{"oversized list dropped", `{"many":[` + strings.Repeat(`0,`, maxNotificationPayload) + `0],"repo":"r"}`,
 			`{"repo":"r","payloadTruncated":true}`},
 		// The sender's own mark never survives as anything but true.
 		{"mark kept true", `{"payloadTruncated":false,"a":"` + long + `"}`,
-			`{"a":"` + long[:maxNotificationPayloadValue] + `","payloadTruncated":true}`},
+			`{"a":"` + long[:maxNotificationPayloadValue-2] + `","payloadTruncated":true}`},
 		// Brackets inside strings, escaped quotes included, are not nesting.
 		{"brackets in strings", `{"a":"` + strings.Repeat(`[{`, 100) + `\"` + strings.Repeat(`[`, 100) + `"}`,
 			`{"a":"` + strings.Repeat(`[{`, 100) + `\"` + strings.Repeat(`[`, 100) + `"}`},
@@ -140,7 +140,7 @@ func TestNotificationToDTOBoundsTheStoredPayload(t *testing.T) {
 		nested(maxNotificationPayloadDepth + 1): truncatedOnly,
 		// A schedule's spec is stored as written, so a long one must not take the status with it.
 		`{"schedule_id":"s1","status":"skipped_overlap","spec_label":"L","spec":"` + longSpec + `"}`: `{"schedule_id":"s1","status":"skipped_overlap","spec_label":"L","spec":"` +
-			longSpec[:maxNotificationPayloadValue] + `","payloadTruncated":true}`,
+			longSpec[:maxNotificationPayloadValue-2] + `","payloadTruncated":true}`,
 	} {
 		dto := notificationToDTO(store.Notification{EventID: "e", Payload: stored})
 		b, err := json.Marshal(dto)
@@ -202,5 +202,52 @@ func TestDrainAgentOutboxStoresAnOversizedPayloadShrunk(t *testing.T) {
 	if got["agent:big"] != `{"questions":[{"question":"Q?"}],"payloadTruncated":true}` ||
 		got["agent:bad"] != "{\"body\":\"a�b\"}" || got["agent:next"] != `{"body":"hi"}` {
 		t.Fatalf("stored payloads %v", got)
+	}
+}
+
+// The value bound is on the encoding: a string of characters that escape to six bytes is cut to
+// fit it, as is each question's text. Each invalid UTF-8 byte becomes its own U+FFFD, as the map
+// decode made it.
+func TestShrinkPayloadBoundsTheEncoding(t *testing.T) {
+	in := `{"a":"` + strings.Repeat("<", maxNotificationPayloadValue) + `","b":"` + strings.Repeat("x", maxNotificationPayload) + `","c":"short"}`
+	var p map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(boundedPayload([]byte(in))), &p); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"a", "b"} {
+		if n := len(p[k]); n > maxNotificationPayloadValue || n < maxNotificationPayloadValue-16 {
+			t.Errorf("%s encodes to %d bytes, want just under %d", k, n, maxNotificationPayloadValue)
+		}
+	}
+	if string(p["c"]) != `"short"` {
+		t.Errorf("c = %s", p["c"])
+	}
+	if got := boundedPayload([]byte("{\"a\":\"x\xff\xfey\"}")); got != "{\"a\":\"x��y\"}" {
+		t.Errorf("consecutive invalid bytes: %q", got)
+	}
+}
+
+// Only the first questions are decoded: a fifth element that is not an object is never reached.
+// Leading space is trimmed before the cut, so the text Web Push trims to is what survives, and
+// the projection stays within the value bound however the text escapes.
+func TestQuestionHeads(t *testing.T) {
+	q := func(text string) string { return `{"question":` + string(fitString(text, 1<<20)) + `,"options":[]}` }
+	v := `[` + q(strings.Repeat(" ", 4000)+"Which way?") + `,` + q(strings.Repeat("<", 8000)) + `,` + q("3") + `,` + q("4") + `,5]`
+	got := questionHeads([]byte(v), maxNotificationPayloadValue)
+	if len(got) > maxNotificationPayloadValue {
+		t.Fatalf("projection is %d bytes, over %d", len(got), maxNotificationPayloadValue)
+	}
+	var qs []struct {
+		Question string `json:"question"`
+	}
+	if err := json.Unmarshal(got, &qs); err != nil || len(qs) != 4 {
+		t.Fatalf("got %s (%v), want 4 questions", got, err)
+	}
+	if qs[0].Question != "Which way?" || qs[2].Question != "3" || qs[1].Question == "" {
+		t.Fatalf("questions = %q", qs)
+	}
+	if questionHeads([]byte(`[5]`), maxNotificationPayloadValue) != nil || questionHeads([]byte(`"x"`), maxNotificationPayloadValue) != nil ||
+		questionHeads([]byte(`[]`), maxNotificationPayloadValue) != nil {
+		t.Fatal("a list that does not start with an object must give nil")
 	}
 }
