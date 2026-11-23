@@ -494,4 +494,22 @@ describe("repository group + button", () => {
     await click(top);
     expect(composer()).toBe(null);
   });
+
+  it("moves a category-targeted composer to the top with its draft, then the section + closes it", async () => {
+    servedCats = [aCat({ id: "c1", name: "P1" })];
+    await render();
+    const top = must(
+      document.querySelector<HTMLButtonElement>('button[aria-label^="Add memo"], button[aria-label^="メモを追加"]'),
+      "section +",
+    );
+    await click(addBtn("P1"));
+    await type("keep me");
+    await click(top);
+    expect(composer()).not.toBe(null);
+    expect(groupFor("P1").contains(composer())).toBe(false);
+    expect(composer()?.querySelector(".memo-add-cat")).not.toBe(null);
+    expect(must(composer()?.querySelector<HTMLTextAreaElement>(".memo-add-text"), "textarea").value).toBe("keep me");
+    await click(top);
+    expect(composer()).toBe(null);
+  });
 });
