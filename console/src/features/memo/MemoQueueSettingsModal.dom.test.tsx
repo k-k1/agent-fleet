@@ -160,6 +160,19 @@ describe("MemoQueueSettingsModal repository settings card", () => {
     expect(closed).toBe(1);
   });
 
+  it("never saves the old draft after an approval whose answer was lost", async () => {
+    approveGate = Promise.reject(new TypeError("network"));
+    approveGate.catch(() => {});
+    let closed = 0;
+    await render("app", () => closed++);
+    await checkFile();
+    await act(async () => approveBtn().click());
+    await flush();
+    expect(closed).toBe(1);
+    await submit();
+    expect(memoQueuePut).not.toHaveBeenCalled();
+  });
+
   it("asks to save or cancel edits before an approval, which would drop them", async () => {
     await render("app");
     await checkFile();

@@ -81,6 +81,9 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, 
   // An approval of repository settings is on its way (MemoRepoSettingsCard): nothing else in the
   // dialog writes or closes until it lands.
   const [repoBusy, setRepoBusy] = useState(false);
+  // An approval saved (or may have saved) the settings: the draft predates it and is never sent,
+  // even if the dialog is still on screen until the caller closes it.
+  const [stale, setStale] = useState(false);
   const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initial), [draft, initial]);
   // Errors show once the person has tried to save, so an untouched form is not red.
   const [tried, setTried] = useState(false);
@@ -115,7 +118,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, 
   const repoSettings = useQueueSettingsCache((st) => st.repoSettings) && repo !== "";
 
   const save = async () => {
-    if (blocked || busy || repoBusy) return;
+    if (blocked || busy || repoBusy || stale) return;
     setTried(true);
     if (Object.keys(errors).length > 0) return;
     setBusy(true);
@@ -206,6 +209,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, 
             onApplied={() => {
               // The draft holds the values from before the approval: close rather than let a save
               // put them back.
+              setStale(true);
               onChanged();
               onClose();
             }}
@@ -513,7 +517,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, 
         <Button variant="ghost" onClick={onClose} type="button" disabled={repoBusy}>
           {tr("common.cancel")}
         </Button>
-        <Button variant="primary" type="submit" disabled={blocked || busy || repoBusy}>
+        <Button variant="primary" type="submit" disabled={blocked || busy || repoBusy || stale}>
           {tr("common.save")}
         </Button>
       </footer>

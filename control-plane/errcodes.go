@@ -260,7 +260,8 @@ const (
 	errCodeMemoQueueNoRepo         = "memo_queue_no_repo"
 	errCodeMemoQueueRepoUnreadable = "memo_queue_repo_unreadable"
 	errCodeMemoQueueRepoStale      = "memo_queue_repo_stale"
-	errCodeMemoQueueRepoExport     = "memo_queue_repo_export"
+	errCodeMemoQueueRepoExportName = "memo_queue_repo_export_name"
+	errCodeMemoQueueRepoExportSize = "memo_queue_repo_export_size"
 
 	// Route policy administration (ADR 0138). internal/routepolicysrv emits the same literals;
 	// declaring them here is what puts them in TestCPEmittedErrCodesHaveConsoleCatalogEntry's

@@ -523,5 +523,6 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memo_queue_no_repo": "This category belongs to no repository, so there is no repository settings file.",
   "err.memo_queue_repo_unreadable": "The settings file could not be read from the repository's default branch. Your current settings stay as they are.",
   "err.memo_queue_repo_stale": "The repository settings file or your settings changed since you looked at the difference. Check again before approving.",
-  "err.memo_queue_repo_export": "These settings cannot be written as a repository settings file. Your settings are unchanged.",
+  "err.memo_queue_repo_export_name": "The category's name looks like a credential, so it is not written into a file. Rename the category, then export again.",
+  "err.memo_queue_repo_export_size": "These settings make a file larger than a repository settings file may be (64 KiB). Shorten the instruction, then export again.",
 };

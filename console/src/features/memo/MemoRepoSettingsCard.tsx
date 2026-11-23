@@ -34,7 +34,8 @@ interface Props {
   /** An approval is on its way: the dialog must not save, remove or close meanwhile, or its
    *  write could land after the approval with the values from before it. */
   onBusy: (busy: boolean) => void;
-  /** An approval saved the settings: the dialog's draft is out of date. */
+  /** An approval saved the settings, or may have (its answer was lost): the dialog's draft is
+   *  out of date and must not be saved over them. */
   onApplied: () => void;
 }
 
@@ -72,18 +73,32 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
     }
   };
 
+  // The dialog is closed rather than left open on a draft that may predate a saved approval: a
+  // save from it would write the old values back. The caller refetches the settings.
+  const uncertain = () => {
+    toast(t("memo.repo_approve_unknown"), { kind: "warn" });
+    onApplied();
+  };
+
   const approve = async (data: MemoRepoSettings) => {
     const keys = approvedKeys(repoDiffRows(data.diffs), chosen);
-    if (keys.length === 0 || approving || blocked || dirty) return;
+    if (keys.length === 0 || approving || blocked || dirty || (data.category !== "" && data.category !== categoryName)) return;
     setApproving(true);
     onBusy(true);
     try {
       const scope = queueScope();
       const res = await memoRepoApprove(categoryId, { commit: data.commit, approvalTag: data.approvalTag, keys });
-      if (res?.error) {
+      // The client names an answer that is not the Control Plane's (a proxy's page, a gateway)
+      // http_<status>: that one says nothing about whether the write happened.
+      if (res?.error?.code && !res.error.code.startsWith("http_")) {
+        // The Control Plane refused it with a reason: nothing was written.
         toast(errText(res.error) || t("memo.repo_approve_failed"), { kind: "warn" });
-        // The file or the settings moved: show the difference as it is now.
+        // The file, the category or the settings moved: show the difference as it is now.
         if (res.error.code === "memo_queue_repo_stale") void load();
+        return;
+      }
+      if (res?.error) {
+        uncertain();
         return;
       }
       const saved = readQueue(res);
@@ -91,7 +106,8 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
       toast(t("memo.repo_applied"), { kind: "success" });
       onApplied();
     } catch {
-      toast(t("memo.repo_approve_failed"), { kind: "warn" });
+      // The answer was lost: the approval may have been saved.
+      uncertain();
     } finally {
       setApproving(false);
       onBusy(false);
@@ -140,6 +156,11 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
   );
 
   const loaded = check.kind === "loaded" ? check.data : null;
+  // The Control Plane compared the entry of the category's current name. When that is not the name
+  // this dialog shows (renamed in another tab), the member would approve another entry than the
+  // one they think: the approval waits for the dialog to be opened again.
+  const renamed = loaded !== null && loaded.category !== "" && loaded.category !== categoryName;
+  const held = dirty || renamed;
   const rows = loaded ? repoDiffRows(loaded.diffs) : [];
   const picked = approvedKeys(rows, chosen).length;
 
@@ -207,7 +228,7 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
                         type="checkbox"
                         checked={chosen.has(r.id)}
                         aria-describedby={`${ids}-${r.id}`}
-                        disabled={blocked || approving || dirty}
+                        disabled={blocked || approving || held}
                         onChange={(e) =>
                           setChosen((s) => {
                             const n = new Set(s);
@@ -248,14 +269,18 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
                 ))}
               </ul>
               <div className="memo-repo-foot">
-                <span className="ui-field-hint memo-repo-foot-hint" data-invalid={dirty || undefined}>
-                  {dirty ? tr("memo.repo_save_first") : tr("memo.repo_approve_hint")}
+                <span className="ui-field-hint memo-repo-foot-hint" data-invalid={held || undefined}>
+                  {renamed
+                    ? tr("memo.repo_renamed", { name: loaded.category })
+                    : dirty
+                      ? tr("memo.repo_save_first")
+                      : tr("memo.repo_approve_hint")}
                 </span>
                 <Button
                   small
                   variant="primary"
                   type="button"
-                  disabled={blocked || approving || dirty || picked === 0}
+                  disabled={blocked || approving || held || picked === 0}
                   onClick={() => void approve(loaded)}
                 >
                   {tr("memo.repo_approve", { count: picked })}

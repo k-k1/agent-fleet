@@ -10,7 +10,7 @@ vi.mock("../../core/api/client.ts", () => ({
   apiJSON: async () => ({}),
   getTenant: () => "",
   getUser: () => "",
-  errText: (e: { message?: string } | undefined) => e?.message ?? "",
+  errText: (e: { code?: string; message?: string } | undefined) => (e?.code ? `[${e.code}] ` : "") + (e?.message ?? ""),
   errDetail: (e: { message?: string }) => e?.message ?? "",
   isTransientErr: () => false,
 }));
@@ -192,6 +192,49 @@ describe("MemoRepoSettingsCard", () => {
     await click(approveButton());
     expect(applied).toBe(0);
     expect(memoRepoSettings).toHaveBeenCalledTimes(2);
+  });
+
+  it("closes the dialog when the approval's answer is lost, since it may have been saved", async () => {
+    for (const lost of [
+      () => Promise.reject(new TypeError("network")),
+      async () => ({ error: { code: "http_502", message: "Bad Gateway" } }),
+    ]) {
+      applied = 0;
+      memoRepoApprove.mockImplementationOnce(lost);
+      await render();
+      await click(buttons()[0]);
+      await click(approveButton());
+      expect(applied).toBe(1);
+    }
+    // A refusal with the Control Plane's reason wrote nothing: the dialog stays.
+    applied = 0;
+    approveAnswer = { error: { code: "memo_queue_bad_settings", message: "no" } };
+    await render();
+    await click(buttons()[0]);
+    await click(approveButton());
+    expect(applied).toBe(0);
+  });
+
+  it("holds the approval when the category was renamed in another tab", async () => {
+    settings = answer({ category: "other" });
+    await render();
+    await click(buttons()[0]);
+    expect(approveButton().disabled).toBe(true);
+    expect(host.querySelector(".memo-repo-foot-hint")!.textContent).toContain("other");
+    await click(approveButton());
+    expect(memoRepoApprove).not.toHaveBeenCalled();
+  });
+
+  it("names why an export was refused", async () => {
+    const shown: string[] = [];
+    for (const code of ["memo_queue_repo_export_name", "memo_queue_repo_export_size"]) {
+      memoRepoExport.mockImplementationOnce(async () => ({ error: { code, message: "" } }));
+      await render({ hasQueue: true });
+      await click(buttons()[1]);
+      shown.push(document.body.textContent ?? "");
+    }
+    expect(shown[0]).toContain("memo_queue_repo_export_name");
+    expect(shown[1]).toContain("memo_queue_repo_export_size");
   });
 
   it("shows the file's errors and no approval", async () => {

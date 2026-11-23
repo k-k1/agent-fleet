@@ -649,23 +649,11 @@ func (a memoAPI) repoApprove(w http.ResponseWriter, r *http.Request, res *resolv
 				sub.Values[k] = v
 			}
 		}
-		// A tidy destination whose settings were removed stays in the row; the Console's list leaves
-		// it out and a Console save drops it. The approval does the same, so a stale id the file
-		// cannot touch never blocks it.
-		base := cur
-		base.TidyDestinations = nil
-		for _, id := range cur.TidyDestinations {
-			if _, isQ, err := tx.GetQueue(id); err != nil {
-				return err
-			} else if isQ && id != c.ID {
-				base.TidyDestinations = append(base.TidyDestinations, id)
-			}
-		}
-		part := memoRepoCompare(base, existed, &sub)
+		part := memoRepoCompare(cur, existed, &sub)
 		if len(part.Errors) > 0 {
 			return memoTxFail(badQueueSettings(part.Errors[0].Reason))
 		}
-		saved, err := memoPutQueueTx(tx, c, res.mv.MembershipID, part.Next, part.In)
+		saved, err := memoPutQueueTx(tx, c, res.mv.MembershipID, part.Next, part.In, cur.TidyDestinations)
 		if err != nil {
 			return err
 		}
@@ -760,7 +748,7 @@ func (a memoAPI) repoExport(w http.ResponseWriter, r *http.Request, _ store.Iden
 	// The name becomes a key of the file: a token pasted into it must not be written, and the
 	// answer does not repeat it.
 	if autorunfile.LooksLikeCredential(c.Name) {
-		writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, errCodeMemoQueueRepoExport,
+		writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, errCodeMemoQueueRepoExportName,
 			"the category's name looks like a credential; rename the category before exporting"})
 		return
 	}
@@ -771,7 +759,7 @@ func (a memoAPI) repoExport(w http.ResponseWriter, r *http.Request, _ store.Iden
 		vals, omitted := memoRepoExportValues(q)
 		b, err := autorunfile.Format(c.Name, vals)
 		if errors.Is(err, autorunfile.ErrTooLarge) {
-			writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, errCodeMemoQueueRepoExport,
+			writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, errCodeMemoQueueRepoExportSize,
 				fmt.Sprintf("these settings make a file larger than %d bytes, which a repository's settings file cannot be", autorunfile.MaxBytes)})
 			return
 		}

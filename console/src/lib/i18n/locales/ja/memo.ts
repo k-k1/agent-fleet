@@ -402,6 +402,8 @@ export const memo = {
   "memo.repo_copied": "YAML をコピーしました",
   "memo.repo_download": "ダウンロード",
   "memo.repo_save_first": "リポジトリの設定を承認する前に、このダイアログでの編集を保存するか取り消してください。",
+  "memo.repo_renamed": "このカテゴリの名前は「{name}」に変わりました。その名前のリポジトリ設定を承認するには、設定を開き直してください。",
+  "memo.repo_approve_unknown": "承認の応答が届かなかったため、保存されている可能性があります。ダイアログを閉じました。開き直していまの設定を確認してください。",
   "memo.q_err_tidy_destinations": "移してよいカテゴリは {max} 個までです。",
   "memo.waiting_tidying": "メモを整理しています。終わると実行されます。",
   "memo.waiting_below_threshold_blocked": "メモがたまるのを待っています（実行できるのは {count} 件、ほかに {blocked} 件が先に終わるべきメモを待っています。{needed} 件で実行を始めます）。",

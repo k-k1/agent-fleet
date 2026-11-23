@@ -216,11 +216,12 @@ func TestMemoRepoApproveTenantTurnedOffDuringTheRead(t *testing.T) {
 	}
 }
 
-// A tidy destination whose settings were removed does not block approving an unrelated setting;
-// it is dropped as a Console save drops it.
-func TestMemoRepoApproveWithAStaleTidyDestination(t *testing.T) {
+// A tidy destination whose settings were removed does not block approving an unrelated setting,
+// and stays: a tidy still offers it as a category (memoTidyDestinations), here one of another
+// repository that only the stored list brings in.
+func TestMemoRepoApproveKeepsAStaleTidyDestination(t *testing.T) {
 	e, a, id := approveEnv(t)
-	dest := e.category("app", "dest")
+	dest := e.category("lib", "dest")
 	if rec := e.do("a", "PUT", "/api/memo-queues/"+dest, map[string]any{"instruction": "y"}); rec.Code != http.StatusOK {
 		t.Fatalf("put dest: %d %s", rec.Code, rec.Body.String())
 	}
@@ -236,8 +237,12 @@ func TestMemoRepoApproveWithAStaleTidyDestination(t *testing.T) {
 	if rec := e.approve(id, approveBody(out, "batch")); rec.Code != http.StatusOK {
 		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
 	}
-	if q, _ := e.queueOf(id); q.Batch != 2 || !q.Tidy || len(q.TidyDestinations) != 0 {
+	if q, _ := e.queueOf(id); q.Batch != 2 || !q.Tidy || len(q.TidyDestinations) != 1 || q.TidyDestinations[0] != dest {
 		t.Fatalf("saved %+v", q)
+	}
+	// The Console's PUT still checks what it is sent.
+	if rec := e.do("a", "PUT", "/api/memo-queues/"+id, map[string]any{"instruction": "x", "tidy": true, "tidyDestinations": []string{dest}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("PUT with a stale destination: %d %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -378,7 +383,7 @@ func TestMemoRepoExportRoute(t *testing.T) {
 		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := e.do("a", "GET", "/api/memo-queues/"+id+"/repo-settings/export", nil); rec.Code != http.StatusUnprocessableEntity ||
-		strings.Contains(rec.Body.String(), "QQQQ") || !strings.Contains(rec.Body.String(), errCodeMemoQueueRepoExport) {
+		strings.Contains(rec.Body.String(), "QQQQ") || !strings.Contains(rec.Body.String(), errCodeMemoQueueRepoExportName) {
 		t.Errorf("credential name: %d %s", rec.Code, rec.Body.String())
 	}
 	e.mgr.memoRepoSettings = false
