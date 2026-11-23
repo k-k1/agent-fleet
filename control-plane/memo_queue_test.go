@@ -254,7 +254,7 @@ func textMemo(repo, category, body string) map[string]any {
 
 func TestMemoQueueSettings(t *testing.T) {
 	eachDialect(t, func(t *testing.T, e *inboxEnv) {
-		if r := e.do("a", "GET", "/api/memo-queues", nil); r.Code != 200 || strings.TrimSpace(r.Body.String()) != `{"tenantEnabled":true,"queues":[]}` {
+		if r := e.do("a", "GET", "/api/memo-queues", nil); r.Code != 200 || strings.TrimSpace(r.Body.String()) != `{"tenantEnabled":true,"repoSettings":false,"queues":[]}` {
 			t.Fatalf("empty list: %d %s", r.Code, r.Body.String())
 		}
 		cat := e.category("repo-a", "issues")

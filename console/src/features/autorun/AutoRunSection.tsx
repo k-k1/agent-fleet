@@ -540,6 +540,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
           key={settingsQueue.categoryId}
           categoryId={settingsQueue.categoryId}
           categoryName={settingsQueue.category}
+          repo={settingsQueue.repo}
           queue={settingsQueue}
           tenantEnabled={tenantEnabled}
           destinations={queues

@@ -1,9 +1,12 @@
 package autorunfile
 
 import (
+	"errors"
 	"math"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func hasIssue(is []Issue, line int, key, part string) bool {
@@ -392,5 +395,65 @@ func TestParseSyntaxErrorDoesNotEchoACredential(t *testing.T) {
 		if strings.Contains(i.Reason, "ZZZZ") {
 			t.Fatalf("echoed: %+v", i)
 		}
+	}
+}
+
+// Format writes each value as its key's type, so the file parses back to the same values, also
+// for strings YAML would otherwise read as numbers or booleans.
+func TestFormatParsesBack(t *testing.T) {
+	vals := []Value{
+		{Key: "model", Str: "123"},
+		{Key: "effort", Str: "true"},
+		{Key: "route", Str: ""},
+		{Key: "spend_cap_usd", Num: 12.5},
+		{Key: "max_active", Int: 3},
+		{Key: "worktree", Bool: true},
+		{Key: "instruction", Str: "line one\n  indented: two\n"},
+	}
+	b, err := Format("issue: rounds", vals)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := Parse(b)
+	e := f.Categories["issue: rounds"]
+	if len(f.Errors) != 0 || e == nil || len(e.Errors) != 0 || len(e.Warnings) != 0 {
+		t.Fatalf("%s\n%+v %+v", b, f.Errors, e)
+	}
+	for _, v := range vals {
+		got := e.Values[v.Key]
+		got.Line = 0
+		if got != v {
+			t.Errorf("%s: got %+v, want %+v", v.Key, got, v)
+		}
+	}
+	if !strings.Contains(string(b), "instruction: |") {
+		t.Errorf("a multi-line instruction is not a literal block:\n%s", b)
+	}
+	if _, err := Format("c", []Value{{Key: "enabled", Bool: true}}); err == nil {
+		t.Error("a Console-only key was written")
+	}
+	if _, err := Format("c", []Value{{Key: "spend_cap_usd", Num: math.Inf(1)}}); err == nil {
+		t.Error("an infinite number was written")
+	}
+}
+
+// An instruction of many short lines grows past the limit as a literal block (every line is
+// indented); Format then writes it quoted, and it still parses back to the same value. Values
+// that cannot fit are ErrTooLarge rather than a file the reader refuses.
+func TestFormatStaysWithinTheLimit(t *testing.T) {
+	short := strings.Repeat("x\n", 8191) + "x"
+	if lit, _ := format("rounds", []Value{{Key: "instruction", Str: short}}, yaml.LiteralStyle); len(lit) <= MaxBytes {
+		t.Fatalf("the case no longer needs the quoted form: %d bytes", len(lit))
+	}
+	b, err := Format("rounds", []Value{{Key: "model", Str: "m"}, {Key: "instruction", Str: short}})
+	if err != nil || len(b) > MaxBytes {
+		t.Fatalf("%v, %d bytes", err, len(b))
+	}
+	f := Parse(b)
+	if !f.Usable("rounds") || f.Categories["rounds"].Values["instruction"].Str != short {
+		t.Fatalf("does not parse back: %+v", f.Errors)
+	}
+	if _, err := Format("rounds", []Value{{Key: "instruction", Str: strings.Repeat("y", MaxBytes)}}); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("too large: %v", err)
 	}
 }

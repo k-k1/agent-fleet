@@ -7,6 +7,9 @@
 // A save replaces the whole row, so draftBody sends every setting the dialog loaded, including
 // the route it does not show. The read-only state (paused, noReportAt, ...) is never sent.
 //
+// When the category belongs to a repository, the dialog also offers the repository settings card
+// (MemoRepoSettingsCard): the difference from .agent-fleet/autorun.yaml, its approval, the export.
+//
 // With the tenant's switch off the dialog says so instead of offering to save. Removing the
 // settings stays possible then: the Control Plane does not gate DELETE.
 import { useMemo, useState } from "react";
@@ -24,6 +27,7 @@ import type { MemoQueue } from "../../types/memo.ts";
 import { memoQueueDelete, memoQueuePut } from "./api.ts";
 import { readQueue } from "./queues.ts";
 import { queueScope, useQueueSettingsCache } from "./queueSettingsCache.ts";
+import { MemoRepoSettingsCard } from "./MemoRepoSettingsCard.tsx";
 import {
   QUEUE_BATCH_MAX,
   QUEUE_CONTINUATION_MAX,
@@ -51,6 +55,8 @@ const RUN_MODES: { mode: RunMode; label: MsgKey; hint: MsgKey }[] = [
 interface Props {
   categoryName: string;
   categoryId: string;
+  /** The repository the category belongs to; "" = the common bucket, which has no settings file. */
+  repo: string;
   /** The category's current settings; undefined = it has none yet. */
   queue: MemoQueue | undefined;
   tenantEnabled: boolean;
@@ -61,16 +67,49 @@ interface Props {
   onChanged: () => void;
 }
 
-export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenantEnabled, destinations, onClose, onChanged }: Props) {
+export function MemoQueueSettingsModal(props: Props) {
+  const tr = useT();
+  // An approval whose answer was lost may have changed these settings without the cached row
+  // knowing: a form built from that row could save the old values back. It opens once a read
+  // begun after the approval has landed, from the row that read brought.
+  const unsure = useQueueSettingsCache((st) => st.unsure.includes(props.categoryId));
+  if (unsure) {
+    return (
+      <Modal title={tr("memo.autorun_settings_title", { name: props.categoryName })} onClose={props.onClose} className="memo-q-modal">
+        <div className="ui-modal-body">
+          <div className="ui-field-hint" role="status">
+            {tr("memo.q_rereading")}
+          </div>
+        </div>
+        <footer className="ui-modal-foot">
+          <Button variant="ghost" onClick={props.onClose} type="button">
+            {tr("common.close")}
+          </Button>
+        </footer>
+      </Modal>
+    );
+  }
+  return <QueueSettingsForm {...props} />;
+}
+
+function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnabled, destinations, onClose, onChanged }: Props) {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
-  const [draft, setDraft] = useState(() => {
+  const [initial] = useState(() => {
     // A destination that is no longer an auto-run category would make the save fail: leave it out.
     const d = draftOf(queue);
     return { ...d, tidyDestinations: d.tidyDestinations.filter((id) => destinations.some((x) => x.id === id)) };
   });
+  const [draft, setDraft] = useState(initial);
   const [busy, setBusy] = useState(false);
+  // An approval of repository settings is on its way (MemoRepoSettingsCard): nothing else in the
+  // dialog writes or closes until it lands.
+  const [repoBusy, setRepoBusy] = useState(false);
+  // An approval saved (or may have saved) the settings: the draft predates it and is never sent,
+  // even if the dialog is still on screen until the caller closes it.
+  const [stale, setStale] = useState(false);
+  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initial), [draft, initial]);
   // Errors show once the person has tried to save, so an untouched form is not red.
   const [tried, setTried] = useState(false);
   const errors = useMemo(() => draftErrors(draft), [draft]);
@@ -101,9 +140,10 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
   };
   const show = (f: keyof typeof errors) => (tried && errors[f] ? tr(errors[f]!, { max: maxOf[f] }) : null);
   const blocked = !tenantEnabled;
+  const repoSettings = useQueueSettingsCache((st) => st.repoSettings) && repo !== "";
 
   const save = async () => {
-    if (blocked || busy) return;
+    if (blocked || busy || repoBusy || stale) return;
     setTried(true);
     if (Object.keys(errors).length > 0) return;
     setBusy(true);
@@ -135,7 +175,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
       confirmLabel: t("memo.q_remove"),
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || repoBusy) return;
     setBusy(true);
     try {
       const scope = queueScope();
@@ -174,13 +214,31 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
         e.preventDefault();
         void save();
       }}
-      lockClose={busy}
+      lockClose={busy || repoBusy}
     >
       <div className="ui-modal-body">
         {blocked && (
           <div className="ui-field-hint memo-q-notice" role="status">
             {queue ? tr("memo.q_tenant_off_existing") : tr("memo.q_tenant_off")}
           </div>
+        )}
+
+        {repoSettings && (
+          <MemoRepoSettingsCard
+            categoryId={categoryId}
+            categoryName={categoryName}
+            hasQueue={!!queue}
+            blocked={blocked || busy}
+            dirty={dirty}
+            onBusy={setRepoBusy}
+            onApplied={() => {
+              // The draft holds the values from before the approval: close rather than let a save
+              // put them back.
+              setStale(true);
+              onChanged();
+              onClose();
+            }}
+          />
         )}
 
         <div className="ui-field">
@@ -477,14 +535,14 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
 
       <footer className="ui-modal-foot">
         {queue && (
-          <Button variant="ghost" type="button" disabled={busy} onClick={() => void remove()}>
+          <Button variant="ghost" type="button" disabled={busy || repoBusy} onClick={() => void remove()}>
             {tr("memo.q_remove")}
           </Button>
         )}
-        <Button variant="ghost" onClick={onClose} type="button">
+        <Button variant="ghost" onClick={onClose} type="button" disabled={repoBusy}>
           {tr("common.cancel")}
         </Button>
-        <Button variant="primary" type="submit" disabled={blocked || busy}>
+        <Button variant="primary" type="submit" disabled={blocked || busy || repoBusy || stale}>
           {tr("common.save")}
         </Button>
       </footer>

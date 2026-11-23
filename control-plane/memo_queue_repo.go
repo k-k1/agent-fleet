@@ -2,7 +2,10 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,14 +23,14 @@ import (
 // Repository settings of a memo queue (#4881). A repository may carry its auto-run category
 // settings in .agent-fleet/autorun.yaml; the workspace Agent reads that file from origin's
 // default branch only, and this answers how it differs from the member's own settings. Nothing
-// is saved here: the member approves a difference before anything is applied, and settings stay
-// per member.
+// is applied until the member approves a difference (repoApprove), and settings stay per member:
+// each member approves for their own queue. The member's settings can also be written as such a
+// file (repoExport).
 //
 // The Control Plane parses the file, not the Agent: the Agent shares its workspace with the runs
 // the settings govern, and the refusal of the Console-only switches must not depend on it.
 //
-// The route answers 404 unless AF_MEMO_QUEUE_REPO_SETTINGS is on, so a release can carry it
-// before the Console shows it.
+// The routes answer 404 when AF_MEMO_QUEUE_REPO_SETTINGS is turned off (it is on by default).
 
 // memoRepoFileWait bounds the Agent call, above the Agent's own 60-second bound on the fetch.
 const memoRepoFileWait = 75 * time.Second
@@ -63,10 +66,16 @@ type memoRepoSettingsWire struct {
 	Entry bool `json:"entry"`
 	// Queue is whether the category has settings yet; without them the file is compared with the
 	// defaults a new queue gets.
-	Queue    bool                `json:"queue"`
-	Errors   []autorunfile.Issue `json:"errors"`
-	Warnings []autorunfile.Issue `json:"warnings"`
-	Diffs    []memoRepoDiff      `json:"diffs"`
+	Queue bool `json:"queue"`
+	// ApprovalTag names what the difference was taken from: the category (id, repository, name),
+	// the member's settings and the difference itself. An approval sends it back. ApprovedCommit
+	// and ApprovedAt are the file commit the member last approved.
+	ApprovalTag    string              `json:"approvalTag"`
+	ApprovedCommit string              `json:"approvedCommit"`
+	ApprovedAt     string              `json:"approvedAt"`
+	Errors         []autorunfile.Issue `json:"errors"`
+	Warnings       []autorunfile.Issue `json:"warnings"`
+	Diffs          []memoRepoDiff      `json:"diffs"`
 }
 
 // agentAutorunFile is the Agent's GET /repos/{name}/autorun-file
@@ -202,10 +211,21 @@ var memoRepoOpenKeys = map[string]bool{"open_cron": true, "open_minutes": true, 
 // memoQueueGated says whether a queue waits for a window or a threshold before it fires by itself.
 func memoQueueGated(q store.MemoQueue) bool { return q.OpenCron != "" || q.OpenAfter > 0 }
 
+// memoRepoResult is what laying a file entry over the member's settings gives. While Errors is not
+// empty the rest is unset. In is the settings body that saves Next, the entry's values that apply
+// laid over the member's settings: what an approval writes.
+type memoRepoResult struct {
+	In       memoQueueIn
+	Next     store.MemoQueue
+	Diffs    []memoRepoDiff
+	Warnings []autorunfile.Issue
+	Errors   []autorunfile.Issue
+}
+
 // memoRepoCompare lays the entry's values over the member's settings (cur, or the defaults when
 // hasQueue is false), runs the result through the Console's own validation, and lists what
 // would change. A refusal comes back as an error on the line of the key that causes it.
-func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) ([]memoRepoDiff, []autorunfile.Issue, []autorunfile.Issue) {
+func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) memoRepoResult {
 	base := memoQueueIn{}
 	if hasQueue {
 		base = memoQueueInFrom(cur)
@@ -222,18 +242,22 @@ func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) (
 		}
 	}
 	sort.Slice(vals, func(i, j int) bool { return vals[i].Line < vals[j].Line })
-	overlay := func(vs []autorunfile.Value, skip int) (store.MemoQueue, *apiError) {
+	build := func(vs []autorunfile.Value, skip int) memoQueueIn {
 		in := base
 		for i, v := range vs {
 			if i != skip {
 				memoRepoFieldByKey[v.Key].set(&in, v)
 			}
 		}
+		return in
+	}
+	overlay := func(vs []autorunfile.Value, skip int) (store.MemoQueue, *apiError) {
+		in := build(vs, skip)
 		return in.validate()
 	}
 	next, aerr := overlay(vals, -1)
 	if aerr != nil {
-		return nil, nil, []autorunfile.Issue{memoRepoBlame(vals, e.Line, aerr, overlay)}
+		return memoRepoResult{Errors: []autorunfile.Issue{memoRepoBlame(vals, e.Line, aerr, overlay)}}
 	}
 	var warns []autorunfile.Issue
 	// Taking the window and the threshold both away makes the queue fire whenever a message
@@ -258,7 +282,7 @@ func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) (
 			Reason: "removing the window and the threshold makes the queue fire whenever a message waits; that is set in the Console only, and the file's open_cron, open_minutes, tz and open_after are not applied"})
 		vals = kept
 		if next, aerr = overlay(vals, -1); aerr != nil {
-			return nil, warns, []autorunfile.Issue{memoRepoBlame(vals, e.Line, aerr, overlay)}
+			return memoRepoResult{Warnings: warns, Errors: []autorunfile.Issue{memoRepoBlame(vals, e.Line, aerr, overlay)}}
 		}
 	}
 	openLine := 0
@@ -284,7 +308,7 @@ func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) (
 			errs = append(errs, autorunfile.Issue{Line: v.Line, Key: "tz", Reason: "tz needs open_cron: without a window it has no effect"})
 		}
 		if len(errs) > 0 {
-			return nil, warns, errs
+			return memoRepoResult{Warnings: warns, Errors: errs}
 		}
 	}
 	diffs := []memoRepoDiff{}
@@ -310,7 +334,7 @@ func memoRepoCompare(cur store.MemoQueue, hasQueue bool, e *autorunfile.Entry) (
 		}
 		diffs = append(diffs, d)
 	}
-	return diffs, warns, nil
+	return memoRepoResult{In: build(vals, -1), Next: next, Diffs: diffs, Warnings: warns}
 }
 
 // memoRepoBlame puts a refusal on the key that causes it: the field the message names when the
@@ -355,10 +379,9 @@ func memoRepoBlame(vals []autorunfile.Value, entryLine int, aerr *apiError,
 	return autorunfile.Issue{Line: entryLine, Reason: aerr.message}
 }
 
-// repoSettingsRoute checks the switch before anything else, so that with the switch off the
-// route neither resolves nor creates a workspace.
-func (a memoAPI) repoSettingsRoute() http.HandlerFunc {
-	h := a.withResolved(a.repoSettings)
+// repoSwitch checks the switch before anything else, so that with the switch off the routes
+// neither resolve nor create a workspace.
+func (a memoAPI) repoSwitch(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !a.mgr.memoRepoSettings {
 			writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "repository settings are not turned on"})
@@ -368,23 +391,79 @@ func (a memoAPI) repoSettingsRoute() http.HandlerFunc {
 	}
 }
 
+func (a memoAPI) repoSettingsRoute() http.HandlerFunc {
+	return a.repoSwitch(a.withResolved(a.repoSettings))
+}
+
+func (a memoAPI) repoApproveRoute() http.HandlerFunc {
+	return a.repoSwitch(a.withResolved(a.repoApprove))
+}
+
+func (a memoAPI) repoExportRoute() http.HandlerFunc {
+	return a.repoSwitch(a.withMembership(a.repoExport))
+}
+
+// memoRepoLoaded is a category's settings file as the workspace read it from origin's default
+// branch.
+type memoRepoLoaded struct {
+	c    store.MemoCategory
+	file agentAutorunFile
+}
+
+// loadRepoFile checks that the category is the member's and belongs to a repository, and reads
+// its settings file through the running workspace.
+func (a memoAPI) loadRepoFile(ctx context.Context, res *resolved, categoryID string) (memoRepoLoaded, *apiError) {
+	c, ok, err := a.store.GetCategory(ctx, categoryID)
+	if err != nil {
+		return memoRepoLoaded{}, internalErr(err)
+	}
+	if !ok || c.MembershipID != res.mv.MembershipID {
+		return memoRepoLoaded{}, &apiError{http.StatusNotFound, "not_found", "category not found"}
+	}
+	if c.Repo == "" {
+		return memoRepoLoaded{}, &apiError{http.StatusConflict, errCodeMemoQueueNoRepo, "this category belongs to no repository"}
+	}
+	if res.rt.State(ctx) != "running" {
+		return memoRepoLoaded{}, &apiError{http.StatusConflict, "workspace_not_running", "your workspace must be running to read the repository's settings"}
+	}
+	file, aerr := a.mgr.agentAutorunFile(ctx, res, c.Repo)
+	if aerr != nil {
+		return memoRepoLoaded{}, aerr
+	}
+	// The Agent shows host and path only; a token pasted into the path is not passed on either.
+	if autorunfile.LooksLikeCredential(file.Remote) {
+		file.Remote = memoRepoRemoteHidden
+	}
+	return memoRepoLoaded{c: c, file: file}, nil
+}
+
+// memoRepoEntry parses the file and answers the category's entry with every finding about the
+// file and the entry; e is nil when the file does not name the category.
+func memoRepoEntry(content, category string) (e *autorunfile.Entry, errs, warns []autorunfile.Issue) {
+	parsed := autorunfile.Parse([]byte(content))
+	errs = append(errs, parsed.Errors...)
+	e = parsed.Categories[category]
+	if e != nil {
+		errs = append(errs, e.Errors...)
+		warns = append(warns, e.Warnings...)
+		if v, ok := e.Values["instruction_file"]; ok {
+			warns = append(warns, autorunfile.Issue{Line: v.Line, Key: "instruction_file",
+				Reason: "instruction_file is not read yet; the instruction is left as it is"})
+		}
+	}
+	return e, errs, warns
+}
+
 // repoSettings answers how the repository's settings file differs from the member's settings for
 // one category. It needs the workspace running: the file is read there, from origin.
 func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resolved) {
 	ctx := r.Context()
-	c, ok, err := a.store.GetCategory(ctx, r.PathValue("categoryId"))
-	if err != nil {
-		writeAPIErr(w, internalErr(err))
+	ld, aerr := a.loadRepoFile(ctx, res, r.PathValue("categoryId"))
+	if aerr != nil {
+		writeAPIErr(w, aerr)
 		return
 	}
-	if !ok || c.MembershipID != res.mv.MembershipID {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "category not found"})
-		return
-	}
-	if c.Repo == "" {
-		writeAPIErr(w, &apiError{http.StatusConflict, errCodeMemoQueueNoRepo, "this category belongs to no repository"})
-		return
-	}
+	c, file := ld.c, ld.file
 	qs, err := a.store.ListMemoQueues(ctx, res.mv.MembershipID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -398,47 +477,303 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 			break
 		}
 	}
-	if res.rt.State(ctx) != "running" {
-		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_not_running", "your workspace must be running to read the repository's settings"})
-		return
-	}
-	file, aerr := a.mgr.agentAutorunFile(ctx, res, c.Repo)
-	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
-	// The Agent shows host and path only; a token pasted into the path is not passed on either.
-	if autorunfile.LooksLikeCredential(file.Remote) {
-		file.Remote = memoRepoRemoteHidden
-	}
 	out := memoRepoSettingsWire{CategoryID: c.ID, Repo: c.Repo, Category: c.Name, Path: autorunfile.Path,
 		Remote: file.Remote, Branch: file.Branch, Commit: file.Commit, Found: file.Found, Queue: hasQueue,
+		ApprovedCommit: cur.RepoCommit, ApprovedAt: cur.RepoApprovedAt,
 		Errors: []autorunfile.Issue{}, Warnings: []autorunfile.Issue{}, Diffs: []memoRepoDiff{}}
 	if !file.Found {
 		writeJSON(w, http.StatusOK, out)
 		return
 	}
-	parsed := autorunfile.Parse([]byte(file.Content))
-	out.Errors = append(out.Errors, parsed.Errors...)
-	e := parsed.Categories[c.Name]
+	e, errs, warns := memoRepoEntry(file.Content, c.Name)
 	out.Entry = e != nil
-	if e != nil {
-		out.Errors = append(out.Errors, e.Errors...)
-		out.Warnings = append(out.Warnings, e.Warnings...)
-		if v, ok := e.Values["instruction_file"]; ok {
-			out.Warnings = append(out.Warnings, autorunfile.Issue{Line: v.Line, Key: "instruction_file",
-				Reason: "instruction_file is not read yet; the instruction is left as it is"})
+	out.Errors = append(out.Errors, errs...)
+	out.Warnings = append(out.Warnings, warns...)
+	if len(out.Errors) == 0 && e != nil {
+		res := memoRepoCompare(cur, hasQueue, e)
+		out.Warnings = append(out.Warnings, res.Warnings...)
+		out.Errors = append(out.Errors, res.Errors...)
+		if len(res.Errors) == 0 {
+			out.Diffs = res.Diffs
 		}
 	}
-	if len(out.Errors) == 0 && e != nil {
-		diffs, warns, errs := memoRepoCompare(cur, hasQueue, e)
-		out.Warnings = append(out.Warnings, warns...)
-		out.Errors = append(out.Errors, errs...)
-		if len(errs) == 0 {
-			out.Diffs = diffs
+	out.ApprovalTag = memoRepoApprovalTag(c, cur, hasQueue, out.Diffs)
+	writeJSON(w, http.StatusOK, out)
+}
+
+// memoRepoApproveIn is POST /api/memo-queues/{categoryId}/repo-settings/approve.
+type memoRepoApproveIn struct {
+	// Commit is the file's commit and ApprovalTag what the difference was taken from, both as
+	// GET .../repo-settings answered. Either having moved since answers 409 memo_queue_repo_stale:
+	// the member approves the values they saw, nothing else.
+	Commit      string `json:"commit"`
+	ApprovalTag string `json:"approvalTag"`
+	// Keys are the file keys approved, each one of the differences shown. The settings that
+	// decide when the queue fires (open_cron, open_minutes, tz, open_after) change as one: their
+	// differences are approved all together or not at all.
+	Keys []string `json:"keys"`
+}
+
+// memoRepoApprovalTag names what a difference was taken from: the category as it is named now
+// (a rename makes the file's entry for another name apply), the member's settings by their
+// content (updatedAt has one-second steps), and the difference with its values. The approval
+// recomputes it in its own transaction, so it applies exactly what the member was shown.
+func memoRepoApprovalTag(c store.MemoCategory, q store.MemoQueue, hasQueue bool, diffs []memoRepoDiff) string {
+	var settings *memoQueueIn
+	if hasQueue {
+		in := memoQueueInFrom(q)
+		settings = &in
+	}
+	if diffs == nil {
+		diffs = []memoRepoDiff{}
+	}
+	b, _ := json.Marshal(struct {
+		ID, Repo, Name string
+		Settings       *memoQueueIn
+		Diffs          []memoRepoDiff
+	}{c.ID, c.Repo, c.Name, settings, diffs})
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:16])
+}
+
+func memoRepoStale(msg string) *apiError {
+	return &apiError{http.StatusConflict, errCodeMemoQueueRepoStale, msg}
+}
+
+// repoApprove saves the file's values for the approved keys through the same validation and the
+// same write as the Console's settings PUT, and records the file's commit on the member's queue.
+// The values come from the file as the workspace reads it now, never from the request: the
+// request only names keys, so a client cannot approve a value the file does not hold.
+func (a memoAPI) repoApprove(w http.ResponseWriter, r *http.Request, res *resolved) {
+	ctx := r.Context()
+	var in memoRepoApproveIn
+	if err := json.NewDecoder(io.LimitReader(r.Body, 16<<10)).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	if !memoRepoCommitRe.MatchString(in.Commit) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "commit must be the file's commit id"})
+		return
+	}
+	if len(in.Keys) == 0 || len(in.Keys) > len(memoRepoFields) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "keys must name the settings to apply"})
+		return
+	}
+	picked := map[string]bool{}
+	for _, k := range in.Keys {
+		if _, known := memoRepoFieldByKey[k]; !known || picked[k] {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "keys must name each setting once"})
+			return
 		}
+		picked[k] = true
+	}
+	if on, err := a.mgr.store.GetTenantMemoQueues(ctx, res.mv.TenantID); err != nil || !on {
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		writeAPIErr(w, &apiError{http.StatusConflict, errCodeMemoQueuesDisabled, "your tenant has not turned memo queues on"})
+		return
+	}
+	ld, aerr := a.loadRepoFile(ctx, res, r.PathValue("categoryId"))
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	const changed = "the repository's settings file, the category or your settings changed since you looked at the difference; check it again"
+	if !ld.file.Found || ld.file.Commit != in.Commit {
+		writeAPIErr(w, memoRepoStale(changed))
+		return
+	}
+	e, errs, _ := memoRepoEntry(ld.file.Content, ld.c.Name)
+	if e == nil || len(errs) > 0 {
+		writeAPIErr(w, memoRepoStale(changed))
+		return
+	}
+	var out memoQueueDTO
+	err := a.store.MemoTx(ctx, res.mv.MembershipID, func(tx store.MemoTxOps) error {
+		// Read again behind the tenant row's lock: the switch may have been turned off while the
+		// workspace read the file, and turning it off waits for this transaction.
+		if on, err := tx.LockTenantSwitch(); err != nil {
+			return err
+		} else if !on {
+			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoQueuesDisabled, "your tenant has not turned memo queues on"})
+		}
+		c, ok, err := tx.GetCategory(ld.c.ID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return memoTxFail(&apiError{http.StatusNotFound, "not_found", "category not found"})
+		}
+		cur, existed, err := tx.GetQueue(c.ID)
+		if err != nil {
+			return err
+		}
+		full := memoRepoCompare(cur, existed, e)
+		var shownDiffs []memoRepoDiff
+		if len(full.Errors) == 0 {
+			shownDiffs = full.Diffs
+		}
+		// The entry was read under the name the category had before this transaction: a rename
+		// since then changes the tag as well.
+		if c.Name != ld.c.Name || len(full.Errors) > 0 || memoRepoApprovalTag(c, cur, existed, shownDiffs) != in.ApprovalTag {
+			return memoTxFail(memoRepoStale(changed))
+		}
+		shown := map[string]bool{}
+		openShown, openPicked := 0, 0
+		for _, d := range full.Diffs {
+			shown[d.Key] = true
+			if memoRepoOpenKeys[d.Key] {
+				openShown++
+				if picked[d.Key] {
+					openPicked++
+				}
+			}
+		}
+		for k := range picked {
+			if !shown[k] {
+				return memoTxFail(memoRepoStale("a setting you approved is no longer different; check it again"))
+			}
+		}
+		if openPicked != 0 && openPicked != openShown {
+			return memoTxFail(&apiError{http.StatusBadRequest, "bad_request",
+				"the settings that decide when the queue runs by itself are approved together"})
+		}
+		// Only the approved keys are laid over the member's settings; the window and threshold keys
+		// come as the whole group the file sets, which is what their differences showed.
+		sub := *e
+		sub.Values = map[string]autorunfile.Value{}
+		for k, v := range e.Values {
+			if picked[k] || (openPicked > 0 && memoRepoOpenKeys[k]) {
+				sub.Values[k] = v
+			}
+		}
+		part := memoRepoCompare(cur, existed, &sub)
+		if len(part.Errors) > 0 {
+			return memoTxFail(badQueueSettings(part.Errors[0].Reason))
+		}
+		saved, err := memoPutQueueTx(tx, c, res.mv.MembershipID, part.Next, part.In, cur.TidyDestinations)
+		if err != nil {
+			return err
+		}
+		if err := tx.SetQueueRepoApproval(c.ID, ld.file.Commit, saved.UpdatedAt); err != nil {
+			return err
+		}
+		out = memoQueueToDTO(saved, c)
+		return nil
+	})
+	if aerr := memoTxResult(err); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// memoRepoExportWire is GET /api/memo-queues/{categoryId}/repo-settings/export. Omitted names the
+// settings left out because their value looks like a credential: a file is committed, and a
+// secret never goes into one.
+type memoRepoExportWire struct {
+	Path     string              `json:"path"`
+	Category string              `json:"category"`
+	YAML     string              `json:"yaml"`
+	Omitted  []autorunfile.Issue `json:"omitted"`
+}
+
+// memoRepoExportValues are the member's settings as file values: every key a file may set, except
+// the ones only the Console may set to the value q holds, and the window or threshold keys q does
+// not use. Comparing the result with q finds no difference (TestMemoRepoExportRoundTrips).
+func memoRepoExportValues(q store.MemoQueue) (vals []autorunfile.Value, omitted []autorunfile.Issue) {
+	n, aerr := memoQueueInFrom(q).validate()
+	if aerr != nil {
+		n = q
+	}
+	for _, f := range memoRepoFields {
+		switch f.key {
+		case "open_cron", "open_minutes", "tz":
+			if n.OpenCron == "" {
+				continue
+			}
+		case "open_after":
+			if n.OpenAfter == 0 {
+				continue
+			}
+		case "worktree":
+			if !n.Worktree {
+				continue
+			}
+		case "tidy":
+			if n.Tidy {
+				continue
+			}
+		}
+		v := autorunfile.Value{Key: f.key}
+		switch x := f.get(n).(type) {
+		case string:
+			if autorunfile.LooksLikeCredential(x) {
+				omitted = append(omitted, autorunfile.Issue{Key: f.key, Reason: f.key + " looks like a credential and is left out"})
+				continue
+			}
+			v.Str = x
+		case int:
+			v.Int = x
+		case float64:
+			v.Num = x
+		case bool:
+			v.Bool = x
+		}
+		vals = append(vals, v)
+	}
+	return vals, omitted
+}
+
+// repoExport writes the member's settings of one category as a settings file to start the
+// repository's from. Nothing is read from the workspace.
+func (a memoAPI) repoExport(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	ctx := r.Context()
+	c, ok, err := a.store.GetCategory(ctx, r.PathValue("categoryId"))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !ok || c.MembershipID != mv.MembershipID {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "category not found"})
+		return
+	}
+	qs, err := a.store.ListMemoQueues(ctx, mv.MembershipID)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// The name becomes a key of the file: a token pasted into it must not be written, and the
+	// answer does not repeat it.
+	if autorunfile.LooksLikeCredential(c.Name) {
+		writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, errCodeMemoQueueRepoExportName,
+			"the category's name looks like a credential; rename the category before exporting"})
+		return
+	}
+	for _, q := range qs {
+		if q.CategoryID != c.ID {
+			continue
+		}
+		vals, omitted := memoRepoExportValues(q)
+		b, err := autorunfile.Format(c.Name, vals)
+		if errors.Is(err, autorunfile.ErrTooLarge) {
+			writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, errCodeMemoQueueRepoExportSize,
+				fmt.Sprintf("these settings make a file larger than %d bytes, which a repository's settings file cannot be", autorunfile.MaxBytes)})
+			return
+		}
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		if omitted == nil {
+			omitted = []autorunfile.Issue{}
+		}
+		writeJSON(w, http.StatusOK, memoRepoExportWire{Path: autorunfile.Path, Category: c.Name, YAML: string(b), Omitted: omitted})
+		return
+	}
+	writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "this category has no auto-run settings to export"})
 }
 
 // memoRepoRemoteHidden is the Agent's own text for a remote it does not show.

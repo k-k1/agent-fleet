@@ -259,6 +259,9 @@ const (
 	// Repository settings of a queue (#4881, memo_queue_repo.go).
 	errCodeMemoQueueNoRepo         = "memo_queue_no_repo"
 	errCodeMemoQueueRepoUnreadable = "memo_queue_repo_unreadable"
+	errCodeMemoQueueRepoStale      = "memo_queue_repo_stale"
+	errCodeMemoQueueRepoExportName = "memo_queue_repo_export_name"
+	errCodeMemoQueueRepoExportSize = "memo_queue_repo_export_size"
 
 	// Route policy administration (ADR 0138). internal/routepolicysrv emits the same literals;
 	// declaring them here is what puts them in TestCPEmittedErrCodesHaveConsoleCatalogEntry's

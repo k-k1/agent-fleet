@@ -48,7 +48,8 @@ const memo = (over: Partial<Memo>): Memo => ({
 
 describe("readMemoQueues", () => {
   it("rebuilds every list, so a JSON null where an array is expected cannot reach a .map", () => {
-    expect(readMemoQueues({ tenantEnabled: true, queues: null })).toEqual({ tenantEnabled: true, queues: [] });
+    expect(readMemoQueues({ tenantEnabled: true, queues: null })).toEqual({ tenantEnabled: true, repoSettings: false, queues: [] });
+    expect(readMemoQueues({ tenantEnabled: true, repoSettings: true, queues: [] })?.repoSettings).toBe(true);
     expect(readMemoQueues({ queues: [null, 5, { categoryId: "" }, { categoryId: "c1" }] })?.queues.map((q) => q.categoryId)).toEqual(["c1"]);
   });
   it("answers null for a failed read, so the caller keeps what it had", () => {

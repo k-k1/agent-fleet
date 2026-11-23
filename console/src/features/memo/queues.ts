@@ -141,7 +141,7 @@ export function readMemoQueues(raw: unknown): MemoQueuesWire | null {
     const r = readQueue(q);
     if (r) queues.push(r);
   }
-  return { tenantEnabled: raw.tenantEnabled === true, queues };
+  return { tenantEnabled: raw.tenantEnabled === true, repoSettings: raw.repoSettings === true, queues };
 }
 
 /** GET .../deliveries, normalised the same way. null = the read failed. */

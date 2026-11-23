@@ -103,6 +103,10 @@ type MemoQueue struct {
 	Enabled              bool
 	Generation           int
 	CreatedAt, UpdatedAt string
+	// RepoCommit is the commit of the repository's settings file whose values the member last
+	// approved for this queue, RepoApprovedAt when (#4881). Only SetQueueRepoApproval writes
+	// them: a settings PUT keeps them.
+	RepoCommit, RepoApprovedAt string
 }
 
 // MemoQueueStore is the queue half of the memo store.
@@ -171,6 +175,8 @@ type MemoTxOps interface {
 	// category row with that name. The unfiled bucket has no row and is never a queue.
 	QueueOf(repo, category string) (MemoQueue, bool, error)
 	PutQueue(q MemoQueue) error
+	// SetQueueRepoApproval records the settings file commit the member approved for a queue.
+	SetQueueRepoApproval(categoryID, commit, at string) error
 	DeleteQueue(categoryID string) error
 	// SetQueueDraining writes the draining state inside the transaction of a fire.
 	SetQueueDraining(categoryID string, on bool) error
@@ -407,7 +413,8 @@ func (t memoTx) DeleteCategory(id string) error {
 const memoQueueCols = `SELECT category_id, membership_id, instruction, agent_kind, model, effort, route, spend_cap_usd,
 	worktree, max_active, batch, enabled, generation, created_at, updated_at, max_task_hours,
 	open_cron, open_minutes, tz, open_after, max_fires_per_day, draining, paused, paused_at, paused_reason, breaker_after,
-	no_report_at, no_refs_at, accept_own_sessions, tidy, tidy_destinations, no_tidy_at, continuation_max FROM memo_queue`
+	no_report_at, no_refs_at, accept_own_sessions, tidy, tidy_destinations, no_tidy_at, continuation_max,
+	repo_commit, repo_approved_at FROM memo_queue`
 
 func scanMemoQueue(row scanner) (MemoQueue, error) {
 	var q MemoQueue
@@ -416,7 +423,8 @@ func scanMemoQueue(row scanner) (MemoQueue, error) {
 	err := row.Scan(&q.CategoryID, &q.MembershipID, &q.Instruction, &q.AgentKind, &q.Model, &q.Effort, &q.Route,
 		&q.SpendCapUSD, &worktree, &q.MaxActive, &q.Batch, &enabled, &q.Generation, &q.CreatedAt, &q.UpdatedAt, &q.MaxTaskHours,
 		&q.OpenCron, &q.OpenMinutes, &q.TZ, &q.OpenAfter, &q.MaxFiresPerDay, &draining, &paused, &q.PausedAt, &q.PausedReason,
-		&q.BreakerAfter, &q.NoReportAt, &q.NoRefsAt, &acceptOwn, &tidy, &dests, &q.NoTidyAt, &q.ContinuationMax)
+		&q.BreakerAfter, &q.NoReportAt, &q.NoRefsAt, &acceptOwn, &tidy, &dests, &q.NoTidyAt, &q.ContinuationMax,
+		&q.RepoCommit, &q.RepoApprovedAt)
 	q.Worktree, q.Enabled, q.Draining, q.Paused = worktree != 0, enabled != 0, draining != 0, paused != 0
 	q.AcceptOwnSessions = acceptOwn != 0
 	q.Tidy, q.TidyDestinations = tidy != 0, decodeIDList(dests)
@@ -463,6 +471,12 @@ func (t memoTx) PutQueue(q MemoQueue) error {
 		b2i(q.Worktree), q.MaxActive, q.Batch, b2i(q.Enabled), q.Generation, q.CreatedAt, q.UpdatedAt, q.MaxTaskHours,
 		q.OpenCron, q.OpenMinutes, q.TZ, q.OpenAfter, q.MaxFiresPerDay, b2i(q.AcceptOwnSessions),
 		b2i(q.Tidy), encodeIDList(q.TidyDestinations), q.ContinuationMax)
+	return err
+}
+
+func (t memoTx) SetQueueRepoApproval(categoryID, commit, at string) error {
+	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_queue SET repo_commit=?, repo_approved_at=? WHERE category_id=? AND membership_id=?`,
+		commit, at, categoryID, t.mid)
 	return err
 }
 

@@ -23,6 +23,9 @@ type fakeAutorunAgent struct {
 	status int
 	body   string
 	paths  []string
+	// onServe runs before each answer, outside the lock: a test changes state while the
+	// Control Plane waits for the workspace.
+	onServe func()
 }
 
 func (a *fakeAutorunAgent) answer(status int, body string) {
@@ -50,6 +53,12 @@ func repoEnv(t *testing.T, state string) (*inboxEnv, *fakeAutorunAgent) {
 	e.mgr.memoRepoSettings = true
 	a := &fakeAutorunAgent{status: http.StatusOK}
 	a.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.mu.Lock()
+		hook := a.onServe
+		a.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		a.paths = append(a.paths, r.Method+" "+r.URL.EscapedPath())

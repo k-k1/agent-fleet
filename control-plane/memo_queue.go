@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -603,8 +604,11 @@ func (in memoQueueIn) validate() (store.MemoQueue, *apiError) {
 // memoQueuesWire is GET /api/memo-queues: the member's queues and whether their tenant lets
 // them create one (tenant.memo_queues). Existing queues are listed whatever the switch says.
 type memoQueuesWire struct {
-	TenantEnabled bool           `json:"tenantEnabled"`
-	Queues        []memoQueueDTO `json:"queues"`
+	TenantEnabled bool `json:"tenantEnabled"`
+	// RepoSettings is whether the repository settings routes are on (AF_MEMO_QUEUE_REPO_SETTINGS):
+	// the Console offers the check and the export only then.
+	RepoSettings bool           `json:"repoSettings"`
+	Queues       []memoQueueDTO `json:"queues"`
 }
 
 // listQueues is also served on the token face (GET /internal/memo-queues), read-only.
@@ -668,7 +672,7 @@ func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Iden
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	writeJSON(w, http.StatusOK, memoQueuesWire{TenantEnabled: on, Queues: out})
+	writeJSON(w, http.StatusOK, memoQueuesWire{TenantEnabled: on, RepoSettings: a.mgr.memoRepoSettings, Queues: out})
 }
 
 // putQueue creates or replaces a category's queue settings. A category that becomes a queue
@@ -704,49 +708,11 @@ func (a memoAPI) putQueue(w http.ResponseWriter, r *http.Request, _ store.Identi
 		if !ok {
 			return memoTxFail(&apiError{http.StatusNotFound, "not_found", "category not found"})
 		}
-		cur, existed, err := tx.GetQueue(c.ID)
+		saved, err := memoPutQueueTx(tx, c, mv.MembershipID, q, in, nil)
 		if err != nil {
 			return err
 		}
-		// A destination is another queue of the member's: a run could not move a message out of a
-		// queue into itself, and an id that is no queue of theirs names nothing.
-		for _, id := range q.TidyDestinations {
-			if _, isQ, err := tx.GetQueue(id); err != nil {
-				return err
-			} else if !isQ || id == c.ID {
-				return memoTxFail(badQueueSettings("tidyDestinations must name other queues of yours"))
-			}
-		}
-		now := store.NowTS()
-		q.CategoryID, q.MembershipID, q.UpdatedAt = c.ID, mv.MembershipID, now
-		if existed {
-			q.CreatedAt, q.Generation, q.NoTidyAt = cur.CreatedAt, cur.Generation, cur.NoTidyAt
-			// A client that does not know the field (an older Console tab) must not turn the member's
-			// 0 back into the default: an omitted value keeps what is stored.
-			if in.ContinuationMax == nil {
-				q.ContinuationMax = cur.ContinuationMax
-			}
-		} else {
-			q.CreatedAt = now
-			if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, false, true, false, memoViaConsole); err != nil {
-				return err
-			}
-		}
-		if err := tx.PutQueue(q); err != nil {
-			return err
-		}
-		if existed {
-			// New defaults may leave a message's recipe unable to create a run: it is held now, so the
-			// list's counts (SQL) agree at once with what a fire would claim.
-			rows, err := tx.ListMemosIn(c.Repo, c.Name)
-			if err != nil {
-				return err
-			}
-			if _, err := memoHoldInvalidRecipes(tx, q, rows); err != nil {
-				return err
-			}
-		}
-		out = memoQueueToDTO(q, c)
+		out = memoQueueToDTO(saved, c)
 		return nil
 	})
 	if aerr := memoTxResult(err); aerr != nil {
@@ -754,6 +720,60 @@ func (a memoAPI) putQueue(w http.ResponseWriter, r *http.Request, _ store.Identi
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// memoPutQueueTx saves validated settings q (from in.validate) for category c inside a MemoTx and
+// answers the row as stored. Every write of queue settings goes through it: the Console's PUT and
+// the approval of a repository's settings file. kept are tidy destinations the write carries over
+// as stored, unchecked: the approval does not touch the destinations, and one whose settings were
+// removed since still names a category a tidy offers (memoTidyDestinations).
+func memoPutQueueTx(tx store.MemoTxOps, c store.MemoCategory, membershipID string, q store.MemoQueue, in memoQueueIn, kept []string) (store.MemoQueue, error) {
+	cur, existed, err := tx.GetQueue(c.ID)
+	if err != nil {
+		return store.MemoQueue{}, err
+	}
+	// A destination is another queue of the member's: a run could not move a message out of a
+	// queue into itself, and an id that is no queue of theirs names nothing.
+	for _, id := range q.TidyDestinations {
+		if slices.Contains(kept, id) && id != c.ID {
+			continue
+		}
+		if _, isQ, err := tx.GetQueue(id); err != nil {
+			return store.MemoQueue{}, err
+		} else if !isQ || id == c.ID {
+			return store.MemoQueue{}, memoTxFail(badQueueSettings("tidyDestinations must name other queues of yours"))
+		}
+	}
+	now := store.NowTS()
+	q.CategoryID, q.MembershipID, q.UpdatedAt = c.ID, membershipID, now
+	if existed {
+		q.CreatedAt, q.Generation, q.NoTidyAt = cur.CreatedAt, cur.Generation, cur.NoTidyAt
+		// A client that does not know the field (an older Console tab) must not turn the member's
+		// 0 back into the default: an omitted value keeps what is stored.
+		if in.ContinuationMax == nil {
+			q.ContinuationMax = cur.ContinuationMax
+		}
+	} else {
+		q.CreatedAt = now
+		if err := memoMoveBucket(tx, c.Repo, c.Name, c.Name, false, true, false, memoViaConsole); err != nil {
+			return store.MemoQueue{}, err
+		}
+	}
+	if err := tx.PutQueue(q); err != nil {
+		return store.MemoQueue{}, err
+	}
+	if existed {
+		// New defaults may leave a message's recipe unable to create a run: it is held now, so the
+		// list's counts (SQL) agree at once with what a fire would claim.
+		rows, err := tx.ListMemosIn(c.Repo, c.Name)
+		if err != nil {
+			return store.MemoQueue{}, err
+		}
+		if _, err := memoHoldInvalidRecipes(tx, q, rows); err != nil {
+			return store.MemoQueue{}, err
+		}
+	}
+	return q, nil
 }
 
 // deleteQueue removes a category's settings: its messages leave the queue and are plain notes
