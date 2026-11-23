@@ -70,6 +70,12 @@ describe("bare button scopes", () => {
     let out = "";
     let i = 0;
     while (i < css.length) {
+      // An escape outside a string (`.foo\'bar`) is part of an identifier: take it with its target.
+      if (css[i] === "\\") {
+        out += css.slice(i, i + 2);
+        i += 2;
+        continue;
+      }
       if (css[i] === '"' || css[i] === "'") {
         const end = skipString(i);
         out += css.slice(i, end);
@@ -101,6 +107,7 @@ describe("bare button scopes", () => {
     expect(rules(".a::before { content: '@' } .b { color: red }")).toEqual([".a::before", ".b"]);
     expect(rules('.a { content: "\\"@" } .b { color: red }')).toEqual([".a", ".b"]);
     expect(rules("@media (hover: hover) { .a { color: red } } .b { color: red }")).toEqual([".b"]);
+    expect(rules(".foo\\'bar { color: red } @media (hover: hover) { .wanted { color: red } }")).toEqual([".foo\\'bar"]);
     expect(rules('@import "x;y.css"; .b { color: red }')).toEqual([".b"]);
     expect(rules('@media (x) { .a { content: "}" } } .b { color: red }')).toEqual([".b"]);
   });
