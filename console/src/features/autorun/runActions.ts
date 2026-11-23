@@ -73,9 +73,20 @@ function leavesRunSessions(folder: string, sessions: Session[], gone: ReadonlySe
   return sessions.some((t) => sessionFolder(t) !== folder && !gone.has(t.name) && roots.has(runRootName(t, byName)));
 }
 
+/** A run that ended without a PR (it skipped an issue, or ended deferred) leaves a worktree that
+ *  holds nothing when it is clean and its branch has no commit the parent lacks. Anything else may
+ *  be work a person wants, so it is not offered. Unknown integration counts as not safe. */
+function nothingToLose(run: RunRow, repos: Repo[], sessions: Session[]): boolean {
+  const wt = createdWorktree(run, repos, sessions)?.repo;
+  if (!wt) return false;
+  const rel = wt.integration?.relation;
+  return (rel === "same" || rel === "contained") && wt.dirty !== true && (wt.ahead ?? 0) === 0 && (wt.integration?.worktreeUnique ?? 0) === 0;
+}
+
 /** "Clear finished runs": per ended run, the stopped sessions to archive (what the run started
  *  first, the run itself last, so a failure part-way leaves the run listed and retryable), and one
- *  delete plan over the worktrees of runs whose PR was merged. A worktree another session also
+ *  delete plan over the worktrees of runs whose PR was merged, and of runs without a PR whose
+ *  worktree is clean and fully contained in its parent. A worktree another session also
  *  lives in is not offered, and its sessions are archived like any other copy's. Session state is
  *  read from `sessions`, so call it with the latest list. */
 export function planClearFinished(
@@ -94,7 +105,7 @@ export function planClearFinished(
   const offeredWts: RepoTreeNode[] = [];
   const offered = new Set<string>();
   for (const r of ended) {
-    if (r.pr?.state !== "merged") continue;
+    if (r.pr?.state !== "merged" && !(r.pr == null && nothingToLose(r, repos, sessions))) continue;
     const wt = createdWorktree(r, repos, sessions);
     if (!wt || offered.has(wt.repo.name)) continue;
     if (!sessionsInFolder(sessions, wt.repo.name).every((s) => mine.has(s.name))) continue;
