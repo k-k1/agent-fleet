@@ -812,6 +812,33 @@ describe("deliveries and Run now", () => {
     });
   });
 
+  describe("run history names its work item (#4877)", () => {
+    it("shows the work item keys and the start of the note on the row, with the return button before them", async () => {
+      servedMemos = [
+        aMemo({ id: "a", state: "delivered", body: "Fix the login redirect\nmore text", reference: { provider: "github", key: "o/r#12", url: "" } }),
+      ];
+      servedDeliveries = [{ id: "d1", state: "closed", outcome: "clean", session: "run-1", messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "t2" }];
+      await render();
+      await openDeliveries();
+      const row = must(dialog().querySelector(".memo-d-row"), "row");
+      const work = must(row.querySelector<HTMLElement>(".memo-d-work"), "work item");
+      expect(work.textContent).toContain("o/r#12");
+      expect(work.textContent).toContain("Fix the login redirect");
+      expect(work.textContent).not.toContain("more text");
+      expect(work.title).toContain("o/r#12");
+      const btn = [...row.querySelectorAll("button")].find((b) => b.textContent === t("memo.d_return"));
+      expect(btn).toBeTruthy();
+      expect(btn!.compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+    it("shows nothing for a run whose notes left the list", async () => {
+      servedMemos = [];
+      servedDeliveries = [{ id: "d1", state: "closed", outcome: "clean", session: "run-1", messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "t2" }];
+      await render();
+      await openDeliveries();
+      expect(dialog().querySelector(".memo-d-work")).toBeNull();
+    });
+  });
+
   describe("when Run now is refused", () => {
     const pressFire = async () => click(headMenuItem({ cls: "memo-cat-run" }));
     const noSlot = { error: { code: "memo_queue_no_slot", message: "every slot of this queue is taken (2 of 2)" } };
@@ -1900,6 +1927,47 @@ describe("the category head", () => {
     expect(memoCategoryUpdateMock).toHaveBeenCalledWith("c2", { position: 0 });
     expect(memoCategoryUpdateMock).toHaveBeenCalledWith("c1", { position: 1 });
     expect(fold()).toEqual(before);
+  });
+});
+
+describe("Return this run to the queue in the memo menu (#4877)", () => {
+  const rowMenuBtn = () => must(document.querySelector<HTMLElement>(".memo-row .memo-menu-btn"), "row menu button");
+  const retItem = () => document.querySelector<HTMLButtonElement>(".ui-menu .memo-menu-returnrun");
+  const delivered = () => aMemo({ id: "a", state: "delivered", deliveryId: "d1" });
+  const run = (over: Record<string, unknown> = {}) => ({
+    id: "d1", state: "closed", outcome: "clean", session: "run-1", messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "t2", ...over,
+  });
+  const openMenu = async () => {
+    await render();
+    await click(must(document.querySelector(".memo-sent-fold"), "history fold"));
+    await click(rowMenuBtn());
+  };
+
+  it("returns the run of a delivered memo after confirming", async () => {
+    servedMemos = [delivered()];
+    servedDeliveries = [run()];
+    await openMenu();
+    const item = must(retItem(), "return item");
+    expect(item.disabled).toBe(false);
+    await click(item);
+    await click(must([...document.querySelectorAll<HTMLElement>(".ui-confirm-actions button")].find((b) => b.textContent === t("memo.d_return_confirm")), "confirm"));
+    expect(memoQueueDeliveryReturn).toHaveBeenCalledWith("c1", "d1");
+  });
+  it("is disabled with the reason when the run cannot return", async () => {
+    servedMemos = [delivered()];
+    servedDeliveries = [run({ returnedAt: "2026-11-20T10:00:00Z" })];
+    await openMenu();
+    const item = must(retItem(), "return item");
+    expect(item.disabled).toBe(true);
+    expect(item.textContent).toContain(t("memo.menu_return_run_no"));
+    await click(item);
+    expect(memoQueueDeliveryReturn).not.toHaveBeenCalled();
+  });
+  it("is absent on a memo that no run delivered, and when the run cannot be read", async () => {
+    servedMemos = [aMemo({ id: "p", state: "pending", provenance: "member" })];
+    await render();
+    await click(rowMenuBtn());
+    expect(retItem()).toBeNull();
   });
 });
 

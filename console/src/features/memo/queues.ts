@@ -993,6 +993,24 @@ export function canReturnRun(d: Pick<MemoDelivery, "state" | "outcome" | "return
   return d.outcome !== "deferred" || d.defer?.result !== "applied" || d.returnBlocked.length > 0;
 }
 
+/** What a run was for: the work item keys its notes point at, and a one-line title (the start of the
+ *  first note's text; a reference carries no cached title). Only notes still in the list count, so a
+ *  run whose notes were cleared names nothing. */
+export function runWorkItems(
+  messages: readonly Pick<Memo, "id" | "body" | "reference">[],
+  d: Pick<MemoDelivery, "messageIds">,
+): { keys: string[]; title: string } {
+  const keys: string[] = [];
+  let title = "";
+  for (const m of messages) {
+    if (!d.messageIds.includes(m.id)) continue;
+    const k = m.reference && typeof m.reference.key === "string" ? m.reference.key : "";
+    if (k && !keys.includes(k)) keys.push(k);
+    if (!title) title = (m.body ?? "").trim().split("\n")[0].slice(0, 120);
+  }
+  return { keys, title };
+}
+
 /** "waiting until <time>" for a note its run handed back, while that time is still ahead. */
 export function deferredUntil(m: Pick<Memo, "state" | "notBefore">, now: number = Date.now()): string | null {
   if (m.state !== "pending" || !m.notBefore) return null;
