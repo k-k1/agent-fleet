@@ -15,6 +15,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 
 import { useLayoutEffect } from "react";
 import { useConsolRun } from "./memoryProposals.tsx";
+import { setTenant } from "../../../core/api/client.ts";
 import { useMemoryStore } from "../../memory/store.ts";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
@@ -268,6 +269,23 @@ describe("useConsolRun", () => {
     const { done } = await confirmRun();
     await act(async () => done);
     expect(apiJSON).toHaveBeenCalledWith(expect.stringContaining("/run"), "POST", {}, { "X-AF-Tenant": "a" });
+  });
+
+  // The ticket dies only when React re-renders after a switch; the selection itself changes first.
+  // With no tenant the write carries no header, so the wrapper would fill in the new selection.
+  it("sends no write when the selection changes before the hook re-renders", async () => {
+    api.mockResolvedValue(status(false));
+    await render(true, "");
+    apiJSON.mockResolvedValue({ ok: true });
+    const { done } = await openRun();
+    setTenant("beta");
+    try {
+      await confirm();
+      await act(async () => done);
+      expect(apiJSON).not.toHaveBeenCalled();
+    } finally {
+      setTenant("");
+    }
   });
 
   it("re-reads after run now", async () => {
