@@ -400,39 +400,35 @@ describe("a refused save", () => {
     });
   };
 
-  it("keeps the editor open when text was typed while the request was out", async () => {
+  it("locks the editor while the request is out, and closes it on success", async () => {
     servedCats = [queueCat];
     servedMemos = [aMemo({ id: "me", body: "the edited one", state: "held" })];
     await renderSection();
     await openEditor("the edited one");
+    await typeBody("the edited one, reworded");
     const answer = slowSave();
     await click(btn(editRow(), t("memo.save")));
-    await typeBody("the edited one, and more");
+    expect(editRow().querySelector<HTMLFieldSetElement>(".memo-edit-lock")!.disabled).toBe(true);
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenCalledTimes(1);
     await answer({});
     await settle();
-    expect(editRow()).not.toBeNull();
-    expect(editRow().querySelector<HTMLTextAreaElement>(".memo-edit-text")!.value).toBe("the edited one, and more");
+    expect(document.querySelector(".memo-row.editing")).toBeNull();
   });
 
-  it("does not let a late answer close or mark an edit begun after a cancel", async () => {
+  it("unlocks the editor with the draft after a refusal that arrives late", async () => {
     servedCats = [queueCat];
     servedMemos = [aMemo({ id: "me", body: "the edited one", state: "held" })];
     await renderSection();
     await openEditor("the edited one");
+    await typeBody("the edited one, reworded");
     const answer = slowSave();
     await click(btn(editRow(), t("memo.save")));
-    await click(btn(editRow(), t("common.cancel")));
-    await openEditor("the edited one");
-    await typeBody("a fresh draft");
     await answer({ error: { code: "memo_locked", message: "english" } });
     await settle();
-    expect(editRow().querySelector("[role=alert]")).toBeNull();
-    expect(editRow().querySelector<HTMLTextAreaElement>(".memo-edit-text")!.value).toBe("a fresh draft");
-    const second = slowSave();
-    await click(btn(editRow(), t("memo.save")));
-    await second({});
-    await settle();
-    expect(document.querySelector(".memo-row.editing")).toBeNull();
+    expect(editRow().querySelector<HTMLFieldSetElement>(".memo-edit-lock")!.disabled).toBe(false);
+    expect(editRow().querySelector<HTMLTextAreaElement>(".memo-edit-text")!.value).toBe("the edited one, reworded");
+    expect(editRow().querySelector("[role=alert]")).not.toBeNull();
   });
 
   it("keeps the editor open with the text when the request itself fails", async () => {

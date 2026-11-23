@@ -1885,10 +1885,9 @@ function MemoRow(props: MemoRowProps) {
   // The last refusal of a save; the editor stays open with the draft until a save goes through.
   const [refusal, setRefusal] = useState<SaveRefusal | null>(null);
   const [saving, setSaving] = useState(false);
-  // An answer applies only to the edit and the draft it was sent for: a cancel and re-edit, or a
-  // keystroke while the request is out, must neither be closed nor overwritten by it.
+  // An answer applies only to the edit it was sent for: a cancel and re-edit while the request is out
+  // must neither be closed nor overwritten by it.
   const editGen = useRef(0);
-  const draftRev = useRef(0);
   const savingRef = useRef(false);
   const editingNow = useRef(editing);
   editingNow.current = editing;
@@ -1955,7 +1954,6 @@ function MemoRow(props: MemoRowProps) {
     // there would be refused, so it is not sent.
     const recipeChange = props.recipeAgent === undefined || !recipeApplies ? {} : recipePatch(recipeBase, recipe);
     const gen = editGen.current;
-    const rev = draftRev.current;
     savingRef.current = true;
     setSaving(true);
     const answer = await props.onSave(body, cat, clearRef, afterChanged(), startAfter, Object.keys(recipeChange).length > 0 ? recipeChange : undefined);
@@ -1963,8 +1961,10 @@ function MemoRow(props: MemoRowProps) {
     savingRef.current = false;
     setSaving(false);
     setRefusal(answer);
-    // Closed only when the draft is still what was sent; text typed meanwhile stays in the editor.
-    if (!answer && rev === draftRev.current && editingNow.current) props.onCancelEdit();
+    // The draft cannot change while the request is out (the editor is locked), so what was sent is
+    // what is stored and the editor can close.
+    if (!answer && editingNow.current) props.onCancelEdit();
+    else requestAnimationFrame(() => taRef.current?.focus());
   };
   // The recipe as it was when the edit began is the baseline: a refresh that brings another device's
   // change must neither be overwritten by a save of the text nor discard what is being typed.
@@ -2011,16 +2011,17 @@ function MemoRow(props: MemoRowProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the start of an edit resets it
   }, [editing]);
 
-  // Any change of the draft retires the refusal shown for the one before it, and marks the draft as
-  // no longer the one a request in flight was sent for.
+  // Any change of the draft retires the refusal shown for the one before it.
   useEffect(() => {
-    draftRev.current++;
     setRefusal(null);
   }, [body, cat, clearRef, after, start, recipe]);
 
   if (editing) {
     return (
       <div className="memo-row editing">
+        {/* Locked while a save is out: text typed meanwhile would be neither sent nor kept once the saved
+            memo is reloaded. */}
+        <fieldset className="memo-edit-lock" disabled={saving}>
         <div className="memo-edit">
           {ref && (
             <div className="memo-edit-ref">
@@ -2135,6 +2136,7 @@ function MemoRow(props: MemoRowProps) {
           )}
           <div className="memo-edit-hint">{m.kind === "file" ? tr("memo.edit_hint_file") : tr("memo.edit_hint")}</div>
         </div>
+        </fieldset>
       </div>
     );
   }

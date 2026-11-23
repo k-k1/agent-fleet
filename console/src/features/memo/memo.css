@@ -1719,3 +1719,12 @@ button.memo-reflink-key {
   font-size: 11px;
   color: var(--muted);
 }
+
+/* Only locks the editor's controls while a save is out; it must not take part in the layout. */
+.memo-edit-lock {
+  display: contents;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
