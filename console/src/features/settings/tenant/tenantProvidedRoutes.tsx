@@ -98,11 +98,11 @@ export function useProvided<T>(path: string, parse: (d: unknown) => T | null, li
 
 /** useGuardedSave runs one save: re-check that what was loaded is still what is stored, PUT,
  *  and keep a refusal on the page with the edits. onSaved gets the CP's answer (its warnings). */
-export function useGuardedSave(onSaved: (res: { warnings?: string[] }) => void) {
+export function useGuardedSave(onSaved: (res: { warnings?: unknown }) => void) {
   const tr = useT();
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
-  const submit = async (unchanged: () => Promise<boolean | null>, put: () => Promise<Reply<{ warnings?: string[] }> | null>) => {
+  const submit = async (unchanged: () => Promise<boolean | null>, put: () => Promise<Reply<{ warnings?: unknown }> | null>) => {
     setBusy(true);
     setRefusal(null);
     try {
