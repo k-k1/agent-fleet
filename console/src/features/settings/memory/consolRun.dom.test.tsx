@@ -15,6 +15,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 
 import { useLayoutEffect } from "react";
 import { useConsolRun } from "./memoryProposals.tsx";
+import { setTenant } from "../../../core/api/client.ts";
 import { useMemoryStore } from "../../memory/store.ts";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
@@ -40,6 +41,8 @@ function Layout({ during }: { during?: () => void }) {
   return null;
 }
 async function render(active: boolean, tenant = "a", reload = 0, during?: () => void) {
+  // The selection and the tenant the screen shows agree, as they do once a switch has rendered.
+  setTenant(tenant);
   await act(async () =>
     root!.render(
       <ToastProvider>
@@ -60,6 +63,7 @@ beforeEach(() => {
   root = createRoot(host);
 });
 afterEach(async () => {
+  setTenant("");
   if (root) await act(async () => root!.unmount());
   host?.remove();
   root = host = null;
@@ -260,6 +264,41 @@ describe("useConsolRun", () => {
       expect(api.mock.calls.length).toBe(calls);
     });
   }
+
+  it("sends the write to the tenant that was confirmed", async () => {
+    api.mockResolvedValue(status(false));
+    await render(true, "a");
+    apiJSON.mockResolvedValue({ ok: true });
+    const { done } = await confirmRun();
+    await act(async () => done);
+    expect(apiJSON).toHaveBeenCalledWith(expect.stringContaining("/run"), "POST", {}, { "X-AF-Tenant": "a" });
+  });
+
+  // The ticket dies only when React re-renders after a switch; the selection itself changes first.
+  // With no tenant the write carries no header, so the wrapper would fill in the new selection.
+  it("opens no dialog when the selection moved before the hook re-rendered", async () => {
+    api.mockResolvedValue(status(false));
+    await render(true, "");
+    setTenant("beta");
+    await openRun();
+    expect(document.body.querySelector(".ui-confirm-actions")).toBeNull();
+    expect(apiJSON).not.toHaveBeenCalled();
+  });
+
+  it("sends no write when the selection changes before the hook re-renders", async () => {
+    api.mockResolvedValue(status(false));
+    await render(true, "");
+    apiJSON.mockResolvedValue({ ok: true });
+    const { done } = await openRun();
+    setTenant("beta");
+    try {
+      await confirm();
+      await act(async () => done);
+      expect(apiJSON).not.toHaveBeenCalled();
+    } finally {
+      setTenant("");
+    }
+  });
 
   it("re-reads after run now", async () => {
     api.mockResolvedValue(status(false));
