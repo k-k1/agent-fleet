@@ -29,7 +29,7 @@ The list can be read while the workspace is stopped.
 |---|---|
 | The number beside the heading | How many items are not done. The line under it says when the list was last fetched |
 | A dot and a bold title | The row has an update or new comments since you last looked. "N updated" appears under the heading |
-| CI and conflict marks | On an open GitHub pull request: CI (failed, running, passed) and a conflict with its base, as of the last fetch |
+| CI and conflict marks | On an open GitHub or Bitbucket pull request: CI (failed, running, passed) and a conflict with its base, as of the last fetch. Bitbucket rows are read at most 10 per refresh, most recently updated first, so a row can show no mark until a later fetch; a row that could not be read shows no mark, never a passed one |
 | Comment count | Shown on GitHub and Bitbucket rows |
 | 🔗 | Opens the item in the original tracker |
 | A round badge | Someone has already started a session on it. Press it to open that session; you notice before a second person picks it up |

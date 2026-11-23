@@ -134,7 +134,7 @@ source_of_truth: "個人/テナント設定は Console、配備の変数は `dep
 | 推論エンジンの利用者 | 配備の自前エンジンを役割（チャット `llm`・画像生成 `image`）ごとに、全メンバーに開くか、チェックしたメンバーだけにするか（配備管理者がテナントに許した範囲の中で）|
 | モデルの利用 | メンバーが使えるものと、だれが止めているか（概要）。認証情報の種類とプロンプトの送り先、個別の変更、承認するセルフホストのサーバーで決めるこのテナントの制限（制限）。提供モデルのメンバーの予算（提供モデルと予算）（[メンバーが使えるモデルを決める](../admin/access/model-access.ja.md)） |
 | セッション | いまテナント内で動いている全部 |
-| 上限・自動停止 | 効いている上限（**読み取り専用**。決めるのは配備管理者）|
+| 上限・自動停止 | 効いている上限（**読み取り専用**。決めるのは配備管理者）と、Web Push がオンのときは、プッシュ通知に質問の文面を入れるか（「プッシュ通知に質問の文面を含める」）|
 | 利用枠ボード | テナントのメンバーが利用上限の状況を公開できるかどうか（既定はオン。オンでも各メンバーは自分で選ぶまで非公開）|
 | サインイン方式 | 自社の IdP や GitHub 組織を入口にする（承認が要る）|
 | サインイン規則 | 効いている参加方式とドメイン（読み取り専用）|
@@ -194,6 +194,7 @@ Control Plane の起動前に設定します。注釈つきの一覧は
 | `AF_MCP_ENABLED` | `true` で `/mcp` エンドポイントとメモリ専用の `/mcp/memory`（Personal Access Token）を提供する。それ以外（`1` を含む）はオフ。テナント単位のメモリのスイッチ（[外部からのメモリの利用を許可する](../admin/memory-outside.ja.md)）は別の、もっと狭いスイッチ |
 | `AF_MCP_OAUTH` | `1` で、Control Plane が `/mcp` の OAuth 認可サーバーにもなり、ホスト型のクライアントはメンバーのサインインで接続できる。`AF_MCP_ENABLED=true` と `https` の `PUBLIC_BASE_URL` が要り、どれか欠けると OAuth のパスは 404。各テナントは自分の分をオフにもできる（[MCP サーバーを全員に配る](../admin/mcp-distribute.ja.md#外部のアプリからの-oauth-接続を止める)）。残りは [MCP のサインインを運用する](../operate/secure/mcp.ja.md#リモートの-mcp-クライアントを-oauth-でサインインさせる) |
 | `AF_GITHUB_WEBHOOK_SECRET` | この配備の GitHub App の Webhook シークレット。設定すると、Control Plane は App の配信を `/webhooks/github` で受け付ける（App の Webhook URL は `<PUBLIC_BASE_URL>/webhooks/github`）。受けた配信は、実行中のワークスペースに「公開リポジトリのプルリクエストを早めに確認して」と知らせるためだけに使う。未設定ならこのエンドポイントは存在せず、ウォッチはポーリングだけで動く。プライベートリポジトリの配信はこの経路では無視する。配信の中身は何も渡さない。 |
+| `AF_WEB_PUSH`・`AF_WEB_PUSH_VAPID_PRIVATE_KEY`・`AF_WEB_PUSH_SUBJECT`・`AF_WEB_PUSH_ENDPOINT_HOSTS`・`AF_NOTIFICATION_DRAIN_INTERVAL` | メンバーのスマートフォンやコンピュータへの Web Push。`true` のときだけオンになり、そのときは VAPID の秘密鍵と `mailto:` か `https:` の連絡先が必須です。どちらかが欠けているか形式が違うと、Control Plane は警告をログに出して Web Push なしで動きます。既定はオフです（[Web Push をオンにする](../operate/run/web-push.ja.md)） |
 | `AF_MCP_OAUTH_TRUSTED_HOSTS` | MCP OAuth が信頼するクライアントのホスト、または `https://host/path` の URL プレフィックス（カンマ区切り。ホスト名だけなら全パス）。既定は `https://claude.ai/api/mcp/auth_callback`・`claude.com`・`chatgpt.com`、`none` でループバックのクライアントだけ。管理モーダルの **MCP ログイン許可ホスト** で保存した一覧がこの変数に優先する（[MCP のサインインを運用する](../operate/secure/mcp.ja.md#信頼するクライアントのホストを決める)）|
 | `AF_DATA_DURABLE_REQUIRED` | `1` は、この配備が Control Plane のデータ領域（`WS_DATA`）を永続ストレージに置く必要があると宣言する。設定されていて、その領域が `/tmp` の下、または `tmpfs` やコンテナのルート（`overlay`）ファイルシステム上にあると、内部 Git プロバイダを止める。リポジトリの作成と `/git/` 以下（clone・push・LFS）は 503 `git_data_not_durable` を返し、「内部リポジトリ」タブにその文面が出る。Console とセッションは影響を受けず、Control Plane は警告を出して起動する。未設定なら何も確認しない。ECS のスタックは、永続のデータ用ファイルシステムを用意するときにこれを設定する。起動時には、どのランタイムでも、一覧にあるのにディスク上のベアリポジトリが無い内部リポジトリをログに出す（何も削除しない） |
 | `AF_EFS_BACKUP` | 手で設定しない。`ecs` / `ecs-ec2` で `update.sh` と `standup.sh` が ingress スタックの `EfsBackup` パラメータ（`present`・`off`・`missing`）から埋め、`missing` なら管理画面に「日次の EFS バックアップがない」バナーが出る（[アップグレードする](../operate/run/upgrade.ja.md#efs-バックアップがないという通知)） |
@@ -213,6 +214,7 @@ Control Plane は自分の既定値のままです。
 | `AF_GITHUB_LOGIN_CLIENT_ID`・`AF_GITHUB_LABEL_JA`・`AF_GITHUB_LABEL_EN`・`AF_GITHUB_MEMBERSHIP_TTL`・`AF_GITHUB_MEMBERSHIP_GRACE` | `GithubLoginClientId`・`GithubLabelJa`・`GithubLabelEn`・`GithubMembershipTtl`・`GithubMembershipGrace` |
 | `AF_LLM_URL`・`AF_COMFY_URL`・`AF_REMOTE_ENGINE_URL`・`AF_REMOTE_ENGINE_KEYS` | `LlmUrl`・`ComfyUrl`・`RemoteEngineUrl`・`RemoteEngineKeys` |
 | `AF_GITHUB_LOGIN_CLIENT_SECRET`・`AF_COMFY_API_KEY`・`AF_REMOTE_ENGINE_TOKEN` | スイッチ `GithubLoginSecret`・`ComfyApiKey`・`RemoteEngineToken`（`on`）。値は SSM SecureString の `<SsmPrefix>/github-login-client-secret`・`/comfy-api-key`・`/remote-engine-token` から読むので、先に作っておきます |
+| `AF_WEB_PUSH`・`AF_WEB_PUSH_VAPID_PRIVATE_KEY`・`AF_WEB_PUSH_SUBJECT`・`AF_WEB_PUSH_ENDPOINT_HOSTS`・`AF_NOTIFICATION_DRAIN_INTERVAL` | `WebPush`（`on` で `AF_WEB_PUSH=true` になり、鍵を SSM SecureString `<SsmPrefix>/web-push-vapid-key` から読む）・`WebPushSubject`・`WebPushEndpointHosts`・`NotificationDrainInterval`。後の 3 つは `WebPush=on` のときだけ読まれる |
 
 パラメータのない変数は、ECS では Control Plane の既定値のままです。`AF_MEMO_QUEUE_REPO_SETTINGS` はオン、`AF_MEMO_QUEUE_REPO_RECHECK` はオフです。
 

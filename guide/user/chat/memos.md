@@ -24,12 +24,12 @@ Memos are stored on the server, so the same queue shows on another PC or your ph
 
 1. Press **+** ("**Add memo**") in the header of the **Memo queue** view. From the keyboard, **Alt+A**, or the leader key (Ctrl/⌘+K) followed by **M**, opens it too
 2. Write in "**Add a quick memo… (send them together later)**". Put a group name in "**Category (optional)**" if you like
-3. Add it with "**Add**" (or Ctrl+Enter). Esc closes the box
+3. Add it with "**Add**" (or Ctrl+Enter). Esc or the **×** ("**Close**") button closes the box
 
 - Attach images by pasting or dropping them into the box, or with the attach button
 - Memos are grouped by repository, and by category within it
 - A memo added from a worktree session, or from a file in a worktree, goes under the **parent repository**, not under a group of its own for that worktree. Memos already under a worktree's group stay there; drag them to move them
-- A category header keeps only the fold arrow, the tick box, the name, the count, one badge (auto-run, paused or off), **+** and **⋯**. Everything else is in the menu behind **⋯** (or a right-click on the header, or the Menu key): "**Send**", "**Run now**", "**Run history**", "**Auto-run settings**", "**Rename**", "**Clear finished memos…**" and "**Delete category**". "**Send**" shows only when something can be sent, and "**Run now**", "**Run history**" and "**Clear finished memos…**" only in an auto-run category. Any other item that cannot act now stays listed, greyed out, with the reason under it. Drag the header to reorder categories
+- A category header keeps only the fold arrow, the tick box, the name, the count, one badge (auto-run, paused or off), **+** and **⋯**, and in an auto-run category a mark when the last read of the repository's settings file found a difference ("**Repository settings differ**") or an error ("**Repository settings file has errors**"; see [Keep auto-run settings in the repository](memo-auto-run-repo-file.md#see-that-the-file-changed)). Everything else is in the menu behind **⋯** (or a right-click on the header, or the Menu key): "**Send**", "**Run now**", "**Run history**", "**Auto-run settings**", "**Rename**", "**Clear finished memos…**" and "**Delete category**". "**Send**" shows only when something can be sent, and "**Run now**", "**Run history**" and "**Clear finished memos…**" only in an auto-run category. Any other item that cannot act now stays listed, greyed out, with the reason under it. Drag the header to reorder categories
   ![A category header with its ⋯ menu open: Send, Run now, Run history, Auto-run settings, Rename, Clear finished memos… and, below a line, Delete category](../../assets/chatpages-memo-cat-menu-en-light.webp)
 - Press **+** on a category header to write straight into that category. "**Add category**" creates one ahead of time
 - The send button of an open file can also "**Add to queue**" a memo about that file ([Hand a file to a session](../files/send.md#send-it-later-in-a-batch))
@@ -39,7 +39,8 @@ Memos are stored on the server, so the same queue shows on another PC or your ph
 
 - The body is cut to two lines. Press it to open the whole text, and press again to edit (Ctrl+Enter saves, Esc cancels)
 - "**Collapse**" under the body goes back to two lines
-- The row's **⋯** (or a right-click) offers "**Edit**", "**Send this memo**", "**Copy**" and "**Delete**"
+- The row's **⋯** (or a right-click) offers "**Edit**", "**Send this memo**", "**Copy**" and "**Delete**". Depending on the memo it also offers "**Collapse**", "**Start with this**" (a memo saved from the "Start working" screen) and, in an auto-run category, "**Run now**", "**Stop chain**" and "**Return this run to the queue**" ([Run memos automatically](memo-auto-run.md))
+- To delete several memos at once, tick them and press "**Delete**" at the bottom. It asks with the count and cannot be undone; memos already being sent are skipped
 - Drag to reorder memos or move them to another category. Press a category's name, or choose "**Rename**" in its **⋯** menu, to rename it. Deleting a category moves its memos to "**Uncategorized**"
 - "**Clear finished memos…**" in a category's **⋯** menu deletes the memos that were delivered or replaced, after asking with the count. It cannot be undone. It is offered in auto-run categories only. The run history and the run counts stay, but the text of those memos is gone, "**Return to queue**" no longer works for their runs, and a tidy run can no longer be undone for the replaced ones. A finished memo that another memo is still waiting for is kept
 
@@ -84,7 +85,7 @@ rewrite above, as before.
 
 | Destination | What happens |
 |---|---|
-| Running sessions | Sent on the spot. The memos are marked "**Sent**" and stay in the queue for 7 days |
+| Running sessions | Sent on the spot. The memos are marked "**Sent**" and stay in the queue for 7 days. Tick "**Keep the memos after sending**" to leave them unsent in the queue instead (the Console remembers the choice); a memo that was already sent cannot be kept |
 | Launch a new session | "**Launch & send**" opens the screen where you pick the repository and agent, with the content as the first prompt. The memos stay in the queue |
 | An assistant | A new chat with that assistant opens with the content in the input box. Check it and send. The memos stay in the queue |
 

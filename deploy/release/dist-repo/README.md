@@ -51,7 +51,8 @@ Main features:
   self-signed certificates, automatic working-copy lock recovery).
 - **Project-centric console**: file browser, commit graph and diffs, session
   state badges (working / awaiting input), a memo queue with image attachments
-  whose categories can run their memos as sessions (auto-run), a notification center, English/Japanese UI, keyboard-first operation
+  whose categories can run their memos as sessions (auto-run), a notification center with optional Web Push to
+  phones and computers (switched on by the operator), English/Japanese UI, keyboard-first operation
   (command palette / leader key), and optional text-to-speech for replies
   (VOICEVOX / Zundamon, AWS Polly).
 - **Work items**: Jira issues, GitHub issues and pull requests, and Bitbucket
@@ -92,7 +93,8 @@ Main features:
   and DST-aware), **waking a stopped workspace**, running the prompt, and
   reporting back, so timed work happens even while nobody is watching. Reuse a
   long-lived session to build up context across runs, or start fresh each time,
-  optionally only when a saved work item query turns up something new;
+  optionally only when a saved work item query turns up something new. A schedule
+  the assistant or a session registers waits for the member's approval before it runs;
   browse the schedule list and per-run history (with the session each run drove)
   from the left rail.
 - **Chat bridge (Discord / Slack)**: connect a bot from the Console (guided,

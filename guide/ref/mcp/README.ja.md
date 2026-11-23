@@ -92,7 +92,7 @@ Agent Fleet は、エージェントやアシスタントが Agent Fleet 自体�
 |---|---|---|---|---|---|
 | `list_schedules` | 定時実行のスケジュールを一覧します | — | ✓ AF 読み取り | — | — |
 | `get_schedule_runs` | スケジュールの実行履歴（最新 50 件）を返します | — | ✓ AF 読み取り | — | `id` |
-| `create_schedule` | 定時実行のスケジュールを登録します | — | ✓ AF 書き込み | — | `spec_kind`, `spec`, `prompt` |
+| `create_schedule` | 定時実行のスケジュールを登録します。メンバーが承認するまで動きません | — | ✓ AF 書き込み | — | `spec_kind`, `spec`, `prompt` |
 | `update_schedule` | 既存のスケジュールを編集します | — | ✓ AF 書き込み | — | `id` |
 | `delete_schedule` | スケジュールを削除します | — | ✓ AF 書き込み | — | `id` |
 | `pause_schedule` | スケジュールを一時停止します | — | ✓ AF 書き込み | — | `id` |
