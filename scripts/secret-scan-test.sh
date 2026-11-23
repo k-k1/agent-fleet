@@ -195,6 +195,22 @@ fi
 rm -f -- ./-dash.json
 [ -s "$work/eq.json" ] || { echo "FAIL: --report-path=FILE must write the report"; FAILED=1; }
 
+# A scan that exits 42 but leaves no readable report (a stub stands in for gitleaks) must not
+# make the shell print the report's path, which a caller may have built from a value.
+cat >"$work/stub-gitleaks" <<'EOF2'
+#!/bin/sh
+[ "$1" = version ] || [ "$1" = --version ] && { echo 8.0.0; exit 0; }
+exit 42
+EOF2
+chmod +x "$work/stub-gitleaks"
+rc=0
+GITLEAKS="$work/stub-gitleaks" "$HERE/secret-scan.sh" pr --report-path "$work/missing-$key.json" >"$out" 2>&1 || rc=$?
+if [ "$rc" != 42 ] || grep -q -e "$key" -e "AKIA" -e "missing-" "$out"; then
+  echo "FAIL: a missing report must keep exit 42 and not print its path (exit=$rc)"
+  sed 's/^/    /' "$out"
+  FAILED=1
+fi
+
 # gitleaks exits 0 with no findings when its child `git log` fails. A shim that fails
 # `git log` stands in for an unreadable object; the wrapper must not report that as clean.
 mkdir "$work/shim"
