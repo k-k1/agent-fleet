@@ -225,7 +225,8 @@ git -C "$TMP/second.git" rev-parse -q --verify refs/heads/main > /dev/null && fa
 # Several refs in one push: every one is checked whatever its position and one finding
 # refuses the whole push. A deletion between two refs is covered separately below, because git
 # itself sends an existing ref's deletion before the new refs whatever order the refspecs are
-# written in (git 2.47.3), so a real push never puts it in the middle.
+# written in (git 2.47.3), so the pushes below, whose other refs are all new, never put it in
+# the middle.
 root_sha="$(g rev-list --max-parents=0 HEAD | head -n1)"
 git init -q --template= --bare "$TMP/refs.git"
 g remote add mr "$TMP/refs.git"
