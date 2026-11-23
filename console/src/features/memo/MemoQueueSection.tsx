@@ -633,7 +633,6 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         if (err.code === "memo_after_invalid") bumpMemos();
         return { code: err.code ?? "", text };
       }
-      setEditing((cur) => (cur === m.id ? null : cur));
       bumpMemos();
       toast(t("memo.updated"), { kind: "success" });
       return null;
@@ -1886,6 +1885,13 @@ function MemoRow(props: MemoRowProps) {
   // The last refusal of a save; the editor stays open with the draft until a save goes through.
   const [refusal, setRefusal] = useState<SaveRefusal | null>(null);
   const [saving, setSaving] = useState(false);
+  // An answer applies only to the edit and the draft it was sent for: a cancel and re-edit, or a
+  // keystroke while the request is out, must neither be closed nor overwritten by it.
+  const editGen = useRef(0);
+  const draftRev = useRef(0);
+  const savingRef = useRef(false);
+  const editingNow = useRef(editing);
+  editingNow.current = editing;
   const ref = memoReference(m);
   // The notes on offer, then every chosen one that is no longer on offer (deleted, moved, replaced,
   // kept past the list's window, or gone while the editor was open): those stay visible as chips so
@@ -1938,7 +1944,7 @@ function MemoRow(props: MemoRowProps) {
   // Sent only when the member changed the field, so an untouched one never re-sends a stored time
   // (which may have passed, and the Control Plane would then clear it) nor clears one set elsewhere.
   const save = async () => {
-    if (saving) return;
+    if (savingRef.current) return;
     const startAfter = start === startBase ? undefined : startAfterFromInput(start, startZone);
     if (startAfter === null) {
       setStartBad(true);
@@ -1948,12 +1954,17 @@ function MemoRow(props: MemoRowProps) {
     // A move out of every auto-run category drops the recipe at the Control Plane, and a recipe sent
     // there would be refused, so it is not sent.
     const recipeChange = props.recipeAgent === undefined || !recipeApplies ? {} : recipePatch(recipeBase, recipe);
+    const gen = editGen.current;
+    const rev = draftRev.current;
+    savingRef.current = true;
     setSaving(true);
-    try {
-      setRefusal(await props.onSave(body, cat, clearRef, afterChanged(), startAfter, Object.keys(recipeChange).length > 0 ? recipeChange : undefined));
-    } finally {
-      setSaving(false);
-    }
+    const answer = await props.onSave(body, cat, clearRef, afterChanged(), startAfter, Object.keys(recipeChange).length > 0 ? recipeChange : undefined);
+    if (gen !== editGen.current) return;
+    savingRef.current = false;
+    setSaving(false);
+    setRefusal(answer);
+    // Closed only when the draft is still what was sent; text typed meanwhile stays in the editor.
+    if (!answer && rev === draftRev.current && editingNow.current) props.onCancelEdit();
   };
   // The recipe as it was when the edit began is the baseline: a refresh that brings another device's
   // change must neither be overwritten by a save of the text nor discard what is being typed.
@@ -1990,12 +2001,22 @@ function MemoRow(props: MemoRowProps) {
     setStartBase(startAfterInputValue(m.startAfter, zone));
     setStartBad(false);
     setRefusal(null);
+    editGen.current++;
+    savingRef.current = false;
+    setSaving(false);
     setAfter(m.after ?? []);
     setAfterBase(m.after ?? []);
     setRecipe(recipeDraftOf(m));
     setRecipeBase(recipeDraftOf(m));
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the start of an edit resets it
   }, [editing]);
+
+  // Any change of the draft retires the refusal shown for the one before it, and marks the draft as
+  // no longer the one a request in flight was sent for.
+  useEffect(() => {
+    draftRev.current++;
+    setRefusal(null);
+  }, [body, cat, clearRef, after, start, recipe]);
 
   if (editing) {
     return (

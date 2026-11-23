@@ -380,8 +380,58 @@ describe("a refused save", () => {
     expect(flagged).toHaveLength(1);
     expect(flagged[0].textContent).toContain("beta job");
     await click(flagged[0].querySelector("button")!);
+    // The refusal was about the draft before this change.
+    expect(editRow().querySelector("[role=alert]")).toBeNull();
     await click(btn(editRow(), t("memo.save")));
     expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one, reworded", category: "inbox", after: ["a1"] });
+    expect(document.querySelector(".memo-row.editing")).toBeNull();
+  });
+
+  const slowSave = () => {
+    let done!: (v: Record<string, unknown>) => void;
+    memoUpdate.mockImplementationOnce(() => new Promise<Record<string, unknown>>((r) => (done = r)));
+    return (v: Record<string, unknown>) => act(async () => void done(v));
+  };
+  const typeBody = async (v: string) => {
+    const ta = editRow().querySelector<HTMLTextAreaElement>(".memo-edit-text")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, v);
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  it("keeps the editor open when text was typed while the request was out", async () => {
+    servedCats = [queueCat];
+    servedMemos = [aMemo({ id: "me", body: "the edited one", state: "held" })];
+    await renderSection();
+    await openEditor("the edited one");
+    const answer = slowSave();
+    await click(btn(editRow(), t("memo.save")));
+    await typeBody("the edited one, and more");
+    await answer({});
+    await settle();
+    expect(editRow()).not.toBeNull();
+    expect(editRow().querySelector<HTMLTextAreaElement>(".memo-edit-text")!.value).toBe("the edited one, and more");
+  });
+
+  it("does not let a late answer close or mark an edit begun after a cancel", async () => {
+    servedCats = [queueCat];
+    servedMemos = [aMemo({ id: "me", body: "the edited one", state: "held" })];
+    await renderSection();
+    await openEditor("the edited one");
+    const answer = slowSave();
+    await click(btn(editRow(), t("memo.save")));
+    await click(btn(editRow(), t("common.cancel")));
+    await openEditor("the edited one");
+    await typeBody("a fresh draft");
+    await answer({ error: { code: "memo_locked", message: "english" } });
+    await settle();
+    expect(editRow().querySelector("[role=alert]")).toBeNull();
+    expect(editRow().querySelector<HTMLTextAreaElement>(".memo-edit-text")!.value).toBe("a fresh draft");
+    const second = slowSave();
+    await click(btn(editRow(), t("memo.save")));
+    await second({});
+    await settle();
     expect(document.querySelector(".memo-row.editing")).toBeNull();
   });
 
