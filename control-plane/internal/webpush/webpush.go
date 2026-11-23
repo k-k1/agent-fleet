@@ -121,17 +121,23 @@ func (k *Keys) authHeader(endpoint, subject string, now time.Time) (string, erro
 }
 
 // origin serialises u as RFC 6454 §6.1 does, which RFC 8292 §2 requires for aud: the Unicode
-// serialization, so a punycode label is turned back into Unicode, a lower-case host, and no port
-// when it is the scheme's default. A host IDNA refuses is kept as written: every default push
-// service is plain ASCII, where both serializations agree.
+// serialization (each punycode label turned back into Unicode, label by label so that one label
+// IDNA refuses does not keep the others in punycode), a lower-case host, and no port when it is
+// the scheme's default. Every default push service is plain ASCII, where both serializations agree.
 func origin(u *url.URL) string {
 	host := strings.ToLower(u.Hostname())
 	if strings.Contains(host, ":") {
 		host = "[" + host + "]"
-	} else if ascii, err := idna.Lookup.ToASCII(host); err == nil {
-		if uni, err := idna.Lookup.ToUnicode(ascii); err == nil {
-			host = uni
+	} else {
+		labels := strings.Split(host, ".")
+		for i, l := range labels {
+			if strings.HasPrefix(l, "xn--") {
+				if uni, err := idna.Lookup.ToUnicode(l); err == nil {
+					labels[i] = uni
+				}
+			}
 		}
+		host = strings.Join(labels, ".")
 	}
 	scheme := strings.ToLower(u.Scheme)
 	if port := u.Port(); port != "" && !(scheme == "https" && port == "443") && !(scheme == "http" && port == "80") {

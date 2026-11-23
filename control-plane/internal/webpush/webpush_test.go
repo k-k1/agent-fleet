@@ -222,6 +222,9 @@ func TestAudIsAnOrigin(t *testing.T) {
 		"https://xn--bcher-kva.example/x": "https://bücher.example",
 		"https://BÜCHER.example/x":        "https://bücher.example",
 		"https://[::1]:8443/x":            "https://[::1]:8443",
+		// A label IDNA refuses does not keep a valid A-label beside it in punycode.
+		"https://under_score.xn--bcher-kva.example/x": "https://under_score.bücher.example",
+		"https://192.0.2.1/x":                         "https://192.0.2.1",
 	} {
 		h, err := keys.authHeader(endpoint, "mailto:ops@example.invalid", time.Unix(1, 0))
 		if err != nil {

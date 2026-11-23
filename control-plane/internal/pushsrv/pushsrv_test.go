@@ -30,6 +30,7 @@ type memStore struct {
 	mu         sync.Mutex
 	releaseErr error
 	getErr     error
+	gets       int
 	subs       []store.PushSubscription
 	off        map[string][]string
 	inactive   map[string]bool
@@ -91,6 +92,7 @@ func (m *memStore) AddPushSubscription(ctx context.Context, p store.PushSubscrip
 func (m *memStore) GetPushSubscription(_ context.Context, mid, ep string) (store.PushSubscription, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.gets++
 	if m.getErr != nil {
 		return store.PushSubscription{}, false, m.getErr
 	}
@@ -546,38 +548,78 @@ func (f *fixture) hold() (arrived chan string, release func()) {
 	return arrived, release
 }
 
+// waitArrival takes the next arrival from hold, failing the test after a bound.
+func waitArrival(t *testing.T, arrived chan string) string {
+	t.Helper()
+	select {
+	case p := <-arrived:
+		return p
+	case <-time.After(5 * time.Second):
+		t.Fatal("no send reached the push service")
+		return ""
+	}
+}
+
 // A burst past the queue is dropped at once rather than parked in a goroutine per device.
 func TestFullSendQueueDrops(t *testing.T) {
 	f := newFixtureN(t, 1, 2, nil)
 	arrived, release := f.hold()
 	defer release()
-	for i := 0; i < 5; i++ {
+	// Occupy the only worker first, so the queue's two places are all there is.
+	f.subscribe(t, "m0")
+	var wg sync.WaitGroup
+	defer wg.Wait()
+	defer release()
+	first := note("question")
+	first.MembershipID = "m0"
+	f.svc.deliver(context.Background(), first, &wg)
+	waitArrival(t, arrived)
+	for i := 0; i < 4; i++ {
 		f.subscribe(t, "m1")
 	}
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
-	var wg sync.WaitGroup
 	f.svc.deliver(context.Background(), note("question"), &wg)
-	<-arrived // the worker holds one, the queue two; the other two had no room
 	if got := strings.Count(buf.String(), "send queue full"); got != 2 {
 		t.Fatalf("%d drops logged, want 2: %q", got, buf.String())
 	}
 	release()
 	wg.Wait()
 	if f.count() != 3 {
-		t.Fatalf("%d sent, want the 3 that fit", f.count())
+		t.Fatalf("%d sent, want the one in flight and the 2 that fit", f.count())
 	}
 }
 
-// A full notification queue drops the notification instead of starting a goroutine for it.
+// blockedWriter is log output that never returns, like a stalled stderr pipe.
+type blockedWriter struct{ gate chan struct{} }
+
+func (b blockedWriter) Write(p []byte) (int, error) { <-b.gate; return len(p), nil }
+
+// A full notification queue drops the notification without waiting on anything, log output
+// included: it runs on the caller that inserted the notification.
 func TestFullNotificationQueueDrops(t *testing.T) {
 	p := &Service{notes: make(chan store.Notification)} // no reader takes from this one
+	bw := blockedWriter{make(chan struct{})}
+	log.SetOutput(bw)
+	returned := make(chan struct{})
+	go func() {
+		p.onNotification(note("question"))
+		p.onNotification(note("question"))
+		close(returned)
+	}()
+	select {
+	case <-returned:
+	case <-time.After(5 * time.Second):
+		t.Error("onNotification blocked on a full queue")
+	}
+	close(bw.gate)
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
-	p.onNotification(note("question"))
-	if !strings.Contains(buf.String(), "delivery queue full") {
+	p.logDroppedNotes()
+	p.logDroppedNotes() // the count was taken; nothing more to say
+	if strings.Count(buf.String(), "delivery queue full; 2 notifications dropped") != 1 || strings.Count(buf.String(), "\n") != 1 {
 		t.Fatalf("log: %q", buf.String())
 	}
 }
@@ -591,7 +633,7 @@ func TestStaleQueuedSendIsDropped(t *testing.T) {
 	f.subscribe(t, "m1")
 	var wg sync.WaitGroup
 	f.svc.deliver(context.Background(), note("question"), &wg)
-	<-arrived
+	waitArrival(t, arrived)
 	time.Sleep(400 * time.Millisecond)
 	release()
 	wg.Wait()
@@ -616,7 +658,7 @@ func TestQueuedSendRereadsTheDevice(t *testing.T) {
 	_ = f.st.UpsertPushSubscription(context.Background(), rekeyed)
 	var wg sync.WaitGroup
 	f.svc.deliver(context.Background(), note("question"), &wg)
-	<-arrived
+	waitArrival(t, arrived)
 	moved.MembershipID = "m2"
 	_ = f.st.UpsertPushSubscription(context.Background(), moved)
 	rekeyed.P256dh, rekeyed.Auth = pNew, aNew
@@ -644,8 +686,8 @@ func TestFailedRereadSkipsTheSend(t *testing.T) {
 	f.subscribe(t, "m1")
 	f.st.getErr = io.ErrUnexpectedEOF
 	f.deliver(note("question"))
-	if f.count() != 0 {
-		t.Fatal("sent although the device could not be read again")
+	if f.count() != 0 || f.st.gets != 1 {
+		t.Fatalf("sent %d with %d re-reads; want none sent after one failed re-read", f.count(), f.st.gets)
 	}
 }
 

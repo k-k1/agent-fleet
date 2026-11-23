@@ -14,6 +14,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
@@ -57,6 +58,8 @@ const (
 	pushNoteQueueLen = 256
 	// pushReaders run the per-notification reads (membership, preferences, devices).
 	pushReaders = 4
+	// pushDropLogEvery is how often the count of notifications a full queue refused is logged.
+	pushDropLogEvery = 10 * time.Second
 	// A question that waits an hour is stale for a phone; the service drops it after that.
 	pushTTL = time.Hour
 )
@@ -74,7 +77,10 @@ type Service struct {
 	jobs     chan sendJob
 	// quit stops the workers; nil (never) outside tests.
 	quit chan struct{}
-	view *viewing
+	// droppedNotes counts notifications refused by a full notification queue. The refusal happens
+	// on the inserting caller, which must not wait on log output, so a ticker logs the count.
+	droppedNotes atomic.Int64
+	view         *viewing
 }
 
 // sendJob is one notification for one device, waiting for a send worker.
@@ -103,6 +109,18 @@ func (p *Service) start(workers, queueLen int) {
 			}
 		}()
 	}
+	go func() {
+		t := time.NewTicker(pushDropLogEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				p.logDroppedNotes()
+			case <-p.quit:
+				return
+			}
+		}
+	}()
 	for i := 0; i < workers; i++ {
 		go func() {
 			for {
@@ -194,7 +212,14 @@ func questionText(payload string) string {
 	return string(r)
 }
 
-// onNotification runs on the inserting caller, so it only queues the delivery.
+func (p *Service) logDroppedNotes() {
+	if d := p.droppedNotes.Swap(0); d > 0 {
+		log.Printf("web push: delivery queue full; %d notifications dropped", d)
+	}
+}
+
+// onNotification runs on the inserting caller, so it only queues the delivery and never blocks,
+// not even on log output.
 func (p *Service) onNotification(n store.Notification) {
 	if !pushKinds[n.Kind] || n.TargetType != "session" || n.TargetID == "" {
 		return
@@ -202,7 +227,7 @@ func (p *Service) onNotification(n store.Notification) {
 	select {
 	case p.notes <- n:
 	default:
-		log.Printf("web push: delivery queue full; %s for session %s dropped", n.Kind, n.TargetID)
+		p.droppedNotes.Add(1)
 	}
 }
 
@@ -213,7 +238,9 @@ func (p *Service) onNotification(n store.Notification) {
 //
 // Before any send, in order: the member must still be active (a removed member gets nothing), the
 // kind must not be one the member turned off, and the session must not be on screen in an active
-// Console. Every doubt resolves to "send": a lost question costs more than a redundant buzz.
+// Console. For these checks every doubt resolves to "send": a lost question costs more than a
+// redundant buzz. Which devices hold the member is not such a check: a device list or a device
+// that cannot be read is not sent to, since the browser may belong to someone else by now.
 func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.WaitGroup) {
 	// Each read has its own deadline: one that stalls until its deadline must not leave the next
 	// read (the subscription list) with an expired context.
@@ -291,7 +318,8 @@ func (p *Service) run(j sendJob) {
 	}
 	// The row is read again just before the send: in the queue it may have moved to another member
 	// (the same browser signed in as someone else) or been removed, and this member's message must
-	// not reach that browser. A failed read skips the send, as a failed list read does.
+	// not reach that browser. A failed read skips the send, as a failed list read does. A move that
+	// commits after this read can still get the one message being sent.
 	rctx, rcancel := context.WithTimeout(context.Background(), p.timeout)
 	cur, held, err := p.store.GetPushSubscription(rctx, j.membershipID, j.sub.Endpoint)
 	rcancel()
