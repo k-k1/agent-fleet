@@ -195,6 +195,16 @@ g push -q "$REMOTE" after:refs/heads/after-url 2> "$TMP/err" || fail "pre-push r
 git init -q --template= --bare "$TMP/fresh.git"
 if g push "$TMP/fresh.git" after:refs/heads/x 2> "$TMP/err"; then fail "pre-push excluded origin/main's history from a push to an unknown destination"; else expect_refused "pre-push unknown destination, published history" "$TMP/err"; fi
 
+# A remote that fetches from one repository and pushes to another: its tracking refs describe
+# the fetch side only. `pub` carries a leak that the fetch side (src.git) has as its main.
+git init -q --template= --bare "$TMP/src.git"
+git init -q --template= --bare "$TMP/pushonly.git"
+g push -q --no-verify "$TMP/src.git" pub:refs/heads/main
+g remote add split "$TMP/src.git"
+g remote set-url --push split "$TMP/pushonly.git"
+g fetch -q split
+if g push split after:refs/heads/x 2> "$TMP/err"; then fail "pre-push trusted the fetch side of a remote with a different pushurl"; else expect_refused "pre-push pushurl" "$TMP/err"; fi
+
 if [ "$FAILED" = 0 ]; then
   echo "ok"
 else

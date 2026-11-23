@@ -25,7 +25,7 @@ root="$(git rev-parse --show-toplevel)"
 # can be stale (the server dropped or rewound the branch since the last fetch) and would then
 # exclude a commit the remote no longer has. $1 is a remote name or, for `git push <url>`, a
 # URL or path: a URL resolves to the configured remote that has it. A destination that is no
-# configured remote is a new place for the history to become public, so nothing of it is
+# configured remote, or whose fetch and push URLs differ, is a new place for the history to become public, so nothing of it is
 # excluded. Empty output means nothing to subtract, and the caller scans everything
 # reachable from the pushed commit — slower, never unsafe.
 #
@@ -47,6 +47,9 @@ default_branch_ref() {
     done
   fi
   [ -n "$name" ] || return 0
+  # A remote that fetches from one place and pushes to another (`pushurl`): its tracking refs
+  # describe the fetch side, which says nothing about what the push side already has.
+  [ "$(git remote get-url --all "$name" 2>/dev/null)" = "$(git remote get-url --push --all "$name" 2>/dev/null)" ] || return 0
   for cand in "refs/remotes/$name/HEAD" "refs/remotes/$name/main" "refs/remotes/$name/master"; do
     if git rev-parse -q --verify "$cand^{commit}" >/dev/null; then
       echo "$cand"
