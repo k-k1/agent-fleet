@@ -205,6 +205,13 @@ g remote set-url --push split "$TMP/pushonly.git"
 g fetch -q split
 if g push split after:refs/heads/x 2> "$TMP/err"; then fail "pre-push trusted the fetch side of a remote with a different pushurl"; else expect_refused "pre-push pushurl" "$TMP/err"; fi
 
+# Several urls on one remote: git fetches from the first and pushes to every one.
+git init -q --template= --bare "$TMP/second.git"
+g remote add multi "$TMP/src.git"
+g remote set-url --add multi "$TMP/second.git"
+g fetch -q multi
+if g push multi after:refs/heads/y 2> "$TMP/err"; then fail "pre-push trusted the first url of a remote with several"; else expect_refused "pre-push several urls" "$TMP/err"; fi
+
 if [ "$FAILED" = 0 ]; then
   echo "ok"
 else

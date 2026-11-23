@@ -25,7 +25,7 @@ root="$(git rev-parse --show-toplevel)"
 # can be stale (the server dropped or rewound the branch since the last fetch) and would then
 # exclude a commit the remote no longer has. $1 is a remote name or, for `git push <url>`, a
 # URL or path: a URL resolves to the configured remote that has it. A destination that is no
-# configured remote, or whose fetch and push URLs differ, is a new place for the history to become public, so nothing of it is
+# configured remote, or whose fetch and push URLs differ or are several, is a new place for the history to become public, so nothing of it is
 # excluded. Empty output means nothing to subtract, and the caller scans everything
 # reachable from the pushed commit — slower, never unsafe.
 #
@@ -49,7 +49,12 @@ default_branch_ref() {
   [ -n "$name" ] || return 0
   # A remote that fetches from one place and pushes to another (`pushurl`): its tracking refs
   # describe the fetch side, which says nothing about what the push side already has.
-  [ "$(git remote get-url --all "$name" 2>/dev/null)" = "$(git remote get-url --push --all "$name" 2>/dev/null)" ] || return 0
+  # With several urls git fetches from the first and pushes to all of them, so those do not
+  # match either.
+  local fetch_url push_urls
+  fetch_url="$(git remote get-url --all "$name" 2>/dev/null)"
+  push_urls="$(git remote get-url --push --all "$name" 2>/dev/null)"
+  [ "$fetch_url" = "$push_urls" ] && [ "$(printf '%s\n' "$push_urls" | wc -l)" = 1 ] || return 0
   for cand in "refs/remotes/$name/HEAD" "refs/remotes/$name/main" "refs/remotes/$name/master"; do
     if git rev-parse -q --verify "$cand^{commit}" >/dev/null; then
       echo "$cand"
@@ -58,14 +63,22 @@ default_branch_ref() {
   done
 }
 
-base_ref="$(default_branch_ref "${1:-origin}")"
-
 # One `gitleaks` run per pushed ref. `-m` is mandatory, as in ci.yml: without it gitleaks
 # skips merge commits, and whatever entered while resolving a conflict stays unscanned.
-ranges=()
+pushes=()
 while read -r _ local_sha _ remote_sha; do
   # A deletion sends no commits. An all-zero id is whatever width the object format has.
-  case "$local_sha" in *[!0]*) ;; *) continue ;; esac
+  case "$local_sha" in *[!0]*) pushes+=("$local_sha $remote_sha") ;; esac
+done
+
+[ "${#pushes[@]}" -gt 0 ] || exit 0
+
+gitleaks_locate pre-push "$root" || exit 0
+
+base_ref="$(default_branch_ref "${1:-origin}")"
+ranges=()
+for push in "${pushes[@]}"; do
+  read -r local_sha remote_sha <<<"$push"
   if case "$remote_sha" in *[!0]*) true ;; *) false ;; esac &&
     git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
     # An existing branch: what the remote does not have yet.
@@ -78,10 +91,6 @@ while read -r _ local_sha _ remote_sha; do
     ranges+=("$local_sha")
   fi
 done
-
-[ "${#ranges[@]}" -gt 0 ] || exit 0
-
-gitleaks_locate pre-push "$root" || exit 0
 
 status=0
 for range in "${ranges[@]}"; do
