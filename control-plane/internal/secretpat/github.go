@@ -88,15 +88,19 @@ func statelessAt(s string, p int, header, payload, sig *runEnds) int {
 		i++
 	}
 	h := i
-	head := false
+	open := 0
 	for _, o := range statelessHeads {
-		head = head || strings.HasPrefix(s[h:], o)
+		if strings.HasPrefix(s[h:], o) {
+			open = len(o)
+		}
 	}
-	if !head {
+	if open == 0 {
 		return 0
 	}
+	// The pattern's header minimum is its opening plus 12, so 15 after `eyJ` and 16 after
+	// `eyAi`; a flat 16 rejected 15-character headers that the gitleaks rule still takes.
 	he := header.end(s, h)
-	if he-h < 16 || he-h > statelessMaxHeader || he >= len(s) || s[he] != '.' {
+	if he-h < open+12 || he-h > statelessMaxHeader || he >= len(s) || s[he] != '.' {
 		return 0
 	}
 	pe := payload.end(s, he+1)
