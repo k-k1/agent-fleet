@@ -127,14 +127,15 @@ regexes = ['''SECRETKEYsecretkeySECRETKEYsecretkey0000''']
 # and `_` in the body (user-to-server ghu_ is announced next). The default github-app-token rule
 # of gitleaks 8.30.1, the pinned version and the latest release, matches exactly 36
 # alphanumerics, so it misses such a token, or catches only a 36-character JWT header when the
-# APPID is absent; no release fixes it yet. The rule follows the documented structure (numeric
-# APPID, three-segment JWT), the same as workspace/agent/internal/secretpat, rather than GitHub's
-# looser `ghs_[A-Za-z0-9._-]{36,}`, which also takes ordinary names such as
+# APPID is absent; no release fixes it yet. The pattern is workspace/agent/internal/secretpat's
+# GitHubStatelessPattern: a numeric APPID and any three-segment JWT, or no APPID and a header
+# starting `eyJ`. It is held to that structure rather than to GitHub's looser
+# `ghs_[A-Za-z0-9._-]{36,}`, which also takes ordinary names such as
 # `ghs_status_dashboard_for_enterprise_repositories.md`. No leading boundary: a token glued to a
 # word (`cache_ghs_…`) is still one.
 [[rules]]
 id = "github-stateless-token"
 description = "GitHub stateless token (ghs_APPID_JWT and the same without the APPID)"
-regex = '''gh[pousr]_(?:[0-9]+_)?eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}'''
+regex = '''gh[pousr]_(?:[0-9]+_[A-Za-z0-9_-]{16,}|eyJ[A-Za-z0-9_-]{13,})\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{32,}'''
 entropy = 3
 keywords = ["ghp_", "gho_", "ghu_", "ghs_", "ghr_"]

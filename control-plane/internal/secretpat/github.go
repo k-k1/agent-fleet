@@ -6,43 +6,67 @@ package secretpat
 
 import (
 	"regexp"
-	"strconv"
+	"sort"
+	"strings"
 )
 
-// GitHubTokenMinBody is the shortest classic body (the alphanumerics after `gh?_`) a detector
-// takes. A classic token's body is exactly 36; anything shorter in prose is far more likely a
-// name than a credential. Redactors that deliberately cast a wider net pass their own, lower
-// minimum to GitHubTokenPattern.
-const GitHubTokenMinBody = 36
-
 // GitHubStatelessPattern matches a stateless token whole: `ghs_APPID_JWT` as GitHub documents
-// it (about 520 characters), and the same without the APPID. It is held to that structure, a
-// numeric APPID and a three-segment JWT, rather than to GitHub's looser suggestion
-// `ghs_[A-Za-z0-9._-]{36,}`, because the looser class also takes ordinary names such as
-// `ghs_status_dashboard_for_enterprise_repositories.md`.
+// it (about 520 characters, `.`, `-` and `_` in the body), and the same without the APPID.
+//
+// It is held to that structure rather than to GitHub's looser `ghs_[A-Za-z0-9._-]{36,}`, which
+// also takes ordinary names such as `ghs_status_dashboard_for_enterprise_repositories.md`.
+// With a numeric APPID the JWT is any three base64url segments, so no particular header bytes
+// are assumed; without one, the header must start as a JSON object does (`eyJ`), the only
+// thing that tells it from a name. The minimums sit below the smallest real JWT (a 19-character
+// `{"alg":"none"}` header, a 43-character HS256 signature).
 //
 // It has no leading `\b`: the structure is specific enough on its own, and a boundary would
 // miss a token glued to a word (`cache_ghs_…`) and leave it all in clear.
-const GitHubStatelessPattern = `gh[pousr]_(?:[0-9]+_)?eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`
+const GitHubStatelessPattern = `gh[pousr]_(?:[0-9]+_[A-Za-z0-9_-]{16,}|eyJ[A-Za-z0-9_-]{13,})\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{32,}`
 
-// GitHubClassicPattern matches a classic token: `gh?_` and at least minBody alphanumerics.
-// There is no trailing `\b`, which would drop a token followed by `_` entirely.
-func GitHubClassicPattern(minBody int) string {
-	return `\bgh[pousr]_[A-Za-z0-9]{` + strconv.Itoa(minBody) + `,}`
-}
-
-// GitHubTokenPattern matches a GitHub token of either shape. The stateless branch comes first:
-// a stateless token without an APPID starts with a 36-character JWT header that the classic
-// branch would take on its own, leaving the payload and signature behind.
-func GitHubTokenPattern(minBody int) string {
-	return `(?:` + GitHubStatelessPattern + `|` + GitHubClassicPattern(minBody) + `)`
-}
+// GitHubClassicPattern is the classic token shape the detectors have always used: `gh?_` and
+// at least 36 alphanumerics, between word boundaries. The trailing boundary is what keeps a
+// name like `ghs_<36 letters>_enabled.md` out; do not drop it.
+const GitHubClassicPattern = `\bgh[pousr]_[A-Za-z0-9]{36,}\b`
 
 var (
-	// GitHubToken matches a GitHub token of either shape at the detectors' minimum.
-	GitHubToken = regexp.MustCompile(GitHubTokenPattern(GitHubTokenMinBody))
-	// GitHubStateless matches the stateless shape only.
+	// GitHubToken matches a GitHub token of either shape, for detectors (they only ask
+	// whether, never where).
+	GitHubToken = regexp.MustCompile(`(?:` + GitHubStatelessPattern + `|` + GitHubClassicPattern + `)`)
+	// GitHubStateless matches the stateless shape only; redactors add it beside their own
+	// classic rule and replace through RedactAll.
 	GitHubStateless = regexp.MustCompile(GitHubStatelessPattern)
-	// GitHubClassic matches the classic shape only, at the detectors' minimum.
-	GitHubClassic = regexp.MustCompile(GitHubClassicPattern(GitHubTokenMinBody))
 )
+
+// RedactAll replaces every match of every re in s with mark. Each re is matched against s as
+// given, and overlapping or touching matches become one replacement. Replacing one pattern's
+// matches before matching the next would let the first cut a later match short and leave its
+// rest in clear: a JWT whose signature holds a GitHub-token-shaped run, a Bearer value that
+// starts with one, a classic token running straight into a stateless one.
+func RedactAll(s, mark string, res ...*regexp.Regexp) string {
+	var spans [][2]int
+	for _, re := range res {
+		for _, m := range re.FindAllStringIndex(s, -1) {
+			if m[1] > m[0] {
+				spans = append(spans, [2]int{m[0], m[1]})
+			}
+		}
+	}
+	if len(spans) == 0 {
+		return s
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i][0] < spans[j][0] })
+	var b strings.Builder
+	last := 0
+	for i := 0; i < len(spans); {
+		from, to := spans[i][0], spans[i][1]
+		for i++; i < len(spans) && spans[i][0] <= to; i++ {
+			to = max(to, spans[i][1])
+		}
+		b.WriteString(s[last:from])
+		b.WriteString(mark)
+		last = to
+	}
+	b.WriteString(s[last:])
+	return b.String()
+}

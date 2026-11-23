@@ -31,10 +31,22 @@ func prefix(kind string) string { return "gh" + kind + "_" }
 
 // JWT is a made-up RS256 JWT: the common 36-character header, a payload and a 2048-bit
 // signature, about 520 characters in all.
-func JWT(tag byte) string {
+func JWT(tag byte) string { return jwt(tag, `{"alg":"RS256","typ":"JWT"}`) }
+
+func jwt(tag byte, header string) string {
 	r := rng(tag)
-	return b64([]byte(`{"alg":"RS256","typ":"JWT"}`)) + "." + b64(randomBytes(r, 105)) + "." + b64(randomBytes(r, 256))
+	return b64([]byte(header)) + "." + b64(randomBytes(r, 105)) + "." + b64(randomBytes(r, 256))
 }
+
+// StatelessSpacedHeader is StatelessApp whose JOSE header starts with a space, as RFC 7519
+// allows: its base64url does not start with `eyJ`.
+func StatelessSpacedHeader() string {
+	return prefix("s") + "2873461_" + jwt('w', ` {"alg":"RS256","typ":"JWT"}`)
+}
+
+// JWTHolding is a JWT whose signature has a GitHub-token-shaped run inside it, cut short by
+// `_` so a word-bounded classic pattern does not take it alone.
+func JWTHolding(tok string) string { return JWT('h') + "opaquePart-" + tok + "_private" }
 
 // StatelessApp is a stateless installation token as GitHub documents it, `ghs_APPID_JWT`.
 func StatelessApp(appID string) string { return prefix("s") + appID + "_" + JWT('s') }
@@ -85,6 +97,7 @@ func All() map[string]string {
 		"stateless-zeros":       StatelessZeros(),
 		"stateless-no-app":      StatelessNoApp(),
 		"stateless-early-punct": StatelessEarlyPunct(),
+		"stateless-spaced":      StatelessSpacedHeader(),
 	}
 }
 
@@ -114,4 +127,7 @@ var Benign = []string{
 	"run `gh pr view` then open docs/user_guide.md and release-notes_2026.11.txt",
 	"open docs/ghs_status_dashboard_for_enterprise_repositories.md and ghp_release_notes_for_the_2026_cycle.txt",
 	"ghs_12_eyJ.short.x and gho_9_eyJhbGciOiJ.too.short are not tokens either",
+	// Split so the literal does not trip the secret scan's own 36-alphanumeric ghs_ rule.
+	"docs/gh" + "s_statusdashboardforenterpriserepositories_enabled.md",
+	"ghs_1_short.config.yaml and ghp_2_release_notes.v2.md stay names",
 }

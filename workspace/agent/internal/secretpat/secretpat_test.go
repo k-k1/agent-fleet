@@ -13,39 +13,24 @@ import (
 
 func TestGitHubTokenMatchesWholeToken(t *testing.T) {
 	frames := []string{"%s", "token: %s. Next sentence", "https://x-access-token:%s@github.com/o/r.git", `"%s"`, "GH_TOKEN=%s\n", "(%s)", "%s.example"}
-	for _, min := range []int{16, 20, GitHubTokenMinBody} {
-		re := regexp.MustCompile(GitHubTokenPattern(min))
-		for name, tok := range secretpattest.All() {
-			fs := append([]string(nil), frames...)
-			if strings.HasPrefix(name, "stateless") {
-				// The stateless branch has no leading boundary, so a token glued to a word is
-				// still one. A `_suffix` is not tested: a JWT signature may hold `_`, so a
-				// stateless match runs on through it, which over-redacts on the safe side.
-				fs = append(fs, "cache_%s", "x%s")
-			} else {
-				fs = append(fs, "%s_suffix")
-			}
-			for _, f := range fs {
-				in := strings.Replace(f, "%s", tok, 1)
-				if got := re.FindString(in); got != tok {
-					t.Errorf("min %d, %s in %q: matched %d of %d chars", min, name, f, len(got), len(tok))
-				}
-				if out := re.ReplaceAllString(in, "***"); out != strings.Replace(f, "%s", "***", 1) {
-					t.Errorf("min %d, %s in %q: redacted to %.80q", min, name, f, out)
-				}
-			}
-		}
-	}
-	if got := GitHubToken.String(); got != GitHubTokenPattern(GitHubTokenMinBody) {
-		t.Errorf("GitHubToken = %s, want the pattern at GitHubTokenMinBody", got)
-	}
 	for name, tok := range secretpattest.All() {
 		stateless := strings.HasPrefix(name, "stateless")
+		fs := append([]string(nil), frames...)
+		if stateless {
+			// No leading boundary: a token glued to a word is still one.
+			fs = append(fs, "cache_%s", "x%s")
+		}
+		for _, f := range fs {
+			in := strings.Replace(f, "%s", tok, 1)
+			if got := GitHubToken.FindString(in); got != tok {
+				t.Errorf("%s in %q: matched %d of %d chars", name, f, len(got), len(tok))
+			}
+			if out := RedactAll(in, "***", GitHubToken); out != strings.Replace(f, "%s", "***", 1) {
+				t.Errorf("%s in %q: redacted to %.80q", name, f, out)
+			}
+		}
 		if got := GitHubStateless.FindString(tok) == tok; got != stateless {
 			t.Errorf("%s: GitHubStateless whole match = %v", name, got)
-		}
-		if !stateless && GitHubClassic.FindString(tok) != tok {
-			t.Errorf("%s: GitHubClassic does not match it whole", name)
 		}
 	}
 }
@@ -65,40 +50,72 @@ func TestFixturesBeatTheOldPattern(t *testing.T) {
 			t.Errorf("%s is not JWT-shaped: %d chars", name, len(tok))
 		}
 	}
-	for _, tok := range []string{secretpattest.Stateless(), secretpattest.StatelessEarlyPunct()} {
-		if m := old.FindString(tok); m != "" {
-			t.Errorf("the old pattern finds %.12s…, so the fixture does not cover the miss", tok)
-		}
-	}
 	if !strings.Contains(secretpattest.StatelessZeros(), "_100000_") {
 		t.Error("the zeros fixture lost its APPID")
+	}
+	if strings.Contains(secretpattest.StatelessSpacedHeader(), "_eyJ") {
+		t.Error("the spaced-header fixture starts its JWT with eyJ")
 	}
 }
 
 func TestGitHubTokenBoundaries(t *testing.T) {
-	re := regexp.MustCompile(GitHubTokenPattern(16))
 	for _, s := range secretpattest.Benign {
-		if m := re.FindString(s); m != "" {
+		if m := GitHubToken.FindString(s); m != "" {
 			t.Errorf("benign %q matched %q", s, m)
 		}
 	}
-	if m := re.FindString("a" + secretpattest.Classic()); m != "" {
+	if m := GitHubToken.FindString("a" + secretpattest.Classic()); m != "" {
 		t.Errorf("a classic token glued to a word matched %q", m)
+	}
+	// A JWT signature may hold `_`, so a stateless match runs on through a glued `_suffix`:
+	// over-redaction, on the safe side.
+	if tok := secretpattest.Stateless(); GitHubToken.FindString(tok+"_suffix") != tok+"_suffix" {
+		t.Error("a stateless token's glued _suffix is not taken with it")
 	}
 }
 
-// TestCopiesAreIdentical keeps control-plane's and workspace/agent's copies of this package
-// byte-identical apart from the module path in the import above.
-func TestCopiesAreIdentical(t *testing.T) {
+func TestRedactAllMergesOverlaps(t *testing.T) {
+	a, b, c := regexp.MustCompile(`a+`), regexp.MustCompile(`ab+`), regexp.MustCompile(`c`)
+	for in, want := range map[string]string{
+		"":          "",
+		"xyz":       "xyz",
+		"xaabbbx":   "x*x",
+		"aac":       "*",
+		"a-c-ab":    "*-*-*",
+		"xab ca bx": "x* * bx", // touching matches merge too
+	} {
+		if got := RedactAll(in, "*", a, b, c); got != want {
+			t.Errorf("RedactAll(%q) = %q, want %q", in, got, want)
+		}
+	}
+	classic, stateless := secretpattest.Classic(), secretpattest.Stateless()
+	if got := RedactAll(classic+stateless, "***", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{16,}`), GitHubStateless); got != "***" {
+		t.Errorf("a classic token running into a stateless one: %.80q", got)
+	}
+}
+
+// TestGitleaksRuleIsThePattern keeps the repository's gitleaks rule for the stateless shape on
+// the same pattern as the detectors.
+func TestGitleaksRuleIsThePattern(t *testing.T) {
+	b, err := os.ReadFile(filepath.Join(repoRoot(t), ".gitleaks.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(b, []byte("regex = '''"+GitHubStatelessPattern+"'''\n")) {
+		t.Error(".gitleaks.toml has no rule whose regex is GitHubStatelessPattern")
+	}
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	root := wd
-	for {
+	for root := wd; ; {
 		if _, err := os.Stat(filepath.Join(root, "control-plane", "go.mod")); err == nil {
 			if _, err := os.Stat(filepath.Join(root, "workspace", "agent", "go.mod")); err == nil {
-				break
+				return root
 			}
 		}
 		up := filepath.Dir(root)
@@ -107,6 +124,12 @@ func TestCopiesAreIdentical(t *testing.T) {
 		}
 		root = up
 	}
+}
+
+// TestCopiesAreIdentical keeps control-plane's and workspace/agent's copies of this package
+// byte-identical apart from the module path in the import above.
+func TestCopiesAreIdentical(t *testing.T) {
+	root := repoRoot(t)
 	norm := func(b []byte) []byte {
 		b = bytes.ReplaceAll(b, []byte("agent-fleet/control-plane/"), []byte("agent-fleet/MODULE/"))
 		return bytes.ReplaceAll(b, []byte("agent-fleet/workspace/agent/"), []byte("agent-fleet/MODULE/"))

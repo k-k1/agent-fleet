@@ -173,13 +173,25 @@ var secretValueREs = []struct {
 	re   *regexp.Regexp
 	repl string
 }{
-	// GitHub's shape goes first: the JWT shape below admits `-` and `_`, so it could swallow
-	// the head of a GitHub token glued to a JWT and leave the signature in clear.
-	{regexp.MustCompile(secretpat.GitHubTokenPattern(16)), "***"},
 	{regexp.MustCompile(`(?i)(authorization:?\s*)(bearer\s+|basic\s+|token\s+)?[^\s"']+`), "${1}${2}***"},
 	{regexp.MustCompile(`(?i)\b(bearer)\s+[^\s"']+`), "${1} ***"},
 	{regexp.MustCompile(`(://[^/\s:@]*):[^/\s@]+@`), "${1}:***@"},
-	{regexp.MustCompile(`\b(?:github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?)`), "***"},
+}
+
+// secretTokenREs are the vendor token shapes, each its own pattern and replaced through
+// secretpat.RedactAll: alternatives of one pattern cannot overlap, so a Slack token or a JWT
+// glued to a GitHub token would take its head and leave the rest in clear, and a replacement
+// made before the next pattern is matched would cut that one short the same way.
+var secretTokenREs = []*regexp.Regexp{
+	secretpat.GitHubStateless,
+	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{16,}`),
+	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`),
+	regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{10,}`),
+	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}`),
+	regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`),
+	regexp.MustCompile(`\bAKIA[0-9A-Z]{16}`),
+	regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{30,}`),
+	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?`),
 }
 
 // MaskCommandSecrets replaces secret-looking values in a command line with "***".
@@ -188,7 +200,7 @@ func MaskCommandSecrets(s string) string {
 	for _, r := range secretValueREs {
 		s = r.re.ReplaceAllString(s, r.repl)
 	}
-	return s
+	return secretpat.RedactAll(s, "***", secretTokenREs...)
 }
 
 // BashTarget is the audit Target for a Bash call.
