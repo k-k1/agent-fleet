@@ -50,12 +50,22 @@ describe("bare button scopes", () => {
     for (const u of used) expect(named.has(u), `${u} is carried by a root but skinned nowhere`).toBe(true);
   });
 
+  // Every `selector { body }` of a stylesheet, comments removed, selector whitespace collapsed.
+  // Nested at-rules are not needed here: the rules read below are all top level.
+  const rulesOf = (css: string): { selector: string; body: string }[] =>
+    [...css.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+      selector: m[1].replace(/\s+/g, " ").trim(),
+      body: m[2],
+    }));
+
   it("ui.css holds each scope's variant rules, with the declarations they exist for", () => {
-    const css = read("ui/ui.css").replace(/\/\*[\s\S]*?\*\//g, "");
+    const rules = rulesOf(read("ui/ui.css"));
+    // The whole selector, not a substring: a rule that gained an ancestor would stop matching
+    // the root that carries only the marker.
     const body = (selector: string): string => {
-      const at = css.indexOf(selector + " {");
-      expect(at, `no rule for ${selector}`).toBeGreaterThanOrEqual(0);
-      return css.slice(css.indexOf("{", at) + 1, css.indexOf("}", at));
+      const hit = rules.filter((r) => r.selector === selector);
+      expect(hit.length, `ui.css has ${hit.length} rules for ${selector}`).toBe(1);
+      return hit[0].body;
     };
     const BARE = ":where(.ui-bare-btns) button.ghost";
     expect(body(BARE)).toMatch(/background:\s*transparent/);
@@ -78,10 +88,23 @@ describe("bare button scopes", () => {
     expect(body(SETTINGS + "danger:hover:not(:disabled)")).toMatch(/#4a2222/);
   });
 
-  // A selector that names the variant as a class, whatever it is qualified by: `button.ghost`,
-  // `.scope .ghost`, `button.btn.ghost`, `.x:where(.ghost)`, `[class~="ghost"]`. `.ghost-x`,
-  // `.btn-ghost` and `.ui-btn-ghost` are other names.
-  const VARIANT = /\.(ghost|primary|danger)(?![\w-])|\[\s*class[~|^$*]?=\s*["']?[^\]"']*\b(ghost|primary|danger)\b/;
+  // The selectors of a stylesheet that name one of the variants: as a class (`button.ghost`,
+  // `.scope .ghost`, `button.btn.ghost`, `.x:where(.ghost)`) or through a class attribute
+  // selector (`[class~="ghost"]`, `[ class ~= ghost ]`, `[class*="ghost"]`). `.btn-ghost`,
+  // `.ui-btn-ghost` and `[class~="ui-btn-ghost"]` are other names; `~=` and `=` compare a whole
+  // class token, the substring operators (`*=` `^=` `$=` `|=`) see the word inside a longer one.
+  const NAMES = "ghost|primary|danger";
+  const AS_CLASS = new RegExp(`\\.(${NAMES})(?![\\w-])`);
+  const AS_ATTR = new RegExp(`\\[\\s*class\\s*([~|^$*]?)=\\s*["']?([^\\]"']*?)["']?\\s*(?:[is]\\s*)?\\]`, "g");
+  const variantSelectors = (css: string): string[] =>
+    rulesOf(css)
+      .map((r) => r.selector)
+      .filter((sel) => {
+        if (AS_CLASS.test(sel)) return true;
+        return [...sel.matchAll(AS_ATTR)].some(([, op, value]) =>
+          op === "" || op === "~" ? new RegExp(`^(${NAMES})$`).test(value.trim()) : new RegExp(`(^|[^\\w])(${NAMES})([^\\w]|$)`).test(value),
+        );
+      });
 
   it("no feature stylesheet restyles a bare ghost / primary / danger button", () => {
     const sheets = files(SRC, /\.css$/);
@@ -93,26 +116,52 @@ describe("bare button scopes", () => {
     for (const f of sheets) {
       // ui.css is where the variants live; its .ui-menu-item.danger is a menu-item modifier.
       if (f.endsWith(path.join("ui", "ui.css"))) continue;
-      const css = readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
-      // Selectors only: the text before each `{`, so a declaration value is not read as one.
-      for (const m of css.matchAll(/([^{}]+)\{/g)) {
-        if (VARIANT.test(m[1])) found.push(`${path.relative(SRC, f)}: ${m[1].trim().split("\n").pop()}`);
-      }
+      for (const sel of variantSelectors(readFileSync(f, "utf8"))) found.push(`${path.relative(SRC, f)}: ${sel}`);
     }
     expect(found).toEqual([]);
   });
 
-  it("the scan catches the equivalent ways to restyle one", () => {
+  it("the scan catches the equivalent ways to restyle one, and only those", () => {
+    const hits = (selector: string) => variantSelectors(`${selector} { color: red }`).length;
     for (const sel of [
       ":where(.chatview) button.ghost",
       ".scope .ghost",
       "button.btn.ghost",
       ".x:where(.primary)",
       '.chatview button[class~="ghost"]',
+      '.chatview button[class ~= "ghost"]',
+      "button[ class~=ghost ]",
+      '[class="danger"]',
+      '[class*="primary"]',
+      '[class^="ghost "]',
       "button.danger:hover",
-    ]) expect(VARIANT.test(sel), sel).toBe(true);
-    for (const sel of [".mt-perm-btn.mt-perm-btn--ghost", ".btn-ghost", ".ui-btn-ghost", ".danger-zone", ".fgraph-arrow--danger", ".primary-x"]) {
-      expect(VARIANT.test(sel), sel).toBe(false);
+    ]) expect(hits(sel), sel).toBe(1);
+    for (const sel of [
+      ".mt-perm-btn.mt-perm-btn--ghost",
+      ".btn-ghost",
+      ".ui-btn-ghost",
+      ".danger-zone",
+      ".fgraph-arrow--danger",
+      ".primary-x",
+      'button[class~="ui-btn-ghost"]',
+      '[class ~= "mt-perm-btn--ghost"]',
+    ]) expect(hits(sel), sel).toBe(0);
+  });
+
+  // jsdom has no container queries, so the shared ViewHead's collapse (labels hidden below 520px,
+  // the same unnamed container scm.css uses) is pinned in the stylesheets themselves: losing one
+  // brings the labels back at 461-520px in that view only.
+  it("each view that labels the shared header's buttons hides them below 520px", () => {
+    for (const [file, label] of [
+      ["features/scm/scm.css", "scm-lbl"],
+      ["features/overview/overview.css", "ovw-lbl"],
+      ["features/fleetgraph/fleetgraph.css", "fgraph-lbl"],
+    ]) {
+      const css = read(file).replace(/\/\*[\s\S]*?\*\//g, "");
+      const block = css.match(/@container \(max-width: 520px\) \{([\s\S]*?\n\})/);
+      expect(block, `${file}: no @container (max-width: 520px) block`).not.toBeNull();
+      const rule = rulesOf(block![1]).find((r) => r.selector === `.view-head .ui-btn .${label}`);
+      expect(rule?.body, `${file}: .view-head .ui-btn .${label}`).toMatch(/display:\s*none/);
     }
   });
 });
