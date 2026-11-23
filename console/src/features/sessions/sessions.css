@@ -187,8 +187,8 @@
   font-size: 12px;
 }
 /* Hue from tokens.css (--kind, per kind, shell and ssm included); tint via color-mix. */
-.sess-kic.kind { color: var(--kind); background: color-mix(in srgb, var(--kind) 14%, transparent); }
-[data-theme="light"] .sess-kic.kind { background: color-mix(in srgb, var(--kind) 20%, transparent); }
+.sess-kic.sess-kic--kind { color: var(--kind); background: color-mix(in srgb, var(--kind) 14%, transparent); }
+[data-theme="light"] .sess-kic.sess-kic--kind { background: color-mix(in srgb, var(--kind) 20%, transparent); }
 /* The state chip is span.session-state (old markup — rules at the bottom of this
    file); its margin-left:auto puts it at the row's right edge. Calm states are
    icon-only (.mini); question/plan/permission keep their text. */

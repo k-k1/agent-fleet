@@ -109,6 +109,7 @@ describe("Google Cloud profiles chip", () => {
     await act(async () => void useGcpLoginStore.getState().refreshProfiles());
     expect(chip()!.textContent).toContain("0/1");
     expect(chip()!.className).toContain("muted");
+    expect(chip()!.className).toContain("ws-aws-btn--muted");
   });
 
   it("renders nothing without Settings profiles or while the workspace is not running", async () => {

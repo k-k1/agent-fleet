@@ -151,11 +151,11 @@
   line-clamp: 2;
   overflow: hidden;
 }
-.doc-comment.open .doc-comment-quote {
+.doc-comment.doc-comment--open .doc-comment-quote {
   white-space: pre-wrap;
   overflow: visible;
 }
-.doc-comment.open .doc-comment-body {
+.doc-comment.doc-comment--open .doc-comment-body {
   display: block;
   -webkit-line-clamp: none;
   line-clamp: none;

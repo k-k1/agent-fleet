@@ -290,7 +290,7 @@ export function PromptTemplatePopover({
                       id={optId(listId, i)}
                       role="option"
                       aria-selected={i === activeIdx}
-                      className={"launch-tmpl-item" + (i === activeIdx ? " sel" : "")}
+                      className={"launch-tmpl-item" + (i === activeIdx ? " launch-tmpl-item--sel" : "")}
                       // A touch has no hover: a tap (and the mousemove it synthesizes) only
                       // previews, and the preview's Insert button commits — the first row is
                       // highlighted from the start, so "tap the highlighted row" cannot mean insert.

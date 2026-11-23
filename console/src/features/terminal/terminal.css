@@ -71,9 +71,9 @@
 }
 /* Hue from tokens.css (--kind, per kind); tints are derived via color-mix. The
    light theme keeps a stronger fill/border (the darker hue comes from the var). */
-.kind-tag.kind { color: var(--kind); background: color-mix(in srgb, var(--kind) 14%, transparent); border-color: color-mix(in srgb, var(--kind) 45%, transparent); }
+.kind-tag.kind-tag--kind { color: var(--kind); background: color-mix(in srgb, var(--kind) 14%, transparent); border-color: color-mix(in srgb, var(--kind) 45%, transparent); }
 /* Light theme: stronger fill for legibility (color comes from the light --kind-* var). */
-[data-theme="light"] .kind-tag.kind { background: color-mix(in srgb, var(--kind) 20%, transparent); border-color: color-mix(in srgb, var(--kind) 55%, transparent); }
+[data-theme="light"] .kind-tag.kind-tag--kind { background: color-mix(in srgb, var(--kind) 20%, transparent); border-color: color-mix(in srgb, var(--kind) 55%, transparent); }
 
 /* Terminal body: xterm fills; overlays cover it. */
 .term-body {
@@ -179,16 +179,6 @@
   opacity: 0.4;
   cursor: default;
 }
-:where(.onboard-scope) button.ghost {
-  background: transparent;
-  border-color: transparent;
-  color: var(--muted);
-  padding: 2px 6px;
-}
-:where(.onboard-scope) button.ghost:hover:not(:disabled) {
-  background: var(--btn);
-  color: var(--fg);
-}
 
 .onboard-card {
   width: min(94%, 500px);
@@ -269,7 +259,7 @@
   font-size: 15px;
   line-height: 1;
 }
-.onboard-cta.primary {
+.onboard-cta.onboard-cta--primary {
   background: var(--accent);
   color: var(--on-accent); /* was hardcoded #fff — use the accent's contrast token */
   border-color: var(--accent);

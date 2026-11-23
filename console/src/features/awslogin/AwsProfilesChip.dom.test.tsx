@@ -106,6 +106,14 @@ describe("AWS profiles chip", () => {
     expect(chip()!.className).not.toMatch(/ws-aws-btn--warn|muted/);
   });
 
+  it("marks the chip muted, with its own modifier, when nothing is signed in", async () => {
+    profiles = [{ ...dev }];
+    await mount();
+    expect(chip()!.className).toContain("ws-aws-btn--muted");
+    expect(chip()!.classList.contains("muted")).toBe(true);
+    expect(chip()!.className).not.toMatch(/ws-aws-btn--(ok|warn)/);
+  });
+
   it("names the profile when exactly one is signed in", async () => {
     profiles = [prod, dev];
     await mount();

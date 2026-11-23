@@ -96,7 +96,7 @@ export function AwsProfilesChip({ hidden = false, passive = false }: { hidden?: 
   const counted = profiles.filter(ownsLogin);
   const active = counted.filter(isActive);
   const expiring = profiles.some((p) => p.expiring);
-  const tone = expiring ? " ws-aws-btn--warn" : active.length === 0 ? " muted" : " ws-aws-btn--ok";
+  const tone = expiring ? " ws-aws-btn--warn" : active.length === 0 ? " muted ws-aws-btn--muted" : " ws-aws-btn--ok";
   // One signed-in profile is named, since "which one" is the question; more get a count.
   const label = active.length === 1 ? active[0].label || active[0].name : `${active.length}/${counted.length}`;
   const title = expiring

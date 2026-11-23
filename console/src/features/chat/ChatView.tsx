@@ -1036,7 +1036,7 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
 
   return (
     <div
-      className="chatview"
+      className="chatview ui-bare-btns"
       data-theme={settings.assistantTheme !== "inherit" ? settings.assistantTheme : undefined}
       style={{
         ...(asstBg ? { "--chat-bg": asstBg } : {}),

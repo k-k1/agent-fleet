@@ -73,7 +73,7 @@
   color: var(--pb-fg, #0c0c0c);
 }
 
-.p-badge.kind { background: var(--kind); }
+.p-badge.p-badge--kind { background: var(--kind); }
 
 .p-badge.pb-github { background: #c9d1d9; }
 
@@ -108,7 +108,7 @@
 /* The agent-kind fills follow --kind, which flips with the theme: light hues in the
    dark theme (near-black label reads), dark hues in the light theme (it did not — the
    claude/codex/cursor/kiro badges sat at 2.8–3.2:1). */
-[data-theme="light"] .p-badge.kind {
+[data-theme="light"] .p-badge.p-badge--kind {
   --pb-fg: #fff;
 }
 

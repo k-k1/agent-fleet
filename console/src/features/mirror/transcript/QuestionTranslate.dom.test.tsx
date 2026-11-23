@@ -57,7 +57,7 @@ describe("QuestionBlock translation", () => {
     expect(h.querySelector(".mq-text")!.textContent).toBe("どう進めますか？");
     expect(h.querySelector(".mq-header")!.textContent).toBe("配備");
     expect(labels(h)).toEqual(["今すぐ再配備", "飛ばす"]);
-    expect(Array.from(h.querySelectorAll(".mq-opt")).map((b) => b.classList.contains("selected"))).toEqual([false, true]);
+    expect(Array.from(h.querySelectorAll(".mq-opt")).map((b) => b.classList.contains("mq-opt--selected"))).toEqual([false, true]);
     expect(h.querySelector(".mt-translate")!.classList.contains("mt-translate--on")).toBe(true);
   });
 

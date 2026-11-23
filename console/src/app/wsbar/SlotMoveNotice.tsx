@@ -16,7 +16,7 @@ export function SlotMoveNotice() {
     <div className="ws-stale ws-slotmove" ref={ref}>
       <Button className="ws-stale-pill" onClick={() => setOpen((o) => !o)} aria-expanded={open} title={tr("wsbar.slotmove.title")}>
         <Icon name="info" />
-        <span className="lbl">{tr("wsbar.slotmove.badge")}</span>
+        <span className="ws-lbl">{tr("wsbar.slotmove.badge")}</span>
       </Button>
       {open && (
         <div className="ws-stale-pop">

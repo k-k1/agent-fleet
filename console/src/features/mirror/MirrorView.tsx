@@ -541,7 +541,7 @@ function MirrorViewBody({
   return (
     <div
       ref={scroll.mirrorRef}
-      className={"mirrorview" + (dragging ? " dragging" : "")}
+      className={"mirrorview ui-bare-btns ui-bare-btns--mirror" + (dragging ? " dragging" : "")}
       data-theme={settings.mirrorTheme !== "inherit" ? settings.mirrorTheme : undefined}
       style={{
         "--chat-font": chatFontStack(settings.chatFont),

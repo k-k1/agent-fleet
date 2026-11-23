@@ -305,7 +305,7 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
         <div className="scm-acts">
           {scmActions.map((a) => (
             <button key={a.key} type="button" className="ui-btn ui-btn-ghost ui-btn-sm" title={a.title} onClick={a.onClick}>
-              <Icon name={a.icon} /> <span className="lbl">{a.label}</span>
+              <Icon name={a.icon} /> <span className="scm-lbl">{a.label}</span>
             </button>
           ))}
         </div>

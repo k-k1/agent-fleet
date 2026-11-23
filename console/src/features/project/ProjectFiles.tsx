@@ -1214,7 +1214,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
               {...(isDir ? { "aria-expanded": isOpen } : {})}
               className={
                 "fsrow" +
-                (isSel ? " selected" : "") +
+                (isSel ? " fsrow--selected" : "") +
                 (isDir && dropTarget === r.path ? " drop-hover" : "") +
                 // A folded row (a/b/c) is "new" when any level of it is — the
                 // added directory is the first segment, not the row's path.

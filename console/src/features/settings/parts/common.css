@@ -465,13 +465,13 @@ button.ssm-row-action:hover:not(:disabled) {
 }
 
 /* Delete stays the destructive one: red text and a red-tinted frame. */
-button.ssm-row-action.danger {
+button.ssm-row-action.ssm-row-action--danger {
   background: color-mix(in srgb, var(--err) 10%, transparent);
   border-color: color-mix(in srgb, var(--err) 45%, var(--btn-border));
   color: var(--err);
 }
 
-button.ssm-row-action.danger:hover:not(:disabled) {
+button.ssm-row-action.ssm-row-action--danger:hover:not(:disabled) {
   background: color-mix(in srgb, var(--err) 22%, transparent);
 }
 

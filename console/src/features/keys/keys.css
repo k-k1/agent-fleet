@@ -201,7 +201,7 @@
   border-radius: 8px;
   cursor: pointer;
 }
-.cp-item.sel {
+.cp-item.cp-item--sel {
   background: var(--active-bg);
 }
 .cp-title {

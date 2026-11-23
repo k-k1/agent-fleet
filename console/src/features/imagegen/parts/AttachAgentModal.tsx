@@ -321,7 +321,7 @@ export function AttachAgentModal({
                       disabled={!!c.blocked}
                       title={reason || tr(ag.launchHintKey)}
                       data-kind={c.kind}
-                      className={"seg-btn " + kindColorClasses(ag.cssClass) + (kind === c.kind ? " seg-btn--active" : "")}
+                      className={"seg-btn " + kindColorClasses(ag.cssClass, "seg-btn") + (kind === c.kind ? " seg-btn--active" : "")}
                       onClick={() => setKind(c.kind)}
                     >
                       <Icon name={ag.icon} className="seg-ic" />

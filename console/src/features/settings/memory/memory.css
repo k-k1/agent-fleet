@@ -70,7 +70,7 @@
   font-weight: 600;
 }
 
-.mem-kind.kind {
+.mem-kind.mem-kind--kind {
   color: var(--kind);
 }
 

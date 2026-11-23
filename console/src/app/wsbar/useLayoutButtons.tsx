@@ -43,7 +43,7 @@ export function useLayoutButtons(isMobile: boolean) {
       onClick={() => splitRight()}
     >
       <Icon name="split-horizontal" />
-      <span className="lbl">{tr("wsbar.split_right")}</span>
+      <span className="ws-lbl">{tr("wsbar.split_right")}</span>
     </Button>
   );
   const splitDownBtn = (
@@ -56,7 +56,7 @@ export function useLayoutButtons(isMobile: boolean) {
       onClick={() => activePaneId && splitDown(activePaneId)}
     >
       <Icon name="split-vertical" />
-      <span className="lbl">{tr("wsbar.split_down")}</span>
+      <span className="ws-lbl">{tr("wsbar.split_down")}</span>
     </Button>
   );
   const closeAllBtn = (
@@ -69,7 +69,7 @@ export function useLayoutButtons(isMobile: boolean) {
       onClick={() => resetToTerminal()}
     >
       <Icon name="close-all" />
-      <span className="lbl">{tr("wsbar.close_all")}</span>
+      <span className="ws-lbl">{tr("wsbar.close_all")}</span>
     </Button>
   );
   return { splitRightBtn, splitDownBtn, closeAllBtn };

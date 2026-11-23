@@ -22,7 +22,7 @@ function PendingTurn({ agentName, note, children }: { agentName: string; note: s
     <div className="mirror-turn assistant">
       <div className="mirror-turn-head">
         <span className="mt-who">{agentName}</span>
-        <span className="mt-model muted">{note}</span>
+        <span className="mt-model muted mt-model--muted">{note}</span>
       </div>
       <div className="mirror-turn-body">{children}</div>
     </div>
@@ -113,7 +113,7 @@ export function PermissionCard({
           {onAlwaysAllow && (
             <button
               type="button"
-              className="ghost mt-perm-btn"
+              className="ghost mt-perm-btn mt-perm-btn--ghost"
               disabled={sending}
               title={tr("mirror.auto_allow")}
               onClick={onAlwaysAllow}
@@ -121,7 +121,7 @@ export function PermissionCard({
               {tr("mirror.always_allow")}
             </button>
           )}
-          <button type="button" className="ghost mt-perm-btn" disabled={sending} onClick={onDeny}>
+          <button type="button" className="ghost mt-perm-btn mt-perm-btn--ghost" disabled={sending} onClick={onDeny}>
             <Icon name="close" /> {tr("mirror.deny")}
           </button>
         </div>
@@ -185,7 +185,7 @@ export function ApprovalCard({
           <button type="button" className="btn primary mt-perm-btn" disabled={sending} onClick={onAllow}>
             <Icon name="check" /> {tr("mirror.allow")}
           </button>
-          <button type="button" className="ghost mt-perm-btn" disabled={sending} onClick={onDeny}>
+          <button type="button" className="ghost mt-perm-btn mt-perm-btn--ghost" disabled={sending} onClick={onDeny}>
             <Icon name="close" /> {tr("mirror.deny")}
           </button>
         </div>

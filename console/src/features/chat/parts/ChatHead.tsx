@@ -77,7 +77,7 @@ export function ChatHead({
             <button
               type="button"
               ref={agentTagRef}
-              className={"kind-tag " + kindClasses(agentKind!) + " chat-agent-pick"}
+              className={"kind-tag " + kindClasses(agentKind!, "kind-tag") + " chat-agent-pick"}
               title={tr("chat.switch_agent_tip")}
               aria-haspopup="menu"
               aria-expanded={agentPickerOpen}
@@ -90,7 +90,7 @@ export function ChatHead({
             </button>
           )}
           {agent && !conversationId && (
-            <span className={"kind-tag " + kindClasses(agentKind!)}>
+            <span className={"kind-tag " + kindClasses(agentKind!, "kind-tag")}>
               <Icon name={agent.icon} />
               {agent.assistantName}
             </span>
@@ -143,7 +143,7 @@ export function ChatHead({
           {conversationId && (
             <button
               type="button"
-              className={"chat-plan-toggle" + (conv?.plan ? " has-plan" : "") + (planOpen ? " open" : "")}
+              className={"chat-plan-toggle" + (conv?.plan ? " has-plan" : "") + (planOpen ? " chat-plan-toggle--open" : "")}
               title={tr("chat.plan.toggle_tip")}
               aria-expanded={planOpen}
               onClick={onTogglePlan}

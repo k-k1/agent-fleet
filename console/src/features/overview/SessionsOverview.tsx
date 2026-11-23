@@ -117,7 +117,7 @@ export function SessionsOverview({ paneId, showStopped, collapsed, headerActions
               title={tr("ovw.show_stopped_hint")}
               onClick={toggleStopped}
             >
-              <Icon name={showStopped ? "eye" : "eye-closed"} /> <span className="lbl">{tr("ovw.show_stopped")}</span>
+              <Icon name={showStopped ? "eye" : "eye-closed"} /> <span className="ovw-lbl">{tr("ovw.show_stopped")}</span>
             </button>
             {/* The way over to the fleet graph. Both panes carry each other's button because
                 the rail's layout map — the only other place either one is offered — hides
@@ -129,7 +129,7 @@ export function SessionsOverview({ paneId, showStopped, collapsed, headerActions
               onClick={openGraph}
               onAuxClick={openGraph}
             >
-              <Icon name="graph" /> <span className="lbl">{tr("ovw.switch_to_fleetgraph")}</span>
+              <Icon name="graph" /> <span className="ovw-lbl">{tr("ovw.switch_to_fleetgraph")}</span>
             </button>
             {headerActions}
           </>

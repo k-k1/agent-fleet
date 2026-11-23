@@ -289,7 +289,7 @@ function talkItem(h: SessionSearchHit, running: boolean): Item {
 function TalkRowBody({ h }: { h: SessionSearchHit }) {
   return (
     <>
-      <span className={"sess-kic " + kindClasses(h.kind)} title={kindLabel(h.kind)}>
+      <span className={"sess-kic " + kindClasses(h.kind, "sess-kic")} title={kindLabel(h.kind)}>
         <Icon name={kindIcon(h.kind)} />
       </span>
       <span className="cp-talk-main">
@@ -418,7 +418,7 @@ function SessionRowBody({ s, refHit, parentName }: { s: Session; refHit?: string
     <>
       {/* The rail's own kind square (sessions.css .sess-kic) — reused rather than
           restyled, so a new agent kind gets its colour here for free. */}
-      <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
+      <span className={"sess-kic " + kindClasses(s.kind, "sess-kic")} title={kindLabel(s.kind)}>
         <Icon name={kindIcon(s.kind)} />
       </span>
       <span className="cp-title">{displayName(s)}</span>
@@ -1033,7 +1033,7 @@ export function CommandPalette() {
                 ref={i === sel ? selRef : null}
                 className={
                   "cp-item" +
-                  (i === sel ? " sel" : "") +
+                  (i === sel ? " cp-item--sel" : "") +
                   (it.session ? " cp-sess" : "") +
                   (it.session && !it.session.alive ? " cp-stopped" : "") +
                   (nested ? " cp-nested" : "") +

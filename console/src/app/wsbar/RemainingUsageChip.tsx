@@ -63,7 +63,7 @@ export function RemainingUsageChip({ src, tenant }: { src: RemainingSource; tena
     host,
     <div className="ws-usage-wrap" ref={ref}>
       <Button
-        className={"kind-tag " + kindClasses(src.kind) + " ws-usage-btn"}
+        className={"kind-tag " + kindClasses(src.kind, "kind-tag") + " ws-usage-btn"}
         title={chipTitle}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}

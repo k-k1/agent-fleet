@@ -949,7 +949,7 @@ function ProfileSection({
         >
           {tr("ssm.edit")}
         </button>
-        <button className="ghost danger ssm-row-action ssm-del" title={tr("common.delete")} disabled={busy} onClick={() => remove(p.id)}>
+        <button className="ghost danger ssm-row-action ssm-row-action--danger ssm-del" title={tr("common.delete")} disabled={busy} onClick={() => remove(p.id)}>
           {tr("common.delete")}
         </button>
       </div>
@@ -1309,7 +1309,7 @@ function HostSection({
                   >
                     {tr("ssm.edit")}
                   </button>
-                  <button className="ghost danger ssm-row-action ssm-del" title={tr("common.delete")} disabled={busy} onClick={() => remove(h.id)}>
+                  <button className="ghost danger ssm-row-action ssm-row-action--danger ssm-del" title={tr("common.delete")} disabled={busy} onClick={() => remove(h.id)}>
                     {tr("common.delete")}
                   </button>
                 </div>

@@ -528,7 +528,7 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
               title={tr("fgraph.show_archived_hint")}
               onClick={toggleArchived}
             >
-              <Icon name={showArchived ? "eye" : "eye-closed"} /> <span className="lbl">{tr("fgraph.show_archived")}</span>
+              <Icon name={showArchived ? "eye" : "eye-closed"} /> <span className="fgraph-lbl">{tr("fgraph.show_archived")}</span>
             </button>
             {/* The way back to the sessions overview (ADR 0096 decision 10). The two panes
                 carry each other's button rather than only the leader key and the palette,
@@ -541,7 +541,7 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
               onClick={(e) => activate(e, openSessionsList)}
               onAuxClick={(e) => activate(e, openSessionsList)}
             >
-              <Icon name="dashboard" /> <span className="lbl">{tr("fgraph.switch_to_sessions")}</span>
+              <Icon name="dashboard" /> <span className="fgraph-lbl">{tr("fgraph.switch_to_sessions")}</span>
             </button>
             {headerActions}
           </>
@@ -851,7 +851,7 @@ function LaneLabel({
       {missingParent && (
         <Icon name="warning" className="fgraph-parent-gap" title={tr("fgraph.parent_missing", { id: missingParent })} />
       )}
-      <span className={"sess-kic " + kindColorClasses(cls)}>
+      <span className={"sess-kic " + kindColorClasses(cls, "sess-kic")}>
         <Icon name={kindIcon(lane.kind)} />
       </span>
       <span className="fgraph-label-text">{lane.label}</span>
@@ -860,11 +860,11 @@ function LaneLabel({
         <span className={stateClass("session-state", st.cls)} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
           {" "}
-          <span className="lbl">{st.short || st.text}</span>
+          <span className="fgraph-lbl">{st.short || st.text}</span>
         </span>
       ) : (
         <span className="session-state session-state--off" title={presence}>
-          <span className="lbl">{tr(PRESENCE_SHORT_KEY[lane.presence])}</span>
+          <span className="fgraph-lbl">{tr(PRESENCE_SHORT_KEY[lane.presence])}</span>
         </span>
       )}
       {session && menuAt && (
@@ -923,7 +923,7 @@ function LaneLine({ lane, scale, y }: { lane: GraphLane; scale: GraphScale; y: n
         ? tr("fgraph.run_cut", { time: fmtDateTime(run.t1!, TIME_HM) })
         : tr("fgraph.death_at", { time: fmtDateTime(run.t1!, TIME_HM) }) + (ex ? "\n" + ex.hint : "");
       nodes.push(
-        <g key={`d${i}`} className={cx("fgraph-death", run.cut && "cut", ex && "danger")} transform={`translate(${x1},${y})`}>
+        <g key={`d${i}`} className={cx("fgraph-death", run.cut && "cut", ex && "fgraph-death--danger")} transform={`translate(${x1},${y})`}>
           <title>{title}</title>
           {run.cut ? <circle r={DEATH_R} /> : null}
           <line x1={-DEATH_R} y1={-DEATH_R} x2={DEATH_R} y2={DEATH_R} />
@@ -1052,7 +1052,7 @@ function ArrowGlyph({
     (arrow.danger ? "\n" + tr("fgraph.death_reason", { reason: arrow.label ?? "" }) : "");
   return (
     <g
-      className={cx("fgraph-arrow", variantCls, arrow.danger && "danger", clickable && "clickable")}
+      className={cx("fgraph-arrow", variantCls, arrow.danger && "fgraph-arrow--danger", clickable && "clickable")}
       onClick={clickable ? onOpen : undefined}
       onAuxClick={clickable ? onOpen : undefined}
     >

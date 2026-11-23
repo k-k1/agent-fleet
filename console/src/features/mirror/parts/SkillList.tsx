@@ -62,7 +62,7 @@ export function SkillList({
             type="button"
             key={s.type + ":" + s.source + ":" + s.name}
             ref={!passive && i === sel ? selRef : undefined}
-            className={"mirror-skill-item" + (!passive && i === sel ? " sel" : "")}
+            className={"mirror-skill-item" + (!passive && i === sel ? " mirror-skill-item--sel" : "")}
             role="option"
             aria-selected={!passive && i === sel}
             title={tr("mirror.skills_item_hint")}
@@ -91,7 +91,7 @@ export function SkillList({
           <button
             type="button"
             ref={moreSel ? selRef : undefined}
-            className={"mirror-skill-more" + (moreSel ? " sel" : "")}
+            className={"mirror-skill-more" + (moreSel ? " mirror-skill-more--sel" : "")}
             role="option"
             aria-selected={moreSel}
             onMouseMove={() => onHover(items.length)}

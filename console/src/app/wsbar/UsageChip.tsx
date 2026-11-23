@@ -91,7 +91,7 @@ export function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | 
       {/* Same badge look as the Sessions-list kind badge: reuse kind-tag + the kind
           color, then reset the button chrome (ws-usage-btn). */}
       <Button
-        className={"kind-tag " + kindClasses(src.kind) + " ws-usage-btn"}
+        className={"kind-tag " + kindClasses(src.kind, "kind-tag") + " ws-usage-btn"}
         title={chipTitle}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}

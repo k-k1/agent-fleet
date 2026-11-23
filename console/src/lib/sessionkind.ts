@@ -25,10 +25,10 @@ export const kindClass = (k: string | null | undefined): string => agentOf(k).cs
 const COLORED_SLUGS = new Set(SESSION_KINDS.map((k) => AGENTS[k].cssClass));
 
 // The class list that colours an element by a kind slug: `kind-<slug>` sets --kind
-// (styles/tokens.css) and the `kind` marker is what the colouring rules select on. A slug with
+// (styles/tokens.css) and the `<block>--kind` marker is what the owning block's colouring rule selects on. A slug with
 // no registered colour (the generic descriptor's, or a raw kind the Agent sent that this Console
 // does not know) gets no marker, so the element keeps its uncoloured base style.
-export const kindColorClasses = (slug: string): string => (COLORED_SLUGS.has(slug) ? "kind kind-" : "kind-") + slug;
+export const kindColorClasses = (slug: string, block: string): string => (COLORED_SLUGS.has(slug) ? block + "--kind kind-" : "kind-") + slug;
 
 // kindColorClasses for a session kind (through the registry, as kindClass).
-export const kindClasses = (k: string | null | undefined): string => kindColorClasses(kindClass(k));
+export const kindClasses = (k: string | null | undefined, block: string): string => kindColorClasses(kindClass(k), block);

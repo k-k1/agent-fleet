@@ -588,7 +588,7 @@
   }
   .repo-row:hover .launch-wrap,
   .repo-row:focus-within .launch-wrap,
-  .repo-row .launch-wrap.open {
+  .repo-row .launch-wrap.launch-wrap--open {
     opacity: 1;
     pointer-events: auto;
   }
@@ -691,7 +691,7 @@
 .launch-sec-head:hover {
   background: var(--btn-h);
 }
-.launch-sec.open .launch-sec-head {
+.launch-sec.launch-sec--open .launch-sec-head {
   border-radius: 6px 6px 0 0;
   border-bottom: 1px solid var(--border2, var(--border));
 }
@@ -876,7 +876,7 @@
   font-size: 12.5px;
   color: var(--fg);
 }
-.launch-tmpl-item.sel {
+.launch-tmpl-item.launch-tmpl-item--sel {
   background: color-mix(in srgb, var(--accent) 18%, var(--btn));
 }
 .launch-tmpl-item-title {
