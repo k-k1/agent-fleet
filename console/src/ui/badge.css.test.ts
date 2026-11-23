@@ -126,3 +126,16 @@ describe("badges and chips moved onto the primitives (#4785)", () => {
     expect(read("../features/inbox/InboxModal.tsx")).toContain('className="ui-chip inbox-chip"');
   });
 });
+
+describe(".ui-card primitive", () => {
+  it("keeps the border, radius and default fill of the old inbox card", () => {
+    const r = rule(ui, ".ui-card");
+    expect(r).toContain("border: 1px solid var(--border)");
+    expect(r).toContain("border-radius: 8px");
+    expect(r).toContain("background: var(--card-bg, var(--panel))");
+  });
+  it("usage cards keep their panel2 fill through --card-bg", () => {
+    const usage = strip(readFileSync(path.resolve(__dirname, "../features/usage/usage.css"), "utf8"));
+    expect(rule(usage, ".usage-card")).toContain("--card-bg: var(--panel2)");
+  });
+});

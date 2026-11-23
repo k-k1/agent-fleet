@@ -10,14 +10,14 @@
 }
 .ovw-count {
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
   white-space: nowrap;
 }
 .ovw-toggle {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-11);
   white-space: nowrap;
 }
 .ovw-toggle.on {
@@ -53,7 +53,7 @@
   margin: 0 0 6px;
   padding-bottom: 4px;
   border-bottom: 1px solid var(--border);
-  font-size: 11px;
+  font-size: var(--fs-11);
   font-weight: 600;
   color: var(--muted);
   /* The heading stays put while its own cards scroll past, so it is always clear which
@@ -152,7 +152,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-13);
 }
 .ovw-menu-wrap {
   flex: none;
@@ -182,7 +182,7 @@
   gap: 6px;
   min-width: 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
   white-space: nowrap;
 }
 .ovw-project {
@@ -197,7 +197,7 @@
   text-overflow: ellipsis;
 }
 .ovw-wt .codicon {
-  font-size: 11px;
+  font-size: var(--fs-11);
 }
 .ovw-row {
   display: flex;
@@ -240,7 +240,7 @@
   flex-wrap: wrap;
   gap: 4px 10px;
   color: var(--muted2);
-  font-size: 11px;
+  font-size: var(--fs-11);
   min-width: 0;
 }
 .ovw-meta > span {
@@ -260,7 +260,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
   line-height: 1.4;
 }
 /* Family fold on a card (ADR 0078's families, folded the way the fleet graph folds its
@@ -278,7 +278,7 @@
   border-radius: 3px;
   background: transparent;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--fs-11);
   cursor: pointer;
 }
 .ovw-fold:hover,
@@ -290,7 +290,7 @@
 .ovw-hidden {
   flex: none;
   color: var(--muted);
-  font-size: 10px;
+  font-size: var(--fs-10);
   padding: 0 4px;
   border: 1px solid var(--border2);
   border-radius: 999px;
