@@ -10,15 +10,21 @@ import (
 	"testing"
 )
 
-// The Workspace image installs the gitleaks that ci.yml's secret-scan job runs, so a session
-// scans with the same rules CI will apply. Two pins that drift mean a push that is clean
-// locally turns red in CI, or the reverse.
+// The Workspace image installs the gitleaks that CI's secret scans run, so a session scans
+// with the same rules CI will apply. Two pins that drift mean a push that is clean locally
+// turns red in CI, or the reverse. CI's pin lives in the install-gitleaks composite action,
+// which ci.yml's secret-scan job (and secret-sweep.yml) use.
 var (
 	dockerGitleaksARG = regexp.MustCompile(`(?m)^ARG GITLEAKS_VERSION=(\S+)\s*$`)
 	// The step that installs the scanner, up to the next step: the pin is searched only there,
 	// so a VERSION in a later step or job is never read as the scanner's.
 	ciGitleaksStep    = regexp.MustCompile(`(?s)- name: install gitleaks[^\n]*\n(.*?)(?:\n\s*- name:|\n\S|\z)`)
 	ciGitleaksVersion = regexp.MustCompile(`(?m)^\s+VERSION:\s*(\S+)\s*$`)
+)
+
+const (
+	gitleaksActionUse  = "./.github/actions/install-gitleaks"
+	gitleaksActionFile = ".github/actions/install-gitleaks/action.yml"
 )
 
 func gitleaksPins(dockerfile, ci string) (docker, workflow string) {
@@ -38,19 +44,28 @@ func TestGitleaksPinMatchesCI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The action is only CI's pin while ci.yml installs the scanner through it: a job that
+	// went back to an inline step would leave this test comparing against a file CI ignores.
 	ci, err := os.ReadFile("../../.github/workflows/ci.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	docker, workflow := gitleaksPins(string(df), string(ci))
+	if !strings.Contains(string(ci), "uses: "+gitleaksActionUse) {
+		t.Fatalf(".github/workflows/ci.yml no longer installs gitleaks with `uses: %s`; point this test at where the pin is now", gitleaksActionUse)
+	}
+	action, err := os.ReadFile("../../" + gitleaksActionFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docker, workflow := gitleaksPins(string(df), string(action))
 	if docker == "" {
 		t.Fatal("workspace/Dockerfile has no `ARG GITLEAKS_VERSION=`")
 	}
 	if workflow == "" {
-		t.Fatal(".github/workflows/ci.yml: no VERSION in the `install gitleaks` step")
+		t.Fatalf("%s: no VERSION in the `install gitleaks` step", gitleaksActionFile)
 	}
 	if docker != workflow {
-		t.Errorf("GITLEAKS_VERSION in workspace/Dockerfile (%s) != VERSION of ci.yml's secret-scan job (%s); bump both together (docs/build/10 §10.4)", docker, workflow)
+		t.Errorf("GITLEAKS_VERSION in workspace/Dockerfile (%s) != VERSION in %s (%s); bump both together (docs/build/10 §10.4)", docker, gitleaksActionFile, workflow)
 	}
 }
 
@@ -65,6 +80,11 @@ func TestGitleaksPinsParse(t *testing.T) {
 	d, w = gitleaksPins("ARG GITLEAKS_VERSION=8.31.0\n", wf)
 	if d == w {
 		t.Errorf("a different Dockerfile pin parsed equal: %q == %q", d, w)
+	}
+	// The composite action's shape: a top-level runs.steps list, indented by four.
+	const action = "runs:\n  using: composite\n  steps:\n    - name: install gitleaks (version+checksum pinned)\n      shell: bash\n      env:\n        VERSION: 8.30.1\n        SHA256: abc\n      run: |\n        x\n"
+	if _, w = gitleaksPins("", action); w != "8.30.1" {
+		t.Errorf("composite action pin parsed as %q, want 8.30.1", w)
 	}
 	// A VERSION that moved out of the step must not be picked up from a later step.
 	const moved = "      - name: install gitleaks (x)\n        run: |\n          x\n      - name: other\n        env:\n          VERSION: 8.30.1\n"
