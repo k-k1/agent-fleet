@@ -1005,6 +1005,12 @@
   gap: 6px;
   align-items: baseline;
 }
+.memo-release-check {
+  flex: none;
+  margin: 0;
+  align-self: flex-start;
+  margin-top: 3px;
+}
 .memo-release-body {
   flex: 1;
   min-width: 0;
