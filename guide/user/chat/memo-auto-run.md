@@ -156,7 +156,7 @@ A run that opened **no pull request** counts as done only when the session's **l
 Write your standing instruction so that a run that finished ends with an answer starting with `Done:` ([Write the standing instruction for nobody watching](../fleet/memo-auto-run-practices.md#write-the-standing-instruction-for-nobody-watching)). The run history shows how each run's last answer read ([Read the run history](#read-the-run-history)).
 
 - Some agents never record how their first turn went. A run of such a session counts as done once it has opened at least one pull request and every one is merged, without the first turn
-- While the workspace is stopped and every memo waiting to run waits only for pull requests, auto-run starts the workspace to check them at most once an hour (at most 24 times a day). Those starts are not runs, so they do not count towards "Runs per day"
+- While the workspace is stopped and every memo waiting to run waits only for pull requests or for a run's last answer, auto-run starts the workspace to check them at most once an hour (at most 24 times a day). Those starts are not runs, so they do not count towards "Runs per day"
 - After a day without any change in those pull requests, auto-run stops starting the workspace for them and notifies you once. The memo keeps waiting, and the check goes on whenever the workspace runs
 - An older workspace that cannot report pull requests leaves the memo waiting: restart the workspace to update it
 
