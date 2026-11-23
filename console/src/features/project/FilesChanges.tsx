@@ -274,7 +274,7 @@ export function FilesChanges() {
                     }}
                   >
                     <span className="fs-file">
-                      <span className={"chg-badge " + b.cls}>{tr(b.label)}</span>
+                      <span className={"ui-badge chg-badge " + b.cls}>{tr(b.label)}</span>
                       <span className="fs-ic">
                         <FileIcon name={rel.split("/").pop() || ""} />
                       </span>

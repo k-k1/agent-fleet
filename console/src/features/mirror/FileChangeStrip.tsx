@@ -180,7 +180,7 @@ function FileChangeStripImpl({ session, files }: { session: string; files: Sessi
                     {!!r.added && <span className="dv-add">+{r.added}</span>}
                     {!!r.removed && <span className="dv-del">−{r.removed}</span>}
                   </span>
-                  <span className={"chg-badge " + badge.cls}>{tr(badge.label)}</span>
+                  <span className={"ui-badge chg-badge " + badge.cls}>{tr(badge.label)}</span>
                 </button>
               </li>
             );

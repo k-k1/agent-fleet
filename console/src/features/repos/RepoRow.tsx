@@ -377,13 +377,13 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
           {(r.dirty || r.integration || ((r.ahead || r.behind) ?? 0) > 0) && (
             <span className="repo-state">
               {r.dirty && (
-                <span className="repo-chip dirty" title={tr("repo.uncommitted_title")}>
+                <span className="ui-badge repo-chip dirty" title={tr("repo.uncommitted_title")}>
                   <Icon name="circle-filled" /> {tr("repo.uncommitted")}
                 </span>
               )}
               {r.integration && (
                 <span
-                  className={`repo-chip integration ${r.integration.relation}`}
+                  className={`ui-badge repo-chip integration ${r.integration.relation}`}
                   title={parentSyncTitle(r.integration)}
                 >
                   {parentSyncLabel(r.integration)}
@@ -394,7 +394,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
                   keeps the origin refs current, so this appears without pressing anything. */}
               {((r.ahead || r.behind) ?? 0) > 0 && (
                 <span
-                  className={"repo-chip ab" + (r.behind ? (r.ahead ? " diverged" : " ff") : "")}
+                  className={"ui-badge repo-chip ab" + (r.behind ? (r.ahead ? " diverged" : " ff") : "")}
                   title={
                     r.behind
                       ? r.ahead

@@ -76,15 +76,9 @@
 }
 .sched-badge {
   flex: 0 0 auto;
-  font-size: 9.5px;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.02em;
-  padding: 1px 5px;
-  border-radius: 999px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  color: var(--muted);
 }
 
 .sched-sub {
@@ -376,11 +370,6 @@
 .sched-sess-ended { font-size: 12px; opacity: 0.8; }
 .sched-sess-anchor { display: flex; padding: 3px 10px; opacity: 0.6; }
 
-/* A schedule a session wrote waits for the member's approval (#4631). */
-.sched-badge-held {
-  background: var(--warn-bg, var(--panel));
-  color: var(--warn, var(--fg));
-}
 .sched-approve-btn {
   flex: 0 0 auto;
   font: inherit;
