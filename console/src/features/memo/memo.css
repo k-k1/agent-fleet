@@ -1023,10 +1023,9 @@
   min-width: 0;
 }
 .memo-release-text {
+  /* No scroll of its own: .memo-release-items is the one scroller, so no two scrollbars sit side by side. */
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 14em;
-  overflow-y: auto;
 }
 .memo-release-atts {
   display: flex;
@@ -1043,6 +1042,8 @@
   font-size: 11px;
 }
 .memo-release-changed {
+  display: inline-block;
+  margin-right: 6px;
   font-size: 10px;
   color: var(--warn, var(--accent));
   border: 1px solid currentColor;
