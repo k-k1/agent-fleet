@@ -6,30 +6,41 @@
 // store to learn the session (the list loads async; the workspace may still be
 // starting) and open it the way a rail click would — chat-capable kinds get the
 // mirror, others the terminal. Unknown/never-appearing names give up silently.
+//
+// A link may also name the tenant the session belongs to (a push does: ?tenant=<slug>, or the
+// `tenant` of the hand-off message). A session name is only unique within a tenant, so a link that
+// names one opens the session only while that tenant is the active one; it never falls back to a
+// same-named session of another tenant.
+import { useTenantStore } from "../core/store/tenant.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { agentOf } from "../agents/registry.ts";
 import { openSessionChat, openSessionTerminal } from "../features/sessions/open.ts";
 
 export function consumeSessionDeepLink(): void {
   let name = "";
+  let tenant = "";
   try {
     const u = new URL(location.href);
     name = u.searchParams.get("session") || "";
     if (!name) return;
+    // `tenant` stays in the URL: the tenant store reads it as its landing hint when it boots.
+    tenant = u.searchParams.get("tenant") || "";
     u.searchParams.delete("session");
     history.replaceState(history.state, "", u.toString());
   } catch {
     return;
   }
-  openSessionByName(name);
+  openSessionByName(name, tenant);
 }
 
-/** Opens a session's pane once it is in the list (a workspace still coming up is waited for). */
-export function openSessionByName(name: string): void {
+/** Opens a session's pane once it is in the list (a workspace still coming up is waited for).
+ *  With `tenant`, only while that tenant is the active one (the tenant may still be resolving). */
+export function openSessionByName(name: string, tenant = ""): void {
   if (!/^[A-Za-z0-9_-]{1,40}$/.test(name)) return;
   let tries = 0;
   const tick = () => {
-    const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
+    const wrongTenant = tenant !== "" && useTenantStore.getState().tenant !== tenant;
+    const s = wrongTenant ? undefined : useSessionsStore.getState().sessions.find((x) => x.name === name);
     if (s) {
       (agentOf(s.kind).caps.chat ? openSessionChat : openSessionTerminal)(name);
       return;
@@ -47,6 +58,22 @@ export function listenPushOpen(): void {
     if (e.data?.type !== "af-open-session") return;
     // Acknowledge first: the worker opens a new window when no page answers.
     e.ports?.[0]?.postMessage("ok");
-    if (typeof e.data.session === "string" && e.data.session) openSessionByName(e.data.session);
+    if (typeof e.data.session === "string" && e.data.session) {
+      void openPushTarget(e.data.session, typeof e.data.tenant === "string" ? e.data.tenant : "");
+    }
   });
+}
+
+/** A push belongs to the tenant of the membership it was sent to, which may not be the one this
+ *  tab shows: switch to it (when the person is a member there and the switch is not declined)
+ *  before opening, and read that tenant's sessions first so the old tenant's list cannot match. */
+async function openPushTarget(name: string, tenant: string): Promise<void> {
+  const ts = useTenantStore.getState();
+  if (tenant && ts.tenant !== tenant) {
+    if (!ts.tenants.some((t) => t.slug === tenant)) return;
+    await ts.select(tenant);
+    if (useTenantStore.getState().tenant !== tenant) return;
+    await useSessionsStore.getState().refresh();
+  }
+  openSessionByName(name, tenant);
 }

@@ -226,10 +226,10 @@ type ctxStore struct {
 	stall string // "context" or "prefs": the read that hangs until its deadline
 }
 
-func (c ctxStore) PushDeliveryContext(ctx context.Context, mid string) (bool, bool, error) {
+func (c ctxStore) PushDeliveryContext(ctx context.Context, mid string) (store.PushDelivery, error) {
 	if c.stall == "context" {
 		<-ctx.Done()
-		return false, false, ctx.Err()
+		return store.PushDelivery{}, ctx.Err()
 	}
 	return c.memStore.PushDeliveryContext(ctx, mid)
 }
