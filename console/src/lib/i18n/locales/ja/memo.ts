@@ -446,7 +446,7 @@ export const memo = {
   "memo.after_r_no_pr": "実行がプルリクエストを作らず、最初のターンの結果も記録されませんでした",
   "memo.after_r_session_gone": "プルリクエストを確認する前に、実行のセッションが削除されました",
   "memo.after_r_answer": "プルリクエストなしで終了、Done: の答えを確認中",
-  "memo.after_r_not_done": "プルリクエストも Done: の答えもなく終わりました（保留）",
+  "memo.after_r_not_done": "プルリクエストなしで終わり、Done: の答えを確認できませんでした（保留）",
   "memo.after_r_not_done_named": "プルリクエストも Done: の答えもなく終わりました（保留。最後の答え:「{answer}」）",
   "memo.no_tidy_notice": "整理でできたメモは、このワークスペースでは実行できません。ワークスペースを再起動して更新するか、Claude を実行できるワークスペースを使ってください。整理の設定をオフにして、実行履歴から整理を取り消すこともできます。",
   "memo.tidy_derived": "{count} 件のメモから整理",

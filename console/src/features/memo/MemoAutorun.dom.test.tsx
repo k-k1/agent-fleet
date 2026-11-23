@@ -1636,6 +1636,17 @@ describe("inline run list under a category", () => {
     expect(document.querySelector(".memo-runs")).toBeNull();
   });
 
+  it("puts a run's last answer, class and head, in its tooltip, and nothing for a run without one (#4876)", async () => {
+    servedDeliveries = [run("d1", { answer: "Held: #4876 part 2, PR #9 not merged", answerClass: "partial" }), run("d2")];
+    await render();
+    await click(toggle());
+    const rows = document.querySelectorAll<HTMLElement>(".memo-run");
+    expect(rows[0].title).toContain(t("memo.d_answer_partial") + ": Held: #4876 part 2, PR #9 not merged");
+    for (const k of ["memo.d_answer_done", "memo.d_answer_partial", "memo.d_answer_other", "memo.d_answer_unknown", "memo.d_answer_plain"] as const) {
+      expect(rows[1].title).not.toContain(t(k));
+    }
+  });
+
   it("has no Show in Auto-run link in a run row", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
     useSessionsStore.setState({ sessions: [{ name: "s-d1", kind: "claude", alive: false, origin: "queue" }] as never });

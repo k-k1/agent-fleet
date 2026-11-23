@@ -449,7 +449,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.after_r_no_pr": "its run opened no pull request, and nothing records how its first turn went",
   "memo.after_r_session_gone": "its run's session was deleted before its pull requests could be read",
   "memo.after_r_answer": "ended without a pull request: waiting for a Done: answer",
-  "memo.after_r_not_done": "ended without a pull request and without Done: — held",
+  "memo.after_r_not_done": "ended without a pull request, and no Done: answer was confirmed — held",
   "memo.after_r_not_done_named": "ended without a pull request and without Done: — held (its last answer: “{answer}”)",
   "memo.no_tidy_notice": "Memos a tidy made cannot run in this workspace. Restart the workspace to update it, or use a workspace that can run Claude. You can also turn the tidy setting off and undo the tidy from the run history.",
   "memo.tidy_derived": "Tidied from {count} memos",
