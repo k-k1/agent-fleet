@@ -16,9 +16,14 @@ import (
 // which ci.yml's secret-scan job (and secret-sweep.yml) use.
 var (
 	dockerGitleaksARG = regexp.MustCompile(`(?m)^ARG GITLEAKS_VERSION=(\S+)\s*$`)
-	// The step that installs the scanner, up to the next step: the pin is searched only there,
-	// so a VERSION in a later step or job is never read as the scanner's.
-	ciGitleaksStep    = regexp.MustCompile(`(?s)- name: install gitleaks[^\n]*\n(.*?)(?:\n\s*- name:|\n\S|\z)`)
+	// The step that installs the scanner, up to the next list item (a named step or a bare
+	// `- uses:`): the pin is searched only there, so a VERSION in a later step or job is never
+	// read as the scanner's.
+	ciGitleaksStep = regexp.MustCompile(`(?s)- name: install gitleaks[^\n]*\n(.*?)(?:\n\s*- |\n\S|\z)`)
+	// A step line that uses the action, exactly (not a comment, not a longer path).
+	gitleaksActionStep = regexp.MustCompile(`(?m)^\s*(?:- )?uses: \./\.github/actions/install-gitleaks\s*$`)
+	// ci.yml's secret-scan job, up to the next job (a two-space key) or the end.
+	ciSecretScanJob   = regexp.MustCompile(`(?s)\n  secret-scan:\n(.*?)(?:\n  [A-Za-z0-9_-]+:\n|\z)`)
 	ciGitleaksVersion = regexp.MustCompile(`(?m)^\s+VERSION:\s*(\S+)\s*$`)
 )
 
@@ -44,14 +49,21 @@ func TestGitleaksPinMatchesCI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The action is only CI's pin while ci.yml installs the scanner through it: a job that
+	// The action is only CI's pin while the scans install the scanner through it: a job that
 	// went back to an inline step would leave this test comparing against a file CI ignores.
 	ci, err := os.ReadFile("../../.github/workflows/ci.yml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(ci), "uses: "+gitleaksActionUse) {
-		t.Fatalf(".github/workflows/ci.yml no longer installs gitleaks with `uses: %s`; point this test at where the pin is now", gitleaksActionUse)
+	if job := ciSecretScanJob.FindStringSubmatch(string(ci)); job == nil || !gitleaksActionStep.MatchString(job[1]) {
+		t.Fatalf(".github/workflows/ci.yml: the secret-scan job no longer installs gitleaks with `uses: %s`; point this test at where the pin is now", gitleaksActionUse)
+	}
+	sweep, err := os.ReadFile("../../.github/workflows/secret-sweep.yml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(gitleaksActionStep.FindAllString(string(sweep), -1)); n != 2 {
+		t.Fatalf(".github/workflows/secret-sweep.yml: %d steps use %s, want 2 (sweep-main and sweep-branch)", n, gitleaksActionUse)
 	}
 	action, err := os.ReadFile("../../" + gitleaksActionFile)
 	if err != nil {
@@ -85,6 +97,21 @@ func TestGitleaksPinsParse(t *testing.T) {
 	const action = "runs:\n  using: composite\n  steps:\n    - name: install gitleaks (version+checksum pinned)\n      shell: bash\n      env:\n        VERSION: 8.30.1\n        SHA256: abc\n      run: |\n        x\n"
 	if _, w = gitleaksPins("", action); w != "8.30.1" {
 		t.Errorf("composite action pin parsed as %q, want 8.30.1", w)
+	}
+	// Nor from a later unnamed `- uses:` step.
+	const bare = "    - name: install gitleaks (x)\n      run: |\n        x\n    - uses: ./other\n      env:\n        VERSION: 8.30.1\n"
+	if _, w = gitleaksPins("", bare); w != "" {
+		t.Errorf("read a later unnamed step's VERSION as the scanner's: %q", w)
+	}
+	// The action guard matches a real step line only.
+	for in, want := range map[string]bool{
+		"      - uses: ./.github/actions/install-gitleaks\n":     true,
+		"      # uses: ./.github/actions/install-gitleaks\n":     false,
+		"      - uses: ./.github/actions/install-gitleaks-old\n": false,
+	} {
+		if got := gitleaksActionStep.MatchString(in); got != want {
+			t.Errorf("action guard on %q = %v, want %v", in, got, want)
+		}
 	}
 	// A VERSION that moved out of the step must not be picked up from a later step.
 	const moved = "      - name: install gitleaks (x)\n        run: |\n          x\n      - name: other\n        env:\n          VERSION: 8.30.1\n"
