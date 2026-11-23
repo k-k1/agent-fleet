@@ -1434,44 +1434,54 @@ func earlierTS(a, b string) string {
 	return b
 }
 
-// memoPRWaits is the deliveries the pending messages of rows wait for, when every one of them
-// waits on reads of a running Agent alone: no message is eligible or failed, and every
-// prerequisite that is not satisfied waits with reason pr (its PR snapshot) or answer (its last
-// answer, issue #4876), or is itself a message of the queue that has not run (held or pending):
-// a chain A <- B <- C must not keep the read B waits for from waking the workspace. ok is false
-// otherwise, and nothing would be gained by a read.
+// memoPRWaits is the deliveries the pending messages of rows wait for, taken from each message
+// whose prerequisites that are not satisfied all wait on a read of a running Agent: reason pr
+// (the PR snapshot) or answer (the last answer, issue #4876). Each message is judged on its own:
+// one that waits on something else (a message that has not run, a first turn) neither asks for
+// a wake nor keeps one from the messages that do, so a chain A <- B <- C wakes for the read B
+// waits for. ok is false when none waits on reads alone, when a message is eligible (its fire
+// starts the workspace) and when one waits for a run still open (its settle wakes it).
 //
 // since is, per delivery, when the longest-waiting of those messages began to wait.
 func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []store.MemoDelivery, since map[string]string, ok bool, err error) {
 	lk := memoafter.TxLookup(tx, rows, now)
 	seen := map[string]bool{}
 	since = map[string]string{}
-	waiting := false
 	for _, m := range rows {
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
 			continue
 		}
-		// A message handed back or carrying a start time waits for its time, not for a PR: it
-		// neither asks for a wake nor keeps one from the messages that do.
+		// A message handed back or carrying a start time waits for its time, not for a PR.
 		if memoafter.Waits(m, now) {
 			continue
 		}
-		waiting = true
 		items, err := memoafter.Status(m, lk)
 		if err != nil {
 			return nil, nil, false, err
 		}
 		eligible, failed := memoafter.Verdict(items)
-		if eligible || failed != nil {
+		if eligible {
 			return nil, nil, false, nil
 		}
+		if failed != nil {
+			continue
+		}
+		var reads []memoafter.Item
 		for _, it := range items {
-			if it.State == memoafter.Satisfied || it.Reason == memoafter.WhyPending || it.Reason == memoafter.WhyHeld {
+			if it.State == memoafter.Satisfied {
 				continue
 			}
-			if (it.Reason != memoafter.WhyPR && it.Reason != memoafter.WhyAnswer) || it.Delivery == "" {
+			if it.Reason == memoafter.WhyRunning {
+				// A run still open, or claimed: its own settle wakes the workspace.
 				return nil, nil, false, nil
 			}
+			if (it.Reason != memoafter.WhyPR && it.Reason != memoafter.WhyAnswer) || it.Delivery == "" {
+				reads = nil
+				break
+			}
+			reads = append(reads, it)
+		}
+		for _, it := range reads {
 			since[it.Delivery] = earlierTS(since[it.Delivery], memoWaitStart(m))
 			if seen[it.Delivery] {
 				continue
@@ -1484,7 +1494,7 @@ func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []sto
 			ds = append(ds, d)
 		}
 	}
-	return ds, since, waiting && len(ds) > 0, nil
+	return ds, since, len(ds) > 0, nil
 }
 
 // prWake wakes the stopped workspace of an open queue whose pending messages all wait on PR

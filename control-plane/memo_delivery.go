@@ -1757,6 +1757,9 @@ const (
 	// bookkeeping lines written after the last answer hold no turn.
 	memoAnswerPage  = 200
 	memoAnswerPages = 4
+	// memoAnswerPageMin is the smallest page a read cut at memoAnswerReplyMax is asked again in:
+	// the Agent's window takes no fewer lines.
+	memoAnswerPageMin = 50
 	// memoAnswerReplyMax bounds one page's reply: a page of tool output can be large.
 	memoAnswerReplyMax = 8 << 20
 )
@@ -1811,12 +1814,13 @@ func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*
 }
 
 // readAnswer reads the delivery's root session for its last answer and keeps it. unknown is kept
-// when the run's answer can no longer be told: the Agent's own list lacks the session, its kind
-// keeps no transcript, a turn started after the close (a person took the session over, so the
-// end of the transcript is no longer the run's), the run's last response ended without an answer,
-// or the whole transcript holds none. Anything else decides nothing: no answer of the Agent's
-// transcript, a session working again, a transcript read empty, or an answer further back than
-// the pages read.
+// when the run's answer can no longer be told: its kind keeps no transcript, a person took the
+// session over (a turn started after the close, or the retire found the session released), so the
+// end of the transcript is no longer the run's, the run's last response ended without an answer,
+// or the whole transcript holds none. Anything else decides nothing and the read is made again
+// until the window ends: no answer of the Agent's transcript (a 404 included: a session archived
+// after the close is not in the list and its transcript may still be read), a session working
+// again, a transcript read empty, or an answer further back than the pages read.
 func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d store.MemoDelivery) {
 	var row *sessionWire
 	for i := range v.live {
@@ -1825,28 +1829,31 @@ func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d s
 			break
 		}
 	}
-	if row != nil && memoTurnAfterClose(row.LastTurnStartAt, d.ClosedAt) {
+	if d.RetireResult == string(retireReleased) || (row != nil && memoTurnAfterClose(row.LastTurnStartAt, d.ClosedAt)) {
 		r.keepAnswer(ctx, d, "", store.AnswerUnknown)
 		return
 	}
 	before := ""
 	sawTurn := false
+	limit := memoAnswerPage
 	for page := 0; page < memoAnswerPages; page++ {
-		status, body, ok := r.askTranscript(ctx, v.res, d.Session, before)
+		status, body, ok := r.askTranscript(ctx, v.res, d.Session, before, limit)
 		if !ok {
 			return
 		}
 		switch {
 		case status == http.StatusOK:
-		case status == http.StatusNotFound && agentErrCode(body) == "not_found" && row == nil:
-			// The Agent's own list, read this tick, lacks it too: a gateway's 404 alone proves nothing.
-			r.keepAnswer(ctx, d, "", store.AnswerUnknown)
-			return
 		case status == http.StatusBadRequest && agentErrCode(body) == "unsupported_kind" && row != nil:
 			r.keepAnswer(ctx, d, "", store.AnswerUnknown)
 			return
 		default:
 			return
+		}
+		if len(body) >= memoAnswerReplyMax && limit > memoAnswerPageMin {
+			// Cut at the bound (a page of large edits): the same place again, in a smaller page.
+			limit = max(limit/4, memoAnswerPageMin)
+			page--
+			continue
 		}
 		var reply memoAnswerReply
 		if json.Unmarshal(body, &reply) != nil || reply.Messages == nil || reply.Name != d.Session {
@@ -1884,12 +1891,12 @@ func memoTurnAfterClose(turnStart, closedAt string) bool {
 	return err == nil && t.After(c)
 }
 
-// askTranscript asks the Agent for one page of a session's transcript: the tail, or the page
-// that ends at before. ok is false when no answer came.
-func (r *memoQueueRunner) askTranscript(ctx context.Context, res *resolved, session, before string) (int, []byte, bool) {
+// askTranscript asks the Agent for one page of limit lines of a session's transcript: the tail,
+// or the page that ends at before. ok is false when no answer came.
+func (r *memoQueueRunner) askTranscript(ctx context.Context, res *resolved, session, before string, limit int) (int, []byte, bool) {
 	cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
 	defer cancel()
-	q := url.Values{"since": {"0"}, "limit": {strconv.Itoa(memoAnswerPage)}}
+	q := url.Values{"since": {"0"}, "limit": {strconv.Itoa(limit)}}
 	if before == "" {
 		q.Set("tail", "1")
 	} else {

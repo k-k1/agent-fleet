@@ -72,9 +72,10 @@ func LastAnswer(turns []Turn) (text string, found bool) {
 
 // ClassifyAnswer is the head an answer is kept by (its first line that holds anything, at most
 // store.AnswerHeadMax runes) and how it reads: done, partial, other, or unknown for no text. A
-// heading mark before the word, emphasis or code marks around it, the case and a full-width colon
-// are allowed: an agent that writes **Done:** or `Done`: said Done:. A quote (>) or a list item is
-// not a declaration of the answer itself.
+// heading mark before the word, emphasis or inline code marks around it (closed again before or
+// after its colon), the case and a full-width colon are allowed: an agent that writes **Done:**
+// or `Done`: said Done:. A quote (>), a list item or a code fence is not a declaration of the
+// answer itself.
 func ClassifyAnswer(text string) (head, class string) {
 	for _, line := range strings.Split(text, "\n") {
 		if s := strings.TrimSpace(line); s != "" {
@@ -88,12 +89,17 @@ func ClassifyAnswer(text string) (head, class string) {
 	if r := []rune(head); len(r) > store.AnswerHeadMax {
 		head = string(r[:store.AnswerHeadMax])
 	}
-	norm := strings.TrimLeft(strings.TrimLeft(head, "# \t"), "*_`")
-	if startsWith(norm, "done", true) {
+	norm := strings.TrimLeft(head, "# \t")
+	open := norm[:len(norm)-len(strings.TrimLeft(norm, "*_`"))]
+	if strings.Contains(open, "```") {
+		return head, store.AnswerOther
+	}
+	norm = norm[len(open):]
+	if startsWith(norm, "done", true, open) {
 		return head, store.AnswerDone
 	}
 	for _, p := range partialHeads {
-		if startsWith(norm, p.word, p.colon) {
+		if startsWith(norm, p.word, p.colon, open) {
 			return head, store.AnswerPartial
 		}
 	}
@@ -101,14 +107,36 @@ func ClassifyAnswer(text string) (head, class string) {
 }
 
 // startsWith reports whether s begins with word (any case), followed, when colon is set, by a
-// colon, which emphasis or code marks closing the word may precede.
-func startsWith(s, word string, colon bool) bool {
+// colon. With colon, open is the emphasis or code marks before the word: they must be closed by the same
+// marks, reversed, right after the word or right after its colon.
+func startsWith(s, word string, colon bool, open string) bool {
 	if len(s) < len(word) || !strings.EqualFold(s[:len(word)], word) {
 		return false
 	}
 	if !colon {
-		return true
+		return true // a phrase, not a label: whatever marks come later
 	}
-	rest := strings.TrimLeft(s[len(word):], "*_`")
-	return strings.HasPrefix(rest, ":") || strings.HasPrefix(rest, "：")
+	rest := s[len(word):]
+	closeMarks := reverse(open)
+	closed := open == ""
+	if !closed && strings.HasPrefix(rest, closeMarks) {
+		rest, closed = rest[len(closeMarks):], true
+	}
+	switch {
+	case strings.HasPrefix(rest, ":"):
+		rest = rest[1:]
+	case strings.HasPrefix(rest, "："):
+		rest = rest[len("："):]
+	default:
+		return false
+	}
+	return closed || strings.HasPrefix(rest, closeMarks)
+}
+
+func reverse(s string) string {
+	b := []byte(s)
+	for i, j := 0, len(b)-1; i < j; i, j = i+1, j-1 {
+		b[i], b[j] = b[j], b[i]
+	}
+	return string(b)
 }

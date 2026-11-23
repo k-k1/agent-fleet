@@ -86,7 +86,8 @@ func TestMemoAnswerDoneSatisfies(t *testing.T) {
 }
 
 // Every answer that does not say Done: sends the dependent to held with the head, and so does one
-// that could not be read: a session the Agent no longer has, or a kind without a transcript.
+// that cannot be told: a response that ended on a tool call, a transcript with no answer at all,
+// or a kind without a transcript.
 func TestMemoAnswerNotDoneHolds(t *testing.T) {
 	cases := []struct {
 		name, head, class string
@@ -105,9 +106,6 @@ func TestMemoAnswerNotDoneHolds(t *testing.T) {
 		{"no answer in the whole transcript", "", store.AnswerUnknown, func() (int, any) {
 			return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "alive": true, "firstLine": 0, "hasMore": false,
 				"messages": []map[string]any{{"role": "user", "text": "the task", "parts": []map[string]any{{"kind": "text", "text": "the task"}}}}}
-		}, false},
-		{"session gone", "", store.AnswerUnknown, func() (int, any) {
-			return http.StatusNotFound, map[string]any{"error": map[string]any{"code": "not_found", "message": "no such session"}}
 		}, false},
 		{"no transcript", "", store.AnswerUnknown, func() (int, any) {
 			return http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "unsupported_kind", "message": "x"}}
@@ -139,8 +137,8 @@ func TestMemoAnswerNotDoneHolds(t *testing.T) {
 	}
 }
 
-// A read that is no answer of the Agent's transcript decides nothing: no route, an error, a cut
-// reply, or a session working again (a person took it over). The dependent keeps waiting, the read
+// A read that is no answer of the Agent's transcript decides nothing: no route, a 404, an error, a
+// cut reply, one about another session or without a status, or a session working again. The dependent keeps waiting, the read
 // is made again after 5 minutes, and once the window is over the dependent goes to held.
 func TestMemoAnswerNoAnswerKeepsWaiting(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
@@ -165,7 +163,7 @@ func TestMemoAnswerNoAnswerKeepsWaiting(t *testing.T) {
 		}
 		for _, reply := range []func() (int, any){
 			nil,  // no route: a plain 404
-			gone, // a 404 for a session the Agent's own list still has
+			gone, // a 404: a gateway's, or the Agent's for a session it no longer has, waits for the window
 			func() (int, any) {
 				return http.StatusBadGateway, map[string]any{"error": map[string]any{"code": "down"}}
 			},
@@ -364,6 +362,92 @@ func TestMemoAnswerStoppedRowsRotate(t *testing.T) {
 		e.settleNow(now.Add(time.Minute))
 		if got := e.delivery(da.ID); got.AnswerTriedAt == "" {
 			t.Fatal("a read nothing waits for was not stamped while stopped")
+		}
+	})
+}
+
+// Each message is judged on its own for a wake: one that waits on a first turn does not keep the
+// read another waits for from waking the workspace, and one that also waits for a held message
+// asks for no wake, as a read could not let it run.
+func TestMemoAnswerWakeJudgesEachMessage(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		e.setPRs(da.ID, store.PRStateNone)
+		d := e.pending("app", "impl", "d")
+		if rec := e.do("a", "POST", "/api/memos", afterMemo("app", "impl", "c waits for d", d.ID)); rec.Code != http.StatusCreated {
+			t.Fatalf("c: %d %s", rec.Code, rec.Body.String())
+		}
+		dd := e.fired(q)
+		if !sameIDs(dd.MessageIDs, d.ID) {
+			t.Fatalf("claimed %v, want d", dd.MessageIDs)
+		}
+		e.closeWithPRs(dd.ID, "", 0, now.Add(-time.Minute), store.PRStateNone) // no first turn recorded
+		e.setRuntime(agent, "stopped")
+		if _, wakes := e.autoTick(now); len(wakes) != 1 {
+			t.Fatalf("%d wakes, want one for b's read", len(wakes))
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, b := e.prChain("clean", now.Add(-time.Minute))
+		e.setPRs(da.ID, store.PRStateWaiting)
+		h := e.pending("app", "impl", "h")
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state='held', release_hash='', released_at='' WHERE id=?`, h.ID); err != nil {
+			t.Fatal(err)
+		}
+		if rec := e.do("a", "PATCH", "/api/memos/"+b.ID, map[string]any{"after": []string{da.MessageIDs[0], h.ID}}); rec.Code != http.StatusOK {
+			t.Fatalf("b waits for a and h: %d %s", rec.Code, rec.Body.String())
+		}
+		e.setRuntime(agent, "stopped")
+		if _, wakes := e.autoTick(now); len(wakes) != 0 {
+			t.Fatalf("%d wakes for a message a read cannot let run", len(wakes))
+		}
+	})
+}
+
+// A person who took the session over before the retire (the retire answered released) leaves no
+// answer of the run to read.
+func TestMemoAnswerReleasedRetire(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET retire_result='released' WHERE id=?`, da.ID); err != nil {
+			t.Fatal(err)
+		}
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: the person's task"))
+		e.settleNow(now)
+		if n := len(agent.answerCallsSoFar()); n != 0 {
+			t.Fatalf("%d transcript reads of a released session", n)
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerUnknown {
+			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// A page cut at the reply bound is asked again, at the same place, in a smaller page.
+func TestMemoAnswerShrinksAPageCutAtTheBound(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		big := strings.Repeat("x", memoAnswerReplyMax)
+		agent.setAnswer("q-a", func() (int, any) {
+			n := len(agent.answerCalls) // the fake holds its lock while it answers
+			if n == 1 {
+				return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "messages": []map[string]any{
+					{"role": "assistant", "parts": []map[string]any{{"kind": "text", "text": "Done: small"}, {"kind": "text", "text": big}}}}}
+			}
+			return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "messages": []map[string]any{
+				{"role": "assistant", "parts": []map[string]any{{"kind": "text", "text": "Done: small"}}}}}
+		})
+		e.settleNow(now)
+		calls := agent.answerCallsSoFar()
+		if len(calls) != 2 || !strings.Contains(calls[0], "limit=200") || !strings.Contains(calls[1], "limit=50") || !strings.Contains(calls[1], "tail=1") {
+			t.Fatalf("reads %v, want the tail again in a page of 50", calls)
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
 		}
 	})
 }

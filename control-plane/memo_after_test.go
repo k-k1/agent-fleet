@@ -695,25 +695,29 @@ func TestMemoAfterHoldSkipsAHandSend(t *testing.T) {
 }
 
 // A message may wait for one queued after it: the dispatcher passes over the older one, runs the
-// newer, and runs the older once the newer is satisfied.
+// newer, and runs the older on the tick after the newer is satisfied.
 func TestMemoAfterALaterPrerequisiteDispatches(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-		_, q := e.autoQueue("app", "impl", map[string]any{"maxActive": 3}, 0)
+		_, _ = e.autoQueue("app", "impl", map[string]any{"maxActive": 3}, 0)
 		a := e.pending("app", "impl", "a, older")
 		b := e.pending("app", "impl", "b, newer")
 		if rec := e.do("a", "PATCH", "/api/memos/"+a.ID, map[string]any{"after": []string{b.ID}}); rec.Code != http.StatusOK {
 			t.Fatalf("a waits for b: %d %s", rec.Code, rec.Body.String())
 		}
-		db := e.fired(q)
-		if !sameIDs(db.MessageIDs, b.ID) {
-			t.Fatalf("claimed %v, want b first", db.MessageIDs)
+		now := time.Now()
+		fired, _ := e.autoTick(now)
+		if len(fired) != 1 || !sameIDs(fired[0].MessageIDs, b.ID) {
+			t.Fatalf("fired %+v, want b alone", fired)
 		}
-		if rec := e.fire(q); rec.Code != http.StatusConflict {
-			t.Fatalf("a fired before b finished: %d %s", rec.Code, rec.Body.String())
+		if again, _ := e.autoTick(now.Add(time.Minute)); len(again) != 0 {
+			t.Fatalf("fired %+v while b runs", again)
 		}
-		e.closeWithPRs(db.ID, "clean", 90_000, time.Now(), store.PRStateMerged)
-		if da := e.fired(q); !sameIDs(da.MessageIDs, a.ID) {
-			t.Fatalf("claimed %v, want a", da.MessageIDs)
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET held_by='', held_session='' WHERE id=?`, fired[0].ID); err != nil {
+			t.Fatal(err)
+		}
+		e.closeWithPRs(fired[0].ID, "clean", 90_000, now.Add(2*time.Minute), store.PRStateMerged)
+		if next, _ := e.autoTick(now.Add(3 * time.Minute)); len(next) != 1 || !sameIDs(next[0].MessageIDs, a.ID) {
+			t.Fatalf("fired %+v, want a", next)
 		}
 	})
 }
