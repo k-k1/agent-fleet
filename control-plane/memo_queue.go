@@ -408,6 +408,9 @@ type memoQueueDTO struct {
 	// memoFireBlock), a reason of the same shape as Waiting. Absent when a press would claim
 	// something.
 	FireBlock *memoWaiting `json:"fireBlock,omitempty"`
+	// RepoCheck is the last read of the repository's settings file (#4881), present only while it
+	// was compared with the settings and the category as they are now.
+	RepoCheck *memoRepoCheckWire `json:"repoCheck,omitempty"`
 }
 
 func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
@@ -417,7 +420,8 @@ func memoQueueToDTO(q store.MemoQueue, c store.MemoCategory) memoQueueDTO {
 		OpenCron: q.OpenCron, OpenMinutes: q.OpenMinutes, TZ: q.TZ, OpenAfter: q.OpenAfter, MaxFiresPerDay: memoQueueFiresPerDay(q),
 		Paused: q.Paused, PausedAt: q.PausedAt, PausedReason: q.PausedReason, Draining: q.Draining, NoReportAt: q.NoReportAt, NoRefsAt: q.NoRefsAt,
 		Tidy: q.Tidy, TidyDestinations: nonNilIDs(q.TidyDestinations), NoTidyAt: q.NoTidyAt,
-		Enabled: q.Enabled, Generation: q.Generation, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt}
+		Enabled: q.Enabled, Generation: q.Generation, CreatedAt: q.CreatedAt, UpdatedAt: q.UpdatedAt,
+		RepoCheck: memoRepoCheckOf(q, c)}
 }
 
 // memoQueueIn is a PUT body. Omitted numbers and worktree take their defaults: a PUT replaces
@@ -650,6 +654,10 @@ func (a memoAPI) listQueues(w http.ResponseWriter, r *http.Request, _ store.Iden
 				continue
 			}
 			dto := memoQueueToDTO(q, c)
+			if !a.mgr.memoRepoSettings {
+				// The card that would show the difference is not offered: neither is a mark for it.
+				dto.RepoCheck = nil
+			}
 			// A destination whose queue settings are gone is not shown: apply ignores it the same way.
 			dto.TidyDestinations = []string{}
 			for _, id := range q.TidyDestinations {

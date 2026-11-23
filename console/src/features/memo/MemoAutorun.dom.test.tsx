@@ -220,6 +220,20 @@ describe("the list", () => {
     expect(badge("inbox-q")?.textContent).toContain(t("memo.autorun_badge_off"));
   });
 
+  it("marks a category whose repository settings file differs when last read", async () => {
+    const repo = () => document.querySelector(".memo-q-repo");
+    const check = { commit: "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff", diffs: 2, checkedAt: "2026-11-23T00:00:00Z" };
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ repoCheck: { state: "differs", ...check } })] };
+    await render();
+    expect(repo()?.getAttribute("aria-label")).toBe(t("memo.repo_badge_differs"));
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ repoCheck: { state: "invalid", ...check, diffs: 0 } })] };
+    await bump();
+    expect(repo()?.getAttribute("aria-label")).toBe(t("memo.repo_badge_invalid"));
+    servedQueues = { tenantEnabled: true, queues: [aQueue({ repoCheck: { state: "same", ...check, diffs: 0 } })] };
+    await bump();
+    expect(repo()).toBeNull();
+  });
+
   it("shows each message's state and where it came from", async () => {
     servedMemos = [
       aMemo({ id: "a", state: "pending", provenance: "member" }),

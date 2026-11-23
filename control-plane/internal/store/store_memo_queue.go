@@ -107,6 +107,19 @@ type MemoQueue struct {
 	// approved for this queue, RepoApprovedAt when (#4881). Only SetQueueRepoApproval writes
 	// them: a settings PUT keeps them.
 	RepoCommit, RepoApprovedAt string
+	// RepoCheck is the last read of the repository's settings file against these settings. Only
+	// SetMemoQueueRepoCheck writes it: a settings PUT keeps it, and its Basis tells it apart.
+	RepoCheck MemoRepoCheck
+}
+
+// MemoRepoCheck is one read of a repository's settings file for a queue (#4881). State is
+// differs, same, invalid or absent; Diffs counts the settings that differ. Basis names the
+// category and the settings the file was compared with, so a read taken before either changed is
+// recognised as out of date.
+type MemoRepoCheck struct {
+	State, Commit string
+	Diffs         int
+	Basis, At     string
 }
 
 // MemoQueueStore is the queue half of the memo store.
@@ -177,6 +190,9 @@ type MemoTxOps interface {
 	PutQueue(q MemoQueue) error
 	// SetQueueRepoApproval records the settings file commit the member approved for a queue.
 	SetQueueRepoApproval(categoryID, commit, at string) error
+	// SetQueueRepoCheck records a read of the repository's settings file on a queue, unless the
+	// queue holds one that began later (At is fixed-width text, so it orders as text).
+	SetQueueRepoCheck(categoryID string, c MemoRepoCheck) error
 	DeleteQueue(categoryID string) error
 	// SetQueueDraining writes the draining state inside the transaction of a fire.
 	SetQueueDraining(categoryID string, on bool) error
@@ -414,7 +430,8 @@ const memoQueueCols = `SELECT category_id, membership_id, instruction, agent_kin
 	worktree, max_active, batch, enabled, generation, created_at, updated_at, max_task_hours,
 	open_cron, open_minutes, tz, open_after, max_fires_per_day, draining, paused, paused_at, paused_reason, breaker_after,
 	no_report_at, no_refs_at, accept_own_sessions, tidy, tidy_destinations, no_tidy_at, continuation_max,
-	repo_commit, repo_approved_at FROM memo_queue`
+	repo_commit, repo_approved_at, repo_check_state, repo_check_commit, repo_check_diffs, repo_check_basis,
+	repo_checked_at FROM memo_queue`
 
 func scanMemoQueue(row scanner) (MemoQueue, error) {
 	var q MemoQueue
@@ -424,7 +441,8 @@ func scanMemoQueue(row scanner) (MemoQueue, error) {
 		&q.SpendCapUSD, &worktree, &q.MaxActive, &q.Batch, &enabled, &q.Generation, &q.CreatedAt, &q.UpdatedAt, &q.MaxTaskHours,
 		&q.OpenCron, &q.OpenMinutes, &q.TZ, &q.OpenAfter, &q.MaxFiresPerDay, &draining, &paused, &q.PausedAt, &q.PausedReason,
 		&q.BreakerAfter, &q.NoReportAt, &q.NoRefsAt, &acceptOwn, &tidy, &dests, &q.NoTidyAt, &q.ContinuationMax,
-		&q.RepoCommit, &q.RepoApprovedAt)
+		&q.RepoCommit, &q.RepoApprovedAt, &q.RepoCheck.State, &q.RepoCheck.Commit, &q.RepoCheck.Diffs, &q.RepoCheck.Basis,
+		&q.RepoCheck.At)
 	q.Worktree, q.Enabled, q.Draining, q.Paused = worktree != 0, enabled != 0, draining != 0, paused != 0
 	q.AcceptOwnSessions = acceptOwn != 0
 	q.Tidy, q.TidyDestinations = tidy != 0, decodeIDList(dests)
@@ -611,6 +629,13 @@ func (s *SQL) SetMemoQueueNoRefs(ctx context.Context, queueID, at string) error 
 
 func (s *SQL) SetMemoQueueNoTidy(ctx context.Context, queueID, at string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE memo_queue SET no_tidy_at=? WHERE category_id=? AND no_tidy_at<>?`, at, queueID, at)
+	return err
+}
+
+func (t memoTx) SetQueueRepoCheck(categoryID string, c MemoRepoCheck) error {
+	_, err := t.q.ExecContext(t.ctx, `UPDATE memo_queue SET repo_check_state=?, repo_check_commit=?, repo_check_diffs=?,
+		repo_check_basis=?, repo_checked_at=? WHERE category_id=? AND membership_id=? AND repo_checked_at<=?`,
+		c.State, c.Commit, c.Diffs, c.Basis, c.At, categoryID, t.mid, c.At)
 	return err
 }
 

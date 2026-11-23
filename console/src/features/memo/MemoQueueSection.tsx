@@ -1360,6 +1360,15 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             </span>
                           );
                         })()}
+                        {isQueue && (queue?.repoCheck?.state === "differs" || queue?.repoCheck?.state === "invalid") && (() => {
+                          // The last read of the repository's settings file: the settings dialog shows the difference.
+                          const label = tr(queue.repoCheck.state === "differs" ? "memo.repo_badge_differs" : "memo.repo_badge_invalid");
+                          return (
+                            <span className="memo-q-repo" role="img" title={label} aria-label={label}>
+                              <Icon name="git-compare" />
+                            </span>
+                          );
+                        })()}
                         {!cat && ids.length > 0 && (
                           <button
                             type="button"

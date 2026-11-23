@@ -33,6 +33,7 @@ vi.mock("./api.ts", () => ({
 }));
 
 const { MemoRepoSettingsCard } = await import("./MemoRepoSettingsCard.tsx");
+type MemoRepoCheck = import("../../types/memo.ts").MemoRepoCheck;
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 
 let root: Root | null = null;
@@ -68,7 +69,7 @@ const flush = async () => {
   for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
 };
 
-async function render(props: { hasQueue?: boolean; blocked?: boolean; dirty?: boolean } = {}): Promise<void> {
+async function render(props: { hasQueue?: boolean; blocked?: boolean; dirty?: boolean; lastCheck?: MemoRepoCheck } = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
@@ -76,6 +77,7 @@ async function render(props: { hasQueue?: boolean; blocked?: boolean; dirty?: bo
           categoryId="cat1"
           categoryName="rounds"
           hasQueue={props.hasQueue ?? true}
+          lastCheck={props.lastCheck}
           blocked={props.blocked ?? false}
           dirty={props.dirty ?? false}
           onBusy={(b) => busy.push(b)}
@@ -118,6 +120,28 @@ describe("MemoRepoSettingsCard", () => {
     await render();
     expect(memoRepoSettings).not.toHaveBeenCalled();
     expect(host.querySelector(".memo-repo-card")).toBeNull();
+    expect(host.querySelector(".memo-repo-last")).toBeNull();
+  });
+
+  it("shows the last read until the member checks again", async () => {
+    const at = "2026-11-23T00:00:00Z";
+    await render({ lastCheck: { state: "differs", commit, diffs: 2, checkedAt: at } });
+    expect(memoRepoSettings).not.toHaveBeenCalled();
+    const last = host.querySelector(".memo-repo-last")!;
+    expect(last.textContent).toContain("c0ffeec");
+    expect(last.textContent).toContain("2");
+    await click(buttons()[0]);
+    expect(host.querySelector(".memo-repo-last")).toBeNull();
+    expect(rowsOf()).toHaveLength(3);
+  });
+
+  it("says nothing about a last read that found no difference", async () => {
+    for (const state of ["same", "absent"] as const) {
+      await render({ lastCheck: { state, commit, diffs: 0, checkedAt: "2026-11-23T00:00:00Z" } });
+      expect(host.querySelector(".memo-repo-last")).toBeNull();
+    }
+    await render({ lastCheck: { state: "invalid", commit, diffs: 0, checkedAt: "2026-11-23T00:00:00Z" } });
+    expect(host.querySelector(".memo-repo-last")).not.toBeNull();
   });
 
   it("shows the difference and approves the ticked rows", async () => {
