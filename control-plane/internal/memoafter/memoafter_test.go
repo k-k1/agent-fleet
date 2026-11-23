@@ -169,3 +169,34 @@ func TestLastAnswer(t *testing.T) {
 		}
 	}
 }
+
+// The pin drops everything from the first user turn of the session itself stamped after it; a
+// subagent's turn, an assistant turn and a turn without a time never cut.
+func TestTurnsBefore(t *testing.T) {
+	pin := time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return pin.Add(d).Format(time.RFC3339Nano) }
+	run := []Turn{
+		{Role: "user", TS: at(-time.Hour), Text: "the task"},
+		{Role: "assistant", TS: at(-time.Minute), Text: "Done: the run"},
+	}
+	for _, c := range []struct {
+		name string
+		tail []Turn
+		keep int
+		cut  bool
+	}{
+		{"nothing after the run", nil, 2, false},
+		{"a person's turn after the pin", []Turn{{Role: "user", TS: at(time.Minute), Text: "more"}, {Role: "assistant", TS: at(2 * time.Minute), Text: "Partial: x"}}, 2, true},
+		{"another zone, same instant after", []Turn{{Role: "user", TS: pin.Add(time.Second).In(time.FixedZone("JST", 9*3600)).Format(time.RFC3339), Text: "more"}}, 2, true},
+		{"a user turn at the pin itself", []Turn{{Role: "user", TS: at(0), Text: "same"}}, 3, false},
+		{"a subagent's user turn", []Turn{{Role: "user", Sidechain: true, TS: at(time.Minute)}}, 3, false},
+		{"an assistant turn after the pin", []Turn{{Role: "assistant", TS: at(time.Minute), Text: "late line"}}, 3, false},
+		{"a user turn without a time", []Turn{{Role: "user", Text: "more"}, {Role: "user", TS: "yesterday", Text: "more"}}, 4, false},
+	} {
+		turns := append(append([]Turn{}, run...), c.tail...)
+		kept, cut := TurnsBefore(turns, pin)
+		if len(kept) != c.keep || cut != c.cut {
+			t.Errorf("%s: kept %d cut %v, want %d %v", c.name, len(kept), cut, c.keep, c.cut)
+		}
+	}
+}

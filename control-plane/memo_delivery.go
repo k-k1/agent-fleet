@@ -1319,6 +1319,8 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	}
 	o := store.DeliveryObservation{Gen: gen, At: v.readAt, HeldBy: why, HeldSession: who, HeldDetail: treeHeldDetail(tree, why, now), Progress: progress,
 		ProgressAt: store.DeliveryTS(now), LimitKinds: treeLimitKinds(tree), ActMark: v.actMark, ActIncarnation: v.actIncarnation}
+	// The turn the close is based on: the answer read is pinned to its end (readAnswer).
+	o.RootTurnEndAt = tree[0].LastTurnEndAt
 	if t := tree[0].QueueTurn; t != nil && t.EndedAt != "" {
 		o.TurnOutcome, o.TurnMs, o.TurnEndedAt = t.Outcome, t.Ms, t.EndedAt
 	}
@@ -1834,6 +1836,10 @@ const (
 	memoAnswerPageMin = 50
 	// memoAnswerReplyMax bounds one page's reply: a page of tool output can be large.
 	memoAnswerReplyMax = 8 << 20
+	// memoAnswerPinSlack is how far past the pinned turn end a user turn may be stamped and still
+	// be read as the run's, for a kind that stamps a turn a moment late. A person's turn starts
+	// after the close, which is at least one tick after that end.
+	memoAnswerPinSlack = 5 * time.Second
 )
 
 // memoAnswerReply is the part of GET /sessions/{name}/messages the answer is read from.
@@ -1912,6 +1918,12 @@ func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*m
 // until the window ends: no answer of the Agent's transcript (a 404 included: a session archived
 // after the close is not in the list and its transcript may still be read), a session working
 // again, a transcript read empty, or an answer further back than the pages read.
+//
+// When the close saw the root session's last turn end, the read is pinned to it: the list's turn
+// start is compared with it on the Agent's one clock, and every turn from the first user turn
+// stamped after it is dropped from the pages read. A person who resumes the session between the
+// list read and the transcript read, or resumes and then archives it (no row to compare), is not
+// read as the run.
 func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d store.MemoDelivery) {
 	var row *sessionWire
 	for i := range v.live {
@@ -1920,9 +1932,16 @@ func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d s
 			break
 		}
 	}
-	if row != nil && memoTurnAfterClose(row.LastTurnStartAt, d.ClosedAt) {
-		r.keepAnswer(ctx, d, "", store.AnswerUnknown)
-		return
+	pin, pinned := memoAnswerPin(d.CloseTurnEndAt)
+	if row != nil {
+		after := memoTurnAfterClose(row.LastTurnStartAt, d.ClosedAt)
+		if pinned {
+			after = memoTurnAfterClose(row.LastTurnStartAt, d.CloseTurnEndAt)
+		}
+		if after {
+			r.keepAnswer(ctx, d, "", store.AnswerUnknown)
+			return
+		}
 	}
 	before := ""
 	sawTurn := false
@@ -1955,12 +1974,16 @@ func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d s
 		if reply.Status != stateIdle && reply.Status != "stopped" {
 			return // working again: what it says mid-turn is not what the run ended with
 		}
-		if text, found := memoafter.LastAnswer(*reply.Messages); found {
+		turns := *reply.Messages
+		if pinned {
+			turns, _ = memoafter.TurnsBefore(turns, pin.Add(memoAnswerPinSlack))
+		}
+		if text, found := memoafter.LastAnswer(turns); found {
 			head, class := memoafter.ClassifyAnswer(text)
 			r.keepAnswer(ctx, d, head, class)
 			return
 		}
-		sawTurn = sawTurn || len(*reply.Messages) > 0
+		sawTurn = sawTurn || len(turns) > 0
 		if !reply.HasMore || reply.FirstLine == nil || *reply.FirstLine <= 0 {
 			if sawTurn {
 				r.keepAnswer(ctx, d, "", store.AnswerUnknown)
@@ -1971,10 +1994,18 @@ func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d s
 	}
 }
 
+// memoAnswerPin is the turn end a delivery's answer read is pinned to, false when the close saw
+// none (or one that does not parse): the read is then made as without the pin.
+func memoAnswerPin(closeTurnEndAt string) (time.Time, bool) {
+	t, err := time.Parse(time.RFC3339Nano, closeTurnEndAt)
+	return t, err == nil
+}
+
 // memoTurnAfterClose reports whether the session's latest turn (the Agent's clock) started after
-// the delivery closed (this Control Plane's). The close comes at least a tick after the run's last
-// turn, so a small skew between the clocks does not read the run's own turn as a later one. A
-// stamp that does not parse proves nothing.
+// closedAt: the delivery's close (this Control Plane's clock), or the pinned turn end (the
+// Agent's). The close comes at least a tick after the run's last turn, so a small skew between the
+// clocks does not read the run's own turn as a later one. A stamp that does not parse proves
+// nothing.
 func memoTurnAfterClose(turnStart, closedAt string) bool {
 	t, err := time.Parse(time.RFC3339Nano, turnStart)
 	if err != nil {

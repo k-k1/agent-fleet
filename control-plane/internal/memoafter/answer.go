@@ -2,6 +2,7 @@ package memoafter
 
 import (
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -28,6 +29,24 @@ type Turn struct {
 	Parts     []TurnPart `json:"parts"`
 	Text      string     `json:"text"`
 	Sidechain bool       `json:"sidechain"`
+	// TS is when the turn was written (RFC 3339, the Agent host's clock), "" when the kind keeps none.
+	TS string `json:"ts"`
+}
+
+// TurnsBefore is turns up to the first user turn of the session itself (not a subagent's) written
+// after pin: what a person started after the run ended is not the run's, nor is anything after it.
+// cut reports whether such a turn was found. A turn whose time is missing or does not parse is
+// kept, as nothing tells it apart: such a kind reads as it did without the pin.
+func TurnsBefore(turns []Turn, pin time.Time) (kept []Turn, cut bool) {
+	for i, t := range turns {
+		if t.Role != "user" || t.Sidechain {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339Nano, t.TS); err == nil && at.After(pin) {
+			return turns[:i], true
+		}
+	}
+	return turns, false
 }
 
 // LastAnswer is the text of the session's last answer in turns: of the last assistant turn of the
