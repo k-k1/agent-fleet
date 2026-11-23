@@ -35,6 +35,9 @@ vi.mock("./api.ts", () => ({
 const { MemoRepoSettingsCard } = await import("./MemoRepoSettingsCard.tsx");
 type MemoRepoCheck = import("../../types/memo.ts").MemoRepoCheck;
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
+const { useTenantStore } = await import("../../core/store/tenant.ts");
+const { queueScope, useQueueSettingsCache } = await import("./queueSettingsCache.ts");
+const { readQueue } = await import("./queues.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -237,6 +240,46 @@ describe("MemoRepoSettingsCard", () => {
     await click(buttons()[0]);
     await click(approveButton());
     expect(applied).toBe(0);
+  });
+
+  it("marks nothing in the scope now shown when the approval's answer is lost after a scope switch", async () => {
+    const tenantBefore = useTenantStore.getState().tenant;
+    const cache = useQueueSettingsCache.getState();
+    try {
+      for (const lost of [
+        (fail: () => void) => fail(),
+        (_fail: () => void, answerWith: (v: unknown) => void) => answerWith({ error: { code: "http_502", message: "Bad Gateway" } }),
+      ]) {
+        applied = 0;
+        cache.reset();
+        cache.publish(queueScope(), cache.begin(), { tenantEnabled: true, repoSettings: true, queues: [] });
+        let fail: (e: unknown) => void = () => {};
+        let answerWith: (v: unknown) => void = () => {};
+        memoRepoApprove.mockImplementationOnce(() => new Promise((res, rej) => ((answerWith = res), (fail = rej))));
+        await render();
+        await click(buttons()[0]);
+        await act(async () => approveButton().click());
+        // The approval is on its way; the member switches to another tenant, whose read has begun.
+        act(() => useTenantStore.setState({ tenant: "other-scope" }));
+        const inFlight = useQueueSettingsCache.getState().begin();
+        lost(() => fail(new TypeError("network")), answerWith);
+        await flush();
+        // The card still closes its dialog and refetches, but the scope shown is not marked ...
+        expect(applied).toBe(1);
+        expect(useQueueSettingsCache.getState().unsure).toEqual([]);
+        // ... and the read it began is not dropped.
+        useQueueSettingsCache.getState().publish(queueScope(), inFlight, {
+          tenantEnabled: true,
+          repoSettings: true,
+          queues: [readQueue({ categoryId: "c9" })!],
+        });
+        expect(useQueueSettingsCache.getState().queues.map((q) => q.categoryId)).toEqual(["c9"]);
+        act(() => useTenantStore.setState({ tenant: tenantBefore }));
+      }
+    } finally {
+      act(() => useTenantStore.setState({ tenant: tenantBefore }));
+      useQueueSettingsCache.getState().reset();
+    }
   });
 
   it("holds the approval when the category was renamed in another tab", async () => {
