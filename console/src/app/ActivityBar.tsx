@@ -4,7 +4,7 @@
 // left pane or the main area, never both.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent as RKeyboardEvent, MouseEvent as RMouseEvent, PointerEvent as RPointerEvent, RefObject, TouchEvent as RTouchEvent } from "react";
-import { setSettings, useSettings, useUIPrefsLoading } from "../lib/settings.ts";
+import { setSettings, uiPrefsLoaded, useSettings, useUIPrefsLoading } from "../lib/settings.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import type { RailView } from "../core/store/leftRail.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -100,9 +100,10 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
     );
     return usable.filter((v) => ids.includes(v.id));
   }, [usable, off, onScreen]);
-  // The list has not been read from the server yet: a change now would be built on the empty
-  // local copy and a save would drop what another browser stored.
-  const prefsLoading = useUIPrefsLoading();
+  // The list has not been read from the server yet (not started, or still in flight): a change now
+  // would be built on the empty local copy and the next save would drop what another browser
+  // stored. The hook re-renders when a read starts and ends, which is when this answer changes.
+  const prefsLoading = useUIPrefsLoading() || !uiPrefsLoaded();
   const menu = useBarMenu(barRef);
   const entries = useMemo(
     () =>
@@ -160,6 +161,18 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
   // still fits, or the bar keeps claiming touch-action that the swipe then refuses.
   useBarSwipe(barRef, { enabled: !foldable && shown, step }, [views.length, imagegenAvailable, waitingHidden.length > 0]);
 
+  // A fold or a toggle elsewhere can take the focused icon out of the bar (the view on screen
+  // keeps an icon only while it is on screen): keep focus on the bar rather than letting it drop
+  // to <body>.
+  const lastFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const was = lastFocus.current;
+    if (!was || was.isConnected || document.activeElement !== document.body) return;
+    lastFocus.current = null;
+    const bar = barRef.current;
+    (bar?.querySelector<HTMLElement>(".actbar-btn[data-rail-view]") ?? bar?.querySelector<HTMLElement>(".actbar-btn"))?.focus();
+  }, [views]);
+
   // Up / Down move focus over the view icons that are shown (not the launchers), without
   // choosing the view: Enter or Space does that.
   const moveFocus = (e: RKeyboardEvent<HTMLDivElement>) => {
@@ -179,6 +192,14 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
       aria-orientation="vertical"
       aria-label={tr("rail.bar_aria")}
       {...menu.barProps}
+      onFocus={(e) => {
+        if (e.target instanceof HTMLElement) lastFocus.current = e.target;
+      }}
+      // Focus that left on its own (a click on blank space, another control) is not ours to
+      // restore; focus lost because the button was removed is.
+      onBlur={(e) => {
+        if (e.target instanceof HTMLElement && (e.relatedTarget !== null || e.target.isConnected)) lastFocus.current = null;
+      }}
       onKeyDown={(e) => {
         menu.barProps.onKeyDown(e);
         moveFocus(e);
@@ -290,6 +311,8 @@ function useBarMenu(barRef: RefObject<HTMLElement | null>) {
   const swallow = useRef(false);
   const swallowTimer = useRef<number | null>(null);
   const returnFocus = useRef<HTMLElement | null>(null);
+  // The button a long press began on: the only one whose click is dropped.
+  const pressed = useRef<Element | null>(null);
   const setSwallow = (on: boolean) => {
     swallow.current = on;
     if (swallowTimer.current !== null) window.clearTimeout(swallowTimer.current);
@@ -321,7 +344,10 @@ function useBarMenu(barRef: RefObject<HTMLElement | null>) {
   const barProps = {
     onContextMenu: (e: RMouseEvent) => {
       e.preventDefault();
-      if ((e.nativeEvent as PointerEvent).pointerType === "touch") setSwallow(true);
+      if ((e.nativeEvent as PointerEvent).pointerType === "touch") {
+        setSwallow(true);
+        pressed.current = e.target instanceof Element ? e.target : null;
+      }
       // A keyboard-raised contextmenu carries no pointer position; anchor on the focused icon.
       const focused = document.activeElement;
       if (e.clientX === 0 && e.clientY === 0 && focused instanceof HTMLElement && e.currentTarget.contains(focused)) openAt(menuAnchor(focused));
@@ -337,6 +363,7 @@ function useBarMenu(barRef: RefObject<HTMLElement | null>) {
     onTouchStart: (e: RTouchEvent) => {
       setSwallow(false);
       press.cancel();
+      pressed.current = e.target instanceof Element ? e.target : null;
       const t = e.touches[0];
       if (!t || e.touches.length > 1) return;
       const { clientX, clientY } = t;
@@ -359,9 +386,20 @@ function useBarMenu(barRef: RefObject<HTMLElement | null>) {
       }
       press.end();
     },
-    onTouchCancel: () => press.end(),
+    onTouchCancel: () => {
+      setSwallow(false);
+      press.end();
+    },
     onClickCapture: (e: RMouseEvent) => {
       if (!swallow.current || !inBar(e)) return;
+      // Only the click a finger lifts into is dropped: a keyboard or assistive-technology
+      // activation (trusted, detail 0) or a mouse click is a real action.
+      const pt = (e.nativeEvent as PointerEvent).pointerType;
+      if ((pt !== undefined && pt !== "" && pt !== "touch") || (e.nativeEvent.isTrusted && e.detail === 0)) {
+        setSwallow(false);
+        return;
+      }
+      if (!(e.target instanceof Node) || !pressed.current?.contains(e.target)) return;
       setSwallow(false);
       e.preventDefault();
       e.stopPropagation();

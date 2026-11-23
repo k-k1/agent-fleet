@@ -302,6 +302,35 @@ describe("the left pane folded away", () => {
   });
 });
 
+describe("focus when the focused icon leaves the bar", () => {
+  it("moves to a remaining icon when folding the pane takes away the icon of a view stored as off", async () => {
+    setSettings({ railViewsOff: ["files"] });
+    useLeftRail.setState({ view: "files" });
+    await mount();
+    expect(icons()).toContain("files");
+    btn("files").focus();
+    expect(document.activeElement).toBe(btn("files"));
+    // Folding the pane: nothing is on screen, so the stored choice applies and the icon goes.
+    await act(async () => root!.render(<Shell shown={false} />));
+    expect(icons()).not.toContain("files");
+    expect(host!.contains(document.activeElement)).toBe(true);
+    expect(document.activeElement).toBe(btn("sessions"));
+  });
+
+  it("leaves focus alone when it was moved on purpose", async () => {
+    setSettings({ railViewsOff: ["files"] });
+    useLeftRail.setState({ view: "files" });
+    await mount();
+    btn("files").focus();
+    const other = document.createElement("input");
+    document.body.append(other);
+    other.focus();
+    await act(async () => root!.render(<Shell shown={false} />));
+    expect(document.activeElement).toBe(other);
+    other.remove();
+  });
+});
+
 describe("focus after the menu closes", () => {
   const key = (el: Element, k: string) => act(async () => void el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })));
   const esc = () => act(async () => void document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
@@ -383,6 +412,20 @@ describe("long press and the clicks after it", () => {
     // The menu is outside the bar, so its click is not the one being dropped.
     await act(async () => row("memory").click());
     expect(getSettings().railViewsOff).toEqual(["memory"]);
+  });
+
+  it("drops only the click on the button the press began on, and none after a touchcancel", async () => {
+    vi.useFakeTimers();
+    await mount();
+    await longPress(btn("files"));
+    await act(async () => down(btn("files"), "touchend", 20, 200));
+    await act(async () => btn("memo").click());
+    expect(useLeftRail.getState().view).toBe("memo");
+    await act(async () => void vi.advanceTimersByTime(1000));
+    await longPress(btn("files"));
+    await act(async () => down(btn("files"), "touchcancel", 20, 200));
+    await act(async () => btn("files").click());
+    expect(useLeftRail.getState().view).toBe("files");
   });
 
   it("does not drop an icon click that comes well after the lift", async () => {

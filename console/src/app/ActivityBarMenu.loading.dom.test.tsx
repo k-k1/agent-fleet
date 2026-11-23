@@ -52,18 +52,25 @@ const menu = () => document.querySelector<HTMLElement>(".actbar-menu");
 const row = (v: RailView) => menu()!.querySelector<HTMLButtonElement>(`[data-menu-view="${v}"]`)!;
 
 describe("the menu before the saved choice has been read", () => {
-  it("changes nothing until the server's copy has arrived, then builds on it", async () => {
-    let release!: (v: unknown) => void;
-    gate.p = new Promise((r) => (release = r));
-    const done = hydrateUIPrefs();
+  it("changes nothing before the read starts, while it runs, and builds on the server's copy once it is in", async () => {
     host = document.createElement("div");
     document.body.append(host);
     root = createRoot(host);
+    // The bar is on screen first, as at start-up: the read has not even begun.
     await act(async () => root!.render(<Shell />));
     await act(async () => void host!.querySelector(".actbar")!.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 30, clientY: 80 })));
     expect(row("files").getAttribute("aria-disabled")).toBe("true");
     await act(async () => row("files").click());
     expect(getSettings().railViewsOff).toEqual([]);
+
+    let release!: (v: unknown) => void;
+    gate.p = new Promise((r) => (release = r));
+    const done = hydrateUIPrefs();
+    await act(async () => void (await Promise.resolve()));
+    expect(row("files").getAttribute("aria-disabled")).toBe("true");
+    await act(async () => row("files").click());
+    expect(getSettings().railViewsOff).toEqual([]);
+
     release({ railViewsOff: ["shared", "future-view"] });
     await act(async () => void (await done));
     gate.p = null;
