@@ -32,7 +32,7 @@ const openEngineAdd = vi.fn();
 vi.mock("./openEngineAdd.ts", () => ({ openEngineAdd: (...args: unknown[]) => openEngineAdd(...args) }));
 
 import { EnginesAdminView, engineOfferResultKey } from "./adminEngines.tsx";
-import { clearCatalogMemory } from "./catalogMemory.ts";
+import { beginEnginesRead, clearCatalogMemory, loadEngines, saveEnginesRead } from "./catalogMemory.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -329,6 +329,19 @@ describe("EnginesAdminView", () => {
       await mount(); // its first read is held: what it draws is the cache
       expect(panel(0).querySelector(".engines-model-tag")!.textContent).not.toContain("起動中");
       expect(seg("常時稼働")?.className).toContain("seg-btn--active");
+    });
+
+    it("an edit's cache write is not undone by another screen's older read answering after it", async () => {
+      const a = row({ key: "image", mode: "ondemand", state: "running" });
+      api.mockResolvedValue({ super_admin: true, engines: [a] });
+      apiJSON.mockImplementation(held);
+      await mount();
+      const otherScreenRead = beginEnginesRead(); // another screen's read, begun before the edit answered
+      await click(seg("常時稼働"));
+      await answer({ ...a, mode: "on" });
+      expect(loadEngines()?.rows[0].mode).toBe("on");
+      saveEnginesRead(otherScreenRead, [a], true, ["hf"]); // it answers with the pre-edit row
+      expect(loadEngines()?.rows[0].mode).toBe("on");
     });
 
     it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {

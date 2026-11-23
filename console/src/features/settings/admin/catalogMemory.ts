@@ -14,6 +14,7 @@
 // worth surviving a reload.
 //
 // Store only: it touches neither React nor the DOM, so it runs in the node project.
+import { ReadGuard, type ReadTicket } from "../../../lib/readGuard.ts";
 import type { CatalogSource, EngineObjectRow, EngineRow, IngestHit } from "./engineTypes.ts";
 
 /** How many (pane, engine, face, kind) entries to keep. A pane has a handful — two faces times two
@@ -133,6 +134,52 @@ export function loadEngines(): CatalogEnginesMemory | null {
   return engines;
 }
 
+// Every screen that holds its own useEngineRows writes the one slot above, but each keeps its own
+// ReadGuard for what it draws. Without an order here a read begun on screen B before screen A's
+// edit answered would put the pre-edit row back into the cache for the next pane to mount. This
+// guard orders the cache writes only: "rows" for whole answers, "row:<key>" for one engine.
+const enginesOrder = new ReadGuard();
+
+/** Take a ticket when a read of the engine list begins, before its first await. */
+export function beginEnginesRead(): ReadTicket {
+  return enginesOrder.begin();
+}
+
+/** Put a read's answer into the cache, unless a read begun later has already done so. A row an
+ *  edit answered for after this read began keeps the cache's copy, which the edit patched. */
+export function saveEnginesRead(ticket: ReadTicket, answered: EngineRow[], isSuper: boolean, sources: CatalogSource[]): void {
+  if (!ticket.land("rows")) return;
+  const cached = engines?.rows;
+  const rows: EngineRow[] = [];
+  for (const e of answered) {
+    if (ticket.land("row:" + e.key)) {
+      rows.push(e);
+      continue;
+    }
+    const kept = cached?.find((c) => c.key === e.key);
+    // An edit claimed the row but the cache has no copy to keep: writing the read's pre-edit row
+    // is the fault this order exists to prevent, so leave the cache to the next read.
+    if (!kept) return;
+    rows.push(kept);
+  }
+  engines = { rows, isSuper, sources };
+}
+
+/** Begin an edit of one engine row, before its request is sent; the function returned patches the
+ *  cache with the answer. The answer is newer than every read in flight, so it claims the row; it
+ *  writes nothing when a read begun after the edit began has landed the row meanwhile, because
+ *  that read may carry a later state (a box that finished starting) than the answer. */
+export function beginEnginesEdit(key: string): (patch: Partial<EngineRow>) => void {
+  const lane = "row:" + key;
+  const ticket = enginesOrder.begin();
+  return (patch) => {
+    if (!ticket.fresh(lane)) return;
+    enginesOrder.claim(lane);
+    if (!engines) return;
+    engines = { ...engines, rows: engines.rows.map((e) => (e.key === key ? { ...e, ...patch } : e)) };
+  };
+}
+
 /** For tests. 🔴 Not optional there: a dom test mounts the catalogue several times with no paneId,
  *  so every case shares one key — without this the second case reads the first one's page and the
  *  search it asserts is never sent. */
@@ -142,4 +189,5 @@ export function clearCatalogMemory(): void {
   shells.clear();
   buckets.clear();
   engines = null;
+  enginesOrder.reset();
 }
