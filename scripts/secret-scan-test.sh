@@ -183,6 +183,16 @@ for ok in "--report-format json" "--report-format=json" "--verbose"; do
 done
 rm -f "$work/eq.json"
 expect "'--report-path=FILE' must be accepted" 42 pr --report-path="$work/eq.json"
+# A report name that starts with `-` is a file name, not an option (to gitleaks or to jq).
+rm -f -- ./-dash.json
+rc=0
+"$HERE/secret-scan.sh" pr --report-path=-dash.json >"$out" 2>&1 || rc=$?
+if [ "$rc" != 42 ] || ! grep -q "rule=aws-access-token" "$out"; then
+  echo "FAIL: a report path starting with '-' must still print the finding lines (exit=$rc)"
+  sed 's/^/    /' "$out"
+  FAILED=1
+fi
+rm -f -- ./-dash.json
 [ -s "$work/eq.json" ] || { echo "FAIL: --report-path=FILE must write the report"; FAILED=1; }
 
 # gitleaks exits 0 with no findings when its child `git log` fails. A shim that fails

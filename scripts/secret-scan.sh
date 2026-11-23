@@ -109,8 +109,9 @@ cat "$work/err" >&2
 
 if [ "$rc" -eq 42 ]; then
   # Every field is reduced to a safe alphabet: the report is data, and this line is read by
-  # people and by workflow log parsers.
-  if ! jq -r '.[] | "secret-scan: finding: rule=\(.RuleID | tostring | gsub("[^A-Za-z0-9._-]"; "?")) commit=\(.Commit[0:12] | gsub("[^0-9a-f]"; "?")) line=\(.StartLine | tostring | gsub("[^0-9]"; "?"))"' "$report" 2>/dev/null; then
+  # people and by workflow log parsers. The report is read through stdin: a name starting
+  # with `-` would be taken for a jq option.
+  if ! jq -r '.[] | "secret-scan: finding: rule=\(.RuleID | tostring | gsub("[^A-Za-z0-9._-]"; "?")) commit=\(.Commit[0:12] | gsub("[^0-9a-f]"; "?")) line=\(.StartLine | tostring | gsub("[^0-9]"; "?"))"' <"$report" 2>/dev/null; then
     echo "secret-scan: leaks were found but the report could not be read; rerun locally with --verbose" >&2
   fi
   echo "secret-scan: file names are not printed (public log); see the commit, or rerun locally with --verbose" >&2
