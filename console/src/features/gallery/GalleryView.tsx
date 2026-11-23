@@ -33,7 +33,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { isBusySession } from "../files/sessionRefresh.ts";
 import { REVALIDATE_GAP_MS, WORKING_TICK_MS } from "../files/refreshPolicy.ts";
-import { useReadGuard, type ReadTicket } from "../../lib/readGuard.ts";
+import { useReadGuard } from "../../lib/readGuard.ts";
 import { useInterval } from "../../lib/useInterval.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
@@ -228,10 +228,12 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
    *  size must not re-run the mount effect as if the folder had changed. */
   const tileRef = useRef(tile);
   tileRef.current = tile;
-  /** Every read of the listing takes a ticket here. Reset with the folder, so a read started for
-   *  the folder being left never lands in the next one; within a folder, an answer older than
-   *  one already landed is dropped, cache write included. */
+  /** Every read of the listing takes a ticket here, for the folder its callback was made for.
+   *  Reset with the folder at commit, so a read started for the folder being left, or begun
+   *  later by a callback that closed over it (a rename's refresh), never lands in the next one;
+   *  within a folder, an answer older than one already landed is dropped, cache write included. */
   const guard = useReadGuard();
+  useLayoutEffect(() => guard.reset(key), [guard, key]);
 
   // Change of folder, done DURING the render rather than in an effect (React's "adjust state
   // when a prop changes"). An effect runs after the browser has painted, and that paint would
@@ -245,7 +247,6 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
   // picture that really did arrive since lights up.
   if (shownPath.current !== key) {
     shownPath.current = key;
-    guard.reset();
     const cached = readGallery(key);
     setEntries(cached?.entries ?? null);
     setTruncated(!!cached?.truncated);
@@ -301,30 +302,37 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
    *     is on screen and is retried. The error state is only for a first read with nothing
    *     drawn — with a cached grid up, a blip must not replace it.
    *
+   * An answer that no longer counts (the folder changed, or a read started later has landed)
+   * settles the read and touches nothing. Only the first read moves `stale` and `failed`: a
+   * background read that fails while the first one is still out says nothing about it.
+   *
    * Returns true when settled, which is what the mount effect's backoff wants.
    */
   const load = useCallback(
-    async (tk: ReadTicket, initial: boolean): Promise<boolean> => {
+    async (initial: boolean): Promise<boolean> => {
+      const tk = guard.begin(key);
+      if (!tk.current()) return true;
       // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
       // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
       // it the first look at a fresh folder trickles in card by card.
       const r = await fetchGalleryListing(path, thumbEdge(tileRef.current), () => tk.land(), flat);
-      if (!tk.current()) return true;
+      // A listing was claimed inside fetchGalleryListing; a newer read may have landed since.
+      if (!tk.fresh()) return true;
       if (!r.ok) {
-        if (r.hard && initial && tk.land()) {
+        if (!initial) return !r.retry;
+        if (r.hard) {
+          tk.land(); // "gone" is newer than any listing begun before it
           forgetGallery(key);
           namesRef.current = null;
           shownRef.current = false;
           setEntries(null);
           setFailed(true);
-        } else if (initial && !shownRef.current) {
+        } else if (!shownRef.current) {
           setFailed(true);
         }
         if (!r.retry) setStale(false);
         return !r.retry;
       }
-      // Claimed inside fetchGalleryListing; a newer read may have landed since.
-      if (!tk.fresh()) return true;
       const next = r.entries;
       const names = new Set(next.map((e) => e?.name).filter(Boolean) as string[]);
       // What a re-read ADDED, so the reader sees a generation land. A first read adds
@@ -348,7 +356,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
       }
       return true;
     },
-    [path, flat, key],
+    [path, flat, key, guard],
   );
 
   // Mount (and every change of folder): retry through the window where the workspace is up
@@ -359,7 +367,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
     let timer = 0;
     let tries = 0;
     const run = () => {
-      load(guard.begin(), true)
+      load(true)
         .then((done) => {
           if (stopped || done) return;
           timer = window.setTimeout(run, Math.min(5000, 700 * 2 ** Math.min(tries++, 3)));
@@ -371,7 +379,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
       stopped = true;
       window.clearTimeout(timer);
     };
-  }, [load, guard]);
+  }, [load]);
 
   useEffect(() => () => window.clearTimeout(freshTimer.current), []);
 
@@ -389,9 +397,9 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
   const refresh = useCallback(
     (force = false) => {
       if (!force && (!running || document.hidden)) return;
-      void load(guard.begin(), false);
+      void load(false);
     },
-    [load, running, guard],
+    [load, running],
   );
 
   // The workspace-wide files tick (start/stop, an upload, a clone). Skipped on the tick the

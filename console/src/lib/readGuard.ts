@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useInterval } from "./useInterval.ts";
 
 /** One read handed out by a ReadGuard. Check it after every await, before the answer touches
@@ -16,17 +16,29 @@ export interface ReadTicket {
   land(lane?: string): boolean;
 }
 
+/** The subject of a guard whose owner unmounted: no begin() matches it. */
+const GONE = Symbol("gone");
+
 /**
  * Generation guard for reads whose answers can come back out of order.
  *
- * `reset()` starts a new subject: every read begun before it can no longer land. Within one
- * subject a read lands only if no read started after it has landed, so a slow older answer
- * cannot overwrite a newer one, while an answer slower than the poll period still shows.
+ * `reset(subject)` starts a new subject: every read begun before it can no longer land.
+ * `begin(subject)` hands out a ticket for the subject the CALLER was made for, and that ticket
+ * is dead from the start when the guard has moved on: a callback that closed over the folder
+ * being left (a rename's follow-up refresh, a backoff timer not yet cleared) must not take a
+ * ticket of the folder now on screen and land its listing there. Subjects compare with
+ * Object.is, so pass a key, not a fresh array.
+ *
+ * Within one subject a read lands only if no read started after it has landed, so a slow older
+ * answer cannot overwrite a newer one, while an answer slower than the poll period still shows.
  *
  * Lanes keep separate "latest landed" marks for parts of the state that different answers own.
  * A failure that lands the error banner must not also stop an older successful read from
  * landing the list: that was a switch at a tick leaving the previous tenant's rows on screen
  * until the next poll (#4815).
+ *
+ * Reset from a layout effect, never during render: a render React discards would otherwise
+ * kill the reads of the subject still on screen.
  */
 export class ReadGuard {
   private gen = 0;
@@ -34,18 +46,24 @@ export class ReadGuard {
   private seq = 0;
   private landed = new Map<string, number>();
   private ac = new AbortController();
+  private subject: unknown = undefined;
 
-  reset(): void {
+  reset(subject?: unknown): void {
+    // Everything new is in place before the old signal fires: an abort listener that begins
+    // the next read must get a live ticket and a live signal.
+    const old = this.ac;
     this.gen++;
+    this.subject = subject;
     this.landed.clear();
-    this.ac.abort();
     this.ac = new AbortController();
+    old.abort();
   }
 
-  begin(): ReadTicket {
-    const g = this.gen;
+  begin(subject?: unknown): ReadTicket {
+    const live = Object.is(subject, this.subject);
+    const g = live ? this.gen : -1;
     const n = ++this.seq;
-    const signal = this.ac.signal;
+    const signal = live ? this.ac.signal : AbortSignal.abort();
     const current = () => g === this.gen;
     const fresh = (lane = "") => current() && n >= (this.landed.get(lane) ?? 0);
     const land = (lane = "") => {
@@ -57,18 +75,23 @@ export class ReadGuard {
   }
 }
 
-/** A ReadGuard for the component's lifetime, reset on unmount so nothing lands after it. */
+/** A ReadGuard for the component's lifetime. Unmount (a layout cleanup, so before any passive
+ *  cleanup or timer can run) leaves it on a subject nothing matches. */
 export function useReadGuard(): ReadGuard {
   const [guard] = useState(() => new ReadGuard());
-  useEffect(() => () => guard.reset(), [guard]);
+  useLayoutEffect(() => () => guard.reset(GONE), [guard]);
   return guard;
 }
 
 /**
  * Poll `read` every `ms` behind a ReadGuard. A change of `subject` resets the guard and reads at
  * once; the period itself is not restarted, which the guard makes safe. `ms === null` switches
- * the poll off: no first read, no ticks, and reads still in flight are dropped (the guard is
- * reset). `subject` must keep the same length across renders, like any dependency list.
+ * the poll off: no first read, no ticks, and reads still in flight are dropped. `subject` must
+ * keep the same length across renders, like any dependency list.
+ *
+ * The callback, the on/off state and the reset are all taken at commit (layout phase), so a
+ * tick never runs a render that was not committed, and the previous subject's reads are dead
+ * from the commit that replaced it.
  * Returns the guard so one-off reads (a retry button, an event) can take tickets from it too.
  */
 export function useGuardedPoll(
@@ -77,14 +100,26 @@ export function useGuardedPoll(
   subject: readonly unknown[],
 ): ReadGuard {
   const guard = useReadGuard();
-  const latest = useRef(read);
-  latest.current = read;
+  const committed = useRef(read);
+  const enabled = useRef(false);
   const on = ms !== null;
-  useEffect(() => {
+  useLayoutEffect(() => {
+    committed.current = read;
+  });
+  useLayoutEffect(() => {
     guard.reset();
-    if (on) latest.current(guard.begin());
+    enabled.current = on;
+    if (on) committed.current(guard.begin());
+    return () => {
+      enabled.current = false;
+      guard.reset(GONE);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [guard, on, ...subject]);
-  useInterval(() => latest.current(guard.begin()), ms);
+  // The interval's own timer is cleared in a passive cleanup, after the commit that switched the
+  // poll off; `enabled` closes that window.
+  useInterval(() => {
+    if (enabled.current) committed.current(guard.begin());
+  }, ms);
   return guard;
 }

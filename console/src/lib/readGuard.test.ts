@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { ReadGuard } from "./readGuard.ts";
 
 describe("ReadGuard", () => {
-  it("drops a read started before a reset (the subject changed)", () => {
+  it("drops a read started before a reset (the subject changed); the next read lands", () => {
     const g = new ReadGuard();
     const old = g.begin();
+    expect(old.land()).toBe(true);
     g.reset();
     const now = g.begin();
     expect(old.current()).toBe(false);
@@ -12,6 +13,18 @@ describe("ReadGuard", () => {
     expect(now.land()).toBe(true);
   });
 
+  it("hands a dead ticket to a caller made for another subject", () => {
+    const g = new ReadGuard();
+    g.reset("a");
+    const forA = g.begin("a");
+    g.reset("b");
+    const lateA = g.begin("a"); // e.g. a rename's refresh that closed over folder a
+    expect(forA.current()).toBe(false);
+    expect(lateA.current()).toBe(false);
+    expect(lateA.land()).toBe(false);
+    expect(lateA.signal.aborted).toBe(true);
+    expect(g.begin("b").land()).toBe(true);
+  });
   it("drops an older answer once a newer read has landed", () => {
     const g = new ReadGuard();
     const first = g.begin();
@@ -38,16 +51,6 @@ describe("ReadGuard", () => {
     expect(first.land("list")).toBe(true);
   });
 
-  it("forgets the marks of the previous subject", () => {
-    const g = new ReadGuard();
-    g.begin(); // started before the reset, never answers
-    const late = g.begin();
-    expect(late.land()).toBe(true);
-    g.reset();
-    const next = g.begin();
-    expect(next.land()).toBe(true);
-  });
-
   it("lets one read land the same lane twice", () => {
     const g = new ReadGuard();
     const t = g.begin();
@@ -63,5 +66,17 @@ describe("ReadGuard", () => {
     const now = g.begin();
     expect(old.signal.aborted).toBe(true);
     expect(now.signal.aborted).toBe(false);
+  });
+
+  it("gives a live ticket to a read begun from the old signal's abort listener", () => {
+    const g = new ReadGuard();
+    const old = g.begin();
+    let next: ReturnType<ReadGuard["begin"]> | undefined;
+    old.signal.addEventListener("abort", () => (next = g.begin()));
+    g.reset();
+    expect(next!.current()).toBe(true);
+    expect(next!.signal.aborted).toBe(false);
+    g.reset();
+    expect(next!.signal.aborted).toBe(true);
   });
 });

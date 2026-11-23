@@ -16,6 +16,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 type Pending = { url: string; resolve: (v: unknown) => void };
 const pending: Pending[] = [];
+const renames: ((v: unknown) => void)[] = [];
 vi.mock("../../core/api/client.ts", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
   return {
@@ -24,19 +25,21 @@ vi.mock("../../core/api/client.ts", async (orig) => {
       String(url).includes("fs/tree")
         ? new Promise((resolve) => pending.push({ url: String(url), resolve }))
         : Promise.resolve({}),
+    fsRename: () => new Promise((resolve) => renames.push(resolve)),
   };
 });
 
 const { GalleryView } = await import("./GalleryView.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
-const { setLocale } = await import("../../lib/i18n/index.ts");
+const { setLocale, t } = await import("../../lib/i18n/index.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { allViews, freshLayout } = await import("../../layout/ops.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { WORKING_TICK_MS } = await import("../files/refreshPolicy.ts");
-const { clearGalleryCache, readGallery } = await import("./galleryCache.ts");
+const { clearGalleryCache, readGallery, writeGallery } =
+  await import("./galleryCache.ts");
 
 const img = (name: string, mtime: number) => ({
   name,
@@ -68,6 +71,10 @@ const names = () =>
   [...host.querySelectorAll<HTMLElement>(".gal-card:not(.folder) .gal-name")]
     .map((n) => n.textContent)
     .sort();
+const updating = () =>
+  (host.querySelector(".gal-count")?.textContent ?? "").includes("updating");
+const failedState = () =>
+  (host.textContent ?? "").includes(t("gallery.failed"));
 const cached = (path: string) =>
   (readGallery(path)?.entries ?? []).map((e) => e.name).sort();
 
@@ -81,6 +88,7 @@ beforeAll(() => {
 beforeEach(async () => {
   vi.useFakeTimers();
   pending.length = 0;
+  renames.length = 0;
   clearGalleryCache();
   useWorkspaceStore.setState({ state: "running" });
   useLayoutStore.setState({ layout: freshLayout() });
@@ -158,5 +166,83 @@ describe("GalleryView reads across a change of folder", () => {
     expect(pending).toHaveLength(2);
     await act(async () => void vi.advanceTimersByTime(1000));
     expect(pending).toHaveLength(3);
+  });
+
+  it("does not let a rename that closed over the folder being left read it into the next one", async () => {
+    vi.stubGlobal("prompt", () => "renamed.png");
+    try {
+      await act(async () => {
+        host
+          .querySelector<HTMLElement>(".gal-card:not(.folder)")!
+          .dispatchEvent(
+            new MouseEvent("contextmenu", {
+              bubbles: true,
+              cancelable: true,
+              clientX: 30,
+              clientY: 40,
+            }),
+          );
+      });
+      const item = [
+        ...document.querySelectorAll<HTMLButtonElement>(
+          ".gal-ctxmenu .ui-menu-item",
+        ),
+      ].find((b) => b.textContent?.includes("Rename the file"));
+      await act(async () =>
+        item!.dispatchEvent(new MouseEvent("click", { bubbles: true })),
+      );
+      expect(renames).toHaveLength(1);
+      await show("b");
+      expect(pending).toHaveLength(2); // the first read of "b"
+      await act(async () => renames[0]!({}));
+      // The rename's refresh is for "a": it must not take a ticket of "b".
+      expect(pending).toHaveLength(2);
+      await answer(1, listing("b1.png"));
+      expect(names()).toEqual(["b1.png"]);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("GalleryView failures around a cached folder's first read", () => {
+  const switchAtTick = async (path: string) => {
+    await act(async () => void vi.advanceTimersByTime(WORKING_TICK_MS - 100));
+    await show(path);
+    await act(async () => void vi.advanceTimersByTime(100));
+  };
+
+  it("keeps 'updating' while a tick fails hard before the first read answers", async () => {
+    writeGallery("b", listing("b1.png").entries);
+    await switchAtTick("b");
+    expect(pending).toHaveLength(3); // the first read of "b", then the tick
+    expect(updating()).toBe(true);
+    await answer(2, { error: { code: "not_found", message: "gone" } });
+    expect(updating()).toBe(true);
+    expect(names()).toEqual(["b1.png"]);
+    await answer(1, listing("b1.png", "b2.png"));
+    expect(updating()).toBe(false);
+    expect(names()).toEqual(["b1.png", "b2.png"]);
+  });
+
+  it("stops retrying a first read that fails after a later tick has landed", async () => {
+    writeGallery("b", listing("b1.png").entries);
+    await switchAtTick("b");
+    await answer(2, listing("b1.png", "b2.png"));
+    await answer(1, { error: { code: "http_502", message: "bad gateway" } });
+    await act(async () => void vi.advanceTimersByTime(5000)); // past the first backoff step
+    expect(pending).toHaveLength(3);
+    expect(names()).toEqual(["b1.png", "b2.png"]);
+    expect(failedState()).toBe(false);
+  });
+
+  it("ignores a first read's hard failure that answers after a later tick has landed", async () => {
+    writeGallery("b", listing("b1.png").entries);
+    await switchAtTick("b");
+    await answer(2, listing("b1.png", "b2.png"));
+    await answer(1, { error: { code: "not_found", message: "gone" } });
+    expect(names()).toEqual(["b1.png", "b2.png"]);
+    expect(cached("b")).toEqual(["b1.png", "b2.png"]);
+    expect(failedState()).toBe(false);
   });
 });

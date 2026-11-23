@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
+import { act, StrictMode, Suspense, startTransition } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { useGuardedPoll, type ReadTicket } from "./readGuard.ts";
 
@@ -70,5 +70,39 @@ describe("useGuardedPoll", () => {
     act(() => root.unmount());
     expect(reads[0].t.current()).toBe(false);
     root = createRoot(document.createElement("div"));
+  });
+
+  it("under StrictMode only the last setup's first read is live", () => {
+    act(() =>
+      root.render(
+        <StrictMode>
+          <Probe subject="a" ms={1000} />
+        </StrictMode>,
+      ),
+    );
+    expect(reads.length).toBeGreaterThanOrEqual(2);
+    expect(reads.slice(0, -1).every((r) => !r.t.current())).toBe(true);
+    expect(reads.at(-1)!.t.current()).toBe(true);
+  });
+
+  it("never runs a render that was not committed, and keeps the shown subject's reads live", async () => {
+    const never = new Promise<never>(() => {});
+    function Hold({ on }: { on: boolean }) {
+      if (on) throw never;
+      return null;
+    }
+    const tree = (subject: string) => (
+      <Suspense fallback={null}>
+        <Probe subject={subject} ms={1000} />
+        <Hold on={subject === "b"} />
+      </Suspense>
+    );
+    act(() => root.render(tree("a")));
+    expect(reads).toHaveLength(1);
+    // A transition to "b" suspends: React keeps "a" on screen and never commits "b".
+    await act(async () => startTransition(() => root.render(tree("b"))));
+    act(() => void vi.advanceTimersByTime(1000));
+    expect(reads.map((r) => r.subject)).toEqual(["a", "a"]);
+    expect(reads[0].t.current()).toBe(true);
   });
 });
