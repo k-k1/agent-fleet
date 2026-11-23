@@ -22,6 +22,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,7 +31,6 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/engine"
-	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // --- the fake far deployment ----------------------------------------------------
@@ -139,9 +139,10 @@ func silentFar(t *testing.T, key string, entered chan struct{}) (*farGateway, *h
 // it is what a borrowed request must NOT present.
 func newTestRemoteEngine(t *testing.T, base, key string) *engineRuntimeState {
 	t.Helper()
-	remotes := engine.NewRemotesFor(strings.TrimRight(base, "/"), "afei_borrower", nil, engineClient)
+	remotes := engine.NewRemotesFor(strings.TrimRight(base, "/"), "afei_borrower", nil,
+		catalogOverlay{catalog: `{"engines":[{"key":"` + key + `","model_rows":[{"id":"m-1"}]}]}`, next: engineClient})
+	remotes.RefreshAll(context.Background(), nopRemoteHost{})
 	rem := remotes.ForKey(key)
-	rem.SeedMirror([]store.EngineModel{{Role: key, ID: "m-1", Enabled: true}})
 	def := engineDef{
 		Key: key, API: engineAPIChat, Provider: "llamacpp",
 		URL: strings.TrimRight(base, "/"), Lifecycle: engineLifecycleRemote,
@@ -151,6 +152,34 @@ func newTestRemoteEngine(t *testing.T, base, key string) *engineRuntimeState {
 		apiKey: "local-key-that-must-not-travel",
 	}
 }
+
+// catalogOverlay answers the far catalogue route from memory and sends every other call on to
+// the real client, so a test can give a borrowed handle a mirror through the same poll production
+// uses while the token exchange and the engine request still reach the fake far gateway.
+type catalogOverlay struct {
+	catalog string
+	next    engine.HTTPDoer
+}
+
+func (o catalogOverlay) Do(req *http.Request) (*http.Response, error) {
+	if req.URL.Path != "/internal/engine/catalog" {
+		return o.next.Do(req)
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(o.catalog)),
+		Request:    req,
+	}, nil
+}
+
+// nopRemoteHost is a registry that serves nothing and takes nothing on: the poll then does no more
+// than fill the mirrors, which is all these tests want from it.
+type nopRemoteHost struct{}
+
+func (nopRemoteHost) Served(string) (engine.Def, func(), bool)     { return engine.Def{}, nil, false }
+func (nopRemoteHost) Adopt(engine.Def) bool                        { return false }
+func (nopRemoteHost) NotifyCatalogChanged(context.Context, string) {}
 
 func remoteGatewayFor(e *engineRuntimeState) engineGateway {
 	return engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{e.def.Key: e}}}

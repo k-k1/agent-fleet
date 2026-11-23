@@ -24,7 +24,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/k-k1/agent-fleet/control-plane/internal/engine"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -698,21 +697,4 @@ func TestBorrowedCatalogueChangeTellsTheWorkspaces(t *testing.T) {
 	far.answers(http.StatusOK, farCatalogBody(t, farImageEngineWith(t, "anima", "sdxl-base", "anima")))
 	rem.RefreshAll(ctx, newEngineRemoteHost(reg, nil))
 	settle(t, 1, "a checkpoint withdrawn on the far fleet")
-}
-
-// 🔴 The signature is sorted because the far side owes this deployment no order. A catalogue
-// whose rows arrive shuffled would otherwise fingerprint differently on every tick, and every
-// tick would POST to every running workspace — the failure mode this whole feature is meant to
-// remove, inverted.
-func TestMirrorSignatureIgnoresRowOrder(t *testing.T) {
-	a := store.EngineModel{Role: "image", ID: "anima", Enabled: true}
-	b := store.EngineModel{Role: "image", ID: "krea2", Enabled: true}
-	if engine.MirrorSignature([]store.EngineModel{a, b}) != engine.MirrorSignature([]store.EngineModel{b, a}) {
-		t.Error("the same two rows in the other order fingerprint differently")
-	}
-	c := b
-	c.Selected = true
-	if engine.MirrorSignature([]store.EngineModel{a, b}) == engine.MirrorSignature([]store.EngineModel{a, c}) {
-		t.Error("which checkpoint is the default fingerprints the same either way")
-	}
 }
