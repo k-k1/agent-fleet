@@ -67,6 +67,8 @@ func TestSharedServeStartsForACustomOnlyWorkspaceOnOwn(t *testing.T) {
 	useMajor(t, 2)
 	stubUsagePref(t, UsageOwn)
 	t.Setenv(standaloneEnv, "")
+	// An inherited disable switch would refuse before the connection gate this test measures.
+	t.Setenv("AF_OPENCODE_SERVE_DISABLE", "")
 	storeCustom(t, selfHosted)
 	useIsolationPolicy(t, approvedCustom())
 
