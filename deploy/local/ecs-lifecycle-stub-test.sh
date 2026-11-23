@@ -588,6 +588,7 @@ case "$args" in
   *"ssm get-parameter --name /af-ws/engine-llm-key"*) [ "${STUB_ENGINE_KEY_EXISTS:-0}" = 1 ] || exit 1 ;;
   *"ssm get-parameter --name /af-cp/github-client-secret"*) [ "${STUB_NO_GH_KEY:-0}" = 1 ] && exit 1; echo ok ;;
   *"ssm get-parameter --name /af-cp/comfy-api-key"*) [ "${STUB_NO_COMFY_KEY:-0}" = 1 ] && exit 1; echo ok ;;
+  *"ssm get-parameter --name /af-cp/web-push-vapid-key"*) [ "${STUB_NO_PUSH_KEY:-0}" = 1 ] && exit 1; echo ok ;;
   # The two keys are read with --with-decryption for their length only (standup.sh).
   *"ssm get-parameter --name /af-cp/master-key --with-decryption"*) echo "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff" ;;
   *"ssm get-parameter --name /af-cp/cookie-secret --with-decryption"*) echo "fake-short-cookie-value" ;;
@@ -2179,6 +2180,28 @@ printf 'GithubLoginSecret=on\n' >> "$STATE/params/30-ingress"
 : > "$LOG"
 STUB_NO_GH_KEY=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3b5" 2>&1 </dev/null \
   || fail "GithubLoginSecret=on was refused for the missing legacy github-client-secret: $(tail -3 "$WORK/out3b5")"
+cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
+# Web Push (#4883): the switch needs its VAPID key in SSM and a usable contact.
+printf 'WebPush=on\nWebPushSubject=mailto:ops@example.com\n' >> "$STATE/params/30-ingress"
+: > "$LOG"
+if STUB_NO_PUSH_KEY=1 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes \
+     > "$WORK/out3b6" 2>&1 </dev/null; then
+  fail "standup went on although WebPush=on and the SSM parameter is missing"
+fi
+grep -q "no SSM /af-cp/web-push-vapid-key (WebPush=on)" "$WORK/out3b6" \
+  || fail "the missing VAPID key was not named: $(tail -3 "$WORK/out3b6")"
+hasnt "cloudformation deploy --stack-name t-network"
+: > "$LOG"
+"$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3b7" 2>&1 </dev/null \
+  || fail "WebPush=on with the key and a contact was refused: $(tail -3 "$WORK/out3b7")"
+grep -q "deploy --stack-name t-ingress .*WebPush=on" "$LOG" || fail "WebPush=on did not reach 30-ingress"
+cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
+printf 'WebPush=on\nWebPushSubject=ops@example.com\n' >> "$STATE/params/30-ingress"
+if "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes \
+     > "$WORK/out3b8" 2>&1 </dev/null; then
+  fail "standup went on although WebPushSubject is neither mailto: nor https://"
+fi
+grep -q "WebPush=on needs WebPushSubject" "$WORK/out3b8" || fail "the bad contact was not named: $(tail -3 "$WORK/out3b8")"
 cp "$WORK/params-30-saved" "$STATE/params/30-ingress"
 
 echo "== case 3c: teardown empties the bucket before deleting 20-platform =="

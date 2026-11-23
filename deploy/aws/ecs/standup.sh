@@ -229,9 +229,17 @@ if [ "$(p30 GithubLoginSecret)" != on ] && { [ -n "$(p30 GithubClientId)" ] || [
 fi
 # Each optional secret has its own switch (30-ingress): a Secrets entry for a parameter that
 # does not exist stops the CP task from starting.
-for sw in GithubLoginSecret:github-login-client-secret ComfyApiKey:comfy-api-key RemoteEngineToken:remote-engine-token; do
+for sw in GithubLoginSecret:github-login-client-secret ComfyApiKey:comfy-api-key RemoteEngineToken:remote-engine-token WebPush:web-push-vapid-key; do
   [ "$(p30 "${sw%%:*}")" != on ] || have_ssm "$SSM_PREFIX/${sw#*:}" || say_missing "no SSM $SSM_PREFIX/${sw#*:} (${sw%%:*}=on)"
 done
+# WebPush=on also needs the contact (the template's Rule refuses an empty one; the CP leaves Web
+# Push off, with a log warning, for a value that is neither mailto: nor https://).
+if [ "$(p30 WebPush)" = on ]; then
+  case "$(p30 WebPushSubject)" in
+    mailto:?*|https://?*) ;;
+    *) say_missing "WebPush=on needs WebPushSubject as mailto:<address> or https://<url> (got '$(p30 WebPushSubject)')" ;;
+  esac
+fi
 
 if [ -n "$HOSTED_ZONE" ]; then
   "${AWS[@]}" route53 get-hosted-zone --id "$HOSTED_ZONE" >/dev/null 2>&1 \

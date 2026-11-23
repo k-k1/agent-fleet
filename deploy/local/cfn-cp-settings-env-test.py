@@ -60,8 +60,15 @@ SECRETS = {
     "GithubLoginSecret": ("AF_GITHUB_LOGIN_CLIENT_SECRET", "github-login-client-secret"),
     "ComfyApiKey": ("AF_COMFY_API_KEY", "comfy-api-key"),
     "RemoteEngineToken": ("AF_REMOTE_ENGINE_TOKEN", "remote-engine-token"),
+    "WebPush": ("AF_WEB_PUSH_VAPID_PRIVATE_KEY", "web-push-vapid-key"),
 }
-NEW_VARS = set(PLAIN.values()) | {v for v, _ in SECRETS.values()}
+# Parameters that reach the CP only while WebPush=on (#4883); AF_WEB_PUSH itself is set by the switch.
+GATED = {
+    "WebPushSubject": "AF_WEB_PUSH_SUBJECT",
+    "WebPushEndpointHosts": "AF_WEB_PUSH_ENDPOINT_HOSTS",
+    "NotificationDrainInterval": "AF_NOTIFICATION_DRAIN_INTERVAL",
+}
+NEW_VARS = set(PLAIN.values()) | {v for v, _ in SECRETS.values()} | set(GATED.values()) | {"AF_WEB_PUSH"}
 # 30-ingress is deployed after 20-platform, whose bucket af_cfn_deploy hands anything over 51,200
 # bytes through (the S3 limit is 1 MB), so the budget is not the inline limit. 64 KiB leaves
 # ~14 KiB (about thirty parameters) before the next deliberate edit of this constant.
@@ -141,7 +148,7 @@ def check(tpl, size, patterns):
     for n, (var, leaf) in SECRETS.items():
         # The sibling non-secret parameter set, the switch off: no Secrets entry.
         sib = {"GithubLoginSecret": "GithubLoginClientId", "ComfyApiKey": "ComfyUrl",
-               "RemoteEngineToken": "RemoteEngineUrl"}[n]
+               "RemoteEngineToken": "RemoteEngineUrl", "WebPush": "WebPushSubject"}[n]
         ev = dek.Ev(tpl, {sib: "https://engine.example.com"})
         if var in secrets(ev):
             fails.append("%s got a Secrets entry from %s alone, without %s=on" % (var, sib, n))
@@ -158,6 +165,33 @@ def check(tpl, size, patterns):
         full = P["SsmPrefix"]["Default"] + "/" + leaf
         if not any(fnmatch.fnmatchcase(full, pat) for pat in patterns):
             fails.append("%s is outside the ExecRole ssm-read grant %s" % (full, patterns))
+    # Web Push: the knobs do nothing while the switch is off; with it on, they arrive verbatim, the
+    # switch sets AF_WEB_PUSH=true, and an empty contact is refused at deploy time.
+    for n in GATED:
+        if (P.get(n) or {}).get("Default") != "" or "AllowedValues" in P[n]:
+            fails.append("%s must default to empty: %r" % (n, P.get(n)))
+    allgated = {n: "x-" + n for n in GATED}
+    off = dek.Ev(tpl, allgated).cp_env_names()
+    for v in sorted(set(GATED.values()) | {"AF_WEB_PUSH"}):
+        if v in off:
+            fails.append("%s is in the CP environment with WebPush=off" % v)
+    on = dek.Ev(tpl, dict(allgated, WebPush="on"))
+    env = on.cp_env_names()
+    if env.get("AF_WEB_PUSH") != "true":
+        fails.append("WebPush=on: AF_WEB_PUSH is %r, want 'true'" % env.get("AF_WEB_PUSH"))
+    for n, var in GATED.items():
+        if env.get(var) != {"!Ref": n} and on.val(env.get(var)) != "x-" + n:
+            fails.append("WebPush=on: %s does not arrive verbatim in %s: %r" % (n, var, env.get(var)))
+    only = dek.Ev(tpl, {"WebPush": "on", "WebPushSubject": "mailto:a@example.com"}).cp_env_names()
+    for v in ("AF_WEB_PUSH_ENDPOINT_HOSTS", "AF_NOTIFICATION_DRAIN_INTERVAL"):
+        if v in only:
+            fails.append("%s is set although its parameter is empty" % v)
+    if "AF_WEB_PUSH_SUBJECT" not in only or "AF_WEB_PUSH" not in only:
+        fails.append("WebPush=on with a subject: AF_WEB_PUSH / AF_WEB_PUSH_SUBJECT missing: %s" % sorted(only))
+    if dek.Ev(tpl, {"WebPush": "on"}).rules_ok():
+        fails.append("WebPush=on with an empty WebPushSubject is not refused by a Rule")
+    if not dek.Ev(tpl, {"WebPush": "on", "WebPushSubject": "mailto:a@example.com"}).rules_ok():
+        fails.append("WebPush=on with a subject is refused by a Rule")
     # GitHub sign-in secrets: the dedicated App replaces the legacy secret (injecting both would
     # need both in SSM and stop the task when only one exists); the legacy one is unchanged.
     for params, legacy, login in (({}, False, False),
@@ -214,6 +248,15 @@ def main():
     def default_on(t):
         t["Parameters"]["ComfyApiKey"]["Default"] = "on"
 
+    def gated_without_switch(t):
+        t["Conditions"]["HasWebPushEndpointHosts"] = {"!Not": [{"!Equals": [{"!Ref": "WebPushEndpointHosts"}, ""]}]}
+
+    def push_always_on(t):
+        t["Conditions"]["WebPushOn"] = {"!Equals": ["a", "a"]}
+
+    def no_subject_rule(t):
+        t["Rules"].pop("WebPushNeedsSubject")
+
     def ws_env(t):
         env(t).append({"Name": "WS_ENV", "Value": "A=b"})
 
@@ -229,6 +272,9 @@ def main():
         "secret outside the ExecRole grant": wrong_leaf,
         "switch defaults on": default_on,
         "WS_ENV exposed": ws_env,
+        "Web Push knob set while the switch is off": gated_without_switch,
+        "Web Push always on": push_always_on,
+        "Web Push without a contact is allowed": no_subject_rule,
     }
     for name, m in controls.items():
         t = copy.deepcopy(tpl)
