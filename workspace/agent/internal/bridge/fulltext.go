@@ -11,6 +11,8 @@ import (
 	"math"
 	"regexp"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat"
 )
 
 // discordContentLimit is a conservative cap below Discord's real 2000-char
@@ -75,10 +77,12 @@ func mrkdwnFromGFM(s string) string {
 }
 
 // knownSecretPatterns are high-precision provider token shapes — matched
-// verbatim regardless of entropy so short, structured credentials still go.
+// verbatim regardless of entropy so short, structured credentials still go. ScrubSecrets adds
+// secretpat.GitHubStatelessSpans (a stateless GitHub token, ghs_APPID_JWT) and replaces all
+// the spans together, so no rule's replacement cuts another's match short.
 var knownSecretPatterns = []*regexp.Regexp{
 	regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`),                                             // Slack tokens
-	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`),                                           // GitHub tokens
+	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{20,}\b`),                                           // GitHub tokens, classic
 	regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`),                                            // AWS access key id
 	regexp.MustCompile(`\bsk-[A-Za-z0-9_\-]{20,}`),                                                 // OpenAI-style secret keys
 	regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/\-]{10,}=*`),                                 // Authorization: Bearer …
@@ -102,9 +106,7 @@ var tokenRe = regexp.MustCompile(`[A-Za-z0-9+/=_.\-]{20,}`)
 // can over-redact a rare high-entropy prose token, which the user accepted as
 // the safer failure than leaking a key.
 func ScrubSecrets(s string) string {
-	for _, re := range knownSecretPatterns {
-		s = re.ReplaceAllString(s, redactedMark)
-	}
+	s = secretpat.ReplaceSpans(s, redactedMark, append(secretpat.Spans(s, knownSecretPatterns...), secretpat.GitHubStatelessSpans(s)...))
 	s = envAssignRe.ReplaceAllString(s, `$1$2`+redactedMark)
 	s = tokenRe.ReplaceAllStringFunc(s, func(tok string) string {
 		if looksSecret(tok) {

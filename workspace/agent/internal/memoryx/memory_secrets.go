@@ -31,6 +31,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat"
 )
 
 // memorySecretRule is one detection rule. Name goes to the Console verbatim and is not
@@ -38,7 +40,13 @@ import (
 // was flagged against knowledge from outside this product.
 type memorySecretRule struct {
 	Name string
-	Re   *regexp.Regexp
+	Re   memorySecretMatcher
+}
+
+// memorySecretMatcher is the part of *regexp.Regexp a rule needs; secretpat.GitHubTokens has it
+// too, for the shape a regexp alone cannot check.
+type memorySecretMatcher interface {
+	FindAllStringSubmatch(s string, n int) [][]string
 }
 
 // memorySecretRules lists high-signature rules only. Judge an addition by whether it could
@@ -46,7 +54,7 @@ type memorySecretRule struct {
 var memorySecretRules = []memorySecretRule{
 	{"aws-access-key-id", regexp.MustCompile(`\b(?:A3T[A-Z0-9]|AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b`)},
 	{"aws-secret-access-key", regexp.MustCompile(`(?i)aws[^\n]{0,24}?secret[^\n]{0,24}?[:=]\s*["'` + "`" + `]?([A-Za-z0-9/+=]{40})`)},
-	{"github-token", regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{36,}\b`)},
+	{"github-token", secretpat.GitHubTokens},
 	{"github-fine-grained-pat", regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{60,}\b`)},
 	{"gitlab-token", regexp.MustCompile(`\bglpat-[A-Za-z0-9_\-]{20,}\b`)},
 	{"slack-token", regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9\-]{10,}\b`)},
@@ -99,6 +107,12 @@ func memoryMaskSecret(s string) string {
 	return s[:memorySecretHintPrefixLen] + "…(" + strconv.Itoa(len(s)) + ")"
 }
 
+// memoryStructural reports whether v holds a shape whose structure is the evidence, so
+// memorySecretPlaceholders does not apply: a stateless GitHub token's APPID can be 100000, and
+// its 500 base64url characters can hold "aaaa" by chance; neither makes it an example. "Holds",
+// not "is": tokens written back to back reach here as one merged candidate.
+func memoryStructural(v string) bool { return len(secretpat.GitHubStatelessSpans(v)) > 0 }
+
 // memoryLooksPlaceholder reports whether the value looks like an example or a redaction.
 func memoryLooksPlaceholder(s string) bool {
 	low := strings.ToLower(s)
@@ -129,7 +143,7 @@ func memoryScanContent(path string, b []byte) []memorySecretFinding {
 				if len(m) > 1 && m[1] != "" {
 					v = m[1]
 				}
-				if !memoryLooksPlaceholder(v) {
+				if memoryStructural(v) || !memoryLooksPlaceholder(v) {
 					val = v
 					break
 				}

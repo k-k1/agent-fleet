@@ -13,6 +13,9 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/secretpat"
 )
 
 // knownSubcommands lists, per program, the words that may follow it into the ledger.
@@ -174,16 +177,45 @@ var secretValueREs = []struct {
 	{regexp.MustCompile(`(?i)(authorization:?\s*)(bearer\s+|basic\s+|token\s+)?[^\s"']+`), "${1}${2}***"},
 	{regexp.MustCompile(`(?i)\b(bearer)\s+[^\s"']+`), "${1} ***"},
 	{regexp.MustCompile(`(://[^/\s:@]*):[^/\s@]+@`), "${1}:***@"},
-	{regexp.MustCompile(`\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{10,}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9_-]{16,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,}|eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?)`), "***"},
 }
+
+// secretTokenREs are the vendor token shapes, each its own pattern; MaskCommandSecrets adds
+// secretpat.GitHubStatelessSpans and replaces all the spans together. Alternatives of one
+// pattern cannot overlap, so a Slack token or a JWT glued to a GitHub token would take its head
+// and leave the rest in clear, and a replacement made before the next pattern is matched would
+// cut that one short the same way.
+var secretTokenREs = []*regexp.Regexp{
+	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{16,}`),
+	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`),
+	regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{10,}`),
+	regexp.MustCompile(`\bxox[abprs]-[A-Za-z0-9-]{10,}`),
+	regexp.MustCompile(`\bsk-[A-Za-z0-9_-]{16,}`),
+	regexp.MustCompile(`\bAKIA[0-9A-Z]{16}`),
+	regexp.MustCompile(`\bAIza[0-9A-Za-z_-]{30,}`),
+	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?`),
+}
+
+// cutTokenRE is a GitHub token cut short by the audit's own truncation: the Agent records a
+// command's first line cut at 80 runes with "…" appended (toolInfoCut), which can cut a stateless
+// token anywhere, even inside its header. Only a word running into that final "…" is taken, and
+// only on a line of exactly that shape, so a short command typed with "…" keeps its words.
+var cutTokenRE = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_.-]*…$`)
+
+// toolInfoCut is the rune length of a line the Agent cut: 80 runes and "…".
+const toolInfoCut = 81
 
 // MaskCommandSecrets replaces secret-looking values in a command line with "***".
 func MaskCommandSecrets(s string) string {
+	cut := utf8.RuneCountInString(s) == toolInfoCut && strings.HasSuffix(s, "…")
 	s = maskValues(s)
 	for _, r := range secretValueREs {
 		s = r.re.ReplaceAllString(s, r.repl)
 	}
-	return s
+	spans := append(secretpat.Spans(s, secretTokenREs...), secretpat.GitHubStatelessSpans(s)...)
+	if cut {
+		spans = append(spans, secretpat.Spans(s, cutTokenRE)...)
+	}
+	return secretpat.ReplaceSpans(s, "***", spans)
 }
 
 // BashTarget is the audit Target for a Bash call.
