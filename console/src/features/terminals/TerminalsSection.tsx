@@ -73,7 +73,9 @@ export const TerminalsSection = memo(function TerminalsSection() {
         const ok = Array.isArray(h) && Array.isArray(p);
         setNames({ owner, hosts: ok ? h : [], profiles: ok ? p : [] });
       })
-      .catch(() => {});
+      // A read that never got an answer is no better than a failed one: an alias the member has
+      // since renamed must not stay on screen as if it were current.
+      .catch(() => alive && setNames({ owner, hosts: [], profiles: [] }));
     return () => {
       alive = false;
     };

@@ -205,6 +205,27 @@ describe("Terminal view", () => {
     expect(heads()).toEqual(["renamed"]);
   });
 
+  it("falls back to the instance id when a read of the hosts gets no answer, and recovers on the next one", async () => {
+    useSessionsStore.setState({ sessions: [ssm("m1", "i-aaa")] });
+    await render(true);
+    expect(heads()).toEqual(["build box"]);
+    const base = api.getMockImplementation()!;
+    api.mockImplementation(async (url: string) => {
+      if (url.startsWith("api/ssm/hosts")) throw new Error("network");
+      return base(url);
+    });
+    // Settings closes after a rename, and the read that follows is lost.
+    await act(async () => useSettingsUI.setState({ settingsOpen: true }));
+    await act(async () => useSettingsUI.setState({ settingsOpen: false }));
+    await flush();
+    expect(heads()).toEqual(["i-aaa"]);
+    api.mockImplementation(base);
+    HOSTS = [{ id: "h1", alias: "renamed", profileId: "p", region: "ap-northeast-1", instanceId: "i-aaa", documentName: "" }];
+    await act(async () => useSettingsUI.setState({ settingsOpen: true }));
+    await flush();
+    expect(heads()).toEqual(["renamed"]);
+  });
+
   it("names nothing when the profiles cannot be read, as the account of a host is in its profile", async () => {
     useSessionsStore.setState({ sessions: [ssm("m1", "i-aaa")] });
     const base = api.getMockImplementation()!;
@@ -243,6 +264,17 @@ describe("Terminal view", () => {
     setSettings({ workingSets: [{ id: "w1", name: "A", repos: ["app"], convs: [], sessions: [], schedules: [] }], workingSetActive: "w1" });
     await render();
     expect(heads()).toEqual(["app"]);
+  });
+
+  it("leaves a shell out of a set that lists only the copy of the same name, unless it was added directly", async () => {
+    useReposStore.setState({ repos: [{ name: "app", path: "/home/dev/repos/app" }] });
+    useSessionsStore.setState({ sessions: [sess("x", { repo: "app", dir: "/home/dev/notes/repos/app" })] });
+    const set = { id: "w1", name: "A", repos: ["app"], convs: [], sessions: [] as string[], schedules: [] };
+    setSettings({ workingSets: [set], workingSetActive: "w1" });
+    await render();
+    expect(heads()).toEqual([]);
+    await act(async () => setSettings({ workingSets: [{ ...set, sessions: ["x"] }], workingSetActive: "w1" }));
+    expect(heads()).toEqual(["Home"]);
   });
 
   it("consumes a reveal, so a view mounted again later does not jump back", async () => {

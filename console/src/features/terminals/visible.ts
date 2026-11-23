@@ -2,7 +2,7 @@
 // promises a group the view does not show.
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
-import { isTerminalSession, placeRepos, shellPlaceKey, shellPlaceOf } from "../../lib/project.ts";
+import { isTerminalSession, placeRepos, sessionFolder, shellPlaceKey, shellPlaceOf } from "../../lib/project.ts";
 import { repoInSet, sessionInSet } from "../../lib/workingSets.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 
@@ -22,6 +22,9 @@ export function visibleTerminals(sessions: Session[], repos: Repo[], set: Workin
       const r = byName.get(place.folder);
       return !!r && repoInSet(set, r);
     }
+    // A shell that names a copy's folder but runs somewhere else (a `repos/app` of its own under
+    // home) is not that copy's: only a direct assignment (above) puts it in the set.
+    if (place?.kind === "home" && sessionFolder(s) && byName.has(sessionFolder(s))) return false;
     return sessionInSet(set, s);
   });
 }

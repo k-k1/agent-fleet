@@ -582,24 +582,31 @@ export type ShellPlace = { kind: "home" } | { kind: "repo"; folder: string } | {
 /** The key of a place's group in the Terminal view; the reveal request names the same key. */
 export const shellPlaceKey = (p: ShellPlace): string => (p.kind === "home" ? "shell:home" : `shell:${p.kind}:${p.folder}`);
 
-/** The working copies a shell's place can be: folder name → absolute path (when the list has one). */
-export type PlaceRepos = ReadonlyMap<string, string | undefined>;
-export const placeRepos = (repos: readonly Repo[]): PlaceRepos => new Map(repos.map((r) => [r.name, r.path]));
+/** The working copies a shell's place can be, by folder name: the list's path and working-copy id. */
+export type PlaceRepos = ReadonlyMap<string, { path?: string; id?: string }>;
+export const placeRepos = (repos: readonly Repo[]): PlaceRepos => new Map(repos.map((r) => [r.name, { path: r.path, id: r.workingCopyId }]));
+
+// One spelling for an absolute path: the Agent keeps a launch directory as it was written, so
+// "/home/dev//repos/app/" and "/home/dev/repos/app" are one working copy.
+const cleanPath = (p: string): string => p.replace(/\/{2,}/g, "/").replace(/\/+$/, "");
 
 /** Where a shell was opened: its space, else the listed working copy it runs in, else home.
  *
  *  `Session.repo` is the base name of the launch directory, so a shell started in the home
  *  directory carries the home folder's own name (a member called `dev` has repo "dev") and would
- *  pass for a working copy of that name. A repository needs the directory to be that copy: the
- *  listed path when the list has one (a folder called `repos/app` somewhere else under home is not
- *  the copy), else `<root>/repos/<folder>`. A row with no `dir` (an older list) is taken at its word. */
+ *  pass for a working copy of that name. A repository needs the directory to be that copy, in this
+ *  order of evidence: the working-copy id both sides carry (it survives any spelling of the path,
+ *  a symlink included); else the listed path; else `<root>/repos/<folder>` for a list without
+ *  paths. A row with no `dir` (an older list) is taken at its word. */
 export function shellPlaceOf(s: Session, repos: PlaceRepos): ShellPlace {
   if (s.space) return { kind: "space", folder: s.space };
   const f = sessionFolder(s);
-  if (f && repos.has(f)) {
-    const dir = (s.dir || "").replace(/\/+$/, "");
-    const path = (repos.get(f) || "").replace(/\/+$/, "");
-    if (!dir || (path ? dir === path : dir.endsWith("/repos/" + f))) return { kind: "repo", folder: f };
+  const copy = f ? repos.get(f) : undefined;
+  if (f && copy) {
+    const dir = cleanPath(s.dir || "");
+    const path = cleanPath(copy.path || "");
+    const same = !dir || (copy.id && s.workingCopyId ? copy.id === s.workingCopyId : path ? dir === path : dir.endsWith("/repos/" + f));
+    if (same) return { kind: "repo", folder: f };
   }
   return { kind: "home" };
 }

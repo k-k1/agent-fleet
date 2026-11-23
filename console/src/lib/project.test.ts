@@ -769,6 +769,12 @@ describe("terminals", () => {
     const real = placeRepos([repo("app", { path: "/home/dev/repos/app" })]);
     expect(shellPlaceOf(shell("a", { repo: "app", dir: "/home/dev/repos/app" }), real)).toEqual({ kind: "repo", folder: "app" });
     expect(shellPlaceOf(shell("b", { repo: "app", dir: "/home/dev/notes/repos/app" }), real)).toEqual({ kind: "home" });
+    // Another spelling of the same path is the same copy: the Agent keeps a launch dir as written.
+    expect(shellPlaceOf(shell("c", { repo: "app", dir: "/home/dev//repos/app/" }), real)).toEqual({ kind: "repo", folder: "app" });
+    // The working-copy id both sides carry settles it whatever the path looks like (a symlink).
+    const withId = placeRepos([repo("app", { path: "/home/dev/repos/app", workingCopyId: "wc_1" })]);
+    expect(shellPlaceOf(shell("d", { repo: "app", dir: "/srv/link/app", workingCopyId: "wc_1" }), withId)).toEqual({ kind: "repo", folder: "app" });
+    expect(shellPlaceOf(shell("e", { repo: "app", dir: "/home/dev/repos/app", workingCopyId: "wc_other" }), withId)).toEqual({ kind: "home" });
     expect(terminalGroups([home, copy], clone).shells.map((g) => [g.key, g.sessions.map((s) => s.name)])).toEqual([
       ["shell:home", ["in-home"]],
       ["shell:repo:dev", ["in-copy"]],
