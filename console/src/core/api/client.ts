@@ -1457,7 +1457,8 @@ export const memoImageURL = (name: string): string =>
   `api/memos/images/${encodeURIComponent(name)}`;
 
 // Best-effort disk hygiene: tell the workspace agent which memo-image basenames are
-// still referenced by a memo; it unlinks every other stored image. Fire-and-forget —
+// still referenced by a memo; it unlinks every other image stored more than a grace
+// period ago (an upload still on its way back to a client is spared). Fire-and-forget —
 // a failure (container stopped, network) just leaves stale files for the next sweep.
 export const memoImageGC = (keep: string[]): Promise<Response> =>
   rawJSON("api/memos/images/gc", "POST", { keep });
