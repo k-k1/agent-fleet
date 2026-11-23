@@ -14,7 +14,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { errText } from "../../core/api/client.ts";
 import type { MemoDelivery } from "../../types/memo.ts";
 import { memoQueueDeliveries, memoQueueDeliveryEnd } from "./api.ts";
-import { deferWords, deliveryStateKey, firstTurnWords, heldNames, heldWords, readDeliveries } from "./queues.ts";
+import { answerWords, deferWords, deliveryStateKey, firstTurnWords, heldNames, heldWords, readDeliveries } from "./queues.ts";
 
 const POLL_MS = 30000;
 const SHOWN = 5;
@@ -102,12 +102,14 @@ export function MemoQueueRuns({ categoryId, onShowAll }: { categoryId: string; o
         const why = heldWords(d);
         const heldText = why ? (heldNames(d) ? tr("memo.d_held_wakers_named", { names: heldNames(d) }) : tr(why)) : "";
         const turn = firstTurnWords(d);
+        const answer = answerWords(d);
         const openable = !!d.session;
         const open = () => openSessionChat(d.session);
         const deferred = deferWords(d);
         const tip = [
           openable ? tr("memo.d_open_session", { name: d.session }) : "",
           turn ? tr(turn) : "",
+          answer ? tr(answer.key) + (answer.head ? ": " + answer.head : "") : "",
           deferred && d.defer ? tr(deferred) + ": " + d.defer.reason : "",
         ]
           .filter(Boolean)

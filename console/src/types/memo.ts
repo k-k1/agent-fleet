@@ -110,6 +110,9 @@ export interface MemoAfterItem {
   /** The PRs of its run, as last read from the workspace, for reason "pr" (waiting for them to
    *  merge) and "pr_closed". Absent while none was read. */
   prs?: MemoAfterPR[];
+  /** The first line of its run's last answer, for reason "not_done" (a run with no PR whose last
+   *  answer does not start with Done:). Absent when none could be read. */
+  answer?: string;
 }
 
 /** One PR of a run a note waits for. key is "owner/repo#N"; state is open, draft, merged, closed,
@@ -372,6 +375,12 @@ export interface MemoDelivery {
   retire: string;
   /** How the first turn of the session ended; null until it did. */
   firstTurn: { outcome: string; ms: number; endedAt: string } | null;
+  /** The first line of the last answer of the run's root session, read after the close, and how
+   *  it reads: done (Done:), partial (Partial:, Held:, Deferred:, Too large:, Stopped at part),
+   *  other, or unknown when it could not be read. Absent while not read, and for a run that started
+   *  no session (#4876). */
+  answer?: string;
+  answerClass?: string;
   /** The hand-back the run's session asked for, null for none. result is what the close made of
    *  it: "applied", or why it was dropped ("turn", "pr", "unread", "released": a person took the session
    *  over; "returned": a person returned the notes first); "" before the close, and on a run closed as

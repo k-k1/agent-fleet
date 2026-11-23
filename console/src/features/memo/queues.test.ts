@@ -9,6 +9,7 @@ import {
   deferWords,
   deferredUntil,
   afterChoices,
+  answerWords,
   afterItemMessage,
   afterItemWords,
   deliveryStateKey,
@@ -328,7 +329,7 @@ describe("notes that wait for others", () => {
     id, repo: "app", category: "run", kind: "text", body: "job " + id, refPath: "", position: 0, createdAt: "2026-11-19T00:00:00Z", sentAt: "",
     state: "pending", ...over,
   });
-  it("offers the notes before it in the category's order, never itself, a later one or a replaced one", () => {
+  it("offers the other notes of the category in its order, later ones too, never itself, a replaced one or one waiting for it", () => {
     const memos = [
       m("c", { position: 2 }),
       m("a", { position: 0, reference: { provider: "github", key: "acme/app#1", url: "u" } }),
@@ -337,11 +338,41 @@ describe("notes that wait for others", () => {
       m("later", { position: 1, createdAt: "2026-11-19T00:00:01Z" }),
       m("other", { position: 0, category: "elsewhere" }),
       m("plain", { position: 0, state: "" }),
+      // Waits for self directly, and through "direct": either would close a cycle.
+      m("direct", { position: 2, createdAt: "2026-11-19T00:00:02Z", after: ["self"] }),
+      m("via", { position: 3, createdAt: "2026-11-19T00:00:02Z", after: ["gone", "direct"] }),
+      // A loop that does not pass through self is no reason to hide one.
+      m("x", { position: 4, createdAt: "2026-11-19T00:00:02Z", after: ["y"] }),
+      m("y", { position: 5, createdAt: "2026-11-19T00:00:02Z", after: ["x"] }),
     ];
     expect(afterChoices(memos, memos.find((x) => x.id === "self")!)).toEqual([
       { id: "a", label: "acme/app#1" },
       { id: "c", label: "job c" },
+      { id: "later", label: "job later" },
+      { id: "x", label: "job x" },
+      { id: "y", label: "job y" },
     ]);
+  });
+  it("words a run that ended without a pull request, with what it said when it did not say Done:", () => {
+    expect(afterItemMessage({ state: "waiting", reason: "answer" })).toEqual({ key: "memo.after_r_answer" });
+    expect(afterItemMessage({ state: "failed", reason: "not_done", answer: "  Held: #4 part 2, PR #9 not merged " })).toEqual({
+      key: "memo.after_r_not_done_named",
+      params: { answer: "Held: #4 part 2, PR #9 not merged" },
+    });
+    // Unreadable, or not a string from the wire: the words alone.
+    expect(afterItemMessage({ state: "failed", reason: "not_done" })).toEqual({ key: "memo.after_r_not_done" });
+    expect(afterItemMessage({ state: "failed", reason: "not_done", answer: 7 as unknown as string })).toEqual({ key: "memo.after_r_not_done" });
+    expect(afterItemWords({ state: "failed", reason: "not_done" })).toBe("memo.after_r_not_done");
+  });
+  it("reads a run's last answer and its class, and nothing before it was read", () => {
+    const one = (extra: Record<string, unknown>) => readDeliveries([{ id: "d1", ...extra }])![0];
+    expect(answerWords(one({ answer: " Done: merged #12 ", answerClass: "done" }))).toEqual({ key: "memo.d_answer_done", head: "Done: merged #12", done: true });
+    expect(answerWords(one({ answer: "Partial: #4 part 1", answerClass: "partial" }))).toEqual({ key: "memo.d_answer_partial", head: "Partial: #4 part 1", done: false });
+    expect(answerWords(one({ answer: "I looked into it", answerClass: "other" }))?.key).toBe("memo.d_answer_other");
+    expect(answerWords(one({ answerClass: "unknown" }))).toEqual({ key: "memo.d_answer_unknown", head: "", done: false });
+    expect(answerWords(one({ answer: "x", answerClass: "newer" }))?.key).toBe("memo.d_answer_plain");
+    expect(answerWords(one({}))).toBeNull();
+    expect(answerWords(one({ answer: 3, answerClass: null }))).toBeNull();
   });
   it("words each standing, and falls back to the state for a reason it does not know", () => {
     expect(afterItemWords({ state: "satisfied" })).toBe("memo.after_r_done");

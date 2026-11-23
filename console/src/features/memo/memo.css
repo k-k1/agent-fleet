@@ -1269,6 +1269,24 @@ ul.memo-repo-warnings {
 .memo-d-turn.memo-d-turn--bad {
   color: var(--warn, var(--accent));
 }
+/* The run's last answer: its class, then the first line it began with, cut to the row. */
+.memo-d-answer {
+  display: inline-flex;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 11px;
+  color: var(--muted);
+}
+.memo-d-answer.memo-d-answer--open {
+  color: var(--warn, var(--accent));
+}
+.memo-d-answer-head {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
 
 /* The work item a note points at: mark, key as a link, and the cached title when there is one. */
 .memo-reflink {
