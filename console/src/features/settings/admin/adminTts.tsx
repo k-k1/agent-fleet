@@ -21,8 +21,8 @@ export function TtsAdminView() {
   const [dictBusy, setDictBusy] = useState(false);
 
   // The poll's period no longer restarts with every answer, so a read can still be in flight when
-  // a mode change or a dictionary save lands: those take a ticket too, and an older read that
-  // answers after them must not put the previous mode back on screen.
+  // a mode change or a dictionary save answers: those claim their lanes, and a read begun before
+  // that answer must not put the previous mode or dictionary back on screen.
   const guard = useReadGuard();
   const load = useCallback(async () => {
     const tk = guard.begin();
@@ -63,14 +63,13 @@ export function TtsAdminView() {
 
   const setMode = async (mode: string) => {
     setBusy(true);
-    const tk = guard.begin();
     try {
       const d = await putTtsMode(mode);
       if (isOk(d) || !d) {
-        tk.land("data");
+        guard.claim("data");
         setData(isOk(d) ? d : null);
       } else {
-        tk.land("err");
+        guard.claim("err");
         setErr(errText(d.error));
       }
     } finally {
@@ -81,17 +80,15 @@ export function TtsAdminView() {
   const saveDict = async () => {
     if (dict === null) return;
     setDictBusy(true);
-    const tk = guard.begin();
     try {
       const d = await putTtsDict(dict);
       if (d && !isOk(d)) {
-        tk.land("err");
+        guard.claim("err");
         setErr(errText(d.error));
         return;
       }
-      tk.land("err");
+      guard.claim("err", "data");
       setErr("");
-      tk.land("data");
       setData(d); // null stays a success, as it always did
       setSavedDict(dict);
       setTenantDict(dict); // applies to this browser's speech at once; other users on next load

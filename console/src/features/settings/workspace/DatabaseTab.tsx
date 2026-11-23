@@ -385,7 +385,9 @@ export function DatabaseTab() {
     getDatabases()
       .then((res) => {
         if (res && res.error) throw new Error(res.error.message || "");
-        if (tk.land()) setData(res as DBPayload);
+        if (!tk.land()) return;
+        setErr(""); // an older read's failure may have landed first
+        setData(res as DBPayload);
       })
       .catch((e: unknown) => {
         if (!tk.land()) return;

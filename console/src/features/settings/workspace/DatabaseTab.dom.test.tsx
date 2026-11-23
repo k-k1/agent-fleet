@@ -464,6 +464,39 @@ describe("DatabaseTab", () => {
     expect(state()).toMatch(/running|稼働中/);
   });
 
+  it("an older read's failure landing first does not hide a newer read's success", async () => {
+    let failSlow: (v: unknown) => void = () => {};
+    let answerNew: (v: unknown) => void = () => {};
+    api
+      .mockResolvedValueOnce({ engines: [mysqlInstalling] })
+      .mockImplementationOnce(() => new Promise((r) => (failSlow = r)))
+      .mockImplementationOnce(() => new Promise((r) => (answerNew = r)));
+    await mount();
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+    await act(async () => {
+      failSlow({ error: { message: "agent busy" } });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).toContain("agent busy");
+    await act(async () => {
+      answerNew({ engines: [{ ...pgRunning, engine: "mysql", major: "8.4" }] });
+      await Promise.resolve();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(document.body.textContent).not.toContain("agent busy");
+    expect(document.querySelector(".db-engine-state")?.textContent).toMatch(/running|稼働中/);
+  });
+
   it("poll stops after unmount — no further GETs after the component is removed", async () => {
     api.mockResolvedValue({ engines: [mysqlInstalling] });
     await mount();

@@ -142,6 +142,56 @@ describe("TtsAdminView", () => {
     expect(host!.textContent).toContain("停止処理中");
   });
 
+  it("drops a poll read begun while a mode change was in flight and answered after it", async () => {
+    let answerPut: (v: unknown) => void = () => {};
+    let answerPoll: (v: unknown) => void = () => {};
+    api
+      .mockResolvedValueOnce(status("ondemand", "running", true))
+      .mockImplementationOnce(() => new Promise((r) => (answerPoll = r)));
+    apiJSON.mockImplementationOnce(() => new Promise((r) => (answerPut = r)));
+    await mount();
+    await click(seg("無効")); // the PUT is in flight
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5100); // a poll read begins while it is
+    });
+    expect(api).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      answerPut(status("off", "stopping", true));
+      await Promise.resolve();
+    });
+    await act(async () => {
+      answerPoll(status("ondemand", "running", true)); // served before the server applied the PUT
+      await Promise.resolve();
+    });
+    expect(seg("無効")!.className).toContain("active");
+    expect(host!.textContent).toContain("停止処理中");
+  });
+
+  it("keeps a saved dictionary saved when an older poll read answers after the save", async () => {
+    let answerPoll: (v: unknown) => void = () => {};
+    api
+      .mockResolvedValueOnce(status("ondemand", "running", true))
+      .mockImplementationOnce(() => new Promise((r) => (answerPoll = r)));
+    apiJSON.mockResolvedValue({ ...status("ondemand", "running", true), dict: "foo=bar" });
+    await mount();
+    const area = host!.querySelector("textarea.ds-userdict") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(area, "foo=bar");
+      area.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5100); // a poll read is in flight
+    });
+    const save = () => Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === "保存") as HTMLButtonElement;
+    await click(save());
+    expect(save().disabled).toBe(true);
+    await act(async () => {
+      answerPoll(status("ondemand", "running", true)); // still the empty dictionary
+      await Promise.resolve();
+    });
+    expect(save().disabled).toBe(true);
+  });
+
   it("discards the old state when a re-read answers a null body", async () => {
     api.mockResolvedValueOnce(status("ondemand", "starting")).mockResolvedValue(null);
     await mount();

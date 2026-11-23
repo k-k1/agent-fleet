@@ -199,7 +199,9 @@ export function MemberView({
     const readStats = async () => {
       try {
         const s = await getMemberStats(slug, key);
-        if (!tk.land("stats")) return;
+        // An error answer is shown as stopped but does not land the lane: a transient failure
+        // must not also drop an older read's good answer that arrives after it.
+        if (!(isOk(s) ? tk.land("stats") : tk.fresh("stats"))) return;
         const st: MemberStats = isOk(s) ? s : { running: false };
         const stSer = JSON.stringify(st);
         if (stSer !== statsSer.current) {
@@ -214,7 +216,7 @@ export function MemberView({
     const readSessions = async () => {
       try {
         const ss = await getMemberSessions(slug, key);
-        if (!tk.land("sessions")) return;
+        if (!(isOk(ss) ? tk.land("sessions") : tk.fresh("sessions"))) return;
         const list = isOk(ss) && ss.sessions ? ss.sessions : [];
         const ssSer = JSON.stringify(list);
         if (ssSer !== sessSer.current) {

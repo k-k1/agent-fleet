@@ -41,8 +41,10 @@ export function useEngineRows() {
   const [comfyLan, setComfyLan] = useState<ComfyLanStatus | null>(null);
 
   // Reads come from the mount, the operator screen's poll and the re-reads after an edit, and
-  // they can answer out of order: an older one must not put back the rows a newer read or an
-  // edit (which takes a ticket of its own and lands "rows") has already drawn.
+  // they can answer out of order: an older one must not put back the rows a newer read has
+  // drawn. An edit claims only its own row's lane ("row:<key>"), so a read begun before the
+  // edit answered keeps that row as the edit left it and still lands every other row: dropping
+  // the whole answer could hide another engine starting and leave nothing on screen to poll for.
   const guard = useReadGuard();
   const load = useCallback(async () => {
     const tk = guard.begin();
@@ -55,11 +57,14 @@ export function useEngineRows() {
       if (tk.land("err")) setErr("");
       if (!tk.land("rows")) return;
       const answered = Array.isArray(d?.engines) ? d.engines : [];
+      const edited = new Set(answered.filter((e) => !tk.land("row:" + e.key)).map((e) => e.key));
       const superAdmin = !!d?.super_admin;
       const offered = catalogSources(d?.catalog_sources);
       setIsSuper(superAdmin);
       setSources(offered);
-      setRows(answered);
+      setRows((cur) =>
+        edited.size ? answered.map((e) => (edited.has(e.key) ? (cur?.find((c) => c.key === e.key) ?? e) : e)) : answered,
+      );
       setComfyLan(d?.comfy_lan ?? null);
       saveEngines({ rows: answered, isSuper: superAdmin, sources: offered });
     } catch {
@@ -70,5 +75,14 @@ export function useEngineRows() {
     load();
   }, [load]);
 
-  return { rows, isSuper, sources, comfyLan, err, setErr, setRows, load, guard };
+  // For the edits: their error (or its clearing) is newer than any read in flight.
+  const setEditErr = useCallback(
+    (v: string) => {
+      guard.claim("err");
+      setErr(v);
+    },
+    [guard],
+  );
+
+  return { rows, isSuper, sources, comfyLan, err, setErr: setEditErr, setRows, load, guard };
 }

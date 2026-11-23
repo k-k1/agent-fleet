@@ -65,6 +65,14 @@ export class ReadGuard {
     if (this.subject === GONE) this.reset();
   }
 
+  /** Mark `lanes` as landed now, newer than every read already begun. For a write's answer,
+   *  which is the latest state: a read begun before it arrived, even one begun after the write
+   *  was sent, may have been served before the server applied it. */
+  claim(...lanes: string[]): void {
+    const t = this.begin(this.subject);
+    for (const lane of lanes) t.land(lane);
+  }
+
   begin(subject?: unknown): ReadTicket {
     const live = Object.is(subject, this.subject);
     const g = live ? this.gen : -1;

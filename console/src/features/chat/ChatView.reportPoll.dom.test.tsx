@@ -20,11 +20,14 @@ const conv = (id: string, updated: number, text: string, inProgress = false): Co
 });
 
 const chatGet = vi.fn();
+// A turn that never finishes: the pane stays in its sending state.
+const chatStream = vi.fn(() => new Promise(() => {}));
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...((await orig()) as Record<string, unknown>),
   api: () => Promise.resolve({}),
   apiJSON: () => Promise.resolve({}),
   chatGet: (...a: unknown[]) => chatGet(...a),
+  chatStream: () => chatStream(),
   chatList: () => Promise.resolve([]),
   assistantGet: () => Promise.resolve({ id: "a1", name: "x", agent: "claude", icon: "beaker", voice: "" }),
   chatSuggestReplies: () => Promise.resolve({ suggestions: [] }),
@@ -64,6 +67,7 @@ const tick = async () => {
 
 beforeEach(() => {
   chatGet.mockReset();
+  chatStream.mockClear();
   useWorkspaceStore.setState({ state: "running" });
   vi.useFakeTimers({ shouldAdvanceTime: true });
 });
@@ -112,5 +116,31 @@ describe("ChatView report poller", () => {
     });
     expect(host!.textContent).toContain("two");
     expect(host!.textContent).not.toContain("late-one");
+  });
+
+  it("drops a read in flight when this pane starts sending", async () => {
+    let answerPoll: (v: unknown) => void = () => {};
+    chatGet
+      .mockResolvedValueOnce(conv("c1", 1000, "one"))
+      .mockImplementationOnce(() => new Promise((r) => (answerPoll = r)));
+    await render("c1");
+    await tick(); // the report read hangs
+    const ta = host!.querySelector("textarea") as HTMLTextAreaElement;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, "hello there");
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      (host!.querySelector(".chat-composer-row button.primary, .chat-composer-row .chat-send") as HTMLElement).click();
+    });
+    expect(chatStream).toHaveBeenCalledTimes(1);
+    expect(host!.textContent).toContain("hello there");
+    await act(async () => {
+      // Newer than the conversation on screen, but it predates the send.
+      answerPoll(conv("c1", 5000, "late-report"));
+      await Promise.resolve();
+    });
+    expect(host!.textContent).not.toContain("late-report");
+    expect(host!.textContent).toContain("hello there");
   });
 });
