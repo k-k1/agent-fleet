@@ -33,6 +33,7 @@ import {
   memoPasteImage,
   memoImageGC,
   memoQueueList,
+  memoQueueDeliveries,
   memoRelease,
   memoStopChain,
   memoQueueResume,
@@ -64,6 +65,10 @@ import { confirmNotes, forgetNotes, trackNotes } from "./shownNotes.ts";
 import { MemoQueueNotices } from "./MemoQueueNotices.tsx";
 import { tidySelection } from "./tidyOps.ts";
 import { effectiveTimeZone, fmtDateTime } from "../../lib/intl.ts";
+import { confirmReturnRun } from "./runReturn.ts";
+import { useSessionsStore } from "../sessions/store.ts";
+import type { MemoDelivery } from "../../types/memo.ts";
+import { canReturnRun, readDeliveries } from "./queues.ts";
 import { afterChoices, afterItemMessage, continuationHeldKey, heldRecipeKey, afterItemWords, deferredUntil, scheduledUntil, fmtStartAfter, startAfterFromInput, startAfterInputValue, hasRecipe, isStaleRelease, isSuperseded, memoOriginWords, memoStateWords, pendingCount, readMemoQueues, releaseCards, releasedByTidy, staleIdsOf, tidyMarks } from "./queues.ts";
 import { MemoTidyModal } from "./MemoTidyModal.tsx";
 import { SendMemoModal } from "./SendMemoModal.tsx";
@@ -887,6 +892,47 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     const r = e.currentTarget.getBoundingClientRect();
     setMemoMenu({ x: r.left, y: r.bottom + 2, m, anchor: r });
   };
+  // The run that delivered the menu's memo, read when the menu opens on a delivered memo of a queue
+  // category: "loading" until the answer, null when it is not there or the read failed (no item).
+  const [menuRun, setMenuRun] = useState<{ memoId: string; run: MemoDelivery | null | "loading" | "missing" } | null>(null);
+  const sessionList = useSessionsStore((s) => s.sessions);
+  const menuMemoId = memoMenu?.m.id;
+  useEffect(() => {
+    const m = memoMenu?.m;
+    if (!m || m.state !== "delivered" || !m.deliveryId) {
+      setMenuRun(null);
+      return;
+    }
+    const cat = cats.find((c) => c.repo === m.repo && c.name === m.category);
+    if (!cat || !(queueByCat.get(cat.id) || cat.queue)) {
+      setMenuRun(null);
+      return;
+    }
+    let live = true;
+    setMenuRun({ memoId: m.id, run: "loading" });
+    // Open runs however old, and the runs closed since the memo was sent: the plain list is the newest fifty.
+    void memoQueueDeliveries(cat.id, true, m.sentAt || "")
+      .then((raw) => {
+        if (!live) return;
+        const all = readDeliveries(raw);
+        // A failed read shows no item; a read that does not hold the run shows it disabled, naming where to look.
+        setMenuRun({ memoId: m.id, run: all ? (all.find((d) => d.id === m.deliveryId) ?? "missing") : null });
+      })
+      .catch(() => {
+        if (live) setMenuRun({ memoId: m.id, run: null });
+      });
+    return () => {
+      live = false;
+    };
+    // Re-read only when the menu opens on another memo, not on every list refresh.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [menuMemoId]);
+  const returnMenuRun = async (m: Memo, d: MemoDelivery) => {
+    const cat = cats.find((c) => c.repo === m.repo && c.name === m.category);
+    if (!cat) return;
+    const done = await confirmReturnRun({ categoryId: cat.id, d, session: sessionList.find((x) => x.name === d.session), askConfirm, toast, tr });
+    if (done) bumpMemos();
+  };
   useDismiss(memoMenuRef, !!memoMenu, () => setMemoMenu(null));
   useMenuRoving(memoMenuRef, !!memoMenu);
   useLayoutEffect(() => {
@@ -1524,6 +1570,36 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   </button>
                 </li>
               )}
+              {menuRun && menuRun.memoId === memoMenu.m.id && menuRun.run && (() => {
+                const run = menuRun.run;
+                const checking = run === "loading";
+                const missing = run === "missing";
+                const ok = !checking && !missing && canReturnRun(run);
+                const why = checking ? tr("memo.menu_return_run_checking") : missing ? tr("memo.menu_return_run_missing") : tr("memo.menu_return_run_no");
+                return (
+                  <li>
+                    <button
+                      type="button"
+                      className="ui-menu-item memo-cat-menu-item memo-menu-returnrun"
+                      // Set here: useMenuRoving tags only the items present when the menu opened, and this one appears later.
+                      role="menuitem"
+                      disabled={!ok}
+                      title={ok ? tr("memo.d_return_hint") : why}
+                      onClick={() => {
+                        const m = memoMenu.m;
+                        if (!ok || checking || missing) return;
+                        runMemoMenu(() => void returnMenuRun(m, run));
+                      }}
+                    >
+                      <Icon name="refresh" />
+                      <span className="memo-cat-menu-txt">
+                        {tr("memo.menu_return_run")}
+                        {!ok && <span className="memo-cat-menu-why">{why}</span>}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })()}
               <li className="ui-menu-sep" aria-hidden="true" />
               <li>
                 <button type="button" className="ui-menu-item danger" onClick={() => runMemoMenu(() => void remove(memoMenu.m.id))}>

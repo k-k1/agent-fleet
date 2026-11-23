@@ -23,7 +23,7 @@ const memoQueueResume = vi.fn();
 const memoUpdateMock = vi.fn(async (_id: string, _patch: unknown) => ({}));
 const memoQueueDeliveryEnd = vi.fn();
 const memoQueueDeliveryReturn = vi.fn();
-const memoQueueDeliveries = vi.fn(async (_id: string) => servedDeliveries);
+const memoQueueDeliveries = vi.fn(async (_id: string, _openToo?: boolean, _since?: string) => servedDeliveries);
 const memoStopChain = vi.fn(async (_id: string) => ({}));
 const memoQueueList = vi.fn(async () => {
   if (queuesFail) throw new Error("down");
@@ -51,7 +51,7 @@ vi.mock("./api.ts", () => ({
   memoQueueDelete: (id: string) => memoQueueDelete(id),
   memoQueueFire: (id: string) => memoQueueFire(id),
   memoQueueResume: (id: string) => memoQueueResume(id),
-  memoQueueDeliveries: (id: string) => memoQueueDeliveries(id),
+  memoQueueDeliveries: (id: string, openToo?: boolean, since?: string) => (openToo === undefined ? memoQueueDeliveries(id) : memoQueueDeliveries(id, openToo, since)),
   memoQueueDeliveryEnd: (id: string, did: string) => memoQueueDeliveryEnd(id, did),
   memoQueueDeliveryReturn: (id: string, did: string) => memoQueueDeliveryReturn(id, did),
   memoTidyRuns: async () => ({ runs: [], usedToday: 0, dailyCap: 10 }),
@@ -809,6 +809,33 @@ describe("deliveries and Run now", () => {
       expect(document.querySelector(".ui-confirm")?.textContent).toContain(t("memo.d_return_body"));
       await click(must(confirmBtns().find((b) => b.textContent === t("memo.d_return_confirm")), "confirm"));
       expect(document.body.textContent).toContain("message m2 already holds o/r#12");
+    });
+  });
+
+  describe("run history names its work item (#4877)", () => {
+    it("shows the work item keys and the start of the note on the row, with the return button before them", async () => {
+      servedMemos = [
+        aMemo({ id: "a", state: "delivered", body: "Fix the login redirect\nmore text", reference: { provider: "github", key: "o/r#12", url: "" } }),
+      ];
+      servedDeliveries = [{ id: "d1", state: "closed", outcome: "clean", session: "run-1", messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "t2" }];
+      await render();
+      await openDeliveries();
+      const row = must(dialog().querySelector(".memo-d-row"), "row");
+      const work = must(row.querySelector<HTMLElement>(".memo-d-work"), "work item");
+      expect(work.textContent).toContain("o/r#12");
+      expect(work.textContent).toContain("Fix the login redirect");
+      expect(work.textContent).not.toContain("more text");
+      expect(work.title).toContain("o/r#12");
+      const btn = [...row.querySelectorAll("button")].find((b) => b.textContent === t("memo.d_return"));
+      expect(btn).toBeTruthy();
+      expect(btn!.compareDocumentPosition(work) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+    it("shows nothing for a run whose notes left the list", async () => {
+      servedMemos = [];
+      servedDeliveries = [{ id: "d1", state: "closed", outcome: "clean", session: "run-1", messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "t2" }];
+      await render();
+      await openDeliveries();
+      expect(dialog().querySelector(".memo-d-work")).toBeNull();
     });
   });
 
@@ -1900,6 +1927,80 @@ describe("the category head", () => {
     expect(memoCategoryUpdateMock).toHaveBeenCalledWith("c2", { position: 0 });
     expect(memoCategoryUpdateMock).toHaveBeenCalledWith("c1", { position: 1 });
     expect(fold()).toEqual(before);
+  });
+});
+
+describe("Return this run to the queue in the memo menu (#4877)", () => {
+  const rowMenuBtn = () => must(document.querySelector<HTMLElement>(".memo-row .memo-menu-btn"), "row menu button");
+  const retItem = () => document.querySelector<HTMLButtonElement>(".ui-menu .memo-menu-returnrun");
+  const delivered = () => aMemo({ id: "a", state: "delivered", deliveryId: "d1" });
+  const run = (over: Record<string, unknown> = {}) => ({
+    id: "d1", state: "closed", outcome: "clean", session: "run-1", messageIds: ["a"], createdAt: "t1", sentAt: "", closedAt: "t2", ...over,
+  });
+  const openMenu = async () => {
+    await render();
+    await click(must(document.querySelector(".memo-sent-fold"), "history fold"));
+    await click(rowMenuBtn());
+  };
+
+  it("returns the run of a delivered memo after confirming", async () => {
+    servedMemos = [delivered()];
+    servedDeliveries = [run()];
+    await openMenu();
+    const item = must(retItem(), "return item");
+    expect(item.disabled).toBe(false);
+    await click(item);
+    await click(must([...document.querySelectorAll<HTMLElement>(".ui-confirm-actions button")].find((b) => b.textContent === t("memo.d_return_confirm")), "confirm"));
+    expect(memoQueueDeliveryReturn).toHaveBeenCalledWith("c1", "d1");
+  });
+  it("is disabled with the reason when the run cannot return", async () => {
+    servedMemos = [delivered()];
+    servedDeliveries = [run({ returnedAt: "2026-11-20T10:00:00Z" })];
+    await openMenu();
+    const item = must(retItem(), "return item");
+    expect(item.disabled).toBe(true);
+    expect(item.textContent).toContain(t("memo.menu_return_run_no"));
+    await click(item);
+    expect(memoQueueDeliveryReturn).not.toHaveBeenCalled();
+  });
+  it("is absent on a memo that no run delivered", async () => {
+    servedMemos = [aMemo({ id: "p", state: "pending", provenance: "member" })];
+    await render();
+    await click(rowMenuBtn());
+    expect(retItem()).toBeNull();
+  });
+  it("asks for open runs and the runs closed since the memo was sent, not the newest fifty alone", async () => {
+    servedMemos = [aMemo({ id: "a", state: "delivered", deliveryId: "d1", sentAt: "2026-11-01T00:00:00Z" })];
+    servedDeliveries = [run()];
+    await openMenu();
+    expect(memoQueueDeliveries).toHaveBeenCalledWith("c1", true, "2026-11-01T00:00:00Z");
+  });
+  it("is disabled and says where to look when the run is not in the answer", async () => {
+    servedMemos = [delivered()];
+    servedDeliveries = [run({ id: "other" })];
+    await openMenu();
+    const item = must(retItem(), "return item");
+    expect(item.disabled).toBe(true);
+    expect(item.textContent).toContain(t("memo.menu_return_run_missing"));
+  });
+  it("shows no item when the read fails", async () => {
+    servedMemos = [delivered()];
+    memoQueueDeliveries.mockRejectedValueOnce(new Error("boom"));
+    await openMenu();
+    expect(retItem()).toBeNull();
+  });
+  it("shows the item with the menuitem role once the read arrives", async () => {
+    servedMemos = [delivered()];
+    let release: (v: unknown) => void = () => {};
+    memoQueueDeliveries.mockImplementationOnce(() => new Promise<never>((r) => (release = r as (v: unknown) => void)));
+    await openMenu();
+    const waiting = must(retItem(), "return item while loading");
+    expect(waiting.disabled).toBe(true);
+    expect(waiting.textContent).toContain(t("memo.menu_return_run_checking"));
+    await act(async () => release([run()]));
+    const ready = must(retItem(), "return item");
+    expect(ready.getAttribute("role")).toBe("menuitem");
+    expect(ready.disabled).toBe(false);
   });
 });
 

@@ -29,6 +29,7 @@ import {
   deliveryStateKey,
   firstTurnWords,
   runRecipes,
+  runWorkItems,
   heldNames,
   heldWords,
   readDeliveries,
@@ -251,6 +252,7 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
               const why = heldWords(d);
               const names = heldNames(d);
               const turn = firstTurnWords(d);
+              const work = runWorkItems(messages ?? [], d);
               const at = (iso: string) => fmtDateTime(iso);
               const openSession = (name: string) => {
                 openSessionChat(name);
@@ -261,6 +263,16 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                   <span className={"memo-d-state s-" + (d.state === "closed" ? d.outcome || "closed" : d.state)}>
                     {k ? tr(k) : tr("memo.d_unknown_state", { state: d.state })}
                   </span>
+                  {canReturnRun(d) && (
+                    <Button small variant="ghost" title={tr("memo.d_return_hint")} disabled={returning !== ""} onClick={() => void returnRun(d)}>
+                      {tr("memo.d_return")}
+                    </Button>
+                  )}
+                  {(work.keys.length > 0 || work.title) && (
+                    <span className="memo-d-work" title={[work.keys.join(", "), work.title].filter(Boolean).join(" — ")}>
+                      {work.keys.length > 0 && <strong className="memo-d-keys">{work.keys.join(", ")}</strong>} {work.title}
+                    </span>
+                  )}
                   <span className="memo-d-n">{tr("memo.d_messages", { count: d.messageIds.length })}</span>
                   <span className="memo-d-at">{at(d.createdAt)}</span>
                   {d.session ? (
@@ -320,11 +332,6 @@ export function MemoQueueDeliveriesModal({ categoryId, categoryName, queue, wait
                     <span className="memo-d-held">{tr("memo.d_return_blocked", { ids: d.returnBlocked.map((b) => b.by).join(", ") })}</span>
                   )}
                   {d.returnedAt && <span className="memo-d-tag">{tr("memo.d_returned", { at: at(d.returnedAt) })}</span>}
-                  {canReturnRun(d) && (
-                    <Button small variant="ghost" title={tr("memo.d_return_hint")} disabled={returning !== ""} onClick={() => void returnRun(d)}>
-                      {tr("memo.d_return")}
-                    </Button>
-                  )}
                 </li>
               );
             })}
