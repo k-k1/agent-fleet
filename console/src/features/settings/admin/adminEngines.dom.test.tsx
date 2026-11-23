@@ -292,6 +292,27 @@ describe("EnginesAdminView", () => {
       expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
     });
 
+    it("an edit answering after its screen closed leaves the shared cache alone", async () => {
+      const a = row({ key: "image", mode: "ondemand", state: "running" });
+      api.mockResolvedValue({ super_admin: true, engines: [a] });
+      apiJSON.mockImplementation(held);
+      await mount();
+      await click(seg("常時稼働")); // the PUT is in flight
+      act(() => root?.unmount());
+      host?.remove();
+      root = null;
+      api.mockResolvedValue({ super_admin: true, engines: [{ ...a, mode: "on", state: "running" }] });
+      await mount(); // another screen reads a running, into the cache
+      act(() => root?.unmount());
+      host?.remove();
+      root = null;
+      await answer({ ...a, mode: "on", state: "starting", desired: 1 }); // the closed screen's PUT
+      api.mockImplementation(held);
+      await mount(); // its first read is held: what it draws is the cache
+      expect(panel(0).querySelector(".engines-model-tag")!.textContent).not.toContain("起動中");
+      expect(seg("常時稼働")?.className).toContain("active");
+    });
+
     it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {
       api.mockResolvedValueOnce({ super_admin: true, engines: [row({ state: "starting", desired: 1 })] }).mockImplementation(held);
       apiJSON.mockResolvedValueOnce({ error: { code: "boom", message: "edit refused" } });

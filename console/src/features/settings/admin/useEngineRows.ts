@@ -81,6 +81,9 @@ export function useEngineRows() {
    *  back rows another screen has read since. */
   const patchRow = useCallback(
     (key: string, d: Partial<EngineRow>) => {
+      // A screen closed while its edit was in flight writes nothing: by now the cache may hold a
+      // newer read from a screen still open.
+      if (!guard.begin().current()) return;
       guard.claim("row:" + key);
       setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
       const cached = loadEngines();
