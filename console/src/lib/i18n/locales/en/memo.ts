@@ -404,6 +404,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.repo_copy": "Copy",
   "memo.repo_copied": "Copied the YAML",
   "memo.repo_download": "Download",
+  "memo.repo_save_first": "Save or cancel your edits in this dialog before approving repository settings.",
   "memo.q_err_tidy_destinations": "Pick at most {max} categories.",
   "memo.waiting_tidying": "The memos are being tidied. They run when that is done.",
   "memo.waiting_below_threshold_blocked": "Waiting for more memos: {count} of {needed} ready so far, and {blocked} more waiting for the memos they depend on. Runs start once {needed} are ready.",

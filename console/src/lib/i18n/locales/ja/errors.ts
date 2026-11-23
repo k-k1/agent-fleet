@@ -519,4 +519,5 @@ export const errors = {
   "err.memo_queue_no_repo": "このカテゴリはリポジトリに属していないため、リポジトリの設定ファイルはありません。",
   "err.memo_queue_repo_unreadable": "リポジトリの既定ブランチから設定ファイルを読めませんでした。いまの設定はそのままです。",
   "err.memo_queue_repo_stale": "差分を表示した後に、リポジトリの設定ファイルかいまの設定が変わりました。もう一度確認してから承認してください。",
+  "err.memo_queue_repo_export": "この設定はリポジトリの設定ファイルとして書き出せません。設定は変わっていません。",
 };

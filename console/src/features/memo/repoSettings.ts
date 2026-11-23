@@ -42,7 +42,7 @@ export function readRepoSettings(raw: unknown): MemoRepoSettings | null {
     found: raw.found === true,
     entry: raw.entry === true,
     queue: raw.queue === true,
-    settingsTag: str(raw.settingsTag),
+    approvalTag: str(raw.approvalTag),
     approvedCommit: str(raw.approvedCommit),
     approvedAt: str(raw.approvedAt),
     errors,
@@ -134,4 +134,3 @@ export function repoValueText(key: string, v: unknown): { text: string } | { wor
 
 /** A commit id cut to the length people read. */
 export const shortCommit = (c: string): string => c.slice(0, 12);
-

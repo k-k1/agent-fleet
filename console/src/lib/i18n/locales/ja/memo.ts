@@ -401,6 +401,7 @@ export const memo = {
   "memo.repo_copy": "コピー",
   "memo.repo_copied": "YAML をコピーしました",
   "memo.repo_download": "ダウンロード",
+  "memo.repo_save_first": "リポジトリの設定を承認する前に、このダイアログでの編集を保存するか取り消してください。",
   "memo.q_err_tidy_destinations": "移してよいカテゴリは {max} 個までです。",
   "memo.waiting_tidying": "メモを整理しています。終わると実行されます。",
   "memo.waiting_below_threshold_blocked": "メモがたまるのを待っています（実行できるのは {count} 件、ほかに {blocked} 件が先に終わるべきメモを待っています。{needed} 件で実行を始めます）。",

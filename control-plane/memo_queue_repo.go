@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -66,10 +67,10 @@ type memoRepoSettingsWire struct {
 	// Queue is whether the category has settings yet; without them the file is compared with the
 	// defaults a new queue gets.
 	Queue bool `json:"queue"`
-	// SettingsTag names the member's settings the difference was taken from ("" without
-	// settings); an approval sends it back. ApprovedCommit and ApprovedAt are the file commit the
-	// member last approved.
-	SettingsTag    string              `json:"settingsTag"`
+	// ApprovalTag names what the difference was taken from: the category (id, repository, name),
+	// the member's settings and the difference itself. An approval sends it back. ApprovedCommit
+	// and ApprovedAt are the file commit the member last approved.
+	ApprovalTag    string              `json:"approvalTag"`
 	ApprovedCommit string              `json:"approvedCommit"`
 	ApprovedAt     string              `json:"approvedAt"`
 	Errors         []autorunfile.Issue `json:"errors"`
@@ -478,7 +479,7 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 	}
 	out := memoRepoSettingsWire{CategoryID: c.ID, Repo: c.Repo, Category: c.Name, Path: autorunfile.Path,
 		Remote: file.Remote, Branch: file.Branch, Commit: file.Commit, Found: file.Found, Queue: hasQueue,
-		SettingsTag: memoRepoSettingsTag(cur, hasQueue), ApprovedCommit: cur.RepoCommit, ApprovedAt: cur.RepoApprovedAt,
+		ApprovedCommit: cur.RepoCommit, ApprovedAt: cur.RepoApprovedAt,
 		Errors: []autorunfile.Issue{}, Warnings: []autorunfile.Issue{}, Diffs: []memoRepoDiff{}}
 	if !file.Found {
 		writeJSON(w, http.StatusOK, out)
@@ -496,32 +497,43 @@ func (a memoAPI) repoSettings(w http.ResponseWriter, r *http.Request, res *resol
 			out.Diffs = res.Diffs
 		}
 	}
+	out.ApprovalTag = memoRepoApprovalTag(c, cur, hasQueue, out.Diffs)
 	writeJSON(w, http.StatusOK, out)
 }
 
 // memoRepoApproveIn is POST /api/memo-queues/{categoryId}/repo-settings/approve.
 type memoRepoApproveIn struct {
-	// Commit is the file's commit and SettingsTag the member's settings as the difference showed
-	// them. Either having moved since answers 409 memo_queue_repo_stale: the member approved
-	// values they saw, nothing newer.
+	// Commit is the file's commit and ApprovalTag what the difference was taken from, both as
+	// GET .../repo-settings answered. Either having moved since answers 409 memo_queue_repo_stale:
+	// the member approves the values they saw, nothing else.
 	Commit      string `json:"commit"`
-	SettingsTag string `json:"settingsTag"`
+	ApprovalTag string `json:"approvalTag"`
 	// Keys are the file keys approved, each one of the differences shown. The settings that
 	// decide when the queue fires (open_cron, open_minutes, tz, open_after) change as one: their
 	// differences are approved all together or not at all.
 	Keys []string `json:"keys"`
 }
 
-// memoRepoSettingsTag names a member's settings by their content: updatedAt has one-second steps,
-// so two saves within a second would leave a difference read before the second looking current.
-// "" is a category without settings.
-func memoRepoSettingsTag(q store.MemoQueue, hasQueue bool) string {
-	if !hasQueue {
-		return ""
+// memoRepoApprovalTag names what a difference was taken from: the category as it is named now
+// (a rename makes the file's entry for another name apply), the member's settings by their
+// content (updatedAt has one-second steps), and the difference with its values. The approval
+// recomputes it in its own transaction, so it applies exactly what the member was shown.
+func memoRepoApprovalTag(c store.MemoCategory, q store.MemoQueue, hasQueue bool, diffs []memoRepoDiff) string {
+	var settings *memoQueueIn
+	if hasQueue {
+		in := memoQueueInFrom(q)
+		settings = &in
 	}
-	b, _ := json.Marshal(memoQueueInFrom(q))
+	if diffs == nil {
+		diffs = []memoRepoDiff{}
+	}
+	b, _ := json.Marshal(struct {
+		ID, Repo, Name string
+		Settings       *memoQueueIn
+		Diffs          []memoRepoDiff
+	}{c.ID, c.Repo, c.Name, settings, diffs})
 	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:12])
+	return hex.EncodeToString(sum[:16])
 }
 
 func memoRepoStale(msg string) *apiError {
@@ -568,7 +580,7 @@ func (a memoAPI) repoApprove(w http.ResponseWriter, r *http.Request, res *resolv
 		writeAPIErr(w, aerr)
 		return
 	}
-	const changed = "the repository's settings file changed since you looked at it; check it again"
+	const changed = "the repository's settings file, the category or your settings changed since you looked at the difference; check it again"
 	if !ld.file.Found || ld.file.Commit != in.Commit {
 		writeAPIErr(w, memoRepoStale(changed))
 		return
@@ -580,22 +592,32 @@ func (a memoAPI) repoApprove(w http.ResponseWriter, r *http.Request, res *resolv
 	}
 	var out memoQueueDTO
 	err := a.store.MemoTx(ctx, res.mv.MembershipID, func(tx store.MemoTxOps) error {
+		// Read again behind the tenant row's lock: the switch may have been turned off while the
+		// workspace read the file, and turning it off waits for this transaction.
+		if on, err := tx.LockTenantSwitch(); err != nil {
+			return err
+		} else if !on {
+			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoQueuesDisabled, "your tenant has not turned memo queues on"})
+		}
 		c, ok, err := tx.GetCategory(ld.c.ID)
 		if err != nil {
 			return err
 		}
-		if !ok || c.Repo != ld.c.Repo || c.Name != ld.c.Name {
-			return memoTxFail(memoRepoStale("the category changed since you looked at it; check it again"))
+		if !ok {
+			return memoTxFail(&apiError{http.StatusNotFound, "not_found", "category not found"})
 		}
 		cur, existed, err := tx.GetQueue(c.ID)
 		if err != nil {
 			return err
 		}
-		if memoRepoSettingsTag(cur, existed) != in.SettingsTag {
-			return memoTxFail(memoRepoStale("your settings changed since you looked at the difference; check it again"))
-		}
 		full := memoRepoCompare(cur, existed, e)
-		if len(full.Errors) > 0 {
+		var shownDiffs []memoRepoDiff
+		if len(full.Errors) == 0 {
+			shownDiffs = full.Diffs
+		}
+		// The entry was read under the name the category had before this transaction: a rename
+		// since then changes the tag as well.
+		if c.Name != ld.c.Name || len(full.Errors) > 0 || memoRepoApprovalTag(c, cur, existed, shownDiffs) != in.ApprovalTag {
 			return memoTxFail(memoRepoStale(changed))
 		}
 		shown := map[string]bool{}
@@ -627,7 +649,19 @@ func (a memoAPI) repoApprove(w http.ResponseWriter, r *http.Request, res *resolv
 				sub.Values[k] = v
 			}
 		}
-		part := memoRepoCompare(cur, existed, &sub)
+		// A tidy destination whose settings were removed stays in the row; the Console's list leaves
+		// it out and a Console save drops it. The approval does the same, so a stale id the file
+		// cannot touch never blocks it.
+		base := cur
+		base.TidyDestinations = nil
+		for _, id := range cur.TidyDestinations {
+			if _, isQ, err := tx.GetQueue(id); err != nil {
+				return err
+			} else if isQ && id != c.ID {
+				base.TidyDestinations = append(base.TidyDestinations, id)
+			}
+		}
+		part := memoRepoCompare(base, existed, &sub)
 		if len(part.Errors) > 0 {
 			return memoTxFail(badQueueSettings(part.Errors[0].Reason))
 		}
@@ -723,12 +757,24 @@ func (a memoAPI) repoExport(w http.ResponseWriter, r *http.Request, _ store.Iden
 		writeAPIErr(w, internalErr(err))
 		return
 	}
+	// The name becomes a key of the file: a token pasted into it must not be written, and the
+	// answer does not repeat it.
+	if autorunfile.LooksLikeCredential(c.Name) {
+		writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, errCodeMemoQueueRepoExport,
+			"the category's name looks like a credential; rename the category before exporting"})
+		return
+	}
 	for _, q := range qs {
 		if q.CategoryID != c.ID {
 			continue
 		}
 		vals, omitted := memoRepoExportValues(q)
 		b, err := autorunfile.Format(c.Name, vals)
+		if errors.Is(err, autorunfile.ErrTooLarge) {
+			writeAPIErr(w, &apiError{http.StatusUnprocessableEntity, errCodeMemoQueueRepoExport,
+				fmt.Sprintf("these settings make a file larger than %d bytes, which a repository's settings file cannot be", autorunfile.MaxBytes)})
+			return
+		}
 		if err != nil {
 			writeAPIErr(w, internalErr(err))
 			return

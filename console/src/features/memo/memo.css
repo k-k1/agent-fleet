@@ -1140,6 +1140,14 @@ ul.memo-repo-warnings {
   border-radius: 4px;
   padding: 4px 6px;
 }
+.memo-repo-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
 .memo-repo-yaml {
   font-family: var(--mono, monospace);
   font-size: 12px;

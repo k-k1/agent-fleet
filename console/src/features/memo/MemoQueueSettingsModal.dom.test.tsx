@@ -15,22 +15,32 @@ vi.mock("../../core/api/client.ts", () => ({
   isTransientErr: () => false,
 }));
 const memoQueuePut = vi.fn(async (_id: string, _body: unknown) => ({}));
-vi.mock("./api.ts", () => ({ memoQueuePut: (id: string, body: unknown) => memoQueuePut(id, body), memoQueueDelete: vi.fn() }));
+let repoAnswer: unknown = {};
+let approveGate: Promise<unknown> = Promise.resolve({});
+const memoRepoApprove = vi.fn((_id: string, _body: unknown) => approveGate);
+vi.mock("./api.ts", () => ({
+  memoQueuePut: (id: string, body: unknown) => memoQueuePut(id, body),
+  memoQueueDelete: vi.fn(),
+  memoRepoSettings: async () => repoAnswer,
+  memoRepoApprove: (id: string, body: unknown) => memoRepoApprove(id, body),
+  memoRepoExport: vi.fn(),
+}));
 
 const { MemoQueueSettingsModal } = await import("./MemoQueueSettingsModal.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
+const { useQueueSettingsCache } = await import("./queueSettingsCache.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
 
-async function render(): Promise<void> {
+async function render(repo = "", onClose: () => void = () => {}): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <MemoQueueSettingsModal categoryName="c" categoryId="cat1" repo="" queue={undefined} tenantEnabled destinations={[]} onClose={() => {}} onChanged={() => {}} />
+          <MemoQueueSettingsModal categoryName="c" categoryId="cat1" repo={repo} queue={undefined} tenantEnabled destinations={[]} onClose={onClose} onChanged={() => {}} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -92,5 +102,73 @@ describe("MemoQueueSettingsModal accept-from-own-sessions switch", () => {
     expect(acceptBox()!.checked).toBe(true);
     await save();
     expect(memoQueuePut).toHaveBeenLastCalledWith("cat1", expect.objectContaining({ acceptOwnSessions: true }));
+  });
+});
+
+describe("MemoQueueSettingsModal repository settings card", () => {
+  const flush = async () => {
+    for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+  };
+  const submit = async () => {
+    await act(async () => {
+      document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    });
+    await flush();
+  };
+  const checkFile = async () => {
+    await act(async () => document.querySelector<HTMLButtonElement>(".memo-repo-head button")!.click());
+    await flush();
+  };
+  const approveBtn = () => document.querySelector<HTMLButtonElement>(".memo-repo-card .ui-btn-primary")!;
+
+  beforeEach(() => {
+    liveKinds = [{ kind: "claude", usableRoutes: ["anthropic-api"] }];
+    useQueueSettingsCache.setState({ repoSettings: true });
+    memoQueuePut.mockClear();
+    memoRepoApprove.mockClear();
+    repoAnswer = {
+      categoryId: "cat1",
+      commit: "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff",
+      found: true,
+      entry: true,
+      approvalTag: "t1",
+      errors: [],
+      warnings: [],
+      diffs: [{ key: "batch", field: "batch", line: 4, current: 1, file: 2, raise: false }],
+    };
+  });
+  afterEach(() => useQueueSettingsCache.setState({ repoSettings: false }));
+
+  it("is not shown for a category without a repository", async () => {
+    await render("");
+    expect(document.querySelector(".memo-repo")).toBeNull();
+  });
+
+  it("does not save the dialog while an approval is on its way", async () => {
+    let finish: (v: unknown) => void = () => {};
+    approveGate = new Promise((r) => (finish = r));
+    let closed = 0;
+    await render("app", () => closed++);
+    await checkFile();
+    await act(async () => approveBtn().click());
+    expect(memoRepoApprove).toHaveBeenCalledTimes(1);
+    await submit();
+    expect(memoQueuePut).not.toHaveBeenCalled();
+    await act(async () => finish({ categoryId: "cat1" }));
+    await flush();
+    expect(memoQueuePut).not.toHaveBeenCalled();
+    expect(closed).toBe(1);
+  });
+
+  it("asks to save or cancel edits before an approval, which would drop them", async () => {
+    await render("app");
+    await checkFile();
+    expect(approveBtn().disabled).toBe(false);
+    const box = acceptBox()!;
+    await act(async () => box.click());
+    expect(approveBtn().disabled).toBe(true);
+    expect(document.querySelector(".memo-repo-foot-hint")!.hasAttribute("data-invalid")).toBe(true);
+    await act(async () => box.click());
+    expect(approveBtn().disabled).toBe(false);
   });
 });

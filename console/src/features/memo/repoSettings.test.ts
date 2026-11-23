@@ -12,7 +12,7 @@ describe("readRepoSettings", () => {
       commit,
       found: true,
       entry: true,
-      settingsTag: "t",
+      approvalTag: "t",
       errors: null,
       warnings: [{ line: 3, key: "enabled", reason: "Console only" }, "junk"],
       diffs: [diff("batch", { raise: true }), { field: "x" }, null],

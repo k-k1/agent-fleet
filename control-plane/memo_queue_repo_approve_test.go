@@ -36,7 +36,7 @@ func approveBody(out memoRepoSettingsWire, keys ...string) map[string]any {
 			keys = append(keys, d.Key)
 		}
 	}
-	return map[string]any{"commit": out.Commit, "settingsTag": out.SettingsTag, "keys": keys}
+	return map[string]any{"commit": out.Commit, "approvalTag": out.ApprovalTag, "keys": keys}
 }
 
 const approveFile = `version: 1
@@ -67,7 +67,7 @@ func approveEnv(t *testing.T) (*inboxEnv, *fakeAutorunAgent, string) {
 func TestMemoRepoApproveAll(t *testing.T) {
 	e, _, id := approveEnv(t)
 	_, out := e.repoSettings(id)
-	if len(out.Diffs) != 3 || out.SettingsTag == "" || out.ApprovedCommit != "" {
+	if len(out.Diffs) != 3 || out.ApprovalTag == "" || out.ApprovedCommit != "" {
 		t.Fatalf("before: %+v", out)
 	}
 	rec := e.approve(id, approveBody(out))
@@ -117,7 +117,7 @@ func TestMemoRepoApproveCreatesTheSettings(t *testing.T) {
 	id := e.category("app", "fresh")
 	a.file("version: 1\ncategories:\n  fresh:\n    instruction: do it\n    agent_kind: codex\n")
 	_, out := e.repoSettings(id)
-	if out.Queue || out.SettingsTag != "" || len(out.Diffs) != 2 {
+	if out.Queue || out.ApprovalTag == "" || len(out.Diffs) != 2 {
 		t.Fatalf("before: %+v", out)
 	}
 	if rec := e.approve(id, approveBody(out)); rec.Code != http.StatusOK {
@@ -173,6 +173,91 @@ func TestMemoRepoApproveAfterAConsoleSave(t *testing.T) {
 	}
 }
 
+// A rename between the check and the approval would make the file's entry for the new name
+// apply: the approval is stale instead, with or without settings.
+func TestMemoRepoApproveAfterARename(t *testing.T) {
+	for _, withQueue := range []bool{true, false} {
+		e, a := repoEnv(t, "")
+		id := e.category("app", "rounds")
+		if withQueue {
+			if rec := e.do("a", "PUT", "/api/memo-queues/"+id, map[string]any{"instruction": "x"}); rec.Code != http.StatusOK {
+				t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+			}
+		}
+		a.file("version: 1\ncategories:\n  rounds:\n    instruction: x\n    batch: 2\n  other:\n    instruction: x\n    batch: 5\n")
+		_, out := e.repoSettings(id)
+		if d := diffByKey(out.Diffs)["batch"]; string(d.File) != "2" {
+			t.Fatalf("queue=%v: diffs %+v", withQueue, out.Diffs)
+		}
+		if rec := e.do("a", "PATCH", "/api/memo-categories/"+id, map[string]any{"name": "other"}); rec.Code != http.StatusOK {
+			t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := e.approve(id, approveBody(out, "batch")); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errCodeMemoQueueRepoStale) {
+			t.Fatalf("queue=%v: approve after a rename: %d %s", withQueue, rec.Code, rec.Body.String())
+		}
+		if q, ok := e.queueOf(id); ok != withQueue || q.Batch == 5 || q.RepoCommit != "" {
+			t.Fatalf("queue=%v: saved %v %+v", withQueue, ok, q)
+		}
+	}
+}
+
+// Turning memo queues off while the workspace reads the file leaves nothing written.
+func TestMemoRepoApproveTenantTurnedOffDuringTheRead(t *testing.T) {
+	e, a, id := approveEnv(t)
+	_, out := e.repoSettings(id)
+	a.mu.Lock()
+	a.onServe = func() { e.memoQueuesOn(false) }
+	a.mu.Unlock()
+	if rec := e.approve(id, approveBody(out)); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), errCodeMemoQueuesDisabled) {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
+	}
+	if q, _ := e.queueOf(id); q.SpendCapUSD != 60 || q.RepoCommit != "" {
+		t.Fatalf("saved %+v", q)
+	}
+}
+
+// A tidy destination whose settings were removed does not block approving an unrelated setting;
+// it is dropped as a Console save drops it.
+func TestMemoRepoApproveWithAStaleTidyDestination(t *testing.T) {
+	e, a, id := approveEnv(t)
+	dest := e.category("app", "dest")
+	if rec := e.do("a", "PUT", "/api/memo-queues/"+dest, map[string]any{"instruction": "y"}); rec.Code != http.StatusOK {
+		t.Fatalf("put dest: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do("a", "PUT", "/api/memo-queues/"+id, map[string]any{"instruction": "implement it", "spendCapUsd": 60, "maxActive": 2,
+		"model": "claude-opus-5-5", "enabled": true, "acceptOwnSessions": true, "tidy": true, "tidyDestinations": []string{dest}}); rec.Code != http.StatusOK {
+		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do("a", "DELETE", "/api/memo-queues/"+dest, nil); rec.Code != http.StatusNoContent {
+		t.Fatalf("delete dest: %d", rec.Code)
+	}
+	a.file(approveFile)
+	_, out := e.repoSettings(id)
+	if rec := e.approve(id, approveBody(out, "batch")); rec.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body.String())
+	}
+	if q, _ := e.queueOf(id); q.Batch != 2 || !q.Tidy || len(q.TidyDestinations) != 0 {
+		t.Fatalf("saved %+v", q)
+	}
+}
+
+// Another member cannot approve for a member's category, with a valid commit, tag and keys, and
+// the workspace is not asked.
+func TestMemoRepoApproveIsTheMembersOwn(t *testing.T) {
+	e, a, id := approveEnv(t)
+	_, out := e.repoSettings(id)
+	before := len(a.requested())
+	if rec := e.do("b", "POST", "/api/memo-queues/"+id+"/repo-settings/approve", approveBody(out)); rec.Code != http.StatusNotFound {
+		t.Fatalf("another member: %d %s", rec.Code, rec.Body.String())
+	}
+	if got := a.requested(); len(got) != before {
+		t.Fatalf("the workspace was asked: %v", got[before:])
+	}
+	if q, _ := e.queueOf(id); q.SpendCapUSD != 60 || q.RepoCommit != "" {
+		t.Fatalf("saved %+v", q)
+	}
+}
+
 func TestMemoRepoApproveRefusals(t *testing.T) {
 	e, a, id := approveEnv(t)
 	_, out := e.repoSettings(id)
@@ -182,13 +267,13 @@ func TestMemoRepoApproveRefusals(t *testing.T) {
 		code int
 		want string
 	}{
-		{"no keys", map[string]any{"commit": out.Commit, "settingsTag": out.SettingsTag, "keys": []string{}}, http.StatusBadRequest, "bad_request"},
+		{"no keys", map[string]any{"commit": out.Commit, "approvalTag": out.ApprovalTag, "keys": []string{}}, http.StatusBadRequest, "bad_request"},
 		{"unknown key", approveBody(out, "enabled"), http.StatusBadRequest, "bad_request"},
 		{"twice", approveBody(out, "batch", "batch"), http.StatusBadRequest, "bad_request"},
 		{"bad commit", map[string]any{"commit": "HEAD", "keys": []string{"batch"}}, http.StatusBadRequest, "bad_request"},
-		{"other commit", map[string]any{"commit": strings.Repeat("a", 40), "settingsTag": out.SettingsTag, "keys": []string{"batch"}},
+		{"other commit", map[string]any{"commit": strings.Repeat("a", 40), "approvalTag": out.ApprovalTag, "keys": []string{"batch"}},
 			http.StatusConflict, errCodeMemoQueueRepoStale},
-		{"settings moved", map[string]any{"commit": out.Commit, "settingsTag": "not-the-tag", "keys": []string{"batch"}},
+		{"settings moved", map[string]any{"commit": out.Commit, "approvalTag": "not-the-tag", "keys": []string{"batch"}},
 			http.StatusConflict, errCodeMemoQueueRepoStale},
 		// The model is equal in the file: there is nothing to approve.
 		{"no difference", approveBody(out, "model"), http.StatusConflict, errCodeMemoQueueRepoStale},
@@ -286,6 +371,15 @@ func TestMemoRepoExportRoute(t *testing.T) {
 	}
 	if rec := e.do("b", "GET", "/api/memo-queues/"+id+"/repo-settings/export", nil); rec.Code != http.StatusNotFound {
 		t.Errorf("another member: %d", rec.Code)
+	}
+	// A token pasted into the category's name is neither written nor repeated.
+	token := "ghp_" + strings.Repeat("Q", 36)
+	if rec := e.do("a", "PATCH", "/api/memo-categories/"+id, map[string]any{"name": token}); rec.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := e.do("a", "GET", "/api/memo-queues/"+id+"/repo-settings/export", nil); rec.Code != http.StatusUnprocessableEntity ||
+		strings.Contains(rec.Body.String(), "QQQQ") || !strings.Contains(rec.Body.String(), errCodeMemoQueueRepoExport) {
+		t.Errorf("credential name: %d %s", rec.Code, rec.Body.String())
 	}
 	e.mgr.memoRepoSettings = false
 	if rec := e.do("a", "GET", "/api/memo-queues/"+id+"/repo-settings/export", nil); rec.Code != http.StatusNotFound {

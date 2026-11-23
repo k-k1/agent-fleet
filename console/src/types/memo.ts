@@ -328,8 +328,8 @@ export interface MemoRepoSettings {
   found: boolean;
   entry: boolean;
   queue: boolean;
-  /** Names the settings the difference was taken from; the approval sends it back. */
-  settingsTag: string;
+  /** Names what the difference was taken from (category, settings, difference); the approval sends it back. */
+  approvalTag: string;
   approvedCommit: string;
   approvedAt: string;
   errors: MemoRepoIssue[];

@@ -6,7 +6,7 @@
 // Plane takes the values from the file at the commit the difference showed, and answers 409
 // memo_queue_repo_stale when the file or the settings moved since. Reading the file needs the
 // workspace (it fetches origin), so the check runs when the member asks for it, never on open.
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
@@ -24,15 +24,23 @@ interface Props {
   categoryName: string;
   /** The category has settings: only then is there something to export. */
   hasQueue: boolean;
-  /** The tenant's switch is off: the difference is shown, the approval is not offered. */
+  /** The tenant's switch is off, or the dialog is saving: the difference is shown, the approval
+   *  is not offered. */
   blocked: boolean;
+  /** The dialog holds edits not saved yet. An approval saves the settings as stored and the
+   *  dialog then closes, so it would drop them: the approval waits until they are saved or
+   *  cancelled. */
+  dirty: boolean;
+  /** An approval is on its way: the dialog must not save, remove or close meanwhile, or its
+   *  write could land after the approval with the values from before it. */
+  onBusy: (busy: boolean) => void;
   /** An approval saved the settings: the dialog's draft is out of date. */
   onApplied: () => void;
 }
 
 type Check = { kind: "idle" } | { kind: "loading" } | { kind: "error"; message: string } | { kind: "loaded"; data: MemoRepoSettings };
 
-export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, blocked, onApplied }: Props) {
+export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, blocked, dirty, onBusy, onApplied }: Props) {
   const tr = useT();
   const toast = useToast();
   const [check, setCheck] = useState<Check>({ kind: "idle" });
@@ -40,11 +48,17 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
   const [approving, setApproving] = useState(false);
   const [exported, setExported] = useState<MemoRepoExport | null>(null);
   const [exporting, setExporting] = useState(false);
+  // Numbers the reads: only the newest one's answer is shown, so a slower earlier read cannot put
+  // an older difference (and its ticks) back over a newer one.
+  const readSeq = useRef(0);
+  const ids = useId();
 
   const load = async () => {
+    const mine = ++readSeq.current;
     setCheck({ kind: "loading" });
     try {
       const raw = await memoRepoSettings(categoryId);
+      if (mine !== readSeq.current) return;
       const data = readRepoSettings(raw);
       if (!data) {
         setCheck({ kind: "error", message: errText((raw as { error?: ApiError } | null)?.error) || t("memo.repo_check_failed") });
@@ -54,17 +68,18 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
       setChosen(new Set(repoDiffRows(data.diffs).map((r) => r.id)));
       setCheck({ kind: "loaded", data });
     } catch {
-      setCheck({ kind: "error", message: t("memo.repo_check_failed") });
+      if (mine === readSeq.current) setCheck({ kind: "error", message: t("memo.repo_check_failed") });
     }
   };
 
   const approve = async (data: MemoRepoSettings) => {
     const keys = approvedKeys(repoDiffRows(data.diffs), chosen);
-    if (keys.length === 0 || approving || blocked) return;
+    if (keys.length === 0 || approving || blocked || dirty) return;
     setApproving(true);
+    onBusy(true);
     try {
       const scope = queueScope();
-      const res = await memoRepoApprove(categoryId, { commit: data.commit, settingsTag: data.settingsTag, keys });
+      const res = await memoRepoApprove(categoryId, { commit: data.commit, approvalTag: data.approvalTag, keys });
       if (res?.error) {
         toast(errText(res.error) || t("memo.repo_approve_failed"), { kind: "warn" });
         // The file or the settings moved: show the difference as it is now.
@@ -79,6 +94,7 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
       toast(t("memo.repo_approve_failed"), { kind: "warn" });
     } finally {
       setApproving(false);
+      onBusy(false);
     }
   };
 
@@ -131,7 +147,7 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
     <section className="ui-field memo-repo" aria-label={tr("memo.repo_title")}>
       <div className="memo-repo-head">
         <span className="ui-field-label memo-repo-title">{tr("memo.repo_title")}</span>
-        <Button small type="button" disabled={check.kind === "loading"} onClick={() => void load()}>
+        <Button small type="button" disabled={check.kind === "loading" || approving} onClick={() => void load()}>
           {check.kind === "idle" ? tr("memo.repo_check") : tr("memo.repo_recheck")}
         </Button>
         {hasQueue && (
@@ -190,7 +206,8 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
                       <input
                         type="checkbox"
                         checked={chosen.has(r.id)}
-                        disabled={blocked || approving}
+                        aria-describedby={`${ids}-${r.id}`}
+                        disabled={blocked || approving || dirty}
                         onChange={(e) =>
                           setChosen((s) => {
                             const n = new Set(s);
@@ -203,34 +220,42 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
                       <span className="memo-repo-diff-name">{r.id === "firing" ? tr("memo.q_when") : label(r.keys[0])}</span>
                       {r.raise && <span className="ui-badge ui-badge-warn memo-repo-raise">{tr("memo.repo_raise")}</span>}
                     </label>
+                    <div id={`${ids}-${r.id}`}>
                     {r.diffs.map((d) =>
                       d.key === "instruction" ? (
                         <div key={d.key} className="memo-repo-diff-text">
                           <div className="ui-field-hint">{tr("memo.repo_current")}</div>
-                          <pre>{typeof d.current === "string" ? d.current : ""}</pre>
+                          {/* Focusable so a long text scrolls from the keyboard too. */}
+                          <pre tabIndex={0}>{typeof d.current === "string" ? d.current : ""}</pre>
                           <div className="ui-field-hint">{tr("memo.repo_file_value", { line: d.line })}</div>
-                          <pre>{typeof d.file === "string" ? d.file : ""}</pre>
+                          <pre tabIndex={0}>{typeof d.file === "string" ? d.file : ""}</pre>
                         </div>
                       ) : (
                         <div key={d.key} className="memo-repo-diff-values">
                           {r.id === "firing" && <span className="memo-repo-diff-sub">{label(d.key)}</span>}
                           {value(d, d.current)}
-                          <span aria-label={tr("memo.repo_becomes")}> → </span>
+                          <span aria-hidden="true">
+                            {" → "}
+                          </span>
+                          <span className="memo-repo-sr">{" " + tr("memo.repo_becomes") + " "}</span>
                           {value(d, d.file)}
                           <span className="ui-field-hint"> {tr("memo.repo_line", { line: d.line })}</span>
                         </div>
                       ),
                     )}
+                    </div>
                   </li>
                 ))}
               </ul>
               <div className="memo-repo-foot">
-                <span className="ui-field-hint memo-repo-foot-hint">{tr("memo.repo_approve_hint")}</span>
+                <span className="ui-field-hint memo-repo-foot-hint" data-invalid={dirty || undefined}>
+                  {dirty ? tr("memo.repo_save_first") : tr("memo.repo_approve_hint")}
+                </span>
                 <Button
                   small
                   variant="primary"
                   type="button"
-                  disabled={blocked || approving || picked === 0}
+                  disabled={blocked || approving || dirty || picked === 0}
                   onClick={() => void approve(loaded)}
                 >
                   {tr("memo.repo_approve", { count: picked })}

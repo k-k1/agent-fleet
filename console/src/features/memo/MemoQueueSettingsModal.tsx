@@ -71,12 +71,17 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, 
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
-  const [draft, setDraft] = useState(() => {
+  const [initial] = useState(() => {
     // A destination that is no longer an auto-run category would make the save fail: leave it out.
     const d = draftOf(queue);
     return { ...d, tidyDestinations: d.tidyDestinations.filter((id) => destinations.some((x) => x.id === id)) };
   });
+  const [draft, setDraft] = useState(initial);
   const [busy, setBusy] = useState(false);
+  // An approval of repository settings is on its way (MemoRepoSettingsCard): nothing else in the
+  // dialog writes or closes until it lands.
+  const [repoBusy, setRepoBusy] = useState(false);
+  const dirty = useMemo(() => JSON.stringify(draft) !== JSON.stringify(initial), [draft, initial]);
   // Errors show once the person has tried to save, so an untouched form is not red.
   const [tried, setTried] = useState(false);
   const errors = useMemo(() => draftErrors(draft), [draft]);
@@ -110,7 +115,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, 
   const repoSettings = useQueueSettingsCache((st) => st.repoSettings) && repo !== "";
 
   const save = async () => {
-    if (blocked || busy) return;
+    if (blocked || busy || repoBusy) return;
     setTried(true);
     if (Object.keys(errors).length > 0) return;
     setBusy(true);
@@ -142,7 +147,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, 
       confirmLabel: t("memo.q_remove"),
       danger: true,
     });
-    if (!ok) return;
+    if (!ok || repoBusy) return;
     setBusy(true);
     try {
       const scope = queueScope();
@@ -181,7 +186,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, 
         e.preventDefault();
         void save();
       }}
-      lockClose={busy}
+      lockClose={busy || repoBusy}
     >
       <div className="ui-modal-body">
         {blocked && (
@@ -196,6 +201,8 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, 
             categoryName={categoryName}
             hasQueue={!!queue}
             blocked={blocked || busy}
+            dirty={dirty}
+            onBusy={setRepoBusy}
             onApplied={() => {
               // The draft holds the values from before the approval: close rather than let a save
               // put them back.
@@ -499,14 +506,14 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, 
 
       <footer className="ui-modal-foot">
         {queue && (
-          <Button variant="ghost" type="button" disabled={busy} onClick={() => void remove()}>
+          <Button variant="ghost" type="button" disabled={busy || repoBusy} onClick={() => void remove()}>
             {tr("memo.q_remove")}
           </Button>
         )}
-        <Button variant="ghost" onClick={onClose} type="button">
+        <Button variant="ghost" onClick={onClose} type="button" disabled={repoBusy}>
           {tr("common.cancel")}
         </Button>
-        <Button variant="primary" type="submit" disabled={blocked || busy}>
+        <Button variant="primary" type="submit" disabled={blocked || busy || repoBusy}>
           {tr("common.save")}
         </Button>
       </footer>

@@ -38,6 +38,7 @@ const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 let root: Root | null = null;
 let host: HTMLDivElement;
 let applied = 0;
+let busy: boolean[] = [];
 
 const answer = (over: Record<string, unknown> = {}) => ({
   categoryId: "cat1",
@@ -49,7 +50,7 @@ const answer = (over: Record<string, unknown> = {}) => ({
   found: true,
   entry: true,
   queue: true,
-  settingsTag: "tag1",
+  approvalTag: "tag1",
   approvedCommit: "",
   approvedAt: "",
   errors: [],
@@ -67,7 +68,7 @@ const flush = async () => {
   for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
 };
 
-async function render(props: { hasQueue?: boolean; blocked?: boolean } = {}): Promise<void> {
+async function render(props: { hasQueue?: boolean; blocked?: boolean; dirty?: boolean } = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
@@ -76,6 +77,8 @@ async function render(props: { hasQueue?: boolean; blocked?: boolean } = {}): Pr
           categoryName="rounds"
           hasQueue={props.hasQueue ?? true}
           blocked={props.blocked ?? false}
+          dirty={props.dirty ?? false}
+          onBusy={(b) => busy.push(b)}
           onApplied={() => applied++}
         />
       </ToastProvider>,
@@ -96,6 +99,7 @@ beforeEach(() => {
   settings = answer();
   approveAnswer = { categoryId: "cat1" };
   applied = 0;
+  busy = [];
   memoRepoSettings.mockClear();
   memoRepoApprove.mockClear();
   host = document.createElement("div");
@@ -135,10 +139,41 @@ describe("MemoRepoSettingsCard", () => {
     await click(approveButton());
     expect(memoRepoApprove).toHaveBeenCalledWith("cat1", {
       commit,
-      settingsTag: "tag1",
+      approvalTag: "tag1",
       keys: ["spend_cap_usd", "open_cron", "open_after"],
     });
     expect(applied).toBe(1);
+    expect(busy).toEqual([true, false]);
+  });
+
+  it("ties each checkbox to the values it changes, for a screen reader", async () => {
+    await render();
+    await click(buttons()[0]);
+    const box = rowsOf()[0].querySelector<HTMLInputElement>("input")!;
+    const desc = document.getElementById(box.getAttribute("aria-describedby")!)!;
+    expect(desc.textContent).toContain("60");
+    expect(desc.textContent).toContain("30");
+  });
+
+  it("offers no approval while the dialog holds unsaved edits", async () => {
+    await render({ dirty: true });
+    await click(buttons()[0]);
+    expect(approveButton().disabled).toBe(true);
+    await click(approveButton());
+    expect(memoRepoApprove).not.toHaveBeenCalled();
+  });
+
+  it("cannot read again while an approval is on its way, so a stale answer cannot race a manual read", async () => {
+    let finish: (v: unknown) => void = () => {};
+    memoRepoApprove.mockImplementationOnce(() => new Promise((r) => (finish = r)));
+    await render();
+    await click(buttons()[0]);
+    await act(async () => approveButton().click());
+    expect(buttons()[0].disabled).toBe(true);
+    await act(async () => finish({ error: { code: "memo_queue_repo_stale", message: "changed" } }));
+    await flush();
+    expect(memoRepoSettings).toHaveBeenCalledTimes(2);
+    expect(buttons()[0].disabled).toBe(false);
   });
 
   it("offers no approval with nothing ticked or with the tenant's switch off", async () => {

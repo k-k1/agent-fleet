@@ -1500,7 +1500,7 @@ export const memoQueueDelete = (categoryId: string): Promise<Response> =>
 // file at the commit the difference showed.
 export const memoRepoSettings = (categoryId: string): Promise<unknown> =>
   api(`api/memo-queues/${encodeURIComponent(categoryId)}/repo-settings`);
-export const memoRepoApprove = (categoryId: string, body: { commit: string; settingsTag: string; keys: string[] }): Promise<MemoWriteResult> =>
+export const memoRepoApprove = (categoryId: string, body: { commit: string; approvalTag: string; keys: string[] }): Promise<MemoWriteResult> =>
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/repo-settings/approve`, "POST", body);
 export const memoRepoExport = (categoryId: string): Promise<unknown> =>
   api(`api/memo-queues/${encodeURIComponent(categoryId)}/repo-settings/export`);
