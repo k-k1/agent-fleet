@@ -633,6 +633,7 @@ Issue・チケット・プルリクエストについて、その項目へのリ
 ## 関連
 
 - [メモをためて渡す](memos.ja.md): メモの書き方と、まとめて送る方法
+- [自動実行の設定をリポジトリに置く](memo-auto-run-repo-file.ja.md): この設定を `.agent-fleet/autorun.yaml` に置き、違いを承認する
 - [メモの自動実行で、見ていなくても作業を進める](../fleet/memo-auto-run-practices.ja.md): 指示とメモの書きかた、大きな作業とマージの進めかた
 - [決まった時刻に実行する](../fleet/schedules.ja.md): 決まった時刻に実行したいときはスケジュール
 - [セッションから子セッションを起動する](../fleet/child-sessions.ja.md)
