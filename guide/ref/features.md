@@ -29,6 +29,7 @@ If a feature ships and does not appear here, it is not done
 | Live terminal attached to a session | member | main area | [Use the terminal](../user/files/terminal.md) |
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [Use the terminal](../user/files/terminal.md) |
 | Ctrl+C / Ctrl+V copy and paste in the terminal | member | terminal | [Use the terminal](../user/files/terminal.md#copy-and-paste) |
+| Terminals view — every shell by the place it was opened in, every SSM session by machine, with the shell / SSM start and tidy | member | activity bar → Terminals; the terminal count chip on a repository or space row of Sessions | [Find your shells and SSM sessions](../user/sessions/terminals.md) |
 | Resume a stopped session | member | left pane → the session | [Stop and resume a session](../user/sessions/stop-resume.md) |
 | Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, activity bar → Home, or leader `g h` | [Find your way around the screen](../user/start/console-tour.md#home) |
 | Sessions overview — every running session as a card | member | activity bar → Sessions overview, or leader `g s` | [See every running session](../user/fleet/overview.md) |

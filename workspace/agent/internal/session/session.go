@@ -294,6 +294,10 @@ type Session struct {
 	Space         string `json:"space,omitempty"`
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
 	Title         string `json:"title"` // user-supplied display title (optional, any kind)
+	// SSM is the non-secret target of an SSM session (ADR 0142 decision 10, open question 4): the
+	// Console groups the Terminal view by machine from it, and a title is no key because it can be
+	// renamed. nil for every other kind. The Control Plane's sessionWire has to carry it too.
+	SSM *SSMTarget `json:"ssm,omitempty"`
 	// Moving / MovedTo mirror Meta's (ADR 0115 decision 11.7): the row of a source whose move
 	// is under way or pending offers retry and cancel, and a moved one says where the
 	// conversation went. The Control Plane's sessionWire has to carry them too.
@@ -1035,6 +1039,25 @@ type SSMMeta struct {
 	// the sign-in's id, or the profile's. Neither is a secret.
 	SSOSession string `json:"ssoSession,omitempty"`
 	SSOOwnerID string `json:"ssoOwnerId,omitempty"`
+}
+
+// SSMTarget is the part of SSMMeta the session list carries: which machine, and under which
+// profile and run-as document. It leaves out the sign-in details (start URL, role, chaining),
+// which the list has no use for.
+type SSMTarget struct {
+	Target    string `json:"target"`              // EC2 instance id (i-...)
+	Region    string `json:"region,omitempty"`    // instance region ("" = profile default)
+	AccountID string `json:"accountId,omitempty"` // SSO account id of the profile
+	Profile   string `json:"profile,omitempty"`   // ~/.aws/config profile name
+	Document  string `json:"document,omitempty"`  // run-as SSM document ("" = default shell)
+}
+
+// SSMTargetOf is the list's view of m's SSM target; nil when m is not an SSM session.
+func SSMTargetOf(m Meta) *SSMTarget {
+	if m.SSM == nil {
+		return nil
+	}
+	return &SSMTarget{Target: m.SSM.Target, Region: m.SSM.Region, AccountID: m.SSM.AccountID, Profile: m.SSM.Profile, Document: m.SSM.Document}
 }
 
 // DriverKind normalizes Meta.Driver ("" → tui). Always branch through it: comparing raw

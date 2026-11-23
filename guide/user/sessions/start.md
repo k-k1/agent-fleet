@@ -19,7 +19,7 @@ A session is one piece of work handed to an agent: its conversation, its working
 | Answer when a reply is needed | Stops at a question, a permission request or a plan, and waits for you |
 
 Sessions are listed in the Sessions view of the left pane under **Repositories**, below their working copy; the ones that belong to no repository
-are under **Other sessions**. You can have as many as you like at once, each with its own conversation and working folder.
+are under **Other sessions**. Shells and SSM sessions are in the **Terminals** view ([Find your shells and SSM sessions](terminals.md)). You can have as many as you like at once, each with its own conversation and working folder.
 
 ## Pick a place in Start
 

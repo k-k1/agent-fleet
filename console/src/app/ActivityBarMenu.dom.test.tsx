@@ -74,7 +74,7 @@ describe("opening the menu", () => {
     await rightClick(btn("memo"));
     expect(menu()).not.toBeNull();
     const rows = [...menu()!.querySelectorAll<HTMLElement>("[data-menu-view]")].map((r) => r.dataset.menuView);
-    expect(rows).toEqual(["sessions", "shared", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"]);
+    expect(rows).toEqual(["sessions", "shared", "terminals", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"]);
     expect(row("memo").getAttribute("aria-checked")).toBe("true");
     expect(row("memo").getAttribute("role")).toBe("menuitemcheckbox");
   });
@@ -155,7 +155,7 @@ describe("turning icons off", () => {
 
   it("cannot turn off the last icon", async () => {
     // Every icon but the one on screen is off.
-    const others = ["shared", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"];
+    const others = ["shared", "terminals", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"];
     setSettings({ railViewsOff: others });
     useLeftRail.setState({ view: "sessions" });
     await mount();
@@ -186,7 +186,7 @@ describe("turning icons off", () => {
 
 describe("the vertical swipe follows the shown icons only", () => {
   it("steps over an icon that is off", async () => {
-    setSettings({ railViewsOff: ["shared"] });
+    setSettings({ railViewsOff: ["shared", "terminals"] });
     useLeftRail.setState({ view: "sessions" });
     await mount();
     const next = BAR_SWIPE_UP_IS_NEXT ? -1 : 1;
@@ -211,7 +211,7 @@ describe("a hidden view that waits on the member", () => {
 
   it("shows one dot on the bar and names the view in the menu", async () => {
     useHandoffStore.setState({ received: [offer("a"), offer("b")] });
-    setSettings({ railViewsOff: ["shared"] });
+    setSettings({ railViewsOff: ["shared", "terminals"] });
     await mount();
     expect(icons()).not.toContain("shared");
     const dot = host!.querySelector<HTMLElement>("[data-hidden-waiting]")!;
@@ -255,7 +255,7 @@ describe("keyboard focus over the icons", () => {
   const key = (el: Element, k: string) => act(async () => void el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })));
 
   it("moves focus over the shown view icons only, in both directions, skipping hidden icons and launchers", async () => {
-    setSettings({ railViewsOff: ["shared"] });
+    setSettings({ railViewsOff: ["shared", "terminals"] });
     await mount();
     btn("sessions").focus();
     await key(btn("sessions"), "ArrowDown");
@@ -283,7 +283,7 @@ describe("the left pane folded away", () => {
   });
 
   it("still keeps the last icon, saying so, and does not turn it off", async () => {
-    setSettings({ railViewsOff: ["shared", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"] });
+    setSettings({ railViewsOff: ["shared", "terminals", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"] });
     await mount({ shown: false });
     expect(icons()).toEqual(["sessions"]);
     await rightClick(bar());

@@ -89,11 +89,13 @@ describe("activity bar swipe", () => {
     expect(useLeftRail.getState().view).toBe("workitems");
   });
 
-  it("steps Sessions, Shared, Assistants in that order", async () => {
+  it("steps Sessions, Shared, Terminals, Assistants in that order", async () => {
     useLeftRail.setState({ view: "sessions" });
     await mount();
     await swipe(bar(), true);
     expect(useLeftRail.getState().view).toBe("shared");
+    await swipe(bar(), true);
+    expect(useLeftRail.getState().view).toBe("terminals");
     await swipe(bar(), true);
     expect(useLeftRail.getState().view).toBe("assistant");
   });

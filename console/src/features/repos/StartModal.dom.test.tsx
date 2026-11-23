@@ -32,6 +32,7 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { StartModal } = await import("./StartModal.tsx");
 const { useReposStore } = await import("./store.ts");
+const { useSessionsStore } = await import("../sessions/store.ts");
 const { useUIStateStore } = await import("../../core/store/uiState.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 
@@ -183,6 +184,33 @@ describe("StartModal — SSM host card subtitle", () => {
     const opts = [...document.querySelectorAll("option")].map((o) => o.textContent || "");
     const withAcct = opts.filter((tx) => tx.includes(t("start.ssm_acct", { id: "123456789012" })));
     expect(withAcct.length).toBe(9);
+  });
+});
+
+// The Terminal view's "SSM session" opens the hub on the host picker instead of the places list.
+describe("StartModal — opened on the SSM stage", () => {
+  const profile = { id: "p1", label: "prod", accountId: "123456789012" };
+  afterEach(() => useSessionsStore.setState({ startStage: null }));
+
+  it("starts on the host picker when the Terminal view asked for it", async () => {
+    unmount();
+    apiGet.mockImplementation(async (path: string) => (path === "api/ssm/profiles" ? [profile] : path === "api/ssm/hosts" ? [] : []));
+    useSessionsStore.getState().openStartAt("ssm");
+    await mount();
+    await act(async () => {});
+    // The host picker is on screen, and the places list is not.
+    expect(document.body.textContent).toContain(t("start.ssm_host_label"));
+    expect(rows().some((b) => b.textContent?.includes(t("start.ssm_title")))).toBe(false);
+  });
+
+  it("starts on the places list for every other way in", async () => {
+    unmount();
+    apiGet.mockImplementation(async (path: string) => (path === "api/ssm/profiles" ? [profile] : []));
+    useSessionsStore.getState().openStart();
+    await mount();
+    await act(async () => {});
+    expect(rowFor(t("start.ssm_title"))).toBeTruthy();
+    expect(document.body.textContent).not.toContain(t("start.ssm_host_label"));
   });
 });
 

@@ -29,6 +29,9 @@ export function sessionFolder(s: Session): string {
   return dir ? dir.split("/").filter(Boolean).pop() || "" : "";
 }
 
+/** A shell or an SSM login: the Terminal view's (ADR 0142 decision 10), never the Sessions view's. */
+export const isTerminalSession = (s: Session): boolean => s.kind === "shell" || s.kind === "ssm";
+
 // groupedRepos partitions working copies into PROJECT GROUPS: each group is a base
 // clone followed by its worktrees (parent === base.name), e.g. [base, wt-a, wt-b].
 // Bases sort by name; worktrees by CREATION TIME (oldest first) within their base —
@@ -376,10 +379,12 @@ export function isUnattendedOnlyFolder(sessions: Session[], repo: Repo | undefin
 }
 
 /** Sessions of a subtree in the order the rail draws them: the node's own sessions, then its
- *  nested copies. Unattended sessions are the Auto-run and Schedules views', not the rail's. */
-export function railNodeSessions(n: RepoTreeNode, sessions: Session[], byName: Map<string, Session>): Session[] {
-  const out = sessionsInFolder(sessions, n.repo.name).filter((s) => !sessionAutoKind(s, byName));
-  for (const c of n.children) out.push(...railNodeSessions(c, sessions, byName));
+ *  nested copies. Unattended sessions are the Auto-run and Schedules views', not the rail's, and
+ *  shells and SSM logins the Terminal view's. `terminals` keeps them, for the one caller that
+ *  uses the order as a position (the swipe rotation steps on from a shell by where it sat). */
+export function railNodeSessions(n: RepoTreeNode, sessions: Session[], byName: Map<string, Session>, terminals = false): Session[] {
+  const out = sessionsInFolder(sessions, n.repo.name).filter((s) => !sessionAutoKind(s, byName) && (terminals || !isTerminalSession(s)));
+  for (const c of n.children) out.push(...railNodeSessions(c, sessions, byName, terminals));
   return out;
 }
 
@@ -528,11 +533,12 @@ function pruneForest(
 // orphanSessions returns sessions that belong to no known working copy — a folder
 // that isn't in the repo list (e.g. a shell in home, or a session whose repo was
 // removed). These land in the rail's "other sessions" catch-all (pj.other_sessions).
-export function orphanSessions(sessions: Session[], repos: Repo[]): Session[] {
+export function orphanSessions(sessions: Session[], repos: Repo[], terminals = false): Session[] {
   const names = new Set(repos.map((r) => r.name));
   return withoutUnattended(sessions)
     .filter((s) => {
       if (s.space) return false; // the Spaces section's (spaceGroups)
+      if (!terminals && isTerminalSession(s)) return false; // the Terminal view's
       const f = sessionFolder(s);
       return !f || !names.has(f);
     })
@@ -548,10 +554,10 @@ export interface SpaceGroup {
 // spaceGroups groups the sessions that run in a space (ADR 0142 decision 9) by space. A space
 // whose newest session is newer comes first, so the space being worked in stays at the top;
 // the folder breaks ties. Unattended runs are left to their own views, as orphanSessions does.
-export function spaceGroups(sessions: Session[]): SpaceGroup[] {
+export function spaceGroups(sessions: Session[], terminals = false): SpaceGroup[] {
   const by = new Map<string, Session[]>();
   for (const s of withoutUnattended(sessions)) {
-    if (!s.space) continue;
+    if (!s.space || (!terminals && isTerminalSession(s))) continue; // a space's shells are the Terminal view's
     const list = by.get(s.space);
     if (list) list.push(s);
     else by.set(s.space, [s]);
@@ -563,4 +569,102 @@ export function spaceGroups(sessions: Session[]): SpaceGroup[] {
       sessions: list.sort((a, b) => compareText(b.createdAt || "", a.createdAt || "")),
     }))
     .sort((a, b) => compareText(newest(b), newest(a)) || compareText(a.folder, b.folder));
+}
+
+/** The Sessions view's rows: what is neither an unattended run nor a shell / SSM login. */
+export function withoutTerminals(sessions: Session[]): Session[] {
+  return sessions.filter((s) => !isTerminalSession(s));
+}
+
+/** Where a shell was opened. */
+export type ShellPlace = { kind: "home" } | { kind: "repo"; folder: string } | { kind: "space"; folder: string };
+
+/** The key of a place's group in the Terminal view; the reveal request names the same key. */
+export const shellPlaceKey = (p: ShellPlace): string => (p.kind === "home" ? "shell:home" : `shell:${p.kind}:${p.folder}`);
+
+/** The shells opened in one place, newest first. */
+export interface ShellGroup {
+  key: string;
+  place: ShellPlace;
+  sessions: Session[];
+}
+
+/** The key of a machine's group in the Terminal view: account, region and instance id. */
+export const ssmMachineKey = (t: { accountId?: string; region?: string; target?: string } | undefined): string =>
+  t?.target ? `ssm:${t.accountId || ""}|${t.region || ""}|${t.target}` : "ssm:?";
+
+/** The SSM logins to one machine, newest first. A different profile or run-as document is the
+ *  row's detail, never a group of its own. */
+export interface SsmGroup {
+  key: string;
+  /** Instance id; "" for a session whose list row names no target (an older Agent, or a list the
+   *  Control Plane served while the Workspace was stopped). */
+  target: string;
+  region: string;
+  accountId: string;
+  sessions: Session[];
+}
+
+export interface TerminalGroups {
+  shells: ShellGroup[];
+  ssm: SsmGroup[];
+}
+
+const newestFirst = (a: Session, b: Session) => compareText(b.createdAt || "", a.createdAt || "");
+
+// terminalGroups files every shell by the place it was opened in and every SSM login by machine
+// (ADR 0142 decision 10). The place is decided like the Sessions view decides it, so the two never
+// disagree: a space by the Agent's `space`, a repository when the folder is a listed working copy,
+// and everything else is home — a shell in a directory that is neither (a project folder under ~,
+// the database tab's `af-db connect`, a repository since removed) belongs to no place a member
+// can start one in. Home comes first, then repositories by name, then the space with the newest
+// shell first.
+export function terminalGroups(sessions: Session[], repos: Repo[]): TerminalGroups {
+  const names = new Set(repos.map((r) => r.name));
+  const placeOf = (s: Session): ShellPlace => {
+    if (s.space) return { kind: "space", folder: s.space };
+    const f = sessionFolder(s);
+    return f && names.has(f) ? { kind: "repo", folder: f } : { kind: "home" };
+  };
+  const shellBy = new Map<string, ShellGroup>();
+  const ssmBy = new Map<string, SsmGroup>();
+  for (const s of sessions) {
+    if (s.kind === "shell") {
+      const place = placeOf(s);
+      const key = shellPlaceKey(place);
+      const g = shellBy.get(key);
+      if (g) g.sessions.push(s);
+      else shellBy.set(key, { key, place, sessions: [s] });
+    } else if (s.kind === "ssm") {
+      const key = ssmMachineKey(s.ssm);
+      const g = ssmBy.get(key);
+      if (g) g.sessions.push(s);
+      else ssmBy.set(key, { key, target: s.ssm?.target || "", region: s.ssm?.region || "", accountId: s.ssm?.accountId || "", sessions: [s] });
+    }
+  }
+  const rank = (g: ShellGroup) => (g.place.kind === "home" ? 0 : g.place.kind === "repo" ? 1 : 2);
+  const shells = [...shellBy.values()];
+  for (const g of shells) g.sessions.sort(newestFirst);
+  shells.sort((a, b) => {
+    if (rank(a) !== rank(b)) return rank(a) - rank(b);
+    if (a.place.kind === "space" && b.place.kind === "space")
+      return compareText(b.sessions[0]?.createdAt || "", a.sessions[0]?.createdAt || "") || compareText(a.key, b.key);
+    return compareText(a.key, b.key);
+  });
+  const ssm = [...ssmBy.values()];
+  for (const g of ssm) g.sessions.sort(newestFirst);
+  // The machine with the newest login first, so the host being worked on stays at the top; the
+  // key breaks ties, and a group with no target (nothing to say about it) goes last.
+  ssm.sort((a, b) => Number(!a.target) - Number(!b.target) || compareText(b.sessions[0]?.createdAt || "", a.sessions[0]?.createdAt || "") || compareText(a.key, b.key));
+  return { shells, ssm };
+}
+
+/** The shell and SSM sessions that run in one working-copy folder (the Sessions view's count chip). */
+export function terminalsInFolder(sessions: Session[], folder: string): Session[] {
+  return sessionsInFolder(sessions, folder).filter(isTerminalSession);
+}
+
+/** The shell and SSM sessions that run in one space. */
+export function terminalsInSpace(sessions: Session[], folder: string): Session[] {
+  return sessions.filter((s) => isTerminalSession(s) && s.space === folder);
 }

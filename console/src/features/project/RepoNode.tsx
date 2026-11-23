@@ -21,7 +21,7 @@ import { useRepoReveal } from "../repos/store.ts";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Session } from "../../types/session.ts";
 import { displayName } from "../../lib/sessionview.ts";
-import { childNodes, sessionsInFolder, withoutUnattended } from "../../lib/project.ts";
+import { childNodes, sessionsInFolder, shellPlaceKey, terminalsInFolder, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
@@ -29,6 +29,7 @@ import { useRefIndex } from "../sessions/useRefIndex.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
 import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
+import { TerminalChip } from "../terminals/TerminalChip.tsx";
 
 /** Deepest level that still adds indentation; below it nodes stay at this inset. */
 const MAX_INDENT_DEPTH = 3;
@@ -51,10 +52,12 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   const sessions = useSessionsStore((s) => s.sessions);
   const nq = normQuery(useProjectFilter((f) => f.q));
   const refs = useRefIndex();
-  // What the tree draws: a session an auto-run started is the Auto-run view's, so it is in no
-  // count, preview or match here (stop / delete read the full list through `detached`).
-  const shown = useMemo(() => withoutUnattended(sessions), [sessions]);
+  // What the tree draws: a session an auto-run started is the Auto-run view's, and a shell or an
+  // SSM login the Terminal view's, so neither is in any count, preview or match here (stop /
+  // delete read the full list through `detached`). The shells of this copy show as a count chip.
+  const shown = useMemo(() => withoutTerminals(withoutUnattended(sessions)), [sessions]);
   const mine = sessionsInFolder(shown, r.name);
+  const termCount = terminalsInFolder(sessions, r.name).length;
   const below = descendantFolders(n);
   // Empty repos (no sessions anywhere under them, worktrees included) default
   // folded — an unused clone shouldn't take up rail space. The default is live
@@ -169,6 +172,7 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
             node={n}
             onToggle={openState.toggle}
             sess={{ alive: sessAlive, total: sessTotal }}
+            termChip={<TerminalChip count={termCount} groupKey={shellPlaceKey({ kind: "repo", folder: r.name })} />}
             unread={unread}
             peek={peek}
             alsoRunning={alsoRunning}

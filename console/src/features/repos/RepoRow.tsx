@@ -7,7 +7,7 @@
 // just highlight in place (no reordering).
 import { createPortal } from "react-dom";
 import { Suspense, lazy, useLayoutEffect, useRef, useState } from "react";
-import type { MouseEvent as RMouseEvent } from "react";
+import type { MouseEvent as RMouseEvent, ReactNode } from "react";
 import { kindClasses } from "../../lib/sessionkind.ts";
 import { stateClass, displayName, stateInfo } from "../../lib/sessionview.ts";
 import type { Session } from "../../types/session.ts";
@@ -67,6 +67,9 @@ export interface RepoRowProps {
    * muted count of stopped ones. The caller decides the scope (own folder while
    * the node is open; descendants folded in while collapsed). */
   sess?: { alive: number; total: number };
+  /** The count chip of the shells opened in this working copy (features/terminals/TerminalChip);
+   * the Sessions view lists none of them. */
+  termChip?: ReactNode;
   /** At least one session this row currently HIDES carries an unseen notification. Only a
    * folded node passes it: while the sessions are on screen they wear their own dot. */
   unread?: boolean;
@@ -141,7 +144,7 @@ function RepoPeek({ s }: { s: Session }) {
 
 const NO_ACCESS: LaunchAccess = { kinds: null, noRoute: false, allOff: false };
 
-export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claudeExpired = false, running = true, active, selected, sess, unread, peek, alsoRunning, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claudeExpired = false, running = true, active, selected, sess, termChip, unread, peek, alsoRunning, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onGitflowInit, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0, onOpenArchived, onStopSessions, aliveCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -415,6 +418,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
             <span className="unread-dot" role="img"
               aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />
           )}
+          {termChip}
           {/* Session tally: alive count (green) wins; otherwise stopped count in
               muted — so a folded project still shows what's running inside. */}
           {sess && sess.alive > 0 && (

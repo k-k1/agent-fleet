@@ -19,6 +19,19 @@ import type { SessionKind } from "../agents/kindTable.ts";
 // shell/ssm emit nothing (their liveness is shown from `alive`).
 export type SessionState = "" | "working" | "idle" | "question" | "plan" | "permission";
 
+/** Which machine an SSM session logs in to, and how. A title is no key (it can be renamed). */
+export interface SessionSSMTarget {
+  /** EC2 instance id (i-...). */
+  target: string;
+  /** Instance region; absent = the profile's default. */
+  region?: string;
+  /** SSO account id of the profile; absent for a profile that carries none. */
+  accountId?: string;
+  profile?: string;
+  /** Run-as SSM document; absent = the default shell. */
+  document?: string;
+}
+
 // A session as returned by GET /api/sessions and used across the left pane, the
 // terminal header, and the chat mirror. Optional fields may be absent per kind.
 export interface Session {
@@ -49,6 +62,10 @@ export interface Session {
    *  space. Decided by the Agent from the directory's root, so a space never passes for the
    *  repository that shares its folder name. */
   space?: string;
+  /** The non-secret target of an SSM session (the Agent's session.SSMTarget); absent for every
+   *  other kind, and for a list the Control Plane served from its stopped-workspace mirror. The
+   *  Terminal view groups SSM sessions by machine from it (ADR 0142 decision 10). */
+  ssm?: SessionSSMTarget;
   workingCopyId?: string;
   path?: string; // absolute working dir
   dir?: string; // working dir shown in the row tooltip

@@ -373,6 +373,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "rail.lock.no_scheduler": "no scheduler here",
   "rail.hidden_waiting": "Waiting for you, icon off: {names}",
   "rail.view.sessions": "Sessions",
+  "rail.view.terminals": "Terminals",
   "rail.badge.waiting_one": "{count} session waiting for your answer",
   "rail.badge.waiting_other": "{count} sessions waiting for your answer",
   "rail.badge.news_one": "{count} new update",

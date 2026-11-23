@@ -24,6 +24,9 @@ import type { Session } from "../../types/session.ts";
  *  section. Fold state and the
  *  rail's search box are ignored — a folded node still holds its place.
  *
+ *  Shells and SSM logins are in it although the Sessions view no longer lists them: this order is
+ *  a position for the swipe to step on from, and a shell pane has to keep the place it always had.
+ *
  *  A working set scopes it the way the rail does (ProjectTree / OtherSessionsSection): a repo
  *  root is in or out by repoInSet with its whole subtree, and only the repo-less sessions go
  *  through sessionInSet. Filtering every session by sessionInSet instead disagrees with the
@@ -34,9 +37,9 @@ export function railOrder(sessions: Session[], repos: Repo[], set: WorkingSet | 
   const byName = new Map(sessions.map((s) => [s.name, s]));
   repoTree(repos, sessions)
     .filter((t) => !set || repoInSet(set, t.repo))
-    .forEach((t) => out.push(...railNodeSessions(t, sessions, byName)));
-  for (const g of spaceGroups(sessions)) out.push(...g.sessions.filter((s) => !set || sessionInSet(set, s)));
-  out.push(...orphanSessions(sessions, repos).filter((s) => !set || sessionInSet(set, s)));
+    .forEach((t) => out.push(...railNodeSessions(t, sessions, byName, true)));
+  for (const g of spaceGroups(sessions, true)) out.push(...g.sessions.filter((s) => !set || sessionInSet(set, s)));
+  out.push(...orphanSessions(sessions, repos, true).filter((s) => !set || sessionInSet(set, s)));
   return out;
 }
 

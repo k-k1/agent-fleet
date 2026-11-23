@@ -55,6 +55,7 @@ interface ViewDef {
 const VIEWS: ViewDef[] = [
   { id: "sessions", icon: "repo", mark: "sparkle", label: "rail.view.sessions" },
   { id: "shared", icon: "broadcast", mark: "sparkle", label: "share.shared_sessions" },
+  { id: "terminals", icon: "terminal", label: "rail.view.terminals" },
   { id: "assistant", icon: "comment-discussion", label: "asst.section_title" },
   { id: "workitems", icon: "issues", label: "wi.title" },
   { id: "memo", icon: "note", label: "memo.title" },

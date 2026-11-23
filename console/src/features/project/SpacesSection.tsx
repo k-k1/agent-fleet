@@ -3,29 +3,28 @@
 // Other sessions. Which sessions belong here is the Agent's answer (Session.space, decided by
 // the directory's root), never the folder name, so a space that shares a repository's name
 // stays out of the repository tree.
-import { memo, useEffect, useId, useMemo } from "react";
+import { memo, useId } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { SessionRow } from "../sessions/SessionRow.tsx";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
-import { spaceGroups } from "../../lib/project.ts";
+import { shellPlaceKey, spaceGroups, terminalsInSpace } from "../../lib/project.ts";
 import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useRefIndex } from "../sessions/useRefIndex.ts";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
-import { failuresFor, spaceLabel, spacesFor, spacesOwner, spacesRetryDelay, useSpacesStore } from "../spaces/store.ts";
+import { spaceLabel } from "../spaces/store.ts";
+import { useSpaceNames } from "../spaces/useSpaceNames.ts";
+import { TerminalChip } from "../terminals/TerminalChip.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 export const SpacesSection = memo(function SpacesSection() {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
-  // Only a list asked for this workspace names anything: until the new owner's answer arrives
-  // after a tenant or member switch, the folders stand in.
-  const owner = spacesOwner();
-  const spaces = useSpacesStore((s) => spacesFor(s, owner));
+  const spaces = useSpaceNames(sessions);
   const ctx = useRepoRailContext();
   const actions = useSessionActions();
   const nq = normQuery(useProjectFilter((f) => f.q));
@@ -45,25 +44,6 @@ export const SpacesSection = memo(function SpacesSection() {
       };
     })
     .filter((g) => g.sessions.length > 0);
-
-  // The names come from GET /api/spaces. Ask when a session names a space the list does not
-  // know yet (made since the last answer) or the list is another workspace's; after a transient
-  // failure ask again, waiting longer each time. Until then the folder stands in.
-  const hasSpaceSessions = sessions.some((s) => !!s.space);
-  const unknown = useMemo(() => {
-    const known = new Set(spaces.map((s) => s.folder));
-    const missing = new Set<string>();
-    for (const s of sessions) if (s.space && !known.has(s.space)) missing.add(s.space);
-    return [...missing].sort().join("\n");
-  }, [sessions, spaces]);
-  const storeOwner = useSpacesStore((s) => s.owner);
-  const failures = useSpacesStore((s) => failuresFor(s, owner));
-  const want = hasSpaceSessions && (unknown !== "" || storeOwner !== owner);
-  useEffect(() => {
-    if (!want) return;
-    const t = setTimeout(() => void useSpacesStore.getState().refresh(), spacesRetryDelay(failures));
-    return () => clearTimeout(t);
-  }, [want, unknown, owner, storeOwner, failures]);
 
   const idBase = useId();
   const unreadSessions = useUnreadSessions();
@@ -100,6 +80,7 @@ export const SpacesSection = memo(function SpacesSection() {
               >
                 <Icon name="folder" />
                 <span className="space-group-name">{g.label}</span>
+                <TerminalChip count={terminalsInSpace(sessions, g.folder).length} groupKey={shellPlaceKey({ kind: "space", folder: g.folder })} />
               </div>
             </div>
             <ul id={`${idBase}-${g.folder}`} className="sess-list proj-sub-list" role="group" aria-label={g.label}>
