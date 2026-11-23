@@ -1435,8 +1435,9 @@ func earlierTS(a, b string) string {
 }
 
 // memoPRWaits is the deliveries the pending messages of rows wait for, when every one of them
-// waits on PR snapshots alone: no message is eligible or failed, and every prerequisite that is
-// not satisfied waits with reason pr. ok is false otherwise, and nothing would be gained by a read.
+// waits on reads of a running Agent alone: no message is eligible or failed, and every
+// prerequisite that is not satisfied waits with reason pr (its PR snapshot) or answer (its last
+// answer, issue #4876). ok is false otherwise, and nothing would be gained by a read.
 //
 // since is, per delivery, when the longest-waiting of those messages began to wait.
 func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []store.MemoDelivery, since map[string]string, ok bool, err error) {
@@ -1466,7 +1467,7 @@ func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []sto
 			if it.State == memoafter.Satisfied {
 				continue
 			}
-			if it.Reason != memoafter.WhyPR || it.Delivery == "" {
+			if (it.Reason != memoafter.WhyPR && it.Reason != memoafter.WhyAnswer) || it.Delivery == "" {
 				return nil, nil, false, nil
 			}
 			since[it.Delivery] = earlierTS(since[it.Delivery], memoWaitStart(m))
@@ -1485,7 +1486,7 @@ func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []sto
 }
 
 // prWake wakes the stopped workspace of an open queue whose pending messages all wait on PR
-// snapshots, with a free slot, so that the next settle pass reads them. It reports whether a wake
+// snapshots or last answers (memoPRWaits), with a free slot, so that the next settle pass reads them. It reports whether a wake
 // was recorded. The count is memo_pr_wake's: no delivery row is written, so neither the queue's
 // fires of the day nor the settle wakes see it.
 func (r *memoQueueRunner) prWake(ctx context.Context, views map[string]*memoMemberView, w *memoQueueWork, now time.Time) bool {

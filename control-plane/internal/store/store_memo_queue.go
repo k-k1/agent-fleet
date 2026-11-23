@@ -133,6 +133,7 @@ type MemoQueueStore interface {
 	MemoTx(ctx context.Context, membershipID string, f func(MemoTxOps) error) error
 	MemoDeliveryStore
 	MemoPRSnapshotStore
+	MemoAnswerStore
 	MemoTidyStore
 }
 

@@ -6,7 +6,8 @@
 // SQL statistics mirror): the prerequisite was delivered by a delivery (not sent by hand) that
 // closed as clean and was not retired as overdue, and the PR snapshot of its session, read from
 // the running Agent after the close, is final with every PR merged, or with no PR when the first
-// turn is recorded and was not bad. A first turn that is never recorded (a kind whose ledger
+// turn is recorded and was not bad and the session's last answer starts with Done: (issue #4876).
+// A first turn that is never recorded (a kind whose ledger
 // records none, a void ledger, a session gone before the collection window ended) cannot show a
 // success, so only a merged PR satisfies then. A dependent is never fired over a prerequisite
 // that went wrong.
@@ -62,6 +63,12 @@ const (
 	WhyPRClosed    = "pr_closed"    // a PR of its session was closed unmerged
 	WhyNoPR        = "no_pr"        // no first turn was recorded, and its session opened no PR
 	WhySessionGone = "session_gone" // the Agent no longer had its session before its PRs were read
+
+	// WhyAnswer waits: the run opened no PR, and its session's last answer is not read yet.
+	WhyAnswer = "answer"
+	// WhyNotDone fails: the run opened no PR, and its last answer does not start with Done:, or
+	// could not be read before the window ended.
+	WhyNotDone = "not_done"
 )
 
 // PR is one PR of a delivery's snapshot, as memo_delivery.pr_snapshot keeps it and as the list
@@ -120,6 +127,9 @@ type Item struct {
 	// PRs is the snapshot behind a reason of pr or pr_closed: the PRs it waits for, or the one
 	// closed unmerged among them. Empty while no read answered.
 	PRs []PR `json:"prs,omitempty"`
+	// Answer is the first line of the last answer behind a reason of not_done, "" when none could
+	// be read.
+	Answer string `json:"answer,omitempty"`
 	// Delivery is the prerequisite's delivery, for the dispatcher's wakes. Never on the wire.
 	Delivery string `json:"-"`
 }
@@ -170,8 +180,7 @@ func Encode(ids []string) string {
 	return string(b)
 }
 
-// OrderLess is the queue's order, (created_at, position, id), the order the claim sorts by: a
-// prerequisite comes before its dependent in it, so no cycle can form.
+// OrderLess is the queue's order, (created_at, position, id), the order the claim sorts by.
 func OrderLess(a, b store.Memo) bool {
 	if a.CreatedAt != b.CreatedAt {
 		return a.CreatedAt < b.CreatedAt
@@ -191,9 +200,11 @@ func invalid(format string, a ...any) *Invalid { return &Invalid{fmt.Sprintf(for
 
 // Resolve turns the `after` a write gave into the column it stores. An entry is a message id of
 // the same queue, or a reference key (owner/repo#12, PROJ-12) that resolves to the newest message
-// of the queue holding it that is not superseded. Every prerequisite must come before self in the
-// queue's order and must not be superseded; one named twice is kept once. rows is self's bucket
-// as it is now (self itself may be among them, or not yet inserted). An empty list clears.
+// of the queue holding it that is not superseded. A prerequisite may come before or after self in
+// the queue's order (a dependent whose prerequisite comes later simply waits for it), must not be
+// superseded, and must not wait for self, directly or through its own prerequisites; one named
+// twice is kept once. rows is self's bucket as it is now (self itself may be among them, or not
+// yet inserted). An empty list clears.
 func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (string, *Invalid) {
 	if len(in) == 0 {
 		return "", nil
@@ -238,18 +249,15 @@ func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (str
 		if p.State == store.MemoStateSuperseded {
 			return "", invalid("message %s was replaced by a tidy run", p.ID)
 		}
-		if !OrderLess(p, self) {
-			return "", invalid("message %s comes after this one in the queue: a prerequisite must come before", p.ID)
-		}
 		if seen[p.ID] {
 			continue
 		}
 		seen[p.ID] = true
 		out = append(out, p.ID)
 	}
-	// The order rule keeps the graph acyclic as long as created_at and position never move a
-	// prerequisite behind its dependent; a reorder can, so a cycle is refused outright.
-	if reaches(byID, out, self.ID) {
+	// Every write of a list goes through here inside the member's MemoTx, so refusing a cycle at
+	// the write keeps the graph acyclic: two messages waiting for each other would never run.
+	if self.ID != "" && reaches(byID, out, self.ID) {
 		return "", invalid("this would make two messages wait for each other")
 	}
 	return Encode(out), nil
@@ -383,8 +391,11 @@ func prereq(m store.Memo, id string, lk Lookup) (Item, error) {
 		}
 		it.Delivery = p.DeliveryID
 		it.State, it.Reason = DeliveryState(d, ok, lk.Now)
-		if it.Reason == WhyPR || it.Reason == WhyPRClosed {
+		switch it.Reason {
+		case WhyPR, WhyPRClosed:
 			it.PRs = ParseSnapshot(d.PRSnapshot)
+		case WhyNotDone:
+			it.Answer = d.AnswerHead
 		}
 	default:
 		// A plain note: the queue's settings were removed, or it was moved out and back.
@@ -423,14 +434,27 @@ func DeliveryState(d store.MemoDelivery, found bool, now time.Time) (state, reas
 		return Failed, WhyPRClosed
 	case store.PRStateMerged:
 	case store.PRStateNone:
+		closed, err := time.Parse("2006-01-02T15:04:05.000000Z", d.ClosedAt)
+		late := err == nil && now.Sub(closed) > ClosedTurnWindow
 		if d.TurnEndedAt == "" {
 			// No PR cannot stand in for a first turn: it satisfies only once the turn is recorded,
 			// and never when the window closes without one.
-			closed, err := time.Parse("2006-01-02T15:04:05.000000Z", d.ClosedAt)
-			if err == nil && now.Sub(closed) > ClosedTurnWindow {
+			if late {
 				return Failed, WhyNoPR
 			}
 			return Waiting, WhyFirstTurn
+		}
+		// A run that stopped part way ends clean too, often without a PR: only its last answer
+		// says it finished. One never read is not taken for done.
+		switch d.AnswerClass {
+		case store.AnswerDone:
+		case "":
+			if late {
+				return Failed, WhyNotDone
+			}
+			return Waiting, WhyAnswer
+		default:
+			return Failed, WhyNotDone
 		}
 	default:
 		// Not read yet, or a PR is open or of unknown state.

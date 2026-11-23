@@ -164,6 +164,12 @@ type memoDeliveryDTO struct {
 	Retire string `json:"retire"`
 	// FirstTurn is how the first turn of the delivery's session ended, null until it did.
 	FirstTurn *memoFirstTurnDTO `json:"firstTurn"`
+	// Answer is the first line of the last answer of the delivery's root session, read after the
+	// close, and AnswerClass how it reads: done, partial, other, or unknown when it could not be
+	// read (also once the window to read it ended). Both absent while it is not read yet, and for a
+	// delivery that started no session.
+	Answer      string `json:"answer,omitempty"`
+	AnswerClass string `json:"answerClass,omitempty"`
 	// Defer is the hand-back the delivery's session asked for (defer_queue_item), absent for
 	// none. ReturnBlocked names the messages that stayed where they were because another message
 	// of the queue holds their reference, and the message that does. ReturnedAt is when a person
@@ -192,6 +198,11 @@ type memoFirstTurnDTO struct {
 }
 
 func memoDeliveryToDTO(d store.MemoDelivery) memoDeliveryDTO {
+	return memoDeliveryToDTOAt(d, time.Now())
+}
+
+// memoDeliveryToDTOAt is memoDeliveryToDTO with the clock the answer's window is read against.
+func memoDeliveryToDTOAt(d store.MemoDelivery, now time.Time) memoDeliveryDTO {
 	ids := d.MessageIDs
 	if ids == nil {
 		ids = []string{}
@@ -217,6 +228,13 @@ func memoDeliveryToDTO(d store.MemoDelivery) memoDeliveryDTO {
 	}
 	if d.TurnEndedAt != "" {
 		out.FirstTurn = &memoFirstTurnDTO{Outcome: d.TurnOutcome, Ms: d.TurnMs, EndedAt: d.TurnEndedAt}
+	}
+	out.Answer, out.AnswerClass = d.AnswerHead, d.AnswerClass
+	if d.AnswerClass == "" && d.State == store.DeliveryClosed && d.Session != "" {
+		// Nothing reads it after the window: it will never be known.
+		if closed, err := time.Parse(time.RFC3339Nano, d.ClosedAt); err == nil && now.Sub(closed) > memoAnswerWindow {
+			out.AnswerClass = store.AnswerUnknown
+		}
 	}
 	return out
 }
@@ -727,6 +745,9 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 	pctx, pcancel := context.WithTimeout(tick, memoPRSnapshotBudget)
 	r.collectPRSnapshots(pctx, views, now)
 	pcancel()
+	actx, acancel := context.WithTimeout(tick, memoAnswerBudget)
+	r.collectAnswers(actx, views, now)
+	acancel()
 	return sends
 }
 
@@ -1712,6 +1733,114 @@ func (r *memoQueueRunner) collectClosedTurns(ctx context.Context, views map[stri
 				log.Printf("memo queue: delivery %s: record the first turn: %v", d.ID, err)
 			}
 		}
+	}
+}
+
+// The answer pass (issue #4876) reads the first line of the last answer of a closed delivery's
+// root session from the Agent's transcript, once, as soon after the close as the workspace runs.
+const (
+	// memoAnswerBudget bounds the pass, apart from the others: a dependent of a run without a PR
+	// waits on it.
+	memoAnswerBudget = 15 * time.Second
+	// memoAnswerWindow is how long after its close a delivery is still read for its answer, the
+	// window memoafter.DeliveryState waits for it.
+	memoAnswerWindow = memoafter.ClosedTurnWindow
+	// memoAnswerEvery is the least time between two reads of one delivery's answer.
+	memoAnswerEvery = 5 * time.Minute
+	// memoAnswersPerTick bounds the reads a tick makes, memoAnswersListed the rows it lists.
+	memoAnswersPerTick = 20
+	memoAnswersListed  = 200
+	// memoAnswerTail is the transcript lines asked for: the Agent's window takes at least 50.
+	memoAnswerTail = 50
+	// memoAnswerReplyMax bounds the reply read: a tail of tool output can be large.
+	memoAnswerReplyMax = 8 << 20
+)
+
+// memoAnswerReply is the part of GET /sessions/{name}/messages the answer is read from.
+type memoAnswerReply struct {
+	Messages *[]memoafter.Turn `json:"messages"`
+	Status   string            `json:"status"`
+	Alive    bool              `json:"alive"`
+}
+
+// collectAnswers reads the answers that are due. Only a running workspace's Agent is asked: a
+// read that cannot be made is not stamped, so it is made as soon as the workspace runs (a
+// dependent's wait wakes it, prWake).
+func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
+	if ctx.Err() != nil {
+		return
+	}
+	ds, err := r.mgr.store.ListAnswersDue(ctx, store.DeliveryTS(now.Add(-memoAnswerWindow)),
+		store.DeliveryTS(now.Add(-memoAnswerEvery)), memoAnswersListed)
+	if err != nil {
+		log.Printf("memo queue: list answers due: %v", err)
+		return
+	}
+	read := 0
+	for _, d := range ds {
+		if ctx.Err() != nil || read >= memoAnswersPerTick {
+			return
+		}
+		v := r.view(ctx, views, d.MembershipID)
+		if v == nil || !v.liveOK {
+			continue
+		}
+		sctx, cancel := memoProgressCtx(ctx)
+		err := r.mgr.store.MarkAnswerTried(sctx, d.ID, store.DeliveryTS(now))
+		cancel()
+		if err != nil {
+			log.Printf("memo queue: delivery %s: stamp the answer tried: %v", d.ID, err)
+		}
+		read++
+		r.readAnswer(ctx, v.res, d)
+	}
+}
+
+// readAnswer asks the Agent for the tail of the delivery's root session and keeps its last answer.
+// A session the Agent no longer has, a kind without a transcript, or a tail with no answer in it
+// is kept as unknown. A session that is working again (a person took it over) is read later: what
+// it says mid-turn is not what the run ended with. Anything else decides nothing.
+func (r *memoQueueRunner) readAnswer(ctx context.Context, res *resolved, d store.MemoDelivery) {
+	cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
+	defer cancel()
+	path := "/sessions/" + url.PathEscape(d.Session) + "/messages?since=0&tail=1&limit=" + fmt.Sprint(memoAnswerTail)
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, res.rt.Endpoint()+path, nil)
+	if err != nil {
+		return
+	}
+	if res.rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+res.rt.Token())
+	}
+	resp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		return
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, memoAnswerReplyMax))
+	if err != nil {
+		return
+	}
+	head, class := "", ""
+	switch {
+	case resp.StatusCode == http.StatusOK:
+		var reply memoAnswerReply
+		if json.Unmarshal(body, &reply) != nil || reply.Messages == nil {
+			return // a cut or foreign answer decides nothing
+		}
+		if reply.Alive && reply.Status != stateIdle {
+			return
+		}
+		head, class = memoafter.ClassifyAnswer(memoafter.LastAnswer(*reply.Messages))
+	case resp.StatusCode == http.StatusNotFound && agentErrCode(body) == "not_found",
+		resp.StatusCode == http.StatusBadRequest && agentErrCode(body) == "unsupported_kind":
+		class = store.AnswerUnknown
+	default:
+		return
+	}
+	wctx, wcancel := memoProgressCtx(ctx)
+	defer wcancel()
+	if _, err := r.mgr.store.RecordAnswer(wctx, d.ID, head, class); err != nil {
+		log.Printf("memo queue: delivery %s: keep the answer: %v", d.ID, err)
 	}
 }
 
