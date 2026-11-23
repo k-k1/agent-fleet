@@ -58,7 +58,7 @@ categories:
 
 - `version: 1` is required. A file of another version is refused, not guessed at
 - Each key under `categories` is a category name, exactly as the Memo queue shows it. Renaming the category in the Console makes it match another entry, or none
-- A key the file leaves out is not compared: your value stays
+- A key the file leaves out is not compared: your value stays. The one exception is a window's length and time zone, cleared when the file switches you to a threshold ([When it runs](#when-it-runs))
 - An unknown key is an error, never silently ignored, so a typo cannot pass for a setting that applies
 - The file may be at most 64 KiB
 
@@ -161,9 +161,9 @@ Press "Check the file" ("Check again" after the first time) to know for sure.
 | "The owner's workspace must be running." | Start your workspace and check again |
 | "The default branch has no .agent-fleet/autorun.yaml." | The file is not on the remote's default branch yet. Merge it there; a working branch is never read |
 | "The file has no entry for “…”." | The file has no key with the category's exact name |
-| "The settings file could not be read from the repository's default branch. Your current settings stay as they are." in the card | A reading error. For example: the remote cannot be reached, the file is larger than 64 KiB or not UTF-8 text, your workspace has no clone of the repository, or the workspace's Agent is too old to read `instruction_file` (restart the workspace to update it). Fix it and check again |
+| "The settings file could not be read from the repository's default branch. Your current settings stay as they are." in the card | A reading error. For example: the remote cannot be reached, the file is larger than 64 KiB or not UTF-8 text, your workspace has no clone of the repository, or the workspace's Agent is too old to read `instruction_file`: when the workspace shows "[Restart needed](../troubleshooting/workspace.md#restart-needed-appears-beside-the-power-button)", restart it; otherwise the deployment has not shipped the update yet, so ask its administrator. Fix it and check again |
 | An error on `instruction_file` | The commit has no such file, or it is not a regular UTF-8 text file, is larger than 16 KiB, holds a NUL, looks like it holds a credential, or the path is not in its plain form |
-| "a queue opens in a window or after a number of messages, not both" | The file sets one of the two while your settings use the other. Write the other as off ([When it runs](#when-it-runs)) |
+| "a queue opens in a window or after a number of messages, not both" | With the file laid over your settings, both are on: the file sets one while your settings use the other, or the file sets both. Write the one you do not use as off ([When it runs](#when-it-runs)) |
 | "The repository settings file or your settings changed since you looked at the difference. Check again before approving." | The default branch or your settings moved after the check. The card reads the file again: check the ticks and approve what it shows now. If the category was renamed, open its "Auto-run settings" again first |
 
 ## Related
