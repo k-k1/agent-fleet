@@ -567,8 +567,9 @@ func TestFullSendQueueDrops(t *testing.T) {
 	// Long budgets: this test is about room in the queue, not about staleness.
 	f := newFixtureN(t, 1, 2, func(f *fixture) { f.svc.slotWait, f.svc.timeout = time.Minute, time.Minute })
 	arrived, release := f.hold()
+	// wg is waited on only on the path where every Add has been made; a failure path releases the
+	// sends and leaves the rest to the fixture's cleanup.
 	var wg sync.WaitGroup
-	defer wg.Wait()
 	defer release()
 	// Occupy the only worker first, so the queue's two places are all there is.
 	f.subscribe(t, "m0")
@@ -588,6 +589,13 @@ func TestFullSendQueueDrops(t *testing.T) {
 	select {
 	case <-returned:
 	case <-time.After(5 * time.Second):
+		// Let the stuck reader finish before failing, so the test ends here instead of hanging.
+		unstall()
+		release()
+		select {
+		case <-returned:
+		case <-time.After(5 * time.Second):
+		}
 		t.Fatal("a reader waited on log output while dropping")
 	}
 	if got := f.svc.droppedFull.Load(); got != 2 {
