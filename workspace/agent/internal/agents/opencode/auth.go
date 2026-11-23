@@ -127,13 +127,22 @@ func connected(s *secrets.Data, oa oauthState) bool {
 	case UsageOwn:
 		// opencode.ai is not used on this route, so neither an account login nor a stored
 		// OPENCODE_API_KEY makes opencode usable here — what does is a provider the user
-		// connected directly, or one of the fleet's own engines (ADR 0071). Being strict is
-		// the safe direction: reporting connected with nothing behind it would let a launch
-		// fall through to opencode's own default model, which is a zero-auth opencode.ai one
-		// — exactly the unasked-for outside call this setting exists to prevent.
-		return hasDirectProviderKey(s) || HasEngineProviders()
+		// connected directly, one of the fleet's own engines (ADR 0071), or the approved
+		// custom endpoint. Being strict is the safe direction: reporting connected with
+		// nothing behind it would let a launch fall through to opencode's own default model,
+		// which is a zero-auth opencode.ai one — exactly the unasked-for outside call this
+		// setting exists to prevent.
+		return hasDirectProviderKey(s) || HasEngineProviders() || hasApprovedCustom(s)
 	}
 	return UsagePref() == UsageFree || len(s.Opencode) > 0 || oa.connected
+}
+
+// hasApprovedCustom reports whether the stored custom connection is one the held policy approves:
+// the only case in which the shared serve is given it (the pin), and so the only one that makes
+// opencode usable. Unrestricted, nothing pins the provider, so a stored connection alone is not.
+func hasApprovedCustom(s *secrets.Data) bool {
+	p, restricted := policyRestriction()
+	return restricted && allowedCustom(p, engineProviderIDs(), s.CustomAPI) != nil
 }
 
 // hasDirectProviderKey reports whether any stored key belongs to a provider other than
