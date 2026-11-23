@@ -74,6 +74,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 | [jq](https://jqlang.org/) | JSON を加工する | Debian 13 (trixie) のパッケージ | [MIT](https://github.com/jqlang/jq/blob/master/COPYING) |
 | [uv](https://github.com/astral-sh/uv) | Python のパッケージとツールを管理する（`uv`、`uvx`） | イメージのビルド時の最新 | [MIT OR Apache-2.0](https://github.com/astral-sh/uv#license) |
 | [npm](https://github.com/npm/cli) | Node.js のパッケージマネージャー | `11.21.2` | [Artistic-2.0](https://github.com/npm/cli/blob/v11.21.2/LICENSE) |
+| [gitleaks](https://github.com/gitleaks/gitleaks) | コミットされた資格情報がないかリポジトリを調べる。push 前の確認に使う | `8.30.1` | [MIT](https://github.com/gitleaks/gitleaks/blob/v8.30.1/LICENSE) |
 | [rtk](https://github.com/rtk-ai/rtk) | エージェント向けにコマンドの出力を短くし、トークンを節約する | `1.2.1` | [Apache-2.0](https://github.com/rtk-ai/rtk/blob/v1.2.1/LICENSE) |
 
 ## 言語ランタイム
