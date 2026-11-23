@@ -34,7 +34,7 @@ export function HistorySearchButton({ open, disabled, onOpen }: { open: boolean;
   return (
     <button
       type="button"
-      className={"ghost mirror-hsearch-btn" + (open ? " on" : "")}
+      className={"ghost mirror-hsearch-btn" + (open ? " mirror-hsearch-btn--on" : "")}
       title={tr("mirror.hsearch_open")}
       disabled={disabled}
       onClick={onOpen}

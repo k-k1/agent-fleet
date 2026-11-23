@@ -74,7 +74,7 @@ describe("TenantBoostView", () => {
   // Selected = highlighted (`.on`) AND exposed (`aria-pressed`): the two are separate expressions, so
   // each is asserted on its own.
   const selected = (h: HTMLElement) => ({
-    on: [...h.querySelectorAll("button.chip.on")].map((b) => b.textContent),
+    on: [...h.querySelectorAll("button.chip.chip--on")].map((b) => b.textContent),
     pressed: [...h.querySelectorAll("button.chip")].filter((b) => b.getAttribute("aria-pressed") === "true").map((b) => b.textContent),
   });
 

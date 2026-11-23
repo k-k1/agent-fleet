@@ -211,7 +211,7 @@ export function ServerForm({
                 <button
                   key={tp}
                   type="button"
-                  className={"seg-btn" + (form.transport === tp ? " active" : "")}
+                  className={"seg-btn" + (form.transport === tp ? " seg-btn--active" : "")}
                   onClick={() => patch({ transport: tp })}
                 >
                   {tp === "stdio" ? tr("mcp.tp_stdio") : tr("mcp.tp_http")}

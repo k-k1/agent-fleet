@@ -141,7 +141,7 @@ export function InternalRepoBrowser({ name, onClose }: { name: string; onClose: 
                   <li key={e.name}>
                     <button
                       type="button"
-                      className={"ig-entry" + (file === (path ? `${path}/${e.name}` : e.name) ? " active" : "")}
+                      className={"ig-entry" + (file === (path ? `${path}/${e.name}` : e.name) ? " ig-entry--active" : "")}
                       onClick={() => openEntry(e)}
                     >
                       <span className="ig-icon">{e.type === "tree" ? "📁" : "📄"}</span>

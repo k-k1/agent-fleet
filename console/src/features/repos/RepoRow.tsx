@@ -9,7 +9,7 @@ import { createPortal } from "react-dom";
 import { Suspense, lazy, useLayoutEffect, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent } from "react";
 import { kindClasses } from "../../lib/sessionkind.ts";
-import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { stateClass, displayName, stateInfo } from "../../lib/sessionview.ts";
 import type { Session } from "../../types/session.ts";
 import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -127,12 +127,12 @@ export interface RepoRowProps {
 function RepoPeek({ s }: { s: Session }) {
   const st = stateInfo(s);
   return (
-    <span className={"repo-peek" + (s.alive ? "" : " stopped")} title={displayName(s)}>
+    <span className={"repo-peek" + (s.alive ? "" : " repo-peek--stopped")} title={displayName(s)}>
       <span className={"sess-kic " + kindClasses(s.kind)} title={kindLabel(s.kind)}>
         <Icon name={kindIcon(s.kind)} />
       </span>
       <span className="repo-peek-title">{displayName(s)}</span>
-      <span className={"session-state mini " + st.cls} title={st.text}>
+      <span className={stateClass("session-state", st.cls) + " mini"} title={st.text}>
         <Icon name={st.icon} spin={st.spin} />
       </span>
     </span>
@@ -231,7 +231,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
 
   return (
     <li
-      className={"repo-row" + (active || selected ? " active" : "")}
+      className={"repo-row" + (active || selected ? " repo-row--active" : "")}
       onContextMenu={(e) => {
         if (!running) return;
         e.preventDefault();
@@ -622,7 +622,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, access = NO_ACCESS, claude
                         toggleWorkingSetMember(w.id, "repos", r.name);
                       }}
                     >
-                      <Icon name="check" className={w.repos.includes(r.name) ? "wset-check" : "wset-check off"} /> {w.name}
+                      <Icon name="check" className={w.repos.includes(r.name) ? "wset-check" : "wset-check wset-check--off"} /> {w.name}
                     </button>
                   </li>
                 ))}

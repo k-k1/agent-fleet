@@ -210,7 +210,7 @@ export function MemoryRailSection() {
                 backwards to a screen reader ("Pending, not pressed" while pending ones are shown). */}
             <button
               type="button"
-              className={"memrail-toggle" + (allProposals ? " active" : "")}
+              className={"memrail-toggle" + (allProposals ? " memrail-toggle--active" : "")}
               aria-pressed={allProposals}
               title={tr("mem.rv_prop_show_all")}
               onClick={() => setAllProposals((v) => !v)}
@@ -245,7 +245,7 @@ export function MemoryRailSection() {
               <li key={p.id}>
                 <button
                   type="button"
-                  className={"memrail-row" + (p.id === openProposal ? " active" : "")}
+                  className={"memrail-row" + (p.id === openProposal ? " memrail-row--active" : "")}
                   aria-current={p.id === openProposal ? "true" : undefined}
                   data-proposal-id={p.id}
                   onClick={() => openMemoryView("proposals", { proposalId: p.id })}
@@ -294,7 +294,7 @@ export function MemoryRailSection() {
           </div>
           <div className="memrail-chips" role="group" aria-label={tr("mem.md_filter")}>
             {FILTERS.map(([f, label]) => (
-              <button key={f} type="button" className={"memrail-chip" + (f === filter ? " active" : "")} aria-pressed={f === filter} onClick={() => setFilter(f)}>
+              <button key={f} type="button" className={"memrail-chip" + (f === filter ? " memrail-chip--active" : "")} aria-pressed={f === filter} onClick={() => setFilter(f)}>
                 {tr(label)}
               </button>
             ))}
@@ -317,7 +317,7 @@ export function MemoryRailSection() {
                   <li key={c.commit}>
                     <button
                       type="button"
-                      className={"memrail-row gone" + (keyOf(c) === activeKey ? " active" : "")}
+                      className={"memrail-row gone" + (keyOf(c) === activeKey ? " memrail-row--active" : "")}
                       aria-current={keyOf(c) === activeKey ? "true" : undefined}
                       data-row-key={keyOf(c)}
                       onClick={() => openMemoryEntry(c, { gone: true })}
@@ -372,7 +372,7 @@ export function MemoryRailSection() {
                       <li key={keyOf(m)}>
                         <button
                           type="button"
-                          className={"memrail-row" + (keyOf(m) === activeKey ? " active" : "")}
+                          className={"memrail-row" + (keyOf(m) === activeKey ? " memrail-row--active" : "")}
                           aria-current={keyOf(m) === activeKey ? "true" : undefined}
                           data-row-key={keyOf(m)}
                           onClick={() => openMemoryEntry(m)}

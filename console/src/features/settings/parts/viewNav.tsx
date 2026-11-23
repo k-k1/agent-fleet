@@ -143,7 +143,7 @@ export function ViewNav({
             aria-selected={v.key === value}
             aria-controls={panelPerView ? `${prefix}-panel-${v.key}` : `${prefix}-panel`}
             tabIndex={v.key === value ? 0 : -1}
-            className={"mem-viewnav-tab" + (v.key === value ? " active" : "")}
+            className={"mem-viewnav-tab" + (v.key === value ? " mem-viewnav-tab--active" : "")}
             onClick={() => onChange(v.key)}
             aria-label={nameOf(v, dirtyLabel)}
           >

@@ -181,7 +181,7 @@ describe("command palette — sessions mode", () => {
     const busy = [...document.querySelectorAll<HTMLElement>(".cp-item.cp-sess")].find(
       (r) => r.querySelector(".cp-title")?.textContent === "busy",
     )!;
-    expect(busy.querySelector(".session-state")?.className).toContain("question");
+    expect(busy.querySelector(".session-state")?.className).toContain("session-state--question");
   });
 });
 
@@ -454,7 +454,7 @@ describe("command palette — session families (#1887)", () => {
 
 describe("command palette — reverse mode chord and paging (#2412)", () => {
   // Modes offered here: sessions, command, changed, file, talk (sfiles needs an active session).
-  const activeTab = () => document.querySelector(".cp-mode.on")?.textContent;
+  const activeTab = () => document.querySelector(".cp-mode.cp-mode--on")?.textContent;
   const tabs = () => [...document.querySelectorAll(".cp-mode")].map((el) => el.textContent);
   const press = (init: KeyboardEventInit & { isComposing?: boolean }) =>
     act(() => {

@@ -28,7 +28,7 @@ const render = async (initial?: { agent: string }) => {
 const picks = () =>
   [...document.querySelectorAll<HTMLElement>(".ui-seg .seg-btn")]
     .filter((b) => Object.values(["claude", "codex", "opencode"]).some((k) => b.textContent === agentOf(k as never).assistantName))
-    .map((b) => ({ text: b.textContent, active: b.classList.contains("active") }));
+    .map((b) => ({ text: b.textContent, active: b.classList.contains("seg-btn--active") }));
 
 const saveBtn = () => document.querySelector<HTMLButtonElement>("button[type=submit]")!;
 const typeName = async () => {

@@ -63,7 +63,7 @@
   color: var(--fg);
   background: var(--hover-bg);
 }
-.files-search-scope button.active {
+.files-search-scope button.files-search-scope--active {
   color: var(--fg);
   background: color-mix(in srgb, var(--lp-accent, var(--accent)) 18%, transparent);
 }

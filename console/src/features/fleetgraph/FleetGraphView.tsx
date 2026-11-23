@@ -25,7 +25,7 @@ import type { MsgKey } from "../../lib/i18n/index.ts";
 import { useIsMobile } from "../../lib/device.ts";
 import { fmtDateTime, TIME_HM } from "../../lib/intl.ts";
 import { placeFixed } from "../../lib/placeFixed.ts";
-import { exitLabel, stateInfo } from "../../lib/sessionview.ts";
+import { stateClass, exitLabel, stateInfo } from "../../lib/sessionview.ts";
 import { kindClass, kindColorClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -523,7 +523,7 @@ export function FleetGraphView({ paneId, showArchived, collapsed, headerActions 
             </span>
             <button
               type="button"
-              className={cx("ui-btn ui-btn-ghost fgraph-toggle", showArchived && "on")}
+              className={cx("ui-btn ui-btn-ghost fgraph-toggle", showArchived && "fgraph-toggle--on")}
               aria-pressed={showArchived}
               title={tr("fgraph.show_archived_hint")}
               onClick={toggleArchived}
@@ -857,13 +857,13 @@ function LaneLabel({
       <span className="fgraph-label-text">{lane.label}</span>
       <HiddenCount lane={lane} />
       {st ? (
-        <span className={"session-state " + st.cls} title={st.text}>
+        <span className={stateClass("session-state", st.cls)} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
           {" "}
           <span className="lbl">{st.short || st.text}</span>
         </span>
       ) : (
-        <span className="session-state off" title={presence}>
+        <span className="session-state session-state--off" title={presence}>
           <span className="lbl">{tr(PRESENCE_SHORT_KEY[lane.presence])}</span>
         </span>
       )}
@@ -942,7 +942,7 @@ function LaneLine({ lane, scale, y }: { lane: GraphLane; scale: GraphScale; y: n
       if (isLast && !run.cut) {
         if (lane.presence === "stopped") {
           const tailX = xOf(scale, scale.to);
-          nodes.push(<line key="tail" className="fgraph-tail stopped" x1={x1} x2={tailX} y1={y} y2={y} />);
+          nodes.push(<line key="tail" className="fgraph-tail fgraph-tail--stopped" x1={x1} x2={tailX} y1={y} y2={y} />);
         }
       } else if (isLast && run.cut) {
         // "その先は不明" (decision 12): a cut run draws NOTHING like a stopped tail

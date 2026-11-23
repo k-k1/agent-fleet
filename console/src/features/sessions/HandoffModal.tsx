@@ -143,7 +143,7 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
                   key={k}
                   type="button"
                   title={tr(a.launchHintKey)}
-                  className={"seg-btn " + kindColorClasses(a.cssClass) + (target === k ? " active" : "")}
+                  className={"seg-btn " + kindColorClasses(a.cssClass) + (target === k ? " seg-btn--active" : "")}
                   onClick={() => setTarget(k)}
                 >
                   <Icon name={a.icon} className="seg-ic" />

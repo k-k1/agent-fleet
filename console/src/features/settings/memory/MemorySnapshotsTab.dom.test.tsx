@@ -523,7 +523,7 @@ describe("MemorySnapshotsTab history filter for Agent Fleet memory writes", () =
     await mount();
     expect(rows()).toHaveLength(2);
     await jump();
-    const active = host!.querySelector(".mem-snap.active")!;
+    const active = host!.querySelector(".mem-snap.mem-snap--active")!;
     expect(active.textContent).toContain(t("mem.trigger_agent_memory"));
     expect(host!.querySelector(".mem-diff-head code")!.textContent).toBe("f0");
     expect(api).toHaveBeenCalledWith("api/agents/memory/diff?to=f0");

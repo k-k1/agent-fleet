@@ -21,7 +21,7 @@ export function ShuffleControl({ segClass, className }: { segClass: string; clas
           <button
             key={m.id}
             type="button"
-            className={"seg-btn" + (s.appearanceShuffle === m.id ? " active" : "")}
+            className={"seg-btn" + (s.appearanceShuffle === m.id ? " seg-btn--active" : "")}
             onClick={() => setAppearanceShuffle(m.id)}
           >
             {tr(m.labelKey)}

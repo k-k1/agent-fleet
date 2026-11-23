@@ -160,7 +160,7 @@ export function BranchRenameModal({ name, branch, repo = "", onClose, onSaved }:
             <button
               key={p}
               type="button"
-              className={"sm-prefix-chip" + (value.startsWith(p) ? " active" : "")}
+              className={"sm-prefix-chip" + (value.startsWith(p) ? " sm-prefix-chip--active" : "")}
               onClick={() => togglePrefix(p)}
               disabled={busy}
             >

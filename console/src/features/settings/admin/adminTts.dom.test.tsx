@@ -82,7 +82,7 @@ describe("TtsAdminView", () => {
     expect(seg("無効")).toBeTruthy();
     expect(seg("オンデマンド")).toBeTruthy();
     expect(seg("常時稼働")).toBeTruthy();
-    expect(seg("オンデマンド")!.className).toContain("active");
+    expect(seg("オンデマンド")!.className).toContain("seg-btn--active");
     expect(host!.textContent).toContain("オンデマンド:"); // the note explaining what it will do
   });
 
@@ -93,8 +93,8 @@ describe("TtsAdminView", () => {
     await click(seg("無効"));
 
     expect(apiJSON).toHaveBeenCalledWith("api/admin/tts", "PUT", { mode: "off" });
-    expect(seg("無効")!.className).toContain("active");
-    expect(seg("常時稼働")!.className).not.toContain("active");
+    expect(seg("無効")!.className).toContain("seg-btn--active");
+    expect(seg("常時稼働")!.className).not.toContain("seg-btn--active");
     expect(host!.textContent).toContain("停止処理中");
     expect(host!.textContent).not.toContain("稼働中");
   });
@@ -103,7 +103,7 @@ describe("TtsAdminView", () => {
     api.mockResolvedValue({ managed: false, mode: "on", enabled: true, engine: { ready: true }, polly: { ready: false }, dict: "" });
     await mount();
     expect(seg("オンデマンド")).toBeUndefined();
-    expect(seg("常時稼働")!.className).toContain("active");
+    expect(seg("常時稼働")!.className).toContain("seg-btn--active");
   });
 
   it("treats a null body from the dictionary PUT as saved, as before: applies it here and clears dirty", async () => {
@@ -133,12 +133,12 @@ describe("TtsAdminView", () => {
     });
     expect(api).toHaveBeenCalledTimes(2);
     await click(seg("無効"));
-    expect(seg("無効")!.className).toContain("active");
+    expect(seg("無効")!.className).toContain("seg-btn--active");
     await act(async () => {
       answerPoll(status("ondemand", "running", true)); // older than the mode change
       await Promise.resolve();
     });
-    expect(seg("無効")!.className).toContain("active");
+    expect(seg("無効")!.className).toContain("seg-btn--active");
     expect(host!.textContent).toContain("停止処理中");
   });
 
@@ -163,7 +163,7 @@ describe("TtsAdminView", () => {
       answerPoll(status("ondemand", "running", true)); // served before the server applied the PUT
       await Promise.resolve();
     });
-    expect(seg("無効")!.className).toContain("active");
+    expect(seg("無効")!.className).toContain("seg-btn--active");
     expect(host!.textContent).toContain("停止処理中");
   });
 
@@ -207,7 +207,7 @@ describe("TtsAdminView", () => {
       answerPoll({ ...status("ondemand", "running", true), dict: "x=y" });
       await Promise.resolve();
     });
-    expect(seg("常時稼働")!.className).toContain("active");
+    expect(seg("常時稼働")!.className).toContain("seg-btn--active");
     // The saved baseline moved to x=y while the box still holds the untouched "" draft, so the
     // panel now reads as unsaved, exactly as main did.
     const save = Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === "保存") as HTMLButtonElement;

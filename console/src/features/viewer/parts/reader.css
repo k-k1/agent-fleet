@@ -20,7 +20,7 @@
   scroll-margin: 20vh 20vw; /* margin for scrollIntoView(center); applies in both axes */
   transition: background 0.15s ease;
 }
-.reader-unit.active {
+.reader-unit.reader-unit--active {
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 /* Appearance of Narou-style ruby (<ruby>base<rt>ruby</rt>). */

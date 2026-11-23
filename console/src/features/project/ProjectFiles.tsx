@@ -1244,7 +1244,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
               onDrop={isDir ? onDropTo(r.path) : undefined}
               {...(isDir ? {} : onAuxOpen(r.path))}
             >
-              <span className={isDir ? "fs-dir" : "fs-file" + (isActiveFile ? " active" : "")}>
+              <span className={isDir ? "fs-dir" : "fs-file" + (isActiveFile ? " fs-file--active" : "")}>
                 <span className="fs-chev">{isDir ? (isOpen ? "▾" : "▸") : ""}</span>
                 <span className="fs-ic">
                   {!isDir ? (

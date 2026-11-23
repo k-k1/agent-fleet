@@ -699,7 +699,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
             <button
               key={s}
               type="button"
-              className={"ui-btn ui-btn-ghost gal-sort-btn" + (mode === s ? " on" : "")}
+              className={"ui-btn ui-btn-ghost gal-sort-btn" + (mode === s ? " gal-sort-btn--on" : "")}
               aria-pressed={mode === s}
               // Without times in the listing there is no "newest" to offer. Disabled rather
               // than silently ignored: a button that writes a sort the view then overrules
@@ -716,7 +716,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
             <button
               key={s}
               type="button"
-              className={"ui-btn ui-btn-ghost gal-sort-btn" + ((tile ?? "m") === s ? " on" : "")}
+              className={"ui-btn ui-btn-ghost gal-sort-btn" + ((tile ?? "m") === s ? " gal-sort-btn--on" : "")}
               aria-pressed={(tile ?? "m") === s}
               title={tr(`gallery.tile_${s}`)}
               aria-label={tr(`gallery.tile_${s}`)}
@@ -768,7 +768,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
         <IconButton
           icon="list-flat"
           label={tr("gallery.flat")}
-          className={"gal-flat" + (flat ? " on" : "")}
+          className={"gal-flat" + (flat ? " gal-flat--on" : "")}
           aria-pressed={!!flat}
           onClick={toggleFlat}
         />

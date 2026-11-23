@@ -1076,7 +1076,7 @@ export function TranslateToggle({ view }: { view: QuestionTranslateView }) {
       )}
       <button
         type="button"
-        className={"ghost xs mt-translate" + (view.shown ? " on" : "")}
+        className={"ghost xs mt-translate" + (view.shown ? " mt-translate--on" : "")}
         title={tr(view.shown ? "mirror.translate_off_title" : "mirror.translate_title")}
         disabled={view.busy}
         onClick={view.toggle}

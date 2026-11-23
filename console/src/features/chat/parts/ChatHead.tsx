@@ -9,6 +9,7 @@ import { SESSION_KINDS } from "../../../types/session.ts";
 import type { Conversation } from "../../../types/chat.ts";
 import type { Assistant } from "../../../types/assistant.ts";
 import type { ConnectionsStatus, SessionKind } from "../../../types/session.ts";
+import { stateClass } from "../../../lib/sessionview.ts";
 
 // Backends a conversation can run on, straight off the registry cap — the same source as
 // the assistant form's picker and the Agent's chatProviders map.
@@ -132,7 +133,7 @@ export function ChatHead({
               document.body,
             )}
           {(conv || showStreaming || !wsRunning) && (
-            <span className={"session-state " + stateChip.cls}>
+            <span className={stateClass("session-state", stateChip.cls)}>
               <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
             </span>
           )}

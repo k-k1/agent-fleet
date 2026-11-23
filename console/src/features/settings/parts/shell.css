@@ -169,11 +169,11 @@
   word-break: auto-phrase;
 }
 
-.settings-modal .settings-rail-item:hover:not(.active) {
+.settings-modal .settings-rail-item:hover:not(.settings-rail-item--active) {
   background: var(--btn);
 }
 
-.settings-rail-item.active {
+.settings-rail-item.settings-rail-item--active {
   background: var(--active-bg);
   font-weight: 600;
 }
@@ -302,11 +302,11 @@
   cursor: pointer;
 }
 
-.font-chip:hover:not(.active) {
+.font-chip:hover:not(.font-chip--active) {
   background: var(--btn-h);
 }
 
-.font-chip.active {
+.font-chip.font-chip--active {
   border-color: var(--accent);
   color: var(--accent);
   background: var(--active-bg);
@@ -319,7 +319,7 @@
   padding: 2px 0;
 }
 
-.ds-char.off .ds-char-name {
+.ds-char.ds-char--off .ds-char-name {
   color: var(--muted);
 }
 
@@ -363,7 +363,7 @@
   white-space: nowrap;
 }
 
-.p-status.on {
+.p-status.p-status--on {
   color: var(--ok);
   border-color: color-mix(in srgb, var(--ok) 45%, transparent);
   background: color-mix(in srgb, var(--ok) 12%, transparent);
@@ -398,7 +398,7 @@
 }
 
 .ig-entry:hover,
-.ig-entry.active {
+.ig-entry.ig-entry--active {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
@@ -478,7 +478,7 @@
   line-height: 1;
 }
 
-.ssm-swatch.active {
+.ssm-swatch.ssm-swatch--active {
   outline: 2px solid var(--fg);
   outline-offset: 1px;
 }
@@ -555,7 +555,7 @@
   color: var(--muted2);
 }
 
-.tc-run.on {
+.tc-run.tc-run--on {
   color: var(--ok);
 }
 
@@ -659,12 +659,12 @@
   background: transparent;
 }
 
-.state-dot.on {
+.state-dot.state-dot--on {
   border-color: var(--ok);
   background: var(--ok);
 }
 
-.state-dot.off {
+.state-dot.state-dot--off {
   border-color: var(--muted2);
   background: transparent;
 }
@@ -676,11 +676,11 @@
   color: var(--muted);
 }
 
-.state-word.on {
+.state-word.state-word--on {
   color: var(--ok);
 }
 
-.state-word.off {
+.state-word.state-word--off {
   color: var(--muted2);
 }
 
@@ -793,8 +793,8 @@
   flex-wrap: wrap;
 }
 
-.adm-mcp-row.off .as-name,
-.adm-mcp-row.off .as-repo {
+.adm-mcp-row.adm-mcp-row--off .as-name,
+.adm-mcp-row.adm-mcp-row--off .as-repo {
   opacity: 0.55;
 }
 
@@ -869,9 +869,9 @@
   border-color: var(--accent);
 }
 
-.limit-edit .le-presets .chip.on,
-.machine-picker .le-presets .chip.on,
-.boost-policy .le-presets .chip.on {
+.limit-edit .le-presets .chip.chip--on,
+.machine-picker .le-presets .chip.chip--on,
+.boost-policy .le-presets .chip.chip--on {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--on-accent);
@@ -938,15 +938,15 @@
   background: var(--btn-h) !important;
 }
 
-.mem-snap.active {
+.mem-snap.mem-snap--active {
   background: var(--active-bg) !important;
   box-shadow: inset 2px 0 0 var(--accent);
 }
 
 /* A disabled row still has to be readable (its definition is what you edit before
    turning it back on), so dim rather than hide. */
-.mcp-item.off .ssm-alias,
-.mcp-item.off .ssm-meta {
+.mcp-item.mcp-item--off .ssm-alias,
+.mcp-item.mcp-item--off .ssm-meta {
   opacity: 0.55;
 }
 
@@ -1004,7 +1004,7 @@ label.idp-flag {
 
 /* Only the "on" state says "in effect" through colour. Colouring both states makes the
    meaning of the row (accepted but not offered) unreadable. */
-.idp-flag.on {
+.idp-flag.idp-flag--on {
   color: var(--fg);
   border-color: color-mix(in srgb, var(--fg) 30%, var(--border2));
 }

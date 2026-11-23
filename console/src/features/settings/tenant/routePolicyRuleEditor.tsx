@@ -337,7 +337,7 @@ function AllOrOnly({
           type="button"
           role="radio"
           aria-checked={all}
-          className={"seg-btn" + (all ? " active" : "")}
+          className={"seg-btn" + (all ? " seg-btn--active" : "")}
           disabled={disabled}
           onClick={() => onChange(true, values)}
         >
@@ -347,7 +347,7 @@ function AllOrOnly({
           type="button"
           role="radio"
           aria-checked={!all}
-          className={"seg-btn" + (!all ? " active" : "")}
+          className={"seg-btn" + (!all ? " seg-btn--active" : "")}
           disabled={disabled}
           onClick={() => onChange(false, values)}
         >
@@ -663,7 +663,7 @@ export function RuleEditor({
               type="button"
               role="radio"
               aria-checked={draft.endpointsAll}
-              className={"seg-btn" + (draft.endpointsAll ? " active" : "")}
+              className={"seg-btn" + (draft.endpointsAll ? " seg-btn--active" : "")}
               disabled={busy}
               onClick={() => edit({ endpointsAll: true })}
             >
@@ -673,7 +673,7 @@ export function RuleEditor({
               type="button"
               role="radio"
               aria-checked={!draft.endpointsAll}
-              className={"seg-btn" + (!draft.endpointsAll ? " active" : "")}
+              className={"seg-btn" + (!draft.endpointsAll ? " seg-btn--active" : "")}
               disabled={busy}
               onClick={() => edit({ endpointsAll: false })}
             >

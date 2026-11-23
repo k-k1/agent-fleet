@@ -507,7 +507,7 @@
 }
 
 .skills-row:hover,
-.skills-row.active {
+.skills-row.skills-row--active {
   background: var(--hover, var(--panel));
 }
 
@@ -723,6 +723,6 @@
   cursor: pointer;
 }
 
-.skills-kind.active {
+.skills-kind.skills-kind--active {
   background: var(--bg-active, rgba(127, 127, 127, 0.18));
 }

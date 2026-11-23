@@ -181,7 +181,7 @@ function MemberGrid({
             <button
               key={f}
               type="button"
-              className={"seg-btn" + (f === filter ? " active" : "")}
+              className={"seg-btn" + (f === filter ? " seg-btn--active" : "")}
               aria-pressed={f === filter}
               onClick={() => setFilter(f)}
             >

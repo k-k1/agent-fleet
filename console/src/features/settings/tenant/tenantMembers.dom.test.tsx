@@ -468,8 +468,8 @@ describe("saved values survive reopening the editor", () => {
 
     // Reopen. The member prop is still stale, which is where implementations diverge.
     await openEditor();
-    expect(buttonWith("省コスト（Arm）")!.className).toContain("on");
-    expect(buttonWith("テナントの既定")!.className).not.toContain("on");
+    expect(buttonWith("省コスト（Arm）")!.className).toContain("chip--on");
+    expect(buttonWith("テナントの既定")!.className).not.toContain("chip--on");
     expect(numbers()[0]).toBe("16384");
   });
 

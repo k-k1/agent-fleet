@@ -100,7 +100,7 @@ export function NotificationCenter() {
       <header>
         <div className="notification-titles"><strong>{tr("noti.notifications")}</strong><span>{tr("noti.past_7_days")}</span></div>
         <div className="notification-head-actions">
-          <Button className={"notification-mute" + (s.ttsSessionNotify ? " on" : "")}
+          <Button className={"notification-mute" + (s.ttsSessionNotify ? " notification-mute--on" : "")}
             title={s.ttsSessionNotify ? tr("noti.tts_on") : tr("noti.tts_off")}
             aria-label={tr("noti.tts_aria")} aria-pressed={s.ttsSessionNotify}
             onClick={() => setSetting("ttsSessionNotify", !s.ttsSessionNotify)}>

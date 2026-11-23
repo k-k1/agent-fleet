@@ -202,7 +202,7 @@ describe("SwatchGrid", () => {
       expect(b.type).toBe("button");
       expect(b.title).not.toBe("");
     }
-    const active = swatches.filter((b) => b.classList.contains("active"));
+    const active = swatches.filter((b) => b.classList.contains("swatch--active"));
     expect(active.map((b) => b.textContent)).toEqual(["✓"]);
     await act(async () => swatches[0].click());
     expect(onChange).toHaveBeenCalledWith(SURFACE_COLORS[0].id);

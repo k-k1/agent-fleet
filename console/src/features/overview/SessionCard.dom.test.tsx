@@ -65,6 +65,9 @@ describe("SessionCard", () => {
     // A card has room, so the chip keeps its text even for the calm states.
     expect(host.querySelector(".session-state")?.textContent?.trim()).toBe(t("state.working"));
     expect(host.querySelector(".session-state")?.className).not.toContain("mini");
+    // The frame and the chip each carry the run state under their own block's name.
+    expect(card().classList.contains("ovw-card--working")).toBe(true);
+    expect(host.querySelector(".session-state")?.classList.contains("session-state--working")).toBe(true);
   });
 
   // ADR 0078 decision 13. The kind is the coloured square, not a word repeated down the grid;
@@ -133,7 +136,7 @@ describe("SessionCard", () => {
     const since = Date.now() - 12 * 60_000;
     await render({ state: "question" }, true, since);
     expect(host.querySelector(".ovw-waited")?.textContent).toBe(t("ovw.waiting_for", { d: "12m" }));
-    expect(host.querySelector(".ovw-waited")?.className).toContain("on");
+    expect(host.querySelector(".ovw-waited")?.className).toContain("ovw-waited--on");
     // Answered: the same instant now reads as "working since you replied".
     await render({ state: "working" }, true, since);
     expect(host.querySelector(".ovw-waited")?.textContent).toBe(t("ovw.since_wait", { d: "12m" }));

@@ -110,7 +110,7 @@ export function InboxModal({ onClose }: { onClose: () => void }) {
               type="button"
               role="tab"
               aria-selected={tab === t}
-              className={"seg-btn" + (tab === t ? " active" : "")}
+              className={"seg-btn" + (tab === t ? " seg-btn--active" : "")}
               onClick={() => setTab(t)}
             >
               {tr(TAB_LABEL[t])}
@@ -477,7 +477,7 @@ function Compose({ onSent }: { onSent: () => void }) {
         <span className="ui-field-label">{tr("inbox.compose_kind")}</span>
         <div className="ui-seg choice-seg">
           {(["request", "dm"] as const).map((k) => (
-            <button key={k} type="button" className={"seg-btn" + (kind === k ? " active" : "")} onClick={() => setKind(k)}>
+            <button key={k} type="button" className={"seg-btn" + (kind === k ? " seg-btn--active" : "")} onClick={() => setKind(k)}>
               {tr(k === "dm" ? "inbox.kind_dm" : "inbox.kind_request")}
             </button>
           ))}
@@ -554,7 +554,7 @@ function SettingsPane() {
             <button
               key={v}
               type="button"
-              className={"seg-btn" + (s.acceptFrom === v ? " active" : "")}
+              className={"seg-btn" + (s.acceptFrom === v ? " seg-btn--active" : "")}
               onClick={() => setS({ ...s, acceptFrom: v })}
             >
               {tr(v === "tenant" ? "inbox.accept_tenant" : "inbox.accept_chosen")}

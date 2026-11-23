@@ -444,7 +444,7 @@ export function MemorySnapshotsTab() {
                         <li key={row.snap.rev}>
                           <button
                             type="button"
-                            className={"mem-snap" + (row.snap.rev === sel ? " active" : "")}
+                            className={"mem-snap" + (row.snap.rev === sel ? " mem-snap--active" : "")}
                             aria-current={row.snap.rev === sel ? "true" : undefined}
                             onClick={() => setSel(row.snap.rev)}
                           >

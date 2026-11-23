@@ -41,7 +41,7 @@
 .log-row:hover {
   background: var(--hover-bg);
 }
-.log-row.active {
+.log-row.log-row--active {
   background: var(--active-bg);
 }
 /* ChangesView right (diff) pane. */

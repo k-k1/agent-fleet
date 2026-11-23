@@ -109,7 +109,7 @@ export function ModelPicker({ kind, model, onChange, filter }: ModelPickerProps)
           <button
             key={v || "default"}
             type="button"
-            className={"seg-btn" + (model === v ? " active" : "")}
+            className={"seg-btn" + (model === v ? " seg-btn--active" : "")}
             onClick={() => onChange(v)}
           >
             {label}

@@ -137,7 +137,7 @@ function Examples({
             type="button"
             role="tab"
             aria-selected={f.id === fwId}
-            className={"dip-tab" + (f.id === fwId ? " active" : "")}
+            className={"dip-tab" + (f.id === fwId ? " dip-tab--active" : "")}
             onClick={() => setFwId(f.id)}
           >
             {fwLabel(f)}
@@ -155,7 +155,7 @@ function Examples({
                 <button
                   key={v.id}
                   type="button"
-                  className={"seg-btn" + (v.id === variant.id ? " active" : "")}
+                  className={"seg-btn" + (v.id === variant.id ? " seg-btn--active" : "")}
                   onClick={() => setVariantByFw((m) => ({ ...m, [fwId]: v.id }))}
                 >
                   {variantLabel(v)}
@@ -201,7 +201,7 @@ function Examples({
               <button
                 key={m}
                 type="button"
-                className={"seg-btn" + (values === m ? " active" : "")}
+                className={"seg-btn" + (values === m ? " seg-btn--active" : "")}
                 onClick={() => setValues(m)}
               >
                 {tr(m === "env" ? "env.devidp_values_env" : "env.devidp_values_fill")}

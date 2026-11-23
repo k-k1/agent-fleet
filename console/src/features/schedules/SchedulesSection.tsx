@@ -260,7 +260,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
                             toggleWorkingSetMember(w.id, "schedules", s.id);
                           }}
                         >
-                          <Icon name="check" className={direct || derived ? "wset-check" : "wset-check off"} /> {w.name}
+                          <Icon name="check" className={direct || derived ? "wset-check" : "wset-check wset-check--off"} /> {w.name}
                         </button>
                       );
                     })}

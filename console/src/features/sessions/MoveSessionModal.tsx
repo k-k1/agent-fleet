@@ -314,7 +314,7 @@ function MoveForm({
                 type="button"
                 data-kind={k}
                 title={tr(ag.launchHintKey)}
-                className={"seg-btn " + kindColorClasses(ag.cssClass) + (kind === k ? " active" : "") + (left ? " quota-left" : "")}
+                className={"seg-btn " + kindColorClasses(ag.cssClass) + (kind === k ? " seg-btn--active" : "") + (left ? " quota-left" : "") + (left && kind === k ? " move-quota-picked" : "")}
                 onClick={() => {
                   chosen.current = true;
                   setKind(k);
@@ -349,10 +349,10 @@ function MoveForm({
         <div className="ui-field">
           <span className="ui-field-label">{tr("launch.field.driver")}</span>
           <div className="ui-seg">
-            <button type="button" className={"seg-btn" + (driver === "managed" ? " active" : "")} onClick={() => setDriverPick("managed")}>
+            <button type="button" className={"seg-btn" + (driver === "managed" ? " seg-btn--active" : "")} onClick={() => setDriverPick("managed")}>
               <Icon name="server-process" /> {tr("launch.driver_managed")}
             </button>
-            <button type="button" className={"seg-btn" + (driver !== "managed" ? " active" : "")} onClick={() => setDriverPick("")}>
+            <button type="button" className={"seg-btn" + (driver !== "managed" ? " seg-btn--active" : "")} onClick={() => setDriverPick("")}>
               <Icon name="terminal" /> {tr("launch.driver_terminal")}
             </button>
           </div>

@@ -80,7 +80,7 @@ import { keyOf, matchMemories } from "../settings/memory/memorySearch.ts";
 import type { MemoryListed, MemorySearchHit } from "../settings/memory/memoryTypes.ts";
 import { loadMemoryList, searchMemoryBodies, type MemoryList } from "./memoryPalette.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
-import { displayName, stateInfo } from "../../lib/sessionview.ts";
+import { stateClass, displayName, stateInfo } from "../../lib/sessionview.ts";
 import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
 import { isUnattendedOnlyFolder, sessionFolder, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
 import type { Session } from "../../types/session.ts";
@@ -442,7 +442,7 @@ function SessionRowBody({ s, refHit, parentName }: { s: Session; refHit?: string
         )}
       </span>
       {refHit && <span className="cp-ref">{refHit}</span>}
-      <span className={"session-state " + st.cls} title={st.text}>
+      <span className={stateClass("session-state", st.cls)} title={st.text}>
         <Icon name={st.icon} spin={st.spin} />
         {st.text}
       </span>
@@ -968,7 +968,7 @@ export function CommandPalette() {
               type="button"
               role="tab"
               aria-selected={m === mode}
-              className={"cp-mode" + (m === mode ? " on" : "")}
+              className={"cp-mode" + (m === mode ? " cp-mode--on" : "")}
               onMouseDown={(e) => {
                 e.preventDefault(); // keep focus in the search input
                 switchMode(m);

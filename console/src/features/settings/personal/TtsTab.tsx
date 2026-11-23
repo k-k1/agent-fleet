@@ -373,7 +373,7 @@ function CharList() {
         const use = conf?.use ?? isDefaultVoice(c.name);
         const style = conf?.style && c.styles.some((st) => st.id === conf.style) ? conf.style : c.profile.base;
         return (
-          <div key={c.name} className={"ds-char" + (use ? "" : " off")}>
+          <div key={c.name} className={"ds-char" + (use ? "" : " ds-char--off")}>
             <label className="ds-char-use" title={use ? tr("tts.char_remove") : tr("tts.char_add")}>
               <input type="checkbox" checked={use} onChange={(e) => patch(c.name, { use: e.target.checked })} />
               <span className="ds-char-name">{c.name}</span>

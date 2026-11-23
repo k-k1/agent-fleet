@@ -241,8 +241,8 @@ export function TenantSignInMethods({
     if (!isSuper) {
       return (
         <span className="idp-flags">
-          <span className={"idp-flag" + (accepted ? " on" : "")}>{tr("admin.idp_accept")}</span>
-          <span className={"idp-flag" + (shown ? " on" : "")}>{tr("admin.idp_show")}</span>
+          <span className={"idp-flag" + (accepted ? " idp-flag--on" : "")}>{tr("admin.idp_accept")}</span>
+          <span className={"idp-flag" + (shown ? " idp-flag--on" : "")}>{tr("admin.idp_show")}</span>
         </span>
       );
     }
@@ -253,7 +253,7 @@ export function TenantSignInMethods({
     const showLocked = shown && locks.showOffLocked;
     return (
       <span className="idp-flags">
-        <label className={"idp-flag" + (accepted ? " on" : "")} title={acceptLocked ? tr("admin.idp_accept_last") : undefined}>
+        <label className={"idp-flag" + (accepted ? " idp-flag--on" : "")} title={acceptLocked ? tr("admin.idp_accept_last") : undefined}>
           <input
             type="checkbox"
             checked={accepted}
@@ -265,7 +265,7 @@ export function TenantSignInMethods({
         {/* "show" is subordinate to "accept": the render path requires allowed even inside the
             hidden check, so turning "show" on for a row that is not accepted does nothing. */}
         <label
-          className={"idp-flag" + (shown ? " on" : "")}
+          className={"idp-flag" + (shown ? " idp-flag--on" : "")}
           title={!accepted ? tr("admin.idp_show_needs_accept") : showLocked ? tr("admin.idp_show_last") : undefined}
         >
           <input
@@ -333,7 +333,7 @@ export function TenantSignInMethods({
           form && form.id === row.id ? (
             <IdPForm key={row.id} form={form} setForm={setForm} busy={busy} onSave={save} onCancel={() => setForm(null)} />
           ) : (
-            <div key={row.id} className={"adm-mcp-row" + (row.status === "active" && row.usable ? "" : " off")}>
+            <div key={row.id} className={"adm-mcp-row" + (row.status === "active" && row.usable ? "" : " adm-mcp-row--off")}>
               <OverlapWarning row={row} />
               {toggles(row.provider_id || "")}
               <span className="as-name mono" title={row.provider_id}>
@@ -652,7 +652,7 @@ export function SignInMethodRegister() {
       </h4>
       <p className="admin-hint">{tr("admin.idp_register_hint")}</p>
       {rows.map((row) => (
-        <div key={row.id} className={"adm-mcp-row" + (row.status === "active" && row.usable ? "" : " off")}>
+        <div key={row.id} className={"adm-mcp-row" + (row.status === "active" && row.usable ? "" : " adm-mcp-row--off")}>
           <OverlapWarning row={row} />
           <span className="as-name mono" title={row.provider_id}>
             {row.tenant_slug}

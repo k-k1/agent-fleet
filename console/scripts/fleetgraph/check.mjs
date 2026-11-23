@@ -147,14 +147,14 @@ try {
     const cs = (el) => el && getComputedStyle(el);
     const band = document.querySelector("svg.fgraph-svg .fgraph-seg.fgraph-seg--active");
     const probe = document.createElement("span");
-    probe.className = "session-state working";
+    probe.className = "session-state session-state--working";
     probe.style.position = "absolute";
     document.body.appendChild(probe);
     const want = cs(probe).color;
     probe.remove();
     const waiting = document.querySelector("svg.fgraph-svg .fgraph-seg.fgraph-seg--waiting");
     const probe2 = document.createElement("span");
-    probe2.className = "session-state question";
+    probe2.className = "session-state session-state--question";
     probe2.style.position = "absolute";
     document.body.appendChild(probe2);
     const wantWaiting = cs(probe2).color;
@@ -175,7 +175,7 @@ try {
   const archived = await cdp.evaluate(`(() => ({
     tails: document.querySelectorAll("svg.fgraph-svg .fgraph-tail.archived").length,
     bands: document.querySelectorAll("svg.fgraph-svg .fgraph-seg.fgraph-seg--archived").length,
-    stoppedTails: document.querySelectorAll("svg.fgraph-svg .fgraph-tail.stopped").length,
+    stoppedTails: document.querySelectorAll("svg.fgraph-svg .fgraph-tail.fgraph-tail--stopped").length,
     chips: [...document.querySelectorAll(".fgraph-label .session-state")].map((e) => e.textContent.trim()),
   }))()`);
   check(archived.tails === 0 && archived.bands === 0, "an archived lane draws no dashed tail and no grey band", `${archived.tails} tails / ${archived.bands} bands`);

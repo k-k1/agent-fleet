@@ -179,7 +179,7 @@ export function RepoPicker({ onChange }: RepoPickerProps) {
           <button
             key={h}
             type="button"
-            className={"prov" + (host === h ? " active" : "")}
+            className={"prov" + (host === h ? " prov--active" : "")}
             disabled={!connected(h)}
             title={connected(h) ? "" : tr("rp.not_connected_git")}
             onClick={() => setHost(h)}

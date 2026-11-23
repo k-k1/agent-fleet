@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { displayName, elapsedShort, remainingShort, resumeClock, stateInfo, stripLabelTag } from "./sessionview.ts";
+import { displayName, elapsedShort, remainingShort, resumeClock, stateClass, stateInfo, stripLabelTag } from "./sessionview.ts";
 import { t, tCount } from "./i18n/index.ts";
 
 // The state-chip mapping. What is pinned here is that "auth expired" (docs/log/47 §4-8) gets a chip
@@ -363,5 +363,34 @@ describe("stateInfo (a stopped session with a booked auto-resume)", () => {
     expect(stateInfo({ kind: "codex", alive: false, rateLimitResumeAt: future, carried: "question" }).text).toBe(
       t("state.stopped_question"),
     );
+  });
+});
+
+// A state chip's modifiers are `<block>--<token>`: a bare `.off` / `.question` is a name many
+// feature stylesheets reuse, so each block (chip, card, tab, dot) owns its own.
+describe("stateClass", () => {
+  it("prefixes every token of a stateInfo cls with the block that shows it", () => {
+    expect(stateClass("session-state", "off question")).toBe("session-state session-state--off session-state--question");
+    expect(stateClass("ovw-card", "on")).toBe("ovw-card ovw-card--on");
+  });
+
+  it("copes with a leading space and an empty cls", () => {
+    expect(stateClass("popout-dot", " working")).toBe("popout-dot popout-dot--working");
+    expect(stateClass("popout-dot", "")).toBe("popout-dot");
+  });
+
+  it("keeps every token of the cls stateInfo produces, in order", () => {
+    const cases: [ReturnType<typeof stateInfo>, string][] = [
+      [
+        stateInfo({ kind: "claude", alive: false, resumable: false }),
+        "session-state session-state--off session-state--dead",
+      ],
+      [stateInfo({ kind: "claude", alive: true, state: "auth" }), "session-state session-state--question"],
+      [
+        stateInfo({ kind: "claude", alive: true, state: "limited" }),
+        "session-state session-state--question session-state--limited",
+      ],
+    ];
+    for (const [chip, want] of cases) expect(stateClass("session-state", chip.cls)).toBe(want);
   });
 });

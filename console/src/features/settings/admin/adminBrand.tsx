@@ -120,7 +120,7 @@ export function BrandAdminView() {
                 key={p.name}
                 type="button"
                 title={p.name}
-                className={"swatch" + (p.name === color ? " active" : "")}
+                className={"swatch" + (p.name === color ? " swatch--active" : "")}
                 style={{ background: p.hex, color: readableInk(p.hex) }}
                 onClick={() => setColor(p.name)}
               >

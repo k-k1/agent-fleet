@@ -166,7 +166,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
               <button
                 key={ic}
                 type="button"
-                className={"icon assistant-icon-opt" + (icon === ic ? " active" : "")}
+                className={"icon assistant-icon-opt" + (icon === ic ? " assistant-icon-opt--active" : "")}
                 title={ic}
                 onClick={() => setIcon(ic)}
               >
@@ -184,7 +184,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
                 <button
                   key={k}
                   type="button"
-                  className={"seg-btn" + (agent === k ? " active" : "")}
+                  className={"seg-btn" + (agent === k ? " seg-btn--active" : "")}
                   onClick={() => {
                     agentTouched.current = true;
                     setAgent(k);
@@ -239,7 +239,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
               <button
                 key={t.value}
                 type="button"
-                className={"seg-btn" + (tools === t.value ? " active" : "")}
+                className={"seg-btn" + (tools === t.value ? " seg-btn--active" : "")}
                 onClick={() => setTools(t.value)}
               >
                 {tr(t.labelKey)}

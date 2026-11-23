@@ -175,7 +175,7 @@ export function ProviderCard({
 // Status pill: connected (green + dot + label) or a muted state (disconnected, or a count).
 export function StatusPill({ on, children }: { on?: boolean; children: ReactNode }) {
   return (
-    <span className={"p-status" + (on ? " on" : "")}>
+    <span className={"p-status" + (on ? " p-status--on" : "")}>
       {on && <span className="p-dot" />}
       {children}
     </span>

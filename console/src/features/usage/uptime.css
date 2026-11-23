@@ -41,7 +41,7 @@
 .uh-metric:last-child {
   border-right: 0;
 }
-.uh-metric.active {
+.uh-metric.uh-metric--active {
   background: var(--sel-bg);
   color: var(--fg);
 }

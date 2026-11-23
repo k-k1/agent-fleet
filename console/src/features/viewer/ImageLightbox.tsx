@@ -200,7 +200,7 @@ export function ImageLightbox({ src, onClose, placeholder, alt, onPrev, onNext, 
         {path && (
           <button
             type="button"
-            className={"mirror-lightbox-props" + (showProps ? " on" : "")}
+            className={"mirror-lightbox-props" + (showProps ? " mirror-lightbox-props--on" : "")}
             aria-pressed={showProps}
             onClick={() => setShowProps((v) => !v)}
             title={tr("imggen.props_toggle")}

@@ -102,7 +102,7 @@ export const FilesSection = memo(function FilesSection() {
           <span className="ui-seg sm files-view sel-scope">
             <button
               type="button"
-              className={"seg-btn" + (view === "tree" ? " active" : "")}
+              className={"seg-btn" + (view === "tree" ? " seg-btn--active" : "")}
               title={tr("pj.tree")}
               onClick={() => setViewPersist("tree")}
             >
@@ -110,7 +110,7 @@ export const FilesSection = memo(function FilesSection() {
             </button>
             <button
               type="button"
-              className={"seg-btn" + (view === "changes" ? " active" : "")}
+              className={"seg-btn" + (view === "changes" ? " seg-btn--active" : "")}
               title={tr("pj.changes_only")}
               onClick={() => setViewPersist("changes")}
             >
@@ -151,7 +151,7 @@ export const FilesSection = memo(function FilesSection() {
               <span className="files-search-scope" role="group" aria-label={tr("pj.search_scope")}>
                 <button
                   type="button"
-                  className={scope === "repos" ? "active" : ""}
+                  className={scope === "repos" ? "files-search-scope--active" : ""}
                   aria-pressed={scope === "repos"}
                   title={tr("pj.search_from_repos")}
                   aria-label={tr("pj.search_from_repos")}
@@ -161,7 +161,7 @@ export const FilesSection = memo(function FilesSection() {
                 </button>
                 <button
                   type="button"
-                  className={scope === "home" ? "active" : ""}
+                  className={scope === "home" ? "files-search-scope--active" : ""}
                   aria-pressed={scope === "home"}
                   title={tr("pj.search_from_home")}
                   aria-label={tr("pj.search_from_home")}

@@ -27,7 +27,7 @@
   font-size: 11px;
   white-space: nowrap;
 }
-.fgraph-toggle.on {
+.fgraph-toggle.fgraph-toggle--on {
   color: var(--accent);
 }
 @container paneview (max-width: 460px) {
@@ -297,7 +297,7 @@
    draw NOTHING past their × — archived lost its faint dashes on 2026-09-21, because a lane
    somebody folded away was still being drawn across the whole figure. The word "archived"
    is on the row's state chip instead. */
-.fgraph-tail.stopped {
+.fgraph-tail.fgraph-tail--stopped {
   stroke: var(--lane-color, var(--muted2));
   stroke-width: 2;
   stroke-dasharray: 4 3;

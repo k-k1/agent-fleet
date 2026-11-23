@@ -318,7 +318,7 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
     {!isSuper && <p className="admin-hint">{tr("admin.engines_tenant_scope")}</p>}
     <div className="engine-catalog-toolbar">
       <span className="seg sm">{(["model", "lora"] as const).map((next) => <Button key={next} variant="ghost" small
-        className={"seg-btn" + (kind === next ? " active" : "")} onClick={() => onKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</Button>)}</span>
+        className={"seg-btn" + (kind === next ? " seg-btn--active" : "")} onClick={() => onKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</Button>)}</span>
       <label className="engine-registered-search"><span>{tr("admin.catalog_registered_search" as never)}</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
       <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span><select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>
         <option value="name">{tr("admin.catalog_sort_name" as never)}</option><option value="enabled">{tr("admin.catalog_sort_enabled" as never)}</option><option value="default">{tr("admin.catalog_sort_default" as never)}</option>
@@ -337,12 +337,12 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
         the one fact nobody could scan a page by. */}
     {groups.length > 1 && <div className="engine-registered-families" role="tablist" aria-label={tr("admin.catalog_family" as never)}>
       <Button variant="ghost" small role="tab" aria-selected={openFamily === null}
-        className={"engine-family-chip" + (openFamily === null ? " active" : "")} onClick={() => setFamily(null)}>
+        className={"engine-family-chip" + (openFamily === null ? " engine-family-chip--active" : "")} onClick={() => setFamily(null)}>
         {tr("admin.catalog_family_all" as never)} <span className="muted">{visible.length}</span>
       </Button>
       {groups.map((group) => <Button key={group.key || "*"} variant="ghost" small role="tab"
         aria-selected={group.key === openFamily}
-        className={"engine-family-chip" + (group.key === openFamily ? " active" : "")}
+        className={"engine-family-chip" + (group.key === openFamily ? " engine-family-chip--active" : "")}
         onClick={() => setFamily(group.key === openFamily ? null : group.key)}>
         {groupLabel(group.key, tr)} <span className="muted">{group.models.length}</span>
       </Button>)}

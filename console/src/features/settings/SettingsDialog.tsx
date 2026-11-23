@@ -226,7 +226,7 @@ export function SettingsDialog() {
   // Keep the active rail item in view as the section changes.
   const railRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
-    const el = railRef.current?.querySelector(".settings-rail-item.active") as HTMLElement | null;
+    const el = railRef.current?.querySelector(".settings-rail-item.settings-rail-item--active") as HTMLElement | null;
     el?.scrollIntoView({ block: "nearest" });
   }, [section]);
 
@@ -263,7 +263,7 @@ export function SettingsDialog() {
                     <button
                       key={key}
                       type="button"
-                      className={"settings-rail-item" + (section === key ? " active" : "")}
+                      className={"settings-rail-item" + (section === key ? " settings-rail-item--active" : "")}
                       data-section={key}
                       aria-current={section === key ? "page" : undefined}
                       onClick={() => pick(key)}

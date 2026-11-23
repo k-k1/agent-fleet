@@ -300,7 +300,7 @@ export function AttachAgentModal({
                   <button
                     key={d}
                     type="button"
-                    className={"seg-btn" + (driver === d ? " active" : "")}
+                    className={"seg-btn" + (driver === d ? " seg-btn--active" : "")}
                     onClick={() => setDriver(d)}
                   >
                     {tr(d === "tui" ? "imggen.attach_driver_tui" : "imggen.attach_driver_managed")}
@@ -321,7 +321,7 @@ export function AttachAgentModal({
                       disabled={!!c.blocked}
                       title={reason || tr(ag.launchHintKey)}
                       data-kind={c.kind}
-                      className={"seg-btn " + kindColorClasses(ag.cssClass) + (kind === c.kind ? " active" : "")}
+                      className={"seg-btn " + kindColorClasses(ag.cssClass) + (kind === c.kind ? " seg-btn--active" : "")}
                       onClick={() => setKind(c.kind)}
                     >
                       <Icon name={ag.icon} className="seg-ic" />

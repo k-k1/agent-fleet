@@ -10,7 +10,7 @@
 import type { Session } from "../../types/session.ts";
 import type { StateInfo } from "../../agents/registry.ts";
 import { kindClasses, kindIcon, kindLabel, kindShort } from "../../lib/sessionkind.ts";
-import { displayName } from "../../lib/sessionview.ts";
+import { displayName, stateClass } from "../../lib/sessionview.ts";
 import { Icon } from "../../ui/Icon.tsx";
 
 interface PaneSessionChipProps {
@@ -31,7 +31,7 @@ export function PaneSessionChip({ session, state }: PaneSessionChipProps) {
       </span>
       <span className="pane-session-name">{displayName(session)}</span>
       {state && (
-        <span className={"session-state " + state.cls}>
+        <span className={stateClass("session-state", state.cls)}>
           <Icon name={state.icon} spin={state.spin} /> {state.text}
         </span>
       )}

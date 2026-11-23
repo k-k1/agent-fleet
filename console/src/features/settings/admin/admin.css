@@ -316,7 +316,7 @@
 
 /* The one the service's strategy points at, marked on the row rather than by re-ordering: where
    the CP fell through to the second offer, seeing that it is the second is the fact. */
-.engines-offer.on .engines-offer-label {
+.engines-offer.engines-offer--on .engines-offer-label {
   color: var(--accent);
   font-weight: 600;
 }
@@ -379,7 +379,7 @@
   border-inline-start: 3px solid var(--border);
 }
 
-.engines-model.on {
+.engines-model.engines-model--on {
   border-inline-start-color: var(--accent);
 }
 
@@ -1126,7 +1126,7 @@ a.engines-model-source:hover {
   color: var(--dialog-muted);
 }
 
-.engine-catalog-role-tabs button.active {
+.engine-catalog-role-tabs button.engine-catalog-role-tabs--active {
   color: var(--fg);
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
   background: color-mix(in srgb, var(--accent) 11%, var(--panel2));
@@ -1368,7 +1368,7 @@ a.engines-model-source:hover {
   white-space: nowrap;
 }
 
-.engine-registered-families .engine-family-chip.active {
+.engine-registered-families .engine-family-chip.engine-family-chip--active {
   border-color: var(--accent);
   background: var(--panel2);
   color: var(--fg);

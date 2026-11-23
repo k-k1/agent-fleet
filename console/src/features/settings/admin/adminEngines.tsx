@@ -317,7 +317,7 @@ export function EnginesAdminView() {
                   <button
                     key={m}
                     type="button"
-                    className={"seg-btn" + (e.mode === m ? " active" : "")}
+                    className={"seg-btn" + (e.mode === m ? " seg-btn--active" : "")}
                     disabled={busy === e.key}
                     onClick={() => setMode(e.key, m)}
                   >
@@ -765,7 +765,7 @@ function EngineClassPicker({
           <p className="muted">{tr("admin.engines_offers_head")}</p>
           <ul className="engines-offers">
             {offers.map((o, i) => (
-              <li key={o.id} className={row.offer?.id === o.id ? "engines-offer on" : "engines-offer"}>
+              <li key={o.id} className={row.offer?.id === o.id ? "engines-offer engines-offer--on" : "engines-offer"}>
                 <span className="mono engines-offer-order">{i + 1}</span>
                 <span className="engines-offer-label">{o.label}</span>
                 <span className="engines-model-tag">{engineBuyLabel(o.buy, tr)}</span>

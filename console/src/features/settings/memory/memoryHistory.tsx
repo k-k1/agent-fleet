@@ -134,7 +134,7 @@ export function MemoryHistory({
             <li key={c.commit}>
               <button
                 type="button"
-                className={"mem-snap" + (c.commit === sel ? " active" : "")}
+                className={"mem-snap" + (c.commit === sel ? " mem-snap--active" : "")}
                 aria-pressed={c.commit === sel}
                 onClick={() => setSel(c.commit === sel ? "" : c.commit)}
               >

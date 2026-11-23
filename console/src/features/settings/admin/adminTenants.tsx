@@ -42,7 +42,7 @@ export function TenantsList({
               </div>
               <div className="tc-stats">
                 <span title={tr("admin.member_count_title")}><Icon name="person" /> {tr("admin.person_count", { n: t.users ?? 0 })}</span>
-                <span className={(t.running || 0) > 0 ? "tc-run on" : "tc-run"} title={tr("admin.running_ws_title")}>
+                <span className={(t.running || 0) > 0 ? "tc-run tc-run--on" : "tc-run"} title={tr("admin.running_ws_title")}>
                   <Icon name="vm-running" /> {tr("admin.running_ws", { n: t.running ?? 0 })}
                 </span>
               </div>

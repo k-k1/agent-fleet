@@ -22,7 +22,7 @@
   flex: none;
 }
 
-.mem-viewnav-tab.active {
+.mem-viewnav-tab.mem-viewnav-tab--active {
   color: var(--fg);
   border-bottom-color: var(--accent);
 }

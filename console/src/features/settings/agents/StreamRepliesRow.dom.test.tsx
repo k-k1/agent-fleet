@@ -45,19 +45,19 @@ afterEach(() => {
 describe("StreamRepliesRow", () => {
   it("shows typewriter for an untouched kind", () => {
     render();
-    expect(button(t("agents.stream_replies_typewriter")).classList.contains("active")).toBe(true);
-    expect(button(t("common.off")).classList.contains("active")).toBe(false);
+    expect(button(t("agents.stream_replies_typewriter")).classList.contains("seg-btn--active")).toBe(true);
+    expect(button(t("common.off")).classList.contains("seg-btn--active")).toBe(false);
     expect(streamReplies(getSettings(), "claude")).toBe("typewriter");
   });
 
   it("shows a stored boolean as off / typewriter", () => {
     setSetting("streamReplies", { claude: false });
     render();
-    expect(button(t("common.off")).classList.contains("active")).toBe(true);
+    expect(button(t("common.off")).classList.contains("seg-btn--active")).toBe(true);
     act(() => root?.unmount());
     setSetting("streamReplies", { claude: true });
     render();
-    expect(button(t("agents.stream_replies_typewriter")).classList.contains("active")).toBe(true);
+    expect(button(t("agents.stream_replies_typewriter")).classList.contains("seg-btn--active")).toBe(true);
   });
 
   it("writes the chosen mode for the kind alone, and off as false", () => {
@@ -65,7 +65,7 @@ describe("StreamRepliesRow", () => {
     act(() => button(t("agents.stream_replies_lines")).click());
     expect(getSettings().streamReplies).toEqual({ codex: false, claude: "lines" });
     expect(streamReplies(getSettings(), "claude")).toBe("lines");
-    expect(button(t("agents.stream_replies_lines")).classList.contains("active")).toBe(true);
+    expect(button(t("agents.stream_replies_lines")).classList.contains("seg-btn--active")).toBe(true);
     act(() => button(t("common.off")).click()); // off stays the boolean an older Console reads
     expect(getSettings().streamReplies).toEqual({ codex: false, claude: false });
     expect(streamReplies(getSettings(), "claude")).toBe("off");

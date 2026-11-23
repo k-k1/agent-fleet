@@ -45,10 +45,10 @@
 .ws-dot {
   font-size: 10px;
 }
-.ws-dot.on {
+.ws-dot.ws-dot--on {
   color: var(--ok);
 }
-.ws-dot.off {
+.ws-dot.ws-dot--off {
   color: var(--muted2);
 }
 .ws-state {
@@ -84,7 +84,7 @@
 .ws-power .codicon {
   font-size: 13px;
 }
-.ws-power.on:not(:disabled) {
+.ws-power.ws-power--on:not(:disabled) {
   color: var(--ok);
   border-color: var(--ok);
 }
@@ -92,14 +92,14 @@
   color: var(--warn);
   border-color: var(--warn);
 }
-.ws-power.off:not(:disabled) {
+.ws-power.ws-power--off:not(:disabled) {
   color: var(--muted2);
 }
-.ws-power.on:not(:disabled):hover {
+.ws-power.ws-power--on:not(:disabled):hover {
   color: var(--warn);
   border-color: var(--warn);
 }
-.ws-power.off:not(:disabled):hover {
+.ws-power.ws-power--off:not(:disabled):hover {
   color: var(--ok);
   border-color: var(--ok);
 }
@@ -361,7 +361,7 @@ button.wu-reload {
 .wu-place-seg button + button {
   border-left: 1px solid var(--border2, var(--border));
 }
-.wu-place-seg button.on {
+.wu-place-seg button.wu-place-seg--on {
   color: var(--fg);
   background: color-mix(in srgb, var(--accent) 22%, transparent);
 }

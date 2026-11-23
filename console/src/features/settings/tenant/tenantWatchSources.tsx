@@ -66,7 +66,7 @@ export function TenantWatchSourcesView({ slug }: { slug: string }) {
               type="button"
               role="radio"
               aria-checked={enabled}
-              className={"seg-btn" + (enabled ? " active" : "")}
+              className={"seg-btn" + (enabled ? " seg-btn--active" : "")}
               disabled={busy}
               onClick={() => put(true)}
             >
@@ -76,7 +76,7 @@ export function TenantWatchSourcesView({ slug }: { slug: string }) {
               type="button"
               role="radio"
               aria-checked={!enabled}
-              className={"seg-btn" + (!enabled ? " active" : "")}
+              className={"seg-btn" + (!enabled ? " seg-btn--active" : "")}
               disabled={busy}
               onClick={() => put(false)}
             >

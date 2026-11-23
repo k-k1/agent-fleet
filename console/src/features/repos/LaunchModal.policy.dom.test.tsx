@@ -152,7 +152,7 @@ describe("route step", () => {
     const k: LiveKindAccess = { kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] };
     await render(["claude", "codex"], access([k, { kind: "codex" }]));
     expect(routeSelect()!.value).toBe("anthropic-api");
-    const claudeBtn = [...document.querySelectorAll<HTMLButtonElement>("button.seg-btn")].find((b) => b.classList.contains("active"))!;
+    const claudeBtn = [...document.querySelectorAll<HTMLButtonElement>("button.seg-btn")].find((b) => b.classList.contains("seg-btn--active"))!;
     await click(claudeBtn);
     expect(routeSelect()!.value).toBe("anthropic-api");
     // A route the member chose by hand survives the same click.

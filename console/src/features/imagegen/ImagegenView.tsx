@@ -900,7 +900,7 @@ function StudioPane({
                 type="button"
                 role="tab"
                 aria-selected={tab === k}
-                className={"igen-tab" + (tab === k ? " active" : "")}
+                className={"igen-tab" + (tab === k ? " igen-tab--active" : "")}
                 onClick={() => {
                   tabPicked.current = true;
                   setTab(k);
