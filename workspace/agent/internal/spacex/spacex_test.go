@@ -147,12 +147,15 @@ func TestFolderOfSpellings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(real, "spaces", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	for _, dir := range []string{
 		sp.Dir,
 		sp.Dir + "/",
 		filepath.Join(real, "spaces", sp.Folder), // through the symlink's target
 		alias + "/spaces/./" + sp.Folder,
-		alias + "/spaces/sub/../" + sp.Folder,
+		alias + "/spaces/sub/../" + sp.Folder, // sub exists below: a real directory
 	} {
 		if got := FolderOf(dir); got != sp.Folder {
 			t.Errorf("FolderOf(%q) = %q, want %q", dir, got, sp.Folder)
@@ -162,6 +165,52 @@ func TestFolderOfSpellings(t *testing.T) {
 		if got := FolderOf(dir); got != "" {
 			t.Errorf("FolderOf(%q) = %q, want empty", dir, got)
 		}
+	}
+}
+
+// A ".." after a symlink is resolved, not dropped: ~/spaces/link/../<folder> runs in the
+// link target's parent, which is no space even when ~/spaces/<folder> is one.
+func TestFolderOfResolvesDotDotAfterASymlink(t *testing.T) {
+	home := withHome(t)
+	sp, err := Create("notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoChild := filepath.Join(home, "repos", "child")
+	if err := os.MkdirAll(repoChild, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "repos", sp.Folder), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(repoChild, filepath.Join(Root(), "link")); err != nil {
+		t.Fatal(err)
+	}
+	if got := FolderOf(filepath.Join(Root(), "link") + "/../" + sp.Folder); got != "" {
+		t.Fatalf("FolderOf(link/../folder) = %q, want empty: it runs in ~/repos/%s", got, sp.Folder)
+	}
+}
+
+// A marker the Agent cannot read still marks the space, for the session row, the list and a
+// create naming the folder alike; only its name is lost.
+func TestUnreadableMarkerStillMarksTheSpace(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads any file")
+	}
+	withHome(t)
+	sp, _ := Create("secret")
+	if err := os.Chmod(filepath.Join(sp.Dir, MarkerFile), 0); err != nil {
+		t.Fatal(err)
+	}
+	if FolderOf(sp.Dir) != sp.Folder {
+		t.Fatal("FolderOf dropped the space")
+	}
+	got, ok := Lookup(sp.Folder)
+	if !ok || got.Name != "" {
+		t.Fatalf("Lookup = %+v, %v; want the space without a name", got, ok)
+	}
+	if list, _ := List(); len(list) != 1 || list[0].Folder != sp.Folder {
+		t.Fatalf("List() = %+v", list)
 	}
 }
 

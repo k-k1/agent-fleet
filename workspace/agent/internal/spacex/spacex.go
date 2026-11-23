@@ -68,12 +68,22 @@ func FolderOf(dir string) string {
 	if dir == "" || !filepath.IsAbs(dir) {
 		return ""
 	}
-	dir = filepath.Clean(dir)
-	parent := filepath.Dir(dir)
+	clean := filepath.Clean(dir)
+	if clean != dir && clean+"/" != dir {
+		// Clean drops a ".." lexically, and after a symlink the real parent is another one:
+		// ~/spaces/link/../notes runs wherever link's target's parent is. Only a spelling that
+		// is not already clean pays for resolving it.
+		real, err := filepath.EvalSymlinks(dir)
+		if err != nil {
+			return ""
+		}
+		clean = real
+	}
+	parent := filepath.Dir(clean)
 	if parent != Root() && parent != realRoot() {
 		return ""
 	}
-	f := filepath.Base(dir)
+	f := filepath.Base(clean)
 	if !ValidFolder(f) || !markerPresent(filepath.Join(parent, f)) {
 		return ""
 	}
@@ -82,19 +92,31 @@ func FolderOf(dir string) string {
 
 // realRoots caches Root's resolved path per Root. Every session row asks FolderOf, so resolving
 // the symlinks each time would put a chain of lstat calls on every poll; home does not move
-// under a running Agent. A Root that does not resolve (no ~/spaces yet) is not cached.
+// under a running Agent. A Root that does not resolve yet (no ~/spaces) is remembered for
+// rootMissTTL, so the first space is noticed soon without every row paying for the miss.
 var realRoots sync.Map
+
+type rootEntry struct {
+	real  string
+	until time.Time // zero for a resolved root, which never expires
+}
+
+const rootMissTTL = 30 * time.Second
 
 func realRoot() string {
 	root := Root()
 	if v, ok := realRoots.Load(root); ok {
-		return v.(string)
+		e := v.(rootEntry)
+		if e.until.IsZero() || time.Now().Before(e.until) {
+			return e.real
+		}
 	}
 	real, err := filepath.EvalSymlinks(root)
 	if err != nil {
+		realRoots.Store(root, rootEntry{real: root, until: time.Now().Add(rootMissTTL)})
 		return root
 	}
-	realRoots.Store(root, real)
+	realRoots.Store(root, rootEntry{real: real})
 	return real
 }
 
@@ -184,6 +206,7 @@ func Create(name string) (Space, error) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return Space{}, err
 	}
+	realRoots.Delete(root) // a root remembered as missing exists now
 	base := slugOf(name)
 	if base == "" {
 		base = "space"
@@ -270,20 +293,19 @@ func readMarker(dir string) (marker, bool) {
 }
 
 // Lookup answers the space in folder, and false when there is none: no such folder, a symlink
-// in its place (List skips those too, so both agree on what a space is), or no marker.
+// in its place (List skips those too, so both agree on what a space is), or no marker. It
+// decides with the same test as FolderOf (markerPresent), so a session row, the list and a
+// create naming the folder never disagree; a marker that cannot be read or parsed only loses
+// the name.
 func Lookup(folder string) (Space, bool) {
 	if !ValidFolder(folder) {
 		return Space{}, false
 	}
 	dir := filepath.Join(Root(), folder)
-	fi, err := os.Lstat(dir)
-	if err != nil || !fi.IsDir() {
+	if !markerPresent(dir) {
 		return Space{}, false
 	}
-	m, ok := readMarker(dir)
-	if !ok {
-		return Space{}, false
-	}
+	m, _ := readMarker(dir)
 	name, ok := CleanName(m.Name)
 	if !ok {
 		name = ""

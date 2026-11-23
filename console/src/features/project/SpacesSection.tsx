@@ -16,13 +16,16 @@ import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useRefIndex } from "../sessions/useRefIndex.ts";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
-import { spaceLabel, spacesOwner, spacesRetryDelay, useSpacesStore } from "../spaces/store.ts";
+import { failuresFor, spaceLabel, spacesFor, spacesOwner, spacesRetryDelay, useSpacesStore } from "../spaces/store.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
 export const SpacesSection = memo(function SpacesSection() {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
-  const spaces = useSpacesStore((s) => s.spaces);
+  // Only a list asked for this workspace names anything: until the new owner's answer arrives
+  // after a tenant or member switch, the folders stand in.
+  const owner = spacesOwner();
+  const spaces = useSpacesStore((s) => spacesFor(s, owner));
   const ctx = useRepoRailContext();
   const actions = useSessionActions();
   const nq = normQuery(useProjectFilter((f) => f.q));
@@ -53,9 +56,8 @@ export const SpacesSection = memo(function SpacesSection() {
     for (const s of sessions) if (s.space && !known.has(s.space)) missing.add(s.space);
     return [...missing].sort().join("\n");
   }, [sessions, spaces]);
-  const owner = spacesOwner();
   const storeOwner = useSpacesStore((s) => s.owner);
-  const failures = useSpacesStore((s) => s.failures);
+  const failures = useSpacesStore((s) => failuresFor(s, owner));
   const want = hasSpaceSessions && (unknown !== "" || storeOwner !== owner);
   useEffect(() => {
     if (!want) return;
@@ -79,14 +81,24 @@ export const SpacesSection = memo(function SpacesSection() {
         onKeyDown={rail.onKeyDown}
       >
         {groups.map((g) => (
-          // The space is the tree's parent node; its sessions are the rail rows arrow keys move
-          // between (data-rail-row), as under a repository node.
-          <li key={g.folder} className="space-group" role="treeitem" aria-expanded={true} aria-label={g.label}>
-            <div className="space-group-head" title={tr("pj.space_folder_hint", { folder: g.folder })}>
-              <Icon name="folder" />
-              <span className="space-group-name">{g.label}</span>
+          // Built like a repository node (RepoNode): the space's own row is the parent treeitem,
+          // focusable and a rail row, so arrow keys reach it and Left from a session returns to
+          // it (useRailRoving looks for .proj-node > .proj-node-head).
+          <li key={g.folder} className="proj-node space-group">
+            <div className="proj-node-head space-group-head">
+              <div
+                className="space-group-row"
+                role="treeitem"
+                aria-expanded={true}
+                tabIndex={-1}
+                data-rail-row=""
+                title={tr("pj.space_folder_hint", { folder: g.folder })}
+              >
+                <Icon name="folder" />
+                <span className="space-group-name">{g.label}</span>
+              </div>
             </div>
-            <ul className="sess-list proj-sub-list" role="group">
+            <ul className="sess-list proj-sub-list" role="group" aria-label={g.label}>
               {g.sessions.map((s) => (
                 <SessionRow
                   key={s.name}

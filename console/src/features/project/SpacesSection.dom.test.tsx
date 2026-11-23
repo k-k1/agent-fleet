@@ -124,21 +124,37 @@ describe("Spaces section", () => {
     }
   });
 
-  it("asks again for another workspace, even for a folder the old list named", async () => {
+  it("names nothing from another workspace's list while the new one is asked for", async () => {
     useSessionsStore.setState({ sessions: [inSpace("s1", "q3-abcdef")] });
     await render();
     expect(heads()).toEqual(["Q3 report"]);
     const before = spaceCalls();
-    // The other tenant's Agent knows the same folder by another name.
+    // The other tenant's Agent knows the same folder by another name, and answers late.
+    let answer: (v: unknown) => void = () => {};
+    spacesAnswer = () => new Promise((r) => (answer = r));
     tenant = "other";
-    spacesAnswer = () => ({ ...LIST, spaces: [{ ...LIST.spaces[0], name: "Other tenant's" }] });
     await act(async () => {
       useSessionsStore.setState({ sessions: [inSpace("s1", "q3-abcdef"), inSpace("s2", "q3-abcdef")] });
     });
     await tick();
-    await flush();
     expect(spaceCalls()).toBeGreaterThan(before);
+    // Asked, not answered: the old tenant's name must not stand in for the folder.
+    expect(heads()).toEqual(["q3-abcdef"]);
+    await act(async () => {
+      answer({ ...LIST, spaces: [{ ...LIST.spaces[0], name: "Other tenant's" }] });
+    });
+    await flush();
     expect(heads()).toEqual(["Other tenant's"]);
+  });
+
+  it("does not carry another workspace's failures into the wait", async () => {
+    // Two failures for the first tenant would make the next ask wait 4 s.
+    useSpacesStore.setState({ failures: 2, failOwner: "\n" });
+    tenant = "other";
+    useSessionsStore.setState({ sessions: [inSpace("s1", "q3-abcdef")] });
+    await render();
+    expect(spaceCalls()).toBe(1);
+    expect(heads()).toEqual(["Q3 report"]);
   });
 
   it("matches the search box against the space's name", async () => {
@@ -148,16 +164,29 @@ describe("Spaces section", () => {
       useProjectFilter.setState({ q: "q3 rep" });
     });
     expect(heads()).toEqual(["Q3 report"]);
-    expect(host.querySelectorAll("[role=treeitem] [role=group] > *").length).toBe(1);
+    expect(host.querySelectorAll("[role=group] [role=treeitem]").length).toBe(1);
   });
 
-  it("names the tree and makes each space its parent node", async () => {
-    useSessionsStore.setState({ sessions: [inSpace("s1", "q3-abcdef")] });
+  it("names the tree, and arrow keys move between a space and its sessions", async () => {
+    useSessionsStore.setState({ sessions: [inSpace("s1", "q3-abcdef"), inSpace("s2", "q3-abcdef")] });
     await render();
-    const tree = host.querySelector("[role=tree]");
-    expect(tree?.getAttribute("aria-label")).toBeTruthy();
-    const node = tree?.querySelector(":scope > [role=treeitem]");
-    expect(node?.getAttribute("aria-label")).toBe("Q3 report");
-    expect(node?.querySelector("[role=group] [role=treeitem]")).not.toBeNull();
+    const tree = host.querySelector<HTMLElement>("[role=tree]")!;
+    expect(tree.getAttribute("aria-label")).toBeTruthy();
+    const rows = [...tree.querySelectorAll<HTMLElement>("[data-rail-row]")];
+    // The space row first, then its two sessions.
+    expect(rows.length).toBe(3);
+    expect(rows[0].getAttribute("role")).toBe("treeitem");
+    expect(rows[0].textContent).toContain("Q3 report");
+    const key = (el: HTMLElement, k: string) =>
+      act(() => {
+        el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+      });
+    rows[0].focus();
+    await key(rows[0], "ArrowDown");
+    expect(document.activeElement).toBe(rows[1]);
+    await key(rows[1], "ArrowDown");
+    expect(document.activeElement).toBe(rows[2]);
+    await key(rows[2], "ArrowLeft");
+    expect(document.activeElement).toBe(rows[0]);
   });
 });
