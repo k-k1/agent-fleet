@@ -421,6 +421,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.continuation_title": "A run added this as a follow-up of a memo you approved, for the same work item, so it waits to run without approval. Stop chain makes the next follow-up wait for approval.",
   "memo.menu_return_run": "Return this run to the queue",
   "memo.menu_return_run_checking": "Checking the run…",
+  "memo.menu_return_run_missing": "The run was not found in the run history; open the history from the category menu",
   "memo.menu_return_run_no": "This run cannot be returned (it is still open, was already returned, or has nothing to return)",
   "memo.continuation_stop": "Stop chain",
   "memo.continuation_stop_title": "From now on a follow-up of this chain waits for your approval.",

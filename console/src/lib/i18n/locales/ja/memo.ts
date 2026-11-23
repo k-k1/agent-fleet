@@ -418,6 +418,7 @@ export const memo = {
   "memo.continuation_title": "あなたが承認したメモの続きとして、同じ作業項目について実行が追加したため、承認を求めずに実行待ちになっています。「連鎖を止める」で、次の続きは承認待ちになります。",
   "memo.menu_return_run": "この実行をキューに戻す",
   "memo.menu_return_run_checking": "実行を確認しています…",
+  "memo.menu_return_run_missing": "実行が実行履歴に見つかりません。カテゴリのメニューから実行履歴を開いてください",
   "memo.menu_return_run_no": "この実行は戻せません（まだ実行中、すでに戻した、または戻すメモがありません）",
   "memo.continuation_stop": "連鎖を止める",
   "memo.continuation_stop_title": "これ以降、この連鎖の続きは承認待ちになります。",

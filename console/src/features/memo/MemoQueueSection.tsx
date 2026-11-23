@@ -894,7 +894,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   };
   // The run that delivered the menu's memo, read when the menu opens on a delivered memo of a queue
   // category: "loading" until the answer, null when it is not there or the read failed (no item).
-  const [menuRun, setMenuRun] = useState<{ memoId: string; run: MemoDelivery | null | "loading" } | null>(null);
+  const [menuRun, setMenuRun] = useState<{ memoId: string; run: MemoDelivery | null | "loading" | "missing" } | null>(null);
   const sessionList = useSessionsStore((s) => s.sessions);
   const menuMemoId = memoMenu?.m.id;
   useEffect(() => {
@@ -910,11 +910,13 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     }
     let live = true;
     setMenuRun({ memoId: m.id, run: "loading" });
-    void memoQueueDeliveries(cat.id)
+    // Open runs however old, and the runs closed since the memo was sent: the plain list is the newest fifty.
+    void memoQueueDeliveries(cat.id, true, m.sentAt || "")
       .then((raw) => {
         if (!live) return;
-        const run = readDeliveries(raw)?.find((d) => d.id === m.deliveryId) ?? null;
-        setMenuRun({ memoId: m.id, run });
+        const all = readDeliveries(raw);
+        // A failed read shows no item; a read that does not hold the run shows it disabled, naming where to look.
+        setMenuRun({ memoId: m.id, run: all ? (all.find((d) => d.id === m.deliveryId) ?? "missing") : null });
       })
       .catch(() => {
         if (live) setMenuRun({ memoId: m.id, run: null });
@@ -1571,7 +1573,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
               {menuRun && menuRun.memoId === memoMenu.m.id && menuRun.run && (() => {
                 const run = menuRun.run;
                 const checking = run === "loading";
-                const ok = !checking && canReturnRun(run);
+                const missing = run === "missing";
+                const ok = !checking && !missing && canReturnRun(run);
+                const why = checking ? tr("memo.menu_return_run_checking") : missing ? tr("memo.menu_return_run_missing") : tr("memo.menu_return_run_no");
                 return (
                   <li>
                     <button
@@ -1580,17 +1584,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       // Set here: useMenuRoving tags only the items present when the menu opened, and this one appears later.
                       role="menuitem"
                       disabled={!ok}
-                      title={checking ? tr("memo.menu_return_run_checking") : ok ? tr("memo.d_return_hint") : tr("memo.menu_return_run_no")}
+                      title={ok ? tr("memo.d_return_hint") : why}
                       onClick={() => {
                         const m = memoMenu.m;
-                        if (!ok) return;
+                        if (!ok || checking || missing) return;
                         runMemoMenu(() => void returnMenuRun(m, run));
                       }}
                     >
                       <Icon name="refresh" />
                       <span className="memo-cat-menu-txt">
                         {tr("memo.menu_return_run")}
-                        {!ok && <span className="memo-cat-menu-why">{checking ? tr("memo.menu_return_run_checking") : tr("memo.menu_return_run_no")}</span>}
+                        {!ok && <span className="memo-cat-menu-why">{why}</span>}
                       </span>
                     </button>
                   </li>

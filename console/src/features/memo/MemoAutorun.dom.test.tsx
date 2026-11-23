@@ -23,7 +23,7 @@ const memoQueueResume = vi.fn();
 const memoUpdateMock = vi.fn(async (_id: string, _patch: unknown) => ({}));
 const memoQueueDeliveryEnd = vi.fn();
 const memoQueueDeliveryReturn = vi.fn();
-const memoQueueDeliveries = vi.fn(async (_id: string) => servedDeliveries);
+const memoQueueDeliveries = vi.fn(async (_id: string, _openToo?: boolean, _since?: string) => servedDeliveries);
 const memoStopChain = vi.fn(async (_id: string) => ({}));
 const memoQueueList = vi.fn(async () => {
   if (queuesFail) throw new Error("down");
@@ -51,7 +51,7 @@ vi.mock("./api.ts", () => ({
   memoQueueDelete: (id: string) => memoQueueDelete(id),
   memoQueueFire: (id: string) => memoQueueFire(id),
   memoQueueResume: (id: string) => memoQueueResume(id),
-  memoQueueDeliveries: (id: string) => memoQueueDeliveries(id),
+  memoQueueDeliveries: (id: string, openToo?: boolean, since?: string) => (openToo === undefined ? memoQueueDeliveries(id) : memoQueueDeliveries(id, openToo, since)),
   memoQueueDeliveryEnd: (id: string, did: string) => memoQueueDeliveryEnd(id, did),
   memoQueueDeliveryReturn: (id: string, did: string) => memoQueueDeliveryReturn(id, did),
   memoTidyRuns: async () => ({ runs: [], usedToday: 0, dailyCap: 10 }),
@@ -1963,11 +1963,44 @@ describe("Return this run to the queue in the memo menu (#4877)", () => {
     await click(item);
     expect(memoQueueDeliveryReturn).not.toHaveBeenCalled();
   });
-  it("is absent on a memo that no run delivered, and when the run cannot be read", async () => {
+  it("is absent on a memo that no run delivered", async () => {
     servedMemos = [aMemo({ id: "p", state: "pending", provenance: "member" })];
     await render();
     await click(rowMenuBtn());
     expect(retItem()).toBeNull();
+  });
+  it("asks for open runs and the runs closed since the memo was sent, not the newest fifty alone", async () => {
+    servedMemos = [aMemo({ id: "a", state: "delivered", deliveryId: "d1", sentAt: "2026-11-01T00:00:00Z" })];
+    servedDeliveries = [run()];
+    await openMenu();
+    expect(memoQueueDeliveries).toHaveBeenCalledWith("c1", true, "2026-11-01T00:00:00Z");
+  });
+  it("is disabled and says where to look when the run is not in the answer", async () => {
+    servedMemos = [delivered()];
+    servedDeliveries = [run({ id: "other" })];
+    await openMenu();
+    const item = must(retItem(), "return item");
+    expect(item.disabled).toBe(true);
+    expect(item.textContent).toContain(t("memo.menu_return_run_missing"));
+  });
+  it("shows no item when the read fails", async () => {
+    servedMemos = [delivered()];
+    memoQueueDeliveries.mockRejectedValueOnce(new Error("boom"));
+    await openMenu();
+    expect(retItem()).toBeNull();
+  });
+  it("shows the item with the menuitem role once the read arrives", async () => {
+    servedMemos = [delivered()];
+    let release: (v: unknown) => void = () => {};
+    memoQueueDeliveries.mockImplementationOnce(() => new Promise<never>((r) => (release = r as (v: unknown) => void)));
+    await openMenu();
+    const waiting = must(retItem(), "return item while loading");
+    expect(waiting.disabled).toBe(true);
+    expect(waiting.textContent).toContain(t("memo.menu_return_run_checking"));
+    await act(async () => release([run()]));
+    const ready = must(retItem(), "return item");
+    expect(ready.getAttribute("role")).toBe("menuitem");
+    expect(ready.disabled).toBe(false);
   });
 });
 
