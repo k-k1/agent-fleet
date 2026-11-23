@@ -9,18 +9,27 @@
 #
 # Fail-open on purpose: with no gitleaks on PATH, or one that cannot run, the hook warns once
 # and lets the work through, like pre-commit does without a Go toolchain. A version other than
-# the one ci.yml pins only warns: rule sets differ between releases, and CI stays the authority.
+# the one CI pins only warns: rule sets differ between releases, and CI stays the authority.
 
 # Exit code gitleaks uses for "leaks found", so a crash (exit 1) is not read as a finding.
 GITLEAKS_LEAK_RC=99
 
-# The version ci.yml pins, read from there so the two cannot drift apart. Empty when it
-# cannot be found (the check is then skipped, not failed).
+# The version CI pins, read from where CI keeps it so the two cannot drift apart: the composite
+# action both secret-scan workflows use, else (an older layout) ci.yml's own install step. Empty
+# when it cannot be found (the check is then skipped, not failed).
 gitleaks_pinned_version() {
-  awk '
-    /install gitleaks/ { seen = 1 }
-    seen && /VERSION:/ { print $2; exit }
-  ' "$1/.github/workflows/ci.yml" 2>/dev/null || true
+  local f v
+  for f in "$1/.github/actions/install-gitleaks/action.yml" "$1/.github/workflows/ci.yml"; do
+    [ -f "$f" ] || continue
+    v="$(awk '
+      /install gitleaks/ { seen = 1 }
+      seen && /VERSION:/ { print $2; exit }
+    ' "$f")"
+    if [ -n "$v" ]; then
+      echo "$v"
+      return 0
+    fi
+  done
 }
 
 # Sets GITLEAKS_BIN, or returns 1 after printing the one warning.
@@ -34,7 +43,7 @@ gitleaks_locate() {
   have="$("$GITLEAKS_BIN" version 2>/dev/null | head -n1 | sed 's/^v//')" || have=""
   want="$(gitleaks_pinned_version "$root")"
   if [ -n "$want" ] && [ "$have" != "$want" ]; then
-    echo "$hook: gitleaks ${have:-?} found, ci.yml pins $want — scanning anyway; a result that differs from CI is not a block" >&2
+    echo "$hook: gitleaks ${have:-?} found, CI pins $want — scanning anyway; a result that differs from CI is not a block" >&2
   fi
   return 0
 }

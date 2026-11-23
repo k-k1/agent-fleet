@@ -41,7 +41,6 @@ WORK="$TMP/work"
 REMOTE="$TMP/remote.git"
 git init -q --template= --bare "$REMOTE"
 git init -q --template= -b main "$WORK"
-mkdir -p "$WORK/.github/workflows"
 cp -R "$REPO/.githooks" "$WORK/.githooks"
 cat > "$WORK/.gitleaks.toml" <<EOF
 [extend]
@@ -51,9 +50,10 @@ useDefault = true
 description = "test fixture"
 regexes = ['''$ALLOWED''']
 EOF
-# The version the hooks compare against, in the shape ci.yml has it.
+# The version the hooks compare against, in the shape the composite action has it.
 pin() {
-  printf 'jobs:\n  secret-scan:\n    steps:\n      - name: install gitleaks (version+checksum pinned)\n        env:\n          VERSION: %s\n' "$1" > "$WORK/.github/workflows/ci.yml"
+  mkdir -p "$WORK/.github/actions/install-gitleaks"
+  printf 'runs:\n  steps:\n    - name: install gitleaks (version+checksum pinned)\n      env:\n        VERSION: %s\n' "$1" > "$WORK/.github/actions/install-gitleaks/action.yml"
 }
 pin "$REAL_VERSION"
 
@@ -175,9 +175,9 @@ g push -q origin :nogl 2> /dev/null
 pin "0.0.1"
 g switch -q -C ver origin/main
 if commit_file "clean-value"; then :; else fail "a version mismatch blocked a clean commit: $(cat "$TMP/err")"; fi
-grep -q "ci.yml pins 0.0.1" "$TMP/err" || fail "no version warning: $(cat "$TMP/err")"
+grep -q "CI pins 0.0.1" "$TMP/err" || fail "no version warning: $(cat "$TMP/err")"
 g push -q origin ver 2> "$TMP/err" || fail "a version mismatch blocked a clean push: $(cat "$TMP/err")"
-grep -q "ci.yml pins 0.0.1" "$TMP/err" || fail "no version warning on push: $(cat "$TMP/err")"
+grep -q "CI pins 0.0.1" "$TMP/err" || fail "no version warning on push: $(cat "$TMP/err")"
 if commit_file "$LEAK"; then fail "a version mismatch switched the scan off"; else expect_refused "pre-commit, other version" "$TMP/err"; fi
 
 # History already on the remote's default branch is not rescanned (CI covers it): a leak that
