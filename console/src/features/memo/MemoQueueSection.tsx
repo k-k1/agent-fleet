@@ -548,7 +548,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const removeNewImage = (name: string) => setNewImages((cur) => cur.filter((a) => a.name !== name));
 
   // Best-effort prune of orphaned container images: keep everything referenced by a memo
-  // plus the composer's in-flight uploads (not yet committed to a memo). Fire-and-forget.
+  // plus the composer's uploads (not yet committed to a memo). An upload whose response has
+  // not arrived cannot be named here; the agent spares recently stored files for that
+  // (memoImageGCGrace). Fire-and-forget.
   const runImageGC = (memoList: Memo[], pending: MemoAttachment[]) => {
     const keep = new Set<string>();
     for (const m of memoList) for (const a of m.attachments || []) keep.add(a.name);
