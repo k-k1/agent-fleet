@@ -1,28 +1,30 @@
 package memoryx
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secretpat/secretpattest"
 )
 
-// A stateless installation token (JWT-shaped, with `.`, `-` and `_`) is a github-token
-// finding like a classic one, its hint keeps only the prefix, and prose with underscores and
-// dots is not one.
+// A stateless GitHub token (ghs_APPID_JWT) is a github-token finding like a classic one, even
+// when its APPID or body holds a placeholder-looking run; its hint keeps only the prefix; a
+// classic token followed by ".example" is still found; prose with underscores and dots is not.
 func TestMemoryScanContentFindsStatelessGitHubTokens(t *testing.T) {
-	toks := []string{secretpattest.Classic(), secretpattest.Stateless(), secretpattest.StatelessEarlyPunct()}
-	for _, tok := range toks {
-		got := memoryScanContent("a.md", []byte("# note\nuse "+tok+" for the push.\n"))
-		if len(got) != 1 || got[0].Rule != "github-token" || got[0].Line != 2 {
-			t.Errorf("%.12s… (%d chars): findings %+v, want one github-token on line 2", tok, len(tok), got)
-			continue
-		}
-		if want := tok[:memorySecretHintPrefixLen] + "…("; !strings.HasPrefix(got[0].Hint, want) {
-			t.Errorf("hint %q, want it to start with %q", got[0].Hint, want)
-		}
-		if l := secretpattest.Leftover(got[0].Hint, tok); l != "" {
-			t.Errorf("hint %q carries %q of the token", got[0].Hint, l)
+	for name, tok := range secretpattest.All() {
+		for _, line := range []string{"use " + tok + " for the push.", "cache_" + tok, tok + ".example"} {
+			if strings.HasPrefix(line, "cache_") && !strings.HasPrefix(name, "stateless") {
+				continue
+			}
+			got := memoryScanContent("a.md", []byte("# note\n"+line+"\n"))
+			if len(got) != 1 || got[0].Rule != "github-token" || got[0].Line != 2 {
+				t.Errorf("%s in %.20q…: findings %+v, want one github-token on line 2", name, line, got)
+				continue
+			}
+			if want := tok[:memorySecretHintPrefixLen] + "…(" + strconv.Itoa(len(tok)) + ")"; got[0].Hint != want {
+				t.Errorf("%s: hint %q, want %q", name, got[0].Hint, want)
+			}
 		}
 	}
 	if got := memoryScanContent("b.md", []byte(strings.Join(secretpattest.Benign, "\n"))); len(got) != 0 {

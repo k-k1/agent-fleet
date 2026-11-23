@@ -13,6 +13,10 @@ import (
 	"strings"
 )
 
+func rng(tag byte) *rand.Rand {
+	return rand.New(rand.NewChaCha8([32]byte{'a', 'f', '-', '4', '9', '2', '9', '-', tag}))
+}
+
 func randomBytes(r *rand.Rand, n int) []byte {
 	b := make([]byte, n)
 	for i := range b {
@@ -25,46 +29,76 @@ func b64(b []byte) string { return base64.RawURLEncoding.EncodeToString(b) }
 
 func prefix(kind string) string { return "gh" + kind + "_" }
 
-// Stateless is a stateless installation token's shape: `ghs_`, a JWT whose header is the
-// common 36-character `{"alg":"RS256","typ":"JWT"}`, a payload and a signature, about 520
-// characters in all. An alphanumeric-only pattern matches its header and stops at the first `.`.
-func Stateless() string {
-	r := rand.New(rand.NewChaCha8([32]byte{'a', 'f', '-', '4', '9', '2', '9', '-', 'h'}))
-	return prefix("s") + b64([]byte(`{"alg":"RS256","typ":"JWT"}`)) + "." + b64(randomBytes(r, 285)) + "." + b64(randomBytes(r, 64))
+// JWT is a made-up RS256 JWT: the common 36-character header, a payload and a 2048-bit
+// signature, about 520 characters in all.
+func JWT(tag byte) string {
+	r := rng(tag)
+	return b64([]byte(`{"alg":"RS256","typ":"JWT"}`)) + "." + b64(randomBytes(r, 105)) + "." + b64(randomBytes(r, 256))
 }
 
-// StatelessEarlyPunct is the same shape with a `-` and a `_` among the body's first 16
-// characters, where an alphanumeric-only pattern with any minimum of 16 or more finds nothing.
+// StatelessApp is a stateless installation token as GitHub documents it, `ghs_APPID_JWT`.
+func StatelessApp(appID string) string { return prefix("s") + appID + "_" + JWT('s') }
+
+// Stateless is StatelessApp with an ordinary APPID.
+func Stateless() string { return StatelessApp("2873461") }
+
+// StatelessZeros has an APPID with a run of zeros, which a substring placeholder filter
+// ("0000") would take for an example.
+func StatelessZeros() string { return StatelessApp("100000") }
+
+// StatelessNoApp is the shape without an APPID: its first 36 body characters are the JWT
+// header, all alphanumeric, which is all an alphanumeric-only pattern takes.
+func StatelessNoApp() string { return prefix("s") + JWT('n') }
+
+// StatelessEarlyPunct has a `-` and a `_` among the body's first 16 characters, where an
+// alphanumeric-only pattern with any minimum of 16 or more finds nothing.
 func StatelessEarlyPunct() string {
-	r := rand.New(rand.NewChaCha8([32]byte{'a', 'f', '-', '4', '9', '2', '9', '-', 'p'}))
-	return prefix("s") + "eyJ0-" + b64(randomBytes(r, 3)) + "_" + b64(randomBytes(r, 24)) + "." + b64(randomBytes(r, 300)) + "." + b64(randomBytes(r, 64))
+	r := rng('p')
+	return prefix("s") + "eyJ0-" + b64(randomBytes(r, 3)) + "_" + b64(randomBytes(r, 24)) + "." + b64(randomBytes(r, 105)) + "." + b64(randomBytes(r, 256))
 }
 
 // Classic is a classic personal access token's shape: `ghp_` and 36 alphanumerics.
 func Classic() string {
-	const alnum = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-	r := rand.New(rand.NewChaCha8([32]byte{'a', 'f', '-', '4', '9', '2', '9', '-', 'c'}))
-	var b strings.Builder
-	for range 36 {
-		b.WriteByte(alnum[r.IntN(len(alnum))])
-	}
-	return prefix("p") + b.String()
+	return prefix("p") + alnum(rng('c'), "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")
 }
 
-// Segments are the parts of tok between dots, the pieces a partial redaction leaves behind.
-func Segments(tok string) []string { return strings.Split(tok, ".") }
+// ClassicLetters is Classic without a digit, which an entropy heuristic that wants both
+// letters and digits does not take.
+func ClassicLetters() string {
+	return prefix("p") + alnum(rng('l'), "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")
+}
 
-// Leftover names the first piece of tok, at least 6 characters long, that is still in out, or
-// "" when none is. Every dot-separated segment is checked, and so is every 12-character window
-// of the body, so a redaction that ate a segment's head but not its tail is caught too.
+func alnum(r *rand.Rand, set string) string {
+	var b strings.Builder
+	for range 36 {
+		b.WriteByte(set[r.IntN(len(set))])
+	}
+	return b.String()
+}
+
+// All names every token shape, for tests that must hold for each.
+func All() map[string]string {
+	return map[string]string{
+		"classic":               Classic(),
+		"classic-letters":       ClassicLetters(),
+		"stateless":             Stateless(),
+		"stateless-zeros":       StatelessZeros(),
+		"stateless-no-app":      StatelessNoApp(),
+		"stateless-early-punct": StatelessEarlyPunct(),
+	}
+}
+
+// Leftover names the first piece of tok still in out, or "" when none is: every piece between
+// `.` and `_` of at least 4 characters (the APPID included), and every 8-character window of
+// the body, so a redaction that left a short fragment is caught too.
 func Leftover(out, tok string) string {
-	for _, s := range Segments(tok) {
-		if len(s) >= 6 && strings.Contains(out, s) {
+	for _, s := range strings.FieldsFunc(tok, func(r rune) bool { return r == '.' || r == '_' }) {
+		if len(s) >= 4 && strings.Contains(out, s) {
 			return s
 		}
 	}
-	for i := len(prefix("s")); i+12 <= len(tok); i++ {
-		if w := tok[i : i+12]; strings.Contains(out, w) {
+	for i := len(prefix("s")); i+8 <= len(tok); i++ {
+		if w := tok[i : i+8]; strings.Contains(out, w) {
 			return w
 		}
 	}
@@ -78,4 +112,6 @@ var Benign = []string{
 	"the gh_ prefix alone, ghs_ alone, ghp_short.x and ghs_a.b.c are not tokens",
 	"snake_case_identifier_with_many_parts.and.dots-and-hyphens_v1.2.3",
 	"run `gh pr view` then open docs/user_guide.md and release-notes_2026.11.txt",
+	"open docs/ghs_status_dashboard_for_enterprise_repositories.md and ghp_release_notes_for_the_2026_cycle.txt",
+	"ghs_12_eyJ.short.x and gho_9_eyJhbGciOiJ.too.short are not tokens either",
 }

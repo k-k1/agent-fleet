@@ -101,6 +101,11 @@ func memoryMaskSecret(s string) string {
 	return s[:memorySecretHintPrefixLen] + "…(" + strconv.Itoa(len(s)) + ")"
 }
 
+// memoryStructural reports whether v is, whole, a shape whose structure is the evidence, so
+// memorySecretPlaceholders does not apply: a stateless GitHub token's APPID can be 100000, and
+// its 500 base64url characters can hold "aaaa" by chance; neither makes it an example.
+func memoryStructural(v string) bool { return secretpat.GitHubStateless.FindString(v) == v }
+
 // memoryLooksPlaceholder reports whether the value looks like an example or a redaction.
 func memoryLooksPlaceholder(s string) bool {
 	low := strings.ToLower(s)
@@ -131,7 +136,7 @@ func memoryScanContent(path string, b []byte) []memorySecretFinding {
 				if len(m) > 1 && m[1] != "" {
 					v = m[1]
 				}
-				if !memoryLooksPlaceholder(v) {
+				if memoryStructural(v) || !memoryLooksPlaceholder(v) {
 					val = v
 					break
 				}

@@ -241,7 +241,7 @@ var remoteSecretRules = []*regexp.Regexp{
 }
 
 var (
-	remoteTokenRe = regexp.MustCompile(`^(gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-ant-|sk-proj-|ATBB)[A-Za-z0-9._-]{8,}`)
+	remoteTokenRe = regexp.MustCompile(`^(gh[pousr]_|github_pat_|glpat-|xox[abprs]-|sk-ant-|sk-proj-|ATBB)[A-Za-z0-9_-]{8,}`)
 	remoteRunRe   = regexp.MustCompile(`^[A-Za-z0-9_]{32,}$`)
 	digitRe       = regexp.MustCompile(`[0-9]`)
 	letterRe      = regexp.MustCompile(`[A-Za-z]`)

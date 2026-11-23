@@ -78,9 +78,11 @@ func mrkdwnFromGFM(s string) string {
 
 // knownSecretPatterns are high-precision provider token shapes — matched
 // verbatim regardless of entropy so short, structured credentials still go.
+// GitHub's goes first: the Slack and JWT shapes admit `-` and `_`, so run before it they can
+// swallow the head of a GitHub token glued to them and leave the rest in clear.
 var knownSecretPatterns = []*regexp.Regexp{
-	regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`),                                             // Slack tokens
 	regexp.MustCompile(secretpat.GitHubTokenPattern(20)),                                           // GitHub tokens, classic and stateless
+	regexp.MustCompile(`xox[baprs]-[A-Za-z0-9-]{10,}`),                                             // Slack tokens
 	regexp.MustCompile(`\b(?:AKIA|ASIA)[0-9A-Z]{16}\b`),                                            // AWS access key id
 	regexp.MustCompile(`\bsk-[A-Za-z0-9_\-]{20,}`),                                                 // OpenAI-style secret keys
 	regexp.MustCompile(`(?i)\bbearer\s+[A-Za-z0-9._~+/\-]{10,}=*`),                                 // Authorization: Bearer …

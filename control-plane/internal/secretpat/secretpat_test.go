@@ -12,22 +12,26 @@ import (
 )
 
 func TestGitHubTokenMatchesWholeToken(t *testing.T) {
-	toks := map[string]string{
-		"classic":               secretpattest.Classic(),
-		"stateless":             secretpattest.Stateless(),
-		"stateless-early-punct": secretpattest.StatelessEarlyPunct(),
-	}
-	frames := []string{"%s", "token: %s. Next sentence", "https://x-access-token:%s@github.com/o/r.git", `"%s"`, "GH_TOKEN=%s\n", "(%s)"}
+	frames := []string{"%s", "token: %s. Next sentence", "https://x-access-token:%s@github.com/o/r.git", `"%s"`, "GH_TOKEN=%s\n", "(%s)", "%s.example"}
 	for _, min := range []int{16, 20, GitHubTokenMinBody} {
 		re := regexp.MustCompile(GitHubTokenPattern(min))
-		for name, tok := range toks {
-			for _, f := range frames {
+		for name, tok := range secretpattest.All() {
+			fs := append([]string(nil), frames...)
+			if strings.HasPrefix(name, "stateless") {
+				// The stateless branch has no leading boundary, so a token glued to a word is
+				// still one. A `_suffix` is not tested: a JWT signature may hold `_`, so a
+				// stateless match runs on through it, which over-redacts on the safe side.
+				fs = append(fs, "cache_%s", "x%s")
+			} else {
+				fs = append(fs, "%s_suffix")
+			}
+			for _, f := range fs {
 				in := strings.Replace(f, "%s", tok, 1)
 				if got := re.FindString(in); got != tok {
-					t.Errorf("min %d, %s in %q: matched %q, want the whole token (%d chars)", min, name, f, got, len(tok))
+					t.Errorf("min %d, %s in %q: matched %d of %d chars", min, name, f, len(got), len(tok))
 				}
-				if out := re.ReplaceAllString(in, "***"); secretpattest.Leftover(out, tok) != "" {
-					t.Errorf("min %d, %s in %q: %q survives redaction", min, name, f, secretpattest.Leftover(out, tok))
+				if out := re.ReplaceAllString(in, "***"); out != strings.Replace(f, "%s", "***", 1) {
+					t.Errorf("min %d, %s in %q: redacted to %.80q", min, name, f, out)
 				}
 			}
 		}
@@ -35,22 +39,39 @@ func TestGitHubTokenMatchesWholeToken(t *testing.T) {
 	if got := GitHubToken.String(); got != GitHubTokenPattern(GitHubTokenMinBody) {
 		t.Errorf("GitHubToken = %s, want the pattern at GitHubTokenMinBody", got)
 	}
+	for name, tok := range secretpattest.All() {
+		stateless := strings.HasPrefix(name, "stateless")
+		if got := GitHubStateless.FindString(tok) == tok; got != stateless {
+			t.Errorf("%s: GitHubStateless whole match = %v", name, got)
+		}
+		if !stateless && GitHubClassic.FindString(tok) != tok {
+			t.Errorf("%s: GitHubClassic does not match it whole", name)
+		}
+	}
 }
 
 // TestFixturesBeatTheOldPattern proves the fixtures exercise the change: the alphanumeric-only
 // pattern every site used before either misses them or leaves part of them in clear.
 func TestFixturesBeatTheOldPattern(t *testing.T) {
 	old := regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{16,}\b`)
-	for name, tok := range map[string]string{"stateless": secretpattest.Stateless(), "stateless-early-punct": secretpattest.StatelessEarlyPunct()} {
-		if secretpattest.Leftover(old.ReplaceAllString(tok, "***"), tok) == "" {
+	for name, tok := range secretpattest.All() {
+		if !strings.HasPrefix(name, "stateless") {
+			continue
+		}
+		if l := secretpattest.Leftover(old.ReplaceAllString(tok, "***"), tok); l == "" {
 			t.Errorf("%s: the old pattern redacts it whole, so it proves nothing", name)
 		}
+		if len(tok) < 400 || strings.Count(tok, ".") != 2 {
+			t.Errorf("%s is not JWT-shaped: %d chars", name, len(tok))
+		}
 	}
-	if old.FindString(secretpattest.StatelessEarlyPunct()) != "" {
-		t.Error("stateless-early-punct: the old pattern finds it, so it does not cover the miss")
+	for _, tok := range []string{secretpattest.Stateless(), secretpattest.StatelessEarlyPunct()} {
+		if m := old.FindString(tok); m != "" {
+			t.Errorf("the old pattern finds %.12s…, so the fixture does not cover the miss", tok)
+		}
 	}
-	if !strings.Contains(secretpattest.Stateless(), ".") || len(secretpattest.Stateless()) < 400 {
-		t.Errorf("stateless fixture is not JWT-shaped: %d chars", len(secretpattest.Stateless()))
+	if !strings.Contains(secretpattest.StatelessZeros(), "_100000_") {
+		t.Error("the zeros fixture lost its APPID")
 	}
 }
 
@@ -62,17 +83,7 @@ func TestGitHubTokenBoundaries(t *testing.T) {
 		}
 	}
 	if m := re.FindString("a" + secretpattest.Classic()); m != "" {
-		t.Errorf("a token glued to a word matched %q", m)
-	}
-	tok := secretpattest.Classic()
-	for in, want := range map[string]string{
-		tok + "...":     tok,
-		tok + "-":       tok + "-",
-		tok + "_suffix": tok + "_suffix",
-	} {
-		if got := GitHubToken.FindString(in); got != want {
-			t.Errorf("FindString(%q) = %q, want %q", in, got, want)
-		}
+		t.Errorf("a classic token glued to a word matched %q", m)
 	}
 }
 

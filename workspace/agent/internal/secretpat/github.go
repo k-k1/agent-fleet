@@ -9,24 +9,40 @@ import (
 	"strconv"
 )
 
-// GitHubTokenMinBody is the shortest body (the part after `gh?_`) a detector takes for a
-// GitHub token. A classic token's body is exactly 36 alphanumerics; anything shorter in prose
-// is far more likely a name than a credential. Redactors that deliberately cast a wider net
-// pass their own, lower minimum to GitHubTokenPattern.
+// GitHubTokenMinBody is the shortest classic body (the alphanumerics after `gh?_`) a detector
+// takes. A classic token's body is exactly 36; anything shorter in prose is far more likely a
+// name than a credential. Redactors that deliberately cast a wider net pass their own, lower
+// minimum to GitHubTokenPattern.
 const GitHubTokenMinBody = 36
 
-// GitHubTokenPattern is the source of a regexp matching one whole GitHub token (ghp_, gho_,
-// ghu_, ghs_, ghr_) whose body has at least minBody characters (minBody >= 2).
+// GitHubStatelessPattern matches a stateless token whole: `ghs_APPID_JWT` as GitHub documents
+// it (about 520 characters), and the same without the APPID. It is held to that structure, a
+// numeric APPID and a three-segment JWT, rather than to GitHub's looser suggestion
+// `ghs_[A-Za-z0-9._-]{36,}`, because the looser class also takes ordinary names such as
+// `ghs_status_dashboard_for_enterprise_repositories.md`.
 //
-// The body admits `.`, `-` and `_` because stateless installation tokens (`ghs_`, about 520
-// characters, JWT-shaped) carry them; an alphanumeric-only class stops at the first one and
-// leaves the rest of the token in clear, and the leading part it does catch is the JWT header,
-// which is predictable. The last character excludes `.` so a sentence ending right after a
-// token keeps its full stop. There is no trailing `\b`: a body may end in `-`, and a boundary
-// there would cut the last character off instead.
-func GitHubTokenPattern(minBody int) string {
-	return `\bgh[pousr]_[A-Za-z0-9._-]{` + strconv.Itoa(minBody-1) + `,}[A-Za-z0-9_-]`
+// It has no leading `\b`: the structure is specific enough on its own, and a boundary would
+// miss a token glued to a word (`cache_ghs_…`) and leave it all in clear.
+const GitHubStatelessPattern = `gh[pousr]_(?:[0-9]+_)?eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}`
+
+// GitHubClassicPattern matches a classic token: `gh?_` and at least minBody alphanumerics.
+// There is no trailing `\b`, which would drop a token followed by `_` entirely.
+func GitHubClassicPattern(minBody int) string {
+	return `\bgh[pousr]_[A-Za-z0-9]{` + strconv.Itoa(minBody) + `,}`
 }
 
-// GitHubToken matches a whole GitHub token, classic or stateless, at the detectors' minimum.
-var GitHubToken = regexp.MustCompile(GitHubTokenPattern(GitHubTokenMinBody))
+// GitHubTokenPattern matches a GitHub token of either shape. The stateless branch comes first:
+// a stateless token without an APPID starts with a 36-character JWT header that the classic
+// branch would take on its own, leaving the payload and signature behind.
+func GitHubTokenPattern(minBody int) string {
+	return `(?:` + GitHubStatelessPattern + `|` + GitHubClassicPattern(minBody) + `)`
+}
+
+var (
+	// GitHubToken matches a GitHub token of either shape at the detectors' minimum.
+	GitHubToken = regexp.MustCompile(GitHubTokenPattern(GitHubTokenMinBody))
+	// GitHubStateless matches the stateless shape only.
+	GitHubStateless = regexp.MustCompile(GitHubStatelessPattern)
+	// GitHubClassic matches the classic shape only, at the detectors' minimum.
+	GitHubClassic = regexp.MustCompile(GitHubClassicPattern(GitHubTokenMinBody))
+)
