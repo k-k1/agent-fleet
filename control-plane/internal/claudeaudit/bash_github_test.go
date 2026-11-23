@@ -83,8 +83,11 @@ func TestBashTargetMasksCutAndJoinedStatelessTokens(t *testing.T) {
 			}
 		}
 	}
-	if got := BashTarget("cat docs/ghs_eyewash_station.md", true); got != "cat docs/ghs_eyewash_station.md" {
-		t.Errorf("a plain file name masked to %q", got)
+	// Only a line of the cut's own shape (80 runes and "…") is taken for a cut one.
+	for _, in := range []string{"cat docs/ghs_eyewash_station.md", "cat docs/ghs_guide.md…", "echo ghs_wip…"} {
+		if got := BashTarget(in, true); got != in {
+			t.Errorf("%q masked to %q", in, got)
+		}
 	}
 }
 

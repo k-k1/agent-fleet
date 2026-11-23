@@ -27,6 +27,14 @@ func TestMemoryScanContentFindsStatelessGitHubTokens(t *testing.T) {
 			}
 		}
 	}
+	// Tokens written back to back reach the placeholder filter as one merged candidate; the
+	// zeros in one APPID must not drop both.
+	z, st := secretpattest.StatelessZeros(), secretpattest.Stateless()
+	for _, line := range []string{z + st, z + "-" + st, st + z} {
+		if got := memoryScanContent("c.md", []byte(line+"\n")); len(got) != 1 || got[0].Rule != "github-token" {
+			t.Errorf("joined tokens: findings %+v", got)
+		}
+	}
 	if got := memoryScanContent("b.md", []byte(strings.Join(secretpattest.Benign, "\n"))); len(got) != 0 {
 		t.Errorf("benign text flagged: %+v", got)
 	}

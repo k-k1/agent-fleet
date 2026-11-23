@@ -13,6 +13,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/secretpat"
 )
@@ -184,10 +185,6 @@ var secretValueREs = []struct {
 // and leave the rest in clear, and a replacement made before the next pattern is matched would
 // cut that one short the same way.
 var secretTokenREs = []*regexp.Regexp{
-	// A GitHub token cut short by the audit's own truncation: the Agent records a command's
-	// first line cut at 80 runes with "…" appended, which can cut a stateless token anywhere,
-	// even inside its header. Only a word running into that final "…" is taken.
-	regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_.-]*…$`),
 	regexp.MustCompile(`\bgh[pousr]_[A-Za-z0-9]{16,}`),
 	regexp.MustCompile(`\bgithub_pat_[A-Za-z0-9_]{20,}`),
 	regexp.MustCompile(`\bglpat-[A-Za-z0-9_-]{10,}`),
@@ -198,13 +195,27 @@ var secretTokenREs = []*regexp.Regexp{
 	regexp.MustCompile(`\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}(?:\.[A-Za-z0-9_-]*)?`),
 }
 
+// cutTokenRE is a GitHub token cut short by the audit's own truncation: the Agent records a
+// command's first line cut at 80 runes with "…" appended (toolInfoCut), which can cut a stateless
+// token anywhere, even inside its header. Only a word running into that final "…" is taken, and
+// only on a line of exactly that shape, so a short command typed with "…" keeps its words.
+var cutTokenRE = regexp.MustCompile(`gh[pousr]_[A-Za-z0-9_.-]*…$`)
+
+// toolInfoCut is the rune length of a line the Agent cut: 80 runes and "…".
+const toolInfoCut = 81
+
 // MaskCommandSecrets replaces secret-looking values in a command line with "***".
 func MaskCommandSecrets(s string) string {
+	cut := utf8.RuneCountInString(s) == toolInfoCut && strings.HasSuffix(s, "…")
 	s = maskValues(s)
 	for _, r := range secretValueREs {
 		s = r.re.ReplaceAllString(s, r.repl)
 	}
-	return secretpat.ReplaceSpans(s, "***", append(secretpat.Spans(s, secretTokenREs...), secretpat.GitHubStatelessSpans(s)...))
+	spans := append(secretpat.Spans(s, secretTokenREs...), secretpat.GitHubStatelessSpans(s)...)
+	if cut {
+		spans = append(spans, secretpat.Spans(s, cutTokenRE)...)
+	}
+	return secretpat.ReplaceSpans(s, "***", spans)
 }
 
 // BashTarget is the audit Target for a Bash call.

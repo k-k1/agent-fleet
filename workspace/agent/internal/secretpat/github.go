@@ -39,25 +39,98 @@ const GitHubStatelessPattern = githubStatelessHead + `[A-Za-z0-9_-]{12,}\.[A-Za-
 const GitHubClassicPattern = `\bgh[pousr]_[A-Za-z0-9]{36,}\b`
 
 var (
-	githubClassic   = regexp.MustCompile(GitHubClassicPattern)
-	githubPrefix    = regexp.MustCompile(`gh[pousr]_`)
+	githubClassic = regexp.MustCompile(GitHubClassicPattern)
+	githubPrefix  = regexp.MustCompile(`gh[pousr]_`)
+	// githubStateless is GitHubStatelessPattern anchored at a start. statelessAt is what runs;
+	// the tests hold the two to the same answers.
 	githubStateless = regexp.MustCompile(`^(?:` + GitHubStatelessPattern + `)`)
 )
+
+// statelessHeads are githubStatelessHead's openings of a JSON object in base64url.
+var statelessHeads = []string{"eyI", "eyJ", "eyAi", "ewoi", "ewog", "ewki", "ew0i", "ew0K", "IHsi", "Cnsi", "CXsi", "DXsi"}
+
+// statelessMaxHeader bounds a candidate's header. A JOSE header is a few dozen bytes; the bound
+// keeps a long line of token-like starts from costing a decode each.
+const statelessMaxHeader = 1024
 
 // GitHubStatelessSpans lists the stateless tokens in s as [start, end) byte offsets. Every
 // `gh?_` is tried as a start on its own, so a token that a previous match ran into (two tokens
 // written back to back: a signature takes the next token's head) is still found; RedactAll and
 // ReplaceSpans merge the overlap. A candidate whose header does not decode to a JSON object is
 // not a token.
+//
+// Each start is matched by statelessAt, not by the anchored regexp: the regexp runs to the end
+// of the base64url run before it fails, so a line packed with starts and no dot cost time
+// quadratic in its length (measured: 78 KB took 11 s, and the memory scan takes 4 MiB blobs).
+// statelessAt shares each run's end between the starts inside it.
 func GitHubStatelessSpans(s string) [][2]int {
 	var out [][2]int
+	var header, payload, sig runEnds
 	for _, p := range githubPrefix.FindAllStringIndex(s, -1) {
-		m := githubStateless.FindStringIndex(s[p[0]:])
-		if m != nil && jwtHeaderIsObject(s[p[0]:p[0]+m[1]]) {
-			out = append(out, [2]int{p[0], p[0] + m[1]})
+		if end := statelessAt(s, p[0], &header, &payload, &sig); end > 0 {
+			out = append(out, [2]int{p[0], end})
 		}
 	}
 	return out
+}
+
+// statelessAt is the end of the stateless token starting at p (s[p:] starts with `gh?_`), or 0
+// for none: githubStateless's answer, with the header bound and decode check on top.
+func statelessAt(s string, p int, header, payload, sig *runEnds) int {
+	i := p + len("ghs_")
+	if i < len(s) && isDigit(s[i]) {
+		for i < len(s) && isDigit(s[i]) {
+			i++
+		}
+		if i >= len(s) || s[i] != '_' {
+			return 0
+		}
+		i++
+	}
+	h := i
+	head := false
+	for _, o := range statelessHeads {
+		head = head || strings.HasPrefix(s[h:], o)
+	}
+	if !head {
+		return 0
+	}
+	he := header.end(s, h)
+	if he-h < 16 || he-h > statelessMaxHeader || he >= len(s) || s[he] != '.' {
+		return 0
+	}
+	pe := payload.end(s, he+1)
+	if pe-(he+1) < 16 || pe >= len(s) || s[pe] != '.' {
+		return 0
+	}
+	se := sig.end(s, pe+1)
+	if se-(pe+1) < 32 || !jwtHeaderIsObject(s[p:se]) {
+		return 0
+	}
+	return se
+}
+
+// runEnds remembers the last base64url run it measured: every position inside a run has the
+// same end, so the starts that share a run (or a payload, or a signature) measure it once.
+type runEnds struct{ from, to int }
+
+// end is the end of the run of base64url characters starting at i.
+func (r *runEnds) end(s string, i int) int {
+	if r.to > 0 && i >= r.from && i <= r.to {
+		return r.to
+	}
+	j := i
+	for j < len(s) && isBase64URL(s[j]) {
+		j++
+	}
+	*r = runEnds{i, j}
+	return j
+}
+
+func isDigit(c byte) bool { return c >= '0' && c <= '9' }
+
+func isBase64URL(c byte) bool {
+	return c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || isDigit(c) || c == '-' || c == '_'
 }
 
 // jwtHeaderIsObject reports whether a stateless candidate's header, the part between the APPID

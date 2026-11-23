@@ -165,7 +165,7 @@ func TestCopiesAreIdentical(t *testing.T) {
 		b = bytes.ReplaceAll(b, []byte("agent-fleet/control-plane/"), []byte("agent-fleet/MODULE/"))
 		return bytes.ReplaceAll(b, []byte("agent-fleet/workspace/agent/"), []byte("agent-fleet/MODULE/"))
 	}
-	for _, f := range []string{"github.go", "secretpat_test.go", filepath.Join("secretpattest", "secretpattest.go")} {
+	for _, f := range []string{"github.go", "secretpat_test.go", "secretpat_perf_test.go", filepath.Join("secretpattest", "secretpattest.go")} {
 		cp, err1 := os.ReadFile(filepath.Join(root, "control-plane", "internal", "secretpat", f))
 		ag, err2 := os.ReadFile(filepath.Join(root, "workspace", "agent", "internal", "secretpat", f))
 		if err1 != nil || err2 != nil {
