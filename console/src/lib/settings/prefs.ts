@@ -106,6 +106,10 @@ const normalizeAgentEnabled = (v: unknown): Record<string, boolean> => {
 };
 
 
+// A list of distinct non-empty strings; anything else is dropped.
+const normalizeStringList = (v: unknown): string[] =>
+  Array.isArray(v) ? [...new Set(v.filter((x): x is string => typeof x === "string" && x !== ""))] : [];
+
 const normalizeAppearanceShuffle = (v: unknown): AppearanceShuffleMode =>
   APPEARANCE_SHUFFLE_MODES.find((m) => m.id === v)?.id ?? "off";
 
@@ -793,6 +797,11 @@ const PREFS = {
   // The launch modal's recent first prompts, newest first, keyed by base repository. Capped and
   // wrapped by lib/promptHistory.ts for the same reasons.
   launchHistory: accumulated<PromptHistoryStore>({}),
+  // The activity bar's views whose icon the member turned off (its context menu, ADR 0142
+  // decision 11). The off list rather than the shown list, so a view added later appears by
+  // default. Synced: it follows the member across browsers. Ids this build does not know are
+  // kept, so a newer build's choice survives a round trip through an older one.
+  railViewsOff: synced<string[]>([], { normalize: normalizeStringList }),
 } satisfies Record<string, Pref<unknown>>;
 
 type PrefValues = { -readonly [K in keyof typeof PREFS]: (typeof PREFS)[K]["default"] };

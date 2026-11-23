@@ -81,6 +81,24 @@ The other icons open a pane in the main area and leave the left pane as it is: *
 **Sessions overview**, **Images** and **Open generated images** at the foot. Images appears only where the deployment
 has an image engine.
 
+### Choose which icons the bar shows
+
+Right-click the activity bar (long-press it on a phone, or press the context-menu key on an icon) to open a list of
+the views with a check beside each icon that is shown. Pick a view to turn its icon off or on. The choice is saved with
+your other display settings, so it follows you to other browsers.
+
+- The view on screen and the last icon left cannot be turned off. A view this deployment cannot use (Schedules, where
+  there is no scheduler) is listed greyed out with the reason beside it
+- **Reset to the default icons** turns every icon back on
+- On a phone, the vertical swipe steps through the icons that are shown only. With the keyboard, Up and Down move
+  focus over the icons that are shown
+- A view whose icon is off can still be reached: anything that reveals a row in it brings it on screen, and its icon
+  shows while it is on screen
+- If a view whose icon is off has something waiting for you (a session stopped on your answer, a handoff, a memo or a
+  suggestion waiting for a decision), a small amber dot appears at the foot of the icons. Press it to open the list;
+  the view's row names what waits. Updates that only tell you something moved ("new" and "unread" marks) are not shown
+  for a view whose icon is off
+
 ## Left pane
 
 The left pane shows the view chosen on the activity bar.
