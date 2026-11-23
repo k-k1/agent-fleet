@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -55,6 +56,10 @@ func TestMemoImageGCSparesYoungFiles(t *testing.T) {
 	write("paste-3.png", time.Now()) // orphan inside the grace: kept
 	write(".paste-tmp", old)         // an upload's temp file: never touched
 	write("notes.txt", old)          // not a paste file: never touched
+	// Stored just now after a client stalled before the closing boundary: the temp file's
+	// last write, and so the mtime, is old, but the name's stamp is not. Kept.
+	stalled := fmt.Sprintf("paste-%d-build.log", time.Now().UnixNano())
+	write(stalled, old)
 
 	if got := postMemoImageGC(t, []string{"paste-2.png"}); got != 1 {
 		t.Errorf("removed = %d, want 1", got)
@@ -65,6 +70,7 @@ func TestMemoImageGCSparesYoungFiles(t *testing.T) {
 		"paste-3.png": true,
 		".paste-tmp":  true,
 		"notes.txt":   true,
+		stalled:       true,
 	} {
 		_, err := os.Stat(filepath.Join(dir, name))
 		if got := err == nil; got != want {
@@ -94,17 +100,19 @@ func TestMemoImageGCKeepsUploadItsClientHasNotSeen(t *testing.T) {
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("upload status = %d, body %s", rec.Code, rec.Body)
 	}
+
+	// The sweep runs with the response still unread: nothing in the keep list names it.
+	if got := postMemoImageGC(t, nil); got != 0 {
+		t.Errorf("removed = %d, want 0", got)
+	}
+
+	// Only now does the client read the response.
 	var up struct {
 		Path string `json:"path"`
 		Name string `json:"name"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &up); err != nil || !strings.HasPrefix(up.Name, "paste-") {
 		t.Fatalf("upload body %s: %v", rec.Body, err)
-	}
-
-	// The sweep runs with the response still unread: nothing in the keep list names it.
-	if got := postMemoImageGC(t, nil); got != 0 {
-		t.Errorf("removed = %d, want 0", got)
 	}
 	if _, err := os.Stat(up.Path); err != nil {
 		t.Fatalf("upload swept before its client saw it: %v", err)

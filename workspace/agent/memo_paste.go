@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,12 +47,29 @@ func handleMemoPastedImage(w http.ResponseWriter, r *http.Request) {
 // leaves its file for a later sweep.
 const memoImageGCGrace = 10 * time.Minute
 
+// memoImageStoredAt is when a memo image was stored: the later of its mtime and the
+// paste-<unixnano> stamp in its name. The mtime alone is the temp file's last write, which
+// a client that stalls before the multipart's closing boundary can leave far older than
+// the rename; the stamp is taken after the copy, just before the rename.
+func memoImageStoredAt(name string, mtime time.Time) time.Time {
+	digits := strings.TrimPrefix(name, "paste-")
+	if i := strings.IndexAny(digits, ".-"); i >= 0 {
+		digits = digits[:i]
+	}
+	if ns, err := strconv.ParseInt(digits, 10, 64); err == nil {
+		if stamp := time.Unix(0, ns); stamp.After(mtime) {
+			return stamp
+		}
+	}
+	return mtime
+}
+
 // handleMemoImageGC prunes memo images no longer referenced by any memo. The Console —
 // which holds the full memo list — POSTs the basenames still in use ({keep:[...]}) and
-// the agent unlinks every other paste-* file in the dir. Best-effort disk hygiene: the
-// bytes are in ~/.cache, so a miss just leaves a stale file until the next sweep. Only
-// paste-* files are ever removed (the in-flight ".paste-*" temp files are left alone), and
-// none younger than memoImageGCGrace.
+// the agent unlinks every other paste-* file stored more than memoImageGCGrace ago.
+// Best-effort disk hygiene: the bytes are in ~/.cache, so a miss just leaves a stale file
+// until the next sweep. Only paste-* files are ever removed (the in-flight ".paste-*" temp
+// files are left alone).
 func handleMemoImageGC(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Keep []string `json:"keep"`
@@ -74,7 +92,8 @@ func handleMemoImageGC(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		// An unreadable mtime counts as young: when in doubt, keep.
-		if info, err := e.Info(); err != nil || info.ModTime().After(cutoff) {
+		info, err := e.Info()
+		if err != nil || memoImageStoredAt(name, info.ModTime()).After(cutoff) {
 			continue
 		}
 		if os.Remove(filepath.Join(dir, name)) == nil {
