@@ -7,8 +7,6 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
-
-	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // putRounds gives category rounds of repository app enabled settings with instruction "old".
@@ -278,18 +276,32 @@ func TestMemoRepoRecheckDropsAReadOfOldSettings(t *testing.T) {
 	}
 }
 
-// A stopped workspace is not resolved for a start: nothing is cached, and its Agent is not asked.
+// A workspace whose runtime is not cached is read through a runtime built for the read and never
+// cached, whatever the row's state column says: the runtime's own state decides. A stopped one's
+// Agent is not asked.
 func TestMemoRepoRecheckLeavesTheRuntimeCacheAlone(t *testing.T) {
-	e := newInboxEnv(t)
-	e.memoQueuesOn(true)
-	e.mgr.memoRepoSettings = true
-	putRounds(e)
-	ws := store.Workspace{ID: "ws-a", TenantID: e.t1.ID, MembershipID: e.members["a"], ContainerName: "a",
-		Network: "n", DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "stopped", CreatedAt: store.NowTS()}
-	if err := e.st.CreateWorkspace(context.Background(), ws); err != nil {
+	e, a := repoEnv(t, "")
+	id := putRounds(e)
+	a.file("version: 1\ncategories:\n  rounds:\n    max_active: 3\n")
+	if err := e.st.SetWorkspaceState(context.Background(), "ws-a", "stopped"); err != nil {
 		t.Fatal(err)
 	}
-	(&memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now}).tick(context.Background())
+	e.mgr.mu.Lock()
+	delete(e.mgr.rts, e.members["a"])
+	e.mgr.mu.Unlock()
+	live := &stubRuntime{endpoint: a.srv.URL, token: "tok", state: "stopped"}
+	e.mgr.rtFactory = stubFactory{rt: live}
+	rc := &memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now}
+
+	rc.tick(context.Background())
+	if got := a.requested(); len(got) != 0 {
+		t.Fatalf("a stopped workspace's Agent was asked: %v", got)
+	}
+	live.state = ""
+	rc.tick(context.Background())
+	if c := e.queueDTO(id).RepoCheck; len(a.requested()) != 1 || c == nil || c.State != memoRepoCheckDiffers {
+		t.Fatalf("running, row says stopped: %v %+v", a.requested(), c)
+	}
 	if _, ok := e.mgr.cachedRTFor(e.members["a"]); ok {
 		t.Fatal("the loop cached a runtime")
 	}

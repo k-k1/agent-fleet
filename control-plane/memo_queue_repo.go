@@ -1177,9 +1177,10 @@ func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string, qs
 	}
 	// The workspace row is read, never built: resolving it for a start would create a missing one,
 	// make a stopped one's keys and publish a runtime in the cache. A read needs the Agent's
-	// address and token only.
+	// address and token only. Whether it runs is the runtime's answer below, not the row's state
+	// column, which a failed state write or an adopted container can leave at stopped.
 	ws, ok, err := rc.mgr.store.GetWorkspaceByMembership(ctx, membershipID)
-	if err != nil || !ok || ws.State != "running" {
+	if err != nil || !ok {
 		return
 	}
 	identityID, ok, err := rc.mgr.store.IdentityIDForMembership(ctx, membershipID)
