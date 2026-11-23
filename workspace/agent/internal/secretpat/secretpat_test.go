@@ -121,6 +121,7 @@ func shortHeaderTokens() map[string]bool {
 	return map[string]bool{
 		tok(`{"alg":""}`):   false, // eyJ, 14
 		tok(`{"alg":"A"}`):  true,  // eyJ, 15
+		tok(`{"1":"ab"}`):   false, // eyI, 14
 		tok(`{"1":"abc"}`):  true,  // eyI, 15
 		tok(` {"a":"bc"}`):  false, // IHsi, 15
 		tok(` {"a":"bcd"}`): true,  // IHsi, 16
