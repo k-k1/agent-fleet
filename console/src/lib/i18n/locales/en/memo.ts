@@ -404,6 +404,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.repo_copy": "Copy",
   "memo.repo_copied": "Copied the YAML",
   "memo.repo_download": "Download",
+  "memo.q_rereading": "Reading your current settings again: a change may have been saved without its answer arriving. This opens once they are read.",
   "memo.repo_save_first": "Save or cancel your edits in this dialog before approving repository settings.",
   "memo.repo_renamed": "This category is now named “{name}”. Open its settings again to approve the repository settings for that name.",
   "memo.repo_approve_unknown": "The approval's answer was lost, so it may have been saved. The dialog is closed: open it again to see your current settings.",

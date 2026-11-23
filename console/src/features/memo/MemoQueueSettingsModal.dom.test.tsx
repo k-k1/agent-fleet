@@ -3,6 +3,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import type { MemoQueue } from "../../types/memo.ts";
 
 let liveKinds: Record<string, unknown>[] = [];
 vi.mock("../../core/api/client.ts", () => ({
@@ -35,12 +36,12 @@ const { useQueueSettingsCache } = await import("./queueSettingsCache.ts");
 let root: Root | null = null;
 let host: HTMLDivElement;
 
-async function render(repo = "", onClose: () => void = () => {}): Promise<void> {
+async function render(repo = "", onClose: () => void = () => {}, queue: MemoQueue | undefined = undefined): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <MemoQueueSettingsModal categoryName="c" categoryId="cat1" repo={repo} queue={undefined} tenantEnabled destinations={[]} onClose={onClose} onChanged={() => {}} />
+          <MemoQueueSettingsModal categoryName="c" categoryId="cat1" repo={repo} queue={queue} tenantEnabled destinations={[]} onClose={onClose} onChanged={() => {}} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -169,8 +170,43 @@ describe("MemoQueueSettingsModal repository settings card", () => {
     await act(async () => approveBtn().click());
     await flush();
     expect(closed).toBe(1);
-    await submit();
+    // The form is gone until the settings are read again; a submit from it, if still there, sends nothing.
+    if (document.querySelector("form")) await submit();
     expect(memoQueuePut).not.toHaveBeenCalled();
+  });
+
+  it("marks the settings unsure after a lost answer, and opens again only from a row read after it", async () => {
+    approveGate = Promise.reject(new TypeError("network"));
+    approveGate.catch(() => {});
+    const { readQueue } = await import("./queues.ts");
+    const { queueScope } = await import("./queueSettingsCache.ts");
+    const old = readQueue({ categoryId: "cat1", instruction: "x", spendCapUsd: 60 })!;
+    useQueueSettingsCache.getState().reset();
+    useQueueSettingsCache.getState().publish(queueScope(), useQueueSettingsCache.getState().begin(), { tenantEnabled: true, repoSettings: true, queues: [old] });
+    await render("app", () => {}, old);
+    await checkFile();
+    await act(async () => approveBtn().click());
+    await flush();
+    expect(useQueueSettingsCache.getState().unsure).toEqual(["cat1"]);
+    // Opened again, the way the sections do: the row comes from the shared cache, which still
+    // holds the one from before the approval. No form, nothing to save.
+    function Live() {
+      const q = useQueueSettingsCache((st) => st.queues.find((x) => x.categoryId === "cat1"));
+      return <MemoQueueSettingsModal categoryName="c" categoryId="cat1" repo="app" queue={q} tenantEnabled destinations={[]} onClose={() => {}} onChanged={() => {}} />;
+    }
+    await act(async () => root!.unmount());
+    root = createRoot(host);
+    await act(async () => root!.render(<ToastProvider><ConfirmProvider><Live /></ConfirmProvider></ToastProvider>));
+    await flush();
+    expect(document.querySelector("#memo-q-budget")).toBeNull();
+    expect(document.querySelector("form")).toBeNull();
+    // A read begun after the mark lands with the approved value: the form opens from it.
+    const fresh = readQueue({ categoryId: "cat1", instruction: "x", spendCapUsd: 30 })!;
+    await act(async () =>
+      useQueueSettingsCache.getState().publish(queueScope(), useQueueSettingsCache.getState().begin(), { tenantEnabled: true, repoSettings: true, queues: [fresh] }),
+    );
+    await flush();
+    expect(document.querySelector<HTMLInputElement>("#memo-q-budget")!.value).toBe("30");
   });
 
   it("asks to save or cancel edits before an approval, which would drop them", async () => {

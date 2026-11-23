@@ -401,6 +401,7 @@ export const memo = {
   "memo.repo_copy": "コピー",
   "memo.repo_copied": "YAML をコピーしました",
   "memo.repo_download": "ダウンロード",
+  "memo.q_rereading": "応答が届かないまま変更が保存された可能性があるため、いまの設定を読み直しています。読み終わると開けます。",
   "memo.repo_save_first": "リポジトリの設定を承認する前に、このダイアログでの編集を保存するか取り消してください。",
   "memo.repo_renamed": "このカテゴリの名前は「{name}」に変わりました。その名前のリポジトリ設定を承認するには、設定を開き直してください。",
   "memo.repo_approve_unknown": "承認の応答が届かなかったため、保存されている可能性があります。ダイアログを閉じました。開き直していまの設定を確認してください。",

@@ -76,6 +76,8 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, block
   // The dialog is closed rather than left open on a draft that may predate a saved approval: a
   // save from it would write the old values back. The caller refetches the settings.
   const uncertain = () => {
+    // Before onApplied, whose refetch must be a read begun after the mark.
+    useQueueSettingsCache.getState().markUnsure(queueScope(), categoryId);
     toast(t("memo.repo_approve_unknown"), { kind: "warn" });
     onApplied();
   };

@@ -67,7 +67,32 @@ interface Props {
   onChanged: () => void;
 }
 
-export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, tenantEnabled, destinations, onClose, onChanged }: Props) {
+export function MemoQueueSettingsModal(props: Props) {
+  const tr = useT();
+  // An approval whose answer was lost may have changed these settings without the cached row
+  // knowing: a form built from that row could save the old values back. It opens once a read
+  // begun after the approval has landed, from the row that read brought.
+  const unsure = useQueueSettingsCache((st) => st.unsure.includes(props.categoryId));
+  if (unsure) {
+    return (
+      <Modal title={tr("memo.autorun_settings_title", { name: props.categoryName })} onClose={props.onClose} className="memo-q-modal">
+        <div className="ui-modal-body">
+          <div className="ui-field-hint" role="status">
+            {tr("memo.q_rereading")}
+          </div>
+        </div>
+        <footer className="ui-modal-foot">
+          <Button variant="ghost" onClick={props.onClose} type="button">
+            {tr("common.close")}
+          </Button>
+        </footer>
+      </Modal>
+    );
+  }
+  return <QueueSettingsForm {...props} />;
+}
+
+function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnabled, destinations, onClose, onChanged }: Props) {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();

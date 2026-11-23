@@ -41,6 +41,9 @@ interface QueueSettingsCache {
   repoSettings: boolean;
   /** False until a read has succeeded: tenantEnabled's initial false is "not read yet". */
   known: boolean;
+  /** Categories whose settings may have changed without this cache seeing the row (an approval
+   *  whose answer was lost). Their settings dialog waits for a read begun after the mark. */
+  unsure: string[];
   /** Numbers a read when its request STARTS, so a save can outrank the reads already in flight. */
   begin(): number;
   /** A read's answer. Dropped when a save or a later read already landed after the read began. */
@@ -49,6 +52,9 @@ interface QueueSettingsCache {
   applySaved(tenant: string, queue: MemoQueue): void;
   /** A successful removal of a category's settings. */
   applyRemoved(tenant: string, categoryId: string): void;
+  /** A write to a category's settings whose outcome is unknown: every read begun before it is
+   *  dropped, and the category stays unsure until a later read lands. */
+  markUnsure(tenant: string, categoryId: string): void;
   reset(): void;
 }
 
@@ -61,11 +67,14 @@ export const useQueueSettingsCache = create<QueueSettingsCache>((set, get) => ({
   tenantEnabled: false,
   repoSettings: false,
   known: false,
+  unsure: [],
   begin: () => ++seq,
   publish: (tenant, ticket, wire) => {
     if (ticket <= floor) return;
     floor = ticket; // a slower, older read must not land over this one
-    set({ tenant, queues: wire.queues, tenantEnabled: wire.tenantEnabled, repoSettings: wire.repoSettings, known: true });
+    // A read that lands began after every mark (earlier ones were dropped above), so it holds the
+    // rows the marks were waiting for.
+    set({ tenant, queues: wire.queues, tenantEnabled: wire.tenantEnabled, repoSettings: wire.repoSettings, known: true, unsure: [] });
   },
   applySaved: (tenant, queue) => {
     const cur = get();
@@ -77,7 +86,7 @@ export const useQueueSettingsCache = create<QueueSettingsCache>((set, get) => ({
     floor = ++seq;
     const i = cur.queues.findIndex((q) => q.categoryId === queue.categoryId);
     const queues = i < 0 ? [...cur.queues, queue] : cur.queues.map((q, j) => (j === i ? withRunState(queue, q) : q));
-    set({ queues });
+    set({ queues, unsure: cur.unsure.filter((id) => id !== queue.categoryId) });
   },
   applyRemoved: (tenant, categoryId) => {
     const cur = get();
@@ -85,9 +94,15 @@ export const useQueueSettingsCache = create<QueueSettingsCache>((set, get) => ({
     floor = ++seq;
     set({ queues: cur.queues.filter((q) => q.categoryId !== categoryId) });
   },
+  markUnsure: (tenant, categoryId) => {
+    const cur = get();
+    if (tenant !== queueScope()) return;
+    floor = ++seq;
+    if (!cur.unsure.includes(categoryId)) set({ unsure: [...cur.unsure, categoryId] });
+  },
   reset: () => {
     floor = ++seq;
-    set({ tenant: "", queues: [], tenantEnabled: false, repoSettings: false, known: false });
+    set({ tenant: "", queues: [], tenantEnabled: false, repoSettings: false, known: false, unsure: [] });
   },
 }));
 
