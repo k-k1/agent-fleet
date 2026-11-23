@@ -165,7 +165,9 @@ export function useConsolRun(reload: number, active: boolean, tenant: string) {
   // before useInterval's passive cleanup starts none. Not the shared guard: a run ending seen just
   // after a tenant switch must not kill the new tenant's first read. `load` also aborts it the
   // moment it adopts a finished status: the layout cleanup only runs at commit, and a failure
-  // answered in the same batch would otherwise still pass.
+  // answered in the same batch would otherwise still pass. A running status adopted right after
+  // in that batch replaces the aborted controller, since `running` never changes across the commit
+  // and the layout effect would not start a new lifetime.
   const pollAc = useRef<AbortController | null>(null);
   useLayoutEffect(() => {
     if (!running || !active) return;
@@ -173,7 +175,8 @@ export function useConsolRun(reload: number, active: boolean, tenant: string) {
     pollAc.current = ac;
     return () => {
       ac.abort();
-      if (pollAc.current === ac) pollAc.current = null;
+      pollAc.current?.abort();
+      pollAc.current = null;
     };
   }, [running, active, tenant]);
   const load = useCallback(async (tk: ReadTicket, signal?: AbortSignal) => {
@@ -193,6 +196,7 @@ export function useConsolRun(reload: number, active: boolean, tenant: string) {
     setErr(false);
     setSt(res);
     if (res?.run?.running !== true) pollAc.current?.abort();
+    else if (pollAc.current?.signal.aborted) pollAc.current = new AbortController();
     return true;
   }, []);
   useRetryLoad(async (signal) => (active ? load(guard.begin(tenant), signal) : true), [reload, active, tenant, load]);

@@ -231,6 +231,32 @@ describe("useConsolRun", () => {
     expect(seen!.err).toBe(false);
   });
 
+  it("keeps polling when a run ending and a new run's start are answered in the same batch", async () => {
+    api.mockResolvedValue(status(true));
+    await render(true);
+    const answers: Array<(v: unknown) => void> = [];
+    api.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    // A poll tick, then a newer re-read (a reload): the poll says the run is done, the re-read
+    // that a new one started.
+    await act(async () => vi.advanceTimersByTime(3000));
+    await render(true, "a", 1);
+    expect(answers.length).toBe(2);
+    // `running` is true before and after the commit, so the poll's lifetime must be renewed by the
+    // answers themselves: the layout effect does not run again.
+    await act(async () => {
+      answers[0](status(false));
+      answers[1](status(true, 2));
+    });
+    await act(async () => {});
+    expect(seen!.running).toBe(true);
+    api.mockReset();
+    api.mockResolvedValue(status(false, 3));
+    await act(async () => vi.advanceTimersByTime(3000));
+    await act(async () => {});
+    expect(api).toHaveBeenCalled();
+    expect(seen!.running).toBe(false);
+  });
+
   it("keeps the later progress when two running answers arrive out of order", async () => {
     const answer = await twoPolls();
     await answer(1, status(true, 2));
