@@ -6,7 +6,7 @@
 //
 // isSuper only decides whether the tenant selector (i.e. whether to look across tenants)
 // is shown; the server always decides whose rows come back.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { errText, rel } from "../../../core/api/client.ts";
 import { getAdminAudit, getAdminSessions, getAdminUsage, isOk, type AdminSessionRow, type AdminUsage, type AuditRow, type UsageTotal } from "../api.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -19,6 +19,8 @@ import { tMaybe, useLocale, useT } from "../../../lib/i18n/index.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
 import type { Tenant } from "../parts/adminShared.ts";
 import { UptimeAdminView } from "../../usage/UptimeHeatmap.tsx";
+import { useReadGuard } from "../../../lib/readGuard.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 // --- All sessions overview (P3-9 admin) -------------------------------------
 // A flat, cross-user list of every session so an operator can see at a glance
@@ -32,17 +34,22 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
   const [q, setQ] = useState("");
   const [rows, setRows] = useState<AdminSessionRow[] | null>(null);
   const [err, setErr] = useState("");
-  const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   const ser = useRef("");
+  // The tick's period does not restart when the tenant changes, so a read for the tenant just
+  // left can still answer: tickets are bound to the tenant the poll was made for. Lanes keep a
+  // failed read from also blocking an older successful one from drawing the list.
+  const guard = useReadGuard();
 
   const poll = useCallback(async () => {
+    const tk = guard.begin(tenant);
     try {
       const d = await getAdminSessions(tenant);
       if (!isOk(d)) {
-        setErr(errText(d?.error));
+        if (tk.land("err")) setErr(errText(d?.error));
         return;
       }
-      setErr("");
+      if (tk.land("err")) setErr("");
+      if (!tk.land("rows")) return;
       const list = d.sessions || [];
       const s = JSON.stringify(list);
       if (s !== ser.current) {
@@ -52,17 +59,18 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
     } catch {
       /* transient; keep last */
     }
-  }, [tenant]);
+  }, [guard, tenant]);
 
-  useEffect(() => {
+  // A layout effect, so the previous tenant's reads are dead from the commit that changed it.
+  useLayoutEffect(() => {
+    guard.reset(tenant);
     ser.current = "";
     setRows(null);
-    poll();
-    timer.current = setInterval(() => {
-      if (!document.hidden) poll(); // hidden tab: skip the tick
-    }, 5000);
-    return () => clearInterval(timer.current);
-  }, [poll]);
+    void poll();
+  }, [guard, tenant, poll]);
+  useInterval(() => {
+    if (!document.hidden) void poll(); // hidden tab: skip the tick
+  }, 5000);
 
   // Deployment-wide overview: show RUNNING sessions only (stopped/resumable ones are
   // noise here — the per-member detail still lists them). Member detail is unchanged.

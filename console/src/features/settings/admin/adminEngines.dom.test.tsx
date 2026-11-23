@@ -10,7 +10,7 @@
 // 🔴 The hourly figure is NOT written into the message any more (ADR 0074): the box is
 // selectable, so a number in the catalogue would be wrong for every deployment that moved off
 // its default rung. The price comes from the ladder the operator declared, or not at all.
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
@@ -175,6 +175,180 @@ describe("EnginesAdminView", () => {
     // The answer, not a re-fetch, is what the row becomes — the same reason the TTS panel
     // does it: a poll landing in between would show the pre-click state.
     expect(host!.textContent).toContain("停止処理中");
+  });
+
+  it("drops a poll read that was in flight when the mode change landed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let answerPoll: (v: unknown) => void = () => {};
+      const before = { super_admin: true, engines: [row({ state: "starting", desired: 1 })] };
+      api.mockResolvedValueOnce(before).mockImplementationOnce(() => new Promise((r) => (answerPoll = r)));
+      apiJSON.mockResolvedValue(row({ mode: "off", enabled: false, state: "stopping" }));
+      await mount();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5100); // the poll's read is now in flight
+      });
+      expect(api).toHaveBeenCalledTimes(2);
+      await click(seg("無効"));
+      expect(host!.textContent).toContain("停止処理中");
+      await act(async () => {
+        answerPoll(before); // started before the click, answered after it
+        await Promise.resolve();
+      });
+      expect(seg("無効")?.className).toContain("active");
+      expect(host!.textContent).toContain("停止処理中");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  describe("a poll read racing an edit", () => {
+    let pending: ((v: unknown) => void)[] = [];
+    const held = () => new Promise((r) => pending.push(r));
+    const answer = async (v: unknown, i = 0) => {
+      await act(async () => {
+        pending[i](v);
+        await Promise.resolve();
+      });
+    };
+    const tick = async () => {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000);
+      });
+    };
+    const panel = (i: number) => host!.querySelectorAll("section.admin-panel")[i] as HTMLElement;
+    const segIn = (el: HTMLElement, label: string) =>
+      Array.from(el.querySelectorAll(".seg-btn")).find((b) => b.textContent === label) as HTMLButtonElement;
+    beforeEach(() => {
+      pending = [];
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("drops a read begun after the edit was sent but answered after it", async () => {
+      const before = { super_admin: true, engines: [row({ state: "starting", desired: 1 })] };
+      api.mockResolvedValueOnce(before).mockImplementation(held);
+      apiJSON.mockImplementation(held);
+      await mount();
+      await click(seg("無効")); // the PUT is in flight
+      await tick(); // a poll read begins while it is
+      expect(api).toHaveBeenCalledTimes(2);
+      await act(async () => {
+        await Promise.resolve();
+      });
+      // apiJSON's promise is pending[0], the poll's is pending[1].
+      await answer(row({ mode: "off", enabled: false, state: "stopping" }), 0);
+      expect(host!.textContent).toContain("停止処理中");
+      await answer(before, 1); // served before the server applied the PUT
+      expect(seg("無効")?.className).toContain("active");
+      expect(host!.textContent).toContain("停止処理中");
+    });
+
+    it("keeps an edited row as the edit left it, and still lands the other rows of the same read", async () => {
+      const a = row({ key: "image", mode: "ondemand", state: "running" });
+      const b = row({ key: "llm", api: "chat", provider: "vllm", models: ["m"], state: "stopped" });
+      api.mockResolvedValueOnce({ super_admin: true, engines: [a, b] }).mockImplementation(held);
+      apiJSON.mockResolvedValue({ ...a, mode: "on" });
+      await mount();
+      await tick(); // the poll read begins: it will see b starting, and a before the edit
+      await click(segIn(panel(0), "常時稼働"));
+      expect(segIn(panel(0), "常時稼働").className).toContain("active");
+      await answer({ super_admin: true, engines: [a, { ...b, state: "starting", desired: 1 }] });
+      expect(segIn(panel(0), "常時稼働").className).toContain("active");
+      expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
+
+      // Mounted again, the held rows are what was on screen, not the read's answer before the merge.
+      act(() => root?.unmount());
+      host?.remove();
+      await mount(); // its first read is held
+      expect(segIn(panel(0), "常時稼働").className).toContain("active");
+      expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
+    });
+
+    it("an edit on one screen patches only its own row in the cache another screen has refreshed", async () => {
+      const a = row({ key: "image", mode: "ondemand", state: "running" });
+      const b = row({ key: "llm", api: "chat", provider: "vllm", models: ["m"], state: "stopped" });
+      api.mockResolvedValue({ super_admin: true, engines: [a, b] });
+      apiJSON.mockResolvedValue({ ...a, mode: "on" });
+      await mount();
+      const first = host!;
+      const firstRoot = root!;
+      await mount(); // a second screen with its own rows, sharing the cache
+      const second = host!;
+      api.mockResolvedValue({ super_admin: true, engines: [a, { ...b, state: "starting", desired: 1 }] });
+      const refresh = second.querySelector("section.admin-panel button.ghost[title='更新']") as HTMLButtonElement;
+      await click(refresh); // the second screen reads b starting
+      const firstPanel = first.querySelectorAll("section.admin-panel")[0] as HTMLElement;
+      await click(segIn(firstPanel, "常時稼働")); // the first screen, still holding b stopped, edits a
+      act(() => root?.unmount());
+      second.remove();
+      act(() => firstRoot.unmount());
+      first.remove();
+      api.mockImplementation(held);
+      await mount(); // its first read is held: what it draws is the cache
+      expect(segIn(panel(0), "常時稼働").className).toContain("active");
+      expect(panel(1).querySelector(".engines-model-tag")!.textContent).toContain("起動中");
+    });
+
+    it("an edit answering after its screen closed leaves the shared cache alone", async () => {
+      const a = row({ key: "image", mode: "ondemand", state: "running" });
+      api.mockResolvedValue({ super_admin: true, engines: [a] });
+      apiJSON.mockImplementation(held);
+      await mount();
+      await click(seg("常時稼働")); // the PUT is in flight
+      act(() => root?.unmount());
+      host?.remove();
+      root = null;
+      api.mockResolvedValue({ super_admin: true, engines: [{ ...a, mode: "on", state: "running" }] });
+      await mount(); // another screen reads a running, into the cache
+      act(() => root?.unmount());
+      host?.remove();
+      root = null;
+      await answer({ ...a, mode: "on", state: "starting", desired: 1 }); // the closed screen's PUT
+      api.mockImplementation(held);
+      await mount(); // its first read is held: what it draws is the cache
+      expect(panel(0).querySelector(".engines-model-tag")!.textContent).not.toContain("起動中");
+      expect(seg("常時稼働")?.className).toContain("active");
+    });
+
+    it("a slow edit answer does not take back a later state this screen's read already cached", async () => {
+      const a = row({ key: "image", mode: "ondemand", state: "starting", desired: 1 });
+      api.mockResolvedValueOnce({ super_admin: true, engines: [a] });
+      apiJSON.mockImplementation(held);
+      await mount();
+      await click(seg("常時稼働")); // the PUT is in flight, its answer made while still starting
+      api.mockResolvedValueOnce({ super_admin: true, engines: [{ ...a, mode: "on", state: "running" }] });
+      await tick(); // the poll reads the box running and caches it
+      await answer({ ...a, mode: "on", state: "starting", desired: 1 }); // the slow PUT answer
+      act(() => root?.unmount());
+      host?.remove();
+      root = null;
+      api.mockImplementation(held);
+      await mount(); // its first read is held: what it draws is the cache
+      expect(panel(0).querySelector(".engines-model-tag")!.textContent).not.toContain("起動中");
+      expect(seg("常時稼働")?.className).toContain("active");
+    });
+
+    it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {
+      api.mockResolvedValueOnce({ super_admin: true, engines: [row({ state: "starting", desired: 1 })] }).mockImplementation(held);
+      apiJSON.mockResolvedValueOnce({ error: { code: "boom", message: "edit refused" } });
+      await mount();
+      await tick();
+      await click(seg("無効"));
+      const shown = () => host!.querySelector(".form-err, .admin-err, .err")?.textContent ?? host!.textContent;
+      expect(shown()).toContain("edit refused");
+      await answer({ super_admin: true, engines: [row({ state: "starting", desired: 1 })] });
+      expect(host!.textContent).toContain("edit refused");
+
+      apiJSON.mockResolvedValueOnce(row({ mode: "off", enabled: false, state: "stopping" }));
+      await tick(); // another read begins, then the edit succeeds and clears the error
+      await click(seg("無効"));
+      expect(host!.textContent).not.toContain("edit refused");
+      await answer({ error: { code: "boom", message: "stale read failed" } }, 1);
+      expect(host!.textContent).not.toContain("stale read failed");
+    });
   });
 
   it("shows the mode the admin chose, not what ECS is still doing", async () => {

@@ -79,4 +79,24 @@ describe("ReadGuard", () => {
     g.reset();
     expect(next!.signal.aborted).toBe(true);
   });
+
+  it("claim drops every read already begun in the claimed lanes only", () => {
+    const g = new ReadGuard();
+    const before = g.begin();
+    g.claim("rows");
+    expect(before.land("rows")).toBe(false);
+    expect(before.land("err")).toBe(true);
+    const after = g.begin();
+    expect(after.land("rows")).toBe(true);
+  });
+
+  it("claim works in the current subject and never revives a read of the previous one", () => {
+    const g = new ReadGuard();
+    g.reset("a");
+    const t = g.begin("a");
+    g.reset("b");
+    g.claim("rows");
+    expect(g.begin("b").land("rows")).toBe(true);
+    expect(t.land("rows")).toBe(false);
+  });
 });
