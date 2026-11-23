@@ -19,6 +19,15 @@ describe("importsRawClient", () => {
     [`// import { api } from ${C};\nconst x = 1;`, false],
     [`/* import * as c from ${C}; */`, false],
     [`import { x } from "./other.ts";`, false],
+    // Declarations without semicolons must not be read across each other.
+    [`export type Foo = string\nimport { api } from ${C}`, true],
+    [`export { a }\nimport { api } from ${C}`, true],
+    [`export const x = 1\nimport { raw } from ${C}`, false],
+    // Example text in a string or template is not an import.
+    ["const example = `import { api } from " + C + "`;", false],
+    [`const example = 'import { api } from ${C}';`, false],
+    [`const s = \`\${ 1 }\`;\nimport { api } from ${C}`, true],
+    [`const m = "import(" + ${C};`, false],
   ])("%s", (src, want) => {
     expect(importsRawClient(src)).toBe(want);
   });
@@ -30,6 +39,12 @@ describe("codeOnly / hasCodeLiteral", () => {
     expect(hasCodeLiteral("/* api/x */ const a = 1;", "api/x")).toBe(false);
     expect(hasCodeLiteral('const a = "api/x";', "api/x")).toBe(true);
     expect(hasCodeLiteral("const a = `api/x/${id}`;", "api/x/${id}")).toBe(true);
+  });
+  it("drops a comment inside a template expression", () => {
+    expect(hasCodeLiteral("const a = `hello ${ /* api/old */ v }`;", "api/old")).toBe(false);
+    expect(hasCodeLiteral("const a = `hello ${ v // api/old\n }`;", "api/old")).toBe(false);
+    expect(hasCodeLiteral("const a = `x/${ v }/api/new`;", "api/new")).toBe(true);
+    expect(hasCodeLiteral("const a = `x/${ `n/${ w }` }/api/new`;", "${ w }")).toBe(true);
   });
   it("keeps a // inside a string", () => {
     expect(codeOnly('const u = "http://x"; // tail')).toContain("http://x");
