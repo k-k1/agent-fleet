@@ -13,6 +13,8 @@ import { errText, isTransientErr } from "../../core/api/client.ts";
 import { takeChatSeed } from "./chatSeed.ts";
 import { useDraft, moveDraft, clearDraft } from "../../lib/draft.ts";
 import { autoGrowTextarea } from "../../lib/autoGrow.ts";
+import { useReadGuard } from "../../lib/readGuard.ts";
+import { useInterval } from "../../lib/useInterval.ts";
 import { scrollComposerViewport } from "../../lib/keyScroll.ts";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { coarsePointer } from "../../lib/device.ts";
@@ -425,29 +427,35 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
   // it also starved the reattach poller below, which only kicks in once THIS client has
   // observed in_progress. A fresher updated_at adopts the server copy; a turn in flight
   // flips in_progress, which the reattach poller above then takes over.
+  //
+  // Every read is ticketed: a switch of conversation, or a send starting, kills the reads in
+  // flight from that commit, and an answer older than one already landed is dropped. Without
+  // the second, a slow read still saying in_progress could land after a newer one that said the
+  // turn was over and hand the pane back to the reattach poller.
   const reportCapable = conv?.tools === "af_write";
-  useEffect(() => {
-    if (!conversationId || !reportCapable) return;
-    let alive = true;
-    const timer = window.setInterval(async () => {
-      if (!alive || sending) return;
-      try {
-        const c = await chatGet(conversationId);
-        if (!alive || sending || !c || !c.id) return;
-        const cur = convRef.current;
-        if (!cur || cur.id !== c.id || c.updated_at > cur.updated_at || !!c.in_progress !== !!cur.in_progress) {
-          applyConv(c);
-        }
-      } catch {
-        /* transient — keep polling */
-      }
-    }, 5000);
-    return () => {
-      alive = false;
-      window.clearInterval(timer);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [conversationId, reportCapable, sending]);
+  const reportPolling = !!conversationId && reportCapable && !sending;
+  const reportGuard = useReadGuard();
+  useLayoutEffect(() => {
+    reportGuard.reset(conversationId);
+  }, [reportGuard, conversationId, reportPolling]);
+  useInterval(
+    () => {
+      if (!conversationId || !reportPolling) return;
+      const tk = reportGuard.begin(conversationId);
+      chatGet(conversationId)
+        .then((c) => {
+          if (!c || !c.id || !tk.land()) return;
+          const cur = convRef.current;
+          if (!cur || cur.id !== c.id || c.updated_at > cur.updated_at || !!c.in_progress !== !!cur.in_progress) {
+            applyConv(c);
+          }
+        })
+        .catch(() => {
+          /* transient — keep polling */
+        });
+    },
+    reportPolling ? 5000 : null,
+  );
 
   // Keep the transcript pinned to the newest turn (and to the thinking indicator). While
   // live karaoke is following the spoken sentence, defer to its scrollIntoView instead —

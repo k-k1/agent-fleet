@@ -63,7 +63,7 @@ usage: teardown.sh --profile <p> --region <r> [--yes] [--purge-retained] [--purg
   --purge-retained  also delete what Persistence=retain deliberately kept (RDS final
                     snapshot, EFS filesystem, the EFS backup vault and its recovery
                     points). Ignored when persistence=delete
-  --purge-secrets   also delete /af-cp/* (cookie-secret, master-key, IdP client secret).
+  --purge-secrets   also delete /af-cp/* (cookie-secret, master-key, IdP client secret, and any optional one such as the Web Push key).
                     Keep them to redeploy into the same account
   --dry-run         print every write instead of making it
 EOF

@@ -466,6 +466,8 @@ describe("the release card", () => {
     expect(card.classList.contains("changed")).toBe(true);
     expect(card.querySelectorAll(".memo-release-changed")).toHaveLength(1);
     expect(card.textContent).toContain("edited");
+    // The tag sits inside the body so the text runs the full card width (#4901).
+    expect(card.querySelectorAll(".memo-release-body .memo-release-changed")).toHaveLength(1);
     // The text under the button is not the one first shown, so the first press only confirms.
     await click(must(card.querySelector("button"), "confirm button"));
     expect(memoRelease).toHaveBeenCalledTimes(1);

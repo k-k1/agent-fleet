@@ -229,9 +229,21 @@ if [ "$(p30 GithubLoginSecret)" != on ] && { [ -n "$(p30 GithubClientId)" ] || [
 fi
 # Each optional secret has its own switch (30-ingress): a Secrets entry for a parameter that
 # does not exist stops the CP task from starting.
-for sw in GithubLoginSecret:github-login-client-secret ComfyApiKey:comfy-api-key RemoteEngineToken:remote-engine-token; do
+for sw in GithubLoginSecret:github-login-client-secret ComfyApiKey:comfy-api-key RemoteEngineToken:remote-engine-token WebPush:web-push-vapid-key; do
   [ "$(p30 "${sw%%:*}")" != on ] || have_ssm "$SSM_PREFIX/${sw#*:}" || say_missing "no SSM $SSM_PREFIX/${sw#*:} (${sw%%:*}=on)"
 done
+# WebPush=on also needs a contact the CP accepts (the template's Rule only refuses an empty
+# one). This is a format precheck that mirrors pushsrv.validSubject (mailto:<one plain address>, or
+# an https URL with a host and an optional numeric port, after trimming), not the CP's own parser:
+# a value it still rejects leaves Web Push off, with a log warning, after the deploy went through.
+if [ "$(p30 WebPush)" = on ]; then
+  push_subject="$(p30 WebPushSubject)"
+  push_subject="${push_subject#"${push_subject%%[![:space:]]*}"}"; push_subject="${push_subject%"${push_subject##*[![:space:]]}"}"
+  push_mail='^mailto:[^][:space:]@,;:<>()"\\]+@[^][:space:]@,;:<>()"\\]+$'
+  push_https='^[Hh][Tt][Tt][Pp][Ss]://([^][/?#[:space:]@]+@)?([A-Za-z0-9._-]+|\[[0-9A-Fa-f:.]+\])(:[0-9]*)?([/?#][^[:space:]]*)?$'
+  [[ "$push_subject" =~ $push_mail || "$push_subject" =~ $push_https ]] \
+    || say_missing "WebPush=on needs WebPushSubject as mailto:<address> or https://<host>[:<port>] (got '$(p30 WebPushSubject)')"
+fi
 
 if [ -n "$HOSTED_ZONE" ]; then
   "${AWS[@]}" route53 get-hosted-zone --id "$HOSTED_ZONE" >/dev/null 2>&1 \

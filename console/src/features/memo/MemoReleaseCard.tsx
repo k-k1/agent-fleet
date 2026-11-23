@@ -117,6 +117,8 @@ export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edite
                 />
               )}
               <div className="memo-release-body" id={uid + m.id}>
+                {/* Inside the body, so the text below runs to the card edge instead of stopping at a tag column. */}
+                {marked(m.id) && <span className="memo-release-changed">{tr("memo.changed_tag")}</span>}
                 {m.kind === "file" && m.refPath && <code className="memo-release-ref">{m.refPath}</code>}
                 {ref && <MemoReferenceLink reference={ref} />}
                 {tidyMarks(m).map((k) => (
@@ -154,7 +156,6 @@ export function MemoReleaseCard({ card, continuationMax, busy, changedIds, edite
                   </div>
                 )}
               </div>
-              {marked(m.id) && <span className="memo-release-changed">{tr("memo.changed_tag")}</span>}
             </li>
           );
         })}

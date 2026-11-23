@@ -14,7 +14,7 @@
 //	                  does not mend.
 //	  Cannot be undone   ruled off below it: clean home, delete backups, remove, discard,
 //	                     delete.
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { errText, type ApiError } from "../../../core/api/client.ts";
 import { getWorkspaceSizing, isOk, type ErrorReply, type MemberStats } from "../api.ts";
 import {
@@ -49,6 +49,8 @@ import { bootReasonKey } from "../../../core/store/bootInstallReason.ts";
 import { bootFailures, bootSkipped, diskFigureNote, homeFullFigures, memberStopAvailable, nextMemberHomePressure } from "./memberRoster.ts";
 import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
+import { useReadGuard } from "../../../lib/readGuard.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 // What a request that got no answer at all looks like to the handlers below.
 const networkFailure = (): ErrorReply => ({ error: { code: "network" } });
@@ -137,13 +139,17 @@ export function MemberView({
   // the EC2 slot pool, and it used to describe all four as Fargate.
   const [sizing, setSizing] = useState<WsSizing>(WS_SIZING_FALLBACK);
   const [role, setMemberRole] = useState(member.role); // tenant-scoped role, live-updated on grant/revoke
-  const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
   // Only setState on an actual change so an unchanged 4s poll doesn't re-render
   // (and flicker the cursor); mirrors the sessions poller in state.jsx.
   const statsSer = useRef("");
   const sessSer = useRef("");
 
   const key = member.user_key;
+  // The tick's period does not restart when another member is opened, and the re-reads after an
+  // action start late: tickets are bound to the member the poll was made for, so a read for the
+  // member just left never draws its stats or sessions here.
+  const guard = useReadGuard();
+  const subject = slug + "/" + key;
 
   // fetchBackups asks the CP and never throws: an answer, or why there is none.
   const fetchBackups = useCallback(async (): Promise<{ backups?: HomeBackupsView; error?: ApiError }> => {
@@ -189,9 +195,13 @@ export function MemberView({
   // Stats and sessions are applied independently: a slow sessions read must never hold back the
   // stats that decide whether Force-stop is offered.
   const poll = useCallback(async () => {
+    const tk = guard.begin(subject);
     const readStats = async () => {
       try {
         const s = await getMemberStats(slug, key);
+        // An error answer is shown as stopped but does not land the lane: a transient failure
+        // must not also drop an older read's good answer that arrives after it.
+        if (!(isOk(s) ? tk.land("stats") : tk.fresh("stats"))) return;
         const st: MemberStats = isOk(s) ? s : { running: false };
         const stSer = JSON.stringify(st);
         if (stSer !== statsSer.current) {
@@ -206,6 +216,7 @@ export function MemberView({
     const readSessions = async () => {
       try {
         const ss = await getMemberSessions(slug, key);
+        if (!(isOk(ss) ? tk.land("sessions") : tk.fresh("sessions"))) return;
         const list = isOk(ss) && ss.sessions ? ss.sessions : [];
         const ssSer = JSON.stringify(list);
         if (ssSer !== sessSer.current) {
@@ -217,7 +228,7 @@ export function MemberView({
       }
     };
     await Promise.all([readStats(), readSessions()]);
-  }, [slug, key]);
+  }, [guard, subject, slug, key]);
 
   // Deployment-wide and immutable while the Console runs, so it is read once per open
   // member rather than on the 4s poll.
@@ -235,18 +246,19 @@ export function MemberView({
     };
   }, []);
 
-  useEffect(() => {
+  // A layout effect, so the previous member's reads are dead from the commit that changed it.
+  useLayoutEffect(() => {
+    guard.reset(subject);
     statsSer.current = "";
     sessSer.current = "";
     setStats(null);
     setHomeFull(false);
     setSessions(null);
-    poll();
-    timer.current = setInterval(() => {
-      if (!document.hidden) poll(); // hidden tab: skip the tick
-    }, 4000);
-    return () => clearInterval(timer.current);
-  }, [poll]);
+    void poll();
+  }, [guard, subject, poll]);
+  useInterval(() => {
+    if (!document.hidden) void poll(); // hidden tab: skip the tick
+  }, 4000);
 
   const running = stats?.running;
   // Running per the runtime, but the Agent has not answered for minutes (CP dead-man check, #2518).

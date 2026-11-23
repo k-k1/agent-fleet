@@ -181,7 +181,7 @@ function HandoffItem({ offer, onClose }: { offer: HandoffOffer; onClose: () => v
   const tr = useT();
   const [open, setOpen] = useState(false);
   return (
-    <li className="inbox-card" data-state="handoff">
+    <li className="ui-card inbox-card" data-state="handoff">
       <button type="button" className="inbox-card-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
         <span className="inbox-kind inbox-kind-handoff">{tr("inbox.kind_handoff")}</span>
         <span className="inbox-who">{tr("inbox.from", { who: senderLabel(offer) })}</span>
@@ -228,7 +228,7 @@ export function ItemCard({ item }: { item: InboxItem }) {
       : tr("inbox.from", { who: personName(tr, item.sender) });
   const firstLine = item.body.split("\n", 1)[0];
   return (
-    <li className={"inbox-card" + (item.unseen ? " is-unseen" : "")} data-state={item.state || "dm"}>
+    <li className={"ui-card inbox-card" + (item.unseen ? " is-unseen" : "")} data-state={item.state || "dm"}>
       <button type="button" className="inbox-card-head" aria-expanded={open} onClick={expand}>
         <span className={"inbox-kind inbox-kind-" + item.kind}>{tr(isRequest ? "inbox.kind_request" : "inbox.kind_dm")}</span>
         {isRequest && item.state && <span className="inbox-state">{tr(STATE_LABEL[item.state])}</span>}

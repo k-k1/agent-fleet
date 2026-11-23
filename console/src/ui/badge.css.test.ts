@@ -126,3 +126,29 @@ describe("badges and chips moved onto the primitives (#4785)", () => {
     expect(read("../features/inbox/InboxModal.tsx")).toContain('className="ui-chip inbox-chip"');
   });
 });
+
+describe(".ui-card primitive", () => {
+  it("keeps the border, radius and default fill of the old inbox card", () => {
+    const r = rule(ui, ".ui-card");
+    expect(r).toContain("border: 1px solid var(--border)");
+    expect(r).toContain("border-radius: 8px");
+    expect(r).toContain("background: var(--card-bg, var(--panel))");
+  });
+  it("usage cards keep their panel2 fill through --card-bg", () => {
+    const usage = strip(readFileSync(path.resolve(__dirname, "../features/usage/usage.css"), "utf8"));
+    expect(rule(usage, ".usage-card")).toContain("--card-bg: var(--panel2)");
+  });
+  it("every inbox-card and usage-card call site also carries ui-card", () => {
+    const sites: [string, string, number][] = [
+      ["../features/inbox/InboxModal.tsx", "inbox-card", 2],
+      ["../features/usage/UsageView.tsx", "usage-card", 5],
+    ];
+    for (const [f, cls, n] of sites) {
+      const src = readFileSync(path.resolve(__dirname, f), "utf8");
+      const all = src.match(new RegExp(`(?<![-\\w])${cls}(?![-\\w])`, "g"))?.length;
+      const withPrimitive = src.match(new RegExp(`ui-card ${cls}(?![-\\w])`, "g"))?.length;
+      expect(all).toBe(n);
+      expect(withPrimitive).toBe(n);
+    }
+  });
+});

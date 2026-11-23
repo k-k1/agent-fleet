@@ -662,7 +662,7 @@ SSM SecureString path prefix holding the CP secrets, created out of band before 
 `master-key`, plus `google-client-secret` / `oidc-client-secret` / `github-client-secret`
 depending on the IdPs in use.
 Optional, each behind its own switch: `github-login-client-secret`, `comfy-api-key`,
-`remote-engine-token` ([below](#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines)).
+`remote-engine-token`, `web-push-vapid-key` ([below](#control-plane-timers-github-sign-in-extras-and-lan--borrowed-engines)).
 
 ## Sign-in
 
@@ -1212,6 +1212,33 @@ grant). With the default `SsmPrefix=/af-cp` the three names above fall under it,
 `cfn-cp-settings-env-test.py` checks. **A non-default `SsmPrefix` outside `/af-cp/` and `/af-ws/`
 is not covered, and that was already true for `cookie-secret` and `master-key`:** widen the
 execution role's `ssm-read` policy to your prefix (least privilege: the prefix, not `*`).
+
+### Web Push
+
+`WebPush=on` switches the CP's Web Push on (`guide/operate/run/web-push.md`, section "On ECS").
+`off` (the default) adds none of the entries below, so the CP keeps Web Push off.
+
+| Parameter | CP variable | Notes |
+|---|---|---|
+| `WebPush` (`off` / `on`) | `AF_WEB_PUSH=true`, and `AF_WEB_PUSH_VAPID_PRIVATE_KEY` from the SSM SecureString `<SsmPrefix>/web-push-vapid-key` | The switch. Create the parameter first: a `Secrets` entry for a missing one stops the task, and `standup.sh` refuses to run without it |
+| `WebPushSubject` | `AF_WEB_PUSH_SUBJECT` | `mailto:you@example.com` or an `https://` URL. Required with `WebPush=on`: a Rule refuses an empty value, and `standup.sh` checks the format (`mailto:` with one plain address, or `https:` with a host and an optional numeric port) and refuses anything else; the CP has the last word and leaves Web Push off, with a log warning, for a value it rejects |
+| `WebPushEndpointHosts` | `AF_WEB_PUSH_ENDPOINT_HOSTS` | Optional, comma list of extra push-service hosts. Empty = the CP's built-in list |
+| `NotificationDrainInterval` | `AF_NOTIFICATION_DRAIN_INTERVAL` | Optional, a Go duration. Empty = the CP default (15s) |
+
+The three knobs are read only while `WebPush=on`: with the switch off a value set in them reaches
+nothing (the CP ignores them then, and the template does not pass them). The private key is the
+only secret and, like the other `Secrets`, is never an `Environment` entry. Keep it stable: a new key
+invalidates every member's subscription (`guide/operate/run/web-push.md`).
+
+**IAM.** No change with the default `SsmPrefix=/af-cp` and the AWS-managed `aws/ssm` key.
+`web-push-vapid-key` falls under the `/af-cp/*` grant of `ExecRole`'s `ssm-read` policy
+(`cfn-cp-settings-env-test.py` checks it), the same as the three secrets above. A `SsmPrefix`
+outside `/af-cp/` and `/af-ws/` needs the policy widened. A customer-managed KMS key on the
+parameter needs a `kms:Decrypt` grant of its own: the role's existing one is for `master-key` only
+(`MasterKeyKmsKeyArn`).
+
+**Egress.** Nothing to open. The CP task leaves through the VPC's NAT gateway (the workspace egress
+gateway governs workspaces only) and the NAT gateway lets HTTPS to the push services through.
 
 ### Not exposed: `WS_ENV`
 

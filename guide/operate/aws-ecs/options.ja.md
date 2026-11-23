@@ -186,18 +186,20 @@ aws cloudformation deploy --stack-name <ingress stack> --template-file cfn/30-in
 | タイマー | `SessionIdleTimeout`・`InteractionIdleTimeout`・`WsIdleTimeout`・`PresenceIdleTimeout`・`BackgroundHoldMax`・`WorkspaceStartDeadline`・`UsageSampleInterval`・`AgentSilentStopAfter` |
 | GitHub でのサインイン | `GithubLoginClientId`・`GithubLabelJa`・`GithubLabelEn`・`GithubMembershipTtl`・`GithubMembershipGrace` |
 | 外部のエンジン | `LlmUrl`・`ComfyUrl`・`RemoteEngineUrl`・`RemoteEngineKeys` |
+| Web Push | `WebPush`・`WebPushSubject`・`WebPushEndpointHosts`・`NotificationDrainInterval`（[Web Push をオンにする](../run/web-push.ja.md#ecs-で使う)） |
 
 タイマーの意味と既定の値は [アイドル停止と強制停止を使う](../run/idle-stop.ja.md) と [上限と既定値](../../ref/limits.ja.md) にあります。
 
 ### シークレットはスイッチで読む
 
-3 つのシークレットは、それぞれのスイッチを `on` にしたときだけ、SSM の SecureString から読みます。**先に SSM パラメータを作ってから**スイッチをオンにします。存在しないパラメータを指していると、タスクが起動しません。
+4 つのシークレットは、それぞれのスイッチを `on` にしたときだけ、SSM の SecureString から読みます。**先に SSM パラメータを作ってから**スイッチをオンにします。存在しないパラメータを指していると、タスクが起動しません。
 
 | スイッチ（既定は `off`） | 読む SSM パラメータ |
 |---|---|
 | `GithubLoginSecret` | `<SsmPrefix>/github-login-client-secret` |
 | `ComfyApiKey` | `<SsmPrefix>/comfy-api-key` |
 | `RemoteEngineToken` | `<SsmPrefix>/remote-engine-token` |
+| `WebPush` | `<SsmPrefix>/web-push-vapid-key` |
 
 - `SsmPrefix` の既定は `/af-cp` で、実行ロールはすでにこの下を読めます。`/af-cp/` と `/af-ws/` の外に変えたときは、実行ロールの `ssm-read` ポリシーをそのプレフィックスに広げます
 - LAN のエンジンには、VPC からの経路（VPN・ピアリング・Transit Gateway）が要ります。スタックは作りません

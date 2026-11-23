@@ -45,6 +45,10 @@ import "./autorun.css";
 
 const STATE_KEY = { running: "autorun.state_running", waiting: "autorun.state_waiting", ended: "autorun.state_ended" } as const;
 
+type RunPr = { state: "open" | "merged" | "closed"; draft?: boolean };
+const prKind = (pr: RunPr) => (pr.draft && pr.state === "open" ? "draft" : pr.state);
+// Draft keeps the plain (muted) badge; merged and closed tones live in autorun.css.
+const prTone = (pr: RunPr) => ({ draft: "", open: "ui-badge-ok", merged: "autorun-pr-merged", closed: "autorun-pr-closed" })[prKind(pr)];
 const PR_KEY = { open: "autorun.pr_open", merged: "autorun.pr_merged", closed: "autorun.pr_closed" } as const;
 
 /** What an open dialog acts on, frozen when the menu item is chosen. The view owns the dialog
@@ -169,8 +173,11 @@ function RunItem({ run, now, onDialog, openMenu, activeName }: { run: RunRow; no
           </span>
         )}
         {pr && (
-          <span className={"autorun-pr " + (pr.draft && pr.state === "open" ? "draft" : pr.state)} title={tr("autorun.pr_title", { n: pr.number })}>
-            #{pr.number} {pr.draft && pr.state === "open" ? tr("autorun.pr_draft") : tr(PR_KEY[pr.state])}
+          <span className="autorun-pr" title={tr("autorun.pr_title", { n: pr.number })}>
+            <span className="autorun-pr-n">#{pr.number}</span>
+            <span className={"ui-badge " + prTone(pr)} data-pr-state={prKind(pr)}>
+              {prKind(pr) === "draft" ? tr("autorun.pr_draft") : tr(PR_KEY[pr.state])}
+            </span>
           </span>
         )}
         {elapsed && <span className="autorun-elapsed">{elapsed}</span>}

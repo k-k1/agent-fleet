@@ -167,9 +167,7 @@
 /* --- Cards ----------------------------------------------------------------- */
 
 .usage-card {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel2);
+  --card-bg: var(--panel2);
   padding: 10px 12px 12px;
 }
 .usage-card .uc-head {

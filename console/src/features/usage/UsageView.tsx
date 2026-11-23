@@ -362,7 +362,7 @@ export function UsageView() {
         <div className={"usage-stage" + (loading ? " reloading" : "")} data-shown-hours={shownHours}>
           <KpiRow totals={totals} unmeasured={series?.unmeasured_calls || 0} />
 
-          <section className="usage-card">
+          <section className="ui-card usage-card">
             <div className="uc-head">
               <h4>{tr("usage.chart_title", { by: tr(("usage.by_" + by) as MsgKey) })}</h4>
               <div className="uc-head-actions">
@@ -421,7 +421,7 @@ export function UsageView() {
             />
           </div>
 
-          <section className="usage-card">
+          <section className="ui-card usage-card">
             <div className="uc-head">
               <h4>{tr("usage.matrix_title")}</h4>
               <div className="uc-group" role="group" aria-label={tr("usage.matrix_title")}>
@@ -531,7 +531,7 @@ function RtkGainCard({ reloadTick }: { reloadTick: number }) {
   const buckets = (gain?.[cur] || []).slice(-curN);
 
   return (
-    <section className="usage-card rtk-gain">
+    <section className="ui-card usage-card rtk-gain">
       <div className="uc-head">
         <h4>{tr("usage.rtk_gain_title")}</h4>
         <div className="uc-head-actions">
@@ -1016,7 +1016,7 @@ function Breakdown({
   const tr = useT();
   const rows = useMemo(() => breakdownRows(totals, dim, metric), [totals, dim, metric]);
   return (
-    <section className="usage-card ubd">
+    <section className="ui-card usage-card ubd">
       <div className="uc-head">
         <h4>{title}</h4>
       </div>
@@ -1129,7 +1129,7 @@ function CoverageBanner({
   const unpricedPct = priced + unpriced > 0 ? Math.round((unpriced / (priced + unpriced)) * 100) : 0;
   if (!notes.length && unmeasured === 0 && unpriced === 0 && !catalog) return null;
   return (
-    <section className="usage-card usage-coverage">
+    <section className="ui-card usage-card usage-coverage">
       <div className="uc-head">
         <h4>
           <Icon name="info" /> {tr("usage.coverage_title")}

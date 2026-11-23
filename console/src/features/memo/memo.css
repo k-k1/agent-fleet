@@ -355,6 +355,13 @@
   color: var(--muted2);
   margin-top: 5px;
 }
+/* The hint names Ctrl+Enter and Esc; a touch keyboard has neither, and the close button
+   covers Esc there. */
+@media (pointer: coarse) {
+  .memo-add-hint {
+    display: none;
+  }
+}
 /* Composer moved under a category header: it belongs to that group, so it indents with
    the memos and drops the category field for a read-only label of where it writes. */
 .memo-add.targeted {
@@ -1016,10 +1023,9 @@
   min-width: 0;
 }
 .memo-release-text {
+  /* No scroll of its own: .memo-release-items is the one scroller, so no two scrollbars sit side by side. */
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 14em;
-  overflow-y: auto;
 }
 .memo-release-atts {
   display: flex;
@@ -1036,6 +1042,8 @@
   font-size: 11px;
 }
 .memo-release-changed {
+  display: inline-block;
+  margin-right: 6px;
   font-size: 10px;
   color: var(--warn, var(--accent));
   border: 1px solid currentColor;

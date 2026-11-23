@@ -6,6 +6,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { loadEngines, saveEngines } from "./catalogMemory.ts";
 import type { ComfyLanStatus } from "./adminEngineLan.tsx";
 import { CATALOG_SOURCES_DEFAULT, type CatalogSource, type EngineRow } from "./engineTypes.ts";
+import { useReadGuard } from "../../../lib/readGuard.ts";
 
 function catalogSources(value: unknown): CatalogSource[] {
   if (!Array.isArray(value)) return [...CATALOG_SOURCES_DEFAULT];
@@ -39,29 +40,71 @@ export function useEngineRows() {
   // across mounts: it is one panel's form state, not something a returning pane has to draw.
   const [comfyLan, setComfyLan] = useState<ComfyLanStatus | null>(null);
 
+  // Reads come from the mount, the operator screen's poll and the re-reads after an edit, and
+  // they can answer out of order: an older one must not put back the rows a newer read has
+  // drawn. An edit claims only its own row's lane ("row:<key>"), so a read begun before the
+  // edit answered keeps that row as the edit left it and still lands every other row: dropping
+  // the whole answer could hide another engine starting and leave nothing on screen to poll for.
+  const guard = useReadGuard();
   const load = useCallback(async () => {
+    const tk = guard.begin();
     try {
       const d = await getEngines();
       if (d && !isOk(d)) {
-        setErr(errDetail(d.error));
+        if (tk.land("err")) setErr(errDetail(d.error));
         return;
       }
-      setErr("");
+      if (tk.land("err")) setErr("");
+      if (!tk.land("rows")) return;
       const answered = Array.isArray(d?.engines) ? d.engines : [];
+      const edited = new Set(answered.filter((e) => !tk.land("row:" + e.key)).map((e) => e.key));
       const superAdmin = !!d?.super_admin;
       const offered = catalogSources(d?.catalog_sources);
       setIsSuper(superAdmin);
       setSources(offered);
-      setRows(answered);
+      const keepEdited = (held: EngineRow[] | null | undefined) =>
+        edited.size ? answered.map((e) => (edited.has(e.key) ? (held?.find((c) => c.key === e.key) ?? e) : e)) : answered;
+      setRows((cur) => keepEdited(cur));
       setComfyLan(d?.comfy_lan ?? null);
-      saveEngines({ rows: answered, isSuper: superAdmin, sources: offered });
+      // The cache is shared with the other screens that hold their own rows, so an edited row
+      // keeps the cache's copy, which patchRow already updated.
+      saveEngines({ rows: keepEdited(loadEngines()?.rows), isSuper: superAdmin, sources: offered });
     } catch {
-      setErr(tr("admin.load_error"));
+      if (tk.land("err")) setErr(tr("admin.load_error"));
     }
-  }, [tr]);
+  }, [guard, tr]);
   useEffect(() => {
     load();
   }, [load]);
+  /** Begin an edit of one row, before its request is sent; the function returned lands the
+   *  answer. The answer is newer than any read in flight for that row, so it claims the row's
+   *  lane and replaces the row on screen. The shared cache takes it, for that key alone, only
+   *  when no read of the row has landed here since the edit began: such a read may hold a later
+   *  state (a box that finished starting) than the answer, and the cache must not go back to
+   *  what main never wrote there. A screen closed meanwhile writes nothing. */
+  const editRow = useCallback(
+    (key: string) => {
+      const tk = guard.begin();
+      return (d: Partial<EngineRow>) => {
+        if (!tk.current()) return;
+        const cacheOlder = tk.fresh("row:" + key);
+        guard.claim("row:" + key);
+        setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+        const cached = cacheOlder ? loadEngines() : null;
+        if (cached) saveEngines({ ...cached, rows: cached.rows.map((e) => (e.key === key ? { ...e, ...d } : e)) });
+      };
+    },
+    [guard],
+  );
 
-  return { rows, isSuper, sources, comfyLan, err, setErr, setRows, load };
+  // For the edits: their error (or its clearing) is newer than any read in flight.
+  const setEditErr = useCallback(
+    (v: string) => {
+      guard.claim("err");
+      setErr(v);
+    },
+    [guard],
+  );
+
+  return { rows, isSuper, sources, comfyLan, err, setErr: setEditErr, load, editRow };
 }

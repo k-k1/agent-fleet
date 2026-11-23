@@ -186,18 +186,20 @@ Each Control Plane variable the operator guide calls configurable has a paramete
 | Timers | `SessionIdleTimeout`, `InteractionIdleTimeout`, `WsIdleTimeout`, `PresenceIdleTimeout`, `BackgroundHoldMax`, `WorkspaceStartDeadline`, `UsageSampleInterval`, `AgentSilentStopAfter` |
 | GitHub sign-in | `GithubLoginClientId`, `GithubLabelJa`, `GithubLabelEn`, `GithubMembershipTtl`, `GithubMembershipGrace` |
 | Outside engines | `LlmUrl`, `ComfyUrl`, `RemoteEngineUrl`, `RemoteEngineKeys` |
+| Web Push | `WebPush`, `WebPushSubject`, `WebPushEndpointHosts`, `NotificationDrainInterval` (see [Switch on Web Push](../run/web-push.md#on-ecs)) |
 
 What the timers mean and their defaults are in [Use idle stop and force-stop](../run/idle-stop.md) and [Limits and defaults](../../ref/limits.md).
 
 ### Secrets are read behind a switch
 
-The three secrets are read from SSM SecureString parameters only when their own switch is `on`. **Create the SSM parameter first**, then turn the switch on: a switch pointing at a parameter that does not exist stops the task from starting.
+The four secrets are read from SSM SecureString parameters only when their own switch is `on`. **Create the SSM parameter first**, then turn the switch on: a switch pointing at a parameter that does not exist stops the task from starting.
 
 | Switch (default `off`) | SSM parameter read |
 |---|---|
 | `GithubLoginSecret` | `<SsmPrefix>/github-login-client-secret` |
 | `ComfyApiKey` | `<SsmPrefix>/comfy-api-key` |
 | `RemoteEngineToken` | `<SsmPrefix>/remote-engine-token` |
+| `WebPush` | `<SsmPrefix>/web-push-vapid-key` |
 
 - `SsmPrefix` defaults to `/af-cp`, which the execution role already reads. If you move it outside `/af-cp/` and `/af-ws/`, widen the execution role's `ssm-read` policy to that prefix
 - An engine on your LAN needs a route from the VPC (VPN, peering, Transit Gateway). The stacks do not create one
