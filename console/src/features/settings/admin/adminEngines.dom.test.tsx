@@ -177,6 +177,31 @@ describe("EnginesAdminView", () => {
     expect(host!.textContent).toContain("停止処理中");
   });
 
+  it("drops a poll read that was in flight when the mode change landed", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let answerPoll: (v: unknown) => void = () => {};
+      const before = { super_admin: true, engines: [row({ state: "starting", desired: 1 })] };
+      api.mockResolvedValueOnce(before).mockImplementationOnce(() => new Promise((r) => (answerPoll = r)));
+      apiJSON.mockResolvedValue(row({ mode: "off", enabled: false, state: "stopping" }));
+      await mount();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5100); // the poll's read is now in flight
+      });
+      expect(api).toHaveBeenCalledTimes(2);
+      await click(seg("無効"));
+      expect(host!.textContent).toContain("停止処理中");
+      await act(async () => {
+        answerPoll(before); // started before the click, answered after it
+        await Promise.resolve();
+      });
+      expect(seg("無効")?.className).toContain("active");
+      expect(host!.textContent).toContain("停止処理中");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("shows the mode the admin chose, not what ECS is still doing", async () => {
     // The disagreement window: mode off, task still going away.
     api.mockResolvedValue({ super_admin: true, engines: [row({ mode: "off", enabled: false, state: "stopping" })] });

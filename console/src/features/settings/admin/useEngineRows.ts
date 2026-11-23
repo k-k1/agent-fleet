@@ -6,6 +6,7 @@ import { useT } from "../../../lib/i18n/index.ts";
 import { loadEngines, saveEngines } from "./catalogMemory.ts";
 import type { ComfyLanStatus } from "./adminEngineLan.tsx";
 import { CATALOG_SOURCES_DEFAULT, type CatalogSource, type EngineRow } from "./engineTypes.ts";
+import { useReadGuard } from "../../../lib/readGuard.ts";
 
 function catalogSources(value: unknown): CatalogSource[] {
   if (!Array.isArray(value)) return [...CATALOG_SOURCES_DEFAULT];
@@ -39,14 +40,20 @@ export function useEngineRows() {
   // across mounts: it is one panel's form state, not something a returning pane has to draw.
   const [comfyLan, setComfyLan] = useState<ComfyLanStatus | null>(null);
 
+  // Reads come from the mount, the operator screen's poll and the re-reads after an edit, and
+  // they can answer out of order: an older one must not put back the rows a newer read or an
+  // edit (which takes a ticket of its own and lands "rows") has already drawn.
+  const guard = useReadGuard();
   const load = useCallback(async () => {
+    const tk = guard.begin();
     try {
       const d = await getEngines();
       if (d && !isOk(d)) {
-        setErr(errDetail(d.error));
+        if (tk.land("err")) setErr(errDetail(d.error));
         return;
       }
-      setErr("");
+      if (tk.land("err")) setErr("");
+      if (!tk.land("rows")) return;
       const answered = Array.isArray(d?.engines) ? d.engines : [];
       const superAdmin = !!d?.super_admin;
       const offered = catalogSources(d?.catalog_sources);
@@ -56,12 +63,12 @@ export function useEngineRows() {
       setComfyLan(d?.comfy_lan ?? null);
       saveEngines({ rows: answered, isSuper: superAdmin, sources: offered });
     } catch {
-      setErr(tr("admin.load_error"));
+      if (tk.land("err")) setErr(tr("admin.load_error"));
     }
-  }, [tr]);
+  }, [guard, tr]);
   useEffect(() => {
     load();
   }, [load]);
 
-  return { rows, isSuper, sources, comfyLan, err, setErr, setRows, load };
+  return { rows, isSuper, sources, comfyLan, err, setErr, setRows, load, guard };
 }

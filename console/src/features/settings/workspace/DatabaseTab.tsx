@@ -7,6 +7,8 @@ import { useSettingsUI } from "../store.ts";
 import { openSessionTerminal } from "../../sessions/open.ts";
 import { useSessionsStore } from "../../sessions/store.ts";
 import { useT } from "../../../lib/i18n/index.ts";
+import { useReadGuard } from "../../../lib/readGuard.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 // The name a member may type for a new database. Same shape the Agent enforces
 // (validateExplicitDB): checking it here turns a 400 into a disabled button with
@@ -90,17 +92,9 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
     };
   }, []);
 
-  // Poll while installing or starting (5 s interval). setInterval keeps firing even when the
-  // refreshed state is still installing/starting; the effect cleanup stops it on unmount or
-  // when the state transitions away from those two values.
-  useEffect(() => {
-    if (eng.state !== "installing" && eng.state !== "starting") return;
-    const id = setInterval(() => {
-      if (!alive.current) return;
-      onRefresh();
-    }, 5000);
-    return () => clearInterval(id);
-  }, [eng.state, onRefresh]);
+  // Poll while installing or starting. The tab's load is guarded, so a tick that overlaps the
+  // refresh after an action cannot land the older answer over the newer one.
+  useInterval(() => onRefresh(), eng.state === "installing" || eng.state === "starting" ? 5000 : null);
 
   const doAction = async (action: string, query = "") => {
     setBusy(true);
@@ -380,19 +374,25 @@ export function DatabaseTab() {
   const [data, setData] = useState<DBPayload | null>(null);
   const [err, setErr] = useState("");
 
+  // The rows' poll and the refresh after each action overlap, and their answers can come back
+  // out of order: only a read newer than the last one landed may replace the list (or the
+  // error, which replaces it too).
+  const guard = useReadGuard();
   const load = useCallback(() => {
     if (!running) return;
+    const tk = guard.begin();
     setErr("");
     getDatabases()
       .then((res) => {
         if (res && res.error) throw new Error(res.error.message || "");
-        setData(res as DBPayload);
+        if (tk.land()) setData(res as DBPayload);
       })
       .catch((e: unknown) => {
+        if (!tk.land()) return;
         setErr(e instanceof Error ? e.message : "");
         setData(null);
       });
-  }, [running]);
+  }, [guard, running]);
 
   useEffect(load, [load]);
 

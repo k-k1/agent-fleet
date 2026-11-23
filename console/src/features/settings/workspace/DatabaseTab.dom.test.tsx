@@ -439,6 +439,31 @@ describe("DatabaseTab", () => {
     expect(getCount).toBeGreaterThanOrEqual(4); // 1 initial + ≥ 3 interval fires
   });
 
+  it("a slow poll read never puts back the state a newer read already drew", async () => {
+    let answerSlow: (v: unknown) => void = () => {};
+    api
+      .mockResolvedValueOnce({ engines: [mysqlInstalling] })
+      .mockImplementationOnce(() => new Promise((r) => (answerSlow = r)))
+      .mockResolvedValue({ engines: [{ ...pgRunning, engine: "mysql", major: "8.4" }] });
+    await mount();
+    await act(async () => {
+      vi.advanceTimersByTime(5000); // first tick: its read hangs
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(5000); // second tick: answers running
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    const state = () => document.querySelector(".db-engine-state")?.textContent;
+    expect(state()).toMatch(/running|稼働中/);
+    await act(async () => {
+      answerSlow({ engines: [mysqlInstalling] }); // started before the read that landed
+      await Promise.resolve();
+    });
+    expect(state()).toMatch(/running|稼働中/);
+  });
+
   it("poll stops after unmount — no further GETs after the component is removed", async () => {
     api.mockResolvedValue({ engines: [mysqlInstalling] });
     await mount();

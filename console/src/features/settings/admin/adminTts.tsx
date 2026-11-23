@@ -5,6 +5,8 @@ import { getTts, putTtsDict, putTtsMode, type TtsStatus } from "./adminApi.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { setTenantDict } from "../../chat/ttsDict.ts";
+import { useReadGuard } from "../../../lib/readGuard.ts";
+import { useInterval } from "../../../lib/useInterval.ts";
 
 export function TtsAdminView() {
   const tr = useT();
@@ -18,26 +20,33 @@ export function TtsAdminView() {
   const [savedDict, setSavedDict] = useState("");
   const [dictBusy, setDictBusy] = useState(false);
 
+  // The poll's period no longer restarts with every answer, so a read can still be in flight when
+  // a mode change or a dictionary save lands: those take a ticket too, and an older read that
+  // answers after them must not put the previous mode back on screen.
+  const guard = useReadGuard();
   const load = useCallback(async () => {
+    const tk = guard.begin();
     try {
       const d = await getTts();
       if (!isOk(d)) {
-        if (d) setErr(errText(d.error));
-        else {
-          setData(null);
-          setErr(tr("admin.load_error"));
+        if (d) {
+          if (tk.land("err")) setErr(errText(d.error));
+        } else {
+          if (tk.land("data")) setData(null);
+          if (tk.land("err")) setErr(tr("admin.load_error"));
         }
         return;
       }
-      setErr("");
+      if (tk.land("err")) setErr("");
+      if (!tk.land("data")) return;
       setData(d);
       const dv = typeof d.dict === "string" ? d.dict : "";
       setSavedDict(dv);
       setDict((cur) => (cur === null ? dv : cur)); // the poll must not clobber an in-progress edit
     } catch {
-      setErr(tr("admin.load_error"));
+      if (tk.land("err")) setErr(tr("admin.load_error"));
     }
-  }, [tr]);
+  }, [guard, tr]);
   useEffect(() => {
     load();
   }, [load]);
@@ -45,22 +54,25 @@ export function TtsAdminView() {
   // (the mode said off and the desired count has not caught up yet), or the control is
   // pinned off because no engine exists — that pin has to lift the moment one appears.
   // On-demand always polls: the desired count moves without anyone touching this screen.
-  useEffect(() => {
-    if (!data) return;
-    const settled = data.engine?.ready || data.engine?.state === "stopped";
-    if (settled && data.mode !== "ondemand") return;
-    if (data.mode === "off" && data.managed && data.engine?.state !== "stopping") return;
-    const t = setInterval(load, 5000);
-    return () => clearInterval(t);
-  }, [data, load]);
+  const settled = !!(data?.engine?.ready || data?.engine?.state === "stopped");
+  const polling =
+    !!data &&
+    !(settled && data.mode !== "ondemand") &&
+    !(data.mode === "off" && data.managed && data.engine?.state !== "stopping");
+  useInterval(() => void load(), polling ? 5000 : null);
 
   const setMode = async (mode: string) => {
     setBusy(true);
+    const tk = guard.begin();
     try {
       const d = await putTtsMode(mode);
-      if (isOk(d)) setData(d);
-      else if (d) setErr(errText(d.error));
-      else setData(null);
+      if (isOk(d) || !d) {
+        tk.land("data");
+        setData(isOk(d) ? d : null);
+      } else {
+        tk.land("err");
+        setErr(errText(d.error));
+      }
     } finally {
       setBusy(false);
     }
@@ -69,13 +81,17 @@ export function TtsAdminView() {
   const saveDict = async () => {
     if (dict === null) return;
     setDictBusy(true);
+    const tk = guard.begin();
     try {
       const d = await putTtsDict(dict);
       if (d && !isOk(d)) {
+        tk.land("err");
         setErr(errText(d.error));
         return;
       }
+      tk.land("err");
       setErr("");
+      tk.land("data");
       setData(d); // null stays a success, as it always did
       setSavedDict(dict);
       setTenantDict(dict); // applies to this browser's speech at once; other users on next load

@@ -121,6 +121,27 @@ describe("TtsAdminView", () => {
     expect(setTenantDict).toHaveBeenCalledWith("foo=bar");
   });
 
+  it("drops a poll read that was in flight when a mode change landed", async () => {
+    let answerPoll: (v: unknown) => void = () => {};
+    api
+      .mockResolvedValueOnce(status("ondemand", "running", true))
+      .mockImplementationOnce(() => new Promise((r) => (answerPoll = r)));
+    apiJSON.mockResolvedValue(status("off", "stopping", true));
+    await mount();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5100); // the poll's read is now in flight
+    });
+    expect(api).toHaveBeenCalledTimes(2);
+    await click(seg("無効"));
+    expect(seg("無効")!.className).toContain("active");
+    await act(async () => {
+      answerPoll(status("ondemand", "running", true)); // older than the mode change
+      await Promise.resolve();
+    });
+    expect(seg("無効")!.className).toContain("active");
+    expect(host!.textContent).toContain("停止処理中");
+  });
+
   it("discards the old state when a re-read answers a null body", async () => {
     api.mockResolvedValueOnce(status("ondemand", "starting")).mockResolvedValue(null);
     await mount();
