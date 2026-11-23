@@ -205,12 +205,40 @@ g remote set-url --push split "$TMP/pushonly.git"
 g fetch -q split
 if g push split after:refs/heads/x 2> "$TMP/err"; then fail "pre-push trusted the fetch side of a remote with a different pushurl"; else expect_refused "pre-push pushurl" "$TMP/err"; fi
 
-# Several urls on one remote: git fetches from the first and pushes to every one.
+# Several urls on one remote: git fetches from the first and pushes to every one, running the
+# hook once per url. The first url already has `main` (= `pub`, which carries a leak), so
+# pushing `after` there is a clean one-commit update and passes; only the second, empty url
+# makes it a new ref. The scan has to cover the whole history there, not just the first url's.
 git init -q --template= --bare "$TMP/second.git"
 g remote add multi "$TMP/src.git"
 g remote set-url --add multi "$TMP/second.git"
 g fetch -q multi
-if g push multi after:refs/heads/y 2> "$TMP/err"; then fail "pre-push trusted the first url of a remote with several"; else expect_refused "pre-push several urls" "$TMP/err"; fi
+if g push multi after:refs/heads/main 2> "$TMP/err"; then fail "pre-push trusted the first url of a remote with several"; else expect_refused "pre-push several urls" "$TMP/err"; fi
+git -C "$TMP/second.git" rev-parse -q --verify refs/heads/main > /dev/null && fail "the second url received the ref"
+
+# Several refs in one push: every one is checked whatever its position, a deletion between
+# them is skipped without ending the scan, and one finding refuses the whole push.
+root_sha="$(g rev-list --max-parents=0 HEAD | head -n1)"
+git init -q --template= --bare "$TMP/refs.git"
+g remote add mr "$TMP/refs.git"
+g push -q mr "$root_sha:refs/heads/main" 2> "$TMP/err" || fail "base push failed: $(cat "$TMP/err")"
+mkbranch() { # <branch> <content> [commit flags...]
+  local br="$1"
+  shift
+  g switch -q -C "$br" "$root_sha"
+  commit_file "$@"
+}
+mkbranch ca "clean-value"
+mkbranch cb "clean-value-b"
+mkbranch lk "$LEAK" --no-verify
+g push -q mr ca:refs/heads/del 2> "$TMP/err" || fail "setup push failed: $(cat "$TMP/err")"
+mr_has() { git -C "$TMP/refs.git" rev-parse -q --verify "refs/heads/$1" > /dev/null; }
+g push -q mr ca:refs/heads/a1 cb:refs/heads/b1 2> "$TMP/err" || fail "pre-push refused several clean refs: $(cat "$TMP/err")"
+if ! { mr_has a1 && mr_has b1; }; then fail "the clean multi-ref push did not arrive"; fi
+if g push mr ca:refs/heads/a2 :refs/heads/del lk:refs/heads/lk1 2> "$TMP/err"; then fail "pre-push missed a leak after a clean ref and a deletion"; else expect_refused "pre-push leak last" "$TMP/err"; fi
+if g push mr lk:refs/heads/lk2 :refs/heads/del cb:refs/heads/b2 2> "$TMP/err"; then fail "pre-push missed a leak in the first ref"; else expect_refused "pre-push leak first" "$TMP/err"; fi
+if ! mr_has del; then fail "a refused push still deleted the branch"; fi
+for r in a2 b2 lk1 lk2; do if mr_has "$r"; then fail "a refused push still created $r"; fi; done
 
 if [ "$FAILED" = 0 ]; then
   echo "ok"
