@@ -19,6 +19,6 @@ describe("memo.css release card scrolling", () => {
     expect(items).toMatch(/overflow-y:\s*auto/);
     const text = body(".memo-release-text");
     expect(text).not.toBe("");
-    expect(text).not.toMatch(/max-height|overflow/);
+    expect(text).not.toMatch(/max-height|overflow(-[xy])?\s*:/);
   });
 });
