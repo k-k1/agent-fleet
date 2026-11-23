@@ -244,6 +244,8 @@ func (f *wakeFirer) scheduleRelease(release func()) {
 // workspace activity in a transaction, and closing a pool does not stop a transaction that
 // is already in flight, so a drop of the schema under it can deadlock (SQLSTATE 40P01).
 // With the default 5-minute settle this would block for that long; production never calls it.
+// Call it only after every caller of scheduleRelease has returned: a Wait that sees a zero
+// counter returns at once, and an Add after it would again race the drop.
 func (f *wakeFirer) waitReleases() { f.releases.Wait() }
 
 // awaitAgentReady polls the Agent's session list until it responds or readyTimeout
