@@ -144,10 +144,19 @@ A memo can wait for other memos of the same auto-run category: it runs only afte
 
 A memo it waits for has **ended well** when it was run by auto-run (not sent by hand), the run ended as "Done", the run's first turn finished, and the run was not stopped for being overdue. Until the first turn is known, the memo keeps waiting.
 
-Then its **pull requests** are checked: the pull request of the branch the run's session worked on, and the pull requests the session opened or worked on (not those of a reviewer it started). Auto-run reads them from the workspace after the run ended, every 10 minutes while the workspace runs, until every one is merged. A run that opened none counts as done. The row says what it waits for, for example "Waits for acme/app#12: waiting for PR #57 to merge".
+Then its **pull requests** are checked: the pull request of the branch the run's session worked on, and the pull requests the session opened or worked on (not those of a reviewer it started). Auto-run reads them from the workspace after the run ended, every 10 minutes while the workspace runs, until every one is merged. A run that opened none counts as done only when it said so, as below. The row says what it waits for, for example "Waits for acme/app#12: waiting for PR #57 to merge".
+
+A run that opened **no pull request** counts as done only when the session's **last answer starts with `Done:`**. A run can stop part way and still end cleanly, often without a pull request, so its own words are what tells a finished run from one that gave up. After the run ended, auto-run reads the first line of the session's last answer from the workspace, while the workspace runs, for up to a day:
+
+- `Done:` at the start of that line (the case, and bold or code marks around the word, do not matter): the memos that wait for it can run
+- Not read yet: they keep waiting. The row says "ended without a pull request: waiting for a Done: answer"
+- Anything else, including `Partial:`, `Held:`, `Deferred:`, `Too large:` or `Stopped at part`, an answer that could not be read, or a day without one: they go back to "Waits for approval", and the row shows the first line it read, for example "ended without a pull request and without Done: — held (its last answer: “Partial: #12 part 1, next part queued”)"
+- A line inside a quote, a list or a code block does not count. A run that opened pull requests is judged by its pull requests, whatever its answer says
+
+Write your standing instruction so that a run that finished ends with an answer starting with `Done:` ([Write the standing instruction for nobody watching](../fleet/memo-auto-run-practices.md#write-the-standing-instruction-for-nobody-watching)). The run history shows how each run's last answer read ([Read the run history](#read-the-run-history)).
 
 - Some agents never record how their first turn went. A run of such a session counts as done once it has opened at least one pull request and every one is merged, without the first turn
-- While the workspace is stopped and every memo waiting to run waits only for pull requests, auto-run starts the workspace to check them at most once an hour (at most 24 times a day). Those starts are not runs, so they do not count towards "Runs per day"
+- While the workspace is stopped and every memo waiting to run waits only for pull requests or for a run's last answer, auto-run starts the workspace to check them at most once an hour (at most 24 times a day). Those starts are not runs, so they do not count towards "Runs per day"
 - After a day without any change in those pull requests, auto-run stops starting the workspace for them and notifies you once. The memo keeps waiting, and the check goes on whenever the workspace runs
 - An older workspace that cannot report pull requests leaves the memo waiting: restart the workspace to update it
 
@@ -160,6 +169,7 @@ When a memo it waits for can no longer end well, the memo goes back to "**Waits 
 | its run went overdue and was stopped | The run was stopped for being overdue |
 | a pull request of its run was closed without merging | A pull request of the run was closed without being merged |
 | its run's session was deleted before its pull requests could be read | The session was deleted before auto-run could read its pull requests |
+| ended without a pull request, and no Done: answer was confirmed — held; ended without a pull request and without Done: — held (its last answer: “…”) | The run opened no pull request, and its session's last answer did not start with `Done:`, or could not be read within a day after the run ended |
 | its run opened no pull request, and nothing records how its first turn went | The session never recorded its first turn (some agents cannot), it opened no pull request, and a day has passed since the run ended |
 | no record of how its first turn went | Shown on a memo that came back for this reason before pull requests were checked |
 | was deleted, was moved out of this category, was replaced by a tidy, may or may not have started | The memo is gone from the category, or "Needs a look" |
@@ -352,6 +362,7 @@ When memos are waiting to run and nothing starts, the top may show a line that s
 | Started by itself, Started with Run now | How the run began |
 | Not finished | Why the run is still open (the table below) |
 | First turn | How the session's first turn ended: finished, failed, stopped or ended |
+| Last answer | How the session's last answer reads, with its first line: Done, stopped part way, no Done:, or could not be read. For a run that opened no pull request, only "Done" lets the memos that wait for it run ([Make a memo wait for another](#make-a-memo-wait-for-another)) |
 | You took over this session | You acted on the session after the run was seen to have ended, so it was not stopped and keeps running ([When a run ends, its session is stopped](#when-a-run-ends-its-session-is-stopped)) |
 
 The states of a run:
