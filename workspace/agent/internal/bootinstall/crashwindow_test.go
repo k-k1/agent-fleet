@@ -689,7 +689,7 @@ func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 	ready, release := filepath.Join(f.home, "ready"), filepath.Join(f.home, "release")
 	pidf := filepath.Join(f.home, "straggler.pid")
 	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf(
-		"#!/bin/sh\nexec 3>&-\n(exec /bin/sleep 30) &\necho $! >%q\n: >%q\nwhile [ ! -e %q ]; do /bin/sleep 0.05; done\n", pidf, ready, release))
+		"#!/bin/sh\nexec 3>&-\n(exec /bin/sleep 30) &\necho $! >%q\n: >%q\ni=0; while [ ! -e %q ] && [ $i -lt 600 ]; do i=$((i+1)); /bin/sleep 0.05; done\n", pidf, ready, release))
 	e, rel, ok := f.env.lockNPM()
 	if !ok {
 		t.Fatal("lock not taken")
@@ -718,8 +718,8 @@ func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		// npm runs without the supervisor (its start failed and npmInstall fell back to npm
 		// directly): let npm finish before failing, or the test blocks until go test's timeout.
-		// Without the release file npm would wait out npmInstall's timeout, so fail at once; the
-		// lock is left to npmInstall's goroutine rather than closed under its Cmd.Start.
+		// Without the release file npm gives up on its own after about 30 s, so fail at once; the
+		// lock stays open until the test binary exits, as closing it here could race Cmd.Start.
 		if err := os.WriteFile(release, nil, 0o644); err != nil {
 			t.Fatalf("supervisor start hook did not fire, and npm cannot be released: %v", err)
 		}
