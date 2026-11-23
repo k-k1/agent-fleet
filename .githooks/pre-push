@@ -20,7 +20,37 @@ root="$(git rev-parse --show-toplevel)"
 # shellcheck source=gitleaks-lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/gitleaks-lib.sh"
 
-remote="${1:-origin}"
+# What a new branch is measured against: the default branch of the remote being pushed to,
+# which CI's secret-scan has already covered. Not `--remotes=<remote>`: a remote-tracking ref
+# can be stale (the server dropped or rewound the branch since the last fetch) and would then
+# exclude a commit the remote no longer has. $1 is a remote name or, for `git push <url>`, a
+# URL or path: resolve a URL to the configured remote that has it, else fall back to origin.
+# Empty output means nothing trustworthy to subtract, and the caller scans everything
+# reachable from the pushed commit — slower, never unsafe.
+default_branch_ref() {
+  local target="${1:-origin}" name r cand
+  if git remote get-url "$target" >/dev/null 2>&1; then
+    name="$target"
+  else
+    name=""
+    for r in $(git remote); do
+      if [ "$(git remote get-url "$r" 2>/dev/null)" = "$target" ]; then
+        name="$r"
+        break
+      fi
+    done
+    [ -n "$name" ] || { git remote get-url origin >/dev/null 2>&1 && name=origin; }
+  fi
+  [ -n "$name" ] || return 0
+  for cand in "refs/remotes/$name/HEAD" "refs/remotes/$name/main" "refs/remotes/$name/master"; do
+    if git rev-parse -q --verify "$cand^{commit}" >/dev/null; then
+      echo "$cand"
+      return 0
+    fi
+  done
+}
+
+base_ref="$(default_branch_ref "${1:-origin}")"
 
 # One `gitleaks` run per pushed ref. `-m` is mandatory, as in ci.yml: without it gitleaks
 # skips merge commits, and whatever entered while resolving a conflict stays unscanned.
@@ -32,10 +62,12 @@ while read -r _ local_sha _ remote_sha; do
     git cat-file -e "$remote_sha^{commit}" 2>/dev/null; then
     # An existing branch: what the remote does not have yet.
     ranges+=("$remote_sha..$local_sha")
-  else
+  elif [ -n "$base_ref" ]; then
     # A new branch, or a remote tip this clone has never fetched (it cannot be an
-    # ancestor to subtract): everything not already on one of the remote's branches.
-    ranges+=("$local_sha --not --remotes=$remote")
+    # ancestor to subtract): what the remote's default branch does not have.
+    ranges+=("$local_sha --not $base_ref")
+  else
+    ranges+=("$local_sha")
   fi
 done
 

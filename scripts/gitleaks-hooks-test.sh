@@ -28,14 +28,19 @@ REAL_VERSION="$("$REAL_GITLEAKS" version | head -n1 | sed 's/^v//')"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
+# Hermetic git: nothing from the user's or the system's configuration (commit.gpgSign, a
+# global core.hooksPath, templates with their own hooks) may reach the throwaway repos.
+mkdir "$TMP/home"
+export HOME="$TMP/home" GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+
 # aws-access-token shaped (AKIA + 16 characters); two values, one of them allowlisted.
 LEAK="AKIA""ZXCVBNMQWERTYUIO"
-ALLOWED="AKIA""QWERTYUIOPASDFGHJK"
+ALLOWED="AKIA""MNBVCXZLKJHGFDSA"
 
 WORK="$TMP/work"
 REMOTE="$TMP/remote.git"
-git init -q --bare "$REMOTE"
-git init -q -b main "$WORK"
+git init -q --template= --bare "$REMOTE"
+git init -q --template= -b main "$WORK"
 mkdir -p "$WORK/.github/workflows"
 cp -R "$REPO/.githooks" "$WORK/.githooks"
 cat > "$WORK/.gitleaks.toml" <<EOF
@@ -80,6 +85,11 @@ expect_refused() { # <what> <file with stderr>
 if commit_file "$LEAK"; then fail "pre-commit let a credential-shaped value through"; else expect_refused pre-commit "$TMP/err"; fi
 g reset -q --hard HEAD
 if commit_file "clean-value"; then :; else fail "pre-commit refused a clean file: $(cat "$TMP/err")"; fi
+# Positive control for the allowlist: without it the same value is a finding, so a hook that
+# ignores .gitleaks.toml cannot pass the next check by accident.
+printf '[extend]\nuseDefault = true\n' > "$WORK/.gitleaks.toml"
+if commit_file "$ALLOWED"; then fail "the allowlist control value is not credential-shaped"; else expect_refused "pre-commit without the allowlist" "$TMP/err"; fi
+g reset -q --hard HEAD # also restores the committed .gitleaks.toml
 if commit_file "$ALLOWED"; then :; else fail "pre-commit refused an allowlisted value: $(cat "$TMP/err")"; fi
 
 # --- pre-push: a leak committed with --no-verify ---
@@ -105,6 +115,9 @@ commit_file "$LEAK" --no-verify || fail "--no-verify commit failed"
 if g push origin leak 2> "$TMP/err"; then fail "pre-push let a leak onto an existing branch"; else expect_refused "pre-push existing branch" "$TMP/err"; fi
 g reset -q --hard HEAD~1
 commit_file "$ALLOWED" --no-verify || fail "commit failed"
+printf '[extend]\nuseDefault = true\n' > "$WORK/.gitleaks.toml"
+if g push origin leak 2> "$TMP/err"; then fail "pre-push: the allowlist control value is not credential-shaped"; else expect_refused "pre-push without the allowlist" "$TMP/err"; fi
+g checkout -q -- .gitleaks.toml
 g push -q origin leak 2> "$TMP/err" || fail "pre-push refused an allowlisted value: $(cat "$TMP/err")"
 
 # A value that entered only while resolving a merge conflict lives in the merge commit alone,
@@ -120,6 +133,24 @@ printf 'token = %s\n' "$LEAK" > "$WORK/m.txt"
 g add m.txt
 g commit -q --no-verify -m "merge" || fail "merge commit failed"
 if g push origin mrg 2> "$TMP/err"; then fail "pre-push missed a leak that only a merge commit carries"; else expect_refused "pre-push merge" "$TMP/err"; fi
+
+# A stale remote-tracking ref (the server never had, or dropped, that commit) must not
+# exclude it from the scan.
+g switch -q -C stale origin/main
+commit_file "$LEAK" --no-verify || fail "--no-verify commit failed"
+g update-ref refs/remotes/origin/ghost "$(g rev-parse HEAD)"
+if g push origin stale 2> "$TMP/err"; then fail "pre-push trusted a stale remote-tracking ref"; else expect_refused "pre-push stale ref" "$TMP/err"; fi
+g update-ref -d refs/remotes/origin/ghost
+
+# `git push <url-or-path>` has no remote name: the URL of a configured remote resolves to it,
+# and an unknown destination is still scanned.
+if g push "$REMOTE" stale:refs/heads/urlpush 2> "$TMP/err"; then fail "pre-push let a leak through a push by URL"; else expect_refused "pre-push by URL" "$TMP/err"; fi
+git init -q --template= --bare "$TMP/other.git"
+if g push "$TMP/other.git" stale:refs/heads/x 2> "$TMP/err"; then fail "pre-push let a leak through a push to an unknown destination"; else expect_refused "pre-push unknown destination" "$TMP/err"; fi
+g switch -q -C urlclean origin/main
+commit_file "clean-value" || fail "clean commit failed"
+g push -q "$REMOTE" urlclean 2> "$TMP/err" || fail "pre-push refused a clean push by URL: $(cat "$TMP/err")"
+g push -q "$TMP/other.git" urlclean 2> "$TMP/err" || fail "pre-push refused a clean push to an unknown destination: $(cat "$TMP/err")"
 
 # Deleting a branch sends no commits.
 g push -q origin :leak 2> "$TMP/err" || fail "pre-push refused a branch deletion: $(cat "$TMP/err")"
@@ -148,6 +179,17 @@ grep -q "ci.yml pins 0.0.1" "$TMP/err" || fail "no version warning: $(cat "$TMP/
 g push -q origin ver 2> "$TMP/err" || fail "a version mismatch blocked a clean push: $(cat "$TMP/err")"
 grep -q "ci.yml pins 0.0.1" "$TMP/err" || fail "no version warning on push: $(cat "$TMP/err")"
 if commit_file "$LEAK"; then fail "a version mismatch switched the scan off"; else expect_refused "pre-commit, other version" "$TMP/err"; fi
+
+# History already on the remote's default branch is not rescanned (CI covers it): a leak that
+# is already public must not block every later push, by name or by URL.
+g switch -q -C pub origin/main
+pin "$REAL_VERSION"
+commit_file "$LEAK" --no-verify || fail "--no-verify commit failed"
+g push -q --no-verify origin pub:main
+g switch -q -C after
+commit_file "clean-value" || fail "clean commit failed"
+g push -q origin after 2> "$TMP/err" || fail "pre-push rescanned history already on the remote's main: $(cat "$TMP/err")"
+g push -q "$REMOTE" after:refs/heads/after-url 2> "$TMP/err" || fail "pre-push rescanned published history on a push by URL: $(cat "$TMP/err")"
 
 if [ "$FAILED" = 0 ]; then
   echo "ok"
