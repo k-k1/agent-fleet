@@ -32,6 +32,7 @@ let apiAnswer: () => Promise<unknown> = async () => ({ sessions: [{ name: "work"
 let clientTenant: string | null = null; // the API client's own selection; null = follows the store
 vi.mock("../core/api/client.ts", () => ({
   getTenant: () => clientTenant ?? tenantState.tenant,
+  apiJSON: async () => ({}),
   api: (path: string) => {
     apiCalls.push(path);
     return apiAnswer();

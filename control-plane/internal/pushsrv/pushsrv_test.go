@@ -290,7 +290,7 @@ func TestPayloadCarriesTheTenantSlug(t *testing.T) {
 	f := newFixture(t)
 	f.st.tenantSlug = "acme"
 	d := f.subscribe(t, "m1")
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 1 {
 		t.Fatalf("pushes: %d", f.count())
 	}
@@ -307,7 +307,7 @@ func TestOverlongNameDropsTheNameNotThePush(t *testing.T) {
 	d := f.subscribe(t, "m1")
 	n := note("question")
 	n.DisplayName = strings.Repeat("x", 3930) // main's base JSON is 3980 bytes; the tenant tips it past 3993
-	f.svc.deliver(context.Background(), n)
+	f.deliver(n)
 	if f.count() != 1 {
 		t.Fatalf("the push was lost to a long name: %d", f.count())
 	}
@@ -328,7 +328,7 @@ func TestPayloadWithoutTenantWhenTheLookupFails(t *testing.T) {
 	f.st.tenantSlug = "acme"
 	f.svc.store = failingCtxStore{f.st}
 	d := f.subscribe(t, "m1")
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 1 {
 		t.Fatalf("a failed tenant lookup must not lose the push: %d", f.count())
 	}
