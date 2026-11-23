@@ -11,6 +11,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
@@ -55,6 +56,9 @@ type wakeFirer struct {
 	sessionReadyTimeout time.Duration
 	// readyInterval is the poll gap for awaitSessionReady (0 -> 1s). Tests set it small.
 	readyInterval time.Duration
+	// releases counts keep-alive releases that are scheduled and not yet finished, so a
+	// test can wait for their final presence write (waitReleases). Production never waits.
+	releases sync.WaitGroup
 }
 
 // scheduleSessionReadyWait is the default sessionReadyTimeout: how long a reuse fire waits
@@ -228,8 +232,19 @@ func (f *wakeFirer) scheduleRelease(release func()) {
 	if settle <= 0 {
 		settle = 5 * time.Minute
 	}
-	time.AfterFunc(settle, release)
+	f.releases.Add(1)
+	time.AfterFunc(settle, func() {
+		defer f.releases.Done()
+		release()
+	})
 }
+
+// waitReleases blocks until every scheduled release has run, final presence write included.
+// A test with a short settle calls it before its database goes away: the release writes
+// workspace activity in a transaction, and closing a pool does not stop a transaction that
+// is already in flight, so a drop of the schema under it can deadlock (SQLSTATE 40P01).
+// With the default 5-minute settle this would block for that long; production never calls it.
+func (f *wakeFirer) waitReleases() { f.releases.Wait() }
 
 // awaitAgentReady polls the Agent's session list until it responds or readyTimeout
 // elapses — a just-started container's Agent needs a moment before it accepts a create.

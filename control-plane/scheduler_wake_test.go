@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -251,5 +252,20 @@ func TestInjectDriverFollowsTheCatalog(t *testing.T) {
 		if got := injectDriver(k); got != "" {
 			t.Errorf("injectDriver(%q) = %q, want none", k, got)
 		}
+	}
+}
+
+// waitReleases returns only after a scheduled release has finished, including the slow
+// presence write it makes; a test relies on that to drop its database afterwards.
+func TestWaitReleasesWaitsForAScheduledRelease(t *testing.T) {
+	f := &wakeFirer{settle: time.Millisecond}
+	var finished atomic.Bool
+	f.scheduleRelease(func() {
+		time.Sleep(50 * time.Millisecond)
+		finished.Store(true)
+	})
+	f.waitReleases()
+	if !finished.Load() {
+		t.Fatal("waitReleases returned before the release finished")
 	}
 }
