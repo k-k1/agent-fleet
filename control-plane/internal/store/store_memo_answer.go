@@ -22,19 +22,31 @@ const AnswerHeadMax = 200
 // lock: no slot and no message is written by it.
 type MemoAnswerStore interface {
 	// ListAnswersDue returns, of every member, the deliveries closed at or after since with a
-	// session and no answer decided, last tried before before (never tried first), at most limit.
-	ListAnswersDue(ctx context.Context, since, before string, limit int) ([]MemoDelivery, error)
+	// session and no answer decided, last tried before before (never tried first), at most limit:
+	// with waited, those a pending message of the same bucket waits for, else the others.
+	ListAnswersDue(ctx context.Context, since, before string, waited bool, limit int) ([]MemoDelivery, error)
 	// MarkAnswerTried stamps a delivery whose answer is about to be read.
 	MarkAnswerTried(ctx context.Context, id, at string) error
-	// RecordAnswer keeps a read's answer on a closed delivery that has none: written once, so a
-	// later turn of the same session (a person taking it over) never rewrites what the run ended
-	// with. False means nothing was written.
-	RecordAnswer(ctx context.Context, id, head, class string) (bool, error)
+	// RecordAnswer keeps a read's answer on a closed delivery that has none and closed at or after
+	// since: written once, so a later turn of the same session (a person taking it over) never
+	// rewrites what the run ended with, and never after the window to read it ended. False means
+	// nothing was written.
+	RecordAnswer(ctx context.Context, id, head, class, since string) (bool, error)
 }
 
-func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, limit int) ([]MemoDelivery, error) {
+// memoDeliveryWaitedSQL holds for a delivery row that a pending message of the same bucket as the
+// message it delivered names as a prerequisite.
+const memoDeliveryWaitedSQL = `EXISTS (SELECT 1 FROM memo p JOIN memo m ON m.membership_id=p.membership_id AND m.repo=p.repo AND m.category=p.category
+	  WHERE p.membership_id=memo_delivery.membership_id AND p.delivery_id=memo_delivery.id AND p.state='delivered'
+	    AND m.state='pending' AND m.after_ids LIKE '%"' || p.id || '"%')`
+
+func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, limit int) ([]MemoDelivery, error) {
+	cond := memoDeliveryWaitedSQL
+	if !waited {
+		cond = `NOT ` + cond
+	}
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state=? AND session<>'' AND answer_class=''
-		  AND closed_at>=? AND answer_tried_at<?
+		  AND closed_at>=? AND answer_tried_at<? AND `+cond+`
 		ORDER BY answer_tried_at, closed_at, id LIMIT ?`, DeliveryClosed, since, before, limit))
 }
 
@@ -43,7 +55,7 @@ func (s *SQL) MarkAnswerTried(ctx context.Context, id, at string) error {
 	return err
 }
 
-func (s *SQL) RecordAnswer(ctx context.Context, id, head, class string) (bool, error) {
+func (s *SQL) RecordAnswer(ctx context.Context, id, head, class, since string) (bool, error) {
 	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET answer_head=?, answer_class=?
-		WHERE id=? AND state=? AND answer_class=''`, head, class, id, DeliveryClosed))
+		WHERE id=? AND state=? AND answer_class='' AND closed_at>=?`, head, class, id, DeliveryClosed, since))
 }

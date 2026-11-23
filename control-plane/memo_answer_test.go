@@ -19,7 +19,7 @@ import (
 // after a tool call in the same turn.
 func transcriptReply(status string, alive bool, text string) func() (int, any) {
 	return func() (int, any) {
-		return http.StatusOK, map[string]any{"status": status, "alive": alive, "cursor": 9, "messages": []map[string]any{
+		return http.StatusOK, map[string]any{"name": "q-a", "status": status, "alive": alive, "cursor": 9, "messages": []map[string]any{
 			{"role": "user", "text": "the task", "parts": []map[string]any{{"kind": "text", "text": "the task"}}},
 			{"role": "assistant", "text": "Looking.\n" + text, "parts": []map[string]any{
 				{"kind": "text", "text": "Looking."}, {"kind": "tool", "tool": "Bash"}, {"kind": "text", "text": text}}},
@@ -27,6 +27,17 @@ func transcriptReply(status string, alive bool, text string) func() (int, any) {
 				{"kind": "text", "text": "Done: a subagent's words"}}},
 		}}
 	}
+}
+
+// addSession puts a row for session in the Agent's list, as a running Agent reports it.
+func (a *fakeQueueAgent) addSession(name string, kv map[string]any) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	row := map[string]any{"name": name, "kind": "claude", "alive": false, "state": "stopped"}
+	for k, v := range kv {
+		row[k] = v
+	}
+	a.rows = append(a.rows, row)
 }
 
 // noPRChain is prChain whose session opened no PR.
@@ -80,25 +91,35 @@ func TestMemoAnswerNotDoneHolds(t *testing.T) {
 	cases := []struct {
 		name, head, class string
 		reply             func() (int, any)
+		listed            bool // the Agent's list has the session
 	}{
 		{"partial", "Partial: #1 part 1, next part queued", store.AnswerPartial,
-			transcriptReply("idle", true, "Partial: #1 part 1, next part queued\nmore")},
-		{"held", "Held: #1 part 2, PR #9 not merged", store.AnswerPartial, transcriptReply("stopped", false, "Held: #1 part 2, PR #9 not merged")},
-		{"other", "I stopped at the review limit.", store.AnswerOther, transcriptReply("idle", true, "I stopped at the review limit.")},
-		{"no answer", "", store.AnswerUnknown, func() (int, any) {
-			return http.StatusOK, map[string]any{"status": "idle", "alive": true, "messages": []any{}}
-		}},
+			transcriptReply("idle", true, "Partial: #1 part 1, next part queued\nmore"), false},
+		{"held", "Held: #1 part 2, PR #9 not merged", store.AnswerPartial, transcriptReply("stopped", false, "Held: #1 part 2, PR #9 not merged"), true},
+		{"other", "I stopped at the review limit.", store.AnswerOther, transcriptReply("idle", true, "I stopped at the review limit."), false},
+		{"ended on a tool call", "", store.AnswerUnknown, func() (int, any) {
+			return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "alive": true, "messages": []map[string]any{
+				{"role": "assistant", "parts": []map[string]any{{"kind": "text", "text": "Done: wrote it"}}},
+				{"role": "assistant", "parts": []map[string]any{{"kind": "tool", "tool": "Bash"}}}}}
+		}, false},
+		{"no answer in the whole transcript", "", store.AnswerUnknown, func() (int, any) {
+			return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "alive": true, "firstLine": 0, "hasMore": false,
+				"messages": []map[string]any{{"role": "user", "text": "the task", "parts": []map[string]any{{"kind": "text", "text": "the task"}}}}}
+		}, false},
 		{"session gone", "", store.AnswerUnknown, func() (int, any) {
 			return http.StatusNotFound, map[string]any{"error": map[string]any{"code": "not_found", "message": "no such session"}}
-		}},
+		}, false},
 		{"no transcript", "", store.AnswerUnknown, func() (int, any) {
 			return http.StatusBadRequest, map[string]any{"error": map[string]any{"code": "unsupported_kind", "message": "x"}}
-		}},
+		}, true},
 	}
 	for _, c := range cases {
 		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 			now := time.Now()
 			agent, q, da, b := e.noPRChain(now.Add(-time.Minute))
+			if c.listed {
+				agent.addSession("q-a", nil)
+			}
 			agent.setAnswer("q-a", c.reply)
 			e.settleNow(now)
 			got := e.delivery(da.ID)
@@ -126,12 +147,34 @@ func TestMemoAnswerNoAnswerKeepsWaiting(t *testing.T) {
 		now := time.Now()
 		agent, q, da, b := e.noPRChain(now.Add(-time.Minute))
 		at := now
+		agent.addSession("q-a", map[string]any{"alive": true, "state": "idle"})
+		gone := func() (int, any) {
+			return http.StatusNotFound, map[string]any{"error": map[string]any{"code": "not_found", "message": "x"}}
+		}
+		withName := func(name string) func() (int, any) {
+			return func() (int, any) {
+				_, body := transcriptReply("idle", true, "Done: someone else's")()
+				body.(map[string]any)["name"] = name
+				return http.StatusOK, body
+			}
+		}
+		noStatus := func() (int, any) {
+			_, body := transcriptReply("idle", true, "Done: x")()
+			delete(body.(map[string]any), "status")
+			return http.StatusOK, body
+		}
 		for _, reply := range []func() (int, any){
-			nil, // no route: a plain 404
+			nil,  // no route: a plain 404
+			gone, // a 404 for a session the Agent's own list still has
 			func() (int, any) {
 				return http.StatusBadGateway, map[string]any{"error": map[string]any{"code": "down"}}
 			},
-			func() (int, any) { return http.StatusOK, map[string]any{"status": "idle"} }, // no messages
+			func() (int, any) { return http.StatusOK, map[string]any{"name": "q-a", "status": "idle"} }, // no messages
+			func() (int, any) { // read empty, as a transcript that could not be read
+				return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "messages": []any{}, "firstLine": 0, "hasMore": false}
+			},
+			withName("q-other"),
+			noStatus,
 			transcriptReply("working", true, "Done: not yet"),
 		} {
 			agent.setAnswer("q-a", reply)
@@ -166,15 +209,20 @@ func TestMemoAnswerNoAnswerKeepsWaiting(t *testing.T) {
 	})
 }
 
-// A kept answer is never rewritten: a later turn of the session is not what the run ended with.
+// A kept answer is never rewritten (a later turn of the session is not what the run ended with),
+// and none is kept once the window to read it ended.
 func TestMemoAnswerWrittenOnce(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		_, _, da, _ := e.noPRChain(time.Now().Add(-time.Minute))
 		ctx := context.Background()
-		if ok, err := e.st.RecordAnswer(ctx, da.ID, "Partial: x", store.AnswerPartial); err != nil || !ok {
+		since := store.DeliveryTS(time.Now().Add(-memoAnswerWindow))
+		if ok, _ := e.st.RecordAnswer(ctx, da.ID, "Done: late", store.AnswerDone, store.DeliveryTS(time.Now())); ok {
+			t.Fatal("an answer was kept after its window")
+		}
+		if ok, err := e.st.RecordAnswer(ctx, da.ID, "Partial: x", store.AnswerPartial, since); err != nil || !ok {
 			t.Fatalf("first: %v %v", ok, err)
 		}
-		if ok, _ := e.st.RecordAnswer(ctx, da.ID, "Done: y", store.AnswerDone); ok {
+		if ok, _ := e.st.RecordAnswer(ctx, da.ID, "Done: y", store.AnswerDone, since); ok {
 			t.Fatal("a kept answer was overwritten")
 		}
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerPartial || got.AnswerHead != "Partial: x" {
@@ -202,6 +250,120 @@ func TestMemoAnswerWakes(t *testing.T) {
 		}
 		if len(fired) != 1 || !sameIDs(fired[0].MessageIDs, b.ID) || fired[0].QueueID != q {
 			t.Fatalf("fired %+v, want b", fired)
+		}
+	})
+}
+
+// A turn that started after the close means a person took the session over: the end of its
+// transcript is no longer the run's answer, and none is read from it.
+func TestMemoAnswerTurnAfterTheClose(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, b := e.noPRChain(now.Add(-10 * time.Minute))
+		agent.addSession("q-a", map[string]any{"alive": true, "state": "idle",
+			"lastTurnStartAt": now.Add(-2 * time.Minute).UTC().Format(time.RFC3339)})
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: the person's other task"))
+		e.settleNow(now)
+		if n := len(agent.answerCallsSoFar()); n != 0 {
+			t.Fatalf("%d transcript reads of a session taken over", n)
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerUnknown {
+			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+		e.runner().checkAfter(context.Background(), e.queueRow(q), now)
+		if row := e.memoRow(b.ID); row.State != store.MemoStateHeld {
+			t.Fatalf("b is %s", row.State)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// The run's own last turn started before the close: read as usual.
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.addSession("q-a", map[string]any{"lastTurnStartAt": now.Add(-20 * time.Minute).UTC().Format(time.RFC3339)})
+		agent.setAnswer("q-a", transcriptReply("stopped", false, "Done: x"))
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// An answer further back than the tail page is found by reading back page by page: claude counts
+// raw log lines, and bookkeeping lines after the last answer hold no turn. Past the pages read the
+// read decides nothing.
+func TestMemoAnswerReadsBack(t *testing.T) {
+	page := func(firstLine int, msgs []map[string]any) map[string]any {
+		return map[string]any{"name": "q-a", "status": "idle", "alive": true, "messages": msgs, "firstLine": firstLine, "hasMore": firstLine > 0}
+	}
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		calls := 0
+		agent.setAnswer("q-a", func() (int, any) {
+			calls++
+			if calls == 1 {
+				return http.StatusOK, page(800, []map[string]any{})
+			}
+			return http.StatusOK, page(600, []map[string]any{{"role": "assistant", "parts": []map[string]any{{"kind": "text", "text": "Done: far back"}}}})
+		})
+		e.settleNow(now)
+		got := agent.answerCallsSoFar()
+		if len(got) != 2 || !strings.Contains(got[0], "tail=1") || !strings.Contains(got[1], "before=800") {
+			t.Fatalf("reads %v, want the tail then the page before line 800", got)
+		}
+		if d := e.delivery(da.ID); d.AnswerClass != store.AnswerDone || d.AnswerHead != "Done: far back" {
+			t.Fatalf("kept %q %q", d.AnswerHead, d.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setAnswer("q-a", func() (int, any) { return http.StatusOK, page(5000, []map[string]any{}) })
+		e.settleNow(now)
+		if n := len(agent.answerCallsSoFar()); n != memoAnswerPages {
+			t.Fatalf("%d reads, want %d pages", n, memoAnswerPages)
+		}
+		if d := e.delivery(da.ID); d.AnswerClass != "" {
+			t.Fatalf("kept %q from pages without an answer", d.AnswerClass)
+		}
+	})
+}
+
+// A chain A <- B <- C in a stopped workspace: C waits for B, which has not run, and that does not
+// keep the read B waits for (A's answer) from waking the workspace.
+func TestMemoAnswerWakesForAChain(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, b := e.noPRChain(now.Add(-time.Minute))
+		e.setPRs(da.ID, store.PRStateNone)
+		if rec := e.do("a", "POST", "/api/memos", afterMemo("app", "impl", "c waits for b", b.ID)); rec.Code != http.StatusCreated {
+			t.Fatalf("c: %d %s", rec.Code, rec.Body.String())
+		}
+		e.setRuntime(agent, "stopped")
+		if _, wakes := e.autoTick(now); len(wakes) != 1 {
+			t.Fatalf("%d wakes, want one", len(wakes))
+		}
+	})
+}
+
+// While its workspace is stopped, a delivery no message waits for is stamped as tried, so such
+// rows rotate instead of filling the list; one a message waits for is not, and is read as soon as
+// the workspace runs.
+func TestMemoAnswerStoppedRowsRotate(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, b := e.noPRChain(now.Add(-time.Minute))
+		e.setRuntime(agent, "stopped")
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerTriedAt != "" {
+			t.Fatalf("a waited-for read was stamped while stopped: %+v", got.AnswerTriedAt)
+		}
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state='held', release_hash='', released_at='' WHERE id=?`, b.ID); err != nil {
+			t.Fatal(err)
+		}
+		e.settleNow(now.Add(time.Minute))
+		if got := e.delivery(da.ID); got.AnswerTriedAt == "" {
+			t.Fatal("a read nothing waits for was not stamped while stopped")
 		}
 	})
 }

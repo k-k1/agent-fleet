@@ -28,6 +28,7 @@ import (
 	"net/url"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1747,99 +1748,179 @@ const (
 	memoAnswerWindow = memoafter.ClosedTurnWindow
 	// memoAnswerEvery is the least time between two reads of one delivery's answer.
 	memoAnswerEvery = 5 * time.Minute
-	// memoAnswersPerTick bounds the reads a tick makes, memoAnswersListed the rows it lists.
+	// memoAnswersPerTick bounds the reads a tick makes, memoAnswersListed the rows it lists of
+	// each of its two lists.
 	memoAnswersPerTick = 20
 	memoAnswersListed  = 200
-	// memoAnswerTail is the transcript lines asked for: the Agent's window takes at least 50.
-	memoAnswerTail = 50
-	// memoAnswerReplyMax bounds the reply read: a tail of tool output can be large.
+	// memoAnswerPage is the transcript lines asked for at a time, memoAnswerPages the pages read
+	// back from the end before the read gives up for now: claude counts raw log lines, and
+	// bookkeeping lines written after the last answer hold no turn.
+	memoAnswerPage  = 200
+	memoAnswerPages = 4
+	// memoAnswerReplyMax bounds one page's reply: a page of tool output can be large.
 	memoAnswerReplyMax = 8 << 20
 )
 
 // memoAnswerReply is the part of GET /sessions/{name}/messages the answer is read from.
 type memoAnswerReply struct {
-	Messages *[]memoafter.Turn `json:"messages"`
-	Status   string            `json:"status"`
-	Alive    bool              `json:"alive"`
+	Name      string            `json:"name"`
+	Messages  *[]memoafter.Turn `json:"messages"`
+	Status    string            `json:"status"`
+	FirstLine *int              `json:"firstLine"`
+	HasMore   bool              `json:"hasMore"`
 }
 
-// collectAnswers reads the answers that are due. Only a running workspace's Agent is asked: a
-// read that cannot be made is not stamped, so it is made as soon as the workspace runs (a
-// dependent's wait wakes it, prWake).
+// collectAnswers reads the answers that are due: first those a pending message waits for, then
+// the rest, which only the run history shows. A waited-for one is not stamped while its workspace
+// is stopped, so it is read as soon as the workspace runs (a dependent's wait wakes it, prWake);
+// any other is stamped either way, so stopped workspaces cannot fill the list and starve the
+// running ones.
 func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
-	if ctx.Err() != nil {
-		return
-	}
-	ds, err := r.mgr.store.ListAnswersDue(ctx, store.DeliveryTS(now.Add(-memoAnswerWindow)),
-		store.DeliveryTS(now.Add(-memoAnswerEvery)), memoAnswersListed)
-	if err != nil {
-		log.Printf("memo queue: list answers due: %v", err)
-		return
-	}
 	read := 0
-	for _, d := range ds {
-		if ctx.Err() != nil || read >= memoAnswersPerTick {
+	for _, waited := range []bool{true, false} {
+		if ctx.Err() != nil {
 			return
 		}
-		v := r.view(ctx, views, d.MembershipID)
-		if v == nil || !v.liveOK {
-			continue
-		}
-		sctx, cancel := memoProgressCtx(ctx)
-		err := r.mgr.store.MarkAnswerTried(sctx, d.ID, store.DeliveryTS(now))
-		cancel()
+		ds, err := r.mgr.store.ListAnswersDue(ctx, store.DeliveryTS(now.Add(-memoAnswerWindow)),
+			store.DeliveryTS(now.Add(-memoAnswerEvery)), waited, memoAnswersListed)
 		if err != nil {
-			log.Printf("memo queue: delivery %s: stamp the answer tried: %v", d.ID, err)
+			log.Printf("memo queue: list answers due: %v", err)
+			return
 		}
-		read++
-		r.readAnswer(ctx, v.res, d)
+		for _, d := range ds {
+			if ctx.Err() != nil || read >= memoAnswersPerTick {
+				return
+			}
+			v := r.view(ctx, views, d.MembershipID)
+			live := v != nil && v.liveOK
+			if !live && waited {
+				continue
+			}
+			sctx, cancel := memoProgressCtx(ctx)
+			err := r.mgr.store.MarkAnswerTried(sctx, d.ID, store.DeliveryTS(now))
+			cancel()
+			if err != nil {
+				log.Printf("memo queue: delivery %s: stamp the answer tried: %v", d.ID, err)
+			}
+			if live {
+				read++
+				r.readAnswer(ctx, v, d)
+			}
+		}
 	}
 }
 
-// readAnswer asks the Agent for the tail of the delivery's root session and keeps its last answer.
-// A session the Agent no longer has, a kind without a transcript, or a tail with no answer in it
-// is kept as unknown. A session that is working again (a person took it over) is read later: what
-// it says mid-turn is not what the run ended with. Anything else decides nothing.
-func (r *memoQueueRunner) readAnswer(ctx context.Context, res *resolved, d store.MemoDelivery) {
+// readAnswer reads the delivery's root session for its last answer and keeps it. unknown is kept
+// when the run's answer can no longer be told: the Agent's own list lacks the session, its kind
+// keeps no transcript, a turn started after the close (a person took the session over, so the
+// end of the transcript is no longer the run's), the run's last response ended without an answer,
+// or the whole transcript holds none. Anything else decides nothing: no answer of the Agent's
+// transcript, a session working again, a transcript read empty, or an answer further back than
+// the pages read.
+func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d store.MemoDelivery) {
+	var row *sessionWire
+	for i := range v.live {
+		if v.live[i].Name == d.Session {
+			row = &v.live[i]
+			break
+		}
+	}
+	if row != nil && memoTurnAfterClose(row.LastTurnStartAt, d.ClosedAt) {
+		r.keepAnswer(ctx, d, "", store.AnswerUnknown)
+		return
+	}
+	before := ""
+	sawTurn := false
+	for page := 0; page < memoAnswerPages; page++ {
+		status, body, ok := r.askTranscript(ctx, v.res, d.Session, before)
+		if !ok {
+			return
+		}
+		switch {
+		case status == http.StatusOK:
+		case status == http.StatusNotFound && agentErrCode(body) == "not_found" && row == nil:
+			// The Agent's own list, read this tick, lacks it too: a gateway's 404 alone proves nothing.
+			r.keepAnswer(ctx, d, "", store.AnswerUnknown)
+			return
+		case status == http.StatusBadRequest && agentErrCode(body) == "unsupported_kind" && row != nil:
+			r.keepAnswer(ctx, d, "", store.AnswerUnknown)
+			return
+		default:
+			return
+		}
+		var reply memoAnswerReply
+		if json.Unmarshal(body, &reply) != nil || reply.Messages == nil || reply.Name != d.Session {
+			return // a cut answer, or one about another session, decides nothing
+		}
+		if reply.Status != stateIdle && reply.Status != "stopped" {
+			return // working again: what it says mid-turn is not what the run ended with
+		}
+		if text, found := memoafter.LastAnswer(*reply.Messages); found {
+			head, class := memoafter.ClassifyAnswer(text)
+			r.keepAnswer(ctx, d, head, class)
+			return
+		}
+		sawTurn = sawTurn || len(*reply.Messages) > 0
+		if !reply.HasMore || reply.FirstLine == nil || *reply.FirstLine <= 0 {
+			if sawTurn {
+				r.keepAnswer(ctx, d, "", store.AnswerUnknown)
+			}
+			return
+		}
+		before = strconv.Itoa(*reply.FirstLine)
+	}
+}
+
+// memoTurnAfterClose reports whether the session's latest turn (the Agent's clock) started after
+// the delivery closed (this Control Plane's). The close comes at least a tick after the run's last
+// turn, so a small skew between the clocks does not read the run's own turn as a later one. A
+// stamp that does not parse proves nothing.
+func memoTurnAfterClose(turnStart, closedAt string) bool {
+	t, err := time.Parse(time.RFC3339Nano, turnStart)
+	if err != nil {
+		return false
+	}
+	c, err := time.Parse(time.RFC3339Nano, closedAt)
+	return err == nil && t.After(c)
+}
+
+// askTranscript asks the Agent for one page of a session's transcript: the tail, or the page
+// that ends at before. ok is false when no answer came.
+func (r *memoQueueRunner) askTranscript(ctx context.Context, res *resolved, session, before string) (int, []byte, bool) {
 	cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
 	defer cancel()
-	path := "/sessions/" + url.PathEscape(d.Session) + "/messages?since=0&tail=1&limit=" + fmt.Sprint(memoAnswerTail)
-	req, err := http.NewRequestWithContext(cctx, http.MethodGet, res.rt.Endpoint()+path, nil)
+	q := url.Values{"since": {"0"}, "limit": {strconv.Itoa(memoAnswerPage)}}
+	if before == "" {
+		q.Set("tail", "1")
+	} else {
+		q.Set("before", before)
+	}
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, res.rt.Endpoint()+"/sessions/"+url.PathEscape(session)+"/messages?"+q.Encode(), nil)
 	if err != nil {
-		return
+		return 0, nil, false
 	}
 	if res.rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+res.rt.Token())
 	}
 	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
-		return
+		return 0, nil, false
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, memoAnswerReplyMax))
 	if err != nil {
-		return
+		return 0, nil, false
 	}
-	head, class := "", ""
-	switch {
-	case resp.StatusCode == http.StatusOK:
-		var reply memoAnswerReply
-		if json.Unmarshal(body, &reply) != nil || reply.Messages == nil {
-			return // a cut or foreign answer decides nothing
-		}
-		if reply.Alive && reply.Status != stateIdle {
-			return
-		}
-		head, class = memoafter.ClassifyAnswer(memoafter.LastAnswer(*reply.Messages))
-	case resp.StatusCode == http.StatusNotFound && agentErrCode(body) == "not_found",
-		resp.StatusCode == http.StatusBadRequest && agentErrCode(body) == "unsupported_kind":
-		class = store.AnswerUnknown
-	default:
-		return
-	}
-	wctx, wcancel := memoProgressCtx(ctx)
-	defer wcancel()
-	if _, err := r.mgr.store.RecordAnswer(wctx, d.ID, head, class); err != nil {
+	return resp.StatusCode, body, true
+}
+
+// keepAnswer records a read's answer, only while the delivery is still inside the window: an
+// answer read after it ended would contradict a dependent already held for the lack of one.
+func (r *memoQueueRunner) keepAnswer(ctx context.Context, d store.MemoDelivery, head, class string) {
+	wctx, cancel := memoProgressCtx(ctx)
+	defer cancel()
+	since := store.DeliveryTS(time.Now().Add(-memoAnswerWindow))
+	if _, err := r.mgr.store.RecordAnswer(wctx, d.ID, head, class, since); err != nil {
 		log.Printf("memo queue: delivery %s: keep the answer: %v", d.ID, err)
 	}
 }

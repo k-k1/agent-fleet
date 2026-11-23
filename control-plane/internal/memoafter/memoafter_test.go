@@ -107,7 +107,11 @@ func TestClassifyAnswer(t *testing.T) {
 		{"Deferred: waiting for #4", "Deferred: waiting for #4", store.AnswerPartial},
 		{"Too large: #5", "Too large: #5", store.AnswerPartial},
 		{"Stopped at part 3: #6", "Stopped at part 3: #6", store.AnswerPartial},
-		{"- Partial: x", "- Partial: x", store.AnswerPartial},
+		{"- Partial: x", "- Partial: x", store.AnswerOther},
+		{"> Done: the task it depends on\nThat was a quote: this one is not done.", "> Done: the task it depends on", store.AnswerOther},
+		{"**Done**: x", "**Done**: x", store.AnswerDone},
+		{"`Done`: x", "`Done`: x", store.AnswerDone},
+		{"Done is what I would say: not yet", "Done is what I would say: not yet", store.AnswerOther},
 		{"Done without a colon", "Done without a colon", store.AnswerOther},
 		{"Not done: x", "Not done: x", store.AnswerOther},
 		{"終わりました", "終わりました", store.AnswerOther},
@@ -125,7 +129,8 @@ func TestClassifyAnswer(t *testing.T) {
 	}
 }
 
-// The answer is what the session itself said after its last tool call, never a subagent's.
+// The answer is what the session itself said after its last tool call, never a subagent's, and a
+// response that ended on a tool call has none.
 func TestLastAnswer(t *testing.T) {
 	text := func(s string) TurnPart { return TurnPart{Kind: "text", Text: s} }
 	tool := TurnPart{Kind: "tool"}
@@ -133,27 +138,29 @@ func TestLastAnswer(t *testing.T) {
 		name  string
 		turns []Turn
 		want  string
+		found bool
 	}{
-		{"none", nil, ""},
-		{"user only", []Turn{{Role: "user", Text: "hi", Parts: []TurnPart{text("hi")}}}, ""},
-		{"after the last tool", []Turn{{Role: "assistant", Parts: []TurnPart{text("Looking."), tool, text("Done: a"), {Kind: "thinking"}, text("b")}}}, "Done: a\nb"},
-		{"a turn ending in a tool", []Turn{
-			{Role: "assistant", Parts: []TurnPart{text("Done: earlier")}},
-			{Role: "assistant", Parts: []TurnPart{text("Partial: x"), tool}},
-		}, "Partial: x"},
+		{"none", nil, "", false},
+		{"user only", []Turn{{Role: "user", Text: "hi", Parts: []TurnPart{text("hi")}}}, "", false},
+		{"after the last tool", []Turn{{Role: "assistant", Parts: []TurnPart{text("Looking."), tool, text("Done: a"), {Kind: "thinking"}, text("b")}}}, "Done: a\nb", true},
+		{"one turn ending in a tool", []Turn{{Role: "assistant", Parts: []TurnPart{text("Done: wrote it"), tool}}}, "", true},
+		{"a tool call in a turn of its own", []Turn{
+			{Role: "assistant", Parts: []TurnPart{text("Done: wrote it")}},
+			{Role: "assistant", Parts: []TurnPart{tool, text("  ")}},
+		}, "", true},
 		{"skips a subagent and a user turn", []Turn{
 			{Role: "assistant", Parts: []TurnPart{text("Held: y")}},
 			{Role: "assistant", Sidechain: true, Parts: []TurnPart{text("Done: sub")}},
 			{Role: "user", Parts: []TurnPart{text("Done: user")}},
-		}, "Held: y"},
-		{"skips a turn with no text", []Turn{
+		}, "Held: y", true},
+		{"skips a turn of thinking alone", []Turn{
 			{Role: "assistant", Parts: []TurnPart{text("Done: z")}},
-			{Role: "assistant", Parts: []TurnPart{tool, text("  ")}},
-		}, "Done: z"},
-		{"text without parts", []Turn{{Role: "assistant", Text: "Done: plain"}}, "Done: plain"},
+			{Role: "assistant", Parts: []TurnPart{{Kind: "thinking", Text: "hmm"}}},
+		}, "Done: z", true},
+		{"text without parts", []Turn{{Role: "assistant", Text: "Done: plain"}}, "Done: plain", true},
 	} {
-		if got := LastAnswer(c.turns); got != c.want {
-			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		if got, found := LastAnswer(c.turns); got != c.want || found != c.found {
+			t.Errorf("%s: %q/%v, want %q/%v", c.name, got, found, c.want, c.found)
 		}
 	}
 }

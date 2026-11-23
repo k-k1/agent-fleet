@@ -204,16 +204,17 @@ func invalid(format string, a ...any) *Invalid { return &Invalid{fmt.Sprintf(for
 // the queue's order (a dependent whose prerequisite comes later simply waits for it), must not be
 // superseded, and must not wait for self, directly or through its own prerequisites; one named
 // twice is kept once. rows is self's bucket as it is now (self itself may be among them, or not
-// yet inserted). An empty list clears.
-func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (string, *Invalid) {
+// yet inserted), and get reads any other row of the member: the cycle walk follows a link into
+// another bucket too. An empty list clears.
+func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool, get func(id string) (store.Memo, bool, error)) (string, *Invalid, error) {
 	if len(in) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 	if !inQueue {
-		return "", invalid("prerequisites are for a message in an auto-run category")
+		return "", invalid("prerequisites are for a message in an auto-run category"), nil
 	}
 	if len(in) > Max {
-		return "", invalid("at most %d prerequisites", Max)
+		return "", invalid("at most %d prerequisites", Max), nil
 	}
 	byID := make(map[string]store.Memo, len(rows))
 	for _, r := range rows {
@@ -224,7 +225,7 @@ func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (str
 	for _, raw := range in {
 		s := strings.TrimSpace(raw)
 		if s == "" {
-			return "", invalid("an empty prerequisite")
+			return "", invalid("an empty prerequisite"), nil
 		}
 		p, ok := byID[s]
 		if !ok {
@@ -239,15 +240,15 @@ func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (str
 				}
 			}
 			if best == nil {
-				return "", invalid("no message of this category is %s", s)
+				return "", invalid("no message of this category is %s", s), nil
 			}
 			p = *best
 		}
 		if p.ID == self.ID {
-			return "", invalid("a message cannot wait for itself")
+			return "", invalid("a message cannot wait for itself"), nil
 		}
 		if p.State == store.MemoStateSuperseded {
-			return "", invalid("message %s was replaced by a tidy run", p.ID)
+			return "", invalid("message %s was replaced by a tidy run", p.ID), nil
 		}
 		if seen[p.ID] {
 			continue
@@ -255,31 +256,48 @@ func Resolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (str
 		seen[p.ID] = true
 		out = append(out, p.ID)
 	}
-	// Every write of a list goes through here inside the member's MemoTx, so refusing a cycle at
-	// the write keeps the graph acyclic: two messages waiting for each other would never run.
-	if self.ID != "" && reaches(byID, out, self.ID) {
-		return "", invalid("this would make two messages wait for each other")
+	// Every write of a list goes through here inside the member's MemoTx, and the walk follows links
+	// across buckets, so the member's whole graph stays acyclic: no move or merge of a category can
+	// then close a cycle either. Two messages waiting for each other would never run.
+	if self.ID != "" {
+		cyc, err := reaches(byID, get, out, self.ID)
+		if err != nil {
+			return "", nil, err
+		}
+		if cyc {
+			return "", invalid("this would make two messages wait for each other"), nil
+		}
 	}
-	return Encode(out), nil
+	return Encode(out), nil, nil
 }
 
-// reaches reports whether target is reachable from start along after lists.
-func reaches(byID map[string]store.Memo, start []string, target string) bool {
+// reaches reports whether target is reachable from start along after lists. A row not in byID is
+// read with get; one that is gone ends its path.
+func reaches(byID map[string]store.Memo, get func(id string) (store.Memo, bool, error), start []string, target string) (bool, error) {
 	seen := map[string]bool{}
 	stack := append([]string(nil), start...)
 	for len(stack) > 0 {
 		id := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		if id == target {
-			return true
+			return true, nil
 		}
 		if seen[id] {
 			continue
 		}
 		seen[id] = true
-		stack = append(stack, IDs(byID[id])...)
+		m, ok := byID[id]
+		if !ok && get != nil {
+			var err error
+			if m, ok, err = get(id); err != nil {
+				return false, err
+			}
+		}
+		if ok {
+			stack = append(stack, IDs(m)...)
+		}
 	}
-	return false
+	return false, nil
 }
 
 // Lookup finds what a dependent's prerequisites are now. Memo answers a row of the member by id

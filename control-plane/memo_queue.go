@@ -1003,12 +1003,16 @@ func memoStartAfterOutside() *apiError {
 }
 
 // memoAfterResolve is memoafter.Resolve with its refusal as the API's answer (400 memo_after_invalid).
-func memoAfterResolve(self store.Memo, rows []store.Memo, in []string, inQueue bool) (string, *apiError) {
-	out, inv := memoafter.Resolve(self, rows, in, inQueue)
-	if inv != nil {
-		return "", &apiError{http.StatusBadRequest, errCodeMemoAfterInvalid, inv.Msg}
+// It reads the member's other rows through tx, so call it in the MemoTx that writes the list.
+func memoAfterResolve(tx store.MemoTxOps, self store.Memo, rows []store.Memo, in []string, inQueue bool) (string, *apiError, error) {
+	out, inv, err := memoafter.Resolve(self, rows, in, inQueue, tx.GetMemo)
+	if err != nil {
+		return "", nil, err
 	}
-	return out, nil
+	if inv != nil {
+		return "", &apiError{http.StatusBadRequest, errCodeMemoAfterInvalid, inv.Msg}, nil
+	}
+	return out, nil, nil
 }
 
 func derefRef(r *memoRefWire) memoRefWire {

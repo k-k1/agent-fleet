@@ -1437,7 +1437,9 @@ func earlierTS(a, b string) string {
 // memoPRWaits is the deliveries the pending messages of rows wait for, when every one of them
 // waits on reads of a running Agent alone: no message is eligible or failed, and every
 // prerequisite that is not satisfied waits with reason pr (its PR snapshot) or answer (its last
-// answer, issue #4876). ok is false otherwise, and nothing would be gained by a read.
+// answer, issue #4876), or is itself a message of the queue that has not run (held or pending):
+// a chain A <- B <- C must not keep the read B waits for from waking the workspace. ok is false
+// otherwise, and nothing would be gained by a read.
 //
 // since is, per delivery, when the longest-waiting of those messages began to wait.
 func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []store.MemoDelivery, since map[string]string, ok bool, err error) {
@@ -1464,7 +1466,7 @@ func memoPRWaits(tx store.MemoTxOps, rows []store.Memo, now time.Time) (ds []sto
 			return nil, nil, false, nil
 		}
 		for _, it := range items {
-			if it.State == memoafter.Satisfied {
+			if it.State == memoafter.Satisfied || it.Reason == memoafter.WhyPending || it.Reason == memoafter.WhyHeld {
 				continue
 			}
 			if (it.Reason != memoafter.WhyPR && it.Reason != memoafter.WhyAnswer) || it.Delivery == "" {

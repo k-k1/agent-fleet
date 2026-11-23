@@ -693,3 +693,50 @@ func TestMemoAfterHoldSkipsAHandSend(t *testing.T) {
 		}
 	})
 }
+
+// A message may wait for one queued after it: the dispatcher passes over the older one, runs the
+// newer, and runs the older once the newer is satisfied.
+func TestMemoAfterALaterPrerequisiteDispatches(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, q := e.autoQueue("app", "impl", map[string]any{"maxActive": 3}, 0)
+		a := e.pending("app", "impl", "a, older")
+		b := e.pending("app", "impl", "b, newer")
+		if rec := e.do("a", "PATCH", "/api/memos/"+a.ID, map[string]any{"after": []string{b.ID}}); rec.Code != http.StatusOK {
+			t.Fatalf("a waits for b: %d %s", rec.Code, rec.Body.String())
+		}
+		db := e.fired(q)
+		if !sameIDs(db.MessageIDs, b.ID) {
+			t.Fatalf("claimed %v, want b first", db.MessageIDs)
+		}
+		if rec := e.fire(q); rec.Code != http.StatusConflict {
+			t.Fatalf("a fired before b finished: %d %s", rec.Code, rec.Body.String())
+		}
+		e.closeWithPRs(db.ID, "clean", 90_000, time.Now(), store.PRStateMerged)
+		if da := e.fired(q); !sameIDs(da.MessageIDs, a.ID) {
+			t.Fatalf("claimed %v, want a", da.MessageIDs)
+		}
+	})
+}
+
+// The cycle walk follows a link into another category: a cycle that a later merge of the two
+// categories would close is refused when its last link is written.
+func TestMemoAfterCycleAcrossCategories(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q1"))
+		e.queue(e.category("r", "q2"))
+		console := memoFaceClient{"console", e}
+		_, a := console.create(textMemo("r", "q1", "a"))
+		_, b := console.create(textMemo("r", "q1", "b"))
+		_, c := console.create(textMemo("r", "q2", "c"))
+		if code, _ := console.update(a.ID, map[string]any{"after": []string{b.ID}}); code != http.StatusOK {
+			t.Fatalf("a waits for b: %d", code)
+		}
+		if code, up := console.update(b.ID, map[string]any{"category": "q2", "after": []string{c.ID}}); code != http.StatusOK || !sameIDs(up.After, c.ID) {
+			t.Fatalf("b moves to q2 and waits for c: %d %+v", code, up)
+		}
+		rec := e.do("a", "PATCH", "/api/memos/"+c.ID, map[string]any{"category": "q1", "after": []string{a.ID}})
+		if rec.Code != http.StatusBadRequest || deliveryErrCode(t, rec) != errCodeMemoAfterInvalid {
+			t.Fatalf("c waits for a through b in another category: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+}
