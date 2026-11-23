@@ -22,10 +22,14 @@ func PushSubscriptionID(endpoint string) string {
 }
 
 type PushSubscriptionStore interface {
-	// UpsertPushSubscription stores sub for its membership. An endpoint already held by another
-	// membership moves to this one.
-	UpsertPushSubscription(ctx context.Context, sub PushSubscription) error
+	// AddPushSubscription stores sub for its membership unless that would give the membership more
+	// than max endpoints; it reports whether it stored. Re-registering an endpoint the membership
+	// already holds is not a new device and always succeeds. An endpoint held by another membership
+	// moves to this one.
+	AddPushSubscription(ctx context.Context, sub PushSubscription, max int) (bool, error)
 	ListPushSubscriptions(ctx context.Context, membershipID string) ([]PushSubscription, error)
+	// GetPushSubscription answers the row for endpoint if membershipID still holds it.
+	GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error)
 	// DeletePushSubscription reports whether a row of that membership was removed.
 	DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error)
 	// DeletePushSubscriptionByEndpoint drops a subscription the push service says is gone. It is
@@ -48,14 +52,49 @@ type PushSubscriptionStore interface {
 
 const pushCols = `SELECT id, membership_id, endpoint, p256dh, auth, user_agent, created_at, last_ok_at FROM push_subscription`
 
+// UpsertPushSubscription stores sub for its membership with no device cap; an endpoint already
+// held by another membership moves to this one. The API goes through AddPushSubscription.
 func (s *SQL) UpsertPushSubscription(ctx context.Context, p PushSubscription) error {
+	return upsertPushSubscription(ctx, s.db, p)
+}
+
+// AddPushSubscription counts and writes in one transaction under the membership's row lock, so
+// two registrations of the same member run one after the other and cannot both pass the count:
+// as separate statements, N concurrent registrations could overshoot the cap by N-1. SQLite serialises through its single connection; on Postgres the row lock
+// does, and the count starts after it, so READ COMMITTED sees every row the other one committed.
+func (s *SQL) AddPushSubscription(ctx context.Context, p PushSubscription, max int) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE membership SET id=id WHERE id=?`, p.MembershipID); err != nil {
+		return false, err
+	}
+	// held is checked apart from the count so that a member already past max (rows from before the
+	// cap was atomic) can still refresh a device it holds.
+	var total, held int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN endpoint=? THEN 1 ELSE 0 END), 0)
+		FROM push_subscription WHERE membership_id=?`, p.Endpoint, p.MembershipID).Scan(&total, &held); err != nil {
+		return false, err
+	}
+	if held == 0 && total >= max {
+		return false, nil
+	}
+	if err := upsertPushSubscription(ctx, tx, p); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
+func upsertPushSubscription(ctx context.Context, q sqlExecQuery, p PushSubscription) error {
 	if p.ID == "" {
 		p.ID = PushSubscriptionID(p.Endpoint)
 	}
 	if p.CreatedAt == "" {
 		p.CreatedAt = NowTS()
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO push_subscription(id, membership_id, endpoint, p256dh, auth, user_agent, created_at)
+	_, err := q.ExecContext(ctx, `INSERT INTO push_subscription(id, membership_id, endpoint, p256dh, auth, user_agent, created_at)
 		VALUES(?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET membership_id=excluded.membership_id,
 		p256dh=excluded.p256dh, auth=excluded.auth, user_agent=excluded.user_agent`,
 		p.ID, p.MembershipID, p.Endpoint, p.P256dh, p.Auth, p.UserAgent, p.CreatedAt)
@@ -77,6 +116,16 @@ func (s *SQL) ListPushSubscriptions(ctx context.Context, membershipID string) ([
 		out = append(out, p)
 	}
 	return out, rows.Err()
+}
+
+func (s *SQL) GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error) {
+	var p PushSubscription
+	err := s.db.QueryRowContext(ctx, pushCols+` WHERE membership_id=? AND endpoint=?`, membershipID, endpoint).
+		Scan(&p.ID, &p.MembershipID, &p.Endpoint, &p.P256dh, &p.Auth, &p.UserAgent, &p.CreatedAt, &p.LastOKAt)
+	if err == sql.ErrNoRows {
+		return PushSubscription{}, false, nil
+	}
+	return p, err == nil, err
 }
 
 func (s *SQL) DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error) {

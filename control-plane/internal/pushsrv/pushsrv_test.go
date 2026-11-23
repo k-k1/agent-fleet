@@ -29,6 +29,7 @@ var b64 = base64.RawURLEncoding
 type memStore struct {
 	mu         sync.Mutex
 	releaseErr error
+	getErr     error
 	subs       []store.PushSubscription
 	off        map[string][]string
 	inactive   map[string]bool
@@ -71,6 +72,34 @@ func (m *memStore) UpsertPushSubscription(_ context.Context, p store.PushSubscri
 	}
 	m.subs = append(m.subs, p)
 	return nil
+}
+func (m *memStore) AddPushSubscription(ctx context.Context, p store.PushSubscription, max int) (bool, error) {
+	m.mu.Lock()
+	total, held := 0, false
+	for _, s := range m.subs {
+		if s.MembershipID == p.MembershipID {
+			total++
+			held = held || s.Endpoint == p.Endpoint
+		}
+	}
+	m.mu.Unlock()
+	if !held && total >= max {
+		return false, nil
+	}
+	return true, m.UpsertPushSubscription(ctx, p)
+}
+func (m *memStore) GetPushSubscription(_ context.Context, mid, ep string) (store.PushSubscription, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.getErr != nil {
+		return store.PushSubscription{}, false, m.getErr
+	}
+	for _, s := range m.subs {
+		if s.MembershipID == mid && s.Endpoint == ep {
+			return s, true, nil
+		}
+	}
+	return store.PushSubscription{}, false, nil
 }
 func (m *memStore) ListPushSubscriptions(_ context.Context, mid string) ([]store.PushSubscription, error) {
 	m.mu.Lock()
@@ -176,7 +205,11 @@ type fixture struct {
 	status int
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T) *fixture { return newFixtureN(t, pushMaxInFlight, pushQueueLen, nil) }
+
+// newFixtureN starts the service with workers send workers and a send queue of queueLen; setup
+// runs before they start, for fields the workers read.
+func newFixtureN(t *testing.T, workers, queueLen int, setup func(*fixture)) *fixture {
 	f := &fixture{st: &memStore{}, status: http.StatusCreated}
 	f.srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
@@ -195,8 +228,20 @@ func newFixture(t *testing.T) *fixture {
 		check: func(e string) error {
 			return webpush.CheckEndpoint(strings.Replace(e, f.srv.URL, "https://fcm.googleapis.com", 1), webpush.DefaultEndpointHosts)
 		},
-		timeout: 5 * time.Second, slotWait: 2 * time.Second, slots: make(chan struct{}, pushMaxInFlight), view: newViewing()}
+		timeout: 5 * time.Second, slotWait: 2 * time.Second, quit: make(chan struct{}), view: newViewing()}
+	if setup != nil {
+		setup(f)
+	}
+	f.svc.start(workers, queueLen)
+	t.Cleanup(func() { close(f.svc.quit) })
 	return f
+}
+
+// deliver runs one notification's delivery and waits until every queued send ended.
+func (f *fixture) deliver(n store.Notification) {
+	var wg sync.WaitGroup
+	f.svc.deliver(context.Background(), n, &wg)
+	wg.Wait()
 }
 
 func (f *fixture) subscribe(t *testing.T, mid string) device {
@@ -222,7 +267,7 @@ func note(kind string) store.Notification {
 func TestDeliverIsMinimal(t *testing.T) {
 	f := newFixture(t)
 	d := f.subscribe(t, "m1")
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 1 {
 		t.Fatalf("pushes: %d", f.count())
 	}
@@ -266,12 +311,12 @@ func TestGoneSubscriptionIsDeletedButFailureIsKept(t *testing.T) {
 	f := newFixture(t)
 	f.subscribe(t, "m1")
 	f.status = http.StatusInternalServerError
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(rows) != 1 {
 		t.Fatal("a 5xx dropped the subscription")
 	}
 	f.status = http.StatusGone
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(rows) != 0 {
 		t.Fatal("a 410 left the subscription")
 	}
@@ -281,7 +326,7 @@ func TestEndpointOutsideAllowlistIsSkippedAndKept(t *testing.T) {
 	f := newFixture(t)
 	f.svc.check = func(string) error { return io.ErrUnexpectedEOF }
 	f.subscribe(t, "m1")
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if f.count() != 0 {
 		t.Fatal("posted to an endpoint the allowlist refuses")
 	}
@@ -312,7 +357,7 @@ func TestSlowDeviceDoesNotStarveTheOthers(t *testing.T) {
 	_ = f.st.UpsertPushSubscription(context.Background(), store.PushSubscription{MembershipID: "m1", Endpoint: f.srv.URL + "/slow", P256dh: p1, Auth: a1})
 	f.subscribe(t, "m1")
 	f.svc.timeout = 600 * time.Millisecond
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	close(release)
 	if f.count() != 1 {
 		t.Fatalf("the healthy device got %d pushes behind a hanging one", f.count())
@@ -326,7 +371,7 @@ func TestSendErrorLogsNoEndpoint(t *testing.T) {
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if buf.Len() == 0 {
 		t.Fatal("no failure logged; the check below would pass vacuously")
 	}
@@ -454,37 +499,154 @@ func TestAPI(t *testing.T) {
 	}
 }
 
-// A wait for a slot must not shorten the send that follows it (the two budgets are separate).
-func TestSlotWaitDoesNotShortenTheSend(t *testing.T) {
-	f := newFixture(t)
-	f.subscribe(t, "m1")
-	f.svc.slotWait = 3 * time.Second
-	f.svc.timeout = 3 * time.Second
-	for i := 0; i < pushMaxInFlight; i++ {
-		f.svc.slots <- struct{}{}
-	}
-	go func() {
-		time.Sleep(1500 * time.Millisecond)
-		<-f.svc.slots
-	}()
+// Time spent waiting in the send queue must not shorten the send that follows it (the two budgets
+// are separate). One worker, so the third device waits behind two slow sends; its wait plus its own
+// send (about 4.5 s) is longer than the slot wait (4 s) and than twice the send timeout (4 s), so
+// sharing any of those deadlines between the wait and the send fails this test.
+func TestQueueWaitDoesNotShortenTheSend(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, func(f *fixture) {
+		f.svc.slotWait = 4 * time.Second
+		f.svc.timeout = 2 * time.Second
+	})
 	f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		time.Sleep(2500 * time.Millisecond) // 1.5 s wait + 2.5 s send > the 3 s a shared deadline would give
-		f.mu.Lock()
-		f.bodies = append(f.bodies, nil)
-		f.mu.Unlock()
+		time.Sleep(1500 * time.Millisecond)
 		w.WriteHeader(http.StatusCreated)
 	})
-	// Through the real entry point, and success is read off last_ok_at, so a shared deadline
-	// brought back there fails this test.
+	for i := 0; i < 3; i++ {
+		f.subscribe(t, "m1")
+	}
+	// Through the real entry point, and success is read off last_ok_at, so a deadline shared with
+	// the wait brought back there fails this test.
 	f.svc.onNotification(note("question"))
-	deadline := time.Now().Add(8 * time.Second)
+	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		if rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(rows) == 1 && rows[0].LastOKAt != "" {
+		if rows, _ := f.st.ListPushSubscriptions(context.Background(), "m1"); len(rows) == 3 && rows[2].LastOKAt != "" {
 			return
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
-	t.Fatal("the send was cut short by time spent waiting for a slot")
+	t.Fatal("the last send was cut short by time spent waiting in the queue")
+}
+
+// hold makes every send hang until the returned func is called, and reports each arrival.
+func (f *fixture) hold() (arrived chan string, release func()) {
+	arrived = make(chan string, 64)
+	gate := make(chan struct{})
+	f.srv.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		arrived <- r.URL.Path
+		<-gate
+		f.mu.Lock()
+		f.bodies = append(f.bodies, b)
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusCreated)
+	})
+	var once sync.Once
+	release = func() { once.Do(func() { close(gate) }) }
+	return arrived, release
+}
+
+// A burst past the queue is dropped at once rather than parked in a goroutine per device.
+func TestFullSendQueueDrops(t *testing.T) {
+	f := newFixtureN(t, 1, 2, nil)
+	arrived, release := f.hold()
+	defer release()
+	for i := 0; i < 5; i++ {
+		f.subscribe(t, "m1")
+	}
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	var wg sync.WaitGroup
+	f.svc.deliver(context.Background(), note("question"), &wg)
+	<-arrived // the worker holds one, the queue two; the other two had no room
+	if got := strings.Count(buf.String(), "send queue full"); got != 2 {
+		t.Fatalf("%d drops logged, want 2: %q", got, buf.String())
+	}
+	release()
+	wg.Wait()
+	if f.count() != 3 {
+		t.Fatalf("%d sent, want the 3 that fit", f.count())
+	}
+}
+
+// A full notification queue drops the notification instead of starting a goroutine for it.
+func TestFullNotificationQueueDrops(t *testing.T) {
+	p := &Service{notes: make(chan store.Notification)} // no reader takes from this one
+	var buf bytes.Buffer
+	log.SetOutput(&buf)
+	defer log.SetOutput(os.Stderr)
+	p.onNotification(note("question"))
+	if !strings.Contains(buf.String(), "delivery queue full") {
+		t.Fatalf("log: %q", buf.String())
+	}
+}
+
+// A send that waited longer than slotWait for a worker is stale for a phone and is dropped.
+func TestStaleQueuedSendIsDropped(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, func(f *fixture) { f.svc.slotWait = 200 * time.Millisecond })
+	arrived, release := f.hold()
+	defer release()
+	f.subscribe(t, "m1")
+	f.subscribe(t, "m1")
+	var wg sync.WaitGroup
+	f.svc.deliver(context.Background(), note("question"), &wg)
+	<-arrived
+	time.Sleep(400 * time.Millisecond)
+	release()
+	wg.Wait()
+	if f.count() != 1 {
+		t.Fatalf("%d sent; the one queued past slotWait must be dropped", f.count())
+	}
+}
+
+// A device that moves to another member (or is removed) while its send is queued gets nothing,
+// and a re-registration with new keys is sent with the new keys.
+func TestQueuedSendRereadsTheDevice(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, nil)
+	arrived, release := f.hold()
+	defer release()
+	f.subscribe(t, "m1") // occupies the worker
+	_, pMoved, aMoved := newDevice(t)
+	moved := store.PushSubscription{MembershipID: "m1", Endpoint: f.srv.URL + "/moved", P256dh: pMoved, Auth: aMoved}
+	_ = f.st.UpsertPushSubscription(context.Background(), moved)
+	_, pOld, aOld := newDevice(t)
+	dNew, pNew, aNew := newDevice(t)
+	rekeyed := store.PushSubscription{MembershipID: "m1", Endpoint: f.srv.URL + "/rekeyed", P256dh: pOld, Auth: aOld}
+	_ = f.st.UpsertPushSubscription(context.Background(), rekeyed)
+	var wg sync.WaitGroup
+	f.svc.deliver(context.Background(), note("question"), &wg)
+	<-arrived
+	moved.MembershipID = "m2"
+	_ = f.st.UpsertPushSubscription(context.Background(), moved)
+	rekeyed.P256dh, rekeyed.Auth = pNew, aNew
+	_ = f.st.UpsertPushSubscription(context.Background(), rekeyed)
+	release()
+	wg.Wait()
+	var paths []string
+	for len(arrived) > 0 {
+		paths = append(paths, <-arrived)
+	}
+	if len(paths) != 1 || paths[0] != "/rekeyed" {
+		t.Fatalf("sends after the first: %v, want only /rekeyed", paths)
+	}
+	f.mu.Lock()
+	last := f.bodies[len(f.bodies)-1]
+	f.mu.Unlock()
+	if !strings.Contains(dNew.open(t, last), `"kind":"question"`) {
+		t.Fatal("the re-keyed device could not read its push")
+	}
+}
+
+// A failed re-read skips the send, as a failed list read does.
+func TestFailedRereadSkipsTheSend(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	f.st.getErr = io.ErrUnexpectedEOF
+	f.deliver(note("question"))
+	if f.count() != 0 {
+		t.Fatal("sent although the device could not be read again")
+	}
 }
 
 func TestBadRedirectLeavesNoToken(t *testing.T) {
@@ -497,7 +659,7 @@ func TestBadRedirectLeavesNoToken(t *testing.T) {
 	var buf bytes.Buffer
 	log.SetOutput(&buf)
 	defer log.SetOutput(os.Stderr)
-	f.svc.deliver(context.Background(), note("question"))
+	f.deliver(note("question"))
 	if buf.Len() == 0 || strings.Contains(buf.String(), "SECRET-TOKEN") || !strings.Contains(buf.String(), "bad redirect") {
 		t.Fatalf("log: %q", buf.String())
 	}

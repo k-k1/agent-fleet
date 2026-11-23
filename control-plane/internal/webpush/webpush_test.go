@@ -218,6 +218,10 @@ func TestAudIsAnOrigin(t *testing.T) {
 		"https://FCM.GoogleAPIs.com:443/x": "https://fcm.googleapis.com",
 		"https://fcm.googleapis.com/x":     "https://fcm.googleapis.com",
 		"https://push.example:8443/x":      "https://push.example:8443",
+		// RFC 8292 asks for the Unicode serialization, whichever form the endpoint was written in.
+		"https://xn--bcher-kva.example/x": "https://bücher.example",
+		"https://BÜCHER.example/x":        "https://bücher.example",
+		"https://[::1]:8443/x":            "https://[::1]:8443",
 	} {
 		h, err := keys.authHeader(endpoint, "mailto:ops@example.invalid", time.Unix(1, 0))
 		if err != nil {
