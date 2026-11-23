@@ -261,46 +261,24 @@ func memoQueueRepoDir(repo string) (string, bool) {
 // happens on the scheduler's next tick: a cold wake does not fit in a request. enabled gates
 // the automatic fires of a later step, not this press. An instruction is required.
 func (a memoAPI) fire(w http.ResponseWriter, r *http.Request, res *resolved) {
-	only, aerr := memoFireTarget(r)
-	if aerr != nil {
-		writeAPIErr(w, aerr)
-		return
-	}
+	a.fireTarget(w, r, res, "")
+}
+
+// fireOne (POST /api/memo-queues/{categoryId}/fire/{memoId}) is the same press for one named
+// message: it claims that message alone (see memoReserveAndClaim). It is a route of its own, not
+// a body on fire, because a Control Plane that predates it must answer 404 and start nothing: a
+// replica that ignored the body would claim the oldest messages instead and answer 202.
+func (a memoAPI) fireOne(w http.ResponseWriter, r *http.Request, res *resolved) {
+	a.fireTarget(w, r, res, r.PathValue("memoId"))
+}
+
+func (a memoAPI) fireTarget(w http.ResponseWriter, r *http.Request, res *resolved, only string) {
 	d, aerr := memoFireNow(r.Context(), a.mgr, res, r.PathValue("categoryId"), only)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
 	writeJSON(w, http.StatusAccepted, memoDeliveryToDTO(d))
-}
-
-// memoFireBodyMax bounds the optional body of a fire: one id, far below this.
-const memoFireBodyMax = 4 << 10
-
-// memoFireTarget reads the optional body of a fire, {"memoId": "<id>"}. No body (or an empty one)
-// is the press that claims the oldest messages and answers "". A body that does not parse, or one
-// that names an empty id, is a 400 rather than a press that would claim something else.
-func memoFireTarget(r *http.Request) (string, *apiError) {
-	raw, err := io.ReadAll(io.LimitReader(r.Body, memoFireBodyMax+1))
-	if err != nil || len(raw) > memoFireBodyMax {
-		return "", &apiError{http.StatusBadRequest, "bad_request", "unreadable request body"}
-	}
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return "", nil
-	}
-	var in struct {
-		MemoID *string `json:"memoId"`
-	}
-	if err := json.Unmarshal(raw, &in); err != nil {
-		return "", &apiError{http.StatusBadRequest, "bad_request", "the body must be JSON: {\"memoId\": \"<id>\"}"}
-	}
-	if in.MemoID == nil {
-		return "", nil
-	}
-	if strings.TrimSpace(*in.MemoID) == "" {
-		return "", &apiError{http.StatusBadRequest, "bad_request", "memoId must not be empty"}
-	}
-	return *in.MemoID, nil
 }
 
 // memoFireNow is the reservation and the claim. only, when set, is the one message the press is
@@ -341,8 +319,9 @@ func memoFireNow(ctx context.Context, mgr *manager, res *resolved, categoryID, o
 	return out, refusal
 }
 
-// The reasons a press for one message is refused with errCodeMemoQueueMemoNotReady. They are part
-// of the answer's text, which the Console shows as it is.
+// The reasons a press for one message is refused with errCodeMemoQueueMemoNotReady. They are the
+// answer's text for an API client; the Console words the refusal from its own catalogue and reads
+// the list again, which then shows the memo's actual state.
 const (
 	memoNotReadyHeld          = "it is held and has to be released first"
 	memoNotReadyClaimed       = "it is already part of a run"
@@ -373,6 +352,21 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	}
 	if !ok {
 		return none, &apiError{http.StatusNotFound, "not_found", "queue not found"}, nil
+	}
+	if only != "" {
+		// The target comes before every constraint of the queue: a message that is not here is a 404
+		// whatever the queue's slots and quota say, so a stale id never reads as "slots full".
+		inCategory, err := tx.ListMemosIn(c.Repo, c.Name)
+		if err != nil {
+			return none, nil, err
+		}
+		found := false
+		for _, m := range inCategory {
+			found = found || m.ID == only
+		}
+		if !found {
+			return none, &apiError{http.StatusNotFound, "not_found", "message not found in this queue"}, nil
+		}
 	}
 	if strings.TrimSpace(q.Instruction) == "" {
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueNoInstruction, "a queue without an instruction cannot fire"}, nil
@@ -438,13 +432,6 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	limitBatch := q.Batch
 	if only != "" {
 		limitBatch = 1
-		found := false
-		for _, m := range rows {
-			found = found || m.ID == only
-		}
-		if !found {
-			return none, &apiError{http.StatusNotFound, "not_found", "message not found in this queue"}, nil
-		}
 	}
 	notReady := func(why string) (store.MemoDelivery, *apiError, error) {
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueMemoNotReady, "this message cannot run now: " + why}, nil

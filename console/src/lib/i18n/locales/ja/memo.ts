@@ -197,6 +197,7 @@ export const memo = {
   "memo.run_one": "このメモをすぐ実行",
   "memo.run_one_hint": "このメモだけを、今すぐセッションとして実行します。",
   "memo.run_one_blocked": "今すぐ実行はできません。{why}",
+  "memo.run_one_busy": "実行を開始しています。",
   "memo.run_one_held": "承認待ちです。先に承認してください。",
   "memo.run_one_prerequisites": "先に終わるべきメモがまだ終わっていません。",
   "memo.run_one_deferred": "セッションから戻されたため、{at} まで待ちます。",

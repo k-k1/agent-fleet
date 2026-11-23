@@ -199,6 +199,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.run_one": "Run now",
   "memo.run_one_hint": "Start only this memo as a session right now.",
   "memo.run_one_blocked": "Run now is unavailable. {why}",
+  "memo.run_one_busy": "A run is being started.",
   "memo.run_one_held": "It is held for approval. Approve it first.",
   "memo.run_one_prerequisites": "It waits for the memos it follows to finish.",
   "memo.run_one_deferred": "It was handed back and waits until {at}.",

@@ -10,7 +10,7 @@ import { kindLabel } from "../../lib/sessionkind.ts";
 import { toast } from "../../ui/toast.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
 import type { Memo, MemoQueue } from "../../types/memo.ts";
-import { memoQueueFire } from "./api.ts";
+import { memoQueueFire, memoQueueFireOne } from "./api.ts";
 import { fireBlockWords } from "./queues.ts";
 
 /** How a press ended: started a run, was refused for want of a slot (the caller may show who holds
@@ -19,7 +19,7 @@ export type RunNowResult = "started" | "no_slot" | "failed";
 
 export async function runNow(categoryId: string, memoId?: string): Promise<RunNowResult> {
   try {
-    const res = await memoQueueFire(categoryId, memoId);
+    const res = memoId === undefined ? await memoQueueFire(categoryId) : await memoQueueFireOne(categoryId, memoId);
     if (res?.error) {
       toast(errText(res.error) || t("memo.d_fire_failed"), { kind: "warn" });
       return res.error.code === "memo_queue_no_slot" ? "no_slot" : "failed";
@@ -35,15 +35,24 @@ export async function runNow(categoryId: string, memoId?: string): Promise<RunNo
 /** Categories with a press in flight. Module-level so a menu that closed and reopened still knows. */
 const pressing = new Set<string>();
 const pressListeners = new Set<() => void>();
+let pressVersion = 0;
 const setPressing = (id: string, on: boolean) => {
   if (on) pressing.add(id);
   else pressing.delete(id);
+  pressVersion++;
   for (const l of pressListeners) l();
 };
 const subscribePressing = (l: () => void) => {
   pressListeners.add(l);
   return () => void pressListeners.delete(l);
 };
+
+/** Re-renders its caller whenever any category starts or ends a press, so a menu that reads
+ *  isPressing never shows an item as available while a press is in flight. */
+export function usePressVersion(): number {
+  return useSyncExternalStore(subscribePressing, () => pressVersion);
+}
+export const isPressing = (categoryId: string): boolean => pressing.has(categoryId);
 
 /** Press "Run now" for one memo of a category (its context menu). It shares the category's press
  *  state, so it cannot overlap the category's own Run now; null = a press was already in flight. */
@@ -68,10 +77,11 @@ export function memoRunNowWhy(
   at: (iso: string) => string,
 ): { key: MsgKey; params?: Record<string, string | number> } | null {
   if (m.state === "held") return { key: "memo.run_one_held" };
-  if (m.afterStatus?.some((a) => a.state !== "satisfied")) return { key: "memo.run_one_prerequisites" };
+  // The claim's own order: a time that has not come is named before an unfinished prerequisite.
   const later = (iso: string | undefined) => !!iso && Date.parse(iso) > now;
   if (later(m.notBefore)) return { key: "memo.run_one_deferred", params: { at: at(m.notBefore ?? "") } };
   if (later(m.startAfter)) return { key: "memo.run_one_scheduled", params: { at: at(m.startAfter ?? "") } };
+  if (m.afterStatus?.some((a) => a.state !== "satisfied")) return { key: "memo.run_one_prerequisites" };
   if (queue?.fireBlock?.reason === "no_place") {
     return { key: queue.fireBlock.detail?.by === "member" ? "memo.waiting_no_place_member" : "memo.waiting_no_place" };
   }
@@ -88,7 +98,7 @@ export function useRunNow(categoryId: string, queue: MemoQueue | undefined) {
   const why = fireBlockWords(queue, (iso) => fmtDateTime(iso), (kind) => kindLabel(kind));
   const reason = why ? tr(why.key, why.params) : "";
   const press = async (): Promise<RunNowResult | null> => {
-    if (busy || reason) return null;
+    if (busy || reason || pressing.has(categoryId)) return null;
     setBusy(true);
     setPressing(categoryId, true);
     try {

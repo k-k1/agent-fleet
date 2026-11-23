@@ -57,7 +57,7 @@ import { MemoProducerText } from "./MemoProducerText.tsx";
 import { MemoQueueRuns } from "./MemoQueueRuns.tsx";
 import { MemoQueueDeliveriesModal } from "./MemoQueueDeliveriesModal.tsx";
 import { CatHeadMenu, type CatHeadMenuAt } from "./CatHeadMenu.tsx";
-import { memoRunNowWhy, runMemoNow, type RunNowResult } from "./runNow.ts";
+import { isPressing, memoRunNowWhy, runMemoNow, usePressVersion, type RunNowResult } from "./runNow.ts";
 import { MemoReleaseCard } from "./MemoReleaseCard.tsx";
 import { MemoRecipeBadge, MemoRecipeFields, recipeDraftOf, recipePatch, type RecipeDraft } from "./MemoRecipe.tsx";
 import { MemoReferenceLink } from "./MemoReferenceLink.tsx";
@@ -408,6 +408,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     }
   };
   // The category of a waiting memo that sits in an auto-run category; undefined for any other memo.
+  // The menu below reads the press state of its category; this re-renders it when a press starts or ends.
+  usePressVersion();
   const runOneCat = (m: Memo) => {
     if (m.state !== "pending" && m.state !== "held") return undefined;
     const cat = cats.find((c) => c.repo === m.repo && c.name === m.category);
@@ -1558,23 +1560,33 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
               {menuLive && (() => {
                 const cat = runOneCat(menuLive);
                 if (!cat) return null;
+                const busy = isPressing(cat.id);
                 const why = memoRunNowWhy(menuLive, queueByCat.get(cat.id), Date.now(), (iso) => fmtDateTime(iso));
-                const reason = why ? tr(why.key, why.params) : "";
+                const reason = busy ? tr("memo.run_one_busy") : why ? tr(why.key, why.params) : "";
                 return (
                   <li>
                     <button
                       type="button"
                       className="ui-menu-item memo-cat-menu-item memo-menu-runone"
                       role="menuitem"
-                      disabled={reason !== ""}
+                      // aria-disabled, not disabled: the menu's arrow keys skip a native disabled item, so the
+                      // reason would be out of keyboard reach. The click guard below is what stops the press.
+                      aria-disabled={reason ? true : undefined}
                       title={reason ? tr("memo.run_one_blocked", { why: reason }) : tr("memo.run_one_hint")}
                       onClick={() => {
                         if (reason) return;
                         const id = menuLive.id;
-                        runMemoMenu(() => void runMemoNow(cat.id, id).then((r) => r && onRunResult(cat.id, r)));
+                        runMemoMenu(() =>
+                          void runMemoNow(cat.id, id).then((r) => {
+                            if (!r) return;
+                            onRunResult(cat.id, r);
+                            // A refusal means the list is behind: read it again so the menu shows the memo's state.
+                            if (r === "failed") bumpMemos();
+                          }),
+                        );
                       }}
                     >
-                      <Icon name="play" />
+                      <Icon name={busy ? "loading" : "play"} spin={busy} />
                       <span className="memo-cat-menu-txt">
                         {tr("memo.run_one")}
                         {reason && <span className="memo-cat-menu-why">{reason}</span>}

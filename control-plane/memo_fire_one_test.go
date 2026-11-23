@@ -12,7 +12,7 @@ import (
 )
 
 func (e *deliveryEnv) fireMemo(queueID, memoID string) *httptest.ResponseRecorder {
-	return e.do("a", "POST", "/api/memo-queues/"+queueID+"/fire", map[string]any{"memoId": memoID})
+	return e.do("a", "POST", "/api/memo-queues/"+queueID+"/fire/"+memoID, nil)
 }
 
 func (e *deliveryEnv) notReady(queueID, memoID, why string) {
@@ -23,7 +23,7 @@ func (e *deliveryEnv) notReady(queueID, memoID, why string) {
 	}
 }
 
-// A press that names a message claims that message alone, whatever the batch and however many
+// A press that names a message (POST .../fire/{memoId}) claims that message alone, whatever the batch and however many
 // older messages are waiting; without a body the press is the oldest-first claim as before.
 func TestMemoFireOneClaimsOnlyTheNamedMessage(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
@@ -54,9 +54,13 @@ func TestMemoFireOneClaimsOnlyTheNamedMessage(t *testing.T) {
 		if got := e.memoRow(m1.ID); got.State != store.MemoStatePending {
 			t.Fatalf("the oldest was claimed by a refused press: %+v", got)
 		}
-		// A press without a body keeps the oldest-first batch.
-		if d := e.fired(q); !sameIDs(d.MessageIDs, m1.ID, m2.ID, m4.ID) {
-			t.Fatalf("a press without a body claimed %v", d.MessageIDs)
+		// The plain route is what it was: oldest first, whatever body an older Console sends with it.
+		rec = e.do("a", "POST", "/api/memo-queues/"+q+"/fire", map[string]any{})
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("plain press: %d %s", rec.Code, rec.Body.String())
+		}
+		if d := decode[memoDeliveryDTO](t, rec); !sameIDs(d.MessageIDs, m1.ID, m2.ID, m4.ID) {
+			t.Fatalf("a plain press claimed %v", d.MessageIDs)
 		}
 	})
 }
@@ -124,14 +128,8 @@ func TestMemoFireOneRefusals(t *testing.T) {
 			}
 		}
 		// Another member cannot reach the queue, so not its messages either.
-		if rec := e.do("c", "POST", "/api/memo-queues/"+q+"/fire", map[string]any{"memoId": other.ID}); rec.Code != http.StatusNotFound {
+		if rec := e.do("c", "POST", "/api/memo-queues/"+q+"/fire/"+other.ID, nil); rec.Code != http.StatusNotFound {
 			t.Fatalf("another member's press: %d %s", rec.Code, rec.Body.String())
-		}
-		// A body that does not say which message is a 400, not an oldest-first press.
-		for _, body := range []any{map[string]any{"memoId": ""}, map[string]any{"memoId": 7}} {
-			if rec := e.do("a", "POST", "/api/memo-queues/"+q+"/fire", body); rec.Code != http.StatusBadRequest {
-				t.Fatalf("body %v: %d %s", body, rec.Code, rec.Body.String())
-			}
 		}
 		for _, id := range []string{other.ID, pre.ID} {
 			if got := e.memoRow(id); got.State != store.MemoStatePending || got.DeliveryID != "" {
@@ -165,6 +163,52 @@ func TestMemoFireOneNeedsASlotAndQuota(t *testing.T) {
 		}
 		if rec := e.fireMemo(q, second.ID); rec.Code != http.StatusConflict || deliveryErrCode(t, rec) != errCodeMemoQueueNoSlot {
 			t.Fatalf("no slot: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// A named memo whose recipe the queue's agent cannot run is held for a person and the refusal
+// commits that hold, as the oldest-first claim does; an older memo that could run stays waiting.
+func TestMemoFireOneHoldsAnInvalidRecipe(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("app", "impl", map[string]any{})
+		other := e.queueWith("app", "other", map[string]any{"agentKind": "codex", "maxActive": 3})
+		older := e.pending("app", "other", "older and runnable")
+		m := decode[memoDTO](t, e.recipeMemo("app", "impl", "claude only", map[string]any{"route": "anthropic-subscription"}))
+		if rec := e.do("a", "PATCH", "/api/memos/"+m.ID, map[string]any{"category": "other"}); rec.Code != http.StatusOK {
+			t.Fatalf("move: %d %s", rec.Code, rec.Body.String())
+		}
+		e.notReady(other, m.ID, memoNotReadyHeld)
+		row := e.memoRow(m.ID)
+		if row.State != store.MemoStateHeld || !strings.Contains(row.HeldReason, "recipe_invalid") {
+			t.Fatalf("row %+v", row)
+		}
+		if got := e.memoRow(older.ID); got.State != store.MemoStatePending || got.DeliveryID != "" {
+			t.Fatalf("the older memo was touched: %+v", got)
+		}
+		if ds, err := e.st.ListMemoDeliveries(context.Background(), e.members["a"], other, 10); err != nil || len(ds) != 0 {
+			t.Fatalf("deliveries: %v, %v", ds, err)
+		}
+	})
+}
+
+// A memo that is not in the queue is a 404 before the queue's own limits are asked, so a stale id
+// never reads as "every slot is taken".
+func TestMemoFireOneChecksTheTargetBeforeTheSlots(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.useQueueAgent("")
+		q := e.queueWith("app", "impl", map[string]any{"maxActive": 1})
+		e.queueWith("app", "elsewhere", nil)
+		moved := e.pending("app", "elsewhere", "now in another queue")
+		e.pending("app", "impl", "takes the only slot")
+		e.fired(q)
+		if rec := e.fire(q); rec.Code != http.StatusConflict || deliveryErrCode(t, rec) != errCodeMemoQueueNoSlot {
+			t.Fatalf("the slot is not full: %d %s", rec.Code, rec.Body.String())
+		}
+		for _, id := range []string{moved.ID, "no-such-id"} {
+			if rec := e.fireMemo(q, id); rec.Code != http.StatusNotFound {
+				t.Fatalf("press for %q with every slot taken: %d %s", id, rec.Code, rec.Body.String())
+			}
 		}
 	})
 }
