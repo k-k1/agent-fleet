@@ -713,7 +713,15 @@ func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	<-started
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		// npm runs without the supervisor (its start failed and npmInstall fell back to npm
+		// directly): let npm finish before failing, or the test blocks until go test's timeout.
+		os.WriteFile(release, nil, 0o644)
+		<-done
+		t.Fatal("npm started without the supervisor")
+	}
 	rel() // the caller's own hold goes, as a killed caller's would
 	e.npmLockFile.Close()
 	if _, _, busy := probeLock(f.env.npmLockPath()); !busy {
