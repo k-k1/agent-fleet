@@ -89,6 +89,9 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 		cmd.WaitDelay = time.Second
 		cmd.Stderr = se
 		if err = cmd.Start(); err == nil {
+			if e.afterNPMStart != nil {
+				e.afterNPMStart()
+			}
 			err = cmd.Wait()
 			// Group kill and wait, as for a direct npm: nothing may write once this returns, and a
 			// supervisor killed alone takes npm (same group) down with it.
