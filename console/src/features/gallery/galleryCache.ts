@@ -150,11 +150,17 @@ export type ListingResult =
  * Read one folder and cache it. `hard` distinguishes "the Agent answered, and the answer is no"
  * — which a first read must show as an error rather than keep a stale grid for — from a
  * transport failure, where what is already on screen is the better answer.
+ *
+ * `accept` is asked only for a listing, right before it is cached, and must claim it in the
+ * same step (ReadTicket.land): false settles the read as aborted, so an answer the caller drops
+ * (a newer read of the folder already landed, or the view moved on) never overwrites a newer
+ * listing in the cache. Claiming later, after the await, would let an older answer write the
+ * cache while a newer one is between its own write and its claim.
  */
 export async function fetchGalleryListing(
   path: string,
   warm: number,
-  signal?: AbortSignal,
+  accept?: () => boolean,
   flat?: boolean,
 ): Promise<ListingResult> {
   let d: { entries?: FsEntry[]; truncated?: boolean; error?: { code?: string } };
@@ -163,9 +169,9 @@ export async function fetchGalleryListing(
   } catch {
     return { ok: false, retry: true, hard: false };
   }
-  if (signal?.aborted) return { ok: false, retry: false, hard: false };
   if (!d || isTransientErr(d)) return { ok: false, retry: true, hard: false };
   if (d.error || !Array.isArray(d.entries)) return { ok: false, retry: false, hard: true };
+  if (accept && !accept()) return { ok: false, retry: false, hard: false };
   const truncated = d.truncated === true;
   writeGallery(galleryKey(path, flat), d.entries, truncated);
   return { ok: true, entries: d.entries, ...(truncated ? { truncated } : {}) };

@@ -33,6 +33,8 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { isBusySession } from "../files/sessionRefresh.ts";
 import { REVALIDATE_GAP_MS, WORKING_TICK_MS } from "../files/refreshPolicy.ts";
+import { useReadGuard, type ReadTicket } from "../../lib/readGuard.ts";
+import { useInterval } from "../../lib/useInterval.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { ImageLightbox } from "../viewer/ImageLightbox.tsx";
 import { SendSelectionModal } from "../memo/SendSelectionModal.tsx";
@@ -226,6 +228,12 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
    *  size must not re-run the mount effect as if the folder had changed. */
   const tileRef = useRef(tile);
   tileRef.current = tile;
+  /** Every read of the listing takes a ticket here, for the folder its callback was made for.
+   *  Reset with the folder at commit, so a read started for the folder being left, or begun
+   *  later by a callback that closed over it (a rename's refresh), never lands in the next one;
+   *  within a folder, an answer older than one already landed is dropped, cache write included. */
+  const guard = useReadGuard();
+  useLayoutEffect(() => guard.reset(key), [guard, key]);
 
   // Change of folder, done DURING the render rather than in an effect (React's "adjust state
   // when a prop changes"). An effect runs after the browser has painted, and that paint would
@@ -294,27 +302,38 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
    *     is on screen and is retried. The error state is only for a first read with nothing
    *     drawn — with a cached grid up, a blip must not replace it.
    *
-   * Returns true when settled, which is what the mount effect's backoff wants.
+   * An answer that no longer counts (the folder changed, or a read started later has landed)
+   * settles the read and touches nothing. Only the first read moves `stale` and `failed`: a
+   * background read that fails while the first one is still out says nothing about it.
+   *
+   * Returns the read's ticket when it should be retried, null when settled: the mount effect's
+   * backoff retries only while that ticket is still fresh, so a later read that lands while the
+   * retry is waiting ends the retries.
    */
   const load = useCallback(
-    async (signal: AbortSignal, initial: boolean): Promise<boolean> => {
+    async (initial: boolean): Promise<ReadTicket | null> => {
+      const tk = guard.begin(key);
+      if (!tk.current()) return null;
       // `warm` asks the Agent to decode this folder's thumbnails into its cache while it
       // answers. A cold thumbnail is ~95 ms and a cached one ~44 µs (measured), so without
       // it the first look at a fresh folder trickles in card by card.
-      const r = await fetchGalleryListing(path, thumbEdge(tileRef.current), signal, flat);
-      if (signal.aborted) return true;
+      const r = await fetchGalleryListing(path, thumbEdge(tileRef.current), () => tk.land(), flat);
+      // A listing was claimed inside fetchGalleryListing; a newer read may have landed since.
+      if (!tk.fresh()) return null;
       if (!r.ok) {
-        if (r.hard && initial) {
+        if (!initial) return r.retry ? tk : null;
+        if (r.hard) {
+          tk.land(); // "gone" is newer than any listing begun before it
           forgetGallery(key);
           namesRef.current = null;
           shownRef.current = false;
           setEntries(null);
           setFailed(true);
-        } else if (initial && !shownRef.current) {
+        } else if (!shownRef.current) {
           setFailed(true);
         }
         if (!r.retry) setStale(false);
-        return !r.retry;
+        return r.retry ? tk : null;
       }
       const next = r.entries;
       const names = new Set(next.map((e) => e?.name).filter(Boolean) as string[]);
@@ -337,29 +356,31 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
           freshTimer.current = window.setTimeout(() => setFresh(new Set()), FRESH_MS);
         }
       }
-      return true;
+      return null;
     },
-    [path, flat, key],
+    [path, flat, key, guard],
   );
 
   // Mount (and every change of folder): retry through the window where the workspace is up
   // but its agent is not yet answering, which is exactly when a pane opened from a session
   // menu mounts.
   useEffect(() => {
-    const ac = new AbortController();
+    let stopped = false;
     let timer = 0;
     let tries = 0;
     const run = () => {
-      load(ac.signal, true)
-        .then((done) => {
-          if (ac.signal.aborted || done) return;
-          timer = window.setTimeout(run, Math.min(5000, 700 * 2 ** Math.min(tries++, 3)));
+      load(true)
+        .then((failed) => {
+          if (stopped || !failed) return;
+          timer = window.setTimeout(() => {
+            if (failed.fresh()) run();
+          }, Math.min(5000, 700 * 2 ** Math.min(tries++, 3)));
         })
         .catch(() => {});
     };
     run();
     return () => {
-      ac.abort();
+      stopped = true;
       window.clearTimeout(timer);
     };
   }, [load]);
@@ -380,8 +401,7 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
   const refresh = useCallback(
     (force = false) => {
       if (!force && (!running || document.hidden)) return;
-      const ac = new AbortController();
-      void load(ac.signal, false);
+      void load(false);
     },
     [load, running],
   );
@@ -415,12 +435,10 @@ export function GalleryView({ paneId, path, sort, tile, flat, focus, sessionName
   // Someone watching while a session runs. Generating an image takes minutes, so the
   // end-of-turn signal is far too late for this surface and this slow tick is what makes
   // pictures appear on their own. The timer exists only while something is running and
-  // only while this view is mounted, so it is not a resident poller.
-  useEffect(() => {
-    if (!anyBusy || !running) return;
-    const id = window.setInterval(() => refresh(), WORKING_TICK_MS);
-    return () => window.clearInterval(id);
-  }, [anyBusy, running, refresh]);
+  // only while this view is mounted, so it is not a resident poller. A change of folder does not
+  // restart the period; the guard keeps a tick that races the new folder's first read from
+  // landing the old folder's listing or an older answer over a newer one.
+  useInterval(() => refresh(), anyBusy && running ? WORKING_TICK_MS : null);
 
   // An opener asked for one picture (the left rail's context menu on an image). Enlarge it
   // once the listing is in, then take the request out of the pane content: it has been

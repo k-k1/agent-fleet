@@ -1077,6 +1077,14 @@
   gap: 8px;
   align-items: baseline;
 }
+.memo-d-work {
+  flex: 1 1 12em;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .memo-d-state {
   font-size: 11px;
   border: 1px solid var(--border2, var(--border));

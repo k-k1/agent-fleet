@@ -454,7 +454,7 @@ A run that went on working is not handed back: the run ends as "Done", the memo 
 
 ### Return a run's memos to the queue
 
-To run a finished run's memos again yourself, press "**Return to queue**" on its row in the run history and confirm. Its memos go back to "Waiting to run", with no time to wait and the count of hand-backs started again.
+To run a finished run's memos again yourself, press "**Return to queue**" on its row in the run history (right after the run's state; each row also shows the run's work item keys and the start of its note), or choose "**Return this run to the queue**" in the ⋯ or right-click menu of a memo that run delivered, and confirm. Its memos go back to "Waiting to run", with no time to wait and the count of hand-backs started again.
 
 - It is offered on a run that has ended, once. Only memos still of that run return: a memo you have since changed or that ran again is left alone
 - When the run's session has a pull request that is open or merged, the confirmation says so: the work may already be done, and running it again may do it twice
