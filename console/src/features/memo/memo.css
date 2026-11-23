@@ -1059,6 +1059,92 @@
 .memo-q-notice {
   color: var(--warn, var(--accent));
 }
+/* Repository settings card (MemoRepoSettingsCard) */
+.memo-repo {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px;
+}
+.memo-repo-head,
+.memo-repo-foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.memo-repo-title,
+.memo-repo-foot-hint {
+  flex: 1;
+}
+.memo-repo-result,
+.memo-repo-export {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+}
+.memo-repo-errors {
+  color: var(--err);
+}
+.memo-repo-errors ul,
+.memo-repo-warnings ul,
+ul.memo-repo-warnings {
+  margin: 2px 0 0;
+  padding-left: 18px;
+}
+.memo-repo-warnings {
+  color: var(--warn, var(--accent));
+}
+.memo-repo-card {
+  border: 1px solid var(--warn, var(--accent));
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.memo-repo-diffs {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.memo-repo-diff-pick {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.memo-repo-diff-name {
+  font-weight: 600;
+}
+.memo-repo-diff[data-raise] .memo-repo-raise {
+  font-weight: 700;
+}
+.memo-repo-diff-values,
+.memo-repo-diff-text {
+  padding-left: 24px;
+}
+.memo-repo-diff-sub {
+  color: var(--muted);
+  margin-right: 6px;
+}
+.memo-repo-diff-text pre {
+  margin: 2px 0 4px;
+  max-height: 10em;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 12px;
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 6px;
+}
+.memo-repo-yaml {
+  font-family: var(--mono, monospace);
+  font-size: 12px;
+  width: 100%;
+}
 .memo-d-bar {
   display: flex;
   gap: 8px;

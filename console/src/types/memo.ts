@@ -292,7 +292,57 @@ export type MemoQueueInput = Pick<
 /** GET /api/memo-queues. tenantEnabled false: the tenant's administrator has not allowed new queues. */
 export interface MemoQueuesWire {
   tenantEnabled: boolean;
+  /** The repository settings check, approval and export are on (#4881); false from an older Control Plane. */
+  repoSettings: boolean;
   queues: MemoQueue[];
+}
+
+/** One finding about a repository's settings file: line 0 is the whole file. */
+export interface MemoRepoIssue {
+  line: number;
+  key: string;
+  reason: string;
+}
+
+/** One setting the file holds with a value other than the member's. current and file are JSON
+ *  values of the setting's type. */
+export interface MemoRepoDiff {
+  key: string;
+  field: string;
+  line: number;
+  current: unknown;
+  file: unknown;
+  /** A limit the file raises (or a spend cap it drops): shown prominently. */
+  raise: boolean;
+}
+
+/** GET /api/memo-queues/{categoryId}/repo-settings (#4881). While errors is not empty diffs is. */
+export interface MemoRepoSettings {
+  categoryId: string;
+  repo: string;
+  category: string;
+  path: string;
+  remote: string;
+  branch: string;
+  commit: string;
+  found: boolean;
+  entry: boolean;
+  queue: boolean;
+  /** Names the settings the difference was taken from; the approval sends it back. */
+  settingsTag: string;
+  approvedCommit: string;
+  approvedAt: string;
+  errors: MemoRepoIssue[];
+  warnings: MemoRepoIssue[];
+  diffs: MemoRepoDiff[];
+}
+
+/** GET /api/memo-queues/{categoryId}/repo-settings/export. */
+export interface MemoRepoExport {
+  path: string;
+  category: string;
+  yaml: string;
+  omitted: MemoRepoIssue[];
 }
 
 /** One fire of a queue (GET /api/memo-queues/{categoryId}/deliveries, #4163). */

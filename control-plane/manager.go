@@ -240,8 +240,9 @@ type manager struct {
 	// which is on when unset; a workspace still has to opt in.
 	devIdPEnvOff bool
 	devIdPSw     devIdPSwitch
-	// memoRepoSettings is AF_MEMO_QUEUE_REPO_SETTINGS: the route that compares a repository's
-	// queue settings file with the member's settings (memo_queue_repo.go). Off by default.
+	// memoRepoSettings is AF_MEMO_QUEUE_REPO_SETTINGS: the routes that compare a repository's
+	// queue settings file with the member's settings and apply what the member approves
+	// (memo_queue_repo.go). On by default.
 	memoRepoSettings bool
 }
 

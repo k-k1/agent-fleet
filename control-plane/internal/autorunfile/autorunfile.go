@@ -487,3 +487,59 @@ func credentialRule(s string) string {
 	}
 	return ""
 }
+
+// Format writes a file holding one category entry with vals, in the order given, for a member
+// to commit as a starting point. Each value is written as its key's type: a key Keys does not
+// know is an error. The file parses back to the same values, and the Console-only settings are
+// named in a comment, never written.
+func Format(category string, vals []Value) ([]byte, error) {
+	entry := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+	for _, v := range vals {
+		typ, ok := keyType[v.Key]
+		if !ok {
+			return nil, fmt.Errorf("autorunfile: unknown key %q", v.Key)
+		}
+		n := &yaml.Node{Kind: yaml.ScalarNode}
+		switch typ {
+		case String:
+			n.Tag, n.Value = "!!str", v.Str
+			if strings.Contains(v.Str, "\n") {
+				n.Style = yaml.LiteralStyle
+			}
+		case Int:
+			n.Tag, n.Value = "!!int", strconv.Itoa(v.Int)
+		case Number:
+			if math.IsNaN(v.Num) || math.IsInf(v.Num, 0) {
+				return nil, fmt.Errorf("autorunfile: %s is not a finite number", v.Key)
+			}
+			n.Value = strconv.FormatFloat(v.Num, 'f', -1, 64)
+			n.Tag = "!!int"
+			if strings.Contains(n.Value, ".") {
+				n.Tag = "!!float"
+			}
+		case Bool:
+			n.Tag, n.Value = "!!bool", strconv.FormatBool(v.Bool)
+		}
+		entry.Content = append(entry.Content, &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: v.Key}, n)
+	}
+	str := func(s string) *yaml.Node { return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: s} }
+	root := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map",
+		HeadComment: "Auto-run category settings, read from the default branch only. A member applies them after\n" +
+			"approving the difference in the Console. Turning auto-run on, accepting messages from your own\n" +
+			"sessions, tidy destinations, running without a worktree and turning the tidy run on are set in\n" +
+			"the Console only.",
+		Content: []*yaml.Node{
+			str("version"), {Kind: yaml.ScalarNode, Tag: "!!int", Value: strconv.Itoa(Version)},
+			str("categories"), {Kind: yaml.MappingNode, Tag: "!!map", Content: []*yaml.Node{str(category), entry}},
+		}}
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	enc.SetIndent(2)
+	if err := enc.Encode(&yaml.Node{Kind: yaml.DocumentNode, Content: []*yaml.Node{root}}); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}

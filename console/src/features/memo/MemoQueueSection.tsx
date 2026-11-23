@@ -1619,6 +1619,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             key={c.id}
             categoryId={c.id}
             categoryName={c.name}
+            repo={c.repo}
             queue={queueByCat.get(c.id)}
             tenantEnabled={tenantEnabled}
             destinations={queues

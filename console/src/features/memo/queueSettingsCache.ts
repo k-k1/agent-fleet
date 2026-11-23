@@ -37,6 +37,8 @@ interface QueueSettingsCache {
   tenant: string;
   queues: MemoQueue[];
   tenantEnabled: boolean;
+  /** The Control Plane offers the repository settings check and export (#4881). */
+  repoSettings: boolean;
   /** False until a read has succeeded: tenantEnabled's initial false is "not read yet". */
   known: boolean;
   /** Numbers a read when its request STARTS, so a save can outrank the reads already in flight. */
@@ -57,12 +59,13 @@ export const useQueueSettingsCache = create<QueueSettingsCache>((set, get) => ({
   tenant: "",
   queues: [],
   tenantEnabled: false,
+  repoSettings: false,
   known: false,
   begin: () => ++seq,
   publish: (tenant, ticket, wire) => {
     if (ticket <= floor) return;
     floor = ticket; // a slower, older read must not land over this one
-    set({ tenant, queues: wire.queues, tenantEnabled: wire.tenantEnabled, known: true });
+    set({ tenant, queues: wire.queues, tenantEnabled: wire.tenantEnabled, repoSettings: wire.repoSettings, known: true });
   },
   applySaved: (tenant, queue) => {
     const cur = get();
@@ -84,7 +87,7 @@ export const useQueueSettingsCache = create<QueueSettingsCache>((set, get) => ({
   },
   reset: () => {
     floor = ++seq;
-    set({ tenant: "", queues: [], tenantEnabled: false, known: false });
+    set({ tenant: "", queues: [], tenantEnabled: false, repoSettings: false, known: false });
   },
 }));
 

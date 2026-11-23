@@ -522,4 +522,5 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memo_tidy_busy": "Another tidy is in progress. Wait a moment and try again.",
   "err.memo_queue_no_repo": "This category belongs to no repository, so there is no repository settings file.",
   "err.memo_queue_repo_unreadable": "The settings file could not be read from the repository's default branch. Your current settings stay as they are.",
+  "err.memo_queue_repo_stale": "The repository settings file or your settings changed since you looked at the difference. Check again before approving.",
 };

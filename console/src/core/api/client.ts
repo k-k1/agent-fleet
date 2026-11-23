@@ -1494,6 +1494,16 @@ export const memoQueuePut = (categoryId: string, body: MemoQueueInput): Promise<
   apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}`, "PUT", body);
 export const memoQueueDelete = (categoryId: string): Promise<Response> =>
   raw(`api/memo-queues/${encodeURIComponent(categoryId)}`, { method: "DELETE" });
+// The repository's settings file of a category (#4881): the difference from the member's
+// settings (raw: readRepoSettings normalises it), the approval of some or all of it, and the
+// member's settings written as a file. The approval names keys only: the values come from the
+// file at the commit the difference showed.
+export const memoRepoSettings = (categoryId: string): Promise<unknown> =>
+  api(`api/memo-queues/${encodeURIComponent(categoryId)}/repo-settings`);
+export const memoRepoApprove = (categoryId: string, body: { commit: string; settingsTag: string; keys: string[] }): Promise<MemoWriteResult> =>
+  apiJSON(`api/memo-queues/${encodeURIComponent(categoryId)}/repo-settings/approve`, "POST", body);
+export const memoRepoExport = (categoryId: string): Promise<unknown> =>
+  api(`api/memo-queues/${encodeURIComponent(categoryId)}/repo-settings/export`);
 // Release held messages, each with the content hash its card showed. All or none: a changed
 // message answers 409 memo_release_stale with error.stale.
 export const memoRelease = (items: { id: string; contentHash: string }[]): Promise<MemoWriteResult> =>

@@ -7,6 +7,9 @@
 // A save replaces the whole row, so draftBody sends every setting the dialog loaded, including
 // the route it does not show. The read-only state (paused, noReportAt, ...) is never sent.
 //
+// When the category belongs to a repository, the dialog also offers the repository settings card
+// (MemoRepoSettingsCard): the difference from .agent-fleet/autorun.yaml, its approval, the export.
+//
 // With the tenant's switch off the dialog says so instead of offering to save. Removing the
 // settings stays possible then: the Control Plane does not gate DELETE.
 import { useMemo, useState } from "react";
@@ -24,6 +27,7 @@ import type { MemoQueue } from "../../types/memo.ts";
 import { memoQueueDelete, memoQueuePut } from "./api.ts";
 import { readQueue } from "./queues.ts";
 import { queueScope, useQueueSettingsCache } from "./queueSettingsCache.ts";
+import { MemoRepoSettingsCard } from "./MemoRepoSettingsCard.tsx";
 import {
   QUEUE_BATCH_MAX,
   QUEUE_CONTINUATION_MAX,
@@ -51,6 +55,8 @@ const RUN_MODES: { mode: RunMode; label: MsgKey; hint: MsgKey }[] = [
 interface Props {
   categoryName: string;
   categoryId: string;
+  /** The repository the category belongs to; "" = the common bucket, which has no settings file. */
+  repo: string;
   /** The category's current settings; undefined = it has none yet. */
   queue: MemoQueue | undefined;
   tenantEnabled: boolean;
@@ -61,7 +67,7 @@ interface Props {
   onChanged: () => void;
 }
 
-export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenantEnabled, destinations, onClose, onChanged }: Props) {
+export function MemoQueueSettingsModal({ categoryName, categoryId, repo, queue, tenantEnabled, destinations, onClose, onChanged }: Props) {
   const tr = useT();
   const toast = useToast();
   const askConfirm = useConfirm();
@@ -101,6 +107,7 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
   };
   const show = (f: keyof typeof errors) => (tried && errors[f] ? tr(errors[f]!, { max: maxOf[f] }) : null);
   const blocked = !tenantEnabled;
+  const repoSettings = useQueueSettingsCache((st) => st.repoSettings) && repo !== "";
 
   const save = async () => {
     if (blocked || busy) return;
@@ -181,6 +188,21 @@ export function MemoQueueSettingsModal({ categoryName, categoryId, queue, tenant
           <div className="ui-field-hint memo-q-notice" role="status">
             {queue ? tr("memo.q_tenant_off_existing") : tr("memo.q_tenant_off")}
           </div>
+        )}
+
+        {repoSettings && (
+          <MemoRepoSettingsCard
+            categoryId={categoryId}
+            categoryName={categoryName}
+            hasQueue={!!queue}
+            blocked={blocked || busy}
+            onApplied={() => {
+              // The draft holds the values from before the approval: close rather than let a save
+              // put them back.
+              onChanged();
+              onClose();
+            }}
+          />
         )}
 
         <div className="ui-field">
