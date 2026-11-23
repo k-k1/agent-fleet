@@ -208,17 +208,47 @@ describe("読み始めた順に一覧を書く（遅い答えが新しい一覧�
     expect(readGallery("b")?.entries).toEqual([entry("b.png")]);
   });
 
-  it("忘れた後に、忘れる前に始めた読みの答えが来ても一覧を戻さない", async () => {
+  it("忘れた後に、忘れる前に始めた読みの答えが来ても一覧を戻さない（「無い」と同じ答えにする）", async () => {
     const releaseOld = held(["ghost.png"]);
     const old = fetchGalleryListing("gone", 512);
     forgetGallery("gone"); // a first read answered "not there"
     releaseOld();
-    await old;
+    // Not shown either: a grid with no cache entry would never remember its scroll position.
+    expect(await old).toEqual({ ok: false, retry: false, hard: true });
     expect(readGallery("gone")).toBeUndefined();
 
     // A read that begins after the folder was forgotten is a fresh start and does write.
     await fetchGalleryListing("gone", 512);
     expect(readGallery("gone")).toBeDefined();
+  });
+
+  it("読みが出ている間は、他の 30 フォルダを忘れても忘れた印は消えない", async () => {
+    const releaseOld = held(["ghost.png"]);
+    const old = fetchGalleryListing("gone", 512);
+    forgetGallery("gone");
+    for (let i = 0; i < 40; i++) forgetGallery(`other${i}`);
+    releaseOld();
+    expect(await old).toEqual({ ok: false, retry: false, hard: true });
+    expect(readGallery("gone")).toBeUndefined();
+  });
+
+  it("読みが出ている間に新しい一覧が LRU で追い出されても、古い答えで書き戻さない", async () => {
+    const releaseOld = held(["old.png"]);
+    const old = fetchGalleryListing("gen", 512);
+    await fetchGalleryListing("gen", 512); // newer read, cached
+    for (let i = 0; i < 30; i++) writeGallery(`f${i}`, [entry(`${i}.png`)]); // pushes "gen" out
+    expect(readGallery("gen")).toBeUndefined();
+    releaseOld();
+    expect(await old).toEqual({ ok: true, entries: [entry("old.png")] });
+    expect(readGallery("gen")).toBeUndefined();
+  });
+
+  it("読みが全部終わって一覧も無いフォルダは、次の読みが普通に書ける", async () => {
+    await fetchGalleryListing("gen", 512);
+    for (let i = 0; i < 30; i++) writeGallery(`f${i}`, [entry(`${i}.png`)]);
+    expect(readGallery("gen")).toBeUndefined();
+    await fetchGalleryListing("gen", 512);
+    expect(readGallery("gen")).toBeDefined();
   });
 
   it("writeGallery 単体は常に最新の読みとして書く", () => {

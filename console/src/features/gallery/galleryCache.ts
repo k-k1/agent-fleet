@@ -26,8 +26,6 @@ interface CacheEntry {
   limit: number;
   /** A flattened listing that left pictures out (`api/fs/images`'s bounds). */
   truncated?: boolean;
-  /** The order the read that produced `entries` BEGAN in (see `beginRead`). */
-  seq: number;
 }
 
 /**
@@ -62,10 +60,14 @@ const cache = new Map<string, CacheEntry>();
  */
 let readSeq = 0;
 
-/** A folder dropped by `forgetGallery`, with the order it was dropped at: a read that began
- *  before it must not bring the listing back. Cleared by the next accepted write; trimmed to
- *  MAX_FOLDERS so gone folders do not pile up. */
-const forgottenAt = new Map<string, number>();
+/** Per key, the order of the newest read whose answer was written, or of the last forget. A
+ *  read that began before it cannot write. Separate from `cache` on purpose: LRU eviction of a
+ *  listing must not lift the barrier for a read still in flight. An entry lives while the key
+ *  is cached or has a read in flight (`active`), so it is bounded by what is actually open. */
+const barrier = new Map<string, { n: number; forgot: boolean }>();
+
+/** Reads in flight per key; the barrier of an uncached key is dropped when the last one ends. */
+const active = new Map<string, number>();
 
 /** In-flight prefetches, so sweeping the mouse across a row of folder cards asks once. */
 const inflight = new Map<string, Promise<unknown>>();
@@ -83,6 +85,11 @@ function beginRead(): number {
   return ++readSeq;
 }
 
+/** Drop a key's barrier once nothing can need it: not cached, and no read in flight. */
+function pruneBarrier(key: string): void {
+  if (!cache.has(key) && !active.has(key)) barrier.delete(key);
+}
+
 function put(path: string, next: CacheEntry): void {
   cache.delete(path);
   cache.set(path, next);
@@ -90,33 +97,35 @@ function put(path: string, next: CacheEntry): void {
     const oldest = cache.keys().next();
     if (oldest.done) break;
     cache.delete(oldest.value);
+    pruneBarrier(oldest.value);
   }
 }
 
-/** Remember a listing. The reader's place in the folder is kept — a background refresh that
- *  landed one new picture must not scroll them back to the top.
- *
- *  `seq` is the order the read began in; the write is dropped when the cache already holds a
- *  listing from a read that began later (or the folder was forgotten after this read began).
- *  Without `seq` the write counts as the newest read. Returns whether it was kept. */
-export function writeGallery(key: string, entries: FsEntry[], truncated?: boolean, seq?: number): boolean {
-  const n = seq ?? beginRead();
+type WriteOutcome = "kept" | "superseded" | "forgotten";
+
+function tryWrite(key: string, entries: FsEntry[], truncated: boolean | undefined, n: number): WriteOutcome {
   const prev = cache.get(key);
-  if (prev && prev.seq > n) return false;
-  const gone = forgottenAt.get(key);
-  if (gone !== undefined) {
-    if (gone > n) return false;
-    forgottenAt.delete(key);
-  }
+  const floor = barrier.get(key);
+  if (floor && floor.n > n) return floor.forgot ? "forgotten" : "superseded";
+  barrier.set(key, { n, forgot: false });
   put(key, {
     entries,
     at: Date.now(),
     scrollTop: prev?.scrollTop ?? 0,
     limit: prev?.limit ?? PAGE_SIZE,
-    seq: n,
     ...(truncated ? { truncated } : {}),
   });
-  return true;
+  return "kept";
+}
+
+/** Remember a listing. The reader's place in the folder is kept — a background refresh that
+ *  landed one new picture must not scroll them back to the top.
+ *
+ *  `seq` is the order the read began in; the write is dropped when a read that began later has
+ *  already been written, or the folder was forgotten after this read began. Without `seq` the
+ *  write counts as the newest read. Returns whether it was kept. */
+export function writeGallery(key: string, entries: FsEntry[], truncated?: boolean, seq?: number): boolean {
+  return tryWrite(key, entries, truncated, seq ?? beginRead()) === "kept";
 }
 
 /** Remember where in the folder the reader is. Written from a scroll handler and from "show
@@ -134,20 +143,16 @@ export function rememberGalleryView(path: string, view: { scrollTop?: number; li
  */
 export function forgetGallery(path: string): void {
   cache.delete(path);
-  forgottenAt.delete(path); // re-insert: the oldest tombstone is the first key
-  forgottenAt.set(path, ++readSeq);
-  while (forgottenAt.size > MAX_FOLDERS) {
-    const oldest = forgottenAt.keys().next();
-    if (oldest.done) break;
-    forgottenAt.delete(oldest.value);
-  }
+  barrier.set(path, { n: ++readSeq, forgot: true }); // a read begun before this cannot bring the listing back
+  pruneBarrier(path);
 }
 
 /** Tests only — the cache outlives a component, which is the whole point. */
 export function clearGalleryCache(): void {
   cache.clear();
   inflight.clear();
-  forgottenAt.clear();
+  barrier.clear();
+  active.clear();
 }
 
 /**
@@ -209,7 +214,27 @@ export async function fetchGalleryListing(
   accept?: () => boolean,
   flat?: boolean,
 ): Promise<ListingResult> {
+  const key = galleryKey(path, flat);
   const seq = beginRead();
+  active.set(key, (active.get(key) ?? 0) + 1);
+  try {
+    return await readListing(path, warm, accept, flat, key, seq);
+  } finally {
+    const left = (active.get(key) ?? 1) - 1;
+    if (left > 0) active.set(key, left);
+    else active.delete(key);
+    pruneBarrier(key);
+  }
+}
+
+async function readListing(
+  path: string,
+  warm: number,
+  accept: (() => boolean) | undefined,
+  flat: boolean | undefined,
+  key: string,
+  seq: number,
+): Promise<ListingResult> {
   let d: { entries?: FsEntry[]; truncated?: boolean; error?: { code?: string } };
   try {
     d = await api(flat ? galleryImagesURL(path, warm) : galleryTreeURL(path, warm));
@@ -220,8 +245,13 @@ export async function fetchGalleryListing(
   if (d.error || !Array.isArray(d.entries)) return { ok: false, retry: false, hard: true };
   if (accept && !accept()) return { ok: false, retry: false, hard: false };
   const truncated = d.truncated === true;
-  // The answer is still the caller's to show; the cache keeps whichever read began last.
-  writeGallery(galleryKey(path, flat), d.entries, truncated, seq);
+  const outcome = tryWrite(key, d.entries, truncated, seq);
+  // The folder was reported gone after this read began, and nothing is cached to keep the
+  // reader's place in it: showing the listing would leave a grid whose scroll position and
+  // page size are never remembered. Settle it as the same "no" the other answer got.
+  if (outcome === "forgotten") return { ok: false, retry: false, hard: true };
+  // "superseded": a newer listing is cached (it keeps the place), and this one is still the
+  // caller's to show.
   return { ok: true, entries: d.entries, ...(truncated ? { truncated } : {}) };
 }
 
