@@ -1,7 +1,8 @@
 # gitleaks 設定（docs/build/10 §10.4「公開リポジトリでの CI の前提」）。
 #
 # 公開リポジトリなので、資格情報の混入は「入った時点で公開」＝取り返しがつかない。
-# ci.yml の secret-scan ジョブが全履歴を毎回走査する（1995 commit / 18MB で約 3 秒）。
+# ci.yml's secret-scan job scans it: a PR what its merge commit reaches, a push to main and the
+# daily secret-sweep.yml every ref (docs/build/10 §10.4).
 #
 # 許可リストの原則: **パスまるごとの除外はしない**（そのファイルに本物が入っても
 # 気づけなくなる）。実在しないと確認できた「その値そのもの」だけを正規表現で外す。

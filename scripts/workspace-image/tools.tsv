@@ -35,6 +35,7 @@ bat	util	bat	bat	https://github.com/sharkdp/bat	MIT OR Apache-2.0	https://github
 jq	util		jq	https://jqlang.org/	MIT	https://github.com/jqlang/jq/blob/master/COPYING	apt:jq	JSON processor	JSON を加工する
 uv	util		uv	https://github.com/astral-sh/uv	MIT OR Apache-2.0	https://github.com/astral-sh/uv#license	latest:uv	Python package and tool manager (`uv`, `uvx`)	Python のパッケージとツールを管理する（`uv`、`uvx`）
 npm	util		npm	https://github.com/npm/cli	Artistic-2.0	https://github.com/npm/cli/blob/v{version}/LICENSE	arg:NPM_VERSION	Node.js package manager	Node.js のパッケージマネージャー
+gitleaks	util	gitleaks	gitleaks	https://github.com/gitleaks/gitleaks	MIT	https://github.com/gitleaks/gitleaks/blob/v{version}/LICENSE	arg:GITLEAKS_VERSION	Scans a repository for committed credentials, for a check before you push	コミットされた資格情報がないかリポジトリを調べる。push 前の確認に使う
 rtk	util	rtk	rtk	https://github.com/rtk-ai/rtk	Apache-2.0	https://github.com/rtk-ai/rtk/blob/v{version}/LICENSE	arg:RTK_VERSION	Shortens command output for agents to save tokens	エージェント向けにコマンドの出力を短くし、トークンを節約する
 node	runtime		Node.js	https://nodejs.org/	MIT	https://github.com/nodejs/node/blob/main/LICENSE	from:node;select	JavaScript runtime	JavaScript のランタイム
 go	runtime		Go	https://go.dev/	BSD-3-Clause	https://github.com/golang/go/blob/go{version}/LICENSE	arg:GO_VERSION;select	Go toolchain	Go のツールチェーン

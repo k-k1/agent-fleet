@@ -331,7 +331,7 @@ npm --prefix console run build
   | `control-plane`・`workspace-agent` | `gofmt -l`・`go vet`・`go build`（arm64 へのクロスコンパイルも）・`go test`、build tag 付きファイルの `go vet`。Agent 側は `entrypoint.sh` の構文も検査する |
   | `console` | 型検査・lint・i18n lint・モデル ID lint・vitest・実ブラウザの検査 2 つ（`pdf:check`・`doc:check`）・本番ビルド |
   | `deploy-scripts` | デプロイ用スクリプトとリリース監視の判断を、スタブの `aws` / `npm` / `curl` / `gh` に当てて検査。CloudFormation テンプレートが ASCII のみであることも |
-  | `secret-scan` | 全履歴に対する資格情報の混入検知（後述）|
+  | `secret-scan` | 資格情報の混入検知。PR では PR のマージコミットから辿れる範囲、`main` への push では全 ref（後述）|
   | `release-scan` | 追跡ツリーに対する禁止トークンのゲート——pre-commit フックがステージ内容にかけるのと同じスキャナ |
   | `model-id-lint` | 両 Go モジュールで `workspace/agent/internal/modelfallback` の外にモデル ID の形の文字列リテラルが無いこと。モデルを選ばないものは `// model-id-lint:allow <理由>` で印を付ける |
   | `migration-versions` | `main` 向けの開いている PR すべてに `migration-version` コミットステータスを付ける。PR が足すマイグレーションのバージョンを `main` が既に持っている（ランナーと同じく数値で比べるので `95_x` と `0095_y` も衝突）、同じ PR の別ファイルも同じバージョンを取っている、または読めるバージョンが無い、のどれかなら failure。このジョブはスクリプトの自己テストで、ステータスを付けるのは cancel-in-progress の無い `migration-version.yml`。PR 自身のイベント（`main` への付け替えも含む）で回り、`main` への push のたびに開いている全 PR を検査し直す。`scripts/migration-versions.sh` |
@@ -636,17 +636,46 @@ opencode・copilot・cursor で、kiro（ログインが要る）と agy（ラ�
 - **`permissions:` を全ワークフローで明示する。** 既定が変わっても最小権限が残るように。
 
 **資格情報の混入検知**（`ci.yml` の `secret-scan`・gitleaks）。公開リポジトリでは混入は
-即公開で取り返しがつかないので、差分ではなく**毎回全履歴**を走査する。押さえどころ:
+即公開で取り返しがつかないので、差分ではなく履歴を走査する。範囲は誰が走らせるかで変わる
+（`scripts/secret-scan.sh`）:
+
+- **PR** は、そのマージコミットから辿れる範囲（`main` の履歴＋PR 自身のコミット）を走査する。
+  無関係なブランチにある資格情報らしい値では落ちない。（以前は全 PR が全 ref を走査していたので、
+  どのブランチに push した 1 件のフィクスチャでも、許可リストの項目が `main` に入るまで開いている
+  PR がすべて赤くなり、再実行しても古いマージコミットを走査し直すだけで直らなかった。）
+- **`main` への push と手動実行**は全 ref を走査する。毎日走る `secret-sweep.yml` も同じ。
+  見つかるとその実行が失敗し、sweep は Issue を 1 件作る（または更新する。載せるのはルールと
+  コミットだけで、値もパスも載せない）。最初に clean になった sweep がそれを閉じる。Issue を
+  触るのは、走査が最後まで完了した `main` 上の実行だけ。
+- **手放したもの:** PR の無いブランチへの混入は、次の PR ではなく、次の `main` への push か毎日の
+  sweep が報告する。しかも、その時点でブランチかタグがそのコミットに届いている間だけ。push した
+  時点で公開済みなので、PR のゲートはもともと混入を防げておらず、報告していただけだった。
+
+どちらでも押さえどころは同じ:
 
 - **`-m` を必ず付ける。** 無いとスキャナは merge commit を飛ばし、**衝突解決で入った内容が
   未走査のまま緑になる**——導入時点でこのリポジトリには該当する merge が 138 件あり、初回の
   スキャンは実際にこの穴を抱えていた。
+- **リビジョンの並びを `--` で閉じる。** リポジトリ直下に `HEAD` という追跡ファイルがあると
+  `git log HEAD` が曖昧になり、git はエラーを出し、スキャナは 0 コミットを走査して「問題なし」と
+  報告する。同じ理由で `scripts/secret-scan.sh` は、`git log` が失敗した（git が stderr に何も出さ
+  ないと、スキャナはその失敗を捨てる）か、スキャナがエラーをログに出したら（終了コード 3）、完了した
+  走査として扱わない。
 - **スキャナの版とチェックサムを固定する。** marketplace action に依存しない。
 - **偽陽性は値そのものを正規表現で外す——パスだけでの除外はしない**（`.gitleaks.toml`。
   `condition = "AND"` で値を 1 ファイルに絞ることはある）。パスで外すと、そのファイルに
   本物が入っても気づけない。
 - 最初の全履歴監査（2026-08-01）は**本物の資格情報ゼロ**。コミットログを辿るのでなく、到達
   可能な全 blob を展開して走査する方法でも裏を取った。
+- **Workspace イメージにも同じスキャナを入れている**（`workspace/Dockerfile` の
+  `GITLEAKS_VERSION`。`/usr/local/bin/gitleaks` に置き、tarball はリリースのチェックサム
+  ファイルで検証する）。セッションが push 前に走査できるようにするためで、自動では何も走らせず、
+  利用者のリポジトリにフックも入れない。**版を上げるときは** `.github/actions/install-gitleaks/action.yml`
+  （`ci.yml` の `secret-scan` と `secret-sweep.yml` が共有するインストール手順）の `VERSION` と `SHA256`、Dockerfile の `GITLEAKS_VERSION` を同じ変更で直す。2 つがずれると
+  `TestGitleaksPinMatchesCI`（`workspace/agent`）が落ちる。`cli-pin-bump.sh` の対象外
+  （あちらはエージェント CLI）で、`gh`・`bkt` と同じ扱い。イメージのスモーク
+  （`deploy/local/e2e-smoke.sh`）が固定した版を確かめ、ガイドのページは
+  `python3 scripts/workspace_image.py` で作り直す。
 
 ## 10.5 コミットとブランチ
 
