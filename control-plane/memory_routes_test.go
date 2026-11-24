@@ -141,10 +141,11 @@ func TestMemorySnapshotIsAudited(t *testing.T) {
 	if action, target, ok = auditActionTarget(req); !ok || action != "memory.entry.supersede_document" || target != "" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.entry.supersede_document with an empty target", action, target, ok)
 	}
-	// The document-target repairs are audited with no target either.
+	// The document-target repairs and the promotion proposal are audited with no target either.
 	for _, a := range []struct{ path, action string }{
 		{"document-retarget", "memory.entry.document_retarget"},
 		{"document-restore", "memory.entry.document_restore"},
+		{"promotion-proposal", "memory.entry.promotion_proposal"},
 	} {
 		req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/entries/"+a.path+"?project=agent-fleet-0123456789ab", nil)
 		if action, target, ok = auditActionTarget(req); !ok || action != a.action || target != "" {

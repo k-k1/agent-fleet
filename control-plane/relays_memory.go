@@ -75,9 +75,11 @@ var memoryRelays = []agentRelay{
 	// the audit row has no target.
 	// Promotion (ADR 0130 decision 11) as the Console reaches it: the candidates only read, and
 	// the proposal writes nothing (it builds the patch and runs the repository's pre-commit hook
-	// in a throwaway clone) and is open to sessions on loopback anyway, so neither is signed.
+	// in a throwaway clone) and is open to sessions on loopback anyway, so neither is signed. The
+	// proposal is audited because it runs the repository's code; its project and memory are in
+	// the body, so the row has no target.
 	{route: "GET /api/agents/memory/entries/promotion-candidates"},
-	{route: "POST /api/agents/memory/entries/promotion-proposal"},
+	{route: "POST /api/agents/memory/entries/promotion-proposal", audit: auditAs("memory.entry.promotion_proposal", nil)},
 	{route: "POST /api/agents/memory/entries/supersede-document", audit: auditAs("memory.entry.supersede_document", nil), sign: signBody},
 	// The repairs of a document target the lint report flags: re-pointing it, and reverting the
 	// supersede. The member's, so signed; the project and memory are in the body, so no target.
