@@ -2436,7 +2436,7 @@ func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d s
 		default:
 			return
 		}
-		if !slim && len(body) >= memoAnswerReplyMax && limit > memoAnswerPageMin {
+		if len(body) >= memoAnswerReplyMax && limit > memoAnswerPageMin {
 			// Cut at the bound (a page of large edits): the same place again, in a smaller page.
 			// Only this page shrinks: the next one is asked at full size again.
 			limit = max(limit/4, memoAnswerPageMin)

@@ -3,6 +3,8 @@ package sessionx
 import (
 	"net/http"
 	"strconv"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -11,10 +13,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// answerTextMax bounds the text a slim turn keeps per part. The Control Plane keeps only the
-// first line of an answer (a few hundred runes), so the head is all it needs; a tool's output or
-// an edit's body never is.
-const answerTextMax = 4 << 10
+// answerTextMax bounds the text a slim turn keeps per text part, counted after the leading
+// whitespace is dropped. The Control Plane keeps only the first non-blank line of an answer, at
+// most store.AnswerHeadMax (200) runes, so 1 KiB holds it; the bound also keeps a page of 4000
+// turns under the Control Plane's reply bound even when every byte is escaped (6x).
+const answerTextMax = 1 << 10
 
 // answerTurn and answerPart are the slim shape of a transcript turn served by
 // GET /sessions/{name}/answer-turns: the fields the last-answer read of a memo delivery uses
@@ -43,8 +46,13 @@ type answerTurnsReply struct {
 	HasMore   bool         `json:"hasMore"`
 }
 
-// headOf cuts s to at most answerTextMax bytes on a rune boundary.
+// headOf is what the answer read takes from s: the text without its leading whitespace (a part
+// that is blank stays blank, so the read passes over it as it does over the full text), cut to at
+// most answerTextMax bytes on a rune boundary. Cutting without the trim would turn a "Partial:"
+// that follows a long run of blank lines into a blank part, and the read would then take an
+// earlier "Done:" for the last answer.
 func headOf(s string) string {
+	s = strings.TrimLeftFunc(s, unicode.IsSpace)
 	if len(s) <= answerTextMax {
 		return s
 	}
@@ -55,9 +63,9 @@ func headOf(s string) string {
 	return s[:n]
 }
 
-// slimTurns drops what an answer read never looks at. Only text, thinking and error parts keep a
-// body (cut to a head); every other part keeps its kind alone, since the read tells a response
-// that ended on a tool call from one that ended on text by the kind of the last part.
+// slimTurns drops what an answer read never looks at. Only text parts keep a body (its head); every
+// other part, thinking and error included, keeps its kind alone, since the read tells a response
+// that ended on a tool call or an error from one that ended on text by the kind of the last part.
 func slimTurns(turns []transcript.Turn) []answerTurn {
 	out := make([]answerTurn, 0, len(turns))
 	for _, t := range turns {
@@ -67,7 +75,7 @@ func slimTurns(turns []transcript.Turn) []answerTurn {
 		}
 		for _, p := range t.Parts {
 			sp := answerPart{Kind: p.Kind}
-			if p.Kind == "text" || p.Kind == "thinking" || p.Kind == "error" {
+			if p.Kind == "text" {
 				sp.Text = headOf(p.Text)
 			}
 			s.Parts = append(s.Parts, sp)
@@ -82,6 +90,12 @@ func slimTurns(turns []transcript.Turn) []answerTurn {
 // every turn slimmed to what the last-answer read of a memo delivery uses. A page of 4000 lines
 // holding more than 8 MiB of edit text on /messages is a few hundred KiB here, so the read can
 // go back far further in one reply. It carries no aggregates (tasks, files, pending prompts).
+//
+// firstLine is the first line of the window that was read in full: the claude turns are collected
+// without the 1 MiB cap /messages puts on a window, since a cap that dropped the oldest turns of
+// the window while firstLine stayed would leave the lines between them unread by the next page.
+// A fork that has not written its own log yet answers with no turns (its parent's history, which
+// /messages previews, is not this session's answer).
 func HandleSessionAnswerTurns(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -115,7 +129,7 @@ func HandleSessionAnswerTurns(w http.ResponseWriter, r *http.Request) {
 			hi = min(before, total)
 		}
 		lo = max(0, hi-limit)
-		turns = claude.CollectTurnsHiding(lines, lo, hi, claude.RewoundPrompts(lines))
+		turns = claude.CollectTurnsUncapped(lines, lo, hi, claude.RewoundPrompts(lines))
 	} else {
 		td, _ := AgentOf(meta.Kind).Transcript(meta)
 		total = len(td.Turns)

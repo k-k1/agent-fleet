@@ -341,15 +341,30 @@ func TestMemoAnswerSlimRoute(t *testing.T) {
 		now := time.Now()
 		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
 		agent.setSlim(true)
-		calls := 0
+		// Each read must ask for the page that ends where the one before began (before = its
+		// firstLine), and the tail first; a read that skips or repeats ground fails the delivery.
+		firstLine := 100000
+		var misread string
 		agent.setAnswer("q-a", func() (int, any) {
-			calls++
-			if calls < memoAnswerSlimPages {
-				return http.StatusOK, page(100000-calls, []map[string]any{})
+			n := len(agent.answerCalls) // the fake holds its lock while it answers
+			q := agent.answerCalls[n-1]
+			want := "tail=1"
+			if n > 1 {
+				want = fmt.Sprintf("before=%d", firstLine)
+			}
+			if !strings.Contains(q, want) {
+				misread = fmt.Sprintf("read %d was %q, want %s", n, q, want)
+			}
+			if n < memoAnswerSlimPages {
+				firstLine -= memoAnswerSlimPage
+				return http.StatusOK, page(firstLine, []map[string]any{})
 			}
 			return http.StatusOK, page(0, []map[string]any{{"role": "assistant", "parts": []map[string]any{{"kind": "text", "text": "Done: very far back"}}}})
 		})
 		e.settleNow(now)
+		if misread != "" {
+			t.Fatal(misread)
+		}
 		routes := agent.routesSoFar()
 		if len(routes) != memoAnswerSlimPages || routes[0] != "/answer-turns" || routes[len(routes)-1] != "/answer-turns" {
 			t.Fatalf("routes %v, want %d reads of /answer-turns", routes, memoAnswerSlimPages)
@@ -1536,6 +1551,36 @@ func TestMemoAnswerShrinksAPageCutAtTheBound(t *testing.T) {
 		calls := agent.answerCallsSoFar()
 		if len(calls) != 2 || !strings.Contains(calls[0], "limit=200") || !strings.Contains(calls[1], "limit=50") || !strings.Contains(calls[1], "tail=1") {
 			t.Fatalf("reads %v, want the tail again in a page of 50", calls)
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// The slim route's page is cut at the bound too (Claude's thinking and a very large single turn
+// are not what the Agent's caps count): it is asked again at the same place in a smaller page.
+func TestMemoAnswerShrinksASlimPageCutAtTheBound(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setSlim(true)
+		big := strings.Repeat("x", memoAnswerReplyMax)
+		agent.setAnswer("q-a", func() (int, any) {
+			var parts []map[string]any
+			if len(agent.answerCalls) == 1 {
+				parts = append(parts, map[string]any{"kind": "text", "text": big})
+			}
+			parts = append(parts, map[string]any{"kind": "text", "text": "Done: small"})
+			return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "messages": []map[string]any{{"role": "assistant", "parts": parts}}}
+		})
+		e.settleNow(now)
+		calls := agent.answerCallsSoFar()
+		if len(calls) != 2 || !strings.Contains(calls[0], fmt.Sprintf("limit=%d", memoAnswerSlimPage)) || !strings.Contains(calls[1], "limit=250") || !strings.Contains(calls[1], "tail=1") {
+			t.Fatalf("reads %v, want the tail again in a smaller page", calls)
+		}
+		if routes := agent.routesSoFar(); routes[0] != "/answer-turns" || routes[1] != "/answer-turns" {
+			t.Fatalf("routes %v", routes)
 		}
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
 			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)

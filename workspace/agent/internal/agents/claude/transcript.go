@@ -490,6 +490,13 @@ func CollectTurnsHiding(lines [][]byte, lo, hi int, rewound map[int]int) []trans
 	return collectTurns(lines, lo, hi, false, true, rewound)
 }
 
+// CollectTurnsUncapped is CollectTurnsHiding without the 1 MiB cap on a window: every line of
+// [lo,hi) is read, so a caller that reports lo as the window's first line never skips a line
+// between it and the turns it returns. For a caller that slims the turns itself.
+func CollectTurnsUncapped(lines [][]byte, lo, hi int, rewound map[int]int) []transcript.Turn {
+	return collectTurns(lines, lo, hi, false, false, rewound)
+}
+
 // CollectAllTurns is CollectTurns over the whole file for an export (#2183): no 1 MiB cap,
 // which would silently drop the oldest turns, and every tool call carries its result as
 // Output. The mirror never shows ordinary tool results, so only this path pays for them.
