@@ -658,6 +658,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /agents/memory/entries/lint-apply", memoryx.HandleAgentMemoryLintApply)
 	mux.HandleFunc("GET /agents/memory/entries/lint-terms", memoryx.HandleAgentMemoryLintTerms)
 	mux.Handle("POST /agents/memory/entries/lint-terms", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryLintTermsSave)))
+	// Promotion candidates (ADR 0130 decision 11): read-only, like the lint report it builds on.
+	mux.HandleFunc("GET /agents/memory/entries/promotion-candidates", memoryx.HandleAgentMemoryPromoteCandidates)
 	mux.HandleFunc("GET /agents/memory/entries/member-latest", memoryx.HandleAgentMemoryMemberLatest)
 	mux.HandleFunc("GET /agents/memory/entries/member-forgotten", memoryx.HandleAgentMemoryMemberForgotten)
 	// The member's purge of one memory's past revisions from the history (#1982): a read-only
