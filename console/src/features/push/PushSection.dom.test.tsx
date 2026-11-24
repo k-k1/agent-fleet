@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 let key: string | null = "k";
 let off: string[] = ["answer-ready"];
+let offOrigins: string[] = [];
 let prefsGate: Promise<void> | null = null;
 let sub: unknown = null;
 let matches = true;
@@ -18,12 +19,12 @@ let listCalls = 0;
 const row = (id: string) => ({ id, userAgent: "Mozilla/5.0 (iPhone) Safari/605", createdAt: "2026-11-22T00:00:00Z", lastOkAt: "" });
 let rows = [row("d1")];
 let listGate: Promise<void> | null = null;
-const puts: string[][] = [];
+const puts: { off: string[]; offOrigins?: string[] }[] = [];
 vi.mock("./pushApi.ts", async (orig) => ({
   ...(await orig<typeof import("./pushApi.ts")>()),
   probePushKey: () => Promise.resolve(key),
-  getPushOff: () => (prefsGate ? prefsGate.then(() => off) : Promise.resolve(off)),
-  putPushOff: (o: string[]) => {
+  getPushPrefs: () => (prefsGate ? prefsGate.then(() => ({ off, offOrigins })) : Promise.resolve({ off, offOrigins })),
+  putPushPrefs: (o: { off: string[]; offOrigins?: string[] }) => {
     puts.push(o);
     return Promise.resolve();
   },
@@ -72,6 +73,7 @@ async function mount() {
 beforeEach(() => {
   key = "k";
   off = ["answer-ready"];
+  offOrigins = [];
   prefsGate = null;
   sub = null;
   matches = true;
@@ -110,7 +112,32 @@ describe("PushSection", () => {
     const q = host.querySelector<HTMLInputElement>(".push-kind input")!;
     await act(async () => void q.click());
     await flush();
-    expect(puts).toEqual([["answer-ready", "question"]]);
+    expect(puts).toEqual([{ off: ["answer-ready", "question"] }]);
+  });
+  it("shows the origin switches as three rows of two, from the saved list", async () => {
+    offOrigins = ["autorun-child"];
+    const host = await mount();
+    const rows = [...host.querySelectorAll(".push-origin-row")];
+    expect(rows).toHaveLength(3);
+    const states = rows.map((r) => [...r.querySelectorAll<HTMLInputElement>("input")].map((b) => b.checked));
+    expect(states).toEqual([[true, true], [true, false], [true, true]]);
+  });
+  it("gives each of the six origin switches a distinct accessible name", async () => {
+    const host = await mount();
+    const names = [...host.querySelectorAll(".push-origin-row input")].map((b) => b.getAttribute("aria-label"));
+    expect(new Set(names).size).toBe(6);
+    expect(names.every((n) => n && n.includes(": "))).toBe(true);
+  });
+  it("saves origins with the kinds, and leaves origins out when only a kind changes (a stale screen must not undo them)", async () => {
+    const host = await mount();
+    const inputs = host.querySelectorAll<HTMLInputElement>(".push-origin-row input");
+    await act(async () => void inputs[2].click()); // auto-run: the session itself
+    await flush();
+    expect(puts).toEqual([{ off: ["answer-ready"], offOrigins: ["autorun"] }]);
+    const q = host.querySelector<HTMLInputElement>(".push-kind input")!;
+    await act(async () => void q.click());
+    await flush();
+    expect(puts[1]).toEqual({ off: ["answer-ready", "question"] });
   });
   it("keeps the kind switches locked until the saved choices arrive, so nothing is overwritten", async () => {
     let open!: () => void;

@@ -76,6 +76,18 @@ The section is shown only on a deployment where the administrator has switched W
 | A permission request is waiting | A session asks for a permission |
 | A turn has finished | A session finished its turn and waits for you |
 
+4. Under "**Send a push for sessions started by**", choose who started the session. Each row has two switches: "**The session**" (the session itself) and "**Sessions it starts**" (the reviewers and helpers it starts)
+
+| Row | Covers |
+|---|---|
+| You | Sessions you started yourself, and the sessions they start |
+| Auto-run | Sessions an auto-run started, and the sessions they start |
+| Schedule | Sessions a schedule started, and the sessions they start |
+
+- A push is sent only when both its kind switch and its origin switch are on. All switches are on by default
+- For example, turn off "Sessions it starts" under Auto-run to keep an auto-run's own pushes and drop those from the reviewers it starts
+- A push from an auto-run or a schedule starts its title with a label such as "Auto-run · " or "Scheduled · ", and one from a session another session started adds "Child · ". Your own sessions have no label
+
 - The choices are saved on the server, so they apply to all your devices. Turning this device on or off affects this device only
 - Tapping a push opens that session in the Console
 - A session you are looking at in the Console on another device is not pushed. The Console reports what is on screen about every 20 seconds, and a report counts for 45 seconds
