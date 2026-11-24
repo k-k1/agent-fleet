@@ -416,6 +416,34 @@ func TestDeleteSpaceRefusesWhenTheEntryCannotBeListed(t *testing.T) {
 	}
 }
 
+// The sidecar this delete wrote itself and cut short: the one case the free-id check cannot
+// reach. The read-back refuses it, the space stays, and what the attempt wrote is removed.
+func TestDeleteSpaceRefusesASidecarItWroteCutShort(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Cut")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+	var drawn string
+	spaceAfterManifest = func(id string) {
+		drawn = id
+		if err := os.WriteFile(filepath.Join(cleanupStoreDir(), id+".json"), []byte(`{"id": "20261`), 0o600); err != nil {
+			t.Error(err)
+		}
+	}
+	t.Cleanup(func() { spaceAfterManifest = nil })
+
+	if got := errCodeOf(t, e.srv, "DELETE", "/spaces/"+sp.Folder, http.StatusInternalServerError); got != errCodeSpaceTrashFailed {
+		t.Errorf("code = %q, want %q", got, errCodeSpaceTrashFailed)
+	}
+	if b, _ := os.ReadFile(filepath.Join(sp.Dir, "f.md")); string(b) != "x" {
+		t.Fatal("the space was moved although no row could name it")
+	}
+	for _, ext := range []string{".json", ".tar.gz", ".space"} {
+		if _, err := os.Lstat(filepath.Join(cleanupStoreDir(), drawn+ext)); !os.IsNotExist(err) {
+			t.Errorf("%s was left behind: %v", ext, err)
+		}
+	}
+}
+
 // A folder already waiting in the trash under the id a new delete drew belongs to another entry
 // (whose tarball may be gone). The delete is refused, and the clean-up of its own files leaves that
 // folder alone: a purge-shaped clean-up used to remove it.
@@ -526,6 +554,26 @@ func TestDeleteSpaceLeavesAnExistingSidecarAlone(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(sp.Dir, "f.md")); string(b) != "x" {
 		t.Fatal("the space was moved")
+	}
+}
+
+// The space part of a restore checks the entry again under its own lock: a purge that wins after
+// the generic restore's check is refused too.
+func TestRestoreLosesToAPurgeThatWonAfterTheGenericCheck(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Later")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+	var out struct{ Archive string }
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+	spaceRestoreStart = func() {
+		do(t, e.srv, "DELETE", "/cleanup/archives/"+out.Archive, nil, http.StatusOK, nil)
+	}
+	t.Cleanup(func() { spaceRestoreStart = nil })
+	if code := httpStatus(t, e.srv, "POST", "/cleanup/archives/"+out.Archive+"/restore", nil); code < 400 {
+		t.Fatalf("restore after a purge that won = %d, want a refusal", code)
+	}
+	if _, err := os.Lstat(sp.Dir); !os.IsNotExist(err) {
+		t.Fatalf("a purged space came back: %v", err)
 	}
 }
 

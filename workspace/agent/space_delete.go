@@ -112,6 +112,10 @@ type deleteSpaceResponse struct {
 	Archive string `json:"archive"`
 }
 
+// spaceRestoreStart is a test seam where the space part of a restore begins, after the generic
+// restore's own check that the entry exists. Nil in production.
+var spaceRestoreStart func()
+
 // spaceBeforeMoveIn is a test seam inside a restore's lock, just before the folder moves back.
 // Nil in production.
 var spaceBeforeMoveIn func()
@@ -182,9 +186,11 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 	// trash (which would leave the files with nothing to name them).
 	var moveErr error
 	sessionx.WithCleanupLock(func() {
-		// An id none of whose files exists yet, checked under the lock every writer of this
-		// directory takes: whatever is found under it afterwards is this attempt's own, and a
-		// clean-up of a failed attempt removes nothing that was there before.
+		// An id none of whose files exists yet, checked under the lock that space deletes and
+		// purges take (the other archive writers claim their id with O_EXCL on the tarball
+		// instead, and their ids have another shape, so they cannot draw this one): whatever is
+		// found under it afterwards is this attempt's own, and a clean-up of a failed attempt
+		// removes nothing that was there before.
 		for attempt := 0; man.ID == "" && attempt < 4; attempt++ {
 			if id := newSpaceArchiveID(now, folder); entryIDFree(id) {
 				man.ID = id
@@ -198,6 +204,9 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 			moveErr = fmt.Errorf("could not record the space in the trash, so it was left as it is: %w", err)
 			return
 		}
+		if spaceAfterManifest != nil {
+			spaceAfterManifest(man.ID)
+		}
 		// The list reads the sidecar alone; one that could not be written (missing, or cut short)
 		// would hide a row whose folder is in the trash. Refused here, with nothing moved, rather
 		// than found out later.
@@ -205,9 +214,6 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 			removeOwnEntry(man.ID)
 			moveErr = errors.New("could not list the space in the trash, so it was left as it is")
 			return
-		}
-		if spaceAfterManifest != nil {
-			spaceAfterManifest(man.ID)
 		}
 		if err := spacex.MoveOut(folder, spaceTrashDir(man.ID)); err != nil {
 			// Only the files this attempt wrote go, never a .space directory: none of ours exists.
@@ -267,6 +273,9 @@ func restoreDeletedSpace(id string, t spaceTombstone) error {
 		return &restoreConflict{errCodeSpaceRestoreMissing, "the trash entry names no space folder"}
 	}
 	src := spaceTrashDir(id)
+	if spaceRestoreStart != nil {
+		spaceRestoreStart()
+	}
 	var err error
 	sessionx.WithDeletionGate(func() {
 		if gitx.UnderDeletion(filepath.Join(spacex.Root(), t.Folder)) {
