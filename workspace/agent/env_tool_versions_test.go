@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -153,8 +154,31 @@ func TestCollectToolVersions(t *testing.T) {
 		if r.Name != toolSpecs[i].Name {
 			t.Errorf("row %d name = %q, want %q", i, r.Name, toolSpecs[i].Name)
 		}
+		if r.Title != toolSpecs[i].Title || r.URL != toolSpecs[i].URL {
+			t.Errorf("row %s title/url = %q/%q, want %q/%q", r.Name, r.Title, r.URL, toolSpecs[i].Title, toolSpecs[i].URL)
+		}
 		t.Logf("%-8s pin=%-8s eff=%v baked=%v local=%v overridden=%v",
 			r.Name, r.Pin, binStr(r.Effective), binStr(r.Baked), binStr(r.UserLocal), r.Overridden)
+	}
+}
+
+// The Console reads `title` and `url` off the JSON: a renamed tag or a dropped assignment
+// would silently fall back to key-only rows, so pin the serialized keys and omitempty.
+func TestToolReportJSONTitleURL(t *testing.T) {
+	b, err := json.Marshal(toolReport{Name: "gh", Title: "GitHub CLI", URL: "https://github.com/cli/cli"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["name"] != "gh" || m["title"] != "GitHub CLI" || m["url"] != "https://github.com/cli/cli" {
+		t.Errorf("wire = %s", b)
+	}
+	b, _ = json.Marshal(toolReport{Name: "gh"})
+	if strings.Contains(string(b), `"title"`) || strings.Contains(string(b), `"url"`) {
+		t.Errorf("empty title/url must be omitted: %s", b)
 	}
 }
 
