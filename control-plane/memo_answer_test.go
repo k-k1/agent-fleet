@@ -846,14 +846,6 @@ func tickEndsOnFirstCall(t *testing.T, calls <-chan string) (context.Context, co
 	return ctx, cancel
 }
 
-// shortRetryWait shortens the wait on a member the PR pass could not reach, which a silent
-// Agent makes the answer pass sit out in full.
-func shortRetryWait(t *testing.T) {
-	saved := memoAnswerRetryWait
-	memoAnswerRetryWait = 200 * time.Millisecond
-	t.Cleanup(func() { memoAnswerRetryWait = saved })
-}
-
 // fastStartPoll shortens the pause between two rounds of the poll for started members.
 func fastStartPoll(t *testing.T) {
 	saved := memoStartPollEvery
@@ -865,11 +857,10 @@ func fastStartPoll(t *testing.T) {
 // healthy member's history-only row is read before the silent member's Agent is asked a second
 // time, and the retry is made afterwards.
 func TestMemoAnswerPRFailedRetryDoesNotDelayOthers(t *testing.T) {
-	shortRetryWait(t)
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		_, q, _, _ := e.noPRChain(now.Add(-time.Hour))
-		calls := e.silentMember()
+		calls := e.downMember()                                   // 502 at once
 		e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), "") // c: a waited-for row
 		b := e.queueAgentFor("b", "running")
 		bRow := e.otherMemberChains(q, "b", 1, now.Add(-30*time.Second), store.PRStateNone)[0]
@@ -1278,7 +1269,6 @@ func TestMemoAnswerNotStarvedByThePRPass(t *testing.T) {
 // costs the answer pass at most memoAnswerRetryWait: the rows behind it are read, and its row is
 // stamped as an Agent's that does not answer is.
 func TestMemoAnswerPRFailedMemberRetriedBriefly(t *testing.T) {
-	shortRetryWait(t)
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
@@ -1307,6 +1297,9 @@ func TestMemoAnswerPRFailedMemberRetriedBriefly(t *testing.T) {
 		r.collectAnswers(actx, views, now)
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
 			t.Fatalf("the member behind the silent one: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+		if len(calls) == 0 {
+			t.Fatal("the silent member was never asked again, so the retry was not reached")
 		}
 		if got := e.delivery(silent); got.AnswerTriedAt == "" {
 			t.Fatal("the silent member's row was not stamped")
@@ -1366,7 +1359,7 @@ func TestMemoAnswerWindowAfterALockWait(t *testing.T) {
 		_, _, da, _ := e.noPRChain(time.Now().Add(-time.Minute))
 		ctx := context.Background()
 		db := e.st.DB()
-		edge := time.Now().Add(2 * time.Second) // room for the writer to reach the wait (a statement away)
+		edge := time.Now().Add(5 * time.Second) // room for the writer to reach the wait on a loaded host
 		if _, err := db.ExecContext(ctx, `UPDATE memo_delivery SET closed_at=? WHERE id=?`,
 			store.DeliveryTS(edge.Add(-memoAnswerWindow)), da.ID); err != nil {
 			t.Fatal(err)
