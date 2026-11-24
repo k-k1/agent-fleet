@@ -110,24 +110,105 @@ func TestAnswerTurnsDropsEditBodies(t *testing.T) {
 }
 
 // What the read concludes from a slim turn is what it concludes from the full one: a blank run in
-// front of the answer is not kept as the answer, a blank part stays blank, a part cut mid-rune
-// stays valid, and thinking and error parts keep their kind alone.
+// front of the answer is not kept as the answer, blank parts leave the turn without an answer, the
+// head is the first line without the whitespace around it, the part kinds that end a response and
+// an error anywhere in the turn survive, and the ids and times travel as they are.
 func TestSlimTurnsKeepsWhatTheReadDecidesOn(t *testing.T) {
 	long := strings.Repeat("\n", answerTextMax*2) + "Partial: still blocked"
+	spaced := "Done:" + strings.Repeat(" ", 2*answerTextMax) + "details"
+	text := func(s string) transcript.Part { return transcript.Part{Kind: "text", Text: s} }
+	kinds := func(parts []answerPart) string {
+		var k []string
+		for _, p := range parts {
+			k = append(k, p.Kind)
+		}
+		return strings.Join(k, ",")
+	}
 	got := slimTurns([]transcript.Turn{
-		{Role: "assistant", Parts: []transcript.Part{{Kind: "text", Text: long}}},
-		{Role: "assistant", Parts: []transcript.Part{{Kind: "text", Text: strings.Repeat(" \n", answerTextMax)}}},
+		{Role: "assistant", Parts: []transcript.Part{text(long)}},
+		{Role: "assistant", Parts: []transcript.Part{text(strings.Repeat(" \n", answerTextMax)), {Kind: "thinking", Text: "hmm"}}},
 		{Role: "assistant", Text: long},
 		{Role: "assistant", Parts: []transcript.Part{{Kind: "thinking", Text: "hmm"}, {Kind: "error", Text: "boom"}}},
+		{Role: "assistant", Parts: []transcript.Part{text(spaced)}},
+		// Ended on a tool call: the text before it is not the answer.
+		{Role: "assistant", Parts: []transcript.Part{text("Done: early"), {Kind: "tool", Tool: "Bash"}, text("  "), {Kind: "thinking"}}},
+		// An error in the middle of a turn that went on to an answer.
+		{Role: "assistant", Parts: []transcript.Part{{Kind: "error"}, {Kind: "tool"}, text("a"), text(""), text("b")}},
+		{Role: "user", Sidechain: true, TS: "2026-11-05T10:00:00Z", AnchorID: "msg_1", Parts: []transcript.Part{text("x")}},
 	})
 	if got[0].Parts[0].Text != "Partial: still blocked" || got[2].Text != "Partial: still blocked" {
 		t.Errorf("blank run kept: %q / %q", got[0].Parts[0].Text, got[2].Text)
 	}
-	if got[1].Parts[0].Text != "" {
-		t.Errorf("a blank part became %q", got[1].Parts[0].Text)
+	if len(got[1].Parts) != 0 || got[1].Text != "" {
+		t.Errorf("a blank turn became %+v", got[1])
 	}
-	if got[3].Parts[0].Text != "" || got[3].Parts[1].Text != "" || got[3].Parts[1].Kind != "error" {
-		t.Errorf("thinking/error parts = %+v", got[3].Parts)
+	if kinds(got[3].Parts) != "error" || got[3].Parts[0].Text != "" {
+		t.Errorf("thinking/error turn = %+v", got[3].Parts)
+	}
+	if got[4].Parts[0].Text != "Done:"+strings.Repeat(" ", answerTextMax-len("Done:")) && got[4].Parts[0].Text != "Done:" {
+		t.Errorf("head = %q", got[4].Parts[0].Text)
+	}
+	if kinds(got[5].Parts) != "tool" || got[5].Parts[0].Text != "" {
+		t.Errorf("tool-ended turn = %+v", got[5].Parts)
+	}
+	if kinds(got[6].Parts) != "error,tool,text" || got[6].Parts[2].Text != "a" {
+		t.Errorf("mixed turn = %+v", got[6].Parts)
+	}
+	if u := got[7]; !u.Sidechain || u.TS != "2026-11-05T10:00:00Z" || u.AnchorID != "msg_1" {
+		t.Errorf("wire fields lost: %+v", u)
+	}
+}
+
+// A turn's slim size does not depend on how many parts it holds: 30 parts of 1 KiB, 5000 thinking
+// parts and a megabyte of text all come out as a few hundred bytes, so a page of 50 lines is far
+// under the Control Plane's reply bound whatever the transcript holds.
+func TestSlimTurnsAreBounded(t *testing.T) {
+	var parts []transcript.Part
+	for i := 0; i < 5000; i++ {
+		parts = append(parts, transcript.Part{Kind: "text", Text: strings.Repeat("<", 1024)}, transcript.Part{Kind: "thinking", Text: "t"})
+	}
+	parts = append(parts, transcript.Part{Kind: "tool", Tool: "Bash"}, transcript.Part{Kind: "text", Text: "Done: fixed\n" + strings.Repeat("x", 1<<20)})
+	b, err := json.Marshal(slimTurns([]transcript.Turn{{Role: "assistant", Parts: parts}}))
+	if err != nil || len(b) > 8<<10 {
+		t.Fatalf("slim turn is %d bytes (%v)", len(b), err)
+	}
+	if !strings.Contains(string(b), "Done: fixed") {
+		t.Fatalf("the answer's head is gone: %.200s", b)
+	}
+}
+
+// The fields the pin decides on come through the route's own wire (ts, anchorId, sidechain, the
+// error kind), not only through slimTurns.
+func TestAnswerTurnsWireCarriesThePinFields(t *testing.T) {
+	name := claudeLog(t, "answer_turns_wire", []string{
+		claudeUser(0, "go"),
+		claudeAssistant(1, "Done: run"),
+	})
+	_, body := getAnswerTurns(t, name, "limit=50")
+	var reply struct {
+		Messages []struct {
+			Role string `json:"role"`
+			TS   string `json:"ts"`
+			// anchorId is the kind's own id; claude writes its uuid.
+			AnchorID string `json:"anchorId"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(body, &reply); err != nil || len(reply.Messages) != 2 {
+		t.Fatalf("%v: %.300s", err, body)
+	}
+	for _, m := range reply.Messages {
+		if m.TS != "2026-11-05T10:00:00Z" && m.TS != "2026-11-05T10:00:01Z" {
+			t.Errorf("%s turn ts = %q", m.Role, m.TS)
+		}
+	}
+	// A generic-path kind carries anchorId and sidechain from its own turns.
+	t.Setenv("HOME", t.TempDir())
+	t.Cleanup(agentreg.SwapForTest(session.KindMuse, fakeTurnsAgent{n: 3, anchor: true}))
+	session.WriteMeta(session.Meta{Name: "answer-turns-wire-g", Dir: t.TempDir(), Kind: session.KindMuse, Driver: session.DriverManaged})
+	_, body = getAnswerTurns(t, "answer-turns-wire-g", "limit=50")
+	s := string(body)
+	if !strings.Contains(s, `"anchorId":"id1"`) || !strings.Contains(s, `"sidechain":true`) || !strings.Contains(s, `"ts":"2026-11-05T10:00:02Z"`) {
+		t.Fatalf("pin fields lost on the wire: %.600s", s)
 	}
 }
 
@@ -155,6 +236,9 @@ func pageAll(t *testing.T, name string, limit int) (texts []string, firsts []int
 		firsts = append(firsts, reply.FirstLine)
 		if !reply.HasMore {
 			return texts, firsts
+		}
+		if reply.FirstLine <= 0 || len(firsts) > 1000 || (len(firsts) > 1 && reply.FirstLine >= firsts[len(firsts)-2]) {
+			t.Fatalf("firstLine %v does not move back to a positive line: a page repeats", firsts)
 		}
 		query = "limit=" + strconv.Itoa(limit) + "&before=" + strconv.Itoa(reply.FirstLine)
 	}
@@ -206,6 +290,8 @@ func TestAnswerTurnsPagesBackWithoutAGap(t *testing.T) {
 type fakeTurnsAgent struct {
 	agents.Agent
 	n int
+	// anchor gives each turn an anchor id, a time and (the last one) the sidechain mark.
+	anchor bool
 }
 
 func (fakeTurnsAgent) Kind() string { return session.KindMuse }
@@ -225,6 +311,11 @@ func (a fakeTurnsAgent) Transcript(session.Meta) (agents.TranscriptData, bool) {
 			role = "user"
 		}
 		turns[i] = transcript.Turn{Role: role, Idx: i, Parts: []transcript.Part{{Kind: "text", Text: "m" + strconv.Itoa(i)}}}
+		if a.anchor {
+			turns[i].AnchorID = "id" + strconv.Itoa(i)
+			turns[i].TS = fmt.Sprintf("2026-11-05T10:00:%02dZ", i)
+			turns[i].Sidechain = i == a.n-1
+		}
 	}
 	return agents.TranscriptData{Turns: turns}, true
 }

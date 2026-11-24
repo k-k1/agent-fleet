@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
@@ -46,13 +45,20 @@ type answerTurnsReply struct {
 	HasMore   bool         `json:"hasMore"`
 }
 
-// headOf is what the answer read takes from s: the text without its leading whitespace (a part
-// that is blank stays blank, so the read passes over it as it does over the full text), cut to at
-// most answerTextMax bytes on a rune boundary. Cutting without the trim would turn a "Partial:"
-// that follows a long run of blank lines into a blank part, and the read would then take an
+// headOf is what the answer read takes from s: its first line that holds anything, without the
+// whitespace around it, cut to at most answerTextMax bytes on a rune boundary. That line is all
+// memoafter.ClassifyAnswer uses (it keeps the first 200 runes of it), so the head, the class and
+// the "blank or not" of the part are those of the full text. Cutting the text itself would turn a
+// "Partial:" that follows a long run of blank lines into a blank part, and the read would take an
 // earlier "Done:" for the last answer.
 func headOf(s string) string {
-	s = strings.TrimLeftFunc(s, unicode.IsSpace)
+	for _, line := range strings.Split(s, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			s = line
+			break
+		}
+	}
+	s = strings.TrimSpace(s)
 	if len(s) <= answerTextMax {
 		return s
 	}
@@ -63,22 +69,55 @@ func headOf(s string) string {
 	return s[:n]
 }
 
-// slimTurns drops what an answer read never looks at. Only text parts keep a body (its head); every
-// other part, thinking and error included, keeps its kind alone, since the read tells a response
-// that ended on a tool call or an error from one that ended on text by the kind of the last part.
+// slimParts is a turn's parts as the answer read uses them (memoafter.LastAnswer, hasError), in
+// at most three parts whatever the turn holds: an error part when the turn has any, the kind of
+// the last part that is neither thinking nor a blank text (a response that ended on a tool call or
+// a question has no answer), and the run of text parts after it joined into one part, holding its
+// head. A turn with nothing but thinking and blank text has no parts: the read passes over it.
+func slimParts(parts []transcript.Part) []answerPart {
+	var out []answerPart
+	for _, p := range parts {
+		if p.Kind == "error" {
+			out = append(out, answerPart{Kind: "error"})
+			break
+		}
+	}
+	var texts []string
+	for i := len(parts) - 1; i >= 0; i-- {
+		p := parts[i]
+		if p.Kind == "thinking" || (p.Kind == "text" && strings.TrimSpace(p.Text) == "") {
+			continue
+		}
+		if p.Kind != "text" {
+			if p.Kind != "error" || len(out) == 0 {
+				out = append(out, answerPart{Kind: p.Kind})
+			}
+			break
+		}
+		texts = append(texts, p.Text)
+	}
+	if len(texts) > 0 {
+		for l, r := 0, len(texts)-1; l < r; l, r = l+1, r-1 {
+			texts[l], texts[r] = texts[r], texts[l]
+		}
+		// The error and the break kind above come first, the text run last, as the parts of the
+		// turn read: the run is what follows its last other part.
+		out = append(out, answerPart{Kind: "text", Text: headOf(strings.Join(texts, "\n"))})
+	}
+	return out
+}
+
+// slimTurns drops what an answer read never looks at: a turn is its role, its time, its ids and
+// slimParts. The size of a turn is bounded (three parts, 1 KiB of text), so a page of n lines is
+// bounded by n whatever the transcript holds.
 func slimTurns(turns []transcript.Turn) []answerTurn {
 	out := make([]answerTurn, 0, len(turns))
 	for _, t := range turns {
 		s := answerTurn{Role: t.Role, Sidechain: t.Sidechain, TS: t.TS, AnchorID: t.AnchorID, Parts: []answerPart{}}
 		if len(t.Parts) == 0 {
 			s.Text = headOf(t.Text) // a turn with no parts is read from its text
-		}
-		for _, p := range t.Parts {
-			sp := answerPart{Kind: p.Kind}
-			if p.Kind == "text" {
-				sp.Text = headOf(p.Text)
-			}
-			s.Parts = append(s.Parts, sp)
+		} else {
+			s.Parts = slimParts(t.Parts)
 		}
 		out = append(out, s)
 	}

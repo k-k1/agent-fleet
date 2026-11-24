@@ -2018,6 +2018,44 @@ func TestMemoAnswerPinLaterTurnWithoutInput(t *testing.T) {
 	})
 }
 
+// The pin is applied to what the slim route sends: an error the kind stored (it carries an id and
+// its own time) after the pin is passed over, so the run's Done: stands; one the Agent made up (no
+// id) is the run's own last turn, so the run has no answer and nothing is kept as Done:.
+func TestMemoAnswerPinnedThroughTheSlimRoute(t *testing.T) {
+	for _, tc := range []struct {
+		name, anchor, want string
+	}{{"stored error", "msg_4", store.AnswerDone}, {"synthetic error", "", store.AnswerUnknown}} {
+		t.Run(tc.name, func(t *testing.T) {
+			eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+				now := time.Now()
+				end := now.Add(-10 * time.Minute).Truncate(time.Second)
+				agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+				agent.setSlim(true)
+				e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+				ts := func(d time.Duration) string { return end.Add(d).UTC().Format(time.RFC3339Nano) }
+				errTurn := map[string]any{"role": "assistant", "ts": ts(4 * time.Minute), "parts": []map[string]any{{"kind": "error"}}}
+				if tc.anchor != "" {
+					errTurn["anchorId"] = tc.anchor
+				}
+				agent.setAnswer("q-a", func() (int, any) {
+					return http.StatusOK, map[string]any{"name": "q-a", "status": "stopped", "firstLine": 0, "hasMore": false, "messages": []map[string]any{
+						{"role": "user", "ts": ts(-time.Hour), "anchorId": "msg_1", "parts": []map[string]any{{"kind": "text", "text": "the task"}}},
+						{"role": "assistant", "ts": ts(-time.Second), "anchorId": "msg_2", "parts": []map[string]any{{"kind": "text", "text": "Done: the run"}}},
+						errTurn,
+					}}
+				})
+				e.settleNow(now)
+				if routes := agent.routesSoFar(); len(routes) == 0 || routes[0] != "/answer-turns" {
+					t.Fatalf("routes %v", routes)
+				}
+				if got := e.delivery(da.ID); got.AnswerClass != tc.want {
+					t.Fatalf("kept %q %q, want %q", got.AnswerHead, got.AnswerClass, tc.want)
+				}
+			})
+		})
+	}
+}
+
 // gatedRuntime answers "running" once release is closed.
 type gatedRuntime struct {
 	stubRuntime
