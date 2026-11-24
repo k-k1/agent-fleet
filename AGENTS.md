@@ -147,6 +147,13 @@ Locally on this shared host it is far slower and depends on the load: the #3523
 baseline measured 4772 s (79.5 min), and the full local run has not been re-measured since. Run
 it once, in the background, with `go test -p 2 -timeout 150m .` and poll the output file.
 
+After #5124 parts 1-3 the whole memo family (`go test -count=1 -run TestMemo .`, SQLite, no `-race`)
+takes about 95 s wall clock on this shared host (measured 2026-11-25, `-p` default). The root package's
+total is not re-measured here; CI's figure above is the one to compare against, and the next
+`ci.yml` run on `main` after #5124 is where its drop shows. The claim's "which rows, in what order,
+within which budget" choice is the pure `memoPickBatch` (`control-plane/memo_pick.go`, table-tested
+in `memo_pick_test.go`), so ordering and batch-size cases need no database or clock.
+
 The memo queue's answer / delivery / PR-snapshot tests (`go test -run 'TestMemoAnswer|TestMemoDelivery|TestMemoPRSnapshot'`,
 SQLite) run on virtual time: `eachDeliveryDialect` runs the SQLite side in a `testing/synctest` bubble and
 the fake Agent is an in-memory `http.RoundTripper` (`memo_inmem_agent_test.go`). Measured with

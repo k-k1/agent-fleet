@@ -146,6 +146,7 @@ memo_continuation.go
 memo_defer.go
 memo_delivery.go
 memo_dispatch.go
+memo_pick.go
 memo_queue.go
 memo_queue_repo.go
 memo_tidy.go

@@ -18,6 +18,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/memorecipe"
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -1781,6 +1782,55 @@ func TestMemoDeliverySettleKeepsItsDeadline(t *testing.T) {
 		release()
 		if got := e.delivery(d.ID); got.State != store.DeliveryClaimed {
 			t.Fatalf("a write that timed out decided %+v", got)
+		}
+	})
+}
+
+// Holds the pick asks for before a refusal are all written, in the claim's own transaction, and
+// the refusal claims nothing: the sendable message ahead of the refusal stays pending and the
+// rows behind it are untouched.
+func TestMemoDeliveryClaimKeepsEveryHoldBeforeARefusal(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"batch": 3})
+		// edit rewrites a column of a stored message together with its release copy (a CHECK ties a
+		// pending row's release to its content) and re-signs the release for the new content.
+		edit := func(m memoDTO, col, val string) {
+			t.Helper()
+			ctx := context.Background()
+			if _, err := e.st.DB().ExecContext(ctx, `UPDATE memo SET `+col+`=?, release_`+col+`=? WHERE id=?`, val, val, m.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := e.st.DB().ExecContext(ctx, `UPDATE memo SET release_hash=? WHERE id=?`, memoContentHash(e.memoRow(m.ID)), m.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		badRecipe := e.pending("app", "impl", "bad recipe")
+		edit(badRecipe, "recipe", memorecipe.Recipe{AgentKind: "no-such-kind"}.Encode())
+		ok := e.pending("app", "impl", "fine")
+		stale := e.pending("app", "impl", "stale release")
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET release_hash='not-this-content' WHERE id=?`, stale.ID); err != nil {
+			t.Fatal(err)
+		}
+		unsendable := e.pending("app", "impl", "too big")
+		edit(unsendable, "body", strings.Repeat("x", memoDeliveryItemBodyMax+1))
+		behind := e.pending("app", "impl", "behind")
+
+		rec := e.fire(q)
+		if rec.Code != http.StatusConflict || deliveryErrCode(t, rec) != errCodeMemoQueueItemInvalid {
+			t.Fatalf("fire: %d %s", rec.Code, rec.Body.String())
+		}
+		for _, h := range []memoDTO{badRecipe, stale} {
+			if got := e.memoRow(h.ID); got.State != store.MemoStateHeld || got.ReleaseHash != "" || got.DeliveryID != "" {
+				t.Fatalf("%s should be held and unclaimed: %+v", h.ID, got)
+			}
+		}
+		if got := e.memoRow(badRecipe.ID); !strings.Contains(got.HeldReason, "recipe_invalid") {
+			t.Fatalf("recipe hold reason %q", got.HeldReason)
+		}
+		for _, p := range []memoDTO{ok, unsendable, behind} {
+			if got := e.memoRow(p.ID); got.State != store.MemoStatePending || got.DeliveryID != "" || got.ReleaseHash == "" {
+				t.Fatalf("%s should be untouched: %+v", p.ID, got)
+			}
 		}
 	})
 }
