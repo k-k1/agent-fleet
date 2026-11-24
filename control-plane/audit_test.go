@@ -70,6 +70,9 @@ func TestAuditActionTarget(t *testing.T) {
 		{"POST", "/api/spaces", "", "space.create", "", true},
 		{"PATCH", "/api/spaces/q3-abc123", "", "space.rename", "q3-abc123", true},
 		{"PATCH", "/api/spaces/Not-A-Folder", "", "space.rename", "", true},
+		// The Agent's folder names are at most 48 characters; a longer one is no target.
+		{"PATCH", "/api/spaces/" + strings.Repeat("a", 48), "", "space.rename", strings.Repeat("a", 48), true},
+		{"PATCH", "/api/spaces/" + strings.Repeat("a", 49), "", "space.rename", "", true},
 		{"GET", "/api/spaces", "", "", "", false},
 		{"GET", "/api/aws-login", "", "", "", false},
 		// ADR 0107 decision 3: the presses, the cancel and the code; the code route names the

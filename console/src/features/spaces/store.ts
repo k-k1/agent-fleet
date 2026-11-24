@@ -102,16 +102,24 @@ export function failuresFor(st: { failures: number; failOwner: string }, owner: 
   return st.failOwner === owner ? st.failures : 0;
 }
 
-/** Rename a space's display name (the folder never changes). Resolves to the server's error, or
- *  null once the name is stored; the list is then read again, so every view names the space the
- *  new way and a space another tab removed drops out. */
-export async function renameSpace(folder: string, name: string): Promise<{ error?: unknown } | null> {
-  const owner = spacesOwner();
+/** What renameSpace answers: the server's error, or `stale` when the workspace changed under the
+ *  dialog (nothing was sent, or the answer belongs to a workspace no longer on screen). */
+export type RenameResult = { error?: unknown; stale?: boolean } | null;
+
+/** Rename a space's display name (the folder never changes) in the workspace `owner`, which is
+ *  the one the dialog was opened in: a form left open across a tenant or member switch must not
+ *  send its folder name to the new workspace, where the same folder may be another space. Null
+ *  once the name is stored; the list is then read again, so every view names the space the new
+ *  way and a space another tab removed drops out. */
+export async function renameSpace(folder: string, name: string, owner: string): Promise<RenameResult> {
+  if (spacesOwner() !== owner) return { stale: true };
   const d = await apiJSON(`api/spaces/${encodeURIComponent(folder)}`, "PATCH", { name });
+  // The answer to a request made in a workspace that is no longer the one on screen says
+  // nothing about this one: no toast, no list.
+  if (spacesOwner() !== owner) return { stale: true };
   if (d?.error) return { error: d.error };
-  // Show the new name at once; the answer to the refresh below replaces the list anyway. A switch
-  // of workspace while the request ran leaves the (other owner's) list alone.
-  if (spacesOwner() === owner && d?.space) {
+  // Show the new name at once; the answer to the refresh below replaces the list anyway.
+  if (d?.space) {
     useSpacesStore.setState((s) =>
       s.owner === owner ? { spaces: s.spaces.map((x) => (x.folder === folder ? { ...x, name: d.space.name ?? name } : x)) } : s,
     );

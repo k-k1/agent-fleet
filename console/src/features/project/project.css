@@ -406,8 +406,13 @@
   font-size: 12px;
 }
 .space-group-row:hover .space-group-rename,
+.space-group-row:focus-within .space-group-rename,
 .space-group-rename:focus-visible {
   opacity: 1;
+}
+.space-group-row .space-group-rename:disabled {
+  cursor: default;
+  opacity: 0;
 }
 .space-group-rename:hover {
   color: var(--text);

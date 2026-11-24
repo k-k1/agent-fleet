@@ -14,20 +14,47 @@ import type { Space } from "./store.ts";
 /** Mirrors spacex.NameMaxRunes on the Agent. */
 export const SPACE_NAME_MAX = 100;
 
-export function SpaceRenameModal({ space, onClose }: { space: Pick<Space, "folder" | "name">; onClose: () => void }) {
+/** `owner` is the workspace the dialog was opened in (spacesOwner() then): the rename is only sent
+ *  to it, and the dialog is closed by its parent when the workspace changes. */
+// The Agent's refusals, worded here: their codes (bad_name, ...) are shared with other routes, so
+// they are not put in the global err.* table.
+const RENAME_ERRORS: Record<string, "pj.space_rename_bad_name" | "pj.space_rename_gone" | "pj.space_rename_changed"> = {
+  bad_name: "pj.space_rename_bad_name",
+  space_not_found: "pj.space_rename_gone",
+  space_changed: "pj.space_rename_changed",
+};
+
+export function SpaceRenameModal({
+  space,
+  owner,
+  onClose,
+}: {
+  space: Pick<Space, "folder" | "name">;
+  owner: string;
+  onClose: () => void;
+}) {
   const tr = useT();
   const toast = useToast();
   const [value, setValue] = useState(space.name);
   const [saving, setSaving] = useState(false);
+  // The Agent counts characters (code points), not UTF-16 units, so a name of 100 characters with
+  // astral ones is as valid as one without; an HTML maxLength would cut it.
+  const tooLong = [...value.trim()].length > SPACE_NAME_MAX;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    if (saving) return;
+    if (saving || tooLong) return;
     setSaving(true);
     try {
-      const res = await renameSpace(space.folder, value.trim());
+      const res = await renameSpace(space.folder, value.trim(), owner);
+      if (res?.stale) {
+        onClose();
+        return;
+      }
       if (res?.error) {
-        toast(errText(res.error as Parameters<typeof errText>[0]));
+        const err = res.error as Parameters<typeof errText>[0];
+        const key = err && typeof err === "object" && err.code ? RENAME_ERRORS[err.code] : undefined;
+        toast(key ? tr(key) : errText(err));
         return;
       }
       onClose();
@@ -49,17 +76,21 @@ export function SpaceRenameModal({ space, onClose }: { space: Pick<Space, "folde
             onChange={(e) => setValue(e.target.value)}
             onFocus={(e) => e.target.select()}
             placeholder={space.folder}
-            maxLength={SPACE_NAME_MAX}
-            autoFocus
+            // The dialog's focus trap focuses this and remembers the pencil that opened it, so
+            // Esc and Save put the focus back there (a React autoFocus would take its place).
+            data-autofocus
+            aria-invalid={tooLong || undefined}
           />
-          <span className="ui-field-hint">{tr("pj.space_rename_hint", { folder: space.folder })}</span>
+          <span className="ui-field-hint">
+            {tooLong ? tr("pj.space_rename_too_long", { max: SPACE_NAME_MAX }) : tr("pj.space_rename_hint", { folder: space.folder })}
+          </span>
         </label>
       </div>
       <footer className="ui-modal-foot">
         <Button variant="ghost" onClick={onClose} disabled={saving}>
           {tr("sx.cancel")}
         </Button>
-        <Button variant="primary" type="submit" disabled={saving}>
+        <Button variant="primary" type="submit" disabled={saving || tooLong}>
           {tr("sx.save")}
         </Button>
       </footer>

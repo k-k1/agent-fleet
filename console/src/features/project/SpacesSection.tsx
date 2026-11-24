@@ -16,7 +16,7 @@ import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useRefIndex } from "../sessions/useRefIndex.ts";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
-import { spaceLabel } from "../spaces/store.ts";
+import { spaceLabel, spacesOwner } from "../spaces/store.ts";
 import { SpaceRenameModal } from "../spaces/SpaceRenameModal.tsx";
 import { useSpaceNames } from "../spaces/useSpaceNames.ts";
 import { TerminalChip } from "../terminals/TerminalChip.tsx";
@@ -33,8 +33,11 @@ export const SpacesSection = memo(function SpacesSection() {
   const nq = normQuery(useProjectFilter((f) => f.q));
   const refs = useRefIndex();
   const rail = useRailRoving();
-  // The folder whose rename dialog is open; the name is read when it opens, from the list.
-  const [renaming, setRenaming] = useState<string | null>(null);
+  // The rename dialog that is open: the space, and the workspace it was opened in. A dialog of
+  // another workspace is not shown (it would send its folder to this one), so a tenant or member
+  // switch closes it.
+  const [renaming, setRenaming] = useState<{ folder: string; owner: string } | null>(null);
+  const owner = spacesOwner();
   // A space session is repo-less, so a working set holds it by direct assignment only. The
   // search box matches a session's own text or the name its space is shown under.
   const wset = useActiveWorkingSet();
@@ -94,11 +97,14 @@ export const SpacesSection = memo(function SpacesSection() {
                 <button
                   type="button"
                   className="space-group-rename"
+                  // Until the list names the space, the dialog would open on an empty name and
+                  // saving it would clear the real one.
+                  disabled={!spaces.some((x) => x.folder === g.folder)}
                   title={tr("pj.space_rename")}
                   aria-label={tr("pj.space_rename_aria", { name: g.label })}
                   onClick={(e) => {
                     e.stopPropagation();
-                    setRenaming(g.folder);
+                    setRenaming({ folder: g.folder, owner });
                   }}
                   onKeyDown={(e) => e.stopPropagation()}
                 >
@@ -124,9 +130,10 @@ export const SpacesSection = memo(function SpacesSection() {
           </li>
         ))}
       </ul>
-      {renaming !== null && (
+      {renaming !== null && renaming.owner === owner && (
         <SpaceRenameModal
-          space={{ folder: renaming, name: spaces.find((x) => x.folder === renaming)?.name ?? "" }}
+          space={{ folder: renaming.folder, name: spaces.find((x) => x.folder === renaming.folder)?.name ?? "" }}
+          owner={renaming.owner}
           onClose={() => setRenaming(null)}
         />
       )}

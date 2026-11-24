@@ -253,7 +253,11 @@ describe("Spaces section", () => {
       await render();
       const btn = host.querySelector<HTMLButtonElement>(".space-group-rename");
       expect(btn).not.toBeNull();
-      await act(async () => btn!.click());
+      // A real click focuses the button first; jsdom's click() does not.
+      await act(async () => {
+        btn!.focus();
+        btn!.click();
+      });
     };
     const dialog = () => document.querySelector<HTMLElement>(".ui-modal, [role=dialog]");
     const input = () => document.querySelector<HTMLInputElement>("input[type=text]")!;
@@ -307,6 +311,88 @@ describe("Spaces section", () => {
       expect(dialog()).not.toBeNull();
       expect(input().value).toBe("x");
       expect(heads()).toEqual(["Q3 report"]);
+    });
+
+    it("keeps the pencil off until the list names the space, so an unknown name is never saved as empty", async () => {
+      let answer: (v: unknown) => void = () => {};
+      spacesAnswer = () => new Promise((r) => (answer = r));
+      useSessionsStore.setState({ sessions: [inSpace("s1", "q3-abcdef")] });
+      await render();
+      const btn = () => host.querySelector<HTMLButtonElement>(".space-group-rename")!;
+      expect(btn().disabled).toBe(true);
+      await act(async () => btn().click());
+      expect(dialog()).toBeNull();
+      await act(async () => answer(LIST));
+      await flush();
+      expect(btn().disabled).toBe(false);
+      await act(async () => btn().click());
+      expect(input().value).toBe("Q3 report");
+    });
+
+    it("closes a dialog left open across a workspace switch, and sends nothing to the new one", async () => {
+      await open();
+      expect(dialog()).not.toBeNull();
+      await type("Renamed");
+      tenant = "other";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+      });
+      await flush();
+      expect(dialog()).toBeNull();
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("drops the answer of a rename that was in flight when the workspace changed", async () => {
+      let answer: (v: unknown) => void = () => {};
+      patchAnswer = () => new Promise((r) => (answer = r));
+      await open();
+      await type("Renamed");
+      const listCalls = spaceCalls();
+      await act(async () => {
+        input().form!.requestSubmit();
+      });
+      tenant = "other";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+        answer({ error: { code: "space_not_found", message: "no such space" } });
+      });
+      await flush();
+      // No refusal about the old workspace's folder is shown in the new one, and its list is not read for it.
+      expect(document.body.textContent).not.toContain("This space no longer exists");
+      expect(document.body.textContent).not.toContain("no such space");
+      expect(spaceCalls() - listCalls).toBeLessThanOrEqual(1);
+    });
+
+    it("counts characters, not UTF-16 units: 100 astral characters fit, 101 do not", async () => {
+      patchAnswer = (folder, body) => ({ space: { ...LIST.spaces[0], folder, name: body.name } });
+      await open();
+      await type("😀".repeat(100));
+      const save = () => [...document.querySelectorAll<HTMLButtonElement>("button[type=submit]")].at(-1)!;
+      expect(save().disabled).toBe(false);
+      await submit();
+      expect(apiJSON).toHaveBeenCalledWith("api/spaces/q3-abcdef", "PATCH", { name: "😀".repeat(100) });
+    });
+
+    it("refuses 101 characters before sending", async () => {
+      await open();
+      await type("a".repeat(101));
+      const save = [...document.querySelectorAll<HTMLButtonElement>("button[type=submit]")].at(-1)!;
+      expect(save.disabled).toBe(true);
+      await submit();
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("words the Agent's refusals in the dialog and returns the focus to the pencil on Escape", async () => {
+      patchAnswer = () => ({ error: { code: "space_not_found", message: "no such space" } });
+      await open();
+      await type("x");
+      await submit();
+      expect(document.body.textContent).toContain("This space no longer exists");
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(dialog()).toBeNull();
+      expect(document.activeElement).toBe(host.querySelector(".space-group-rename"));
     });
   });
 });

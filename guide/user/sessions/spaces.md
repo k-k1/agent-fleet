@@ -51,8 +51,9 @@ Without a pick, each start makes a new space.
 ## Rename a space
 
 In the **Spaces** section of the Sessions view, point at a space's row and press the pencil. Type the new name and
-**Save**. Leave the name empty to show the folder name again. Only the name shown in the Console changes: the folder
-and the files in it stay where they are, and so do the sessions.
+**Save** (on a touch screen the pencil is always shown). Leave the name empty to show the folder name again. Only the name shown in the Console changes: the folder
+and the files in it stay where they are, and so do the sessions. A space shows in this section while it has a session or a shell; after you delete the last one,
+the space and its files stay, but it has no row to rename from.
 
 ## Files you attach
 
@@ -65,7 +66,7 @@ If a file cannot be copied into the space, it is not attached, and the launch sa
 
 - **The folder name never changes.** The session and its conversation history are tied to the folder, so the folder is
   never renamed or moved. The name you gave is shown in the Sessions view and is stored apart from the folder, so you
-  can [rename](#rename-a-space) it at any time
+  can [rename](#rename-a-space) it while it has a row in the Sessions view
 - **Deleting a session keeps its space**, and the files in it
 - **Clean home deletes it**, like the rest of your home
 
