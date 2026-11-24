@@ -72,7 +72,11 @@ func reasonFromStderr(s string) string {
 // stderr. npm checks every tarball against the registry's integrity hash itself (EINTEGRITY
 // fails the install), so there is no digest of ours to compare, unlike the GitHub-release CLIs.
 func (e Env) npmInstall(specs []string) (stderr string, err error) {
-	ctx, cancel := context.WithTimeout(context.Background(), npmInstallTimeout)
+	parent := context.Background()
+	if e.npmCtx != nil {
+		parent = e.npmCtx
+	}
+	ctx, cancel := context.WithTimeout(parent, npmInstallTimeout)
 	defer cancel()
 	args := append([]string{"install", "-g", "--prefix", filepath.Join(e.Home, ".local")}, specs...)
 	se := &tailWriter{max: 64 << 10}
@@ -90,7 +94,7 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 		cmd.Stderr = se
 		if err = cmd.Start(); err == nil {
 			if e.afterNPMStart != nil {
-				e.afterNPMStart()
+				e.afterNPMStart(cmd.Process)
 			}
 			err = cmd.Wait()
 			// Group kill and wait, as for a direct npm: nothing may write once this returns, and a
