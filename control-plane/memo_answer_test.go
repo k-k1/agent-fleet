@@ -573,3 +573,433 @@ func TestMemoAnswerShrinksAPageCutAtTheBound(t *testing.T) {
 		}
 	})
 }
+
+// pinnedReply is a transcript whose run ended with run's answer before pin, and a person's turn
+// after it that ended with theirs (issue #4891).
+func pinnedReply(pin time.Time, run, theirs string) func() (int, any) {
+	at := func(d time.Duration) string { return pin.Add(d).UTC().Format(time.RFC3339Nano) }
+	return func() (int, any) {
+		return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "alive": true, "messages": []map[string]any{
+			{"role": "user", "ts": at(-time.Hour), "parts": []map[string]any{{"kind": "text", "text": "the task"}}},
+			{"role": "assistant", "ts": at(-time.Second), "parts": []map[string]any{{"kind": "tool", "tool": "Bash"}, {"kind": "text", "text": run}}},
+			{"role": "user", "ts": at(3 * time.Minute), "parts": []map[string]any{{"kind": "text", "text": "something else"}}},
+			{"role": "assistant", "ts": at(4 * time.Minute), "parts": []map[string]any{{"kind": "text", "text": theirs}}},
+		}}
+	}
+}
+
+// setCloseTurnEnd pins a closed delivery's answer read to at, as kept by the read the close was
+// based on (gen 7); heldGen is the read the close was actually based on.
+func (e *deliveryEnv) setCloseTurnEnd(id string, at string, heldGen int64) {
+	e.t.Helper()
+	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET close_turn_end_at=?, close_turn_gen=7, held_gen=? WHERE id=?`,
+		at, heldGen, id); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// agentSecond is a turn end as the Agent stamps it: to the second, truncated.
+func agentSecond(t time.Time) string { return t.Truncate(time.Second).Format(time.RFC3339) }
+
+// The read is pinned to the turn end the close saw: a person's turn after it is not the run's,
+// whether the list read before it showed no later turn (a resume inside one tick) or showed no
+// row at all (resumed, then archived). Without a pin the end of the transcript is read as before.
+func TestMemoAnswerPinnedToTheCloseTurn(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		listed bool
+		pinned bool
+		class  string
+		head   string
+	}{
+		{"resumed inside one tick", true, true, store.AnswerDone, "Done: the run"},
+		{"resumed, then archived", false, true, store.AnswerDone, "Done: the run"},
+		{"no pin", false, false, store.AnswerPartial, "Partial: the person's"},
+	} {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			now := time.Now()
+			pin := now.Add(-10 * time.Minute)
+			agent, _, da, _ := e.noPRChain(pin.Add(2 * time.Minute))
+			if c.pinned {
+				e.setCloseTurnEnd(da.ID, agentSecond(pin), 7)
+			}
+			if c.listed {
+				// The list was read before the person's turn began: it shows the run's own.
+				agent.addSession("q-a", map[string]any{"alive": true, "state": "idle",
+					"lastTurnStartAt": pin.Add(-time.Hour).UTC().Format(time.RFC3339Nano)})
+			}
+			agent.setAnswer("q-a", pinnedReply(pin, "Done: the run", "Partial: the person's"))
+			e.settleNow(now)
+			if got := e.delivery(da.ID); got.AnswerClass != c.class || got.AnswerHead != c.head {
+				t.Fatalf("%s: kept %q %q", c.name, got.AnswerHead, got.AnswerClass)
+			}
+		})
+	}
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// A turn that started after the pinned end but before the close (by this Control Plane's
+		// clock) is a later turn: the list is compared on the Agent's clock.
+		now := time.Now()
+		pin := now.Add(-10 * time.Minute)
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(pin), 7)
+		agent.addSession("q-a", map[string]any{"alive": true, "state": "idle",
+			"lastTurnStartAt": pin.Add(time.Minute).UTC().Format(time.RFC3339Nano)})
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: x"))
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerUnknown {
+			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// Every turn of the tail page is the person's: the run's answer is read from the page before.
+		now := time.Now()
+		pin := now.Add(-10 * time.Minute)
+		agent, _, da, _ := e.noPRChain(pin.Add(2 * time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(pin), 7)
+		_, full := pinnedReply(pin, "Done: the run", "Partial: the person's")()
+		msgs := full.(map[string]any)["messages"].([]map[string]any)
+		calls := 0
+		agent.setAnswer("q-a", func() (int, any) {
+			calls++
+			page := map[string]any{"name": "q-a", "status": "idle", "messages": msgs[2:], "firstLine": 200, "hasMore": true}
+			if calls > 1 {
+				page = map[string]any{"name": "q-a", "status": "idle", "messages": msgs[:2], "firstLine": 0, "hasMore": false}
+			}
+			return http.StatusOK, page
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone || calls != 2 {
+			t.Fatalf("kept %q %q in %d reads", got.AnswerHead, got.AnswerClass, calls)
+		}
+	})
+}
+
+// The close keeps the root session's turn end its read saw, and nothing moves it after the close.
+func TestMemoAnswerCloseKeepsTheTurnEnd(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		first := time.Now().Add(-time.Hour).UTC().Format(time.RFC3339Nano)
+		end := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339Nano)
+		agent.setRow(d.Session, map[string]any{"state": "working", "lastTurnEndAt": first})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.CloseTurnEndAt != first {
+			t.Fatalf("open: %+v", got)
+		}
+		agent.setRow(d.Session, map[string]any{"state": "idle", "lastTurnEndAt": end})
+		e.settleNow(time.Now())
+		e.settleNow(time.Now())
+		got := e.delivery(d.ID)
+		if got.State != store.DeliveryClosed || got.CloseTurnEndAt != end || got.CloseTurnGen != got.HeldGen {
+			t.Fatalf("closed: state %s, turn end %q, want %q", got.State, got.CloseTurnEndAt, end)
+		}
+		agent.setRow(d.Session, map[string]any{"state": "idle", "lastTurnEndAt": time.Now().UTC().Format(time.RFC3339Nano)})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.CloseTurnEndAt != end {
+			t.Fatalf("moved after the close: %q", got.CloseTurnEndAt)
+		}
+	})
+}
+
+// The pin's edges (review of #5030): a turn end stamped to the second covers the run's turn that
+// started and ended inside that second; a person's turn a second or two after it is cut; a page
+// that starts inside the person's turn is not read as the run; a transcript that holds the
+// person's turns only, read to its first line, no longer holds the run's answer; and a pin that
+// is not the read the close was based on is not used.
+func TestMemoAnswerPinEdges(t *testing.T) {
+	msg := func(role, ts, text string) map[string]any {
+		return map[string]any{"role": role, "ts": ts, "parts": []map[string]any{{"kind": "text", "text": text}}}
+	}
+	at := func(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
+	idle := func(firstLine int, msgs ...map[string]any) map[string]any {
+		return map[string]any{"name": "q-a", "status": "idle", "messages": msgs, "firstLine": firstLine, "hasMore": firstLine > 0}
+	}
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// Started at .2 and ended at .8 of one second: the end reads as that second.
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second).Add(800 * time.Millisecond)
+		agent, _, da, _ := e.noPRChain(end.Add(2 * time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		agent.addSession("q-a", map[string]any{"alive": true, "state": "idle", "lastTurnStartAt": at(end.Add(-600 * time.Millisecond))})
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusOK, idle(0, msg("user", at(end.Add(-600*time.Millisecond)), "the task"), msg("assistant", at(end.Add(-100*time.Millisecond)), "Done: in one second"))
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("same second: kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// A person's resume two seconds after the end is a later turn.
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Second))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusOK, idle(0, msg("user", at(end.Add(-time.Hour)), "the task"), msg("assistant", at(end.Add(-time.Second)), "Partial: the run"),
+				msg("user", at(end.Add(2*time.Second)), "go on"), msg("assistant", at(end.Add(time.Minute)), "Done: the person's"))
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerPartial {
+			t.Fatalf("quick resume: kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// The tail page starts inside the person's turn: its user turn is on the page before.
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		calls := 0
+		agent.setAnswer("q-a", func() (int, any) {
+			calls++
+			if calls == 1 {
+				return http.StatusOK, idle(200, msg("assistant", at(end.Add(5*time.Minute)), "Done: other work"))
+			}
+			return http.StatusOK, idle(0, msg("user", at(end.Add(-time.Hour)), "the task"), msg("assistant", at(end.Add(-time.Second)), "Partial: the run"),
+				msg("user", at(end.Add(4*time.Minute)), "other work"))
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerPartial || calls != 2 {
+			t.Fatalf("page inside a later turn: kept %q %q in %d reads", got.AnswerHead, got.AnswerClass, calls)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// The whole transcript is the person's: the run's answer is no longer there.
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusOK, idle(0, msg("user", at(end.Add(4*time.Minute)), "other work"), msg("assistant", at(end.Add(5*time.Minute)), "Done: other work"))
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerUnknown {
+			t.Fatalf("only later turns: kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// An older Control Plane kept a later read (held_gen 8) and closed on it, leaving the pin of
+		// read 7, the end of the run's first turn. The run's second turn is read, as without a pin.
+		now := time.Now()
+		first := now.Add(-30 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(first), 8)
+		agent.addSession("q-a", map[string]any{"alive": true, "state": "idle", "lastTurnStartAt": at(first.Add(10 * time.Minute))})
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusOK, idle(0, msg("user", at(first.Add(-time.Hour)), "the task"), msg("assistant", at(first.Add(-time.Second)), "Partial: first turn"),
+				msg("user", at(first.Add(10*time.Minute)), "a peer's go on"), msg("assistant", at(first.Add(15*time.Minute)), "Done: second turn"))
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone || got.AnswerHead != "Done: second turn" {
+			t.Fatalf("pin of another read: kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// A close from the mirror keeps the pin of the last kept report; a close made without a report
+// forgets it.
+func TestMemoAnswerPinOnEveryClose(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		end := agentSecond(time.Now().Add(-time.Minute))
+		agent.setRow(d.Session, map[string]any{"state": "idle", "lastTurnEndAt": end})
+		e.settleNow(time.Now())
+		e.stopWorkspace(agent, d.Session, "")
+		e.settleNow(time.Now())
+		e.settleNow(time.Now())
+		got := e.delivery(d.ID)
+		if got.State != store.DeliveryClosed || got.CloseTurnEndAt != end || got.CloseTurnGen != got.HeldGen {
+			t.Fatalf("mirror close: state %s, pin %q gen %d held %d", got.State, got.CloseTurnEndAt, got.CloseTurnGen, got.HeldGen)
+		}
+		if _, ok := memoAnswerPin(got); !ok {
+			t.Fatal("a mirror close lost its pin")
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		agent, d := e.openReported(nil)
+		agent.setRow(d.Session, map[string]any{"state": "idle", "lastTurnEndAt": agentSecond(time.Now().Add(-time.Minute))})
+		e.settleNow(time.Now())
+		if got := e.delivery(d.ID); got.CloseTurnGen == 0 {
+			t.Fatalf("no pin kept: %+v", got)
+		}
+		e.runner().closeOpen(context.Background(), e.delivery(d.ID), store.DeliveryClean)
+		got := e.delivery(d.ID)
+		if _, ok := memoAnswerPin(got); got.State != store.DeliveryClosed || ok || got.CloseTurnEndAt != "" {
+			t.Fatalf("close without a report: %+v", got)
+		}
+	})
+}
+
+// Round 2 of the review of #5030: a kiro transcript (a user turn stamped to the second, assistant
+// turns without a time), a codex error turn stamped when read, and a person's end from the run
+// history.
+func TestMemoAnswerPinKindsAndEnd(t *testing.T) {
+	user := func(ts, text string) map[string]any {
+		return map[string]any{"role": "user", "ts": ts, "parts": []map[string]any{{"kind": "text", "text": text}}}
+	}
+	said := func(text string) map[string]any { // kiro: no time
+		return map[string]any{"role": "assistant", "parts": []map[string]any{{"kind": "text", "text": text}}}
+	}
+	sec := func(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+	idle := func(firstLine int, msgs ...map[string]any) map[string]any {
+		return map[string]any{"name": "q-a", "status": "idle", "messages": msgs, "firstLine": firstLine, "hasMore": firstLine > 0}
+	}
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// The run ended in 10:00:00; a person resumed at 10:00:01.4, stamped 10:00:01.
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Second))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		agent.addSession("q-a", map[string]any{"alive": true, "state": "idle", "lastTurnStartAt": sec(end.Add(-time.Hour))})
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusOK, idle(0, user(sec(end.Add(-time.Hour)), "the task"), said("Partial: the run"),
+				user(sec(end.Add(time.Second)), "go on"), said("Done: the person's"))
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerPartial {
+			t.Fatalf("resume in the next second: kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// The list read before the resume: the next second's start is a later turn there as well.
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		agent.addSession("q-a", map[string]any{"alive": true, "state": "idle", "lastTurnStartAt": end.Add(time.Second).UTC().Format(time.RFC3339Nano)})
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: x"))
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerUnknown {
+			t.Fatalf("list at the next second: kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// A kiro tail page that starts with the person's answer: their input is on the page before.
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		calls := 0
+		agent.setAnswer("q-a", func() (int, any) {
+			calls++
+			if calls == 1 {
+				return http.StatusOK, idle(200, said("Done: other work"), user(sec(end.Add(5*time.Minute)), "more"), said("Done: more"))
+			}
+			return http.StatusOK, idle(0, user(sec(end.Add(-time.Hour)), "the task"), said("Partial: the run"), user(sec(end.Add(4*time.Minute)), "other work"))
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerPartial || calls != 2 {
+			t.Fatalf("kiro page inside a later turn: kept %q %q in %d reads", got.AnswerHead, got.AnswerClass, calls)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// The run's second turn was refused at turn/start: codex shows the error turn stamped when
+		// it is read. It is still the run's last answer, and none is read from it.
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusOK, idle(0, user(sec(end.Add(-time.Hour)), "the task"), said("Done: first turn"),
+				map[string]any{"role": "assistant", "ts": sec(now), "parts": []map[string]any{{"kind": "error", "text": "refused"}}})
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerUnknown {
+			t.Fatalf("codex error stamped when read: kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// A person ends the run from the history after a turn the last read did not see: the pin of
+		// that read is not used.
+		agent, d := e.openReported(nil)
+		first := time.Now().Add(-30 * time.Minute).Truncate(time.Second)
+		agent.setRow(d.Session, map[string]any{"state": "idle", "lastTurnEndAt": agentSecond(first)})
+		e.settleNow(time.Now())
+		rec := e.do("a", "POST", "/api/memo-queues/"+d.QueueID+"/deliveries/"+d.ID+"/end", nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("end: %d %s", rec.Code, rec.Body.String())
+		}
+		got := e.delivery(d.ID)
+		if _, ok := memoAnswerPin(got); got.Outcome != store.DeliveryEnded || got.CloseTurnGen != got.HeldGen || ok {
+			t.Fatalf("ended: outcome %s, pin gen %d held %d, pinned %v", got.Outcome, got.CloseTurnGen, got.HeldGen, ok)
+		}
+	})
+}
+
+// Round 3 of the review of #5030: a run that called tools for more lines than the pages read has
+// its answer read from the tail page, and a kind whose turn end is read off a poll is not pinned.
+func TestMemoAnswerPinLongRunAndPolledKinds(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		calls := 0
+		agent.setAnswer("q-a", func() (int, any) {
+			calls++
+			return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "firstLine": 5000, "hasMore": true, "messages": []map[string]any{
+				{"role": "assistant", "ts": end.Add(-time.Minute).UTC().Format(time.RFC3339Nano), "parts": []map[string]any{{"kind": "tool", "tool": "Bash"}}},
+				{"role": "assistant", "ts": end.Add(-300 * time.Millisecond).UTC().Format(time.RFC3339Nano), "parts": []map[string]any{{"kind": "text", "text": "Done: long run"}}},
+			}}
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone || calls != 1 {
+			t.Fatalf("long run: kept %q %q in %d reads", got.AnswerHead, got.AnswerClass, calls)
+		}
+	})
+	for _, kind := range []string{"kiro", "agy", "copilot", "cursor"} {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(nil)
+			agent.setRow(d.Session, map[string]any{"kind": kind, "state": "idle", "lastTurnEndAt": agentSecond(time.Now().Add(-time.Minute))})
+			e.settleNow(time.Now())
+			e.settleNow(time.Now())
+			got := e.delivery(d.ID)
+			if _, ok := memoAnswerPin(got); got.State != store.DeliveryClosed || ok || got.CloseTurnEndAt != "" {
+				t.Fatalf("%s: state %s, pin %q", kind, got.State, got.CloseTurnEndAt)
+			}
+		})
+	}
+}
+
+// Round 4 of the review of #5030: opencode drops an input of attachments alone from its turns, so
+// a person's later turn shows no user turn; its answer, stamped after the pin, is not the run's.
+func TestMemoAnswerPinLaterTurnWithoutInput(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		ts := func(d time.Duration) string { return end.Add(d).UTC().Format(time.RFC3339Nano) }
+		agent.setAnswer("q-a", func() (int, any) { // archived: no row in the list
+			return http.StatusOK, map[string]any{"name": "q-a", "status": "stopped", "firstLine": 0, "hasMore": false, "messages": []map[string]any{
+				{"role": "user", "ts": ts(-time.Hour), "parts": []map[string]any{{"kind": "text", "text": "the task"}}},
+				{"role": "assistant", "ts": ts(-time.Second), "parts": []map[string]any{{"kind": "text", "text": "Partial: the run"}}},
+				{"role": "assistant", "ts": ts(4 * time.Minute), "parts": []map[string]any{{"kind": "text", "text": "Done: the attachment's"}}},
+			}}
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerPartial {
+			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// The later turn failed before it reached the model: opencode stores the error with its own
+		// time and id. It is not the run's last answer either.
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		ts := func(d time.Duration) string { return end.Add(d).UTC().Format(time.RFC3339Nano) }
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusOK, map[string]any{"name": "q-a", "status": "stopped", "firstLine": 0, "hasMore": false, "messages": []map[string]any{
+				{"role": "user", "ts": ts(-time.Hour), "anchorId": "msg_1", "parts": []map[string]any{{"kind": "text", "text": "the task"}}},
+				{"role": "assistant", "ts": ts(-time.Second), "anchorId": "msg_2", "parts": []map[string]any{{"kind": "text", "text": "Done: the run"}}},
+				{"role": "assistant", "ts": ts(4 * time.Minute), "anchorId": "msg_4", "parts": []map[string]any{{"kind": "error", "text": "provider failed"}}},
+			}}
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("later stored error: kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
