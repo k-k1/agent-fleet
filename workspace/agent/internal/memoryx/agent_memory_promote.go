@@ -190,20 +190,21 @@ func agentMemPromoteHistory(head string, s agentMemPromoteSnap) (at time.Time, m
 
 // agentMemPromoteCandidates lists the candidates of one project. Read-only.
 func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (agentMemPromoteWire, error) {
-	out, _, err := agentMemPromoteCandidatesRepo(project, quietDays, now)
+	out, _, _, err := agentMemPromoteCandidatesRepo(project, quietDays, now)
 	return out, err
 }
 
 // agentMemPromoteCandidatesRepo is agentMemPromoteCandidates that also hands back the repository
-// reader pinned to the commit the anchors were checked on (nil when they were not), so a proposal
-// is built on the revision its candidate was judged on.
-func agentMemPromoteCandidatesRepo(project string, quietDays int, now time.Time) (agentMemPromoteWire, memorylint.Repo, error) {
+// reader pinned to the commit the anchors were checked on (nil when they were not) and the entries
+// as they were judged, so a proposal is built on the revision and the text its candidate was
+// judged on.
+func agentMemPromoteCandidatesRepo(project string, quietDays int, now time.Time) (agentMemPromoteWire, memorylint.Repo, map[string]agentMemEntry, error) {
 	out := agentMemPromoteWire{MinSessions: memorypromote.DefaultMinSessions, QuietDays: quietDays}
 	// One read of the term list serves the lint run and the check that it was read.
 	terms, termsErr := agentMemLintLoadDocStrict()
 	lint, es, c, repo, err := agentMemLintCollectDoc(agentMemScopeProject, project, nil, &terms)
 	if err != nil {
-		return out, nil, err
+		return out, nil, nil, err
 	}
 	out.Project, out.Ref, out.Commit, out.Withheld = lint.Project, lint.Ref, lint.Commit, lint.Withheld
 
@@ -246,7 +247,7 @@ func agentMemPromoteCandidatesRepo(project string, quietDays int, now time.Time)
 	}
 	rel, err := agentMemScopeDir(agentMemScopeProject, c)
 	if err != nil {
-		return out, nil, err
+		return out, nil, nil, err
 	}
 
 	// The entries, their records, the link targets and the head of the store's history are read
@@ -257,18 +258,20 @@ func agentMemPromoteCandidatesRepo(project string, quietDays int, now time.Time)
 	cur, _, err := agentMemLoadDir(agentMemScopeProject, rel)
 	if err != nil {
 		agentMemMu.RUnlock()
-		return out, nil, err
+		return out, nil, nil, err
 	}
 	names := make(map[string]bool, len(cur))
 	for _, e := range cur {
 		names[e.Name] = true
 	}
 	mems := make([]memorypromote.Memory, 0, len(cur))
+	judged := make(map[string]agentMemEntry, len(cur))
 	var snaps []agentMemPromoteSnap
 	for _, e := range cur {
 		if !memorypromote.Promotable(e.MemKind) || agentMemExcluded(e) {
 			continue
 		}
+		judged[e.Name] = e
 		m := memorypromote.Memory{
 			Name: e.Name, Kind: e.MemKind, Type: e.Type, Revision: e.Revision,
 			Anchors: e.Anchors, Reasons: len(e.Reasons), Findings: findings[e.Name], Missing: missing[e.Name],
@@ -335,7 +338,7 @@ func agentMemPromoteCandidatesRepo(project string, quietDays int, now time.Time)
 	out.Result = memorypromote.Select(mems, memorypromote.Options{
 		Now: now, Quiet: time.Duration(quietDays) * 24 * time.Hour, Unverified: unverified,
 	})
-	return out, repo, nil
+	return out, repo, judged, nil
 }
 
 // agentMemPromoteSameText says whether two versions of one revision agree on what a save would

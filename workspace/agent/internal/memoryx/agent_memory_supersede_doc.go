@@ -62,12 +62,12 @@ func agentMemSupersedeDocCheck(p *agentMemProject, path, heading, commit string)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
 	defer cancel()
-	out, err := agentMemLintGit(ctx, lr.gitDir, nil, "rev-parse", "--verify", "-q", "--end-of-options", commit+"^{commit}")
-	full := strings.TrimSpace(string(out))
-	// rev-parse also resolves a branch or tag whose name looks like hex: what it answers must be
-	// the object the member named, not a ref that happens to share the spelling.
-	if err != nil || !agentMemCommitIDRe.MatchString(full) || !strings.HasPrefix(full, commit) {
-		return agentMemDocTarget{}, conflict("commit %s is not in the repository; fetch the default branch first", commit)
+	full, err := agentMemResolveCommit(ctx, lr.gitDir, commit)
+	if err != nil {
+		return agentMemDocTarget{}, err
+	}
+	if full == "" {
+		return agentMemDocTarget{}, conflict("commit %s is not in the repository, or names more than one; fetch the default branch first, or give more of the id", commit)
 	}
 	if _, err := agentMemLintGit(ctx, lr.gitDir, nil, "merge-base", "--is-ancestor", full, lr.ref); err != nil {
 		var ee *exec.ExitError
@@ -95,6 +95,35 @@ func agentMemSupersedeDocCheck(p *agentMemProject, path, heading, commit string)
 		}
 	}
 	return agentMemDocTarget{Repo: p.Remote, Path: path, Heading: heading, Commit: full}, nil
+}
+
+// agentMemResolveCommit finds the one commit whose id starts with prefix, in the object
+// namespace only: rev-parse would also take a branch or tag spelled like hex, and prefer it. ""
+// when no commit, or more than one, has that prefix.
+func agentMemResolveCommit(ctx context.Context, gitDir, prefix string) (string, error) {
+	out, err := agentMemLintGit(ctx, gitDir, nil, "rev-parse", "--disambiguate="+prefix)
+	if err != nil {
+		// rev-parse exits non-zero when nothing has the prefix.
+		return "", nil
+	}
+	ids := strings.Fields(string(out))
+	if len(ids) == 0 {
+		return "", nil
+	}
+	types, err := agentMemLintGit(ctx, gitDir, []byte(strings.Join(ids, "\n")+"\n"), "cat-file", "--batch-check=%(objectname) %(objecttype)")
+	if err != nil {
+		return "", err
+	}
+	var found []string
+	for _, ln := range strings.Split(strings.TrimSpace(string(types)), "\n") {
+		if id, typ, _ := strings.Cut(ln, " "); typ == "commit" && strings.HasPrefix(id, prefix) {
+			found = append(found, id)
+		}
+	}
+	if len(found) != 1 {
+		return "", nil
+	}
+	return found[0], nil
 }
 
 // agentMemSupersedeDocument sets superseded_by to a document on one project memory.

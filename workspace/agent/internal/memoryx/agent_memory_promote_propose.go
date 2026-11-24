@@ -25,6 +25,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"os/exec"
@@ -41,17 +42,20 @@ import (
 )
 
 const (
-	// agentMemProposeCloneTimeout bounds the throwaway clone, its checkout and the diff (measured:
-	// 7 s for this repository's 137 MB tree).
-	agentMemProposeCloneTimeout = 2 * time.Minute
 	// agentMemProposeOutputMax bounds the hook output carried back.
 	agentMemProposeOutputMax = 16 << 10
 	// agentMemProposePatchMax bounds the patch. A memory body is at most agentMemMaxBody; the rest
-	// is the diff's context.
-	agentMemProposePatchMax = 4 << 20
+	// is the diff's context. JSON may escape a byte as six (\u003c), and the CLI reads at most
+	// 16 MiB of an answer, so 2 MiB of patch plus the text still fits.
+	agentMemProposePatchMax = 2 << 20
 	// agentMemProposeMaxRequest bounds the request body before it is decoded.
 	agentMemProposeMaxRequest = 64 << 10
 )
+
+// agentMemProposeCloneTimeout bounds the throwaway clone, its checkout and the diff, and again the
+// diff after the hook (measured: 7 s for this repository's 137 MB tree). A variable so a test can
+// shorten it.
+var agentMemProposeCloneTimeout = 2 * time.Minute
 
 // agentMemProposeHookTimeout bounds the repository's pre-commit hook (this repository's hook
 // builds and runs a Go scanner and gitleaks). A variable so a test can shorten it.
@@ -98,7 +102,7 @@ type agentMemPreCommit struct {
 	// Absent: the repository has no hook git would run on a commit, so there is nothing to pass.
 	Absent bool `json:"absent,omitempty"`
 	// Changed: the hook left a different staged change than the one it was given (a formatter);
-	// the patch answered is the hook's, and it has not been checked again.
+	// the patch answered is still the one given to it, and the proposal is not ready.
 	Changed bool `json:"changed,omitempty"`
 	// Output is the hook's output when it did not pass, with the throwaway paths removed; it is
 	// withheld when the secret scan flags it.
@@ -260,6 +264,9 @@ func agentMemProposeEnv(tmp string, hook bool) []string {
 // and stderr apart. Whatever is left of the group when the command exits, or when ctx ends, is
 // killed, so nothing a hook put in the background outlives the request.
 func agentMemProposeRun(ctx context.Context, dir string, env []string, stdoutMax int, name string, args ...string) (stdout, stderr []byte, err error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
 	cmd := exec.Command(name, args...)
 	cmd.Dir, cmd.Env = dir, env
 	o := &agentMemCappedBuf{max: stdoutMax}
@@ -280,7 +287,8 @@ func agentMemProposeRun(ctx context.Context, dir string, env []string, stdoutMax
 		err = ctx.Err()
 	}
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	if err == nil && o.cut {
+	if err == nil && o.cut && stdoutMax == agentMemProposePatchMax {
+		// Only a cut patch is an error; a hook's chatter past the cap is just not all shown.
 		err = errors.New("the output is larger than allowed")
 	}
 	return o.Bytes(), e.Bytes(), err
@@ -315,32 +323,52 @@ func (b *agentMemCappedBuf) Bytes() []byte {
 	return append([]byte(nil), b.buf.Bytes()...)
 }
 
-// agentMemProposeHooks resolves the directory git takes the pre-commit hook from when the member
-// commits in the working copy: core.hooksPath as the working copy configures it (a relative one
-// is relative to the top of the working tree), else hooks/ of the repository. ok=false when the
-// configuration could not be read.
-func agentMemProposeHooks(root, gitDir string) (dir, shown string, ok bool) {
-	cmd := gitx.Cmd(root, "config", "--type=path", "--get", "core.hooksPath")
-	out, err := cmd.Output()
-	v := strings.TrimSpace(string(out))
+// agentMemProposeHooks asks the working copy's git where its pre-commit hook is, which is where
+// `git commit` there would look (core.hooksPath with git's own reading of it, else hooks/ of the
+// repository), in the environment the hook gets. shown names the setting without a path when the
+// path is absolute. ok=false when git could not answer.
+func agentMemProposeHooks(ctx context.Context, root, tmp string) (hook, shown string, ok bool) {
+	env := agentMemProposeEnv(tmp, true)
+	// Not --path-format=absolute: it resolves the path on disk and fails for /dev/null/pre-commit,
+	// which is how a hooksPath of /dev/null turns hooks off. A relative answer is relative to root.
+	out, _, err := agentMemProposeRun(ctx, root, env, agentMemProposeOutputMax, "git", "rev-parse", "--git-path", "hooks/pre-commit")
+	hook = strings.TrimSuffix(string(out), "\n")
+	if err != nil || hook == "" {
+		return "", "", false
+	}
+	if !filepath.IsAbs(hook) {
+		hook = filepath.Join(root, hook)
+	}
+	v, _, err := agentMemProposeRun(ctx, root, env, agentMemProposeOutputMax, "git", "config", "--get", "core.hooksPath")
 	var ee *exec.ExitError
-	switch {
-	case err == nil && v != "":
-	case errors.As(err, &ee) && ee.ExitCode() == 1, err == nil:
+	switch val := strings.TrimSuffix(string(v), "\n"); {
+	case err == nil && (filepath.IsAbs(val) || strings.HasPrefix(val, "~")):
+		shown = "core.hooksPath (an absolute path)"
+	case err == nil:
+		shown = "core.hooksPath " + val
+	case errors.As(err, &ee) && ee.ExitCode() == 1:
 		// Exit 1 is git config's "not set".
-		return filepath.Join(gitDir, "hooks"), "hooks/ of the repository", true
+		shown = "hooks/ of the repository"
 	default:
 		return "", "", false
 	}
-	if filepath.IsAbs(v) {
-		return v, "core.hooksPath " + v, true
+	return hook, shown, true
+}
+
+// agentMemProposeScrub takes the local paths out of what the answer carries: the throwaway
+// directory, the working copy, the hook's directory and the home directory.
+func agentMemProposeScrub(s string, paths map[string]string) string {
+	for _, k := range []string{"clone", "tmp", "hooks", "root", "home"} {
+		if p := paths[k]; p != "" && p != "/" {
+			s = strings.ReplaceAll(s, p, "<"+k+">")
+		}
 	}
-	return filepath.Join(root, v), "core.hooksPath " + v, true
+	return s
 }
 
 // agentMemProposeShowOutput is what the answer carries of a failed hook's output: its stdout and
-// stderr with the throwaway paths taken out, or nothing when the secret scan flags it.
-func agentMemProposeShowOutput(tmp, clone string, stdout, stderr []byte) string {
+// stderr with the local paths taken out, or nothing when the secret scan flags it.
+func agentMemProposeShowOutput(paths map[string]string, stdout, stderr []byte) string {
 	s := strings.TrimRight(string(stdout), "\n")
 	if t := strings.TrimRight(string(stderr), "\n"); t != "" {
 		if s != "" {
@@ -348,11 +376,28 @@ func agentMemProposeShowOutput(tmp, clone string, stdout, stderr []byte) string 
 		}
 		s += t
 	}
-	s = strings.ReplaceAll(strings.ReplaceAll(s, clone+"/", ""), tmp, "<tmp>")
+	s = agentMemProposeScrub(s, paths)
 	if len(agentMemScanText("hook output", s)) > 0 {
 		return "(withheld: the secret scan flags something in the hook's output)"
 	}
 	return s
+}
+
+// agentMemProposeRemoveAll removes the throwaway directory even when a hook left a directory in it
+// without write permission; what cannot be removed is logged.
+func agentMemProposeRemoveAll(tmp string) {
+	if os.RemoveAll(tmp) == nil {
+		return
+	}
+	_ = filepath.WalkDir(tmp, func(p string, d os.DirEntry, err error) error {
+		if err == nil && d.IsDir() {
+			_ = os.Chmod(p, 0o700)
+		}
+		return nil
+	})
+	if err := os.RemoveAll(tmp); err != nil {
+		log.Printf("memory promotion: the throwaway directory could not be removed: %v", err)
+	}
 }
 
 // agentMemProposePatch writes data to file in a throwaway clone at commit, stages it, and answers
@@ -364,7 +409,7 @@ func agentMemProposePatch(ctx context.Context, root, gitDir, commit, file string
 	if err != nil {
 		return "", pc, err
 	}
-	defer os.RemoveAll(tmp)
+	defer agentMemProposeRemoveAll(tmp)
 	clone := filepath.Join(tmp, "repo")
 	for _, d := range []string{"tmp", "no-hooks"} {
 		if err := os.Mkdir(filepath.Join(tmp, d), 0o700); err != nil {
@@ -428,19 +473,22 @@ func agentMemProposePatch(ctx context.Context, root, gitDir, commit, file string
 		return "", pc, errors.New("the change is empty")
 	}
 
-	hooks, shown, ok := agentMemProposeHooks(root, gitDir)
+	hook, shown, ok := agentMemProposeHooks(ctx, root, tmp)
 	if !ok {
-		pc.Note = "core.hooksPath of the working copy could not be read, so the hook git would run is unknown"
+		pc.Note = "git could not say where the working copy's pre-commit hook is, so it is not known what a commit would run"
 		return patch, pc, nil
 	}
 	pc.Hook = shown
-	st, err := os.Stat(filepath.Join(hooks, "pre-commit"))
+	home, _ := os.UserHomeDir()
+	paths := map[string]string{"clone": clone, "tmp": tmp, "hooks": filepath.Dir(hook), "root": root, "home": home}
+	st, err := os.Stat(hook)
 	switch {
-	case err != nil && os.IsNotExist(err), err == nil && !st.Mode().IsRegular():
+	case err != nil && (errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)), err == nil && !st.Mode().IsRegular():
+		// Not there, or core.hooksPath disables hooks (/dev/null): git runs nothing.
 		pc.Absent, pc.Note = true, "the repository has no pre-commit hook ("+shown+")"
 		return patch, pc, nil
 	case err != nil:
-		pc.Note = "the pre-commit hook could not be read: " + err.Error()
+		pc.Note = "the pre-commit hook could not be read: " + agentMemProposeScrub(err.Error(), paths)
 		return patch, pc, nil
 	case st.Mode().Perm()&0o111 == 0:
 		pc.Absent, pc.Note = true, "the pre-commit hook is not executable ("+shown+"), so git would not run it either"
@@ -449,7 +497,7 @@ func agentMemProposePatch(ctx context.Context, root, gitDir, commit, file string
 	hctx, hcancel := context.WithTimeout(ctx, agentMemProposeHookTimeout)
 	defer hcancel()
 	hargs := append(append([]string{}, quiet...), "--git-dir="+filepath.Join(clone, ".git"), "--work-tree="+clone)
-	hargs[1] = "core.hooksPath=" + hooks
+	hargs[1] = "core.hooksPath=" + filepath.Dir(hook)
 	stdout, stderr, err := agentMemProposeRun(hctx, clone, agentMemProposeEnv(tmp, true), agentMemProposeOutputMax, "git",
 		append(hargs, "hook", "run", "pre-commit")...)
 	pc.Ran = true
@@ -463,19 +511,24 @@ func agentMemProposePatch(ctx context.Context, root, gitDir, commit, file string
 		pc.Note = fmt.Sprintf("the hook failed (exit %d)", ee.ExitCode())
 	default:
 		pc.Ran = false
-		pc.Note = "the hook could not be run: " + err.Error()
+		pc.Note = "the hook could not be run: " + agentMemProposeScrub(err.Error(), paths)
 	}
 	if !pc.Passed {
-		pc.Output = agentMemProposeShowOutput(tmp, clone, stdout, stderr)
+		pc.Output = agentMemProposeShowOutput(paths, stdout, stderr)
 	}
-	// What the hook checked must be what is answered: a hook that rewrites the staged change
-	// (a formatter) leaves another patch than the one it was given.
-	if after, err := diff(); err != nil {
-		return "", pc, err
-	} else if after != patch {
+	// What the hook checked must be what is answered. A hook that rewrites the staged change (a
+	// formatter) leaves another change, which no scan has seen: the answer keeps the patch that was
+	// scanned and says that the hook changed it.
+	actx, acancel := context.WithTimeout(ctx, agentMemProposeCloneTimeout)
+	defer acancel()
+	after, _, err := agentMemProposeRun(actx, tmp, env, agentMemProposePatchMax, "git", append(in, "diff", "--cached", "--no-color",
+		"--no-ext-diff", "--no-textconv", "--no-renames", "--binary", "--full-index")...)
+	if err != nil {
+		return "", pc, fmt.Errorf("git diff after the hook: %v", err)
+	}
+	if string(after) != patch {
 		pc.Changed = true
-		pc.Note = strings.TrimSpace(pc.Note + " the hook changed the staged change; the patch shown is what it left, not checked again")
-		patch = after
+		pc.Note = strings.TrimSpace(pc.Note + " the hook changed the staged change; the patch shown is the one given to it")
 	}
 	return patch, pc, nil
 }
@@ -538,8 +591,11 @@ func agentMemPropose(ctx context.Context, req agentMemProposeReq, now time.Time)
 	}
 	defer agentMemProposeBusy.Unlock()
 
-	cands, repo, err := agentMemPromoteCandidatesRepo(req.Project, days, now)
+	cands, repo, judged, err := agentMemPromoteCandidatesRepo(req.Project, days, now)
 	if err != nil {
+		return out, err
+	}
+	if err := ctx.Err(); err != nil {
 		return out, err
 	}
 	out.Project, out.Ref = cands.Project, cands.Ref
@@ -601,6 +657,10 @@ func agentMemPropose(ctx context.Context, req agentMemProposeReq, now time.Time)
 		return out, conflict("%s moved to revision %d while it was being checked; ask again", req.Name, cur.Entry.Revision)
 	case len(cur.Entry.Reasons) > 0 || memorypromote.Disputed(reports, cur.Entry.Revision) > 0:
 		return out, conflict("%s was doubted while it was being checked; ask again", req.Name)
+	case judged[req.Name].Body != cur.Entry.Body || judged[req.Name].Revision != cur.Entry.Revision:
+		// The text proposed must be the text that was judged: an edit of the store outside AF
+		// changes a body without a new revision.
+		return out, conflict("%s changed while it was being checked; ask again", req.Name)
 	}
 	e := cur.Entry
 	out.Sources = []agentMemProposeSource{{Name: e.Name, Scope: agentMemScopeProject, Revision: e.Revision,
@@ -652,7 +712,8 @@ func agentMemPropose(ctx context.Context, req agentMemProposeReq, now time.Time)
 	}
 
 	// Everything the proposal adds to the repository: the text, the heading and the file name.
-	out.Scans.Secret = agentMemScanText(file, strings.Join([]string{text, section, file}, "\n"))
+	// The findings name a fixed label, not the file: the file name may be what they flag.
+	out.Scans.Secret = agentMemScanText("proposal", strings.Join([]string{text, section, file}, "\n"))
 	if out.Scans.Secret == nil {
 		out.Scans.Secret = []memorySecretFinding{}
 	}

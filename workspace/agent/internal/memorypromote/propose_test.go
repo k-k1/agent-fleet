@@ -20,7 +20,7 @@ func headingList(doc string) string {
 func TestHeadingsFollowCommonMark(t *testing.T) {
 	doc := "# Title #\n\n```sh\n# not a heading\n``` `\n## nor this\n```\n\n<!--\n## in a comment\n-->\n\n" +
 		"## Real ##  \nSetext\n===\n   ### Indented\n    #### code block\n\n```\n## unclosed\n"
-	if got, want := headingList(doc), "# Title|## Real|# Setext|### Indented"; got != want {
+	if got, want := headingList(doc+"\n- ## in a list\n\n> ## in a quote\n"), "# Title|## Real|# Setext|### Indented"; got != want {
 		t.Fatalf("got %q, want %q", got, want)
 	}
 	if got := headingList("## CRLF\r\nx\r\n"); got != "## CRLF" {
@@ -53,6 +53,23 @@ func TestInsertAtTheEndOfTheSectionOrANewOne(t *testing.T) {
 	// A document that ends inside an unclosed fence would swallow the new section.
 	if _, _, err := Insert([]byte("x\n\n```\ncode\n"), "Build", "t"); !errors.Is(err, ErrNotPlaced) {
 		t.Fatalf("unclosed fence: %v", err)
+	}
+	// The section's own last block is an unclosed fence: the text would be code.
+	if _, _, err := Insert([]byte("## A\n\n```\ncode\n"), "A", "t"); !errors.Is(err, ErrNotPlaced) {
+		t.Fatalf("section ends in an unclosed fence: %v", err)
+	}
+	// The text opens a fence it never closes: the sections after it would be swallowed.
+	if _, _, err := Insert([]byte("## A\n\nx\n\n## B\n\ny\n"), "A", "```\nunclosed"); !errors.Is(err, ErrNotPlaced) {
+		t.Fatalf("text with an unclosed fence: %v", err)
+	}
+	// A heading inside a list or a block quote is not a target: a new section is added.
+	out, ok, err = Insert([]byte("- ## Item\n\n> ## Quote\n"), "Item", "t")
+	if err != nil || ok || !strings.HasSuffix(string(out), "\n\n## Item\n\nt\n") {
+		t.Fatalf("container heading: %q %v %v", out, ok, err)
+	}
+	// Text that is a list or a quote is placed as its own block.
+	if _, _, err := Insert([]byte("## A\n\nx\n\n## B\n"), "A", "- one\n- two"); err != nil {
+		t.Fatalf("list text: %v", err)
 	}
 	// A new or empty document gets just the section.
 	if out, ok, _ = Insert(nil, "Release", "t"); ok || string(out) != "## Release\n\nt\n" {

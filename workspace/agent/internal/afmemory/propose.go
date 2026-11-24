@@ -31,9 +31,10 @@ type proposal struct {
 	FileExists    bool `json:"fileExists"`
 	SectionExists bool `json:"sectionExists"`
 	Sources       []struct {
-		Name     string `json:"name"`
-		Scope    string `json:"scope"`
-		Revision int    `json:"revision"`
+		Name       string `json:"name"`
+		Scope      string `json:"scope"`
+		Revision   int    `json:"revision"`
+		BodySHA256 string `json:"bodySha256"`
 	} `json:"sources"`
 	Text     string   `json:"text,omitempty"`
 	Patch    string   `json:"patch,omitempty"`

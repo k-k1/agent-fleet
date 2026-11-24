@@ -43,30 +43,83 @@ type Heading struct {
 	Line int // 0-based index of the heading's first line
 }
 
-// Headings lists the headings of doc as CommonMark reads them: a line that only looks like a
-// heading inside a fenced or indented code block, an HTML block or a comment is not one. An empty
-// heading (a bare "##") has no position in the parse and is not listed.
-func Headings(doc []byte) []Heading {
+// lineIndex answers the 0-based line of a byte offset, by a binary search over the line starts
+// computed once.
+type lineIndex []int
+
+func newLineIndex(doc []byte) lineIndex {
+	idx := lineIndex{0}
+	for i, c := range doc {
+		if c == '\n' {
+			idx = append(idx, i+1)
+		}
+	}
+	return idx
+}
+
+func (l lineIndex) line(off int) int {
+	lo, hi := 0, len(l)
+	for lo+1 < hi {
+		m := (lo + hi) / 2
+		if l[m] <= off {
+			lo = m
+		} else {
+			hi = m
+		}
+	}
+	return lo
+}
+
+// block is one top-level block of a document: its kind and the line it starts on.
+type block struct {
+	heading *Heading
+	start   int
+}
+
+// topBlocks parses doc and lists its top-level blocks that have a position, in order. A heading
+// inside a list or a block quote is not a top-level block, so it is never a target: text inserted
+// "after" it by line would land outside the container.
+func topBlocks(doc []byte) []block {
 	root := goldmark.New().Parser().Parse(text.NewReader(doc))
+	idx := newLineIndex(doc)
+	var out []block
+	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
+		first := n
+		for first != nil && first.Type() != ast.TypeBlock || first != nil && first.Lines().Len() == 0 && first.FirstChild() != nil {
+			// A container (list, block quote) starts where its first leaf block does.
+			first = first.FirstChild()
+		}
+		if first == nil || first.Lines().Len() == 0 {
+			continue
+		}
+		start := idx.line(first.Lines().At(0).Start)
+		if n.Kind() == ast.KindFencedCodeBlock {
+			start-- // the opening fence is the line before the first content line
+		}
+		bl := block{start: start}
+		if h, ok := n.(*ast.Heading); ok {
+			var b strings.Builder
+			for i := 0; i < h.Lines().Len(); i++ {
+				seg := h.Lines().At(i)
+				b.Write(seg.Value(doc))
+			}
+			bl.heading = &Heading{Level: h.Level, Text: strings.TrimSpace(b.String()), Line: start}
+		}
+		out = append(out, bl)
+	}
+	return out
+}
+
+// Headings lists the top-level headings of doc as CommonMark reads them: a line that only looks
+// like a heading inside a code block, an HTML block, a comment, a list or a block quote is not
+// one. An empty heading (a bare "##") has no position in the parse and is not listed.
+func Headings(doc []byte) []Heading {
 	var out []Heading
-	_ = ast.Walk(root, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
-		h, ok := n.(*ast.Heading)
-		if !entering || !ok {
-			return ast.WalkContinue, nil
+	for _, b := range topBlocks(doc) {
+		if b.heading != nil {
+			out = append(out, *b.heading)
 		}
-		lines := h.Lines()
-		if lines.Len() == 0 {
-			return ast.WalkSkipChildren, nil
-		}
-		var b strings.Builder
-		for i := 0; i < lines.Len(); i++ {
-			seg := lines.At(i)
-			b.Write(seg.Value(doc))
-		}
-		start := lines.At(0).Start
-		out = append(out, Heading{Level: h.Level, Text: strings.TrimSpace(b.String()), Line: bytes.Count(doc[:start], []byte("\n"))})
-		return ast.WalkSkipChildren, nil
-	})
+	}
 	return out
 }
 
@@ -93,8 +146,9 @@ func SectionOK(section string) bool {
 	return len(hs) == 1 && hs[0].Level == 2 && hs[0].Text == section
 }
 
-// ErrNotPlaced is returned by Insert when the section, after the insertion, is not a heading of
-// the document (an unclosed code fence at the end swallows an appended section).
+// ErrNotPlaced is returned by Insert when the text would not stand as its own blocks in the
+// section: an unclosed code fence before it would swallow it, or one in it would swallow the
+// headings after it.
 var ErrNotPlaced = errors.New("the section would not be a heading of the document")
 
 // Insert returns doc with text added to the section named section: at the end of that section
@@ -141,8 +195,7 @@ func Insert(doc []byte, section, body string) (out []byte, existed bool, err err
 		}
 		res = b.String()
 	}
-	// The section must still be a heading once the text is in, and the text must follow it.
-	if after, found := FindHeading([]byte(res), section); !found || ok && after.Line != h.Line {
+	if !placed(src, []byte(res), section, ok, bodyLine(res, body)) {
 		return nil, ok, ErrNotPlaced
 	}
 	if crlf {
@@ -227,3 +280,55 @@ var memoryLink = regexp.MustCompile(`\[\[[^\[\]\n]+\]\]`)
 
 // HasMemoryLinks says whether text links a memory with [[name]].
 func HasMemoryLinks(text string) bool { return memoryLink.MatchString(text) }
+
+// bodyLine is the line the inserted body starts on in res: the body is followed by what came
+// after the section, so its last occurrence before that is the one inserted.
+func bodyLine(res, body string) int {
+	i := strings.LastIndex(res, "\n"+strings.TrimRight(body, "\n")+"\n")
+	if i < 0 {
+		return -1
+	}
+	return strings.Count(res[:i+1], "\n")
+}
+
+// placed checks an insertion on the parsed result: the headings are the old ones (plus the new
+// section) in the same order, the section is one of them, and a top-level block starts exactly on
+// the body's first line, after the section's heading and before the next heading of its level.
+func placed(old, res []byte, section string, existed bool, line int) bool {
+	if line < 0 {
+		return false
+	}
+	before, after := Headings(old), Headings(res)
+	if !existed {
+		before = append(before, Heading{Level: 2, Text: section})
+	}
+	if len(before) != len(after) {
+		return false
+	}
+	at := -1
+	for i := range before {
+		if before[i].Text != after[i].Text || before[i].Level != after[i].Level {
+			return false
+		}
+		if after[i].Text == section && at < 0 {
+			at = i
+		}
+	}
+	if at < 0 || after[at].Line >= line {
+		return false
+	}
+	for _, n := range after[at+1:] {
+		if n.Level <= after[at].Level {
+			if n.Line <= line {
+				return false
+			}
+			break
+		}
+	}
+	for _, b := range topBlocks(res) {
+		if b.start == line {
+			return true
+		}
+	}
+	return false
+}

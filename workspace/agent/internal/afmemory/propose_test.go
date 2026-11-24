@@ -45,7 +45,7 @@ func proposalAnswer(ready bool, pre string, extra string) string {
 	}
 	return `{"project":{"id":"demo-0123456789ab","display":"demo"},"ref":"origin/main","commit":"0123456789abcdef0123456789abcdef01234567",` +
 		`"target":{"repo":"github.com/acme/demo","path":"AGENTS.md","heading":"Release"},"fileExists":true,"sectionExists":false,` +
-		`"sources":[{"name":"release-steps","scope":"project","revision":3}],"text":"Run it.","patch":` + string(b) + `,` +
+		`"sources":[{"name":"release-steps","scope":"project","revision":3,"bodySha256":"` + strings.Repeat("ab", 32) + `"}],"text":"Run it.","patch":` + string(b) + `,` +
 		`"warnings":["language-differs"],"scans":{"secret":[],"preCommit":` + pre + `},"ready":` + r + extra + `}`
 }
 
@@ -90,7 +90,9 @@ func TestAFMemoryPromoteProposal(t *testing.T) {
 	}
 	code, out, _ = run(c, "promote-proposal", "--project", "demo", "--name", "release-steps", "--json")
 	var p proposal
-	if code != 0 || json.Unmarshal([]byte(out), &p) != nil || !p.Ready || p.Target.Heading != "Release" {
+	// The digest a supersede has to quote back survives the CLI's decoding.
+	if code != 0 || json.Unmarshal([]byte(out), &p) != nil || !p.Ready || p.Target.Heading != "Release" ||
+		len(p.Sources) != 1 || p.Sources[0].BodySHA256 != strings.Repeat("ab", 32) {
 		t.Fatalf("--json: %d %s", code, out)
 	}
 }

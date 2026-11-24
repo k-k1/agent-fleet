@@ -3,6 +3,7 @@ package memoryx
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -158,7 +159,7 @@ func TestAgentMemoryPromoteProposalReportsAFailingHook(t *testing.T) {
 		t.Fatalf("%d %s", code, raw)
 	}
 	pc := w.Scans.PreCommit
-	if w.Ready || !pc.Ran || pc.Passed || !strings.Contains(pc.Output, "a forbidden token is staged in <tmp>/repo (<tmp>/tmp)") ||
+	if w.Ready || !pc.Ran || pc.Passed || !strings.Contains(pc.Output, "a forbidden token is staged in <clone> (<tmp>/tmp)") ||
 		strings.Contains(pc.Output, "af-memory-promote-") || pc.Note != "the hook failed (exit 1)" {
 		t.Fatalf("ready=%v %+v", w.Ready, pc)
 	}
@@ -278,6 +279,12 @@ func TestAgentMemoryPromoteProposalRefusals(t *testing.T) {
 	}
 	if strings.Contains(raw, key) {
 		t.Fatal("the answer repeats the secret")
+	}
+	// The file name can be what the scan flags: the findings name a fixed label, and the target
+	// path is withheld too.
+	code, w, raw = promotePropose(t, agentMemProposeReq{Project: a.Project.ID, Name: "release-steps", File: "docs/" + key + ".md"})
+	if code != http.StatusOK || w.Ready || len(w.Scans.Secret) == 0 || strings.Contains(raw, key) {
+		t.Fatalf("secret file name: %d %s", code, raw)
 	}
 }
 
@@ -617,6 +624,7 @@ fail() { echo "isolation: $1" >&2; exit 3; }
 case "$TMPDIR" in */af-memory-promote-*/tmp) ;; *) fail "TMPDIR=$TMPDIR" ;; esac
 [ "$(git rev-parse --show-toplevel)" = "$PWD" ] || fail worktree
 mktemp >/dev/null
+mkdir "$TMPDIR/ro" && touch "$TMPDIR/ro/f" && chmod 500 "$TMPDIR/ro"
 sleep 60 >/dev/null 2>&1 &
 echo $! > "$PROMOTE_PID"
 echo ok >> "$PROMOTE_MARK"
@@ -707,17 +715,23 @@ func TestAgentMemoryPromoteProposalPatchIsWholeAndChecked(t *testing.T) {
 	agentMemLintOrigin(t, clone, map[string]string{"AGENTS.md": "# Agents\n\n## Build\n\n" + long + "\n"})
 	promoteSave(t, a, "release-steps", "procedure", "Run scripts/release.sh.", "scripts/release.sh")
 	promoteConfirm(t, "release-steps", 1, a, b)
-	promoteSetHook(t, clone, "#!/bin/sh\necho chatter; echo more chatter >&2\n")
+	// A successful hook that talks a lot is still a pass.
+	promoteSetHook(t, clone, "#!/bin/sh\nhead -c 40000 /dev/zero | tr '\\0' x\necho more chatter >&2\n")
 	code, w, raw := promotePropose(t, agentMemProposeReq{Project: a.Project.ID, Name: "release-steps", Section: "Build"})
-	if code != http.StatusOK || !w.Ready || len(w.Patch) < 20000 || strings.Contains(w.Patch, "chatter") {
+	if code != http.StatusOK || !w.Ready || len(w.Patch) < 20000 || strings.Contains(w.Patch, "chatter") || w.Scans.PreCommit.Output != "" {
 		t.Fatalf("%d ready=%v patch %d bytes", code, w.Ready, len(w.Patch))
 	}
 	_ = raw
 	promoteMerge(t, clone, w.Patch) // git apply --index: it applies as answered
 
-	promoteSetHook(t, clone, "#!/bin/sh\necho formatted >> AGENTS.md && git add AGENTS.md\n")
+	// A hook that rewrites the change, and stages a file the scan never saw: not ready, and the
+	// answer keeps the patch that was scanned.
+	key := "ghp_" + strings.Repeat("q7Zx", 9) // built at run time, never a literal in the tree
+	t.Setenv("PROMOTE_KEY", key)
+	promoteSetHook(t, clone, "#!/bin/sh\necho formatted >> AGENTS.md && echo \"$PROMOTE_KEY\" > gen.txt && git add AGENTS.md gen.txt\n")
 	code, w, raw = promotePropose(t, agentMemProposeReq{Project: a.Project.ID, Name: "release-steps", Section: "Release"})
-	if pc := w.Scans.PreCommit; code != http.StatusOK || w.Ready || !pc.Passed || !pc.Changed || !strings.Contains(w.Patch, "+formatted") {
+	if pc := w.Scans.PreCommit; code != http.StatusOK || w.Ready || !pc.Passed || !pc.Changed || strings.Contains(w.Patch, "formatted") ||
+		strings.Contains(raw, key) || !strings.Contains(w.Patch, "+## Release") {
 		t.Fatalf("%d %s", code, raw)
 	}
 }
@@ -829,4 +843,100 @@ func TestAgentMemorySupersedeByDocumentScansTheTarget(t *testing.T) {
 	if err != nil || e.SupersededBy != nil || e.Revision != 1 {
 		t.Fatalf("written: %+v %v", e, err)
 	}
+}
+
+// git decides where the hook is: a relative core.hooksPath keeps its spaces, an empty one and
+// /dev/null leave nothing to run. A failing hook named by an absolute path does not put that path,
+// the working copy's or the home directory in the scans of the answer.
+func TestAgentMemoryPromoteProposalResolvesTheHookAsGitDoes(t *testing.T) {
+	clone, a, b := promoteRepo(t)
+	promoteSave(t, a, "release-steps", "procedure", "Run scripts/release.sh.", "scripts/release.sh")
+	promoteConfirm(t, "release-steps", 1, a, b)
+	propose := func() agentMemPreCommit {
+		t.Helper()
+		code, w, raw := promotePropose(t, agentMemProposeReq{Project: a.Project.ID, Name: "release-steps"})
+		if code != http.StatusOK {
+			t.Fatalf("%d %s", code, raw)
+		}
+		if pc := w.Scans.PreCommit; (pc.Passed || pc.Absent) != w.Ready {
+			t.Fatalf("ready %v with %+v", w.Ready, pc)
+		}
+		return w.Scans.PreCommit
+	}
+	spaced := filepath.Join(clone, "hooks dir ")
+	if err := os.MkdirAll(spaced, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(spaced, "pre-commit"), []byte("#!/bin/sh\necho spaced >> \"$PROMOTE_MARK\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		value  string
+		ran    bool
+		absent bool
+		mark   string
+	}{
+		{"hooks dir ", true, false, "spaced\n"},
+		{"", false, true, ""},
+		{"/dev/null", false, true, ""},
+	} {
+		if err := agentMemGit(clone, "config", "core.hooksPath", c.value); err != nil {
+			t.Fatal(err)
+		}
+		pc := propose()
+		if pc.Ran != c.ran || pc.Absent != c.absent || promoteMark(t) != c.mark {
+			t.Errorf("core.hooksPath %q: %+v", c.value, pc)
+		}
+	}
+
+	abs := filepath.Join(t.TempDir(), "abs-hooks")
+	if err := os.MkdirAll(abs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(abs, "pre-commit"), []byte("#!/bin/sh\necho \"$0 in $PWD, home $HOME, wc "+clone+"\" >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := agentMemGit(clone, "config", "core.hooksPath", abs); err != nil {
+		t.Fatal(err)
+	}
+	pc := propose()
+	scans, _ := json.Marshal(pc)
+	home, _ := os.UserHomeDir()
+	for _, p := range []string{abs, clone, home, os.TempDir()} {
+		if strings.Contains(string(scans), p) {
+			t.Errorf("the scans carry the path %s: %s", p, scans)
+		}
+	}
+	if !pc.Ran || pc.Passed || pc.Hook != "core.hooksPath (an absolute path)" || !strings.Contains(pc.Output, "<hooks>/pre-commit in <clone>") {
+		t.Fatalf("%+v", pc)
+	}
+}
+
+// A hook that outlives the clone's time limit but not its own still passes: the diff after it has
+// its own limit. A request that ended before the hook runs nothing more and frees the slot.
+func TestAgentMemoryPromoteProposalLimitsAreSeparate(t *testing.T) {
+	clone, a, b := promoteRepo(t)
+	promoteSave(t, a, "release-steps", "procedure", "Run scripts/release.sh.", "scripts/release.sh")
+	promoteConfirm(t, "release-steps", 1, a, b)
+	old := agentMemProposeCloneTimeout
+	agentMemProposeCloneTimeout = 15 * time.Second
+	t.Cleanup(func() { agentMemProposeCloneTimeout = old })
+	promoteSetHook(t, clone, "#!/bin/sh\nsleep 17\necho slow >> \"$PROMOTE_MARK\"\n")
+	code, w, raw := promotePropose(t, agentMemProposeReq{Project: a.Project.ID, Name: "release-steps"})
+	if code != http.StatusOK || !w.Ready || !w.Scans.PreCommit.Passed || promoteMark(t) != "slow\n" {
+		t.Fatalf("%d %s", code, raw)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := agentMemPropose(ctx, agentMemProposeReq{Project: a.Project.ID, Name: "release-steps"}, time.Now()); !errors.Is(err, context.Canceled) {
+		t.Fatalf("an ended request: %v", err)
+	}
+	if promoteMark(t) != "" {
+		t.Fatal("the hook ran for an ended request")
+	}
+	if !agentMemProposeBusy.TryLock() {
+		t.Fatal("the slot is still held")
+	}
+	agentMemProposeBusy.Unlock()
 }
