@@ -126,6 +126,15 @@ func freeView(t *testing.T) {
 		return nil, UsageZen, oauthState{known: true}, nil
 	}
 	storedKeysAre(t, nil, true)
+	accountIs(t, UsageZen, oauthState{known: true})
+}
+
+// accountIs makes the record's billing choice and account view answer pref, acct.
+func accountIs(t *testing.T, pref string, acct oauthState) {
+	t.Helper()
+	old := defaultModelAccount
+	t.Cleanup(func() { defaultModelAccount = old })
+	defaultModelAccount = func() (string, oauthState) { return pref, acct }
 }
 
 // storedKeysAre makes the record's own read of the credential store answer keys, ok.
@@ -360,8 +369,9 @@ func TestDefaultModelLaunchKeepsAfsOwnView(t *testing.T) {
 			want = freeLaunch
 		}
 		credentialView = v
-		keys, _, _, _ := v()
+		keys, pref, acct, _ := v()
 		storedKeysAre(t, keys, true)
+		accountIs(t, pref, acct)
 		if got := resolveDefault(session.Meta{Dir: realTemp(t)}); got != want {
 			t.Errorf("%s: resolved %+v, want %+v", name, got, want)
 		}
@@ -450,5 +460,29 @@ func TestDefaultModelLaunchNeedsTheStoreRead(t *testing.T) {
 	storedKeysAre(t, map[string]string{}, true)
 	if got := resolveDefault(session.Meta{Dir: dir}); got != freeLaunch {
 		t.Errorf("an empty store that was read: %+v, want %+v", got, freeLaunch)
+	}
+}
+
+// Once the store was read under the budget nothing reads it again: a writer that holds the store
+// after that must not park the resolver past the budget. credentialView stands for every read of
+// the store without a deadline, and here it never returns.
+func TestDefaultModelLaunchReadsTheStoreOnce(t *testing.T) {
+	freeView(t)
+	serveWith(t, &fakeDirServe{providers: onlyOpencode, def: freeDefault})
+	block := make(chan struct{})
+	defer close(block)
+	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
+		<-block
+		return nil, UsageZen, oauthState{known: true}, nil
+	}
+	done := make(chan routes.Launch, 1)
+	go func() { done <- resolveDefault(session.Meta{Dir: realTemp(t)}) }()
+	select {
+	case got := <-done:
+		if got != freeLaunch {
+			t.Errorf("resolved %+v, want %+v", got, freeLaunch)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the resolver waited on a second read of the credential store")
 	}
 }

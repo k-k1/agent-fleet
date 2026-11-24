@@ -73,6 +73,10 @@ var defaultModelStoredKeys = func(ctx context.Context) (map[string]string, bool)
 	return s.Opencode, true
 }
 
+// defaultModelAccount is the billing choice and the opencode.ai account as last seen: neither
+// reads the credential store or the daemon. A seam for tests.
+var defaultModelAccount = func() (string, oauthState) { return UsagePref(), oauthCached() }
+
 // errNotFreeOnly is why a directory is not proven to offer opencode.ai's free models alone.
 var errNotFreeOnly = errors.New("the directory is not proven to offer opencode.ai's free models alone")
 
@@ -324,12 +328,16 @@ func resolveDefaultModelLaunch(m session.Meta, start time.Time) routes.Launch {
 			return routes.Launch{}
 		}
 	}
-	_, pref, acct, custom := credentialView()
+	// Nothing below reads the credential store again: a second, unbounded read (credentialView)
+	// would wait on a writer that holds it after the budget is spent. The keys are the ones just
+	// read, the billing choice and the account are the cached views, and the provider is opencode,
+	// which neither an engine nor a custom connection can take (reservedProviders).
+	pref, acct := defaultModelAccount()
 	model := launchDefaultModelOf(ctx, m.CWD())
 	if model == "" {
 		return routes.Launch{}
 	}
-	l := resolveModel(model, keys, pref, acct, engineProviderIDs(), custom)
+	l := resolveModel(model, keys, pref, acct, nil, nil)
 	if l != (routes.Launch{Route: routes.RouteOpencodeZen, Binding: FreeBinding}) {
 		return routes.Launch{}
 	}
