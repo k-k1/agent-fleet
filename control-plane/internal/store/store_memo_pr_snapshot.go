@@ -35,10 +35,10 @@ type MemoPRSnapshotStore interface {
 	// ListPRSnapshotsDue returns, of every member but those in except, the closed clean deliveries
 	// a pending message waits for whose snapshot is not final and was last tried before before
 	// (never tried first), at most limit, in (pr_tried_at, closed_at, id) order and past after when
-	// it is given (the last row of the page before). A delivery that can no longer satisfy step 1
-	// (retired as overdue, a bad first turn) is left out: its dependents go to held whatever its
-	// PRs say.
-	ListPRSnapshotsDue(ctx context.Context, before string, after *MemoDelivery, except []string, limit int) ([]MemoDelivery, error)
+	// it is given (the last row of the page before), of member alone when it is not "". A delivery
+	// that can no longer satisfy step 1 (retired as overdue, a bad first turn) is left out: its
+	// dependents go to held whatever its PRs say.
+	ListPRSnapshotsDue(ctx context.Context, before string, after *MemoDelivery, except []string, member string, limit int) ([]MemoDelivery, error)
 	// ListPRSnapshotStoppedMembers returns the members with a row ListPRSnapshotsDue would list
 	// whose workspace is recorded as stopped, at most limit (memoDueStoppedMembersSQL).
 	ListPRSnapshotStoppedMembers(ctx context.Context, before string, limit int) ([]string, error)
@@ -74,9 +74,9 @@ func memoPRSnapshotsDueSQL(before string) (string, []any) {
 		[]any{DeliveryClosed, DeliveryClean, PRStateWaiting, before, MemoQuickTurnMs, MemoStateDelivered, MemoStatePending}
 }
 
-func (s *SQL) ListPRSnapshotsDue(ctx context.Context, before string, after *MemoDelivery, except []string, limit int) ([]MemoDelivery, error) {
+func (s *SQL) ListPRSnapshotsDue(ctx context.Context, before string, after *MemoDelivery, except []string, member string, limit int) ([]MemoDelivery, error) {
 	cond, args := memoPRSnapshotsDueSQL(before)
-	page, pargs := memoDeliveryPageSQL("pr_tried_at", func(d MemoDelivery) string { return d.PRTriedAt }, after, except)
+	page, pargs := memoDeliveryPageSQL("pr_tried_at", func(d MemoDelivery) string { return d.PRTriedAt }, after, except, member)
 	args = append(append(args, pargs...), limit)
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE `+cond+page+`
 		ORDER BY pr_tried_at, closed_at, id LIMIT ?`, args...))

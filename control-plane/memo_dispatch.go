@@ -1271,9 +1271,9 @@ type memoPRSnapshotReply struct {
 // collectPRSnapshots reads the snapshots that are due: a pending message waits for them, they are
 // not final, and they were not tried in the last 10 minutes. Only a running workspace whose Agent
 // has the endpoint is asked; every other read decides nothing, and the dependent waits. The list
-// is paged as collectAnswers pages its waited-for one: the members recorded as stopped that this
-// tick's view finds stopped are left out from the first page, and any other member whose rows are
-// left unstamped from the next pages.
+// is paged as collectAnswers pages its waited-for one: the members recorded as stopped whose
+// runtime is stopped are left out from the first page (and read after the list if they started
+// meanwhile), and any other member whose rows are left unstamped from the next pages.
 func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
 	r.prFailed = map[string]bool{}
 	read := 0
@@ -1284,19 +1284,28 @@ func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[stri
 	if err != nil {
 		log.Printf("memo queue: list PR snapshots due of stopped members: %v", err)
 	}
-	for _, m := range ms {
-		if ctx.Err() != nil {
-			break
-		}
-		if v := r.prView(ctx, views, m); v == nil || !v.liveOK {
-			except.add(m)
-		}
+	stopped := r.memoLookUpStopped(ctx, ms)
+	for _, m := range stopped {
+		except.add(m)
 	}
+	defer func() {
+		for _, m := range r.memoStartedSince(ctx, stopped) {
+			if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
+				return
+			}
+			ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, before, nil, nil, m, memoPRSnapshotsPerTick-read)
+			if err != nil {
+				log.Printf("memo queue: list PR snapshots due of %s: %v", m, err)
+				continue
+			}
+			read = r.readPRSnapshotsOf(ctx, views, ds, read, &memoExcept{}, now)
+		}
+	}()
 	for p := 0; p < memoPRSnapshotListPages; p++ {
 		if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
 			return
 		}
-		ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, before, after, except.ids, memoPRSnapshotsListed)
+		ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, before, after, except.ids, "", memoPRSnapshotsListed)
 		if err != nil {
 			log.Printf("memo queue: list PR snapshots due: %v", err)
 			return

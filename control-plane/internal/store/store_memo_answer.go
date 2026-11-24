@@ -30,9 +30,9 @@ type MemoAnswerStore interface {
 	// ListAnswersDue returns, of every member but those in except, the deliveries closed at or
 	// after since with a session and no answer decided, last tried before before (never tried
 	// first), at most limit, in (answer_tried_at, closed_at, id) order and past after when it is
-	// given (the last row of the page before): with waited, those a pending message of the same
-	// bucket waits for, else the others.
-	ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, except []string, limit int) ([]MemoDelivery, error)
+	// given (the last row of the page before), of member alone when it is not "": with waited,
+	// those a pending message of the same bucket waits for, else the others.
+	ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, except []string, member string, limit int) ([]MemoDelivery, error)
 	// ListAnswerStoppedMembers returns the members with a row ListAnswersDue would list whose
 	// workspace is recorded as stopped, at most limit (memoDueStoppedMembersSQL).
 	ListAnswerStoppedMembers(ctx context.Context, since, before string, waited bool, limit int) ([]string, error)
@@ -54,11 +54,14 @@ const memoDeliveryWaitedSQL = `EXISTS (SELECT 1 FROM memo p JOIN memo m ON m.mem
 
 // memoDeliveryPageSQL narrows a list of deliveries in (tried, closed_at, id) order, tried being the
 // column of the pass's own stamp, to the rows past after (the last row of the page before, when
-// given) and outside the members in except. The except list is how a pass rotates past the
+// given) and outside the members in except, or to member's rows when it is not "". The except list is how a pass rotates past the
 // members whose rows it leaves unstamped (a stopped workspace): one entry skips all of a member's
 // rows, however many, where a page bound alone would let them fill every page.
-func memoDeliveryPageSQL(tried string, triedOf func(MemoDelivery) string, after *MemoDelivery, except []string) (string, []any) {
+func memoDeliveryPageSQL(tried string, triedOf func(MemoDelivery) string, after *MemoDelivery, except []string, member string) (string, []any) {
 	cond, args := "", []any{}
+	if member != "" {
+		cond, args = ` AND membership_id=?`, append(args, member)
+	}
 	if after != nil {
 		t := triedOf(*after)
 		cond += ` AND (` + tried + `>? OR (` + tried + `=? AND (closed_at>? OR (closed_at=? AND id>?))))`
@@ -112,9 +115,9 @@ func memoAnswersDueSQL(since, before string, waited bool) (string, []any) {
 		[]any{DeliveryClosed, since, before}
 }
 
-func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, except []string, limit int) ([]MemoDelivery, error) {
+func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, except []string, member string, limit int) ([]MemoDelivery, error) {
 	cond, args := memoAnswersDueSQL(since, before, waited)
-	page, pargs := memoDeliveryPageSQL("answer_tried_at", func(d MemoDelivery) string { return d.AnswerTriedAt }, after, except)
+	page, pargs := memoDeliveryPageSQL("answer_tried_at", func(d MemoDelivery) string { return d.AnswerTriedAt }, after, except, member)
 	args = append(append(args, pargs...), limit)
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE `+cond+page+`
 		ORDER BY answer_tried_at, closed_at, id LIMIT ?`, args...))

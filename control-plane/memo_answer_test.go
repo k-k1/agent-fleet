@@ -573,7 +573,7 @@ func TestMemoAnswerUnansweredAgentIsStamped(t *testing.T) {
 	})
 }
 
-// stoppedMembers adds n members whose workspaces are recorded as stopped, each with rows chains
+// stoppedMembers adds n members whose workspaces are stopped (and recorded so), each with rows chains
 // like otherMemberChains', closed before closedAt (a member's rows next to each other in close
 // order), and answers the views a tick has of them (stopped) and their deliveries.
 func (e *deliveryEnv) stoppedMembers(q string, n, rows int, closedAt time.Time, prState string) (func() map[string]*memoMemberView, []string) {
@@ -593,11 +593,14 @@ func (e *deliveryEnv) stoppedMembers(q string, n, rows int, closedAt time.Time, 
 		}
 		e.members[name] = mem.ID
 		members = append(members, mem.ID)
-		if err := e.st.CreateWorkspace(ctx, store.Workspace{ID: "ws-" + name, TenantID: e.t1.ID, MembershipID: mem.ID,
-			ContainerName: name, Network: "n", DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "stopped",
-			CreatedAt: store.NowTS()}); err != nil {
+		ws := store.Workspace{ID: "ws-" + name, TenantID: e.t1.ID, MembershipID: mem.ID, ContainerName: name,
+			Network: "n", DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "stopped", CreatedAt: store.NowTS()}
+		if err := e.st.CreateWorkspace(ctx, ws); err != nil {
 			e.t.Fatal(err)
 		}
+		e.mgr.mu.Lock()
+		e.mgr.rts[mem.ID] = cachedRT{rt: stubRuntime{state: "stopped"}, ws: ws}
+		e.mgr.mu.Unlock()
 		ids = append(ids, e.otherMemberChains(q, name, rows, closedAt.Add(-time.Duration(i)*time.Minute), prState)...)
 	}
 	views := func() map[string]*memoMemberView {
@@ -647,6 +650,134 @@ func TestMemoAnswerStaleStoppedRecordIsRead(t *testing.T) {
 		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now)
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
 			t.Fatalf("a running member recorded as stopped: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// queueAgentFor puts a fake Agent behind member's workspace, in runtime state, its workspace
+// recorded as running unless it already has one.
+func (e *deliveryEnv) queueAgentFor(member, state string) *fakeQueueAgent {
+	e.t.Helper()
+	a := newFakeQueueAgent(e.t)
+	a.mu.Lock()
+	a.report = true
+	a.mu.Unlock()
+	ctx := context.Background()
+	ws, ok, err := e.st.GetWorkspaceByMembership(ctx, e.members[member])
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	if !ok {
+		ws = store.Workspace{ID: "ws-" + member, TenantID: e.t1.ID, MembershipID: e.members[member], ContainerName: member,
+			Network: "n", DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: store.NowTS()}
+		if err := e.st.CreateWorkspace(ctx, ws); err != nil {
+			e.t.Fatal(err)
+		}
+	}
+	e.setRuntimeOf(member, a, state)
+	return a
+}
+
+// setRuntimeOf is setRuntime for member's workspace.
+func (e *deliveryEnv) setRuntimeOf(member string, a *fakeQueueAgent, state string) {
+	ws, _, _ := e.st.GetWorkspaceByMembership(context.Background(), e.members[member])
+	e.mgr.mu.Lock()
+	e.mgr.rts[e.members[member]] = cachedRT{rt: stubRuntime{endpoint: a.srv.URL, token: "tok", state: state}, ws: ws}
+	e.mgr.mu.Unlock()
+}
+
+// recordStopped records member's workspace as stopped, whatever its runtime says.
+func (e *deliveryEnv) recordStopped(member string) {
+	e.t.Helper()
+	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE workspace SET state='stopped' WHERE membership_id=?`, e.members[member]); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// namedReply is transcriptReply about session.
+func namedReply(session, text string) func() (int, any) {
+	return func() (int, any) {
+		_, body := transcriptReply("idle", true, text)()
+		body.(map[string]any)["name"] = session
+		return http.StatusOK, body
+	}
+}
+
+// The look-up of the members recorded as stopped asks no Agent: a running member recorded as
+// stopped whose Agent does not answer costs the pass nothing before the older rows of another.
+func TestMemoAnswerStaleRecordAsksNoAgentFirst(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-2 * time.Minute))
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: older"))
+		calls := e.silentMember()
+		e.otherMemberChains(q, "c", 1, now.Add(-time.Minute+time.Second), store.PRStateNone) // newer than a's
+		e.recordStopped("c")
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		e.runner().collectAnswers(ctx, map[string]*memoMemberView{}, now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the older row of the running member: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+		if len(calls) == 0 {
+			t.Fatal("the silent member's row was never reached, so the test proves nothing")
+		}
+	})
+}
+
+// A member left out as stopped at the start of the pass whose workspace starts while the pass reads
+// other rows is read in the same tick, after the list.
+func TestMemoAnswerStartedDuringTheTickIsRead(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		c := e.queueAgentFor("c", "stopped")
+		e.recordStopped("c")
+		ids := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), store.PRStateNone) // older than a's
+		c.setAnswer("q-c", namedReply("q-c", "Done: started meanwhile"))
+		agent.setAnswer("q-a", func() (int, any) {
+			e.setRuntimeOf("c", c, "running") // c's start completes while a is read
+			return namedReply("q-a", "Done: a")()
+		})
+		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("a: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+		if got := e.delivery(ids[0]); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the member that started during the tick: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// A member the PR snapshot pass could not reach is read in its rows' order, not after the rest: with
+// one read left, an older row of a member that answers again is the one read.
+func TestMemoAnswerPRFailedMemberReadInOrder(t *testing.T) {
+	saved := memoAnswersPerTick
+	memoAnswersPerTick = 1
+	t.Cleanup(func() { memoAnswersPerTick = saved })
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: newer"))
+		c := e.queueAgentFor("c", "running")
+		c.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer() })
+		c.setAnswer("q-c", namedReply("q-c", "Done: older, read again"))
+		c.mu.Lock()
+		c.sessionsFailNext = 1
+		c.mu.Unlock()
+		ids := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), "") // older than a's
+		r := e.runner()
+		views := map[string]*memoMemberView{}
+		r.collectPRSnapshots(context.Background(), views, now)
+		if !r.prFailed[e.members["c"]] {
+			t.Fatalf("the PR pass did not record c: %v", r.prFailed)
+		}
+		r.collectAnswers(context.Background(), views, now)
+		if got := e.delivery(ids[0]); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("c's older row: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != "" {
+			t.Fatalf("a's newer row was read past the bound: %q", got.AnswerClass)
 		}
 	})
 }
@@ -703,9 +834,9 @@ func TestMemoAnswerNotStarvedByThePRPass(t *testing.T) {
 }
 
 // A member whose session list the PR snapshot pass could not read and that still does not answer
-// costs the answer pass no other member's read: its row is tried after the others, and is stamped
-// as an Agent that does not answer is.
-func TestMemoAnswerPRFailedMemberTriedLast(t *testing.T) {
+// costs the answer pass at most memoAnswerRetryWait: the rows behind it are read, and its row is
+// stamped as an Agent's that does not answer is.
+func TestMemoAnswerPRFailedMemberRetriedBriefly(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
@@ -729,48 +860,14 @@ func TestMemoAnswerPRFailedMemberTriedLast(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("the PR pass never asked the silent Agent")
 		}
-		actx, acancel := context.WithTimeout(context.Background(), 2*time.Second)
+		actx, acancel := context.WithTimeout(context.Background(), memoAnswerRetryWait+2*time.Second)
 		defer acancel()
 		r.collectAnswers(actx, views, now)
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
 			t.Fatalf("the member behind the silent one: %q %q", got.AnswerHead, got.AnswerClass)
 		}
 		if got := e.delivery(silent); got.AnswerTriedAt == "" {
-			t.Fatal("the silent member's row was not tried after the others")
-		}
-	})
-}
-
-// The rows of a member the PR snapshot pass could not reach are tried after both lists: a row only
-// the run history shows, of another member, is read before the retry of a silent one.
-func TestMemoAnswerRetryAfterBothLists(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-		now := time.Now()
-		agent, q, da, b := e.noPRChain(now.Add(-time.Minute))
-		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: history only"))
-		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state='held', release_hash='', released_at='' WHERE id=?`, b.ID); err != nil {
-			t.Fatal(err)
-		}
-		calls := e.silentMember()
-		e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), "")
-		r := e.runner()
-		views := map[string]*memoMemberView{}
-		pctx, pcancel := context.WithTimeout(context.Background(), time.Second)
-		r.collectPRSnapshots(pctx, views, now)
-		pcancel()
-		select {
-		case <-calls:
-		case <-time.After(10 * time.Second):
-			t.Fatal("the PR pass never asked the silent Agent")
-		}
-		if !r.prFailed[e.members["c"]] {
-			t.Fatalf("the PR pass did not record the silent member: %v", r.prFailed)
-		}
-		actx, acancel := context.WithTimeout(context.Background(), 3*time.Second)
-		defer acancel()
-		r.collectAnswers(actx, views, now)
-		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
-			t.Fatalf("the history-only row: %q %q", got.AnswerHead, got.AnswerClass)
+			t.Fatal("the silent member's row was not stamped")
 		}
 	})
 }
