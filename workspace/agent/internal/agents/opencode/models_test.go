@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -104,19 +105,24 @@ func TestModelsFallsBackWithoutDaemon(t *testing.T) {
 	orig := oauthProbe
 	oauthProbe = func() (string, bool) { return "", false }
 	defer func() { oauthProbe = orig }()
-	if got := modelsFromDaemon(); got != nil {
-		t.Fatalf("no daemon present, yet got %v", got)
+	if got, up := modelsFromDaemon(); got != nil || up {
+		t.Fatalf("no daemon present, yet got %v (up=%v)", got, up)
 	}
 }
 
 // From opencode 2.4.0 a serve whose instance is still activating answers GET /api/model with 200
 // and an empty list (measured: about 3 s on 2.4.0 and 2.4.1), where 2.3.x held the request. That
-// answer is not "this account has no models": the picker falls back to the CLI, and the empty read
-// is not cached, so the next refresh asks the daemon again.
+// answer is not "this account has no models": the picker falls back to the CLI, and that stand-in
+// is not cached, because the CLI cannot see a Console login's models and caching it would hide
+// them for a minute after the daemon is ready.
 func TestModelsFallsBackOnAnActivatingDaemon(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	var mu sync.Mutex
+	listing := `[]`
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"location":{"directory":"/w"},"data":[]}`))
+		mu.Lock()
+		defer mu.Unlock()
+		_, _ = w.Write([]byte(`{"location":{"directory":"/w"},"data":` + listing + `}`))
 	}))
 	defer srv.Close()
 	orig := oauthProbe
@@ -133,6 +139,44 @@ func TestModelsFallsBackOnAnActivatingDaemon(t *testing.T) {
 
 	if got := Models(); !reflect.DeepEqual(got, []string{"opencode/tidepool-alpha-free"}) {
 		t.Fatalf("Models with an activating daemon = %v, want the CLI's list", got)
+	}
+
+	// The instance finishes activating and lists what the Console login brings.
+	mu.Lock()
+	listing = `[{"id":"tidepool-alpha-free","providerID":"opencode","status":"active","cost":[{"input":0}]},
+		{"id":"gpt-5.6-luna","providerID":"opencode-go","status":"active","cost":[{"input":1}]}]`
+	mu.Unlock()
+	want := []string{"opencode/tidepool-alpha-free", "opencode-go/gpt-5.6-luna"}
+	if got := Models(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Models right after the daemon finished activating = %v, want %v", got, want)
+	}
+}
+
+// Without a daemon the CLI list is the whole answer and keeps its minute of cache: the launch
+// modal fetches on every open, and each `opencode models` costs about a second.
+func TestModelsCachesTheCLIListWithoutDaemon(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	orig := oauthProbe
+	oauthProbe = func() (string, bool) { return "", false }
+	defer func() { oauthProbe = orig }()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "opencode")
+	write := func(id string) {
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\necho "+id+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("opencode/first")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	InvalidateModels()
+	defer InvalidateModels()
+
+	if got := Models(); !reflect.DeepEqual(got, []string{"opencode/first"}) {
+		t.Fatalf("first read = %v", got)
+	}
+	write("opencode/second")
+	if got := Models(); !reflect.DeepEqual(got, []string{"opencode/first"}) {
+		t.Fatalf("second read within the minute = %v, want the cached CLI list", got)
 	}
 }
 
