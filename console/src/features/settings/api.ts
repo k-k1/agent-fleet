@@ -138,7 +138,10 @@ export const putToolchains = (next: ToolchainsPatch): Promise<Reply<Toolchains>>
 export type ToolBin = { path: string; version: string; raw: string };
 export type BootInstall = { status: "ok" | "skipped" | "failed"; reason?: "no_space" | "network" | "checksum" | "other" };
 export type ToolReport = {
+  /** Stable key (the command-ish name); `title`/`url` are the product name and home page. */
   name: string;
+  title?: string;
+  url?: string;
   pin?: string;
   /** null when absent. */
   effective: ToolBin | null;

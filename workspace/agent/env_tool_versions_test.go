@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -389,5 +390,43 @@ func TestConfluenceWrapperVersionSkipsCredentialHelper(t *testing.T) {
 	}
 	if got == nil || got.Version != "2.31.0" {
 		t.Errorf("probe through wrapper = %+v, want 2.31.0", got)
+	}
+}
+
+// guideToolRowRe matches a tool row of the generated guide/ref/workspace-image.md:
+// `| [Name](url) | …`. The link text is the guide's name for the tool.
+var guideToolRowRe = regexp.MustCompile("^\\| \\[([^\\]]+)\\]\\((https?://[^)]+)\\) \\|")
+
+// TestToolSpecsMatchGuide keeps the Toolchains rows' product name and home link in step with
+// the tool's row in the workspace-image guide: the guide's link must equal the spec's URL and
+// the guide's name must start with the spec's Title ("GitHub CLI (`gh`)" starts with
+// "GitHub CLI"). Without it the Console and the guide drift apart silently.
+func TestToolSpecsMatchGuide(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "guide", "ref", "workspace-image.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guide := map[string]string{} // url → guide name
+	for _, line := range strings.Split(string(raw), "\n") {
+		if m := guideToolRowRe.FindStringSubmatch(line); m != nil {
+			guide[m[2]] = m[1]
+		}
+	}
+	if len(guide) < 20 { // a regexp that matched nothing must not read as green
+		t.Fatalf("parsed only %d guide rows; the row format changed?", len(guide))
+	}
+	for _, spec := range toolSpecs {
+		if spec.Title == "" || spec.URL == "" {
+			t.Errorf("%s: Title and URL are required (add the tool to the guide via scripts/workspace-image/tools.tsv)", spec.Name)
+			continue
+		}
+		name, ok := guide[spec.URL]
+		if !ok {
+			t.Errorf("%s: no guide row links to %s", spec.Name, spec.URL)
+			continue
+		}
+		if !strings.HasPrefix(name, spec.Title) {
+			t.Errorf("%s: guide names it %q, which does not start with Title %q", spec.Name, name, spec.Title)
+		}
 	}
 }
