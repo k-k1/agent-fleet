@@ -6,7 +6,7 @@
 import type { Session } from "../../types/session.ts";
 import { waitsForMember } from "../autorun/runs.ts";
 import { repoInSet, sessionInSet, type WorkingSet } from "../../lib/workingSets.ts";
-import { sessionFolder } from "../../lib/project.ts";
+import { sessionAutoKind, sessionFolder } from "../../lib/project.ts";
 import type { Repo } from "../repos/store.ts";
 
 export interface ScheduledRun {
@@ -80,12 +80,17 @@ export function buildScheduledRuns(sessions: Session[], set: WorkingSet | null =
 
 /** Sessions of scheduled runs that wait for the member's answer, by the rule the list uses
  *  (a stopped session that still carries its question counts), and that the working set shows:
- *  the Schedules icon's count. */
-export const waitingScheduledCount = (sessions: Session[], set: WorkingSet | null = null, repos: Repo[] = []): number =>
-  buildScheduledRuns(sessions, set, repos).reduce(
-    (n, r) => n + [r.root, ...r.children].filter((s) => waitsForMember(s) && (!set || scheduledSessionInSet(set, s, repos))).length,
+ *  the Schedules icon's count. A child the Sessions view lists too (`shown`, see sessionAutoKind)
+ *  counts on that icon instead, not on both. */
+export const waitingScheduledCount = (sessions: Session[], set: WorkingSet | null = null, repos: Repo[] = [], shown?: ReadonlySet<string>): number => {
+  const byName = new Map(sessions.map((s) => [s.name, s]));
+  return buildScheduledRuns(sessions, set, repos).reduce(
+    (n, r) =>
+      n +
+      [r.root, ...r.children].filter((s) => waitsForMember(s) && (!set || scheduledSessionInSet(set, s, repos)) && sessionAutoKind(s, byName, shown) !== "").length,
     0,
   );
+};
 
 /** Splits runs (newest first, as built) into those under a listed schedule, by id, and the rest. */
 export function groupRunsBySchedule(runs: ScheduledRun[], known: ReadonlySet<string>): { bySchedule: Map<string, ScheduledRun[]>; rest: ScheduledRun[] } {

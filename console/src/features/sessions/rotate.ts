@@ -32,14 +32,14 @@ import type { Session } from "../../types/session.ts";
  *  through sessionInSet. Filtering every session by sessionInSet instead disagrees with the
  *  rail both ways: a directly assigned session in an out-of-set repo, and a worktree whose
  *  folder carries no "@<base>". set=null means no scope. */
-export function railOrder(sessions: Session[], repos: Repo[], set: WorkingSet | null): Session[] {
+export function railOrder(sessions: Session[], repos: Repo[], set: WorkingSet | null, shown?: ReadonlySet<string>): Session[] {
   const out: Session[] = [];
   const byName = new Map(sessions.map((s) => [s.name, s]));
-  repoTree(repos, sessions)
+  repoTree(repos, sessions, shown)
     .filter((t) => !set || repoInSet(set, t.repo))
-    .forEach((t) => out.push(...railNodeSessions(t, sessions, byName, true)));
-  for (const g of spaceGroups(sessions, true)) out.push(...g.sessions.filter((s) => !set || sessionInSet(set, s)));
-  out.push(...orphanSessions(sessions, repos, true).filter((s) => !set || sessionInSet(set, s)));
+    .forEach((t) => out.push(...railNodeSessions(t, sessions, byName, true, shown)));
+  for (const g of spaceGroups(sessions, true, shown)) out.push(...g.sessions.filter((s) => !set || sessionInSet(set, s)));
+  out.push(...orphanSessions(sessions, repos, true, shown).filter((s) => !set || sessionInSet(set, s)));
   return out;
 }
 

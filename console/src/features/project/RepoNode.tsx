@@ -21,6 +21,7 @@ import { useRepoReveal } from "../repos/store.ts";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
 import type { Session } from "../../types/session.ts";
 import { displayName } from "../../lib/sessionview.ts";
+import { useShownSchedules } from "..//schedules/store.ts";
 import { childNodes, sessionsInFolder, shellPlaceKey, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
 import type { RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
@@ -55,7 +56,8 @@ export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
   // What the tree draws: a session an auto-run started is the Auto-run view's, and a shell or an
   // SSM login the Terminal view's, so neither is in any count, preview or match here (stop /
   // delete read the full list through `detached`). The shells of this copy show as a count chip.
-  const shown = useMemo(() => withoutTerminals(withoutUnattended(sessions)), [sessions]);
+  const shownSchedules = useShownSchedules();
+  const shown = useMemo(() => withoutTerminals(withoutUnattended(sessions, shownSchedules)), [sessions, shownSchedules]);
   const mine = sessionsInFolder(shown, r.name);
   const below = descendantFolders(n);
   // Empty repos (no sessions anywhere under them, worktrees included) default

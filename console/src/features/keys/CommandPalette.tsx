@@ -82,6 +82,7 @@ import { loadMemoryList, searchMemoryBodies, type MemoryList } from "./memoryPal
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { stateClass, displayName, stateInfo } from "../../lib/sessionview.ts";
 import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
+import { useShownSchedules } from "../schedules/store.ts";
 import { isUnattendedOnlyFolder, sessionFolder, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
 import type { Session } from "../../types/session.ts";
 import {
@@ -453,6 +454,7 @@ function SessionRowBody({ s, refHit, parentName }: { s: Session; refHit?: string
 export function CommandPalette() {
   const open = useKeysStore((s) => s.paletteOpen);
   const sessions = useSessionsStore((s) => s.sessions);
+  const shownSchedules = useShownSchedules();
   const repos = useReposStore((s) => s.repos);
   const refs = useRefIndex();
   // Subscribed (not a getState peek): which session is active decides whether the session
@@ -761,12 +763,12 @@ export function CommandPalette() {
       // A copy only auto-run works in is not in the tree, so there is no row to reveal: open its
       // Source Control instead.
       run: (split) =>
-        split || isUnattendedOnlyFolder(sessions, r, repos)
+        split || isUnattendedOnlyFolder(sessions, r, repos, shownSchedules)
           ? useLayoutStore.getState().openTargetInNew({ content: { kind: "scm", scmRepo: r.name } })
           : revealRepoInRail(r.name),
     }));
     return [...cmds, ...sess, ...repoItems];
-  }, [open, sessions, repos, commands, locale]);
+  }, [open, sessions, repos, commands, locale, shownSchedules]);
 
   // command/changed are static lists filtered client-side; file is already server-filtered by q.
   // File "loading" only counts with a live query — an empty query shows the type-to-search hint,

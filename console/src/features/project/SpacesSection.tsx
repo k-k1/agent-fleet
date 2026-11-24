@@ -10,6 +10,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { SessionRow } from "../sessions/SessionRow.tsx";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
+import { useShownSchedules } from "..//schedules/store.ts";
 import { shellPlaceKey, spaceGroups } from "../../lib/project.ts";
 import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
@@ -40,7 +41,7 @@ export const SpacesSection = memo(function SpacesSection() {
   // set), and found by the name it is shown under, never by a shell's title.
   const { counts } = useTerminalView();
   const shellSpaces = [...counts.keys()].filter((k) => k.startsWith("shell:space:")).map((k) => k.slice("shell:space:".length));
-  const base = spaceGroups(sessions);
+  const base = spaceGroups(sessions, false, useShownSchedules());
   const known = new Set(base.map((g) => g.folder));
   const groups = [...base, ...shellSpaces.filter((f) => !known.has(f)).sort().map((folder) => ({ folder, sessions: [] as Session[] }))]
     .map((g) => {

@@ -814,3 +814,47 @@ describe("terminals", () => {
     expect(railOrder(sessions, repos, null).map((s) => s.name)).toContain("in-space");
   });
 });
+
+describe("a schedule that also shows in the Sessions view", () => {
+  const t = (n: number) => `2026-09-0${n}T00:00:00Z`;
+  const repos = [repo("af"), wt("af@cron", "af", { createdAt: t(1) }), wt("af@kid", "af", { createdAt: t(2) }), wt("af@plain", "af", { createdAt: t(3) })];
+  const sessions = [
+    sess("cron", { repo: "af@cron", createdAt: t(1), origin: "schedule", scheduleId: "s1", worktree: true }),
+    sess("kid", { repo: "af@kid", createdAt: t(2), origin: "session", originSession: "cron", worktree: true }),
+    // A child that shares the root's folder, with no worktree of its own.
+    sess("plain", { repo: "af@plain", createdAt: t(3), origin: "session", originSession: "cron" }),
+  ];
+  const on = new Set(["s1"]);
+  const names = (ns: RepoTreeNode[]) => ns.map((n) => n.repo.name);
+
+  it("off: nothing changes", () => {
+    expect(withoutUnattended(sessions).map((s) => s.name)).toEqual([]);
+    expect(names(repoTree(repos, sessions)[0].children)).toEqual([]);
+    expect(withoutUnattended(sessions, new Set()).map((s) => s.name)).toEqual([]);
+  });
+  it("on: a child with a worktree is listed, the root and a child without one are not", () => {
+    expect(withoutUnattended(sessions, on).map((s) => s.name)).toEqual(["kid"]);
+  });
+  it("on: its worktree is an ordinary tree row, the others stay detached", () => {
+    const tree = repoTree(repos, sessions, on)[0];
+    expect(names(tree.children)).toEqual(["af@kid"]);
+    // The root's copy stays detached, with the child that has no worktree nested under it.
+    expect(shapes(tree.detached ?? [])).toEqual([["af@cron", [["af@plain", []]]]]);
+  });
+  it("on: the filter's match rule finds the child and not the root", () => {
+    const hit = (folder: string) => sessionsInFolder(withoutUnattended(sessions, on), folder).length > 0;
+    expect(hit("af@kid")).toBe(true);
+    expect(hit("af@cron")).toBe(false);
+    expect(hit("af@plain")).toBe(false);
+  });
+  it("on: the rotation order and the unattended-only test follow", () => {
+    expect(railOrder(sessions, repos, null, on).map((s) => s.name)).toEqual(["kid"]);
+    expect(isUnattendedOnlyFolder(sessions, repos[2], repos, on)).toBe(false);
+    expect(isUnattendedOnlyFolder(sessions, repos[2], repos)).toBe(true);
+  });
+  it("a root without an id, or whose schedule is not flagged, keeps today's behaviour", () => {
+    const noId = sessions.map((s) => (s.name === "cron" ? { ...s, scheduleId: undefined } : s));
+    expect(withoutUnattended(noId, on)).toEqual([]);
+    expect(withoutUnattended(sessions, new Set(["other"]))).toEqual([]);
+  });
+});

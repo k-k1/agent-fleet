@@ -98,3 +98,16 @@ describe("groupRunsBySchedule", () => {
     expect(g.rest.map((r) => r.root.name)).toEqual(["none", "b"]);
   });
 });
+
+describe("waitingScheduledCount with a schedule shown in the Sessions view", () => {
+  const ss = [
+    sess("cron", { origin: "schedule", scheduleId: "s1", state: "question" }),
+    sess("kid", { origin: "session", originSession: "cron", worktree: true, state: "question" }),
+    sess("plain", { origin: "session", originSession: "cron", state: "question" }),
+  ];
+  it("counts a worktree child on the Sessions icon only, and keeps every run listed", () => {
+    expect(waitingScheduledCount(ss)).toBe(3);
+    expect(waitingScheduledCount(ss, null, [], new Set(["s1"]))).toBe(2);
+    expect(buildScheduledRuns(ss)[0].children.map((c) => c.name)).toEqual(["kid", "plain"]);
+  });
+});
