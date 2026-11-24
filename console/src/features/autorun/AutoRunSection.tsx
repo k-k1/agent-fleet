@@ -291,6 +291,9 @@ function SubHead({ label, open, onToggle, kind }: { label: string; open: boolean
   );
 }
 
+type CatFold = { live: boolean; ended: boolean };
+const DEFAULT_FOLD: CatFold = { live: true, ended: false };
+
 function Category({
   label,
   categoryId,
@@ -302,8 +305,12 @@ function Category({
   onSettings,
   activeName,
   filtering,
+  fold,
+  onFold,
 }: {
   label: string;
+  fold: CatFold;
+  onFold: (f: CatFold) => void;
   /** A filter is set: both groups are open, or a match inside "Ended" would be hidden. */
   filtering: boolean;
   /** The category's live queue settings (undefined: none are known). */
@@ -318,8 +325,8 @@ function Category({
   activeName: string | null;
 }) {
   const tr = useT();
-  const [showLive, setShowLive] = useState(true);
-  const [showEnded, setShowEnded] = useState(false);
+  // Held by the view, not here: a category the filter hides unmounts, and its folds must survive.
+  const { live: showLive, ended: showEnded } = fold;
   // Published on the section so the sub-headers pin directly under this header, wrapped or not.
   const headRef = usePublishedHeight<HTMLDivElement>("--autorun-cat-head-h");
   const live = runs.filter((r) => r.state !== "ended");
@@ -340,7 +347,7 @@ function Category({
       </div>
       {live.length > 0 && (
         <div className="autorun-group" data-autorun-group="live">
-          <SubHead kind="live" label={tr("autorun.running_head", { n: live.length })} open={showLive || filtering} onToggle={() => setShowLive((v) => !v)} />
+          <SubHead kind="live" label={tr("autorun.running_head", { n: live.length })} open={showLive || filtering} onToggle={() => onFold({ ...fold, live: !fold.live })} />
           {(showLive || filtering) && (
             <ul className="autorun-list">
               {live.map((r) => (
@@ -352,7 +359,7 @@ function Category({
       )}
       {ended.length > 0 && (
         <div className="autorun-group" data-autorun-group="ended">
-          <SubHead kind="ended" label={tr("autorun.ended", { n: ended.length })} open={showEnded || filtering} onToggle={() => setShowEnded((v) => !v)} />
+          <SubHead kind="ended" label={tr("autorun.ended", { n: ended.length })} open={showEnded || filtering} onToggle={() => onFold({ ...fold, ended: !fold.ended })} />
           {(showEnded || filtering) && (
             <ul className="autorun-list">
               {ended.map((r) => (
@@ -511,6 +518,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
     const q = queues.find((x) => x.categoryId === id);
     return q ? [q.repo, q.category].filter(Boolean).join(" / ") || tr("memo.autorun") : tr("autorun.other");
   };
+  const [folds, setFolds] = useState<Record<string, CatFold>>({});
   const [q, setQ] = useState("");
   const nq = normQuery(q);
   const refs = useRefIndex();
@@ -617,6 +625,8 @@ export const AutoRunSection = memo(function AutoRunSection() {
             queue={queues.find((q) => q.categoryId === id)}
             runs={shownRuns.filter((r) => keyOf(r.categoryId) === id)}
             filtering={!!nq}
+            fold={folds[id] ?? DEFAULT_FOLD}
+            onFold={(f) => setFolds((m) => ({ ...m, [id]: f }))}
             now={now}
             onDialog={setDialog}
             openMenu={openMenu}

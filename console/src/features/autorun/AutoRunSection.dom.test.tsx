@@ -725,6 +725,47 @@ describe("AutoRunSection", () => {
       expect(host.textContent).not.toContain("No auto-run runs yet.");
     });
 
+    it("finds a run and a reviewer by a reference only the work-item ledger knows, once the ledger loads", async () => {
+      const { useWorkItemStore } = await import("../workitems/store.ts");
+      useWorkItemStore.setState({ payload: null, loaded: false });
+      await mount();
+      await type("PROJ-77");
+      expect(runs()).toEqual([]);
+      await act(async () => {
+        useWorkItemStore.setState({
+          loaded: true,
+          payload: { sessions: [{ id: "1", provider: "jira", itemKey: "PROJ-77", sessionName: "rev-a", repo: "", branch: "", createdAt: "" }] } as never,
+        });
+      });
+      expect(runs()).toEqual(["run-a"]);
+      await type("PROJ-78");
+      expect(runs()).toEqual([]);
+      useWorkItemStore.setState({ payload: null, loaded: false });
+    });
+
+    it("Enter moves focus to the first row", async () => {
+      await mount();
+      const input = await type("run-a");
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      });
+      expect(document.activeElement).toBe(host.querySelector("[data-rail-row]"));
+      expect(document.activeElement?.classList.contains("autorun-sub-head")).toBe(true);
+    });
+
+    it("keeps a category's folds across a filter that hides it", async () => {
+      twoCategories();
+      await mount();
+      await act(async () => host.querySelector<HTMLButtonElement>('[data-autorun-category="other / nightly"] .autorun-sub-head.is-live')!.click());
+      expect(runs()).not.toContain("run-z");
+      const input = await type("Fix it");
+      expect(cats()).toEqual(["agent-fleet / issue-rounds"]);
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(runs()).not.toContain("run-z");
+    });
+
     it("opens the Ended fold while filtering so a match there is visible", async () => {
       await mount();
       expect(runs()).not.toContain("run-old");
