@@ -13,6 +13,10 @@ type Notification struct {
 	Seq                                                           int64
 	EventID, MembershipID, Kind, TargetType, TargetID, TargetKind string
 	DisplayName, Payload, CreatedAt, SeenAt                       string
+	// OriginRoot is own, autorun or schedule ("" reads as own); OriginChild is true when the
+	// session was itself started by another session.
+	OriginRoot  string
+	OriginChild bool
 }
 
 type UsageNotificationState struct {
@@ -37,19 +41,22 @@ type NotificationStore interface {
 
 // --- Notification center -------------------------------------------------------
 
-const notificationCols = `SELECT seq, event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at FROM notification`
+const notificationCols = `SELECT seq, event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at, origin_root, origin_child FROM notification`
 
 func scanNotification(row scanner) (Notification, error) {
 	var n Notification
+	var child int
 	err := row.Scan(&n.Seq, &n.EventID, &n.MembershipID, &n.Kind, &n.TargetType,
-		&n.TargetID, &n.TargetKind, &n.DisplayName, &n.Payload, &n.CreatedAt, &n.SeenAt)
+		&n.TargetID, &n.TargetKind, &n.DisplayName, &n.Payload, &n.CreatedAt, &n.SeenAt, &n.OriginRoot, &child)
+	n.OriginChild = child != 0
 	return n, err
 }
 
 func (s *SQL) InsertNotification(ctx context.Context, n Notification) error {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(membership_id, event_id) DO NOTHING`, n.EventID, n.MembershipID,
-		n.Kind, n.TargetType, n.TargetID, n.TargetKind, n.DisplayName, n.Payload, n.CreatedAt, n.SeenAt)
+	res, err := s.db.ExecContext(ctx, `INSERT INTO notification(event_id, membership_id, kind, target_type, target_id, target_kind, display_name, payload, created_at, seen_at, origin_root, origin_child)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(membership_id, event_id) DO NOTHING`, n.EventID, n.MembershipID,
+		n.Kind, n.TargetType, n.TargetID, n.TargetKind, n.DisplayName, n.Payload, n.CreatedAt, n.SeenAt,
+		originRootOrOwn(n.OriginRoot), b2i(n.OriginChild))
 	if err != nil {
 		return err
 	}
@@ -131,4 +138,13 @@ func (s *SQL) PutUsageNotificationState(ctx context.Context, st UsageNotificatio
 		ON CONFLICT(membership_id, source, window_key) DO UPDATE SET resets_at=excluded.resets_at, armed=excluded.armed`,
 		st.MembershipID, st.Source, st.WindowKey, st.ResetsAt, st.Armed)
 	return err
+}
+
+// originRootOrOwn stores "own" for a notification no origin was set on (the control plane's own
+// events, an older Agent's entries).
+func originRootOrOwn(r string) string {
+	if r == "" {
+		return "own"
+	}
+	return r
 }

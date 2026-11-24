@@ -2,6 +2,7 @@ package pushsrv
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -236,12 +237,12 @@ func (c ctxStore) PushDeliveryContext(ctx context.Context, mid string) (store.Pu
 	}
 	return c.memStore.PushDeliveryContext(ctx, mid)
 }
-func (c ctxStore) GetPushOffKinds(ctx context.Context, mid string) ([]string, error) {
+func (c ctxStore) GetPushPrefs(ctx context.Context, mid string) ([]string, []string, error) {
 	if c.stall == "prefs" {
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
-	return c.memStore.GetPushOffKinds(ctx, mid)
+	return c.memStore.GetPushPrefs(ctx, mid)
 }
 func (c ctxStore) ListPushSubscriptions(ctx context.Context, mid string) ([]store.PushSubscription, error) {
 	if err := ctx.Err(); err != nil {
@@ -524,5 +525,111 @@ func TestSendTimeReadsShareTheReadBudget(t *testing.T) {
 	_, _, _, err := p.sendTarget(sendJob{membershipID: "m1", sub: store.PushSubscription{Endpoint: "https://x.invalid/p"}})
 	if took := time.Since(start); err == nil || took > 1400*time.Millisecond {
 		t.Fatalf("reads took %s (err %v); want a failure within the 1s budget", took, err)
+	}
+}
+
+func noteFrom(kind, root string, child bool) store.Notification {
+	n := note(kind)
+	n.OriginRoot, n.OriginChild = root, child
+	return n
+}
+
+func TestOffOriginIsNotPushedOthersAre(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	ctx := context.Background()
+	// Auto-run children off, the run's own notifications on: the use case of the switch.
+	_ = f.st.PutPushOffOrigins(ctx, "m1", []string{"autorun-child", "schedule"})
+	cases := []struct {
+		root  string
+		child bool
+		want  int
+	}{
+		{"autorun", true, 0}, {"autorun", false, 1}, {"schedule", false, 0}, {"schedule", true, 1},
+		{"own", false, 1}, {"own", true, 1},
+		{"", false, 1},       // an old Agent's entry reads as own
+		{"unknown", true, 1}, // a root nothing knows reads as own
+	}
+	for _, c := range cases {
+		before := f.count()
+		f.deliver(noteFrom("question", c.root, c.child))
+		if got := f.count() - before; got != c.want {
+			t.Errorf("origin (%q,%v): sent %d, want %d", c.root, c.child, got, c.want)
+		}
+	}
+}
+
+func TestKindAndOriginSwitchesCombineWithAnd(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	ctx := context.Background()
+	_ = f.st.PutPushOffKinds(ctx, "m1", []string{"answer-ready"})
+	_ = f.st.PutPushOffOrigins(ctx, "m1", []string{"schedule"})
+	f.deliver(noteFrom("answer-ready", "own", false))  // kind off
+	f.deliver(noteFrom("question", "schedule", false)) // origin off
+	if f.count() != 0 {
+		t.Fatalf("a notification with one switch off was pushed: %d", f.count())
+	}
+	f.deliver(noteFrom("question", "own", false))
+	if f.count() != 1 {
+		t.Fatalf("both switches on, not pushed: %d", f.count())
+	}
+}
+
+func TestPrefsAPIOrigins(t *testing.T) {
+	f := newFixture(t)
+	put := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		f.svc.PutPrefs(w, httptest.NewRequest("PUT", "/", strings.NewReader(body)), "m1")
+		return w
+	}
+	if w := put(`{"off":[],"offOrigins":["schedule-child","autorun","autorun"]}`); w.Code != 200 ||
+		!strings.Contains(w.Body.String(), `"offOrigins":["autorun","schedule-child"]`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if put(`{"off":[],"offOrigins":["nope"]}`).Code != 400 {
+		t.Fatal("accepted an unknown origin")
+	}
+	// A save without offOrigins (a client that only knows kinds) keeps the saved origins.
+	if w := put(`{"off":["question"]}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"offOrigins":["autorun","schedule-child"]`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if o, _ := f.st.GetPushOffOrigins(context.Background(), "m1"); len(o) != 2 {
+		t.Fatalf("a refused or kinds-only save changed the origins: %v", o)
+	}
+	if w := put(`{"off":[],"offOrigins":[]}`); !strings.Contains(w.Body.String(), `"offOrigins":[]`) {
+		t.Fatalf("an empty list did not clear: %s", w.Body)
+	}
+	w := httptest.NewRecorder()
+	f.svc.GetPrefs(w, httptest.NewRequest("GET", "/", nil), "m2")
+	if !strings.Contains(w.Body.String(), `"offOrigins":[]`) {
+		t.Fatalf("default is not an empty list: %s", w.Body)
+	}
+}
+
+func TestFailedPrefsReadStillPushes(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	f.st.prefsErr = errors.New("db down")
+	f.deliver(noteFrom("question", "autorun", true))
+	if f.count() != 1 {
+		t.Fatalf("an unreadable preference read silenced the push: %d", f.count())
+	}
+}
+
+func TestFailedPrefsSaveAnswers500AndChangesNothing(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	_, _, _ = f.st.PutPushPrefs(ctx, "m1", []string{"question"}, &[]string{"schedule"})
+	f.st.prefsErr = errors.New("db down")
+	w := httptest.NewRecorder()
+	f.svc.PutPrefs(w, httptest.NewRequest("PUT", "/", strings.NewReader(`{"off":["answer-ready"],"offOrigins":["autorun"]}`)), "m1")
+	if w.Code != 500 {
+		t.Fatalf("code %d", w.Code)
+	}
+	f.st.prefsErr = nil
+	k, o, _ := f.st.GetPushPrefs(ctx, "m1")
+	if len(k) != 1 || k[0] != "question" || len(o) != 1 || o[0] != "schedule" {
+		t.Fatalf("a failed save changed the stored prefs: %v %v", k, o)
 	}
 }

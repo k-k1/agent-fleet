@@ -40,6 +40,31 @@ var pushKinds = map[string]bool{
 	"question": true, "plan-approval": true, "permission-request": true, "answer-ready": true,
 }
 
+// pushOrigins are the origin switches a member may turn off, each with the (root, child) pair it
+// matches: the root session of an own / auto-run / scheduled chain, and the sessions that chain's
+// root started. Sessions are told apart by the Agent (workspace notice.OriginOf).
+var pushOrigins = map[string]struct {
+	root  string
+	child bool
+}{
+	"own": {"own", false}, "own-child": {"own", true},
+	"autorun": {"autorun", false}, "autorun-child": {"autorun", true},
+	"schedule": {"schedule", false}, "schedule-child": {"schedule", true},
+}
+
+// originKey is the switch name a notification falls under; an unknown or empty root is own.
+func originKey(root string, child bool) string {
+	switch root {
+	case "autorun", "schedule":
+	default:
+		root = "own"
+	}
+	if child {
+		return root + "-child"
+	}
+	return root
+}
+
 const (
 	// pushSendTimeout bounds one device; the HTTP client's own 15 s sits inside it.
 	pushSendTimeout = 20 * time.Second
@@ -305,11 +330,14 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 	}
 	includeText := dc.IncludeText
 	octx, ocancel := read()
-	off, err := p.store.GetPushOffKinds(octx, n.MembershipID)
+	off, offOrigins, err := p.store.GetPushPrefs(octx, n.MembershipID)
 	ocancel()
+	// A notification is pushed only when its kind and its origin are both on. Both come from one
+	// read, so a save between two reads cannot let through what no saved state allows. A failed
+	// read pushes: a stall must not silence a member.
 	if err != nil {
 		log.Printf("web push: preferences: %v", err)
-	} else if slices.Contains(off, n.Kind) {
+	} else if slices.Contains(off, n.Kind) || slices.Contains(offOrigins, originKey(n.OriginRoot, n.OriginChild)) {
 		return
 	}
 	lctx, lcancel := read()
@@ -633,8 +661,19 @@ func PrefKinds() []string {
 	return out
 }
 
+// PrefOrigins are the origins a member may turn off for push.
+func PrefOrigins() []string {
+	out := make([]string, 0, len(pushOrigins))
+	for k := range pushOrigins {
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
+}
+
 type prefsWire struct {
-	Off []string `json:"off"`
+	Off        []string `json:"off"`
+	OffOrigins []string `json:"offOrigins"`
 }
 
 // GetPrefs answers the kinds the caller turned off.
@@ -642,7 +681,7 @@ func (p *Service) GetPrefs(w http.ResponseWriter, r *http.Request, membershipID 
 	if p.off(w) {
 		return
 	}
-	off, err := p.store.GetPushOffKinds(r.Context(), membershipID)
+	off, offOrigins, err := p.store.GetPushPrefs(r.Context(), membershipID)
 	if err != nil {
 		internalErr(w, err)
 		return
@@ -650,7 +689,10 @@ func (p *Service) GetPrefs(w http.ResponseWriter, r *http.Request, membershipID 
 	if off == nil {
 		off = []string{}
 	}
-	writeJSON(w, http.StatusOK, prefsWire{Off: off})
+	if offOrigins == nil {
+		offOrigins = []string{}
+	}
+	writeJSON(w, http.StatusOK, prefsWire{Off: off, OffOrigins: offOrigins})
 }
 
 // PutPrefs replaces the caller's turned-off kinds. An unknown kind is refused so a typo cannot
@@ -659,10 +701,30 @@ func (p *Service) PutPrefs(w http.ResponseWriter, r *http.Request, membershipID 
 	if p.off(w) {
 		return
 	}
-	var in prefsWire
+	// OffOrigins absent (null) leaves the saved origins alone, so a client that only knows kinds
+	// cannot clear them by saving.
+	var in struct {
+		Off        []string  `json:"off"`
+		OffOrigins *[]string `json:"offOrigins"`
+	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&in); err != nil || in.Off == nil {
-		writeErr(w, http.StatusBadRequest, "bad_request", `body must be {"off":[...]}`)
+		writeErr(w, http.StatusBadRequest, "bad_request", `body must be {"off":[...],"offOrigins":[...]}`)
 		return
+	}
+	var origins []string
+	if in.OffOrigins != nil {
+		seenO := map[string]bool{}
+		for _, o := range *in.OffOrigins {
+			if _, ok := pushOrigins[o]; !ok {
+				writeErr(w, http.StatusBadRequest, "bad_origin", "unknown push origin: "+o)
+				return
+			}
+			if !seenO[o] {
+				seenO[o] = true
+				origins = append(origins, o)
+			}
+		}
+		slices.Sort(origins)
 	}
 	seen := map[string]bool{}
 	var off []string
@@ -677,11 +739,16 @@ func (p *Service) PutPrefs(w http.ResponseWriter, r *http.Request, membershipID 
 		}
 	}
 	slices.Sort(off)
-	if err := p.store.PutPushOffKinds(r.Context(), membershipID, off); err != nil {
+	var originsArg *[]string
+	if in.OffOrigins != nil {
+		originsArg = &origins
+	}
+	savedKinds, savedOrigins, err := p.store.PutPushPrefs(r.Context(), membershipID, off, originsArg)
+	if err != nil {
 		internalErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, prefsWire{Off: append([]string{}, off...)})
+	writeJSON(w, http.StatusOK, prefsWire{Off: append([]string{}, savedKinds...), OffOrigins: append([]string{}, savedOrigins...)})
 }
 
 // Viewing records that the caller's Console shows session on screen right now. A Console sends it

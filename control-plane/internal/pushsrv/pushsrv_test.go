@@ -36,6 +36,8 @@ type memStore struct {
 	joinErr    error
 	subs       []store.PushSubscription
 	off        map[string][]string
+	offOrigins map[string][]string
+	prefsErr   error
 	inactive   map[string]bool
 	includeTxt bool
 	tenantSlug string
@@ -53,6 +55,46 @@ func (m *memStore) PutPushOffKinds(_ context.Context, mid string, k []string) er
 		m.off = map[string][]string{}
 	}
 	m.off[mid] = k
+	return nil
+}
+func (m *memStore) GetPushPrefs(_ context.Context, mid string) ([]string, []string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.prefsErr != nil {
+		return nil, nil, m.prefsErr
+	}
+	return m.off[mid], m.offOrigins[mid], nil
+}
+func (m *memStore) PutPushPrefs(_ context.Context, mid string, k []string, o *[]string) ([]string, []string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.prefsErr != nil {
+		return nil, nil, m.prefsErr
+	}
+	if m.off == nil {
+		m.off = map[string][]string{}
+	}
+	if m.offOrigins == nil {
+		m.offOrigins = map[string][]string{}
+	}
+	m.off[mid] = k
+	if o != nil {
+		m.offOrigins[mid] = *o
+	}
+	return m.off[mid], m.offOrigins[mid], nil
+}
+func (m *memStore) GetPushOffOrigins(_ context.Context, mid string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.offOrigins[mid], nil
+}
+func (m *memStore) PutPushOffOrigins(_ context.Context, mid string, o []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.offOrigins == nil {
+		m.offOrigins = map[string][]string{}
+	}
+	m.offOrigins[mid] = o
 	return nil
 }
 func (m *memStore) PushDeliveryContext(_ context.Context, mid string) (store.PushDelivery, error) {
