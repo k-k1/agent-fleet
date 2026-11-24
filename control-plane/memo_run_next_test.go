@@ -609,8 +609,21 @@ func TestMemoRunNextTidyUndoLeavesTheDestinationsMark(t *testing.T) {
 		if rec := e.runNextCall("a", ids[0], map[string]any{"runNext": true}); rec.Code != http.StatusOK {
 			t.Fatalf("mark: %d %s", rec.Code, rec.Body.String())
 		}
-		if rec := e.undo(run.ID); rec.Code != http.StatusOK {
+		rec := e.undo(run.ID)
+		if rec.Code != http.StatusOK {
 			t.Fatalf("undo: %d %s", rec.Code, rec.Body.String())
+		}
+		answered := false
+		for _, m := range decode[memoTidyUndoWire](t, rec).Restored {
+			if m.ID == ids[0] {
+				answered = true
+				if m.RunNext {
+					t.Fatalf("the undo answered the mark the row no longer has: %+v", m)
+				}
+			}
+		}
+		if !answered {
+			t.Fatal("the undo did not answer the message it moved home")
 		}
 		if m := e.memoRow(ids[0]); m.Repo == "other" || m.State != store.MemoStatePending || m.RunNext {
 			t.Fatalf("after the undo: %+v, want pending at home without the mark", m)

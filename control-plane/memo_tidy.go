@@ -542,6 +542,8 @@ func memoTidyUndoCheck(rd store.MemoTidyReader, run store.MemoTidyRun, rec memoT
 		back := m
 		back.Repo, back.Category, back.Position = home.Repo, home.Name, next
 		back.TidyFrom, back.TidyRunID = "", mv.PrevRun
+		// The undo's transaction clears the mark (below); the answer shows the row as it will be.
+		back.RunNext = false
 		// Only a queue keeps a recipe: the row may have moved on into another queue since, and a plain
 		// note carries none.
 		back.Recipe = ""
