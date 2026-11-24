@@ -433,7 +433,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 ARG CLAUDE_CODE_VERSION=2.1.331
 ARG OPENCODE_VERSION=2.4.1
 ARG CODEX_VERSION=0.172.0
-ARG COPILOT_VERSION=1.0.114
+ARG COPILOT_VERSION=1.0.115
 # opencode is the npm package @opencode/cli (it also installs an `opencode2` bin). Only opencode 2
 # is supported (ADR 0127): a rollback is an earlier 2.x pin, never a 1.x one (the opencode 1
 # package, opencode-ai, is another package that entrypoint.sh removes from ~/.local).
