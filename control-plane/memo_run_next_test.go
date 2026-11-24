@@ -453,3 +453,104 @@ func TestMemoRunNextRouteRefusals(t *testing.T) {
 		}
 	})
 }
+
+// The mark is a place in one queue's order: a move to another category leaves it, whoever moves
+// the message, and a session's edit of the content leaves it too, so a run cannot carry the
+// member's mark into a queue whose switch accepts its messages. The member's edit in place keeps it.
+func TestMemoRunNextLeavesWithAMove(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("r", "a-src", nil)
+		dst := e.queueWith("r", "a-dst", map[string]any{"acceptOwnSessions": true, "maxActive": 1})
+		older := e.pending("r", "a-dst", "older, unmarked")
+		_, held := e.fromSession("a-src", "by a session the member started", "user", nil)
+		if rec := e.release(held.ID, held.ContentHash); rec.Code != http.StatusOK {
+			t.Fatalf("release: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := e.runNextCall("a", held.ID, map[string]any{"runNext": true}); rec.Code != http.StatusOK {
+			t.Fatalf("mark: %d %s", rec.Code, rec.Body.String())
+		}
+		rec := e.memoTokenDo("a", "PATCH", "/internal/memos/"+held.ID, map[string]any{"category": "a-dst"})
+		if rec.Code != http.StatusOK || decode[memoDTO](t, rec).RunNext {
+			t.Fatalf("token move: %d %s", rec.Code, rec.Body.String())
+		}
+		if row := e.memoRow(held.ID); row.State != store.MemoStatePending || row.RunNext {
+			t.Fatalf("after the token move: %+v, want pending without the mark", row)
+		}
+		if d := e.fired(dst); !sameIDs(d.MessageIDs, older.ID) {
+			t.Fatalf("fired %v, want the older %s first", d.MessageIDs, older.ID)
+		}
+
+		// A session's edit of the content in place, the switch keeping it pending.
+		_, again := e.fromSession("a-dst", "another", "user", nil)
+		if again.State != store.MemoStatePending {
+			t.Fatalf("created %+v", again)
+		}
+		e.runNextCall("a", again.ID, map[string]any{"runNext": true})
+		if rec := e.memoTokenDo("a", "PATCH", "/internal/memos/"+again.ID, map[string]any{"body": "replaced by the session"}); rec.Code != http.StatusOK {
+			t.Fatalf("token edit: %d %s", rec.Code, rec.Body.String())
+		}
+		if row := e.memoRow(again.ID); row.State != store.MemoStatePending || row.RunNext {
+			t.Fatalf("after the session's edit: %+v, want pending without the mark", row)
+		}
+		// A session's write that changes no content (its position) keeps it.
+		e.runNextCall("a", again.ID, map[string]any{"runNext": true})
+		if rec := e.memoTokenDo("a", "PATCH", "/internal/memos/"+again.ID, map[string]any{"position": 7}); rec.Code != http.StatusOK || !e.memoRow(again.ID).RunNext {
+			t.Fatalf("a reorder by a session dropped the mark: %d %s", rec.Code, rec.Body.String())
+		}
+
+		// The member's move to another queue leaves it too; the member's edit in place keeps it.
+		mine := e.pending("r", "a-src", "the member's")
+		e.runNextCall("a", mine.ID, map[string]any{"runNext": true})
+		if rec := e.do("a", "PATCH", "/api/memos/"+mine.ID, map[string]any{"body": "the member's, edited"}); rec.Code != http.StatusOK || !e.memoRow(mine.ID).RunNext {
+			t.Fatalf("the member's edit dropped the mark: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := e.do("a", "PATCH", "/api/memos/"+mine.ID, map[string]any{"category": "a-dst"}); rec.Code != http.StatusOK || e.memoRow(mine.ID).RunNext {
+			t.Fatalf("the member's move kept the mark: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// A message in a send in flight is not waiting: the list does not show its mark.
+func TestMemoRunNextHiddenWhileSending(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("app", "impl", nil)
+		m := e.pending("app", "impl", "waiting")
+		e.runNextCall("a", m.ID, map[string]any{"runNext": true})
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET send_token='t', send_started_at=? WHERE id=?`, store.NowTS(), m.ID); err != nil {
+			t.Fatal(err)
+		}
+		if e.listed(m.ID).RunNext {
+			t.Fatal("a message being sent shows the mark")
+		}
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET send_token='', send_started_at='' WHERE id=?`, m.ID); err != nil {
+			t.Fatal(err)
+		}
+		if !e.listed(m.ID).RunNext {
+			t.Fatal("the mark is not shown once the send is given up")
+		}
+	})
+}
+
+// A tidy run's move to another queue leaves the mark as well, even where it lands pending.
+func TestMemoRunNextLeavesWithATidyMove(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		listed := e.queueWith("other", "inbox", nil)
+		agent, q, ids := e.tidyAuto(map[string]any{"tidyDestinations": []string{listed}}, 2)
+		if !e.setRunNext(ids[0], true) || !e.setRunNext(ids[1], true) {
+			t.Fatal("the marks were not set")
+		}
+		agent.tidyReply = tidyOpsReply(func(ids []string, _ map[string]any) []any {
+			return []any{map[string]any{"op": "move", "id": ids[0], "to": listed}}
+		})
+		e.tidyTick(e.runner(), time.Now())
+		if run := e.onlyRun(q); run.State != store.TidyRunApplied {
+			t.Fatalf("run: %+v", run)
+		}
+		if m := e.memoRow(ids[0]); m.State != store.MemoStatePending || m.Repo != "other" || m.RunNext {
+			t.Fatalf("the moved message %+v, want pending without the mark", m)
+		}
+		if m := e.memoRow(ids[1]); !m.RunNext {
+			t.Fatalf("the message that stayed lost its mark: %+v", m)
+		}
+	})
+}

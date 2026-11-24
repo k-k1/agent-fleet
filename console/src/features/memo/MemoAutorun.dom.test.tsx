@@ -27,7 +27,8 @@ const memoQueueDeliveryEnd = vi.fn();
 const memoQueueDeliveryReturn = vi.fn();
 const memoQueueDeliveries = vi.fn(async (_id: string, _openToo?: boolean, _since?: string) => servedDeliveries);
 const memoStopChain = vi.fn(async (_id: string) => ({}));
-const memoSetRunNext = vi.fn(async (_id: string, _on: boolean): Promise<unknown> => ({}));
+// Answers the memo as the Control Plane does: runNext present only when set.
+const memoSetRunNext = vi.fn(async (id: string, on: boolean): Promise<unknown> => (on ? { id, runNext: true } : { id }));
 const memoQueueList = vi.fn(async () => {
   if (queuesFail) throw new Error("down");
   return servedQueues;
@@ -2213,16 +2214,38 @@ describe("Run next in the memo menu (#5021)", () => {
     expect(nextItem()).not.toBeNull();
   });
 
-  it("toasts the refusal and reads the list again", async () => {
-    memoSetRunNext.mockResolvedValueOnce({ error: { code: "memo_locked", message: "only a waiting message can be marked to run next" } });
+  for (const code of ["memo_locked", "memo_in_queue"]) {
+    it(`says the memo is no longer waiting on ${code}, and reads the list again`, async () => {
+      memoSetRunNext.mockResolvedValueOnce({ error: { code, message: "refused" } });
+      servedMemos = [waiting()];
+      await render();
+      await click(rowMenuBtn());
+      const before = memoListCalls;
+      await click(must(nextItem(), "run next item"));
+      expect(document.body.textContent).not.toContain(t("memo.run_next_done"));
+      expect(document.querySelector(".ui-toast-msg")?.textContent).toContain(t("memo.run_next_not_waiting"));
+      expect(memoListCalls).toBeGreaterThan(before);
+    });
+  }
+
+  it("shows the answer at once when the re-read fails", async () => {
     servedMemos = [waiting()];
     await render();
     await click(rowMenuBtn());
-    const before = memoListCalls;
-    await click(must(nextItem(), "run next item"));
-    expect(document.body.textContent).not.toContain(t("memo.run_next_done"));
-    expect(document.querySelector(".ui-toast-msg")).not.toBeNull();
-    expect(memoListCalls).toBeGreaterThan(before);
+    memoListRejects = true;
+    try {
+      await click(must(nextItem(), "run next item"));
+      expect(memoSetRunNext).toHaveBeenLastCalledWith("a", true);
+      expect(badge()).not.toBeNull();
+      await click(rowMenuBtn());
+      const clear = must(nextItem(), "clear run next item");
+      expect(clear.textContent).toContain(t("memo.run_next_clear"));
+      await click(clear);
+      expect(memoSetRunNext).toHaveBeenLastCalledWith("a", false);
+      expect(badge()).toBeNull();
+    } finally {
+      memoListRejects = false;
+    }
   });
 
   it("is absent outside an auto-run category, and on a memo a run has taken or that already ran", async () => {

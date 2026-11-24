@@ -373,7 +373,16 @@ func memoTidyMoveOne(tx store.MemoTxOps, q store.MemoQueue, m store.Memo, dest s
 		next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = store.MemoStateHeld, "", "", ""
 	}
 	rec.Hash, rec.ToState = memoContentHash(next), next.State
-	return rec, tx.WriteTidyMemo(next)
+	if err := tx.WriteTidyMemo(next); err != nil {
+		return rec, err
+	}
+	// A move leaves the queue whose order the member's run-next mark was a place in (memoUpdateFor).
+	if m.RunNext {
+		if _, err := tx.SetMemoRunNext(m.ID, false); err != nil {
+			return rec, err
+		}
+	}
+	return rec, nil
 }
 
 // memoTidyItemOf is a message as the validator sees it. A derived message is grouped by the

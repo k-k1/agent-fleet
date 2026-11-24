@@ -428,8 +428,21 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     const on = !m.runNext;
     try {
       const res = await memoSetRunNext(m.id, on);
-      if (res?.error) toast(errText(res.error) || t("memo.run_next_failed"), { kind: "warn" });
-      else toast(t(on ? "memo.run_next_done" : "memo.run_next_cleared"), { kind: "success" });
+      if (res?.error) {
+        // Both codes mean the list is behind (the note ran, or its category stopped being a queue);
+        // the shared catalogue lines for them speak of sending from the workspace.
+        const gone = res.error.code === "memo_locked" || res.error.code === "memo_in_queue";
+        toast(gone ? t("memo.run_next_not_waiting") : errText(res.error) || t("memo.run_next_failed"), { kind: "warn" });
+      } else {
+        // Show the answer at once: a failed or slow re-read must not leave the old mark on screen,
+        // where the next press would send the same value again. A read already in flight started
+        // before the write, so it is dropped (load's applied check).
+        const now = res.runNext === true;
+        applied.current = seq.current + 1;
+        serRef.current = "";
+        setMemos((list) => list.map((x) => (x.id === m.id ? { ...x, runNext: now } : x)));
+        toast(t(now ? "memo.run_next_done" : "memo.run_next_cleared"), { kind: "success" });
+      }
     } catch {
       toast(t("memo.run_next_failed"), { kind: "warn" });
     }

@@ -118,8 +118,9 @@ type memoDTO struct {
 	// already waiting there: the message returned is that one, and nothing was added.
 	Existing bool `json:"existing,omitempty"`
 	// RunNext is the member's "Run next" mark on a waiting message (setRunNext, memo_queue.go): the claim
-	// takes it before the oldest. Written only by POST /api/memos/{id}/run-next; validateMemo and
-	// memoPatch never read it, so no create or edit sets it.
+	// takes it before the oldest. Set only by POST /api/memos/{id}/run-next; validateMemo and
+	// memoPatch never read it, so no create or edit sets it. A move to another category clears it
+	// (memoUpdateFor, memoTidyMoveOne), and so does a session's edit of the content.
 	RunNext bool `json:"runNext,omitempty"`
 	// The tidy fields of ADR 0137 section 8, written by the CP. DerivedFrom is the source ids of a
 	// message a tidy run made (Provenance is then "curator" and SourceProvenance the provenance of
@@ -162,8 +163,9 @@ func memoToDTO(m store.Memo) memoDTO {
 	if m.State == store.MemoStatePending {
 		d.NotBefore = m.NotBefore
 	}
-	// A claimed or sent row may keep the column set; the mark means something only while it waits.
-	if (m.State == store.MemoStateHeld || m.State == store.MemoStatePending) && m.DeliveryID == "" && m.SentAt == "" {
+	// A claimed, sending or sent row may keep the column set; the mark means something only while it
+	// waits, the same rows SetMemoRunNext accepts.
+	if (m.State == store.MemoStateHeld || m.State == store.MemoStatePending) && m.DeliveryID == "" && m.SentAt == "" && m.SendToken == "" {
 		d.RunNext = m.RunNext
 	}
 	d.DeferCount = m.DeferCount
@@ -643,7 +645,20 @@ func memoUpdateFor(ctx context.Context, st store.MemoStore, membershipID, id str
 		if err := memoEnsureRow(tx, next.Repo, next.Category); err != nil {
 			return err
 		}
-		return tx.WriteMemo(next)
+		if err := tx.WriteMemo(next); err != nil {
+			return err
+		}
+		// The run-next mark is a place in one queue's order that only the member's login sets: a
+		// move to another category leaves it, and so does a session's change of the content, or a
+		// run could carry a mark into a queue whose switch accepts its messages, or reuse one for a
+		// text the member never marked. The member's own edit in place keeps it.
+		if cur.RunNext && (moved || (via.fromWorkspace() && memoContentHash(cur) != memoContentHash(next))) {
+			if _, err := tx.SetMemoRunNext(next.ID, false); err != nil {
+				return err
+			}
+			out.RunNext = false
+		}
+		return nil
 	})
 	if aerr := memoTxResult(err); aerr != nil {
 		return memoDTO{}, aerr
