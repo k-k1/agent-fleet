@@ -49,16 +49,19 @@ const apiMock = vi.fn(async (url: string) => {
   return { branches: served };
 });
 
-// undefined: the real hook; otherwise the Copilot usage reading useUsage answers with (the
-// Free-plan note).
-let usageReading: Record<string, unknown> | null | undefined;
-vi.mock("../../app/wsbar/usageCommon.tsx", async (orig) => {
-  const real = (await orig()) as { useUsage: (...a: unknown[]) => unknown };
-  return {
-    ...real,
-    useUsage: (...a: unknown[]) => (usageReading === undefined ? real.useUsage(...a) : { usage: usageReading, refreshing: false, refresh: () => {} }),
-  };
-});
+// The usage hub behind the real useUsage: each subscription is answered once, the first with
+// `usageReading` and every later one with a failed read (a re-read during a network blip).
+let usageReading: Record<string, unknown> | null = null;
+let usageSubs = 0;
+vi.mock("../../app/wsbar/usageAll.ts", async (orig) => ({
+  ...((await orig()) as object),
+  subscribeUsage: (_t: unknown, _k: unknown, _e: unknown, listener: (d: unknown) => void) => {
+    usageSubs++;
+    const d = usageSubs === 1 ? usageReading : { ok: false, authed: true, error: "offline" };
+    if (d) queueMicrotask(() => listener(d));
+    return () => {};
+  },
+}));
 vi.mock("../../core/api/client.ts", () => ({
   apiJSON: async () => ({}),
   getTenant: () => "",
@@ -200,7 +203,8 @@ const launchedWith = (): LaunchOpts => onLaunch.mock.calls[0][0] as LaunchOpts;
 
 beforeEach(() => {
   localStorage.clear();
-  usageReading = undefined;
+  usageReading = null;
+  usageSubs = 0;
   // These suites drive the agent, model and advanced controls, which sit in the Details fold
   // (ADR 0142 decision 7); start with it open, as a device that left it open does. The fold
   // itself is tested in LaunchModal.dom.test.tsx ("what -> where -> details").
@@ -309,19 +313,32 @@ describe("LaunchModal what -> where -> details", () => {
     expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("keeps the Copilot Free-plan note in view while Details is folded", async () => {
+  it("keeps the Copilot Free-plan note in view, folded or open, without re-reading the plan", async () => {
     usageReading = { ok: true, authed: true, plan: "Free" };
     localStorage.setItem("af.repo-model.copilot.app", "claude-sonnet-4.6");
     await render(["copilot"]);
-    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+    await settle();
     const note = t("launch.copilot_free_model");
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
     expect(document.body.textContent).toContain(note);
-    // Shown once whichever way the fold is.
+    // Opening and folding again keeps the one reading: a re-read here would fail (see the mock).
     await expand("Details");
     expect(document.body.textContent!.split(note)).toHaveLength(2);
-    // A paid plan: nothing, folded or not.
+    await expand("Details");
+    await settle();
+    expect(document.body.textContent).toContain(note);
+    expect(usageSubs).toBe(1);
+  });
+
+  it("shows no Free-plan note for a paid Copilot plan, folded or open", async () => {
     usageReading = { ok: true, authed: true, plan: "Pro" };
-    await reopen();
+    localStorage.setItem("af.repo-model.copilot.app", "claude-sonnet-4.6");
+    await render(["copilot"]);
+    await settle();
+    const note = t("launch.copilot_free_model");
+    expect(summaryOf("Details")).toContain("claude-sonnet-4.6");
+    expect(document.body.textContent).not.toContain(note);
+    await expand("Details");
     expect(document.body.textContent).not.toContain(note);
   });
 });

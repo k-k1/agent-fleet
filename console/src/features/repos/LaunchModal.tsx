@@ -1148,7 +1148,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               }}
             />
             {routeModelBlocked && <span className="ui-field-hint">{tr("launch.bedrock_model_needed")}</span>}
-            <CopilotFreePlanHint kind={kind} model={model} />
           </div>
         )}
 
@@ -1670,8 +1669,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     </LaunchSection>
   );
   // The Free-plan note does not stop the launch, but every turn of that session would fail, so it
-  // stays in view while Details is folded. Inside, it sits under the model picker.
-  const detailsNotes = !detailsShown && <CopilotFreePlanHint kind={kind} model={model} />;
+  // sits under Details, in view whether the fold is open or not. One instance, never inside the
+  // fold: the body unmounts when folded, and a remounted note starts from no usage reading, which
+  // a failed re-read never fills, so the warning would be lost.
+  const detailsNotes = <CopilotFreePlanHint kind={kind} model={model} />;
 
   if (space) {
     return (
