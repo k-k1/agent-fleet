@@ -32,7 +32,15 @@ const openEngineAdd = vi.fn();
 vi.mock("./openEngineAdd.ts", () => ({ openEngineAdd: (...args: unknown[]) => openEngineAdd(...args) }));
 
 import { EnginesAdminView, engineOfferResultKey } from "./adminEngines.tsx";
-import { clearCatalogMemory } from "./catalogMemory.ts";
+import { beginEnginesEdit, clearCatalogMemory, loadEngines } from "./catalogMemory.ts";
+import { useEngineRows } from "./useEngineRows.ts";
+
+// A second screen that holds its own rows, as the catalogue pane does.
+let probeLoad: () => Promise<void> = async () => {};
+function EngineRowsProbe() {
+  probeLoad = useEngineRows().load;
+  return null;
+}
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -329,6 +337,69 @@ describe("EnginesAdminView", () => {
       await mount(); // its first read is held: what it draws is the cache
       expect(panel(0).querySelector(".engines-model-tag")!.textContent).not.toContain("起動中");
       expect(seg("常時稼働")?.className).toContain("seg-btn--active");
+    });
+
+    it("an edit's cache write is not undone by another screen's older read answering after it", async () => {
+      const a = row({ key: "image", mode: "ondemand", state: "running" });
+      const c = row({ key: "llm", api: "chat", state: "starting", desired: 1 });
+      api.mockResolvedValueOnce({ super_admin: true, engines: [a, c] });
+      await mount(); // screen A
+      api.mockImplementationOnce(held); // screen B's read stays in flight
+      const hostB = document.createElement("div");
+      document.body.appendChild(hostB);
+      const rootB = createRoot(hostB);
+      await act(async () => {
+        rootB.render(<EngineRowsProbe />);
+      });
+      apiJSON.mockImplementation(held);
+      try {
+        await click(seg("常時稼働")); // A's PUT: pending[1]
+        await answer({ ...a, mode: "on" }, 1);
+        expect(loadEngines()?.rows.map((e) => e.mode)).toEqual(["on", "ondemand"]);
+        // B's read was served before the PUT: the old image row, and a changed llm row.
+        await answer({ super_admin: true, engines: [a, { ...c, state: "running", desired: 1 }] }, 0);
+        expect(loadEngines()?.rows.map((e) => `${e.key}:${e.mode}:${e.state}`)).toEqual([
+          "image:on:running",
+          "llm:ondemand:running",
+        ]);
+      } finally {
+        act(() => rootB.unmount());
+        hostB.remove();
+      }
+    });
+
+    it("an older read this screen drops locally still reaches the cache after a newer one was refused there", async () => {
+      const b = row({ key: "llm", api: "chat", state: "stopped" });
+      const a = row({ key: "image" });
+      api.mockResolvedValueOnce({ super_admin: true, engines: [b] }).mockImplementation(held);
+      host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+      await act(async () => {
+        root!.render(<EngineRowsProbe />);
+      });
+      expect(loadEngines()?.rows.map((e) => e.state)).toEqual(["stopped"]);
+      act(() => void probeLoad()); // R1: served before a was added
+      act(() => void probeLoad()); // R2: begun later, sees a
+      beginEnginesEdit("image")({ mode: "on" }); // another screen's edit of a row this cache lacks
+      await answer({ super_admin: true, engines: [{ ...b, state: "starting" }, a] }, 1); // R2: cache gives up
+      await answer({ super_admin: true, engines: [{ ...b, state: "starting" }] }, 0); // R1: this screen drops it
+      expect(loadEngines()?.rows.map((e) => e.state)).toEqual(["starting"]);
+    });
+
+    it("a read answering after its screen closed leaves the shared cache alone", async () => {
+      api.mockImplementation(held);
+      host = document.createElement("div");
+      document.body.appendChild(host);
+      root = createRoot(host);
+      await act(async () => {
+        root!.render(<EngineRowsProbe />);
+      }); // the first read is in flight
+      act(() => root?.unmount());
+      host.remove();
+      root = null;
+      await answer({ super_admin: true, engines: [row({ key: "image" })] });
+      expect(loadEngines()).toBeNull();
     });
 
     it("keeps an edit's error over an older read's success, and an edit's cleared error over an older failure", async () => {

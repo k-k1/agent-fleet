@@ -10,6 +10,7 @@
 // they moved since the page loaded; a save racing in between is not caught (#4367).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errDetail, errText } from "../../../core/api/client.ts";
+import { isOk, type Reply } from "../api.ts";
 import { getProvided, putProvidedGrant, putProvidedMembers, putProvidedPolicy } from "./tenantApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { DirtyScope, useReportDirty } from "../parts/dirtyScope.tsx";
@@ -101,7 +102,7 @@ export function useGuardedSave(onSaved: (res: { warnings?: unknown }) => void) {
   const tr = useT();
   const [busy, setBusy] = useState(false);
   const [refusal, setRefusal] = useState<string | null>(null);
-  const submit = async (unchanged: () => Promise<boolean | null>, put: () => Promise<unknown>) => {
+  const submit = async (unchanged: () => Promise<boolean | null>, put: () => Promise<Reply<{ warnings?: unknown }> | null>) => {
     setBusy(true);
     setRefusal(null);
     try {
@@ -114,8 +115,8 @@ export function useGuardedSave(onSaved: (res: { warnings?: unknown }) => void) {
         setRefusal(tr("admin.mpol_stale"));
         return;
       }
-      const res = (await put()) as { error?: Parameters<typeof errDetail>[0]; warnings?: unknown } | null | undefined;
-      if (res?.error) {
+      const res = await put();
+      if (res && !isOk(res)) {
         setRefusal(errDetail(res.error));
         return;
       }

@@ -689,11 +689,15 @@ func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 	ready, release := filepath.Join(f.home, "ready"), filepath.Join(f.home, "release")
 	pidf := filepath.Join(f.home, "straggler.pid")
 	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf(
-		"#!/bin/sh\nexec 3>&-\n(exec /bin/sleep 30) &\necho $! >%q\n: >%q\nwhile [ ! -e %q ]; do /bin/sleep 0.05; done\n", pidf, ready, release))
+		"#!/bin/sh\nexec 3>&-\n(exec /bin/sleep 30) &\necho $! >%q\n: >%q\ni=0; while [ ! -e %q ] && [ $i -lt 600 ]; do i=$((i+1)); /bin/sleep 0.05; done\n", pidf, ready, release))
 	e, rel, ok := f.env.lockNPM()
 	if !ok {
 		t.Fatal("lock not taken")
 	}
+	// Cmd.Start reads the lock's descriptor; the ready file below orders it before the close only
+	// through the filesystem, which the race detector does not see.
+	started := make(chan struct{})
+	e.afterNPMStart = func(*os.Process) { close(started) }
 	done := make(chan error, 1)
 	go func() {
 		se, err := e.npmInstall([]string{"x"})
@@ -708,6 +712,20 @@ func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 			t.Fatal("npm never started")
 		}
 		time.Sleep(20 * time.Millisecond)
+	}
+	select {
+	case <-started:
+	case <-time.After(10 * time.Second):
+		// The hook did not run (the supervisor failed to start and npm ran directly, or the hook
+		// was never called): release the fake npm so the failure is reported without waiting out
+		// its own bound. If the release cannot be written, the lock stays open until the binary
+		// exits, as closing it here could race Cmd.Start.
+		if err := os.WriteFile(release, nil, 0o644); err != nil {
+			t.Fatalf("supervisor start hook did not fire, and npm cannot be released: %v", err)
+		}
+		<-done
+		rel() // npmInstall has returned, so nothing reads the descriptor any more
+		t.Fatal("supervisor start hook did not fire")
 	}
 	rel() // the caller's own hold goes, as a killed caller's would
 	e.npmLockFile.Close()

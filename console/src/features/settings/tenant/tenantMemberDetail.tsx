@@ -16,7 +16,7 @@
 //	                     delete.
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { errText, type ApiError } from "../../../core/api/client.ts";
-import { getWorkspaceSizing, isOk, type ErrorReply, type MemberStats } from "../api.ts";
+import { getWorkspaceSizing, isDefinitiveRefusal, isOk, type ErrorReply, type MemberStats } from "../api.ts";
 import {
   cleanMemberHome,
   deleteMemberHomeBackups,
@@ -51,6 +51,10 @@ import { MemberAutoStopDetail, MemberIdleDetail, MemberSizeChips } from "./tenan
 import { MemberEngineAccessPanel } from "./tenantEngineAccess.tsx";
 import { useReadGuard } from "../../../lib/readGuard.ts";
 import { useInterval } from "../../../lib/useInterval.ts";
+
+// Whether a poll answer lands its lane: a real answer or a definitive refusal. Anything else is a
+// transient fault that must leave an older good answer free to land.
+const landsLane = (r: unknown): boolean => isOk(r as never) || isDefinitiveRefusal(r);
 
 // What a request that got no answer at all looks like to the handlers below.
 const networkFailure = (): ErrorReply => ({ error: { code: "network" } });
@@ -199,9 +203,10 @@ export function MemberView({
     const readStats = async () => {
       try {
         const s = await getMemberStats(slug, key);
-        // An error answer is shown as stopped but does not land the lane: a transient failure
-        // must not also drop an older read's good answer that arrives after it.
-        if (!(isOk(s) ? tk.land("stats") : tk.fresh("stats"))) return;
+        // A transient error is shown as stopped but does not land the lane: it must not also drop
+        // an older read's good answer that arrives after it. A definitive refusal (member gone,
+        // access revoked) lands, so that older answer cannot put the member back on screen.
+        if (!(landsLane(s) ? tk.land("stats") : tk.fresh("stats"))) return;
         const st: MemberStats = isOk(s) ? s : { running: false };
         const stSer = JSON.stringify(st);
         if (stSer !== statsSer.current) {
@@ -216,7 +221,7 @@ export function MemberView({
     const readSessions = async () => {
       try {
         const ss = await getMemberSessions(slug, key);
-        if (!(isOk(ss) ? tk.land("sessions") : tk.fresh("sessions"))) return;
+        if (!(landsLane(ss) ? tk.land("sessions") : tk.fresh("sessions"))) return;
         const list = isOk(ss) && ss.sessions ? ss.sessions : [];
         const ssSer = JSON.stringify(list);
         if (ssSer !== sessSer.current) {

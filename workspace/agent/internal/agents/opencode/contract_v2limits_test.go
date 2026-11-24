@@ -86,8 +86,9 @@ func limitsModel(name string, limit map[string]any) map[string]any {
 	return m
 }
 
-// listedLimits waits for the directory's instance to finish activating (it answers 503 until its
-// plugins are up) and returns the stub models it lists, with their limits.
+// listedLimits waits for the directory's instance to finish activating and returns the stub models
+// it lists, with their limits. Activating looks different by version: 503 (or a held request) up to
+// 2.3.x, and from 2.4.0 a 200 with an empty list (stubLimitsFromListing), so both are waited out.
 func listedLimits(t *testing.T, addr, dir string) map[string]map[string]float64 {
 	t.Helper()
 	client := &http.Client{Timeout: 60 * time.Second, Transport: authTransport{}}
@@ -104,23 +105,17 @@ func listedLimits(t *testing.T, addr, dir string) map[string]map[string]float64 
 			}
 			continue
 		}
-		var listed struct {
-			Data []struct {
-				ID         string             `json:"id"`
-				ProviderID string             `json:"providerID"`
-				Limit      map[string]float64 `json:"limit"`
-			} `json:"data"`
-		}
-		if err := json.Unmarshal(raw, &listed); err != nil {
+		limits, activated, err := stubLimitsFromListing(raw)
+		if err != nil {
 			t.Fatal(err)
 		}
-		out := map[string]map[string]float64{}
-		for _, m := range listed.Data {
-			if m.ProviderID == "stub" {
-				out[m.ID] = m.Limit
+		if !activated {
+			if time.Now().After(deadline) {
+				t.Fatalf("GET /api/model still lists no model at all after 90s: %s", raw)
 			}
+			continue
 		}
-		return out
+		return limits
 	}
 }
 

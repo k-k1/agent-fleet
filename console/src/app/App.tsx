@@ -65,6 +65,9 @@ import { WorkItemModalHost } from "../features/workitems/WorkItemModalHost.tsx";
 import { SchedulesSection } from "../features/schedules/SchedulesSection.tsx";
 import { ProjectTree } from "../features/project/ProjectTree.tsx";
 import { OtherSessionsSection } from "../features/project/OtherSessionsSection.tsx";
+import { SpacesSection } from "../features/project/SpacesSection.tsx";
+import { TerminalsSection } from "../features/terminals/TerminalsSection.tsx";
+import { useSpacesStore } from "../features/spaces/store.ts";
 import { StoppedSessionsSection } from "../features/project/StoppedSessionsSection.tsx";
 import { AutoRunSection } from "../features/autorun/AutoRunSection.tsx";
 import { SharedSessionsSection } from "../features/sharing/SharedSessionsSection.tsx";
@@ -428,6 +431,7 @@ export function App() {
       // The rail's repos are the previous tenant's workspace. When both workspaces are running
       // no running edge fires, so nothing else drops them; ProjectTree reloads on the switch.
       useReposStore.getState().clear();
+      useSpacesStore.getState().clear();
       // Same for the other workspace-proxied snapshots: the Agent's answers (connections, import
       // jobs, cloud logins, the chat list) are not keyed on the tenant, so drop and re-ask. The
       // FILES tree, the connection hook and the chat rail reload on the tenant themselves.
@@ -623,6 +627,7 @@ export function App() {
                   <SoloSection>
                     <ProjectTree />
                   </SoloSection>
+                  <SpacesSection />
                   <OtherSessionsSection />
                 </>
               ) : (
@@ -632,6 +637,20 @@ export function App() {
                   </SoloSection>
                   <StoppedSessionsSection />
                 </>
+              )}
+            </RailView>
+            {/* Shells and SSM logins (ADR 0142 decision 10). Mounted on first show: it reads the
+                registered SSM hosts, which a member who never opens the view has no use for. A
+                working set narrows it as it narrows the sessions it was split from. */}
+            <RailView id="terminals" active={railView} shown={railShown} scoped lazy>
+              {workspaceRunning ? (
+                <SoloSection>
+                  <TerminalsSection />
+                </SoloSection>
+              ) : (
+                <SoloSection>
+                  <StoppedRailSection id="terminals" title={tr("rail.view.terminals")} icon="terminal" />
+                </SoloSection>
               )}
             </RailView>
             {/* Not scoped: a shared session belongs to another member's working copy, so a

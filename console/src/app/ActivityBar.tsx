@@ -3,6 +3,8 @@
 // pane alone. Keeping those two apart is the point of the column: an icon either changes the
 // left pane or the main area, never both.
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { KeyboardEvent as RKeyboardEvent, MouseEvent as RMouseEvent, PointerEvent as RPointerEvent, RefObject, TouchEvent as RTouchEvent } from "react";
+import { setSettings, useSettings, useUIPrefsUnsettled } from "../lib/settings.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import type { RailView } from "../core/store/leftRail.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
@@ -27,12 +29,17 @@ import { hintSuffix } from "../features/keys/keyHint.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
-import { hasUnreadConversation, hasUnreadSession, pendingNews, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
+import { hasUnreadConversation, hasUnreadSession, hasUnreadTerminal, pendingNews, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
 import type { RailBadge } from "./activity/badges.ts";
 import { useAutoRunFeed, useScopedAutoRuns } from "../features/autorun/store.ts";
 import { waitingScheduledCount } from "../features/schedules/scheduledSessions.ts";
 import { buildRuns, failedRunKeys, scopeRuns, waitingRunCount } from "../features/autorun/runs.ts";
 import { stepView } from "./barSwipe.ts";
+import { createLongPress } from "../lib/longPress.ts";
+import { isContextMenuKey, menuAnchor } from "../features/project/contextMenuKey.ts";
+import { ActivityBarMenu } from "./ActivityBarMenu.tsx";
+import type { BarMenuAnchor, BarMenuRow } from "./ActivityBarMenu.tsx";
+import { canResetOff, hiddenWaiting, menuEntries, resetOff, shownViews, toggleOff } from "./activity/visibility.ts";
 import { useBarSwipe } from "./useBarSwipe.ts";
 
 interface ViewDef {
@@ -48,6 +55,7 @@ interface ViewDef {
 const VIEWS: ViewDef[] = [
   { id: "sessions", icon: "repo", mark: "sparkle", label: "rail.view.sessions" },
   { id: "shared", icon: "broadcast", mark: "sparkle", label: "share.shared_sessions" },
+  { id: "terminals", icon: "terminal", label: "rail.view.terminals" },
   { id: "assistant", icon: "comment-discussion", label: "asst.section_title" },
   { id: "workitems", icon: "issues", label: "wi.title" },
   { id: "memo", icon: "note", label: "memo.title" },
@@ -77,11 +85,55 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
   const imagegenAvailable = useImagegenAvailable();
   const badges = useRailBadges(shown ? view : null);
 
-  const views = useMemo(() => (schedulerEnabled ? VIEWS : VIEWS.filter((v) => v.id !== "schedules")), [schedulerEnabled]);
-
   // Phone only (a tablet's docked column keeps taps), and only while the drawer is out.
-  // The list is the one rendered above, so a toggled scheduler is never stale.
   const barRef = useRef<HTMLDivElement>(null);
+  // The view on screen keeps its icon and cannot be turned off; with the left pane folded away
+  // nothing is on screen, so any icon may go (the last one excepted).
+  const onScreen = shown ? view : null;
+  const usable = useMemo(() => (schedulerEnabled ? VIEWS : VIEWS.filter((v) => v.id !== "schedules")), [schedulerEnabled]);
+  // The icons the member left on (its context menu). The swipe steps through these only.
+  const { railViewsOff: off } = useSettings();
+  const views = useMemo(() => {
+    const ids = shownViews(
+      usable.map((v) => v.id),
+      off,
+      onScreen,
+    );
+    return usable.filter((v) => ids.includes(v.id));
+  }, [usable, off, onScreen]);
+  // The list has not been read from the server yet, or is being read again (a tenant switch): a
+  // change now would be built on the previous copy, recorded against the new owner, and win over
+  // what the read brings, so the next save would drop ids another browser stored.
+  const prefsLoading = useUIPrefsUnsettled();
+  const menu = useBarMenu(barRef);
+  const entries = useMemo(
+    () =>
+      menuEntries(
+        VIEWS.map((v) => v.id),
+        usable.map((v) => v.id),
+        off,
+        onScreen,
+      ),
+    [usable, off, onScreen],
+  );
+  // Views with no icon that wait on the member: the bar carries one dot for them (ADR 0142).
+  const waitingHidden = useMemo(
+    () =>
+      hiddenWaiting(
+        usable.map((v) => v.id),
+        views.map((v) => v.id),
+        badges,
+      ),
+    [usable, views, badges],
+  );
+  const waitingNames = waitingHidden.map((w) => tr(usable.find((v) => v.id === w.id)!.label)).join(", ");
+  const rows: BarMenuRow[] = entries.map((e) => {
+    const def = VIEWS.find((v) => v.id === e.id)!;
+    const w = waitingHidden.find((x) => x.id === e.id);
+    return { ...e, icon: def.icon, name: tr(def.label), waiting: w ? badgeText(w.badge, tr, e.id) : "" };
+  });
+
+  // The list is the one rendered above, so a toggled scheduler is never stale.
   const [announced, setAnnounced] = useState("");
   const step = useCallback(
     (delta: 1 | -1) => {
@@ -106,10 +158,54 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
     const id = window.setTimeout(() => setAnnounced(""), 1000);
     return () => window.clearTimeout(id);
   }, [announced]);
-  useBarSwipe(barRef, { enabled: !foldable && shown, step }, [views.length, imagegenAvailable]);
+  // The dot adds height without changing the icon count: it has to re-measure whether the column
+  // still fits, or the bar keeps claiming touch-action that the swipe then refuses.
+  useBarSwipe(barRef, { enabled: !foldable && shown, step }, [views.length, imagegenAvailable, waitingHidden.length > 0]);
+
+  // A fold or a toggle elsewhere can take the focused icon out of the bar (the view on screen
+  // keeps an icon only while it is on screen): keep focus on the bar rather than letting it drop
+  // to <body>.
+  const lastFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    const was = lastFocus.current;
+    if (!was || was.isConnected || document.activeElement !== document.body) return;
+    lastFocus.current = null;
+    const bar = barRef.current;
+    (bar?.querySelector<HTMLElement>(".actbar-btn[data-rail-view]") ?? bar?.querySelector<HTMLElement>(".actbar-btn"))?.focus();
+  }, [views]);
+
+  // Up / Down move focus over the view icons that are shown (not the launchers), without
+  // choosing the view: Enter or Space does that.
+  const moveFocus = (e: RKeyboardEvent<HTMLDivElement>) => {
+    if ((e.key !== "ArrowDown" && e.key !== "ArrowUp") || !(e.target instanceof HTMLElement) || !e.target.dataset.railView) return;
+    const icons = [...e.currentTarget.querySelectorAll<HTMLElement>(".actbar-btn[data-rail-view]")];
+    const next = icons[icons.indexOf(e.target) + (e.key === "ArrowDown" ? 1 : -1)];
+    e.preventDefault();
+    next?.focus();
+  };
 
   return (
-    <div ref={barRef} className="actbar" role="toolbar" aria-orientation="vertical" aria-label={tr("rail.bar_aria")}>
+    <>
+    <div
+      ref={barRef}
+      className="actbar"
+      role="toolbar"
+      aria-orientation="vertical"
+      aria-label={tr("rail.bar_aria")}
+      {...menu.barProps}
+      onFocus={(e) => {
+        if (e.target instanceof HTMLElement) lastFocus.current = e.target;
+      }}
+      // Focus that left on its own (a click on blank space, another control) is not ours to
+      // restore; focus lost because the button was removed is.
+      onBlur={(e) => {
+        if (e.target instanceof HTMLElement && (e.relatedTarget !== null || e.target.isConnected)) lastFocus.current = null;
+      }}
+      onKeyDown={(e) => {
+        menu.barProps.onKeyDown(e);
+        moveFocus(e);
+      }}
+    >
       <LaunchButton id="home" icon="home" label={tr("wsbar.home_title") + hintSuffix("open.home")} name={tr("wsbar.home")} onClick={() => openHome()} />
       <span className="actbar-rule" />
       {views.map((v) => {
@@ -141,6 +237,19 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
           </button>
         );
       })}
+      {waitingHidden.length > 0 && (
+        <button
+          type="button"
+          className="actbar-btn actbar-hidden"
+          data-hidden-waiting={waitingHidden.map((w) => w.id).join(" ")}
+          aria-label={tr("rail.hidden_waiting", { names: waitingNames })}
+          title={tr("rail.hidden_waiting", { names: waitingNames })}
+          onClick={(e) => menu.openAt(menuAnchor(e.currentTarget))}
+        >
+          <Icon name="ellipsis" />
+          <span className="actbar-badge tone-waiting" data-badge="waiting" />
+        </button>
+      )}
       <span className="actbar-gap" />
       <span className="actbar-rule" />
       <LaunchButton
@@ -174,8 +283,134 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
         {announced}
       </span>
     </div>
+    {/* A sibling of the bar, not a child: the menu's clicks and keys are React events that would
+        otherwise bubble through the portal into the bar's own gesture handlers. */}
+    {menu.anchor && (
+      <ActivityBarMenu
+        anchor={menu.anchor}
+        rows={rows}
+        busy={prefsLoading}
+        canReset={canResetOff(off)}
+        onToggle={(id, on) => setSettings({ railViewsOff: toggleOff(off, id, on) })}
+        onReset={() => setSettings({ railViewsOff: resetOff(off) })}
+        onClose={menu.close}
+      />
+    )}
+    </>
   );
 });
+
+// Opens the bar's menu: right-click, the context-menu key (the focused icon anchors it), and a long
+// press on a touch screen. The click a long press leaves on lift is dropped, or it would also pick
+// the icon under the finger; the drop only covers that click (a short window after the lift, and
+// only for events inside the bar), never a later mouse or key action.
+const CLICK_SWALLOW_MS = 400;
+
+function useBarMenu(barRef: RefObject<HTMLElement | null>) {
+  const [anchor, setAnchor] = useState<BarMenuAnchor | null>(null);
+  const [press] = useState(createLongPress);
+  const swallow = useRef(false);
+  const swallowTimer = useRef<number | null>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  // The button a long press began on: the only one whose click is dropped. The press may start on
+  // the icon inside it and the compatibility click may land on the button, so both are the button.
+  const pressed = useRef<Element | null>(null);
+  const buttonOf = (t: EventTarget | null): Element | null => (t instanceof Element ? t.closest(".actbar-btn") : null);
+  const setSwallow = (on: boolean) => {
+    swallow.current = on;
+    if (swallowTimer.current !== null) window.clearTimeout(swallowTimer.current);
+    swallowTimer.current = null;
+  };
+  useEffect(() => () => setSwallow(false), []);
+  const openAt = useCallback(
+    (a: BarMenuAnchor) => {
+      press.cancel();
+      const active = document.activeElement;
+      returnFocus.current = active instanceof HTMLElement && barRef.current?.contains(active) ? active : null;
+      setAnchor(a);
+    },
+    [press, barRef],
+  );
+  const close = useCallback(() => {
+    press.cancel();
+    setAnchor(null);
+    // The opener may be gone by now (its icon was turned off, or the dot it opened from was
+    // cleared): land on the view on screen, or the first button, rather than on <body>.
+    const back = returnFocus.current;
+    returnFocus.current = null;
+    if (!back) return;
+    const bar = barRef.current;
+    const target = back.isConnected ? back : (bar?.querySelector<HTMLElement>(".actbar-btn[aria-pressed='true']") ?? bar?.querySelector<HTMLElement>(".actbar-btn"));
+    target?.focus();
+  }, [press, barRef]);
+  const inBar = (e: { currentTarget: Element; target: EventTarget }) => e.target instanceof Node && e.currentTarget.contains(e.target);
+  const barProps = {
+    onContextMenu: (e: RMouseEvent) => {
+      e.preventDefault();
+      if ((e.nativeEvent as PointerEvent).pointerType === "touch") {
+        setSwallow(true);
+        pressed.current = buttonOf(e.target);
+      }
+      // A keyboard-raised contextmenu carries no pointer position; anchor on the focused icon.
+      const focused = document.activeElement;
+      if (e.clientX === 0 && e.clientY === 0 && focused instanceof HTMLElement && e.currentTarget.contains(focused)) openAt(menuAnchor(focused));
+      else openAt({ x: e.clientX, y: e.clientY });
+    },
+    onKeyDown: (e: RKeyboardEvent) => {
+      if (!isContextMenuKey(e) || !(e.target instanceof HTMLElement)) return;
+      e.preventDefault();
+      openAt(menuAnchor(e.target));
+    },
+    onMouseDown: () => setSwallow(false),
+    onPointerDown: (e: RPointerEvent) => press.pointerDown(e.pointerType),
+    onTouchStart: (e: RTouchEvent) => {
+      setSwallow(false);
+      press.cancel();
+      pressed.current = buttonOf(e.target);
+      const t = e.touches[0];
+      if (!t || e.touches.length > 1) return;
+      const { clientX, clientY } = t;
+      press.start(clientX, clientY, () => {
+        setSwallow(true);
+        openAt({ x: clientX, y: clientY });
+      });
+    },
+    // The vertical swipe that steps views starts as a drag: past the tolerance it is no press.
+    onTouchMove: (e: RTouchEvent) => {
+      const t = e.touches[0];
+      if (t) press.move(t.clientX, t.clientY);
+    },
+    onTouchEnd: (e: RTouchEvent) => {
+      if (swallow.current) {
+        if (e.cancelable) e.preventDefault();
+        // The lift's click, where the browser still sends one, comes right after; whatever
+        // arrives later is a different action.
+        swallowTimer.current = window.setTimeout(() => setSwallow(false), CLICK_SWALLOW_MS);
+      }
+      press.end();
+    },
+    onTouchCancel: () => {
+      setSwallow(false);
+      press.end();
+    },
+    onClickCapture: (e: RMouseEvent) => {
+      if (!swallow.current || !inBar(e)) return;
+      // Only the click a finger lifts into is dropped: a keyboard or assistive-technology
+      // activation (trusted, detail 0) or a mouse click is a real action.
+      const pt = (e.nativeEvent as PointerEvent).pointerType;
+      if ((pt !== undefined && pt !== "" && pt !== "touch") || (e.nativeEvent.isTrusted && e.detail === 0)) {
+        setSwallow(false);
+        return;
+      }
+      const hit = buttonOf(e.target);
+      if (!hit || hit !== pressed.current) return;
+      setSwallow(false);
+      e.preventDefault();
+      e.stopPropagation();
+    },
+  };
+  return { anchor, openAt, close, barProps };
+}
 
 function LaunchButton({ id, icon, label, name, onClick }: { id: string; icon: string; label: string; name: string; onClick: () => void }) {
   return (
@@ -214,7 +449,12 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const waiting = useMemo(() => waitingSessions(sessions, wset), [sessions, wset]);
   // Selectors that answer a boolean: the notification list is replaced on every poll, and a
   // subscription to the list itself would re-render the column each time.
-  const unreadSessions = useNotificationStore((s) => hasUnreadSession(s.items, sessions, wset));
+  // Where a shell's notice leads depends on where its row is: the Terminal view lists it while the
+  // workspace runs, and the Sessions view's history lists every session while it is stopped.
+  const terminalsViewLive = useWorkspaceStore((s) => s.state) === "running";
+  const unreadSessions = useNotificationStore((s) => hasUnreadSession(s.items, sessions, wset, !terminalsViewLive));
+  const reposForTerminals = useReposStore((s) => s.repos);
+  const unreadTerminals = useNotificationStore((s) => terminalsViewLive && hasUnreadTerminal(s.items, sessions, reposForTerminals, wset));
   const unreadConversation = useNotificationStore((s) => hasUnreadConversation(s.items, wset));
   const payload = useWorkItemStore((s) => s.payload);
   const seen = useSeenStore((s) => s.map);
@@ -270,6 +510,7 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const out: Partial<Record<RailView, RailBadge>> = {};
   if (waiting > 0) out.sessions = { tone: "waiting", count: waiting };
   else if (unreadSessions) out.sessions = { tone: "unread" };
+  if (unreadTerminals) out.terminals = { tone: "unread" };
   if (unreadConversation) out.assistant = { tone: "unread" };
   const news = onScreen === "workitems" ? 0 : pendingNews(workItemKeys, acked.workitems).length;
   if (news > 0) out.workitems = { tone: "news", count: news };

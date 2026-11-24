@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
@@ -37,11 +39,37 @@ func handleMemoPastedImage(w http.ResponseWriter, r *http.Request) {
 	sessionx.ServePastedImageFrom(w, memoImagesDir(), r.PathValue("file"))
 }
 
+// memoImageGCGrace is how long a stored memo image is spared by the sweep even when no
+// keep list names it. The keep list cannot name an upload whose response has not reached
+// its client yet (the name is chosen here, at store time), nor one held by another tab's or
+// device's composer, so without this a sweep racing a paste deletes a file a composer is
+// about to show. The cost is hygiene only: a memo deleted within this window of its upload
+// leaves its file for a later sweep.
+const memoImageGCGrace = 10 * time.Minute
+
+// memoImageStoredAt is when a memo image was stored: the later of its mtime and the
+// paste-<unixnano> stamp in its name. The mtime alone is the temp file's last write, which
+// a client that stalls before the multipart's closing boundary can leave far older than
+// the rename; the stamp is taken after the copy, just before the rename.
+func memoImageStoredAt(name string, mtime time.Time) time.Time {
+	digits := strings.TrimPrefix(name, "paste-")
+	if i := strings.IndexAny(digits, ".-"); i >= 0 {
+		digits = digits[:i]
+	}
+	if ns, err := strconv.ParseInt(digits, 10, 64); err == nil {
+		if stamp := time.Unix(0, ns); stamp.After(mtime) {
+			return stamp
+		}
+	}
+	return mtime
+}
+
 // handleMemoImageGC prunes memo images no longer referenced by any memo. The Console —
 // which holds the full memo list — POSTs the basenames still in use ({keep:[...]}) and
-// the agent unlinks every other paste-* file in the dir. Best-effort disk hygiene: the
-// bytes are in ~/.cache, so a miss just leaves a stale file until the next sweep. Only
-// paste-* files are ever removed (the in-flight ".paste-*" temp files are left alone).
+// the agent unlinks every other paste-* file stored more than memoImageGCGrace ago.
+// Best-effort disk hygiene: the bytes are in ~/.cache, so a miss just leaves a stale file
+// until the next sweep. Only paste-* files are ever removed (the in-flight ".paste-*" temp
+// files are left alone).
 func handleMemoImageGC(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Keep []string `json:"keep"`
@@ -56,10 +84,16 @@ func handleMemoImageGC(w http.ResponseWriter, r *http.Request) {
 	}
 	dir := memoImagesDir()
 	entries, _ := os.ReadDir(dir)
+	cutoff := time.Now().Add(-memoImageGCGrace)
 	removed := 0
 	for _, e := range entries {
 		name := e.Name()
 		if e.IsDir() || !strings.HasPrefix(name, "paste-") || keep[name] {
+			continue
+		}
+		// An unreadable mtime counts as young: when in doubt, keep.
+		info, err := e.Info()
+		if err != nil || memoImageStoredAt(name, info.ModTime()).After(cutoff) {
 			continue
 		}
 		if os.Remove(filepath.Join(dir, name)) == nil {

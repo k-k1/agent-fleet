@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import { hasCodeLiteral, importsRawClient } from "../../../test/sourcePins.ts";
 
 // Source pins for the admin area's typed API layer (#4783 part 2). Two seams break silently:
 // a component that goes back to a raw `api()` call (the reply is `any` again), and a wrapper
@@ -14,7 +15,7 @@ describe("admin typed API layer", () => {
     const files = readdirSync(dir).filter((f) => /\.tsx?$/.test(f) && !/\.test\./.test(f) && f !== "adminApi.ts");
     expect(files.length).toBeGreaterThan(20);
     const offenders = files.filter((f) =>
-      /import\s*\{[^}]*\b(api|apiJSON)\b[^}]*\}\s*from\s*"[^"]*core\/api\/client\.ts"/.test(read(f)),
+      importsRawClient(read(f)),
     );
     expect(offenders).toEqual([]);
   });
@@ -34,7 +35,7 @@ describe("admin typed API layer", () => {
       "api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(modelId)}/complete",
       "api/admin/provided-routes/deployment",
     ]) {
-      expect(src).toContain(p);
+      expect(hasCodeLiteral(src, p)).toBe(true);
     }
   });
 

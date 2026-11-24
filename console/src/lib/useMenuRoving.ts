@@ -21,7 +21,8 @@ export function useMenuRoving(menuRef: RefObject<HTMLElement | null>, open: bool
         (el) => !(el as HTMLButtonElement).disabled && el.offsetParent !== null,
       );
     const initial = items();
-    for (const el of initial) el.setAttribute("role", "menuitem");
+    // An item that declares its own role (a checkable one is a menuitemcheckbox) keeps it.
+    for (const el of initial) if (!el.hasAttribute("role")) el.setAttribute("role", "menuitem");
     initial[0]?.focus();
 
     const onKey = (e: KeyboardEvent) => {

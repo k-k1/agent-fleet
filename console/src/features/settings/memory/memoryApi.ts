@@ -45,8 +45,9 @@ import type {
 // commit result) the answer is unknown, so the wrapper keeps null and says so in its type: the
 // caller leaves its "not loaded" / "no result" state alone, as it did before the typed wrappers.
 const api = (path: string): Promise<never> => rawApi(path).then((r) => (r ?? {}) as never);
-const apiJSON = (path: string, method: string, body?: unknown): Promise<never> =>
-  rawApiJSON(path, method, body).then((r) => (r ?? {}) as never);
+const apiJSON = (path: string, method: string, body?: unknown, headers?: Record<string, string>): Promise<never> =>
+  // Without headers the call keeps its three arguments: the wrapper's tests pin them exactly.
+  (headers ? rawApiJSON(path, method, body, headers) : rawApiJSON(path, method, body)).then((r) => (r ?? {}) as never);
 
 /** A reply whose refusals also carry data (secret findings, what a broken-off move did): one
  *  object with an optional `error`, read with `if (res.error)` instead of `isOk`. */
@@ -203,7 +204,10 @@ export const getConsolProposals = (): Promise<Reply<{ proposals?: ConsolProposal
   api(`${CONSOL}/proposals`);
 export const getConsolProposal = (id: string): Promise<Reply<ConsolProposalView> | null> =>
   rawApi(`${CONSOL}/proposal?id=${encodeURIComponent(id)}`);
-export const runConsolidation = (all: boolean): Promise<Reply<Ack>> =>
-  apiJSON(`${CONSOL}/run`, "POST", all ? { all: true } : {});
+// `tenant` is the workspace the member confirmed the run for, sent as X-AF-Tenant: the global fetch
+// wrapper only fills the header in when the request has none, so without it the write would go to
+// whichever tenant is selected when the request leaves.
+export const runConsolidation = (all: boolean, tenant: string): Promise<Reply<Ack>> =>
+  apiJSON(`${CONSOL}/run`, "POST", all ? { all: true } : {}, tenant ? { "X-AF-Tenant": tenant } : undefined);
 export const decideConsolProposal = (verb: "approve" | "reject" | "retry", id: string): Promise<Reply<Ack>> =>
   apiJSON(`${CONSOL}/proposals/${verb}?proposal=${encodeURIComponent(id)}`, "POST", { id });

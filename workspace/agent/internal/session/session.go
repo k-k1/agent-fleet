@@ -288,8 +288,16 @@ type Session struct {
 	// InitialPromptReason says why InitialPromptState is failed when the Agent knows (Meta's).
 	InitialPromptReason string `json:"initialPromptReason,omitempty"`
 	Repo                string `json:"repo"` // working dir basename (display)
-	WorkingCopyID       string `json:"workingCopyId,omitempty"`
-	Title               string `json:"title"` // user-supplied display title (optional, any kind)
+	// Space is the space folder the session runs in (ADR 0142), "" outside ~/spaces. The Agent
+	// decides it from Dir's root, because a space and a repository can share a folder name and
+	// Repo alone cannot tell them apart. The Control Plane's sessionWire has to carry it too.
+	Space         string `json:"space,omitempty"`
+	WorkingCopyID string `json:"workingCopyId,omitempty"`
+	Title         string `json:"title"` // user-supplied display title (optional, any kind)
+	// SSM is the non-secret target of an SSM session (ADR 0142 decision 10, open question 4): the
+	// Console groups the Terminal view by machine from it, and a title is no key because it can be
+	// renamed. nil for every other kind. The Control Plane's sessionWire has to carry it too.
+	SSM *SSMTarget `json:"ssm,omitempty"`
 	// Moving / MovedTo mirror Meta's (ADR 0115 decision 11.7): the row of a source whose move
 	// is under way or pending offers retry and cancel, and a moved one says where the
 	// conversation went. The Control Plane's sessionWire has to carry them too.
@@ -1031,6 +1039,49 @@ type SSMMeta struct {
 	// the sign-in's id, or the profile's. Neither is a secret.
 	SSOSession string `json:"ssoSession,omitempty"`
 	SSOOwnerID string `json:"ssoOwnerId,omitempty"`
+}
+
+// SSMTarget is the part of SSMMeta the session list carries: which machine, and under which
+// profile and run-as document. It leaves out the sign-in details (start URL, role, chaining),
+// which the list has no use for.
+type SSMTarget struct {
+	Target    string `json:"target"`              // EC2 instance id (i-...)
+	Region    string `json:"region,omitempty"`    // instance region ("" = profile default)
+	AccountID string `json:"accountId,omitempty"` // SSO account id of the profile
+	Profile   string `json:"profile,omitempty"`   // ~/.aws/config profile name
+	Document  string `json:"document,omitempty"`  // run-as SSM document ("" = default shell)
+}
+
+// SSMTargetOf is the list's view of m's SSM target; nil when m is not an SSM session.
+//
+// AccountID is the account the instance lives in. For a role-chained profile SSMMeta.AccountID
+// describes the SOURCE sign-in (ssm.go of the Control Plane stores src.AccountID) and the target
+// account is the one in RoleARN, so a direct login and an assume-role login to one machine group
+// together instead of splitting by the account that happened to sign in.
+func SSMTargetOf(m Meta) *SSMTarget {
+	if m.SSM == nil {
+		return nil
+	}
+	acct := m.SSM.AccountID
+	if a := roleARNAccount(m.SSM.RoleARN); a != "" {
+		acct = a
+	}
+	return &SSMTarget{Target: m.SSM.Target, Region: m.SSM.Region, AccountID: acct, Profile: m.SSM.Profile, Document: m.SSM.Document}
+}
+
+// roleARNAccount is the account id of an IAM role ARN (arn:<partition>:iam::<12 digits>:role/<name>);
+// "" for anything else, so a malformed value leaves the stored account in force.
+func roleARNAccount(arn string) string {
+	parts := strings.SplitN(arn, ":", 6)
+	if len(parts) < 6 || parts[0] != "arn" || parts[1] == "" || parts[2] != "iam" || parts[3] != "" || len(parts[4]) != 12 || !strings.HasPrefix(parts[5], "role/") {
+		return ""
+	}
+	for _, c := range parts[4] {
+		if c < '0' || c > '9' {
+			return ""
+		}
+	}
+	return parts[4]
 }
 
 // DriverKind normalizes Meta.Driver ("" → tui). Always branch through it: comparing raw

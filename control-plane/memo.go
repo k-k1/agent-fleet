@@ -1127,6 +1127,9 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 		return nil, &apiError{http.StatusBadRequest, "no_ids", "ids is required"}
 	}
 	token := store.NewID()
+	if keep {
+		token = store.MemoSendKeepPrefix + token
+	}
 	var memos []store.Memo
 	err := st.MemoTx(ctx, membershipID, func(tx store.MemoTxOps) error {
 		memos = make([]store.Memo, 0, len(ids))
@@ -1215,8 +1218,9 @@ func memoFlushFor(ctx context.Context, st store.MemoStore, rt runtime.Runtime, m
 	if err := memoSettleSend(context.WithoutCancel(ctx), st, membershipID, token, memos, sendErr, sentAt, keep); err != nil {
 		// The outcome is known but not recorded. The rows keep the reservation until
 		// MemoSendStaleAfter takes it back: a queue message then becomes unconfirmed and is
-		// never fired again by itself. After a successful send, answering 500 would make the
-		// client send the same text twice, so the send's own outcome is reported.
+		// never fired again by itself, unless the send was kept (the token says so), which
+		// leaves it as it was. After a successful send, answering 500 would make the client
+		// send the same text twice, so the send's own outcome is reported.
 		log.Printf("memo flush: settling the send failed session=%s sent=%v: %v", sessionName, sendErr == nil, err)
 	}
 	if sendErr != nil {

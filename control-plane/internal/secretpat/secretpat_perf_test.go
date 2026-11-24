@@ -49,6 +49,9 @@ func TestStatelessAtAgreesWithThePattern(t *testing.T) {
 	for _, tok := range secretpattest.All() {
 		ins = append(ins, tok, "x "+tok+" y", tok+tok, tok+"-"+tok, tok[:len(tok)/2], tok+".md", "cache_"+tok)
 	}
+	for tok := range shortHeaderTokens() {
+		ins = append(ins, tok, "x "+tok+" y", tok+tok, "cache_"+tok)
+	}
 	ins = append(ins, secretpattest.Benign...)
 	for _, in := range ins {
 		got, want := GitHubStatelessSpans(in), ref(in)

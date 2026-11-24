@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, it } from "vitest";
+import type { EngineRow } from "./engineTypes.ts";
 import {
+  beginEnginesEdit,
+  beginEnginesRead,
   catalogKey,
   clearCatalogMemory,
   loadEngines,
@@ -8,6 +11,7 @@ import {
   loadSearch,
   loadShell,
   saveEngines,
+  saveEnginesRead,
   saveObjects,
   saveRegistered,
   saveSearch,
@@ -92,5 +96,110 @@ describe("catalogue memory contents", () => {
     expect(loadSearch(key)).toBeNull();
     expect(loadShell("pane-a")).toBeNull();
     expect(loadEngines()).toBeNull();
+  });
+});
+
+// The engine list is one slot written by every screen's useEngineRows, each ordering its own reads.
+// The order that keeps a stale answer out of the slot lives beside it.
+describe("engine cache write order across screens", () => {
+  const eng = (key: string, mode: string) => ({ key, mode }) as unknown as EngineRow;
+  const seed = () => saveEngines({ rows: [eng("a", "ondemand"), eng("b", "ondemand")], isSuper: true, sources: ["hf"] });
+  const modes = () => loadEngines()?.rows.map((e) => `${e.key}:${(e as unknown as { mode: string }).mode}`);
+
+  it("keeps an edited row when a read begun before the edit answered saves its older copy", () => {
+    seed();
+    const read = beginEnginesRead(); // screen B
+    beginEnginesEdit("a")({ mode: "on" } as Partial<EngineRow>); // screen A's edit answers
+    saveEnginesRead(read, [eng("a", "ondemand"), eng("b", "ondemand")], true, ["hf"]);
+    expect(modes()).toEqual(["a:on", "b:ondemand"]);
+  });
+
+  it("still lands the other rows of that read", () => {
+    seed();
+    const read = beginEnginesRead();
+    beginEnginesEdit("a")({ mode: "on" } as Partial<EngineRow>);
+    saveEnginesRead(read, [eng("a", "ondemand"), eng("b", "on")], true, ["hf"]);
+    expect(modes()).toEqual(["a:on", "b:on"]);
+  });
+
+  it("takes a read begun after the edit answered", () => {
+    seed();
+    beginEnginesEdit("a")({ mode: "on" } as Partial<EngineRow>);
+    saveEnginesRead(beginEnginesRead(), [eng("a", "on"), eng("b", "ondemand")], true, ["hf"]);
+    expect(modes()).toEqual(["a:on", "b:ondemand"]);
+  });
+
+  it("does not let an older read overwrite a newer one's answer", () => {
+    seed();
+    const older = beginEnginesRead();
+    const newer = beginEnginesRead();
+    saveEnginesRead(newer, [eng("a", "on"), eng("b", "on")], true, ["hf"]);
+    saveEnginesRead(older, [eng("a", "ondemand"), eng("b", "ondemand")], false, []);
+    expect(modes()).toEqual(["a:on", "b:on"]);
+    expect(loadEngines()?.isSuper).toBe(true);
+  });
+
+  it("drops an edit's cache write when a read begun after the edit began has landed the row", () => {
+    seed();
+    const edit = beginEnginesEdit("a");
+    saveEnginesRead(beginEnginesRead(), [eng("a", "ondemand"), eng("b", "ondemand")], true, ["hf"]); // may hold a later state
+    edit({ mode: "on" } as Partial<EngineRow>);
+    expect(modes()).toEqual(["a:ondemand", "b:ondemand"]);
+  });
+
+  it("writes nothing from a stale read when an edit claimed a row the cache does not hold", () => {
+    const read = beginEnginesRead();
+    beginEnginesEdit("a")({ mode: "on" } as Partial<EngineRow>); // nothing cached to patch
+    saveEnginesRead(read, [eng("a", "ondemand")], true, ["hf"]);
+    expect(loadEngines()).toBeNull();
+  });
+
+  it.each([
+    ["in the order they began", false],
+    ["in the reverse order", true],
+  ])("applies two edits of one row that overlap, answering %s", (_name, reverse) => {
+    seed();
+    const mode = beginEnginesEdit("a");
+    const note = beginEnginesEdit("a");
+    const answers = [() => mode({ mode: "on" } as Partial<EngineRow>), () => note({ note: "x" } as unknown as Partial<EngineRow>)];
+    for (const answer of reverse ? answers.reverse() : answers) answer();
+    expect(loadEngines()?.rows[0]).toMatchObject({ mode: "on", note: "x" });
+  });
+
+  it("keeps a row a later read wrote against an older read answering after a slow edit", () => {
+    seed();
+    const edit = beginEnginesEdit("a");
+    const r1 = beginEnginesRead();
+    const r2 = beginEnginesRead();
+    saveEnginesRead(r1, [{ ...eng("a", "on"), state: "running" } as EngineRow, eng("b", "ondemand")], true, ["hf"]);
+    edit({ mode: "on", state: "starting" } as unknown as Partial<EngineRow>); // not applied: r1 is newer
+    saveEnginesRead(r2, [{ ...eng("a", "on"), state: "starting" } as EngineRow, eng("b", "ondemand")], true, ["hf"]);
+    expect(loadEngines()?.rows[0]).toMatchObject({ mode: "on", state: "running" });
+  });
+
+  it("takes every row of a read begun after an edit, not only those the edit left alone", () => {
+    seed();
+    beginEnginesEdit("a")({ mode: "on" } as Partial<EngineRow>);
+    saveEnginesRead(
+      beginEnginesRead(),
+      [{ ...eng("a", "on"), state: "running" } as EngineRow, { ...eng("b", "ondemand"), state: "running" } as EngineRow],
+      true,
+      ["hf"],
+    );
+    expect(loadEngines()?.rows).toMatchObject([{ state: "running" }, { state: "running" }]);
+  });
+
+  it("does not let a read that gave up block the older answers that can still be written", () => {
+    saveEngines({ rows: [eng("b", "ondemand")], isSuper: true, sources: ["hf"] });
+    const older = beginEnginesRead();
+    const editB = beginEnginesEdit("b"); // begun after the older read, before the newer one
+    const newer = beginEnginesRead();
+    beginEnginesEdit("a")({ mode: "on" } as Partial<EngineRow>); // a row the cache does not hold
+    saveEnginesRead(newer, [eng("b", "ondemand"), eng("a", "ondemand")], true, ["hf"]); // gives up
+    saveEnginesRead(older, [{ ...eng("b", "ondemand"), state: "running" } as EngineRow], true, ["hf"]);
+    expect(loadEngines()?.rows).toMatchObject([{ key: "b", state: "running" }]);
+    // The older read began before this edit, so it did not stop it, and the gave-up read marked nothing.
+    editB({ mode: "on" } as Partial<EngineRow>);
+    expect(loadEngines()?.rows[0]).toMatchObject({ mode: "on", state: "running" });
   });
 });

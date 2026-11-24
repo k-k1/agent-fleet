@@ -426,6 +426,7 @@ func (m *manager) runtimeForUnattended(ctx context.Context, res *resolved) (runt
 // happen and returns a runtime whose env names the URLs it will answer on
 // (docs/log/81 §4 + §8). nil = nothing to do (previews off for this deployment) or the
 // slug could not be minted — the caller then starts with the runtime it already had.
+// res.ws must already be resolved for this start (withResolvedSizeSource).
 //
 // The runtime has to be rebuilt because container env is fixed at the instant of the start
 // and the runtime buildResolved assembled does not yet know this start's slug. "The URL was
@@ -442,7 +443,6 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, keys ru
 	}
 	ws := res.ws
 	ws.PreviewSlug = slug
-	ws = m.withResolvedSize(ctx, ws)
 	return m.runtimeFor(ws, keys, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
 }
 
@@ -454,7 +454,7 @@ func (m *manager) armPreviewForStart(ctx context.Context, res *resolved, keys ru
 // would otherwise inject the dead token at every start. Called under the start lock and
 // the lifecycle lease, right before Start. A rotation on another replica in the moment
 // between this check and Start still goes unseen (docs/build/91 §91.5). extraEnv is
-// carried over, as armPreviewForStart does.
+// carried over, and res.ws must already be resolved, as for armPreviewForStart.
 func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, keys runtime.SecretKeys, extraEnv []string) runtime.Runtime {
 	if m.internalGitHost == "" || res.ws.MembershipID == "" {
 		return nil
@@ -464,7 +464,6 @@ func (m *manager) refreshGitTokenForStart(ctx context.Context, res *resolved, ke
 		return nil
 	}
 	ws := res.ws
-	ws = m.withResolvedSize(ctx, ws)
 	// Next resolve rebuilds the memo too, so the stale env is not kept for later starts.
 	m.evictMembershipCache(res.ws.MembershipID)
 	return m.runtimeFor(ws, keys, append(m.workspaceExtraEnv(ctx, ws), extraEnv...)...)
@@ -747,13 +746,25 @@ func (m *manager) resolveWorkspaceSize(ctx context.Context, ws store.Workspace) 
 // leaves SlotClass empty, and ecs-ec2 then places the member on the deployment default
 // class instead of the tenant's.
 func (m *manager) withResolvedSize(ctx context.Context, ws store.Workspace) store.Workspace {
+	ws, _ = m.withResolvedSizeSource(ctx, ws)
+	return ws
+}
+
+// withResolvedSizeSource is withResolvedSize plus what chose the box: "boost" (later "auto"),
+// or "" for the member's own setting. A Start resolves once with it and builds its runtime and
+// its launch record from that one answer: resolved twice, a boost ending between the two would
+// put an unboosted box under a "boost" record and charge its hours to the boost budget.
+func (m *manager) withResolvedSizeSource(ctx context.Context, ws store.Workspace) (store.Workspace, string) {
 	ws.MemBytes, ws.CPUUnits, ws.DiskGB = m.resolveWorkspaceSize(ctx, ws)
 	ws.SlotClass, _ = m.resolveSlotClass(ctx, ws)
 	// A live boost (and later the auto override) is laid over the stored choice here, so every
 	// start and resize path sees it and the stored choice is never rewritten (ADR 0139).
 	ns := m.overlaySizeOverrides(ctx, ws, ws.MemBytes, ws.SlotClass)
 	ws.MemBytes, ws.SlotClass = ns.MemBytes, ns.SlotClass
-	return ws
+	if ns.Source == "stored" {
+		return ws, ""
+	}
+	return ws, ns.Source
 }
 
 // resolveSlotClass returns the machine class ws's NEXT container start lands on, and

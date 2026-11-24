@@ -150,6 +150,10 @@ function recordOwner(owner: string): void {
 // localStorage, let the learning from a single mirror reply PUT the full default set over the
 // server, and it propagated from there to every other device.
 let prefsLoaded = false;
+// The owner whose server copy the last successful read brought in. prefsLoaded never goes back to
+// false, so after a tenant or user switch this is what says the copy in memory is not the new
+// owner's yet, however many reads of theirs have failed since.
+let readOwner: string | null = null;
 // Local changes made before that read succeeded. Sent once, all together, as soon as it does.
 let savePending = false;
 // Only ever true in tests (set by cancelPrefsTimersForTest); production never calls it.
@@ -179,6 +183,7 @@ function scheduleHydrateRetry(): void {
 // out here, and not before.
 function markPrefsLoaded(): void {
   prefsLoaded = true;
+  readOwner = ownerSource();
   hydrateAttempt = 0;
   if (hydrateRetry) {
     clearTimeout(hydrateRetry);
@@ -338,6 +343,22 @@ export function useUIPrefsLoading(): boolean {
     },
     uiPrefsLoading,
     uiPrefsLoading,
+  );
+}
+
+/** Reactive "a screen that edits a synced key must wait": true until a read has succeeded for the
+ * current owner, and while any read is in flight. After a tenant or user switch an edit made before
+ * that owner's read has succeeded (a failed read included) is recorded against them and wins over
+ * what the read later brings. Unlike useUIPrefsLoading it does not stop at the first success. */
+export function useUIPrefsUnsettled(): boolean {
+  const get = (): boolean => !prefsLoaded || hydrateInFlight > 0 || readOwner !== ownerSource();
+  return useSyncExternalStore(
+    (fn) => {
+      loadingSubs.add(fn);
+      return () => void loadingSubs.delete(fn);
+    },
+    get,
+    get,
   );
 }
 

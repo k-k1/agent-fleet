@@ -20,6 +20,8 @@ import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
 import { getSettings, setSetting } from "../../../lib/settings.ts";
 import { setLocale, t } from "../../../lib/i18n/index.ts";
+import { useTenantStore } from "../../../core/store/tenant.ts";
+import { setTenant } from "../../../core/api/client.ts";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -106,6 +108,8 @@ afterEach(() => {
   document.body.innerHTML = "";
   setSetting("memoryConsolidation", false);
   setSetting("memoryLintSchedule", false);
+  useTenantStore.setState({ tenant: "" });
+  setTenant("");
 });
 
 describe("the pure helpers", () => {
@@ -199,6 +203,35 @@ describe("the manual run", () => {
     expect(apiJSON).toHaveBeenCalledTimes(1);
     await act(async () => release({ started: true }));
     await flush();
+  });
+
+  // The Settings tab used to pass no tenant, so a switch during the dialog went unseen and the POST
+  // carried whichever tenant was selected when it left.
+  it("sends the write to the tenant that was confirmed, from the Settings tab", async () => {
+    setSetting("memoryConsolidation", true);
+    setTenant("alpha");
+    useTenantStore.setState({ tenant: "alpha" });
+    api.mockImplementation((p: string) => (p === "api/agents/memory-consolidation" ? Promise.resolve(runStatus({ running: false, done: 0, total: 0 })) : route(p)));
+    await mount(<ConsolidationSettings running />);
+    await click(runButton());
+    await click(confirmButton()!);
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(apiJSON).toHaveBeenCalledWith(RUN, "POST", {}, { "X-AF-Tenant": "alpha" });
+  });
+
+  it("sends no write from the Settings tab when the tenant changes while the dialog is open", async () => {
+    setSetting("memoryConsolidation", true);
+    setTenant("alpha");
+    useTenantStore.setState({ tenant: "alpha" });
+    api.mockImplementation((p: string) => (p === "api/agents/memory-consolidation" ? Promise.resolve(runStatus({ running: false, done: 0, total: 0 })) : route(p)));
+    await mount(<ConsolidationSettings running />);
+    await click(runButton());
+    await act(async () => {
+      setTenant("beta");
+      useTenantStore.setState({ tenant: "beta" });
+    });
+    await click(confirmButton()!);
+    expect(apiJSON).not.toHaveBeenCalled();
   });
 
   it("sends all=true only when the option is ticked", async () => {

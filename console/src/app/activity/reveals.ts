@@ -9,12 +9,16 @@ import { useMemoStore } from "../../features/memo/store.ts";
 import { useRepoReveal } from "../../features/repos/store.ts";
 import { useSharedReveal } from "../../features/sharing/store.ts";
 import { useSchedulesStore } from "../../features/schedules/store.ts";
+import { useTerminalReveal } from "../../features/terminals/store.ts";
 
 export function wireRailReveals(): () => void {
   const show = (view: RailView) => useLeftRail.getState().showView(view);
   const unsubs = [
     useRepoReveal.subscribe((s, prev) => {
       if (s.n !== prev.n) show("sessions");
+    }),
+    useTerminalReveal.subscribe((s, prev) => {
+      if (s.n !== prev.n) show("terminals");
     }),
     useSharedReveal.subscribe((s, prev) => {
       if (s.n !== prev.n) show("shared");

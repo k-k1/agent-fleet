@@ -14,6 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionsearch"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/skillcurator"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/svnx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagesvc"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/workitems"
@@ -421,6 +422,11 @@ func buildMux() *http.ServeMux {
 	// Unlike clone / svn checkout it is synchronous — it touches no network, so making it a
 	// job would buy nothing.
 	mux.HandleFunc("POST /repos/init", gitx.HandleInitRepo)
+	// Spaces (ADR 0142): folders under ~/spaces where agents run without a repository. A create
+	// names an existing space or asks for a new one through POST /sessions' "space" field; this
+	// pair lists them and makes an empty one.
+	mux.HandleFunc("GET /spaces", spacex.HandleList)
+	mux.HandleFunc("POST /spaces", spacex.HandleCreate)
 	// Repository import jobs (docs/log/78). clone / svn checkout answer 202 and move here;
 	// progress and outcome are observed through this list. DELETE aborts a running job and
 	// marks a finished one as read.

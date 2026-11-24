@@ -120,6 +120,97 @@ commit "a value in a file whose name says ERR"
 expect "pr must report a finding in a file named ... ERR ..." 42 pr
 expect "all must report a finding in a file named ... ERR ..." 42 all
 
+# The log of a public repository is public: a finding whose file name contains the matched
+# value must not put that value (or the path) in the output, yet the log must still say which
+# rule and which commit failed. Both report destinations are covered: the scan's own, and the
+# caller's `--report-path` (the sweep's), which must still be written for the caller.
+git switch -q -c valuename "$base"
+printf 'aws_access_key_id = %s\n' "$key" >"$key.env"
+commit "a value that is also part of a file name"
+named="$(git rev-parse HEAD)"
+for variant in own caller; do
+  args=()
+  [ "$variant" = caller ] && args=(--report-format json --report-path "$work/caller.json")
+  rc=0
+  "$HERE/secret-scan.sh" pr ${args[@]+"${args[@]}"} >"$out" 2>&1 || rc=$?
+  if [ "$rc" != 42 ]; then
+    echo "FAIL: a value in a file name must be found ($variant report, exit=$rc, want 42)"
+    FAILED=1
+  fi
+  if grep -q -e "$key" -e "AKIA" -e ".env" "$out"; then
+    echo "FAIL: the log must not carry the file name or the value ($variant report)"
+    sed 's/^/    /' "$out"
+    FAILED=1
+  fi
+  if ! grep -q "rule=aws-access-token commit=${named:0:12} line=1" "$out"; then
+    echo "FAIL: the log must name the rule and the commit ($variant report)"
+    sed 's/^/    /' "$out"
+    FAILED=1
+  fi
+done
+if ! jq -e --arg c "$named" 'length == 1 and .[0].Commit == $c' "$work/caller.json" >/dev/null 2>&1; then
+  echo "FAIL: the caller's --report-path must still receive the report"
+  FAILED=1
+fi
+
+# Only `--report-format json`, `--report-path FILE` and `--verbose` are accepted. Every other
+# spelling, including the ones gitleaks' flag parser accepts for "report to stdout" and
+# "another format" (`-r-`, `-f=csv`, `--report-template`), is refused before anything is
+# scanned, with a fixed message that does not repeat the value (a rejected path may hold one).
+for refused in "--report-path -" "-r -" "-r-" "-r=-" "--report-path=-" "--report-format sarif" \
+  "--report-format=csv" "-f junit" "-f=csv" "-fcsv" "--report-template x.tmpl" "--no-banner"; do
+  rc=0
+  # shellcheck disable=SC2086 # the words are split on purpose
+  "$HERE/secret-scan.sh" pr $refused >"$out" 2>&1 || rc=$?
+  if [ "$rc" != 2 ] || grep -q -e "$key" -e ".env" "$out"; then
+    echo "FAIL: '$refused' must be refused with exit 2 and no finding in the log (exit=$rc)"
+    sed 's/^/    /' "$out"
+    FAILED=1
+  fi
+done
+rc=0
+"$HERE/secret-scan.sh" pr --report-format csv --report-path "$work/$key.csv" >"$out" 2>&1 || rc=$?
+if [ "$rc" != 2 ] || grep -q -e "$key" -e "AKIA" "$out"; then
+  echo "FAIL: a refused flag must not echo a path or value (exit=$rc)"
+  sed 's/^/    /' "$out"
+  FAILED=1
+fi
+# The accepted spellings still scan: they find the history's values (exit 42) and the report
+# lands where the caller said.
+for ok in "--report-format json" "--report-format=json" "--verbose"; do
+  # shellcheck disable=SC2086
+  expect "'$ok' must be accepted" 42 pr $ok
+done
+rm -f "$work/eq.json"
+expect "'--report-path=FILE' must be accepted" 42 pr --report-path="$work/eq.json"
+# A report name that starts with `-` is a file name, not an option (to gitleaks or to jq).
+rm -f -- ./-dash.json
+rc=0
+"$HERE/secret-scan.sh" pr --report-path=-dash.json >"$out" 2>&1 || rc=$?
+if [ "$rc" != 42 ] || ! grep -q "rule=aws-access-token" "$out"; then
+  echo "FAIL: a report path starting with '-' must still print the finding lines (exit=$rc)"
+  sed 's/^/    /' "$out"
+  FAILED=1
+fi
+rm -f -- ./-dash.json
+[ -s "$work/eq.json" ] || { echo "FAIL: --report-path=FILE must write the report"; FAILED=1; }
+
+# A scan that exits 42 but leaves no readable report (a stub stands in for gitleaks) must not
+# make the shell print the report's path, which a caller may have built from a value.
+cat >"$work/stub-gitleaks" <<'EOF2'
+#!/bin/sh
+[ "$1" = version ] || [ "$1" = --version ] && { echo 8.0.0; exit 0; }
+exit 42
+EOF2
+chmod +x "$work/stub-gitleaks"
+rc=0
+GITLEAKS="$work/stub-gitleaks" "$HERE/secret-scan.sh" pr --report-path "$work/missing-$key.json" >"$out" 2>&1 || rc=$?
+if [ "$rc" != 42 ] || grep -q -e "$key" -e "AKIA" -e "missing-" "$out"; then
+  echo "FAIL: a missing report must keep exit 42 and not print its path (exit=$rc)"
+  sed 's/^/    /' "$out"
+  FAILED=1
+fi
+
 # gitleaks exits 0 with no findings when its child `git log` fails. A shim that fails
 # `git log` stands in for an unreadable object; the wrapper must not report that as clean.
 mkdir "$work/shim"

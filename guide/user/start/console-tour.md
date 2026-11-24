@@ -17,7 +17,7 @@ on the other pages easy to find.
 | Top bar | Inbox, notifications, Appearance, the account menu |
 | Workspace action bar | Workspace start and stop, Start, pane splitting |
 | Activity bar | The column of icons at the left edge. It chooses what the left pane shows, and opens Home and other panes |
-| Left pane | One view at a time: sessions, Assistants, the issue tracker, the memo queue, auto-run, memory, schedules or files |
+| Left pane | One view at a time: sessions, Terminals, Assistants, the issue tracker, the memo queue, auto-run, memory, schedules or files |
 | Main area | What you opened: sessions, files, the commit graph and more. It can be split into panes |
 
 ![The Console. The top bar and the workspace action bar across the top, the activity bar and the left pane (the Sessions view) on the left, and in the main area a session's conversation and the commit graph in two panes](../../assets/start-tour-en-light.webp)
@@ -50,8 +50,9 @@ The icons in the upper group choose the view the left pane shows. Hover over an 
 
 | Icon | What the left pane shows |
 |---|---|
-| Sessions | The cloned repositories with the sessions running under them, then **Other sessions** (home or a shell). Runs that memo auto-run started are not listed here; they are in **Auto-run** |
+| Sessions | The cloned repositories with the sessions running under them, then **Other sessions** (agents running in home). Shells and SSM sessions are not listed here; they are in **Terminals**. Runs that memo auto-run started are not listed here either; they are in **Auto-run** |
 | Shared sessions | The conversations other members shared with you, and handoffs waiting for your decision (a number on the icon) |
+| Terminals | Every shell, under the place it was opened in (home, a repository, a space), and every SSM session, under the machine it logs in to. The header starts a shell or an SSM session and tidies the stopped ones ([Find your shells and SSM sessions](../sessions/terminals.md)) |
 | Assistants | The list of chats that use no repository, and **+** |
 | Issue tracker | Issues from the Jira or GitHub you connected ([Connect an issue tracker](../integrations/issue-tracker.md)) |
 | Memo queue | The instructions you jotted down |
@@ -81,11 +82,29 @@ The other icons open a pane in the main area and leave the left pane as it is: *
 **Sessions overview**, **Images** and **Open generated images** at the foot. Images appears only where the deployment
 has an image engine.
 
+### Choose which icons the bar shows
+
+Right-click the activity bar (long-press it on a phone, or press the context-menu key on an icon) to open a list of
+the views with a check beside each icon that is shown. Pick a view to turn its icon off or on. The choice is saved with
+your other display settings, so it follows you to other browsers.
+
+- The view on screen and the last icon left cannot be turned off. A view this deployment cannot use (Schedules, where
+  there is no scheduler) is listed greyed out with the reason beside it
+- **Reset to the default icons** turns every icon back on
+- On a phone, the vertical swipe steps through the icons that are shown only. With the keyboard, Up and Down move
+  focus over the icons that are shown
+- A view whose icon is off can still be reached: anything that reveals a row in it brings it on screen, and its icon
+  shows while it is on screen
+- If a view whose icon is off has something waiting for you (a session stopped on your answer, a handoff, a memo or a
+  suggestion waiting for a decision), a small amber dot appears at the foot of the icons. Press it to open the list;
+  the view's row names what waits. Updates that only tell you something moved ("new" and "unread" marks) are not shown
+  for a view whose icon is off
+
 ## Left pane
 
 The left pane shows the view chosen on the activity bar.
 
-- The **Sessions**, **Assistants**, **Schedules** and **Files** views start with the working-set bar ("All"). It narrows
+- The **Sessions**, **Terminals**, **Assistants**, **Schedules** and **Files** views start with the working-set bar ("All"). It narrows
   what is listed to a named group; "All" shows everything. The marks on the activity bar count only what the chosen
   group lists
 - In the Sessions view, click the **Other sessions** heading to fold or unfold it. The Shared sessions view says so when nothing is shared with you

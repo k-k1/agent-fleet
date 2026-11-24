@@ -2,7 +2,10 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
@@ -53,7 +56,7 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 		mems = append(mems, m.ID)
 	}
 	a, b := mems[0], mems[1]
-	checkPushPrefs(t, st, tn.ID, a, b)
+	checkPushPrefs(t, st, tn.ID, tn.Slug, a, b)
 	const ep = "https://fcm.googleapis.com/fcm/send/one"
 	sub := PushSubscription{MembershipID: a, Endpoint: ep, P256dh: "k1", Auth: "a1", UserAgent: "ua"}
 	for i := 0; i < 2; i++ { // a repeat is one row
@@ -125,6 +128,112 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 0 {
 		t.Fatalf("rows=%+v", rows)
 	}
+	checkPushCap(t, st, a, b)
+}
+
+// checkPushCap covers AddPushSubscription: the cap, the refresh of a held endpoint at the cap, a
+// move from another member, GetPushSubscription, and concurrent registrations that must not
+// overshoot.
+func checkPushCap(t *testing.T, st *SQL, a, b string) {
+	t.Helper()
+	ctx := context.Background()
+	const max = 3
+	add := func(mid, ep string) bool {
+		t.Helper()
+		ok, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: mid, Endpoint: ep, P256dh: "k", Auth: "a"}, max)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok
+	}
+	ep := func(i int) string { return fmt.Sprintf("https://fcm.googleapis.com/fcm/send/cap-%d", i) }
+	for i := 0; i < max; i++ {
+		if !add(a, ep(i)) {
+			t.Fatalf("device %d refused under the cap", i)
+		}
+	}
+	if add(a, ep(max)) {
+		t.Fatal("a device over the cap was stored")
+	}
+	if !add(a, ep(0)) {
+		t.Fatal("re-registering a held endpoint at the cap was refused")
+	}
+	// A member already past the cap (rows written before it was atomic) can still refresh a device.
+	if err := st.UpsertPushSubscription(ctx, PushSubscription{MembershipID: a, Endpoint: ep(99), P256dh: "k", Auth: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	if !add(a, ep(1)) {
+		t.Fatal("refreshing a held endpoint past the cap was refused")
+	}
+	if _, err := st.DeletePushSubscription(ctx, a, PushSubscriptionID(ep(99))); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || !ok || got.Endpoint != ep(0) || got.MembershipID != a {
+		t.Fatalf("get: %+v %v %v", got, ok, err)
+	}
+	// Moving one of a's endpoints to b frees a slot for a and is itself under b's cap.
+	if !add(b, ep(0)) {
+		t.Fatal("b could not take over an endpoint")
+	}
+	if _, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || ok {
+		t.Fatalf("a still holds the moved endpoint: %v %v", ok, err)
+	}
+	if !add(a, ep(max)) {
+		t.Fatal("the slot freed by the move was not reusable")
+	}
+
+	// Concurrent registrations of one member: exactly max of them are stored. A few rounds, since
+	// one round of a non-atomic count can happen to run in order.
+	for _, rows := range [][]PushSubscription{mustList(t, st, a), mustList(t, st, b)} {
+		for _, r := range rows {
+			if _, err := st.DeletePushSubscription(ctx, r.MembershipID, r.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for round := 0; round < 5; round++ {
+		var wg sync.WaitGroup
+		var stored atomic.Int32
+		errs := make(chan error, 16)
+		for i := 0; i < 16; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				ok, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: a,
+					Endpoint: fmt.Sprintf("https://fcm.googleapis.com/fcm/send/race-%d-%d", round, i), P256dh: "k", Auth: "a"}, max)
+				if err != nil {
+					errs <- err
+					return
+				}
+				if ok {
+					stored.Add(1)
+				}
+			}(i)
+		}
+		wg.Wait()
+		close(errs)
+		for err := range errs {
+			t.Fatal(err)
+		}
+		rows := mustList(t, st, a)
+		if len(rows) != max || stored.Load() != max {
+			t.Fatalf("round %d: concurrent registrations stored %d rows (%d reported), want %d", round, len(rows), stored.Load(), max)
+		}
+		for _, r := range rows {
+			if _, err := st.DeletePushSubscription(ctx, a, r.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+}
+
+func mustList(t *testing.T, st *SQL, mid string) []PushSubscription {
+	t.Helper()
+	rows, err := st.ListPushSubscriptions(context.Background(), mid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rows
 }
 
 func TestNotificationHookFiresOncePerRow(t *testing.T) {
@@ -155,7 +264,7 @@ func TestNotificationHookFiresOncePerRow(t *testing.T) {
 
 // checkPushPrefs covers the part 3 tables: per-member opt-out, the tenant text switch and the
 // active-membership check the sender relies on.
-func checkPushPrefs(t *testing.T, st *SQL, tenantID, a, b string) {
+func checkPushPrefs(t *testing.T, st *SQL, tenantID, slug, a, b string) {
 	t.Helper()
 	ctx := context.Background()
 	if off, err := st.GetPushOffKinds(ctx, a); err != nil || len(off) != 0 {
@@ -173,9 +282,12 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, a, b string) {
 	if off, _ := st.GetPushOffKinds(ctx, b); len(off) != 0 {
 		t.Fatalf("one member's opt-out leaked to another: %v", off)
 	}
-	active, inc, err := st.PushDeliveryContext(ctx, a)
-	if err != nil || !active || inc {
-		t.Fatalf("default context active=%v inc=%v err=%v", active, inc, err)
+	dc, err := st.PushDeliveryContext(ctx, a)
+	if err != nil || !dc.Active || dc.IncludeText {
+		t.Fatalf("default context=%+v err=%v", dc, err)
+	}
+	if slug == "" || dc.TenantSlug != slug {
+		t.Fatalf("tenant slug = %q, want %q", dc.TenantSlug, slug)
 	}
 	if err := st.PutTenantPushIncludeText(ctx, tenantID, true, "admin"); err != nil {
 		t.Fatal(err)
@@ -183,19 +295,19 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, a, b string) {
 	if on, _ := st.GetTenantPushIncludeText(ctx, tenantID); !on {
 		t.Fatal("setting not stored")
 	}
-	if _, inc, _ := st.PushDeliveryContext(ctx, a); !inc {
+	if dc, _ := st.PushDeliveryContext(ctx, a); !dc.IncludeText {
 		t.Fatal("tenant setting not seen by the sender")
 	}
 	if err := st.PutTenantPushIncludeText(ctx, tenantID, false, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if _, inc, _ := st.PushDeliveryContext(ctx, a); inc {
+	if dc, _ := st.PushDeliveryContext(ctx, a); dc.IncludeText {
 		t.Fatal("switching it off did not take effect")
 	}
 	if err := st.SetMembershipStatus(ctx, b, "inactive"); err != nil {
 		t.Fatal(err)
 	}
-	if active, _, _ := st.PushDeliveryContext(ctx, b); active {
+	if dc, _ := st.PushDeliveryContext(ctx, b); dc.Active || dc.TenantSlug != "" {
 		t.Fatal("a deactivated membership still counts as active")
 	}
 	if err := st.SetMembershipStatus(ctx, b, "active"); err != nil {

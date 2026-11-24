@@ -79,7 +79,7 @@ The engine table itself is not in the way. A key is free text — `engineAPIKeyE
 in as many words that nothing stops an operator writing `image-2`
 (`control-plane/engines.go:966-975`) — `registry.list()` carries unknown keys, every admin route
 is `{key}`-generic (`engine_admin.go:77-145`), and the borrowed-row collision check looks at the
-key alone (`engine_remote_catalog.go:205-216`). **Declaring a second images row already works.
+key alone (`internal/engine/remote_catalog.go:211-221`). **Declaring a second images row already works.
 Reaching it does not.**
 
 ### What an operator gets today, with no code change
@@ -283,7 +283,7 @@ engine appears under its own key, which is a distinction a member can act on.
    two model lists whose ids may overlap, and which engine a picture was made on has to stay
    visible in the result.
 3. **Is a key collision between a local row and a borrowed one an operator error worth a louder
-   answer?** Today it repeats one log line per poll (`engine_remote_catalog.go:205-216`). With N
+   answer?** Today it repeats one log line per poll (`internal/engine/remote_catalog.go:211-221`). With N
    rows the operator needs to see it in the panel, not in a log they have no route to.
 4. **Does a member need the fleet rows ranked individually, or is "the deployment's own engines,
    in table order" enough?** The second is one row in the settings list and no migration of the
@@ -329,7 +329,7 @@ engine appears under its own key, which is a distinction a member can act on.
   keyed on `provider == "comfy"`.
 - `control-plane/engine_family_guess.go` — the family suggestion, and why it returns "" rather
   than a guess.
-- `control-plane/engine_remote_catalog.go:205-216` — the borrowed-row collision check, on the key
+- `control-plane/internal/engine/remote_catalog.go:211-221` — the borrowed-row collision check, on the key
   alone.
 - `control-plane/engine_admin.go:77-145` — the admin routes, all `{key}`-generic.
 - `console/src/lib/settings.ts:723-800` — `IMAGE_PROVIDERS_RANKED`, `imageProviderLabel` and

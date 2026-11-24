@@ -20,6 +20,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"github.com/k-k1/agent-fleet/control-plane/internal/usagehistory"
 )
 
 // workspaceAPI is the handler set for the Workspace lifecycle and Session management. The
@@ -667,27 +668,31 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		}
 		extraEnv = append(append([]string(nil), extraEnv...), homeKeyStartEnv+"="+homeStart)
 	}
+	// The box is resolved ONCE for this start: the launch record and every runtime built below
+	// take it from this answer, so a boost ending mid-start cannot leave them disagreeing.
+	sized, override := a.mgr.withResolvedSizeSource(ctx, res.ws)
+	startRes := *res
+	startRes.ws = sized
 	// The launch is recorded before Start and its id handed to the container, so the Agent's
-	// minutes carry it (usage_history.go). Where the runtime names no box this is a no-op.
-	boxRT := rt
-	if fresh, drifted := a.mgr.sizeDrifted(ctx, res.ws); drifted {
-		// The memoized runtime still names a box a boost has since left (or entered): the ledger
-		// records the box this start lands on, which the rebuild below also uses.
-		boxRT = a.mgr.runtimeFor(fresh, keys, a.mgr.workspaceExtraEnv(ctx, fresh)...)
+	// minutes carry it (usage_history.go). The id is minted here, the runtime that starts is
+	// built with it, and the record is read off that runtime below. Where the runtime names no
+	// box there is no history.
+	var launchID string
+	if _, ok := usageHistoryRuntime(rt); ok {
+		launchID = newLaunchID()
+		extraEnv = append(append([]string(nil), extraEnv...), usagehistory.LaunchEnv+"="+launchID)
 	}
-	launchID, launchEnv := a.mgr.beginLaunch(ctx, res.ws, boxRT)
-	if launchEnv != "" {
-		extraEnv = append(append([]string(nil), extraEnv...), launchEnv)
-	}
-	if armed := a.mgr.armPreviewForStart(ctx, res, keys, extraEnv); armed != nil {
+	if armed := a.mgr.armPreviewForStart(ctx, &startRes, keys, extraEnv); armed != nil {
 		rt = armed
-	} else if fresh := a.mgr.refreshGitTokenForStart(ctx, res, keys, extraEnv); fresh != nil {
+	} else if fresh := a.mgr.refreshGitTokenForStart(ctx, &startRes, keys, extraEnv); fresh != nil {
 		rt = fresh // armPreviewForStart built its env just now; this covers the other starts
 	} else if a.mgr.rtFactory != nil {
 		// Rebuilt for this start, keys or not: the memo's env was fixed when it was built,
 		// and what the deployment switches at runtime (the dev IdP's env) must be read now.
-		ws := a.mgr.withResolvedSize(ctx, res.ws)
-		rt = a.mgr.runtimeFor(ws, keys, append(a.mgr.workspaceExtraEnv(ctx, ws), extraEnv...)...)
+		rt = a.mgr.runtimeFor(sized, keys, append(a.mgr.workspaceExtraEnv(ctx, sized), extraEnv...)...)
+	}
+	if launchID != "" && !a.mgr.recordLaunch(ctx, res.ws, rt, override, launchID) {
+		launchID = "" // unrecorded: the Agent's minutes under this id are dropped, as before
 	}
 	// The previous automatic stop stops describing this workspace once a new launch is
 	// attempted, whether or not it succeeds: a Start that fails (secrets, home, launch)
@@ -833,9 +838,18 @@ type sessionWire struct {
 	// Same relay caveat as the fields around it — absent here, the Console never sees
 	// which folder a session was launched in. The DB mirror has no column for it, so it is
 	// absent while stopped.
-	Subdir        string `json:"subdir,omitempty"`
-	Repo          string `json:"repo"`
+	Subdir string `json:"subdir,omitempty"`
+	Repo   string `json:"repo"`
+	// Space: the space folder the session runs in (ADR 0142), "" outside ~/spaces. Same relay
+	// caveat as its neighbours: absent here, the Console files a space session under the
+	// repository that happens to share its folder name. No DB-mirror column; a stopped
+	// Workspace's rail lists sessions without the Spaces section.
+	Space         string `json:"space,omitempty"`
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
+	// SSM: the non-secret target of an SSM session (ADR 0142 decision 10). Same relay caveat as
+	// its neighbours: absent here, the Terminal view cannot group SSM sessions by machine. No
+	// DB-mirror column; a stopped Workspace's list carries none.
+	SSM *sessionSSMTarget `json:"ssm,omitempty"`
 	// Title: the user-supplied display title, which the Console's displayName prefers above
 	// everything else. Dropping it in the relay barely shows for claude kinds (title is
 	// baked into label too) — only shell/ssm, which use no label, fall back to a wrong
@@ -1109,6 +1123,15 @@ type sessionWakerHolder struct {
 	Source  string `json:"source"`
 	Builtin bool   `json:"builtin,omitempty"`
 	Timer   bool   `json:"timer,omitempty"`
+}
+
+// sessionSSMTarget mirrors the Agent's session.SSMTarget.
+type sessionSSMTarget struct {
+	Target    string `json:"target"`
+	Region    string `json:"region,omitempty"`
+	AccountID string `json:"accountId,omitempty"`
+	Profile   string `json:"profile,omitempty"`
+	Document  string `json:"document,omitempty"`
 }
 
 // sessionQueueTurn is the end of a queue delivery's first turn. Outcome is clean, turn-failed or

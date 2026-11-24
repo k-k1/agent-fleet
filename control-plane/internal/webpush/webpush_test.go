@@ -218,6 +218,15 @@ func TestAudIsAnOrigin(t *testing.T) {
 		"https://FCM.GoogleAPIs.com:443/x": "https://fcm.googleapis.com",
 		"https://fcm.googleapis.com/x":     "https://fcm.googleapis.com",
 		"https://push.example:8443/x":      "https://push.example:8443",
+		// RFC 8292 asks for the Unicode serialization, whichever form the endpoint was written in.
+		"https://xn--bcher-kva.example/x": "https://bücher.example",
+		"https://BÜCHER.example/x":        "https://bücher.example",
+		"https://bu\u0308cher.example/x":  "https://bücher.example",  // decomposed: NFC as net/http connects
+		"https://\u0130.example/x":        "https://i\u0307.example", // mapped before lower-casing, which would give "i"
+		"https://[::1]:8443/x":            "https://[::1]:8443",
+		// A label IDNA refuses does not keep a valid A-label beside it in punycode.
+		"https://under_score.xn--bcher-kva.example/x": "https://under_score.bücher.example",
+		"https://192.0.2.1/x":                         "https://192.0.2.1",
 	} {
 		h, err := keys.authHeader(endpoint, "mailto:ops@example.invalid", time.Unix(1, 0))
 		if err != nil {

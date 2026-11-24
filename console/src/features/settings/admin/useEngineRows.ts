@@ -3,7 +3,7 @@ import { errDetail } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
 import { getEngines } from "./adminApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
-import { loadEngines, saveEngines } from "./catalogMemory.ts";
+import { beginEnginesEdit, beginEnginesRead, loadEngines, saveEnginesRead } from "./catalogMemory.ts";
 import type { ComfyLanStatus } from "./adminEngineLan.tsx";
 import { CATALOG_SOURCES_DEFAULT, type CatalogSource, type EngineRow } from "./engineTypes.ts";
 import { useReadGuard } from "../../../lib/readGuard.ts";
@@ -48,6 +48,7 @@ export function useEngineRows() {
   const guard = useReadGuard();
   const load = useCallback(async () => {
     const tk = guard.begin();
+    const cacheTk = beginEnginesRead();
     try {
       const d = await getEngines();
       if (d && !isOk(d)) {
@@ -55,20 +56,23 @@ export function useEngineRows() {
         return;
       }
       if (tk.land("err")) setErr("");
-      if (!tk.land("rows")) return;
       const answered = Array.isArray(d?.engines) ? d.engines : [];
-      const edited = new Set(answered.filter((e) => !tk.land("row:" + e.key)).map((e) => e.key));
       const superAdmin = !!d?.super_admin;
       const offered = catalogSources(d?.catalog_sources);
+      // The cache is shared with the other screens, which order their own writes; see
+      // saveEnginesRead for why this screen's guard cannot speak for them. Offered before this
+      // screen's own "rows" lane is judged: an answer this screen drops as older than one it
+      // already drew can still be newer than what the cache holds, because that newer one may have
+      // been refused there.
+      if (tk.current()) saveEnginesRead(cacheTk, answered, superAdmin, offered);
+      if (!tk.land("rows")) return;
+      const edited = new Set(answered.filter((e) => !tk.land("row:" + e.key)).map((e) => e.key));
       setIsSuper(superAdmin);
       setSources(offered);
       const keepEdited = (held: EngineRow[] | null | undefined) =>
         edited.size ? answered.map((e) => (edited.has(e.key) ? (held?.find((c) => c.key === e.key) ?? e) : e)) : answered;
       setRows((cur) => keepEdited(cur));
       setComfyLan(d?.comfy_lan ?? null);
-      // The cache is shared with the other screens that hold their own rows, so an edited row
-      // keeps the cache's copy, which patchRow already updated.
-      saveEngines({ rows: keepEdited(loadEngines()?.rows), isSuper: superAdmin, sources: offered });
     } catch {
       if (tk.land("err")) setErr(tr("admin.load_error"));
     }
@@ -78,20 +82,17 @@ export function useEngineRows() {
   }, [load]);
   /** Begin an edit of one row, before its request is sent; the function returned lands the
    *  answer. The answer is newer than any read in flight for that row, so it claims the row's
-   *  lane and replaces the row on screen. The shared cache takes it, for that key alone, only
-   *  when no read of the row has landed here since the edit began: such a read may hold a later
-   *  state (a box that finished starting) than the answer, and the cache must not go back to
-   *  what main never wrote there. A screen closed meanwhile writes nothing. */
+   *  lane and replaces the row on screen. The shared cache orders it against the reads of every
+   *  screen (beginEnginesEdit). A screen closed meanwhile writes nothing. */
   const editRow = useCallback(
     (key: string) => {
       const tk = guard.begin();
+      const patchCache = beginEnginesEdit(key);
       return (d: Partial<EngineRow>) => {
         if (!tk.current()) return;
-        const cacheOlder = tk.fresh("row:" + key);
         guard.claim("row:" + key);
         setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
-        const cached = cacheOlder ? loadEngines() : null;
-        if (cached) saveEngines({ ...cached, rows: cached.rows.map((e) => (e.key === key ? { ...e, ...d } : e)) });
+        patchCache(d);
       };
     },
     [guard],

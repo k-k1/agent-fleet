@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console and CP read. Generated - do not edit by hand.
 # Update: cd workspace/agent && go test -run TestWireShapeGolden -update-wire-golden .
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 233
+# count: 239
 Repo.ahead number
 Repo.behind number
 Repo.branch string
@@ -195,8 +195,14 @@ session.Session.resumable bool
 session.Session.route.connection string,omitempty
 session.Session.route.route string
 session.Session.scheduleId string,omitempty
+session.Session.space string,omitempty
 session.Session.spendCapHitAt string,omitempty
 session.Session.spendCapUsd number,omitempty
+session.Session.ssm.accountId string,omitempty
+session.Session.ssm.document string,omitempty
+session.Session.ssm.profile string,omitempty
+session.Session.ssm.region string,omitempty
+session.Session.ssm.target string
 session.Session.started string
 session.Session.state string
 session.Session.stateSince string,omitempty

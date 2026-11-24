@@ -374,6 +374,18 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
     applyConv(snapshot);
   }, [snapshot, conversationId]);
 
+  // One guard orders every poll read of this conversation: the reattach poller below and the
+  // report poller after it. Without a shared order, a report read still saying in_progress could
+  // answer after a reattach read had seen the turn end, and its in_progress mismatch would be
+  // adopted as news, restarting reattach polling on a turn that is over. A switch of
+  // conversation, or a send starting, kills the reads in flight from that commit.
+  const reportCapable = conv?.tools === "af_write";
+  const reportPolling = !!conversationId && reportCapable && !sending;
+  const pollGuard = useReadGuard();
+  useLayoutEffect(() => {
+    pollGuard.reset(conversationId);
+  }, [pollGuard, conversationId, reportPolling]);
+
   // Re-attach after a reload: a streaming turn is detached from its SSE request on the
   // backend, so a browser reload aborts the stream but the turn keeps running and saves
   // its reply. chatGet reports in_progress while that turn runs; poll until the reply
@@ -393,9 +405,12 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
     const tick = async () => {
       if (!alive) return;
       try {
+        const tk = pollGuard.begin(conversationId);
         const c = await chatGet(conversationId);
         if (!alive) return;
-        if (c && c.id) {
+        // An answer older than one a poller already landed is dropped, and the turn stays
+        // in flight as far as this poller knows: the next read decides.
+        if (c && c.id && tk.land()) {
           applyConv(c);
           if (!c.in_progress) {
             setReattachKey(null);
@@ -428,20 +443,13 @@ function ChatViewBody({ conversationId, draftAssistantId, paneId, active, header
   // observed in_progress. A fresher updated_at adopts the server copy; a turn in flight
   // flips in_progress, which the reattach poller above then takes over.
   //
-  // Every read is ticketed: a switch of conversation, or a send starting, kills the reads in
-  // flight from that commit, and an answer older than one already landed is dropped. Without
-  // the second, a slow read still saying in_progress could land after a newer one that said the
-  // turn was over and hand the pane back to the reattach poller.
-  const reportCapable = conv?.tools === "af_write";
-  const reportPolling = !!conversationId && reportCapable && !sending;
-  const reportGuard = useReadGuard();
-  useLayoutEffect(() => {
-    reportGuard.reset(conversationId);
-  }, [reportGuard, conversationId, reportPolling]);
+  // Every read is ticketed from the guard shared with the reattach poller (declared above): a
+  // slow read still saying in_progress cannot land after a newer one that said the turn was
+  // over and hand the pane back to the reattach poller.
   useInterval(
     () => {
       if (!conversationId || !reportPolling) return;
-      const tk = reportGuard.begin(conversationId);
+      const tk = pollGuard.begin(conversationId);
       chatGet(conversationId)
         .then((c) => {
           if (!c || !c.id || !tk.land()) return;

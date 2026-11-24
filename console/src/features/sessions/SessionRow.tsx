@@ -42,9 +42,12 @@ interface SessionRowProps {
   actions?: SessionActions;
   /** History-only rail used while the workspace agent is unavailable. */
   readOnly?: boolean;
+  /** A muted second half of the title (the Terminal view: an SSM login's profile and run-as
+   *  document, which do not make a group of their own). */
+  detail?: string;
 }
 
-export function SessionRow({ s, selected, opens, multi, running, actions, readOnly = false }: SessionRowProps) {
+export function SessionRow({ s, selected, opens, multi, running, actions, readOnly = false, detail }: SessionRowProps) {
   const setActive = useLayoutStore((st) => st.setActive);
   const { hover, setHover } = usePaneHover();
   const tr = useT();
@@ -132,6 +135,7 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         title={
           // Full display name first — the row ellipsizes it in the narrow rail.
           displayName(s) +
+          (detail ? " · " + detail : "") +
           "\n" +
           (inert
             ? tr("srow.cant_resume")
@@ -168,7 +172,10 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
           </span>
           {unread && <span className="unread-dot" role="img" aria-label={tr("noti.unread_session")} title={tr("noti.unread_session")} />}
         </span>
-        <span className="sess-l1">{displayName(s)}</span>
+        <span className="sess-l1">
+          {displayName(s)}
+          {detail && <span className="sess-detail"> · {detail}</span>}
+        </span>
         {/* Branch drift: the working copy left the branch this session started
             on — the agent's tree may be swapped out under it. */}
         {s.branchDrift && (

@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { useTenantStore } from "../../../core/store/tenant.ts";
 import {
   useSettings,
@@ -297,7 +296,7 @@ function FontSelect({
 
 // ChipChoice lays the options out as wrapping chips (same as FontSelect) so a long
 // list doesn't overflow off-screen on a phone, unlike the single-row segmented Choice.
-function ChipChoice({ value, options, onChange }: ChoiceProps) {
+function ChipChoice<T>({ value, options, onChange }: ChoiceProps<T>) {
   return (
     <div className="font-choices">
       {options.map(([v, label]) => (
@@ -305,9 +304,9 @@ function ChipChoice({ value, options, onChange }: ChoiceProps) {
           key={String(v)}
           type="button"
           className={"font-chip" + (v === value ? " font-chip--active" : "")}
-          onClick={() => onChange(v as never)}
+          onClick={() => onChange(v)}
         >
-          {label as ReactNode}
+          {label}
         </button>
       ))}
     </div>

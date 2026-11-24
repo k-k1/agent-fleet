@@ -352,5 +352,14 @@ func createIdempotencyKey(r *CreateReq) string {
 			h.Write([]byte{0})
 		}
 	}
+	// Likewise for a space (ADR 0142): the same launch in another space, or in a new one, is
+	// another session. A retry of a new-space create converges on the first one, so it does not
+	// make a second space.
+	if sp := r.Space; sp != nil {
+		for _, f := range []string{"space", strings.TrimSpace(sp.Folder), strings.TrimSpace(sp.Name)} {
+			h.Write([]byte(f))
+			h.Write([]byte{0})
+		}
+	}
 	return "fp_" + hex.EncodeToString(h.Sum(nil))
 }

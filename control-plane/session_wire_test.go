@@ -50,7 +50,8 @@ const agentSessionsPayload = `{"sessions":[{
 	"pr":{"number":1062,"state":"open","draft":true,"url":"https://github.com/o/r/pull/1062","checks":"failure"},"ports":[5173,8080],
 	"generatedImages":3,"generatedImagesPath":".cache/agent-fleet/generated/2f1c0a7e-0000-5000-8000-000000000001",
 	"studio":"0b9d1f2e-7c4a-4e1b-9a3d-5f6e7a8b9c0d","initialPromptState":"pending",
-	"moving":"s2","movedTo":"s3","queueDelivery":"d-77","inputNotDelivered":true
+	"moving":"s2","movedTo":"s3","queueDelivery":"d-77","inputNotDelivered":true,
+	"ssm":{"target":"i-0abc123","region":"ap-northeast-1","accountId":"111122223333","profile":"ops","document":"AF-Shell"}
 }]}`
 
 // TestAgentSessionsRelayKeepsFields pins that the CP's decode→re-emit round trip drops none
@@ -174,6 +175,18 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 	for k, v := range want {
 		if got[k] != v {
 			t.Errorf("relayed %s = %v, want %v", k, got[k], v)
+		}
+	}
+	// The SSM target the Terminal view groups by machine (ADR 0142 decision 10). Dropped here,
+	// every SSM session falls into one "unknown machine" group, and the Console's optional
+	// declaration keeps the type check quiet.
+	ssmObj, ok := got["ssm"].(map[string]any)
+	if !ok {
+		t.Fatalf("relayed ssm = %v, want object", got["ssm"])
+	}
+	for k, v := range map[string]any{"target": "i-0abc123", "region": "ap-northeast-1", "accountId": "111122223333", "profile": "ops", "document": "AF-Shell"} {
+		if ssmObj[k] != v {
+			t.Errorf("relayed ssm.%s = %v, want %v", k, ssmObj[k], v)
 		}
 	}
 	// context passes straight through without the CP interpreting its shape (RawMessage);

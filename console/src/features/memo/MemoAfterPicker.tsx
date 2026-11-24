@@ -196,8 +196,8 @@ export function MemoAfterPicker({
   const activeId = shown[cur]?.entry.id;
   useEffect(() => {
     if (listOpen && cur >= 0) document.getElementById(optId(shown[cur].entry.id))?.scrollIntoView?.({ block: "nearest" });
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a change of the active note
-  }, [activeId, listOpen, query]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- the active note, or its position when a poll moves it
+  }, [activeId, cur, listOpen, query]);
 
   // Fixes the pointer on a note once it is shown, and drops it when its note has left.
   useEffect(() => {

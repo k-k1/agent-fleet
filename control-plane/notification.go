@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -29,9 +30,10 @@ type notificationDTO struct {
 	Kind        string                `json:"kind"`
 	Target      notificationTargetDTO `json:"target"`
 	DisplayName string                `json:"displayName"`
-	Payload     map[string]any        `json:"payload"`
-	CreatedAt   string                `json:"createdAt"`
-	Seen        bool                  `json:"seen"`
+	// Payload is always a JSON object (boundedPayload): the Console reads its fields directly.
+	Payload   json.RawMessage `json:"payload"`
+	CreatedAt string          `json:"createdAt"`
+	Seen      bool            `json:"seen"`
 }
 
 type notificationAPI struct {
@@ -55,11 +57,228 @@ func notificationCutoff() string {
 }
 
 func notificationToDTO(n store.Notification) notificationDTO {
-	p := map[string]any{}
-	_ = json.Unmarshal([]byte(n.Payload), &p)
 	return notificationDTO{Seq: n.Seq, ID: n.EventID, Kind: n.Kind,
 		Target:      notificationTargetDTO{Type: n.TargetType, ID: n.TargetID, Kind: n.TargetKind},
-		DisplayName: n.DisplayName, Payload: p, CreatedAt: n.CreatedAt, Seen: n.SeenAt != ""}
+		DisplayName: n.DisplayName, Payload: json.RawMessage(boundedPayload([]byte(n.Payload))),
+		CreatedAt: n.CreatedAt, Seen: n.SeenAt != ""}
+}
+
+// The bounds on the payload one notification keeps. The payload is kept as raw JSON and never
+// expanded into a map: a response of many small values decodes to several times its byte size.
+// A healthy payload is a few KiB (the Agent caps its own at maxPayloadBytes in package notice,
+// half of this, so nothing it sends today is cut here).
+const (
+	maxNotificationPayload      = 256 << 10
+	maxNotificationPayloadDepth = 32
+	// maxNotificationPayloadValue bounds each member shrinkPayload keeps of an oversized payload.
+	maxNotificationPayloadValue = 8 << 10
+)
+
+// omittedPayload replaces a payload that is not a JSON object. The rest of the notification is
+// still stored and acked: dropping the whole entry would leave it queued at the Agent, where it
+// holds back every entry after it.
+const omittedPayload = `{"payloadOmitted":true}`
+
+// payloadTruncatedKey marks a payload shrinkPayload cut; the Agent uses the same key.
+const payloadTruncatedKey = "payloadTruncated"
+
+// boundedPayload returns raw when it is a JSON object within maxNotificationPayload and
+// maxNotificationPayloadDepth, "{}" for an empty or null payload, the shrunk object for one past
+// a bound, and omittedPayload for anything else. The result is always a valid UTF-8 JSON object,
+// which notificationDTO relies on: an invalid json.RawMessage fails the marshal of the whole
+// list, and Postgres refuses invalid UTF-8 in a TEXT column, which would refuse the entry on
+// every drain.
+func boundedPayload(raw []byte) string {
+	t := bytes.Trim(raw, " \t\r\n") // JSON's whitespace only
+	if len(t) == 0 || string(t) == "null" {
+		return "{}"
+	}
+	if t[0] != '{' {
+		return omittedPayload
+	}
+	// json.Valid accepts invalid UTF-8 inside a string, and RawMessage keeps it. A map decode
+	// replaced each invalid byte with U+FFFD; repairUTF8 does the same.
+	if !utf8.Valid(t) {
+		t = repairUTF8(t)
+	}
+	if !json.Valid(t) {
+		return omittedPayload
+	}
+	if len(t) <= maxNotificationPayload && jsonDepthWithin(t, maxNotificationPayloadDepth) {
+		return string(t)
+	}
+	return string(shrinkPayload(t, maxNotificationPayload, maxNotificationPayloadValue, maxNotificationPayloadDepth))
+}
+
+// shrinkPayload keeps what fits of a valid JSON object past a bound, in order: each top-level
+// member whose value encodes within maxValue (and nests within maxDepth), a long string cut to
+// an encoding of maxValue bytes, and a long "questions" list reduced to each question's text, which Web Push
+// shows (pushsrv.questionText). What the Console navigates by and the short reasons it words
+// (a schedule's status beside a long spec) survive this way. The result carries
+// payloadTruncatedKey and stays within max. Each member is decoded raw, so nothing is expanded.
+func shrinkPayload(obj []byte, max, maxValue, maxDepth int) []byte {
+	const mark = `"` + payloadTruncatedKey + `":true}`
+	dec := json.NewDecoder(bytes.NewReader(obj))
+	out := []byte{'{'}
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return []byte(omittedPayload)
+	}
+	for dec.More() {
+		kt, err := dec.Token()
+		if err != nil {
+			break
+		}
+		var v json.RawMessage
+		if dec.Decode(&v) != nil {
+			break
+		}
+		k, _ := kt.(string)
+		if k == payloadTruncatedKey || len(k) > 256 {
+			continue
+		}
+		var keep []byte
+		switch {
+		case len(v) <= maxValue && jsonDepthWithin(v, maxDepth-1):
+			keep = v
+		case v[0] == '"':
+			var s string
+			if json.Unmarshal(v, &s) == nil {
+				keep = fitString(s, maxValue)
+			}
+		case k == "questions":
+			keep = questionHeads(v, maxValue)
+		}
+		if keep == nil {
+			continue
+		}
+		kb, _ := json.Marshal(k)
+		if len(out)+len(kb)+len(keep)+2+len(mark) > max {
+			continue
+		}
+		out = append(append(append(append(out, kb...), ':'), keep...), ',')
+	}
+	return append(out, mark...)
+}
+
+// questionHeads reduces a questions list to the first questions' text (leading space trimmed,
+// as Web Push trims it) and header, encoded within maxValue, or nil when it does not start as a
+// list of objects. It reads the list element by element and stops after maxQuestions, so a list
+// of millions of small elements is never decoded.
+func questionHeads(v []byte, maxValue int) []byte {
+	const maxQuestions = 4
+	dec := json.NewDecoder(bytes.NewReader(v))
+	if t, err := dec.Token(); err != nil || t != json.Delim('[') {
+		return nil
+	}
+	out := []byte{'['}
+	for n := 0; n < maxQuestions && dec.More(); n++ {
+		// Raw fields, so a field of the wrong type costs only that field, as it does in
+		// pushsrv.questionText, which reads the question alone.
+		var q struct {
+			Question json.RawMessage `json:"question"`
+			Header   json.RawMessage `json:"header"`
+		}
+		if dec.Decode(&q) != nil {
+			return nil
+		}
+		var question, header string
+		_ = json.Unmarshal(q.Question, &question)
+		_ = json.Unmarshal(q.Header, &header)
+		if n > 0 {
+			out = append(out, ',')
+		}
+		out = append(append(out, `{"question":`...), fitString(strings.TrimSpace(question), maxValue/maxQuestions-192)...)
+		if header != "" {
+			out = append(append(out, `,"header":`...), fitString(header, 128)...)
+		}
+		out = append(out, '}')
+	}
+	if len(out) == 1 {
+		return nil
+	}
+	return append(out, ']')
+}
+
+// fitString is the longest head of s, cut on a rune boundary, whose encoding as a JSON string
+// fits n bytes. The bound is on the encoding, not the text: an escaped character such as '<'
+// takes six bytes. The encoded length only grows with the head, so a binary search finds it.
+func fitString(s string, n int) []byte {
+	s = headBytes(s, n)
+	if b, _ := json.Marshal(s); len(b) <= n {
+		return b
+	}
+	lo, hi := 0, len(s) // the head of lo bytes fits, the head of hi does not
+	for hi-lo > 1 {
+		mid := (lo + hi) / 2
+		if b, _ := json.Marshal(headBytes(s, mid)); len(b) <= n {
+			lo = mid
+		} else {
+			hi = mid
+		}
+	}
+	b, _ := json.Marshal(headBytes(s, lo))
+	return b
+}
+
+// repairUTF8 replaces each byte that is not part of valid UTF-8 with U+FFFD, one per byte, which
+// is what decoding the JSON into a Go string does.
+func repairUTF8(b []byte) []byte {
+	out := make([]byte, 0, len(b)+len(b)/8)
+	for len(b) > 0 {
+		r, size := utf8.DecodeRune(b)
+		if r == utf8.RuneError && size == 1 {
+			out = append(out, "\uFFFD"...)
+		} else {
+			out = append(out, b[:size]...)
+		}
+		b = b[size:]
+	}
+	return out
+}
+
+// headBytes cuts s to at most n bytes without splitting a UTF-8 sequence.
+func headBytes(s string, n int) string {
+	if n < 0 {
+		n = 0
+	}
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// jsonDepthWithin reports whether no object or array in b nests deeper than max. It only counts
+// brackets outside strings, so it is meaningful for valid JSON alone; callers check validity.
+func jsonDepthWithin(b []byte, max int) bool {
+	depth, inStr, esc := 0, false, false
+	for _, c := range b {
+		if inStr {
+			switch {
+			case esc:
+				esc = false
+			case c == '\\':
+				esc = true
+			case c == '"':
+				inStr = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inStr = true
+		case '{', '[':
+			depth++
+			if depth > max {
+				return false
+			}
+		case '}', ']':
+			depth--
+		}
+	}
+	return true
 }
 
 type agentNotification struct {
@@ -69,10 +288,12 @@ type agentNotification struct {
 	SessionKind string `json:"sessionKind"`
 	// Empty = "session" (see drainAgentOutbox): the Agent only learned to send
 	// workspace-level events later, and old Agents must keep their meaning.
-	TargetType  string         `json:"targetType"`
-	DisplayName string         `json:"displayName"`
-	CreatedAt   string         `json:"createdAt"`
-	Payload     map[string]any `json:"payload"`
+	TargetType  string `json:"targetType"`
+	DisplayName string `json:"displayName"`
+	CreatedAt   string `json:"createdAt"`
+	// Raw, not a map: any JSON value decodes, so a payload of the wrong type no longer fails the
+	// entry, and boundedPayload sees the bytes before anything is expanded.
+	Payload json.RawMessage `json:"payload"`
 }
 
 func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
@@ -91,7 +312,6 @@ const agentEventIDPrefix = "agent:"
 // id carries agentEventIDPrefix and the row is unique per (membership, id), so the same id sent
 // twice by one Agent is still one row, and another member's Agent cannot take it over.
 func agentNotificationRow(in agentNotification, membershipID string) store.Notification {
-	payload, _ := json.Marshal(in.Payload)
 	// The Agent's outbox was session-only until workspace-level events appeared
 	// (arch-residue). An empty targetType therefore has to keep meaning "session",
 	// or an older Agent's events would all become untargeted after a CP upgrade.
@@ -104,7 +324,7 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 	}
 	n := store.Notification{EventID: agentEventIDPrefix + in.ID, MembershipID: membershipID, Kind: in.Kind,
 		TargetType: targetType, TargetID: targetID, TargetKind: targetKind,
-		DisplayName: in.DisplayName, Payload: string(payload), CreatedAt: in.CreatedAt}
+		DisplayName: in.DisplayName, Payload: boundedPayload(in.Payload), CreatedAt: in.CreatedAt}
 	if n.CreatedAt == "" {
 		n.CreatedAt = store.NowTS()
 	}
@@ -112,9 +332,9 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 }
 
 // The bounds on one /notifications response, vars only so a test can lower them. The Agent
-// returns at most 100 entries but does not bound an entry's size, and the drain runs on a timer
-// for every workspace, so the CP stops reading at a byte count and an entry count far above
-// anything a healthy Agent sends. Entries read whole before a bound is hit are stored and
+// returns at most 100 entries and caps each entry's payload, but an older Agent does not, and the
+// drain runs on a timer for every workspace, so the CP stops reading at a byte count and an entry
+// count far above anything a healthy Agent sends. Entries read whole before a bound is hit are stored and
 // acked; the rest stays queued for the next drain.
 var (
 	maxOutboxBody    int64 = 64 << 20
@@ -189,6 +409,9 @@ func readOutboxEntries(r io.Reader, limit int64) (entries []agentNotification, m
 			if dec.Decode(&in) != nil {
 				return cut()
 			}
+			// Bounded here as well as in agentNotificationRow, so an oversized payload is not
+			// held while the rest of the response is read.
+			in.Payload = json.RawMessage(boundedPayload(in.Payload))
 			entries = append(entries, in)
 		}
 		if t, err := dec.Token(); err != nil || t != json.Delim(']') {
@@ -209,17 +432,14 @@ func readOutboxEntries(r io.Reader, limit int64) (entries []agentNotification, m
 // until somebody woke the workspace again — the stop-for-cost decision swallowing the one
 // notification that announces it.
 func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string) string {
-	state, prevFirst := "offline", ""
+	state := "offline"
+	var acked []string
 	for round := 0; round < maxDrainRounds; round++ {
 		var more bool
-		var first string
-		state, more, first = drainAgentOutboxOnce(ctx, st, rt, membershipID)
-		// The same first id again means the Agent did not drop what it was told to: asking
-		// more would only repeat the work.
-		if state != "ready" || !more || ctx.Err() != nil || first == prevFirst {
+		state, more, acked = drainAgentOutboxOnce(ctx, st, rt, membershipID, acked)
+		if state != "ready" || !more || ctx.Err() != nil {
 			break
 		}
-		prevFirst = first
 	}
 	return state
 }
@@ -227,60 +447,81 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 // maxDrainRounds bounds how many times one drain asks again after a response cut by a bound.
 const maxDrainRounds = 8
 
-// drainAgentOutboxOnce reads one response. more is true when a bound cut it and the entries
-// read were stored and the Agent answered the ack with a 2xx, so asking again can make
-// progress. first is the id of the first entry read.
-func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string) (state string, more bool, first string) {
+// drainAgentOutboxOnce reads one response, stores it and acks it. prevAcked is what the
+// previous round acked (nil on the first round); acked is what this round acked, for the next.
+// more is true when a bound cut the response, the ack was answered with a 2xx, and this read
+// does not show that the previous round's ack moved nothing, so asking again can make
+// progress.
+//
+// The previous ack moved nothing when this read starts with the same id and still holds every
+// id it acked. The first id alone is not enough: the Agent answers the ack with a 204 even
+// when some deletes failed, so the first entry can stay while the rest moved on. A different
+// first id keeps the drain going even when every acked id is still there: a new entry may be
+// listed ahead or the entries reordered, and once this round's ack goes through the next read
+// can move past them. A round that meets the stop condition is still stored and acked before
+// the drain stops: an entry new to it must not be left unstored, and a delete that failed
+// only once gets its second try. Only ids stored the round before skip the insert, because
+// the store already holds them.
+func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string, prevAcked []string) (state string, more bool, acked []string) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
 	if tok := rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
-		return "offline", false, ""
+		return "offline", false, nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return "unsupported", false, ""
+		return "unsupported", false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "offline", false, ""
+		return "offline", false, nil
 	}
 	// Bounded by maxOutboxBody / maxOutboxEntries; see there. An unreadable first entry stores
-	// nothing, so a single entry past the byte bound stays queued.
+	// nothing, so a single entry past the byte bound stays queued; only an Agent without the
+	// payload cap in package notice can send one.
 	entries, more, ok := readOutboxEntries(resp.Body, maxOutboxBody)
 	resp.Body.Close() // before the ack, so one connection is not held across both requests
 	if !ok {
-		return "offline", false, ""
+		return "offline", false, nil
 	}
-	acked := make([]string, 0, len(entries))
+	stored := make(map[string]struct{}, len(prevAcked))
+	for _, id := range prevAcked {
+		stored[id] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(stored))
+	acked = make([]string, 0, len(entries))
 	for _, in := range entries {
-		n := agentNotificationRow(in, membershipID)
-		if err := st.InsertNotification(ctx, n); err != nil {
-			return "offline", false, ""
+		if _, ok := stored[in.ID]; ok {
+			seen[in.ID] = struct{}{}
+		} else if err := st.InsertNotification(ctx, agentNotificationRow(in, membershipID)); err != nil {
+			return "offline", false, nil
 		}
 		acked = append(acked, in.ID)
 	}
-	if len(acked) > 0 {
-		b, _ := json.Marshal(map[string]any{"ids": acked})
-		req, _ = http.NewRequestWithContext(ctx, http.MethodPost, rt.Endpoint()+"/notifications/ack", bytes.NewReader(b))
-		req.Header.Set("Content-Type", "application/json")
-		if tok := rt.Token(); tok != "" {
-			req.Header.Set("Authorization", "Bearer "+tok)
-		}
-		ackResp, err := agentHTTPClient.Do(req)
-		if err != nil {
-			return "ready", false, acked[0]
-		}
-		ackResp.Body.Close()
-		if ackResp.StatusCode/100 != 2 {
-			return "ready", false, acked[0]
-		}
-	}
 	if len(acked) == 0 {
-		return "ready", false, ""
+		return "ready", false, nil
 	}
-	return "ready", more, acked[0]
+	b, _ := json.Marshal(map[string]any{"ids": acked})
+	req, _ = http.NewRequestWithContext(ctx, http.MethodPost, rt.Endpoint()+"/notifications/ack", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	if tok := rt.Token(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	ackResp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		return "ready", false, nil
+	}
+	ackResp.Body.Close()
+	if ackResp.StatusCode/100 != 2 {
+		return "ready", false, nil
+	}
+	// Asking again would most likely read this same response once more.
+	if len(prevAcked) > 0 && acked[0] == prevAcked[0] && len(seen) == len(stored) {
+		return "ready", false, acked
+	}
+	return "ready", more, acked
 }
 
 // listPayload composes the GET /api/notifications body (drain the Agent's

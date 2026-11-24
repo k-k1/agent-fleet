@@ -624,6 +624,10 @@ func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *ht
 		Kind          string `json:"kind"`
 		SSMHostID     string `json:"ssm_host_id"`
 		SSMForceLogin bool   `json:"ssm_force_login"`
+		// Space is only looked at to refuse it: the rewrite below rebuilds the body from fixed
+		// fields, so an SSM create naming a space would otherwise launch with the space dropped
+		// instead of being refused as the Agent refuses it (ADR 0142).
+		Space json.RawMessage `json:"space"`
 	}
 	body, err := readAllBody(r)
 	if err != nil {
@@ -635,6 +639,9 @@ func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *ht
 	if peek.Kind != "ssm" {
 		restoreBody(r, body) // untouched pass-through
 		return nil
+	}
+	if len(peek.Space) > 0 && string(peek.Space) != "null" {
+		return &apiError{http.StatusBadRequest, "bad_space", "an SSM session runs on another host, not in a space"}
 	}
 	if peek.SSMHostID == "" {
 		return &apiError{http.StatusBadRequest, "bad_request", "ssm_host_id is required for kind=ssm"}

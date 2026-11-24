@@ -191,4 +191,25 @@ describe("MemberView", () => {
     expect(stop()!.disabled).toBe(false);
     expect(host!.textContent).toContain("alice-sess");
   });
+  it.each([
+    ["404", { error: { code: "not_found", status: 404 } }],
+    ["403", { error: { code: "forbidden", status: 403 } }],
+    ["a non-JSON 404", { error: { code: "http_404" } }],
+  ])("a newer %s answer is not overtaken by an older good read", async (_n, refusal) => {
+    const stats = hold();
+    const sess = hold();
+    api.mockImplementation((p: string) =>
+      p.endsWith("/stats") ? stats.next() : p.endsWith("/sessions") ? sess.next() : Promise.resolve({}),
+    );
+    await render(view("u-alice"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(4000); // a tick's reads join the first ones
+    });
+    await stats.answer(refusal, 1);
+    await sess.answer(refusal, 1);
+    await stats.answer({ running: true }, 0); // the older read answers after the refusal
+    await sess.answer({ sessions: [named("alice-sess")] }, 0);
+    expect(host!.textContent).not.toContain("alice-sess");
+    expect(stop()?.disabled ?? true).toBe(true); // the member is not shown as running
+  });
 });

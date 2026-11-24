@@ -94,6 +94,17 @@ type UsageHistoryStore interface {
 	FoldRunning(ctx context.Context, membershipID string) error
 	// GetLaunch reads one launch.
 	GetLaunch(ctx context.Context, id string) (Launch, bool, error)
+	// ReopenLaunch reopens the membership's newest launch, and reports whether it did, when no
+	// launch of the membership is open and the newest one was closed at its own last sighting
+	// (which is where a stop the sampler inferred closes it) at or after closedSince. The launch
+	// must also have started, and been closed, before observedAt, the moment the "running" that
+	// asks for this was read: a stop or a launch after that is something the reading cannot
+	// contradict.
+	ReopenLaunch(ctx context.Context, membershipID string, observedAt, closedSince int64) (Launch, bool, error)
+	// OverrideRunningSecs is how many seconds of [from, to) the membership's launches with the
+	// given override ran, each launch up to its End. It reads the launches, not the day rows, so
+	// an open launch counts up to its last sighting without waiting for a fold.
+	OverrideRunningSecs(ctx context.Context, membershipID, override string, from, to int64) (int64, error)
 
 	// UsagePullCursor is how far the membership's Agent series has been folded (0 = never).
 	UsagePullCursor(ctx context.Context, membershipID string) (int64, error)
@@ -164,6 +175,44 @@ func (s *SQL) OpenLaunch(ctx context.Context, membershipID string) (Launch, bool
 func (s *SQL) GetLaunch(ctx context.Context, id string) (Launch, bool, error) {
 	l, err := scanLaunch(s.db.QueryRowContext(ctx,
 		`SELECT `+launchCols+` FROM workspace_launch WHERE id=?`, id))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Launch{}, false, nil
+	}
+	return l, err == nil, err
+}
+
+func (s *SQL) OverrideRunningSecs(ctx context.Context, membershipID, override string, from, to int64) (int64, error) {
+	if to <= from {
+		return 0, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT started_at, COALESCE(stopped_at, last_seen_at) FROM workspace_launch
+		 WHERE membership_id=? AND override=? AND started_at < ? AND COALESCE(stopped_at, last_seen_at) > ?`,
+		membershipID, override, to, from)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var total int64
+	for rows.Next() {
+		var start, end int64
+		if err := rows.Scan(&start, &end); err != nil {
+			return 0, err
+		}
+		total += min(end, to) - max(start, from)
+	}
+	return total, rows.Err()
+}
+
+func (s *SQL) ReopenLaunch(ctx context.Context, membershipID string, observedAt, closedSince int64) (Launch, bool, error) {
+	l, err := scanLaunch(s.db.QueryRowContext(ctx,
+		`UPDATE workspace_launch SET stopped_at = NULL
+		 WHERE id = (SELECT id FROM workspace_launch WHERE membership_id=? ORDER BY started_at DESC, id DESC LIMIT 1)
+		   AND stopped_at IS NOT NULL AND stopped_at = last_seen_at AND stopped_at >= ?
+		   AND started_at < ? AND stopped_at < ?
+		   AND NOT EXISTS (SELECT 1 FROM workspace_launch o WHERE o.membership_id=? AND o.stopped_at IS NULL)
+		 RETURNING `+launchCols,
+		membershipID, closedSince, observedAt, observedAt, membershipID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return Launch{}, false, nil
 	}

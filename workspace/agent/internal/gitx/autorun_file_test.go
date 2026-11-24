@@ -212,6 +212,29 @@ func TestAutorunFileLeavesOtherRefsAlone(t *testing.T) {
 	}
 }
 
+// An extra remote.<name>.fetch mapping of the default branch is configured state the read must not
+// act on: --refmap= leaves it out, so only origin/<default> moves.
+func TestAutorunFileKeepsConfiguredExtraMappings(t *testing.T) {
+	home, seed, dir := autorunClone(t, "version: 1 # old\n")
+	gitAt(t, dir, "config", "--add", "remote.origin.fetch", "+refs/heads/main:refs/remotes/extra/main")
+	gitAt(t, dir, "fetch", "origin")
+	extraBefore := gitAt(t, dir, "rev-parse", "refs/remotes/extra/main")
+	writeFile(t, filepath.Join(seed, AutorunFilePath), "version: 1 # new\n")
+	gitAt(t, seed, "commit", "-am", "new")
+	gitAt(t, seed, "push", filepath.Join(home, "origin.git"), "main")
+	want := gitAt(t, seed, "rev-parse", "HEAD")
+
+	if code, f, body := getAutorunFile(t); code != 200 || f.Content != "version: 1 # new\n" {
+		t.Fatalf("status %d: %s", code, body)
+	}
+	if got := gitAt(t, dir, "rev-parse", "refs/remotes/origin/main"); got != want {
+		t.Errorf("origin/main = %s, want %s", got, want)
+	}
+	if got := gitAt(t, dir, "rev-parse", "refs/remotes/extra/main"); got != extraBefore {
+		t.Errorf("the read moved the extra mapping to %s, want %s", got, extraBefore)
+	}
+}
+
 // The named remote is used for the network: its URL rewriting applies once, and its own
 // upload-pack setting is honoured.
 func TestAutorunFileUsesTheNamedRemote(t *testing.T) {

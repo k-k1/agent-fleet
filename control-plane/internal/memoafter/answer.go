@@ -2,6 +2,7 @@ package memoafter
 
 import (
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -28,6 +29,73 @@ type Turn struct {
 	Parts     []TurnPart `json:"parts"`
 	Text      string     `json:"text"`
 	Sidechain bool       `json:"sidechain"`
+	// TS is when the turn was written (RFC 3339, the Agent host's clock), "" when the kind keeps none.
+	TS string `json:"ts"`
+	// AnchorID is the kind's own id of the turn, "" for a turn the Agent made up.
+	AnchorID string `json:"anchorId"`
+}
+
+// TurnsBefore is turns up to the first user turn of the session itself (not a subagent's) stamped
+// at or after pin, the first instant past the run's end: a person's input that came later, and
+// everything after it, is not the run's. Only a user turn cuts: an assistant turn may be stamped
+// when it is read rather than when it was written (measured: codex's synthetic error turn of a
+// refused turn/start is stamped time.Now()), and dropping the run's own last error would read an
+// earlier Done:. A turn whose time is missing or does not parse is kept, as nothing tells it
+// apart: such a kind reads as it did without the pin.
+func TurnsBefore(turns []Turn, pin time.Time) []Turn {
+	for i, t := range turns {
+		if t.Role != "user" || t.Sidechain {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339Nano, t.TS); err == nil && !at.Before(pin) {
+			return turns[:i]
+		}
+	}
+	return turns
+}
+
+// PinnedAnswer is LastAnswer of the turns before pin (TurnsBefore), turns being the transcript
+// from some line to its end. Every line of the run was written before pin, so an assistant turn
+// stamped at or after it is a later turn's even when no user turn of that turn is seen (opencode
+// drops an input of attachments alone from its turns): it is passed over. Only an error turn the
+// Agent made up (no AnchorID) is not, as it is stamped when it is read (codex's synthetic error of
+// a refused turn/start), and passing over the run's own last error would read an earlier Done:. An
+// error the kind stored (opencode's, with its message id) carries its own time and is passed over
+// like any other.
+//
+// A page can start inside a person's later turn, whose input, stamped after pin, is on the page
+// before: an answer counts when its own turn is stamped before pin, or else once a user turn of
+// the session itself is seen before it (an answer stamped late, or not at all). found is false
+// until then, so the caller reads back a page; atStart says turns begin at the transcript's first
+// line, where nothing earlier can be such an input. A run that called tools for more lines than
+// the pages read holds no user turn in them: its own answer, stamped before pin, is taken all the
+// same.
+func PinnedAnswer(turns []Turn, pin time.Time, atStart bool) (text string, found bool) {
+	kept := TurnsBefore(turns, pin)
+	var at int
+	for {
+		text, at, found = lastAnswerAt(kept)
+		if !found {
+			return "", false
+		}
+		ts, err := time.Parse(time.RFC3339Nano, kept[at].TS)
+		if err == nil && ts.Before(pin) {
+			return text, true
+		}
+		if err != nil || (kept[at].AnchorID == "" && hasError(kept[at])) {
+			break // stamped late, or not at all
+		}
+		kept = kept[:at] // a later turn's
+	}
+	if atStart {
+		return text, true
+	}
+	for _, t := range kept[:at] {
+		if t.Role == "user" && !t.Sidechain {
+			return text, true
+		}
+	}
+	return "", false
 }
 
 // LastAnswer is the text of the session's last answer in turns: of the last assistant turn of the
@@ -38,6 +106,22 @@ type Turn struct {
 // not taken for one. found is false when turns hold no such assistant turn at all (an older page
 // may hold it); text is "" for one that ended without an answer.
 func LastAnswer(turns []Turn) (text string, found bool) {
+	text, _, found = lastAnswerAt(turns)
+	return text, found
+}
+
+// hasError reports whether t holds an error part.
+func hasError(t Turn) bool {
+	for _, p := range t.Parts {
+		if p.Kind == "error" {
+			return true
+		}
+	}
+	return false
+}
+
+// lastAnswerAt is LastAnswer and the index of the turn it was read from.
+func lastAnswerAt(turns []Turn) (text string, at int, found bool) {
 	for i := len(turns) - 1; i >= 0; i-- {
 		t := turns[i]
 		if t.Role != "assistant" || t.Sidechain {
@@ -47,7 +131,7 @@ func LastAnswer(turns []Turn) (text string, found bool) {
 			if strings.TrimSpace(t.Text) == "" {
 				continue
 			}
-			return t.Text, true
+			return t.Text, i, true
 		}
 		var texts []string
 		seen := false
@@ -65,9 +149,9 @@ func LastAnswer(turns []Turn) (text string, found bool) {
 		if !seen {
 			continue
 		}
-		return strings.Join(texts, "\n"), true
+		return strings.Join(texts, "\n"), i, true
 	}
-	return "", false
+	return "", -1, false
 }
 
 // ClassifyAnswer is the head an answer is kept by (its first line that holds anything, at most

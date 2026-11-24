@@ -6,6 +6,7 @@ import { useMemoStore } from "../../features/memo/store.ts";
 import { useRepoReveal } from "../../features/repos/store.ts";
 import { useSharedReveal } from "../../features/sharing/store.ts";
 import { useSchedulesStore } from "../../features/schedules/store.ts";
+import { useTerminalReveal } from "../../features/terminals/store.ts";
 
 let unwire: () => void;
 beforeEach(() => {
@@ -45,6 +46,11 @@ describe("wireRailReveals", () => {
   it("brings the shared view forward for a shared-session reveal", () => {
     useSharedReveal.getState().reveal("cat1");
     expect(rail()).toEqual({ open: true, view: "shared" });
+  });
+
+  it("brings the Terminal view forward for the count chip of a repository or space row", () => {
+    useTerminalReveal.getState().reveal("shell:repo:webshop");
+    expect(rail()).toEqual({ open: true, view: "terminals" });
   });
 
   it("stops following once unwired", () => {

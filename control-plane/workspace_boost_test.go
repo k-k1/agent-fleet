@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"github.com/k-k1/agent-fleet/control-plane/internal/usagehistory"
 )
 
 // ADR 0139 decisions 4 and 5: the boost override, its resolution in withResolvedSize and the API
@@ -511,28 +514,138 @@ func TestSizeOverrideStore(t *testing.T) {
 	}
 }
 
-func TestLaunchOverrideAndDriftFollowTheBoost(t *testing.T) {
+func TestResolvedSizeSourceFollowsTheBoost(t *testing.T) {
 	ctx := context.Background()
 	e := newBoostEnv(t, onBoost)
-	if got := e.m.launchOverride(ctx, e.ws()); got != "" {
-		t.Fatalf("no boost: override %q", got)
+	if _, src := e.m.withResolvedSizeSource(ctx, e.ws()); src != "" {
+		t.Fatalf("no boost: override %q", src)
 	}
 	e.grant(t, "standard", 16384, time.Hour)
-	if got := e.m.launchOverride(ctx, e.ws()); got != "boost" {
-		t.Fatalf("live boost: override %q, want boost", got)
-	}
-	// A runtime memoized under the boost goes stale when it ends: the start must see the drift.
-	memoized := e.m.withResolvedSize(ctx, e.ws())
-	if _, drifted := e.m.sizeDrifted(ctx, memoized); drifted {
-		t.Fatalf("nothing changed yet")
+	if ws, src := e.m.withResolvedSizeSource(ctx, e.ws()); src != "boost" || ws.MemBytes != 16384*mib {
+		t.Fatalf("live boost: override %q mem %d, want boost on 16384", src, ws.MemBytes/mib)
 	}
 	e.now = e.now.Add(2 * time.Hour)
-	fresh, drifted := e.m.sizeDrifted(ctx, memoized)
-	if !drifted || fresh.MemBytes != 0 {
-		t.Fatalf("after expiry: drifted=%v mem=%d, want the stored box", drifted, fresh.MemBytes)
+	if ws, src := e.m.withResolvedSizeSource(ctx, e.ws()); src != "" || ws.MemBytes != 0 {
+		t.Fatalf("expired: override %q mem %d", src, ws.MemBytes)
 	}
-	if got := e.m.launchOverride(ctx, e.ws()); got != "" {
-		t.Fatalf("expired: override %q", got)
+}
+
+// boxFactory builds runtimes that name the rung their size resolved to, the way ecs-ec2 does,
+// and records the box each Start ran on.
+type boxFactory struct {
+	mu         sync.Mutex
+	started    []string
+	startedEnv [][]string
+}
+
+type boxStartRT struct {
+	stubRuntime
+	f   *boxFactory
+	box runtime.WorkspaceMachine
+	env []string
+}
+
+func (r *boxStartRT) MachineProfile() runtime.WorkspaceMachine { return r.box }
+func (r *boxStartRT) Start(context.Context) error {
+	r.f.mu.Lock()
+	defer r.f.mu.Unlock()
+	r.f.started = append(r.f.started, r.box.InstanceType)
+	r.f.startedEnv = append(r.f.startedEnv, r.env)
+	return nil
+}
+
+func (f *boxFactory) New(ws runtime.Workspace, _ runtime.SecretKeys, env []string) runtime.Runtime {
+	ladder := ladderOf(boostSizing(), ws.SlotClass)
+	s := ladder[rungIndex(ladder, ws.MemBytes)]
+	return &boxStartRT{stubRuntime: stubRuntime{state: "stopped"}, f: f, env: env,
+		box: runtime.WorkspaceMachine{InstanceType: s.InstanceType, ClassID: ws.SlotClass}}
+}
+
+func (f *boxFactory) SizingProfile() runtime.WorkspaceSizing { return boostSizing() }
+
+// TestStartRecordsTheBoxItStarts: a boost that ends while a Start is under way must not leave
+// the launch record saying "boost" over an unboosted box (that box's hours would be charged to
+// the budget), nor the reverse. The Start resolves the box once and both take it from there.
+func TestStartRecordsTheBoxItStarts(t *testing.T) {
+	ctx := context.Background()
+	e := newBoostEnv(t, onBoost)
+	f := &boxFactory{}
+	e.m.rtFactory = f
+	if err := e.m.store.CreateWorkspace(ctx, store.Workspace{ID: "W-1", TenantID: e.tenantID, MembershipID: e.memID,
+		ContainerName: "af-ws-acme-a", AgentPort: "7731", AgentToken: "tok", State: "stopped", CreatedAt: store.NowTS()}); err != nil {
+		t.Fatal(err)
+	}
+	e.grant(t, "standard", 16384, time.Hour)
+	mv, _, _ := e.m.store.GetMembershipByID(ctx, e.memID)
+	res, aerr := e.m.buildResolved(ctx, e.ident, mv)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	// From here the boost has ended on the second read of the clock and on every one after it.
+	reads := 0
+	expiry := e.now.Add(time.Hour)
+	boostNow = func() time.Time {
+		reads++
+		if reads == 1 {
+			return expiry.Add(-time.Millisecond)
+		}
+		return expiry.Add(time.Millisecond)
+	}
+	if aerr := newWorkspaceAPI(e.m, false).ensureWorkspaceStarted(ctx, res); aerr != nil {
+		t.Fatal(aerr)
+	}
+	l, ok, err := e.m.store.OpenLaunch(ctx, e.memID)
+	if err != nil || !ok {
+		t.Fatalf("no launch recorded: %v", err)
+	}
+	f.mu.Lock()
+	started := f.started
+	f.mu.Unlock()
+	if len(started) != 1 {
+		t.Fatalf("started %v", started)
+	}
+	// Whichever side of the expiry the one read fell on, the record and the box agree.
+	if boosted := started[0] == "m7i.xlarge"; boosted != (l.Override == "boost") || l.InstanceType != started[0] {
+		t.Fatalf("started on %s, recorded %s override %q", started[0], l.InstanceType, l.Override)
+	}
+}
+
+// TestStartRecordsTheRuntimeItStarts: the runtime handed to the Start was built for another box
+// than the one the Start resolves (an unattended start whose own read of the boost failed). The
+// launch record is read off the runtime that actually starts, not off the one handed in.
+func TestStartRecordsTheRuntimeItStarts(t *testing.T) {
+	ctx := context.Background()
+	e := newBoostEnv(t, onBoost)
+	f := &boxFactory{}
+	e.m.rtFactory = f
+	if err := e.m.store.CreateWorkspace(ctx, store.Workspace{ID: "W-1", TenantID: e.tenantID, MembershipID: e.memID,
+		ContainerName: "af-ws-acme-a", AgentPort: "7731", AgentToken: "tok", State: "stopped", CreatedAt: store.NowTS()}); err != nil {
+		t.Fatal(err)
+	}
+	e.grant(t, "standard", 16384, time.Hour)
+	mv, _, _ := e.m.store.GetMembershipByID(ctx, e.memID)
+	res, aerr := e.m.buildResolved(ctx, e.ident, mv)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	unboosted := f.New(runtime.Workspace{SlotClass: "standard"}, runtime.SecretKeys{}, nil)
+	if aerr := newWorkspaceAPI(e.m, false).ensureWorkspaceStartedRT(ctx, res, unboosted); aerr != nil {
+		t.Fatal(aerr)
+	}
+	l, _, _ := e.m.store.OpenLaunch(ctx, e.memID)
+	f.mu.Lock()
+	started := f.started
+	f.mu.Unlock()
+	if len(started) != 1 || started[0] != "m7i.xlarge" || l.InstanceType != "m7i.xlarge" || l.Override != "boost" {
+		t.Fatalf("started %v, recorded %s override %q", started, l.InstanceType, l.Override)
+	}
+	// The runtime that started carries the recorded launch's id, which is what files the
+	// Agent's minutes under this launch.
+	f.mu.Lock()
+	env := f.startedEnv[0]
+	f.mu.Unlock()
+	if got := envValue(strings.Join(env, " "), usagehistory.LaunchEnv); got != l.ID {
+		t.Fatalf("started with %s=%q, recorded launch %q", usagehistory.LaunchEnv, got, l.ID)
 	}
 }
 
@@ -601,5 +714,95 @@ func TestRunningBoxFallsBackToTheMemoryCap(t *testing.T) {
 	sz := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident, rt: runningFake{endpoint: srv.URL}})
 	if sz.Running == nil || sz.Running.MemMiB != 8192 || !sz.RestartOffered {
 		t.Fatalf("%+v", sz)
+	}
+}
+
+// TestBoostBudgetCountsLaunchRecords: the production counter reads the launch records, so the
+// budget is enforced from the hours a member actually ran boosted this month (ADR 0139 decision
+// 5), whether or not the boost has since expired.
+func TestBoostBudgetCountsLaunchRecords(t *testing.T) {
+	ctx := context.Background()
+	e := newBoostEnv(t, tenantLimits{BoostEnabled: true, BoostMonthlyHours: 5})
+	e.m.boostHours = boostHoursFor(e.m.store, 5*time.Minute)
+	at := func(d time.Duration) int64 { return e.now.Add(d).Unix() }
+	launch := func(id, override string, from, to time.Duration) {
+		t.Helper()
+		if err := e.m.store.BeginLaunch(ctx, store.Launch{ID: id, WorkspaceID: "w1", MembershipID: e.memID,
+			TenantID: e.tenantID, StartedAt: at(from), Override: override}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := e.m.store.EndOpenLaunch(ctx, e.memID, at(to)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Last month's boosted hours, unboosted and adopted launches, and a boost that never ran
+	// count for nothing.
+	launch("prev", store.SizeOverrideBoost, -40*24*time.Hour, -39*24*time.Hour)
+	launch("plain", "", -100*time.Hour, -90*time.Hour)
+	launch("adopted", "adopted", -80*time.Hour, -70*time.Hour)
+	launch("never", store.SizeOverrideBoost, -60*time.Hour, -60*time.Hour)
+	// Four boosted hours this month: well past any boost's end, which is the point.
+	launch("b1", store.SizeOverrideBoost, -50*time.Hour, -46*time.Hour)
+
+	sz := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident})
+	if b := sz.Boost.Budget; !b.Counted || b.UsedHours != 4 || b.Spent || !sz.Boost.Available {
+		t.Fatalf("4 of 5 hours: %+v available=%t", b, sz.Boost.Available)
+	}
+	if code, _, body := e.call(t, http.MethodPost, ``); code != 200 {
+		t.Fatalf("under budget: %d %s", code, body)
+	}
+
+	// One more boosted hour, still open and last seen an hour in.
+	if err := e.m.store.BeginLaunch(ctx, store.Launch{ID: "b2", WorkspaceID: "w1", MembershipID: e.memID,
+		TenantID: e.tenantID, StartedAt: at(-2 * time.Hour), Override: store.SizeOverrideBoost}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.store.TouchLaunch(ctx, "b2", at(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	sz = e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident})
+	if b := sz.Boost.Budget; b.UsedHours != 5 || !b.Spent || sz.Boost.Reason != "budget_spent" {
+		t.Fatalf("5 of 5 hours: %+v reason=%q", b, sz.Boost.Reason)
+	}
+	// Spent refuses an extension of the live boost as well as a new one.
+	if code, _, body := e.call(t, http.MethodPost, `{"hours":2}`); code != http.StatusConflict || !strings.Contains(body, "boost_budget_spent") {
+		t.Fatalf("over budget: %d %s", code, body)
+	}
+
+	// A new month starts from zero.
+	e.now = time.Date(2026, 12, 1, 0, 30, 0, 0, time.UTC)
+	if b := e.m.boostBudgetOf(ctx, e.memID, tenantLimits{BoostEnabled: true, BoostMonthlyHours: 5}); b.UsedHours != 0 || b.Spent {
+		t.Fatalf("a new month: %+v", b)
+	}
+}
+
+// TestBoostBudgetIsCountedOnlyWithTheSampler: main's wiring counts the budget while the usage
+// sampler runs, and says it is not counted when the sampler is off, where an open launch's hours
+// would read 0 for as long as it runs.
+func TestBoostBudgetIsCountedOnlyWithTheSampler(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		interval time.Duration
+		counted  bool
+	}{{5 * time.Minute, true}, {0, false}, {500 * time.Millisecond, false}} {
+		e := newBoostEnv(t, tenantLimits{BoostEnabled: true, BoostMonthlyHours: 1})
+		e.m.boostHours = boostHoursFor(e.m.store, c.interval)
+		if err := e.m.store.BeginLaunch(ctx, store.Launch{ID: "b", WorkspaceID: "w1", MembershipID: e.memID,
+			TenantID: e.tenantID, StartedAt: e.now.Add(-3 * time.Hour).Unix(), Override: store.SizeOverrideBoost}); err != nil {
+			t.Fatal(err)
+		}
+		if err := e.m.store.TouchLaunch(ctx, "b", e.now.Unix()); err != nil {
+			t.Fatal(err)
+		}
+		w := httptest.NewRecorder()
+		ten, _ := e.m.store.GetTenant(ctx, e.tenantID)
+		newWorkspaceAPI(e.m, false).writeTenantBoost(w, ctx, ten)
+		if want := fmt.Sprintf(`"budget_counted":%t`, c.counted); !strings.Contains(w.Body.String(), want) {
+			t.Fatalf("interval %v: GET %s, want %s", c.interval, w.Body.String(), want)
+		}
+		b := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident}).Boost.Budget
+		if b.Counted != c.counted || b.Spent != c.counted {
+			t.Fatalf("interval %v: budget %+v", c.interval, b)
+		}
 	}
 }

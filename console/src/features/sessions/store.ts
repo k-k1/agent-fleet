@@ -23,7 +23,12 @@ interface SessionsStore {
    * and onboarding bump this; StartHost — which owns the StartModal —
    * watches it. */
   startTick: number;
+  /** The stage the next hub opens on: null = the places list. Set by openStartAt, and read once by
+   *  the hub when it mounts. */
+  startStage: "ssm" | null;
   openStart(): void;
+  /** Open the Start hub directly on its SSM host picker (the Terminal view's "SSM session"). */
+  openStartAt(stage: "ssm"): void;
   refresh(): Promise<void>;
   /** Publish a session list (poll result or pushed api/events frame) — only on
    * an actual change (serialized compare, see the header note). */
@@ -49,7 +54,9 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   sessions: [],
   loaded: false,
   startTick: 0,
-  openStart: () => set((s) => ({ startTick: s.startTick + 1 })),
+  startStage: null,
+  openStart: () => set((s) => ({ startTick: s.startTick + 1, startStage: null })),
+  openStartAt: (stage) => set((s) => ({ startTick: s.startTick + 1, startStage: stage })),
 
   applyList(list: Session[]) {
     // The only place the moment a session starts waiting on a human can be observed —

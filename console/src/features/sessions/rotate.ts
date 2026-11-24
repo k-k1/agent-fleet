@@ -15,13 +15,17 @@
 //   folder) stopped matching the rail once worktrees nested by lineage.
 import { repoInSet, sessionInSet } from "../../lib/workingSets.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
-import { orphanSessions, railNodeSessions, repoTree } from "../../lib/project.ts";
+import { orphanSessions, railNodeSessions, repoTree, spaceGroups } from "../../lib/project.ts";
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 
 /** Every session in the order the left rail lists it: the repo tree depth first (a node's own
- *  sessions, then its nested worktrees), then the other-sessions section. Fold state and the
+ *  sessions, then its nested worktrees), then the Spaces section, then the other-sessions
+ *  section. Fold state and the
  *  rail's search box are ignored — a folded node still holds its place.
+ *
+ *  Shells and SSM logins are in it although the Sessions view no longer lists them: this order is
+ *  a position for the swipe to step on from, and a shell pane has to keep the place it always had.
  *
  *  A working set scopes it the way the rail does (ProjectTree / OtherSessionsSection): a repo
  *  root is in or out by repoInSet with its whole subtree, and only the repo-less sessions go
@@ -33,8 +37,9 @@ export function railOrder(sessions: Session[], repos: Repo[], set: WorkingSet | 
   const byName = new Map(sessions.map((s) => [s.name, s]));
   repoTree(repos, sessions)
     .filter((t) => !set || repoInSet(set, t.repo))
-    .forEach((t) => out.push(...railNodeSessions(t, sessions, byName)));
-  out.push(...orphanSessions(sessions, repos).filter((s) => !set || sessionInSet(set, s)));
+    .forEach((t) => out.push(...railNodeSessions(t, sessions, byName, true)));
+  for (const g of spaceGroups(sessions, true)) out.push(...g.sessions.filter((s) => !set || sessionInSet(set, s)));
+  out.push(...orphanSessions(sessions, repos, true).filter((s) => !set || sessionInSet(set, s)));
   return out;
 }
 

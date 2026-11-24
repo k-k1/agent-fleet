@@ -34,6 +34,10 @@ type fakeAutorunAgent struct {
 	instrCommit string
 	// instrAsked are the instruction reads' queries, "commit path".
 	instrAsked []string
+	// remote is the remote the settings read names (file only).
+	remote string
+	// onInstr runs before each instruction read, outside the lock, after onServe.
+	onInstr func()
 }
 
 // instruction sets what the fake Agent's instruction route answers for p.
@@ -53,7 +57,10 @@ func (a *fakeAutorunAgent) answer(status int, body string) {
 }
 
 func (a *fakeAutorunAgent) file(content string) {
-	b, _ := json.Marshal(agentAutorunFile{Path: autorunfile.Path, Branch: "main", Commit: testCommit, Found: true, Content: content})
+	a.mu.Lock()
+	remote := a.remote
+	a.mu.Unlock()
+	b, _ := json.Marshal(agentAutorunFile{Path: autorunfile.Path, Remote: remote, Branch: "main", Commit: testCommit, Found: true, Content: content})
 	a.answer(http.StatusOK, string(b))
 }
 
@@ -69,13 +76,22 @@ func repoEnv(t *testing.T, state string) (*inboxEnv, *fakeAutorunAgent) {
 	e := newInboxEnv(t)
 	e.memoQueuesOn(true)
 	e.mgr.memoRepoSettings = true
+	return e, e.repoAgent("a", state)
+}
+
+// repoAgent puts a fake Agent behind a workspace of member who, in state ("" = running).
+func (e *inboxEnv) repoAgent(who, state string) *fakeAutorunAgent {
+	t := e.t
 	a := &fakeAutorunAgent{status: http.StatusOK}
 	a.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
-		hook := a.onServe
+		hook, instrHook := a.onServe, a.onInstr
 		a.mu.Unlock()
 		if hook != nil {
 			hook()
+		}
+		if instrHook != nil && strings.HasSuffix(r.URL.Path, "/autorun-file/instruction") {
+			instrHook()
 		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
@@ -113,15 +129,15 @@ func repoEnv(t *testing.T, state string) (*inboxEnv, *fakeAutorunAgent) {
 		_, _ = w.Write([]byte(a.body))
 	}))
 	t.Cleanup(a.srv.Close)
-	ws := store.Workspace{ID: "ws-a", TenantID: e.t1.ID, MembershipID: e.members["a"], ContainerName: "a",
+	ws := store.Workspace{ID: "ws-" + who, TenantID: e.t1.ID, MembershipID: e.members[who], ContainerName: who,
 		Network: "n", DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: store.NowTS()}
 	if err := e.st.CreateWorkspace(context.Background(), ws); err != nil {
 		t.Fatal(err)
 	}
 	e.mgr.mu.Lock()
-	e.mgr.rts[e.members["a"]] = cachedRT{rt: stubRuntime{endpoint: a.srv.URL, token: "tok", state: state}, ws: ws}
+	e.mgr.rts[e.members[who]] = cachedRT{rt: stubRuntime{endpoint: a.srv.URL, token: "tok", state: state}, ws: ws}
 	e.mgr.mu.Unlock()
-	return e, a
+	return a
 }
 
 func (e *inboxEnv) repoSettings(categoryID string) (*httptest.ResponseRecorder, memoRepoSettingsWire) {

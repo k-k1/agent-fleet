@@ -12,9 +12,12 @@ test.skip(!base, "skipped: docker / the image / console-dist is missing (on CI, 
 test("Console -> open a session -> keystrokes reach the container", async ({ page, request }) => {
   await page.goto(base + "/");
 
-  // The shell session global-setup created through the API (under home, so no repo) shows up
-  // in the left pane's "other sessions" group as a SessionRow (.sess-btn).
-  const row = page.locator(".sess-btn", { hasText: process.env.E2E_SESSION_TITLE || "e2e-ui" });
+  // The shell session global-setup created through the API (under home, so no repo) is listed by
+  // the Terminals view (ADR 0142 decision 10), not by Sessions: open that view from the activity
+  // bar, where its icon is on by default. Until the workspace runs the view only says so, and the
+  // row appears once it does.
+  await page.locator('.actbar-btn[data-rail-view="terminals"]').click();
+  const row = page.locator('.rail-view[data-rail-view="terminals"] .sess-btn', { hasText: process.env.E2E_SESSION_TITLE || "e2e-ui" });
   await expect(row).toBeVisible({ timeout: 30_000 });
   await row.click();
 

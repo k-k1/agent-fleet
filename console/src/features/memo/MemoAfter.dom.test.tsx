@@ -349,6 +349,99 @@ describe("a note that waits for other notes", () => {
   });
 });
 
+describe("a refused save", () => {
+  it("keeps the editor open with the draft, flags the chip that left, and saves again once it is removed", async () => {
+    servedCats = [queueCat];
+    servedMemos = [
+      aMemo({ id: "a1", body: "alpha job", state: "pending", position: 0, createdAt: "2026-09-09T00:00:01Z" }),
+      aMemo({ id: "a2", body: "beta job", state: "pending", position: 1, createdAt: "2026-09-09T00:00:02Z" }),
+      aMemo({ id: "me", body: "the edited one", state: "held", position: 2, createdAt: "2026-09-09T00:00:03Z" }),
+    ];
+    await renderSection();
+    await openEditor("the edited one");
+    await focusSearch();
+    await click(opts()[0]);
+    await click(opts()[0]);
+    expect(chips()).toHaveLength(2);
+    const ta = () => editRow().querySelector<HTMLTextAreaElement>(".memo-edit-text")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta(), "the edited one, reworded");
+      ta().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // beta moves out of the category while the editor is open; the Control Plane refuses the list.
+    servedMemos = servedMemos.map((x) => (x.id === "a2" ? { ...x, category: "elsewhere" } : x));
+    memoUpdate.mockResolvedValueOnce({ error: { code: "memo_after_invalid", message: "english" } });
+    await click(btn(editRow(), t("memo.save")));
+    expect(document.querySelector(".memo-row.editing")).not.toBeNull();
+    expect(ta().value).toBe("the edited one, reworded");
+    expect(editRow().querySelector("[role=alert]")!.textContent).toContain(t("err.memo_after_invalid"));
+    expect(chips()).toHaveLength(2);
+    const flagged = chips().filter((c) => c.textContent?.includes(t("memo.after_refused")));
+    expect(flagged).toHaveLength(1);
+    expect(flagged[0].textContent).toContain("beta job");
+    await click(flagged[0].querySelector("button")!);
+    // The refusal was about the draft before this change.
+    expect(editRow().querySelector("[role=alert]")).toBeNull();
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenLastCalledWith("me", { body: "the edited one, reworded", category: "inbox", after: ["a1"] });
+    expect(document.querySelector(".memo-row.editing")).toBeNull();
+  });
+
+  const slowSave = () => {
+    let done!: (v: Record<string, unknown>) => void;
+    memoUpdate.mockImplementationOnce(() => new Promise<Record<string, unknown>>((r) => (done = r)));
+    return (v: Record<string, unknown>) => act(async () => void done(v));
+  };
+  const typeBody = async (v: string) => {
+    const ta = editRow().querySelector<HTMLTextAreaElement>(".memo-edit-text")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(ta, v);
+      ta.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  it("locks the editor while the request is out, and closes it on success", async () => {
+    servedCats = [queueCat];
+    servedMemos = [aMemo({ id: "me", body: "the edited one", state: "held" })];
+    await renderSection();
+    await openEditor("the edited one");
+    await typeBody("the edited one, reworded");
+    const answer = slowSave();
+    await click(btn(editRow(), t("memo.save")));
+    expect(editRow().querySelector<HTMLFieldSetElement>(".memo-edit-lock")!.disabled).toBe(true);
+    await click(btn(editRow(), t("memo.save")));
+    expect(memoUpdate).toHaveBeenCalledTimes(1);
+    await answer({});
+    await settle();
+    expect(document.querySelector(".memo-row.editing")).toBeNull();
+  });
+
+  it("unlocks the editor with the draft after a refusal that arrives late", async () => {
+    servedCats = [queueCat];
+    servedMemos = [aMemo({ id: "me", body: "the edited one", state: "held" })];
+    await renderSection();
+    await openEditor("the edited one");
+    await typeBody("the edited one, reworded");
+    const answer = slowSave();
+    await click(btn(editRow(), t("memo.save")));
+    await answer({ error: { code: "memo_locked", message: "english" } });
+    await settle();
+    expect(editRow().querySelector<HTMLFieldSetElement>(".memo-edit-lock")!.disabled).toBe(false);
+    expect(editRow().querySelector<HTMLTextAreaElement>(".memo-edit-text")!.value).toBe("the edited one, reworded");
+    expect(editRow().querySelector("[role=alert]")).not.toBeNull();
+  });
+
+  it("keeps the editor open with the text when the request itself fails", async () => {
+    servedCats = [queueCat];
+    servedMemos = [aMemo({ id: "me", body: "the edited one", state: "held" })];
+    memoUpdate.mockRejectedValueOnce(new Error("offline"));
+    await renderSection();
+    await openEditor("the edited one");
+    await click(btn(editRow(), t("memo.save")));
+    expect(editRow().querySelector("[role=alert]")!.textContent).toContain(t("common.send_failed"));
+  });
+});
+
 describe("the editor's text area", () => {
   it("is sized to a long note as it opens, not left at its rows height until the next keystroke", async () => {
     const spy = vi.spyOn(HTMLTextAreaElement.prototype, "scrollHeight", "get").mockImplementation(() => 137);
@@ -780,6 +873,28 @@ describe("choosing what a note waits for by search", () => {
     expect(search().getAttribute("aria-activedescendant")).toBe(active[0].id);
     await pressKey("Enter");
     expect(titles(chips())).toEqual(["Importer docs"]);
+  });
+
+  it("brings the pointed memo back into view when a poll moves it down the list", async () => {
+    seed();
+    const seen: string[] = [];
+    const orig = Element.prototype.scrollIntoView;
+    Element.prototype.scrollIntoView = function (this: Element) {
+      seen.push(this.textContent ?? "");
+    };
+    try {
+      await renderSection();
+      await openEditor("the edited one");
+      await focusSearch();
+      await pressKey("ArrowDown"); // Importer docs, index 1
+      seen.length = 0;
+      servedMemos = [...servedMemos, aMemo({ id: "a4", body: "newer job", state: "pending", position: 2.5, createdAt: "2026-09-09T00:00:02Z" })];
+      await bump();
+      // Same note, index 1 -> 2: the list may be scrolled away from where it now sits.
+      expect(seen.some((x) => x.includes("Importer docs"))).toBe(true);
+    } finally {
+      Element.prototype.scrollIntoView = orig;
+    }
   });
 
   it("adds nothing on Enter when the memo the keyboard pointed at left the list, until another is pointed at", async () => {

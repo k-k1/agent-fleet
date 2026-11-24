@@ -156,9 +156,19 @@ func (e *ecsEC2Runtime) notePlacementBlocked(ctx context.Context, s ecstypes.Ser
 // ifGenCurrent runs f only while the Start count still reads gen, under the lock that
 // moves it. It does not treat gen 0 specially (unlike ifOwnedStrict); a count that cannot
 // be read or a lock that cannot be had skips f.
+//
+// The wait outlives the caller's cancellation, so a Console poll abandoned mid-way still
+// records the diagnosis it already paid for, but never the caller's deadline: State is
+// bounded by callers (the notification drain, the reaper), and the lock can be held by a
+// Start for far longer than they wait.
 func (e *ecsEC2Runtime) ifGenCurrent(ctx context.Context, gen int64, f func()) bool {
-	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	dctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), ifGenCurrentBudget)
 	defer cancel()
+	if dl, ok := ctx.Deadline(); ok {
+		var cancelDL context.CancelFunc
+		dctx, cancelDL = context.WithDeadline(dctx, dl)
+		defer cancelDL()
+	}
 	lctx, unlock, err := e.lockHome(dctx, homeLockClaim)
 	if err != nil {
 		return false
@@ -176,6 +186,10 @@ func (e *ecsEC2Runtime) ifGenCurrent(ctx context.Context, gen int64, f func()) b
 	f()
 	return true
 }
+
+// ifGenCurrentBudget bounds ifGenCurrent's wait for the home lock when the caller sets no
+// earlier deadline.
+const ifGenCurrentBudget = 10 * time.Second
 
 // clearBlockedPhase removes a blocked phase once nothing blocks the task any more. Scoped
 // to the prefix on purpose: any other phase belongs to a Start that is still in flight, and

@@ -17,7 +17,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { setCachedConns } from "./connsCache.ts";
 import { fetchConnsWithRetry } from "./connsRetry.ts";
-import type { ConnectionsStatus } from "../../types/session.ts";
+import type { ConnectionsStatus, Session } from "../../types/session.ts";
 
 export interface RepoRailContext {
   /** Launch kinds the user can actually start: connection-gated and allowed by the credential
@@ -85,6 +85,12 @@ function fetchConns(key: string): Promise<ConnectionsStatus | null> {
   return p;
 }
 
+/** The repository row the attached session lights up, or null. A session in a space (ADR 0142)
+ *  has no repository, even when a repository shares its folder name. */
+export function activeRepoOf(s: Session | undefined): string | null | undefined {
+  return s && agentOf(s.kind).caps.runsInDir && !s.space ? s.repo : null;
+}
+
 export function useRepoRailContext(): RepoRailContext {
   const sessions = useSessionsStore((s) => s.sessions);
   const layout = useLayoutStore((s) => s.layout);
@@ -147,7 +153,7 @@ export function useRepoRailContext(): RepoRailContext {
   // The attached session's repo (from the shared list — no extra fetch).
   const activeSessionName = activePane(layout)?.session ?? null;
   const activeSessionObj = sessions.find((s) => s.name === activeSessionName);
-  const activeRepo = activeSessionObj && agentOf(activeSessionObj.kind).caps.runsInDir ? activeSessionObj.repo : null;
+  const activeRepo = activeRepoOf(activeSessionObj);
 
   // The SCM pane target → active row.
   const ac = activePane(layout)?.content;

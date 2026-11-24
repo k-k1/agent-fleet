@@ -80,7 +80,8 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
   const refreshSessions = useSessionsStore((s) => s.refresh);
   const startWork = useStartWork();
 
-  const [stage, setStage] = useState<Stage>("place");
+  // The Terminal view opens the hub on the SSM host picker; every other way in starts at the places.
+  const [stage, setStage] = useState<Stage>(() => useSessionsStore.getState().startStage ?? "place");
   const [busy, setBusy] = useState(false);
 
   // --- place: chat (assistants inline), repos, +clone, home, other ---

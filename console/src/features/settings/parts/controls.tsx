@@ -16,16 +16,16 @@ export function Row({ label, children }: { label: ReactNode; children?: ReactNod
 
 // Shared settings-tab controls, so the segmented Choice and the on/off toggle are defined
 // once instead of copied between DisplayTab and AgentsTab (they drift otherwise).
-export interface ChoiceProps {
-  value: unknown;
-  options: unknown[][];
-  /** `never` accepts a handler of any parameter type: each caller's options carry its own value
-   *  type, which this untyped option list cannot name. */
-  onChange: (v: never) => void;
+export type ChoiceOption<T> = readonly [value: T, label: ReactNode];
+export interface ChoiceProps<T> {
+  value: T;
+  options: readonly ChoiceOption<T>[];
+  /** Receives one of the option values, so a caller's handler is checked against its own option type. */
+  onChange: (v: T) => void;
 }
 
 // Choice: a small horizontal segmented control.
-export function Choice({ value, options, onChange }: ChoiceProps) {
+export function Choice<T>({ value, options, onChange }: ChoiceProps<T>) {
   return (
     <div className="seg choice-seg">
       {options.map(([v, label]) => (
@@ -33,9 +33,9 @@ export function Choice({ value, options, onChange }: ChoiceProps) {
           key={String(v)}
           type="button"
           className={"seg-btn" + (v === value ? " seg-btn--active" : "")}
-          onClick={() => onChange(v as never)}
+          onClick={() => onChange(v)}
         >
-          {label as ReactNode}
+          {label}
         </button>
       ))}
     </div>
@@ -78,19 +78,21 @@ export function Slider({
 // Select: a native dropdown sharing Choice's [value, label] options, for lists too long
 // for a segmented control (opencode's ~50 models, say). Values round-trip through the
 // original option: String() is used for display only and onChange returns the original type.
-export function Select({ value, options, onChange }: ChoiceProps) {
+export function Select<T>({ value, options, onChange }: ChoiceProps<T>) {
   return (
     <select
       className="ds-select"
       value={String(value)}
       onChange={(e) => {
+        // The DOM only reports a string. A value that matches no option can only come from a stale
+        // element, so it is dropped instead of being passed on as a `T` it is not.
         const hit = options.find(([v]) => String(v) === e.target.value);
-        onChange((hit ? hit[0] : e.target.value) as never);
+        if (hit) onChange(hit[0]);
       }}
     >
       {options.map(([v, label]) => (
         <option key={String(v)} value={String(v)}>
-          {label as string}
+          {label}
         </option>
       ))}
     </select>

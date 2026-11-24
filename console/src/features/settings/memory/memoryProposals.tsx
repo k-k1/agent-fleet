@@ -8,7 +8,7 @@
 // change list's layout (memoryChanges.tsx) on purpose.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { errDetail, isTransientErr } from "../../../core/api/client.ts";
+import { errDetail, getTenant, isTransientErr } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
 import {
   decideConsolProposal,
@@ -18,6 +18,7 @@ import {
   runConsolidation,
 } from "./memoryApi.ts";
 import { useMemoryStore } from "../../memory/store.ts";
+import { useTenantStore } from "../../../core/store/tenant.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
 import { useReadGuard, type ReadTicket } from "../../../lib/readGuard.ts";
 import { useInterval } from "../../../lib/useInterval.ts";
@@ -136,9 +137,11 @@ export function LintScheduleSettings() {
 /**
  * The consolidator's status and its "run now", shared by Settings and the left pane's Memory view.
  * `active` false stops the read and the run poll (a hidden view makes no read of its own, ADR 0140
- * decision 3); `reload` re-reads; `tenant` is another workspace, whose status replaces this one.
+ * decision 3); `reload` re-reads; `tenant` is the workspace on screen, another one replaces this
+ * status, and "run now" writes to the one confirmed and sends nothing once it changed. Required: a
+ * caller that left it out could neither notice a switch nor pin the write.
  */
-export function useConsolRun(reload: number, active = true, tenant = "") {
+export function useConsolRun(reload: number, active: boolean, tenant: string) {
   const tr = useT();
   const [st, setSt] = useState<ConsolStatus | null>(null);
   const [err, setErr] = useState(false);
@@ -160,15 +163,20 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
   // The run poll's own lifetime, set at commit: its reads are dropped once the run has ended, so a
   // late failure cannot leave a warning nothing will clear with the poll stopped, and a tick due
   // before useInterval's passive cleanup starts none. Not the shared guard: a run ending seen just
-  // after a tenant switch must not kill the new tenant's first read.
-  const pollSignal = useRef<AbortSignal | null>(null);
+  // after a tenant switch must not kill the new tenant's first read. `load` also aborts it the
+  // moment it adopts a finished status: the layout cleanup only runs at commit, and a failure
+  // answered in the same batch would otherwise still pass. A running status adopted right after
+  // in that batch replaces the aborted controller, since `running` never changes across the commit
+  // and the layout effect would not start a new lifetime.
+  const pollAc = useRef<AbortController | null>(null);
   useLayoutEffect(() => {
     if (!running || !active) return;
     const ac = new AbortController();
-    pollSignal.current = ac.signal;
+    pollAc.current = ac;
     return () => {
       ac.abort();
-      pollSignal.current = null;
+      pollAc.current?.abort();
+      pollAc.current = null;
     };
   }, [running, active, tenant]);
   const load = useCallback(async (tk: ReadTicket, signal?: AbortSignal) => {
@@ -187,6 +195,8 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
     if (!tk.land()) return true;
     setErr(false);
     setSt(res);
+    if (res?.run?.running !== true) pollAc.current?.abort();
+    else if (pollAc.current?.signal.aborted) pollAc.current = new AbortController();
     return true;
   }, []);
   useRetryLoad(async (signal) => (active ? load(guard.begin(tenant), signal) : true), [reload, active, tenant, load]);
@@ -201,8 +211,8 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
   // A failed read does not stop it: the next poll clears the warning by itself, whereas stopping would
   // leave a stale "running" that only a reload could end. The interval is bounded and cleared on unmount.
   useInterval(() => {
-    const signal = pollSignal.current;
-    if (signal) void load(guard.begin(tenant), signal);
+    const signal = pollAc.current?.signal;
+    if (signal && !signal.aborted) void load(guard.begin(tenant), signal);
   }, running && active ? RUN_POLL_MS : null);
 
   const [starting, setStarting] = useState(false);
@@ -215,6 +225,12 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
     // The view this click was made in: a tenant switch or the view being hidden while the dialog is
     // open (or before the re-read) leaves this ticket dead.
     const origin = guard.begin(tenant);
+    const confirmedFor = tenant;
+    // The selection itself, read live: the ticket only dies once React re-renders after a switch,
+    // and an empty `tenant` sends no header, so the wrapper would fill in the new selection. A
+    // click made while the screen still shows another tenant is refused too, dialog included.
+    const selectedAtClick = getTenant();
+    if (selectedAtClick !== confirmedFor) return;
     const budget = st.config.tokenBudget;
     const ok = await askConfirm({
       title: tr("mem.cs_run_title"),
@@ -227,12 +243,12 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
       ),
       confirmLabel: tr("mem.cs_run_confirm"),
     });
-    if (!ok || inFlight.current || !origin.current()) return;
+    if (!ok || inFlight.current || !origin.current() || getTenant() !== selectedAtClick) return;
     inFlight.current = true;
     setStarting(true);
     try {
       // No id to repeat in the query: the CP audit row for this write has no target.
-      const res = await runConsolidation(all);
+      const res = await runConsolidation(all, confirmedFor);
       if (!isOk(res)) toast(refusalText(tr, res.error.code, errDetail(res.error)));
       else toast(tr("mem.cs_run_started"), { kind: "success" });
     } catch {
@@ -249,7 +265,8 @@ export function useConsolRun(reload: number, active = true, tenant = "") {
 
 function ConsolidationStatus({ reload }: { reload: number }) {
   const tr = useT();
-  const { st, err, running, starting, runNow: run } = useConsolRun(reload);
+  const tenant = useTenantStore((s) => s.tenant);
+  const { st, err, running, starting, runNow: run } = useConsolRun(reload, true, tenant);
   const [all, setAll] = useState(false);
   const runNow = () => run(all);
   if (err) return <p className="mem-warn">{tr("mem.cs_status_failed")}</p>;

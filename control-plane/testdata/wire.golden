@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 675
+# count: 687
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -93,8 +93,14 @@ agentCatalogWire.sessions[].resumable bool
 agentCatalogWire.sessions[].route.connection string,omitempty
 agentCatalogWire.sessions[].route.route string
 agentCatalogWire.sessions[].scheduleId string,omitempty
+agentCatalogWire.sessions[].space string,omitempty
 agentCatalogWire.sessions[].spendCapHitAt string,omitempty
 agentCatalogWire.sessions[].spendCapUsd number,omitempty
+agentCatalogWire.sessions[].ssm.accountId string,omitempty
+agentCatalogWire.sessions[].ssm.document string,omitempty
+agentCatalogWire.sessions[].ssm.profile string,omitempty
+agentCatalogWire.sessions[].ssm.region string,omitempty
+agentCatalogWire.sessions[].ssm.target string
 agentCatalogWire.sessions[].started string
 agentCatalogWire.sessions[].state string
 agentCatalogWire.sessions[].stateSince string,omitempty
@@ -450,7 +456,7 @@ notificationDTO.createdAt string
 notificationDTO.displayName string
 notificationDTO.id string
 notificationDTO.kind string
-notificationDTO.payload object
+notificationDTO.payload raw
 notificationDTO.seen bool
 notificationDTO.seq number
 notificationDTO.target.id string
@@ -572,8 +578,14 @@ sessionWire.resumable bool
 sessionWire.route.connection string,omitempty
 sessionWire.route.route string
 sessionWire.scheduleId string,omitempty
+sessionWire.space string,omitempty
 sessionWire.spendCapHitAt string,omitempty
 sessionWire.spendCapUsd number,omitempty
+sessionWire.ssm.accountId string,omitempty
+sessionWire.ssm.document string,omitempty
+sessionWire.ssm.profile string,omitempty
+sessionWire.ssm.region string,omitempty
+sessionWire.ssm.target string
 sessionWire.started string
 sessionWire.state string
 sessionWire.stateSince string,omitempty

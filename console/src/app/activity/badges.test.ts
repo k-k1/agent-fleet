@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasUnreadConversation, hasUnreadSession, mergeAcked, pendingNews, waitingSessions, workItemNewsKeys } from "./badges.ts";
+import { hasUnreadConversation, hasUnreadSession, hasUnreadTerminal, mergeAcked, pendingNews, waitingSessions, workItemNewsKeys } from "./badges.ts";
 import { approvalCount } from "../../features/memo/queues.ts";
 import type { Memo } from "../../types/memo.ts";
 import type { FleetNotification } from "../../features/notifications/store.ts";
@@ -36,6 +36,27 @@ describe("badges under a working set", () => {
     const list = [inRepo("a", "question", "webshop"), inRepo("b", "question", "payments-api"), sess("solo", "plan")];
     expect(waitingSessions(list)).toBe(3);
     expect(waitingSessions(list, set)).toBe(2);
+  });
+
+  // A program in a shell can raise a desktop notification (OSC): it is on a row only the Terminal
+  // view lists, so that is the icon that carries the dot, and the Sessions icon stays quiet.
+  it("sends a shell's unread notice to the Terminal icon, not the Sessions one", () => {
+    const list = [
+      { name: "sh", kind: "shell", alive: true, repo: "webshop", dir: "/home/dev/repos/webshop" },
+      { name: "ag", kind: "claude", alive: true, repo: "webshop", dir: "/home/dev/repos/webshop" },
+    ] as unknown as Session[];
+    const repos = [{ name: "webshop" }] as unknown as Parameters<typeof hasUnreadTerminal>[2];
+    const onShell = [note({ target: { type: "session", id: "sh" } })];
+    const onAgent = [note({ target: { type: "session", id: "ag" } })];
+    expect(hasUnreadSession(onShell, list, null)).toBe(false);
+    expect(hasUnreadTerminal(onShell, list, repos, null)).toBe(true);
+    expect(hasUnreadSession(onAgent, list, null)).toBe(true);
+    expect(hasUnreadTerminal(onAgent, list, repos, null)).toBe(false);
+    // Under a set that lists the copy, and under one that does not.
+    // While the workspace is stopped the history lists the shell, so the Sessions icon carries it.
+    expect(hasUnreadSession(onShell, list, null, true)).toBe(true);
+    expect(hasUnreadTerminal(onShell, list, repos, set)).toBe(true);
+    expect(hasUnreadTerminal(onShell, list, repos, { ...set, repos: ["payments-api"] })).toBe(false);
   });
 
   it("marks unread sessions only when one of them is listed", () => {

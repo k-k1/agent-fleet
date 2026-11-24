@@ -15,6 +15,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 
 import { useLayoutEffect } from "react";
 import { useConsolRun } from "./memoryProposals.tsx";
+import { setTenant } from "../../../core/api/client.ts";
 import { useMemoryStore } from "../../memory/store.ts";
 import { ToastProvider } from "../../../ui/ToastProvider.tsx";
 import { ConfirmProvider } from "../../../ui/ConfirmProvider.tsx";
@@ -40,6 +41,8 @@ function Layout({ during }: { during?: () => void }) {
   return null;
 }
 async function render(active: boolean, tenant = "a", reload = 0, during?: () => void) {
+  // The selection and the tenant the screen shows agree, as they do once a switch has rendered.
+  setTenant(tenant);
   await act(async () =>
     root!.render(
       <ToastProvider>
@@ -60,6 +63,7 @@ beforeEach(() => {
   root = createRoot(host);
 });
 afterEach(async () => {
+  setTenant("");
   if (root) await act(async () => root!.unmount());
   host?.remove();
   root = host = null;
@@ -208,6 +212,51 @@ describe("useConsolRun", () => {
     expect(seen!.err).toBe(false);
   });
 
+  it("drops a poll's failure answered in the same batch as the run ending", async () => {
+    api.mockResolvedValue(status(true));
+    await render(true);
+    const answers: Array<(v: unknown) => void> = [];
+    api.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    await act(async () => vi.advanceTimersByTime(3000));
+    await act(async () => vi.advanceTimersByTime(3000));
+    expect(answers.length).toBe(2);
+    // One act: both answers are processed before React commits, so the layout cleanup that ends
+    // the poll's lifetime has not run when the failure is handled.
+    await act(async () => {
+      answers[0](status(false));
+      answers[1](failure);
+    });
+    await act(async () => {});
+    expect(seen!.running).toBe(false);
+    expect(seen!.err).toBe(false);
+  });
+
+  it("keeps polling when a run ending and a new run's start are answered in the same batch", async () => {
+    api.mockResolvedValue(status(true));
+    await render(true);
+    const answers: Array<(v: unknown) => void> = [];
+    api.mockImplementation(() => new Promise((resolve) => answers.push(resolve)));
+    // A poll tick, then a newer re-read (a reload): the poll says the run is done, the re-read
+    // that a new one started.
+    await act(async () => vi.advanceTimersByTime(3000));
+    await render(true, "a", 1);
+    expect(answers.length).toBe(2);
+    // `running` is true before and after the commit, so the poll's lifetime must be renewed by the
+    // answers themselves: the layout effect does not run again.
+    await act(async () => {
+      answers[0](status(false));
+      answers[1](status(true, 2));
+    });
+    await act(async () => {});
+    expect(seen!.running).toBe(true);
+    api.mockReset();
+    api.mockResolvedValue(status(false, 3));
+    await act(async () => vi.advanceTimersByTime(3000));
+    await act(async () => {});
+    expect(api).toHaveBeenCalled();
+    expect(seen!.running).toBe(false);
+  });
+
   it("keeps the later progress when two running answers arrive out of order", async () => {
     const answer = await twoPolls();
     await answer(1, status(true, 2));
@@ -260,6 +309,41 @@ describe("useConsolRun", () => {
       expect(api.mock.calls.length).toBe(calls);
     });
   }
+
+  it("sends the write to the tenant that was confirmed", async () => {
+    api.mockResolvedValue(status(false));
+    await render(true, "a");
+    apiJSON.mockResolvedValue({ ok: true });
+    const { done } = await confirmRun();
+    await act(async () => done);
+    expect(apiJSON).toHaveBeenCalledWith(expect.stringContaining("/run"), "POST", {}, { "X-AF-Tenant": "a" });
+  });
+
+  // The ticket dies only when React re-renders after a switch; the selection itself changes first.
+  // With no tenant the write carries no header, so the wrapper would fill in the new selection.
+  it("opens no dialog when the selection moved before the hook re-rendered", async () => {
+    api.mockResolvedValue(status(false));
+    await render(true, "");
+    setTenant("beta");
+    await openRun();
+    expect(document.body.querySelector(".ui-confirm-actions")).toBeNull();
+    expect(apiJSON).not.toHaveBeenCalled();
+  });
+
+  it("sends no write when the selection changes before the hook re-renders", async () => {
+    api.mockResolvedValue(status(false));
+    await render(true, "");
+    apiJSON.mockResolvedValue({ ok: true });
+    const { done } = await openRun();
+    setTenant("beta");
+    try {
+      await confirm();
+      await act(async () => done);
+      expect(apiJSON).not.toHaveBeenCalled();
+    } finally {
+      setTenant("");
+    }
+  });
 
   it("re-reads after run now", async () => {
     api.mockResolvedValue(status(false));

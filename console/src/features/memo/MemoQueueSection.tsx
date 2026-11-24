@@ -548,7 +548,9 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const removeNewImage = (name: string) => setNewImages((cur) => cur.filter((a) => a.name !== name));
 
   // Best-effort prune of orphaned container images: keep everything referenced by a memo
-  // plus the composer's in-flight uploads (not yet committed to a memo). Fire-and-forget.
+  // plus the composer's uploads (not yet committed to a memo). An upload whose response has
+  // not arrived cannot be named here; the agent spares recently stored files for that
+  // (memoImageGCGrace). Fire-and-forget.
   const runImageGC = (memoList: Memo[], pending: MemoAttachment[]) => {
     const keep = new Set<string>();
     for (const m of memoList) for (const a of m.attachments || []) keep.add(a.name);
@@ -607,8 +609,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   }, []);
 
   // ---- memo edit / delete ------------------------------------------------------
-  const saveEdit = async (m: Memo, body: string, category: string, clearRef: boolean, after?: string[], startAfter?: string, recipe?: Partial<RecipeDraft>) => {
-    setEditing(null);
+  // Resolves to the refusal's words when the save did not go through, null when it did. The editor
+  // stays open until then: a refused save must not cost the member the draft, so the row keeps it and
+  // shows the words.
+  const saveEdit = async (m: Memo, body: string, category: string, clearRef: boolean, after?: string[], startAfter?: string, recipe?: Partial<RecipeDraft>): Promise<SaveRefusal | null> => {
     try {
       // The reference is left out unless the member removed it: absent keeps it, `{}` clears it. The
       // notes it waits for are sent only when the member changed them: absent keeps them, [] clears.
@@ -625,13 +629,17 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       if ((res as { error?: unknown }).error) {
         // A queue's own refusals (locked, sending, ...) have their own wording.
         const err = (res as unknown as { error: { code?: string } }).error;
-        toast(err.code?.startsWith("memo_") ? errText(err) : t("common.send_failed"));
-        return;
+        const text = err.code?.startsWith("memo_") ? errText(err) : t("common.send_failed");
+        // The refusal can come from a list that moved under the editor (a prerequisite left the
+        // category): reload it so the picker can say which chip is the offender.
+        if (err.code === "memo_after_invalid") bumpMemos();
+        return { code: err.code ?? "", text };
       }
       bumpMemos();
       toast(t("memo.updated"), { kind: "success" });
+      return null;
     } catch {
-      toast(t("common.send_failed"));
+      return { code: "", text: t("common.send_failed") };
     }
   };
   const remove = async (id: string) => {
@@ -1233,7 +1241,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                       onCollapse={() => setExpanded((s) => ({ ...s, [m.id]: false }))}
                       onEdit={() => setEditing(m.id)}
                       onCancelEdit={() => setEditing(null)}
-                      onSave={(body, category, clearRef, after, startAfter, recipe) => void saveEdit(m, body, category, clearRef, after, startAfter, recipe)}
+                      onSave={(body, category, clearRef, after, startAfter, recipe) => saveEdit(m, body, category, clearRef, after, startAfter, recipe)}
                       isQueueCategory={(name) => !!cats.find((c) => c.repo === m.repo && c.name === name)?.queue}
                       recipeAgent={isQueue && (m.state === "held" || m.state === "pending") ? (queue?.agentKind ?? "") : undefined}
                       afterChoices={isQueue && (m.state === "held" || m.state === "pending") ? afterChoices(g.memos, m) : undefined}
@@ -1760,6 +1768,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
             setSendOpen(false);
             bumpMemos();
           }}
+          onProgress={bumpMemos}
         />
       )}
     </>
@@ -1809,6 +1818,12 @@ function dedupeGroups(groups: { repo: string; category: string }[]): { repo: str
   });
 }
 
+/** A refused save: the Control Plane's code and the words to show. */
+interface SaveRefusal {
+  code: string;
+  text: string;
+}
+
 // One memo row: collapsed to 1 line, click to expand full text, click again to edit.
 interface MemoRowProps {
   memo: Memo;
@@ -1823,7 +1838,7 @@ interface MemoRowProps {
   onCancelEdit: () => void;
   /** after is the notes it waits for when the member changed them, absent otherwise. */
   /** after and startAfter are sent only when the member changed them (absent keeps them). */
-  onSave: (body: string, category: string, clearRef: boolean, after?: string[], startAfter?: string, recipe?: Partial<RecipeDraft>) => void;
+  onSave: (body: string, category: string, clearRef: boolean, after?: string[], startAfter?: string, recipe?: Partial<RecipeDraft>) => Promise<SaveRefusal | null>;
   /** The category's own agent when the note may carry a run recipe of its own (a held or waiting note
    *  of an auto-run category; "" when its settings are not read); absent elsewhere. */
   recipeAgent?: string;
@@ -1870,6 +1885,15 @@ function MemoRow(props: MemoRowProps) {
   const [start, setStart] = useState(() => startAfterInputValue(m.startAfter, startZone));
   const [startBase, setStartBase] = useState(start);
   const [startBad, setStartBad] = useState(false);
+  // The last refusal of a save; the editor stays open with the draft until a save goes through.
+  const [refusal, setRefusal] = useState<SaveRefusal | null>(null);
+  const [saving, setSaving] = useState(false);
+  // An answer applies only to the edit it was sent for: a cancel and re-edit while the request is out
+  // must neither be closed nor overwritten by it.
+  const editGen = useRef(0);
+  const savingRef = useRef(false);
+  const editingNow = useRef(editing);
+  editingNow.current = editing;
   const ref = memoReference(m);
   // The notes on offer, then every chosen one that is no longer on offer (deleted, moved, replaced,
   // kept past the list's window, or gone while the editor was open): those stay visible as chips so
@@ -1901,7 +1925,7 @@ function MemoRow(props: MemoRowProps) {
                 memo: byId.get(id) ?? seen?.memo,
                 // Without a word from the Control Plane, a note seen on offer that is gone now: the
                 // save would be refused, so the chip says so.
-                why: st ? afterItemWords(st) : seen ? "memo.after_gone" : undefined,
+                why: st ? afterItemWords(st) : seen ? (refusal?.code === "memo_after_invalid" ? "memo.after_refused" : "memo.after_gone") : undefined,
               };
             });
           return [...offered, ...rest];
@@ -1921,7 +1945,8 @@ function MemoRow(props: MemoRowProps) {
         : after;
   // Sent only when the member changed the field, so an untouched one never re-sends a stored time
   // (which may have passed, and the Control Plane would then clear it) nor clears one set elsewhere.
-  const save = () => {
+  const save = async () => {
+    if (savingRef.current) return;
     const startAfter = start === startBase ? undefined : startAfterFromInput(start, startZone);
     if (startAfter === null) {
       setStartBad(true);
@@ -1931,7 +1956,18 @@ function MemoRow(props: MemoRowProps) {
     // A move out of every auto-run category drops the recipe at the Control Plane, and a recipe sent
     // there would be refused, so it is not sent.
     const recipeChange = props.recipeAgent === undefined || !recipeApplies ? {} : recipePatch(recipeBase, recipe);
-    props.onSave(body, cat, clearRef, afterChanged(), startAfter, Object.keys(recipeChange).length > 0 ? recipeChange : undefined);
+    const gen = editGen.current;
+    savingRef.current = true;
+    setSaving(true);
+    const answer = await props.onSave(body, cat, clearRef, afterChanged(), startAfter, Object.keys(recipeChange).length > 0 ? recipeChange : undefined);
+    if (gen !== editGen.current) return;
+    savingRef.current = false;
+    setSaving(false);
+    setRefusal(answer);
+    // The draft cannot change while the request is out (the editor is locked), so what was sent is
+    // what is stored and the editor can close.
+    if (!answer && editingNow.current) props.onCancelEdit();
+    else requestAnimationFrame(() => taRef.current?.focus());
   };
   // The recipe as it was when the edit began is the baseline: a refresh that brings another device's
   // change must neither be overwritten by a save of the text nor discard what is being typed.
@@ -1967,6 +2003,10 @@ function MemoRow(props: MemoRowProps) {
     setStart(startAfterInputValue(m.startAfter, zone));
     setStartBase(startAfterInputValue(m.startAfter, zone));
     setStartBad(false);
+    setRefusal(null);
+    editGen.current++;
+    savingRef.current = false;
+    setSaving(false);
     setAfter(m.after ?? []);
     setAfterBase(m.after ?? []);
     setRecipe(recipeDraftOf(m));
@@ -1974,9 +2014,17 @@ function MemoRow(props: MemoRowProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only the start of an edit resets it
   }, [editing]);
 
+  // Any change of the draft retires the refusal shown for the one before it.
+  useEffect(() => {
+    setRefusal(null);
+  }, [body, cat, clearRef, after, start, recipe]);
+
   if (editing) {
     return (
       <div className="memo-row editing">
+        {/* Locked while a save is out: text typed meanwhile would be neither sent nor kept once the saved
+            memo is reloaded. */}
+        <fieldset className="memo-edit-lock" disabled={saving}>
         <div className="memo-edit">
           {ref && (
             <div className="memo-edit-ref">
@@ -2013,7 +2061,7 @@ function MemoRow(props: MemoRowProps) {
               const submitWithKey = settings.mirrorSend !== "enter" ? mod : !e.shiftKey && !mod;
               if (submitWithKey) {
                 e.preventDefault();
-                save();
+                void save();
               }
             }}
           />
@@ -2025,7 +2073,7 @@ function MemoRow(props: MemoRowProps) {
               placeholder={tr("memo.category_ph")}
               onChange={(e) => setCat(e.target.value)}
             />
-            <Button small variant="primary" onClick={save}>
+            <Button small variant="primary" disabled={saving} onClick={() => void save()}>
               {tr("memo.save")}
             </Button>
             <Button small variant="ghost" onClick={props.onCancelEdit}>
@@ -2084,8 +2132,14 @@ function MemoRow(props: MemoRowProps) {
               <div className="memo-edit-hint">{tr("memo.start_edit_hint", { zone: startZone })}</div>
             </fieldset>
           )}
+          {refusal && (
+            <div className="memo-edit-after-why" role="alert">
+              {refusal.text}
+            </div>
+          )}
           <div className="memo-edit-hint">{m.kind === "file" ? tr("memo.edit_hint_file") : tr("memo.edit_hint")}</div>
         </div>
+        </fieldset>
       </div>
     );
   }

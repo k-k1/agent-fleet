@@ -103,6 +103,8 @@ function openRunSession(agentKind: string | undefined, name: string): void {
 interface ScheduleRowProps {
   s: ScheduleDTO;
   rowBusy: boolean;
+  /** The row got a 409 on approve and its refreshed copy has not arrived: its details stay shut. */
+  detailHeld: boolean;
   runsOpen: boolean;
   runs: ScheduleRun[] | undefined;
   /** Sessions this schedule started (and the ones they spawned), newest first. */
@@ -120,7 +122,7 @@ interface ScheduleRowProps {
   onDelete: (s: ScheduleDTO) => void;
 }
 
-function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEndedOpenChange, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
+function ScheduleRow({ s, rowBusy, detailHeld, runsOpen, runs, sessionRuns, endedOpen, onEndedOpenChange, wsets, wctx, onToggleRuns, onDetail, onPause, onRunNow, onDelete }: ScheduleRowProps) {
   const tr = useT();
   const paused = !s.enabled;
   const tone = statusTone(s.last_status);
@@ -196,7 +198,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
           <button
             type="button"
             className="sched-approve-btn"
-            disabled={rowBusy}
+            disabled={rowBusy || detailHeld}
             onClick={(e) => {
               e.stopPropagation();
               onDetail(s);
@@ -223,7 +225,7 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
           {menuOpen &&
             createPortal(
               <div className="ui-menu sched-menu" ref={menuElRef} onMouseDown={(e) => e.stopPropagation()}>
-                <button type="button" className="ui-menu-item" onClick={() => runAction(onDetail)}>
+                <button type="button" className="ui-menu-item" disabled={detailHeld} onClick={() => runAction(onDetail)}>
                   <Icon name="edit" /> {tr("sched.detail")}
                 </button>
                 <button type="button" className="ui-menu-item" disabled={rowBusy} onClick={() => runAction(onPause)}>
@@ -333,10 +335,16 @@ function ScheduleRow({ s, rowBusy, runsOpen, runs, sessionRuns, endedOpen, onEnd
   );
 }
 
-// Rendered inside the Section body: its unmount is the real "body went away" signal.
-function BodyMark({ onUnmount }: { onUnmount: () => void }) {
+// Rendered inside the Section body: its unmount is the real "body went away" signal. `mounted`
+// is false from that unmount on, so a layout effect of the parent that runs in the same commit
+// (child cleanups run first) can tell the body is already gone.
+function BodyMark({ mounted, onUnmount }: { mounted: { current: boolean }; onUnmount: () => void }) {
   useLayoutEffect(() => {
-    return onUnmount;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      onUnmount();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return null;
@@ -367,6 +375,11 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const [openRuns, setOpenRuns] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ScheduleRun[]>>({});
   const [detail, setDetail] = useState<ScheduleDTO | null>(null);
+  // The rows whose approve answered 409: the copy on screen is the rejected generation, so opening
+  // it again would only earn a second 409. Held from the 409 until a list read begun after it
+  // lands (the retry tick drops every older read), so no stale copy can reopen the details. A Set
+  // because a second row can be refused while the first one's re-read is still out.
+  const [staleIds, setStaleIds] = useState<ReadonlySet<string>>(() => new Set());
   // The section owns its open state (a controlled Section) because a reveal from a
   // notification has to open it. The key is the one Section persists to itself, so an
   // existing open/closed choice still applies.
@@ -420,6 +433,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
         }
         if (tk.land("status")) setLoadErr("");
         if (tk.land("list")) {
+          setStaleIds((cur) => (cur.size ? new Set() : cur));
           const ser = JSON.stringify(arr);
           if (ser !== serRef.current) {
             serRef.current = ser;
@@ -467,6 +481,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
   // Section unmounts its body when closed, but never under SoloSection, so the section's own
   // open flag cannot tell: BodyMark's unmount resets every fold.
   const prevRestEnded = useRef<Map<string, string>>(new Map());
+  const bodyMounted = useRef(false);
   useLayoutEffect(() => {
     const prev = prevRestEnded.current;
     const next = new Map<string, string>();
@@ -477,8 +492,10 @@ export const SchedulesSection = memo(function SchedulesSection() {
     const keep = new Set<string>();
     if (grouped.rest.length) keep.add("");
     for (const [id, list] of grouped.bySchedule) if (list.length) keep.add(id);
+    // No carry once the body is gone: `endedOpen` here is the previous render's, and a carry
+    // queued after BodyMark's reset in the same commit would bring a fold back open on reopen.
     const carry = new Set<string>();
-    if (endedOpen[""]) {
+    if (bodyMounted.current && endedOpen[""]) {
       for (const [id, list] of grouped.bySchedule) {
         if (list.some((r) => !r.live && prev.get(r.root.name) === "")) carry.add(id);
       }
@@ -624,7 +641,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
       open={sectionOpen}
       onToggle={() => setSectionOpen(!sectionOpen)}
     >
-      <BodyMark onUnmount={() => setEndedOpen({})} />
+      <BodyMark mounted={bodyMounted} onUnmount={() => setEndedOpen({})} />
       {/* A failed fetch is shown as its own state, not as "empty" (the rows on screen stay). */}
       {loadErr && (
         <div className="sched-load-err" role="status" title={loadErr}>
@@ -648,6 +665,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
               key={s.id}
               s={s}
               rowBusy={!!busy[s.id]}
+              detailHeld={staleIds.has(s.id)}
               runsOpen={openRuns === s.id}
               runs={openRuns === s.id ? runs[s.id] : undefined}
               sessionRuns={grouped.bySchedule.get(s.id) ?? []}
@@ -669,7 +687,10 @@ export const SchedulesSection = memo(function SchedulesSection() {
         <ScheduleDetailModal
           s={detail}
           onClose={() => setDetail(null)}
-          onStale={() => setReloadTick((n) => n + 1)}
+          onStale={() => {
+            setStaleIds((cur) => new Set(cur).add(detail.id));
+            setReloadTick((n) => n + 1);
+          }}
           onSaved={(dto) => {
             applyDTO(dto);
             setDetail(null);

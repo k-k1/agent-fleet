@@ -48,6 +48,7 @@ type Store interface {
 	WorkItemStore
 	NotificationStore
 	PushSubscriptionStore
+	PushSubscribedMembershipStore
 	ScheduleStore
 	MCPServerStore
 	SessionShareStore
