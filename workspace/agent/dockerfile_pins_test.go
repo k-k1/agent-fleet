@@ -19,6 +19,21 @@ var pinExemptions = map[string]string{
 	"POSTGRES_VERSION":     "has a row without a Pin on purpose: versions.json holds the Zonky server version, psql prints the Debian client version (see toolSpecs)",
 }
 
+// pinKeyAliases are the ARGs whose versions.json key is not the lower-cased ARG name without
+// `_VERSION`. Pinning the expected key per ARG is what catches two printf arguments swapped.
+var pinKeyAliases = map[string]string{
+	"CLAUDE_CODE_VERSION":    "claude",
+	"JIRA_CLI_VERSION":       "jira",
+	"CONFLUENCE_CLI_VERSION": "confluence",
+}
+
+func expectedPinKey(arg string) string {
+	if k, ok := pinKeyAliases[arg]; ok {
+		return k
+	}
+	return strings.ToLower(strings.TrimSuffix(arg, "_VERSION"))
+}
+
 var (
 	dockerArgDefaultRe = regexp.MustCompile(`(?m)^\s*ARG\s+([A-Z][A-Z0-9_]*_VERSION)=\S`)
 	printfKeyRe        = regexp.MustCompile(`"([a-z0-9_]+)":"%s"`)
@@ -57,7 +72,9 @@ func versionsJSONPositions(t *testing.T, dockerfile string) map[string]string {
 	out := map[string]string{}
 	for n, a := range args {
 		if strings.HasPrefix(a, "$") {
-			out[strings.TrimPrefix(a, "$")] = keys[n]
+			name := strings.TrimPrefix(a, "$")
+			name = strings.TrimSuffix(strings.TrimPrefix(name, "{"), "}")
+			out[name] = keys[n]
 		}
 	}
 	return out
@@ -98,6 +115,10 @@ func TestDockerfileVersionArgsAreCovered(t *testing.T) {
 			t.Errorf("%s: not passed to the versions.json printf in workspace/Dockerfile. Add a key and a \"$%s\" argument at the same position, add a toolSpecs row (workspace/agent/env_tool_versions.go) with Pin set to that key, or exempt it in pinExemptions with a reason", arg, arg)
 			continue
 		}
+		if want := expectedPinKey(arg); key != want {
+			t.Errorf("%s: the versions.json printf puts it under %q, want %q (arguments swapped or misplaced? add a pinKeyAliases entry if the key is named differently on purpose)", arg, key, want)
+			continue
+		}
 		if !pins[key] {
 			t.Errorf("%s: versions.json has %q but no toolSpecs row has Pin %q (workspace/agent/env_tool_versions.go); add the row or exempt the ARG in pinExemptions with a reason", arg, key, key)
 		}
@@ -134,10 +155,23 @@ func TestGitleaksAndSessionManagerRows(t *testing.T) {
 			t.Errorf("toolSpecs has no %s row", name)
 		}
 	}
+	for _, s := range toolSpecs {
+		if s.Name == "session-manager-plugin" && (s.VerRe == nil || s.VerRe("1.2.835.0") != "1.2.835.0") {
+			t.Error("session-manager-plugin row must carry a VerRe that keeps all four version parts")
+		}
+	}
 	if v := extractVer("8.30.1"); v != "8.30.1" {
 		t.Errorf("extractVer(gitleaks output) = %q", v)
 	}
 	if v := fullDottedVersion("1.2.835.0"); v != "1.2.835.0" {
 		t.Errorf("extractVer(session-manager-plugin output) = %q", v)
+	}
+}
+
+func TestVersionsJSONPositionsAcceptsBraces(t *testing.T) {
+	df := "printf '{\"a\":\"%s\",\"b\":\"%s\"}\\n' \\\n  \"${X_VERSION}\" \"$Y_VERSION\" \\\n  > /x/versions.json\n"
+	got := versionsJSONPositions(t, df)
+	if got["X_VERSION"] != "a" || got["Y_VERSION"] != "b" {
+		t.Errorf("positions = %v", got)
 	}
 }
