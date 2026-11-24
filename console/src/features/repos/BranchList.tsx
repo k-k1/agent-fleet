@@ -1,6 +1,7 @@
 // BranchList — filterable, newest-commit-first branch list. Shared by the repo
 // branch-switch modal (local, checkout on pick) and the new-session repo picker
 // (remote, select on pick). Port of the old components/BranchList.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useMemo, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
@@ -68,7 +69,7 @@ export function BranchList({ branches, selected, onPick, busy, disableActive, au
 
   return (
     <div className="branchlist-wrap">
-      <input
+      <input {...NO_AUTOFILL}
         className="branch-filter"
         autoFocus={autoFocus}
         placeholder={tr("rp.filter_branches")}

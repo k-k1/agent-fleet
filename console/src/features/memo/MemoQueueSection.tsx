@@ -8,6 +8,7 @@
 //     drag — memos within/between categories, and the categories themselves;
 //   - the send button (「送信…」) opens SendMemoModal to edit the concatenated text and
 //     pick a destination.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useFold } from "../../lib/useFold.ts";
 import { usePublishedHeight } from "../../lib/usePublishedHeight.ts";
 import { useInterval } from "../../lib/useInterval.ts";
@@ -1084,7 +1085,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         }
       }}
     >
-      <textarea
+      <textarea {...NO_AUTOFILL}
         ref={composerTextRef}
         className="memo-add-text"
         value={newText}
@@ -1125,7 +1126,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         {target ? (
           <span className="memo-add-target">{catLabel(target.category)}</span>
         ) : (
-          <input
+          <input {...NO_AUTOFILL}
             className="memo-add-cat"
             list="memo-cat-suggest"
             value={newCat}
@@ -1392,7 +1393,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           }
                         />
                         {cat && renameCat === cat.id ? (
-                          <input
+                          <input {...NO_AUTOFILL}
                             className="memo-cat-rename"
                             defaultValue={cat.name}
                             autoFocus
@@ -2109,7 +2110,7 @@ function MemoRow(props: MemoRowProps) {
               )}
             </div>
           )}
-          <textarea
+          <textarea {...NO_AUTOFILL}
             ref={taRef}
             className="memo-edit-text"
             value={body}
@@ -2130,7 +2131,7 @@ function MemoRow(props: MemoRowProps) {
             }}
           />
           <div className="memo-edit-row">
-            <input
+            <input {...NO_AUTOFILL}
               className="memo-edit-cat"
               list="memo-cat-suggest"
               value={cat}

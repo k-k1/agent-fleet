@@ -1,6 +1,7 @@
 // ChangesView — working-tree changes + commit workbench (stage / unstage /
 // discard, commit box, repo identity). A file's diff opens in a SEPARATE pane
 // (openFileDiff). Port of views/ChangesView onto the zustand stores.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api, apiJSON, rawJSON, isTransientErr } from "../../core/api/client.ts";
@@ -116,7 +117,7 @@ export function ChangesView({ repo, headerActions }: { repo: string; headerActio
         </ul>
 
         <div className="commitbox">
-          <textarea rows={2} placeholder={tr("scm.commit_message")} value={msg} onChange={(e) => setMsg(e.target.value)} />
+          <textarea {...NO_AUTOFILL} rows={2} placeholder={tr("scm.commit_message")} value={msg} onChange={(e) => setMsg(e.target.value)} />
           <label className="commitbox-all">
             <input type="checkbox" checked={all} onChange={(e) => setAll(e.target.checked)} /> {tr("scm.stage_all_tracked")}
           </label>
@@ -222,8 +223,8 @@ function RepoIdentity({ enc }: { enc: string }) {
         </button>
       ) : (
         <div className="ri-edit">
-          <input placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input {...NO_AUTOFILL} placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input {...NO_AUTOFILL} placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <button type="button" className="ui-btn ui-btn-sm" onClick={() => void put(name.trim(), email.trim())}>
             {tr("scm.save")}
           </button>

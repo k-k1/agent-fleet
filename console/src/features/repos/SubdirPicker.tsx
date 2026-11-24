@@ -8,6 +8,7 @@
 // For a worktree launch the tree shown is the PARENT copy's: the worktree does not
 // exist yet. The layouts normally match; when they don't, the Agent rejects the
 // missing path at create rather than silently landing somewhere else.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -57,7 +58,7 @@ export function SubdirPicker({
     <div className="subdirpick">
       <div className="subdirpick-row">
         <span className="subdirpick-root">{repo}/</span>
-        <input
+        <input {...NO_AUTOFILL}
           className="subdirpick-input"
           value={value}
           onChange={(e) => onChange(normalizeSubdir(e.target.value))}

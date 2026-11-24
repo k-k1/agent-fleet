@@ -13,6 +13,7 @@
 // mirror's battery measurements are the precedent. The status is read once per mount and on
 // the manual refresh; it does not change on its own except for `warm`, which the job phases
 // already report.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -851,7 +852,7 @@ function StudioPane({
                 {tr("imggen.studio_rename")}
                 {/* Keyed by the stored title so an answer from the Agent (or another pane)
                     replaces what is shown; saved on blur or Enter, "" goes back to the date. */}
-                <input
+                <input {...NO_AUTOFILL}
                   key={studio.studio.title}
                   className="ds-input"
                   defaultValue={studio.studio.title}

@@ -11,6 +11,7 @@
 //
 // GitHub is deliberately absent: the rail reuses the Git connection (Settings > Git), because
 // the token that clones is the token that lists issues. Only Jira needs its own.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { deleteJira, getConnections, getGitOAuthAvailability, putJiraSite, putJiraToken, startJiraOAuth, type JiraConn } from "./connectApi.ts";
@@ -225,7 +226,7 @@ function JiraCard({ st, reload, oauthAvailable }: { st: JiraConn | undefined; re
           {mode === "token" && (
             <>
               <div className="flow">
-                <input className="cinput" type="url" placeholder={tr("ops.jira_site_placeholder")} value={site} onChange={(e) => setSite(e.target.value)} />
+                <input {...NO_AUTOFILL} className="cinput" type="url" placeholder={tr("ops.jira_site_placeholder")} value={site} onChange={(e) => setSite(e.target.value)} />
               </div>
               <div className="flow">
                 <input className="cinput" type="email" placeholder={tr("ops.jira_email_placeholder")} value={email} onChange={(e) => setEmail(e.target.value)} />

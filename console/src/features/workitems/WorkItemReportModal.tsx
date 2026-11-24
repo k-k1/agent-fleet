@@ -8,6 +8,7 @@
 // The draft's narrative line is left blank on purpose — af fills in branch and files
 // (facts it alone has per session) and lets the user say what happened. A generated
 // summary would read plausibly enough to be posted unread onto someone else's ticket.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -125,12 +126,12 @@ export function WorkItemReportModal({ item, sessions, sessionRef, onClose }: Pro
         {!edited && (
           <label className="wi-rnote">
             <span>{tr("wi.report_note")}</span>
-            <input value={note} onChange={(e) => setNote(e.target.value)} placeholder={tr("wi.report_note_ph")} />
+            <input {...NO_AUTOFILL} value={note} onChange={(e) => setNote(e.target.value)} placeholder={tr("wi.report_note_ph")} />
           </label>
         )}
         <label className="wi-rbody">
           <span>{tr("wi.report_body")}</span>
-          <textarea
+          <textarea {...NO_AUTOFILL}
             rows={12}
             value={body}
             spellCheck={false}

@@ -11,6 +11,7 @@
 //      the ADR rejects by name). Quality prefixes and trigger words are chips that append
 //      when pressed; the administrator's negative is a chip that cannot be removed and is
 //      never merged into the textarea, so what is in the box is what the person wrote.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent as RKeyboardEvent, ReactNode } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -222,7 +223,7 @@ export function GenerateForm({
           {tr("imggen.prompt")}
           {lk("prompt")}
         </span>
-        <textarea
+        <textarea {...NO_AUTOFILL}
           className="igen-prompt"
           rows={5}
           value={draft.prompt}
@@ -251,7 +252,7 @@ export function GenerateForm({
           {tr("imggen.negative")}
           {lk("negativePrompt")}
         </span>
-        <textarea
+        <textarea {...NO_AUTOFILL}
           className="igen-negative"
           rows={2}
           value={draft.negative}
@@ -484,7 +485,7 @@ export function GenerateForm({
           {draft.seedPolicy !== "random" && (
             <label className="igen-field">
               <span className="igen-label">{tr("imggen.seed")}</span>
-              <input
+              <input {...NO_AUTOFILL}
                 className="ds-input"
                 value={draft.seed}
                 placeholder={tr("imggen.seed_ph")}
@@ -523,7 +524,7 @@ export function GenerateForm({
           </label>
           <label className="igen-field">
             <span className="igen-label">{tr("imggen.out_dir")}</span>
-            <input
+            <input {...NO_AUTOFILL}
               className="ds-input"
               value={draft.outDir}
               placeholder={tr("imggen.out_dir_ph")}
@@ -532,7 +533,7 @@ export function GenerateForm({
           </label>
           <label className="igen-field">
             <span className="igen-label">{tr("imggen.label")}</span>
-            <input
+            <input {...NO_AUTOFILL}
               className="ds-input"
               value={draft.label}
               placeholder={tr("imggen.label_ph")}

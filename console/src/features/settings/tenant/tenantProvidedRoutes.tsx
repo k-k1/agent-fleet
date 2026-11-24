@@ -8,6 +8,7 @@
 //
 // No PUT here carries a revision, so each save re-reads the stored values first and refuses when
 // they moved since the page loaded; a save racing in between is not caught (#4367).
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errDetail, errText } from "../../../core/api/client.ts";
 import { isOk, type Reply } from "../api.ts";
@@ -339,7 +340,7 @@ function GrantEditor({
       </label>
       <label className="admin-fld">
         <span className="af-cap">{tr("admin.prov_ceiling")}</span>
-        <input
+        <input {...NO_AUTOFILL}
           type="text"
           inputMode="decimal"
           value={ceiling}
@@ -416,7 +417,7 @@ function PolicyEditor({
       </span>
       <label className="admin-fld">
         <span className="af-cap">{tr("admin.prov_default_budget")}</span>
-        <input
+        <input {...NO_AUTOFILL}
           type="text"
           inputMode="decimal"
           value={budget}
@@ -492,7 +493,7 @@ function MemberRow({
         />
       </td>
       <td data-label={tr("admin.prov_col_budget")}>
-        <input
+        <input {...NO_AUTOFILL}
           type="text"
           inputMode="decimal"
           aria-label={tr("admin.prov_member_budget", { user: member.user_key })}

@@ -6,6 +6,7 @@
 // a favicon. Here it is a stored setting that wins over the environment; "follow the
 // environment" is a separate action rather than "pick teal and clear the label", because on
 // a deployment whose environment names a colour those are different outcomes.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -132,7 +133,7 @@ export function BrandAdminView() {
 
         <div className="brand-field">
           <label htmlFor="brand-label">{tr("admin.brand_label")}</label>
-          <input
+          <input {...NO_AUTOFILL}
             id="brand-label"
             type="text"
             value={label}

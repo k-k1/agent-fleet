@@ -8,6 +8,7 @@
 // instead, never a detached HEAD. "sessions" lists the shelf's sessions of that folder to
 // restore — folders named after a branch are reused across generations, so the dates are
 // shown and a start branch that differs from the recreated one is flagged.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -270,7 +271,7 @@ export function RecreateWorktreeModal({ dir, sessions, onClose, onChanged }: Rec
             {needsNewBranch && (
               <label className="ui-field">
                 <span className="ui-field-label">{newBranchLabel(cand)}</span>
-                <input type="text" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} disabled={busy} />
+                <input {...NO_AUTOFILL} type="text" value={newBranch} onChange={(e) => setNewBranch(e.target.value)} disabled={busy} />
                 <span className="ui-field-hint">{tr("rwt.in_use_hint")}</span>
               </label>
             )}

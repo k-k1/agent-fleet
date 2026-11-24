@@ -5,6 +5,7 @@
 // rarely. The CP runs the Agent's own checks and answers which rule failed and why, so the
 // screen shows that answer verbatim and keeps the text as typed. Rules advise and never refuse
 // (decision 8), which is why there is no enforce switch here.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -150,7 +151,7 @@ export function TenantBranchRulesView({ slug }: { slug: string }) {
         <p className="admin-hint">{tr("tenant.branch_rules_note")}</p>
         <label className="admin-fld wide">
           <span className="af-cap">{tr("tenant.branch_rules_json")}</span>
-          <textarea
+          <textarea {...NO_AUTOFILL}
             className="branch-rules-json"
             rows={14}
             spellCheck={false}

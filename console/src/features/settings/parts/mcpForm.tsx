@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -73,7 +74,7 @@ export function KVEditor({
     <div className="mcp-kv">
       {rows.map((r, i) => (
         <div key={i} className={"mcp-kv-row" + (noValue ? " keyonly" : "")}>
-          <input
+          <input {...NO_AUTOFILL}
             className="cinput"
             placeholder={keyPlaceholder}
             value={r.k}

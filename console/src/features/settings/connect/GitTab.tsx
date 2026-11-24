@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { usePolling } from "../parts/usePolling.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
@@ -192,13 +193,13 @@ function SvnCard({ servers, reload }: { servers: SvnServer[]; reload: () => void
       ))}
       <div className="p-body">
         <div className="gi-row">
-          <input
+          <input {...NO_AUTOFILL}
             className="cinput"
             placeholder={tr("git.svn_prefix_ph")}
             value={prefix}
             onChange={(e) => setPrefix(e.target.value)}
           />
-          <input className="cinput" placeholder={tr("git.svn_user_ph")} value={user} onChange={(e) => setUser(e.target.value)} />
+          <input {...NO_AUTOFILL} className="cinput" placeholder={tr("git.svn_user_ph")} value={user} onChange={(e) => setUser(e.target.value)} />
           <input
             className="cinput"
             type="password"
@@ -255,8 +256,8 @@ function IdentityFields({ host, name0, email0 }: { host: string; name0?: string;
     <div className="git-identity">
       <div className="gi-title">{tr("git.identity_title")}</div>
       <div className="gi-row">
-        <input className="cinput" placeholder={tr("git.name_placeholder_ex")} value={name} onChange={(e) => setName(e.target.value)} />
-        <input className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <input {...NO_AUTOFILL} className="cinput" placeholder={tr("git.name_placeholder_ex")} value={name} onChange={(e) => setName(e.target.value)} />
+        <input {...NO_AUTOFILL} className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         <button disabled={busy} onClick={save}>
           {tr("common.save")}
         </button>
@@ -302,8 +303,8 @@ function GlobalIdentity() {
       <div className="ds-title">{tr("git.global_identity_cat")}</div>
       <div className="git-identity git-identity-solo">
         <div className="gi-row">
-          <input className="cinput" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input {...NO_AUTOFILL} className="cinput" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input {...NO_AUTOFILL} className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <button disabled={busy} onClick={save}>
             {tr("common.save")}
           </button>
@@ -582,7 +583,7 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
       ) : mode === "token" ? (
         <div className="p-body">
           <div className="flow">
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput"
               placeholder={tr("git.bb_email_ph")}
               value={username}

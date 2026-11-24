@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useState } from "react";
 import { errDetail, raw } from "../../../core/api/client.ts";
 import { putOpencodeKey } from "./credentialsApi.ts";
@@ -108,7 +109,7 @@ export function ProviderKeyCard({
                 </select>
               )}
               {active.env === "" && (
-                <input
+                <input {...NO_AUTOFILL}
                   className="cinput"
                   placeholder={tr("agents.oc_env_placeholder")}
                   value={customEnv}

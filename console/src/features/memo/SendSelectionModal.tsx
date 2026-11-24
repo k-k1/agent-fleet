@@ -9,6 +9,7 @@
 //     the caller passes `withAssistants` (the gallery's "send", ADR 0080): a picture is
 //     something to LOOK at, which an assistant can do, so it is offered both, the assistant
 //     through the same attach_path chat the quote mode opens.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -276,7 +277,7 @@ export function SendSelectionModal({
 
         <div className="ui-field">
           <div className="ui-field-label">{tr("send.comment_label")}</div>
-          <textarea
+          <textarea {...NO_AUTOFILL}
             value={comment}
             onChange={(e) => setComment(e.target.value)}
             onKeyDown={(e) => {
@@ -298,7 +299,7 @@ export function SendSelectionModal({
 
         <div className="ui-field">
           <div className="ui-field-label">{tr("send.category_label")}</div>
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             list="sendsel-cat-suggest"
             value={category}

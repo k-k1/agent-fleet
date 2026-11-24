@@ -5,6 +5,7 @@
 // A refusal stays on the page beside the save button, with the edits kept, so the administrator
 // can read why and fix the one value rather than start again. A toast would vanish, and a reload
 // would throw the edits away.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { putRoutePolicyRule } from "./tenantApi.ts";
@@ -490,7 +491,7 @@ function ServerRows({
         </ul>
       )}
       <div className="mpol-server-add">
-        <input
+        <input {...NO_AUTOFILL}
           type="text"
           aria-label={tr("admin.mpol_server_new")}
           placeholder={tr("admin.mpol_server_new")}

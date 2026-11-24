@@ -4,6 +4,7 @@
 // folder that exists nowhere yet, created empty and `git init`ed. The op itself
 // runs in the parent (spinner row in the rail) so the user isn't trapped in a busy
 // dialog.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -167,7 +168,7 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, onInit, repos = 
             {!!cloneUrl && (
               <div className="ui-field">
                 <span className="ui-field-label">{tr("rp.new_branch_optional")}</span>
-                <input
+                <input {...NO_AUTOFILL}
                   value={newBranch}
                   onChange={(e) => setNewBranch(e.target.value)}
                   placeholder={tr("rp.create_from", { branch: cloneBranch || tr("rp.default_branch") })}
@@ -190,7 +191,7 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, onInit, repos = 
                     tr("rp.workcopy_exists", { name: derivedRepo })
                   )}
                 </span>
-                <input
+                <input {...NO_AUTOFILL}
                   value={name}
                   onChange={(e) => {
                     setName(e.target.value);
@@ -206,11 +207,11 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, onInit, repos = 
           <>
             <label className="ui-field">
               <span className="ui-field-label">{tr("rp.svn_url")}</span>
-              <input value={svnUrl} onChange={(e) => setSvnUrl(e.target.value)} placeholder="https://svn.example.com/repo" />
+              <input {...NO_AUTOFILL} value={svnUrl} onChange={(e) => setSvnUrl(e.target.value)} placeholder="https://svn.example.com/repo" />
             </label>
             <label className="ui-field">
               <span className="ui-field-label">{tr("rp.svn_subpath")}</span>
-              <input value={subpath} onChange={(e) => setSubpath(e.target.value)} placeholder="trunk" />
+              <input {...NO_AUTOFILL} value={subpath} onChange={(e) => setSubpath(e.target.value)} placeholder="trunk" />
               <span className="ui-field-hint">{tr("rp.svn_subpath_hint")}</span>
             </label>
             <label className="ui-field">
@@ -239,7 +240,7 @@ export function NewRepoModal({ onClose, onClone, onSvnCheckout, onInit, repos = 
             </label>
             <div className="ui-field">
               <span className="ui-field-label">{tr("rp.folder_name")}</span>
-              <input
+              <input {...NO_AUTOFILL}
                 value={svnName}
                 onChange={(e) => {
                   setSvnName(e.target.value);

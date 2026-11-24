@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useState } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Button } from "../../../ui/Button.tsx";
@@ -83,14 +84,14 @@ export function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
 
   return <Modal title={`${tr("admin.catalog_edit" as never)} — ${model.id}`} className="engine-registered-edit" onClose={onClose} lockClose={busy}>
     <div className="ui-modal-body engine-operation-body"><div className="engine-operation-grid">
-      <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
+      <label><span>{tr("admin.engines_model_add_desc")}</span><input {...NO_AUTOFILL} value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
       {(image || lora) && <label><span>{tr(!image && lora ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span>{baseChoices.length || (!image && lora)
         ? <select value={baseModel} disabled={!baseChoices.length} onChange={(event) => setBaseModel(event.currentTarget.value)}><option value="">—</option>{baseChoices.map((base) => <option key={base} value={base}>{base}</option>)}</select>
-        : <input value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)} />}</label>}
-      {!image && !lora && <><label><span>{tr("admin.engines_model_window_context")}</span><input inputMode="numeric" value={context} onChange={(event) => setContext(event.currentTarget.value)} /></label><label><span>{tr("admin.engines_model_window_output")}</span><input inputMode="numeric" value={output} onChange={(event) => setOutput(event.currentTarget.value)} /></label></>}
-      <label><span>{tr("admin.engines_model_vram_edit")}</span><input inputMode="numeric" value={vram} onChange={(event) => setVram(event.currentTarget.value)} /></label>
-      {image && !lora && <label><span>{tr("admin.engines_model_negative")}</span><input value={negative} onChange={(event) => setNegative(event.currentTarget.value)} /></label>}
-      {image && lora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
+        : <input {...NO_AUTOFILL} value={baseModel} onChange={(event) => setBaseModel(event.currentTarget.value)} />}</label>}
+      {!image && !lora && <><label><span>{tr("admin.engines_model_window_context")}</span><input {...NO_AUTOFILL} inputMode="numeric" value={context} onChange={(event) => setContext(event.currentTarget.value)} /></label><label><span>{tr("admin.engines_model_window_output")}</span><input {...NO_AUTOFILL} inputMode="numeric" value={output} onChange={(event) => setOutput(event.currentTarget.value)} /></label></>}
+      <label><span>{tr("admin.engines_model_vram_edit")}</span><input {...NO_AUTOFILL} inputMode="numeric" value={vram} onChange={(event) => setVram(event.currentTarget.value)} /></label>
+      {image && !lora && <label><span>{tr("admin.engines_model_negative")}</span><input {...NO_AUTOFILL} value={negative} onChange={(event) => setNegative(event.currentTarget.value)} /></label>}
+      {image && lora && <label><span>{tr("admin.engines_model_trigger")}</span><input {...NO_AUTOFILL} value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
     </div>
     {/* The measurement is OFFERED, never applied (ADR 0094 decision 8). `vram_mib` means "the
         operator measured it", so the press is what makes the number a declaration — and it sits
@@ -119,7 +120,7 @@ export function RegisteredEditDialog({ row, model, error, onClose, onSave }: {
       {editCardMiB ? ` · ${(tr("admin.engines_ingest_fit_card") as string).replace("{n}", String(editFit.needMiB)).replace("{c}", String(editCardMiB))} ` : " "}
       <FitTag fit={editFit} />
     </p>}
-    {image && <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">{(Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}</div></details>}
+    {image && <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">{(Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input {...NO_AUTOFILL} value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}</div></details>}
     {validation && <p className="form-err">{validation}</p>}
     {error && <p className="form-err">{error}</p>}
     <footer className="engine-operation-footer"><Button variant="ghost" onClick={onClose} disabled={busy}>{tr("common.cancel")}</Button><Button variant="primary" disabled={busy || !!validation} onClick={() => void save()}>{tr("common.save")}</Button></footer></div>

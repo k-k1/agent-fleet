@@ -12,6 +12,7 @@
 //
 // With the tenant's switch off the dialog says so instead of offering to save. Removing the
 // settings stays possible then: the Control Plane does not gate DELETE.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -246,7 +247,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
           <label className="ui-field-label" htmlFor="memo-q-instruction">
             {tr("memo.q_instruction")}
           </label>
-          <textarea
+          <textarea {...NO_AUTOFILL}
             id="memo-q-instruction"
             value={draft.instruction}
             rows={6}
@@ -276,7 +277,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             <label className="ui-field-label" htmlFor="memo-q-model">
               {tr("memo.q_model")}
             </label>
-            <input
+            <input {...NO_AUTOFILL}
               id="memo-q-model"
               type="text"
               value={draft.model}
@@ -290,7 +291,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             <label className="ui-field-label" htmlFor="memo-q-effort">
               {tr("memo.q_effort")}
             </label>
-            <input
+            <input {...NO_AUTOFILL}
               id="memo-q-effort"
               type="text"
               list="memo-q-efforts"
@@ -313,7 +314,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             <label className="ui-field-label" htmlFor="memo-q-budget">
               {tr("memo.q_budget")}
             </label>
-            <input
+            <input {...NO_AUTOFILL}
               id="memo-q-budget"
               type="text"
               inputMode="decimal"
@@ -327,7 +328,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             <label className="ui-field-label" htmlFor="memo-q-max-active">
               {tr("memo.q_max_active")}
             </label>
-            <input
+            <input {...NO_AUTOFILL}
               id="memo-q-max-active"
               type="text"
               inputMode="numeric"
@@ -341,7 +342,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             <label className="ui-field-label" htmlFor="memo-q-batch">
               {tr("memo.q_batch")}
             </label>
-            <input
+            <input {...NO_AUTOFILL}
               id="memo-q-batch"
               type="text"
               inputMode="numeric"
@@ -377,7 +378,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
           <label className="ui-field-label" htmlFor="memo-q-continuation">
             {tr("memo.q_continuation")}
           </label>
-          <input
+          <input {...NO_AUTOFILL}
             id="memo-q-continuation"
             type="text"
             inputMode="numeric"
@@ -445,7 +446,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
                 <label className="ui-field-label" htmlFor="memo-q-open-cron">
                   {tr("memo.q_open_cron")}
                 </label>
-                <input
+                <input {...NO_AUTOFILL}
                   id="memo-q-open-cron"
                   type="text"
                   value={draft.openCron}
@@ -459,7 +460,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
                 <label className="ui-field-label" htmlFor="memo-q-open-minutes">
                   {tr("memo.q_open_minutes")}
                 </label>
-                <input
+                <input {...NO_AUTOFILL}
                   id="memo-q-open-minutes"
                   type="text"
                   inputMode="numeric"
@@ -472,7 +473,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
                 <label className="ui-field-label" htmlFor="memo-q-tz">
                   {tr("sched.f_tz")}
                 </label>
-                <input id="memo-q-tz" type="text" value={draft.tz} placeholder="UTC" onChange={(e) => set("tz", e.target.value)} spellCheck={false} />
+                <input {...NO_AUTOFILL} id="memo-q-tz" type="text" value={draft.tz} placeholder="UTC" onChange={(e) => set("tz", e.target.value)} spellCheck={false} />
                 {fieldErr("tz") ?? <div className="ui-field-hint">{tr("memo.q_tz_hint")}</div>}
               </div>
             </div>
@@ -482,7 +483,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
               <label className="ui-field-label" htmlFor="memo-q-open-after">
                 {tr("memo.q_open_after")}
               </label>
-              <input
+              <input {...NO_AUTOFILL}
                 id="memo-q-open-after"
                 type="text"
                 inputMode="numeric"
@@ -499,7 +500,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             <label className="ui-field-label" htmlFor="memo-q-fires">
               {tr("memo.q_fires")}
             </label>
-            <input
+            <input {...NO_AUTOFILL}
               id="memo-q-fires"
               type="text"
               inputMode="numeric"
@@ -513,7 +514,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             <label className="ui-field-label" htmlFor="memo-q-task-hours">
               {tr("memo.q_task_hours")}
             </label>
-            <input
+            <input {...NO_AUTOFILL}
               id="memo-q-task-hours"
               type="text"
               inputMode="numeric"

@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { isOk } from "../api.ts";
 import { getIngestFiles, getIngestVersions, resolveIngest, startIngest } from "./adminApi.ts";
@@ -306,7 +307,7 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
     <div className="ui-modal-body engine-operation-body">
       {!hit && <div className="engine-operation-manual">
         {image && <select value={sourceType} onChange={(event) => { setSourceType(event.currentTarget.value as CatalogSource); resetInspection(); }}><option value="civitai">Civitai</option><option value="hf">Hugging Face / URL</option></select>}
-        <input value={manualRef} onChange={(event) => changeManualRef(event.currentTarget.value)} placeholder="owner/repository or https://…" />
+        <input {...NO_AUTOFILL} value={manualRef} onChange={(event) => changeManualRef(event.currentTarget.value)} placeholder="owner/repository or https://…" />
         <Button small onClick={() => void inspect()} disabled={busy || !manualRef.trim()}>{tr("admin.catalog_inspect" as never)}</Button>
       </div>}
       <div className="engine-operation-grid">
@@ -315,7 +316,7 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
         </select></label>}
         <label><span>{tr(plainURL ? "admin.catalog_checksum" as never : "admin.catalog_file" as never)}</span>{files.length
           ? <select value={file} onChange={(event) => setFile(event.currentTarget.value)}><option value="">{tr("admin.catalog_pick_file" as never)}</option>{files.map((candidate) => <option key={candidate.ref || candidate.name} value={candidate.name}>{candidate.name}</option>)}</select>
-          : <input value={file} onChange={(event) => setFile(event.currentTarget.value)} placeholder={plainURL ? "sha256" : "model.safetensors"} />}</label>
+          : <input {...NO_AUTOFILL} value={file} onChange={(event) => setFile(event.currentTarget.value)} placeholder={plainURL ? "sha256" : "model.safetensors"} />}</label>
         {asksFamily && <label><span>{tr(isLora && !image ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}</span><select value={baseModel} onChange={(event) => { setBaseModel(event.currentTarget.value); setOperatorFamily(event.currentTarget.value); }}>
           <option value="">{tr(isLora && !image ? "admin.engines_model_add_lora_base_pick" : "admin.engines_model_add_family_pick")}</option>{familyOptions.map((base) => <option key={base} value={base}>{base}</option>)}</select></label>}
       </div>
@@ -363,7 +364,7 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
           behind a `<summary>` the person reading the red line never opened. */}
       {!image && !isLora && !!resolved && <div className="engine-operation-window">
         <label><span>{tr("admin.engines_model_window_context")}</span>
-          <input inputMode="numeric" value={context} onChange={(event) => setContext(event.currentTarget.value)} /></label>
+          <input {...NO_AUTOFILL} inputMode="numeric" value={context} onChange={(event) => setContext(event.currentTarget.value)} /></label>
         {!!resolved.context_length && <span className="muted">{(tr("admin.engines_ingest_ctx_ceiling" as never) as string)
           .replace("{n}", fmtNum(resolved.context_length))}</span>}
       </div>}
@@ -386,11 +387,11 @@ export function IngestPlanDialog({ row, kind, hit, initialSource, initialRef, on
       </p>}
       <label className="engine-operation-check"><input type="checkbox" checked={accepted} onChange={(event) => setAccepted(event.currentTarget.checked)} /><span>{tr("admin.engines_ingest_accept")}</span></label>
       <details className="engine-operation-advanced"><summary>{tr("admin.catalog_advanced" as never)}</summary><div className="engine-operation-grid">
-        <label><span>{tr("admin.engines_model_add_id")}</span><input value={id} onChange={(event) => { setIdEdited(true); setId(event.currentTarget.value); }} /></label>
-        <label><span>{tr("admin.engines_model_add_desc")}</span><input value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
-        {!image && !isLora && <label><span>{tr("admin.engines_model_add_out")}</span><input value={output} onChange={(event) => setOutput(event.currentTarget.value)} inputMode="numeric" /></label>}
-        {isLora && <label><span>{tr("admin.engines_model_trigger")}</span><input value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
-        {image && (Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}
+        <label><span>{tr("admin.engines_model_add_id")}</span><input {...NO_AUTOFILL} value={id} onChange={(event) => { setIdEdited(true); setId(event.currentTarget.value); }} /></label>
+        <label><span>{tr("admin.engines_model_add_desc")}</span><input {...NO_AUTOFILL} value={description} onChange={(event) => setDescription(event.currentTarget.value)} /></label>
+        {!image && !isLora && <label><span>{tr("admin.engines_model_add_out")}</span><input {...NO_AUTOFILL} value={output} onChange={(event) => setOutput(event.currentTarget.value)} inputMode="numeric" /></label>}
+        {isLora && <label><span>{tr("admin.engines_model_trigger")}</span><input {...NO_AUTOFILL} value={trainedWords} onChange={(event) => setTrainedWords(event.currentTarget.value)} /></label>}
+        {image && (Object.keys(params) as (keyof EngineParams)[]).map((key) => <label key={key}><span>{tr((`admin.engines_params_${key}`) as never)}</span><input {...NO_AUTOFILL} value={params[key]} onChange={(event) => setParams((current) => ({ ...current, [key]: event.currentTarget.value }))} /></label>)}
       </div></details>
       <EngineRefusal error={err} busy={busy} onNext={() => { setErr(null); void inspect(); }} />
       <footer className="engine-operation-footer"><span className="muted">{missing}</span><Button variant="ghost" onClick={onClose} disabled={busy}>{tr("common.cancel")}</Button><Button variant="primary" onClick={() => void start()} disabled={busy || !!missing}>{tr("admin.engines_ingest_go")}</Button></footer>

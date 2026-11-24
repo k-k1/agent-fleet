@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { useApiSave } from "../parts/useApiSave.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -92,7 +93,7 @@ export function EgressNote({
       <div>{level === "blocked" ? tr("mcp.egress_blocked", { host }) : tr("mcp.egress_would_block", { host })}</div>
       {open ? (
         <div className="egress-mcp-ask">
-          <input
+          <input {...NO_AUTOFILL}
             className="cinput"
             placeholder={tr("mcp.egress_reason_ph")}
             value={reason}

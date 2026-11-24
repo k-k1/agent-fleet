@@ -1,6 +1,7 @@
 // A message's own run recipe (agent, model, effort; ADR 0137 addendum, #4845): the badge that says
 // a message does not follow the category's setting, and the editor row that sets it. A field left
 // empty follows the category, so a message with no badge runs exactly as before.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useMemo } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { scheduledKinds } from "../../agents/registry.ts";
@@ -82,7 +83,7 @@ export function MemoRecipeFields({ value, onChange, categoryAgent, dropped }: Fi
             </option>
           ))}
         </select>
-        <input
+        <input {...NO_AUTOFILL}
           type="text"
           aria-label={tr("memo.q_model")}
           value={value.model}
@@ -90,7 +91,7 @@ export function MemoRecipeFields({ value, onChange, categoryAgent, dropped }: Fi
           spellCheck={false}
           onChange={(e) => onChange({ ...value, model: e.target.value })}
         />
-        <input
+        <input {...NO_AUTOFILL}
           type="text"
           list="memo-recipe-efforts"
           aria-label={tr("memo.q_effort")}

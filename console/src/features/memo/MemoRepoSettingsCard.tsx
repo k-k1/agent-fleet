@@ -7,6 +7,7 @@
 // memo_queue_repo_stale when the file or the settings moved since. Reading the file needs the
 // workspace (it fetches origin), so the check runs when the member asks for it, never on open;
 // until then the card shows the queue's last read, which the Control Plane keeps.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useId, useRef, useState } from "react";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -318,7 +319,7 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, lastC
               ))}
             </ul>
           )}
-          <textarea className="memo-reposet-yaml" readOnly rows={12} value={exported.yaml} aria-label={tr("memo.repo_export")} spellCheck={false} />
+          <textarea {...NO_AUTOFILL} className="memo-reposet-yaml" readOnly rows={12} value={exported.yaml} aria-label={tr("memo.repo_export")} spellCheck={false} />
           <div className="memo-reposet-foot">
             <Button
               small

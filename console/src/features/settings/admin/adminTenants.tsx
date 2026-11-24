@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import type { FormEvent } from "react";
 import { useState } from "react";
 import { rawJSON } from "../../../core/api/client.ts";
@@ -75,8 +76,8 @@ export function NewTenant({ onCreated, onCancel }: { onCreated: () => void; onCa
   };
   return (
     <form className="new-tenant" onSubmit={submit}>
-      <input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder={tr("admin.slug_ph")} autoFocus />
-      <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("admin.display_name_ph")} />
+      <input {...NO_AUTOFILL} value={slug} onChange={(e) => setSlug(e.target.value)} placeholder={tr("admin.slug_ph")} autoFocus />
+      <input {...NO_AUTOFILL} value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("admin.display_name_ph")} />
       <button type="submit" className="primary">{tr("admin.create")}</button>
       <button type="button" className="ghost" onClick={onCancel}>{tr("common.cancel")}</button>
     </form>

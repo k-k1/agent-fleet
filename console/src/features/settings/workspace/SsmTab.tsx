@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChangeEvent, ReactNode, RefObject } from "react";
 import { raw, rawJSON } from "../../../core/api/client.ts";
@@ -531,7 +532,7 @@ function ProfileSection({
     <FieldGroup>
       {kindSelect}
       <Field label={tr("ssm.f_label")} req hint={tr("ssm.f_label_hint")}>
-        <input ref={labelRef} className="cinput" placeholder="deploy-role" value={f.label} onChange={set("label")} autoFocus />
+        <input {...NO_AUTOFILL} ref={labelRef} className="cinput" placeholder="deploy-role" value={f.label} onChange={set("label")} autoFocus />
       </Field>
       <Field label={tr("ssm.f_source")} req wide hint={tr("ssm.f_source_hint")}>
         <select className="cinput" value={f.sourceProfileId} onChange={set("sourceProfileId")}>
@@ -544,16 +545,16 @@ function ProfileSection({
         </select>
       </Field>
       <Field label={tr("ssm.f_role_arn")} req wide hint={tr("ssm.f_role_arn_hint")}>
-        <input className="cinput" placeholder="arn:aws:iam::123456789012:role/deploy" value={f.roleArn} onChange={set("roleArn")} />
+        <input {...NO_AUTOFILL} className="cinput" placeholder="arn:aws:iam::123456789012:role/deploy" value={f.roleArn} onChange={set("roleArn")} />
       </Field>
       <Field label={tr("ssm.f_external_id")} hint={tr("ssm.f_optional")}>
-        <input className="cinput" value={f.externalId} onChange={set("externalId")} />
+        <input {...NO_AUTOFILL} className="cinput" value={f.externalId} onChange={set("externalId")} />
       </Field>
       <Field label={tr("ssm.f_session_name")} hint={tr("ssm.f_optional")}>
-        <input className="cinput" placeholder="agent-fleet" value={f.sessionName} onChange={set("sessionName")} />
+        <input {...NO_AUTOFILL} className="cinput" placeholder="agent-fleet" value={f.sessionName} onChange={set("sessionName")} />
       </Field>
       <Field label={tr("ssm.f_duration")} hint={tr("ssm.f_duration_hint")}>
-        <input className="cinput" inputMode="numeric" placeholder="3600" value={f.durationSeconds} onChange={set("durationSeconds")} />
+        <input {...NO_AUTOFILL} className="cinput" inputMode="numeric" placeholder="3600" value={f.durationSeconds} onChange={set("durationSeconds")} />
       </Field>
       <Field label={tr("ssm.meta_default_region")} hint={tr("ssm.f_default_region_hint")}>
         <RegionSelect value={f.region} onChange={setVal("region")} emptyLabel={tr("ssm.region_unset")} />
@@ -567,7 +568,7 @@ function ProfileSection({
         <FieldGroup>
           {kindSelect}
           <Field label={tr("ssm.f_label")} req hint={tr("ssm.f_label_hint")}>
-            <input
+            <input {...NO_AUTOFILL}
               ref={labelRef}
               className="cinput"
               placeholder="my-profile"
@@ -604,7 +605,7 @@ function ProfileSection({
           </Field>
           {newSignIn && (
             <Field label={tr("ssm.f_sign_in_name")} req hint={tr("ssm.f_sign_in_name_hint")}>
-              <input className="cinput ssm-sign-in-name" placeholder="my-company" value={f.signIn} onChange={set("signIn")} />
+              <input {...NO_AUTOFILL} className="cinput ssm-sign-in-name" placeholder="my-company" value={f.signIn} onChange={set("signIn")} />
             </Field>
           )}
           {joining ? (
@@ -631,7 +632,7 @@ function ProfileSection({
               </>
             }
           >
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput"
               placeholder="https://my-company.awsapps.com/start"
               value={f.startUrl}
@@ -641,10 +642,10 @@ function ProfileSection({
             </>
           )}
           <Field label={tr("ssm.f_account_id")} hint={tr("ssm.f_optional_login_pick")}>
-            <input className="cinput" placeholder="123456789012" value={f.accountId} onChange={set("accountId")} />
+            <input {...NO_AUTOFILL} className="cinput" placeholder="123456789012" value={f.accountId} onChange={set("accountId")} />
           </Field>
           <Field label={tr("ssm.f_role_name")} hint={tr("ssm.f_optional_login_pick")}>
-            <input className="cinput" placeholder="AdministratorAccess" value={f.roleName} onChange={set("roleName")} />
+            <input {...NO_AUTOFILL} className="cinput" placeholder="AdministratorAccess" value={f.roleName} onChange={set("roleName")} />
           </Field>
           <Field label={tr("ssm.meta_default_region")} hint={tr("ssm.f_default_region_hint")}>
             <RegionSelect value={f.region} onChange={setVal("region")} emptyLabel={tr("ssm.region_unset")} />
@@ -785,13 +786,13 @@ function ProfileSection({
       <fieldset className="ssm-fieldset" disabled={busy}>
         <FieldGroup>
           <Field label={tr("ssm.f_sign_in_name")} req hint={tr("ssm.f_sign_in_name_hint")}>
-            <input className="cinput ssm-signin-name" value={sf.name} onChange={(e) => setSf((x) => ({ ...x, name: e.target.value }))} autoFocus />
+            <input {...NO_AUTOFILL} className="cinput ssm-signin-name" value={sf.name} onChange={(e) => setSf((x) => ({ ...x, name: e.target.value }))} autoFocus />
           </Field>
           <Field label={tr("ssm.meta_sso_region")} req hint={tr("ssm.f_sso_region_hint")}>
             <RegionSelect value={sf.ssoRegion} onChange={(v) => setSf((x) => ({ ...x, ssoRegion: v }))} emptyLabel={tr("ssm.region_select")} />
           </Field>
           <Field label="start URL" req wide>
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput ssm-signin-url"
               placeholder="https://my-company.awsapps.com/start"
               value={sf.startUrl}
@@ -1246,13 +1247,13 @@ function HostSection({
             </select>
           </Field>
           <Field label={tr("ssm.f_alias")} req hint={tr("ssm.f_alias_hint")}>
-            <input className="cinput" placeholder="admin@web-01" value={f.alias} onChange={set("alias")} />
+            <input {...NO_AUTOFILL} className="cinput" placeholder="admin@web-01" value={f.alias} onChange={set("alias")} />
           </Field>
           <Field label={tr("ssm.f_instance_id")} req hint={<>{tr("ssm.f_instance_hint_1")}<code>aws ec2 describe-instances</code>{tr("ssm.f_instance_hint_2")}</>}>
-            <input className="cinput" placeholder="i-0123456789abcdef0" value={f.instanceId} onChange={set("instanceId")} />
+            <input {...NO_AUTOFILL} className="cinput" placeholder="i-0123456789abcdef0" value={f.instanceId} onChange={set("instanceId")} />
           </Field>
           <Field label={tr("ssm.f_document")} hint={tr("ssm.f_document_hint")}>
-            <input className="cinput" placeholder="SSM-SessionManagerRunShell" value={f.documentName} onChange={set("documentName")} />
+            <input {...NO_AUTOFILL} className="cinput" placeholder="SSM-SessionManagerRunShell" value={f.documentName} onChange={set("documentName")} />
           </Field>
           <Field label={tr("ssm.meta_region")} hint={tr("ssm.f_region_hint")}>
             <RegionSelect

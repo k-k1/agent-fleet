@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -76,7 +77,7 @@ export function BrowserPane({ paneId, port, path, headerActions }: BrowserPanePr
         <IconButton icon="arrow-right" className="browser-nav" label={tr("browser.forward")} disabled={!snapshot.canForward} onClick={() => controller.history("forward")} />
         <IconButton icon="refresh" label={tr("browser.reload")} onClick={() => controller.reload()} />
         <span className="browser-host">127.0.0.1:</span>
-        <input
+        <input {...NO_AUTOFILL}
           className={"browser-port" + (portError ? " invalid" : "")}
           aria-label={tr("browser.port")}
           aria-invalid={portError}
@@ -84,7 +85,7 @@ export function BrowserPane({ paneId, port, path, headerActions }: BrowserPanePr
           value={portDraft}
           onChange={(event) => setPortDraft(event.target.value)}
         />
-        <input
+        <input {...NO_AUTOFILL}
           className={"browser-path" + (pathError ? " invalid" : "")}
           aria-label={tr("browser.path")}
           aria-invalid={pathError}

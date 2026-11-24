@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -90,7 +91,7 @@ function EngineBrowse({ sources }: { sources: CatalogSource[] }) {
     <div className="engines-model-add engines-ingest">
       <label className="engines-search-row">
         <span>{tr("admin.engines_ingest_search")}</span>
-        <input
+        <input {...NO_AUTOFILL}
           value={q}
           placeholder={kind === "gguf" ? "qwen2.5 coder" : "sdxl"}
           onChange={(ev) => setQ(ev.currentTarget.value)}

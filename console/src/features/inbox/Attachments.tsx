@@ -6,6 +6,7 @@
 // as the recipient's own memo, with an origin the server sets. A session attachment shows what
 // the server decided this reader may see; a session they cannot see arrives as an opaque
 // placeholder and is drawn as one, with nothing to open.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useState } from "react";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -34,14 +35,14 @@ export function RecipeEditor({ value, onChange }: { value: RecipeDraft; onChange
   const field = (k: keyof RecipeDraft, label: string, placeholder = "") => (
     <label className="ui-field">
       <span className="ui-field-label">{label}</span>
-      <input value={value[k]} placeholder={placeholder} onChange={(e) => onChange({ ...value, [k]: e.target.value })} />
+      <input {...NO_AUTOFILL} value={value[k]} placeholder={placeholder} onChange={(e) => onChange({ ...value, [k]: e.target.value })} />
     </label>
   );
   return (
     <div className="inbox-recipe-editor">
       <label className="ui-field">
         <span className="ui-field-label">{tr("inbox.recipe_prompt")}</span>
-        <textarea rows={4} value={value.prompt} onChange={(e) => onChange({ ...value, prompt: e.target.value })} />
+        <textarea {...NO_AUTOFILL} rows={4} value={value.prompt} onChange={(e) => onChange({ ...value, prompt: e.target.value })} />
       </label>
       <div className="inbox-recipe-hints">
         {field("kind", tr("inbox.recipe_kind"), "claude")}

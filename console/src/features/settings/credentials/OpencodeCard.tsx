@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useState } from "react";
 import { errDetail, raw } from "../../../core/api/client.ts";
 import { putOpencodeKey, restartOpencodeServe, putOpencodeWorkspace, startOpencodeOauth, pollOpencodeOauth, cancelOpencodeOauth } from "./credentialsApi.ts";
@@ -272,7 +273,7 @@ function OpencodeWorkspaceRow({ st, reload }: { st: ProviderConn | undefined; re
       )}
       {(editing || !id) && (
         <div className="flow">
-          <input
+          <input {...NO_AUTOFILL}
             className="cinput"
             placeholder={tr("agents.oc_ws_placeholder")}
             value={draft}
@@ -543,7 +544,7 @@ export function OpencodeCard({
                 ))}
               </select>
               {active === "custom" && (
-                <input
+                <input {...NO_AUTOFILL}
                   className="cinput"
                   placeholder={tr("agents.oc_env_placeholder")}
                   value={customEnv}

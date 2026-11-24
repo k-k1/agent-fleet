@@ -5,6 +5,7 @@
 // (GET api/skills/catalog?repo=&subdir=), so a Subdir launch shows what it would really see:
 // a nearer copy of a name shadows one above it, and a folder a CLI reads but the repository has
 // not created is listed with the path to create.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useCallback, useMemo, useState } from "react";
 import { api, errText, isTransientErr } from "../../core/api/client.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../core/store/workspace.ts";
@@ -84,7 +85,7 @@ export function RepoSkillsModal({ repo, onClose }: { repo: string; onClose?: () 
             >
               <label>
                 {tr("repo_skills.subdir")}
-                <input
+                <input {...NO_AUTOFILL}
                   type="text"
                   value={draft}
                   placeholder={tr("repo_skills.subdir_ph")}

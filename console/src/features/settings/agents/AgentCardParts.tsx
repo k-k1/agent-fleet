@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import type { ReactNode } from "react";
 import { useContext, useState } from "react";
 import { ConnChecking } from "../parts/providerCard.tsx";
@@ -233,7 +234,7 @@ function ClaudeCustomModelsRow() {
           </div>
         )}
         <div className="ui-field-row">
-          <input
+          <input {...NO_AUTOFILL}
             className="ds-select"
             value={value}
             onChange={(e) => setValue(e.target.value)}

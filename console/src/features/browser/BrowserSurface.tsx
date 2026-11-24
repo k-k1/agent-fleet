@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   KeyboardEvent as RKeyboardEvent,
@@ -311,7 +312,7 @@ export function BrowserSurface({
         onPointerCancel={(event) => onPointer(event, "cancel")}
         onContextMenu={(event) => event.preventDefault()}
       />
-      <input
+      <input {...NO_AUTOFILL}
         ref={imeRef}
         className="browser-ime"
         style={{ left: inputAnchor.x, top: inputAnchor.y }}

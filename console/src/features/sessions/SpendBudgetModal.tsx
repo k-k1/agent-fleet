@@ -8,6 +8,7 @@
 // until the spend has been read and the value clears it — or is 0, which removes the budget.
 // The read here can be seconds old while the Agent re-prices on the write, so the start also
 // waits for the write's own answer: a crossing it did not lift means no resume.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -119,7 +120,7 @@ export function SpendBudgetModal({ s, onClose }: SpendBudgetModalProps) {
         </p>
         <label className="ui-field">
           <span className="ui-field-label">{tr("sess.budget_label")}</span>
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             inputMode="decimal"
             value={value}

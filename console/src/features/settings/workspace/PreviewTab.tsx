@@ -14,6 +14,7 @@
 //
 // The i18n keys stay `env.preview_*`: a key is an identifier, not a location, so moving the
 // UI is not a reason to rewrite every one of them.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useRef, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
@@ -310,7 +311,7 @@ function PreviewSection({
         {tr("env.preview_current_note", { domain: au.previewDomain || "" })}
       </p>
       <Row label={tr("env.preview_ports_label")}>
-        <input
+        <input {...NO_AUTOFILL}
           className="ds-select"
           value={ports}
           onChange={(e) => setPorts(e.target.value)}
@@ -440,7 +441,7 @@ function PersonaEditor() {
         </Row>
       ))}
       <Row label={tr("env.persona_add_label")}>
-        <input
+        <input {...NO_AUTOFILL}
           className="ds-select"
           value={handle}
           onChange={(e) => setHandle(e.target.value)}
@@ -449,7 +450,7 @@ function PersonaEditor() {
           spellCheck={false}
           maxLength={32}
         />{" "}
-        <input
+        <input {...NO_AUTOFILL}
           className="ds-select"
           value={name}
           onChange={(e) => setName(e.target.value)}

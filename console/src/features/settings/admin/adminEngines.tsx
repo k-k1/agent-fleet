@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { errDetail } from "../../../core/api/client.ts";
@@ -568,7 +569,7 @@ function EngineNegative({
     <div className="engines-negative">
       <label className="engines-model-add-row">
         <span>{tr("admin.engines_negative_label")}</span>
-        <input
+        <input {...NO_AUTOFILL}
           type="text"
           value={draft}
           maxLength={max + 1}

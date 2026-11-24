@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -291,7 +292,7 @@ function EngineRow({ eng, onRefresh }: { eng: DBEngine; onRefresh: () => void })
             handleCreate();
           }}
         >
-          <input
+          <input {...NO_AUTOFILL}
             className="db-create-name"
             value={newName}
             placeholder={tr("env.db_create_placeholder")}

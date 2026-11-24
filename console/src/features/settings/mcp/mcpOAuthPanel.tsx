@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errDetail, errText } from "../../../core/api/client.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
@@ -377,7 +378,7 @@ function ClientIdForm({
     <div className="mcp-oauth-client" data-testid="mcp-oauth-client">
       <div className="mcp-oauth-state">{tr("mcp.oauth_client_title")}</div>
       <p className="ps-note">{tr("mcp.oauth_client_hint", { issuer })}</p>
-      <input
+      <input {...NO_AUTOFILL}
         className="cinput mono"
         aria-label={tr("mcp.oauth_client_id")}
         placeholder={tr("mcp.oauth_client_id")}

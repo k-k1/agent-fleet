@@ -1,6 +1,7 @@
 // SpaceRenameModal — change a space's display name (ADR 0142 decision 3). Only the name shown
 // in the Console changes: the folder under ~/spaces keeps its name, so the sessions in it and
 // their transcripts stay where they are. An empty name shows the folder again.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -73,7 +74,7 @@ export function SpaceRenameModal({
       <div className="ui-modal-body">
         <label className="ui-field">
           <span className="ui-field-label">{tr("pj.space_rename_label")}</span>
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             value={value}
             onChange={(e) => setValue(e.target.value)}

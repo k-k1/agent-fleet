@@ -7,6 +7,7 @@
 //   - an assistant chat (opens a chat prefilled with the text — memos stay queued).
 // The composed default mirrors the server's buildFlushMessage so "send as-is" is identical
 // to the old one-tap flush.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useMemo, useState, useEffect, useRef } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -300,7 +301,7 @@ export function SendMemoModal({ memos, onClose, onSent, onProgress }: SendMemoMo
           <div className="ui-field-label">
             {tr("memo.content_label")} <span className="memo-send-hint">{tr("memo.content_hint")}</span>
           </div>
-          <textarea
+          <textarea {...NO_AUTOFILL}
             ref={textareaRef}
             className="memo-send-text"
             value={text}

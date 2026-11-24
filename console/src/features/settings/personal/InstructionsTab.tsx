@@ -16,6 +16,7 @@
 //   3. Say that it only takes effect from the next session: running sessions are not
 //      retroactively changed. lcpp is the exception: it has no file (delivery "prompt", no
 //      path), and its harness re-reads the text every turn, which its row's wording says.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useState } from "react";
 import { errText, isTransientErr } from "../../../core/api/client.ts";
 import { assertBody } from "../workspace/workspaceApi.ts";
@@ -161,7 +162,7 @@ export function InstructionsTab() {
       <label className="instr-editor-label" htmlFor="instr-body">
         {tr("instr.body_label")}
       </label>
-      <textarea
+      <textarea {...NO_AUTOFILL}
         id="instr-body"
         className="instr-editor"
         spellCheck={false}

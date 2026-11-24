@@ -5,6 +5,7 @@
 // clients only) and nothing saved are different states and the screen says which one is in
 // effect; "reset" deletes the saved value so the environment variable, then the built-in
 // default, applies again.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -115,7 +116,7 @@ export function McpTrustedHostsView() {
         {data && !data.served && <p className="form-err">{tr("admin.mcptrust_not_served")}</p>}
         <label className="brand-field">
           {tr("admin.mcptrust_hosts")}
-          <textarea
+          <textarea {...NO_AUTOFILL}
             id="mcptrust-hosts"
             className="mono"
             rows={6}

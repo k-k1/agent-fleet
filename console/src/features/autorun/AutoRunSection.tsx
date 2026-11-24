@@ -2,6 +2,7 @@
 // queue, grouped by the queue's category. Unattended work is listed here and not in the
 // repository tree. A row opens the run's session; the sessions the run started (reviewers) sit
 // one level under it, and finished runs fold into "Ended N".
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { KeyboardEvent, MouseEvent } from "react";
@@ -594,7 +595,7 @@ export const AutoRunSection = memo(function AutoRunSection() {
       <div ref={filterBarRef} className="proj-filter-bar autorun-filter-bar">
         <div className="proj-filter">
           <Icon name="search" />
-          <input
+          <input {...NO_AUTOFILL}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {

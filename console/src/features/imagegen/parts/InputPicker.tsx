@@ -4,6 +4,7 @@
 // pixels have to be on the workspace disk for the Agent to send them to the box. A dropped
 // file therefore takes the long way round — the existing `POST /fs/upload` into
 // `generated/console/inputs/`, then the path it landed at. Picking from the gallery is P1.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useRef, useState } from "react";
 import type { DragEvent as RDragEvent } from "react";
 import { uploadFiles } from "../../../core/api/client.ts";
@@ -103,7 +104,7 @@ export function InputPicker({
       {!full && (
         <>
           <div className="igen-row">
-            <input
+            <input {...NO_AUTOFILL}
               className="ds-input"
               value={typed}
               placeholder={tr("imggen.input_ph")}

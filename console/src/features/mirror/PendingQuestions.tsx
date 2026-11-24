@@ -17,6 +17,7 @@
 // typed text on option rows and the Enter confirms the highlighted first option
 // (measured on v2.1.204, docs/build/92-driving-a-tui.md).
 
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useId } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { t as tr } from "../../lib/i18n/index.ts";
@@ -257,7 +258,7 @@ export function PendingQuestions({
             // Typing here clears a single-select pick — the two are mutually exclusive.
             // While a pick is active the text stays, greyed out (freeInactive).
             <>
-              <textarea
+              <textarea {...NO_AUTOFILL}
                 className={"mq-freetext" + (freeInactive(qi) ? " inactive" : "")}
                 rows={2}
                 placeholder={tr("mirror.freeform_ph")}

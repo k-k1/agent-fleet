@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import type { KeyboardEvent as RKeyboardEvent } from "react";
 import { sessionSettings } from "../../../core/api/client.ts";
 import type { AgentDescriptor } from "../../../agents/registry.ts";
@@ -200,7 +201,7 @@ export function MirrorComposer({
           </button>
         </>
       )}
-      <textarea
+      <textarea {...NO_AUTOFILL}
         ref={inputRef}
         className="mirror-input"
         rows={2}

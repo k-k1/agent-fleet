@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -170,7 +171,7 @@ export function CatalogBrowser({ row, kind, onKind, paneId, sources, readOnly, o
           {tr((`admin.engines_ingest_source_${next}`) as never)}
         </Button>)}</span>}
         <form className="engine-catalog-search" onSubmit={(event) => { event.preventDefault(); void search(false); }}>
-          <input value={query} aria-label={tr("admin.engines_ingest_search")} placeholder={image ? "SDXL, Flux, style…" : "Qwen, Llama, coder…"}
+          <input {...NO_AUTOFILL} value={query} aria-label={tr("admin.engines_ingest_search")} placeholder={image ? "SDXL, Flux, style…" : "Qwen, Llama, coder…"}
             onChange={(event) => setQuery(event.currentTarget.value)} />
           <Button type="submit" variant="primary" small disabled={busy}>
             {busy && !busyMore && <Icon name="loading" spin />}
@@ -431,7 +432,7 @@ export function NoEngineCatalog({ sources }: { sources: CatalogSource[] }) {
     <div className="engine-catalog-toolbar">
       <span className="seg sm">{(["model", "lora"] as const).map((next) => <Button key={next} variant="ghost" small className={`seg-btn${kind === next ? " seg-btn--active" : ""}`} onClick={() => setKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</Button>)}</span>
       {image && <span className="seg sm">{(["civitai", "civitai-red", "hf"] as const).filter((next) => sources.includes(next)).map((next) => <Button key={next} variant="ghost" small className={`seg-btn${source === next ? " seg-btn--active" : ""}`} onClick={() => switchSource(next)}>{tr((`admin.engines_ingest_source_${next}`) as never)}</Button>)}</span>}
-      <form className="engine-catalog-search" onSubmit={(event) => { event.preventDefault(); void search(false); }}><input aria-label={tr("admin.engines_ingest_search")} value={query} onChange={(event) => setQuery(event.currentTarget.value)} /><Button type="submit" variant="primary" small disabled={busy}>{tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}</Button></form>
+      <form className="engine-catalog-search" onSubmit={(event) => { event.preventDefault(); void search(false); }}><input {...NO_AUTOFILL} aria-label={tr("admin.engines_ingest_search")} value={query} onChange={(event) => setQuery(event.currentTarget.value)} /><Button type="submit" variant="primary" small disabled={busy}>{tr(query.trim() ? "admin.engines_ingest_search_go" : "admin.engines_ingest_browse_go")}</Button></form>
       <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span><select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>{sortOptions.map((option) => <option key={option} value={option}>{tr((`admin.engines_ingest_sort_${option}`) as never)}</option>)}</select></label>
     </div>
     {(source === "civitai" || source === "civitai-red") && sort === "newest" && <p className="muted engine-catalog-sort-note">{tr("admin.catalog_civitai_newest_note" as never)}</p>}

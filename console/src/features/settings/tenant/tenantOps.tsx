@@ -6,6 +6,7 @@
 //
 // isSuper only decides whether the tenant selector (i.e. whether to look across tenants)
 // is shown; the server always decides whose rows come back.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { errText, rel } from "../../../core/api/client.ts";
 import { getAdminAudit, getAdminSessions, getAdminUsage, isOk, type AdminSessionRow, type AdminUsage, type AuditRow, type UsageTotal } from "../api.ts";
@@ -100,7 +101,7 @@ export function AllSessionsView({ tenants, isSuper }: { tenants: Tenant[]; isSup
           )}
           <label className="as-search">
             {tr("admin.search")}
-            <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("admin.search_ph_sessions")} />
+            <input {...NO_AUTOFILL} type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("admin.search_ph_sessions")} />
           </label>
           <span className="as-count muted">{tr("admin.running_count", { n: all.length })}</span>
         </div>
@@ -228,7 +229,7 @@ export function AuditView({ tenants, isSuper }: { tenants: Tenant[]; isSuper: bo
           )}
           <label className="as-search">
             {tr("admin.search")}
-            <input type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("admin.search_ph_audit")} />
+            <input {...NO_AUTOFILL} type="text" value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("admin.search_ph_audit")} />
           </label>
           <button type="button" className="ghost" title={tr("admin.refresh")} onClick={load}>
             <Icon name="refresh" />

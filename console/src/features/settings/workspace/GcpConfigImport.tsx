@@ -6,6 +6,7 @@
 // pasted text is dropped as soon as it has been read (and on cancel); a path or token file named
 // in a configuration is never shown or sent, because only the six mapped fields leave the
 // reader.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useMemo, useRef, useState } from "react";
 import { Modal } from "../../../ui/Modal.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
@@ -184,7 +185,7 @@ export function GcpConfigImport({ onClose, onImported }: { onClose: () => void; 
             />
             <label className="ssm-fld aws-import-fld">
               <span>{tr("gcp.imp_name")}</span>
-              <input className="cinput" value={pasteName} aria-label={tr("gcp.imp_name")} onChange={(e) => setPasteName(e.target.value.trim())} />
+              <input {...NO_AUTOFILL} className="cinput" value={pasteName} aria-label={tr("gcp.imp_name")} onChange={(e) => setPasteName(e.target.value.trim())} />
             </label>
             <div className="flow">
               <button
@@ -274,7 +275,7 @@ function Row({ tr, r, e, edit, busy }: { tr: Tr; r: GcpImportRow; e: GcpRowEdit;
         <div className="ssm-fgrid">
           <label className="ssm-fld aws-import-fld">
             <span>{tr("gcp.imp_label")}</span>
-            <input className="cinput" value={e.label ?? r.display ?? ""} disabled={busy} onChange={(ev) => edit(r.index, { label: ev.target.value })} />
+            <input {...NO_AUTOFILL} className="cinput" value={e.label ?? r.display ?? ""} disabled={busy} onChange={(ev) => edit(r.index, { label: ev.target.value })} />
           </label>
         </div>
       )}

@@ -8,6 +8,7 @@
 // bottom owns the mirror's landing position forever, and every message sent afterwards
 // looks lost behind it (observed in a real incident). That is why the fetch lives in a hook the
 // mirror owns — it needs created_at to place each card.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { Icon } from "../../ui/Icon.tsx";
@@ -243,14 +244,14 @@ export function HandoffProposal({
     >
       {editing ? (
         <>
-          <input
+          <input {...NO_AUTOFILL}
             className="mirror-handoff-title"
             value={title}
             maxLength={SESSION_TITLE_MAX}
             placeholder={tr("mirror.handoff_title_ph")}
             onChange={(e) => setTitle(e.target.value)}
           />
-          <textarea className="mirror-handoff-edit" value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} />
+          <textarea {...NO_AUTOFILL} className="mirror-handoff-edit" value={draft} onChange={(e) => setDraft(e.target.value)} spellCheck={false} />
         </>
       ) : (
         <HandoffBody title={proposal.title} prompt={proposal.prompt} />

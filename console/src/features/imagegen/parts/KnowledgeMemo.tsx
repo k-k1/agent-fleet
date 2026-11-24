@@ -6,6 +6,7 @@
 //
 // Read on demand (the memo is folded by default), never on the studio's 2 s poll: the summary
 // already rides every get_image_studio, and the pane has no reason to pay for it per tick.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -151,7 +152,7 @@ function KnowledgeDoc({ scope, docKey }: { scope: KnowledgeScope; docKey: string
           {SECTIONS.map((sec) => (
             <label className="igen-memo-sec" key={sec}>
               <span className="igen-memo-cap">{tr(`imggen.memo_${sec}` as "imggen.memo_summary")}</span>
-              <textarea
+              <textarea {...NO_AUTOFILL}
                 className="igen-memo-input"
                 data-section={sec}
                 rows={sec === "records" ? 5 : 3}
@@ -180,7 +181,7 @@ function KnowledgeDoc({ scope, docKey }: { scope: KnowledgeScope; docKey: string
       )}
       {!editing && (
         <div className="igen-memo-add">
-          <textarea
+          <textarea {...NO_AUTOFILL}
             className="igen-memo-input"
             rows={2}
             value={note}

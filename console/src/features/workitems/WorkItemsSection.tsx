@@ -26,6 +26,7 @@
 //
 // Launching from the detail modal still just hands the existing launch stack (seed ->
 // useLaunchTarget -> LaunchModal), so worktree/branch/agent stay implemented in one place.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -380,7 +381,7 @@ export const WorkItemsSection = memo(function WorkItemsSection() {
             <div className="wi-filter">
               <div className="proj-filter">
                 <Icon name="search" />
-                <input
+                <input {...NO_AUTOFILL}
                   ref={filterInput}
                   type="search"
                   value={needle}

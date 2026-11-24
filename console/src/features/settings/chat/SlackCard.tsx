@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { errText, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -157,7 +158,7 @@ export function SlackCard({ st, reload }: { st: ChatConn | undefined; reload: ()
                   <OnOff value={threads} onChange={(v) => (setThreads(v), persist({ threads: v }))} />
                 </PsRow>
                 <PsRow label={tr("ops.sl_user_label")} sub={tr("ops.sl_user_sub")}>
-                  <input
+                  <input {...NO_AUTOFILL}
                     className="cinput"
                     type="text"
                     style={{ maxWidth: "12em" }}
@@ -228,7 +229,7 @@ export function SlackCard({ st, reload }: { st: ChatConn | undefined; reload: ()
           </div>
           {dm ? (
             <div className="flow">
-              <input
+              <input {...NO_AUTOFILL}
                 className="cinput"
                 type="text"
                 placeholder={tr("ops.sl_user_placeholder")}

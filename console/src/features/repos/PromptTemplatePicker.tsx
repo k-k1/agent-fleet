@@ -11,6 +11,7 @@
 // The repository's .claude commands and skills are not offered here any more: the skill picker
 // beside this one invokes them for every kind, while pasting their body only ever worked for
 // claude and duplicated the list.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent, RefObject } from "react";
 import { Icon } from "../../ui/Icon.tsx";
@@ -256,7 +257,7 @@ export function PromptTemplatePopover({
         <>
           <div className="launch-tmpl-search">
             <Icon name="search" />
-            <input
+            <input {...NO_AUTOFILL}
               ref={searchRef}
               type="search"
               role="combobox"
@@ -423,7 +424,7 @@ function TemplateEditor({
     <div className="launch-tmpl-edit" role="group" aria-label={tr(draft.id ? "launch.tmpl.edit_title" : "launch.tmpl.new_title")}>
       <div className="launch-tmpl-edit-head">{tr(draft.id ? "launch.tmpl.edit_title" : "launch.tmpl.new_title")}</div>
       <label htmlFor={nameId}>{tr("launch.tmpl.name")}</label>
-      <input
+      <input {...NO_AUTOFILL}
         id={nameId}
         type="text"
         autoFocus={!coarsePointer()}
@@ -434,7 +435,7 @@ function TemplateEditor({
         onChange={(e) => onChange({ ...draft, name: e.target.value })}
       />
       <label htmlFor={bodyId}>{tr("launch.tmpl.body")}</label>
-      <textarea
+      <textarea {...NO_AUTOFILL}
         id={bodyId}
         rows={6}
         value={draft.body}

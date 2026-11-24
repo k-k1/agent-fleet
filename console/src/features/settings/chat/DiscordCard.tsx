@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { errText, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -183,7 +184,7 @@ export function DiscordCard({ st, reload }: { st: ChatConn | undefined; reload: 
                   label={tr("ops.dc_mention_label")}
                   sub={autoMention && mention === autoMention.id && autoMention.name ? tr("ops.dc_mention_auto", { name: autoMention.name }) : undefined}
                 >
-                  <input
+                  <input {...NO_AUTOFILL}
                     className="cinput"
                     type="text"
                     style={{ maxWidth: "14em" }}
@@ -245,7 +246,7 @@ export function DiscordCard({ st, reload }: { st: ChatConn | undefined; reload: 
           </div>
           {dm ? (
             <div className="flow">
-              <input
+              <input {...NO_AUTOFILL}
                 className="cinput"
                 type="text"
                 placeholder={tr("ops.dc_user_placeholder")}

@@ -114,7 +114,7 @@ export function ClaudeCard({
               {tr("agents.claude_hint_2")}
             </Hint>
             <div className="flow">
-              {/* With a plain <input>, password managers and browser autofill kick in and can
+              {/* With a plain input element, password managers and browser autofill kick in and can
                   append a claude.com URL to the pasted OAuth code (code#state), breaking it.
                   Disable autofill completely. */}
               <input

@@ -5,6 +5,7 @@
 // working dir, filterable, bulk-prunable by age (>7 days). A group whose folder was a
 // deleted worktree offers to recreate it at the same path (RecreateWorktreeModal), which is
 // what makes its sessions resumable again.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
@@ -270,7 +271,7 @@ export function ArchivedModal({ onClose, onRestored, dir: scopeDir, session: sco
             <div className="arch-toolbar">
               <div className="arch-search">
                 <Icon name="search" />
-                <input
+                <input {...NO_AUTOFILL}
                   type="search"
                   placeholder={tr("arch.filter_ph")}
                   value={q}

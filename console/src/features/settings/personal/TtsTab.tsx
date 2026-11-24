@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   useSettings,
@@ -248,7 +249,7 @@ export function TtsTab() {
             )}
             <div className="ds-userdict-block">
               <span className="ds-label">{tr("tts.userdict")}</span>
-              <textarea
+              <textarea {...NO_AUTOFILL}
                 className="ds-userdict"
                 value={s.ttsUserDict}
                 onChange={(e) => setSetting("ttsUserDict", e.target.value)}

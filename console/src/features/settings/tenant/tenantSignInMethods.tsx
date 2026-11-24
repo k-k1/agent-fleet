@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -458,7 +459,7 @@ function IdPForm({
     <div className="ssm-frm adm-mcp-form">
       <div className="ssm-fgrid">
         <Field label={tr("admin.idp_name")} req hint={tr("admin.idp_name_hint")}>
-          <input value={form.name} placeholder={isGitHub ? "github" : "entra"} onChange={(e) => set({ name: e.target.value })} />
+          <input {...NO_AUTOFILL} value={form.name} placeholder={isGitHub ? "github" : "entra"} onChange={(e) => set({ name: e.target.value })} />
         </Field>
         <Field label={tr("admin.idp_kind")} req hint={tr("admin.idp_kind_hint")}>
           {/* Changing the kind discards the other kind's fields. Carrying them over would allow
@@ -480,7 +481,7 @@ function IdPForm({
         </Field>
         {isGitHub ? (
           <Field label={tr("admin.idp_orgs")} req wide hint={tr("admin.idp_orgs_hint")}>
-            <input
+            <input {...NO_AUTOFILL}
               value={form.allowed_orgs || ""}
               placeholder="acme-sub"
               onChange={(e) => set({ allowed_orgs: e.target.value })}
@@ -495,7 +496,7 @@ function IdPForm({
               </select>
             </Field>
             <Field label={tr("admin.idp_issuer")} req wide hint={tr("admin.idp_issuer_hint")}>
-              <input
+              <input {...NO_AUTOFILL}
                 value={form.issuer}
                 placeholder="https://login.microsoftonline.com/<tenant-guid>/v2.0"
                 onChange={(e) => set({ issuer: e.target.value })}
@@ -504,7 +505,7 @@ function IdPForm({
           </>
         )}
         <Field label={tr("admin.idp_client_id")} req hint={isGitHub ? tr("admin.idp_github_app_hint", { url: callbackURL }) : undefined}>
-          <input value={form.client_id} onChange={(e) => set({ client_id: e.target.value })} />
+          <input {...NO_AUTOFILL} value={form.client_id} onChange={(e) => set({ client_id: e.target.value })} />
         </Field>
         <Field
           label={tr("admin.idp_client_secret")}
@@ -525,7 +526,7 @@ function IdPForm({
           wide
           hint={isGitHub ? tr("admin.idp_github_domains_note") : tr("admin.idp_domains_hint")}
         >
-          <input
+          <input {...NO_AUTOFILL}
             value={form.allowed_domains || ""}
             placeholder="@sub.co.jp"
             onChange={(e) => set({ allowed_domains: e.target.value })}
@@ -533,7 +534,7 @@ function IdPForm({
         </Field>
         {!isGitHub && (
           <Field label={tr("admin.idp_tids")} wide hint={tr("admin.idp_tids_hint")}>
-            <input value={form.allowed_tids || ""} onChange={(e) => set({ allowed_tids: e.target.value })} />
+            <input {...NO_AUTOFILL} value={form.allowed_tids || ""} onChange={(e) => set({ allowed_tids: e.target.value })} />
           </Field>
         )}
         {/* A select, not free text. Only a claim the IdP assigns and the subject cannot choose
@@ -549,10 +550,10 @@ function IdPForm({
           </Field>
         )}
         <Field label={tr("admin.idp_label_ja")}>
-          <input value={form.label_ja || ""} onChange={(e) => set({ label_ja: e.target.value })} />
+          <input {...NO_AUTOFILL} value={form.label_ja || ""} onChange={(e) => set({ label_ja: e.target.value })} />
         </Field>
         <Field label={tr("admin.idp_label_en")}>
-          <input value={form.label_en || ""} onChange={(e) => set({ label_en: e.target.value })} />
+          <input {...NO_AUTOFILL} value={form.label_en || ""} onChange={(e) => set({ label_en: e.target.value })} />
         </Field>
       </div>
       <p className="admin-hint">{tr("admin.idp_repend_hint")}</p>

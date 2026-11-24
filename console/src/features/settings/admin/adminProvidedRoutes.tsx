@@ -6,6 +6,7 @@
 // Drawn only where the CP serves provided routes (its plain 404 draws nothing). The source's PUT
 // takes SourceInput alone and reads an absent `active` as true, so the body always carries the
 // loaded or edited `active`: re-saving an inactive source must never switch it back on.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useState } from "react";
 import { putProvidedDeployment } from "./adminApi.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -61,7 +62,7 @@ function SourceEditor({
   const field = (label: string, value: string, set: (v: string) => void) => (
     <label className="admin-fld">
       <span className="af-cap">{label}</span>
-      <input
+      <input {...NO_AUTOFILL}
         type="text"
         value={value}
         disabled={busy}
@@ -79,7 +80,7 @@ function SourceEditor({
       {field(tr("admin.prov_source_region"), region, setRegion)}
       <label className="admin-fld">
         <span className="af-cap">{tr("admin.prov_source_models")}</span>
-        <textarea
+        <textarea {...NO_AUTOFILL}
           rows={3}
           value={models}
           disabled={busy}

@@ -9,6 +9,7 @@
 // So the card is the REPOSITORY, the rows under it stay one per quantisation (a member has to be
 // able to choose between IQ2_XXS and IQ2_S, so they cannot be merged), and the ladder of sizes
 // that are not here yet is one press away with a verdict on every line.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { isOk } from "../api.ts";
 import { getIngestFiles, getIngestVersions } from "./adminApi.ts";
@@ -113,7 +114,7 @@ export function RepoQuantLadder({ engine, repo, rows, readOnly, startOpen, onTak
     {open && <>
       <div className="engine-repo-ladder-head">
         <label><span>{tr("admin.engines_model_window_context")}</span>
-          <input inputMode="numeric" value={ctx} onChange={(event) => setCtx(event.currentTarget.value)} /></label>
+          <input {...NO_AUTOFILL} inputMode="numeric" value={ctx} onChange={(event) => setCtx(event.currentTarget.value)} /></label>
         {!!cardMiB && <span className="muted">{(tr("admin.fit_card" as never) as string).replace("{c}", String(cardMiB))}</span>}
         {busy && <span className="muted"><Icon name="loading" spin /> {tr("admin.repo_ladder_loading" as never)}</span>}
         {/* In a modal the dialog's own close is the way out; a second one inside it would leave

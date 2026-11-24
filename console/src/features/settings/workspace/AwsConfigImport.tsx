@@ -4,6 +4,7 @@
 // per-profile fields of the rows the member ticks, through the same POST the add form uses.
 // The pasted text is dropped as soon as it has been read (and on cancel), so the only copy
 // left is the parsed, validated rows.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useMemo, useRef, useState } from "react";
 import { Modal } from "../../../ui/Modal.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
@@ -325,7 +326,7 @@ function Row({
         <div className="ssm-fgrid">
           <label className="ssm-fld aws-import-fld">
             <span>{tr("ssm.imp_label")}</span>
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput"
               value={e.label ?? r.display}
               disabled={busy}
@@ -335,7 +336,7 @@ function Row({
           {r.kind === "sso" && !preview.signInsUnknown && (
             <label className="ssm-fld aws-import-fld">
               <span>{tr("ssm.imp_sign_in")}</span>
-              <input
+              <input {...NO_AUTOFILL}
                 className="cinput ssm-imp-signin"
                 value={e.signIn ?? r.signInName}
                 placeholder={tr("ssm.imp_sign_in_own")}
@@ -348,7 +349,7 @@ function Row({
           {r.kind === "assume_role" && (
             <label className="ssm-fld aws-import-fld">
               <span>{tr("ssm.imp_duration")}</span>
-              <input
+              <input {...NO_AUTOFILL}
                 className="cinput"
                 inputMode="numeric"
                 placeholder="3600"

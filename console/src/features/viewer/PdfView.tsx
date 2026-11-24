@@ -16,6 +16,7 @@
 // The bytes are fetched by pdf.js itself from the download endpoint (via `url`). That path
 // supports Range, so a large PDF starts rendering without loading the whole file into JS memory
 // (the Agent serves with http.ServeContent and the CP proxy relays the headers unchanged).
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import {
   useCallback,
   useEffect,
@@ -711,7 +712,7 @@ export function PdfView({ src, onMeta, scrollMemory }: PdfViewProps) {
     <div className="pdfview" ref={rootRef} {...{ [OWN_FIND_ATTR]: "" }} onKeyDown={onPaneKeyDown}>
       {findOpen && (
         <div className="pdfview-find" role="search" onKeyDown={onBarKeyDown}>
-          <input
+          <input {...NO_AUTOFILL}
             ref={findInputRef}
             type="text"
             value={query}

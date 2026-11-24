@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -216,12 +217,12 @@ export function TenantLoginRules({
         <div className="admin-fgrid">
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.auto_join_domains")}</span>
-            <input type="text" placeholder="@sales.acme.co.jp" value={autoJoin} onChange={(e) => setAutoJoin(e.target.value)} />
+            <input {...NO_AUTOFILL} type="text" placeholder="@sales.acme.co.jp" value={autoJoin} onChange={(e) => setAutoJoin(e.target.value)} />
             <span className="af-unit">{tr("admin.auto_join_domains_unit")}</span>
           </label>
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.invite_domains")}</span>
-            <input type="text" placeholder="@acme.co.jp" value={domains} onChange={(e) => setDomains(e.target.value)} />
+            <input {...NO_AUTOFILL} type="text" placeholder="@acme.co.jp" value={domains} onChange={(e) => setDomains(e.target.value)} />
             <span className="af-unit">{tr("admin.invite_domains_unit")}</span>
           </label>
         </div>

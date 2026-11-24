@@ -3,6 +3,7 @@
 // flow Ph2): source (pick from a connection / type a URL) + RepoPicker or
 // URL+branch inputs. It only resolves WHAT to clone — branch forking / folder
 // naming stay with the caller.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { RepoPicker } from "./RepoPicker.tsx";
 import type { RepoSelection } from "./RepoPicker.tsx";
@@ -67,11 +68,11 @@ export function CloneForm({ onChange }: CloneFormProps) {
         <>
           <label className="ui-field">
             <span className="ui-field-label">{tr("rp.clone_url")}</span>
-            <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://… / git@…" />
+            <input {...NO_AUTOFILL} value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://… / git@…" />
           </label>
           <label className="ui-field">
             <span className="ui-field-label">{tr("rp.branch_optional")}</span>
-            <input value={branch} onChange={(e) => setBranch(e.target.value)} placeholder={tr("rp.default_branch")} />
+            <input {...NO_AUTOFILL} value={branch} onChange={(e) => setBranch(e.target.value)} placeholder={tr("rp.default_branch")} />
           </label>
         </>
       )}

@@ -6,6 +6,7 @@
 // The profile name (gcloud configuration af-<name>) is the CP's: this page shows `name` and
 // `conflict` as the API returns them and never derives them, so it cannot disagree with what
 // the workspace receives.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import type { ChangeEvent } from "react";
 import { getGcpLoginStates, listGcpProfileRows } from "./workspaceApi.ts";
@@ -173,7 +174,7 @@ export function GcpTab() {
       <fieldset className="ssm-fieldset" disabled={busy}>
         <FieldGroup>
           <Field label={tr("gcp.f_label")} req hint={tr("gcp.f_label_hint")}>
-            <input className="cinput" placeholder="prod" value={f.label} onChange={set("label")} autoFocus />
+            <input {...NO_AUTOFILL} className="cinput" placeholder="prod" value={f.label} onChange={set("label")} autoFocus />
           </Field>
           <Field label={tr("gcp.f_login_method")} hint={tr("gcp.f_login_method_hint")}>
             <select className="cinput" value="google" disabled>
@@ -181,16 +182,16 @@ export function GcpTab() {
             </select>
           </Field>
           <Field label={tr("gcp.f_project")} req hint={tr("gcp.f_project_hint")}>
-            <input className="cinput" placeholder="my-project-123" value={f.project} onChange={set("project")} />
+            <input {...NO_AUTOFILL} className="cinput" placeholder="my-project-123" value={f.project} onChange={set("project")} />
           </Field>
           <Field label={tr("gcp.f_quota_project")} hint={tr("gcp.f_quota_project_hint")}>
-            <input className="cinput" placeholder={f.project.trim() || "my-project-123"} value={f.quotaProject} onChange={set("quotaProject")} />
+            <input {...NO_AUTOFILL} className="cinput" placeholder={f.project.trim() || "my-project-123"} value={f.quotaProject} onChange={set("quotaProject")} />
           </Field>
           <Field label={tr("gcp.f_account")} hint={tr("gcp.f_account_hint")}>
-            <input className="cinput" placeholder="you@example.com" value={f.account} onChange={set("account")} />
+            <input {...NO_AUTOFILL} className="cinput" placeholder="you@example.com" value={f.account} onChange={set("account")} />
           </Field>
           <Field label={tr("gcp.f_impersonate")} wide hint={tr("gcp.f_impersonate_hint")}>
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput"
               placeholder="deployer@my-project-123.iam.gserviceaccount.com"
               value={f.impersonateServiceAccount}

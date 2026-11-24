@@ -9,6 +9,7 @@
 // superseded by the document, quoting the revision and text digest the proposal showed, so a
 // memory edited while the pull request waited is refused rather than hidden.
 
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useRef, useState } from "react";
 import {
   errDetail,
@@ -157,7 +158,7 @@ function Proposal({
           </p>
           <label>
             <span className="muted">{tr("mem.promo_commit")}</span>{" "}
-            <input value={commit} onChange={(e) => setCommit(e.target.value)} />
+            <input {...NO_AUTOFILL} value={commit} onChange={(e) => setCommit(e.target.value)} />
           </label>{" "}
           <Button
             type="submit"

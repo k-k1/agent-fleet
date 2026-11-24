@@ -12,6 +12,7 @@
 // (questionKeys) is not imported here, so no carried-interaction button can reach a live
 // pane with Down/Enter. The same holds when the session is running again: the answer still goes
 // through sessionCarriedAnswer, and only the words change (no "stopped", no "resume").
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
@@ -151,7 +152,7 @@ export function CarriedBlock({
         {carried.kind === "plan" && (
           <>
             <PlanBlock plan={carried.plan} session={session} previewLinks onOpen={carried.plan && onOpenPlan ? () => onOpenPlan(carried.plan!) : undefined} />
-            <textarea
+            <textarea {...NO_AUTOFILL}
               className="mq-freetext"
               rows={2}
               placeholder={tr("mirror.carried_plan_feedback_ph")}

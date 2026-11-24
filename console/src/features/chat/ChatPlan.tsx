@@ -15,6 +15,7 @@
 // over a newer agreement. The edit affordance is the only remedy for that, so the panel can
 // be collapsed but not removed: the header button is always present on a conversation that
 // has a plan.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -133,7 +134,7 @@ export function ChatPlan({ conversationId, plan, updatedAt, disabled, onUpdated,
         </div>
       )}
       {editing ? (
-        <textarea
+        <textarea {...NO_AUTOFILL}
           className="cp-edit"
           value={draft}
           spellCheck={false}

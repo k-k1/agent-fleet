@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useRef, useState } from "react";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
 import { AWS_REGIONS } from "./awsRegions.ts";
@@ -82,7 +83,7 @@ export function RegionSelect({
         <option value={OTHER}>{tr(`${msgPrefix}_other`)}</option>
       </select>
       {other && (
-        <input
+        <input {...NO_AUTOFILL}
           className={className}
           placeholder={tr(`${msgPrefix}_other_placeholder`)}
           value={value}
