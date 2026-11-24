@@ -1224,12 +1224,12 @@ func memoFireBlock(tx store.MemoWaitOps, q store.MemoQueue, pending store.QueueP
 
 const (
 	// memoPRSnapshotBudget bounds the pass that reads the snapshots, apart from the settle pass's
-	// own budget, and memoPRSnapshotsPerTick how many it reads in a tick. memoPRSnapshotsListed is
-	// how many due ones it looks at: those of a stopped workspace are passed over without a read,
-	// and must not use up the tick's reads.
-	memoPRSnapshotBudget   = 20 * time.Second
-	memoPRSnapshotsPerTick = 20
-	memoPRSnapshotsListed  = 200
+	// own budget, and memoPRSnapshotsPerTick how many it reads in a tick. memoPRSnapshotListPages
+	// is the pages of due ones it looks at: those of a stopped workspace are passed over without a
+	// read, and must not use up the tick's reads.
+	memoPRSnapshotBudget    = 20 * time.Second
+	memoPRSnapshotsPerTick  = 20
+	memoPRSnapshotListPages = 10
 	// memoPRSnapshotEvery is the least time between two reads of one delivery's snapshot.
 	memoPRSnapshotEvery = 10 * time.Minute
 	// memoPRCallWait is the wait for the Agent, above its own 15 s bound on the provider and
@@ -1270,25 +1270,47 @@ type memoPRSnapshotReply struct {
 
 // collectPRSnapshots reads the snapshots that are due: a pending message waits for them, they are
 // not final, and they were not tried in the last 10 minutes. Only a running workspace whose Agent
-// has the endpoint is asked; every other read decides nothing, and the dependent waits.
+// has the endpoint is asked; every other read decides nothing, and the dependent waits. The list
+// is paged as collectAnswers pages its waited-for one: a member whose rows are left unstamped is
+// left out of the next pages, so they cannot hide a running workspace's rows behind them.
 func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
-	if ctx.Err() != nil {
-		return
-	}
-	ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, store.DeliveryTS(now.Add(-memoPRSnapshotEvery)), memoPRSnapshotsListed)
-	if err != nil {
-		log.Printf("memo queue: list PR snapshots due: %v", err)
-		return
-	}
 	read := 0
-	for _, d := range ds {
+	var after *store.MemoDelivery
+	var except []string
+	for p := 0; p < memoPRSnapshotListPages; p++ {
 		if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
 			return
+		}
+		ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, store.DeliveryTS(now.Add(-memoPRSnapshotEvery)), after, except, memoPRSnapshotsListed)
+		if err != nil {
+			log.Printf("memo queue: list PR snapshots due: %v", err)
+			return
+		}
+		read, except = r.readPRSnapshotsOf(ctx, views, ds, read, except, now)
+		if len(ds) < memoPRSnapshotsListed {
+			return
+		}
+		after = &ds[len(ds)-1]
+	}
+}
+
+// memoPRSnapshotsListed is a page of collectPRSnapshots' list. A variable only so a test can page
+// with a handful of rows.
+var memoPRSnapshotsListed = 200
+
+// readPRSnapshotsOf reads the snapshots of one page of collectPRSnapshots' list, read being the
+// reads the tick made so far and except the members left unstamped so far, and answers both,
+// grown.
+func (r *memoQueueRunner) readPRSnapshotsOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, read int, except []string, now time.Time) (int, []string) {
+	for _, d := range ds {
+		if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
+			return read, except
 		}
 		// Only a read that is made is stamped: a stamp on a stopped workspace's snapshot would keep
 		// the wake made for it from being read for 10 minutes after the start.
 		v := r.view(ctx, views, d.MembershipID)
 		if v == nil || !v.liveOK || !v.prs {
+			except = memoExceptAdd(except, d.MembershipID)
 			continue
 		}
 		// Stamped before it is tried, as the first-turn pass stamps: the next tick goes on with
@@ -1302,6 +1324,7 @@ func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[stri
 		read++
 		r.readPRSnapshot(ctx, v.res, d)
 	}
+	return read, except
 }
 
 // readPRSnapshot asks the Agent for one delivery's snapshot and keeps the answer. The first read

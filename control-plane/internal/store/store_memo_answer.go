@@ -1,6 +1,10 @@
 package store
 
-import "context"
+import (
+	"context"
+	"fmt"
+	"time"
+)
 
 // The last answer of a delivery's root session (ADR 0137, issue #4876): the first line of what the
 // session said last, read from the running Agent after the delivery closed and kept on the
@@ -24,16 +28,17 @@ type MemoAnswerStore interface {
 	// ListAnswersDue returns, of every member, the deliveries closed at or after since with a
 	// session and no answer decided, last tried before before (never tried first), at most limit,
 	// in (answer_tried_at, closed_at, id) order and past after when it is given (the last row of
-	// the page before): with waited, those a pending message of the same bucket waits for, else
-	// the others.
-	ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, limit int) ([]MemoDelivery, error)
+	// the page before), leaving out the members in except: with waited, those a pending message of
+	// the same bucket waits for, else the others.
+	ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, except []string, limit int) ([]MemoDelivery, error)
 	// MarkAnswerTried stamps a delivery whose answer is about to be read.
 	MarkAnswerTried(ctx context.Context, id, at string) error
 	// RecordAnswer keeps a read's answer on a closed delivery that has none and closed at or after
 	// since: written once, so a later turn of the same session (a person taking it over) never
-	// rewrites what the run ended with, and never after the window to read it ended. False means
-	// nothing was written.
-	RecordAnswer(ctx context.Context, id, head, class, since string) (bool, error)
+	// rewrites what the run ended with, and never after the window to read it ended: the close is
+	// at or after since (the caller's clock) and no more than window before the database's clock
+	// when the row is written. False means nothing was written.
+	RecordAnswer(ctx context.Context, id, head, class, since string, window time.Duration) (bool, error)
 }
 
 // memoDeliveryWaitedSQL holds for a delivery row that a pending message of the same bucket as the
@@ -42,16 +47,35 @@ const memoDeliveryWaitedSQL = `EXISTS (SELECT 1 FROM memo p JOIN memo m ON m.mem
 	  WHERE p.membership_id=memo_delivery.membership_id AND p.delivery_id=memo_delivery.id AND p.state='delivered'
 	    AND m.state='pending' AND m.after_ids LIKE '%"' || p.id || '"%')`
 
-func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, limit int) ([]MemoDelivery, error) {
+// memoDeliveryPageSQL narrows a list of deliveries in (tried, closed_at, id) order, tried being the
+// column of the pass's own stamp, to the rows past after (the last row of the page before, when
+// given) and outside the members in except. The except list is how a pass rotates past the
+// members whose rows it leaves unstamped (a stopped workspace): one entry skips all of a member's
+// rows, however many, where a page bound alone would let them fill every page.
+func memoDeliveryPageSQL(tried string, triedOf func(MemoDelivery) string, after *MemoDelivery, except []string) (string, []any) {
+	cond, args := "", []any{}
+	if after != nil {
+		t := triedOf(*after)
+		cond += ` AND (` + tried + `>? OR (` + tried + `=? AND (closed_at>? OR (closed_at=? AND id>?))))`
+		args = append(args, t, t, after.ClosedAt, after.ClosedAt, after.ID)
+	}
+	if len(except) > 0 {
+		cond += ` AND membership_id NOT IN (` + inList(len(except)) + `)`
+		for _, m := range except {
+			args = append(args, m)
+		}
+	}
+	return cond, args
+}
+
+func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, except []string, limit int) ([]MemoDelivery, error) {
 	cond := memoDeliveryWaitedSQL
 	if !waited {
 		cond = `NOT ` + cond
 	}
-	args := []any{DeliveryClosed, since, before}
-	if after != nil {
-		cond += ` AND (answer_tried_at>? OR (answer_tried_at=? AND (closed_at>? OR (closed_at=? AND id>?))))`
-		args = append(args, after.AnswerTriedAt, after.AnswerTriedAt, after.ClosedAt, after.ClosedAt, after.ID)
-	}
+	page, pargs := memoDeliveryPageSQL("answer_tried_at", func(d MemoDelivery) string { return d.AnswerTriedAt }, after, except)
+	cond += page
+	args := append([]any{DeliveryClosed, since, before}, pargs...)
 	args = append(args, limit)
 	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state=? AND session<>'' AND answer_class=''
 		  AND closed_at>=? AND answer_tried_at<? AND `+cond+`
@@ -63,7 +87,24 @@ func (s *SQL) MarkAnswerTried(ctx context.Context, id, at string) error {
 	return err
 }
 
-func (s *SQL) RecordAnswer(ctx context.Context, id, head, class, since string) (bool, error) {
+// RecordAnswer judges the window by both clocks: since alone was computed before the statement, so
+// an UPDATE that waited on a row lock past the edge would still keep an answer. The database's
+// clock is read when the row is written (Postgres re-evaluates clock_timestamp() when it re-checks
+// a row another write changed while it waited; SQLite takes its write lock before it reads 'now').
+func (s *SQL) RecordAnswer(ctx context.Context, id, head, class, since string, window time.Duration) (bool, error) {
 	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET answer_head=?, answer_class=?
-		WHERE id=? AND state=? AND answer_class='' AND closed_at>=?`, head, class, id, DeliveryClosed, since))
+		WHERE id=? AND state=? AND answer_class='' AND closed_at>=? AND closed_at>=`+s.dbDeliveryTSAgo(window),
+		head, class, id, DeliveryClosed, since))
+}
+
+// dbDeliveryTSAgo is an SQL expression for the database's clock less d, in DeliveryTS's form
+// (microseconds, UTC, Z), so it compares as text with the stamps the Control Plane writes. d is
+// taken in whole seconds.
+func (s *SQL) dbDeliveryTSAgo(d time.Duration) string {
+	secs := int64(d / time.Second)
+	if s.dialect == "postgres" {
+		return fmt.Sprintf(`to_char((clock_timestamp() AT TIME ZONE 'UTC') - interval '%d seconds', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`, secs)
+	}
+	// strftime's %f is seconds with milliseconds: SQLite's clock has no finer grain.
+	return fmt.Sprintf(`(strftime('%%Y-%%m-%%dT%%H:%%M:%%f', 'now', '-%d seconds') || '000Z')`, secs)
 }

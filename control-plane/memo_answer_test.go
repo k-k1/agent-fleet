@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -214,13 +215,13 @@ func TestMemoAnswerWrittenOnce(t *testing.T) {
 		_, _, da, _ := e.noPRChain(time.Now().Add(-time.Minute))
 		ctx := context.Background()
 		since := store.DeliveryTS(time.Now().Add(-memoAnswerWindow))
-		if ok, _ := e.st.RecordAnswer(ctx, da.ID, "Done: late", store.AnswerDone, store.DeliveryTS(time.Now())); ok {
+		if ok, _ := e.st.RecordAnswer(ctx, da.ID, "Done: late", store.AnswerDone, store.DeliveryTS(time.Now()), memoAnswerWindow); ok {
 			t.Fatal("an answer was kept after its window")
 		}
-		if ok, err := e.st.RecordAnswer(ctx, da.ID, "Partial: x", store.AnswerPartial, since); err != nil || !ok {
+		if ok, err := e.st.RecordAnswer(ctx, da.ID, "Partial: x", store.AnswerPartial, since, memoAnswerWindow); err != nil || !ok {
 			t.Fatalf("first: %v %v", ok, err)
 		}
-		if ok, _ := e.st.RecordAnswer(ctx, da.ID, "Done: y", store.AnswerDone, since); ok {
+		if ok, _ := e.st.RecordAnswer(ctx, da.ID, "Done: y", store.AnswerDone, since, memoAnswerWindow); ok {
 			t.Fatal("a kept answer was overwritten")
 		}
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerPartial || got.AnswerHead != "Partial: x" {
@@ -466,8 +467,43 @@ func TestMemoAnswerWakeUnderAThreshold(t *testing.T) {
 	})
 }
 
-// collectAnswers pages its waited-for list past the rows of a stopped workspace: they stay
-// unstamped (read at the start), and a running workspace's row behind them is read in the tick.
+// otherMemberChains makes n chains like prChain's (first turn clean, snapshot prState) and moves
+// each to member, with session "q-<member>": their deliveries close before closedAt, the first
+// latest, so they are listed ahead of a delivery closed at closedAt. It answers their ids.
+func (e *deliveryEnv) otherMemberChains(q, member string, n int, closedAt time.Time, prState string) []string {
+	e.t.Helper()
+	ctx := context.Background()
+	db := e.st.DB()
+	var ids []string
+	for i := 0; i < n; i++ {
+		p := e.pending("app", "impl", fmt.Sprintf("p%d", i))
+		rec := e.do("a", "POST", "/api/memos", afterMemo("app", "impl", fmt.Sprintf("waits for p%d", i), p.ID))
+		if rec.Code != http.StatusCreated {
+			e.t.Fatalf("dependent: %d %s", rec.Code, rec.Body.String())
+		}
+		dep := decode[memoDTO](e.t, rec)
+		d := e.fired(q)
+		if !sameIDs(d.MessageIDs, p.ID) {
+			e.t.Fatalf("claimed %v, want p%d", d.MessageIDs, i)
+		}
+		e.closeWithPRs(d.ID, "clean", 90_000, closedAt.Add(-time.Duration(i+1)*time.Second), prState)
+		if _, err := db.ExecContext(ctx, `UPDATE memo_delivery SET session=?, membership_id=? WHERE id=?`,
+			"q-"+member, e.members[member], d.ID); err != nil {
+			e.t.Fatal(err)
+		}
+		for _, id := range []string{p.ID, dep.ID} {
+			if _, err := db.ExecContext(ctx, `UPDATE memo SET membership_id=? WHERE id=?`, e.members[member], id); err != nil {
+				e.t.Fatal(err)
+			}
+		}
+		ids = append(ids, d.ID)
+	}
+	return ids
+}
+
+// collectAnswers pages its waited-for list past the rows of a stopped workspace, however many: they
+// stay unstamped (read at the start), the member is left out of the next pages, and a running
+// workspace's row behind more of them than the tick has pages is read in the tick (issue #4891).
 func TestMemoAnswerListPages(t *testing.T) {
 	saved := memoAnswersListed
 	memoAnswersListed = 1
@@ -475,56 +511,70 @@ func TestMemoAnswerListPages(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
-		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: behind the stopped row"))
-		// A second chain, closed earlier so it is listed first, moved to member b, whose
-		// workspace is stopped.
-		p2 := e.pending("app", "impl", "p2")
-		d2rec := e.do("a", "POST", "/api/memos", afterMemo("app", "impl", "waits for p2", p2.ID))
-		if d2rec.Code != http.StatusCreated {
-			t.Fatalf("dependent: %d %s", d2rec.Code, d2rec.Body.String())
-		}
-		dep2 := decode[memoDTO](t, d2rec)
-		d2 := e.fired(q)
-		if !sameIDs(d2.MessageIDs, p2.ID) {
-			t.Fatalf("claimed %v, want p2", d2.MessageIDs)
-		}
-		e.closeWithPRs(d2.ID, "clean", 90_000, now.Add(-2*time.Minute), store.PRStateNone)
-		db := e.st.DB()
-		for _, stmt := range []string{
-			`UPDATE memo_delivery SET session='q-b', membership_id=? WHERE id=?`,
-		} {
-			if _, err := db.ExecContext(context.Background(), stmt, e.members["b"], d2.ID); err != nil {
-				t.Fatal(err)
-			}
-		}
-		for _, id := range []string{p2.ID, dep2.ID} {
-			if _, err := db.ExecContext(context.Background(), `UPDATE memo SET membership_id=? WHERE id=?`, e.members["b"], id); err != nil {
-				t.Fatal(err)
-			}
-		}
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: behind the stopped rows"))
+		stopped := e.otherMemberChains(q, "b", memoAnswerListPages+1, now.Add(-time.Minute), store.PRStateNone)
 		views := map[string]*memoMemberView{e.members["b"]: {mirrorOK: true}}
 		e.runner().collectAnswers(context.Background(), views, now)
-		if got := e.delivery(d2.ID); got.AnswerTriedAt != "" || got.AnswerClass != "" {
-			t.Fatalf("the stopped workspace's row was stamped or read: %+v", got)
+		for _, id := range stopped {
+			if got := e.delivery(id); got.AnswerTriedAt != "" || got.AnswerClass != "" {
+				t.Fatalf("the stopped workspace's row was stamped or read: %+v", got)
+			}
 		}
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
-			t.Fatalf("the running workspace's row behind it: %q %q", got.AnswerHead, got.AnswerClass)
+			t.Fatalf("the running workspace's row behind them: %q %q", got.AnswerHead, got.AnswerClass)
 		}
 	})
 }
 
 // An Agent that reports its workspace running but does not answer the session list costs one try:
-// the row is stamped, so the next ticks reach the rows behind it.
+// the row is stamped, so the next ticks reach the rows behind it. The first member's list call is
+// held until the pass's budget ends (the pass is run under a short budget of its own), and the
+// next tick, under the same budget, reads the following member's Done:.
 func TestMemoAnswerUnansweredAgentIsStamped(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
-		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
-		agent.mu.Lock()
-		agent.sessionsDown = true
-		agent.mu.Unlock()
-		e.settleNow(now)
-		if got := e.delivery(da.ID); got.AnswerTriedAt == "" {
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: the member behind"))
+		e.silentMember() // c: its Agent holds every call until the caller gives up
+		silent := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), store.PRStateNone)[0]
+		budget := func(at time.Time) {
+			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+			defer cancel()
+			e.runner().collectAnswers(ctx, map[string]*memoMemberView{}, at)
+		}
+		budget(now)
+		if got := e.delivery(silent); got.AnswerTriedAt == "" {
 			t.Fatal("a row of an Agent that did not answer was left unstamped")
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != "" || len(agent.answerCallsSoFar()) != 0 {
+			t.Fatalf("the member behind was read in a tick the silent Agent used up: %+v", got)
+		}
+		budget(now.Add(time.Minute))
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone || got.AnswerHead != "Done: the member behind" {
+			t.Fatalf("the next tick: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// RecordAnswer judges the window by the database's clock as well as by the caller's since: a since
+// that says the close is inside the window does not keep an answer the database's clock puts past
+// it (an UPDATE that waited on a lock past the edge), and an answer just inside it is kept.
+func TestMemoAnswerWindowByTheDatabaseClock(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		_, _, da, _ := e.noPRChain(time.Now().Add(-time.Minute))
+		ctx := context.Background()
+		closeAt := func(at time.Time) {
+			if _, err := e.st.DB().ExecContext(ctx, `UPDATE memo_delivery SET closed_at=? WHERE id=?`, store.DeliveryTS(at), da.ID); err != nil {
+				t.Fatal(err)
+			}
+		}
+		closeAt(time.Now().Add(-memoAnswerWindow - 2*time.Second))
+		if ok, err := e.st.RecordAnswer(ctx, da.ID, "Done: late", store.AnswerDone, "", memoAnswerWindow); err != nil || ok {
+			t.Fatalf("kept past the database's window: %v %v", ok, err)
+		}
+		closeAt(time.Now().Add(-memoAnswerWindow + 5*time.Second))
+		if ok, err := e.st.RecordAnswer(ctx, da.ID, "Done: in time", store.AnswerDone, "", memoAnswerWindow); err != nil || !ok {
+			t.Fatalf("not kept inside the window: %v %v", ok, err)
 		}
 	})
 }

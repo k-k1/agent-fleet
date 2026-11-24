@@ -373,3 +373,32 @@ func TestMemoPRSnapshotNoWakeWithoutTheReport(t *testing.T) {
 		}
 	})
 }
+
+// collectPRSnapshots pages its list past the rows of a stopped workspace, however many: they stay
+// unstamped (read at the start), the member is left out of the next pages, and a running
+// workspace's snapshot behind more of them than the tick has pages is read in the tick (issue
+// #4891).
+func TestMemoPRSnapshotListPages(t *testing.T) {
+	saved := memoPRSnapshotsListed
+	memoPRSnapshotsListed = 1
+	t.Cleanup(func() { memoPRSnapshotsListed = saved })
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.prChain("clean", now.Add(-time.Minute))
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
+		stopped := e.otherMemberChains(q, "b", memoPRSnapshotListPages+1, now.Add(-time.Minute), "")
+		views := map[string]*memoMemberView{e.members["b"]: {mirrorOK: true}}
+		e.runner().collectPRSnapshots(context.Background(), views, now)
+		for _, id := range stopped {
+			if got := e.delivery(id); got.PRTriedAt != "" || got.PRState != "" {
+				t.Fatalf("the stopped workspace's snapshot was stamped or read: %+v", got)
+			}
+		}
+		if got := e.delivery(da.ID); got.PRState != store.PRStateMerged {
+			t.Fatalf("the running workspace's snapshot behind them: %+v", got)
+		}
+		if calls := agent.prCallsSoFar(); len(calls) != 1 || calls[0].Session != "q-a" {
+			t.Fatalf("reads %+v, want one of q-a", calls)
+		}
+	})
+}

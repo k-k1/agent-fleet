@@ -27,6 +27,7 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1859,24 +1860,26 @@ type memoAnswerReply struct {
 // collectAnswers reads the answers that are due: first those a pending message waits for, then
 // the rest, which only the run history shows. A waited-for one is not stamped while its workspace
 // is known to be stopped, so it is read as soon as the workspace runs (a dependent's wait wakes
-// it, prWake), and the list is paged past such rows, so they cannot hide a running workspace's
-// behind them. Every other row is stamped when it is reached, read or not: an Agent that does not
-// answer is tried again after memoAnswerEvery, and the rows behind it are reached meanwhile.
+// it, prWake), and the list's next pages leave that member out, so its rows cannot hide a running
+// workspace's behind them however many there are: the pages are spent on distinct members, not
+// rows. Every other row is stamped when it is reached, read or not: an Agent that does not answer
+// is tried again after memoAnswerEvery, and the rows behind it are reached meanwhile.
 func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
 	read := 0
 	for _, waited := range []bool{true, false} {
 		var after *store.MemoDelivery
+		var except []string // the members whose rows this list leaves unstamped
 		for p := 0; p < memoAnswerListPages; p++ {
 			if ctx.Err() != nil || read >= memoAnswersPerTick {
 				return
 			}
 			ds, err := r.mgr.store.ListAnswersDue(ctx, store.DeliveryTS(now.Add(-memoAnswerWindow)),
-				store.DeliveryTS(now.Add(-memoAnswerEvery)), waited, after, memoAnswersListed)
+				store.DeliveryTS(now.Add(-memoAnswerEvery)), waited, after, except, memoAnswersListed)
 			if err != nil {
 				log.Printf("memo queue: list answers due: %v", err)
 				return
 			}
-			read = r.readAnswersOf(ctx, views, ds, waited, read, now)
+			read, except = r.readAnswersOf(ctx, views, ds, waited, read, except, now)
 			if len(ds) < memoAnswersListed {
 				break
 			}
@@ -1890,15 +1893,16 @@ func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*
 var memoAnswersListed = 200
 
 // readAnswersOf reads the answers of one page of collectAnswers' list, read being the reads the
-// tick made so far, and answers the new count.
-func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, waited bool, read int, now time.Time) int {
+// tick made so far and except the members left unstamped so far, and answers both, grown.
+func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, waited bool, read int, except []string, now time.Time) (int, []string) {
 	for _, d := range ds {
 		if ctx.Err() != nil || read >= memoAnswersPerTick {
-			return read
+			return read, except
 		}
 		v := r.view(ctx, views, d.MembershipID)
 		live := v != nil && v.liveOK
 		if waited && v != nil && v.mirrorOK {
+			except = memoExceptAdd(except, d.MembershipID)
 			continue // stopped: read at the start
 		}
 		sctx, cancel := memoProgressCtx(ctx)
@@ -1912,7 +1916,15 @@ func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*m
 			r.readAnswer(ctx, v, d)
 		}
 	}
-	return read
+	return read, except
+}
+
+// memoExceptAdd adds a member to a pass's except list once.
+func memoExceptAdd(except []string, membershipID string) []string {
+	if slices.Contains(except, membershipID) {
+		return except
+	}
+	return append(except, membershipID)
 }
 
 // readAnswer reads the delivery's root session for its last answer and keeps it. unknown is kept
@@ -2077,7 +2089,7 @@ func (r *memoQueueRunner) keepAnswer(ctx context.Context, d store.MemoDelivery, 
 	wctx, cancel := memoProgressCtx(ctx)
 	defer cancel()
 	since := store.DeliveryTS(time.Now().Add(-memoAnswerWindow))
-	if _, err := r.mgr.store.RecordAnswer(wctx, d.ID, head, class, since); err != nil {
+	if _, err := r.mgr.store.RecordAnswer(wctx, d.ID, head, class, since, memoAnswerWindow); err != nil {
 		log.Printf("memo queue: delivery %s: keep the answer: %v", d.ID, err)
 	}
 }
