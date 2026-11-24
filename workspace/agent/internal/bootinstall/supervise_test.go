@@ -22,6 +22,10 @@ const (
 	npmCallerNPM  = "AF_TEST_NPM_CALLER_NPM"
 )
 
+// superviseGraceEnv shortens the grace of a supervisor started from the test binary (TestMain),
+// so a cleanup that runs out of time can be seen without an unkillable process.
+const superviseGraceEnv = "AF_TEST_NPM_SUPERVISE_GRACE"
+
 // npmCallerHelper takes the npm lock and runs one supervised install, as NPM does.
 func npmCallerHelper() int {
 	e, _, ok := Env{Home: os.Getenv(npmCallerHome), NPM: os.Getenv(npmCallerNPM)}.lockNPM()
@@ -119,7 +123,7 @@ func lockBusy(f *suFixture) bool {
 
 // install is one npmInstall running in the background.
 type install struct {
-	sup      int
+	sup      *os.Process
 	finished chan struct{}
 	err      error
 }
@@ -142,8 +146,8 @@ func (in *install) wait(t *testing.T) error {
 func startInstall(t *testing.T, f *suFixture, e Env, rel func(), n fakeNPM) *install {
 	t.Helper()
 	in := &install{finished: make(chan struct{})}
-	supc := make(chan int, 1)
-	e.afterNPMStart = func(pid int) { supc <- pid }
+	supc := make(chan *os.Process, 1)
+	e.afterNPMStart = func(p *os.Process) { supc <- p }
 	go func() {
 		se, err := e.npmInstall([]string{"x"})
 		if err != nil {
@@ -164,7 +168,13 @@ func startInstall(t *testing.T, f *suFixture, e Env, rel func(), n fakeNPM) *ins
 	select {
 	case in.sup = <-supc:
 	case <-in.finished:
-		t.Fatalf("npmInstall returned before its supervisor started: %v", in.err)
+		// The hook runs before the install can return, so a started supervisor is already here
+		// even when select picked this case.
+		select {
+		case in.sup = <-supc:
+		default:
+			t.Fatalf("npmInstall returned before its supervisor started: %v", in.err)
+		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the supervisor never started (npm ran directly?)")
 	}
@@ -198,6 +208,30 @@ func TestNPMSupervisorKillsADescendantThatLeftTheGroup(t *testing.T) {
 	}
 }
 
+// npm leaves a live helper in its own session, which has a live child in yet another session:
+// the supervisor kills the helper, inherits the grandchild when the helper dies, and kills that
+// too, all before it reports success.
+func TestNPMSupervisorKillsAGrandchildItInherits(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/setsid"); err != nil {
+		t.Skip("no setsid")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	gpid, helper := filepath.Join(f.home, "grandchild.pid"), filepath.Join(f.home, "helper.sh")
+	// {SREADY} is written by the grandchild, so npm exits only once both run.
+	n := newFakeNPM(t, f, "/usr/bin/setsid /bin/sh "+helper, "exit 0\n")
+	f.write(t, helper, strings.NewReplacer("{PIDF}", strconv.Quote(n.strayPid), "{GPID}", strconv.Quote(gpid),
+		"{SREADY}", strconv.Quote(filepath.Join(f.home, "straggler.ready")), "{TOKEN}", n.token).Replace(
+		"echo $$ >{PIDF}\n/usr/bin/setsid /bin/sh -c 'echo $$ >{GPID}; : >{SREADY}; exec /bin/sleep {TOKEN}' </dev/null >/dev/null 2>&1 &\nexec /bin/sleep {TOKEN}\n"))
+	t.Cleanup(func() { n.kill(f, gpid) })
+	e, rel := lockedEnv(t, f)
+	if err := startInstall(t, f, e, rel, n).wait(t); err != nil {
+		t.Fatal(err)
+	}
+	if n.runs(t, f, n.strayPid) || n.runs(t, f, gpid) {
+		t.Fatal("the helper or its grandchild outlived the install")
+	}
+}
+
 // A postinstall helper whose main thread exited while its other threads run shows as a zombie
 // in its stat; it is still killed, so the install neither waits out the grace nor leaves it
 // running. It left the group, so the caller's group kill would not reach it either.
@@ -216,14 +250,14 @@ def run():
     while open("/proc/%d/stat" % os.getpid()).read().rsplit(")", 1)[1].split()[0] != "Z":
         time.sleep(0.01)
     open(os.environ["SREADY_FILE"], "w").close()
-    time.sleep(float(os.environ["TOKEN_SECS"]))
+    time.sleep(10)  # bounded: once the leader is gone its cmdline is empty, so no cleanup can match it
 open(os.environ["PID_FILE"], "w").write(str(os.getpid()))
 threading.Thread(target=run).start()
 ctypes.CDLL(None).pthread_exit(None)
 `
 	sp := filepath.Join(f.home, "leader.py")
 	f.write(t, sp, script)
-	launch := fmt.Sprintf("PID_FILE={PIDF} SREADY_FILE={SREADY} TOKEN_SECS={TOKEN} /usr/bin/setsid %s %s {TOKEN}", py, sp)
+	launch := fmt.Sprintf("PID_FILE={PIDF} SREADY_FILE={SREADY} /usr/bin/setsid %s %s {TOKEN}", py, sp)
 	n := newFakeNPM(t, f, launch, "exit 0\n")
 	e, rel := lockedEnv(t, f)
 	if err := startInstall(t, f, e, rel, n).wait(t); err != nil {
@@ -241,7 +275,7 @@ func TestNPMSupervisorKilledAloneTakesTheGroupDown(t *testing.T) {
 	n := newFakeNPM(t, f, shStraggler, "exec /bin/sleep {TOKEN}\n")
 	e, rel := lockedEnv(t, f)
 	in := startInstall(t, f, e, rel, n)
-	if err := unix.Kill(in.sup, unix.SIGKILL); err != nil {
+	if err := in.sup.Kill(); err != nil { // through the Process: never a pid reused since
 		t.Fatal(err)
 	}
 	if err := in.wait(t); err == nil {
@@ -322,8 +356,8 @@ func TestNPMSupervisorFailsWhenItsGraceRunsOut(t *testing.T) {
 	}{{0, 1, true}, {7, 7, false}} {
 		f := newSU(t, goodRTK, "", "", "")
 		n := newFakeNPM(t, f, shStraggler, fmt.Sprintf("exit %d\n", c.exit))
+		t.Setenv(superviseGraceEnv, "0s") // the straggler is alive at the first look, and no second one comes
 		e, rel := lockedEnv(t, f)
-		e.superviseGrace = "0s" // the straggler is alive at the first look, and no second one comes
 		err := startInstall(t, f, e, rel, n).wait(t)
 		var ee *exec.ExitError
 		if !errors.As(err, &ee) || ee.ExitCode() != c.want {

@@ -23,33 +23,29 @@ const superviseGrace = 5 * time.Second
 // MaybeSupervise runs the supervisor and exits when args (os.Args[1:]) ask for it; otherwise it
 // returns. Run calls it first, and the package's TestMain does too, because a test binary is
 // what the re-exec starts there.
-func MaybeSupervise(args []string) {
+func MaybeSupervise(args []string) { maybeSupervise(args, superviseGrace) }
+
+// maybeSupervise is MaybeSupervise with the grace given. Only the tests' TestMain passes another
+// one; production never reads it from anywhere, so nothing inherited can shorten it.
+func maybeSupervise(args []string, grace time.Duration) {
 	if len(args) < 3 || args[0] != "boot-install" || args[1] != superviseStep {
 		return
 	}
-	os.Exit(supervise(args[2], args[3:]))
+	os.Exit(supervise(args[2], args[3:], grace))
 }
-
-// superviseGraceEnv shortens the supervisor's grace; tests set it so a cleanup that runs out of
-// time can be seen without an unkillable process.
-const superviseGraceEnv = "AF_NPM_SUPERVISE_GRACE"
 
 // supervise runs npm in its own (the supervisor's) process group, passes the lock on to it, and
 // keeps the lock open until nothing npm started is left: the lock is an flock, dropped only when
 // the last holder of the file description exits, so a postinstall child that does not inherit it
 // still cannot outlive the lock. The caller owns the deadline and kills the whole group
 // (supervisor included), so no signal handling is needed here.
-func supervise(npm string, args []string) int {
+func supervise(npm string, args []string, grace time.Duration) int {
 	// The step signals its whole group at the end: it must lead its own, never a caller's.
 	lock := os.NewFile(3, "npm-lock")
 	if lock == nil || syscall.Getpgrp() != os.Getpid() {
 		return 125
 	}
 	defer lock.Close() // the last holder if npm's children did not inherit it: live until the end
-	grace := superviseGrace
-	if d, err := time.ParseDuration(os.Getenv(superviseGraceEnv)); err == nil && d >= 0 && d < grace {
-		grace = d
-	}
 	// As a subreaper, every orphan of npm's tree is re-parented here rather than to init, so
 	// "no child left" proves that no descendant is left, including one that left the group with
 	// setsid or was forked while /proc was being read. It needs no privilege (Linux 3.4).
@@ -113,7 +109,9 @@ func stopChildren(deadline time.Time) (stopped, known bool) {
 			return true, true
 		}
 		for _, pid := range childrenOf(self) {
-			_ = unix.Kill(pid, unix.SIGKILL)
+			if isChild(pid) {
+				_ = unix.Kill(pid, unix.SIGKILL)
+			}
 		}
 		if time.Now().After(deadline) {
 			return false, true
@@ -136,6 +134,20 @@ func reapChildren() (none bool, err error) {
 			return false, err
 		case info.Signo == 0: // WNOHANG and nothing has exited
 			return false, nil
+		}
+	}
+}
+
+// isChild asks the kernel whether pid is a child of this process, without reaping it (WNOWAIT).
+// The /proc listing alone does not prove it: a /proc mounted for another pid namespace numbers
+// processes differently from the kill that follows. When the answer is not a plain yes, the pid
+// is not signalled.
+func isChild(pid int) bool {
+	var info unix.Siginfo
+	for {
+		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOHANG|unix.WNOWAIT, nil)
+		if !errors.Is(err, unix.EINTR) {
+			return err == nil
 		}
 	}
 }

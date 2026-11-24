@@ -92,12 +92,9 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 		cmd.WaitDelay = time.Second
 		cmd.Stderr = se
-		if e.superviseGrace != "" {
-			cmd.Env = append(os.Environ(), superviseGraceEnv+"="+e.superviseGrace)
-		}
 		if err = cmd.Start(); err == nil {
 			if e.afterNPMStart != nil {
-				e.afterNPMStart(cmd.Process.Pid)
+				e.afterNPMStart(cmd.Process)
 			}
 			err = cmd.Wait()
 			// Group kill and wait, as for a direct npm: nothing may write once this returns, and a
