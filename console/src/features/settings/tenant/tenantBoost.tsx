@@ -36,10 +36,12 @@ export interface BoostUsage {
   over_hours: number;
 }
 
-/** Hours to one decimal; a sliver above zero is "<0.1" rather than a 0 that reads as none. */
+/** Hours cut down to one decimal, so 4.99 of a 5-hour budget never reads as the budget reached. A
+ *  sliver above zero is "<0.1" rather than a 0 that reads as none. */
 export function fmtBoostHours(h: number): string {
-  if (h > 0 && h < 0.05) return "<0.1";
-  return String(Math.round(h * 10) / 10);
+  if (h > 0 && h < 0.1) return "<0.1";
+  // The epsilon keeps a float like 6.5 that lands a hair under 65 after the multiply on 6.5.
+  return String(Math.floor(h * 10 + 1e-9) / 10);
 }
 
 /** Every distinct rung memory the deployment declares, ascending. */
@@ -57,13 +59,12 @@ export function TenantBoostView({ slug }: { slug: string }) {
   const [saved, setSaved] = useState(false);
 
   const load = useCallback(async () => {
-    try {
-      const [d, sz] = await Promise.all([getTenantBoost(slug), getWorkspaceSizing()]);
-      if (isOk(d)) setView(d);
-      setRungs(declaredRungs({ ...WS_SIZING_FALLBACK, ...(isOk(sz) ? sz : {}) }));
-    } catch {
-      /* transient; the panel keeps its last values */
-    }
+    // Settled apart: a failed sizing read only costs the rung chips their list, never the policy
+    // and this month's hours the other read did bring back.
+    const [d, sz] = await Promise.allSettled([getTenantBoost(slug), getWorkspaceSizing()]);
+    if (d.status === "fulfilled" && isOk(d.value)) setView(d.value);
+    const sizing = sz.status === "fulfilled" && isOk(sz.value) ? sz.value : {};
+    setRungs(declaredRungs({ ...WS_SIZING_FALLBACK, ...sizing }));
   }, [slug]);
   useEffect(() => {
     void load();
@@ -183,12 +184,14 @@ function BoostOverNote({ u }: { u: BoostUsage }) {
 // no second endpoint that could drift from it.
 export function MemberBoostLine({ slug, userKey }: { slug: string; userKey: string }) {
   const tr = useT();
-  const [view, setView] = useState<BoostPolicy | null>(null);
+  // Kept with the tenant it answers for: the same mounted card can be handed another tenant, and
+  // until that tenant's answer arrives the last one must not be drawn as this member's hours.
+  const [got, setGot] = useState<{ slug: string; view: BoostPolicy } | null>(null);
   useEffect(() => {
     let live = true;
     getTenantBoost(slug)
       .then((d) => {
-        if (live && isOk(d)) setView(d);
+        if (live && isOk(d)) setGot({ slug, view: d });
       })
       .catch(() => {
         /* the line stays absent: no hours rather than a wrong 0 */
@@ -197,6 +200,7 @@ export function MemberBoostLine({ slug, userKey }: { slug: string; userKey: stri
       live = false;
     };
   }, [slug]);
+  const view = got?.slug === slug ? got.view : null;
   if (!view?.editable || !view.month) return null;
   const u = view.members?.find((m) => m.user_key === userKey);
   if (!view.enabled && !u) return null;

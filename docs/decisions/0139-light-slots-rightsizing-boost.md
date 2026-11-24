@@ -432,8 +432,10 @@ The tenant-wide `GET /api/admin/usage/history?tenant=` is shown too (#4493): und
 - At the budget a new boost and an extension are both refused (`boost_budget_spent`).
 - **The overrun is shown from the same count.** `GET /api/admin/tenants/{slug}/boost` carries `month` and
   `members`: every member of the tenant with boosted hours this month, most first, with `spent` (the comparison
-  the refusal uses) and `over_hours`. The tenant is the membership's, not the launch row's. `month` is set only
-  when the hours were read, so an unread count shows nothing rather than a 0. The Boost card lists them, and the
+  the refusal uses) and `over_hours`. The tenant is the membership's, not the launch row's, and an index on
+  `workspace_launch(override, started_at)` keeps the read to boosted launches. `month` is set only when the hours
+  were read, so an unread count shows nothing rather than a 0. Hours are cut, not rounded, to a tenth, so a member
+  just under the budget never reads as at it. The Boost card lists them, and the
   member detail shows the member's own line under the cloud cost card, as its own card: those are dollars over
   a chosen period, these are hours in the current month (ADR 0048 decision 2). The detail reads the tenant's
-  answer instead of a second endpoint, so the two screens cannot disagree.
+  answer instead of a second endpoint, so both screens count by the same rule, each as of its own read.

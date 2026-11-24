@@ -445,14 +445,13 @@ func (a workspaceAPI) tenantBoost(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a.writeTenantBoost(w, r.Context(), t)
+	a.writeTenantBoost(w, r.Context(), t, parseLimits(t.Limits))
 }
 
-func (a workspaceAPI) writeTenantBoost(w http.ResponseWriter, ctx context.Context, t store.Tenant) {
-	lim := parseLimits(t.Limits)
-	if fresh, err := a.mgr.store.GetTenant(ctx, t.ID); err == nil {
-		lim = parseLimits(fresh.Limits)
-	}
+// writeTenantBoost answers from the limits the caller hands it, never a re-read: after a PUT those
+// are the limits just saved, and a re-read that failed would fall back to the ones before the save
+// and judge the overrun against the old budget.
+func (a workspaceAPI) writeTenantBoost(w http.ResponseWriter, ctx context.Context, t store.Tenant, lim tenantLimits) {
 	p := a.mgr.workspaceSizing()
 	out := tenantBoostWire{
 		Tenant: t.Slug, Enabled: lim.BoostEnabled, MaxMemMiB: lim.BoostMaxMemMiB, MonthlyHours: lim.BoostMonthlyHours,
@@ -517,7 +516,7 @@ func (a workspaceAPI) setTenantBoost(w http.ResponseWriter, r *http.Request) {
 		Action: "tenant.boost", Target: t.Slug, At: store.NowTS(),
 		Detail: fmt.Sprintf("enabled=%t max_mem_mib=%d monthly_hours=%d", body.Enabled, body.MaxMemMiB, body.MonthlyHours),
 	})
-	a.writeTenantBoost(w, r.Context(), t)
+	a.writeTenantBoost(w, r.Context(), t, lim)
 }
 
 // declaresRung: some declared class has a rung of exactly this memory.

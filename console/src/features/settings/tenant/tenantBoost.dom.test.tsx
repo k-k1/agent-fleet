@@ -141,6 +141,20 @@ describe("TenantBoostView - this month's hours", () => {
     expect(h.querySelector(".boost-usage")).toBeNull();
   });
 
+  it("keeps the policy and the hours when only the sizing read fails", async () => {
+    api.mockImplementation((p: string) =>
+      p.endsWith("/boost") ? Promise.resolve(policy({ monthly_hours: 5, budget_counted: true, month: "2026-11", members: usage })) : Promise.reject(new Error("down")),
+    );
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<TenantBoostView slug="acme" />);
+    });
+    expect(rows(host)).toHaveLength(3);
+    expect(host.querySelector('input[type="checkbox"]')).toBeTruthy();
+  });
+
   it("still shows this month's hours after boost is switched off, but not an empty list", async () => {
     let h = await mount(policy({ enabled: false, budget_counted: true, month: "2026-11", members: usage }));
     expect(rows(h)).toHaveLength(3);
@@ -152,11 +166,17 @@ describe("TenantBoostView - this month's hours", () => {
 });
 
 describe("fmtBoostHours", () => {
-  it("rounds to one decimal and never shows a sliver as 0", () => {
+  it("cuts to one decimal and never shows a sliver as 0", () => {
     expect(fmtBoostHours(0)).toBe("0");
     expect(fmtBoostHours(0.01)).toBe("<0.1");
-    expect(fmtBoostHours(1.26)).toBe("1.3");
+    expect(fmtBoostHours(0.09)).toBe("<0.1");
+    expect(fmtBoostHours(1.26)).toBe("1.2");
+    expect(fmtBoostHours(6.5)).toBe("6.5");
     expect(fmtBoostHours(40)).toBe("40");
+  });
+
+  it("never shows a member just under the budget as at it", () => {
+    expect(fmtBoostHours(4 + 59 / 60)).toBe("4.9");
   });
 });
 
@@ -195,6 +215,25 @@ describe("MemberBoostLine", () => {
   ])("is absent when %s", async (_why, view) => {
     const h = await mountLine(view, "zz");
     expect(h.textContent).toBe("");
+  });
+
+  it("is absent on an error reply", async () => {
+    const h = await mountLine({ error: { code: "forbidden", message: "tenant admin required" } }, "a");
+    expect(h.textContent).toBe("");
+  });
+
+  it("never draws the previous tenant's answer for the tenant it now shows", async () => {
+    const h = await mountLine(policy({ monthly_hours: 5, budget_counted: true, month: "2026-11", members: usage }), "a");
+    expect(h.querySelector(".member-boost p")?.textContent).toContain("6.5");
+    let answer: (v: unknown) => void = () => {};
+    api.mockImplementation(() => new Promise((res) => (answer = res)));
+    await act(async () => {
+      root!.render(<MemberBoostLine slug="other" userKey="a" />);
+    });
+    expect(api).toHaveBeenLastCalledWith("api/admin/tenants/other/boost");
+    expect(h.textContent).toBe("");
+    await act(async () => answer(policy({ monthly_hours: 5, budget_counted: true, month: "2026-11", members: [{ ...usage[2], user_key: "a" }] })));
+    expect(h.querySelector(".member-boost p")?.textContent).toBe("ブーストでの稼働: 2 時間 / 枠 5 時間（2026-11、UTC）");
   });
 
   it("is absent when the read fails", async () => {
