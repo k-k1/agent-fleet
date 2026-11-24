@@ -146,6 +146,12 @@ and 106.6 s. Locally on this shared host it is far slower and depends on the loa
 baseline measured 4772 s (79.5 min), and the full local run has not been re-measured since. Run
 it once, in the background, with `go test -p 2 -timeout 150m .` and poll the output file.
 
+The memo queue's answer / delivery / PR-snapshot tests (`go test -run 'TestMemoAnswer|TestMemoDelivery|TestMemoPRSnapshot'`,
+SQLite) run on virtual time: `eachDeliveryDialect` runs the SQLite side in a `testing/synctest` bubble and
+the fake Agent is an in-memory `http.RoundTripper` (`memo_inmem_agent_test.go`). Measured with
+`go test -json`: 85.5 s before, 27.6 s after (#5124 part 1). A test that waits on a `sync.Mutex` or a
+database lock is not durably blocked, so the clock would never move: it uses `eachDeliveryDialectRealTime`.
+
 Postgres-backed tests skip themselves unless `AF_TEST_DATABASE_URL` is set; in a Workspace,
 `af-db url` provides one — see `docs/build/10-development.md` §10.4. No Docker in the workspace.
 The full build/reflect matrix is `docs/build/10-development.md`.

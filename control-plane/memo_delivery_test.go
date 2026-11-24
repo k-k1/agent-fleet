@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -30,10 +31,12 @@ import (
 // Control Plane process.
 type deliveryEnv struct {
 	*inboxEnv
-	other *store.SQL
+	other   *store.SQL
+	virtual bool // the test runs in a synctest bubble
 }
 
-func eachDeliveryDialect(t *testing.T, f func(t *testing.T, e *deliveryEnv)) {
+// newSQLiteDeliveryEnv is the SQLite side of eachDeliveryDialect: two connections on one file.
+func newSQLiteDeliveryEnv(t *testing.T) *deliveryEnv {
 	path := filepath.Join(t.TempDir(), "cp.db")
 	lite, err := openMigratedSQLite(path)
 	if err != nil {
@@ -45,34 +48,79 @@ func eachDeliveryDialect(t *testing.T, f func(t *testing.T, e *deliveryEnv)) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { lite2.Close() })
-	envs := map[string]*deliveryEnv{"sqlite": {newInboxEnvOn(t, lite), lite2}}
-	if url, ok := pgtest.Schema(t); ok {
-		pg, err := store.OpenPostgres(url)
-		if err != nil {
-			t.Fatalf("open postgres: %v", err)
-		}
-		t.Cleanup(func() { pg.Close() })
-		pg2, err := store.OpenPostgres(url)
-		if err != nil {
-			t.Fatalf("open postgres: %v", err)
-		}
-		t.Cleanup(func() { pg2.Close() })
-		envs["postgres"] = &deliveryEnv{newInboxEnvOn(t, pg), pg2}
-	}
-	for name, e := range envs {
+	return &deliveryEnv{inboxEnv: newInboxEnvOn(t, lite), other: lite2}
+}
+
+// eachDeliveryVirtual runs f on SQLite inside a testing/synctest bubble, so the pass's budgets,
+// retry waits and poll intervals run on virtual time and cost no wall time. It is for tests that
+// pin the order, the budget and the retries of the scheduling logic; a test that pins what a
+// Postgres lock does stays on eachDeliveryDialect. The Agent must be a fakeQueueAgent (in
+// memory): a loopback socket is never durably blocked, so the clock would not move.
+func eachDeliveryVirtual(t *testing.T, f func(t *testing.T, e *deliveryEnv)) {
+	// A bubble's clock starts at 2000-01-01 while SQLite's own clock (CURRENT_TIMESTAMP, the
+	// database clock of an answer window) reads real time. Moving the virtual clock to real
+	// time first keeps the two in step.
+	real := time.Now()
+	synctest.Test(t, func(t *testing.T) {
+		time.Sleep(real.Sub(time.Now()))
+		e := newSQLiteDeliveryEnv(t)
+		e.virtual = true
 		e.memoQueuesOn(true)
-		t.Run(name, func(t *testing.T) {
-			e.t = t
-			f(t, e)
-		})
+		e.t = t
+		f(t, e)
+	})
+}
+
+// eachDeliveryDialect runs f on SQLite and, with AF_TEST_DATABASE_URL, on Postgres. The SQLite run
+// is inside a synctest bubble (see eachDeliveryVirtual); the Postgres run is in real time, because
+// a connection to a database server is never durably blocked. A test that waits on a sync.Mutex
+// or a database lock cannot run in a bubble (that wait is not durably blocked either, so the
+// clock never moves): it uses eachDeliveryDialectRealTime.
+func eachDeliveryDialect(t *testing.T, f func(t *testing.T, e *deliveryEnv)) {
+	t.Run("sqlite", func(t *testing.T) { eachDeliveryVirtual(t, f) })
+	eachPostgresDelivery(t, f)
+}
+
+// eachDeliveryDialectRealTime is eachDeliveryDialect with real time on both dialects, for the
+// few tests that pin what a lock does and so wait for it.
+func eachDeliveryDialectRealTime(t *testing.T, f func(t *testing.T, e *deliveryEnv)) {
+	t.Run("sqlite", func(t *testing.T) {
+		e := newSQLiteDeliveryEnv(t)
+		e.memoQueuesOn(true)
+		e.t = t
+		f(t, e)
+	})
+	eachPostgresDelivery(t, f)
+}
+
+func eachPostgresDelivery(t *testing.T, f func(t *testing.T, e *deliveryEnv)) {
+	url, ok := pgtest.Schema(t)
+	if !ok {
+		return
 	}
+	pg, err := store.OpenPostgres(url)
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	t.Cleanup(func() { pg.Close() })
+	pg2, err := store.OpenPostgres(url)
+	if err != nil {
+		t.Fatalf("open postgres: %v", err)
+	}
+	t.Cleanup(func() { pg2.Close() })
+	e := &deliveryEnv{inboxEnv: newInboxEnvOn(t, pg), other: pg2}
+	e.memoQueuesOn(true)
+	t.Run("postgres", func(t *testing.T) {
+		e.t = t
+		f(t, e)
+	})
 }
 
 // fakeQueueAgent is the Agent: POST /sessions under a durable key, the key's reserve and
 // abandon, and GET /sessions with each session's queueDelivery.
 type fakeQueueAgent struct {
 	mu  sync.Mutex
-	srv *httptest.Server
+	srv *inMemAgentSrv
 	// keys is each durable key's record: reserved, inflight, done, abandoned, refused.
 	keys    map[string]string
 	bodies  map[string]string // done key -> the create's answer
@@ -356,8 +404,9 @@ func (a *fakeQueueAgent) retireBody(n int) string {
 
 func newFakeQueueAgent(t *testing.T) *fakeQueueAgent {
 	a := &fakeQueueAgent{keys: map[string]string{}, bodies: map[string]string{}}
-	a.srv = httptest.NewServer(http.HandlerFunc(a.serve))
-	t.Cleanup(a.srv.Close)
+	url, closeAgent := registerInMemAgent(http.HandlerFunc(a.serve))
+	a.srv = &inMemAgentSrv{URL: url}
+	t.Cleanup(closeAgent)
 	return a
 }
 
@@ -787,6 +836,11 @@ func (e *deliveryEnv) fired(queueID string) memoDeliveryDTO {
 	rec := e.fire(queueID)
 	if rec.Code != http.StatusAccepted {
 		e.t.Fatalf("fire: %d %s", rec.Code, rec.Body.String())
+	}
+	// A bubble's clock is frozen between sleeps, so two deliveries fired back to back would carry
+	// one creation time and the list's order by that time would tie.
+	if e.virtual {
+		time.Sleep(10 * time.Millisecond)
 	}
 	return decode[memoDeliveryDTO](e.t, rec)
 }

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -33,21 +32,21 @@ func (e *deliveryEnv) downMember() <-chan string {
 func (e *deliveryEnv) memberCAgent(serve http.HandlerFunc) <-chan string {
 	e.t.Helper()
 	calls := make(chan string, 64)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	url, closeAgent := registerInMemAgent(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case calls <- r.URL.Path:
 		default:
 		}
 		serve(w, r)
 	}))
-	e.t.Cleanup(srv.Close)
+	e.t.Cleanup(closeAgent)
 	ws := store.Workspace{ID: "ws-c", TenantID: e.t1.ID, MembershipID: e.members["c"], ContainerName: "c", Network: "n",
 		DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: store.NowTS()}
 	if err := e.st.CreateWorkspace(context.Background(), ws); err != nil {
 		e.t.Fatal(err)
 	}
 	e.mgr.mu.Lock()
-	e.mgr.rts[e.members["c"]] = cachedRT{rt: stubRuntime{endpoint: srv.URL, token: "tok", state: "running"}, ws: ws}
+	e.mgr.rts[e.members["c"]] = cachedRT{rt: stubRuntime{endpoint: url, token: "tok", state: "running"}, ws: ws}
 	e.mgr.mu.Unlock()
 	return calls
 }

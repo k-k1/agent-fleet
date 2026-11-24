@@ -1927,7 +1927,7 @@ func (g gatedRuntime) State(ctx context.Context) string {
 // The poll reports its first round done only after a member seen running is published: a pass
 // that waits for the round must find the result when it takes.
 func TestMemoStartWatchPublishesBeforeTheFirstRoundIsDone(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+	eachDeliveryDialectRealTime(t, func(t *testing.T, e *deliveryEnv) {
 		e.noPRChain(time.Now().Add(-time.Minute))
 		a := e.queueAgentFor("c", "stopped")
 		ws, _, _ := e.st.GetWorkspaceByMembership(context.Background(), e.members["c"])
