@@ -8,16 +8,23 @@ import { raw, rawJSON } from "../../core/api/client.ts";
 // prefix makes clearLocalState drop it at sign-out.
 // webPush.ts removes it by the same key when it forgets the device id.
 const RELEASE_TOKEN_KEY = "af-push-release-token";
-const readReleaseToken = (): string => {
+/** The token and the subscription (by endpoint) it was issued for. */
+export interface ReleaseBinding {
+  endpoint: string;
+  token: string;
+}
+/** What storage holds right now; take it when a release is decided on, not when it is sent. */
+export const snapshotReleaseBinding = (): ReleaseBinding | null => {
   try {
-    return localStorage.getItem(RELEASE_TOKEN_KEY) || "";
+    const j = JSON.parse(localStorage.getItem(RELEASE_TOKEN_KEY) || "null");
+    return j && typeof j.endpoint === "string" && typeof j.token === "string" && j.token ? j : null;
   } catch {
-    return "";
+    return null;
   }
 };
-const storeReleaseToken = (token: string) => {
+const storeReleaseBinding = (b: ReleaseBinding | null) => {
   try {
-    if (token) localStorage.setItem(RELEASE_TOKEN_KEY, token);
+    if (b) localStorage.setItem(RELEASE_TOKEN_KEY, JSON.stringify(b));
     else localStorage.removeItem(RELEASE_TOKEN_KEY);
   } catch {
     /* best effort: without it the release falls back to the keys alone */
@@ -73,7 +80,7 @@ export async function addPushDevice(sub: PushSubscriptionJSON): Promise<string> 
     throw new Error(msg);
   }
   const j = await r.json();
-  storeReleaseToken(typeof j?.releaseToken === "string" ? j.releaseToken : "");
+  storeReleaseBinding(typeof j?.releaseToken === "string" && j.releaseToken ? { endpoint: String(sub.endpoint), token: j.releaseToken } : null);
   return String(j?.id || "");
 }
 
@@ -109,10 +116,15 @@ export async function postViewing(device: string, session: string, tenant?: stri
 }
 
 /** Sign-out: drops the browser's subscription server-side; the keys are the proof (no session needed). */
-export async function releasePushEndpoint(sub: PushSubscriptionJSON, signal?: AbortSignal): Promise<void> {
-  // The token is read now, when the release is started: a request that lands after the browser
-  // switched member still carries the registration it was made for.
-  const releaseToken = readReleaseToken();
+export async function releasePushEndpoint(
+  sub: PushSubscriptionJSON,
+  signal?: AbortSignal,
+  binding: ReleaseBinding | null = snapshotReleaseBinding(),
+): Promise<void> {
+  // A token issued for another subscription is not this one's. Callers that decide on a release
+  // before an asynchronous step pass the binding they took first, so a registration made in
+  // between (another tab, another member) is not the one released.
+  const releaseToken = binding && binding.endpoint === sub.endpoint ? binding.token : "";
   const r = await raw("api/push/release", {
     method: "POST",
     headers: { "Content-Type": "application/json" },

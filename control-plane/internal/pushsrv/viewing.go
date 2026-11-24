@@ -19,27 +19,29 @@ type viewing struct {
 	lastSweep time.Time
 	// byMember: membership id -> device id -> report.
 	byMember map[string]map[string]viewReport
+	// seqs: membership id -> device id -> highest seq seen.
+	seqs map[string]map[string]seqMark
 }
 
-// A report with an empty session is a tombstone: it is kept (rather than deleted) when it carries a
-// seq, so a heartbeat that was sent before the clear but arrives after it is recognised as late.
 type viewReport struct {
 	session string
 	at      time.Time
-	seq     int64
 }
 
-// tombstoneTTL is how long a clear's seq is remembered. Longer than viewTTL: the late heartbeat it
-// guards against can only matter while a lost-order report is still in flight, but a generous
-// bound costs one small map entry per device.
-const tombstoneTTL = 5 * time.Minute
-
-func (r viewReport) expired(now time.Time) bool {
-	if r.session == "" {
-		return now.Sub(r.at) > tombstoneTTL
-	}
-	return now.Sub(r.at) > viewTTL
+// seqMark is the highest seq a device has reported. It is kept apart from the on-screen entries so
+// that remembering an order never takes a slot an on-screen device needs, and the reverse.
+type seqMark struct {
+	seq int64
+	at  time.Time
 }
+
+// seqTTL is how long a device's highest seq is remembered. A report only has to be recognised as
+// late while it can still be in flight, and every comparison checks this age itself, so the answer
+// does not depend on when the last sweep ran.
+const seqTTL = 5 * time.Minute
+
+// maxSeqDevices bounds the seq marks one member can have on record; at the bound the oldest goes.
+const maxSeqDevices = 64
 
 // maxViewDevices bounds the devices one member can have on record, so a client that sends a new
 // device id every time cannot grow the map or make each report scan an ever longer list.
@@ -60,7 +62,7 @@ func (v *viewing) set(member, device, session string, seq int64, now time.Time) 
 		v.lastSweep = now
 		for m, ds := range v.byMember {
 			for d, r := range ds {
-				if r.expired(now) {
+				if now.Sub(r.at) > viewTTL {
 					delete(ds, d)
 				}
 			}
@@ -68,12 +70,22 @@ func (v *viewing) set(member, device, session string, seq int64, now time.Time) 
 				delete(v.byMember, m)
 			}
 		}
+		for m, ds := range v.seqs {
+			for d, k := range ds {
+				if now.Sub(k.at) > seqTTL {
+					delete(ds, d)
+				}
+			}
+			if len(ds) == 0 {
+				delete(v.seqs, m)
+			}
+		}
 	}
-	devs := v.byMember[member]
-	if prev, ok := devs[device]; ok && seq > 0 && prev.seq > 0 && seq < prev.seq {
+	if seq > 0 && !v.acceptSeq(member, device, seq, now) {
 		return
 	}
-	if session == "" && seq == 0 {
+	devs := v.byMember[member]
+	if session == "" {
 		delete(devs, device)
 		if len(devs) == 0 {
 			delete(v.byMember, member)
@@ -91,7 +103,7 @@ func (v *viewing) set(member, device, session string, seq int64, now time.Time) 
 		// Make room by dropping this member's expired entries, then the oldest.
 		oldest, oldAt := "", now
 		for d, r := range devs {
-			if r.expired(now) {
+			if now.Sub(r.at) > viewTTL {
 				delete(devs, d)
 			} else if oldest == "" || r.at.Before(oldAt) {
 				oldest, oldAt = d, r.at
@@ -101,7 +113,7 @@ func (v *viewing) set(member, device, session string, seq int64, now time.Time) 
 			delete(devs, oldest)
 		}
 	}
-	devs[device] = viewReport{session, now, seq}
+	devs[device] = viewReport{session, now}
 }
 
 // on reports whether any device of the member has shown session within viewTTL.
@@ -114,4 +126,37 @@ func (v *viewing) on(member, session string, now time.Time) bool {
 		}
 	}
 	return false
+}
+
+// acceptSeq records seq as the device's highest and reports whether the report is current. Must be
+// called with v.mu held.
+func (v *viewing) acceptSeq(member, device string, seq int64, now time.Time) bool {
+	ds := v.seqs[member]
+	if k, ok := ds[device]; ok && now.Sub(k.at) <= seqTTL {
+		if seq < k.seq {
+			return false
+		}
+	}
+	if ds == nil {
+		if v.seqs == nil {
+			v.seqs = map[string]map[string]seqMark{}
+		}
+		ds = map[string]seqMark{}
+		v.seqs[member] = ds
+	}
+	if _, known := ds[device]; !known && len(ds) >= maxSeqDevices {
+		oldest, oldAt := "", now
+		for d, k := range ds {
+			if now.Sub(k.at) > seqTTL {
+				delete(ds, d)
+			} else if oldest == "" || k.at.Before(oldAt) {
+				oldest, oldAt = d, k.at
+			}
+		}
+		if len(ds) >= maxSeqDevices && oldest != "" {
+			delete(ds, oldest)
+		}
+	}
+	ds[device] = seqMark{seq, now}
+	return true
 }

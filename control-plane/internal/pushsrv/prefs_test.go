@@ -145,6 +145,17 @@ func TestViewingAPI(t *testing.T) {
 	if post(`{"device":"d1","session":"s1"}`) != http.StatusNoContent || !f.svc.view.on("m1", "s1", time.Now()) {
 		t.Fatal("report not recorded")
 	}
+	// The order survives the HTTP entry: a heartbeat numbered below the clear is dropped.
+	if post(`{"device":"d2","session":"s7","seq":1}`) != 204 || post(`{"device":"d2","session":"","seq":3}`) != 204 ||
+		post(`{"device":"d2","session":"s7","seq":2}`) != 204 {
+		t.Fatal("report refused")
+	}
+	if f.svc.view.on("m1", "s7", time.Now()) {
+		t.Fatal("a late heartbeat revived the view through the handler")
+	}
+	if post(`{"device":"d2","session":"s7","seq":-1}`) != 400 {
+		t.Fatal("accepted a negative seq")
+	}
 	if post(`{"session":"s1"}`) != 400 {
 		t.Fatal("accepted a report with no device")
 	}
@@ -662,6 +673,9 @@ func TestReleaseTokenBindsToTheLatestRegistration(t *testing.T) {
 	}
 	held := func() int { s, _ := f.st.ListPushSubscriptions(context.Background(), "m2"); return len(s) }
 	tokA := sub("m1")
+	if again := sub("m1"); again != tokA {
+		t.Fatal("a same-member re-registration rotated the token (a lost 201 would strand the release)")
+	}
 	tokB := sub("m2") // the browser switched member
 	if tokA == tokB {
 		t.Fatal("a new registration kept the old token")
@@ -674,7 +688,9 @@ func TestReleaseTokenBindsToTheLatestRegistration(t *testing.T) {
 	if held() != 0 {
 		t.Fatal("the current token did not release")
 	}
-	sub("m2")
+	if again := sub("m2"); again == tokB {
+		t.Fatal("the row was deleted, so a new registration must get a new token")
+	}
 	rel("") // an older Console sends no token: keys alone, as before
 	if held() != 0 {
 		t.Fatal("a release without a token must keep working")

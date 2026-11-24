@@ -30,7 +30,7 @@ type PushSubscriptionStore interface {
 	// than max endpoints; it reports whether it stored. Re-registering an endpoint the membership
 	// already holds is not a new device and always succeeds. An endpoint held by another membership
 	// moves to this one.
-	AddPushSubscription(ctx context.Context, sub PushSubscription, max int) (bool, error)
+	AddPushSubscription(ctx context.Context, sub PushSubscription, max int) (stored bool, releaseToken string, err error)
 	ListPushSubscriptions(ctx context.Context, membershipID string) ([]PushSubscription, error)
 	// GetPushSubscription answers the row for endpoint if membershipID still holds it. A send
 	// falls back to it when the member's status cannot be read, so it must not touch membership.
@@ -88,50 +88,61 @@ const pushCols = `SELECT id, membership_id, endpoint, p256dh, auth, user_agent, 
 // UpsertPushSubscription stores sub for its membership with no device cap; an endpoint already
 // held by another membership moves to this one. The API goes through AddPushSubscription.
 func (s *SQL) UpsertPushSubscription(ctx context.Context, p PushSubscription) error {
-	return upsertPushSubscription(ctx, s.db, p)
+	_, err := upsertPushSubscription(ctx, s.db, p)
+	return err
 }
 
 // AddPushSubscription counts and writes in one transaction under the membership's row lock, so
 // two registrations of the same member run one after the other and cannot both pass the count:
 // as separate statements, N concurrent registrations could overshoot the cap by N-1. SQLite serialises through its single connection; on Postgres the row lock
 // does, and the count starts after it, so READ COMMITTED sees every row the other one committed.
-func (s *SQL) AddPushSubscription(ctx context.Context, p PushSubscription, max int) (bool, error) {
+func (s *SQL) AddPushSubscription(ctx context.Context, p PushSubscription, max int) (bool, string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `UPDATE membership SET id=id WHERE id=?`, p.MembershipID); err != nil {
-		return false, err
+		return false, "", err
 	}
 	// held is checked apart from the count so that a member already past max (rows from before the
 	// cap was atomic) can still refresh a device it holds.
 	var total, held int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN endpoint=? THEN 1 ELSE 0 END), 0)
 		FROM push_subscription WHERE membership_id=?`, p.Endpoint, p.MembershipID).Scan(&total, &held); err != nil {
-		return false, err
+		return false, "", err
 	}
 	if held == 0 && total >= max {
-		return false, nil
+		return false, "", nil
 	}
-	if err := upsertPushSubscription(ctx, tx, p); err != nil {
-		return false, err
+	token, err := upsertPushSubscription(ctx, tx, p)
+	if err != nil {
+		return false, "", err
 	}
-	return true, tx.Commit()
+	return true, token, tx.Commit()
 }
 
-func upsertPushSubscription(ctx context.Context, q sqlExecQuery, p PushSubscription) error {
+// upsertPushSubscription writes the row and answers the release token it ended up with. A
+// re-registration by the same member with the same keys keeps the token the row already has, so a
+// release the Console started with it still applies (and a lost 201 changes nothing); a new row, a
+// different owner, other keys or a row from before the column get p.ReleaseToken.
+func upsertPushSubscription(ctx context.Context, q sqlExecQuery, p PushSubscription) (string, error) {
 	if p.ID == "" {
 		p.ID = PushSubscriptionID(p.Endpoint)
 	}
 	if p.CreatedAt == "" {
 		p.CreatedAt = NowTS()
 	}
-	_, err := q.ExecContext(ctx, `INSERT INTO push_subscription(id, membership_id, endpoint, p256dh, auth, user_agent, created_at, release_token)
-		VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET membership_id=excluded.membership_id,
-		p256dh=excluded.p256dh, auth=excluded.auth, user_agent=excluded.user_agent, release_token=excluded.release_token`,
-		p.ID, p.MembershipID, p.Endpoint, p.P256dh, p.Auth, p.UserAgent, p.CreatedAt, p.ReleaseToken)
-	return err
+	var token string
+	err := q.QueryRowContext(ctx, `INSERT INTO push_subscription(id, membership_id, endpoint, p256dh, auth, user_agent, created_at, release_token)
+		VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET
+		release_token = CASE WHEN push_subscription.membership_id=excluded.membership_id AND push_subscription.p256dh=excluded.p256dh
+			AND push_subscription.auth=excluded.auth AND push_subscription.release_token<>''
+			THEN push_subscription.release_token ELSE excluded.release_token END,
+		membership_id=excluded.membership_id, p256dh=excluded.p256dh, auth=excluded.auth, user_agent=excluded.user_agent
+		RETURNING release_token`,
+		p.ID, p.MembershipID, p.Endpoint, p.P256dh, p.Auth, p.UserAgent, p.CreatedAt, p.ReleaseToken).Scan(&token)
+	return token, err
 }
 
 func (s *SQL) ListPushSubscriptions(ctx context.Context, membershipID string) ([]PushSubscription, error) {

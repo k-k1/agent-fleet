@@ -172,8 +172,18 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 1 {
 		t.Fatalf("a release with foreign keys removed the row: %+v", rows)
 	}
+	// The same member re-registering with the same keys keeps the token, so a release started with
+	// it still applies; another owner or other keys take the new one.
+	sub.ReleaseToken = "tok-first"
+	if _, tok, err := st.AddPushSubscription(ctx, sub, 10); err != nil || tok != "tok-first" {
+		t.Fatalf("tok=%q err=%v", tok, err)
+	}
+	sub.ReleaseToken = "tok-second"
+	if _, tok, err := st.AddPushSubscription(ctx, sub, 10); err != nil || tok != "tok-first" {
+		t.Fatalf("a same-owner re-registration rotated the token: %q %v", tok, err)
+	}
 	// A token release applies only to the registration that wrote the current token.
-	sub.ReleaseToken = "tok-new"
+	sub.ReleaseToken = "tok-first"
 	if err := st.UpsertPushSubscription(ctx, sub); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +195,7 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 			t.Fatalf("token %q released the row: %+v", tok, rows)
 		}
 	}
-	if err := st.ReleasePushEndpointIfToken(ctx, ep, sub.P256dh, sub.Auth, "tok-new"); err != nil {
+	if err := st.ReleasePushEndpointIfToken(ctx, ep, sub.P256dh, sub.Auth, "tok-first"); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 0 {
@@ -217,7 +227,7 @@ func checkPushCap(t *testing.T, st *SQL, a, b string) {
 	const max = 3
 	add := func(mid, ep string) bool {
 		t.Helper()
-		ok, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: mid, Endpoint: ep, P256dh: "k", Auth: "a"}, max)
+		ok, _, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: mid, Endpoint: ep, P256dh: "k", Auth: "a"}, max)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -279,7 +289,7 @@ func checkPushCap(t *testing.T, st *SQL, a, b string) {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				ok, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: a,
+				ok, _, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: a,
 					Endpoint: fmt.Sprintf("https://fcm.googleapis.com/fcm/send/race-%d-%d", round, i), P256dh: "k", Auth: "a"}, max)
 				if err != nil {
 					errs <- err

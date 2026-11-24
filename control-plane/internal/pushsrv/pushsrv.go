@@ -619,9 +619,9 @@ func (p *Service) Subscribe(w http.ResponseWriter, r *http.Request, membershipID
 		internalErr(w, err)
 		return
 	}
-	token := base64.RawURLEncoding.EncodeToString(tok[:])
-	added, err := p.store.AddPushSubscription(r.Context(), store.PushSubscription{MembershipID: membershipID,
-		Endpoint: in.Endpoint, P256dh: in.Keys.P256dh, Auth: in.Keys.Auth, UserAgent: ua, ReleaseToken: token}, pushMaxPerMember)
+	fresh := base64.RawURLEncoding.EncodeToString(tok[:])
+	added, token, err := p.store.AddPushSubscription(r.Context(), store.PushSubscription{MembershipID: membershipID,
+		Endpoint: in.Endpoint, P256dh: in.Keys.P256dh, Auth: in.Keys.Auth, UserAgent: ua, ReleaseToken: fresh}, pushMaxPerMember)
 	if err != nil {
 		internalErr(w, err)
 		return

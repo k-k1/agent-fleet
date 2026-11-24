@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { addPushDevice, postViewing, probePushKey, releasePushEndpoint } from "./pushApi.ts";
+import { addPushDevice, postViewing, probePushKey, releasePushEndpoint, snapshotReleaseBinding } from "./pushApi.ts";
 
 const reply = (status: number, body: unknown) => vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify(body), { status }));
 afterEach(() => vi.restoreAllMocks());
@@ -35,6 +35,19 @@ describe("release token", () => {
     expect(await addPushDevice(sub)).toBe("d");
     await releasePushEndpoint(sub);
     expect(bodyOf(spy, 2).releaseToken).toBe("tok1");
+  });
+  it("does not send a token issued for another subscription, and uses a binding taken earlier", async () => {
+    const spy = reply(200, { id: "d", releaseToken: "tokA" });
+    await addPushDevice(sub);
+    await releasePushEndpoint({ ...sub, endpoint: "https://push.example/other" });
+    expect(bodyOf(spy, 1).releaseToken).toBeUndefined();
+    // Another registration replaced the stored token after the release was decided on.
+    const taken = snapshotReleaseBinding();
+    spy.mockResolvedValue(new Response(JSON.stringify({ id: "d", releaseToken: "tokB" }), { status: 201 }));
+    await addPushDevice(sub);
+    spy.mockResolvedValue(new Response("{}", { status: 200 }));
+    await releasePushEndpoint(sub, undefined, taken);
+    expect(bodyOf(spy, 3).releaseToken).toBe("tokA");
   });
 });
 

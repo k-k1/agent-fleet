@@ -2,15 +2,15 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const calls: { device: string; session: string; tenant?: string }[] = [];
+const calls: { device: string; session: string; tenant?: string; seq?: number }[] = [];
 let key: string | null = "k";
 let probeFails = 0;
 let postGate: Promise<void> | null = null;
 vi.mock("./pushApi.ts", () => ({
   probePushKey: () => (probeFails-- > 0 ? Promise.reject(new Error("502")) : Promise.resolve(key)),
-  postViewing: async (device: string, session: string, tenant?: string) => {
+  postViewing: async (device: string, session: string, tenant?: string, seq?: number) => {
     if (postGate && session === "sess-one") await postGate;
-    calls.push({ device, session, tenant } as any);
+    calls.push({ device, session, tenant, seq } as any);
   },
 }));
 let tenantNow = "t1";
@@ -127,6 +127,20 @@ describe("usePushViewing", () => {
     act(() => void vi.advanceTimersByTime(VIEWING_BEAT_MS * 2));
     await flush();
     expect(calls.length).toBe(n);
+  });
+  it("numbers the reports of a device in the order they were made", async () => {
+    render(<Host />);
+    await flush();
+    act(() => void vi.advanceTimersByTime(VIEWING_BEAT_MS));
+    await flush();
+    Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    await flush();
+    const seqs = calls.map((c) => c.seq as number);
+    expect(calls.at(-1)?.session).toBe("");
+    expect(seqs.every((n) => Number.isInteger(n) && n > 0)).toBe(true);
+    expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    expect(new Set(seqs).size).toBe(seqs.length);
   });
   it("clears the entry on unmount", async () => {
     const r = render(<Host />);
