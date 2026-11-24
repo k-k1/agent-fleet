@@ -70,8 +70,9 @@ Typesense returned nothing for `af-aws-exec` (probably its handling of hyphens, 
 ### Why no engine reaches 3 for ワークツリー
 
 Counting occurrences in the 335 Japanese pages: eleven contain 「ワークツリー」. The release-note index has 15,
-`memo-auto-run` 12, `memos` 4, a few release notes 2–3, and the worktrees page **one**. With these untuned settings, engines that
-keep the word as one token (Typesense 6, Orama 7, bigrams 9) still did not put the page in the top 3. The one hit list
+`memo-auto-run` 12, `memos` 4, a few release notes 2–3, and the worktrees page **one**. With these untuned settings, engines with
+three different tokenizing schemes (Typesense and Orama keep a katakana word as one token, MiniSearch bigrams cut it into
+two-character pieces; ranks 6, 7 and 9) still did not put the page in the top 3. The one hit list
 that was read, Typesense's, had release notes and the memo pages above it, which fits the explanation that pages
 saying the word more often win; that is a hypothesis, since the stored results hold only the expected page's rank, and
 the title and BM25-style effects were not separated. The page's title says `worktree`, not the katakana.
@@ -93,7 +94,8 @@ was added to the worktrees page (and エージェントメモリ to the memory o
 | 7 | 2 | 5 | 50 |
 | 10 | 2 | 5 | 50 |
 
-In both non-control runs the worktrees keyword and the memory overview keyword were added together. At weight 7 the
+In all four non-control weight settings (1, 3, 7, 10) the worktrees keyword and the memory overview keyword were added
+together, at the same weight. At weight 7 the
 expected page's rank and the result count of the other 52 queries are identical to the control (the ranks of the
 other pages in each result list were not recorded), and the page prose is untouched. Only the weight-7 run's
 per-query results were kept; the other weights are read off the console. エージェントメモリ stays at 5:
