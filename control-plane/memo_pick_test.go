@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/memorecipe"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -34,6 +35,7 @@ func TestMemoPickBatch(t *testing.T) {
 	now := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
 	all := func(store.Memo) bool { return true }
 	runNext := func(m *store.Memo) { m.RunNext = true }
+	badRecipe := func(m *store.Memo) { m.Recipe = memorecipe.Recipe{AgentKind: "no-such-kind"}.Encode() }
 	tooBig := func(m *store.Memo) { m.Body = strings.Repeat("x", memoDeliveryItemBodyMax+1) }
 	claimed := func(m *store.Memo) { m.DeliveryID = "d1" }
 
@@ -71,6 +73,12 @@ func TestMemoPickBatch(t *testing.T) {
 		{name: "a stale release is held and skipped", q: store.MemoQueue{Batch: 2},
 			rows: []store.Memo{func() store.Memo { m := pickMemo("a", 1, nil); m.Body = "edited"; return m }(), pickMemo("b", 2, nil)},
 			want: []string{"b"}, holds: []string{"a"}},
+		{name: "a recipe the run cannot be created with is held and skipped", q: store.MemoQueue{Batch: 2},
+			rows: []store.Memo{pickMemo("a", 1, badRecipe), pickMemo("b", 2, nil)}, want: []string{"b"}, holds: []string{"a"}},
+		{name: "holds made before a refusal are kept in order and the batch is dropped", q: store.MemoQueue{Batch: 3},
+			rows: []store.Memo{pickMemo("a", 1, badRecipe), pickMemo("b", 2, nil),
+				func() store.Memo { m := pickMemo("c", 3, nil); m.Body = "edited"; return m }(), pickMemo("d", 4, tooBig), pickMemo("e", 5, badRecipe)},
+			refusal: errCodeMemoQueueItemInvalid, holds: []string{"a", "c"}},
 		{name: "a fire by itself leaves a reference while the Agent shows none", q: store.MemoQueue{Batch: 2, NoRefsAt: "t"}, auto: true,
 			rows: []store.Memo{pickMemo("a", 1, func(m *store.Memo) { m.RefKey = "k" }), pickMemo("b", 2, nil)}, want: []string{"b"}},
 		{name: "a press takes that reference", q: store.MemoQueue{Batch: 2, NoRefsAt: "t"}, only: "a",
@@ -110,8 +118,19 @@ func TestMemoPickBatch(t *testing.T) {
 			hs := []string{}
 			for _, h := range got.Holds {
 				hs = append(hs, h.Memo.ID)
-				if h.Memo.State != store.MemoStateHeld || h.Memo.ReleaseHash != "" {
-					t.Fatalf("hold %s is not a held, unreleased row: %+v", h.Memo.ID, h.Memo)
+				switch h.Kind {
+				case memoHoldStaleRelease:
+					// The pick already shows the row as the caller writes it.
+					if h.Memo.State != store.MemoStateHeld || h.Memo.ReleaseHash != "" {
+						t.Fatalf("stale-release hold %s is not a held, unreleased row: %+v", h.Memo.ID, h.Memo)
+					}
+				case memoHoldRecipe:
+					// The caller (memoHoldForRecipe) turns the pending row into the held one and stamps the reason.
+					if h.Why != "recipe_invalid" || h.Memo.State != store.MemoStatePending {
+						t.Fatalf("recipe hold %s = %+v, want the pending row with reason recipe_invalid", h.Memo.ID, h)
+					}
+				default:
+					t.Fatalf("unknown hold kind %d", h.Kind)
 				}
 			}
 			if want := append([]string{}, tc.holds...); !reflect.DeepEqual(hs, want) {
