@@ -104,13 +104,17 @@ export function subscriptionMatchesKey(sub: PushSubscription, key: string): bool
 // "cancelled": the member signed out while the enable was running; nothing is left registered.
 export type EnableResult = "ok" | "denied" | "unsupported" | "unavailable" | "cancelled";
 
-// Set when a sign-out starts and never cleared: every path that calls releasePushForSignOut ends in
-// a page navigation. An enable that is running then stops and takes back what it made, and none
-// starts, because a subscription made after the release read would be registered under the account
-// that is leaving and reach whoever signs in next.
-let leaving = false;
-// Enables still running; the sign-out waits for them (inside its own deadline) so that what they
-// take back is done before the page goes.
+// A sign-out stops the enables that are running (epoch) and keeps new ones from starting for a
+// window (blockedUntil): a subscription made after the release read would be registered under the
+// account that is leaving and reach whoever signs in next. The block is a window, not a latch,
+// because a sign-out can be called off after it started (the browser's "leave this page?" prompt
+// on a terminal pane): the person then stays and must be able to turn push on again.
+let epoch = 0;
+let blockedUntil = 0;
+const SIGN_OUT_BLOCK_EXTRA_MS = 5_000;
+// Enables that have started changing something; the sign-out waits for them (inside its own
+// deadline) so that what they take back is done before the page goes. One that is still asking for
+// permission or reading the key has changed nothing and is not waited for.
 const running = new Set<Promise<unknown>>();
 
 const KEY_READ_TIMEOUT_MS = 5_000;
@@ -132,48 +136,55 @@ function swReady(): Promise<ServiceWorkerRegistration> {
  * the screen's copy is used only when that read fails or takes too long. Throws the CP's message on
  * refusal. Resolves "cancelled" (never an error) once a sign-out has started.
  */
-export function enablePush(key: string | null): Promise<EnableResult> {
-  const p = doEnable(key);
-  running.add(p);
-  const done = () => void running.delete(p);
-  p.then(done, done);
+export function enablePush(key: string | null, onKey?: (used: string) => void): Promise<EnableResult> {
+  let p: Promise<EnableResult>;
+  const begin = () => {
+    running.add(p);
+    const done = () => void running.delete(p);
+    p.then(done, done);
+  };
+  p = doEnable(key, begin, onKey);
   return p;
 }
 
-async function doEnable(key: string | null): Promise<EnableResult> {
-  if (leaving) return "cancelled";
+async function doEnable(key: string | null, begin: () => void, onKey?: (used: string) => void): Promise<EnableResult> {
+  if (Date.now() < blockedUntil) return "cancelled";
+  const mine = epoch;
+  const gone = () => epoch !== mine;
   if (pushSupport() !== "ok") return "unsupported";
   if (!key) return "unavailable";
-  // An answer that arrives while the page is leaving says nothing the person will read.
-  const settle = <T extends EnableResult>(r: T): T | "cancelled" => (leaving ? "cancelled" : r);
   let created: PushSubscription | null = null;
   try {
     const perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
-    if (perm !== "granted") return settle("denied");
+    if (gone()) return "cancelled"; // an answer that arrives while the page is leaving says nothing worth showing
+    if (perm !== "granted") return "denied";
     const fresh = await readKey(key);
-    if (!fresh) return settle("unavailable");
+    if (gone()) return "cancelled";
+    if (!fresh) return "unavailable";
+    onKey?.(fresh);
     const reg = await swReady();
-    if (leaving) return "cancelled";
+    if (gone()) return "cancelled";
     let sub = await reg.pushManager.getSubscription();
-    if (leaving) return "cancelled";
+    if (gone()) return "cancelled";
+    begin();
     if (sub && !subscriptionMatchesKey(sub, fresh)) {
       // Made with a key the CP no longer sends with (rotation): its pushes would be refused, so end
       // it on both sides first (the old row also frees a slot at the device cap) and start over.
       // The CP row goes first and its failure stops the swap: the old keys are needed to retry.
       await releasePushEndpoint(sub.toJSON());
-      if (leaving) return "cancelled";
+      if (gone()) return "cancelled";
       await sub.unsubscribe().catch(() => {});
       forgetDeviceId();
       sub = null;
     }
-    if (leaving) return "cancelled";
+    if (gone()) return "cancelled";
     // Only a subscription this call made is taken back on a failure: one that was already there
     // belongs to an earlier enable and is not this call's to end.
     if (!sub) {
       sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(fresh) });
       created = sub;
     }
-    if (leaving) {
+    if (gone()) {
       if (created) await created.unsubscribe().catch(() => {});
       return "cancelled";
     }
@@ -186,12 +197,20 @@ async function doEnable(key: string | null): Promise<EnableResult> {
     } catch (e) {
       // A subscription the CP does not know would be a device that silently gets nothing. When the
       // answer was lost the CP may have the row anyway, so a sign-out also releases it.
-      if (leaving) await takeBack(json, sub);
-      else if (created) await created.unsubscribe().catch(() => {});
-      if (leaving) return "cancelled";
+      if (gone()) {
+        await takeBack(json, sub);
+        return "cancelled";
+      }
+      if (created) await created.unsubscribe().catch(() => {});
+      if (gone()) {
+        // The sign-out started while the local end was being ended: its own read found nothing,
+        // so the CP row (if the lost answer hid one) is released here with the keys taken above.
+        await releasePushEndpoint(json).catch(() => {});
+        return "cancelled";
+      }
       throw e;
     }
-    if (leaving) {
+    if (gone()) {
       // The CP accepted it after the sign-out released this browser: take it off again.
       await takeBack(json, sub);
       return "cancelled";
@@ -200,7 +219,7 @@ async function doEnable(key: string | null): Promise<EnableResult> {
     return "ok";
   } catch (e) {
     // A failure on the way out (a permission or key read, a worker that is gone) is not news.
-    if (leaving) {
+    if (gone()) {
       if (created) await created.unsubscribe().catch(() => {});
       return "cancelled";
     }
@@ -233,8 +252,12 @@ async function takeBack(json: PushSubscriptionJSON, sub: PushSubscription): Prom
  * Drops this browser's own subscription after its CP row is already gone (the device list's
  * "remove" on this very device): nothing more to tell the CP.
  */
-export async function dropLocalSubscription(): Promise<void> {
+export async function dropLocalSubscription(rowId = ""): Promise<void> {
   const sub = await currentSubscription();
+  if (!sub) return void forgetDeviceId();
+  // Another subscription may have replaced the one whose row was removed while the CP was
+  // answering; that one is a different device registration and stays.
+  if (rowId && (await deviceIdFor(sub)) !== rowId) return;
   forgetDeviceId();
   await sub?.unsubscribe().catch(() => {});
 }
@@ -257,7 +280,8 @@ export async function disablePush(): Promise<void> {
  * still pending at the deadline is left to finish on its own, and the CP prunes on the next 410.
  */
 export async function releasePushForSignOut(timeoutMs = 2500): Promise<void> {
-  leaving = true;
+  epoch++;
+  blockedUntil = Date.now() + timeoutMs + SIGN_OUT_BLOCK_EXTRA_MS;
   const ctl = new AbortController();
   const work = (async () => {
     // Enables already running take back what they made; waiting for them also keeps the page here

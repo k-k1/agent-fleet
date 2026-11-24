@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import {
@@ -8,7 +8,6 @@ import {
   putPushOff,
   removePushDevice,
   type PushDevice,
-  probePushKey,
   type PushKind,
 } from "./pushApi.ts";
 import { usePushKey } from "./usePushKey.ts";
@@ -60,32 +59,37 @@ export function PushSection() {
     }
   }, []);
 
+  // The whole first read is bounded, not just the list: a browser call that never settles must not
+  // hold the switch for good either.
   const loadDevices = useCallback(async (k: string) => {
     try {
-      const [d, sub] = await Promise.all([withTimeout(listPushDevices()), currentSubscription()]);
-      const matches = !!sub && subscriptionMatchesKey(sub, k);
-      // The list and this browser's row id are published together: a "remove" pressed in between
-      // would otherwise not know which row is this device's own.
-      const id = sub ? await deviceIdFor(sub) : "";
-      setDevices(d);
-      setMyId(id);
-      setStale(!!sub && !matches);
-      // This browser counts as enabled only while its key is current and the CP lists its row.
-      // With no way to tell the row (no stored id and no SubtleCrypto) the subscription alone decides.
-      setHere(matches && (!id || d.some((x) => x.id === id)));
+      await withTimeout(
+        (async () => {
+          const [d, sub] = await Promise.all([listPushDevices(), currentSubscription()]);
+          const matches = !!sub && subscriptionMatchesKey(sub, k);
+          // The list and this browser's row id are published together: a "remove" pressed in
+          // between would otherwise not know which row is this device's own.
+          const id = sub ? await deviceIdFor(sub) : "";
+          setDevices(d);
+          setMyId(id);
+          setStale(!!sub && !matches);
+          // This browser counts as enabled only while its key is current and the CP lists its row.
+          // With no way to tell the row (no stored id and no SubtleCrypto) the subscription alone decides.
+          setHere(matches && (!id || d.some((x) => x.id === id)));
+        })(),
+      );
     } catch {
-      /* transient (a failed or unanswered list read leaves the switch off and usable); keep the last view */
+      /* transient (a failed or unanswered read leaves the switch off and usable); keep the last view */
     } finally {
       setLoaded(true);
     }
   }, []);
 
-  // After a click the key is asked again: an enable subscribes with the CP's current key, which may
-  // no longer be the one this screen loaded, and a comparison with the old one would read "stale".
-  const reload = useCallback(async () => {
-    if (!key) return;
-    const k = await withTimeout(probePushKey()).catch(() => key);
-    await loadDevices(k || key);
+  // The key an enable on this screen actually subscribed with: the CP may have rotated it since the
+  // screen loaded, and comparing the new subscription with the old key would read "stale".
+  const usedKey = useRef<string | null>(null);
+  const reload = useCallback(() => {
+    if (key) void loadDevices(usedKey.current ?? key);
   }, [key, loadDevices]);
 
   useEffect(() => {
@@ -103,7 +107,7 @@ export function PushSection() {
     let leaving = false;
     try {
       if (on) {
-        const res = await enablePush(key);
+        const res = await enablePush(key, (k) => (usedKey.current = k));
         // Signed out meanwhile: the page is leaving and nothing here is worth a toast or a read.
         if (res === "cancelled") {
           leaving = true;
@@ -143,7 +147,7 @@ export function PushSection() {
     try {
       await removePushDevice(d.id);
       // Removing this very device also ends the browser's own subscription.
-      if (d.id === myId) await dropLocalSubscription().catch(() => {});
+      if (d.id === myId) await dropLocalSubscription(d.id).catch(() => {});
     } catch (e) {
       fail(e);
     } finally {

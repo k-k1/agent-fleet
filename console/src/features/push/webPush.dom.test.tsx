@@ -293,18 +293,78 @@ describe("web push device lifecycle", () => {
     expect(await p).toBe("cancelled");
     expect(released).toEqual([sub.toJSON()]);
   });
-  it("reports cancelled, not an error or a denial, when the sign-out comes first", async () => {
+  it("reports cancelled, not a denial, when the sign-out comes while the permission prompt is open", async () => {
     let decide!: (v: string) => void;
     (window as any).Notification = { permission: "default", requestPermission: () => new Promise((r) => (decide = r)) };
     const p = enablePush("AQAB");
     await vi.waitFor(() => expect(decide).toBeTypeOf("function"));
-    await releasePushForSignOut();
-    decide("denied");
+    const t0 = Date.now();
+    await releasePushForSignOut(); // nothing has been changed yet: it does not wait for the prompt
+    expect(Date.now() - t0).toBeLessThan(500);
+    const probeCalls = vi.fn(() => Promise.resolve("AQAB"));
+    probe = probeCalls;
+    decide("granted");
     expect(await p).toBe("cancelled");
-    const reg = (await navigator.serviceWorker.getRegistration())!;
-    vi.spyOn(reg.pushManager, "subscribe").mockRejectedValue(new Error("gone"));
+    expect(probeCalls).not.toHaveBeenCalled(); // granted after the sign-out goes no further
+    expect(subscribed).toBe(0);
+  });
+  it("a subscribe() that fails after the sign-out started reads as cancelled", async () => {
     current = null;
+    let fail!: (e: Error) => void;
+    const reg = (await navigator.serviceWorker.getRegistration())!;
+    vi.spyOn(reg.pushManager, "subscribe").mockImplementation(() => new Promise((_, rej) => (fail = rej)));
+    const p = enablePush("AQAB");
+    await vi.waitFor(() => expect(fail).toBeTypeOf("function"));
+    await releasePushForSignOut();
+    fail(new Error("push service down"));
+    expect(await p).toBe("cancelled");
+  });
+  it("lets the person turn push on again on the same page after the sign-out was called off", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await releasePushForSignOut(100); // e.g. the browser's "leave this page?" prompt was declined
     expect(await enablePush("AQAB")).toBe("cancelled");
+    vi.setSystemTime(Date.now() + 6000);
+    expect(await enablePush("AQAB")).toBe("ok");
+  });
+  it("releases the CP row when the sign-out reads nothing because the failed enable was already ending its subscription", async () => {
+    current = null;
+    let fail!: (e: Error) => void;
+    addDevice = () => new Promise((_, rej) => (fail = rej));
+    let finishUnsub!: () => void;
+    const made = {
+      ...sub,
+      unsubscribe: () => {
+        unsubscribed++;
+        current = null; // the browser no longer lists it
+        return new Promise<boolean>((r) => (finishUnsub = () => r(true)));
+      },
+    };
+    const reg = (await navigator.serviceWorker.getRegistration())!;
+    vi.spyOn(reg.pushManager, "subscribe").mockResolvedValue(made as never);
+    const p = enablePush("AQAB");
+    await vi.waitFor(() => expect(fail).toBeTypeOf("function"));
+    fail(new Error("network")); // the CP may have committed the row; the answer is lost
+    await vi.waitFor(() => expect(finishUnsub).toBeTypeOf("function"));
+    await releasePushForSignOut(50); // reads null: nothing to release from its side
+    expect(released).toEqual([]);
+    finishUnsub();
+    expect(await p).toBe("cancelled");
+    expect(released).toEqual([sub.toJSON()]);
+  });
+  it("hands the screen the key an enable subscribed with", async () => {
+    probe = () => Promise.resolve("AgAB");
+    const seen: string[] = [];
+    await enablePush("AQAB", (k) => seen.push(k));
+    expect(seen).toEqual(["AgAB"]);
+  });
+  it("dropLocalSubscription leaves a subscription alone when it is not the one whose row was removed", async () => {
+    localStorage.setItem("af-push-sub-id", "dev1");
+    await dropLocalSubscription("0000000000000000"); // a different registration took this one's place
+    expect(unsubscribed).toBe(0);
+    expect(localStorage.getItem("af-push-sub-id")).toBe("dev1");
+    const own = await deviceIdFor(sub as unknown as PushSubscription);
+    await dropLocalSubscription(own);
+    expect(unsubscribed).toBe(1);
   });
   it("asks for the permission before anything else, so it runs inside the tap", async () => {
     const order: string[] = [];

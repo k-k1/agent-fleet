@@ -11,6 +11,7 @@ let myId = "d1"; // what webPush derives for this browser's subscription
 let matchKey: string | null = null; // when set, the subscription was made with exactly this key
 let idGate: Promise<void> | null = null;
 let listHangs = false;
+let subHangs = false;
 let listGate: Promise<void> | null = null;
 const puts: string[][] = [];
 vi.mock("./pushApi.ts", async (orig) => ({
@@ -26,7 +27,7 @@ vi.mock("./pushApi.ts", async (orig) => ({
 }));
 vi.mock("./webPush.ts", () => ({
   pushSupport: () => "ok",
-  currentSubscription: () => Promise.resolve(sub),
+  currentSubscription: () => (subHangs ? new Promise(() => {}) : Promise.resolve(sub)),
   subscriptionMatchesKey: (_s: unknown, k: string) => (matchKey !== null ? k === matchKey : matches),
   deviceIdFor: () => (idGate ? idGate : Promise.resolve()).then(() => myId),
   dropLocalSubscription: vi.fn(() => Promise.resolve()),
@@ -60,6 +61,7 @@ beforeEach(() => {
   matchKey = null;
   idGate = null;
   listHangs = false;
+  subHangs = false;
   listGate = null;
   puts.length = 0;
 });
@@ -132,7 +134,7 @@ describe("PushSection", () => {
     expect(sw.disabled).toBe(false);
     expect(sw.checked).toBe(true);
   });
-  it("reads the key again after a click, so a rotation since the screen opened does not read as stale", async () => {
+  it("compares with the key the enable subscribed with, so a rotation since the screen opened does not read as stale", async () => {
     key = "k1";
     sub = {};
     matchKey = "k2"; // enablePush subscribed with the key the CP serves now
@@ -141,7 +143,7 @@ describe("PushSection", () => {
     expect(sw.checked).toBe(false);
     expect(host.textContent).toContain(t("push.stale"));
     key = "k2";
-    vi.mocked(webPush.enablePush).mockResolvedValue("ok");
+    vi.mocked(webPush.enablePush).mockImplementation(async (_k, onKey) => (onKey?.("k2"), "ok"));
     await act(async () => void sw.click());
     await flush();
     expect(sw.checked).toBe(true);
@@ -164,7 +166,7 @@ describe("PushSection", () => {
     await act(async () => void btn.click());
     await flush();
     expect(pushApi.removePushDevice).toHaveBeenCalledWith("d1");
-    expect(webPush.dropLocalSubscription).toHaveBeenCalledOnce();
+    expect(webPush.dropLocalSubscription).toHaveBeenCalledWith("d1");
     expect(webPush.disablePush).not.toHaveBeenCalled();
   });
   it("leaves the switch usable, and off, when the device list never answers", async () => {
@@ -181,6 +183,19 @@ describe("PushSection", () => {
     await act(async () => void (await vi.advanceTimersByTimeAsync(10_000)));
     expect(sw.disabled).toBe(false);
     expect(sw.checked).toBe(false);
+    vi.useRealTimers();
+  });
+  it("leaves the switch usable when the browser's own subscription read never answers", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    sub = {};
+    subHangs = true;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => root!.render(<PushSection />));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(100)));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(10_000)));
+    expect(host.querySelector<HTMLInputElement>("label input[role=switch]")!.disabled).toBe(false);
     vi.useRealTimers();
   });
   it("counts a matching subscription as on when its row id cannot be told at all", async () => {
