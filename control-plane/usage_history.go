@@ -173,7 +173,7 @@ func (m *manager) stopRecordedAt(ctx context.Context, ws store.Workspace, rt run
 		cancel()
 	}
 	if !atLastSeen {
-		atLastSeen = neverCameUp(ctx, rt)
+		atLastSeen = noTaskUp(ctx, rt)
 	}
 	err := rt.Stop(ctx)
 	if err == nil {
@@ -186,19 +186,28 @@ func (m *manager) stopRecordedAt(ctx context.Context, ws store.Workspace, rt run
 	return err
 }
 
-// neverCameUp reports whether rt is stopped while its launch is still starting with no task up,
-// so the launch ends at its last sighting rather than at the stop: the minutes a launch waited
-// for a placement that never came are not running time. A launch with a task up is still
-// counted to the stop (its box is there and billed), and anything that cannot be told counts
-// to the stop too.
-func neverCameUp(ctx context.Context, rt runtime.Runtime) bool {
+// usageStopProbeTimeout bounds the reads noTaskUp makes before a Stop. They are accounting, and
+// the Stop that follows still runs on the caller's own context, so a slow read never costs the
+// Stop its deadline. A variable so a test can shrink it.
+var usageStopProbeTimeout = 5 * time.Second
+
+// noTaskUp reports whether rt is about to be stopped with no task up and not running (a launch
+// still waiting for a placement, or one whose start claim lapsed back to stopped), so its launch
+// ends at its last sighting rather than at the stop: minutes spent waiting for a placement that
+// never came are not running time. A launch with a task up is counted to the stop (its box is
+// there and billed), and anything that cannot be told, a read that fails or times out
+// included, counts to the stop too.
+func noTaskUp(ctx context.Context, rt runtime.Runtime) bool {
 	tc, ok := rt.(runtime.TaskCounter)
-	if !ok || rt.State(ctx) != "starting" {
+	if !ok {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, usageStopProbeTimeout)
 	defer cancel()
-	n, err := tc.RunningTasks(ctx)
+	if st := rt.State(pctx); st == "running" || pctx.Err() != nil {
+		return false
+	}
+	n, err := tc.RunningTasks(pctx)
 	return err == nil && n == 0
 }
 
@@ -356,7 +365,13 @@ func (m *manager) tickUsageHistory(ctx context.Context, ws store.Workspace, rt r
 				return false
 			}
 		}
-		if err := m.store.TouchLaunch(ctx, l.ID, time.Now().Unix()); err != nil {
+		// The reading says nothing about a launch begun after it (the CP stopped the one it saw
+		// and started another meanwhile): touching that one would give a Start that then fails
+		// running time it never had. A launch is touched up to the moment it was seen, no later.
+		if l.StartedAt > observedAt.Unix() {
+			return true
+		}
+		if err := m.store.TouchLaunch(ctx, l.ID, observedAt.Unix()); err != nil {
 			log.Printf("usage history: touch launch (ws=%s): %v", ws.ID, err)
 		}
 		m.foldRunning(ctx, ws.MembershipID)

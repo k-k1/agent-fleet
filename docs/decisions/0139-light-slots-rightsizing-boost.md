@@ -412,8 +412,9 @@ The tenant-wide `GET /api/admin/usage/history?tenant=` is shown too (#4493): und
   clipped to the current UTC month. A launch runs from the Start request (the box's boot is included) to its
   stop, or to its last sighting while it is still open. It keeps `boost` until it stops, so the hours after
   expiry are in the count.
-- **What does not.** A boost whose Start failed was closed at its own start. A launch stopped while still
-  starting with no task up, by the start deadline or by hand, is closed at its last sighting, so one that was
+- **What does not.** A boost whose Start failed was closed at its own start. A launch stopped while not
+  running and with no task up (still waiting for a placement, or its start claim lapsed), by the start deadline
+  or by hand, is closed at its last sighting, so one that was
   never placed adds nothing for the minutes it waited. Once a task is up, its boot counts.
   A launch the sampler adopted with no record of its start (`adopted`) is not counted: what chose its box is
   unknown.

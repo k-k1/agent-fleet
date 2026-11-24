@@ -13,6 +13,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"github.com/k-k1/agent-fleet/control-plane/internal/usagehistory"
 )
 
 // ADR 0139 decisions 4 and 5: the boost override, its resolution in withResolvedSize and the API
@@ -532,14 +533,16 @@ func TestResolvedSizeSourceFollowsTheBoost(t *testing.T) {
 // boxFactory builds runtimes that name the rung their size resolved to, the way ecs-ec2 does,
 // and records the box each Start ran on.
 type boxFactory struct {
-	mu      sync.Mutex
-	started []string
+	mu         sync.Mutex
+	started    []string
+	startedEnv [][]string
 }
 
 type boxStartRT struct {
 	stubRuntime
 	f   *boxFactory
 	box runtime.WorkspaceMachine
+	env []string
 }
 
 func (r *boxStartRT) MachineProfile() runtime.WorkspaceMachine { return r.box }
@@ -547,13 +550,14 @@ func (r *boxStartRT) Start(context.Context) error {
 	r.f.mu.Lock()
 	defer r.f.mu.Unlock()
 	r.f.started = append(r.f.started, r.box.InstanceType)
+	r.f.startedEnv = append(r.f.startedEnv, r.env)
 	return nil
 }
 
-func (f *boxFactory) New(ws runtime.Workspace, _ runtime.SecretKeys, _ []string) runtime.Runtime {
+func (f *boxFactory) New(ws runtime.Workspace, _ runtime.SecretKeys, env []string) runtime.Runtime {
 	ladder := ladderOf(boostSizing(), ws.SlotClass)
 	s := ladder[rungIndex(ladder, ws.MemBytes)]
-	return &boxStartRT{stubRuntime: stubRuntime{state: "stopped"}, f: f,
+	return &boxStartRT{stubRuntime: stubRuntime{state: "stopped"}, f: f, env: env,
 		box: runtime.WorkspaceMachine{InstanceType: s.InstanceType, ClassID: ws.SlotClass}}
 }
 
@@ -634,6 +638,14 @@ func TestStartRecordsTheRuntimeItStarts(t *testing.T) {
 	f.mu.Unlock()
 	if len(started) != 1 || started[0] != "m7i.xlarge" || l.InstanceType != "m7i.xlarge" || l.Override != "boost" {
 		t.Fatalf("started %v, recorded %s override %q", started, l.InstanceType, l.Override)
+	}
+	// The runtime that started carries the recorded launch's id, which is what files the
+	// Agent's minutes under this launch.
+	f.mu.Lock()
+	env := f.startedEnv[0]
+	f.mu.Unlock()
+	if got := envValue(strings.Join(env, " "), usagehistory.LaunchEnv); got != l.ID {
+		t.Fatalf("started with %s=%q, recorded launch %q", usagehistory.LaunchEnv, got, l.ID)
 	}
 }
 

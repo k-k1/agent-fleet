@@ -679,15 +679,16 @@ type taskBoxRT struct {
 
 func (r taskBoxRT) RunningTasks(context.Context) (int, error) { return r.tasks, nil }
 
-// A Stop of a launch still starting with no task up ends it at its last sighting: the minutes
-// spent waiting for a placement are not running time. With a task up, the boot counts.
+// A Stop of a launch still starting (or whose start claim lapsed back to stopped) with no task up
+// ends it at its last sighting: the minutes spent waiting for a placement are not running time.
+// With a task up, the boot counts.
 func TestStopOfALaunchThatNeverCameUp(t *testing.T) {
 	ctx := context.Background()
 	for _, c := range []struct {
 		state string
 		tasks int
 		zero  bool
-	}{{"starting", 0, true}, {"starting", 1, false}, {"running", 0, false}} {
+	}{{"starting", 0, true}, {"starting", 1, false}, {"stopped", 0, true}, {"stopped", 1, false}, {"running", 0, false}} {
 		st, mgr, ws, _, rt := historyFixture(t, c.state)
 		trt := taskBoxRT{boxRT: rt, tasks: c.tasks}
 		if err := st.BeginLaunch(ctx, store.Launch{ID: "L", WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
@@ -701,5 +702,79 @@ func TestStopOfALaunchThatNeverCameUp(t *testing.T) {
 		if (secs == 0) != c.zero {
 			t.Fatalf("%s with %d tasks: %d boosted secs, want zero=%t", c.state, c.tasks, secs, c.zero)
 		}
+	}
+}
+
+// A "running" read before a launch began says nothing about it: a stale reading that lands after
+// the CP stopped the launch it saw and recorded the next one does not touch the new one, so a
+// Start of it that then fails is left with no running time.
+func TestStaleRunningReadingDoesNotTouchANewerLaunch(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	observed := time.Now().Add(-30 * time.Second)
+	if err := st.BeginLaunch(ctx, store.Launch{ID: "A", WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
+		TenantID: ws.TenantID, StartedAt: observed.Add(-time.Hour).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := st.EndOpenLaunch(ctx, ws.MembershipID, observed.Add(10*time.Second).Unix()); err != nil {
+		t.Fatal(err)
+	}
+	// B: recorded after the reading, its Start still under way when the reading lands.
+	id := "B"
+	if err := st.BeginLaunch(ctx, store.Launch{ID: id, WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
+		TenantID: ws.TenantID, StartedAt: observed.Add(15 * time.Second).Unix(), Override: "boost"}); err != nil {
+		t.Fatal(err)
+	}
+	mgr.tickUsageHistory(ctx, ws, rt, "running", observed)
+	mgr.endLaunchFailed(ctx, ws.MembershipID, id)
+	if secs, _ := st.OverrideRunningSecs(ctx, ws.MembershipID, "boost", 0, time.Now().Unix()+3600); secs != 0 {
+		t.Fatalf("the failed launch has %d boosted secs, want 0", secs)
+	}
+	if a, _, _ := st.GetLaunch(ctx, "A"); a.StoppedAt != observed.Add(10*time.Second).Unix() {
+		t.Fatalf("A = %+v, the stale reading reopened or moved it", a)
+	}
+}
+
+// slowStateRT answers State only when its context ends, like an AWS read that hangs.
+type slowStateRT struct {
+	taskBoxRT
+	stopCtxErr *error
+}
+
+func (r slowStateRT) State(ctx context.Context) string {
+	<-ctx.Done()
+	return "none"
+}
+
+func (r slowStateRT) Stop(ctx context.Context) error {
+	*r.stopCtxErr = ctx.Err()
+	*r.stops++
+	return nil
+}
+
+// The reads made before a Stop for the accounting are bounded on their own: one that hangs costs
+// at most usageStopProbeTimeout, and the Stop still runs on the caller's live context.
+func TestStopIsNotHeldByTheAccountingRead(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	old := usageStopProbeTimeout
+	usageStopProbeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { usageStopProbeTimeout = old })
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	var stopErr error
+	srt := slowStateRT{taskBoxRT: taskBoxRT{boxRT: rt}, stopCtxErr: &stopErr}
+	if err := st.BeginLaunch(ctx, store.Launch{ID: "L", WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
+		TenantID: ws.TenantID, StartedAt: time.Now().Add(-10 * time.Minute).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := mgr.stopRecorded(ctx, ws, srt, false); err != nil {
+		t.Fatal(err)
+	}
+	if *rt.stops != 1 || stopErr != nil {
+		t.Fatalf("stops=%d, stop context err=%v", *rt.stops, stopErr)
+	}
+	// A read that could not finish is no evidence: the launch counts to the stop.
+	if l, _, _ := st.GetLaunch(ctx, "L"); l.StoppedAt-l.StartedAt < 9*60 {
+		t.Fatalf("closed at %d, %ds after its start, want the stop", l.StoppedAt, l.StoppedAt-l.StartedAt)
 	}
 }
