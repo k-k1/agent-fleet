@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentkinds"
@@ -718,9 +719,9 @@ type memoQueueRunner struct {
 	// again, briefly (readAnswersOf), rather than taking the failure for its own. Only the tick's
 	// goroutine touches it.
 	prFailed map[string]bool
-	// retryLater is the prFailed members whose rows the answer pass put off to resolve them again
-	// after the others' rows.
-	retryLater []string
+	// retry is the prFailed members whose rows the answer pass put off to resolve them again after
+	// the rows of both lists.
+	retry *memoRetrySet
 }
 
 func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
@@ -1889,15 +1890,21 @@ type memoAnswerReply struct {
 // is known to be stopped, so it is read as soon as the workspace runs (a dependent's wait wakes
 // it, prWake). The waited-for list leaves out the members recorded as stopped whose runtime is
 // stopped (memoLookUpStopped), and any other member whose row it left so from its next pages, so
-// their rows cannot hide a running workspace's behind them; a member left out that started
-// meanwhile is read ahead of the next page (and after the last). Every other row is stamped when it is reached, read or not: an
-// Agent that does not answer is tried again after memoAnswerEvery, and the rows behind it are
-// reached meanwhile.
+// their rows cannot hide a running workspace's behind them.
+//
+// Budgets: the query and the state look-ups of stopped members run first under
+// memoStoppedLookupBudget, and the pass's own budget (memoAnswerBudget) starts after them. A
+// background poll (watchStarts) learns which of those members start while the pass reads; the
+// pass only takes its result and never waits for a look-up. A member seen running is read before
+// the next row of any page, so the read bound is not spent on later rows first.
+//
+// Every other row is stamped when it is reached, read or not: an Agent that does not answer is
+// tried again after memoAnswerEvery, and the rows behind it are reached meanwhile. A member the PR
+// pass could not reach has its rows put off to the end of both lists, where it is resolved again
+// (at most memoAnswerRetries members), so the retry costs the other rows nothing.
 func (r *memoQueueRunner) collectAnswers(tick context.Context, views map[string]*memoMemberView, now time.Time) {
 	read := 0
 	since, before := store.DeliveryTS(now.Add(-memoAnswerWindow)), store.DeliveryTS(now.Add(-memoAnswerEvery))
-	// The query and the state look-ups come first, under their own bound: the read budget below
-	// starts after them, so a slow look-up leaves an older healthy row all the time main gave it.
 	lctx, lcancel := context.WithTimeout(tick, memoStoppedLookupBudget)
 	ms, err := r.mgr.store.ListAnswerStoppedMembers(lctx, since, before, true, memoAnswerListPages*memoAnswersListed)
 	if err != nil {
@@ -1907,74 +1914,79 @@ func (r *memoQueueRunner) collectAnswers(tick context.Context, views map[string]
 	lcancel()
 	ctx, cancel := context.WithTimeout(tick, memoAnswerBudget)
 	defer cancel()
+	watch := r.watchStarts(ctx, stopped)
+	defer func() { r.retry = nil }()
+	// readOf reads the rows of one member of one list, outside the pages.
+	readOf := func(m string, waited, started bool) {
+		ds, err := r.mgr.store.ListAnswersDue(ctx, since, before, waited, nil, nil, m, memoAnswersPerTick-read)
+		if err != nil {
+			log.Printf("memo queue: list answers due of %s: %v", m, err)
+			return
+		}
+		r.readAnswersOf(ctx, views, ds, waited, &read, &memoExcept{}, now, started, nil)
+	}
+	// readStarted reads the rows of the members the poll saw running.
+	readStarted := func() {
+		for _, m := range watch.take() {
+			if ctx.Err() != nil || read >= memoAnswersPerTick {
+				return
+			}
+			if v, ok := views[m]; ok && (v == nil || !v.liveOK) {
+				delete(views, m) // the tick's view is of the stopped workspace
+			}
+			readOf(m, true, true)
+		}
+	}
 	for _, waited := range []bool{true, false} {
 		var after *store.MemoDelivery
 		var except memoExcept
-		if !waited {
-			stopped = nil
-		}
-		for _, m := range stopped {
-			except.add(m)
-		}
-		// readMember reads the rows of members whose reads were put off or are due again, ahead of
-		// the page about to be read, so the read bound is not spent on later rows first.
-		readMember := func(m string, started bool) {
-			if started {
-				if v, ok := views[m]; ok && (v == nil || !v.liveOK) {
-					delete(views, m) // the view of the tick is of the stopped workspace
-				}
+		var pre func()
+		if waited {
+			for _, m := range stopped {
+				except.add(m)
 			}
-			ds, err := r.mgr.store.ListAnswersDue(ctx, since, before, waited, nil, nil, m, memoAnswersPerTick-read)
-			if err != nil {
-				log.Printf("memo queue: list answers due of %s: %v", m, err)
-				return
-			}
-			read = r.readAnswersOf(ctx, views, ds, waited, read, &memoExcept{}, now, started)
+			pre = readStarted
 		}
 		for p := 0; p < memoAnswerListPages; p++ {
 			if ctx.Err() != nil || read >= memoAnswersPerTick {
 				return
+			}
+			if pre != nil {
+				pre()
 			}
 			ds, err := r.mgr.store.ListAnswersDue(ctx, since, before, waited, after, except.ids, "", memoAnswersListed)
 			if err != nil {
 				log.Printf("memo queue: list answers due: %v", err)
 				return
 			}
-			before := read
-			read = r.readAnswersOf(ctx, views, ds, waited, read, &except, now, false)
+			r.readAnswersOf(ctx, views, ds, waited, &read, &except, now, false, pre)
 			if len(ds) < memoAnswersListed {
 				break
 			}
 			after = &ds[len(ds)-1]
-			if read > before {
-				// Time has passed: a member that started meanwhile is read before the next page.
-				for _, m := range r.memoStartedSince(ctx, &stopped) {
-					if ctx.Err() != nil || read >= memoAnswersPerTick {
-						return
-					}
-					readMember(m, true)
-				}
-			}
 		}
-		for _, m := range r.memoStartedSince(ctx, &stopped) {
-			if ctx.Err() != nil || read >= memoAnswersPerTick {
-				return
-			}
-			readMember(m, true)
+		if pre != nil {
+			pre()
 		}
-		// A member the PR pass could not reach is resolved again only now, after the rows of the
-		// others: its retry costs them nothing, and a member that recovers is read.
-		later := r.retryLater
-		r.retryLater = nil
-		for _, m := range later {
-			if ctx.Err() != nil || read >= memoAnswersPerTick {
-				return
+	}
+	// The members the PR pass could not reach, after the normal rows of both lists.
+	defer func() {
+		watch.settle(ctx)
+		readStarted()
+	}()
+	for _, m := range r.retry.order() {
+		if ctx.Err() != nil || read >= memoAnswersPerTick {
+			return
+		}
+		delete(r.prFailed, m)
+		delete(views, m)
+		rctx, rcancel := context.WithTimeout(ctx, memoAnswerRetryWait)
+		r.view(rctx, views, m)
+		rcancel()
+		for _, waited := range []bool{true, false} {
+			if r.retry.has(m, waited) && read < memoAnswersPerTick {
+				readOf(m, waited, false)
 			}
-			delete(views, m)
-			rctx, rcancel := context.WithTimeout(ctx, memoAnswerRetryWait)
-			r.view(rctx, views, m)
-			rcancel()
-			readMember(m, false)
 		}
 	}
 }
@@ -2004,19 +2016,147 @@ func (e *memoExcept) add(membershipID string) {
 }
 
 const (
-	// memoStoppedLookupBudget bounds each look-up of a pass's members recorded as stopped, apart
-	// from the pass's reads: what it does not reach is listed as before.
+	// memoStoppedLookupBudget bounds the look-up of a pass's members recorded as stopped (the query
+	// and the runtime states together), outside the pass's read budget: what it does not reach is
+	// listed in the pages like any other member.
 	memoStoppedLookupBudget = 2 * time.Second
 	// memoAnswerRetryWait bounds the answer pass's second resolution of a member the PR snapshot
-	// pass could not reach: one whose Agent still does not answer costs the reads behind it no more.
+	// pass could not reach: one whose Agent still does not answer costs no more.
 	memoAnswerRetryWait = 3 * time.Second
 	// memoAnswerRetries is how many such members a tick resolves again.
 	memoAnswerRetries = 3
 )
 
+// memoStartPollEvery is the pause between two rounds of the background poll for started members.
+// A variable only so a test can shorten it.
+var memoStartPollEvery = 250 * time.Millisecond
+
+// memoRetrySet is the members the PR pass could not reach whose rows the answer pass put off, and
+// for each the lists (waited-for or history) the rows came from.
+type memoRetrySet struct {
+	ids   []string
+	lists map[string][2]bool // index 1 is the waited-for list
+}
+
+func retryIdx(waited bool) int {
+	if waited {
+		return 1
+	}
+	return 0
+}
+
+// add puts member's rows of a list off, unless the cap is reached by other members.
+func (s *memoRetrySet) add(member string, waited bool) bool {
+	if _, ok := s.lists[member]; !ok {
+		if len(s.ids) >= memoAnswerRetries {
+			return false
+		}
+		if s.lists == nil {
+			s.lists = map[string][2]bool{}
+		}
+		s.ids = append(s.ids, member)
+	}
+	l := s.lists[member]
+	l[retryIdx(waited)] = true
+	s.lists[member] = l
+	return true
+}
+
+func (s *memoRetrySet) order() []string {
+	if s == nil {
+		return nil
+	}
+	return s.ids
+}
+
+func (s *memoRetrySet) has(member string, waited bool) bool {
+	return s != nil && s.lists[member][retryIdx(waited)]
+}
+
+// memoStartWatch is the members left out of a pass as stopped that a background poll has seen
+// running.
+type memoStartWatch struct {
+	mu   sync.Mutex
+	seen []string
+	// first is closed when the poll has asked every member once.
+	first chan struct{}
+}
+
+// memoStartFinalWait bounds how long the end of a pass waits for the poll's first round, when the
+// pass was shorter than a round. Nothing is left to read behind that wait.
+const memoStartFinalWait = 500 * time.Millisecond
+
+// settle waits for the poll's first round, at most memoStartFinalWait, and ends with ctx.
+func (w *memoStartWatch) settle(ctx context.Context) {
+	if w == nil {
+		return
+	}
+	t := time.NewTimer(memoStartFinalWait)
+	defer t.Stop()
+	select {
+	case <-w.first:
+	case <-ctx.Done():
+	case <-t.C:
+	}
+}
+
+func (w *memoStartWatch) take() []string {
+	if w == nil {
+		return nil
+	}
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := w.seen
+	w.seen = nil
+	return out
+}
+
+// watchStarts polls the runtime state of stopped in the background until ctx ends or every member
+// has been seen running, so the pass learns of a start without waiting on a look-up: a state call
+// that blocks holds this goroutine only. It answers nil when stopped is empty.
+func (r *memoQueueRunner) watchStarts(ctx context.Context, stopped []string) *memoStartWatch {
+	if len(stopped) == 0 {
+		return nil
+	}
+	w := &memoStartWatch{first: make(chan struct{})}
+	go func() {
+		rest := append([]string(nil), stopped...)
+		firstDone := false
+		for len(rest) > 0 {
+			var next []string
+			for _, m := range rest {
+				if ctx.Err() != nil {
+					return
+				}
+				sctx, cancel := context.WithTimeout(ctx, memoStoppedLookupBudget)
+				st := r.memoRuntimeState(sctx, m)
+				cancel()
+				if st == "running" {
+					w.mu.Lock()
+					w.seen = append(w.seen, m)
+					w.mu.Unlock()
+				} else {
+					next = append(next, m)
+				}
+			}
+			rest = next
+			if !firstDone {
+				firstDone = true
+				close(w.first)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(memoStartPollEvery):
+			}
+		}
+	}()
+	return w
+}
+
 // memoLookUpStopped answers the members of ms (recorded as stopped) whose runtime is stopped now.
 // Only the runtime is asked, never an Agent, and no view is kept: a record that is stale (the
-// write after a start was lost) leaves its member to be read in its rows' order, as before.
+// write after a start was lost) leaves its member to be read in its rows' order.
 func (r *memoQueueRunner) memoLookUpStopped(ctx context.Context, ms []string) []string {
 	var out []string
 	for _, m := range ms {
@@ -2030,77 +2170,46 @@ func (r *memoQueueRunner) memoLookUpStopped(ctx context.Context, ms []string) []
 	return out
 }
 
-// memoStartedSince answers the members of *stopped whose runtime is running now, and takes them out
-// of it: left out of the list as stopped, they are read in this tick. Only "running" counts: a
-// workspace still starting has no Agent to read, and a row read as if it had would be stamped.
-func (r *memoQueueRunner) memoStartedSince(ctx context.Context, stopped *[]string) []string {
-	if len(*stopped) == 0 {
-		return nil
-	}
-	lctx, cancel := context.WithTimeout(ctx, memoStoppedLookupBudget)
-	defer cancel()
-	var out, rest []string
-	for i, m := range *stopped {
-		if lctx.Err() != nil {
-			rest = append(rest, (*stopped)[i:]...)
-			break
-		}
-		if r.memoRuntimeState(lctx, m) == "running" {
-			out = append(out, m)
-		} else {
-			rest = append(rest, m)
-		}
-	}
-	*stopped = rest
-	return out
-}
-
-// memoRuntimeState is a member's workspace runtime state, "" when it cannot be told or ctx ends
-// first. The resolver can wait on a lock that ignores ctx, so the call is abandoned when ctx ends.
+// memoRuntimeState is a member's workspace runtime state, "" when it cannot be told. It never
+// queues behind a workspace build (resolveByMembershipNoWait), so no call is left waiting on a
+// lock after ctx ends.
 func (r *memoQueueRunner) memoRuntimeState(ctx context.Context, membershipID string) string {
-	ch := make(chan string, 1)
-	go func() {
-		identityID, ok, err := r.mgr.store.IdentityIDForMembership(ctx, membershipID)
-		if err != nil || !ok {
-			ch <- ""
-			return
-		}
-		res, aerr := r.mgr.resolveByMembership(ctx, identityID, membershipID)
-		if aerr != nil {
-			ch <- ""
-			return
-		}
-		ch <- res.rt.State(ctx)
-	}()
-	select {
-	case st := <-ch:
-		return st
-	case <-ctx.Done():
+	identityID, ok, err := r.mgr.store.IdentityIDForMembership(ctx, membershipID)
+	if err != nil || !ok {
 		return ""
 	}
+	res, aerr := r.mgr.resolveByMembershipNoWait(ctx, identityID, membershipID)
+	if aerr != nil {
+		return ""
+	}
+	return res.rt.State(ctx)
 }
 
-// readAnswersOf reads the answers of one page of collectAnswers' list, read being the reads the
-// tick made so far, and answers the new count. A member the PR snapshot pass of the tick could not
-// reach is left for after the list (retryLater), where it is resolved again for at most
-// memoAnswerRetryWait; only memoAnswerRetries of them are, and the others go on with the failed
-// view, as before. started is a member that was left out as stopped: its row is stamped only once
-// its view can be read.
-func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, waited bool, read int, except *memoExcept, now time.Time, started bool) int {
+// readAnswersOf reads the answers of one page of collectAnswers' list, adding to *read the reads
+// made. pre, when set, runs before each row (it reads the members a start was seen of). A member
+// the PR snapshot pass could not reach has its rows put off (memoRetrySet), as far as the cap
+// allows; the others go on with the failed view. started is a member that was left out as stopped:
+// its row is stamped only once its view can be read.
+func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, waited bool, read *int, except *memoExcept, now time.Time, started bool, pre func()) {
 	for _, d := range ds {
-		if ctx.Err() != nil || read >= memoAnswersPerTick {
-			return read
+		if pre != nil {
+			pre()
+		}
+		if ctx.Err() != nil || *read >= memoAnswersPerTick {
+			return
 		}
 		if except.in[d.MembershipID] {
 			continue
 		}
-		if r.prFailed[d.MembershipID] {
-			delete(r.prFailed, d.MembershipID)
-			if len(r.retryLater) < memoAnswerRetries {
-				r.retryLater = append(r.retryLater, d.MembershipID)
+		if r.prFailed[d.MembershipID] && !started {
+			if r.retry == nil {
+				r.retry = &memoRetrySet{}
+			}
+			if r.retry.add(d.MembershipID, waited) {
 				except.add(d.MembershipID)
 				continue
 			}
+			delete(r.prFailed, d.MembershipID) // over the cap: the failed view, as the PR pass left it
 		}
 		v := r.view(ctx, views, d.MembershipID)
 		if waited && v != nil && v.mirrorOK {
@@ -2117,11 +2226,10 @@ func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*m
 			log.Printf("memo queue: delivery %s: stamp the answer tried: %v", d.ID, err)
 		}
 		if v != nil && v.liveOK {
-			read++
+			*read++
 			r.readAnswer(ctx, v, d)
 		}
 	}
-	return read
 }
 
 // readAnswer reads the delivery's root session for its last answer and keeps it. unknown is kept

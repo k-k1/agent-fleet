@@ -389,11 +389,21 @@ func selectMembership(ms []store.MembershipView, tenantSel string) (store.Member
 // that follows it holding the old env. That is within the existing semantics — a policy
 // change applies at the next container start.
 func (m *manager) buildResolved(ctx context.Context, ident store.Identity, mv store.MembershipView) (*resolved, *apiError) {
+	return m.buildResolvedWait(ctx, ident, mv, true)
+}
+
+// buildResolvedWait is buildResolved; with wait false it answers 503 at once when another caller
+// holds the membership's build lock, instead of queueing behind a build that ignores ctx.
+func (m *manager) buildResolvedWait(ctx context.Context, ident store.Identity, mv store.MembershipView, wait bool) (*resolved, *apiError) {
 	if c, ok := m.cachedRTFor(mv.MembershipID); ok {
 		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv, gitEpoch: c.gitEpoch}, nil
 	}
 	bl := m.buildLockFor(mv.MembershipID)
-	bl.Lock()
+	if wait {
+		bl.Lock()
+	} else if !bl.TryLock() {
+		return nil, &apiError{http.StatusServiceUnavailable, "build_in_progress", "workspace is being built"}
+	}
 	defer bl.Unlock()
 	if c, ok := m.cachedRTFor(mv.MembershipID); ok { // built while we waited
 		return &resolved{rt: c.rt, ws: c.ws, ident: ident, mv: mv, gitEpoch: c.gitEpoch}, nil
@@ -501,6 +511,16 @@ func (m *manager) resolveByMembership(ctx context.Context, identityID, membershi
 		return nil, aerr
 	}
 	return m.buildResolved(ctx, ident, mv)
+}
+
+// resolveByMembershipNoWait is resolveByMembership for a caller that must not queue behind a
+// workspace build: it answers an error when one is in progress.
+func (m *manager) resolveByMembershipNoWait(ctx context.Context, identityID, membershipID string) (*resolved, *apiError) {
+	ident, mv, aerr := m.activeMembership(ctx, identityID, membershipID)
+	if aerr != nil {
+		return nil, aerr
+	}
+	return m.buildResolvedWait(ctx, ident, mv, false)
 }
 
 // resolveByMembershipBrowser is resolveByMembership for a browser request that carries its own
