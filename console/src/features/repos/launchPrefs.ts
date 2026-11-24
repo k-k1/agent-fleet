@@ -3,8 +3,9 @@
 // name every time and someone who launches with the defaults belongs to the person and does
 // not follow the repository. Not weighty enough for settings (which sync to the server), so
 // it stays in localStorage — if it cannot be read, the collapsed default is fine.
-// "details" is the Start hub's space form (agent, model and the rest folded together).
-export type LaunchSectionKey = "place" | "adv" | "details";
+// "details" is the agent, model and the rest folded together, shared by the dialog and the Start
+// hub's space form.
+export type LaunchSectionKey = "place" | "details";
 
 const KEY = (k: LaunchSectionKey) => "af.launch-open." + k;
 

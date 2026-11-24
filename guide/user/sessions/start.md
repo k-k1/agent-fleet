@@ -40,7 +40,7 @@ uses them. The draft lasts until you close Start.
 
 | Row in Other | What happens |
 |---|---|
-| Launch an agent in home | Runs an agent in home (`~`), for drafts, research and throwaway work. It opens the same Start work dialog as a repository (images and files can be attached), without the worktree and branch choices |
+| Launch an agent in home | Runs an agent in home (`~`), for drafts, research and throwaway work. It opens the same Start working dialog as a repository (images and files can be attached), without the worktree and branch choices |
 | shell | Opens a plain shell (bash) right away |
 | SSM — log in to another host | Logs in to EC2 over SSM. Shown only when you have an SSM profile ([Log in to EC2 with SSM](../integrations/aws-ssm.md)) |
 | Clone a new repository… | Clone from a connection or a URL; when it finishes you go straight on to Start working |
@@ -56,17 +56,19 @@ uses them. The draft lasts until you close Start.
 
 ## Launch from Start working
 
-![The "Start working: webshop" dialog. It has Agent, Model and First prompt fields, the folded Location and More sections under them, and a "Start in a worktree" button at the bottom](../../assets/sessions-launch-en-light.webp)
+![The "Start working: webshop" dialog. From the top: the First prompt box, the folded Location section, the folded Details section whose summary names the agent and model, and a "Start in a worktree" button at the bottom](../../assets/sessions-launch-en-light.webp)
 
-1. Under **Agent**, pick the agent to use
-2. For an agent that can run on more than one route, pick the **Model route**: where model calls go and which account
-   is billed. Your default route (⚙ Settings → Agents) is already chosen when it can be used now. A route marked "no
-   credential yet" can be picked once its key or login is added in ⚙ Settings → Model credentials. Only the routes
-   your organisation allows are listed ([Amazon Bedrock route](../../ref/bedrock-route.md))
-3. Pick the **Model**
-4. If you want, write an instruction in **First prompt (optional)**. It is sent once, automatically, as soon as the session is ready. Left empty, the session just opens
-5. **Location** and **More** stay folded with a summary of what they will do. Press **Change** only to change them
-6. Press **Start in a worktree** (**Launch** when you start directly in this copy)
+The dialog asks what, then where, then the details.
+
+1. If you want, write an instruction in **First prompt (optional)**. It is sent once, automatically, as soon as the session is ready. Left empty, the session just opens
+2. **Location** shows where the session will run: a new worktree by default. Press **Change** only to change it
+3. **Details** shows the agent and model, then any setting that is not at its default. Press **Change** to pick
+   another agent, model route or model, or to change the rest ([Details](#details))
+4. Press **Start in a worktree** (**Launch** when you start directly in this copy)
+
+Your last agent and model for the repository are chosen already, so most launches need only the prompt. Details stays
+open next time once you open it. It opens by itself when something there needs you: no agent can be listed, a model
+route has to be chosen, your default route cannot be used, or the Claude login has expired.
 
 When no agent can be listed, the dialog says why in one line: **No model route is available to you. Ask your
 administrator.** when your organisation allows no route, or **You have switched off every agent.** with **Reset my
@@ -83,12 +85,15 @@ The first prompt box also lets you:
 By default each session gets a new worktree (its own working copy) and starts there.
 How to choose the branch, and how to start inside a folder of the repository, is in [Work in parallel with worktrees](worktrees.md).
 
-### More
+### Details
 
 Only the items the chosen agent supports are shown.
 
 | Item | What it decides |
 |---|---|
+| Agent | The agent to use |
+| Model route | For an agent that can run on more than one route: where model calls go and which account is billed. Your default route (⚙ Settings → Agents) is already chosen when it can be used now. A route marked "no credential yet" can be picked once its key or login is added in ⚙ Settings → Model credentials. Only the routes your organisation allows are listed ([Amazon Bedrock route](../../ref/bedrock-route.md)) |
+| Model | Left as the agent's default unless you pick one |
 | Execution method | Managed (recommended) or Terminal (CLI) ([Choose the execution method](#choose-the-execution-method)) |
 | Reasoning effort | Left unset, the model's default applies |
 | Start mode | "Plan" spends the first turn on research and a plan |
