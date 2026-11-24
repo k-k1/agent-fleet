@@ -1394,27 +1394,48 @@ func TestStreamDeafChildIsKilled(t *testing.T) {
 	}
 }
 
-// Where waitid is refused, watch falls back to Wait: a live child is not taken for an exited one
-// (and killed), and an exit is still seen.
-func TestStreamWaitidRefused(t *testing.T) {
+// On a host that refuses waitid the route refuses at spawn: the child is ended at once, the
+// input is kept and the handle goes down, rather than running a child nothing can follow.
+func TestStreamWaitidRefusedAtSpawn(t *testing.T) {
+	orig := waitidUsable
+	waitidUsable = func(int) bool { return false }
+	t.Cleanup(func() { waitidUsable = orig })
+	f := newFakeStream(t)
+	send(t, f.h, "hello")
+	waitFor(t, "the handle to go down", func() bool {
+		f.h.mu.Lock()
+		defer f.h.mu.Unlock()
+		return !f.h.alive && !f.h.pumping && !f.h.running
+	})
+	f.h.mu.Lock()
+	kept, kids := f.h.q.Len(), len(f.h.kids)
+	f.h.mu.Unlock()
+	if kept != 1 || kids != 0 {
+		t.Fatalf("queue = %d, children = %d; want the input kept and no child tracked", kept, kids)
+	}
+	if got := f.lines("turn "); len(got) != 0 {
+		t.Fatalf("the refused child read %q", got)
+	}
+}
+
+// If waitid stops answering after the spawn, watch falls back to Wait without a group kill, and
+// a stop and its escalation still reach the child.
+func TestStreamWaitidRefusedLater(t *testing.T) {
 	orig := waitExited
 	waitExited = func(int) bool { return false }
 	t.Cleanup(func() { waitExited = orig })
 	f := newFakeStream(t)
+	f.h.stopGrace = 300 * time.Millisecond
 	send(t, f.h, "hello")
 	if st := settled(t, f.h); st != agents.TurnCompleted {
 		t.Fatalf("turn = %s, want completed on a child watch left alone", st)
 	}
-	// A stop still reaches the child, and its escalation still ends one that ignores SIGINT.
-	f.h.stopGrace = 300 * time.Millisecond
 	send(t, f.h, "stubborn")
 	f.waitRead(t, "stubborn")
 	_, _ = f.h.Interrupt(agents.InterruptOpts{})
 	if st := settled(t, f.h); st != agents.TurnCancelled {
 		t.Fatalf("stopped turn = %s, want cancelled", st)
 	}
-	send(t, f.h, "crash")
-	waitFor(t, "the crash to land", func() bool { return !f.h.Alive() })
 }
 
 // A stop reaches a prompt that is moving to a new child after its write failed: the turn is
@@ -1493,6 +1514,9 @@ func TestStreamDetachAfterASilentDeath(t *testing.T) {
 		defer f.h.mu.Unlock()
 		return !f.h.pumping && !f.h.running
 	})
+	if st := f.h.TurnState(); st != agents.TurnUnknown {
+		t.Fatalf("silent crash = %s, want unknown whatever the detach did", st)
+	}
 	f.env = nil
 	f.h.Start(session.Meta{Name: f.h.name, Kind: session.KindAgy, Dir: f.h.dir})
 	time.Sleep(300 * time.Millisecond)
@@ -1621,4 +1645,72 @@ func settledNow(h *streamHandle) bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return !h.pumping && !h.running && h.q.Len() == 0
+}
+
+// An entry taken before a shutdown starts again from the generation a Resume opened: a spawn that
+// fails there stops the handle at once instead of being retried by the old turn.
+func TestStreamEntryFromBeforeAShutdownStartsAgain(t *testing.T) {
+	f := newFakeStream(t)
+	commit := newGateHook(1)
+	f.h.beforeCommit = commit.fn
+	t.Cleanup(commit.open)
+	send(t, f.h, "hello")
+	commit.wait(t, "the take")
+	f.h.Down()()
+	f.env = []string{streamExitEnv + "=1"} // every child of the new generation dies at start
+	f.h.afterEnsure = func() {
+		waitFor(t, "the child to exit", func() bool {
+			f.h.mu.Lock()
+			defer f.h.mu.Unlock()
+			return f.h.child == nil || f.h.child.dead
+		})
+	}
+	f.h.Start(session.Meta{Name: f.h.name, Kind: session.KindAgy, Dir: f.h.dir})
+	commit.open()
+	waitFor(t, "the handle to go down", func() bool {
+		f.h.mu.Lock()
+		defer f.h.mu.Unlock()
+		return !f.h.alive && !f.h.pumping && !f.h.running
+	})
+	time.Sleep(300 * time.Millisecond) // a retry loop would have spawned again by now
+	if got := f.spawns(); len(got) != 1 {
+		t.Fatalf("spawns = %d, want one failed start in the new generation and no retry", len(got))
+	}
+	f.h.mu.Lock()
+	kept := f.h.q.Len()
+	f.h.mu.Unlock()
+	if kept != 1 {
+		t.Fatalf("queue = %d, want the input kept", kept)
+	}
+}
+
+// A stop that takes the entry while it waits for a retiring child to exit starts no new child
+// for it.
+func TestStreamStopWhileWaitingForTheOldChild(t *testing.T) {
+	f := newFakeStream(t)
+	f.env = []string{streamLingerEnv + "=1"} // a closed stdin is answered a second later
+	f.h.idleAfter = 50 * time.Millisecond
+	send(t, f.h, "hello")
+	settled(t, f.h)
+	waitFor(t, "the idle close", func() bool {
+		f.h.mu.Lock()
+		defer f.h.mu.Unlock()
+		return f.h.child != nil && f.h.child.stopAsked
+	})
+	send(t, f.h, "hello")
+	waitFor(t, "the turn to wait for the old child", func() bool {
+		f.h.mu.Lock()
+		defer f.h.mu.Unlock()
+		return f.h.running && f.h.q.Head() != nil
+	})
+	if res, _ := f.h.Interrupt(agents.InterruptOpts{}); res.Discard == nil {
+		t.Fatalf("stop = %+v, want the waiting input discarded", res)
+	}
+	if st := settled(t, f.h); st != agents.TurnCancelled {
+		t.Fatalf("turn = %s, want cancelled", st)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if got := f.spawns(); len(got) != 1 {
+		t.Fatalf("spawns = %d, want no child started for the stopped input", len(got))
+	}
 }

@@ -75,6 +75,9 @@ const (
 // errDetached: the handle was detached or shut down while a turn was getting its child.
 var errDetached = errors.New("agy managed: detached")
 
+// errTaken: a stop or a teardown took the entry while it was getting its child.
+var errTaken = errors.New("agy managed: entry taken")
+
 // streamCommandFunc builds the child for st, resuming conv when it is not empty. spawn sets Dir
 // and the pipes.
 type streamCommandFunc func(h *streamHandle, st agents.ThreadSettings, conv string) *exec.Cmd
@@ -291,15 +294,21 @@ func (h *streamHandle) Start(m session.Meta) {
 // usableLocked reports a child a turn can be written to.
 func usableLocked(c *streamChild) bool { return c != nil && !c.stopAsked && !c.dead }
 
-// ensureChild returns a child that can take a turn: the current one, or a new one once a child
-// that is retiring or exited has gone (its conversation is not free before that). errDetached
-// when a teardown came first.
-func (h *streamHandle) ensureChild() (*streamChild, error) {
+// ensureChild returns a child that can take entry t, taken in teardown generation gen: the
+// current one, or a new one once a child that is retiring or exited has gone (its conversation
+// is not free before that). errDetached when a teardown came first, even one a Resume already
+// followed: an entry from before it starts again from the new generation's Take, so a failure
+// there stops the handle at once. errTaken when a stop took t meanwhile.
+func (h *streamHandle) ensureChild(t *agents.Taken, gen int) (*streamChild, error) {
 	for {
 		h.mu.Lock()
-		if !h.alive {
+		if !h.alive || h.gen != gen {
 			h.mu.Unlock()
 			return nil, errDetached
+		}
+		if h.q.Head() != t {
+			h.mu.Unlock()
+			return nil, errTaken
 		}
 		c := h.child
 		if usableLocked(c) {
@@ -316,7 +325,6 @@ func (h *streamHandle) ensureChild() (*streamChild, error) {
 		if c == nil {
 			sw := &spawnWait{done: make(chan struct{})}
 			h.spawning = sw
-			gen := h.gen
 			h.mu.Unlock()
 			return h.spawn(gen, sw)
 		}
@@ -382,6 +390,15 @@ func (h *streamHandle) spawn(gen int, sw *spawnWait) (*streamChild, error) {
 		return failed(fmt.Errorf("agy を起動できません: %w", err))
 	}
 	tail.Settle() // the stderr tail is kept for spawn failures only (StderrTail's contract)
+	if !waitidUsable(cmd.Process.Pid) {
+		// Without waitid neither watch nor Go's own Wait (which uses it too) can follow the child,
+		// so the route refuses here rather than lose track of a process it started.
+		_ = cmd.Process.Kill()
+		go func() { _ = cmd.Wait() }()
+		_ = inW.Close()
+		_ = outR.Close()
+		return failed(errors.New("agy の Managed はこのホストでは使えません（waitid が拒否されます）"))
+	}
 	c := &streamChild{cmd: cmd, stdin: inW, exited: make(chan struct{}), gen: gen, fresh: true, tr: newTurnTracker(conv != "")}
 	// Registered, and published or retired, before watch starts: a child that exits at once is
 	// then let go by watch rather than published after it was reaped.
@@ -481,6 +498,18 @@ func waitExitedNoReap(pid int) bool {
 // waitExited is waitExitedNoReap, replaceable by tests that need waitid refused.
 var waitExited = waitExitedNoReap
 
+// waitidUsable reports that waitid answers for pid, without waiting or reaping. Replaceable by
+// tests.
+var waitidUsable = func(pid int) bool {
+	var info unix.Siginfo
+	for {
+		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOHANG|unix.WNOWAIT, nil)
+		if err != unix.EINTR {
+			return err == nil
+		}
+	}
+}
+
 // watch waits for the child to exit, ends what is left of its group, reaps it, lets the reader
 // finish, then lets go of it.
 func (h *streamHandle) watch(c *streamChild, tail *agents.StderrTail, r *os.File, readDone chan struct{}) {
@@ -498,8 +527,8 @@ func (h *streamHandle) watch(c *streamChild, tail *agents.StderrTail, r *os.File
 		c.reaped = true
 		c.reapMu.Unlock()
 	} else {
-		// waitid is refused here: group signalling ends before the reap can happen, and Wait
-		// alone follows, with no group kill.
+		// waitid answered at spawn (waitidUsable) and is refused now. Group signalling ends
+		// before the reap can happen, and Wait alone follows, with no group kill.
 		c.reapMu.Lock()
 		c.leaderOnly = true
 		c.reapMu.Unlock()
@@ -769,9 +798,13 @@ func (h *streamHandle) runTurn(t *agents.Taken, lease *lifegate.Lease, gen int) 
 		}
 		h.mu.Unlock()
 		var err error
-		c, err = h.ensureChild()
+		c, err = h.ensureChild(t, gen)
 		if h.afterEnsure != nil {
 			h.afterEnsure()
+		}
+		if errors.Is(err, errTaken) {
+			h.mu.Lock()
+			return h.landLocked(t, agents.TurnCancelled), ""
 		}
 		if err != nil {
 			if !errors.Is(err, errDetached) {
@@ -781,7 +814,7 @@ func (h *streamHandle) runTurn(t *agents.Taken, lease *lifegate.Lease, gen int) 
 			return h.requeueLostLocked(t, gen), ""
 		}
 		h.mu.Lock()
-		if !h.alive {
+		if !h.alive || h.gen != gen {
 			return h.requeueLostLocked(t, gen), ""
 		}
 		if !usableLocked(c) {
@@ -832,9 +865,9 @@ func (h *streamHandle) runTurn(t *agents.Taken, lease *lifegate.Lease, gen int) 
 		c.stopAsked = true
 		h.turnChild = nil // the turn is not on that child any more: a stop now reaches it
 		h.mu.Unlock()
-		nc, err := h.ensureChild()
+		nc, err := h.ensureChild(t, gen)
 		h.mu.Lock()
-		if err != nil && !errors.Is(err, errDetached) {
+		if err != nil && !errors.Is(err, errDetached) && !errors.Is(err, errTaken) {
 			log.Printf("agy managed: %s: %v", h.name, err)
 			return h.requeueLostLocked(t, gen), ""
 		}
@@ -862,8 +895,14 @@ func (h *streamHandle) runTurn(t *agents.Taken, lease *lifegate.Lease, gen int) 
 	asked := c.stopAsked
 	if !got && !asked && !stopped && c.fresh && !c.heard {
 		// Spawned for this prompt and gone without a word: agy never started (init comes
-		// before any work), so the input waits for Resume instead of being lost with it.
-		st := h.requeueLostLocked(t, gen)
+		// before any work), so the input waits for Resume instead of being lost with it. One a
+		// detach dropped stays dropped, but the turn still lands as the crash it was.
+		var st agents.TurnState
+		if h.dropped {
+			st = h.landLocked(t, agents.TurnUnknown)
+		} else {
+			st = h.requeueLostLocked(t, gen)
+		}
 		h.recordLost(c)
 		return st, ""
 	}
@@ -1156,7 +1195,9 @@ func (h *streamHandle) teardownLocked() (*streamChild, <-chan struct{}) {
 	}
 	tdGen, sw := h.gen, h.spawning
 	var end *streamChild
-	if c := h.child; c != nil && !c.stopAsked {
+	if c := h.child; c != nil && !c.stopAsked && !c.dead {
+		// A child that already died needs no ending, and marking it would rewrite its crash as
+		// an exit we asked for.
 		c.stopAsked = true
 		end = c
 	}
