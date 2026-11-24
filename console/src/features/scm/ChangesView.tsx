@@ -223,8 +223,8 @@ function RepoIdentity({ enc }: { enc: string }) {
         </button>
       ) : (
         <div className="ri-edit">
-          <input {...NO_AUTOFILL} placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input {...NO_AUTOFILL} placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input autoComplete="name" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input autoComplete="email" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <button type="button" className="ui-btn ui-btn-sm" onClick={() => void put(name.trim(), email.trim())}>
             {tr("scm.save")}
           </button>

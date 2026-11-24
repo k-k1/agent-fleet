@@ -18,57 +18,130 @@ function files(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-// Returns the opening tag text of every <input>/<textarea> in `src`, brace- and quote-aware so
-// `=>` and `>` inside `{…}` attribute expressions do not end the tag early.
-export function openingTags(src: string): { kind: string; tag: string; line: number }[] {
-  const res: { kind: string; tag: string; line: number }[] = [];
-  const re = /<(input|textarea)\b/g;
+type Attr = { name: string; value: string | null };
+type Tag = { kind: string; line: number; attrs: Attr[]; spreads: string[] };
+
+// Skips a balanced {…} expression starting at `i` (src[i] === "{"), honouring strings and template
+// literals, and returns the index after the closing brace.
+function skipBraces(src: string, i: number): number {
+  let depth = 0;
+  let q: string | null = null;
+  for (; i < src.length; i++) {
+    const c = src[i];
+    if (q) {
+      if (c === "\\") i++;
+      else if (c === q) q = null;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") q = c;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return i + 1;
+  }
+  return i;
+}
+
+// Parses every <input>/<textarea> opening tag into real attributes and spreads, so that text inside
+// a value (placeholder="autoComplete", data-type="checkbox") is never mistaken for an attribute.
+export function parseControls(src: string): Tag[] {
+  const res: Tag[] = [];
+  const re = /<(input|textarea)(?=[\s/>])/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(src))) {
     let i = m.index + m[0].length;
-    let depth = 0;
-    let q: string | null = null;
-    for (; i < src.length; i++) {
-      const c = src[i];
-      if (q) {
-        if (c === q) q = null;
+    const attrs: Attr[] = [];
+    const spreads: string[] = [];
+    for (; i < src.length; ) {
+      while (/\s/.test(src[i])) i++;
+      if (src.startsWith("//", i)) {
+        i = src.indexOf("\n", i);
         continue;
       }
-      if (c === '"' || c === "'" || c === "`") q = c;
-      else if (c === "{") depth++;
-      else if (c === "}") depth--;
-      else if (c === ">" && depth === 0) break;
+      if (src.startsWith("/*", i)) {
+        i = src.indexOf("*/", i) + 2;
+        continue;
+      }
+      if (src[i] === ">" || (src[i] === "/" && src[i + 1] === ">")) break;
+      if (src[i] === "{") {
+        const e = skipBraces(src, i);
+        spreads.push(src.slice(i + 1, e - 1).replace(/^\s*\.\.\./, "").trim());
+        i = e;
+        continue;
+      }
+      const n = /^[\w:-]+/.exec(src.slice(i));
+      if (!n) break;
+      i += n[0].length;
+      let value: string | null = null;
+      if (src[i] === "=") {
+        i++;
+        if (src[i] === '"' || src[i] === "'") {
+          const e = src.indexOf(src[i], i + 1);
+          value = src.slice(i + 1, e);
+          i = e + 1;
+        } else if (src[i] === "{") {
+          const e = skipBraces(src, i);
+          value = "{" + src.slice(i + 1, e - 1).trim() + "}";
+          i = e;
+        }
+      }
+      attrs.push({ name: n[0], value });
     }
-    res.push({ kind: m[1], tag: src.slice(m.index, i + 1), line: src.slice(0, m.index).split("\n").length });
+    res.push({ kind: m[1], line: src.slice(0, m.index).split("\n").length, attrs, spreads });
   }
   return res;
 }
 
-export function needsOptOut(kind: string, tag: string): boolean {
-  if (/autoComplete|NO_AUTOFILL/.test(tag)) return false;
-  if (kind === "textarea") return true;
-  const t = tag.match(/\btype=["{]+([a-z-]+)/)?.[1] ?? "text";
-  return t === "text" || t === "search" || t === "url";
+export function needsOptOut(t: Tag): boolean {
+  if (t.attrs.some((a) => a.name === "autoComplete")) return false;
+  if (t.spreads.includes("NO_AUTOFILL")) return false;
+  if (t.kind === "textarea") return true;
+  const ty = t.attrs.find((a) => a.name === "type")?.value;
+  if (ty == null) return true;
+  const lit = /^\{\s*["']([\w-]+)["']\s*\}$/.exec(ty)?.[1] ?? (ty.startsWith("{") ? null : ty);
+  // A dynamic type can render as text, so it counts as text.
+  return lit === null || lit === "text" || lit === "search" || lit === "url";
 }
+
+const first = (src: string) => parseControls(src)[0];
 
 describe("autofill opt-out guard", () => {
   it("detects an unmarked control and accepts a marked one", () => {
-    expect(needsOptOut("input", '<input value={a} onChange={(e) => f(e)} />')).toBe(true);
-    expect(needsOptOut("textarea", "<textarea rows={2}>")).toBe(true);
-    expect(needsOptOut("input", '<input type="search" />')).toBe(true);
-    expect(needsOptOut("input", "<input {...NO_AUTOFILL} />")).toBe(false);
-    expect(needsOptOut("input", '<input autoComplete="new-password" />')).toBe(false);
-    expect(needsOptOut("input", '<input type="checkbox" />')).toBe(false);
-    const tags = openingTags('<input onChange={(e) => x(e)} value={v} />\n<textarea />');
-    expect(tags.map((t) => t.kind)).toEqual(["input", "textarea"]);
+    expect(needsOptOut(first("<input value={a} onChange={(e) => f(e)} />"))).toBe(true);
+    expect(needsOptOut(first("<textarea rows={2}>"))).toBe(true);
+    expect(needsOptOut(first('<input type="search" />'))).toBe(true);
+    expect(needsOptOut(first("<input {...NO_AUTOFILL} />"))).toBe(false);
+    expect(needsOptOut(first('<input autoComplete="new-password" />'))).toBe(false);
+    expect(needsOptOut(first('<input type="checkbox" />'))).toBe(false);
+    expect(needsOptOut(first('<input type={"radio"} />'))).toBe(false);
+  });
+
+  it("is not fooled by text inside attribute values or dynamic types", () => {
+    expect(needsOptOut(first('<input placeholder="autoComplete" />'))).toBe(true);
+    expect(needsOptOut(first('<input placeholder="NO_AUTOFILL" />'))).toBe(true);
+    expect(needsOptOut(first('<input data-type="checkbox" />'))).toBe(true);
+    expect(needsOptOut(first("<input type={kind} />"))).toBe(true);
+    expect(needsOptOut(first("<input {...rest} />"))).toBe(true);
+    expect(needsOptOut(first("<input title={`a > b`} onChange={(e) => g(e)} />"))).toBe(true);
+    expect(needsOptOut(first("<input\n  // it's a note\n  type=\"checkbox\" />"))).toBe(false);
+    expect(parseControls("<input a={1} />\n<textarea />").map((t) => t.kind)).toEqual(["input", "textarea"]);
+  });
+
+  it("keeps real autofill on personal-data and credential fields", () => {
+    const want: [string, string][] = [
+      ["src/features/settings/connect/GitTab.tsx", 'autoComplete="email"'],
+      ["src/features/settings/connect/GitTab.tsx", 'autoComplete="name"'],
+      ["src/features/settings/connect/GitTab.tsx", 'autoComplete="username"'],
+      ["src/features/scm/ChangesView.tsx", 'autoComplete="email"'],
+      ["src/features/settings/tenant/tenantMembers.tsx", 'autoComplete="email"'],
+    ];
+    for (const [f, needle] of want) expect(fs.readFileSync(f, "utf8")).toContain(needle);
   });
 
   it("has no unmarked free-text control in console/src", () => {
     const bad: string[] = [];
     for (const f of files("src")) {
       const src = fs.readFileSync(f, "utf8");
-      openingTags(src).forEach((t, n) => {
-        if (needsOptOut(t.kind, t.tag) && !ALLOW[`${f}:${n}`]) bad.push(`${f}:${t.line}`);
+      parseControls(src).forEach((t, n) => {
+        if (needsOptOut(t) && !ALLOW[`${f}:${n}`]) bad.push(`${f}:${t.line}`);
       });
     }
     expect(bad).toEqual([]);

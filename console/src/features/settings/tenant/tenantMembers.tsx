@@ -748,7 +748,7 @@ function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean;
     <form className="form add-member" onSubmit={submit}>
       <h5 className="admin-subhead">{tr("admin.add_member")}</h5>
       <div className="form-row">
-        <input {...NO_AUTOFILL} value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
+        <input autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
         <input {...NO_AUTOFILL} value={key} onChange={(e) => setKey(e.target.value)} placeholder={tr("admin.or_user_key")} />
         {isSuper && (
           <select value={role} onChange={(e) => setRole(e.target.value)}>

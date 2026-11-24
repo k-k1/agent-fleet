@@ -199,7 +199,7 @@ function SvnCard({ servers, reload }: { servers: SvnServer[]; reload: () => void
             value={prefix}
             onChange={(e) => setPrefix(e.target.value)}
           />
-          <input {...NO_AUTOFILL} className="cinput" placeholder={tr("git.svn_user_ph")} value={user} onChange={(e) => setUser(e.target.value)} />
+          <input autoComplete="username" className="cinput" placeholder={tr("git.svn_user_ph")} value={user} onChange={(e) => setUser(e.target.value)} />
           <input
             className="cinput"
             type="password"
@@ -256,8 +256,8 @@ function IdentityFields({ host, name0, email0 }: { host: string; name0?: string;
     <div className="git-identity">
       <div className="gi-title">{tr("git.identity_title")}</div>
       <div className="gi-row">
-        <input {...NO_AUTOFILL} className="cinput" placeholder={tr("git.name_placeholder_ex")} value={name} onChange={(e) => setName(e.target.value)} />
-        <input {...NO_AUTOFILL} className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+        <input autoComplete="name" className="cinput" placeholder={tr("git.name_placeholder_ex")} value={name} onChange={(e) => setName(e.target.value)} />
+        <input autoComplete="email" className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
         <button disabled={busy} onClick={save}>
           {tr("common.save")}
         </button>
@@ -303,8 +303,8 @@ function GlobalIdentity() {
       <div className="ds-title">{tr("git.global_identity_cat")}</div>
       <div className="git-identity git-identity-solo">
         <div className="gi-row">
-          <input {...NO_AUTOFILL} className="cinput" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
-          <input {...NO_AUTOFILL} className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
+          <input autoComplete="name" className="cinput" placeholder="name" value={name} onChange={(e) => setName(e.target.value)} />
+          <input autoComplete="email" className="cinput" placeholder="email" value={email} onChange={(e) => setEmail(e.target.value)} />
           <button disabled={busy} onClick={save}>
             {tr("common.save")}
           </button>
@@ -583,7 +583,7 @@ function BitbucketRow({ st, reload, oauthAvailable }: RowProps) {
       ) : mode === "token" ? (
         <div className="p-body">
           <div className="flow">
-            <input {...NO_AUTOFILL}
+            <input autoComplete="email"
               className="cinput"
               placeholder={tr("git.bb_email_ph")}
               value={username}
