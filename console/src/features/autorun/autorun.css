@@ -3,7 +3,7 @@
    the sub-head of the group on screen (z 1). Every band is opaque so rows never show through. */
 .autorun-cat-head {
   padding: 6px 10px 2px;
-  position: sticky; top: var(--sec-head-h, 34px); z-index: 2; background: var(--leftpane-bg, var(--panel));
+  position: sticky; top: calc(var(--sec-head-h, 34px) + var(--autorun-filter-h, 33px)); z-index: 2; background: var(--leftpane-bg, var(--panel));
 }
 .autorun-cat-name { flex: 1; min-width: 0; margin: 0; font: inherit; letter-spacing: inherit; text-transform: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .autorun-cat-act { flex: none; display: inline-flex; align-items: center; padding: 0 4px; border: 0; background: none; color: var(--muted2); cursor: pointer; }
@@ -25,7 +25,7 @@
 /* After the shared button rule above, which resets the background. Opaque, with the hover tint
    laid over the base: a pinned band must never show the rows scrolling under it. */
 .autorun-sub-head {
-  position: sticky; top: calc(var(--sec-head-h, 34px) + var(--autorun-cat-head-h, 0px)); z-index: 1;
+  position: sticky; top: calc(var(--sec-head-h, 34px) + var(--autorun-filter-h, 33px) + var(--autorun-cat-head-h, 0px)); z-index: 1;
   background: var(--leftpane-bg, var(--panel));
 }
 .autorun-sub-head:hover {

@@ -38,6 +38,9 @@ import { isContextMenuKey, menuAnchor } from "../project/contextMenuKey.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import type { Session } from "../../types/session.ts";
 import { openSessionChat } from "../sessions/open.ts";
+import { useLedgerWhile, useRefIndex } from "../sessions/useRefIndex.ts";
+import { refQuery } from "../sessions/refSearch.ts";
+import { normQuery, runMatches } from "./filter.ts";
 import { refreshAutoRuns, reloadAutoRuns, useAutoRunFeed, useScopedAutoRuns } from "./store.ts";
 import { buildRuns, fmtElapsed, scopeRuns, waitsForMember, type RunRow } from "./runs.ts";
 import { ancestorNames, planClearFinished, runStopScope, runWorktreeNode } from "./runActions.ts";
@@ -288,6 +291,9 @@ function SubHead({ label, open, onToggle, kind }: { label: string; open: boolean
   );
 }
 
+type CatFold = { live: boolean; ended: boolean };
+const DEFAULT_FOLD: CatFold = { live: true, ended: false };
+
 function Category({
   label,
   categoryId,
@@ -298,8 +304,15 @@ function Category({
   openMenu,
   onSettings,
   activeName,
+  filtering,
+  fold,
+  onFold,
 }: {
   label: string;
+  fold: CatFold;
+  onFold: (f: CatFold) => void;
+  /** A filter is set: both groups are open, or a match inside "Ended" would be hidden. */
+  filtering: boolean;
   /** The category's live queue settings (undefined: none are known). */
   queue: MemoQueue | undefined;
   /** "" for runs no queue category names: no settings, no history. */
@@ -312,8 +325,8 @@ function Category({
   activeName: string | null;
 }) {
   const tr = useT();
-  const [showLive, setShowLive] = useState(true);
-  const [showEnded, setShowEnded] = useState(false);
+  // Held by the view, not here: a category the filter hides unmounts, and its folds must survive.
+  const { live: showLive, ended: showEnded } = fold;
   // Published on the section so the sub-headers pin directly under this header, wrapped or not.
   const headRef = usePublishedHeight<HTMLDivElement>("--autorun-cat-head-h");
   const live = runs.filter((r) => r.state !== "ended");
@@ -334,8 +347,8 @@ function Category({
       </div>
       {live.length > 0 && (
         <div className="autorun-group" data-autorun-group="live">
-          <SubHead kind="live" label={tr("autorun.running_head", { n: live.length })} open={showLive} onToggle={() => setShowLive((v) => !v)} />
-          {showLive && (
+          <SubHead kind="live" label={tr("autorun.running_head", { n: live.length })} open={showLive || filtering} onToggle={() => onFold({ ...fold, live: !fold.live })} />
+          {(showLive || filtering) && (
             <ul className="autorun-list">
               {live.map((r) => (
                 <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} openMenu={openMenu} activeName={activeName} />
@@ -346,8 +359,8 @@ function Category({
       )}
       {ended.length > 0 && (
         <div className="autorun-group" data-autorun-group="ended">
-          <SubHead kind="ended" label={tr("autorun.ended", { n: ended.length })} open={showEnded} onToggle={() => setShowEnded((v) => !v)} />
-          {showEnded && (
+          <SubHead kind="ended" label={tr("autorun.ended", { n: ended.length })} open={showEnded || filtering} onToggle={() => onFold({ ...fold, ended: !fold.ended })} />
+          {(showEnded || filtering) && (
             <ul className="autorun-list">
               {ended.map((r) => (
                 <RunItem key={r.root.name} run={r} now={now} onDialog={onDialog} openMenu={openMenu} activeName={activeName} />
@@ -505,7 +518,15 @@ export const AutoRunSection = memo(function AutoRunSection() {
     const q = queues.find((x) => x.categoryId === id);
     return q ? [q.repo, q.category].filter(Boolean).join(" / ") || tr("memo.autorun") : tr("autorun.other");
   };
-  const ids = [...new Set(runs.map((r) => keyOf(r.categoryId)))];
+  const [folds, setFolds] = useState<Record<string, CatFold>>({});
+  const [q, setQ] = useState("");
+  const nq = normQuery(q);
+  const refs = useRefIndex();
+  useLedgerWhile(!!refQuery(nq));
+  const filterBarRef = usePublishedHeight<HTMLDivElement>("--autorun-filter-h");
+  const viewRef = useRef<HTMLDivElement>(null);
+  const shownRuns = nq ? runs.filter((r) => runMatches(r, labelOf(keyOf(r.categoryId)), nq, refs)) : runs;
+  const ids = [...new Set(shownRuns.map((r) => keyOf(r.categoryId)))];
   const active = runs.filter((r) => r.state !== "ended").length;
   const doReload = async () => {
     setReloading(true);
@@ -569,15 +590,43 @@ export const AutoRunSection = memo(function AutoRunSection() {
         </>
       }
     >
-      <div className="autorun-view">
+      {/* Quick filter, as the Repositories view's: Escape clears, Enter moves to the first row. */}
+      <div ref={filterBarRef} className="proj-filter-bar autorun-filter-bar">
+        <div className="proj-filter">
+          <Icon name="search" />
+          <input
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setQ("");
+              else if (e.key === "Enter") {
+                e.preventDefault();
+                viewRef.current?.querySelector<HTMLElement>("[data-rail-row]")?.focus();
+              }
+            }}
+            placeholder={tr("autorun.filter_ph")}
+            aria-label={tr("autorun.filter_aria")}
+          />
+          {q && (
+            <button type="button" className="proj-filter-clear" title={tr("pj.clear")} onClick={() => setQ("")}>
+              <Icon name="close" />
+            </button>
+          )}
+        </div>
+      </div>
+      <div className="autorun-view" ref={viewRef}>
         {runs.length === 0 && <div className="pane-empty">{tr("autorun.none")}</div>}
+        {runs.length > 0 && shownRuns.length === 0 && <div className="pane-empty" data-autorun-nomatch="">{tr("autorun.no_match")}</div>}
         {ids.map((id) => (
           <Category
             key={id}
             label={labelOf(id)}
             categoryId={id}
             queue={queues.find((q) => q.categoryId === id)}
-            runs={runs.filter((r) => keyOf(r.categoryId) === id)}
+            runs={shownRuns.filter((r) => keyOf(r.categoryId) === id)}
+            filtering={!!nq}
+            fold={folds[id] ?? DEFAULT_FOLD}
+            onFold={(f) => setFolds((m) => ({ ...m, [id]: f }))}
             now={now}
             onDialog={setDialog}
             openMenu={openMenu}

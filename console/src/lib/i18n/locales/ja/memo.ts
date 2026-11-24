@@ -659,4 +659,7 @@ export const memo = {
   "autorun.show_in_memo": "メモキューで表示",
   "autorun.running_head": "実行中・回答待ち {n} 件",
   "autorun.reload": "最新に更新",
+  "autorun.filter_ph": "絞り込み（実行）",
+  "autorun.filter_aria": "自動実行の実行を絞り込み",
+  "autorun.no_match": "条件に合う実行はありません",
 };

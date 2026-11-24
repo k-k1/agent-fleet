@@ -14,6 +14,8 @@ const memoQueueDeliveries = vi.fn(async (_id: string, _openToo?: boolean): Promi
   { id: "d1", session: "run-a", state: "open" },
   { id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" },
 ]);
+const workItemList = vi.fn(async (): Promise<unknown> => ({ items: [], queries: [], sessions: [] }));
+vi.mock("../workitems/api.ts", () => ({ workItemList: () => workItemList(), workItemRefresh: () => workItemList() }));
 const memoQueueFire = vi.fn(async (_id: string): Promise<unknown> => ({ id: "d9" }));
 vi.mock("../memo/api.ts", () => ({
   memoQueueList: () => memoQueueList(),
@@ -77,6 +79,7 @@ beforeEach(() => {
   memoQueueList.mockReset();
   memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] });
   memoQueueFire.mockClear();
+  workItemList.mockClear();
   memoQueueDeliveries.mockReset();
   memoQueueDeliveries.mockImplementation(async () => [
     { id: "d1", session: "run-a", state: "open" },
@@ -655,5 +658,128 @@ describe("AutoRunSection", () => {
     useSessionsStore.setState({ sessions: [sess("hand", { origin: "user" })] });
     await mount();
     expect(host.querySelector(".pane-empty")).not.toBeNull();
+  });
+
+  describe("quick filter", () => {
+    const type = async (v: string) => {
+      const input = host.querySelector<HTMLInputElement>(".autorun-filter-bar input")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, v);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      return input;
+    };
+    const twoCategories = () => {
+      memoQueueList.mockResolvedValue({
+        tenantEnabled: true,
+        queues: [
+          { categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" },
+          { categoryId: "c2", repo: "other", category: "nightly" },
+        ],
+      });
+      memoQueueDeliveries.mockImplementation(async (id: string) =>
+        id === "c1" ? [{ id: "d1", session: "run-a", state: "open" }] : [{ id: "d2", session: "run-z", state: "open" }],
+      );
+      useSessionsStore.setState({
+        sessions: [
+          ...useSessionsStore.getState().sessions,
+          sess("run-z", { origin: "queue", title: "Sweep logs", createdAt: new Date().toISOString() }),
+        ],
+      });
+    };
+    const runs = () => [...host.querySelectorAll("[data-autorun-run]")].map((e) => e.getAttribute("data-autorun-run"));
+    const cats = () => [...host.querySelectorAll("[data-autorun-category]")].map((e) => e.getAttribute("data-autorun-category"));
+
+    it("matches by title, #N, category label and a child's name, hiding categories with no match", async () => {
+      twoCategories();
+      await mount();
+      expect(cats()).toEqual(expect.arrayContaining(["agent-fleet / issue-rounds", "other / nightly"]));
+      await type("FIX IT");
+      expect(runs()).toEqual(["run-a"]);
+      expect(cats()).toEqual(["agent-fleet / issue-rounds"]);
+      await type("#12");
+      expect(runs()).toEqual(["run-a"]);
+      await type("nightly");
+      expect(runs()).toEqual(["run-z"]);
+      expect(cats()).toEqual(["other / nightly"]);
+      await type("rev-a");
+      expect(runs()).toEqual(["run-a"]);
+    });
+
+    it("clears on Escape and on the × button", async () => {
+      twoCategories();
+      await mount();
+      const input = await type("nightly");
+      expect(runs()).toEqual(["run-z"]);
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(input.value).toBe("");
+      expect(runs().sort()).toEqual(["run-a", "run-z"]);
+      await type("nightly");
+      await act(async () => host.querySelector<HTMLButtonElement>(".proj-filter-clear")!.click());
+      expect(runs().sort()).toEqual(["run-a", "run-z"]);
+    });
+
+    it("says so when the filter, not the data, empties the list", async () => {
+      await mount();
+      await type("zzz-nothing");
+      expect(host.querySelector("[data-autorun-nomatch]")!.textContent).toBe("No runs match the filter.");
+      expect(host.textContent).not.toContain("No auto-run runs yet.");
+    });
+
+    it("loads the work-item ledger for a reference query and finds the run and its reviewer by it", async () => {
+      const { useWorkItemStore } = await import("../workitems/store.ts");
+      useWorkItemStore.setState({ payload: null, loaded: false });
+      // ensureWorkItems throttles retries by the wall clock; an earlier test's reference query used it up.
+      const realNow = Date.now();
+      const nowSpy = vi.spyOn(Date, "now").mockReturnValue(realNow + 3_600_000);
+      const ref = (itemKey: string, sessionName: string) => ({ id: itemKey, provider: "jira", itemKey, sessionName, repo: "", branch: "", createdAt: "" });
+      workItemList.mockResolvedValue({ items: [], queries: [], sessions: [ref("PROJ-77", "rev-a"), ref("PROJ-88", "run-a")] });
+      await mount();
+      expect(workItemList).not.toHaveBeenCalled();
+      await type("PROJ-77");
+      expect(workItemList).toHaveBeenCalled();
+      await act(async () => {
+        await Promise.resolve();
+      });
+      expect(runs()).toEqual(["run-a"]); // via the reviewer's reference
+      await type("PROJ-88");
+      expect(runs()).toEqual(["run-a"]); // via the root's reference
+      await type("PROJ-99");
+      expect(runs()).toEqual([]);
+      nowSpy.mockRestore();
+      useWorkItemStore.setState({ payload: null, loaded: false });
+    });
+
+    it("Enter moves focus to the first row", async () => {
+      await mount();
+      const input = await type("run-a");
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      });
+      expect(document.activeElement).toBe(host.querySelector("[data-rail-row]"));
+      expect(document.activeElement?.classList.contains("autorun-sub-head")).toBe(true);
+    });
+
+    it("keeps a category's folds across a filter that hides it", async () => {
+      twoCategories();
+      await mount();
+      await act(async () => host.querySelector<HTMLButtonElement>('[data-autorun-category="other / nightly"] .autorun-sub-head.is-live')!.click());
+      expect(runs()).not.toContain("run-z");
+      const input = await type("Fix it");
+      expect(cats()).toEqual(["agent-fleet / issue-rounds"]);
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(runs()).not.toContain("run-z");
+    });
+
+    it("opens the Ended fold while filtering so a match there is visible", async () => {
+      await mount();
+      expect(runs()).not.toContain("run-old");
+      await type("run-old");
+      expect(runs()).toEqual(["run-old"]);
+    });
   });
 });
