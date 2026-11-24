@@ -456,10 +456,12 @@ const maxDrainRounds = 8
 // The previous ack moved nothing when this read starts with the same id and still holds every
 // id it acked. The first id alone is not enough: the Agent answers the ack with a 204 even
 // when some deletes failed, so the first entry can stay while the rest moved on. A different
-// first id counts as progress too, since a newer entry listed ahead can hide what was dropped
-// behind the bound. Such a round is still stored and acked before the drain stops: an entry
-// new to it must not be left unstored, and a delete that failed only once gets its second try.
-// Only ids stored the round before skip the insert, because the store already holds them.
+// first id keeps the drain going even when every acked id is still there: a newer entry was
+// listed ahead, and once this round's ack goes through the next read can move past them. A
+// round that meets the stop condition is still stored and acked before the drain stops: an
+// entry new to it must not be left unstored, and a delete that failed only once gets its
+// second try. Only ids stored the round before skip the insert, because the store already
+// holds them.
 func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string, prevAcked []string) (state string, more bool, acked []string) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
 	if tok := rt.Token(); tok != "" {
