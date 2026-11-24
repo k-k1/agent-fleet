@@ -60,8 +60,8 @@ const (
 	pushReaders = 4
 	// pushDropLogEvery is how often the counts of dropped notifications and messages are logged.
 	pushDropLogEvery = 10 * time.Second
-	// pushJoinBudget bounds sendTarget's joined read, well below pushSlotWait, and pushJoinOffFor is
-	// how long sendTarget reads the row alone after that read failed.
+	// pushJoinBudget bounds sendTarget's read with the text setting, well below pushSlotWait, and
+	// pushJoinOffFor is how long sendTarget leaves the setting out after that read failed.
 	pushJoinBudget = 2 * time.Second
 	pushJoinOffFor = 30 * time.Second
 	// A question that waits an hour is stale for a phone; the service drops it after that.
@@ -381,15 +381,17 @@ func (p *Service) run(j sendJob) {
 }
 
 // sendTarget reads the device's row with the member's status and the tenant's text setting in one
-// statement, so all three are checked at one point in time. That statement reaches tables main's
-// worker never read, so it runs on a short budget of its own, and when it fails the row is read
-// alone and answered as active with no text: what deliver does with a failed context read. A
-// failure also skips the joined read for joinOffFor, so a stall on those tables costs one short
-// wait per worker rather than one per queued send, which would make the sends behind them stale.
+// statement, so all three are checked at one point in time. The setting is the part a send can do
+// without, so that statement runs on a short budget of its own, and when it fails the row and the
+// member's status are read again without the setting, and the send goes out without the text. A
+// failure also leaves the setting out for joinOffFor, so a stall on its table costs one short wait
+// per worker rather than one per queued send, which would make the sends behind them stale. The
+// member's status is read on every send either way: one failed read must not let a member removed
+// during the wait be sent to.
 func (p *Service) sendTarget(j sendJob) (store.PushSubscription, store.PushDelivery, bool, error) {
 	if time.Now().UnixNano() >= p.joinOffUntil.Load() {
 		ctx, cancel := context.WithTimeout(context.Background(), min(orDefault(p.joinBudget, pushJoinBudget), p.timeout))
-		cur, dc, held, err := p.store.GetPushSendTarget(ctx, j.membershipID, j.sub.Endpoint)
+		cur, dc, held, err := p.store.GetPushSendTarget(ctx, j.membershipID, j.sub.Endpoint, true)
 		cancel()
 		if err == nil {
 			return cur, dc, held, nil
@@ -399,8 +401,7 @@ func (p *Service) sendTarget(j sendJob) (store.PushSubscription, store.PushDeliv
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
-	cur, held, err := p.store.GetPushSubscription(ctx, j.membershipID, j.sub.Endpoint)
-	return cur, store.PushDelivery{Active: true}, held, err
+	return p.store.GetPushSendTarget(ctx, j.membershipID, j.sub.Endpoint, false)
 }
 
 // orDefault is d, or def when d is zero (a Service literal leaves the tuning fields zero).

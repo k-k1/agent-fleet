@@ -373,11 +373,14 @@ func TestFailedJoinedReadSendsWithoutText(t *testing.T) {
 	}
 }
 
-// stallJoin makes the send-time joined read hang until its deadline, as a lock on the setting
-// table would, while the row alone still reads at once.
+// stallJoin makes the send-time read with the setting hang until its deadline, as a lock on the
+// setting table would, while the read without it still answers at once.
 type stallJoin struct{ *memStore }
 
-func (s stallJoin) GetPushSendTarget(ctx context.Context, _, _ string) (store.PushSubscription, store.PushDelivery, bool, error) {
+func (s stallJoin) GetPushSendTarget(ctx context.Context, mid, ep string, withText bool) (store.PushSubscription, store.PushDelivery, bool, error) {
+	if !withText {
+		return s.memStore.GetPushSendTarget(ctx, mid, ep, false)
+	}
 	<-ctx.Done()
 	return store.PushSubscription{}, store.PushDelivery{}, false, ctx.Err()
 }
@@ -407,5 +410,33 @@ func TestStalledJoinedReadDoesNotStaleTheQueue(t *testing.T) {
 	}
 	if got := f.svc.joinFailed.Load(); got != 1 {
 		t.Fatalf("joined reads that waited out their budget: %d, want 1", got)
+	}
+}
+
+// After one failed read with the setting, the reads that leave it out still check the member: a
+// member removed while their send waited is not sent to, even inside joinOffFor.
+func TestFailedJoinedReadStillChecksTheMember(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, nil)
+	arrived, release := f.hold()
+	defer release()
+	f.subscribe(t, "m1")
+	f.subscribe(t, "m2")
+	f.st.mu.Lock()
+	f.st.joinErr = io.ErrUnexpectedEOF
+	f.st.mu.Unlock()
+	var wg sync.WaitGroup
+	f.svc.deliver(context.Background(), note("question"), &wg) // m1: its read with the setting fails
+	waitArrival(t, arrived)
+	other := note("question")
+	other.MembershipID = "m2"
+	f.svc.deliver(context.Background(), other, &wg) // m2: queued while still active
+	f.st.mu.Lock()
+	f.st.joinErr = nil // the database is back
+	f.st.inactive = map[string]bool{"m2": true}
+	f.st.mu.Unlock()
+	release()
+	wg.Wait()
+	if f.count() != 1 || f.svc.joinFailed.Load() != 1 {
+		t.Fatalf("%d sent, %d failed joins; want 1 (m1 only) and 1", f.count(), f.svc.joinFailed.Load())
 	}
 }

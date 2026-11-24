@@ -178,7 +178,7 @@ func checkPushCap(t *testing.T, st *SQL, a, b string) {
 	if _, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || ok {
 		t.Fatalf("a still holds the moved endpoint: %v %v", ok, err)
 	}
-	if _, _, ok, err := st.GetPushSendTarget(ctx, a, ep(0)); err != nil || ok {
+	if _, _, ok, err := st.GetPushSendTarget(ctx, a, ep(0), true); err != nil || ok {
 		t.Fatalf("a still holds the moved endpoint: %v %v", ok, err)
 	}
 	if !add(a, ep(max)) {
@@ -324,9 +324,14 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, slug, a, b string) {
 	}
 	get := func() PushDelivery {
 		t.Helper()
-		got, dc, ok, err := st.GetPushSendTarget(ctx, a, sub.Endpoint)
+		got, dc, ok, err := st.GetPushSendTarget(ctx, a, sub.Endpoint, true)
 		if err != nil || !ok || got.Endpoint != sub.Endpoint {
 			t.Fatalf("get: %+v %v %v", got, ok, err)
+		}
+		// Without the setting the same read still answers the member's status.
+		_, alone, ok, err := st.GetPushSendTarget(ctx, a, sub.Endpoint, false)
+		if err != nil || !ok || alone.IncludeText || alone.Active != dc.Active {
+			t.Fatalf("read without the setting: %+v %v %v (with it: %+v)", alone, ok, err, dc)
 		}
 		return dc
 	}

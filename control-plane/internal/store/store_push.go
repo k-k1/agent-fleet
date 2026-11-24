@@ -33,8 +33,9 @@ type PushSubscriptionStore interface {
 	GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error)
 	// GetPushSendTarget is GetPushSubscription with the membership's delivery context (TenantSlug
 	// left empty) read in the same statement, so a send checks the device's owner, the member's
-	// status and the text setting at one point in time.
-	GetPushSendTarget(ctx context.Context, membershipID, endpoint string) (PushSubscription, PushDelivery, bool, error)
+	// status and the text setting at one point in time. withText false leaves the tenant setting
+	// out of the statement and answers IncludeText false.
+	GetPushSendTarget(ctx context.Context, membershipID, endpoint string, withText bool) (PushSubscription, PushDelivery, bool, error)
 	// DeletePushSubscription reports whether a row of that membership was removed.
 	DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error)
 	// DeletePushSubscriptionByEndpoint drops a subscription the push service says is gone. It is
@@ -140,14 +141,18 @@ func (s *SQL) GetPushSubscription(ctx context.Context, membershipID, endpoint st
 	return p, err == nil, err
 }
 
-func (s *SQL) GetPushSendTarget(ctx context.Context, membershipID, endpoint string) (PushSubscription, PushDelivery, bool, error) {
+func (s *SQL) GetPushSendTarget(ctx context.Context, membershipID, endpoint string, withText bool) (PushSubscription, PushDelivery, bool, error) {
 	var p PushSubscription
 	var active, inc int64
+	text, join := `0`, ``
+	if withText {
+		text, join = `COALESCE(t.include_text, 0)`, `LEFT JOIN tenant_push_setting t ON t.tenant_id = m.tenant_id`
+	}
 	err := s.db.QueryRowContext(ctx, `SELECT s.id, s.membership_id, s.endpoint, s.p256dh, s.auth, s.user_agent, s.created_at, s.last_ok_at,
-		CASE WHEN m.status='active' THEN 1 ELSE 0 END, COALESCE(t.include_text, 0)
+		CASE WHEN m.status='active' THEN 1 ELSE 0 END, `+text+`
 		FROM push_subscription s
 		LEFT JOIN membership m ON m.id = s.membership_id
-		LEFT JOIN tenant_push_setting t ON t.tenant_id = m.tenant_id
+		`+join+`
 		WHERE s.membership_id=? AND s.endpoint=?`, membershipID, endpoint).
 		Scan(&p.ID, &p.MembershipID, &p.Endpoint, &p.P256dh, &p.Auth, &p.UserAgent, &p.CreatedAt, &p.LastOKAt, &active, &inc)
 	if err == sql.ErrNoRows {

@@ -107,16 +107,26 @@ func (m *memStore) GetPushSubscription(_ context.Context, mid, ep string) (store
 	}
 	return store.PushSubscription{}, false, nil
 }
-func (m *memStore) GetPushSendTarget(_ context.Context, mid, ep string) (store.PushSubscription, store.PushDelivery, bool, error) {
+
+// GetPushSendTarget fails withText reads on joinErr (the setting table) and counts the reads
+// without the setting in gets, as the subscription re-read they stand in for.
+func (m *memStore) GetPushSendTarget(_ context.Context, mid, ep string, withText bool) (store.PushSubscription, store.PushDelivery, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.joins++
-	if m.joinErr != nil || m.getErr != nil {
-		return store.PushSubscription{}, store.PushDelivery{}, false, errors.Join(m.joinErr, m.getErr)
+	if withText {
+		m.joins++
+		if m.joinErr != nil || m.getErr != nil {
+			return store.PushSubscription{}, store.PushDelivery{}, false, errors.Join(m.joinErr, m.getErr)
+		}
+	} else {
+		m.gets++
+		if m.getErr != nil {
+			return store.PushSubscription{}, store.PushDelivery{}, false, m.getErr
+		}
 	}
 	for _, s := range m.subs {
 		if s.MembershipID == mid && s.Endpoint == ep {
-			return s, store.PushDelivery{Active: !m.inactive[mid], IncludeText: m.includeTxt}, true, nil
+			return s, store.PushDelivery{Active: !m.inactive[mid], IncludeText: withText && m.includeTxt}, true, nil
 		}
 	}
 	return store.PushSubscription{}, store.PushDelivery{}, false, nil
