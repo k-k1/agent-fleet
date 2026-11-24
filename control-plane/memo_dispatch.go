@@ -1274,24 +1274,36 @@ type memoPRSnapshotReply struct {
 // is paged as collectAnswers pages its waited-for one: the members recorded as stopped whose
 // runtime is stopped are left out from the first page (and read after the list if they started
 // meanwhile), and any other member whose rows are left unstamped from the next pages.
-func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
+func (r *memoQueueRunner) collectPRSnapshots(tick context.Context, views map[string]*memoMemberView, now time.Time) {
 	r.prFailed = map[string]bool{}
+	r.retryLater = nil
 	read := 0
 	before := store.DeliveryTS(now.Add(-memoPRSnapshotEvery))
 	var after *store.MemoDelivery
 	var except memoExcept
-	ms, err := r.mgr.store.ListPRSnapshotStoppedMembers(ctx, before, memoPRSnapshotListPages*memoPRSnapshotsListed)
+	// The query and the state look-ups come first, under their own bound: the pass's budget starts
+	// after them (see collectAnswers).
+	lctx, lcancel := context.WithTimeout(tick, memoStoppedLookupBudget)
+	ms, err := r.mgr.store.ListPRSnapshotStoppedMembers(lctx, before, memoPRSnapshotListPages*memoPRSnapshotsListed)
 	if err != nil {
 		log.Printf("memo queue: list PR snapshots due of stopped members: %v", err)
 	}
-	stopped := r.memoLookUpStopped(ctx, ms)
+	stopped := r.memoLookUpStopped(lctx, ms)
+	lcancel()
+	ctx, cancel := context.WithTimeout(tick, memoPRSnapshotBudget)
+	defer cancel()
 	for _, m := range stopped {
 		except.add(m)
 	}
-	defer func() {
-		for _, m := range r.memoStartedSince(ctx, stopped) {
+	// readStarted reads the rows of the members left out as stopped that run now, ahead of the page
+	// about to be read, so the read bound is not spent on later rows first.
+	readStarted := func() {
+		for _, m := range r.memoStartedSince(ctx, &stopped) {
 			if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
 				return
+			}
+			if v, ok := views[m]; ok && (v == nil || !v.liveOK) {
+				delete(views, m) // the view of the tick is of the stopped workspace
 			}
 			ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, before, nil, nil, m, memoPRSnapshotsPerTick-read)
 			if err != nil {
@@ -1300,7 +1312,8 @@ func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[stri
 			}
 			read = r.readPRSnapshotsOf(ctx, views, ds, read, &memoExcept{}, now)
 		}
-	}()
+	}
+	defer readStarted()
 	for p := 0; p < memoPRSnapshotListPages; p++ {
 		if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
 			return
@@ -1310,11 +1323,15 @@ func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[stri
 			log.Printf("memo queue: list PR snapshots due: %v", err)
 			return
 		}
+		reads := read
 		read = r.readPRSnapshotsOf(ctx, views, ds, read, &except, now)
 		if len(ds) < memoPRSnapshotsListed {
 			return
 		}
 		after = &ds[len(ds)-1]
+		if read > reads {
+			readStarted() // time has passed: a member that started meanwhile goes before the next page
+		}
 	}
 }
 

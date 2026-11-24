@@ -749,9 +749,10 @@ func TestMemoAnswerStartedDuringTheTickIsRead(t *testing.T) {
 	})
 }
 
-// A member the PR snapshot pass could not reach is read in its rows' order, not after the rest: with
-// one read left, an older row of a member that answers again is the one read.
-func TestMemoAnswerPRFailedMemberReadInOrder(t *testing.T) {
+// A member the PR snapshot pass could not reach is resolved again only after the rows of the
+// others: with one read allowed, the newer row of a healthy member is the one read, as on main,
+// and the retried member's row stays unstamped for the next tick.
+func TestMemoAnswerPRFailedMemberReadAfterTheOthers(t *testing.T) {
 	saved := memoAnswersPerTick
 	memoAnswersPerTick = 1
 	t.Cleanup(func() { memoAnswersPerTick = saved })
@@ -773,11 +774,135 @@ func TestMemoAnswerPRFailedMemberReadInOrder(t *testing.T) {
 			t.Fatalf("the PR pass did not record c: %v", r.prFailed)
 		}
 		r.collectAnswers(context.Background(), views, now)
-		if got := e.delivery(ids[0]); got.AnswerClass != store.AnswerDone {
-			t.Fatalf("c's older row: %q %q", got.AnswerHead, got.AnswerClass)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("a's row: %q %q", got.AnswerHead, got.AnswerClass)
 		}
-		if got := e.delivery(da.ID); got.AnswerClass != "" {
-			t.Fatalf("a's newer row was read past the bound: %q", got.AnswerClass)
+		if got := e.delivery(ids[0]); got.AnswerClass != "" || got.AnswerTriedAt != "" {
+			t.Fatalf("c's row was read or stamped ahead of the others: %+v", got)
+		}
+	})
+}
+
+// The retry of a member the PR pass could not reach is made after the rows of the others: the
+// healthy member's answer is read before the silent member's Agent is asked a second time.
+func TestMemoAnswerPRFailedRetryDoesNotDelayOthers(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer() })
+		calls := e.silentMember()
+		e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), "") // ahead of a in both lists
+		views := map[string]*memoMemberView{}
+		r := e.runner()
+		pctx, pcancel := context.WithTimeout(context.Background(), time.Second)
+		r.collectPRSnapshots(pctx, views, now)
+		pcancel()
+		select {
+		case <-calls:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the PR pass never asked the silent Agent")
+		}
+		asked := -1
+		agent.setAnswer("q-a", func() (int, any) {
+			asked = len(calls) // the silent Agent's calls since the PR pass's
+			return transcriptReply("idle", true, "Done: not delayed")()
+		})
+		actx, acancel := context.WithTimeout(context.Background(), memoAnswerRetryWait+2*time.Second)
+		defer acancel()
+		r.collectAnswers(actx, views, now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("a's row: %q", got.AnswerClass)
+		}
+		if asked != 0 {
+			t.Fatalf("the silent Agent was asked again (%d calls) before a's row was read", asked)
+		}
+	})
+}
+
+// A member left out as stopped that starts while a page is read is read before the next page, so
+// the read bound spent by that page's rows and the later ones is not spent on the others first.
+func TestMemoAnswerStartedMemberGoesBeforeTheNextPage(t *testing.T) {
+	savedL, savedP := memoAnswersListed, memoAnswersPerTick
+	memoAnswersListed, memoAnswersPerTick = 1, 2
+	t.Cleanup(func() { memoAnswersListed, memoAnswersPerTick = savedL, savedP })
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		first := e.otherMemberChains(q, "a", 1, now.Add(-3*time.Minute), store.PRStateNone)[0]
+		c := e.queueAgentFor("c", "stopped")
+		e.recordStopped("c")
+		cRow := e.otherMemberChains(q, "c", 1, now.Add(-2*time.Minute), store.PRStateNone)[0]
+		second := e.otherMemberChains(q, "a", 1, now.Add(-time.Minute), store.PRStateNone)[0]
+		c.setAnswer("q-c", namedReply("q-c", "Done: started meanwhile"))
+		agent.setAnswer("q-a", func() (int, any) {
+			e.setRuntimeOf("c", c, "running")
+			return namedReply("q-a", "Done: a")()
+		})
+		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now)
+		if got := e.delivery(first); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the first row: %q", got.AnswerClass)
+		}
+		if got := e.delivery(cRow); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the member that started: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+		for _, id := range []string{second, da.ID} {
+			if got := e.delivery(id); got.AnswerClass != "" {
+				t.Fatalf("a later row was read past the bound: %q", got.AnswerClass)
+			}
+		}
+	})
+}
+
+// A workspace that is starting is not read, and its row is not stamped: the row is read once the
+// workspace runs, in the next tick (not five minutes later).
+func TestMemoAnswerStartingMemberIsNotStamped(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, _, _ := e.noPRChain(now.Add(-time.Minute))
+		c := e.queueAgentFor("c", "stopped")
+		e.recordStopped("c")
+		cRow := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), store.PRStateNone)[0]
+		c.setAnswer("q-c", namedReply("q-c", "Done: after the start"))
+		agent.setAnswer("q-a", func() (int, any) {
+			e.setRuntimeOf("c", c, "starting")
+			return namedReply("q-a", "Done: a")()
+		})
+		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now)
+		if got := e.delivery(cRow); got.AnswerClass != "" || got.AnswerTriedAt != "" {
+			t.Fatalf("a row of a starting workspace was read or stamped: %+v", got)
+		}
+		e.setRuntimeOf("c", c, "running")
+		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now.Add(time.Minute))
+		if got := e.delivery(cRow); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the next tick: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// The state look-up is abandoned when its context ends, even while the resolver waits on a lock
+// that ignores it.
+func TestMemoRuntimeStateEndsWithItsContext(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.noPRChain(time.Now().Add(-time.Minute))
+		e.queueAgentFor("c", "stopped")
+		id := e.members["c"]
+		e.mgr.mu.Lock()
+		delete(e.mgr.rts, id)
+		e.mgr.mu.Unlock()
+		bl := e.mgr.buildLockFor(id)
+		bl.Lock()
+		defer bl.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		defer cancel()
+		done := make(chan string, 1)
+		go func() { done <- e.runner().memoRuntimeState(ctx, id) }()
+		select {
+		case st := <-done:
+			if st != "" {
+				t.Fatalf("state %q while the resolver was blocked", st)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("the look-up kept waiting on the resolver's lock past its context")
 		}
 	})
 }
