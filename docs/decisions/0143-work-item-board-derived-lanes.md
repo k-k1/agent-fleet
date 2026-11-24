@@ -45,8 +45,7 @@ row. Nothing says "this ticket is waiting for review" or "this ticket's session 
    uses it for its own `pr.ready` notice, but no list the Console reads has a `ready` boolean.
 4. **A PR a session has left is not written back to its link unless a switch is on.** There are three
    paths. The PR of the session's current branch is read with the session list and written to the
-   link (`sessionx/session_work_links.go:181-225`; `links.go:57` says the Agent reads a link's PR
-   state "only while a session is on its branch"). A held link off the branch is read by number and
+   link (`sessionx/session_work_links.go:181-225`). A held link off the branch is read by number and
    written back by the PR-feedback tick (reads `pr_feedback.go:242-260`, write-back
    `pr_feedback.go:603-635`), and the tick returns first when PR feedback is off
    (`pr_feedback.go:503-511`), which is the default. The message queue's PR snapshot also reads held
@@ -93,6 +92,9 @@ has to be added so that the sources say enough.
   freshest observation (`observedAt`, or the row's fetch time), `merged` is final and wins over any
   older `open`, and a fact only one source has (checks from the cache, the review decision from the
   Agent) is taken from that source, never defaulted. The same PR is never counted as two open PRs.
+  A derived verdict does not outlive the facts it was built from: a link's `ready` is not used while
+  a newer observation of the same PR (an inbox row's checks or mergeable) says it is not green or not
+  mergeable, because the Console must not recompute `ready` and so cannot repair it, only ignore it.
 
 ### 2. A lane is a pure function of a card's facts. First match wins.
 
@@ -127,11 +129,13 @@ session does.
 - **What attention is** is not listed here. A session is in attention when `stateInfo()` gives it the
   `question` colour class and not `limited`. Live, that covers question, plan, permission, blocked,
   auth, spend limit and input not delivered; stopped, it covers a carried interaction, and not a
-  session whose folder is gone, which `stateInfo` shows as dead and which cannot be answered. The board calls the shared helper, so it follows `stateInfo` when that
+  session whose folder is gone, which `stateInfo` shows as dead and which cannot be answered. That
+  exclusion holds where the list says so (`resumable: false` on the live list). The stopped mirror
+  does not know whether the folder survives and serves such a session as resumable
+  (`workspace_handlers.go:1143-1214`), so a stopped Workspace can still show it in Needs you. The board calls the shared helper, so it follows `stateInfo` when that
   changes. `limited` (waiting for a usage window to reset) needs nobody and counts as In progress.
-- **A PR closed unmerged** leaves the card's PR set, and the card is judged again on what is left:
-  In review or Needs you if another open PR remains, else In progress (a driving session) or To do
-  (an inbox row), and a PR-only card with nothing else disappears (decision 1).
+- **A PR closed unmerged** leaves the card's PR set, and the card is judged again from the top of the
+  table on what is left. A PR-only card with nothing else disappears (decision 1).
 - **Tracker state.** Done by the tracker reads the provider-independent state ADR 0061 decision 9.5
   fixed (a Jira status *category*, not a name), and only for a ticket or issue. An item not in the
   inbox has no known tracker state, and unknown is not done. An inbox *pull request* row is read as
@@ -202,10 +206,10 @@ The mirror gives links, link state and `carried`; the facts of decision 4 give P
   serve it per row (#5054). This is ADR 0061 decision 1's rule, "each row carries last fetched", at
   card level. When no fact has a time, nothing is shown, never an invented one (ADR 0078
   decision 11).
-- Attention that comes from a *session* while stopped is only `carried` (and not for a session whose
-  folder is gone, decision 2). A session that was working
-  when the Workspace stopped is stopped, so its card reads In progress with a stopped chip, not Needs
-  you. Attention that comes from a *PR* stays, as the PR facts last recorded with their `observedAt`:
+- Attention that comes from a *session* while stopped is only `carried`. The dead-folder exclusion of
+  decision 2 cannot apply, because the mirror cannot tell. A session that was working when the
+  Workspace stopped is stopped, so it gives its card In progress with a stopped chip, not Needs you,
+  when no higher row of the table matches. Attention that comes from a *PR* stays, as the PR facts last recorded with their `observedAt`:
   a card with a failing CI the cache or the link recorded before the stop is still in Needs you, and
   says as of when.
 - **Age never orders cards or moves a lane.** It is shown, not used.
@@ -263,7 +267,11 @@ These are the owner's, and are collected on #5051. Each has a recommendation abo
    that `reviewing` counts on the card of the PR it reviews only.
 4. **Always observe, or only once the board has been opened** (decision 5).
 5. **Paused sessions.** A stopped, unarchived session keeps its card In progress until ADR 0097's
-   retention archives it. A months-old paused session therefore holds a card. This ADR does not add a
+   retention archives it. A months-old paused session therefore holds a card. The opposite error is
+   in the table too: a stopped session with no carried interaction cannot be told from a finished
+   one, so a ticket whose only PR is merged reads Done even if that session was only paused before
+   opening the next PR. The tracker's own done is the exact signal, and a Done card keeps the session's
+   stopped chip, so the member sees it. This ADR does not add a
    threshold, because a number chosen without data would decide what the member sees. Look at real
    boards after P3 and decide then.
 6. **No tracker write-back** (decision 7). Confirm that no lane change writes to a tracker.
