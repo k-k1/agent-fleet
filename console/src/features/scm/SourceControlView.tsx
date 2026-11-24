@@ -1,6 +1,7 @@
 // SourceControlView — the per-repo commit graph (codeleaf lane layout), opened
 // by clicking a repo. Changes+commit box and per-commit detail live in their own
 // panes. Port of views/SourceControlView onto the zustand stores.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { FormEvent, KeyboardEvent as RKeyboardEvent, ReactNode } from "react";
 import { api, apiJSON, errText, isTransientErr } from "../../core/api/client.ts";
@@ -439,7 +440,7 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
           <div className="ui-modal-body">
             <label className="ui-field">
               <span className="ui-field-label">{tr("scm.branch_name")}</span>
-              <input autoFocus value={nbName} onChange={(e) => setNbName(e.target.value)} placeholder="feature/…" />
+              <input {...NO_AUTOFILL} autoFocus value={nbName} onChange={(e) => setNbName(e.target.value)} placeholder="feature/…" />
             </label>
           </div>
           <footer className="ui-modal-foot">

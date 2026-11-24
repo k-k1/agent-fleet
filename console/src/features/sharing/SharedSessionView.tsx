@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useInterval } from "../../lib/useInterval.ts";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
@@ -714,7 +715,7 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
       </div>
       {meta?.permission === "rw" && meta.workspaceState === "running" && (
         <div className="shared-propose">
-          <textarea value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={tr("share.proposal_placeholder")} />
+          <textarea {...NO_AUTOFILL} value={draft} onChange={(e) => setDraft(e.target.value)} placeholder={tr("share.proposal_placeholder")} />
           <Button variant="primary" icon="send" disabled={!draft.trim() || sending} onClick={() => void propose()}>
             {tr("share.propose")}
           </Button>

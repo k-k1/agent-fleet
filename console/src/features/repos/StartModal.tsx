@@ -3,6 +3,7 @@
 // from here), in a repository (→ the per-repo start-work dialog), or Other (home agent, shell,
 // SSM, clone, new folder). One draft is shown in every section. Entry points that already know
 // the place (the repo row's launch) skip this hub.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffectiveDefaults } from "../../core/store/uiState.ts";
 import type { TeamCloneTarget } from "./tenantLaunchDefaults.ts";
 import { teamCloneHost, teamCloneTargets, teamFirst } from "./tenantLaunchDefaults.ts";
@@ -462,7 +463,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
             <HubComposer draft={draft} busy={busy} note={tr("start.draft_note_repo")} />
             <div className="ui-field start-repos">
               <label className="ui-field-label" htmlFor="start-repo-search">{tr("start.repo_launch_label")}</label>
-              <input
+              <input {...NO_AUTOFILL}
                 id="start-repo-search"
                 type="search"
                 value={repoQuery}
@@ -610,7 +611,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
                 </span>
               ) : (
                 <>
-                  <input
+                  <input {...NO_AUTOFILL}
                     type="search"
                     value={ssmQuery}
                     onChange={(e) => setSsmQuery(e.target.value)}
@@ -688,7 +689,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
               </Button>
               {ssmSearchError && <span role="alert" className="start-search-error">{ssmSearchError}</span>}
               {ssmInstances !== null && ssmInstances.length > 0 && (
-                <input
+                <input {...NO_AUTOFILL}
                   type="search"
                   value={ssmInstanceQuery}
                   onChange={(e) => setSsmInstanceQuery(e.target.value)}

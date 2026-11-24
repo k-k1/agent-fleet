@@ -3,6 +3,7 @@
 // the replacement + apply/discard). Unlike the conflict panel this is not an error, so it is
 // not role="alert". Whether it can be applied is derived from baseRevision matching the
 // current bufferRevision; a stale suggestion disables apply.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { lineDiff } from "../DiffView.tsx";
@@ -72,7 +73,7 @@ export function EditorSuggestPanel(props: EditorSuggestPanelProps) {
         <Icon name="sparkle" /> {tr("editor.suggestion.title")}
       </h4>
       <p className="muted">{tr("editor.suggestion.compose_hint")}</p>
-      <textarea
+      <textarea {...NO_AUTOFILL}
         value={props.instruction}
         placeholder={tr("editor.suggestion.placeholder")}
         rows={3}

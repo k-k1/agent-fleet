@@ -8,6 +8,7 @@
 // runsInDir agent set, same order, same `ui-seg big` seg-buttons). It reads the shared
 // connections cache the always-mounted repo rail warms, so the list appears instantly
 // instead of a beat late; it only self-fetches when the cache is still cold.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { FormEvent, KeyboardEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -158,7 +159,7 @@ export function HandoffModal({ session, actions, onClose }: HandoffModalProps) {
           <div className="ui-field-label">{tr("handoff.note_label")}</div>
           <div className="ui-field-hint">{tr("handoff.note_hint")}</div>
           <label className="ui-field">
-            <textarea
+            <textarea {...NO_AUTOFILL}
               value={note}
               onChange={(e) => setNote(e.target.value)}
               onKeyDown={onNoteKeyDown}

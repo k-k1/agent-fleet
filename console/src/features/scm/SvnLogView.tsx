@@ -2,6 +2,7 @@
 // history is linear per path), a path filter, "load more", and a mark on revisions newer than
 // the working copy. The log is a NETWORK call on the server: it is fetched when the pane opens,
 // when the filter is applied, and when the user asks for more — never from a timer.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { api, errText, isTransientErr } from "../../core/api/client.ts";
@@ -107,7 +108,7 @@ export function SvnLogView({ repo, path = "", headerActions }: { repo: string; p
         {wcRev && <span className="scm-repo-tag">r{wcRev}</span>}
       </ViewHead>
       <form className="svnlog-filter" onSubmit={submit}>
-        <input
+        <input {...NO_AUTOFILL}
           type="text"
           value={filter}
           placeholder={tr("svn.log_path_filter")}

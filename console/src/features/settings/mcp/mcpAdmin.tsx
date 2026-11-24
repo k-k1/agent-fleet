@@ -2,6 +2,7 @@
 //
 // The CP opens /api/admin/mcp-servers* to tenant_admin (and super_admin), so this view has
 // to be reachable from tenant settings as well as from the admin modal.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -250,7 +251,7 @@ function TenantClientFields({ form, patch }: { form: TenantForm; patch: (p: Part
         label={tr("admin.mcp_oauth_issuer")}
         hint={issuerBad ? <span className="ps-note-warn">{tr("admin.mcp_oauth_issuer_bad")}</span> : tr("admin.mcp_oauth_issuer_hint")}
       >
-        <input
+        <input {...NO_AUTOFILL}
           className="cinput"
           placeholder="https://"
           value={form.oauthIssuer}
@@ -321,7 +322,7 @@ export function McpAdminForm({
         <p className="ssm-fg-title">{form.id ? tr("admin.mcp_edit_title") : tr("admin.mcp_add")}</p>
         <div className="ssm-fgrid">
           <Field label={tr("mcp.f_label")} hint={tr("mcp.f_label_hint")}>
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput"
               placeholder={tr("mcp.f_label_placeholder")}
               value={form.label}
@@ -330,7 +331,7 @@ export function McpAdminForm({
             />
           </Field>
           <Field label={tr("mcp.f_name")} req hint={nameBad ? tr("mcp.f_name_bad") : tr("mcp.f_name_hint")}>
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput mono"
               placeholder="wiki"
               value={form.name}
@@ -349,7 +350,7 @@ export function McpAdminForm({
               )
             }
           >
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput"
               placeholder="https://"
               value={form.url}

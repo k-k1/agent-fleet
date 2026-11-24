@@ -6,6 +6,7 @@
 // quotes the revision the report showed, so a memory that moved meanwhile is refused, and each is
 // a change the member can revert in the change list.
 
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -112,18 +113,18 @@ function Row({
         >
           <label>
             <span className="muted">{tr("mem.lint_doc_path")}</span>
-            <input value={path} onChange={(e) => setPath(e.target.value)} />
+            <input {...NO_AUTOFILL} value={path} onChange={(e) => setPath(e.target.value)} />
           </label>
           <label>
             <span className="muted">{tr("mem.lint_doc_heading")}</span>
-            <input
+            <input {...NO_AUTOFILL}
               value={heading}
               onChange={(e) => setHeading(e.target.value)}
             />
           </label>
           <label>
             <span className="muted">{tr("mem.lint_doc_commit")}</span>
-            <input value={commit} onChange={(e) => setCommit(e.target.value)} />
+            <input {...NO_AUTOFILL} value={commit} onChange={(e) => setCommit(e.target.value)} />
           </label>
           <Button
             type="submit"

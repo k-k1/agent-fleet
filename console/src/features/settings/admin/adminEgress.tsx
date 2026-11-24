@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import type { FormEvent } from "react";
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
@@ -205,7 +206,7 @@ export function EgressView() {
             </button>
           </span>
           {kind === "host" ? (
-            <input
+            <input {...NO_AUTOFILL}
               type="text"
               value={entry}
               onChange={(e) => setEntry(e.target.value)}
@@ -213,14 +214,14 @@ export function EgressView() {
             />
           ) : (
             <>
-              <input
+              <input {...NO_AUTOFILL}
                 type="text"
                 value={tcpHost}
                 onChange={(e) => setTcpHost(e.target.value)}
                 placeholder={tr("admin.egress_tcp_host_ph")}
                 aria-label={tr("admin.egress_tcp_host_ph")}
               />
-              <input
+              <input {...NO_AUTOFILL}
                 type="text"
                 className="egress-tcp-ports"
                 value={tcpPorts}
@@ -230,7 +231,7 @@ export function EgressView() {
               />
             </>
           )}
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             value={reason}
             onChange={(e) => setReason(e.target.value)}

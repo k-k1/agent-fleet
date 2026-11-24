@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -195,7 +196,7 @@ export function TtsAdminView() {
             {dictBusy ? tr("admin.saving") : tr("common.save")}
           </button>
         </div>
-        <textarea
+        <textarea {...NO_AUTOFILL}
           className="ds-userdict"
           value={dict ?? ""}
           onChange={(e) => setDict(e.target.value)}

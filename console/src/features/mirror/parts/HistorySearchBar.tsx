@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import type { KeyboardEvent as RKeyboardEvent, Ref } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
@@ -34,7 +35,7 @@ export function HistorySearchBar({
     <div className={"mirror-histsearch" + (failed ? " mirror-histsearch--failed" : "")}>
       <Icon name="search" />
       <span className="mirror-histsearch-label">{tr(failed ? "mirror.hsearch_failed" : "mirror.hsearch_label")}</span>
-      <input
+      <input {...NO_AUTOFILL}
         ref={inputRef}
         className="mirror-histsearch-input"
         type="text"

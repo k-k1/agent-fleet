@@ -3,6 +3,7 @@
 // proposal the user applies explicitly — it never clobbers what they typed.
 // The suggest button only renders for kinds with a transcript (claude/codex/
 // opencode) — shell/ssm have no conversation log, so suggestion always failed.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -79,7 +80,7 @@ export function SessionTitleModal({ name, kind, title, onClose, onSaved }: Sessi
       <div className="ui-modal-body">
         <label className="ui-field">
           <span className="ui-field-label">{tr("sx.title_label")}</span>
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             value={value}
             onChange={(e) => setValue(e.target.value)}

@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import type { KeyboardEvent, ClipboardEvent, RefObject } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -70,7 +71,7 @@ export function ChatComposerRow({
           <Icon name="chevron-down" />
         </button>
       </div>
-      <textarea
+      <textarea {...NO_AUTOFILL}
         ref={inputRef}
         className="chat-input"
         value={input}

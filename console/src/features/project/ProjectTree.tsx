@@ -5,6 +5,7 @@
 // decorated flat list — and folding the base folds the whole project. The
 // section header carries the repo actions (clone / refresh) and the
 // session-maintenance actions (tidy / archive).
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useFold } from "../../lib/useFold.ts";
 import { memo, useEffect, useState } from "react";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
@@ -173,7 +174,7 @@ export const ProjectTree = memo(function ProjectTree() {
       <div ref={filterBarRef} className="proj-filter-bar">
         <div className="proj-filter">
           <Icon name="search" />
-          <input
+          <input {...NO_AUTOFILL}
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => {

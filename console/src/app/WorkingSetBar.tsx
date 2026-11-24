@@ -4,6 +4,7 @@
 // and rendered for the stopped rail too. The button shows the active group name
 // ("All" when unscoped); the menu switches groups, the modal manages them.
 // Assignment lives on the rows themselves (repo / conversation / session menus).
+import { NO_AUTOFILL } from "../ui/noAutofill.ts";
 import { createPortal } from "react-dom";
 import { memo, useLayoutEffect, useRef, useState } from "react";
 import { Icon } from "../ui/Icon.tsx";
@@ -136,7 +137,7 @@ function WorkingSetManageModal({ onClose }: { onClose: () => void }) {
             create();
           }}
         >
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             value={newName}
             onChange={(e) => setNewName(e.target.value)}
@@ -182,7 +183,7 @@ function WorkingSetRow({ w }: { w: WorkingSet }) {
   return (
     <li className="wset-row">
       <Icon name="layers" />
-      <input
+      <input {...NO_AUTOFILL}
         type="text"
         value={name}
         onChange={(e) => setName(e.target.value)}

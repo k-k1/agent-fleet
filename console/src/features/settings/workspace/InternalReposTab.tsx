@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
@@ -109,7 +110,7 @@ export function InternalReposTab() {
         <div className="p-desc">{tr("git.internal_desc")}</div>
         <div className="p-body">
           <div className="flow">
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput"
               placeholder={tr("git.repo_name_placeholder")}
               value={name}
@@ -182,7 +183,7 @@ function InternalRepoRow({
   if (editing) {
     return (
       <li className="internal-repo">
-        <input
+        <input {...NO_AUTOFILL}
           className="cinput ir-rename"
           value={draft}
           autoFocus

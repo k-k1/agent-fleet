@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
@@ -67,7 +68,7 @@ export function SendQueueList({
         {items.map((it, i) => (
           <li key={it.id} className="mirror-queue-item">
             {editing?.id === it.id ? (
-              <textarea
+              <textarea {...NO_AUTOFILL}
                 className="mirror-queue-edit"
                 autoFocus
                 rows={2}

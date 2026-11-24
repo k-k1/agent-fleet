@@ -7,6 +7,7 @@
 // "open folder" on a repo row) opens the section so the target is visible — hence the
 // controlled Section + own persistence (the old console's af-section-files key,
 // so an existing collapse choice carries over).
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useFold } from "../../lib/useFold.ts";
 import { openGeneratedGallery } from "../gallery/open.ts";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -133,7 +134,7 @@ export const FilesSection = memo(function FilesSection() {
           <div ref={filterBarRef} className="proj-filter-bar">
             <div className="proj-filter">
               <Icon name="search" />
-              <input
+              <input {...NO_AUTOFILL}
                 ref={filterRef}
                 value={q}
                 onChange={(e) => setQ(e.target.value)}

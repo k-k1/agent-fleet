@@ -10,6 +10,7 @@
 // and it would drift from the server's check at send time (docs/log/77 §77.5). The same holds
 // for "push, then send" (#2072): the CP asks the Agent to push and then for a fresh verdict;
 // this surface only asks for it.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -310,11 +311,11 @@ export function HandoffOfferModal({
               )}
               <label className="ui-field">
                 <span className="ui-field-label">{tr("handoff.offer_title_label")}</span>
-                <input value={title} maxLength={SESSION_TITLE_MAX} onChange={(e) => setTitle(e.target.value)} />
+                <input {...NO_AUTOFILL} value={title} maxLength={SESSION_TITLE_MAX} onChange={(e) => setTitle(e.target.value)} />
               </label>
               <label className="ui-field">
                 <span className="ui-field-label">{tr("handoff.offer_prompt_label")}</span>
-                <textarea
+                <textarea {...NO_AUTOFILL}
                   className="handoff-prompt-edit"
                   value={prompt}
                   spellCheck={false}

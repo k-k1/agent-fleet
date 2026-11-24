@@ -27,6 +27,7 @@
 // paragraphs in the middle of a Japanese screen are the paragraphs nobody reads, which for these
 // two sentences is the whole failure. The Go file states the same split: `deterministic` and
 // `has_workspace` are described there as the machine-readable halves of the prose.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { errDetail } from "../../../core/api/client.ts";
@@ -145,7 +146,7 @@ export function EngineIssueTokenPanel() {
       <form onSubmit={issue}>
         <label className="engines-model-add-row">
           <span>{tr("admin.engines_issue_tenant")}</span>
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             value={slug}
             placeholder={tr("admin.engines_issue_tenant_ph") as string}
@@ -154,7 +155,7 @@ export function EngineIssueTokenPanel() {
         </label>
         <label className="engines-model-add-row">
           <span>{tr("admin.engines_issue_user_key")}</span>
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             value={userKey}
             placeholder={tr("admin.engines_issue_user_key_ph") as string}

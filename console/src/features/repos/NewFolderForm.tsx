@@ -3,6 +3,7 @@
 // stage (StartModal). One field, but two callers and one validation rule, and the
 // rule is the server's: repoNameRe mirrors workspace/agent/git.go, and a name that
 // already exists is refused there with 409 exists rather than overwritten.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useRef } from "react";
 import { repoNameRe } from "./reponame.ts";
 import { coarsePointer } from "../../lib/device.ts";
@@ -39,7 +40,7 @@ export function NewFolderForm({ value, onChange, taken, onSubmit, autoFocus = fa
   return (
     <div className="ui-field">
       <span className="ui-field-label">{tr("rp.folder_name")}</span>
-      <input
+      <input {...NO_AUTOFILL}
         ref={ref}
         value={value}
         onChange={(e) => onChange(e.target.value)}

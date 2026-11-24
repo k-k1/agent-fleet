@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useState } from "react";
 import { agentOf } from "../../../agents/registry.ts";
 import { useT, t } from "../../../lib/i18n/index.ts";
@@ -81,7 +82,7 @@ export function SecretsForm({
               return (
                 <div key={r.k}>
                   <div className="mcp-kv-row two">
-                    <input className="cinput mono" value={r.k} readOnly disabled />
+                    <input {...NO_AUTOFILL} className="cinput mono" value={r.k} readOnly disabled />
                     <input
                       className="cinput"
                       type="password"
@@ -189,7 +190,7 @@ export function ServerForm({
       <div className="ssm-fgroup">
         <div className="ssm-fgrid">
           <Field label={tr("mcp.f_label")} hint={tr("mcp.f_label_hint")}>
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput"
               placeholder={tr("mcp.f_label_placeholder")}
               value={form.label}
@@ -198,7 +199,7 @@ export function ServerForm({
             />
           </Field>
           <Field label={tr("mcp.f_name")} req hint={nameBad ? tr("mcp.f_name_bad") : tr("mcp.f_name_hint")}>
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput mono"
               placeholder="my-server"
               value={form.name}
@@ -223,7 +224,7 @@ export function ServerForm({
           {form.transport === "stdio" ? (
             <>
               <Field label={tr("mcp.f_command")} req wide hint={tr("mcp.f_command_hint")}>
-                <input
+                <input {...NO_AUTOFILL}
                   className="cinput"
                   placeholder="npx"
                   value={form.command}
@@ -231,7 +232,7 @@ export function ServerForm({
                 />
               </Field>
               <Field label={tr("mcp.f_args")} wide hint={tr("mcp.f_args_hint")}>
-                <textarea
+                <textarea {...NO_AUTOFILL}
                   className="cinput mcp-ta"
                   rows={3}
                   placeholder={"-y\n@modelcontextprotocol/server-filesystem\n/home/dev/repos"}
@@ -262,7 +263,7 @@ export function ServerForm({
                   )
                 }
               >
-                <input
+                <input {...NO_AUTOFILL}
                   className="cinput"
                   placeholder="https://"
                   value={form.url}

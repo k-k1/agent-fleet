@@ -2,6 +2,7 @@
 // rail). Mirrors SessionTitleModal.tsx: the "ask the AI to suggest one" button fetches a
 // candidate via the preview-only /title/suggest endpoint and shows it as a proposal the user
 // applies explicitly — it never clobbers what they typed.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -76,7 +77,7 @@ export function ChatTitleModal({ id, title, onClose, onSaved }: ChatTitleModalPr
       <div className="ui-modal-body">
         <label className="ui-field">
           <span className="ui-field-label">{tr("asst.title_label")}</span>
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             value={value}
             onChange={(e) => setValue(e.target.value)}

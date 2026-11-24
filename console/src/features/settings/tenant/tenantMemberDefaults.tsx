@@ -1,6 +1,7 @@
 // The tenant's defaults for its members' Console (ADR 0114 decision 8): today the agent the
 // first-run card names. Tenants pay for different agents, so a new member is pointed at the
 // one their team uses instead of being asked to choose. It names, never restricts.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -152,7 +153,7 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
         <p className="admin-hint">{tr("tenant.member_defaults_launch_note")}</p>
         <label className="admin-fld">
           <span className="af-cap">{tr("tenant.member_defaults_model")}</span>
-          <input value={launch.model} onChange={(e) => setLaunch({ ...launch, model: e.target.value })} />
+          <input {...NO_AUTOFILL} value={launch.model} onChange={(e) => setLaunch({ ...launch, model: e.target.value })} />
         </label>
         <label className="admin-fld">
           <span className="af-cap">{tr("tenant.member_defaults_driver")}</span>
@@ -172,7 +173,7 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
         </label>
         <label className="admin-fld">
           <span className="af-cap">{tr("tenant.member_defaults_budget")}</span>
-          <input
+          <input {...NO_AUTOFILL}
             inputMode="decimal"
             value={budgetText}
             onChange={(e) => {
@@ -183,7 +184,7 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
         </label>
         <h4>{tr("tenant.member_defaults_repos")}</h4>
         <p className="admin-hint">{tr("tenant.member_defaults_repos_note")}</p>
-        <textarea rows={4} value={repos} onChange={(e) => setRepos(e.target.value)} aria-label={tr("tenant.member_defaults_repos")} />
+        <textarea {...NO_AUTOFILL} rows={4} value={repos} onChange={(e) => setRepos(e.target.value)} aria-label={tr("tenant.member_defaults_repos")} />
         <h4>{tr("tenant.member_defaults_ops")}</h4>
         <p className="admin-hint">{tr("tenant.member_defaults_ops_note")}</p>
         {(
@@ -196,7 +197,7 @@ export function TenantMemberDefaultsPanel({ slug }: { slug: string }) {
         ).map(([k, label]) => (
           <label className="admin-fld" key={k}>
             <span className="af-cap">{tr(label)}</span>
-            <input value={ops[k]} onChange={(e) => setOps({ ...ops, [k]: e.target.value.trim() })} />
+            <input {...NO_AUTOFILL} value={ops[k]} onChange={(e) => setOps({ ...ops, [k]: e.target.value.trim() })} />
           </label>
         ))}
         {error && (

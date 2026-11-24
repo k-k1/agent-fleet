@@ -4,6 +4,7 @@
 // untouched); every session in that dir has its start branch follow, so the
 // rename isn't read as drift. The chips are the prefixes the branch-name resolver gives this
 // repository (ADR 0103 decision 8), or a fixed conventional-commit set from an older Agent.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -143,7 +144,7 @@ export function BranchRenameModal({ name, branch, repo = "", onClose, onSaved }:
       <div className="ui-modal-body">
         <label className="ui-field">
           <span className="ui-field-label">{tr("sx.branch_label")}</span>
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             value={value}
             onChange={(e) => setValue(e.target.value)}

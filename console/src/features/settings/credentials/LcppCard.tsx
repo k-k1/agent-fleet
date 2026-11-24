@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { errDetail, raw } from "../../../core/api/client.ts";
 import { putLcppConnection, checkLcppConnection } from "./credentialsApi.ts";
@@ -163,7 +164,7 @@ export function LcppCard({
           ) : (
             <>
               <div className="flow">
-                <input
+                <input {...NO_AUTOFILL}
                   className="cinput"
                   type="text"
                   placeholder={tr("agents.lcpp_conn_url_placeholder")}

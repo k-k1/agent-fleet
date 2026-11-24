@@ -5,6 +5,7 @@
 // through the same POST the add-host form uses. Nothing of a ProxyCommand is kept past the
 // reader (sshConfigImport.ts), so there is nothing here to display or send. The pasted text is
 // dropped as soon as it has been read, and on cancel.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useMemo, useRef, useState } from "react";
 import { Modal } from "../../../ui/Modal.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
@@ -269,7 +270,7 @@ function Row({
         <div className="ssm-fgrid">
           <label className="ssm-fld aws-import-fld">
             <span>{tr("ssm.ssh_alias")}</span>
-            <input className="cinput" value={e.alias ?? r.display} disabled={busy} onChange={(ev) => edit(r.id, { alias: ev.target.value })} />
+            <input {...NO_AUTOFILL} className="cinput" value={e.alias ?? r.display} disabled={busy} onChange={(ev) => edit(r.id, { alias: ev.target.value })} />
           </label>
           {needsProfile && (
             <label className="ssm-fld aws-import-fld wide">

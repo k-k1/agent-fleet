@@ -2,6 +2,7 @@
 // this same box over the one shared draft, so switching sections keeps the text; it is mounted
 // per section and takes the focus on mount, which is what moves the focus into the section just
 // opened.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ClipboardEvent, DragEvent, KeyboardEvent } from "react";
@@ -91,7 +92,7 @@ export function HubComposer({ draft, busy, note, onSubmit }: HubComposerProps) {
       )}
       <AttachChips attachments={draft.attach.items} pasting={draft.loading} onRemove={(i) => !locked && draft.attach.remove(i)} onOpen={setZoom} />
       {zoom && createPortal(<ImageLightbox src={zoom} className="over-modal" onClose={() => setZoom(null)} />, document.body)}
-      <textarea
+      <textarea {...NO_AUTOFILL}
         id="start-draft-text"
         ref={textRef}
         value={draft.prompt}

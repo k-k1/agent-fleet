@@ -9,6 +9,7 @@
 // Permission is the server's. Both the limits PUT and "approve and enable" for a sign-in
 // method are fixed at withSuperAdmin / super_admin (ADR0043 decision 19 / decision 30); what
 // is switched here is presentation only.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -320,23 +321,23 @@ export function TenantLimits({
         <div className="admin-fgrid">
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.session_halt")}</span>
-            <input type="text" placeholder={tr("admin.idle_ph_30m")} value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
+            <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.idle_ph_30m")} value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
           </label>
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.interaction_halt")}</span>
-            <input type="text" placeholder={tr("admin.interaction_ph")} value={interIdle} onChange={(e) => setInterIdle(e.target.value)} />
+            <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.interaction_ph")} value={interIdle} onChange={(e) => setInterIdle(e.target.value)} />
           </label>
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.background_hold")}</span>
-            <input type="text" placeholder={tr("admin.background_hold_ph")} value={bgHold} onChange={(e) => setBgHold(e.target.value)} />
+            <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.background_hold_ph")} value={bgHold} onChange={(e) => setBgHold(e.target.value)} />
           </label>
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.ws_stop")}</span>
-            <input type="text" placeholder={tr("admin.idle_ph_60m")} value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
+            <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.idle_ph_60m")} value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
           </label>
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.image_refresh_quiet")}</span>
-            <input type="text" placeholder={tr("admin.image_refresh_quiet_ph")} value={refreshQuiet} onChange={(e) => setRefreshQuiet(e.target.value)} />
+            <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.image_refresh_quiet_ph")} value={refreshQuiet} onChange={(e) => setRefreshQuiet(e.target.value)} />
           </label>
         </div>
         <p className="admin-hint">
@@ -354,7 +355,7 @@ export function TenantLimits({
           <div className="admin-fgrid">
             <label className="admin-fld">
               <span className="af-cap">{tr("admin.hibernate_after")}</span>
-              <input type="text" placeholder={tr("admin.hibernate_ph")} value={homeHib} onChange={(e) => setHomeHib(e.target.value)} />
+              <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.hibernate_ph")} value={homeHib} onChange={(e) => setHomeHib(e.target.value)} />
             </label>
           </div>
           <p className="admin-hint">{tr("admin.hibernate_hint")}</p>
@@ -370,7 +371,7 @@ export function TenantLimits({
           <div className="admin-fgrid">
             <label className="admin-fld">
               <span className="af-cap">{tr("admin.backup_every")}</span>
-              <input type="text" placeholder={tr("admin.backup_ph")} value={homeBackup} onChange={(e) => setHomeBackup(e.target.value)} />
+              <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.backup_ph")} value={homeBackup} onChange={(e) => setHomeBackup(e.target.value)} />
             </label>
           </div>
           <p className="admin-hint">{tr("admin.backup_hint")}</p>

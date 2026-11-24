@@ -5,6 +5,7 @@
 // Nothing is written to any memory by the report. The member edits the retired-term list here,
 // and repairs a document target the report flags (memoryLintDocs.tsx), one explicit choice each.
 
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
 import { useRetryLoad } from "../../../lib/retryLoad.ts";
@@ -256,7 +257,7 @@ export function LintPanel({
       )}
       <h5>{tr("mem.lint_terms_title")}</h5>
       <p className="muted ds-hint">{tr("mem.lint_terms_hint")}</p>
-      <textarea
+      <textarea {...NO_AUTOFILL}
         className="mem-lint-terms"
         rows={5}
         aria-label={tr("mem.lint_terms_title")}

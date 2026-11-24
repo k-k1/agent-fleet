@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { listBrowserAttachments } from "../../features/browser/attachmentService.ts";
@@ -141,7 +142,7 @@ export function usePortPreview(
             }}
             title={tr("wsbar.preview.port_hint")}
           />
-          <input
+          <input {...NO_AUTOFILL}
             className="preview-path"
             value={previewPath}
             onChange={(e) => setPreviewPath(e.target.value)}

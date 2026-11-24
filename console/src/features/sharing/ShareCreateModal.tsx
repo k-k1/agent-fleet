@@ -3,6 +3,7 @@
 // hidden; opened from "new share" in the share list (ShareListModal) it has no
 // initialTarget and the target is chosen here. It follows the same as="form" +
 // ui-field/ui-seg + ui-modal-foot shape as the other creation forms (NewRepoModal, …).
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -154,7 +155,7 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
             </div>
           ) : (
             <>
-              <input
+              <input {...NO_AUTOFILL}
                 type="search"
                 value={recipientQuery}
                 onChange={(e) => setRecipientQuery(e.target.value)}

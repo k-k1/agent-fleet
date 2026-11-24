@@ -8,6 +8,7 @@
 // isSuper only decides whether to show the operations that mean something to a deployment
 // admin alone (granting and revoking the role). PUT /api/admin/membership-role is fixed at
 // withSuperAdmin, so hiding the button here is presentation only.
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { errDetail, rawJSON } from "../../../core/api/client.ts";
@@ -197,7 +198,7 @@ function MemberGrid({
           <option value="disk">{tr("admin.roster_sort_disk")}</option>
           <option value="last_active">{tr("admin.roster_sort_last_active")}</option>
         </select>
-        <input
+        <input {...NO_AUTOFILL}
           type="search"
           className="member-search"
           aria-label={tr("admin.roster_search_ph")}
@@ -747,8 +748,8 @@ function AddMember({ slug, isSuper, onAdded }: { slug: string; isSuper: boolean;
     <form className="form add-member" onSubmit={submit}>
       <h5 className="admin-subhead">{tr("admin.add_member")}</h5>
       <div className="form-row">
-        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
-        <input value={key} onChange={(e) => setKey(e.target.value)} placeholder={tr("admin.or_user_key")} />
+        <input autoComplete="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="email" />
+        <input {...NO_AUTOFILL} value={key} onChange={(e) => setKey(e.target.value)} placeholder={tr("admin.or_user_key")} />
         {isSuper && (
           <select value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="member">member</option>

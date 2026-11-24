@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -141,7 +142,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
         <div className="ui-field">
           <div className="ui-field-label">{tr("asst.name")}</div>
           <label className="ui-field">
-            <input value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("asst.name_ph")} autoFocus />
+            <input {...NO_AUTOFILL} value={name} onChange={(e) => setName(e.target.value)} placeholder={tr("asst.name_ph")} autoFocus />
           </label>
         </div>
 
@@ -149,7 +150,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
           <div className="ui-field-label">{tr("asst.desc_label")}</div>
           <div className="ui-field-hint">{tr("asst.desc_hint")}</div>
           <label className="ui-field">
-            <textarea
+            <textarea {...NO_AUTOFILL}
               className="assistant-persona"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
@@ -200,7 +201,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
         <div className="ui-field">
           <div className="ui-field-label">{tr("asst.model")}</div>
           <label className="ui-field">
-            <input value={model} onChange={(e) => setModel(e.target.value)} placeholder={tr("asst.model_ph")} />
+            <input {...NO_AUTOFILL} value={model} onChange={(e) => setModel(e.target.value)} placeholder={tr("asst.model_ph")} />
           </label>
         </div>
 
@@ -222,7 +223,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
           <div className="ui-field-label">{tr("asst.persona_label")}</div>
           <div className="ui-field-hint">{tr("asst.persona_hint")}</div>
           <label className="ui-field">
-            <textarea
+            <textarea {...NO_AUTOFILL}
               className="assistant-persona"
               value={persona}
               onChange={(e) => setPersona(e.target.value)}
@@ -280,7 +281,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
           <div className="ui-field-label">{tr("asst.knowledge_label")}</div>
           <div className="ui-field-hint">{tr("asst.knowledge_hint")}</div>
           <label className="ui-field">
-            <textarea
+            <textarea {...NO_AUTOFILL}
               className="assistant-knowledge"
               value={knowledge}
               onChange={(e) => setKnowledge(e.target.value)}

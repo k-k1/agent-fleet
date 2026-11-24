@@ -4,6 +4,7 @@
 //
 // Layout and words are not final: every string is a `memo.addrun_*` catalogue key, and the
 // fields below are plain labelled rows that can be reordered without touching the logic.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
 import { ConfirmDialog } from "../../ui/ConfirmDialog.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -169,7 +170,7 @@ export function AddToAutoRunDialog({ reference, repos, defaultRepo, onClose }: P
         )}
         <label className="wi-sfield">
           <span>{tr("memo.addrun_note")}</span>
-          <textarea rows={3} value={note} placeholder={tr("memo.addrun_note_ph")} onChange={(e) => setNote(e.target.value)} />
+          <textarea {...NO_AUTOFILL} rows={3} value={note} placeholder={tr("memo.addrun_note_ph")} onChange={(e) => setNote(e.target.value)} />
         </label>
       </div>
     </ConfirmDialog>

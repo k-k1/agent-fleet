@@ -13,6 +13,7 @@
 // the folded tiers being able to CHECK them is enough. The summary must always show the
 // values the launch will actually use, so nothing is ever launched from a setting the fold
 // hid.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { KeyboardEvent, ClipboardEvent, DragEvent, MutableRefObject, ReactNode } from "react";
@@ -715,7 +716,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
 
   // Paste file(s) into the prompt. Text pastes fall through to the default.
   // NOTE: mobile soft keyboards (e.g. Gboard) can't commit an image into a plain
-  // <textarea> — they refuse it ("paste not supported here"). The + picker beside the
+  // <textarea {...NO_AUTOFILL}> — they refuse it ("paste not supported here"). The + picker beside the
   // label is the phone path; it funnels into the same addFiles as this handler.
   const onPaste = (e: ClipboardEvent<HTMLTextAreaElement>) => {
     if (!canPasteImage) return;
@@ -1095,7 +1096,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                 </option>
               ))}
             </select>
-            <input
+            <input {...NO_AUTOFILL}
               type="text"
               value={bedrockRegion}
               placeholder={bedrockPick.region || tr("launch.bedrock_region_placeholder")}
@@ -1179,7 +1180,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             <span>{tr("launch.first_prompt")}</span>
             <span className="launch-prompt-tools">
               {/* + attach: the paste-less path. Mobile keyboards can't paste images into
-                  a <textarea>, so a phone can only attach through this picker. Any file
+                  a <textarea {...NO_AUTOFILL}>, so a phone can only attach through this picker. Any file
                   type, like the mirror composer's picker. */}
               {canPasteImage && (
                 <>
@@ -1255,7 +1256,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               the lightbox's backdrop stops at the panel instead of also closing the dialog. */}
           {zoom &&
             createPortal(<ImageLightbox src={zoom} className="over-modal" onClose={() => setZoom(null)} />, document.body)}
-          <textarea
+          <textarea {...NO_AUTOFILL}
             ref={textRef}
             value={prompt}
             readOnly={busy}
@@ -1377,7 +1378,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                   <>
                     <label className="ui-field">
                       <span className="ui-field-label">{tr("launch.base_branch")}</span>
-                      <input
+                      <input {...NO_AUTOFILL}
                         value={base}
                         onChange={(e) => {
                           naming.touchBase();
@@ -1398,7 +1399,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                     </label>
                     <label className="ui-field">
                       <span className="ui-field-label">{tr("launch.branch_name")}</span>
-                      <input
+                      <input {...NO_AUTOFILL}
                         value={branchName}
                         onChange={(e) => {
                           naming.touchName();
@@ -1585,7 +1586,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
 
           <div className="ui-field">
             <span className="ui-field-label">{tr("launch.field.title")}</span>
-            <input
+            <input {...NO_AUTOFILL}
               value={title}
               maxLength={SESSION_TITLE_MAX}
               onChange={(e) => setTitle(e.target.value)}
@@ -1595,7 +1596,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           {hasBudget && (
             <div className="ui-field">
               <span className="ui-field-label">{tr("launch.field.budget")}</span>
-              <input
+              <input {...NO_AUTOFILL}
                 value={budget}
                 inputMode="decimal"
                 onChange={(e) => {
@@ -1682,7 +1683,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           <div className="start-place">
             <SpacePlacePicker folder={spaceFolder} onChange={setSpaceFolder} disabled={busy} gone={spaceGone} />
             {!spaceFolder && (
-              <input
+              <input {...NO_AUTOFILL}
                 type="text"
                 value={spaceName}
                 maxLength={SPACE_NAME_MAX}

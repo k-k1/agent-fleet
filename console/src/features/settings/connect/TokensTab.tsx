@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { DirectionNote } from "../parts/DirectionNote.tsx";
 import { rel } from "../../../core/api/client.ts";
@@ -166,7 +167,7 @@ export function TokensTab() {
 
       <div className="pat-form">
         <Row label={tr("tokens.name")}>
-          <input
+          <input {...NO_AUTOFILL}
             type="text"
             value={name}
             placeholder={tr("tokens.name_placeholder")}

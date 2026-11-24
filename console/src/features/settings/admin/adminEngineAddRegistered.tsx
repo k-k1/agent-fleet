@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errDetail } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -319,7 +320,7 @@ export function RegisteredCatalog({ row, kind, onKind, paneId, isSuper, readOnly
     <div className="engine-catalog-toolbar">
       <span className="seg sm">{(["model", "lora"] as const).map((next) => <Button key={next} variant="ghost" small
         className={"seg-btn" + (kind === next ? " seg-btn--active" : "")} onClick={() => onKind(next)}>{tr(next === "lora" ? "admin.engines_tab_loras" : "admin.engines_tab_models")}</Button>)}</span>
-      <label className="engine-registered-search"><span>{tr("admin.catalog_registered_search" as never)}</span><input value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
+      <label className="engine-registered-search"><span>{tr("admin.catalog_registered_search" as never)}</span><input {...NO_AUTOFILL} value={query} onChange={(event) => setQuery(event.currentTarget.value)} /></label>
       <label className="engine-catalog-sort"><span>{tr("admin.catalog_sort" as never)}</span><select value={sort} onChange={(event) => setSort(event.currentTarget.value)}>
         <option value="name">{tr("admin.catalog_sort_name" as never)}</option><option value="enabled">{tr("admin.catalog_sort_enabled" as never)}</option><option value="default">{tr("admin.catalog_sort_default" as never)}</option>
       </select></label>

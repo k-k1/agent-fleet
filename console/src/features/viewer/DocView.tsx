@@ -6,6 +6,7 @@
 // here; sending is the mirror's plan card, because the route depends on the target's state
 // (awaiting approval vs already rejected) and that decision belongs to whoever holds the session
 // state.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
 import { createPortal } from "react-dom";
@@ -281,7 +282,7 @@ export function DocView({ title, content, session, headerActions }: DocViewProps
         createPortal(
           <div className="doc-comment-pop" ref={popRef} style={{ left: draft.x, top: Math.max(EDGE, draft.y) }}>
             <div className="doc-comment-pop-quote">{draft.quote}</div>
-            <textarea
+            <textarea {...NO_AUTOFILL}
               className="doc-comment-pop-input"
               autoFocus
               rows={3}

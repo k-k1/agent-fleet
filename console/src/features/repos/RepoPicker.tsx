@@ -2,6 +2,7 @@
 // provider (Bitbucket / GitHub / tenant-internal git). Branch list lazy-loads on
 // repo pick. Emits onChange({host, cloneUrl, fullName, branch}) or null. Port of
 // the old components/RepoPicker.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../../core/api/client.ts";
 import { BranchList, relTime } from "./BranchList.tsx";
@@ -206,7 +207,7 @@ export function RepoPicker({ onChange }: RepoPickerProps) {
               <p className="pick-muted">{reposErr}</p>
             ) : (
               <div className="branchlist-wrap">
-                <input
+                <input {...NO_AUTOFILL}
                   className="branch-filter"
                   placeholder={tr("rp.filter_repos")}
                   value={repoFilter}

@@ -11,6 +11,7 @@
 // are not inbox items: they come from the handoff store (GET /api/session-handoff-offers/received)
 // and expanding one renders the same HandoffOfferRow the shared view and the handoff dialog use,
 // so taking it over, declining and giving back behave exactly as there.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -372,11 +373,11 @@ function PRLink({ item }: { item: InboxItem }) {
     <div className="inbox-pr">
       <label className="ui-field">
         <span className="ui-field-label">{tr("inbox.pr_url")}</span>
-        <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" />
+        <input {...NO_AUTOFILL} type="url" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://" />
       </label>
       <label className="ui-field">
         <span className="ui-field-label">{tr("inbox.pr_branch")}</span>
-        <input value={branch} onChange={(e) => setBranch(e.target.value)} />
+        <input {...NO_AUTOFILL} value={branch} onChange={(e) => setBranch(e.target.value)} />
       </label>
       <Button small onClick={() => void save()}>
         {tr("inbox.pr_save")}
@@ -418,7 +419,7 @@ function MemberPicker({ chosen, onChange, max }: { chosen: InboxPerson[]; onChan
           </li>
         ))}
       </ul>
-      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("inbox.compose_search")} aria-label={tr("inbox.compose_search")} />
+      <input {...NO_AUTOFILL} value={q} onChange={(e) => setQ(e.target.value)} placeholder={tr("inbox.compose_search")} aria-label={tr("inbox.compose_search")} />
       {full && <p className="ui-field-hint">{tr("inbox.compose_max_recipients", { max: String(max) })}</p>}
       <ul className="inbox-hits">
         {hits
@@ -489,7 +490,7 @@ function Compose({ onSent }: { onSent: () => void }) {
       </div>
       <label className="ui-field">
         <span className="ui-field-label">{tr("inbox.compose_body")}</span>
-        <textarea rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
+        <textarea {...NO_AUTOFILL} rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
         <span className={"ui-field-hint" + (bytes > INBOX_BODY_MAX_BYTES ? " inbox-warn" : "")}>
           {tr("inbox.compose_bytes", { n: String(bytes), max: String(INBOX_BODY_MAX_BYTES) })}
         </span>

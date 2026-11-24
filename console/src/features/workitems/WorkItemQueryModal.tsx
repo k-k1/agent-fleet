@@ -5,6 +5,7 @@
 // Bitbucket is the one exception (§80.22): its query is not a dialect the member already
 // writes but a shape af invented (the `<workspace>/<repo>` prefix, `reviewers.uuid="@me"`),
 // so it is assembled from the connection's own repository list instead of typed.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";
@@ -281,7 +282,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
         <div className="wi-qbranch">
           <label>
             <span>{tr("wi.branch_template")}</span>
-            <input
+            <input {...NO_AUTOFILL}
               value={settings.workItemBranchTemplate}
               placeholder={preview ? RESOLVER_DEFAULT_TEMPLATE : DEFAULT_BRANCH_TEMPLATE}
               spellCheck={false}
@@ -320,7 +321,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
           </div>
           <label>
             <span>{tr("wi.query_label")}</span>
-            <input
+            <input {...NO_AUTOFILL}
               value={label}
               onChange={(e) => setLabel(e.target.value)}
               placeholder={tr("wi.query_label_ph")}
@@ -384,7 +385,7 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
             <>
               <label>
                 <span>{tr("wi.query_expr")}</span>
-                <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={DEFAULT_QUERY[provider]} spellCheck={false} />
+                <input {...NO_AUTOFILL} value={query} onChange={(e) => setQuery(e.target.value)} placeholder={DEFAULT_QUERY[provider]} spellCheck={false} />
               </label>
               {/* GitHub's note is about one trap only: `assignee:` lists no pull request, because
                   GitHub does not assign a PR to its author. Left unsaid, it is learned from a rail

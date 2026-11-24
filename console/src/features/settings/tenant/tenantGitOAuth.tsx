@@ -14,6 +14,7 @@
 //
 // client_secret is write-only. A stored value is never returned, so saving with the field
 // empty means "leave unchanged" (the server keeps the same contract).
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errText, raw } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -213,7 +214,7 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
       <div className="admin-fgrid">
         <label className="admin-fld wide">
           <span className="af-cap">{tr("tenant.git_oauth_client_id")}</span>
-          <input type="text" value={clientID} onChange={(e) => setClientID(e.target.value)} />
+          <input {...NO_AUTOFILL} type="text" value={clientID} onChange={(e) => setClientID(e.target.value)} />
         </label>
         {/* GitHub uses the device flow and has no secret. Omit the field entirely rather than
             greying it out: never show a field whose contents nobody can guess. */}
@@ -402,11 +403,11 @@ function GitHubOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuth
           <div className="admin-fgrid">
             <label className="admin-fld wide">
               <span className="af-cap">{tr("tenant.git_oauth_client_id")}</span>
-              <input type="text" value={clientID} onChange={(e) => setClientID(e.target.value)} />
+              <input {...NO_AUTOFILL} type="text" value={clientID} onChange={(e) => setClientID(e.target.value)} />
             </label>
             <label className="admin-fld wide">
               <span className="af-cap">{tr("tenant.gh_install_url")}</span>
-              <input
+              <input {...NO_AUTOFILL}
                 type="text"
                 placeholder="https://github.com/apps/…"
                 value={installURL}

@@ -8,6 +8,7 @@
 // Only the fields the user actually changed are PATCHed, so re-saving an unchanged spec
 // never resets next_run (an interval's initialNextRun is now+interval). The CP validates
 // the spec/enums and recomputes next_run when the timing changed.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -263,7 +264,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
           <label className="ui-field-label" htmlFor="sched-label">
             {tr("sched.f_label")}
           </label>
-          <input
+          <input {...NO_AUTOFILL}
             id="sched-label"
             type="text"
             value={label}
@@ -289,7 +290,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
             <label className="ui-field-label" htmlFor="sched-spec">
               {tr("sched.f_spec")}
             </label>
-            <input id="sched-spec" type="text" value={spec} onChange={(e) => setSpec(e.target.value)} spellCheck={false} />
+            <input {...NO_AUTOFILL} id="sched-spec" type="text" value={spec} onChange={(e) => setSpec(e.target.value)} spellCheck={false} />
             <div className="ui-field-hint">{specHint}</div>
           </div>
         </div>
@@ -299,7 +300,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
             <label className="ui-field-label" htmlFor="sched-tz">
               {tr("sched.f_tz")}
             </label>
-            <input id="sched-tz" type="text" value={tz} onChange={(e) => setTz(e.target.value)} placeholder="UTC" spellCheck={false} />
+            <input {...NO_AUTOFILL} id="sched-tz" type="text" value={tz} onChange={(e) => setTz(e.target.value)} placeholder="UTC" spellCheck={false} />
           </div>
           <div className="ui-field sched-narrow">
             <label className="ui-field-label" htmlFor="sched-wake">
@@ -340,7 +341,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
             <label className="ui-field-label" htmlFor="sched-model">
               {tr("sched.f_model")}
             </label>
-            <input id="sched-model" type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder={tr("sched.f_model_ph")} spellCheck={false} />
+            <input {...NO_AUTOFILL} id="sched-model" type="text" value={model} onChange={(e) => setModel(e.target.value)} placeholder={tr("sched.f_model_ph")} spellCheck={false} />
           </div>
         </div>
 
@@ -436,7 +437,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
           <label className="ui-field-label" htmlFor="sched-prompt">
             {tr("sched.f_prompt")}
           </label>
-          <textarea
+          <textarea {...NO_AUTOFILL}
             id="sched-prompt"
             className="sched-prompt"
             value={prompt}
@@ -508,7 +509,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
                         <label className="ui-field-label" htmlFor="sched-gate-max">
                           {tr("sched.gate_max_fires")}
                         </label>
-                        <input
+                        <input {...NO_AUTOFILL}
                           id="sched-gate-max"
                           type="text"
                           inputMode="numeric"
@@ -521,7 +522,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
                         <label className="ui-field-label" htmlFor="sched-gate-gap">
                           {tr("sched.gate_min_gap")}
                         </label>
-                        <input
+                        <input {...NO_AUTOFILL}
                           id="sched-gate-gap"
                           type="text"
                           inputMode="numeric"

@@ -14,6 +14,7 @@
 // memory has no name to key a buffer by yet, so its buffer is keyed by the pane and carries the
 // name typed so far in its text; it is stored at revision 0, which the Agent refuses once the name
 // exists.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { api, apiJSON, errDetail, isTransientErr } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -572,13 +573,13 @@ export function MemoryEntryView({ paneId, content, headerActions }: MemoryEntryV
               {isNew && (
                 <label>
                   {tr("mem.br_f_name")}
-                  <input value={fields.name} autoFocus disabled={locked} onChange={(e) => setField({ name: e.target.value })} />
+                  <input {...NO_AUTOFILL} value={fields.name} autoFocus disabled={locked} onChange={(e) => setField({ name: e.target.value })} />
                 </label>
               )}
               <label className="mentry-desc">
                 {tr("mem.br_f_description")}
                 {/* Edit replaces the button that had focus: focus moves here so the keyboard keeps its place. */}
-                <input value={fields.description} autoFocus={!isNew} disabled={locked} onChange={(e) => setField({ description: e.target.value })} />
+                <input {...NO_AUTOFILL} value={fields.description} autoFocus={!isNew} disabled={locked} onChange={(e) => setField({ description: e.target.value })} />
               </label>
               <label>
                 {tr("mem.br_f_type")}

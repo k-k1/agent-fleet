@@ -10,6 +10,7 @@
 // The screen also states that this is not a network defence: the request reaches the CP through
 // the ALB and is rejected after the session has been validated. It only covers "someone holding
 // valid credentials touches data from a place that is not allowed" (decision 1).
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
 import { isOk } from "../api.ts";
@@ -82,7 +83,7 @@ export function TenantNetworkView({ slug }: { slug: string }) {
         <div className="admin-fgrid">
           <label className="admin-fld wide">
             <span className="af-cap">{tr("tenant.net_allowed")}</span>
-            <input
+            <input {...NO_AUTOFILL}
               type="text"
               placeholder="203.0.113.0/24, 198.51.100.7"
               value={cidrs}

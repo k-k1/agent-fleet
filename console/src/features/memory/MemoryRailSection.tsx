@@ -9,6 +9,7 @@
 //
 // A memory whose text fails the secret scan is never listed (the Agent sends a count), so no name
 // or description of one reaches this DOM.
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, errText, isTransientErr } from "../../core/api/client.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
@@ -268,7 +269,7 @@ export function MemoryRailSection() {
 
       <Section id="memory-list" title={tr("mem.view_memories")} count={filter === "forgotten" ? goneShown.length : shown.length}>
         <div className="memrail-filter" ref={filterRef}>
-          <input
+          <input {...NO_AUTOFILL}
             type="search"
             aria-label={tr("mem.br_search")}
             placeholder={tr("mem.br_search")}

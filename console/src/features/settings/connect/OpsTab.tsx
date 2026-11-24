@@ -1,3 +1,4 @@
+import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
@@ -205,7 +206,7 @@ function GrafanaCard({ st, reload }: { st: ProviderConn | undefined; reload: () 
       ) : (
         <div className="p-body">
           <div className="flow">
-            <input
+            <input {...NO_AUTOFILL}
               className="cinput"
               type="text"
               placeholder={tr("ops.grafana_url_placeholder")}
@@ -312,7 +313,7 @@ function AWSProfileFields({ p }: { p: ReturnType<typeof useAWSProfile> }) {
         </select>
       )}
       {p.manual && (
-        <input
+        <input {...NO_AUTOFILL}
           className="cinput"
           type="text"
           placeholder={tr("ops.cw_manual_placeholder")}
