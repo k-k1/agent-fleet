@@ -1271,7 +1271,7 @@ func argMemoStartAfter(a map[string]any) (*string, error) {
 
 // memoRunNextSchema is the `runNext` argument of add_memo. update_memo has none: only the member
 // marks or unmarks a message already waiting, from the Console.
-var memoRunNextSchema = map[string]any{"type": "boolean", "description": "Optional, for a note of an auto-run category only: true puts this note ahead of the waiting notes that are not marked, so it is the next one started when a slot frees (its prerequisites and start time still apply). " +
+var memoRunNextSchema = map[string]any{"type": "boolean", "description": "Optional, for a note of an auto-run category only: true puts this note ahead of the waiting notes that are not marked: when a slot frees, the marked notes that can run are taken first, oldest of them first (its prerequisites, its start time and the user's approval, where one is needed, still apply). " +
 	"Use it for a fix that unblocks other queued work. Only the note this call adds is marked; the user changes the mark in the Console."}
 
 // argMemoRunNext reads the `runNext` argument: absent or null is false, a boolean is the value,

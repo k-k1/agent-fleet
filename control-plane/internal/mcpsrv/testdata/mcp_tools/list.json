@@ -715,7 +715,7 @@
             "type": "string"
           },
           "runNext": {
-            "description": "Optional, for a note of an auto-run category only: true puts this note ahead of the waiting notes that are not marked, so it is the next one started when a slot frees (its prerequisites and start time still apply). Use it for a fix that unblocks other queued work. Only the note this call adds is marked; the user changes the mark in the Console.",
+            "description": "Optional, for a note of an auto-run category only: true puts this note ahead of the waiting notes that are not marked: when a slot frees, the marked notes that can run are taken first, oldest of them first (its prerequisites, its start time and the user's approval, where one is needed, still apply). Use it for a fix that unblocks other queued work. Only the note this call adds is marked; the user changes the mark in the Console.",
             "type": "boolean"
           },
           "startAfter": {

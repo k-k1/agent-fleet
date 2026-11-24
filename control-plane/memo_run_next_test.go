@@ -624,9 +624,9 @@ func TestMemoRunNextTidyUndoLeavesTheDestinationsMark(t *testing.T) {
 }
 
 // A create into a queue may mark the message it adds, on every face: the Console, the token face
-// and /mcp. It marks nothing else: a create answered with a message already waiting for the same
-// item leaves that one as it is, a create outside every queue is refused rather than dropped, and
-// no face's edit sets the mark.
+// and /mcp. The mark releases nothing, and it marks nothing else: a create answered with a message
+// already waiting (same item, or the same text from inside the workspace) leaves that one as it is,
+// a create outside every queue is refused rather than dropped, and no face's edit sets the mark.
 func TestMemoRunNextOnCreate(t *testing.T) {
 	eachDialect(t, func(t *testing.T, e *inboxEnv) {
 		e.queue(e.category("r", "q"))
@@ -637,6 +637,22 @@ func TestMemoRunNextOnCreate(t *testing.T) {
 			code, d := c.create(marked)
 			if code != http.StatusCreated || !d.RunNext || !e.memoRow(d.ID).RunNext {
 				t.Fatalf("%s: create %d %+v", c.name, code, d)
+			}
+			// The mark is no release: a session's marked message still waits for the member's.
+			wantState := store.MemoStateHeld
+			if c.name == "console" {
+				wantState = store.MemoStatePending
+			}
+			if d.State != wantState || e.memoRow(d.ID).State != wantState {
+				t.Fatalf("%s: a marked create entered as %q, want %q", c.name, d.State, wantState)
+			}
+			if c.name != "console" {
+				// The same text again from inside the workspace answers the marked message, mark and all.
+				again := textMemo("r", "q", c.name+" marked")
+				code, dup := c.create(again)
+				if code != http.StatusOK || !dup.Existing || dup.ID != d.ID || !dup.RunNext || !e.memoRow(d.ID).RunNext {
+					t.Fatalf("%s: same-text create %d %+v", c.name, code, dup)
+				}
 			}
 			if code, d := c.create(textMemo("r", "q", c.name+" plain")); code != http.StatusCreated || d.RunNext || e.memoRow(d.ID).RunNext {
 				t.Fatalf("%s: a create without the field marked it: %d %+v", c.name, code, d)

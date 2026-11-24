@@ -148,10 +148,7 @@ func memoTools() []toolSpec {
 				if err != nil {
 					return mcpToolErr(req.ID, memoRelayErr(err))
 				}
-				if msg := memoRunNextProblem(p.Args, out); msg != "" {
-					return mcpToolErr(req.ID, msg+" The Control Plane answered: "+out)
-				}
-				return memoWriteResult(req.ID, p.Args, out)
+				return memoCreateResult(req.ID, p.Args, out)
 			}),
 		},
 		{
@@ -367,11 +364,11 @@ func memoAfterSchemaJA(update bool) map[string]any {
 
 // memoRunNextSchema is the runNext argument of the session's add_memo. update_memo has none: the
 // mark on a message already waiting is the member's, set and cleared in the Console (#5021).
-var memoRunNextSchema = map[string]any{"type": "boolean", "description": "Optional, for a note of an auto-run category only: true puts this note ahead of the waiting notes that are not marked, so it is the next one started when a slot frees (its prerequisites, start time and the release your user gives still apply). " +
+var memoRunNextSchema = map[string]any{"type": "boolean", "description": "Optional, for a note of an auto-run category only: true puts this note ahead of the waiting notes that are not marked: when a slot frees, the marked notes that can run are taken first, oldest of them first (its prerequisites, its start time and your user's approval, where one is needed, still apply). " +
 	"Use it for a fix that unblocks other queued work, not to jump the queue with routine work. Only the note this call adds is marked; your user changes the mark in the Console."}
 
 // memoRunNextSchemaJA is memoRunNextSchema for the operator assistant's Japanese tool texts.
-var memoRunNextSchemaJA = map[string]any{"type": "boolean", "description": "任意。自動実行カテゴリのメモだけ: true にすると、このメモを印の無い待機中のメモより先にし、枠が空いたら次に実行する（前提のメモ・開始時刻・利用者の解放はそのまま）。ほかのキューの仕事を止めている修正に使う。印が付くのはこの呼び出しで追加するメモだけで、印の付け外しは利用者が Console で行う。"}
+var memoRunNextSchemaJA = map[string]any{"type": "boolean", "description": "任意。自動実行カテゴリのメモだけ: true にすると、このメモを印の無い待機中のメモより先にする。枠が空くと、実行できる印付きのメモを先に、その中では古い順に取る（前提のメモ・開始時刻・必要な場合の利用者の解放はそのまま）。ほかのキューの仕事を止めている修正に使う。印が付くのはこの呼び出しで追加するメモだけで、印の付け外しは利用者が Console で行う。"}
 
 // memoStartAfterSchema is the startAfter argument of the session's add_memo and update_memo.
 func memoStartAfterSchema(update bool) map[string]any {
@@ -456,25 +453,46 @@ func memoRecipeProblem(args json.RawMessage, answer string) string {
 // reference that was sent but is missing from the answer means the Control Plane ignored it (an
 // older one does): the note is there without it, and success would be a false report.
 func memoWriteResult(id json.RawMessage, args json.RawMessage, answer string) []byte {
+	if msg := memoWriteProblem(args, answer); msg != "" {
+		return mcpToolErr(id, msg+" The Control Plane answered: "+answer)
+	}
+	return mcpTextResult(id, answer)
+}
+
+// memoCreateResult is memoWriteResult for add_memo, which may also ask for the run-next mark. A
+// missing mark is reported beside the other problems, never instead of them: an older Control
+// Plane drops the mark and the prerequisites alike, and the prerequisites say when the note may run.
+func memoCreateResult(id json.RawMessage, args json.RawMessage, answer string) []byte {
+	var msgs []string
+	for _, m := range []string{memoWriteProblem(args, answer), memoRunNextProblem(args, answer)} {
+		if m != "" {
+			msgs = append(msgs, m)
+		}
+	}
+	if len(msgs) == 0 {
+		return mcpTextResult(id, answer)
+	}
+	return mcpToolErr(id, strings.Join(msgs, " ")+" The Control Plane answered: "+answer)
+}
+
+// memoWriteProblem is the first field of a create or an update the answer shows was not kept, ""
+// when there is none.
+func memoWriteProblem(args json.RawMessage, answer string) string {
 	if memoRefSent(args) && !memoRefAnswered(answer) {
-		return mcpToolErr(id, "The note was saved, but its reference was NOT kept: this Control Plane does not support "+
-			"references yet. Do not report the reference as stored; tell your user, or put the item's key and URL "+
-			"in the note's body instead. The Control Plane answered: "+answer)
+		return "The note was saved, but its reference was NOT kept: this Control Plane does not support " +
+			"references yet. Do not report the reference as stored; tell your user, or put the item's key and URL " +
+			"in the note's body instead."
 	}
 	// An answer with existing: true is a note already holding the same item: nothing was written,
 	// so a missing list there says nothing about the Control Plane, and the answer goes back as it came.
 	if memoAfterSent(args) && !memoAfterAnswered(answer) && !memoExistingAnswer(answer) {
-		return mcpToolErr(id, "The note was saved, but its prerequisites (after) were NOT kept: this Control Plane does not "+
-			"support them yet, so nothing makes the note wait. Do not report them as stored; tell your user. "+
-			"The Control Plane answered: "+answer)
+		return "The note was saved, but its prerequisites (after) were NOT kept: this Control Plane does not " +
+			"support them yet, so nothing makes the note wait. Do not report them as stored; tell your user."
 	}
 	if msg := memoStartAfterProblem(args, answer, time.Now()); msg != "" {
-		return mcpToolErr(id, msg+" The Control Plane answered: "+answer)
+		return msg
 	}
-	if msg := memoRecipeProblem(args, answer); msg != "" {
-		return mcpToolErr(id, msg+" The Control Plane answered: "+answer)
-	}
-	return mcpTextResult(id, answer)
+	return memoRecipeProblem(args, answer)
 }
 
 // memoStartAfterSlack is how far ahead of the check a requested time must be for its absence from
@@ -534,13 +552,21 @@ func memoRunNextProblem(args json.RawMessage, answer string) string {
 		return ""
 	}
 	var out struct {
-		RunNext  bool `json:"runNext"`
-		Existing bool `json:"existing"`
+		RunNext    bool   `json:"runNext"`
+		Existing   bool   `json:"existing"`
+		State      string `json:"state"`
+		DeliveryID string `json:"deliveryId"`
 	}
 	if json.Unmarshal([]byte(answer), &out) != nil || out.RunNext {
 		return ""
 	}
 	if out.Existing {
+		// The answer shows the mark only while the note waits; a note a run has taken has no place
+		// left in the order, and nobody can mark it.
+		if (out.State != "held" && out.State != "pending") || out.DeliveryID != "" {
+			return "Nothing was added: a run has already taken the note this queue holds for the same item, so " +
+				"marking it to run next means nothing now. Do not report a new note or a mark."
+		}
 		return "Nothing was added: the queue already holds a waiting note for the same item, and it was returned " +
 			"unchanged, so it is NOT marked to run next. Do not report it as marked; tell your user, who can mark it " +
 			"in the Console."

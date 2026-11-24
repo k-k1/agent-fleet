@@ -29,3 +29,25 @@ func TestMemoRunNextProblem(t *testing.T) {
 		}
 	}
 }
+
+// A create the Control Plane answered without the mark and without its prerequisites reports both:
+// the missing mark never hides a warning about when the note may run. A note already there that a
+// run has taken is not one to mark in the Console.
+func TestMemoCreateResultReportsEveryProblem(t *testing.T) {
+	res := string(memoCreateResult(json.RawMessage(`1`), json.RawMessage(`{"kind":"text","after":["m0"],"runNext":true}`), `{"id":"m1","state":"pending"}`))
+	if !strings.Contains(res, `"isError":true`) || !strings.Contains(res, "prerequisites (after) were NOT kept") || !strings.Contains(res, "NOT marked to run next") {
+		t.Fatalf("result %s", res)
+	}
+	if res := string(memoCreateResult(json.RawMessage(`1`), json.RawMessage(`{"kind":"text","runNext":true}`), `{"id":"m1","state":"held","runNext":true}`)); strings.Contains(res, `"isError":true`) {
+		t.Fatalf("a kept mark was reported: %s", res)
+	}
+	for _, answer := range []string{`{"id":"m0","existing":true,"state":"claimed","deliveryId":"d1"}`, `{"id":"m0","existing":true,"state":"pending","deliveryId":"d1"}`} {
+		got := memoRunNextProblem(json.RawMessage(`{"kind":"text","runNext":true}`), answer)
+		if !strings.Contains(got, "already taken") || strings.Contains(got, "Console") {
+			t.Errorf("%s: %q", answer, got)
+		}
+	}
+	if got := memoRunNextProblem(json.RawMessage(`{"kind":"text","runNext":true}`), `{"id":"m0","existing":true,"state":"held"}`); !strings.Contains(got, "Console") {
+		t.Errorf("a waiting existing note: %q", got)
+	}
+}
