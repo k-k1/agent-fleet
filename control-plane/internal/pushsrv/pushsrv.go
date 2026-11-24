@@ -330,21 +330,14 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 	}
 	includeText := dc.IncludeText
 	octx, ocancel := read()
-	off, err := p.store.GetPushOffKinds(octx, n.MembershipID)
+	off, offOrigins, err := p.store.GetPushPrefs(octx, n.MembershipID)
 	ocancel()
+	// A notification is pushed only when its kind and its origin are both on. Both come from one
+	// read, so a save between two reads cannot let through what no saved state allows. A failed
+	// read pushes: a stall must not silence a member.
 	if err != nil {
 		log.Printf("web push: preferences: %v", err)
-	} else if slices.Contains(off, n.Kind) {
-		return
-	}
-	// A notification is pushed only when its kind and its origin are both on. A failed read of the
-	// origin switches pushes, like the kinds: a stall must not silence a member.
-	xctx, xcancel := read()
-	offOrigins, err := p.store.GetPushOffOrigins(xctx, n.MembershipID)
-	xcancel()
-	if err != nil {
-		log.Printf("web push: origin preferences: %v", err)
-	} else if slices.Contains(offOrigins, originKey(n.OriginRoot, n.OriginChild)) {
+	} else if slices.Contains(off, n.Kind) || slices.Contains(offOrigins, originKey(n.OriginRoot, n.OriginChild)) {
 		return
 	}
 	lctx, lcancel := read()
@@ -688,18 +681,13 @@ func (p *Service) GetPrefs(w http.ResponseWriter, r *http.Request, membershipID 
 	if p.off(w) {
 		return
 	}
-	off, err := p.store.GetPushOffKinds(r.Context(), membershipID)
+	off, offOrigins, err := p.store.GetPushPrefs(r.Context(), membershipID)
 	if err != nil {
 		internalErr(w, err)
 		return
 	}
 	if off == nil {
 		off = []string{}
-	}
-	offOrigins, err := p.store.GetPushOffOrigins(r.Context(), membershipID)
-	if err != nil {
-		internalErr(w, err)
-		return
 	}
 	if offOrigins == nil {
 		offOrigins = []string{}
@@ -751,22 +739,16 @@ func (p *Service) PutPrefs(w http.ResponseWriter, r *http.Request, membershipID 
 		}
 	}
 	slices.Sort(off)
-	if err := p.store.PutPushOffKinds(r.Context(), membershipID, off); err != nil {
-		internalErr(w, err)
-		return
-	}
+	var originsArg *[]string
 	if in.OffOrigins != nil {
-		if err := p.store.PutPushOffOrigins(r.Context(), membershipID, origins); err != nil {
-			internalErr(w, err)
-			return
-		}
+		originsArg = &origins
 	}
-	saved, err := p.store.GetPushOffOrigins(r.Context(), membershipID)
+	savedKinds, savedOrigins, err := p.store.PutPushPrefs(r.Context(), membershipID, off, originsArg)
 	if err != nil {
 		internalErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, prefsWire{Off: append([]string{}, off...), OffOrigins: append([]string{}, saved...)})
+	writeJSON(w, http.StatusOK, prefsWire{Off: append([]string{}, savedKinds...), OffOrigins: append([]string{}, savedOrigins...)})
 }
 
 // Viewing records that the caller's Console shows session on screen right now. A Console sends it

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -26,5 +27,22 @@ func TestAgentNotificationRowOrigin(t *testing.T) {
 		if n.OriginRoot != c.root || n.OriginChild != c.child {
 			t.Errorf("%s: got (%q,%v), want (%q,%v)", c.name, n.OriginRoot, n.OriginChild, c.root, c.child)
 		}
+	}
+}
+
+// One entry with wrongly typed origin keys must neither fail the decode of the response nor take
+// its neighbours down.
+func TestOutboxWithMalformedOriginStillDecodes(t *testing.T) {
+	body := `{"notifications":[{"id":"1","kind":"question","sessionName":"a","originChild":"true","originRoot":7},` +
+		`{"id":"2","kind":"question","sessionName":"b","originRoot":"schedule","originChild":true}]}`
+	entries, _, ok := readOutboxEntries(strings.NewReader(body), 1<<20)
+	if !ok || len(entries) != 2 {
+		t.Fatalf("ok=%v entries=%d", ok, len(entries))
+	}
+	if r, c := entries[0].originOf(); r != "own" || c {
+		t.Errorf("malformed = (%q,%v)", r, c)
+	}
+	if r, c := entries[1].originOf(); r != "schedule" || !c {
+		t.Errorf("good = (%q,%v)", r, c)
 	}
 }

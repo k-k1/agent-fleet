@@ -2,6 +2,7 @@ package pushsrv
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -236,12 +237,12 @@ func (c ctxStore) PushDeliveryContext(ctx context.Context, mid string) (store.Pu
 	}
 	return c.memStore.PushDeliveryContext(ctx, mid)
 }
-func (c ctxStore) GetPushOffKinds(ctx context.Context, mid string) ([]string, error) {
+func (c ctxStore) GetPushPrefs(ctx context.Context, mid string) ([]string, []string, error) {
 	if c.stall == "prefs" {
 		<-ctx.Done()
-		return nil, ctx.Err()
+		return nil, nil, ctx.Err()
 	}
-	return c.memStore.GetPushOffKinds(ctx, mid)
+	return c.memStore.GetPushPrefs(ctx, mid)
 }
 func (c ctxStore) ListPushSubscriptions(ctx context.Context, mid string) ([]store.PushSubscription, error) {
 	if err := ctx.Err(); err != nil {
@@ -603,5 +604,32 @@ func TestPrefsAPIOrigins(t *testing.T) {
 	f.svc.GetPrefs(w, httptest.NewRequest("GET", "/", nil), "m2")
 	if !strings.Contains(w.Body.String(), `"offOrigins":[]`) {
 		t.Fatalf("default is not an empty list: %s", w.Body)
+	}
+}
+
+func TestFailedPrefsReadStillPushes(t *testing.T) {
+	f := newFixture(t)
+	f.subscribe(t, "m1")
+	f.st.prefsErr = errors.New("db down")
+	f.deliver(noteFrom("question", "autorun", true))
+	if f.count() != 1 {
+		t.Fatalf("an unreadable preference read silenced the push: %d", f.count())
+	}
+}
+
+func TestFailedPrefsSaveAnswers500AndChangesNothing(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	_, _, _ = f.st.PutPushPrefs(ctx, "m1", []string{"question"}, &[]string{"schedule"})
+	f.st.prefsErr = errors.New("db down")
+	w := httptest.NewRecorder()
+	f.svc.PutPrefs(w, httptest.NewRequest("PUT", "/", strings.NewReader(`{"off":["answer-ready"],"offOrigins":["autorun"]}`)), "m1")
+	if w.Code != 500 {
+		t.Fatalf("code %d", w.Code)
+	}
+	f.st.prefsErr = nil
+	k, o, _ := f.st.GetPushPrefs(ctx, "m1")
+	if len(k) != 1 || k[0] != "question" || len(o) != 1 || o[0] != "schedule" {
+		t.Fatalf("a failed save changed the stored prefs: %v %v", k, o)
 	}
 }

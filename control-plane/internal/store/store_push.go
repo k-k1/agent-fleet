@@ -47,13 +47,13 @@ type PushSubscriptionStore interface {
 	// presents the subscription's own keys: the endpoint alone is not proof of owning the browser.
 	ReleasePushEndpoint(ctx context.Context, endpoint, p256dh, auth string) error
 	TouchPushSubscription(ctx context.Context, membershipID, endpoint, at string) error
-	// GetPushOffKinds returns the notification kinds the member turned off for push (none by default).
-	GetPushOffKinds(ctx context.Context, membershipID string) ([]string, error)
-	PutPushOffKinds(ctx context.Context, membershipID string, kinds []string) error
-	// GetPushOffOrigins returns the origins (pushsrv.PrefOrigins) the member turned off for push
-	// (none by default); PutPushOffOrigins replaces them and leaves the kinds as they are.
-	GetPushOffOrigins(ctx context.Context, membershipID string) ([]string, error)
-	PutPushOffOrigins(ctx context.Context, membershipID string, origins []string) error
+	// GetPushPrefs reads the kinds and the origins (pushsrv.PrefOrigins) the member turned off for
+	// push (none by default) in one statement, so a send sees one saved state. A list that cannot
+	// be read counts as none, without touching the other.
+	GetPushPrefs(ctx context.Context, membershipID string) (kinds, origins []string, err error)
+	// PutPushPrefs replaces the kinds, and the origins unless origins is nil (they are then left
+	// as saved), in one statement, and answers what is stored afterwards.
+	PutPushPrefs(ctx context.Context, membershipID string, kinds []string, origins *[]string) (savedKinds, savedOrigins []string, err error)
 	// PushDeliveryContext answers, for one send: whether the membership is still active, whether
 	// its tenant allows a question's text in the push (default false), and the tenant's slug (the
 	// name the Console selects a tenant by). An inactive or unknown membership is the zero value.
@@ -247,31 +247,47 @@ func (s *SQL) PutPushOffKinds(ctx context.Context, membershipID string, kinds []
 	return err
 }
 
-func (s *SQL) GetPushOffOrigins(ctx context.Context, membershipID string) ([]string, error) {
-	var raw string
-	err := s.db.QueryRowContext(ctx, `SELECT off_origins FROM push_pref WHERE membership_id=?`, membershipID).Scan(&raw)
-	if err == sql.ErrNoRows {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
+func decodeOffList(raw string) []string {
 	var out []string
 	if json.Unmarshal([]byte(raw), &out) != nil {
-		return nil, nil
+		return nil
 	}
-	return out, nil
+	return out
 }
 
-func (s *SQL) PutPushOffOrigins(ctx context.Context, membershipID string, origins []string) error {
-	if origins == nil {
-		origins = []string{}
+func (s *SQL) GetPushPrefs(ctx context.Context, membershipID string) ([]string, []string, error) {
+	var k, o string
+	err := s.db.QueryRowContext(ctx, `SELECT off_kinds, off_origins FROM push_pref WHERE membership_id=?`, membershipID).Scan(&k, &o)
+	if err == sql.ErrNoRows {
+		return nil, nil, nil
 	}
-	b, _ := json.Marshal(origins)
-	_, err := s.db.ExecContext(ctx, `INSERT INTO push_pref(membership_id, off_origins, updated_at) VALUES(?,?,?)
-		ON CONFLICT(membership_id) DO UPDATE SET off_origins=excluded.off_origins, updated_at=excluded.updated_at`,
-		membershipID, string(b), NowTS())
-	return err
+	if err != nil {
+		return nil, nil, err
+	}
+	return decodeOffList(k), decodeOffList(o), nil
+}
+
+func (s *SQL) PutPushPrefs(ctx context.Context, membershipID string, kinds []string, origins *[]string) ([]string, []string, error) {
+	if kinds == nil {
+		kinds = []string{}
+	}
+	kb, _ := json.Marshal(kinds)
+	ob := []byte("[]")
+	set := `off_kinds=excluded.off_kinds, updated_at=excluded.updated_at`
+	if origins != nil {
+		if *origins != nil {
+			ob, _ = json.Marshal(*origins)
+		}
+		set = `off_kinds=excluded.off_kinds, off_origins=excluded.off_origins, updated_at=excluded.updated_at`
+	}
+	var k, o string
+	err := s.db.QueryRowContext(ctx, `INSERT INTO push_pref(membership_id, off_kinds, off_origins, updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(membership_id) DO UPDATE SET `+set+` RETURNING off_kinds, off_origins`,
+		membershipID, string(kb), string(ob), NowTS()).Scan(&k, &o)
+	if err != nil {
+		return nil, nil, err
+	}
+	return decodeOffList(k), decodeOffList(o), nil
 }
 
 func (s *SQL) PushDeliveryContext(ctx context.Context, membershipID string) (PushDelivery, error) {

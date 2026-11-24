@@ -296,8 +296,20 @@ type agentNotification struct {
 	Payload json.RawMessage `json:"payload"`
 	// OriginRoot / OriginChild: who started the session (own, autorun, schedule; and whether
 	// another session did). An older Agent sends neither: it reads as own, not a child.
-	OriginRoot  string `json:"originRoot"`
-	OriginChild bool   `json:"originChild"`
+	// Raw, so one entry with a wrongly typed origin cannot fail the decode of the whole response
+	// (readOutboxEntries); originOf reads them leniently.
+	OriginRoot  json.RawMessage `json:"originRoot"`
+	OriginChild json.RawMessage `json:"originChild"`
+}
+
+// originOf reads the origin an Agent sent; anything that is not a string root / a boolean child
+// reads as own / not a child.
+func (in agentNotification) originOf() (string, bool) {
+	var root string
+	var child bool
+	_ = json.Unmarshal(in.OriginRoot, &root)
+	_ = json.Unmarshal(in.OriginChild, &child)
+	return normalizeOriginRoot(root), child
 }
 
 func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
@@ -329,7 +341,8 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 	n := store.Notification{EventID: agentEventIDPrefix + in.ID, MembershipID: membershipID, Kind: in.Kind,
 		TargetType: targetType, TargetID: targetID, TargetKind: targetKind,
 		DisplayName: in.DisplayName, Payload: boundedPayload(in.Payload), CreatedAt: in.CreatedAt,
-		OriginRoot: normalizeOriginRoot(in.OriginRoot), OriginChild: in.OriginChild}
+	}
+	n.OriginRoot, n.OriginChild = in.originOf()
 	if n.CreatedAt == "" {
 		n.CreatedAt = store.NowTS()
 	}

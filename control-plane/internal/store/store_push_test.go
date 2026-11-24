@@ -342,26 +342,29 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, slug, a, b string) {
 	if off, _ := st.GetPushOffKinds(ctx, b); len(off) != 0 {
 		t.Fatalf("one member's opt-out leaked to another: %v", off)
 	}
-	if o, err := st.GetPushOffOrigins(ctx, a); err != nil || len(o) != 0 {
-		t.Fatalf("default origins=%v err=%v", o, err)
+	if k, o, err := st.GetPushPrefs(ctx, b); err != nil || len(k) != 0 || len(o) != 0 {
+		t.Fatalf("default prefs=%v %v err=%v", k, o, err)
 	}
-	if err := st.PutPushOffOrigins(ctx, a, []string{"autorun-child"}); err != nil {
+	// One statement writes both lists and answers what is stored; nil origins leave them alone.
+	k, o, err := st.PutPushPrefs(ctx, a, []string{"answer-ready", "question"}, &[]string{"autorun-child"})
+	if err != nil || len(k) != 2 || len(o) != 1 || o[0] != "autorun-child" {
+		t.Fatalf("put: %v %v %v", k, o, err)
+	}
+	k, o, err = st.PutPushPrefs(ctx, a, []string{"question"}, nil)
+	if err != nil || len(k) != 1 || len(o) != 1 {
+		t.Fatalf("kinds-only put changed the origins: %v %v %v", k, o, err)
+	}
+	if k, o, _ = st.GetPushPrefs(ctx, a); len(k) != 1 || len(o) != 1 {
+		t.Fatalf("get: %v %v", k, o)
+	}
+	// A first save without origins creates the row with none.
+	if k, o, err = st.PutPushPrefs(ctx, b, []string{"question"}, nil); err != nil || len(k) != 1 || len(o) != 0 {
+		t.Fatalf("first kinds-only put: %v %v %v", k, o, err)
+	}
+	if _, _, err = st.PutPushPrefs(ctx, b, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if o, _ := st.GetPushOffOrigins(ctx, a); len(o) != 1 || o[0] != "autorun-child" {
-		t.Fatalf("origins=%v", o)
-	}
-	// Saving one list leaves the other alone.
-	if off, _ := st.GetPushOffKinds(ctx, a); len(off) != 2 {
-		t.Fatalf("saving origins changed the kinds: %v", off)
-	}
-	if err := st.PutPushOffKinds(ctx, a, nil); err != nil {
-		t.Fatal(err)
-	}
-	if o, _ := st.GetPushOffOrigins(ctx, a); len(o) != 1 {
-		t.Fatalf("saving kinds changed the origins: %v", o)
-	}
-	if err := st.PutPushOffKinds(ctx, a, []string{"answer-ready", "question"}); err != nil {
+	if _, _, err = st.PutPushPrefs(ctx, a, []string{"answer-ready", "question"}, &[]string{}); err != nil {
 		t.Fatal(err)
 	}
 	dc, err := st.PushDeliveryContext(ctx, a)
