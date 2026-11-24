@@ -86,13 +86,14 @@ func limitsModel(name string, limit map[string]any) map[string]any {
 	return m
 }
 
-// listedLimits waits for the directory's instance to finish activating and returns the stub models
-// it lists, with their limits. Activating looks different by version: 503 (or a held request) up to
-// 2.3.x, and from 2.4.0 a 200 with an empty list (stubLimitsFromListing), so both are waited out.
-func listedLimits(t *testing.T, addr, dir string) map[string]map[string]float64 {
+// listedLimits waits until the directory's instance lists every stub model in want and returns the
+// stub models it lists, with their limits. Waiting looks different by version: 503 (or a held
+// request) up to 2.3.x, and from 2.4.0 a 200 whose listing fills in steps (stubLimitsFromListing).
+// A test that expects the stub provider to be refused passes no want.
+func listedLimits(t *testing.T, addr, dir string, want ...string) map[string]map[string]float64 {
 	t.Helper()
 	client := &http.Client{Timeout: 60 * time.Second, Transport: authTransport{}}
-	for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(time.Second) {
+	for deadline := time.Now().Add(90 * time.Second); ; time.Sleep(200 * time.Millisecond) {
 		res, err := client.Get(addr + "/api/model?directory=" + dir)
 		if err != nil {
 			t.Fatal(err)
@@ -105,13 +106,13 @@ func listedLimits(t *testing.T, addr, dir string) map[string]map[string]float64 
 			}
 			continue
 		}
-		limits, activated, err := stubLimitsFromListing(raw)
+		limits, ready, err := stubLimitsFromListing(raw, want...)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !activated {
+		if !ready {
 			if time.Now().After(deadline) {
-				t.Fatalf("GET /api/model still lists no model at all after 90s: %s", raw)
+				t.Fatalf("GET /api/model after 90s still lacks stub models %v (stub listed: %v): %s", want, limits, raw)
 			}
 			continue
 		}
@@ -165,7 +166,7 @@ func TestContractV2ModelLimits(t *testing.T) {
 	// compacts before its context is reached. The exact point is opencode's own: measured on
 	// 2.2.5 it is 85% of 200000 and of 20000, but already 82000-84000 of 100000 and under 40000 of
 	// 50000, so only measured pairs on either side are pinned here.
-	listed := listedLimits(t, addr, dir)
+	listed := listedLimits(t, addr, dir, "nolimit", "quiet", "both", "bothquiet")
 	if l := listed["nolimit"]; l["context"] != 200000 || l["output"] != 32000 {
 		t.Fatalf("%s: a model without limit is listed with %v, want context 200000 output 32000", v, l)
 	}
@@ -225,7 +226,12 @@ func TestContractV2ModelLimitContextOnly(t *testing.T) {
 		"valid":   limitsModel("valid", map[string]any{"context": 20000, "output": 2000}),
 	}, nil)
 	v := opencodeVersion(t)
-	listed := listedLimits(t, addr, dir)
+	// Up to 2.2.5 the provider is refused, so there is no stub model to wait for.
+	var want []string
+	if opencodeAtLeast(t, v, 2, 2, 6) {
+		want = []string{"ctxonly", "valid"}
+	}
+	listed := listedLimits(t, addr, dir, want...)
 
 	if !opencodeAtLeast(t, v, 2, 2, 6) {
 		if len(listed) != 0 {
