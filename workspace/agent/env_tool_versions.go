@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -130,6 +131,11 @@ var toolSpecs = []toolSpec{
 	// baked and the versions.json pin is the only clue left. Without these rows there is no
 	// way to check from the Console that an MCP server is old or missing.
 	{Name: "awscli", Cmd: "aws", Baked: "/usr/local/bin/aws", Pin: "awscli"},
+	// `session-manager-plugin --version` prints the bare four-part number (1.2.835.0); the default
+	// extraction keeps three parts and would read as drift against the pin. The deb links it into /usr/local/bin.
+	{Name: "session-manager-plugin", Cmd: "session-manager-plugin", Baked: "/usr/local/bin/session-manager-plugin", Pin: "session_manager_plugin", VerRe: fullDottedVersion},
+	// `gitleaks version` prints the bare number (8.30.1).
+	{Name: "gitleaks", Cmd: "gitleaks", Baked: "/usr/local/bin/gitleaks", Args: []string{"version"}, Pin: "gitleaks"},
 	// gcloud is never baked (ADR 0107 decision 4): `install-gcloud` links it into ~/.local/bin.
 	{Name: "gcloud", Cmd: "gcloud", Baked: "", Pin: "gcloud", VerFile: "../VERSION"},
 	{Name: "mcp-grafana", Cmd: "mcp-grafana", Baked: "/usr/local/bin/mcp-grafana", Pin: "mcp_grafana"},
@@ -137,6 +143,16 @@ var toolSpecs = []toolSpec{
 		Pin: "cloudwatch_mcp", PyDist: "awslabs-cloudwatch-mcp-server"},
 	{Name: "aws-mcp", Cmd: "mcp-proxy-for-aws", Baked: "/usr/local/bin/mcp-proxy-for-aws",
 		Pin: "aws_mcp_proxy", PyDist: "mcp-proxy-for-aws"},
+}
+
+var fullDottedRe = regexp.MustCompile(`[0-9]+(\.[0-9]+)+`)
+
+// fullDottedVersion returns the first dotted number with any number of parts.
+func fullDottedVersion(raw string) string {
+	if m := fullDottedRe.FindString(raw); m != "" {
+		return m
+	}
+	return strings.TrimSpace(raw)
 }
 
 type toolBin struct {
