@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -897,20 +896,20 @@ func TestMemoOccupancyClosedTurnsProgressSurvivesTheDeadline(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		agent, q := e.autoQueue("app", "impl", nil, 0)
 		// A second member whose workspace never answers /sessions in time.
-		slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		slowURL, closeSlow := registerInMemAgent(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			select {
 			case <-r.Context().Done():
 			case <-time.After(10 * time.Second):
 			}
 		}))
-		t.Cleanup(slow.Close)
+		t.Cleanup(closeSlow)
 		ws := store.Workspace{ID: "ws-c", TenantID: e.t1.ID, MembershipID: e.members["c"], ContainerName: "c", Network: "n",
 			DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: store.NowTS()}
 		if err := e.st.CreateWorkspace(context.Background(), ws); err != nil {
 			t.Fatal(err)
 		}
 		e.mgr.mu.Lock()
-		e.mgr.rts[e.members["c"]] = cachedRT{rt: stubRuntime{endpoint: slow.URL, token: "tok", state: "running"}, ws: ws}
+		e.mgr.rts[e.members["c"]] = cachedRT{rt: stubRuntime{endpoint: slowURL, token: "tok", state: "running"}, ws: ws}
 		e.mgr.mu.Unlock()
 		insert := func(membership, queue, session string, closedAgo time.Duration) string {
 			id := store.NewID()

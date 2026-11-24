@@ -1034,7 +1034,7 @@ func waitUntil(t *testing.T, cond func() bool) {
 // The answer pass's second resolution of a PR-failed member never queues on the workspace build
 // lock: with it held, the pass and the retry return in time.
 func TestMemoAnswerPRFailedRetryDoesNotQueueOnTheBuildLock(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+	eachDeliveryDialectRealTime(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
 		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer() })
@@ -1065,6 +1065,11 @@ func TestMemoAnswerPRFailedRetryDoesNotQueueOnTheBuildLock(t *testing.T) {
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
+			// Release the lock and let the pass end before failing, so a regression fails here
+			// instead of leaving the goroutine behind.
+			bl.Unlock()
+			<-done
+			bl.Lock()
 			t.Fatal("the pass queued behind the build lock")
 		}
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
@@ -1190,7 +1195,7 @@ func TestMemoAnswerStartingMemberIsNotStamped(t *testing.T) {
 // The state look-up never queues behind a workspace build: with the build lock held it answers
 // unknown at once, and no caller is left waiting on the lock.
 func TestMemoRuntimeStateDoesNotQueueOnTheBuildLock(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+	eachDeliveryDialectRealTime(t, func(t *testing.T, e *deliveryEnv) {
 		e.noPRChain(time.Now().Add(-time.Minute))
 		e.queueAgentFor("c", "stopped")
 		id := e.members["c"]
@@ -1202,7 +1207,18 @@ func TestMemoRuntimeStateDoesNotQueueOnTheBuildLock(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		start := time.Now()
-		st := e.runner().memoRuntimeState(ctx, id)
+		got := make(chan string, 1)
+		go func() { got <- e.runner().memoRuntimeState(ctx, id) }()
+		var st string
+		select {
+		case st = <-got:
+		case <-time.After(5 * time.Second):
+			// Release the lock and join before failing, so a regression fails here and not at
+			// the package timeout.
+			bl.Unlock()
+			<-got
+			t.Fatal("the state look-up queued behind the build lock")
+		}
 		if d := time.Since(start); st != "" || d > time.Second {
 			t.Fatalf("state %q after %v with the build lock held", st, d)
 		}
@@ -1415,7 +1431,7 @@ func TestMemoAnswerWindowAfterALockWait(t *testing.T) {
 // that says the close is inside the window does not keep an answer the database's clock puts past
 // it (an UPDATE that waited on a lock past the edge), and an answer just inside it is kept.
 func TestMemoAnswerWindowByTheDatabaseClock(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+	eachDeliveryDialectRealTime(t, func(t *testing.T, e *deliveryEnv) {
 		_, _, da, _ := e.noPRChain(time.Now().Add(-time.Minute))
 		ctx := context.Background()
 		closeAt := func(at time.Time) {
@@ -1927,7 +1943,7 @@ func (g gatedRuntime) State(ctx context.Context) string {
 // The poll reports its first round done only after a member seen running is published: a pass
 // that waits for the round must find the result when it takes.
 func TestMemoStartWatchPublishesBeforeTheFirstRoundIsDone(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+	eachDeliveryDialectRealTime(t, func(t *testing.T, e *deliveryEnv) {
 		e.noPRChain(time.Now().Add(-time.Minute))
 		a := e.queueAgentFor("c", "stopped")
 		ws, _, _ := e.st.GetWorkspaceByMembership(context.Background(), e.members["c"])
