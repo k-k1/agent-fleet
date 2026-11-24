@@ -865,5 +865,6 @@ the merge still in effect, the file renamed with its new path and commit, the fi
 reports it. The repairs are two member-origin routes, `document-retarget` (checked as the supersede is) and
 `document-restore` (the supersede undone), each quoting the revision the report showed and each one change (`retarget`,
 `restore`) that can be reverted. The redundancy check is `restates-document`: 80% of a memory's 12-rune runs (letters
-and digits, any script) found in a Markdown or text file it anchors; advice, never a reason. The Console has the
+and digits, any script) found in a Markdown or text file it anchors; advice, never a reason, and run only for
+the member's report, so lint-apply and promotion never read whole documents. The Console has the
 promotion (candidates, proposal, supersede) and the repairs. Not built: verified procedures to skills.

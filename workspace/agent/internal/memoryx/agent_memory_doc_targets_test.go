@@ -3,6 +3,8 @@ package memoryx
 import (
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -213,8 +215,162 @@ func TestAgentMemoryDocumentTargetUnreachableMissingOtherRepo(t *testing.T) {
 		t.Fatal(why)
 	}
 	f, bad, err := agentMemDocCheckOne(t.Context(), repo.(agentMemLintRepo), "github.com/acme/demo",
-		agentMemDocTarget{Repo: "github.com/other/repo", Path: "AGENTS.md", Commit: merge}, nil, nil)
+		agentMemDocTarget{Repo: "github.com/other/repo", Path: "AGENTS.md", Commit: merge}, nil)
 	if err != nil || !bad || f.Problem != agentMemDocOtherRepo {
 		t.Fatalf("other repository: %+v %v %v", f, bad, err)
+	}
+}
+
+// Only a sentence git revert writes counts: a commit that quotes it indented in prose, or names
+// a longer id or other text after it, is no evidence. A revert -m of a real merge commit (", reversing
+// changes made to …") is.
+func TestAgentMemoryDocumentTargetRevertMessages(t *testing.T) {
+	full := strings.Repeat("ab", 20)
+	for msg, want := range map[string]bool{
+		"Revert \"x\"\n\nThis reverts commit " + full + ".\n":                                          true,
+		"Revert \"x\"\n\nThis reverts commit " + full + ", reversing\nchanges made to " + full + ".\n": true,
+		"docs: explain\n\n    This reverts commit " + full + ".\n":                                     false,
+		"docs: explain\n\nThis reverts commit " + full + "cd.\n":                                       false,
+		"docs: explain\n\nThis reverts commit " + full + " and more\n":                                 false,
+	} {
+		if got := agentMemDocSaysRevert(msg, full); got != want {
+			t.Errorf("%q: %v, want %v", msg, got, want)
+		}
+	}
+
+	// On real history: a quoting commit is not taken for a revert; a revert -m of a merge is.
+	clone, project, _ := docTargetSetup(t)
+	merge := promoteHead(t, clone, "HEAD")
+	docTargetGit(t, clone, []string{"commit", "--quiet", "--allow-empty", "-m", "docs: history\n\n    This reverts commit " + merge + "."})
+	docTargetClean(t, docTargetLint(t, project))
+
+	// A target merged by a real merge commit.
+	mclone, mproject := docTargetMergeSetup(t)
+	mmerge := promoteHead(t, mclone, "HEAD")
+	rev := docTargetGit(t, mclone, []string{"revert", "--no-edit", "-m", "1", mmerge})
+	if f := docTargetOne(t, docTargetLint(t, mproject), agentMemDocReverted); f.Commit != rev {
+		t.Fatalf("revert -m: %+v, want %s", f, rev)
+	}
+}
+
+// docTargetMergeSetup is docTargetSetup with the section brought in by a merge commit of a branch.
+func docTargetMergeSetup(t *testing.T) (clone, project string) {
+	t.Helper()
+	clone, a, _ := promoteRepo(t)
+	promoteSave(t, a, "release-steps", "procedure", "Run scripts/release.sh.", "scripts/release.sh")
+	if err := os.WriteFile(filepath.Join(clone, "AGENTS.md"), []byte("# Agents\n\n## Release\n\nRun scripts/release.sh.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	merge := docTargetGit(t, clone,
+		[]string{"switch", "--quiet", "-c", "docs-branch"},
+		[]string{"commit", "--quiet", "-am", "docs: release"},
+		[]string{"switch", "--quiet", "main"},
+		[]string{"merge", "--quiet", "--no-ff", "-m", "Merge docs-branch", "docs-branch"})
+	code, out := supersedeDoc(t, agentMemSupersedeDocReq{Project: a.Project.ID, Name: "release-steps", Revision: 1, Path: "AGENTS.md",
+		Heading: "Release", Commit: merge, BodySHA256: agentMemSHA256("Run scripts/release.sh.")})
+	if code != http.StatusOK {
+		t.Fatalf("supersede: %d %s", code, out)
+	}
+	return clone, a.Project.ID
+}
+
+// Past the bound on reverts of reverts the target is not judged (the answer would depend on the
+// bound's parity): the report says so for that memory and lists no finding for it. At the bound
+// minus one the chain is still followed.
+func TestAgentMemoryDocumentTargetRevertDepthBound(t *testing.T) {
+	old := agentMemDocRevertDepth
+	t.Cleanup(func() { agentMemDocRevertDepth = old })
+	agentMemDocRevertDepth = 3
+	clone, project, merge := docTargetSetup(t)
+	r1 := docTargetGit(t, clone, []string{"revert", "--no-edit", merge})
+	r2 := docTargetGit(t, clone, []string{"revert", "--no-edit", r1})
+	docTargetClean(t, docTargetLint(t, project)) // depth 2: the merge is back
+	docTargetGit(t, clone, []string{"revert", "--no-edit", r2})
+	w := docTargetLint(t, project)
+	if w.Documents == nil || len(w.Documents.Findings) != 0 || !strings.Contains(strings.Join(w.Report.Skipped, "\n"), "document target of release-steps: too many reverts") {
+		t.Fatalf("past the bound: %+v %v", w.Documents, w.Report.Skipped)
+	}
+}
+
+// A rename is followed only after the target's commit: an older move of another file by the same
+// name is no lead. And a rename whose commit lacks the heading (renamed and retitled, the title
+// restored later) is still repaired by re-pointing at the revision the report read.
+func TestAgentMemoryDocumentTargetRenameHistory(t *testing.T) {
+	clone, a, _ := promoteRepo(t)
+	promoteSave(t, a, "release-steps", "procedure", "Run scripts/release.sh.", "scripts/release.sh")
+	// Long before the target existed, an AGENTS.md was moved away.
+	docTargetGit(t, clone, []string{"mv", "AGENTS.md", "old-agents.md"}, []string{"commit", "--quiet", "-m", "move the old agents file"})
+	agentMemLintOrigin(t, clone, map[string]string{"AGENTS.md": "# Agents\n\n## Release\n\nRun scripts/release.sh.\n", "old-agents.md": "# Old\n\n## Release\n\nx\n"})
+	merge := promoteHead(t, clone, "HEAD")
+	if code, out := supersedeDoc(t, agentMemSupersedeDocReq{Project: a.Project.ID, Name: "release-steps", Revision: 1, Path: "AGENTS.md",
+		Heading: "Release", Commit: merge, BodySHA256: agentMemSHA256("Run scripts/release.sh.")}); code != http.StatusOK {
+		t.Fatalf("supersede: %d %s", code, out)
+	}
+	docTargetGit(t, clone, []string{"rm", "--quiet", "AGENTS.md"}, []string{"commit", "--quiet", "-m", "drop agents"})
+	docTargetOne(t, docTargetLint(t, a.Project.ID), agentMemDocMissing)
+
+}
+
+// A rename whose commit lacks the heading (renamed and retitled together, the title restored later)
+// is reported with the heading found, and re-pointing at the revision the report read works.
+func TestAgentMemoryDocumentTargetRenameRetitled(t *testing.T) {
+	clone, project, _ := docTargetSetup(t)
+	if err := agentMemGit(clone, "mv", "AGENTS.md", "docs/agents.md"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, "docs", "agents.md"), []byte("# Agents\n\n## Build\n\nRun make.\n\n## Shipping\n\nRun scripts/release.sh.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rename := docTargetGit(t, clone, []string{"commit", "--quiet", "-am", "move and retitle"})
+	agentMemLintOrigin(t, clone, map[string]string{"docs/agents.md": "# Agents\n\n## Build\n\nRun make.\n\n## Release\n\nRun scripts/release.sh.\n"})
+	w := docTargetLint(t, project)
+	f := docTargetOne(t, w, agentMemDocRenamed)
+	if f.Path != "docs/agents.md" || !f.HeadingFound || f.Commit != rename {
+		t.Fatalf("%+v", f)
+	}
+	// The renaming commit lacks the heading, so it is no commit to re-point to; the report's is.
+	if code, _ := docRepair(t, "document-retarget", agentMemDocRepairReq{Project: project, Name: "release-steps", Revision: f.Revision,
+		Path: f.Path, Heading: "Release", Commit: f.Commit}); code != http.StatusConflict {
+		t.Fatalf("the renaming commit was accepted: %d", code)
+	}
+	if code, out := docRepair(t, "document-retarget", agentMemDocRepairReq{Project: project, Name: "release-steps", Revision: f.Revision,
+		Path: f.Path, Heading: "Release", Commit: w.Commit}); code != http.StatusOK {
+		t.Fatalf("re-point at the report's commit: %d %s", code, out)
+	}
+	docTargetClean(t, docTargetLint(t, project))
+}
+
+// Without origin/HEAD the default branch is a guess: the targets are not judged (a sound target on
+// the real default branch would read as unreachable), and the report says why.
+func TestAgentMemoryDocumentTargetNeedsTheDefaultBranch(t *testing.T) {
+	clone, project, _ := docTargetSetup(t)
+	if err := agentMemGit(clone, "symbolic-ref", "--delete", "refs/remotes/origin/HEAD"); err != nil {
+		t.Fatal(err)
+	}
+	w := docTargetLint(t, project)
+	if w.Documents != nil || !strings.Contains(strings.Join(w.Report.Skipped, "\n"), "document targets: origin/HEAD does not name the default branch") {
+		t.Fatalf("%+v %v", w.Documents, w.Report.Skipped)
+	}
+}
+
+// The redundancy check is in the member's report only: a memory that restates the document it
+// anchors is reported there and stays a promotion candidate (the check is advice, and promotion
+// must be able to propose it again after the merge).
+func TestAgentMemoryRestatesIsReportOnly(t *testing.T) {
+	clone, a, b := promoteRepo(t)
+	long := "Run scripts/release.sh from the repository root after the changelog is merged; it tags the commit and pushes the images."
+	agentMemLintOrigin(t, clone, map[string]string{"docs/release.md": "# Release\n\n" + long + "\n"})
+	promoteSave(t, a, "release-steps", "procedure", long, "docs/release.md")
+	promoteConfirm(t, "release-steps", 1, a, b)
+	w := docTargetLint(t, a.Project.ID)
+	found := false
+	for _, f := range w.Report.Findings {
+		found = found || (f.Memory == "release-steps" && f.Check == "restates-document" && f.Subject == "docs/release.md")
+	}
+	if !found || w.Report.Counts["restates-document"] != 1 {
+		t.Fatalf("not reported: %+v", w.Report)
+	}
+	if names := promoteNames(promoteGet(t, "project="+a.Project.ID)); len(names) != 1 || names[0] != "release-steps" {
+		t.Fatalf("candidates: %v", names)
 	}
 }

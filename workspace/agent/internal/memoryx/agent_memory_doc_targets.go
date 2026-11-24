@@ -53,7 +53,9 @@ type agentMemDocFinding struct {
 	Target   agentMemDocTarget `json:"target"`
 	Problem  string            `json:"problem"`
 	// Path is where a renamed file is now (renamed only); HeadingFound says whether the target's
-	// heading is in it, so a re-point can keep the heading.
+	// heading is in it at the revision the report read, so a re-point to that revision can keep
+	// the heading. The renaming commit itself may not hold the heading: it is evidence, not the
+	// commit to re-point to.
 	Path         string `json:"path,omitempty"`
 	HeadingFound bool   `json:"headingFound,omitempty"`
 	// Commit is the evidence: the commit that renamed the file, or the one that reverted the merge.
@@ -71,34 +73,43 @@ type agentMemDocReport struct {
 // changes made to <parent>" after the id, so the id is matched as a prefix of the rest.
 const agentMemDocRevertMsg = "This reverts commit "
 
-// agentMemDocRevertDepth bounds how many reverts of reverts are followed.
-const agentMemDocRevertDepth = 8
+// agentMemDocRevertDepth bounds how many reverts of reverts are followed; past it the target is
+// not judged at all, because stopping early would decide by the parity of the depth. A variable so
+// a test can lower it.
+var agentMemDocRevertDepth = 16
 
-// agentMemDocRevertOf finds the newest commit in (commit, ref] whose message says it reverts
-// commit and that is itself in effect (no later commit reverts it in turn). "" when there is none.
+var errAgentMemDocRevertDeep = errors.New("too many reverts of reverts to tell whether the merge is in effect")
+
+// agentMemDocSaysRevert says whether msg says, as git revert writes it, that it reverts commit:
+// a line that starts with the sentence (a quote indented in prose does not), the full id, then
+// the end of the sentence or, for a merge, ", reversing".
+func agentMemDocSaysRevert(msg, commit string) bool {
+	for _, ln := range strings.Split(msg, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimRight(ln, " \t\r"), agentMemDocRevertMsg+commit)
+		if ok && (rest == "." || rest == "," || strings.HasPrefix(rest, ", reversing")) {
+			return true
+		}
+	}
+	return false
+}
+
+// agentMemDocRevertOf finds the newest commit in (commit, ref] that reverts commit and is itself in
+// effect (no later commit reverts it, and stays so). "" when there is none.
 func agentMemDocRevertOf(ctx context.Context, gitDir, commit, ref string, depth int) (string, error) {
 	if depth >= agentMemDocRevertDepth {
-		return "", nil
+		return "", errAgentMemDocRevertDeep
 	}
+	// --grep only narrows the candidates: it also matches the sentence quoted mid-line.
 	out, err := agentMemLintGit(ctx, gitDir, nil, "log", "--format=%H", "-F", "--grep="+agentMemDocRevertMsg+commit, commit+".."+ref)
 	if err != nil {
 		return "", err
 	}
 	for _, rev := range strings.Fields(string(out)) {
-		// --grep matches the line anywhere; the message must say it as git revert does, at the
-		// start of a line.
 		msg, err := agentMemLintGit(ctx, gitDir, nil, "log", "-1", "--format=%B", rev)
 		if err != nil {
 			return "", err
 		}
-		says := false
-		for _, ln := range strings.Split(string(msg), "\n") {
-			if rest, ok := strings.CutPrefix(strings.TrimSpace(ln), agentMemDocRevertMsg); ok && strings.HasPrefix(rest, commit) {
-				says = true
-				break
-			}
-		}
-		if !says {
+		if !agentMemDocSaysRevert(string(msg), commit) {
 			continue
 		}
 		// A revert that was itself reverted (and stayed so) brought the change back; an older
@@ -116,7 +127,7 @@ func agentMemDocRevertOf(ctx context.Context, gitDir, commit, ref string, depth 
 
 // agentMemDocCheckOne checks one target against the pinned revision. have is the set of the
 // revision's files; ok is false when nothing is wrong.
-func agentMemDocCheckOne(ctx context.Context, repo agentMemLintRepo, remote string, t agentMemDocTarget, have map[string]bool, ren func() (agentMemLintRenames, error)) (agentMemDocFinding, bool, error) {
+func agentMemDocCheckOne(ctx context.Context, repo agentMemLintRepo, remote string, t agentMemDocTarget, have map[string]bool) (agentMemDocFinding, bool, error) {
 	f := agentMemDocFinding{Target: t}
 	report := func(problem string) (agentMemDocFinding, bool, error) {
 		f.Problem = problem
@@ -163,11 +174,13 @@ func agentMemDocCheckOne(ctx context.Context, repo agentMemLintRepo, remote stri
 		return f, false, err
 	}
 	if !blob {
-		r, err := ren()
+		// Only renames after the target's commit: an older move of another file by the same name
+		// says nothing about this one. A file rename only: the target is a file, and a directory
+		// move shows as its files' renames.
+		r, err := agentMemLintReadRenames(ctx, repo.gitDir, full+".."+repo.ref)
 		if err != nil {
 			return f, false, err
 		}
-		// A file rename only: the target is a file, and a directory move shows as its files' renames.
 		hops, ok := agentMemLintResolveRename(t.Path, agentMemLintRenames{File: r.File}, func(p string) bool { return have[p] }, nil)
 		if !ok {
 			return report(agentMemDocMissing)
@@ -187,6 +200,16 @@ func agentMemDocCheckOne(ctx context.Context, repo agentMemLintRepo, remote stri
 		return report(agentMemDocHeading)
 	}
 	return f, false, nil
+}
+
+// agentMemDocAny says whether any of es is superseded by a document.
+func agentMemDocAny(es []agentMemEntry) bool {
+	for _, e := range es {
+		if e.SupersededBy != nil && e.SupersededBy.Document != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // agentMemDocLint checks the document target of every memory es holds that is superseded by one.
@@ -214,10 +237,15 @@ func agentMemDocLint(ctx context.Context, p *agentMemProject, repo agentMemLintR
 	if p != nil {
 		remote = p.Remote
 	}
+	var notes []string
 	for _, e := range docs {
 		cctx, cancel := context.WithTimeout(ctx, agentMemLintGitTimeout)
-		f, bad, err := agentMemDocCheckOne(cctx, repo, remote, *e.SupersededBy.Document, have, repo.Renames)
+		f, bad, err := agentMemDocCheckOne(cctx, repo, remote, *e.SupersededBy.Document, have)
 		cancel()
+		if errors.Is(err, errAgentMemDocRevertDeep) {
+			notes = append(notes, "document target of "+e.Name+": "+err.Error())
+			continue
+		}
 		if err != nil {
 			return nil, "document targets: the repository could not be read"
 		}
@@ -226,7 +254,7 @@ func agentMemDocLint(ctx context.Context, p *agentMemProject, repo agentMemLintR
 			out.Findings = append(out.Findings, f)
 		}
 	}
-	return out, ""
+	return out, strings.Join(notes, "; ")
 }
 
 // ---- repairs ---------------------------------------------------------------------------------

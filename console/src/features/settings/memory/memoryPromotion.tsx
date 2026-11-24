@@ -9,7 +9,7 @@
 // superseded by the document, quoting the revision and text digest the proposal showed, so a
 // memory edited while the pull request waited is refused rather than hidden.
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   errDetail,
   errText,
@@ -142,8 +142,8 @@ function Proposal({
       )}
       {/* Offered whatever the scans said: they gate the pull request, and the supersede checks the
           merged document itself. A proposal built after the merge is often "not ready" only
-          because the section is already there. */}
-      {src && (
+          because the section is already there. Not when the secret scan withheld the target. */}
+      {src && p.target.path && p.target.heading && (
         <form
           className="mem-promo-merged"
           onSubmit={(e) => {
@@ -187,12 +187,19 @@ export function PromotionPanel({
   const [list, setList] = useState<PromoteCandidates | null>(null);
   const [listErr, setListErr] = useState("");
   const [again, setAgain] = useState(0);
-  // The proposal shown, for which memory; one is built at a time (each runs a hook).
+  // The proposal shown, for which project and memory; one is built at a time (each runs a hook).
+  // It stays bound to the project it was asked for: a memory of the same name in the project
+  // chosen since must never be shown it, nor superseded by it.
   const [proposal, setProposal] = useState<{
+    project: string;
     name: string;
     p: PromoteProposal;
   } | null>(null);
   const [proposing, setProposing] = useState("");
+  const current = useRef(project);
+  useEffect(() => {
+    current.current = project;
+  }, [project]);
 
   useRetryLoad(
     async (signal) => {
@@ -232,15 +239,17 @@ export function PromotionPanel({
   );
 
   const propose = async (name: string) => {
+    const at = project;
     setProposing(name);
     setProposal(null);
     try {
-      const res = await proposePromotion({ project, name });
+      const res = await proposePromotion({ project: at, name });
+      if (current.current !== at) return; // another project was chosen meanwhile
       if (!isOk(res)) {
         toast(errDetail(res.error), { kind: "error" });
         return;
       }
-      setProposal({ name, p: res });
+      setProposal({ project: at, name, p: res });
     } finally {
       setProposing("");
     }
@@ -321,10 +330,10 @@ export function PromotionPanel({
                 {proposing === c.name && (
                   <p className="muted">{tr("mem.promo_proposing")}</p>
                 )}
-                {proposal?.name === c.name && (
+                {proposal?.project === project && proposal.name === c.name && (
                   <Proposal
                     p={proposal.p}
-                    project={project}
+                    project={proposal.project}
                     onSuperseded={() => {
                       setProposal(null);
                       setAgain((n) => n + 1);

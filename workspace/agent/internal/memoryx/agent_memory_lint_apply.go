@@ -345,9 +345,14 @@ func (r agentMemLintRepo) FormerTopDirs() ([]string, error) {
 func (r agentMemLintRepo) readRenames() (agentMemLintRenames, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "--git-dir="+r.gitDir, "-c", "core.quotePath=false", "log",
+	return agentMemLintReadRenames(ctx, r.gitDir, r.ref)
+}
+
+// agentMemLintReadRenames reads the renames of the commits revs names (a ref, or a range).
+func agentMemLintReadRenames(ctx context.Context, gitDir, revs string) (agentMemLintRenames, error) {
+	cmd := exec.CommandContext(ctx, "git", "--git-dir="+gitDir, "-c", "core.quotePath=false", "log",
 		"-n", fmt.Sprint(agentMemLintRenameCommits), "--no-merges", "-M", "--diff-filter=R", "--name-status",
-		"--no-color", "--no-ext-diff", "--format=%x01%H", r.ref)
+		"--no-color", "--no-ext-diff", "--format=%x01%H", revs)
 	cmd.Env = append(cmd.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

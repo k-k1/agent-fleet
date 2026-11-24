@@ -51,9 +51,9 @@ function Row({
   const [open, setOpen] = useState(false);
   const [path, setPath] = useState(f.path ?? f.target.path);
   const [heading, setHeading] = useState(f.target.heading ?? "");
-  const [commit, setCommit] = useState(
-    f.problem === "renamed" && f.commit ? f.commit : head,
-  );
+  // The revision the report read holds what it reported (a renamed file with the heading); the
+  // renaming commit is evidence only and may lack the heading.
+  const [commit, setCommit] = useState(head);
   const base = { project, name: f.memory, revision: f.revision };
   const where = f.target.heading
     ? `${f.target.path} # ${f.target.heading}`
@@ -63,7 +63,7 @@ function Row({
       <code>{f.memory}</code> → <code>{where}</code>{" "}
       <span className="muted">@{short(f.target.commit)}</span> —{" "}
       <Problem f={f} />{" "}
-      {f.problem === "renamed" && f.headingFound && f.path && f.commit && (
+      {f.problem === "renamed" && f.headingFound && f.path && head && (
         <>
           <Button
             disabled={busy}
@@ -72,7 +72,7 @@ function Row({
                 ...base,
                 path: f.path,
                 heading: f.target.heading ?? "",
-                commit: f.commit,
+                commit: head,
               })
             }
           >
@@ -80,17 +80,14 @@ function Row({
           </Button>{" "}
         </>
       )}
-      {f.problem !== "other-repository" && (
-        <>
-          <Button
-            disabled={busy}
-            aria-expanded={open}
-            onClick={() => setOpen((o) => !o)}
-          >
-            {tr("mem.lint_doc_repoint")}
-          </Button>{" "}
-        </>
-      )}
+      {/* Offered for another repository too: the re-point is checked against this project's. */}
+      <Button
+        disabled={busy}
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {tr("mem.lint_doc_repoint")}
+      </Button>{" "}
       <Button disabled={busy} onClick={() => repair("restore", base)}>
         {tr("mem.lint_doc_restore")}
       </Button>

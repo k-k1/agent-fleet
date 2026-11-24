@@ -215,4 +215,59 @@ describe("PromotionPanel", () => {
     expect(text).toContain("links other memories");
     expect(button("Supersede by the document")).toBeTruthy();
   });
+
+  it("drops a proposal that answers after another project was chosen", async () => {
+    const projB = { ...proj, id: "other-0123456789ab", display: "other" };
+    api.mockImplementation(async (path: string) => {
+      if (path.startsWith("api/agents/memory/entries/projects"))
+        return {
+          projects: [
+            { project: proj, count: 3, orphaned: false, live: true },
+            { project: projB, count: 1, orphaned: false, live: true },
+          ],
+        };
+      if (path.startsWith("api/agents/memory/entries/promotion-candidates"))
+        return candidates;
+      return {};
+    });
+    let answer: (v: unknown) => void = () => {};
+    apiJSON.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    await mount();
+    await click(button("Propose"));
+    const sel = document.body.querySelector<HTMLSelectElement>("select")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        "value",
+      )!.set!.call(sel, projB.id);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    await act(async () => answer(proposal(true)));
+    await flush();
+    // B lists a memory of the same name; A's proposal must not appear under it.
+    expect(document.body.textContent).toContain("release-steps");
+    expect(document.body.textContent).not.toContain("Into AGENTS.md");
+    expect(button("Supersede by the document")).toBeUndefined();
+  });
+
+  it("offers no supersede when the secret scan withheld the target", async () => {
+    const p = proposal(false);
+    apiJSON.mockResolvedValueOnce({
+      ...p,
+      target: { repo: p.target.repo, path: "", heading: "" },
+      text: undefined,
+      patch: undefined,
+      scans: {
+        secret: [{ path: "proposal", line: 1, rule: "token", hint: "ghp_" }],
+        preCommit: { ran: false, passed: false, note: "not run" },
+      },
+    });
+    await mount();
+    await click(button("Propose"));
+    expect(document.body.textContent).toContain(
+      "The secret scan flagged 1 line(s)",
+    );
+    expect(button("Supersede by the document")).toBeUndefined();
+  });
 });

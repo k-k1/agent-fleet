@@ -4,6 +4,9 @@ package memorylint
 // it anchors already holds repeats the document, and the member can supersede it by that document.
 // It is advice, like oversize: the memory is not doubted, only shown to be redundant.
 //
+// It is not part of Lint: it reads whole documents, so it runs only where a member asked for the
+// report (Restates), never on the paths that lint-apply or promotion take.
+//
 // The comparison is textual and script-neutral: both texts are reduced to their letters and digits,
 // lower-cased, and the memory's runs of restateShingle runes are looked up in the document. That
 // reads Japanese (no spaces) and English alike, and ignores Markdown, wrapping and punctuation.
@@ -12,6 +15,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"path"
+	"regexp"
 	"sort"
 	"strings"
 	"unicode"
@@ -32,6 +36,16 @@ const (
 	// restateMaxDocs bounds the documents one run reads.
 	restateMaxDocs = 200
 )
+
+// FileSizer is implemented by a Repo that can tell a file's size without reading it; Restates
+// asks it first, so a document over the bound is never loaded.
+type FileSizer interface {
+	FileSize(path string) (int64, error)
+}
+
+// rootDocRe finds a bare document name in a body ("See README.md"): the path rule needs a slash,
+// so a top-level document named in prose would never be compared.
+var rootDocRe = regexp.MustCompile(`[A-Za-z0-9_.-]+\.(?i:md|markdown|txt|rst|adoc)\b`)
 
 // restateDocExt are the file kinds that are documents. A memory naming a script or a source file
 // is about it, not a copy of it.
@@ -78,8 +92,17 @@ func restateDocs(m Memory, rc *repoCtx) []string {
 			out = append(out, a.text)
 		}
 	}
-	// A top-level document has no directory, so the path rule above never sees it: a stored
-	// anchor naming one (AGENTS.md) is taken as it is.
+	// A top-level document has no directory, so the path rule above never sees it: a bare name in
+	// the body that is a file at the root, or a stored anchor naming one, is taken as it is.
+	for _, loc := range rootDocRe.FindAllStringIndex(m.Body, -1) {
+		if loc[0] > 0 && strings.IndexByte("/~:$*{<%\\", m.Body[loc[0]-1]) >= 0 {
+			continue // the tail of a longer path or a URL
+		}
+		if a := m.Body[loc[0]:loc[1]]; !seen[a] && rc.files[a] {
+			seen[a] = true
+			out = append(out, a)
+		}
+	}
 	for _, a := range m.Anchors {
 		a = strings.TrimPrefix(strings.TrimSpace(a), "./")
 		if !seen[a] && rc.files[a] && restateDocExt[strings.ToLower(path.Ext(a))] {
@@ -90,9 +113,24 @@ func restateDocs(m Memory, rc *repoCtx) []string {
 	return out
 }
 
+// Restates reports the memories most of whose text a document they anchor already holds
+// (CheckRestatesDoc), with notes for what it could not read. It needs a Repo that reads files.
+func Restates(mems []Memory, repo Repo) ([]Finding, []string) {
+	fr, ok := repo.(FileReader)
+	if !ok {
+		return nil, nil
+	}
+	rc, _, err := loadRepo(repo, "")
+	if err != nil {
+		return nil, []string{fmt.Sprintf("redundancy check: %v", err)}
+	}
+	sz, _ := repo.(FileSizer)
+	return restateFindings(mems, rc, fr, sz)
+}
+
 // restateFindings runs the check over mems. Each document is read once and scanned once, for the
 // runs of every memory that anchors it.
-func restateFindings(mems []Memory, rc *repoCtx, fr FileReader) ([]Finding, []string) {
+func restateFindings(mems []Memory, rc *repoCtx, fr FileReader, sz FileSizer) ([]Finding, []string) {
 	type use struct {
 		memory string
 		sh     map[uint64]bool
@@ -124,6 +162,12 @@ func restateFindings(mems []Memory, rc *repoCtx, fr FileReader) ([]Finding, []st
 	var out []Finding
 	unread := 0
 	for _, d := range docs {
+		if sz != nil {
+			if n, err := sz.FileSize(d); err != nil || n > restateMaxDocBytes {
+				unread++
+				continue
+			}
+		}
 		b, err := fr.ReadFile(d)
 		if err != nil || len(b) > restateMaxDocBytes {
 			unread++

@@ -22,7 +22,7 @@ const (
 	CheckMissingADR   = "missing-adr"       // an ADR number with no record under the ADR directory
 	CheckRetiredTerm  = "retired-term"      // a term from the member's retired-term list
 	CheckOversizeBody = "oversize"          // a body over MaxBytes
-	CheckRestatesDoc  = "restates-document" // a body a repository document it anchors already holds (restates.go)
+	CheckRestatesDoc  = "restates-document" // a body a document it anchors already holds; Restates, not Lint
 )
 
 // DefaultMaxBytes is the size past which a body is reported: the part of a memory file that
@@ -192,12 +192,6 @@ func Lint(mems []Memory, opts Options, repo Repo) Report {
 				}
 			}
 		}
-	}
-
-	if fr, ok := repo.(FileReader); ok && rc != nil {
-		fs, notes := restateFindings(mems, rc, fr)
-		rep.Findings = append(rep.Findings, fs...)
-		rep.Skipped = append(rep.Skipped, notes...)
 	}
 
 	if rc != nil {

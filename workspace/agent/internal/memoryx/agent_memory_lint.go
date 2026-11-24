@@ -180,6 +180,18 @@ func (r agentMemLintRepo) ReadFile(path string) ([]byte, error) {
 	return out, nil
 }
 
+// FileSize answers a blob's size without reading it (`git cat-file -s`), so the redundancy check
+// never loads a document over its bound.
+func (r agentMemLintRepo) FileSize(path string) (int64, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
+	defer cancel()
+	out, err := agentMemLintGit(ctx, r.gitDir, nil, "cat-file", "-s", r.ref+":"+path)
+	if err != nil {
+		return 0, fmt.Errorf("git cat-file -s: %w", err)
+	}
+	return strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+}
+
 // agentMemLintKeyRe is the shape of a configuration key the history scan looks for: the
 // workspace's environment variables (at least three characters after AF_, which leaves out
 // short names such as AF_ID that occur everywhere).
@@ -411,12 +423,26 @@ func agentMemMemberLint(ctx context.Context, scope, project string) (agentMemLin
 	if err != nil {
 		return out, err
 	}
-	if r, ok := repo.(agentMemLintRepo); ok && scope == agentMemScopeProject {
-		var note string
-		if out.Documents, note = agentMemDocLint(ctx, c.Project, r, es); note != "" {
-			out.Report.Skipped = append(out.Report.Skipped, note)
-			sort.Strings(out.Report.Skipped)
+	r, ok := repo.(agentMemLintRepo)
+	if !ok || scope != agentMemScopeProject {
+		return out, nil
+	}
+	agentMemLintAddRestated(&out, es, r)
+	// A target is judged against the default branch, and a repair is offered from that judgement:
+	// a branch only guessed (no origin/HEAD) could call a sound target unreachable. The repairs
+	// refuse a guessed branch as well.
+	note := ""
+	if !agentMemPromoteDefaultKnownCtx(ctx, r, out.Ref) {
+		if agentMemDocAny(es) {
+			note = "document targets: origin/HEAD does not name the default branch, so " + out.Ref +
+				" is only a guess (`git remote set-head origin --auto` sets it)"
 		}
+	} else {
+		out.Documents, note = agentMemDocLint(ctx, c.Project, r, es)
+	}
+	if note != "" {
+		out.Report.Skipped = append(out.Report.Skipped, note)
+		sort.Strings(out.Report.Skipped)
 	}
 	return out, nil
 }
@@ -480,7 +506,6 @@ func agentMemLintCollectDoc(scope, project string, memo *agentMemLintRenameMemo,
 		}
 	}
 	out.Report = memorylint.Lint(mems, memorylint.Options{RetiredTerms: terms, RejectedTerms: doc.Rejected}, repo)
-	agentMemLintDropRestated(&out.Report, es)
 	if repo == nil {
 		out.Report.Skipped = append(out.Report.Skipped, "repository checks (paths, symbols, ADRs, document targets): "+why)
 	}
@@ -488,27 +513,28 @@ func agentMemLintCollectDoc(scope, project string, memo *agentMemLintRenameMemo,
 	return out, es, c, repo, nil
 }
 
-// agentMemLintDropRestated leaves out the redundancy findings of archived and superseded
-// memories: agents no longer see them, and one superseded by its document restates it by design.
-func agentMemLintDropRestated(rep *memorylint.Report, es []agentMemEntry) {
-	gone := map[string]bool{}
+// agentMemLintAddRestated adds the redundancy findings to a member's report. Only memories agents
+// still see are compared: one superseded by its document restates it by design. It reads whole
+// documents, so it runs here and never on the lint-apply or promotion paths.
+func agentMemLintAddRestated(out *agentMemLintWire, es []agentMemEntry, repo memorylint.Repo) {
+	var mems []memorylint.Memory
 	for _, e := range es {
-		if agentMemExcluded(e) {
-			gone[e.Name] = true
+		if !agentMemExcluded(e) {
+			mems = append(mems, memorylint.Memory{Name: e.Name, Body: e.Body, Anchors: e.Anchors})
 		}
 	}
-	keep := rep.Findings[:0]
-	for _, f := range rep.Findings {
-		if f.Check == memorylint.CheckRestatesDoc && gone[f.Memory] {
-			rep.Counts[f.Check]--
-			if rep.Counts[f.Check] == 0 {
-				delete(rep.Counts, f.Check)
-			}
-			continue
-		}
-		keep = append(keep, f)
+	fs, notes := memorylint.Restates(mems, repo)
+	if len(fs) == 0 && len(notes) == 0 {
+		return
 	}
-	rep.Findings = keep
+	rep := &out.Report
+	rep.Findings = append(rep.Findings, fs...)
+	for _, f := range fs {
+		rep.Counts[f.Check]++
+	}
+	rep.Skipped = append(rep.Skipped, notes...)
+	sort.Strings(rep.Skipped)
+	sort.SliceStable(rep.Findings, func(i, j int) bool { return rep.Findings[i].Memory < rep.Findings[j].Memory })
 }
 
 // HandleAgentMemoryMemberLint serves the report to the Console and the CLI. Not gated by the

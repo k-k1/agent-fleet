@@ -65,6 +65,12 @@ const report = {
         problem: "reverted",
         commit: "1111222233334444",
       },
+      {
+        memory: "elsewhere",
+        revision: 1,
+        target: { ...target, repo: "github.com/other/repo" },
+        problem: "other-repository",
+      },
     ],
   },
 };
@@ -155,10 +161,17 @@ describe("LintPanel document targets", () => {
     const text = document.body.textContent ?? "";
     expect(text).toContain("Bodies a document they anchor already says");
     expect(text).toContain("docs/guide.md");
-    expect(text).toContain("3 target(s) checked, 2 to repair.");
+    expect(text).toContain("3 target(s) checked, 3 to repair.");
     expect(text).toContain("the file moved to docs/agents.md in aaaabbbbcccc");
     expect(text).toContain("the merge was reverted by 111122223333");
     expect(text).not.toContain("Nothing to report.");
+    // Every row can be re-pointed, another repository's too: the API checks the new target
+    // against this project.
+    expect(
+      [...document.body.querySelectorAll("button")].filter(
+        (b) => b.textContent === "Re-point…",
+      ),
+    ).toHaveLength(3);
   });
 
   it("follows a rename in one click, quoting the revision, and re-runs the report", async () => {
@@ -175,7 +188,8 @@ describe("LintPanel document targets", () => {
         revision: 4,
         path: "docs/agents.md",
         heading: "Release",
-        commit: "aaaabbbbccccdddd",
+        // The revision the report read, not the renaming commit (which may lack the heading).
+        commit: "feedc0ffee12",
       },
     );
     expect(lintCalls()).toBe(before + 1);
