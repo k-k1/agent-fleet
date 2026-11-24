@@ -1296,11 +1296,13 @@ func (r *memoQueueRunner) collectPRSnapshots(tick context.Context, views map[str
 		except.add(m)
 	}
 	watch := r.watchStarts(ctx, stopped)
-	// readStarted reads the rows of the members the poll saw running, before the next row.
-	readStarted := func() {
-		for _, m := range watch.take() {
+	// started merges the rows of the members the poll saw running into the pages by their order.
+	started := &memoStartedRows{
+		watch:   watch,
+		triedOf: func(d store.MemoDelivery) string { return d.PRTriedAt },
+		fetch: func(m string) []store.MemoDelivery {
 			if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
-				return
+				return nil
 			}
 			if v, ok := views[m]; ok && (v == nil || !v.liveOK) {
 				delete(views, m) // the tick's view is of the stopped workspace
@@ -1308,26 +1310,27 @@ func (r *memoQueueRunner) collectPRSnapshots(tick context.Context, views map[str
 			ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, before, nil, nil, m, memoPRSnapshotsPerTick-read)
 			if err != nil {
 				log.Printf("memo queue: list PR snapshots due of %s: %v", m, err)
-				continue
 			}
+			return ds
+		},
+		read: func(ds []store.MemoDelivery) {
 			r.readPRSnapshotsOf(ctx, views, ds, &read, &memoExcept{}, now, nil)
-		}
+		},
 	}
 	defer func() {
 		watch.settle(ctx)
-		readStarted()
+		started.before(nil)
 	}()
 	for p := 0; p < memoPRSnapshotListPages; p++ {
 		if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
 			return
 		}
-		readStarted()
 		ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, before, after, except.ids, "", memoPRSnapshotsListed)
 		if err != nil {
 			log.Printf("memo queue: list PR snapshots due: %v", err)
 			return
 		}
-		r.readPRSnapshotsOf(ctx, views, ds, &read, &except, now, readStarted)
+		r.readPRSnapshotsOf(ctx, views, ds, &read, &except, now, started.before)
 		if len(ds) < memoPRSnapshotsListed {
 			return
 		}
@@ -1352,12 +1355,12 @@ func (r *memoQueueRunner) prView(ctx context.Context, views map[string]*memoMemb
 	return v
 }
 
-// readPRSnapshotsOf reads the snapshots of one page of collectPRSnapshots' list, read being the
+// readPRSnapshotsOf reads the snapshots of one page of collectPRSnapshots' list,
 // adding to *read the reads made; pre, when set, runs before each row.
-func (r *memoQueueRunner) readPRSnapshotsOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, read *int, except *memoExcept, now time.Time, pre func()) {
+func (r *memoQueueRunner) readPRSnapshotsOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, read *int, except *memoExcept, now time.Time, pre func(*store.MemoDelivery)) {
 	for _, d := range ds {
 		if pre != nil {
-			pre()
+			pre(&d)
 		}
 		if ctx.Err() != nil || *read >= memoPRSnapshotsPerTick {
 			return

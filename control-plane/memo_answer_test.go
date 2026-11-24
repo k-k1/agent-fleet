@@ -790,6 +790,7 @@ type flipRuntime struct {
 	calls *atomic.Int32
 	then  string
 	block bool
+	at    time.Time // when set, "stopped" until then
 }
 
 func (f flipRuntime) State(ctx context.Context) string {
@@ -800,15 +801,23 @@ func (f flipRuntime) State(ctx context.Context) string {
 		<-ctx.Done()
 		return ""
 	}
+	if !f.at.IsZero() && time.Now().Before(f.at) {
+		return "stopped"
+	}
 	return f.then
 }
 
 // setFlipRuntime puts a flipRuntime in front of member's Agent.
 func (e *deliveryEnv) setFlipRuntime(member string, a *fakeQueueAgent, then string, block bool) {
+	e.setFlipRuntimeAt(member, a, then, block, time.Time{})
+}
+
+// setFlipRuntimeAt is setFlipRuntime that reports "stopped" until at.
+func (e *deliveryEnv) setFlipRuntimeAt(member string, a *fakeQueueAgent, then string, block bool, at time.Time) {
 	ws, _, _ := e.st.GetWorkspaceByMembership(context.Background(), e.members[member])
 	e.mgr.mu.Lock()
 	defer e.mgr.mu.Unlock()
-	e.mgr.rts[e.members[member]] = cachedRT{rt: flipRuntime{stubRuntime: stubRuntime{endpoint: a.srv.URL, token: "tok", state: "running"}, calls: &atomic.Int32{}, then: then, block: block}, ws: ws}
+	e.mgr.rts[e.members[member]] = cachedRT{rt: flipRuntime{stubRuntime: stubRuntime{endpoint: a.srv.URL, token: "tok", state: "running"}, calls: &atomic.Int32{}, then: then, block: block, at: at}, ws: ws}
 }
 
 // fastStartPoll shortens the pause between two rounds of the poll for started members.
@@ -866,60 +875,6 @@ func TestMemoAnswerPRFailedRetryDoesNotDelayOthers(t *testing.T) {
 	})
 }
 
-// With the production page width and read bound, a member that starts while a page is read goes
-// before the page's later rows: its row is read though the page holds more healthy rows than the
-// bound.
-func TestMemoAnswerStartedMemberBeatsTheReadBound(t *testing.T) {
-	fastStartPoll(t)
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-		if memoAnswersListed != 200 || memoAnswersPerTick != 20 {
-			t.Fatalf("page %d, bound %d: not the production values", memoAnswersListed, memoAnswersPerTick)
-		}
-		now := time.Now()
-		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
-		agent.setAnswer("q-a", namedReply("q-a", "Done: a"))
-		e.otherMemberChains(q, "a", memoAnswersPerTick+5, now.Add(-time.Minute), store.PRStateNone)
-		c := e.queueAgentFor("c", "stopped")
-		e.recordStopped("c")
-		cRow := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), store.PRStateNone)[0]
-		c.setAnswer("q-c", namedReply("q-c", "Done: started"))
-		e.setFlipRuntime("c", c, "running", false)
-		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now)
-		if got := e.delivery(cRow); got.AnswerClass != store.AnswerDone {
-			t.Fatalf("the member that started: %q %q", got.AnswerHead, got.AnswerClass)
-		}
-		if got := e.delivery(da.ID); got.AnswerClass != "" {
-			t.Fatalf("the newest row was read past the bound: %q", got.AnswerClass)
-		}
-	})
-}
-
-// The same for the PR snapshot pass.
-func TestMemoPRSnapshotStartedMemberBeatsTheReadBound(t *testing.T) {
-	fastStartPoll(t)
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
-		if memoPRSnapshotsListed != 200 || memoPRSnapshotsPerTick != 20 {
-			t.Fatalf("page %d, bound %d: not the production values", memoPRSnapshotsListed, memoPRSnapshotsPerTick)
-		}
-		now := time.Now()
-		agent, q, da, _ := e.prChain("clean", now.Add(-time.Minute))
-		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
-		e.otherMemberChains(q, "a", memoPRSnapshotsPerTick+5, now.Add(-time.Minute), "")
-		c := e.queueAgentFor("c", "stopped")
-		e.recordStopped("c")
-		cRow := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), "")[0]
-		c.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
-		e.setFlipRuntime("c", c, "running", false)
-		e.runner().collectPRSnapshots(context.Background(), map[string]*memoMemberView{}, now)
-		if got := e.delivery(cRow); got.PRState != store.PRStateMerged {
-			t.Fatalf("the member that started: %+v", got)
-		}
-		if got := e.delivery(da.ID); got.PRState != "" {
-			t.Fatalf("the newest row was read past the bound: %+v", got)
-		}
-	})
-}
-
 // The check for started members never takes the pass's reads' time: with a State call that blocks
 // after the first, every row is still read at once.
 func TestMemoAnswerStartCheckDoesNotBlockReads(t *testing.T) {
@@ -944,6 +899,155 @@ func TestMemoAnswerStartCheckDoesNotBlockReads(t *testing.T) {
 			if got := e.delivery(id); got.AnswerClass != store.AnswerDone {
 				t.Fatalf("a healthy row: %q", got.AnswerClass)
 			}
+		}
+	})
+}
+
+// holdDependent makes the delivery's dependent held, so the delivery's row is in the history list
+// only (no message waits for it).
+func (e *deliveryEnv) holdDependent(delivery string) {
+	e.t.Helper()
+	var held string
+	if err := e.st.DB().QueryRowContext(context.Background(), `SELECT m.id FROM memo m JOIN memo p ON m.after_ids LIKE '%"' || p.id || '"%' WHERE p.delivery_id=?`, delivery).Scan(&held); err != nil {
+		e.t.Fatal(err)
+	}
+	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET state='held', release_hash='', released_at='' WHERE id=?`, held); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
+// A started member's rows are merged into the pages by the pages' order: its row older than the
+// next one is read, and its newer rows do not push out the older healthy rows main reads first.
+// Order: A, C's old row, 19 rows of B, 19 newer rows of C; twenty reads fit.
+func TestMemoAnswerStartedRowsMergeByOrder(t *testing.T) {
+	fastStartPoll(t)
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-40 * time.Minute))
+		agent.setAnswer("q-a", namedReply("q-a", "Done: a"))
+		c := e.queueAgentFor("c", "stopped")
+		e.recordStopped("c")
+		cOld := e.otherMemberChains(q, "c", 1, now.Add(-25*time.Minute), store.PRStateNone)[0]
+		bRows := e.otherMemberChains(q, "a", 19, now.Add(-20*time.Minute), store.PRStateNone)
+		cNew := e.otherMemberChains(q, "c", 19, now.Add(-10*time.Minute), store.PRStateNone)
+		c.setAnswer("q-c", namedReply("q-c", "Done: c"))
+		e.setFlipRuntime("c", c, "running", false)
+		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("A: %q", got.AnswerClass)
+		}
+		if got := e.delivery(cOld); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("C's old row: %q", got.AnswerClass)
+		}
+		done := 0
+		for _, id := range bRows {
+			if e.delivery(id).AnswerClass == store.AnswerDone {
+				done++
+			}
+		}
+		if done != 18 {
+			t.Fatalf("%d of B's older rows were read, want 18", done)
+		}
+		for _, id := range cNew {
+			if got := e.delivery(id); got.AnswerClass != "" {
+				t.Fatalf("a newer row of C pushed out an older healthy row: %+v", got)
+			}
+		}
+	})
+}
+
+// The same for the PR snapshot pass.
+func TestMemoPRSnapshotStartedRowsMergeByOrder(t *testing.T) {
+	fastStartPoll(t)
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.prChain("clean", now.Add(-40*time.Minute))
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
+		c := e.queueAgentFor("c", "stopped")
+		e.recordStopped("c")
+		cOld := e.otherMemberChains(q, "c", 1, now.Add(-25*time.Minute), "")[0]
+		bRows := e.otherMemberChains(q, "a", 19, now.Add(-20*time.Minute), "")
+		cNew := e.otherMemberChains(q, "c", 19, now.Add(-10*time.Minute), "")
+		c.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
+		e.setFlipRuntime("c", c, "running", false)
+		e.runner().collectPRSnapshots(context.Background(), map[string]*memoMemberView{}, now)
+		if got := e.delivery(da.ID); got.PRState != store.PRStateMerged {
+			t.Fatalf("A: %+v", got)
+		}
+		if got := e.delivery(cOld); got.PRState != store.PRStateMerged {
+			t.Fatalf("C's old row: %+v", got)
+		}
+		done := 0
+		for _, id := range bRows {
+			if e.delivery(id).PRState == store.PRStateMerged {
+				done++
+			}
+		}
+		if done != 18 {
+			t.Fatalf("%d of B's older rows were read, want 18", done)
+		}
+		for _, id := range cNew {
+			if got := e.delivery(id); got.PRState != "" {
+				t.Fatalf("a newer row of C pushed out an older healthy row: %+v", got)
+			}
+		}
+	})
+}
+
+// A start seen while the history list is read goes before the next history row: the waited-for
+// rows come first in the order, however long the history rows take.
+func TestMemoAnswerStartedDuringHistoryGoesFirst(t *testing.T) {
+	fastStartPoll(t)
+	saved := memoAnswersPerTick
+	memoAnswersPerTick = 3
+	t.Cleanup(func() { memoAnswersPerTick = saved })
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Hour))
+		hist := e.otherMemberChains(q, "a", 5, now.Add(-30*time.Minute), store.PRStateNone)
+		for _, id := range hist {
+			e.holdDependent(id)
+		}
+		c := e.queueAgentFor("c", "stopped")
+		e.recordStopped("c")
+		cRow := e.otherMemberChains(q, "c", 1, now.Add(-20*time.Minute), store.PRStateNone)[0]
+		c.setAnswer("q-c", namedReply("q-c", "Done: c"))
+		var calls atomic.Int32
+		agent.setAnswer("q-a", func() (int, any) {
+			if calls.Add(1) == 2 {
+				time.Sleep(300 * time.Millisecond) // the first row of the history list
+			}
+			return namedReply("q-a", "Done: a")()
+		})
+		e.setFlipRuntimeAt("c", c, "running", false, time.Now().Add(150*time.Millisecond))
+		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now)
+		if got := e.delivery(cRow); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the waited-for row of the member that started: %q", got.AnswerClass)
+		}
+		_ = da
+	})
+}
+
+// A slow state call for one member does not hold up the member behind it: D is seen running
+// while C's later look-up is still blocked.
+func TestMemoAnswerSlowStateCallDoesNotDelayAnotherStart(t *testing.T) {
+	fastStartPoll(t)
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, _, _ := e.noPRChain(now.Add(-time.Hour))
+		agent.setAnswer("q-a", namedReply("q-a", "Done: a"))
+		c := e.queueAgentFor("c", "stopped")
+		b := e.queueAgentFor("b", "stopped")
+		e.recordStopped("c")
+		e.recordStopped("b")
+		e.otherMemberChains(q, "c", 1, now.Add(-30*time.Minute), store.PRStateNone) // C is first in the candidate list
+		bRow := e.otherMemberChains(q, "b", 1, now.Add(-20*time.Minute), store.PRStateNone)[0]
+		b.setAnswer("q-b", namedReply("q-b", "Done: b"))
+		e.setFlipRuntime("c", c, "", true) // the later calls wait for their context
+		e.setFlipRuntime("b", b, "running", false)
+		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now)
+		if got := e.delivery(bRow); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the member that started behind the slow one: %q", got.AnswerClass)
 		}
 	})
 }

@@ -1925,34 +1925,50 @@ func (r *memoQueueRunner) collectAnswers(tick context.Context, views map[string]
 		}
 		r.readAnswersOf(ctx, views, ds, waited, &read, &memoExcept{}, now, started, nil)
 	}
-	// readStarted reads the rows of the members the poll saw running.
-	readStarted := func() {
-		for _, m := range watch.take() {
+	// started holds the waited-for rows of the members the poll saw running, merged into the
+	// pages by the pages' own order.
+	started := &memoStartedRows{
+		watch:   watch,
+		triedOf: func(d store.MemoDelivery) string { return d.AnswerTriedAt },
+		fetch: func(m string) []store.MemoDelivery {
 			if ctx.Err() != nil || read >= memoAnswersPerTick {
-				return
+				return nil
 			}
 			if v, ok := views[m]; ok && (v == nil || !v.liveOK) {
 				delete(views, m) // the tick's view is of the stopped workspace
 			}
-			readOf(m, true, true)
-		}
+			ds, err := r.mgr.store.ListAnswersDue(ctx, since, before, true, nil, nil, m, memoAnswersPerTick-read)
+			if err != nil {
+				log.Printf("memo queue: list answers due of %s: %v", m, err)
+			}
+			return ds
+		},
+		read: func(ds []store.MemoDelivery) {
+			r.readAnswersOf(ctx, views, ds, true, &read, &memoExcept{}, now, true, nil)
+		},
 	}
+	defer func() {
+		watch.settle(ctx)
+		started.before(nil)
+	}()
 	for _, waited := range []bool{true, false} {
 		var after *store.MemoDelivery
 		var except memoExcept
-		var pre func()
-		if waited {
-			for _, m := range stopped {
-				except.add(m)
+		var pre func(*store.MemoDelivery)
+		if watch != nil {
+			pre = started.before
+			if waited {
+				for _, m := range stopped {
+					except.add(m)
+				}
+			} else {
+				// Every waited-for row comes before the history rows.
+				pre = func(*store.MemoDelivery) { started.before(nil) }
 			}
-			pre = readStarted
 		}
 		for p := 0; p < memoAnswerListPages; p++ {
 			if ctx.Err() != nil || read >= memoAnswersPerTick {
 				return
-			}
-			if pre != nil {
-				pre()
 			}
 			ds, err := r.mgr.store.ListAnswersDue(ctx, since, before, waited, after, except.ids, "", memoAnswersListed)
 			if err != nil {
@@ -1965,16 +1981,10 @@ func (r *memoQueueRunner) collectAnswers(tick context.Context, views map[string]
 			}
 			after = &ds[len(ds)-1]
 		}
-		if pre != nil {
-			pre()
-		}
 	}
 	// The members the PR pass could not reach, after the normal rows of both lists.
-	defer func() {
-		watch.settle(ctx)
-		readStarted()
-	}()
 	for _, m := range r.retry.order() {
+		started.before(nil)
 		if ctx.Err() != nil || read >= memoAnswersPerTick {
 			return
 		}
@@ -2111,33 +2121,57 @@ func (w *memoStartWatch) take() []string {
 	return out
 }
 
+// memoStartPollParallel is how many members the poll asks at once: a state call that is slow
+// holds one slot only.
+const memoStartPollParallel = 4
+
 // watchStarts polls the runtime state of stopped in the background until ctx ends or every member
-// has been seen running, so the pass learns of a start without waiting on a look-up: a state call
-// that blocks holds this goroutine only. It answers nil when stopped is empty.
+// has been seen running, so the pass learns of a start without waiting on a look-up. A slow state
+// call holds one of memoStartPollParallel slots and only delays its own member's answer. It
+// answers nil when stopped is empty.
 func (r *memoQueueRunner) watchStarts(ctx context.Context, stopped []string) *memoStartWatch {
 	if len(stopped) == 0 {
 		return nil
 	}
+	every := memoStartPollEvery // read here: the goroutine must not touch the variable
 	w := &memoStartWatch{first: make(chan struct{})}
 	go func() {
 		rest := append([]string(nil), stopped...)
 		firstDone := false
 		for len(rest) > 0 {
+			var mu sync.Mutex
+			var wg sync.WaitGroup
 			var next []string
+			sem := make(chan struct{}, memoStartPollParallel)
 			for _, m := range rest {
+				select {
+				case sem <- struct{}{}:
+				case <-ctx.Done():
+				}
 				if ctx.Err() != nil {
-					return
+					break
 				}
-				sctx, cancel := context.WithTimeout(ctx, memoStoppedLookupBudget)
-				st := r.memoRuntimeState(sctx, m)
-				cancel()
-				if st == "running" {
-					w.mu.Lock()
-					w.seen = append(w.seen, m)
-					w.mu.Unlock()
-				} else {
-					next = append(next, m)
-				}
+				wg.Add(1)
+				go func(m string) {
+					defer wg.Done()
+					defer func() { <-sem }()
+					sctx, cancel := context.WithTimeout(ctx, memoStoppedLookupBudget)
+					st := r.memoRuntimeState(sctx, m)
+					cancel()
+					mu.Lock()
+					defer mu.Unlock()
+					if st == "running" {
+						w.mu.Lock()
+						w.seen = append(w.seen, m)
+						w.mu.Unlock()
+					} else {
+						next = append(next, m)
+					}
+				}(m)
+			}
+			wg.Wait()
+			if ctx.Err() != nil {
+				return
 			}
 			rest = next
 			if !firstDone {
@@ -2147,11 +2181,56 @@ func (r *memoQueueRunner) watchStarts(ctx context.Context, stopped []string) *me
 			select {
 			case <-ctx.Done():
 				return
-			case <-time.After(memoStartPollEvery):
+			case <-time.After(every):
 			}
 		}
 	}()
 	return w
+}
+
+// memoStartedRows merges the rows of members a start was seen of into a pass's rows by the pass's
+// order, (tried, closed_at, id): a started member's rows older than the next row go before it, and
+// the newer ones wait, so they cannot push out the rows main would read first.
+type memoStartedRows struct {
+	watch   *memoStartWatch
+	triedOf func(store.MemoDelivery) string
+	fetch   func(member string) []store.MemoDelivery // a member's due rows, in order
+	read    func([]store.MemoDelivery)
+	pending []store.MemoDelivery
+}
+
+func (s *memoStartedRows) less(a, b store.MemoDelivery) bool {
+	if ta, tb := s.triedOf(a), s.triedOf(b); ta != tb {
+		return ta < tb
+	}
+	if a.ClosedAt != b.ClosedAt {
+		return a.ClosedAt < b.ClosedAt
+	}
+	return a.ID < b.ID
+}
+
+// before takes the starts seen so far and reads the pending rows that come before next, or all of
+// them when next is nil.
+func (s *memoStartedRows) before(next *store.MemoDelivery) {
+	if s == nil || s.watch == nil {
+		return
+	}
+	if ms := s.watch.take(); len(ms) > 0 {
+		for _, m := range ms {
+			s.pending = append(s.pending, s.fetch(m)...)
+		}
+		sort.SliceStable(s.pending, func(i, j int) bool { return s.less(s.pending[i], s.pending[j]) })
+	}
+	n := len(s.pending)
+	if next != nil {
+		n = sort.Search(len(s.pending), func(i int) bool { return !s.less(s.pending[i], *next) })
+	}
+	if n == 0 {
+		return
+	}
+	batch := s.pending[:n:n]
+	s.pending = s.pending[n:]
+	s.read(batch)
 }
 
 // memoLookUpStopped answers the members of ms (recorded as stopped) whose runtime is stopped now.
@@ -2186,14 +2265,14 @@ func (r *memoQueueRunner) memoRuntimeState(ctx context.Context, membershipID str
 }
 
 // readAnswersOf reads the answers of one page of collectAnswers' list, adding to *read the reads
-// made. pre, when set, runs before each row (it reads the members a start was seen of). A member
+// made. pre, when set, runs before each row with that row (it reads the rows of members a start was seen of that come before it). A member
 // the PR snapshot pass could not reach has its rows put off (memoRetrySet), as far as the cap
 // allows; the others go on with the failed view. started is a member that was left out as stopped:
 // its row is stamped only once its view can be read.
-func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, waited bool, read *int, except *memoExcept, now time.Time, started bool, pre func()) {
+func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, waited bool, read *int, except *memoExcept, now time.Time, started bool, pre func(*store.MemoDelivery)) {
 	for _, d := range ds {
 		if pre != nil {
-			pre()
+			pre(&d)
 		}
 		if ctx.Err() != nil || *read >= memoAnswersPerTick {
 			return
