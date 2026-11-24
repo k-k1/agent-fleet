@@ -258,6 +258,52 @@ func TestAgentMemoryPromoteHoldsAnUnpublishedFile(t *testing.T) {
 	}
 }
 
+// A pin republishes a file under its revision number as it stands: an edit outside AF to the type
+// or the anchors, which a save would have given a new revision, must not let the published
+// revision's confirmations vouch for it.
+func TestAgentMemoryPromoteHoldsMetadataPublishedByAPin(t *testing.T) {
+	_, clone, _ := agentMemTestEnv(t)
+	promoteBackdate(t)
+	agentMemLintOrigin(t, clone, map[string]string{"scripts/release.sh": "#!/bin/sh\n"})
+	a, b := agentMemCallerT(t, "claude-main"), agentMemCallerT(t, "codex-wt")
+	kind := "procedure"
+	anchors := []string{"scripts/release.sh"}
+	if _, err := agentMemSave(a, agentMemSaveReq{Name: "about-me", Description: "d", Type: "user", Body: "run scripts/release.sh", MemKind: &kind, Anchors: &anchors}, promoteSaved); err != nil {
+		t.Fatal(err)
+	}
+	promoteConfirm(t, "about-me", 1, a, b)
+	promoteSave(t, a, "gone", "procedure", "run the release", "scripts/gone.sh")
+	promoteConfirm(t, "gone", 1, a, b)
+	for name, edit := range map[string][2]string{
+		"about-me": {`type: "user"`, `type: "project"`},
+		"gone":     {`"scripts/gone.sh"`, `"scripts/release.sh"`},
+	} {
+		p := filepath.Join(agentMemDir(), "projects", a.Project.ID, name+".md")
+		raw, err := os.ReadFile(p)
+		if err != nil || !strings.Contains(string(raw), edit[0]) {
+			t.Fatalf("%s fixture: %v\n%s", name, err, raw)
+		}
+		if err := os.WriteFile(p, []byte(strings.Replace(string(raw), edit[0], edit[1], 1)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := agentMemPin(agentMemPinReq{Scope: agentMemScopeProject, Project: a.Project.ID, Name: name, Pinned: true}, time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if got := lifeStored(t, a, agentMemScopeProject, name); got.Revision != 1 {
+			t.Fatalf("%s: the pin moved the revision to %d", name, got.Revision)
+		}
+	}
+	w := promoteGet(t, "project="+a.Project.ID)
+	if len(w.Candidates) != 0 {
+		t.Fatalf("candidates %v", promoteNames(w))
+	}
+	for _, name := range []string{"about-me", "gone"} {
+		if got := strings.Join(promoteHeldRules(w, name), ";"); got != memorypromote.RuleUnpublished+"=the revision does not follow the change before it" {
+			t.Errorf("%s: held %v", name, got)
+		}
+	}
+}
+
 // Every way the anchors cannot be checked holds the candidate as unverified and says why: no
 // origin default branch, a default only guessed because origin/HEAD is not set, a retired-term
 // list that cannot be read.

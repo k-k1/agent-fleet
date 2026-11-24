@@ -127,11 +127,10 @@ func agentMemPromoteHead() string {
 
 // agentMemPromoteSnap is what the history check of one memory needs, taken under the lock.
 type agentMemPromoteSnap struct {
-	idx      int // into the memories handed to Select
-	fileRel  string
-	file     []byte
-	revision int
-	body     string
+	idx     int // into the memories handed to Select
+	fileRel string
+	file    []byte
+	entry   agentMemEntry
 }
 
 // agentMemPromoteHistory checks one memory against the store's history at head, outside the lock:
@@ -166,8 +165,8 @@ func agentMemPromoteHistory(head string, s agentMemPromoteSnap) (at time.Time, m
 		return at, unpublished("the file differs from its last published change")
 	}
 	// Back through every published change that carries the current revision number (a pin or a
-	// feedback mark republishes the file without a new revision): each must hold the same text,
-	// and the change before them a lower revision. Comparing only the last two would lose a broken
+	// feedback mark republishes the file without a new revision): each must hold the same text and
+	// the same fields selection reads, and the change before them a lower revision. Comparing only the last two would lose a broken
 	// revision line after two pins.
 	for _, ln := range lines[1:] {
 		prev, _, _ := strings.Cut(ln, " ")
@@ -177,9 +176,9 @@ func agentMemPromoteHistory(head string, s agentMemPromoteSnap) (at time.Time, m
 		}
 		pe, ok := agentMemParse(pb)
 		switch {
-		case !ok || pe.Revision > s.revision || pe.Revision == s.revision && pe.Body != s.body:
+		case !ok || pe.Revision > s.entry.Revision || pe.Revision == s.entry.Revision && !agentMemPromoteSameText(pe, s.entry):
 			return at, unpublished("the revision does not follow the change before it")
-		case pe.Revision < s.revision:
+		case pe.Revision < s.entry.Revision:
 			return at, nil
 		}
 	}
@@ -305,7 +304,7 @@ func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (ag
 			if err != nil || !ok || !parsed || !agentMemPromoteSameEntry(pe, e) {
 				m.Also = append(m.Also, memorypromote.Miss{Rule: memorypromote.RuleMoved})
 			} else {
-				snaps = append(snaps, agentMemPromoteSnap{idx: len(mems), fileRel: fileRel, file: b, revision: e.Revision, body: e.Body})
+				snaps = append(snaps, agentMemPromoteSnap{idx: len(mems), fileRel: fileRel, file: b, entry: e})
 			}
 		}
 		mems = append(mems, m)
@@ -330,11 +329,18 @@ func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (ag
 	return out, nil
 }
 
+// agentMemPromoteSameText says whether two versions of one revision agree on what a save would
+// have given a new revision for (body, type, kind, anchors). A pin or a feedback mark changes
+// other fields without one; a change to these under the same number is an edit outside AF that
+// a later pin published.
+func agentMemPromoteSameText(a, b agentMemEntry) bool {
+	return a.Body == b.Body && a.Type == b.Type && a.MemKind == b.MemKind && slicesEqual(a.Anchors, b.Anchors)
+}
+
 // agentMemPromoteSameEntry says whether two reads of a memory agree on everything selection uses.
 func agentMemPromoteSameEntry(a, b agentMemEntry) bool {
-	return a.Revision == b.Revision && a.Type == b.Type && a.Body == b.Body && a.MemKind == b.MemKind &&
-		slicesEqual(a.Anchors, b.Anchors) && agentMemReasonsEqual(a.Reasons, b.Reasons) &&
-		agentMemExcluded(a) == agentMemExcluded(b)
+	return a.Revision == b.Revision && agentMemPromoteSameText(a, b) && a.Updated == b.Updated &&
+		agentMemReasonsEqual(a.Reasons, b.Reasons) && agentMemExcluded(a) == agentMemExcluded(b)
 }
 
 // agentMemPromoteLink is the target of an anchor that is a whole [[link]].
