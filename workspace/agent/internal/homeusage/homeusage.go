@@ -65,6 +65,7 @@ type Root struct {
 const (
 	CatSource      = "source"      // working copies: tracked and untracked files, git data
 	CatRegenerable = "regenerable" // build output inside working copies
+	CatSpaces      = "spaces"      // ~/spaces: the member's own work, kept by Recreate (ADR 0142)
 	CatToolCache   = "tool_cache"  // package-manager and build-tool caches
 	CatTools       = "tools"       // installed runtimes, JDKs, CLIs
 	CatAfWork      = "af_work"     // ~/.af-work
@@ -74,7 +75,7 @@ const (
 )
 
 var categoryOrder = []string{
-	CatSource, CatRegenerable, CatToolCache, CatTools,
+	CatSource, CatRegenerable, CatSpaces, CatToolCache, CatTools,
 	CatAfWork, CatTrash, CatAgent, CatOther,
 }
 

@@ -6,15 +6,18 @@
 package spacex
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -375,6 +378,304 @@ func List() ([]Space, error) {
 		return out[i].Folder < out[j].Folder
 	})
 	return out, nil
+}
+
+// ErrNotFound is what Rename answers for a folder that is no space (never made, removed, or a
+// symlink in its place).
+var ErrNotFound = errors.New("no such space")
+
+// ErrChanged is what Rename answers when the space or its marker was replaced while the new name
+// was being written: nothing was changed, and asking again reads the new state.
+var ErrChanged = errors.New("the space changed while it was being renamed")
+
+// ErrMarkerTooBig is what Rename answers for a marker larger than any name needs: it cannot be
+// told from a valid one, so it is not overwritten.
+var ErrMarkerTooBig = errors.New("the space's marker file is too big to be rewritten")
+
+// renameMu serialises the renames this Agent makes, so two of them never interleave their
+// read-modify-write of one marker.
+var renameMu sync.Mutex
+
+// beforePublish runs between the last read of a rename and its final check. A variable so a test
+// can change the space at exactly that point.
+var beforePublish = func() {}
+
+// Rename changes the display name of the space in folder to name (already cleaned) and answers
+// the space as it now is. Only the marker is rewritten: the folder keeps its name, so the
+// sessions in it keep their ids and their transcripts (see the package comment).
+//
+// What the rename may touch is decided on the opened files, not on paths checked earlier:
+//   - the folder has to be a real directory under Root (a link, even one that stays inside Root,
+//     is no space, as Lookup says), and the directory opened is the one that was checked;
+//   - everything inside runs in an os.Root on that directory, and the marker is opened without
+//     following a link and without blocking, so a symlink or FIFO an agent put there is refused
+//     rather than read or written through;
+//   - the new marker is written to a temporary file in the space and published by a rename, so a
+//     reader sees the old name or the new one and a crash leaves the old one;
+//   - just before publishing, the folder and the marker are checked to be the ones that were read:
+//     a space removed meanwhile stays removed (ErrNotFound, no marker is recreated) and one
+//     replaced is refused (ErrChanged). Only the instant between that check and the rename is not
+//     covered: nothing short of a lock the agents do not take could.
+//
+// A marker that is missing or no regular file is ErrNotFound; one that cannot be read is an error
+// and nothing is written; only one that was read and does not parse is repaired.
+func Rename(folder, name string) (Space, error) {
+	if !ValidFolder(folder) {
+		return Space{}, ErrNotFound
+	}
+	renameMu.Lock()
+	defer renameMu.Unlock()
+	// Go opens a Root without O_DIRECTORY or O_NONBLOCK, so a FIFO in the place of ~/spaces would
+	// block here (with renameMu held): refuse anything that is no directory first.
+	if fi, err := os.Stat(Root()); err != nil {
+		return Space{}, notExistIsNotFound(err)
+	} else if !fi.IsDir() {
+		return Space{}, ErrNotFound
+	}
+	top, err := os.OpenRoot(Root())
+	if err != nil {
+		return Space{}, notExistIsNotFound(err)
+	}
+	defer top.Close()
+	topFi, err := top.Stat(".")
+	if err != nil {
+		return Space{}, err
+	}
+	dirFi, err := top.Lstat(folder)
+	if err != nil {
+		return Space{}, notExistIsNotFound(err)
+	}
+	if !dirFi.IsDir() {
+		return Space{}, ErrNotFound
+	}
+	sp, err := top.OpenRoot(folder)
+	if err != nil {
+		return Space{}, notExistIsNotFound(err)
+	}
+	defer sp.Close()
+	if openFi, err := sp.Stat("."); err != nil || !os.SameFile(dirFi, openFi) {
+		return Space{}, ErrChanged
+	}
+	markFi, err := sp.Lstat(MarkerFile)
+	if err != nil {
+		return Space{}, notExistIsNotFound(err)
+	}
+	if !markFi.Mode().IsRegular() {
+		return Space{}, ErrNotFound
+	}
+	fields, raw, err := readMarkerIn(sp, markFi)
+	if err != nil {
+		return Space{}, err
+	}
+	// Every other field of the marker is kept as it is: only the name is the rename's.
+	//
+	// The readers decode the marker with encoding/json, which matches keys without regard to case
+	// and drops the whole marker (name included) when name or createdAt has the wrong type. So
+	// the two keys are normalised the way the readers see them: every spelling is taken out, the
+	// first createdAt that is a string is kept under its own name, and the new name is set; any
+	// other createdAt is dropped, which is what lets the new name be read back.
+	createdAt := ""
+	for _, k := range slices.Sorted(maps.Keys(fields)) {
+		switch {
+		case strings.EqualFold(k, "name"):
+			delete(fields, k)
+		case strings.EqualFold(k, "createdAt"):
+			var v string
+			if createdAt == "" && json.Unmarshal(fields[k], &v) == nil {
+				createdAt = v
+			}
+			delete(fields, k)
+		}
+	}
+	nameJSON, err := json.Marshal(name)
+	if err != nil {
+		return Space{}, err
+	}
+	fields["name"] = nameJSON
+	if createdAt != "" {
+		createdJSON, err := json.Marshal(createdAt)
+		if err != nil {
+			return Space{}, err
+		}
+		fields["createdAt"] = createdJSON
+	}
+	b, err := json.Marshal(fields)
+	if err != nil {
+		return Space{}, err
+	}
+	b = append(b, '\n')
+	// What is written has to be readable again by the same limit, or the rename would succeed and
+	// the next Lookup lose both names. Nothing has been created yet, so the old marker stays.
+	if len(b) > markerMaxBytes {
+		return Space{}, ErrMarkerTooBig
+	}
+	tmp, err := writeTempIn(sp, b)
+	if err != nil {
+		return Space{}, err
+	}
+	beforePublish()
+	if err := checkUnchanged(top, sp, folder, topFi, dirFi, markFi, raw); err != nil {
+		_ = sp.Remove(tmp)
+		return Space{}, err
+	}
+	if err := sp.Rename(tmp, MarkerFile); err != nil {
+		_ = sp.Remove(tmp)
+		return Space{}, err
+	}
+	return Space{Folder: folder, Name: name, Dir: filepath.Join(Root(), folder), CreatedAt: createdAt}, nil
+}
+
+// checkUnchanged says whether ~/spaces, folder under it and the marker in sp are still the
+// directories and the file Rename started from, and the marker still holds the bytes that were
+// read (raw): a writer that rewrites it in place keeps its inode, and one that restores times
+// keeps its size and modification time too, so only the content tells.
+func checkUnchanged(top, sp *os.Root, folder string, topFi, dirFi, markFi os.FileInfo, raw []byte) error {
+	// ~/spaces itself may have been moved or replaced: top still names the old directory.
+	if now, err := os.Stat(Root()); err != nil {
+		return notExistIsNotFound(err)
+	} else if !os.SameFile(topFi, now) {
+		return ErrChanged
+	}
+	cur, err := top.Lstat(folder)
+	if err != nil {
+		return notExistIsNotFound(err)
+	}
+	if !os.SameFile(dirFi, cur) {
+		return ErrChanged
+	}
+	mark, err := sp.Lstat(MarkerFile)
+	if err != nil {
+		return notExistIsNotFound(err)
+	}
+	if !os.SameFile(markFi, mark) {
+		return ErrChanged
+	}
+	again, _, err := readMarkerBytes(sp, markFi)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(raw, again) {
+		return ErrChanged
+	}
+	return nil
+}
+
+// notExistIsNotFound answers ErrNotFound for "no such file or directory" and leaves every other
+// error (permission, I/O) as it is, so a failure is never reported as a missing space.
+func notExistIsNotFound(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return ErrNotFound
+	}
+	return err
+}
+
+// readMarkerBytes reads sp's MarkerFile the way readMarker reads one by path: opened without
+// following a link and without blocking, and read only when the opened file is the regular file
+// want describes (Root.OpenFile re-resolves a link inside the space when O_NOFOLLOW is refused,
+// so the identity of what was opened is checked, not assumed), at most markerMaxBytes. A missing
+// file or one that is no regular file is ErrNotFound, a different one ErrChanged, a read that
+// fails is that error, and a marker over the limit cannot be told from a valid one, so it is
+// left alone (ErrMarkerTooBig).
+func readMarkerBytes(sp *os.Root, want os.FileInfo) ([]byte, os.FileInfo, error) {
+	f, err := sp.OpenFile(MarkerFile, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		if errors.Is(err, syscall.ELOOP) {
+			return nil, nil, ErrNotFound
+		}
+		return nil, nil, notExistIsNotFound(err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, nil, ErrNotFound
+	}
+	if !os.SameFile(want, fi) {
+		return nil, nil, ErrChanged
+	}
+	b, err := io.ReadAll(io.LimitReader(f, markerMaxBytes+1))
+	if err != nil {
+		return nil, nil, err
+	}
+	if len(b) > markerMaxBytes {
+		return nil, nil, ErrMarkerTooBig
+	}
+	return b, fi, nil
+}
+
+// readMarkerIn answers the marker's fields as raw JSON values and the bytes they came from. One
+// that was read whole and is no JSON object gives no fields, which a rename repairs.
+func readMarkerIn(sp *os.Root, want os.FileInfo) (fields map[string]json.RawMessage, raw []byte, err error) {
+	raw, _, err = readMarkerBytes(sp, want)
+	if err != nil {
+		return nil, nil, err
+	}
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
+		fields = map[string]json.RawMessage{}
+	}
+	return fields, raw, nil
+}
+
+// writeTempIn writes data to a new file in sp (created exclusively, so nothing is overwritten)
+// and answers its name; the file is removed again when the write fails.
+func writeTempIn(sp *os.Root, data []byte) (string, error) {
+	for attempt := 0; ; attempt++ {
+		tmp := fmt.Sprintf(".af-space-%s.tmp", randSuffix())
+		f, err := sp.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			if errors.Is(err, fs.ErrExist) && attempt < 8 {
+				continue
+			}
+			return "", err
+		}
+		_, werr := f.Write(data)
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			_ = sp.Remove(tmp)
+			return "", werr
+		}
+		return tmp, nil
+	}
+}
+
+// renameRequest is PATCH /spaces/{folder}. Name is a pointer so a body without one (or with
+// null) is told from an explicit empty name, which clears the display name.
+type renameRequest struct {
+	Name *string `json:"name"`
+}
+
+// HandleRename is PATCH /spaces/{folder}: the display name only (the folder never changes).
+func HandleRename(w http.ResponseWriter, r *http.Request) {
+	folder := r.PathValue("folder")
+	var req renameRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	var name string
+	ok := req.Name != nil
+	if ok {
+		name, ok = CleanName(*req.Name)
+	}
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name",
+			fmt.Sprintf("name is required, at most %d characters, with no control characters", NameMaxRunes))
+		return
+	}
+	sp, err := Rename(folder, name)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteErr(w, http.StatusNotFound, "space_not_found", "no such space")
+	case errors.Is(err, ErrChanged):
+		httpx.WriteErr(w, http.StatusConflict, "space_changed", err.Error())
+	case err != nil:
+		httpx.WriteErr(w, http.StatusInternalServerError, "rename_failed", err.Error())
+	default:
+		httpx.WriteJSON(w, http.StatusOK, createResponse{Space: sp})
+	}
 }
 
 // listResponse is GET /spaces.

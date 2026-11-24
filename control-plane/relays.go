@@ -185,6 +185,8 @@ func auditConnection(kind, verb string, target func(*http.Request) string) relay
 var (
 	// auditHostRe is a git host with an optional port: no userinfo, path or query can pass.
 	auditHostRe = regexp.MustCompile(`^[A-Za-z0-9.-]{1,253}(:[0-9]{1,5})?$`)
+	// spaceFolderRe is the shape of a space's folder name (spacex.ValidFolder's alphabet and its 48-character limit).
+	spaceFolderRe = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
 	// auditEnvNameRe is the Agent's own shape for a provider key's environment variable name.
 	auditEnvNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
 )
