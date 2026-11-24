@@ -196,6 +196,27 @@ describe("ScheduleDetailModal delivery", () => {
     expect(update).toHaveBeenCalledWith("sch_1", { show_in_sessions: false });
   });
 
+  it("leaves a stored Sessions-view setting out of an unrelated save, toggled back or not", async () => {
+    await renderWith({ show_in_sessions: true });
+    // Toggle off and on again: back to the stored value, so it must not be patched.
+    await act(async () => {
+      showBox()!.click();
+    });
+    await act(async () => {
+      showBox()!.click();
+    });
+    const label = document.querySelector("#sched-label") as HTMLInputElement;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      set.call(label, "renamed");
+      label.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      saveButton().click();
+    });
+    expect(update).toHaveBeenCalledWith("sch_1", { spec_label: "renamed" });
+  });
+
   it("offers no Sessions-view setting for an assistant-mode schedule", async () => {
     await renderWith({ session_mode: "assistant" });
     expect(showBox()).toBeUndefined();
