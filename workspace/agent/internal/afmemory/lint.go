@@ -24,6 +24,28 @@ type lintScopeReport struct {
 	Withheld int               `json:"withheld,omitempty"`
 	Terms    int               `json:"terms"`
 	Report   memorylint.Report `json:"report"`
+	// Documents checks the targets of memories superseded by a repository document.
+	Documents *lintDocReport `json:"documents,omitempty"`
+}
+
+type lintDocReport struct {
+	Checked  int              `json:"checked"`
+	Findings []lintDocFinding `json:"findings"`
+}
+
+type lintDocFinding struct {
+	Memory   string `json:"memory"`
+	Revision int    `json:"revision"`
+	Target   struct {
+		Repo    string `json:"repo"`
+		Path    string `json:"path"`
+		Heading string `json:"heading,omitempty"`
+		Commit  string `json:"commit"`
+	} `json:"target"`
+	Problem      string `json:"problem"`
+	Path         string `json:"path,omitempty"`
+	HeadingFound bool   `json:"headingFound,omitempty"`
+	Commit       string `json:"commit,omitempty"`
 }
 
 func cmdLint(c *Client, args []string, out io.Writer) error {
@@ -131,6 +153,23 @@ func printLint(out io.Writer, r lintScopeReport) {
 			subj += " bytes"
 		}
 		fmt.Fprintf(out, "   %-14s %s%s  %s\n", f.Check, f.Memory, pos, strings.TrimSpace(subj))
+	}
+	if d := r.Documents; d != nil {
+		fmt.Fprintf(out, "   document targets: %d checked, %d to repair (re-point or restore them in the Console, Import & export > Memory lint report)\n", d.Checked, len(d.Findings))
+		for _, f := range d.Findings {
+			where := f.Target.Path
+			if f.Target.Heading != "" {
+				where += " # " + f.Target.Heading
+			}
+			detail := ""
+			switch {
+			case f.Path != "":
+				detail = fmt.Sprintf("  now %s @ %s", f.Path, shortCommit(f.Commit))
+			case f.Commit != "":
+				detail = "  by " + shortCommit(f.Commit)
+			}
+			fmt.Fprintf(out, "   %-14s %s  %s%s\n", "doc-"+f.Problem, f.Memory, where, detail)
+		}
 	}
 	if len(r.Report.Proposals) > 0 {
 		fmt.Fprintf(out, "   retired-term proposals (nothing is applied; accept or reject them in the Console, Import & export > Memory lint report):\n")

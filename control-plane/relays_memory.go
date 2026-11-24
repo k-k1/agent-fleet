@@ -73,7 +73,16 @@ var memoryRelays = []agentRelay{
 	// Superseding a memory by the repository document its promotion was merged into (ADR 0130
 	// decision 11): the member's decision, so signed. The project and memory are in the body, so
 	// the audit row has no target.
+	// Promotion (ADR 0130 decision 11) as the Console reaches it: the candidates only read, and
+	// the proposal writes nothing (it builds the patch and runs the repository's pre-commit hook
+	// in a throwaway clone) and is open to sessions on loopback anyway, so neither is signed.
+	{route: "GET /api/agents/memory/entries/promotion-candidates"},
+	{route: "POST /api/agents/memory/entries/promotion-proposal"},
 	{route: "POST /api/agents/memory/entries/supersede-document", audit: auditAs("memory.entry.supersede_document", nil), sign: signBody},
+	// The repairs of a document target the lint report flags: re-pointing it, and reverting the
+	// supersede. The member's, so signed; the project and memory are in the body, so no target.
+	{route: "POST /api/agents/memory/entries/document-retarget", audit: auditAs("memory.entry.document_retarget", nil), sign: signBody},
+	{route: "POST /api/agents/memory/entries/document-restore", audit: auditAs("memory.entry.document_restore", nil), sign: signBody},
 	// Moving the memories of a project whose working copy is gone (#1984), audited under the
 	// source project id.
 	{route: "GET /api/agents/memory/entries/projects"},

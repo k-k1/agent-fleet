@@ -1,0 +1,379 @@
+package memoryx
+
+// Lint of document targets (ADR 0130 decision 11): a project memory superseded by a repository
+// document keeps pointing at it, so the target is an anchor lint checks on every report, on the
+// superseded memory itself. A renamed or deleted file, a vanished heading, a merge that was
+// reverted or a merge commit the default branch no longer holds is reported to the member, who
+// re-points the target (agentMemDocRetarget) or reverts the supersede (agentMemDocRestore). The
+// body never comes back by itself: lint only reports here, it writes no reason and no target.
+//
+// Every read is by ref from the git-common-dir, pinned to the same commit as the rest of the
+// report, and fetches nothing.
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"os/exec"
+	"strings"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorypromote"
+)
+
+// Problems a document target can have, most fundamental first: only the first that holds is
+// reported, because the later ones follow from it (a reverted merge usually took the heading too).
+const (
+	// agentMemDocOtherRepo: the target names another repository than the project's origin, so this
+	// repository cannot say anything about it.
+	agentMemDocOtherRepo = "other-repository"
+	// agentMemDocUnreachable: the merge commit is missing, or no longer on the default branch (a
+	// rewritten history).
+	agentMemDocUnreachable = "unreachable"
+	// agentMemDocReverted: a commit on the default branch reverts the merge, and nothing reverted
+	// that revert.
+	agentMemDocReverted = "reverted"
+	// agentMemDocRenamed: the file is gone and the history says where it went (Path).
+	agentMemDocRenamed = "renamed"
+	// agentMemDocMissing: the file is gone and no rename explains it.
+	agentMemDocMissing = "missing"
+	// agentMemDocHeading: the file is there but the heading is not.
+	agentMemDocHeading = "heading"
+)
+
+const agentMemOpRetarget, agentMemOpRestore = "retarget", "restore"
+
+// agentMemDocFinding is one superseded memory whose document target no longer holds. Revision is
+// the memory's, for the repair's compare-and-swap.
+type agentMemDocFinding struct {
+	Memory   string            `json:"memory"`
+	Revision int               `json:"revision"`
+	Target   agentMemDocTarget `json:"target"`
+	Problem  string            `json:"problem"`
+	// Path is where a renamed file is now (renamed only); HeadingFound says whether the target's
+	// heading is in it, so a re-point can keep the heading.
+	Path         string `json:"path,omitempty"`
+	HeadingFound bool   `json:"headingFound,omitempty"`
+	// Commit is the evidence: the commit that renamed the file, or the one that reverted the merge.
+	Commit string `json:"commit,omitempty"`
+}
+
+// agentMemDocReport is the document-target part of the lint report.
+type agentMemDocReport struct {
+	// Checked counts the memories superseded by a document that were checked.
+	Checked  int                  `json:"checked"`
+	Findings []agentMemDocFinding `json:"findings"`
+}
+
+// agentMemDocRevertMsg is the line `git revert` writes; a revert of a merge adds ", reversing
+// changes made to <parent>" after the id, so the id is matched as a prefix of the rest.
+const agentMemDocRevertMsg = "This reverts commit "
+
+// agentMemDocRevertDepth bounds how many reverts of reverts are followed.
+const agentMemDocRevertDepth = 8
+
+// agentMemDocRevertOf finds the newest commit in (commit, ref] whose message says it reverts
+// commit and that is itself in effect (no later commit reverts it in turn). "" when there is none.
+func agentMemDocRevertOf(ctx context.Context, gitDir, commit, ref string, depth int) (string, error) {
+	if depth >= agentMemDocRevertDepth {
+		return "", nil
+	}
+	out, err := agentMemLintGit(ctx, gitDir, nil, "log", "--format=%H", "-F", "--grep="+agentMemDocRevertMsg+commit, commit+".."+ref)
+	if err != nil {
+		return "", err
+	}
+	for _, rev := range strings.Fields(string(out)) {
+		// --grep matches the line anywhere; the message must say it as git revert does, at the
+		// start of a line.
+		msg, err := agentMemLintGit(ctx, gitDir, nil, "log", "-1", "--format=%B", rev)
+		if err != nil {
+			return "", err
+		}
+		says := false
+		for _, ln := range strings.Split(string(msg), "\n") {
+			if rest, ok := strings.CutPrefix(strings.TrimSpace(ln), agentMemDocRevertMsg); ok && strings.HasPrefix(rest, commit) {
+				says = true
+				break
+			}
+		}
+		if !says {
+			continue
+		}
+		// A revert that was itself reverted (and stayed so) brought the change back; an older
+		// revert may still be in effect.
+		again, err := agentMemDocRevertOf(ctx, gitDir, rev, ref, depth+1)
+		if err != nil {
+			return "", err
+		}
+		if again == "" {
+			return rev, nil
+		}
+	}
+	return "", nil
+}
+
+// agentMemDocCheckOne checks one target against the pinned revision. have is the set of the
+// revision's files; ok is false when nothing is wrong.
+func agentMemDocCheckOne(ctx context.Context, repo agentMemLintRepo, remote string, t agentMemDocTarget, have map[string]bool, ren func() (agentMemLintRenames, error)) (agentMemDocFinding, bool, error) {
+	f := agentMemDocFinding{Target: t}
+	report := func(problem string) (agentMemDocFinding, bool, error) {
+		f.Problem = problem
+		return f, true, nil
+	}
+	if t.Repo != remote {
+		return report(agentMemDocOtherRepo)
+	}
+	full, err := agentMemResolveCommit(ctx, repo.gitDir, t.Commit)
+	if err != nil {
+		return f, false, err
+	}
+	if full == "" {
+		return report(agentMemDocUnreachable)
+	}
+	if _, err := agentMemLintGit(ctx, repo.gitDir, nil, "merge-base", "--is-ancestor", full, repo.ref); err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && ee.ExitCode() == 1 {
+			return report(agentMemDocUnreachable)
+		}
+		return f, false, err
+	}
+	rev, err := agentMemDocRevertOf(ctx, repo.gitDir, full, repo.ref, 0)
+	if err != nil {
+		return f, false, err
+	}
+	if rev != "" {
+		f.Commit = rev
+		return report(agentMemDocReverted)
+	}
+	hasHeading := func(path string) (bool, error) {
+		if t.Heading == "" {
+			return true, nil
+		}
+		doc, err := agentMemLintGit(ctx, repo.gitDir, nil, "cat-file", "blob", repo.ref+":"+path)
+		if err != nil {
+			return false, err
+		}
+		_, ok := memorypromote.FindHeading(doc, t.Heading)
+		return ok, nil
+	}
+	blob, _, err := agentMemTreeBlob(ctx, repo.gitDir, repo.ref, t.Path)
+	if err != nil {
+		return f, false, err
+	}
+	if !blob {
+		r, err := ren()
+		if err != nil {
+			return f, false, err
+		}
+		// A file rename only: the target is a file, and a directory move shows as its files' renames.
+		hops, ok := agentMemLintResolveRename(t.Path, agentMemLintRenames{File: r.File}, func(p string) bool { return have[p] }, nil)
+		if !ok {
+			return report(agentMemDocMissing)
+		}
+		last := hops[len(hops)-1]
+		f.Path, f.Commit = last.To, last.Commit
+		if f.HeadingFound, err = hasHeading(f.Path); err != nil {
+			return f, false, err
+		}
+		return report(agentMemDocRenamed)
+	}
+	found, err := hasHeading(t.Path)
+	if err != nil {
+		return f, false, err
+	}
+	if !found {
+		return report(agentMemDocHeading)
+	}
+	return f, false, nil
+}
+
+// agentMemDocLint checks the document target of every memory es holds that is superseded by one.
+// It answers nil when there is none; a note when the targets could not be checked.
+func agentMemDocLint(ctx context.Context, p *agentMemProject, repo agentMemLintRepo, es []agentMemEntry) (*agentMemDocReport, string) {
+	var docs []agentMemEntry
+	for _, e := range es {
+		if e.SupersededBy != nil && e.SupersededBy.Document != nil {
+			docs = append(docs, e)
+		}
+	}
+	if len(docs) == 0 {
+		return nil, ""
+	}
+	out := &agentMemDocReport{Checked: len(docs), Findings: []agentMemDocFinding{}}
+	paths, err := repo.Paths()
+	if err != nil {
+		return nil, "document targets: " + err.Error()
+	}
+	have := make(map[string]bool, len(paths))
+	for _, p := range paths {
+		have[p] = true
+	}
+	remote := ""
+	if p != nil {
+		remote = p.Remote
+	}
+	for _, e := range docs {
+		cctx, cancel := context.WithTimeout(ctx, agentMemLintGitTimeout)
+		f, bad, err := agentMemDocCheckOne(cctx, repo, remote, *e.SupersededBy.Document, have, repo.Renames)
+		cancel()
+		if err != nil {
+			return nil, "document targets: the repository could not be read"
+		}
+		if bad {
+			f.Memory, f.Revision = e.Name, e.Revision
+			out.Findings = append(out.Findings, f)
+		}
+	}
+	return out, ""
+}
+
+// ---- repairs ---------------------------------------------------------------------------------
+
+// agentMemDocRepairReq names a memory superseded by a document, at the revision the member saw.
+// The retarget also names the new path, heading and a commit on the default branch holding them.
+type agentMemDocRepairReq struct {
+	Project  string `json:"project"`
+	Name     string `json:"name"`
+	Revision int    `json:"revision"`
+	Path     string `json:"path,omitempty"`
+	Heading  string `json:"heading,omitempty"`
+	Commit   string `json:"commit,omitempty"`
+}
+
+// agentMemDocRepair loads the memory under the store lock, checks it is still superseded by a
+// document at the revision given, lets mut change it and publishes the change as op.
+func agentMemDocRepair(c agentMemCaller, req agentMemDocRepairReq, op string, now time.Time, mut func(*agentMemEntry)) (agentMemWriteResult, error) {
+	conflict := func(format string, a ...any) error {
+		return memoryErrf(http.StatusConflict, errCodeMemoryConflict, format, a...)
+	}
+	rel, err := agentMemScopeDir(agentMemScopeProject, c)
+	if err != nil {
+		return agentMemWriteResult{}, err
+	}
+	agentMemMu.Lock()
+	defer agentMemMu.Unlock()
+	memorySnapshotMu.Lock()
+	defer memorySnapshotMu.Unlock()
+
+	cur, exists, err := agentMemLoadOne(c, agentMemScopeProject, req.Name)
+	switch {
+	case err != nil:
+		return agentMemWriteResult{}, err
+	case !exists:
+		return agentMemWriteResult{}, memoryErrf(http.StatusNotFound, errCodeMemoryNotFound, "no memory by that name")
+	case cur.Withheld:
+		return agentMemWriteResult{}, conflict("this memory is withheld; fix or remove the file first")
+	case cur.Entry.SupersededBy == nil || cur.Entry.SupersededBy.Document == nil:
+		return agentMemWriteResult{}, conflict("this memory is not superseded by a document")
+	case cur.Entry.Revision != req.Revision:
+		return agentMemWriteResult{}, conflict("this memory is at revision %d, not the %d the report showed; run the report again",
+			cur.Entry.Revision, req.Revision)
+	}
+	stamp := now.UTC().Format(time.RFC3339)
+	e := cur.Entry // every field the repair does not name is kept (ADR 0130 decision 3)
+	mut(&e)
+	e.Revision++
+	e.AuthorKind, e.AuthorSession, e.Updated = c.Kind, c.Session, stamp
+	data := agentMemRender(e)
+	if f := append(agentMemScanText("memory", string(data)), agentMemScanText("memory", agentMemPublished(e))...); len(f) > 0 {
+		return agentMemWriteResult{}, &agentMemSecretErr{Findings: f}
+	}
+	repoRel := rel + "/" + req.Name + ".md"
+	rev, err := agentMemApplyLocked([]agentMemChange{{Rel: repoRel, Data: data}}, op, repoRel, c, now)
+	if err != nil {
+		return agentMemWriteResult{}, err
+	}
+	agentMemPrimeScan(data, agentMemScopeProject, req.Name)
+	return agentMemWriteResult{Name: req.Name, Scope: agentMemScopeProject, Revision: e.Revision, Commit: rev}, nil
+}
+
+// agentMemDocRepairCheck validates the fields every repair names.
+func agentMemDocRepairCheck(req *agentMemDocRepairReq) (agentMemCaller, error) {
+	req.Name = strings.TrimSpace(req.Name)
+	if agentMemCheckName(req.Name) != nil {
+		return agentMemCaller{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "name is not a memory name")
+	}
+	if req.Revision < 1 {
+		return agentMemCaller{}, memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, "revision must be the one the report showed")
+	}
+	return agentMemMemberCaller(agentMemScopeProject, req.Project)
+}
+
+// agentMemDocRetarget points a memory's document target at a new path, heading and commit, each
+// checked as the supersede checks them. The memory stays superseded; the earlier target is in the
+// change's diff, and reverting the change restores it.
+func agentMemDocRetarget(ctx context.Context, req agentMemDocRepairReq, now time.Time) (agentMemWriteResult, error) {
+	bad := func(format string, a ...any) error {
+		return memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, format, a...)
+	}
+	req.Path, req.Heading, req.Commit = strings.TrimSpace(req.Path), strings.TrimSpace(req.Heading), strings.ToLower(strings.TrimSpace(req.Commit))
+	switch {
+	case !agentMemDocPathOK(req.Path):
+		return agentMemWriteResult{}, bad("path must be a normalised relative path")
+	case !agentMemSectionOK(req.Heading):
+		return agentMemWriteResult{}, bad("heading must be one line of at most %d characters, without the leading #", memorypromote.MaxSection)
+	case !agentMemCommitIDRe.MatchString(req.Commit):
+		return agentMemWriteResult{}, bad("commit must be a hex commit id")
+	}
+	c, err := agentMemDocRepairCheck(&req)
+	if err != nil {
+		return agentMemWriteResult{}, err
+	}
+	target, err := agentMemSupersedeDocCheck(ctx, c.Project, req.Path, req.Heading, req.Commit)
+	if err != nil {
+		return agentMemWriteResult{}, err
+	}
+	return agentMemDocRepair(c, req, agentMemOpRetarget, now, func(e *agentMemEntry) {
+		e.SupersededBy = &agentMemSuperseded{Document: &target}
+	})
+}
+
+// agentMemDocRestore reverts the supersede by a document: the memory is back in agents' view with
+// the body it kept. Unlike a revert of the supersede change it works after a re-point too, and it
+// is itself a change the member can revert.
+func agentMemDocRestore(req agentMemDocRepairReq, now time.Time) (agentMemWriteResult, error) {
+	c, err := agentMemDocRepairCheck(&req)
+	if err != nil {
+		return agentMemWriteResult{}, err
+	}
+	return agentMemDocRepair(c, req, agentMemOpRestore, now, func(e *agentMemEntry) {
+		e.SupersededBy, e.InvalidAt = nil, ""
+	})
+}
+
+// HandleAgentMemoryDocumentRetarget re-points a document target. The member's decision, so it
+// answers only a request the CP marked as theirs (ADR 0113).
+func HandleAgentMemoryDocumentRetarget(w http.ResponseWriter, r *http.Request) {
+	if !memberorigin.RefuseUnverified(w, r) {
+		return
+	}
+	var req agentMemDocRepairReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	res, err := agentMemDocRetarget(r.Context(), req, time.Now())
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}
+
+// HandleAgentMemoryDocumentRestore reverts a supersede by a document. Member-origin only.
+func HandleAgentMemoryDocumentRestore(w http.ResponseWriter, r *http.Request) {
+	if !memberorigin.RefuseUnverified(w, r) {
+		return
+	}
+	var req agentMemDocRepairReq
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	res, err := agentMemDocRestore(req, time.Now())
+	if err != nil {
+		agentMemWriteErr(w, err)
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, res)
+}

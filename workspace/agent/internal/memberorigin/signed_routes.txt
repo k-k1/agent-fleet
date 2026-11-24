@@ -22,6 +22,8 @@ POST /agents/memory-consolidation/run relay
 POST /agents/memory-review/runs/revert relay
 POST /agents/memory/af-import relay
 POST /agents/memory/auto-sync relay
+POST /agents/memory/entries/document-restore relay
+POST /agents/memory/entries/document-retarget relay
 POST /agents/memory/entries/lint-terms relay
 POST /agents/memory/entries/member-save relay
 POST /agents/memory/entries/pin relay

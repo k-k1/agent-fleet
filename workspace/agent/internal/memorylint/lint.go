@@ -16,12 +16,13 @@ import (
 
 // Check names, as they appear in a Finding and in the report's counts.
 const (
-	CheckBrokenLink   = "broken-link"    // [[name]] with no memory of that name
-	CheckMissingPath  = "missing-path"   // a repository path absent from the default branch
-	CheckMissingSym   = "missing-symbol" // a Test* or code-shaped symbol found nowhere in the default branch
-	CheckMissingADR   = "missing-adr"    // an ADR number with no record under the ADR directory
-	CheckRetiredTerm  = "retired-term"   // a term from the member's retired-term list
-	CheckOversizeBody = "oversize"       // a body over MaxBytes
+	CheckBrokenLink   = "broken-link"       // [[name]] with no memory of that name
+	CheckMissingPath  = "missing-path"      // a repository path absent from the default branch
+	CheckMissingSym   = "missing-symbol"    // a Test* or code-shaped symbol found nowhere in the default branch
+	CheckMissingADR   = "missing-adr"       // an ADR number with no record under the ADR directory
+	CheckRetiredTerm  = "retired-term"      // a term from the member's retired-term list
+	CheckOversizeBody = "oversize"          // a body over MaxBytes
+	CheckRestatesDoc  = "restates-document" // a body a repository document it anchors already holds (restates.go)
 )
 
 // DefaultMaxBytes is the size past which a body is reported: the part of a memory file that
@@ -193,6 +194,12 @@ func Lint(mems []Memory, opts Options, repo Repo) Report {
 		}
 	}
 
+	if fr, ok := repo.(FileReader); ok && rc != nil {
+		fs, notes := restateFindings(mems, rc, fr)
+		rep.Findings = append(rep.Findings, fs...)
+		rep.Skipped = append(rep.Skipped, notes...)
+	}
+
 	if rc != nil {
 		var cands []candidate
 		if fr, ok := repo.(FileReader); ok && rc.hasADRs {
@@ -208,7 +215,7 @@ func Lint(mems []Memory, opts Options, repo Repo) Report {
 		rep.Proposals = buildProposals(cands, mems, opts.RetiredTerms, opts.RejectedTerms)
 	}
 
-	checkOrder := map[string]int{CheckBrokenLink: 0, CheckMissingPath: 1, CheckMissingSym: 2, CheckMissingADR: 3, CheckRetiredTerm: 4, CheckOversizeBody: 5}
+	checkOrder := map[string]int{CheckBrokenLink: 0, CheckMissingPath: 1, CheckMissingSym: 2, CheckMissingADR: 3, CheckRetiredTerm: 4, CheckOversizeBody: 5, CheckRestatesDoc: 6}
 	sort.SliceStable(rep.Findings, func(i, j int) bool {
 		a, b := rep.Findings[i], rep.Findings[j]
 		if a.Memory != b.Memory {

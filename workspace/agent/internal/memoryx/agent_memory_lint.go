@@ -400,12 +400,25 @@ type agentMemLintWire struct {
 	// Terms is how many retired terms were applied.
 	Terms  int               `json:"terms"`
 	Report memorylint.Report `json:"report"`
+	// Documents checks the targets of the memories superseded by a repository document; absent
+	// when there are none or the repository could not be read (Report.Skipped then says why).
+	Documents *agentMemDocReport `json:"documents,omitempty"`
 }
 
 // agentMemMemberLint lints one scope. Read-only.
-func agentMemMemberLint(scope, project string) (agentMemLintWire, error) {
-	out, _, _, _, err := agentMemLintCollect(scope, project)
-	return out, err
+func agentMemMemberLint(ctx context.Context, scope, project string) (agentMemLintWire, error) {
+	out, es, c, repo, err := agentMemLintCollect(scope, project)
+	if err != nil {
+		return out, err
+	}
+	if r, ok := repo.(agentMemLintRepo); ok && scope == agentMemScopeProject {
+		var note string
+		if out.Documents, note = agentMemDocLint(ctx, c.Project, r, es); note != "" {
+			out.Report.Skipped = append(out.Report.Skipped, note)
+			sort.Strings(out.Report.Skipped)
+		}
+	}
+	return out, nil
 }
 
 // agentMemLintCollect runs the checks and also hands back what the apply step needs: the entries
@@ -467,18 +480,42 @@ func agentMemLintCollectDoc(scope, project string, memo *agentMemLintRenameMemo,
 		}
 	}
 	out.Report = memorylint.Lint(mems, memorylint.Options{RetiredTerms: terms, RejectedTerms: doc.Rejected}, repo)
+	agentMemLintDropRestated(&out.Report, es)
 	if repo == nil {
-		out.Report.Skipped = append(out.Report.Skipped, "repository checks (paths, symbols, ADRs): "+why)
+		out.Report.Skipped = append(out.Report.Skipped, "repository checks (paths, symbols, ADRs, document targets): "+why)
 	}
 	sort.Strings(out.Report.Skipped)
 	return out, es, c, repo, nil
+}
+
+// agentMemLintDropRestated leaves out the redundancy findings of archived and superseded
+// memories: agents no longer see them, and one superseded by its document restates it by design.
+func agentMemLintDropRestated(rep *memorylint.Report, es []agentMemEntry) {
+	gone := map[string]bool{}
+	for _, e := range es {
+		if agentMemExcluded(e) {
+			gone[e.Name] = true
+		}
+	}
+	keep := rep.Findings[:0]
+	for _, f := range rep.Findings {
+		if f.Check == memorylint.CheckRestatesDoc && gone[f.Memory] {
+			rep.Counts[f.Check]--
+			if rep.Counts[f.Check] == 0 {
+				delete(rep.Counts, f.Check)
+			}
+			continue
+		}
+		keep = append(keep, f)
+	}
+	rep.Findings = keep
 }
 
 // HandleAgentMemoryMemberLint serves the report to the Console and the CLI. Not gated by the
 // switch, writes nothing, counts no use.
 func HandleAgentMemoryMemberLint(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	out, err := agentMemMemberLint(q.Get("scope"), q.Get("project"))
+	out, err := agentMemMemberLint(r.Context(), q.Get("scope"), q.Get("project"))
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return
