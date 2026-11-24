@@ -225,6 +225,7 @@ func runFakeAgy(argv []string) {
 			select {}
 		case "deaf":
 			signal.Ignore(syscall.SIGINT, syscall.SIGTERM)
+			logLine("ready deaf")
 			select {}
 		case "grandchild":
 			gc := exec.Command("sh", "-c", `trap "" TERM INT; sleep 60`)
@@ -1367,8 +1368,17 @@ func TestStreamDeafChildIsKilled(t *testing.T) {
 	f := newFakeStream(t)
 	f.h.stopGrace = 300 * time.Millisecond
 	f.h.termGrace = 300 * time.Millisecond
+	var first *exec.Cmd
+	inner := f.h.command
+	f.h.command = func(h *streamHandle, st agents.ThreadSettings, conv string) *exec.Cmd {
+		cmd := inner(h, st, conv)
+		if first == nil {
+			first = cmd
+		}
+		return cmd
+	}
 	send(t, f.h, "deaf")
-	f.waitRead(t, "deaf")
+	waitFor(t, "the fake to ignore INT and TERM", func() bool { return len(f.lines("ready deaf")) == 1 })
 	send(t, f.h, "hello")
 	_, _ = f.h.Interrupt(agents.InterruptOpts{})
 	waitFor(t, "the queued turn", func() bool { return len(f.spawns()) == 2 })
@@ -1377,6 +1387,10 @@ func TestStreamDeafChildIsKilled(t *testing.T) {
 	}
 	if states := drainStates(f.h); !containsState(states, agents.TurnCancelled) {
 		t.Fatalf("states = %v, want the deaf turn cancelled", states)
+	}
+	ws, ok := first.ProcessState.Sys().(syscall.WaitStatus)
+	if !ok || !ws.Signaled() || ws.Signal() != syscall.SIGKILL {
+		t.Fatalf("the deaf child ended with %v, want SIGKILL", first.ProcessState)
 	}
 }
 
@@ -1391,6 +1405,220 @@ func TestStreamWaitidRefused(t *testing.T) {
 	if st := settled(t, f.h); st != agents.TurnCompleted {
 		t.Fatalf("turn = %s, want completed on a child watch left alone", st)
 	}
+	// A stop still reaches the child, and its escalation still ends one that ignores SIGINT.
+	f.h.stopGrace = 300 * time.Millisecond
+	send(t, f.h, "stubborn")
+	f.waitRead(t, "stubborn")
+	_, _ = f.h.Interrupt(agents.InterruptOpts{})
+	if st := settled(t, f.h); st != agents.TurnCancelled {
+		t.Fatalf("stopped turn = %s, want cancelled", st)
+	}
 	send(t, f.h, "crash")
 	waitFor(t, "the crash to land", func() bool { return !f.h.Alive() })
+}
+
+// A stop reaches a prompt that is moving to a new child after its write failed: the turn is
+// cancelled and the new child never reads it.
+func TestStreamStopDuringTheRetry(t *testing.T) {
+	f := newFakeStream(t)
+	calls := 0
+	f.h.beforeWrite = func() {
+		f.h.mu.Lock()
+		calls++
+		n, c := calls, f.h.sending
+		f.h.mu.Unlock()
+		if n == 2 && c != nil {
+			<-c.exited
+		}
+	}
+	respawn := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	inner := f.h.command
+	spawned := 0
+	f.h.command = func(h *streamHandle, st agents.ThreadSettings, conv string) *exec.Cmd {
+		spawned++
+		if spawned == 2 {
+			close(respawn)
+			<-release
+		}
+		return inner(h, st, conv)
+	}
+	firstAnswered := make(chan struct{})
+	f.h.beforeLand = func() {
+		select {
+		case <-firstAnswered:
+		default:
+			close(firstAnswered)
+		}
+	}
+	send(t, f.h, "result-exit")
+	waitChan(t, firstAnswered, "the first answer")
+	send(t, f.h, "hello")
+	waitChan(t, respawn, "the replacement spawn")
+	res, _ := f.h.Interrupt(agents.InterruptOpts{})
+	if res.Stop != agents.StopFirst {
+		t.Fatalf("stop = %+v", res)
+	}
+	close(release)
+	if st := settled(t, f.h); st != agents.TurnCancelled {
+		t.Fatalf("retried turn = %s, want cancelled", st)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := f.lines("turn "); strings.Join(got, ",") != "result-exit" {
+		t.Fatalf("turns read = %q, want the stopped prompt never read", got)
+	}
+}
+
+// A detach after a fresh child died silently discards the input: a Resume does not run it.
+func TestStreamDetachAfterASilentDeath(t *testing.T) {
+	f := newFakeStream(t)
+	f.env = []string{streamSilentEnv + "=1"}
+	land := newGateHook(1)
+	f.h.beforeLand = land.fn
+	t.Cleanup(land.open)
+	send(t, f.h, "hello")
+	land.wait(t, "the silent death")
+	detached := f.h.Detach()
+	land.open()
+	waitChan(t, detached, "Detach")
+	waitFor(t, "the turn to land", func() bool {
+		f.h.mu.Lock()
+		defer f.h.mu.Unlock()
+		return !f.h.pumping && !f.h.running
+	})
+	f.env = nil
+	f.h.Start(session.Meta{Name: f.h.name, Kind: session.KindAgy, Dir: f.h.dir})
+	time.Sleep(300 * time.Millisecond)
+	if got := f.lines("turn "); strings.Join(got, ",") != "hello" {
+		t.Fatalf("turns read = %q, want the detached input not run again", got)
+	}
+}
+
+// A detach after a turn's result is in keeps the turn's own outcome.
+func TestStreamDetachAfterTheResult(t *testing.T) {
+	f := newFakeStream(t)
+	land := newGateHook(1)
+	f.h.beforeLand = land.fn
+	t.Cleanup(land.open)
+	send(t, f.h, "fail")
+	land.wait(t, "the failed result")
+	detached := f.h.Detach()
+	land.open()
+	waitChan(t, detached, "Detach")
+	waitFor(t, "the turn to land", func() bool {
+		f.h.mu.Lock()
+		defer f.h.mu.Unlock()
+		return !f.h.pumping && !f.h.running
+	})
+	if st := f.h.TurnState(); st != agents.TurnFailed {
+		t.Fatalf("turn = %s, want failed as it answered", st)
+	}
+}
+
+// After a detach during a spawn, a Resume's next turn waits for the retired child to go:
+// two agy processes never run for one session at once.
+func TestStreamResumeWaitsForARetiringChild(t *testing.T) {
+	f := newFakeStream(t)
+	f.env = []string{streamLingerEnv + "=1"}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	inner := f.h.command
+	var mu sync.Mutex
+	spawned, overlap := 0, ""
+	f.h.command = func(h *streamHandle, st agents.ThreadSettings, conv string) *exec.Cmd {
+		mu.Lock()
+		spawned++
+		n := spawned
+		mu.Unlock()
+		if n == 1 {
+			close(started)
+			<-release
+		} else if ps := f.lines("spawn "); len(ps) > 0 {
+			_, pid, _ := strings.Cut(ps[0], "pid=")
+			if !pidGone(pid) {
+				mu.Lock()
+				overlap = pid
+				mu.Unlock()
+			}
+		}
+		return inner(h, st, conv)
+	}
+	send(t, f.h, "hello")
+	waitChan(t, started, "the spawn")
+	_ = f.h.Detach()
+	close(release)
+	waitFor(t, "the retired child to start", func() bool { return len(f.lines("spawn ")) == 1 })
+	f.h.Start(session.Meta{Name: f.h.name, Kind: session.KindAgy, Dir: f.h.dir})
+	send(t, f.h, "hello")
+	if st := settled(t, f.h); st != agents.TurnCompleted {
+		t.Fatalf("turn after Resume = %s", st)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if overlap != "" {
+		t.Fatalf("a new child was spawned while the retired child %s still ran", overlap)
+	}
+}
+
+// A stop that comes after the child died but before the prompt's write returned still reaches
+// the prompt: it was never delivered, so it is cancelled and not retried on a new child.
+func TestStreamStopBeforeAFailedWrite(t *testing.T) {
+	f := newFakeStream(t)
+	calls := 0
+	f.h.beforeWrite = func() {
+		f.h.mu.Lock()
+		calls++
+		n, c := calls, f.h.sending
+		f.h.mu.Unlock()
+		if n == 2 && c != nil {
+			<-c.exited
+			if res, _ := f.h.Interrupt(agents.InterruptOpts{}); res.Stop != agents.StopFirst {
+				t.Errorf("stop = %+v", res)
+			}
+		}
+	}
+	firstAnswered := make(chan struct{})
+	f.h.beforeLand = func() {
+		select {
+		case <-firstAnswered:
+		default:
+			close(firstAnswered)
+		}
+	}
+	send(t, f.h, "result-exit")
+	waitChan(t, firstAnswered, "the first answer")
+	send(t, f.h, "hello")
+	waitFor(t, "the prompt to land", func() bool {
+		f.h.mu.Lock()
+		n := calls
+		f.h.mu.Unlock()
+		return n >= 2 && settledNow(f.h)
+	})
+	if st := f.h.TurnState(); st != agents.TurnCancelled {
+		t.Fatalf("stopped prompt = %s, want cancelled", st)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := f.lines("turn "); strings.Join(got, ",") != "result-exit" {
+		t.Fatalf("turns read = %q, want the stopped prompt never read", got)
+	}
+}
+
+func settledNow(h *streamHandle) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return !h.pumping && !h.running && h.q.Len() == 0
 }
