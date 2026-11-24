@@ -486,12 +486,13 @@ func TestStartNotificationDrainNeedsASender(t *testing.T) {
 }
 
 // statefulOutbox is an Agent outbox that serves what has not been acked, oldest first, up to
-// the Agent's 100 entries, and drops what is acked.
+// the Agent's 100 entries, and drops what is acked except keep.
 type statefulOutbox struct {
 	mu      sync.Mutex
 	pending []string // ids, oldest first
 	pad     string
 	acked   []string
+	keep    string // an id whose delete fails: acked, but never dropped
 }
 
 func (o *statefulOutbox) handler(w http.ResponseWriter, r *http.Request) {
@@ -504,6 +505,9 @@ func (o *statefulOutbox) handler(w http.ResponseWriter, r *http.Request) {
 		defer o.mu.Unlock()
 		for _, id := range b.IDs {
 			o.acked = append(o.acked, id)
+			if id == o.keep {
+				continue
+			}
 			for i, p := range o.pending {
 				if p == id {
 					o.pending = append(o.pending[:i], o.pending[i+1:]...)
@@ -656,8 +660,8 @@ func TestDrainAgentOutboxTruncatedBodyIsOffline(t *testing.T) {
 }
 
 // Asking again after a bound-cut response needs the ack to have been accepted and to have
-// moved the outbox: a 503, or a 204 that drops nothing, ends the drain after one fetch (a
-// second fetch would repeat the same work).
+// moved the outbox: a 503 ends the drain after one fetch, and a 204 that drops nothing after
+// a second fetch that finds every acked id again, before it stores or acks them again.
 func TestDrainAgentOutboxDoesNotReaskWithoutProgress(t *testing.T) {
 	old := maxOutboxEntries
 	maxOutboxEntries = 1
@@ -669,9 +673,10 @@ func TestDrainAgentOutboxDoesNotReaskWithoutProgress(t *testing.T) {
 	}{{"ack refused", http.StatusServiceUnavailable, 1}, {"ack accepted but nothing dropped", http.StatusNoContent, 2}} {
 		t.Run(tc.name, func(t *testing.T) {
 			st, mem := drainFixture(t)
-			var gets atomic.Int32
+			var gets, acks atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/notifications/ack" {
+					acks.Add(1)
 					w.WriteHeader(tc.status)
 					return
 				}
@@ -683,6 +688,32 @@ func TestDrainAgentOutboxDoesNotReaskWithoutProgress(t *testing.T) {
 			if got := gets.Load(); got != tc.want {
 				t.Fatalf("%d fetches, want %d", got, tc.want)
 			}
+			if got := acks.Load(); got != 1 {
+				t.Fatalf("%d acks, want 1: the same ids were acked again", got)
+			}
 		})
+	}
+}
+
+// An Agent whose ack keeps the first id (a failed delete it answers with a 204 anyway) but
+// drops the rest has still made progress: the drain keeps asking until the outbox holds only
+// the stuck entry, and stores every other one.
+func TestDrainAgentOutboxReasksWhenOnlyTheFirstIdStays(t *testing.T) {
+	old := maxOutboxEntries
+	maxOutboxEntries = 2
+	defer func() { maxOutboxEntries = old }()
+	st, mem := drainFixture(t)
+	o := &statefulOutbox{pending: []string{"a", "b", "c", "d"}, keep: "a"}
+	srv := httptest.NewServer(http.HandlerFunc(o.handler))
+	defer srv.Close()
+	if got := drainAgentOutbox(context.Background(), st, drainFakeRT{state: "running", endpoint: srv.URL}, mem); got != "ready" {
+		t.Fatalf("drain = %q", got)
+	}
+	if strings.Join(o.pending, ",") != "a" {
+		t.Fatalf("pending %v, want only the stuck a", o.pending)
+	}
+	rows, _ := st.ListNotifications(context.Background(), mem, "2000-01-01T00:00:00Z", 50)
+	if len(rows) != 4 {
+		t.Fatalf("stored %d rows, want 4", len(rows))
 	}
 }
