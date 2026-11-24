@@ -856,6 +856,12 @@ func (r *memoQueueRunner) settle(ctx context.Context, now time.Time) []store.Mem
 
 // view resolves a member's workspace once per tick, without waking it.
 func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMemberView, membershipID string) *memoMemberView {
+	return r.viewWait(ctx, views, membershipID, true)
+}
+
+// viewWait is view; with wait false a workspace build in progress (its build lock held) leaves the
+// view empty at once instead of queueing behind it.
+func (r *memoQueueRunner) viewWait(ctx context.Context, views map[string]*memoMemberView, membershipID string, wait bool) *memoMemberView {
 	if v, ok := views[membershipID]; ok {
 		return v
 	}
@@ -864,7 +870,11 @@ func (r *memoQueueRunner) view(ctx context.Context, views map[string]*memoMember
 	if err != nil || !ok {
 		return nil
 	}
-	res, aerr := r.mgr.resolveByMembership(ctx, identityID, membershipID)
+	resolve := r.mgr.resolveByMembership
+	if !wait {
+		resolve = r.mgr.resolveByMembershipNoWait
+	}
+	res, aerr := resolve(ctx, identityID, membershipID)
 	if aerr != nil {
 		return nil
 	}
@@ -1991,7 +2001,7 @@ func (r *memoQueueRunner) collectAnswers(tick context.Context, views map[string]
 		delete(r.prFailed, m)
 		delete(views, m)
 		rctx, rcancel := context.WithTimeout(ctx, memoAnswerRetryWait)
-		r.view(rctx, views, m)
+		r.viewWait(rctx, views, m, false)
 		rcancel()
 		for _, waited := range []bool{true, false} {
 			if r.retry.has(m, waited) && read < memoAnswersPerTick {
@@ -2126,65 +2136,103 @@ func (w *memoStartWatch) take() []string {
 const memoStartPollParallel = 4
 
 // watchStarts polls the runtime state of stopped in the background until ctx ends or every member
-// has been seen running, so the pass learns of a start without waiting on a look-up. A slow state
-// call holds one of memoStartPollParallel slots and only delays its own member's answer. It
-// answers nil when stopped is empty.
+// has been seen running, so the pass learns of a start without waiting on a look-up. Each member
+// is asked again memoStartPollEvery after its own last answer, by up to memoStartPollParallel
+// workers, so a slow state call holds one worker and one member only. It answers nil when stopped
+// is empty.
 func (r *memoQueueRunner) watchStarts(ctx context.Context, stopped []string) *memoStartWatch {
 	if len(stopped) == 0 {
 		return nil
 	}
-	every := memoStartPollEvery // read here: the goroutine must not touch the variable
+	every := memoStartPollEvery // read here: the goroutines must not touch the variable
 	w := &memoStartWatch{first: make(chan struct{})}
-	go func() {
-		rest := append([]string(nil), stopped...)
-		firstDone := false
-		for len(rest) > 0 {
-			var mu sync.Mutex
-			var wg sync.WaitGroup
-			var next []string
-			sem := make(chan struct{}, memoStartPollParallel)
-			for _, m := range rest {
-				select {
-				case sem <- struct{}{}:
-				case <-ctx.Done():
+	type entry struct {
+		id     string
+		due    time.Time
+		busy   bool
+		polled bool
+	}
+	var mu sync.Mutex
+	entries := make([]*entry, len(stopped))
+	for i, m := range stopped {
+		entries[i] = &entry{id: m}
+	}
+	unpolled := len(entries)
+	// pick answers the member due first that is not being asked, or how long to wait.
+	pick := func() (*entry, time.Duration, bool) {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(entries) == 0 {
+			return nil, 0, true
+		}
+		var best *entry
+		wait := 10 * time.Millisecond // every member is being asked
+		var soonest time.Duration
+		now := time.Now()
+		for _, e := range entries {
+			if e.busy {
+				continue
+			}
+			if d := e.due.Sub(now); d > 0 {
+				if soonest == 0 || d < soonest {
+					soonest = d
 				}
-				if ctx.Err() != nil {
-					break
-				}
-				wg.Add(1)
-				go func(m string) {
-					defer wg.Done()
-					defer func() { <-sem }()
-					sctx, cancel := context.WithTimeout(ctx, memoStoppedLookupBudget)
-					st := r.memoRuntimeState(sctx, m)
-					cancel()
-					mu.Lock()
-					defer mu.Unlock()
-					if st == "running" {
-						w.mu.Lock()
-						w.seen = append(w.seen, m)
-						w.mu.Unlock()
-					} else {
-						next = append(next, m)
-					}
-				}(m)
+				continue
 			}
-			wg.Wait()
-			if ctx.Err() != nil {
-				return
-			}
-			rest = next
-			if !firstDone {
-				firstDone = true
-				close(w.first)
-			}
-			select {
-			case <-ctx.Done():
-				return
-			case <-time.After(every):
+			if best == nil || e.due.Before(best.due) {
+				best = e
 			}
 		}
-	}()
+		if best == nil && soonest > 0 {
+			wait = soonest
+		}
+		if best != nil {
+			best.busy = true
+		}
+		return best, wait, false
+	}
+	for i := 0; i < memoStartPollParallel; i++ {
+		go func() {
+			for ctx.Err() == nil {
+				e, wait, done := pick()
+				if done {
+					return
+				}
+				if e == nil {
+					select {
+					case <-ctx.Done():
+						return
+					case <-time.After(wait):
+					}
+					continue
+				}
+				sctx, cancel := context.WithTimeout(ctx, memoStoppedLookupBudget)
+				st := r.memoRuntimeState(sctx, e.id)
+				cancel()
+				mu.Lock()
+				e.busy = false
+				e.due = time.Now().Add(every)
+				if !e.polled {
+					e.polled = true
+					if unpolled--; unpolled == 0 {
+						close(w.first)
+					}
+				}
+				if st == "running" {
+					for i, x := range entries {
+						if x == e {
+							entries = append(entries[:i], entries[i+1:]...)
+							break
+						}
+					}
+					w.mu.Lock()
+					w.seen = append(w.seen, e.id)
+					w.mu.Unlock()
+				}
+				mu.Unlock()
+			}
+		}()
+	}
 	return w
 }
 

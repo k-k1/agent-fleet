@@ -790,7 +790,8 @@ type flipRuntime struct {
 	calls *atomic.Int32
 	then  string
 	block bool
-	at    time.Time // when set, "stopped" until then
+	gate  *atomic.Bool  // when set, "stopped" until it is true
+	ran   *atomic.Int32 // counts the calls that answered the state after the first
 }
 
 func (f flipRuntime) State(ctx context.Context) string {
@@ -801,23 +802,27 @@ func (f flipRuntime) State(ctx context.Context) string {
 		<-ctx.Done()
 		return ""
 	}
-	if !f.at.IsZero() && time.Now().Before(f.at) {
+	if f.gate != nil && !f.gate.Load() {
 		return "stopped"
 	}
+	f.ran.Add(1)
 	return f.then
 }
 
 // setFlipRuntime puts a flipRuntime in front of member's Agent.
 func (e *deliveryEnv) setFlipRuntime(member string, a *fakeQueueAgent, then string, block bool) {
-	e.setFlipRuntimeAt(member, a, then, block, time.Time{})
+	e.setFlipRuntimeAt(member, a, then, block, nil)
 }
 
-// setFlipRuntimeAt is setFlipRuntime that reports "stopped" until at.
-func (e *deliveryEnv) setFlipRuntimeAt(member string, a *fakeQueueAgent, then string, block bool, at time.Time) {
+// setFlipRuntimeAt is setFlipRuntime that reports "stopped" until gate is true. It answers the
+// counts of State calls so far and of those that answered running.
+func (e *deliveryEnv) setFlipRuntimeAt(member string, a *fakeQueueAgent, then string, block bool, gate *atomic.Bool) (calls, ran *atomic.Int32) {
 	ws, _, _ := e.st.GetWorkspaceByMembership(context.Background(), e.members[member])
+	calls, ran = &atomic.Int32{}, &atomic.Int32{}
 	e.mgr.mu.Lock()
 	defer e.mgr.mu.Unlock()
-	e.mgr.rts[e.members[member]] = cachedRT{rt: flipRuntime{stubRuntime: stubRuntime{endpoint: a.srv.URL, token: "tok", state: "running"}, calls: &atomic.Int32{}, then: then, block: block, at: at}, ws: ws}
+	e.mgr.rts[e.members[member]] = cachedRT{rt: flipRuntime{stubRuntime: stubRuntime{endpoint: a.srv.URL, token: "tok", state: "running"}, calls: calls, then: then, block: block, gate: gate, ran: ran}, ws: ws}
+	return calls, ran
 }
 
 // fastStartPoll shortens the pause between two rounds of the poll for started members.
@@ -994,6 +999,60 @@ func TestMemoPRSnapshotStartedRowsMergeByOrder(t *testing.T) {
 	})
 }
 
+// waitUntil polls cond for up to two seconds.
+func waitUntil(t *testing.T, cond func() bool) {
+	t.Helper()
+	for end := time.Now().Add(2 * time.Second); time.Now().Before(end); time.Sleep(2 * time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	t.Error("a condition the test waits for never held")
+}
+
+// The answer pass's second resolution of a PR-failed member never queues on the workspace build
+// lock: with it held, the pass and the retry return in time.
+func TestMemoAnswerPRFailedRetryDoesNotQueueOnTheBuildLock(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer() })
+		agent.setAnswer("q-a", namedReply("q-a", "Done: a"))
+		calls := e.silentMember()
+		silent := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), "")[0]
+		views := map[string]*memoMemberView{}
+		r := e.runner()
+		pctx, pcancel := context.WithTimeout(context.Background(), time.Second)
+		r.collectPRSnapshots(pctx, views, now)
+		pcancel()
+		<-calls
+		if !r.prFailed[e.members["c"]] {
+			t.Fatalf("the PR pass did not record c: %v", r.prFailed)
+		}
+		id := e.members["c"]
+		e.mgr.mu.Lock()
+		delete(e.mgr.rts, id)
+		e.mgr.mu.Unlock()
+		bl := e.mgr.buildLockFor(id)
+		bl.Lock()
+		defer bl.Unlock()
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			r.collectAnswers(context.Background(), views, now)
+		}()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the pass queued behind the build lock")
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("a's row: %q", got.AnswerClass)
+		}
+		_ = silent
+	})
+}
+
 // A start seen while the history list is read goes before the next history row: the waited-for
 // rows come first in the order, however long the history rows take.
 func TestMemoAnswerStartedDuringHistoryGoesFirst(t *testing.T) {
@@ -1012,14 +1071,18 @@ func TestMemoAnswerStartedDuringHistoryGoesFirst(t *testing.T) {
 		e.recordStopped("c")
 		cRow := e.otherMemberChains(q, "c", 1, now.Add(-20*time.Minute), store.PRStateNone)[0]
 		c.setAnswer("q-c", namedReply("q-c", "Done: c"))
+		var gate atomic.Bool
+		var ran *atomic.Int32
 		var calls atomic.Int32
 		agent.setAnswer("q-a", func() (int, any) {
-			if calls.Add(1) == 2 {
-				time.Sleep(300 * time.Millisecond) // the first row of the history list
+			if calls.Add(1) == 2 { // the first row of the history list
+				gate.Store(true)
+				waitUntil(t, func() bool { return ran.Load() > 0 }) // the poll has seen C running
+				time.Sleep(30 * time.Millisecond)
 			}
 			return namedReply("q-a", "Done: a")()
 		})
-		e.setFlipRuntimeAt("c", c, "running", false, time.Now().Add(150*time.Millisecond))
+		_, ran = e.setFlipRuntimeAt("c", c, "running", false, &gate)
 		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now)
 		if got := e.delivery(cRow); got.AnswerClass != store.AnswerDone {
 			t.Fatalf("the waited-for row of the member that started: %q", got.AnswerClass)
@@ -1028,14 +1091,13 @@ func TestMemoAnswerStartedDuringHistoryGoesFirst(t *testing.T) {
 	})
 }
 
-// A slow state call for one member does not hold up the member behind it: D is seen running
+// A slow state call for one member does not hold up another: B is asked again and seen running
 // while C's later look-up is still blocked.
 func TestMemoAnswerSlowStateCallDoesNotDelayAnotherStart(t *testing.T) {
 	fastStartPoll(t)
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, q, _, _ := e.noPRChain(now.Add(-time.Hour))
-		agent.setAnswer("q-a", namedReply("q-a", "Done: a"))
 		c := e.queueAgentFor("c", "stopped")
 		b := e.queueAgentFor("b", "stopped")
 		e.recordStopped("c")
@@ -1044,7 +1106,18 @@ func TestMemoAnswerSlowStateCallDoesNotDelayAnotherStart(t *testing.T) {
 		bRow := e.otherMemberChains(q, "b", 1, now.Add(-20*time.Minute), store.PRStateNone)[0]
 		b.setAnswer("q-b", namedReply("q-b", "Done: b"))
 		e.setFlipRuntime("c", c, "", true) // the later calls wait for their context
-		e.setFlipRuntime("b", b, "running", false)
+		var gate atomic.Bool
+		states, ran := e.setFlipRuntimeAt("b", b, "running", false, &gate)
+		var once atomic.Bool
+		agent.setAnswer("q-a", func() (int, any) {
+			if once.CompareAndSwap(false, true) {
+				waitUntil(t, func() bool { return states.Load() >= 2 }) // B answered stopped to the poll
+				gate.Store(true)                                        // B starts while C's look-up is still blocked
+				waitUntil(t, func() bool { return ran.Load() > 0 })
+				time.Sleep(30 * time.Millisecond)
+			}
+			return namedReply("q-a", "Done: a")()
+		})
 		e.runner().collectAnswers(context.Background(), map[string]*memoMemberView{}, now)
 		if got := e.delivery(bRow); got.AnswerClass != store.AnswerDone {
 			t.Fatalf("the member that started behind the slow one: %q", got.AnswerClass)
