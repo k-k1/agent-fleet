@@ -58,16 +58,24 @@ export function TenantBoostView({ slug }: { slug: string }) {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const load = useCallback(async () => {
-    // Settled apart: a failed sizing read only costs the rung chips their list, never the policy
-    // and this month's hours the other read did bring back.
-    const [d, sz] = await Promise.allSettled([getTenantBoost(slug), getWorkspaceSizing()]);
-    if (d.status === "fulfilled" && isOk(d.value)) setView(d.value);
-    const sizing = sz.status === "fulfilled" && isOk(sz.value) ? sz.value : {};
-    setRungs(declaredRungs({ ...WS_SIZING_FALLBACK, ...sizing }));
+  // Two independent reads: the policy and this month's hours draw as soon as they arrive, and a
+  // sizing read that fails or never answers only leaves the rung chips without their list.
+  const load = useCallback(() => {
+    getTenantBoost(slug)
+      .then((d) => {
+        if (isOk(d)) setView(d);
+      })
+      .catch(() => {
+        /* transient; the panel keeps its last values */
+      });
+    getWorkspaceSizing()
+      .then((sz) => setRungs(declaredRungs({ ...WS_SIZING_FALLBACK, ...(isOk(sz) ? sz : {}) })))
+      .catch(() => {
+        /* the chips keep their last list */
+      });
   }, [slug]);
   useEffect(() => {
-    void load();
+    load();
   }, [load]);
 
   // Absent on a runtime with no rungs: there is nothing to boost between.

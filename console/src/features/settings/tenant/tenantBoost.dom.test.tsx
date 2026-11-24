@@ -155,6 +155,19 @@ describe("TenantBoostView - this month's hours", () => {
     expect(host.querySelector('input[type="checkbox"]')).toBeTruthy();
   });
 
+  it("draws the hours while the sizing read has not answered yet", async () => {
+    api.mockImplementation((p: string) =>
+      p.endsWith("/boost") ? Promise.resolve(policy({ monthly_hours: 5, budget_counted: true, month: "2026-11", members: usage })) : new Promise(() => {}),
+    );
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<TenantBoostView slug="acme" />);
+    });
+    expect(rows(host)).toHaveLength(3);
+  });
+
   it("still shows this month's hours after boost is switched off, but not an empty list", async () => {
     let h = await mount(policy({ enabled: false, budget_counted: true, month: "2026-11", members: usage }));
     expect(rows(h)).toHaveLength(3);
