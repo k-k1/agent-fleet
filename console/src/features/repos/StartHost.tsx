@@ -201,7 +201,8 @@ export function StartHost() {
           }}
           onBack={show ? clearLaunch : undefined}
           onLaunch={async (o) => {
-            const run = (take?: HandoffTake) => startWork({ dir: launch.path || "", repo: launch.name }, o, take);
+            // Over the hub without its draft, the seed (a memo) never reached this session.
+            const run = (take?: HandoffTake) => startWork({ dir: launch.path || "", repo: launch.name, seedless: show && !carry }, o, take);
             // A handoff received from another member (docs/log/77) is taken BEFORE the session
             // is created and given back if the launch fails, so a just-withdrawn offer is never
             // launched (#2020).

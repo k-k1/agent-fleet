@@ -146,12 +146,14 @@ describe("Start hub — start in a space", () => {
     const launched = vi.fn();
     useLaunchSeed.getState().set("メモの本文");
     useLaunchSeed.getState().setMemoId("m1");
+    useLaunchSeed.getState().setInboxMemo("im1");
     useLaunchSeed.getState().setOnLaunched(launched);
     await openHub();
     expect(hubBox().value).toBe("メモの本文");
     await click(spaceGo());
     expect((createCalls()[0][2] as Record<string, unknown>).initial_prompt).toBe("メモの本文");
     expect(launched).toHaveBeenCalledWith("space-1");
+    expect((createCalls()[0][2] as Record<string, unknown>).inbox_memo_id).toBe("im1"); // it did get the memo
   });
 
   it("starts the draft over at each opening of the hub", async () => {
@@ -265,6 +267,7 @@ describe("Start hub — the draft's files and the memo it came from", () => {
     });
     useLaunchSeed.getState().set("メモの本文");
     useLaunchSeed.getState().setMemoId("m1");
+    useLaunchSeed.getState().setInboxMemo("im1"); // a memo taken in from the inbox
     useLaunchSeed.getState().setOnLaunched(launched);
     await openHub("other");
     await click([...document.querySelectorAll<HTMLButtonElement>(".start-row")].find((b) => b.textContent?.includes(t("start.newdir_title")))!);
@@ -278,6 +281,7 @@ describe("Start hub — the draft's files and the memo it came from", () => {
     expect(lastBox().value).not.toBe("メモの本文"); // the dialog shows its own draft, not the memo
     await click([...foot().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === t("launch.launch"))!);
     expect(createCalls()).toHaveLength(1);
+    expect(createCalls()[0][2]).not.toHaveProperty("inbox_memo_id"); // no provenance for a memo it never got
     expect(launched).not.toHaveBeenCalled();
   });
 

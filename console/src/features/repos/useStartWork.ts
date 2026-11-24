@@ -28,9 +28,15 @@ export interface StartTarget {
   dir: string;
   /** Working-copy folder name for repoLast / prompt history ("" = skip). */
   repo: string;
+  /** The launch does not carry the launch seed's text (a repository picked in the Start hub
+   *  without the hub's draft): none of the seed's lineage, work item or inbox provenance rides
+   *  along either, since the session never received what they describe. */
+  seedless?: boolean;
 }
 
 /** The handoff take a launch from another member's offer carries (acceptHandoff.ts). */
+const EMPTY_SEED = { handoffSession: "", handoffId: "", workItem: null, inboxItemId: "", inboxMemoId: "" } as const;
+
 export interface HandoffTake {
   offerId: string;
   token: string;
@@ -53,7 +59,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo }, { kind, driver, model, effort, route, routeConnection, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd, space }, take) => {
+  return async ({ dir, repo, seedless = false }, { kind, driver, model, effort, route, routeConnection, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd, space }, take) => {
     const hasModel = agentOf(kind).caps.model;
     // With attachments the first prompt's text cannot be fixed until the session exists,
     // because the saved paths have to be woven into it and the upload target IS that
@@ -99,7 +105,8 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     // hint the server checks, never a claim it takes. Read from the store rather than through a
     // prop because it is the same source StartHost badges the proposal from, and the two must
     // not be able to disagree about which proposal this launch was.
-    const { handoffSession, handoffId } = useLaunchSeed.getState();
+    const launchSeed = seedless ? EMPTY_SEED : useLaunchSeed.getState();
+    const { handoffSession, handoffId } = launchSeed;
     if (handoffSession && handoffId) {
       body.origin_session = handoffSession;
       body.origin_proposal = handoffId;
@@ -108,7 +115,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     // through the branch-name resolver keeps {ref} and the kind (ADR 0103 decision 8). The same
     // store as the lineage above, for the same reason. An older Agent ignores the field (the
     // create decodes leniently), so it needs no fallback.
-    const { workItem } = useLaunchSeed.getState();
+    const { workItem } = launchSeed;
     if (workItem) {
       body.work_item = { provider: workItem.provider, key: workItem.key, title: workItem.title, type: workItem.type, labels: workItem.labels };
     }
@@ -124,7 +131,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     }
     // A launch from an inbox request goes through the CP's request launch: the same create
     // body, but the CP checks the claim first and records the session on the request.
-    const { inboxItemId, inboxMemoId } = useLaunchSeed.getState();
+    const { inboxItemId, inboxMemoId } = launchSeed;
     // The memo a launch was seeded from: the Control Plane turns it into the session's
     // provenance badge when the memo was taken in from the inbox. It names the memo, never
     // the origin itself, which the server alone sets.
