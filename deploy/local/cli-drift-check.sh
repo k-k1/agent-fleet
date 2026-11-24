@@ -116,7 +116,7 @@ for t in "${TARGETS[@]}"; do
     github)
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "${GH_AUTH[@]}" \
         "https://api.github.com/repos/${locator}/releases/latest" 2>/dev/null |
-        jq -r '.tag_name // empty | sub("^v";"")' 2>/dev/null)" ;;
+        jq -r '.tag_name // empty | sub("^v";"")' 2>/dev/null)" || latest="" ;;
     agy)
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
         jq -r '.version // empty' 2>/dev/null)" ;;

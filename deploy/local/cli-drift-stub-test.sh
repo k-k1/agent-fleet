@@ -136,6 +136,8 @@ case "$name" in
     echo "  url=\"https://downloads.cursor.com/versions/${version}/linux\""
     seq 1 4000 | sed 's/^/# trailing padding line /' ;;
 esac
+# STUB_PARTIAL names rows whose body arrived whole and whose transfer then failed.
+case ",${STUB_PARTIAL:-}," in *",$name,"*) exit 18 ;; esac
 FAKE
 # git answers `ls-remote --tags --refs <url> <glob>` for the awscli row. Tags come out in
 # lexicographic order, as the real command prints them, with a pre-release and a lower
@@ -268,6 +270,13 @@ in_sync gcloud
 STUB_GIT_PARTIAL=1 STUB_FAIL="" STUB_DRIFT="" run_check
 out_has '^failed=awscli$'
 out_has '^latest_awscli=$'
+
+# The same for every curl-read new row: a full body followed by a failed transfer is no answer.
+for name in mcp_grafana go gcloud cloudwatch_mcp; do
+  STUB_PARTIAL="$name" STUB_FAIL="" STUB_DRIFT="" run_check
+  out_has "^failed=$name\$"
+  out_has "^latest_$name=\$"
+done
 
 echo "== case 5d: GH_TOKEN goes to api.github.com only, and nothing is sent without it =="
 export STUB_CURL_LOG="$WORK/curl.log"
