@@ -50,7 +50,8 @@ P_CURSOR="$(pin_of CURSOR_VERSION)"
 P_KIRO="$(pin_of KIRO_VERSION)"
 P_MUSE="$(pin_of MUSE_VERSION)"
 P_RTK="$(pin_of RTK_VERSION)"
-for v in P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK; do
+P_GH="$(pin_of GH_VERSION)"
+for v in P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK P_GH; do
   [ -n "${!v}" ] || fail "$v: its ARG is missing from workspace/Dockerfile"
 done
 
@@ -62,7 +63,7 @@ done
 cat > "$STUB/drift-check" <<'FAKE'
 #!/usr/bin/env bash
 rc=0
-for k in claude codex opencode copilot agy cursor kiro muse rtk; do
+for k in claude codex opencode copilot agy cursor kiro muse rtk gh; do
   up="$(printf '%s' "$k" | tr a-z A-Z)"
   pin_var="P_$up"; latest_var="STUB_LATEST_$up"
   case ",${STUB_FAIL:-}," in *",$k,"*) echo "latest_$k=" >> "$GITHUB_OUTPUT"; continue ;; esac
@@ -140,7 +141,7 @@ echo "$*" >> "$STUB_REPORT_LOG"
 FAKE
 chmod +x "$STUB/fragment-check" "$STUB/report"
 export STUB_FRAG_LOG="$WORK/frag.log" STUB_REPORT_LOG="$WORK/report.log"
-export P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK
+export P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK P_GH
 
 serve() { # serve <url> <file>
   cp "$2" "$WWW/$(printf '%s' "$1" | sed 's|[^A-Za-z0-9._-]|_|g')"
@@ -150,7 +151,7 @@ sha512() { sha512sum "$1" | awk '{ print $1 }'; }
 
 # New versions, in the shapes the real sources use.
 L_CLAUDE=2.1.999 L_CODEX=0.999.0 L_AGY=1.9.9 L_CURSOR=2099.01.01-abcdef0 L_KIRO=9.9.9
-L_MUSE=9.9.9-R9999.1 L_RTK=9.9.9
+L_MUSE=9.9.9-R9999.1 L_RTK=9.9.9 L_GH=9.9.9
 AGY_BUILD=1234567890123456
 
 mkdir -p "$WORK/art"
@@ -218,7 +219,7 @@ issue_with() { # issue_with <muse tested>
 
 export STUB_LATEST_CLAUDE="$L_CLAUDE" STUB_LATEST_CODEX="$L_CODEX" STUB_LATEST_AGY="$L_AGY" \
   STUB_LATEST_CURSOR="$L_CURSOR" STUB_LATEST_KIRO="$L_KIRO" STUB_LATEST_MUSE="$L_MUSE" \
-  STUB_LATEST_RTK="$L_RTK"
+  STUB_LATEST_RTK="$L_RTK" STUB_LATEST_GH="$L_GH"
 
 DF="$WORK/Dockerfile"
 rc=0
@@ -290,6 +291,8 @@ body_has "[\`agy-contract.yml\` passed on $L_AGY](https://github.com/k-k1/agent-
 body_has "| codex | \`$P_CODEX\` | \`$L_CODEX\` | no passing \`latest\` contract on $L_CODEX yet (tested: $P_CODEX) |"
 body_has "| muse | \`$P_MUSE\` | \`$L_MUSE\` | checksum refused: the x86 artifact hashes to"
 body_has "| rtk | \`$P_RTK\` | \`$L_RTK\` | no contract gates it"
+# A watch-only image tool (no contract) drifting is listed, never bumped.
+body_has "| gh | \`$P_GH\` | \`$L_GH\` | no contract gates it; bump \`GH_VERSION\` by hand"
 body_hasnt "| opencode |"   # in sync: neither bumped nor listed
 ID_1="$(sed -n 's/^edit_id=//p' "$WORK/gh_out")"
 [ "${#ID_1}" = 16 ] || fail "edit_id is not set: '$ID_1'"
