@@ -50,7 +50,11 @@ type Schedule struct {
 	DeliverTo string
 	// Silent lets a run whose final answer is exactly the sentinel ([SILENT]) deliver
 	// nothing: the run is recorded as fired_silent instead. Failures are never silent.
-	Silent               bool
+	Silent bool
+	// ShowInSessions lists the worktree children a run of this schedule starts in the Console's
+	// repository tree and Sessions list as the member's own (issue #5070). Display only: it never
+	// changes what a fire runs. Default false = they stay in the Schedules view.
+	ShowInSessions       bool
 	Enabled              bool
 	NextRun, LastRun     string
 	LastStatus           string
@@ -206,18 +210,18 @@ const scheduleCols = `SELECT id, membership_id, tenant_id, owner_conv, spec_kind
 	reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy,
 	manual_fire_pending, report, stop_after_run, held_by_removal, deliver_to, silent,
 	route, route_connection, gate_kind, gate_spec, gate_fired_fingerprint, gate_fired_at,
-	gate_window_start, gate_window_count, gate_last_eval_at, gate_last_verdict, approval_pending, generation FROM schedule`
+	gate_window_start, gate_window_count, gate_last_eval_at, gate_last_verdict, approval_pending, generation, show_in_sessions FROM schedule`
 
 func scanSchedule(row scanner) (Schedule, error) {
 	var s Schedule
-	var newBranch, enabled, manualFire, report, stopAfterRun, held, silent, pending int
+	var newBranch, enabled, manualFire, report, stopAfterRun, held, silent, pending, showInSessions int
 	err := row.Scan(&s.ID, &s.MembershipID, &s.TenantID, &s.OwnerConv, &s.SpecKind, &s.Spec, &s.SpecLabel, &s.TZ,
 		&s.WakePolicy, &s.SessionMode, &s.ReuseTarget, &s.AgentKind, &s.Model, &s.Repo, &s.Worktree, &newBranch, &s.Prompt,
 		&s.OverlapPolicy, &enabled, &s.NextRun, &s.LastRun, &s.LastStatus, &s.CreatedAt, &s.UpdatedAt,
 		&s.ReuseSession, &s.ReuseStartedAt, &s.ReuseRunCount, &s.Rotation, &s.MissingTargetPolicy,
 		&manualFire, &report, &stopAfterRun, &held, &s.DeliverTo, &silent, &s.Route, &s.RouteConnection,
 		&s.GateKind, &s.GateSpec, &s.GateFiredFingerprint, &s.GateFiredAt, &s.GateWindowStart,
-		&s.GateWindowCount, &s.GateLastEvalAt, &s.GateLastVerdict, &pending, &s.Generation)
+		&s.GateWindowCount, &s.GateLastEvalAt, &s.GateLastVerdict, &pending, &s.Generation, &showInSessions)
 	s.NewBranch = newBranch != 0
 	s.Enabled = enabled != 0
 	s.ManualFirePending = manualFire != 0
@@ -225,6 +229,7 @@ func scanSchedule(row scanner) (Schedule, error) {
 	s.StopAfterRun = stopAfterRun != 0
 	s.HeldByRemoval = held != 0
 	s.Silent = silent != 0
+	s.ShowInSessions = showInSessions != 0
 	s.ApprovalPending = pending != 0
 	return s, err
 }
@@ -235,13 +240,13 @@ func (s *SQL) CreateSchedule(ctx context.Context, sc Schedule) error {
 		   wake_policy, session_mode, reuse_target, agent_kind, model, repo, worktree, new_branch, prompt,
 		   overlap_policy, enabled, next_run, last_run, last_status, created_at, updated_at,
 		   reuse_session, reuse_started_at, reuse_run_count, rotation, missing_target_policy, report,
-		   stop_after_run, deliver_to, silent, route, route_connection, gate_kind, gate_spec, approval_pending)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   stop_after_run, deliver_to, silent, route, route_connection, gate_kind, gate_spec, approval_pending, show_in_sessions)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		sc.ID, sc.MembershipID, sc.TenantID, sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ,
 		sc.WakePolicy, sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.LastRun, sc.LastStatus, sc.CreatedAt, sc.UpdatedAt,
 		sc.ReuseSession, sc.ReuseStartedAt, sc.ReuseRunCount, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, b2i(sc.ApprovalPending))
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, b2i(sc.ApprovalPending), b2i(sc.ShowInSessions))
 	return err
 }
 
@@ -301,13 +306,13 @@ func (s *SQL) UpdateSchedule(ctx context.Context, sc Schedule) error {
 		`UPDATE schedule SET owner_conv=?, spec_kind=?, spec=?, spec_label=?, tz=?, wake_policy=?,
 		   session_mode=?, reuse_target=?, agent_kind=?, model=?, repo=?, worktree=?, new_branch=?, prompt=?,
 		   overlap_policy=?, enabled=?, next_run=?, updated_at=?, rotation=?, missing_target_policy=?, report=?,
-		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, gate_kind=?, gate_spec=?, held_by_removal=0, approval_pending=?, generation=generation+1,
+		   stop_after_run=?, deliver_to=?, silent=?, route=?, route_connection=?, gate_kind=?, gate_spec=?, held_by_removal=0, approval_pending=?, show_in_sessions=?, generation=generation+1,
 		   manual_fire_pending=CASE WHEN ?=1 THEN 0 ELSE manual_fire_pending END
 		 WHERE id=? AND membership_id=? AND generation=?`,
 		sc.OwnerConv, sc.SpecKind, sc.Spec, sc.SpecLabel, sc.TZ, sc.WakePolicy,
 		sc.SessionMode, sc.ReuseTarget, sc.AgentKind, sc.Model, sc.Repo, sc.Worktree, b2i(sc.NewBranch), sc.Prompt,
 		sc.OverlapPolicy, b2i(sc.Enabled), sc.NextRun, sc.UpdatedAt, sc.Rotation, sc.MissingTargetPolicy, b2i(sc.Report),
-		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, b2i(sc.ApprovalPending), b2i(sc.ApprovalPending), sc.ID, sc.MembershipID, sc.Generation)
+		b2i(sc.StopAfterRun), sc.DeliverTo, b2i(sc.Silent), sc.Route, sc.RouteConnection, sc.GateKind, sc.GateSpec, b2i(sc.ApprovalPending), b2i(sc.ShowInSessions), b2i(sc.ApprovalPending), sc.ID, sc.MembershipID, sc.Generation)
 	if err != nil {
 		return err
 	}
