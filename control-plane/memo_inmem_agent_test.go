@@ -85,14 +85,14 @@ func (t inMemTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if !strings.HasSuffix(req.URL.Hostname(), inMemAgentHost) {
 		return t.next.RoundTrip(req)
 	}
+	if req.Body != nil {
+		defer req.Body.Close() // a RoundTripper closes the body on every path, errors included
+	}
 	v, ok := inMemAgents.Load(req.URL.Host)
 	if !ok {
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
 	}
 	a := v.(*inMemAgent)
-	if req.Body != nil {
-		defer req.Body.Close() // a RoundTripper closes the body on every path, errors included
-	}
 	// A real Transport refuses a request whose context is already done before it sends anything.
 	if err := req.Context().Err(); err != nil {
 		return nil, err

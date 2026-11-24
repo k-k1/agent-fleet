@@ -67,14 +67,19 @@ func TestInMemAgentResponseAfterCancelIsAnError(t *testing.T) {
 	}
 }
 
-// Closing the Agent waits for a running call and refuses a call that arrives meanwhile.
+// Closing the Agent waits for a running call and refuses a call that arrives meanwhile. A
+// regression is reported with t.Error, and the first handler is released and every goroutine
+// joined on the failure path too, so the bubble ends.
 func TestInMemAgentCloseDrainsAndRefuses(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
 		release := make(chan struct{})
 		started := make(chan struct{})
+		var first atomic.Bool
 		url, closeAgent := registerInMemAgent(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			close(started)
-			<-release
+			if first.CompareAndSwap(false, true) {
+				close(started)
+				<-release
+			}
 		}))
 		firstErr := make(chan error, 1)
 		go func() {
@@ -88,20 +93,21 @@ func TestInMemAgentCloseDrainsAndRefuses(t *testing.T) {
 		<-started
 		closed := make(chan struct{})
 		go func() { closeAgent(); close(closed) }()
-		synctest.Wait() // close is now waiting for the first call
+		synctest.Wait() // close is now waiting for the first call, or has returned
 		select {
 		case <-closed:
-			t.Fatal("close returned while a call was still running")
+			t.Error("close returned while a call was still running")
 		default:
 		}
 		req, _ := http.NewRequest(http.MethodGet, url+"/sessions", nil)
-		if _, err := agentHTTPClient.Do(req); err == nil {
-			t.Fatal("a call arriving during close was served")
+		if resp, err := agentHTTPClient.Do(req); err == nil {
+			resp.Body.Close()
+			t.Error("a call arriving during close was served")
 		}
 		close(release)
 		<-closed
 		if err := <-firstErr; err != nil {
-			t.Fatalf("the running call failed: %v", err)
+			t.Errorf("the running call failed: %v", err)
 		}
 	})
 }
