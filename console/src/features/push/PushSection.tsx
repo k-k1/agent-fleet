@@ -11,7 +11,7 @@ import {
   type PushKind,
 } from "./pushApi.ts";
 import { usePushKey } from "./usePushKey.ts";
-import { currentSubscription, disablePush, enablePush, pushSupport, subscriptionMatchesKey, thisDeviceId } from "./webPush.ts";
+import { currentSubscription, deviceIdFor, disablePush, enablePush, pushSupport, subscriptionMatchesKey } from "./webPush.ts";
 
 const KIND_LABEL = {
   question: "push.kind_question",
@@ -32,6 +32,10 @@ export function PushSection() {
   // A subscription made with a key the CP no longer uses: shown as off with a hint, re-enabling replaces it.
   const [stale, setStale] = useState(false);
   const [devices, setDevices] = useState<PushDevice[]>([]);
+  // The CP row id of this browser's subscription ("" without one), and whether the first read of
+  // the list has finished: until then "on" cannot be told from "off", so the switch is held.
+  const [myId, setMyId] = useState("");
+  const [loaded, setLoaded] = useState(false);
   // null until the saved choices arrive: a write built from an empty guess would erase them.
   const [off, setOff] = useState<string[] | null>(null);
   const [prefsFailed, setPrefsFailed] = useState(false);
@@ -53,11 +57,14 @@ export function PushSection() {
       setDevices(d);
       const matches = !!sub && subscriptionMatchesKey(sub, k);
       setStale(!!sub && !matches);
-      // This browser counts as enabled only while its key is current and the CP also knows it.
-      const id = thisDeviceId();
-      setHere(matches && (!id || d.some((x) => x.id === id)));
+      // This browser counts as enabled only while its key is current and the CP lists its row.
+      const id = sub ? await deviceIdFor(sub) : "";
+      setMyId(id);
+      setHere(matches && !!id && d.some((x) => x.id === id));
     } catch {
       /* transient; keep the last view */
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
@@ -84,6 +91,7 @@ export function PushSection() {
         if (res === "denied") toast(tr("push.denied"));
         else if (res === "unsupported") toast(tr("push.unsupported"));
         else if (res === "unavailable") toast(tr("push.unavailable"));
+        // "cancelled" (signed out meanwhile) says nothing: the page is leaving.
       } else {
         await disablePush();
       }
@@ -114,7 +122,7 @@ export function PushSection() {
     try {
       await removePushDevice(d.id);
       // Removing this very device also ends the browser's own subscription.
-      if (d.id === thisDeviceId()) await disablePush().catch(() => {});
+      if (d.id === myId) await disablePush().catch(() => {});
     } catch (e) {
       fail(e);
     } finally {
@@ -124,7 +132,6 @@ export function PushSection() {
   };
 
   const supported = pushSupport() === "ok";
-  const myId = thisDeviceId();
   return (
     <section className="ds-group" data-testid="push-section">
       <h4 className="ds-title">{tr("push.title")}</h4>
@@ -139,7 +146,7 @@ export function PushSection() {
               role="switch"
               className="noti-switch"
               checked={here}
-              disabled={busy || perm === "denied"}
+              disabled={busy || !loaded || perm === "denied"}
               onChange={(e) => void toggleHere(e.target.checked)}
             />{" "}
             {tr("push.this_device")}

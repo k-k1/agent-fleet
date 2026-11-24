@@ -1,6 +1,6 @@
 // Browser side of Web Push (#4750): subscribe / unsubscribe this device through the service worker
 // (public/sw.js), and release it on sign-out. Nothing here caches or intercepts a request.
-import { addPushDevice, releasePushEndpoint, removePushDevice } from "./pushApi.ts";
+import { addPushDevice, probePushKey, releasePushEndpoint, removePushDevice } from "./pushApi.ts";
 
 // The CP's id of this browser's subscription, kept to mark "this device" in the list. Best effort:
 // without it the list simply marks nothing. The af prefix makes clearLocalState drop it at sign-out.
@@ -59,6 +59,28 @@ const forgetDeviceId = () => {
   }
 };
 
+/**
+ * The CP's id for a subscription: the first 8 bytes of SHA-256 over the endpoint, hex (the CP's
+ * store.PushSubscriptionID). "" where the browser has no SubtleCrypto.
+ */
+async function derivedDeviceId(endpoint: string): Promise<string> {
+  try {
+    const sum = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(endpoint));
+    return [...new Uint8Array(sum).slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The CP row id of this browser's subscription. Derived from the endpoint rather than read from
+ * localStorage alone: the stored id is lost with the storage (cleared site data, another profile
+ * mode) while the subscription and its CP row live on.
+ */
+export async function deviceIdFor(sub: PushSubscription): Promise<string> {
+  return (await derivedDeviceId(sub.endpoint)) || thisDeviceId();
+}
+
 function b64urlToBytes(s: string): Uint8Array<ArrayBuffer> {
   const pad = "=".repeat((4 - (s.length % 4)) % 4);
   const bin = atob((s + pad).replace(/-/g, "+").replace(/_/g, "/"));
@@ -79,7 +101,12 @@ export function subscriptionMatchesKey(sub: PushSubscription, key: string): bool
   return bytesToB64url(sub.options?.applicationServerKey) === key.replace(/=+$/, "");
 }
 
-export type EnableResult = "ok" | "denied" | "unsupported" | "unavailable";
+// "cancelled": the member signed out while the enable was running; nothing is left registered.
+export type EnableResult = "ok" | "denied" | "unsupported" | "unavailable" | "cancelled";
+
+// Bumped by every sign-out. A subscribe() or CP call that settles after the sign-out released this
+// browser would otherwise register it again under the account that is leaving.
+let accountEpoch = 0;
 
 const READY_TIMEOUT_MS = 10_000;
 // serviceWorker.ready never settles when the worker failed to register; bound it so the UI recovers.
@@ -91,18 +118,26 @@ function swReady(): Promise<ServiceWorkerRegistration> {
 }
 
 /**
- * Asks permission, subscribes and registers this browser with the CP. `key` is the CP's public key,
- * loaded before the click: requestPermission is the first await so it still runs inside the user's
- * tap (iOS refuses the prompt once the activation has lapsed). Throws the CP's message on refusal.
+ * Asks permission, subscribes and registers this browser with the CP. `key` is the CP's public key
+ * as the screen last saw it, loaded before the click: requestPermission is the first await so it
+ * still runs inside the user's tap (iOS refuses the prompt once the activation has lapsed). The key
+ * is read again right after the prompt, since the CP may have rotated it while the screen was open;
+ * the screen's copy is used only when that read fails. Throws the CP's message on refusal.
  */
 export async function enablePush(key: string | null): Promise<EnableResult> {
   if (pushSupport() !== "ok") return "unsupported";
   if (!key) return "unavailable";
+  const epoch = accountEpoch;
+  const signedOut = () => epoch !== accountEpoch;
   const perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
   if (perm !== "granted") return "denied";
+  const fresh = await probePushKey().catch(() => key);
+  if (!fresh) return "unavailable";
   const reg = await swReady();
+  if (signedOut()) return "cancelled";
   let sub = await reg.pushManager.getSubscription();
-  if (sub && !subscriptionMatchesKey(sub, key)) {
+  if (signedOut()) return "cancelled";
+  if (sub && !subscriptionMatchesKey(sub, fresh)) {
     // Made with a key the CP no longer sends with (rotation): its pushes would be refused, so end
     // it on both sides first (the old row also frees a slot at the device cap) and start over.
     // The CP row goes first and its failure stops the swap: the old keys are needed to retry.
@@ -111,12 +146,29 @@ export async function enablePush(key: string | null): Promise<EnableResult> {
     forgetDeviceId();
     sub = null;
   }
-  if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(key) });
+  // Only a subscription this call made is taken back on a failure: one that was already there
+  // belongs to an earlier enable and is not this call's to end.
+  let created = false;
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(fresh) });
+    created = true;
+  }
+  if (signedOut()) {
+    if (created) await sub.unsubscribe().catch(() => {});
+    return "cancelled";
+  }
   try {
-    storeDeviceId(await addPushDevice(sub.toJSON()));
+    const id = await addPushDevice(sub.toJSON());
+    if (signedOut()) {
+      // The CP accepted it after the sign-out released this browser: take it off again.
+      await releasePushEndpoint(sub.toJSON()).catch(() => {});
+      await sub.unsubscribe().catch(() => {});
+      return "cancelled";
+    }
+    storeDeviceId(id);
   } catch (e) {
     // A subscription the CP does not know would be a device that silently gets nothing.
-    await sub.unsubscribe().catch(() => {});
+    if (created) await sub.unsubscribe().catch(() => {});
     throw e;
   }
   return "ok";
@@ -140,6 +192,7 @@ export async function disablePush(): Promise<void> {
  * still pending at the deadline is left to finish on its own, and the CP prunes on the next 410.
  */
 export async function releasePushForSignOut(timeoutMs = 2500): Promise<void> {
+  accountEpoch++;
   const ctl = new AbortController();
   const work = (async () => {
     // One retry for a read that failed: reading nothing must not be taken for "no subscription".

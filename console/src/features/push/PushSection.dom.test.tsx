@@ -7,6 +7,8 @@ let off: string[] = ["answer-ready"];
 let prefsGate: Promise<void> | null = null;
 let sub: unknown = null;
 let matches = true;
+let myId = "d1"; // what webPush derives for this browser's subscription
+let listGate: Promise<void> | null = null;
 const puts: string[][] = [];
 vi.mock("./pushApi.ts", async (orig) => ({
   ...(await orig<typeof import("./pushApi.ts")>()),
@@ -16,14 +18,14 @@ vi.mock("./pushApi.ts", async (orig) => ({
     puts.push(o);
     return Promise.resolve();
   },
-  listPushDevices: () => Promise.resolve([{ id: "d1", userAgent: "Mozilla/5.0 (iPhone) Safari/605", createdAt: "2026-11-22T00:00:00Z", lastOkAt: "" }]),
+  listPushDevices: () => (listGate ? listGate : Promise.resolve()).then(() => [{ id: "d1", userAgent: "Mozilla/5.0 (iPhone) Safari/605", createdAt: "2026-11-22T00:00:00Z", lastOkAt: "" }]),
   removePushDevice: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("./webPush.ts", () => ({
   pushSupport: () => "ok",
   currentSubscription: () => Promise.resolve(sub),
   subscriptionMatchesKey: () => matches,
-  thisDeviceId: () => "",
+  deviceIdFor: () => Promise.resolve(myId),
   enablePush: vi.fn(),
   disablePush: vi.fn(),
 }));
@@ -48,6 +50,8 @@ beforeEach(() => {
   prefsGate = null;
   sub = null;
   matches = true;
+  myId = "d1";
+  listGate = null;
   puts.length = 0;
 });
 afterEach(() => {
@@ -94,6 +98,30 @@ describe("PushSection", () => {
     const sw = host.querySelector<HTMLInputElement>("label input[role=switch]")!;
     expect(sw.checked).toBe(false);
     expect(host.textContent).toContain(t("push.stale"));
+  });
+  it("shows this browser as on when the CP lists the row its endpoint maps to, with nothing stored locally", async () => {
+    sub = {};
+    const host = await mount();
+    expect(host.querySelector<HTMLInputElement>("label input[role=switch]")!.checked).toBe(true);
+    expect(host.textContent).toContain(t("push.this_badge"));
+  });
+  it("shows this browser as off when the CP has no row for its subscription", async () => {
+    sub = {};
+    myId = "gone";
+    const host = await mount();
+    expect(host.querySelector<HTMLInputElement>("label input[role=switch]")!.checked).toBe(false);
+  });
+  it("holds the device switch until the device list has loaded", async () => {
+    sub = {};
+    let open!: () => void;
+    listGate = new Promise<void>((r) => (open = r));
+    const host = await mount();
+    const sw = host.querySelector<HTMLInputElement>("label input[role=switch]")!;
+    expect(sw.disabled).toBe(true);
+    open();
+    await flush();
+    expect(sw.disabled).toBe(false);
+    expect(sw.checked).toBe(true);
   });
   it("labels a device from its user agent", () => {
     expect(shortAgent("Mozilla/5.0 (Linux; Android 14) Chrome/120 Mobile Safari/537")).toBe("Chrome / Android");

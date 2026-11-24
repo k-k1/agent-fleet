@@ -3,8 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const released: unknown[] = [];
 const removed: string[] = [];
 let releaseFails = false;
+let probe: () => Promise<string | null> = () => Promise.resolve("AQAB");
+let addDevice: () => Promise<string> = () => Promise.resolve("dev1");
 vi.mock("./pushApi.ts", () => ({
-  addPushDevice: () => Promise.resolve("dev1"),
+  probePushKey: () => probe(),
+  addPushDevice: () => addDevice(),
   removePushDevice: (id: string) => {
     removed.push(id);
     return Promise.resolve();
@@ -16,7 +19,8 @@ vi.mock("./pushApi.ts", () => ({
   },
 }));
 
-import { disablePush, enablePush, releasePushForSignOut, subscriptionMatchesKey } from "./webPush.ts";
+import { createHash } from "node:crypto";
+import { deviceIdFor, disablePush, enablePush, releasePushForSignOut, subscriptionMatchesKey } from "./webPush.ts";
 
 let unsubscribed = 0;
 const keyBytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
@@ -36,6 +40,8 @@ beforeEach(() => {
   removed.length = 0;
   unsubscribed = 0;
   releaseFails = false;
+  probe = () => Promise.resolve("AQAB");
+  addDevice = () => Promise.resolve("dev1");
   current = sub;
   localStorage.clear();
   sub.options.applicationServerKey = keyBytes("AQAB");
@@ -48,7 +54,10 @@ beforeEach(() => {
   (window as any).PushManager = function () {};
   (window as any).Notification = { permission: "granted", requestPermission: () => Promise.resolve("granted") };
 });
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 
 describe("web push device lifecycle", () => {
   it("a subscription made with another key is replaced, the old row released first", async () => {
@@ -136,5 +145,84 @@ describe("web push device lifecycle", () => {
     (window as any).Notification = { permission: "denied", requestPermission: () => Promise.resolve("denied") };
     expect(await enablePush("AQAB")).toBe("denied");
     expect(localStorage.getItem("af-push-sub-id")).toBeNull();
+  });
+
+  it("subscribes with the key the CP serves now, not the one the screen loaded earlier", async () => {
+    current = null;
+    probe = () => Promise.resolve("AgAB"); // rotated since Settings opened
+    const reg = (await navigator.serviceWorker.getRegistration())!;
+    const subscribe = vi.spyOn(reg.pushManager, "subscribe");
+    expect(await enablePush("AQAB")).toBe("ok");
+    expect([...(subscribe.mock.calls[0]![0]!.applicationServerKey as Uint8Array)]).toEqual([2, 0, 1]);
+  });
+  it("replaces a subscription that matches the screen's key but not the rotated one", async () => {
+    probe = () => Promise.resolve("AgAB");
+    expect(await enablePush("AQAB")).toBe("ok");
+    expect(released).toEqual([sub.toJSON()]);
+    expect(subscribed).toBe(1);
+  });
+  it("falls back to the screen's key when the key read fails, and stops when the CP now has none", async () => {
+    current = null;
+    probe = () => Promise.reject(new Error("503"));
+    expect(await enablePush("AQAB")).toBe("ok");
+    expect(subscribed).toBe(1);
+    subscribed = 0;
+    probe = () => Promise.resolve(null);
+    expect(await enablePush("AQAB")).toBe("unavailable");
+    expect(subscribed).toBe(0);
+  });
+  it("a sign-out during subscribe() takes the new subscription back and registers nothing", async () => {
+    current = null;
+    let done!: () => void;
+    const reg = (await navigator.serviceWorker.getRegistration())!;
+    vi.spyOn(reg.pushManager, "subscribe").mockImplementation(() => new Promise((r) => (done = () => r(sub as never))));
+    const add = vi.fn(() => Promise.resolve("dev1"));
+    addDevice = add;
+    const p = enablePush("AQAB");
+    await vi.waitFor(() => expect(done).toBeTypeOf("function"));
+    await releasePushForSignOut(); // reads no subscription yet: nothing to release
+    done();
+    expect(await p).toBe("cancelled");
+    expect(add).not.toHaveBeenCalled();
+    expect(unsubscribed).toBe(1);
+    expect(localStorage.getItem("af-push-sub-id")).toBeNull();
+  });
+  it("a sign-out while the CP registers the device releases it again once the CP answers", async () => {
+    let answer!: (id: string) => void;
+    addDevice = () => new Promise((r) => (answer = r));
+    const p = enablePush("AQAB");
+    await vi.waitFor(() => expect(answer).toBeTypeOf("function"));
+    await releasePushForSignOut();
+    released.length = 0;
+    unsubscribed = 0;
+    answer("dev1");
+    expect(await p).toBe("cancelled");
+    expect(released).toEqual([sub.toJSON()]);
+    expect(unsubscribed).toBe(1);
+    expect(localStorage.getItem("af-push-sub-id")).toBeNull();
+  });
+  it("a failed registration takes back only a subscription this call made", async () => {
+    addDevice = () => Promise.reject(new Error("cap"));
+    await expect(enablePush("AQAB")).rejects.toThrow("cap"); // reuses the existing subscription
+    expect(unsubscribed).toBe(0);
+    current = null;
+    await expect(enablePush("AQAB")).rejects.toThrow("cap"); // made it itself
+    expect(unsubscribed).toBe(1);
+  });
+  it("gives up with an error when the service worker never becomes ready", async () => {
+    vi.useFakeTimers();
+    Object.defineProperty(navigator, "serviceWorker", {
+      value: { getRegistration: () => Promise.resolve(undefined), ready: new Promise(() => {}) },
+      configurable: true,
+    });
+    const p = enablePush("AQAB");
+    const failed = expect(p).rejects.toThrow("service worker not ready");
+    await vi.advanceTimersByTimeAsync(10_000);
+    await failed;
+    expect(subscribed).toBe(0);
+  });
+  it("derives the CP's row id from the endpoint", async () => {
+    const want = createHash("sha256").update("https://push.example/x").digest("hex").slice(0, 16);
+    expect(await deviceIdFor({ endpoint: "https://push.example/x" } as PushSubscription)).toBe(want);
   });
 });
