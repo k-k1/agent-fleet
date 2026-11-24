@@ -138,7 +138,7 @@ func agentMemLintSaveTerms(doc agentMemLintTermsDoc) error {
 // agentMemLintGit runs git against one git directory by ref, never in a working copy.
 func agentMemLintGit(ctx context.Context, gitDir string, stdin []byte, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"--git-dir=" + gitDir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -198,14 +198,14 @@ func (r agentMemLintRepo) RemovedKeys() ([]memorylint.RemovedKey, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", "--git-dir="+r.gitDir, "log", "-n", strconv.Itoa(agentMemLintKeyCommits),
-		"--no-merges", "-p", "-U0", "--no-color", "--no-ext-diff", "--format=%x01%h%x02%s", r.ref, "--", ":(exclude,top)docs/log")
+		"--no-merges", "-p", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", "--format=%x01%h%x02%s", r.ref, "--", ":(exclude,top)docs/log")
 	// A work tree in the environment must not narrow the pathspec to a subtree.
 	for _, e := range os.Environ() {
 		if !strings.HasPrefix(e, "GIT_WORK_TREE=") && !strings.HasPrefix(e, "GIT_DIR=") {
 			cmd.Env = append(cmd.Env, e)
 		}
 	}
-	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
+	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, errors.New("git log failed")
@@ -254,6 +254,18 @@ func (r agentMemLintRepo) RemovedKeys() ([]memorylint.RemovedKey, error) {
 func (r agentMemLintRepo) FindSymbols(syms []string) (map[string]bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
 	defer cancel()
+	// In a partial clone git grep passes over the blobs it does not have without a word, and with
+	// lazy fetching off it must not get them: every symbol would read as missing. Whether the
+	// pinned tree is complete is asked of the objects themselves, not of the configuration (a
+	// promisor remote can be declared in more than one form), and a complete partial clone (a
+	// checkout fetched its tree) is searched as usual.
+	complete, err := agentMemLintTreeComplete(ctx, r.gitDir, r.ref)
+	if err != nil {
+		return nil, err
+	}
+	if !complete {
+		return nil, errors.New("the default branch's files are not all present (a partial clone)")
+	}
 	found := make(map[string]bool, len(syms))
 	for i := 0; i < len(syms); i += agentMemLintSymChunk {
 		chunk := syms[i:min(i+agentMemLintSymChunk, len(syms))]
@@ -262,7 +274,7 @@ func (r agentMemLintRepo) FindSymbols(syms []string) (map[string]bool, error) {
 			pat.WriteString(s + "\n")
 		}
 		cmd := exec.CommandContext(ctx, "git", "--git-dir="+r.gitDir, "grep", "-h", "-o", "-w", "-F", "-I", "-f", "-", r.ref)
-		cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
+		cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
 		cmd.Stdin = &pat
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -288,6 +300,25 @@ func (r agentMemLintRepo) FindSymbols(syms []string) (map[string]bool, error) {
 		}
 	}
 	return found, nil
+}
+
+// agentMemLintTreeComplete says whether every object of the pinned commit's tree is present.
+// rev-list with --missing=print names a missing object instead of fetching it (lazy fetching is
+// off as well), and --no-walk keeps it to this commit, not the history.
+func agentMemLintTreeComplete(ctx context.Context, gitDir, ref string) (bool, error) {
+	out, err := agentMemLintGit(ctx, gitDir, nil, "rev-list", "--objects", "--no-walk", "--missing=print", ref)
+	if err != nil {
+		if ctx.Err() != nil {
+			return false, errors.New("git rev-list timed out")
+		}
+		return false, errors.New("git rev-list failed")
+	}
+	for _, ln := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(ln, "?") {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // agentMemLintDefaultRef names the project's default branch as the remote has it. No fetch
@@ -381,6 +412,12 @@ func agentMemLintCollect(scope, project string) (agentMemLintWire, []agentMemEnt
 // agentMemLintCollectMemo is agentMemLintCollect that reuses the rename history another collect of
 // the same run already read, when it is the history of the same pinned revision.
 func agentMemLintCollectMemo(scope, project string, memo *agentMemLintRenameMemo) (agentMemLintWire, []agentMemEntry, agentMemCaller, memorylint.Repo, error) {
+	return agentMemLintCollectDoc(scope, project, memo, nil)
+}
+
+// agentMemLintCollectDoc is agentMemLintCollectMemo with the retired-term list given by the
+// caller (nil reads it), so a caller that has to know the list was read can use that one read.
+func agentMemLintCollectDoc(scope, project string, memo *agentMemLintRenameMemo, given *agentMemLintTermsDoc) (agentMemLintWire, []agentMemEntry, agentMemCaller, memorylint.Repo, error) {
 	out := agentMemLintWire{Scope: scope}
 	c, err := agentMemMemberCaller(scope, project)
 	if err != nil {
@@ -397,7 +434,12 @@ func agentMemLintCollectMemo(scope, project string, memo *agentMemLintRenameMemo
 		mems = append(mems, memorylint.Memory{Name: e.Name, Body: e.Body, Anchors: e.Anchors})
 	}
 	out.Project, out.Withheld = c.Project, withheld
-	doc := agentMemLintLoadDoc()
+	var doc agentMemLintTermsDoc
+	if given != nil {
+		doc = *given
+	} else {
+		doc = agentMemLintLoadDoc()
+	}
 	terms := doc.Terms
 	out.Terms = len(terms)
 

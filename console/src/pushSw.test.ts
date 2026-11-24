@@ -64,6 +64,70 @@ describe("push handler", () => {
   });
 });
 
+describe("tenant in the payload", () => {
+  const clickWith = async (sw: ReturnType<typeof loadSw>, data: unknown) => {
+    let p: Promise<unknown> = Promise.resolve();
+    sw.listeners.notificationclick({ notification: { close() {}, data }, waitUntil: (x: Promise<unknown>) => (p = x) });
+    await p;
+  };
+  it("keeps the tenant on the notification and in its tag", async () => {
+    const sw = loadSw();
+    await push(sw, { v: 1, kind: "question", session: "s", name: "S", tenant: "acme" });
+    expect(sw.shown[0].opts.data).toEqual({ session: "s", tenant: "acme" });
+    expect(sw.shown[0].opts.tag).toBe("af-acme/s-question");
+  });
+  it("does not let the same session name in two tenants replace each other's notification", async () => {
+    const sw = loadSw();
+    await push(sw, { kind: "question", session: "s", tenant: "a" });
+    await push(sw, { kind: "question", session: "s", tenant: "b" });
+    expect(sw.shown[0].opts.tag).not.toBe(sw.shown[1].opts.tag);
+  });
+  it("drops a tenant that is not a slug, and one that arrives without a session", async () => {
+    const sw = loadSw();
+    await push(sw, { kind: "question", session: "s", tenant: "a&session=x" });
+    await push(sw, { kind: "question", tenant: "acme" });
+    expect(sw.shown[0].opts.data.tenant).toBe("");
+    expect(sw.shown[1].opts.data).toEqual({ session: "", tenant: "" });
+  });
+  it("names the tenant when it opens a new window", async () => {
+    const sw = loadSw();
+    await clickWith(sw, { session: "my-sess", tenant: "acme" });
+    expect(sw.opened).toEqual(["https://console.test/?session=my-sess&tenant=acme"]);
+  });
+  it("hands the tenant to an open Console", async () => {
+    const msgs: unknown[] = [];
+    const win = {
+      url: "https://console.test/",
+      postMessage: (m: unknown, ports: MessagePort[]) => {
+        msgs.push(m);
+        ports[0].postMessage("ok");
+      },
+      focus: async () => {},
+    };
+    const sw = loadSw("en", [win]);
+    await clickWith(sw, { session: "my-sess", tenant: "acme" });
+    expect(msgs).toEqual([{ type: "af-open-tenant-session", session: "my-sess", tenant: "acme" }]);
+  });
+});
+
+describe("an open Console from before the tenant was in the push", () => {
+  it("does not get the tenant hand-off, so the tap opens a window that names the tenant", async () => {
+    // That Console answers only "af-open-session" and would open the name in its own tenant.
+    const win = {
+      url: "https://console.test/",
+      postMessage: (m: any, ports: MessagePort[]) => {
+        if (m.type === "af-open-session") ports[0].postMessage("ok");
+      },
+      focus: async () => {},
+    };
+    const sw = loadSw("en", [win]);
+    let p: Promise<unknown> = Promise.resolve();
+    sw.listeners.notificationclick({ notification: { close() {}, data: { session: "s", tenant: "acme" } }, waitUntil: (x: Promise<unknown>) => (p = x) });
+    await p;
+    expect(sw.opened).toEqual(["https://console.test/?session=s&tenant=acme"]);
+  }, 5000);
+});
+
 describe("notificationclick", () => {
   const click = async (sw: ReturnType<typeof loadSw>, session: string) => {
     let p: Promise<unknown> = Promise.resolve();

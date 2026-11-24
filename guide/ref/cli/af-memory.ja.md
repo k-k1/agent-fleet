@@ -8,7 +8,7 @@ source_of_truth: "af-memory --help（ワークスペースの workspace-agent �
 [English](af-memory.md) | 日本語
 
 ワークスペースのターミナルから、Agent Fleet のメモリを扱います。変更の一覧、Claude Code と muse のメモリの取り込み、
-Claude Code への書き戻し、リントができます。どれもワークスペースの Agent に頼むので、Console と同じスイッチとシークレットの検査が効きます。
+Claude Code への書き戻し、リント、昇格候補の一覧ができます。どれもワークスペースの Agent に頼むので、Console と同じスイッチとシークレットの検査が効きます。
 Console での使いかたは [メモリを取り込む・書き出す](../../user/memory/import-export.ja.md) にあります。
 
 ## 書式
@@ -23,6 +23,7 @@ af-memory muse-import --scope personal --into-user [--dry-run]
 af-memory export-sources
 af-memory export --project <ID か名前> [--dry-run] [--overwrite <名前>]...
 af-memory lint [--user | --project <ID か名前>] [--json] [--apply]
+af-memory promote-candidates [--project <ID か名前>] [--days N] [--json]
 af-memory --help
 ```
 
@@ -38,6 +39,7 @@ af-memory --help
 | `export-sources` | Claude Code へ書き戻せるプロジェクトを一覧する | 書かない |
 | `export` | プロジェクトのメモリを Claude Code 自身のメモリへ書き戻す | `--dry-run` なしなら書く |
 | `lint` | メモリを点検してレポートを出す | `--apply` を付けたときだけ書く |
+| `promote-candidates` | リポジトリの文書へ提案する価値のあるプロジェクトのメモリを一覧する | 書かない |
 | `--help`（`-h`・`help`） | 使いかたを表示する | 書かない |
 
 ## 終了コード
@@ -214,7 +216,7 @@ af-memory lint [--user | --project <ID か名前>] [--json] [--apply]
 | `oversize` | 4,096 バイトを超える本文 |
 
 - `--apply` なしでは何も書きません。読み取りもメモリの使用回数に数えません
-- リポジトリは作業コピーではなく、`origin` の既定ブランチを ref で読みます。fetch はしないので、古いクローンでは古い答えになります
+- リポジトリは作業コピーではなく、`origin` の既定ブランチを ref で読みます。fetch はしないので、古いクローンでは古い答えになります。部分クローン（`git clone --filter`）では、既定ブランチのファイルの中身がすべてそろっていない限り、シンボルの検査は飛ばします（既定ブランチをチェックアウトすると、そろいます）
 - 廃止した用語の提案が出ることがあります。一覧に入れるかどうかは Console で決めます
 - 終了コードは、コマンドが動いたかどうかです。指摘があっても 0 で終わります
 
@@ -229,3 +231,54 @@ af-memory lint [--user | --project <ID か名前>] [--json] [--apply]
 - 範囲ごとに `applied (…): N marked, N renamed, N moved since the check, N deferred` と表示し、そのあとのレポートは書き込んだあとの状態です
 - Agent Fleet のメモリのスイッチがオンである必要があります
 - 定期実行や、ほかの `--apply` が動いている間は断られます。終わってから、もう一度実行してください
+
+## promote-candidates
+
+十分に確かめられ、リポジトリ自身の文書へ提案する価値があるプロジェクトのメモリを一覧します。一覧するだけで、何も書かず、文面の提案もまだしません。
+
+```sh
+af-memory promote-candidates [--project <ID か名前>] [--days N] [--json]
+```
+
+| オプション | 意味 |
+|---|---|
+| （プロジェクトの指定なし） | メモリのあるすべてのプロジェクトを一覧します |
+| `--project <ID か名前>` | 1 つのプロジェクトだけを一覧します |
+| `--days N` | 今のリビジョンが変わらずに経っているべき日数です。1〜90 日、既定は 7 日です |
+| `--json` | 一覧を JSON で出します |
+
+次のすべてを満たすメモリが候補になります。
+
+- 種類（kind）が `lesson`・`procedure`・`preference` のどれかで、タイプ（type）が `user` ではありません（あなたではなく、リポジトリについてのメモリです）
+- 異なる 2 つ以上のセッションが、今のリビジョンを `memory_feedback` で確かめています。前のリビジョンへの確認は数えません
+- 保存されたアンカーがあり、どれも既定ブランチで見つかります。ツリーのファイルかディレクトリ、記録のある `ADR <番号>`、メモリの `[[名前]]`、ファイルの中に見つかるコードの形のシンボル（修飾なし。`pkg.Func` は調べられません）のどれかです。アンカー全体がそのどれか 1 つである必要があります。コマンドなど調べようのないアンカーは、実在する名前を含んでいても保留になります
+- 既定ブランチで lint がそのメモリについて何も指摘していません
+- 未解決の理由がありません
+- ストアの履歴で、ファイルが N 日以上変わっていません（lint が理由を足したり消したりするのも変更です）。また、最後に公開した変更と同じ内容です
+
+```
+== acme-shop: 1 candidate(s), 1 held (confirmed by 2 sessions, unchanged for 7 days)  [origin/main @ 3f9c2a1e5b07]
+   candidate  release-steps r3  procedure, 2 sessions, since 2026-11-01T00:00:00Z
+              anchors: scripts/release.sh
+   held       deploy-notes r1  lesson: no-anchors; confirmations (1 of 2 sessions on revision 1)
+```
+
+その種類のメモリで条件を満たさないものは `held` として、足りないものを添えて表示します。ストアの履歴（履歴による `changed-recently` と `unpublished`）は、ほかの条件をすべて満たすメモリについてだけ読むので、ほかに足りないものがあるメモリは、それを直したあとで理由が増えることがあります。
+
+| 足りないもの | 意味 |
+|---|---|
+| `about-member` | タイプが `user` です |
+| `open-reasons` | 「要確認」です |
+| `disputed` | あるセッションが、今のリビジョンを stale か wrong と報告しました。理由がメモリに付いていなくても、新しいリビジョンになるまで保留します |
+| `no-anchors` | 保存されたアンカーがありません |
+| `unverified` | 確かめられないものがあったので、どのメモリも候補になりません。既定ブランチを読めなかったか、その上の検査が失敗した、`origin/HEAD` が設定されていない（既定ブランチが推測にすぎません。`git remote set-head origin --auto` で設定できます）、部分クローンである、廃止した用語の一覧を読めない、のどれかです。どれだったかは `skipped` の行に出ます |
+| `anchor-not-found` | 保存されたアンカーが既定ブランチで見つかりません（そのアンカーを添えます） |
+| `lint` | lint がそのメモリについて指摘しています（指摘の名前を添えます） |
+| `moved` | 一覧を作っている間に変わりました。もう一度実行してください |
+| `unpublished` | ファイルが、最後に公開した変更と違います（Agent Fleet の外で編集したときなど）。または、リビジョンがその前の変更から正しく続いていません |
+| `confirmations` | 今のリビジョンを確かめたセッションが足りません |
+| `changed-recently` | 今のリビジョンができてから N 日経っていません |
+
+- アーカイブ済み・置き換え済みのメモリと、種類 `state`・`log` のメモリは表示しません
+- リポジトリは `lint` と同じく、`origin` の既定ブランチを ref で読みます。作業コピーは使わず、fetch もしません
+- 読み取りはメモリの使用回数に数えません。終了コードは、コマンドが動いたかどうかです

@@ -54,7 +54,7 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 |---|---|---|---|
 | [Claude Code (`claude`)](https://github.com/anthropics/claude-code) | Anthropic's coding agent | `2.1.330` | [Vendor terms](https://www.anthropic.com/legal/commercial-terms) |
 | [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI's coding agent | `0.171.0` | [Apache-2.0](https://github.com/openai/codex/blob/rust-v0.171.0/LICENSE) |
-| [opencode](https://github.com/anomalyco/opencode) | An open-source coding agent that works with many model providers | `2.3.2` | [MIT](https://github.com/anomalyco/opencode/blob/v2.3.2/LICENSE) |
+| [opencode](https://github.com/anomalyco/opencode) | An open-source coding agent that works with many model providers | `2.4.1` | [MIT](https://github.com/anomalyco/opencode/blob/v2.4.1/LICENSE) |
 | [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub's coding agent | `1.0.114` | [Vendor terms](https://github.com/github/copilot-cli/blob/v1.0.114/LICENSE.md) |
 | [Antigravity CLI (`agy`)](https://antigravity.google/) | Google's coding agent | `1.5.15` | [Vendor terms](https://antigravity.google/terms) |
 | [Cursor CLI (`cursor-agent`)](https://cursor.com/) | Cursor's coding agent | `2026.10.22-27dcf5f` | [Vendor terms](https://cursor.com/terms-of-service) |
@@ -108,7 +108,7 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 
 | Tool | What it is for | Version | Licence |
 |---|---|---|---|
-| [Chromium](https://www.chromium.org/) | Headless browser that agents use for screenshots and page checks | `156.0.8078.79` | [BSD-3-Clause](https://github.com/chromium/chromium/blob/156.0.8078.79/LICENSE) |
+| [Chromium](https://www.chromium.org/) | Headless browser that agents use for screenshots and page checks | `156.0.8078.108` | [BSD-3-Clause](https://github.com/chromium/chromium/blob/156.0.8078.108/LICENSE) |
 | [Noto Sans CJK](https://github.com/notofonts/noto-cjk) | Fonts for Japanese, Chinese and Korean pages | Debian 13 (trixie) package | [OFL-1.1](https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE) |
 
 ## Licence

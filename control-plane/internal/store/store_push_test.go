@@ -56,7 +56,7 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 		mems = append(mems, m.ID)
 	}
 	a, b := mems[0], mems[1]
-	checkPushPrefs(t, st, tn.ID, a, b)
+	checkPushPrefs(t, st, tn.ID, tn.Slug, a, b)
 	const ep = "https://fcm.googleapis.com/fcm/send/one"
 	sub := PushSubscription{MembershipID: a, Endpoint: ep, P256dh: "k1", Auth: "a1", UserAgent: "ua"}
 	for i := 0; i < 2; i++ { // a repeat is one row
@@ -264,7 +264,7 @@ func TestNotificationHookFiresOncePerRow(t *testing.T) {
 
 // checkPushPrefs covers the part 3 tables: per-member opt-out, the tenant text switch and the
 // active-membership check the sender relies on.
-func checkPushPrefs(t *testing.T, st *SQL, tenantID, a, b string) {
+func checkPushPrefs(t *testing.T, st *SQL, tenantID, slug, a, b string) {
 	t.Helper()
 	ctx := context.Background()
 	if off, err := st.GetPushOffKinds(ctx, a); err != nil || len(off) != 0 {
@@ -282,9 +282,12 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, a, b string) {
 	if off, _ := st.GetPushOffKinds(ctx, b); len(off) != 0 {
 		t.Fatalf("one member's opt-out leaked to another: %v", off)
 	}
-	active, inc, err := st.PushDeliveryContext(ctx, a)
-	if err != nil || !active || inc {
-		t.Fatalf("default context active=%v inc=%v err=%v", active, inc, err)
+	dc, err := st.PushDeliveryContext(ctx, a)
+	if err != nil || !dc.Active || dc.IncludeText {
+		t.Fatalf("default context=%+v err=%v", dc, err)
+	}
+	if slug == "" || dc.TenantSlug != slug {
+		t.Fatalf("tenant slug = %q, want %q", dc.TenantSlug, slug)
 	}
 	if err := st.PutTenantPushIncludeText(ctx, tenantID, true, "admin"); err != nil {
 		t.Fatal(err)
@@ -292,19 +295,19 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, a, b string) {
 	if on, _ := st.GetTenantPushIncludeText(ctx, tenantID); !on {
 		t.Fatal("setting not stored")
 	}
-	if _, inc, _ := st.PushDeliveryContext(ctx, a); !inc {
+	if dc, _ := st.PushDeliveryContext(ctx, a); !dc.IncludeText {
 		t.Fatal("tenant setting not seen by the sender")
 	}
 	if err := st.PutTenantPushIncludeText(ctx, tenantID, false, "admin"); err != nil {
 		t.Fatal(err)
 	}
-	if _, inc, _ := st.PushDeliveryContext(ctx, a); inc {
+	if dc, _ := st.PushDeliveryContext(ctx, a); dc.IncludeText {
 		t.Fatal("switching it off did not take effect")
 	}
 	if err := st.SetMembershipStatus(ctx, b, "inactive"); err != nil {
 		t.Fatal(err)
 	}
-	if active, _, _ := st.PushDeliveryContext(ctx, b); active {
+	if dc, _ := st.PushDeliveryContext(ctx, b); dc.Active || dc.TenantSlug != "" {
 		t.Fatal("a deactivated membership still counts as active")
 	}
 	if err := st.SetMembershipStatus(ctx, b, "active"); err != nil {

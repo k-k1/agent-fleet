@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -35,6 +36,7 @@ type memStore struct {
 	off        map[string][]string
 	inactive   map[string]bool
 	includeTxt bool
+	tenantSlug string
 }
 
 func (m *memStore) GetPushOffKinds(_ context.Context, mid string) ([]string, error) {
@@ -51,10 +53,10 @@ func (m *memStore) PutPushOffKinds(_ context.Context, mid string, k []string) er
 	m.off[mid] = k
 	return nil
 }
-func (m *memStore) PushDeliveryContext(_ context.Context, mid string) (bool, bool, error) {
+func (m *memStore) PushDeliveryContext(_ context.Context, mid string) (store.PushDelivery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return !m.inactive[mid], m.includeTxt, nil
+	return store.PushDelivery{Active: !m.inactive[mid], IncludeText: m.includeTxt, TenantSlug: m.tenantSlug}, nil
 }
 func (m *memStore) GetTenantPushIncludeText(context.Context, string) (bool, error) { return false, nil }
 func (m *memStore) PutTenantPushIncludeText(context.Context, string, bool, string) error {
@@ -279,6 +281,59 @@ func TestDeliverIsMinimal(t *testing.T) {
 	}
 	if strings.Contains(got, "SECRET") {
 		t.Fatal("the question text reached the push service")
+	}
+}
+
+// The payload names the receiving membership's tenant so the Console can open the session in that
+// tenant rather than in whichever one it currently shows.
+func TestPayloadCarriesTheTenantSlug(t *testing.T) {
+	f := newFixture(t)
+	f.st.tenantSlug = "acme"
+	d := f.subscribe(t, "m1")
+	f.deliver(note("question"))
+	if f.count() != 1 {
+		t.Fatalf("pushes: %d", f.count())
+	}
+	if got := d.open(t, f.bodies[0]); got != `{"v":1,"kind":"question","session":"s1","name":"My session","tenant":"acme"}` {
+		t.Fatalf("payload %s", got)
+	}
+}
+
+// A display name so long that even the base payload cannot be encrypted must not cost the push:
+// the name goes, the session and the tenant stay.
+func TestOverlongNameDropsTheNameNotThePush(t *testing.T) {
+	f := newFixture(t)
+	f.st.tenantSlug = "acme"
+	d := f.subscribe(t, "m1")
+	n := note("question")
+	n.DisplayName = strings.Repeat("x", 3930) // main's base JSON is 3980 bytes; the tenant tips it past 3993
+	f.deliver(n)
+	if f.count() != 1 {
+		t.Fatalf("the push was lost to a long name: %d", f.count())
+	}
+	if got := d.open(t, f.bodies[0]); got != `{"v":1,"kind":"question","session":"s1","tenant":"acme"}` {
+		t.Fatalf("payload %s", got)
+	}
+}
+
+// failingCtxStore fails the delivery-context read: the push still goes out, without a tenant.
+type failingCtxStore struct{ *memStore }
+
+func (failingCtxStore) PushDeliveryContext(context.Context, string) (store.PushDelivery, error) {
+	return store.PushDelivery{}, errors.New("db down")
+}
+
+func TestPayloadWithoutTenantWhenTheLookupFails(t *testing.T) {
+	f := newFixture(t)
+	f.st.tenantSlug = "acme"
+	f.svc.store = failingCtxStore{f.st}
+	d := f.subscribe(t, "m1")
+	f.deliver(note("question"))
+	if f.count() != 1 {
+		t.Fatalf("a failed tenant lookup must not lose the push: %d", f.count())
+	}
+	if got := d.open(t, f.bodies[0]); strings.Contains(got, "tenant") {
+		t.Fatalf("payload %s", got)
 	}
 }
 

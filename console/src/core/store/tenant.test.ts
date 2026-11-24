@@ -20,8 +20,9 @@ vi.stubGlobal("fetch", fetchMock);
 
 let useTenantStore: (typeof import("./tenant.ts"))["useTenantStore"];
 let setTenant: (typeof import("../api/client.ts"))["setTenant"];
+let setLandingTenantHint: (typeof import("./tenant.ts"))["setLandingTenantHint"];
 beforeAll(async () => {
-  ({ useTenantStore } = await import("./tenant.ts"));
+  ({ useTenantStore, setLandingTenantHint } = await import("./tenant.ts"));
   ({ setTenant } = await import("../api/client.ts"));
 });
 
@@ -134,6 +135,14 @@ describe("tenant store boot hint", () => {
 
   it("keeps the persisted selection when there is no hint", async () => {
     expect(await boot("", ["dev", "sales"], "sales")).toBe("sales");
+  });
+
+  // A push link's tenant is handed over in memory (its URL is cleaned at once): it picks the
+  // landing tenant like the URL hint, and only for the boot that received it.
+  it("takes a hint handed over in memory, for one boot only", async () => {
+    setLandingTenantHint("sales");
+    expect(await boot("", ["dev", "sales"], "dev")).toBe("sales");
+    expect(await boot("", ["dev", "sales"], "dev")).toBe("dev");
   });
 });
 

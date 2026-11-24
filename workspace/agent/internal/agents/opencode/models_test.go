@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sync"
 	"testing"
 	"time"
 )
@@ -104,8 +105,187 @@ func TestModelsFallsBackWithoutDaemon(t *testing.T) {
 	orig := oauthProbe
 	oauthProbe = func() (string, bool) { return "", false }
 	defer func() { oauthProbe = orig }()
-	if got := modelsFromDaemon(); got != nil {
-		t.Fatalf("no daemon present, yet got %v", got)
+	if got := modelsFromDaemon(); got.ids != nil || got.up {
+		t.Fatalf("no daemon present, yet got %+v", got)
+	}
+}
+
+// bootingServe is a stub `opencode serve` whose answers can be moved through the 2.4 boot steps:
+// GET /api/plugin and GET /api/model each answer what was last set (a 404 for an empty string).
+type bootingServe struct {
+	mu              sync.Mutex
+	plugins, models string
+}
+
+func (b *bootingServe) set(plugins, models string) {
+	b.mu.Lock()
+	b.plugins, b.models = plugins, models
+	b.mu.Unlock()
+}
+
+func (b *bootingServe) start(t *testing.T) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b.mu.Lock()
+		body := map[string]string{"/api/plugin": b.plugins, "/api/model": b.models}[r.URL.Path]
+		b.mu.Unlock()
+		if body == "" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"location":{"directory":"/w"},"data":` + body + `}`))
+	}))
+	t.Cleanup(srv.Close)
+	orig := oauthProbe
+	oauthProbe = func() (string, bool) { return srv.URL, true }
+	t.Cleanup(func() { oauthProbe = orig })
+	InvalidateModels()
+	t.Cleanup(InvalidateModels)
+}
+
+// The 2.4 boot steps, as measured on 2.4.1 (daemonSettled): opencode's own models alone, then the
+// configured providers and the Console login's models together with the plugin list.
+const (
+	bootBuiltin = `{"id":"tidepool-alpha-free","providerID":"opencode","status":"active","cost":[{"input":0}]}`
+	bootLogin   = `{"id":"gpt-5.6-luna","providerID":"opencode-go","status":"active","cost":[{"input":1}]}`
+	bootPlugins = `[{"id":"opencode.provider.opencode","source":{},"features":{},"state":{"status":"active"}}]`
+)
+
+func cliModels(t *testing.T, ids ...string) {
+	t.Helper()
+	dir := t.TempDir()
+	script := "#!/bin/sh\n"
+	for _, id := range ids {
+		script += "echo " + id + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "opencode"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// From opencode 2.4.0 a booting serve answers GET /api/model with 200 and an empty list (about
+// 3 s on 2.4.0 and 2.4.1), where 2.3.x held the request. That answer is not "this account has no
+// models": the picker falls back to the CLI, and that stand-in is not cached, because the CLI
+// cannot see a Console login's models and caching it would hide them for a minute after the
+// daemon is ready.
+func TestModelsFallsBackOnAnActivatingDaemon(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cliModels(t, "opencode/tidepool-alpha-free")
+	var serve bootingServe
+	serve.set(`[]`, `[]`)
+	serve.start(t)
+
+	if got := Models(); !reflect.DeepEqual(got, []string{"opencode/tidepool-alpha-free"}) {
+		t.Fatalf("Models with an activating daemon = %v, want the CLI's list", got)
+	}
+	serve.set(bootPlugins, `[`+bootBuiltin+`,`+bootLogin+`]`)
+	want := []string{"opencode/tidepool-alpha-free", "opencode-go/gpt-5.6-luna"}
+	if got := Models(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Models right after the daemon finished activating = %v, want %v", got, want)
+	}
+}
+
+// The step after the empty one: opencode's own models are listed, the configured providers and the
+// Console login's are not yet, and no plugin is listed. That partial listing is what Models()
+// answers then, but it must not be cached, or the login's models stay out of the picker and the
+// launch check for a minute after the serve is ready.
+func TestModelsDoesNotCacheAPartialBootListing(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cliModels(t, "opencode/from-cli")
+	var serve bootingServe
+	serve.set(`[]`, `[`+bootBuiltin+`]`)
+	serve.start(t)
+
+	if got := Models(); !reflect.DeepEqual(got, []string{"opencode/tidepool-alpha-free"}) {
+		t.Fatalf("Models during the partial step = %v, want the daemon's partial listing", got)
+	}
+	serve.set(bootPlugins, `[`+bootBuiltin+`,`+bootLogin+`]`)
+	want := []string{"opencode/tidepool-alpha-free", "opencode-go/gpt-5.6-luna"}
+	if got := Models(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("Models right after the serve settled = %v, want %v", got, want)
+	}
+}
+
+// A settled listing keeps its minute of cache, and so does one from a serve with no /api/plugin
+// at all (no signal; 2.3.x holds GET /api/model until it is whole anyway).
+func TestModelsCachesASettledListing(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		plugins string
+	}{
+		{"plugins listed", bootPlugins},
+		{"no plugin endpoint", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			cliModels(t, "opencode/from-cli")
+			var serve bootingServe
+			serve.set(c.plugins, `[`+bootBuiltin+`]`)
+			serve.start(t)
+			if got := Models(); !reflect.DeepEqual(got, []string{"opencode/tidepool-alpha-free"}) {
+				t.Fatalf("first read = %v", got)
+			}
+			serve.set(c.plugins, `[`+bootBuiltin+`,`+bootLogin+`]`)
+			if got := Models(); !reflect.DeepEqual(got, []string{"opencode/tidepool-alpha-free"}) {
+				t.Fatalf("second read within the minute = %v, want the cached listing", got)
+			}
+		})
+	}
+}
+
+// What daemonSettled makes of each answer GET /api/plugin gave on a real serve, plus the ones that
+// must not read as settled.
+func TestDaemonSettled(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		status int
+		body   string
+		want   bool
+	}{
+		{"2.4 booting: 503", http.StatusServiceUnavailable, `{"_tag":"ServiceUnavailableError"}`, false},
+		{"2.4 booting: empty", http.StatusOK, `{"location":{"directory":"/w"},"data":[]}`, false},
+		{"settled", http.StatusOK, `{"location":{"directory":"/w"},"data":` + bootPlugins + `}`, true},
+		{"no endpoint", http.StatusNotFound, ``, true},
+		{"unreadable", http.StatusOK, `{"data":`, false},
+		{"auth refused", http.StatusUnauthorized, `{"_tag":"UnauthorizedError"}`, false},
+	} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(c.status)
+			_, _ = w.Write([]byte(c.body))
+		}))
+		if got := daemonSettled(srv.URL); got != c.want {
+			t.Errorf("%s: daemonSettled = %v, want %v", c.name, got, c.want)
+		}
+		srv.Close()
+	}
+}
+
+// Without a daemon the CLI list is the whole answer and keeps its minute of cache: the launch
+// modal fetches on every open, and each `opencode models` costs about a second.
+func TestModelsCachesTheCLIListWithoutDaemon(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	orig := oauthProbe
+	oauthProbe = func() (string, bool) { return "", false }
+	defer func() { oauthProbe = orig }()
+	dir := t.TempDir()
+	bin := filepath.Join(dir, "opencode")
+	write := func(id string) {
+		if err := os.WriteFile(bin, []byte("#!/bin/sh\necho "+id+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("opencode/first")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	InvalidateModels()
+	defer InvalidateModels()
+
+	if got := Models(); !reflect.DeepEqual(got, []string{"opencode/first"}) {
+		t.Fatalf("first read = %v", got)
+	}
+	write("opencode/second")
+	if got := Models(); !reflect.DeepEqual(got, []string{"opencode/first"}) {
+		t.Fatalf("second read within the minute = %v, want the cached CLI list", got)
 	}
 }
 

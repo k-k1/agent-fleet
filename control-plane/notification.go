@@ -432,17 +432,14 @@ func readOutboxEntries(r io.Reader, limit int64) (entries []agentNotification, m
 // until somebody woke the workspace again — the stop-for-cost decision swallowing the one
 // notification that announces it.
 func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string) string {
-	state, prevFirst := "offline", ""
+	state := "offline"
+	var acked []string
 	for round := 0; round < maxDrainRounds; round++ {
 		var more bool
-		var first string
-		state, more, first = drainAgentOutboxOnce(ctx, st, rt, membershipID)
-		// The same first id again means the Agent did not drop what it was told to: asking
-		// more would only repeat the work.
-		if state != "ready" || !more || ctx.Err() != nil || first == prevFirst {
+		state, more, acked = drainAgentOutboxOnce(ctx, st, rt, membershipID, acked)
+		if state != "ready" || !more || ctx.Err() != nil {
 			break
 		}
-		prevFirst = first
 	}
 	return state
 }
@@ -450,24 +447,36 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 // maxDrainRounds bounds how many times one drain asks again after a response cut by a bound.
 const maxDrainRounds = 8
 
-// drainAgentOutboxOnce reads one response. more is true when a bound cut it and the entries
-// read were stored and the Agent answered the ack with a 2xx, so asking again can make
-// progress. first is the id of the first entry read.
-func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string) (state string, more bool, first string) {
+// drainAgentOutboxOnce reads one response, stores it and acks it. prevAcked is what the
+// previous round acked (nil on the first round); acked is what this round acked, for the next.
+// more is true when a bound cut the response, the ack was answered with a 2xx, and this read
+// does not show that the previous round's ack moved nothing, so asking again can make
+// progress.
+//
+// The previous ack moved nothing when this read starts with the same id and still holds every
+// id it acked. The first id alone is not enough: the Agent answers the ack with a 204 even
+// when some deletes failed, so the first entry can stay while the rest moved on. A different
+// first id keeps the drain going even when every acked id is still there: a new entry may be
+// listed ahead or the entries reordered, and once this round's ack goes through the next read
+// can move past them. A round that meets the stop condition is still stored and acked before
+// the drain stops: an entry new to it must not be left unstored, and a delete that failed
+// only once gets its second try. Only ids stored the round before skip the insert, because
+// the store already holds them.
+func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string, prevAcked []string) (state string, more bool, acked []string) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
 	if tok := rt.Token(); tok != "" {
 		req.Header.Set("Authorization", "Bearer "+tok)
 	}
 	resp, err := agentHTTPClient.Do(req)
 	if err != nil {
-		return "offline", false, ""
+		return "offline", false, nil
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode == http.StatusNotFound {
-		return "unsupported", false, ""
+		return "unsupported", false, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "offline", false, ""
+		return "offline", false, nil
 	}
 	// Bounded by maxOutboxBody / maxOutboxEntries; see there. An unreadable first entry stores
 	// nothing, so a single entry past the byte bound stays queued; only an Agent without the
@@ -475,36 +484,44 @@ func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt ru
 	entries, more, ok := readOutboxEntries(resp.Body, maxOutboxBody)
 	resp.Body.Close() // before the ack, so one connection is not held across both requests
 	if !ok {
-		return "offline", false, ""
+		return "offline", false, nil
 	}
-	acked := make([]string, 0, len(entries))
+	stored := make(map[string]struct{}, len(prevAcked))
+	for _, id := range prevAcked {
+		stored[id] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(stored))
+	acked = make([]string, 0, len(entries))
 	for _, in := range entries {
-		n := agentNotificationRow(in, membershipID)
-		if err := st.InsertNotification(ctx, n); err != nil {
-			return "offline", false, ""
+		if _, ok := stored[in.ID]; ok {
+			seen[in.ID] = struct{}{}
+		} else if err := st.InsertNotification(ctx, agentNotificationRow(in, membershipID)); err != nil {
+			return "offline", false, nil
 		}
 		acked = append(acked, in.ID)
 	}
-	if len(acked) > 0 {
-		b, _ := json.Marshal(map[string]any{"ids": acked})
-		req, _ = http.NewRequestWithContext(ctx, http.MethodPost, rt.Endpoint()+"/notifications/ack", bytes.NewReader(b))
-		req.Header.Set("Content-Type", "application/json")
-		if tok := rt.Token(); tok != "" {
-			req.Header.Set("Authorization", "Bearer "+tok)
-		}
-		ackResp, err := agentHTTPClient.Do(req)
-		if err != nil {
-			return "ready", false, acked[0]
-		}
-		ackResp.Body.Close()
-		if ackResp.StatusCode/100 != 2 {
-			return "ready", false, acked[0]
-		}
-	}
 	if len(acked) == 0 {
-		return "ready", false, ""
+		return "ready", false, nil
 	}
-	return "ready", more, acked[0]
+	b, _ := json.Marshal(map[string]any{"ids": acked})
+	req, _ = http.NewRequestWithContext(ctx, http.MethodPost, rt.Endpoint()+"/notifications/ack", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	if tok := rt.Token(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	ackResp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		return "ready", false, nil
+	}
+	ackResp.Body.Close()
+	if ackResp.StatusCode/100 != 2 {
+		return "ready", false, nil
+	}
+	// Asking again would most likely read this same response once more.
+	if len(prevAcked) > 0 && acked[0] == prevAcked[0] && len(seen) == len(stored) {
+		return "ready", false, acked
+	}
+	return "ready", more, acked
 }
 
 // listPayload composes the GET /api/notifications body (drain the Agent's

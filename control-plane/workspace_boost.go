@@ -26,13 +26,43 @@ const (
 
 // boostHoursCounter counts the hours a member actually RAN on a box a boost put them on,
 // including hours after the boost expired while the workspace kept running (ADR 0139 decision
-// 5). The source of truth is the CP's launch records (#4333), which are not on main yet; until
-// they are, no implementation is wired and the budget is not enforced.
+// 5). main wires boostHoursFor; a manager built without one does not enforce the budget.
 //
-// counted=false means "this deployment cannot count yet", and the caller must neither block
-// on it nor show a number.
+// counted=false means "this deployment cannot count", and the caller must neither block on it
+// nor show a number.
 type boostHoursCounter interface {
 	BoostedRunningHours(ctx context.Context, membershipID string, from, to time.Time) (hours float64, counted bool, err error)
+}
+
+// launchBoostHours counts from the CP's launch records (ADR 0139 decision 3): a launch the
+// boost chose the box for keeps override "boost" until it stops, so the hours after the boost
+// expired are in it, and a launch whose Start failed was closed at its own start and adds
+// nothing. A launch the sampler adopted with no record of its start does not count: what chose
+// its box is unknown, and a guess must not lock a member out.
+type launchBoostHours struct{ st launchSecsReader }
+
+type launchSecsReader interface {
+	OverrideRunningSecs(ctx context.Context, membershipID, override string, from, to int64) (int64, error)
+}
+
+// boostHoursFor is the counter main wires: launchBoostHours while the usage sampler runs, nil
+// when it does not (AF_USAGE_SAMPLE_INTERVAL=0, or under a second, which sample() treats as
+// off). The sampler is what moves an open launch's last sighting; without it a boosted
+// workspace would read 0 hours for as long as it runs, so the budget is reported as not counted
+// instead of as counted and never reached.
+func boostHoursFor(st launchSecsReader, sampleInterval time.Duration) boostHoursCounter {
+	if int(sampleInterval.Seconds()) <= 0 {
+		return nil
+	}
+	return launchBoostHours{st}
+}
+
+func (c launchBoostHours) BoostedRunningHours(ctx context.Context, membershipID string, from, to time.Time) (float64, bool, error) {
+	secs, err := c.st.OverrideRunningSecs(ctx, membershipID, store.SizeOverrideBoost, from.Unix(), to.Unix())
+	if err != nil {
+		return 0, false, err
+	}
+	return float64(secs) / 3600, true, nil
 }
 
 // boostBudget is a member's month so far against the tenant's budget.
@@ -337,8 +367,8 @@ type tenantBoostWire struct {
 	MonthlyHours int    `json:"monthly_hours"`
 	// Editable is false on a runtime with no rungs, where a boost has nothing to move between.
 	Editable bool `json:"editable"`
-	// BudgetCounted is false while no launch records exist to count boosted hours from: the
-	// monthly budget is stored but not enforced.
+	// BudgetCounted is false on a CP with no boostHoursCounter: the monthly budget is stored
+	// but not enforced.
 	BudgetCounted bool `json:"budget_counted"`
 }
 
@@ -584,14 +614,6 @@ func (m *manager) resolveNextStart(ctx context.Context, ws store.Workspace) next
 	mem := m.resolveWorkspaceMemBytes(ctx, ws)
 	class, _ := m.resolveSlotClass(ctx, ws)
 	return m.overlaySizeOverrides(ctx, ws, mem, class)
-}
-
-// sizeDrifted returns ws resolved afresh and whether that differs from the box ws was resolved to
-// when its runtime was memoized. A boost ends by the clock, with nothing to evict the memo, so a
-// start that reads the box off the memoized runtime would record (and size) the expired boost.
-func (m *manager) sizeDrifted(ctx context.Context, ws store.Workspace) (store.Workspace, bool) {
-	fresh := m.withResolvedSize(ctx, ws)
-	return fresh, fresh.MemBytes != ws.MemBytes || fresh.SlotClass != ws.SlotClass
 }
 
 // sizeUntil is when the override deciding ws's next-start box ends, zero when none does.

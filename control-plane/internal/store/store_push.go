@@ -43,11 +43,26 @@ type PushSubscriptionStore interface {
 	// GetPushOffKinds returns the notification kinds the member turned off for push (none by default).
 	GetPushOffKinds(ctx context.Context, membershipID string) ([]string, error)
 	PutPushOffKinds(ctx context.Context, membershipID string, kinds []string) error
-	// PushDeliveryContext answers, for one send: whether the membership is still active, and
-	// whether its tenant allows a question's text in the push (default false).
-	PushDeliveryContext(ctx context.Context, membershipID string) (active, includeText bool, err error)
+	// PushDeliveryContext answers, for one send: whether the membership is still active, whether
+	// its tenant allows a question's text in the push (default false), and the tenant's slug (the
+	// name the Console selects a tenant by). An inactive or unknown membership is the zero value.
+	PushDeliveryContext(ctx context.Context, membershipID string) (PushDelivery, error)
 	GetTenantPushIncludeText(ctx context.Context, tenantID string) (bool, error)
 	PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error
+}
+
+// PushSubscribedMembershipStore is kept apart from PushSubscriptionStore because only the
+// notification drain needs it, not the push sender that takes the narrower interface.
+type PushSubscribedMembershipStore interface {
+	// ListPushSubscribedMemberships answers every membership holding at least one subscription,
+	// in one read: a sweep over all workspaces asks this once instead of once per workspace.
+	ListPushSubscribedMemberships(ctx context.Context) ([]string, error)
+}
+
+// PushDelivery is what one push send needs to know about the receiving membership.
+type PushDelivery struct {
+	Active, IncludeText bool
+	TenantSlug          string
 }
 
 const pushCols = `SELECT id, membership_id, endpoint, p256dh, auth, user_agent, created_at, last_ok_at FROM push_subscription`
@@ -118,6 +133,23 @@ func (s *SQL) ListPushSubscriptions(ctx context.Context, membershipID string) ([
 	return out, rows.Err()
 }
 
+func (s *SQL) ListPushSubscribedMemberships(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT membership_id FROM push_subscription`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
 func (s *SQL) GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error) {
 	var p PushSubscription
 	err := s.db.QueryRowContext(ctx, pushCols+` WHERE membership_id=? AND endpoint=?`, membershipID, endpoint).
@@ -181,18 +213,20 @@ func (s *SQL) PutPushOffKinds(ctx context.Context, membershipID string, kinds []
 	return err
 }
 
-func (s *SQL) PushDeliveryContext(ctx context.Context, membershipID string) (active, includeText bool, err error) {
+func (s *SQL) PushDeliveryContext(ctx context.Context, membershipID string) (PushDelivery, error) {
 	var inc sql.NullInt64
-	err = s.db.QueryRowContext(ctx, `SELECT COALESCE(t.include_text, 0) FROM membership m
+	var slug string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(t.include_text, 0), COALESCE(tn.slug, '') FROM membership m
+		LEFT JOIN tenant tn ON tn.id = m.tenant_id
 		LEFT JOIN tenant_push_setting t ON t.tenant_id = m.tenant_id
-		WHERE m.id=? AND m.status='active'`, membershipID).Scan(&inc)
+		WHERE m.id=? AND m.status='active'`, membershipID).Scan(&inc, &slug)
 	if err == sql.ErrNoRows {
-		return false, false, nil
+		return PushDelivery{}, nil
 	}
 	if err != nil {
-		return false, false, err
+		return PushDelivery{}, err
 	}
-	return true, inc.Int64 != 0, nil
+	return PushDelivery{Active: true, IncludeText: inc.Int64 != 0, TenantSlug: slug}, nil
 }
 
 func (s *SQL) GetTenantPushIncludeText(ctx context.Context, tenantID string) (bool, error) {
