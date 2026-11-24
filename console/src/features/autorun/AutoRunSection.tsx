@@ -333,8 +333,8 @@ function Category({
   const ended = runs.filter((r) => r.state === "ended");
   return (
     <section className="autorun-cat" data-autorun-category={label}>
-      <div className="autorun-cat-head" ref={headRef}>
-        <Icon name="repo" className="autorun-cat-ic" />
+      <div className="lp-group-head autorun-cat-head" ref={headRef}>
+        <Icon name="repo" className="lp-group-head-ic" />
         <h3 className="autorun-cat-name">{label}</h3>
         {categoryId && (
           <>

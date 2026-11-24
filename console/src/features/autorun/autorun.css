@@ -2,11 +2,9 @@
 /* The sticky stack, top to bottom: the section head (z 3, --sec-head-h), the category head (z 2),
    the sub-head of the group on screen (z 1). Every band is opaque so rows never show through. */
 .autorun-cat-head {
-  display: flex; align-items: center; gap: 5px; padding: 6px 10px 2px; font-size: 11px; font-weight: 600;
-  letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted);
+  padding: 6px 10px 2px;
   position: sticky; top: calc(var(--sec-head-h, 34px) + var(--autorun-filter-h, 33px)); z-index: 2; background: var(--leftpane-bg, var(--panel));
 }
-.autorun-cat-ic { font-size: 12px; }
 .autorun-cat-name { flex: 1; min-width: 0; margin: 0; font: inherit; letter-spacing: inherit; text-transform: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .autorun-cat-act { flex: none; display: inline-flex; align-items: center; padding: 0 4px; border: 0; background: none; color: var(--muted2); cursor: pointer; }
 .autorun-cat-act:hover { color: var(--fg); }

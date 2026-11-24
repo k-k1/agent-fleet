@@ -155,21 +155,19 @@
   white-space: nowrap;
 }
 
+/* Leaves a gap so a group's last row is not glued to the next head. */
+.memrail-group {
+  margin-bottom: 8px;
+}
 .memrail-group-head {
   position: sticky;
   top: calc(var(--sec-head-h, 34px) + var(--memrail-filter-h, 0px));
   z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 4px;
   width: 100%;
-  padding: 4px 10px 2px;
+  padding: 6px 10px 2px;
   border: none;
   background: var(--leftpane-bg);
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--muted);
+  font-family: inherit;
   text-align: left;
   cursor: pointer;
 }

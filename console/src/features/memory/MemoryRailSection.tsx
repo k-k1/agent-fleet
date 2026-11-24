@@ -356,13 +356,14 @@ export function MemoryRailSection() {
               <div key={k} className="memrail-group">
                 <button
                   type="button"
-                  className="memrail-group-head"
+                  className="lp-group-head memrail-group-head"
                   title={forced && folded[k] ? tr("mem.rail_group_forced") : label}
                   aria-expanded={open}
                   data-group={k}
                   onClick={() => toggleFold(k)}
                 >
                   <Icon name={open ? "chevron-down" : "chevron-right"} className="memrail-group-chev" />
+                  <Icon name={k === "user" ? "globe" : "repo"} className="lp-group-head-ic memrail-group-ic" />
                   <span className="memrail-group-name">{label}</span>
                   <span className="memrail-group-count">{list.length}</span>
                 </button>

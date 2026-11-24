@@ -103,14 +103,7 @@
   margin-bottom: 8px;
 }
 .memo-repo-head {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  text-transform: uppercase;
-  color: var(--muted);
+  /* Typography: .lp-group-head (ui.css). */
   /* Pinned under the section header (z-index 3), over the category rows (1). Opaque, and
      padding rather than margin, so scrolled notes never show through the band. */
   position: sticky;
@@ -138,9 +131,6 @@
 }
 .memo-repo-add:hover {
   color: var(--fg);
-}
-.memo-repo-ic {
-  font-size: 12px;
 }
 .memo-cat {
   margin: 5px 0 0 2px;
