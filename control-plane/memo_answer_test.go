@@ -329,6 +329,85 @@ func TestMemoAnswerReadsBack(t *testing.T) {
 	})
 }
 
+// The read goes through the Agent's slim answer-turns route (issue #4891 items 2 and 7): pages of
+// memoAnswerSlimPage lines, back as far as memoAnswerSlimPages of them, so an answer further back
+// than the plain route's pages is found. An Agent without the route (a plain 404) is read through
+// /messages as before, and a session the slim route says is missing does not fall back.
+func TestMemoAnswerSlimRoute(t *testing.T) {
+	page := func(firstLine int, msgs []map[string]any) map[string]any {
+		return map[string]any{"name": "q-a", "status": "idle", "alive": true, "messages": msgs, "firstLine": firstLine, "hasMore": firstLine > 0}
+	}
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setSlim(true)
+		// Each read must ask for the page that ends where the one before began (before = its
+		// firstLine), and the tail first; a read that skips or repeats ground fails the delivery.
+		firstLine := 100000
+		var misread string
+		agent.setAnswer("q-a", func() (int, any) {
+			n := len(agent.answerCalls) // the fake holds its lock while it answers
+			q := agent.answerCalls[n-1]
+			want := "tail=1"
+			if n > 1 {
+				want = fmt.Sprintf("before=%d", firstLine)
+			}
+			if !strings.Contains(q, want) {
+				misread = fmt.Sprintf("read %d was %q, want %s", n, q, want)
+			}
+			if n < memoAnswerSlimPages {
+				firstLine -= memoAnswerSlimPage
+				return http.StatusOK, page(firstLine, []map[string]any{})
+			}
+			return http.StatusOK, page(0, []map[string]any{{"role": "assistant", "parts": []map[string]any{{"kind": "text", "text": "Done: very far back"}}}})
+		})
+		e.settleNow(now)
+		if misread != "" {
+			t.Fatal(misread)
+		}
+		routes := agent.routesSoFar()
+		if len(routes) != memoAnswerSlimPages || routes[0] != "/answer-turns" || routes[len(routes)-1] != "/answer-turns" {
+			t.Fatalf("routes %v, want %d reads of /answer-turns", routes, memoAnswerSlimPages)
+		}
+		if first := agent.answerCallsSoFar()[0]; !strings.Contains(first, fmt.Sprintf("limit=%d", memoAnswerSlimPage)) {
+			t.Fatalf("first read %q, want a page of %d", first, memoAnswerSlimPage)
+		}
+		if d := e.delivery(da.ID); d.AnswerClass != store.AnswerDone || d.AnswerHead != "Done: very far back" {
+			t.Fatalf("kept %q %q", d.AnswerHead, d.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// An older Agent: the plain 404 of the missing route, then the plain route.
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: old agent"))
+		e.settleNow(now)
+		if d := e.delivery(da.ID); d.AnswerClass != store.AnswerDone {
+			t.Fatalf("kept %q %q", d.AnswerHead, d.AnswerClass)
+		}
+		if routes := agent.routesSoFar(); len(routes) != 1 || routes[0] != "/messages" {
+			t.Fatalf("routes %v, want the plain route only", routes)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// The route answers 404 with an error code: the session is gone, not the route, so the
+		// read is left for the next tick rather than repeated on /messages.
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setSlim(true)
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusNotFound, map[string]any{"error": map[string]any{"code": "not_found", "message": "no such session"}, "code": "not_found"}
+		})
+		e.settleNow(now)
+		if routes := agent.routesSoFar(); len(routes) != 1 || routes[0] != "/answer-turns" {
+			t.Fatalf("routes %v, want one read of the slim route", routes)
+		}
+		if d := e.delivery(da.ID); d.AnswerClass != "" {
+			t.Fatalf("kept %q", d.AnswerClass)
+		}
+	})
+}
+
 // A chain A <- B <- C in a stopped workspace: C waits for B, which has not run, and that does not
 // keep the read B waits for (A's answer) from waking the workspace.
 func TestMemoAnswerWakesForAChain(t *testing.T) {
@@ -1495,6 +1574,36 @@ func TestMemoAnswerShrinksAPageCutAtTheBound(t *testing.T) {
 	})
 }
 
+// The slim route's page is cut at the bound too (Claude's thinking and a very large single turn
+// are not what the Agent's caps count): it is asked again at the same place in a smaller page.
+func TestMemoAnswerShrinksASlimPageCutAtTheBound(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setSlim(true)
+		big := strings.Repeat("x", memoAnswerReplyMax)
+		agent.setAnswer("q-a", func() (int, any) {
+			var parts []map[string]any
+			if len(agent.answerCalls) == 1 {
+				parts = append(parts, map[string]any{"kind": "text", "text": big})
+			}
+			parts = append(parts, map[string]any{"kind": "text", "text": "Done: small"})
+			return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "messages": []map[string]any{{"role": "assistant", "parts": parts}}}
+		})
+		e.settleNow(now)
+		calls := agent.answerCallsSoFar()
+		if len(calls) != 2 || !strings.Contains(calls[0], fmt.Sprintf("limit=%d", memoAnswerSlimPage)) || !strings.Contains(calls[1], "limit=250") || !strings.Contains(calls[1], "tail=1") {
+			t.Fatalf("reads %v, want the tail again in a smaller page", calls)
+		}
+		if routes := agent.routesSoFar(); routes[0] != "/answer-turns" || routes[1] != "/answer-turns" {
+			t.Fatalf("routes %v", routes)
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
 // pinnedReply is a transcript whose run ended with run's answer before pin, and a person's turn
 // after it that ended with theirs (issue #4891).
 func pinnedReply(pin time.Time, run, theirs string) func() (int, any) {
@@ -1923,6 +2032,44 @@ func TestMemoAnswerPinLaterTurnWithoutInput(t *testing.T) {
 			t.Fatalf("later stored error: kept %q %q", got.AnswerHead, got.AnswerClass)
 		}
 	})
+}
+
+// The pin is applied to what the slim route sends: an error the kind stored (it carries an id and
+// its own time) after the pin is passed over, so the run's Done: stands; one the Agent made up (no
+// id) is the run's own last turn, so the run has no answer and nothing is kept as Done:.
+func TestMemoAnswerPinnedThroughTheSlimRoute(t *testing.T) {
+	for _, tc := range []struct {
+		name, anchor, want string
+	}{{"stored error", "msg_4", store.AnswerDone}, {"synthetic error", "", store.AnswerUnknown}} {
+		t.Run(tc.name, func(t *testing.T) {
+			eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+				now := time.Now()
+				end := now.Add(-10 * time.Minute).Truncate(time.Second)
+				agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+				agent.setSlim(true)
+				e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+				ts := func(d time.Duration) string { return end.Add(d).UTC().Format(time.RFC3339Nano) }
+				errTurn := map[string]any{"role": "assistant", "ts": ts(4 * time.Minute), "parts": []map[string]any{{"kind": "error"}}}
+				if tc.anchor != "" {
+					errTurn["anchorId"] = tc.anchor
+				}
+				agent.setAnswer("q-a", func() (int, any) {
+					return http.StatusOK, map[string]any{"name": "q-a", "status": "stopped", "firstLine": 0, "hasMore": false, "messages": []map[string]any{
+						{"role": "user", "ts": ts(-time.Hour), "anchorId": "msg_1", "parts": []map[string]any{{"kind": "text", "text": "the task"}}},
+						{"role": "assistant", "ts": ts(-time.Second), "anchorId": "msg_2", "parts": []map[string]any{{"kind": "text", "text": "Done: the run"}}},
+						errTurn,
+					}}
+				})
+				e.settleNow(now)
+				if routes := agent.routesSoFar(); len(routes) == 0 || routes[0] != "/answer-turns" {
+					t.Fatalf("routes %v", routes)
+				}
+				if got := e.delivery(da.ID); got.AnswerClass != tc.want {
+					t.Fatalf("kept %q %q, want %q", got.AnswerHead, got.AnswerClass, tc.want)
+				}
+			})
+		})
+	}
 }
 
 // gatedRuntime answers "running" once release is closed.
