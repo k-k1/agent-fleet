@@ -67,6 +67,12 @@ const OPEN_START_HUB = `
         await wait(1000);
       }`;
 
+// The hub opens on "Start in a space" for a browser that never chose a section; the repository
+// scenes open "Start in a repository" first.
+const OPEN_REPO_SECTION = `
+      [...document.querySelectorAll(".start-sec-head")].find((el) => /リポジトリで始める|Start in a repository/.test(el.textContent || ""))?.click();
+      await wait(600);`;
+
 // Opens Tenant settings from the account menu and picks one rail item by its label (ja|en).
 const openTenantSection = (label) => `
       document.querySelector(".acct-btn")?.click();
@@ -339,6 +345,8 @@ const SCENES = [
     action: `(async () => {
       document.querySelector(".ws-newsession")?.click();
       await new Promise((r) => setTimeout(r, 700));
+      [...document.querySelectorAll(".start-sec-head")].find((el) => /リポジトリで始める|Start in a repository/.test(el.textContent || ""))?.click();
+      await new Promise((r) => setTimeout(r, 500));
       const rows = [...document.querySelectorAll(".start-row")];
       rows.find((el) => el.textContent.includes("webshop"))?.click();
     })()`,
@@ -956,6 +964,9 @@ const SCENES = [
       await wait(800);
       document.querySelector(".ws-newsession")?.click();
       await wait(800);
+      // SSM is in the hub's Other section.
+      [...document.querySelectorAll(".start-sec-head")].find((el) => /^(その他|Other)$/.test(el.querySelector(".start-sec-label")?.textContent || ""))?.click();
+      await wait(500);
       [...document.querySelectorAll(".start-row")].find((el) => /SSM/.test(el.textContent || ""))?.click();
       await wait(800);
       [...document.querySelectorAll("button")].find((el) => /AWS から検索|Search AWS/.test(el.textContent || ""))?.click();
@@ -1321,7 +1332,8 @@ const SCENES = [
     settle: 1200,
   },
   {
-    // The Start hub opened from the WS bar: where to work (chat, shell, home, a repository).
+    // The Start hub opened from the WS bar, on "Start in a space". Opened by hand: a scene run
+    // before it in the same profile may have left another section remembered.
     name: "sessions-start",
     guide: true,
     clip: ".ui-modal",
@@ -1331,8 +1343,11 @@ const SCENES = [
     height: 1100,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
     action: `(async () => {${OPEN_START_HUB}
+      [...document.querySelectorAll(".start-sec-head")].find((el) => /スペースで始める|Start in a space/.test(el.textContent || ""))?.click();
+      await wait(600);
     })()`,
     settle: 1500,
+    verify: `!!document.querySelector(".start-space-actions button:not([disabled])")`,
   },
   {
     // "Start work" for a repository as it opens: agent, model, first prompt, and the folded
@@ -1346,7 +1361,7 @@ const SCENES = [
     width: 1400,
     height: 1800,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
-    action: `(async () => {${OPEN_START_HUB}
+    action: `(async () => {${OPEN_START_HUB}${OPEN_REPO_SECTION}
       [...document.querySelectorAll(".start-row")].find((el) => el.textContent.includes("webshop"))?.click();
       await wait(1200);
       const ms = document.querySelectorAll(".ui-modal");
@@ -1365,7 +1380,7 @@ const SCENES = [
     width: 1400,
     height: 1400,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
-    action: `(async () => {${OPEN_START_HUB}
+    action: `(async () => {${OPEN_START_HUB}${OPEN_REPO_SECTION}
       [...document.querySelectorAll(".start-row")].find((el) => el.textContent.includes("webshop"))?.click();
       await wait(1200);
       // The first section in the dialog is Location.

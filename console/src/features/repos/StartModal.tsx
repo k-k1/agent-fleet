@@ -1,14 +1,14 @@
-// StartModal — the Start hub (launch flow Ph2/Ph3): the WS bar's single entry point
-// for starting anything. Place-first: chat (assistants, repo-less), an existing
-// working copy (→ the per-repo start-work dialog), clone-and-continue, a home
-// (repo-less) agent session, and the folded "other" track (shell direct / SSM —
-// its host picker lives here since NewSessionModal was retired in Ph3). Entry
-// points that already know the place (the repo row's launch) skip this hub.
+// StartModal — the Start hub: the WS bar's single entry point for starting anything. An
+// accordion with exactly one section open (ADR 0142 decision 5): start in a new space (launched
+// from here), in a repository (→ the per-repo start-work dialog), or Other (home agent, shell,
+// SSM, clone, new folder). One draft is shown in every section. Entry points that already know
+// the place (the repo row's launch) skip this hub.
 import { useEffectiveDefaults } from "../../core/store/uiState.ts";
 import type { TeamCloneTarget } from "./tenantLaunchDefaults.ts";
 import { teamCloneHost, teamCloneTargets, teamFirst } from "./tenantLaunchDefaults.ts";
 import { useEffect, useRef, useState } from "react";
-import { api, apiJSON, errText } from "../../core/api/client.ts";
+import type { ReactNode } from "react";
+import { api, apiJSON, errText, isTransientErr } from "../../core/api/client.ts";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -32,26 +32,58 @@ import { useStartWork } from "./useStartWork.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionTerminal } from "../sessions/open.ts";
 import { SsmLoginModal } from "../sessions/SsmLoginModal.tsx";
-import { assistantList } from "../chat/api.ts";
-import { assistantName, assistantDesc } from "../chat/assistantI18n.ts";
-import { openAssistantDraft } from "../chat/open.ts";
-import type { Assistant } from "../../types/assistant.ts";
 import type { SsmHost } from "../../types/session.ts";
 import { deriveRepoName } from "./reponame.ts";
+import { useFoldValue } from "../../lib/useFold.ts";
+import { HubComposer } from "./HubComposer.tsx";
+import { SpaceLaunchForm } from "./LaunchModal.tsx";
+import type { LaunchAccess, LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
+import type { SharedDraft } from "./hubDraft.ts";
 
 interface StartModalProps {
   /** Connection-gated coding-agent kinds (claude / codex / agy / opencode). */
   kinds: string[];
+  /** The credential policy as the member sees it, for the space launch (as LaunchModal's). */
+  access: LaunchAccess;
+  claudeExpired?: boolean;
+  settling?: boolean;
+  /** The hub's one draft, shown in every section. */
+  draft: SharedDraft;
+  /** Starts a session in a new space from the space section. */
+  onLaunchSpace: (o: LaunchOpts) => Promise<LaunchResult>;
   onClose: () => void;
   /** A working copy was picked (existing or freshly cloned) — the host closes
    * this hub and opens the per-repo start-work dialog on it. */
-  onPickRepo: (r: Repo) => void;
+  onPickRepo: (r: Repo, fromRepoSection: boolean) => void;
+  /** A pick is waiting on a memo restore: nothing else may start meanwhile. */
+  pickPending?: boolean;
   /** "Launch an agent at home" was picked — the host opens the start-work dialog in its
    * repo-less (home) form on top of this hub. */
   onPickHome: () => void;
 }
 
 type Stage = "place" | "clone" | "newdir" | "ssm";
+
+type Section = "space" | "repo" | "other";
+/** The open section, per user and tenant like the rail's folds; space the very first time. */
+const SECTION_KEY = "af-start-section";
+
+/** Whether this workspace's Agent can start a session in a space: an older one ignores the
+ *  field and would start in home instead (#4978), so the hub asks GET /api/spaces first. */
+type SpaceSupport = "checking" | "yes" | "no" | "failed";
+
+function HubSection({ open, icon, label, disabled, onOpen, children }: { open: boolean; icon: string; label: string; disabled: boolean; onOpen: () => void; children: ReactNode }) {
+  return (
+    <section className={"start-sec" + (open ? " start-sec--open" : "")}>
+      <button type="button" className="start-sec-head" aria-expanded={open} disabled={disabled && !open} onClick={onOpen}>
+        <Icon name={open ? "chevron-down" : "chevron-right"} className="start-sec-chev" />
+        <Icon name={icon} className="start-row-ic" />
+        <span className="start-sec-label">{label}</span>
+      </button>
+      {open && <div className="start-sec-body">{children}</div>}
+    </section>
+  );
+}
 
 interface SsmProfile {
   id: string;
@@ -71,7 +103,7 @@ interface SsmInstance {
   pingStatus: string;
 }
 
-export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModalProps) {
+export function StartModal({ kinds, access, claudeExpired, settling, draft, onLaunchSpace, onClose, onPickRepo, onPickHome, pickPending = false }: StartModalProps) {
   useKindCatalogVersion(); // effort / start-mode rows and the driver sent depend on the catalog's facts
   const toast = useToast();
   const tr = useT();
@@ -84,20 +116,32 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
   const [stage, setStage] = useState<Stage>(() => useSessionsStore.getState().startStage ?? "place");
   const [busy, setBusy] = useState(false);
 
-  // --- place: chat (assistants inline), repos, +clone, home, other ---
-  const [chatOpen, setChatOpen] = useState(false);
+  // --- place: the accordion (space / repository / other) ---
+  const [storedSection, setSection] = useFoldValue(SECTION_KEY);
+  const section: Section = storedSection === "repo" || storedSection === "other" ? storedSection : "space";
   const [repoQuery, setRepoQuery] = useState("");
   const [ssmProfiles, setSsmProfiles] = useState<SsmProfile[] | null>(null);
-  const [assistants, setAssistants] = useState<Assistant[]>([]);
+  const [spaceSupport, setSpaceSupport] = useState<SpaceSupport>("checking");
+  const [spaceProbe, setSpaceProbe] = useState(0);
   useEffect(() => {
     let alive = true;
-    assistantList()
-      .then((r) => alive && setAssistants(r.assistants || []))
-      .catch(() => {});
+    setSpaceSupport("checking");
+    api("api/spaces")
+      .then((d) => {
+        if (!alive) return;
+        if (d && !d.error && Array.isArray(d.spaces)) setSpaceSupport("yes");
+        // Only "no such route" means an Agent without spaces; anything else may pass. A plain-text
+        // 404 / 405 (the Agent's mux) arrives as http_404 / http_405 with no status.
+        else if (d?.error && !isTransientErr(d) && (d.error.status === 404 || d.error.status === 405 || d.error.code === "http_404" || d.error.code === "http_405")) setSpaceSupport("no");
+        else setSpaceSupport("failed");
+      })
+      .catch(() => alive && setSpaceSupport("failed"));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [spaceProbe]);
+  // The composer's send key launches the space form below it.
+  const spaceSubmit = useRef<(() => void) | null>(null);
   useEffect(() => {
     let alive = true;
     api("api/ssm/profiles")
@@ -139,7 +183,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
   });
 
   const baseRow = (r: Repo) => (
-    <button key={r.name} type="button" className="start-row" onClick={() => onPickRepo(r)}>
+    <button key={r.name} type="button" className="start-row" disabled={pickPending} onClick={() => onPickRepo(r, true)}>
       <Icon name="repo" className="start-row-ic" />
       <span className="start-row-body">
         <span className="start-row-title">{r.name}</span>
@@ -165,7 +209,9 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
   const [src, setSrc] = useState<CloneSource>({ cloneUrl: "", branch: "" });
   const derived = src.cloneUrl ? deriveRepoName(src.cloneUrl) : "";
   const already = derived ? repos.find((r) => r.name === derived) : undefined;
-  const doClone = async (url = src.cloneUrl, branch = src.branch) => {
+  // fromRepoSection: a team repository's shortcut in the repository section, which takes the draft
+  // like any repository row there; the clone stage is Other's and does not.
+  const doClone = async (url = src.cloneUrl, branch = src.branch, fromRepoSection = false) => {
     if (!url || busy) return;
     setBusy(true);
     const res = await cloneRepo({ remote_url: url, branch, name: "" }, toast);
@@ -174,7 +220,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
     const repo = useReposStore.getState().repos.find((r) => r.name === res.name);
     if (repo) {
       setStage("place"); // the hub stays mounted below the launch stage — leave it reset
-      onPickRepo(repo);
+      onPickRepo(repo, fromRepoSection);
     } else onClose(); // clone landed but the fresh list hasn't caught up — the tree has it
   };
 
@@ -184,7 +230,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
   // before the first await; without it two clicks start two clone jobs for one repository.
   const teamCloneLock = useRef(false);
   const cloneTeam = async (c: TeamCloneTarget) => {
-    if (busy || teamCloneLock.current) return;
+    if (busy || pickPending || teamCloneLock.current) return;
     teamCloneLock.current = true;
     setBusy(true);
     try {
@@ -194,7 +240,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
         toast(tr("start.team_clone_host_changed"), { kind: "error" });
         return;
       }
-      await doClone(c.cloneUrl, "");
+      await doClone(c.cloneUrl, "", true);
     } finally {
       setBusy(false);
       teamCloneLock.current = false;
@@ -217,7 +263,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
     const repo = useReposStore.getState().repos.find((r) => r.name === res.name);
     if (repo) {
       setStage("place"); // the hub stays mounted below — leave it reset
-      onPickRepo(repo);
+      onPickRepo(repo, false);
     } else onClose(); // created, but the list hasn't caught up — the tree has it
   };
 
@@ -370,43 +416,72 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
       lockClose={busy}
     >
       {stage === "place" && (
-        <div className="ui-modal-body">
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("start.where")}</span>
-            <div className="start-list">
-              <button type="button" className="start-row" onClick={() => setChatOpen((o) => !o)}>
-                <Icon name="comment-discussion" className="start-row-ic" />
-                <span className="start-row-body">
-                  <span className="start-row-title">{tr("start.chat_title")}</span>
-                  <span className="start-row-desc">{tr("start.chat_desc")}</span>
-                </span>
-                <Icon name={chatOpen ? "chevron-down" : "chevron-right"} className="start-row-chev" />
-              </button>
-              {chatOpen &&
-                assistants.map((a) => (
-                  <button
-                    key={a.id}
-                    type="button"
-                    className="start-row start-sub"
-                    title={assistantDesc(a) || assistantName(a)}
-                    onClick={() => {
-                      openAssistantDraft(a.id);
-                      onClose();
-                    }}
-                  >
-                    <Icon name={a.icon || "comment"} className="start-row-ic" />
+        <div className="ui-modal-body start-hub">
+          <HubSection open={section === "space"} disabled={pickPending} icon="folder-library" label={tr("start.sec_space")} onOpen={() => setSection("space")}>
+            <HubComposer draft={draft} busy={busy} onSubmit={() => spaceSubmit.current?.()} />
+            {spaceSupport !== "yes" && (
+              <span className={"ui-field-hint" + (spaceSupport === "checking" ? "" : " ui-field-hint--warn")} role="status">
+                {tr(spaceSupport === "checking" ? "start.space_checking" : spaceSupport === "no" ? "start.space_unsupported" : "start.space_check_failed")}
+                {spaceSupport === "failed" && (
+                  <>
+                    {" "}
+                    <button type="button" className="linklike" onClick={() => setSpaceProbe((n) => n + 1)}>
+                      {tr("start.space_check_again")}
+                    </button>
+                  </>
+                )}
+              </span>
+            )}
+            <SpaceLaunchForm
+              kinds={kinds}
+              access={access}
+              claudeExpired={claudeExpired}
+              settling={settling}
+              shared={draft}
+              busy={busy}
+              setBusy={setBusy}
+              launchBlocked={spaceSupport !== "yes" || pickPending}
+              submitRef={spaceSubmit}
+              onClose={onClose}
+              onLaunch={onLaunchSpace}
+            />
+          </HubSection>
+          <HubSection open={section === "repo"} disabled={pickPending} icon="repo" label={tr("start.sec_repo")} onOpen={() => setSection("repo")}>
+            <HubComposer draft={draft} busy={busy} note={tr("start.draft_note_repo")} />
+            <div className="ui-field start-repos">
+              <label className="ui-field-label" htmlFor="start-repo-search">{tr("start.repo_launch_label")}</label>
+              <input
+                id="start-repo-search"
+                type="search"
+                value={repoQuery}
+                onChange={(e) => setRepoQuery(e.target.value)}
+                placeholder={tr("start.repo_search_ph")}
+              />
+              <div className="start-list start-repo-list">
+                {visibleBases.filter((r) => teamBases.has(r)).map(baseRow)}
+                {teamClones.map((c) => (
+                  <button key={c.path} type="button" className="start-row" disabled={busy || pickPending} onClick={() => void cloneTeam(c)}>
+                    <Icon name="add" className="start-row-ic" />
                     <span className="start-row-body">
-                      <span className="start-row-title">{assistantName(a)}</span>
+                      <span className="start-row-title">{c.path}</span>
+                      <span className="start-row-desc">{tr("start.team_repo")} · {tr("start.team_clone_desc", { host: c.host })}</span>
                     </span>
-                    {a.builtin && <span className="start-row-meta">{tr("start.builtin")}</span>}
                   </button>
                 ))}
-              {ssmProfiles != null && ssmProfiles.length > 0 && (
-                <button type="button" className="start-row start-primary-place" onClick={() => setStage("ssm")}>
-                  <Icon name="vm" className="start-row-ic" />
+                {visibleBases.filter((r) => !teamBases.has(r)).map(baseRow)}
+                {visibleBases.length === 0 && teamClones.length === 0 && <span className="start-empty">{tr("start.no_repos")}</span>}
+              </div>
+            </div>
+          </HubSection>
+          <HubSection open={section === "other"} disabled={pickPending} icon="ellipsis" label={tr("start.sec_other")} onOpen={() => setSection("other")}>
+            <HubComposer draft={draft} busy={busy} note={tr("start.draft_note_other")} />
+            <div className="start-list">
+              {kinds.length > 0 && (
+                <button type="button" className="start-row" onClick={onPickHome}>
+                  <Icon name="home" className="start-row-ic" />
                   <span className="start-row-body">
-                    <span className="start-row-title">{tr("start.ssm_title")}</span>
-                    <span className="start-row-desc">{tr("start.ssm_desc")}</span>
+                    <span className="start-row-title">{tr("start.home_title")}</span>
+                    <span className="start-row-desc">{tr("start.home_desc")}</span>
                   </span>
                   <Icon name="chevron-right" className="start-row-chev" />
                 </button>
@@ -418,42 +493,16 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
                   <span className="start-row-desc">{tr("start.shell_desc")}</span>
                 </span>
               </button>
-              {kinds.length > 0 && (
-                <button type="button" className="start-row" onClick={onPickHome}>
-                  <Icon name="home" className="start-row-ic" />
+              {ssmProfiles != null && ssmProfiles.length > 0 && (
+                <button type="button" className="start-row" onClick={() => setStage("ssm")}>
+                  <Icon name="vm" className="start-row-ic" />
                   <span className="start-row-body">
-                    <span className="start-row-title">{tr("start.home_title")}</span>
-                    <span className="start-row-desc">{tr("start.home_desc")}</span>
+                    <span className="start-row-title">{tr("start.ssm_title")}</span>
+                    <span className="start-row-desc">{tr("start.ssm_desc")}</span>
                   </span>
                   <Icon name="chevron-right" className="start-row-chev" />
                 </button>
               )}
-            </div>
-          </div>
-          <div className="ui-field start-repos">
-            <label className="ui-field-label" htmlFor="start-repo-search">{tr("start.repo_launch_label")}</label>
-            <input
-              id="start-repo-search"
-              type="search"
-              value={repoQuery}
-              onChange={(e) => setRepoQuery(e.target.value)}
-              placeholder={tr("start.repo_search_ph")}
-            />
-            <div className="start-list start-repo-list">
-              {visibleBases.filter((r) => teamBases.has(r)).map(baseRow)}
-              {teamClones.map((c) => (
-                <button key={c.path} type="button" className="start-row" disabled={busy} onClick={() => void cloneTeam(c)}>
-                  <Icon name="add" className="start-row-ic" />
-                  <span className="start-row-body">
-                    <span className="start-row-title">{c.path}</span>
-                    <span className="start-row-desc">{tr("start.team_repo")} · {tr("start.team_clone_desc", { host: c.host })}</span>
-                  </span>
-                </button>
-              ))}
-              {visibleBases.filter((r) => !teamBases.has(r)).map(baseRow)}
-              {visibleBases.length === 0 && teamClones.length === 0 && <span className="start-empty">{tr("start.no_repos")}</span>}
-            </div>
-            <div className="start-list start-clone-action">
               <button type="button" className="start-row action" onClick={() => setStage("clone")}>
                 <Icon name="add" className="start-row-ic" />
                 <span className="start-row-body">
@@ -470,7 +519,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
                 </span>
               </button>
             </div>
-          </div>
+          </HubSection>
         </div>
       )}
 
@@ -488,7 +537,7 @@ export function StartModal({ kinds, onClose, onPickRepo, onPickHome }: StartModa
                   icon="repo"
                   onClick={() => {
                     setStage("place");
-                    onPickRepo(already);
+                    onPickRepo(already, false);
                   }}
                 >
                   {tr("start.begin_from_existing", { name: already.name })}

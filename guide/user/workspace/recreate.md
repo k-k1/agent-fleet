@@ -26,7 +26,7 @@ your own tools into `~/.local`.
 | | Stop → Start | Recreate | Clean home |
 |---|---|---|---|
 | `~/repos` (working copies, including uncommitted changes) | stays | **deleted** | **deleted** |
-| The rest of your home (`~/.local`, caches, dotfiles, `~/.af-work`, `af-db` data) | stays | stays | **deleted** |
+| The rest of your home (`~/spaces`, `~/.local`, caches, dotfiles, `~/.af-work`, `af-db` data) | stays | stays | **deleted** |
 | Logins and connections (`~/.config`, `~/.ssh`, `~/.gitconfig`, `~/.git-credentials`, `~/.claude`, `~/.claude.json`, `~/.codex`) | stays | stays | stays |
 | Claude's settings and state (`$CLAUDE_CONFIG_DIR`, saved memory included) | stays | stays | stays |
 | Outside your home (`/usr`, `/opt`, `/tmp` and so on) | back to the image | back to the image | back to the image |

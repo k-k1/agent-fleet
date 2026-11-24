@@ -10,9 +10,9 @@ vi.mock("./useRepoRail.ts", () => ({ useRepoRailContext: () => ({ access: { kind
 vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
 const repo = { name: "app", path: "/home/dev/repos/app", branch: "main" };
 vi.mock("./StartModal.tsx", () => ({
-  StartModal: (p: { onPickRepo: (r: unknown) => void; onClose: () => void }) => (
+  StartModal: (p: { onPickRepo: (r: unknown, fromRepoSection: boolean) => void; onClose: () => void }) => (
     <>
-      <button type="button" data-testid="pick" onClick={() => p.onPickRepo(repo)}>
+      <button type="button" data-testid="pick" onClick={() => p.onPickRepo(repo, true)}>
         pick
       </button>
       <button type="button" data-testid="close" onClick={p.onClose}>
