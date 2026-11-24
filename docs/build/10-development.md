@@ -225,7 +225,7 @@ above is the whole interaction. An issue opens only for:
 | `<kind> CLI: contract failed on <v>` | the contract is red on latest (its row and run are in the issue's `Red contracts` section; `deploy/local/cli-contract-report.sh`) | the bump PR once the fixed contract passes |
 | `<kind> CLI: contract fails on main` | the contract failed its last 2 runs on `main` whatever the version: the harness or its secret is broken | itself, once the contract passes and the pin is current |
 | `<kind> CLI: upstream message fragments gone in <v>` | the new release no longer contains text Agent Fleet matches on (named in the `Red contracts` section); check the code that matches it, fix it and the registry | the bump PR, or a newer release |
-| `rtk CLI: bump the pin to <v>` | rtk has a release source but no contract, so no `tested` to gate on; bump it by hand (§10.2.1) | the hand-bump PR |
+| `<tool> CLI: bump the pin to <v>` (`rtk`, `gh`, `bkt`, `jira`, `gitleaks`, `confluence`) | a watch-only manifest row: it has a release source but no contract, so no `tested` to gate on; bump it by hand (§10.2.1). Nothing dispatches a contract or opens a bump PR for it | the hand-bump PR |
 
 An open issue follows its CLI: once latest passes, the same issue is retitled
 `<kind> CLI: merge the pin bump to <v>` and names the bump PR. It closes itself, with a

@@ -78,6 +78,8 @@ export const schedules = {
   "sched.f_silent_hint": "異常が無ければ [SILENT] とだけ答えるようエージェントに伝え、その回は何も届けず履歴に「報告なし」と残します。失敗は必ず通知します。既定ではしません。",
   "sched.f_stop_after_run": "終わったら停止",
   "sched.f_stop_after_run_hint": "実行が終わったらセッションを停止します（報告のあとに停止し、再開できます）。既定では停止しません。",
+  "sched.f_show_in_sessions": "セッション一覧にも表示",
+  "sched.f_show_in_sessions_hint": "このスケジュールの実行が始めた、専用の作業コピーを持つセッションを、リポジトリツリーとセッション一覧にも表示します。既定では表示しません。",
   "sched.f_prompt": "プロンプト",
   "sched.f_session_mode": "セッションモード",
   "sched.f_reuse_target": "再利用ターゲット",

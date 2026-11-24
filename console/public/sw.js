@@ -88,7 +88,7 @@ async function handleShare(req) {
 }
 
 // --- Web Push ---------------------------------------------------------------------------------
-// The payload is minimal by design (pushsrv.pushPayload): {v, kind, session, name, tenant?, text?}. The
+// The payload is minimal by design (pushsrv.pushPayload): {v, kind, session, name, tenant?, origin, text?}. The
 // wording is rendered here from kind, in the browser's language, so the push service never sees
 // it. A payload that does not parse still shows a generic notification: a push the browser
 // receives must show something (userVisibleOnly), and silence would let it revoke the permission.
@@ -108,6 +108,24 @@ const PUSH_TEXT = {
     other: "A session needs you",
   },
 };
+// Title prefix per origin (pushsrv originKey). own has none; an unknown or absent origin (an older
+// server) is treated as own rather than shown raw.
+const ORIGIN_LABEL = {
+  ja: {
+    "own-child": "子 · ",
+    autorun: "自動実行 · ",
+    "autorun-child": "自動実行 · 子 · ",
+    schedule: "スケジュール · ",
+    "schedule-child": "スケジュール · 子 · ",
+  },
+  en: {
+    "own-child": "Child · ",
+    autorun: "Auto-run · ",
+    "autorun-child": "Auto-run · Child · ",
+    schedule: "Scheduled · ",
+    "schedule-child": "Scheduled · Child · ",
+  },
+};
 // Same rule as the Agent's session.ValidName: a name from a push may hold capitals and underscores.
 const SESSION_NAME = /^[A-Za-z0-9_-]{1,40}$/;
 // A tenant slug as the Console selects it; anything else is dropped rather than put in a URL.
@@ -121,7 +139,10 @@ function pushLines(data) {
   const kind = data && typeof data.kind === "string" && has(table, data.kind) ? data.kind : "other";
   const name = data && typeof data.name === "string" ? data.name : "";
   const text = data && typeof data.text === "string" ? data.text : "";
-  return { title: name || "Agent Fleet", body: text || table[kind], kind };
+  const labels = ORIGIN_LABEL[lang];
+  const origin = data && typeof data.origin === "string" && has(labels, data.origin) ? data.origin : "own";
+  const prefix = has(labels, origin) ? labels[origin] : "";
+  return { title: prefix + (name || "Agent Fleet"), body: text || table[kind], kind };
 }
 
 self.addEventListener("push", (event) => {
@@ -139,6 +160,9 @@ self.addEventListener("push", (event) => {
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
+      // Resolved against the scope so a path-prefixed mount still finds them. iOS Safari ignores both.
+      icon: self.registration.scope + "brand/icon-192.png",
+      badge: self.registration.scope + "brand/badge-96.png",
       // One notification per tenant, session and kind: a repeat replaces the earlier one instead of stacking.
       tag: session ? `af-${tenant ? `${tenant}/` : ""}${session}-${kind}` : undefined,
       data: { session, tenant },

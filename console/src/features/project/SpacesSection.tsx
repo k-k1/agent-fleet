@@ -3,7 +3,7 @@
 // Other sessions. Which sessions belong here is the Agent's answer (Session.space, decided by
 // the directory's root), never the folder name, so a space that shares a repository's name
 // stays out of the repository tree.
-import { memo, useId } from "react";
+import { memo, useEffect, useId, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -17,7 +17,8 @@ import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useRefIndex } from "../sessions/useRefIndex.ts";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
-import { spaceLabel } from "../spaces/store.ts";
+import { spaceLabel, spacesOwner } from "../spaces/store.ts";
+import { SpaceRenameModal } from "../spaces/SpaceRenameModal.tsx";
 import { useSpaceNames } from "../spaces/useSpaceNames.ts";
 import { TerminalChip } from "../terminals/TerminalChip.tsx";
 import { useTerminalView } from "../terminals/useTerminalView.ts";
@@ -33,6 +34,16 @@ export const SpacesSection = memo(function SpacesSection() {
   const nq = normQuery(useProjectFilter((f) => f.q));
   const refs = useRefIndex();
   const rail = useRailRoving();
+  // The rename dialog that is open: the space, and the workspace it was opened in. A dialog of
+  // another workspace is not shown (it would send its folder to this one), so a tenant or member
+  // switch closes it.
+  const [renaming, setRenaming] = useState<{ folder: string; owner: string } | null>(null);
+  const owner = spacesOwner();
+  // The state of a dialog is dropped, not just hidden, when the workspace changes: coming back to
+  // the first workspace must not bring a form back that nobody pressed the pencil for.
+  useEffect(() => {
+    setRenaming((cur) => (cur && cur.owner !== owner ? null : cur));
+  }, [owner]);
   // A space session is repo-less, so a working set holds it by direct assignment only. The
   // search box matches a session's own text or the name its space is shown under.
   const wset = useActiveWorkingSet();
@@ -89,6 +100,22 @@ export const SpacesSection = memo(function SpacesSection() {
                 <Icon name="folder" />
                 <span className="space-group-name">{g.label}</span>
                 <TerminalChip groupKey={shellPlaceKey({ kind: "space", folder: g.folder })} />
+                <button
+                  type="button"
+                  className="space-group-rename"
+                  // Until the list names the space, the dialog would open on an empty name and
+                  // saving it would clear the real one.
+                  disabled={!spaces.some((x) => x.folder === g.folder)}
+                  title={tr("pj.space_rename")}
+                  aria-label={tr("pj.space_rename_aria", { name: g.label })}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setRenaming({ folder: g.folder, owner });
+                  }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                >
+                  <Icon name="edit" />
+                </button>
               </div>
             </div>
             {g.sessions.length > 0 && (
@@ -109,6 +136,14 @@ export const SpacesSection = memo(function SpacesSection() {
           </li>
         ))}
       </ul>
+      {renaming !== null && renaming.owner === owner && (
+        <SpaceRenameModal
+          space={{ folder: renaming.folder, name: spaces.find((x) => x.folder === renaming.folder)?.name ?? "" }}
+          owner={renaming.owner}
+          // Only this dialog's own close: a late one must not take down a newer dialog.
+          onClose={() => setRenaming((cur) => (cur === renaming ? null : cur))}
+        />
+      )}
     </Section>
   );
 });

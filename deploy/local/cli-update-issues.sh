@@ -18,7 +18,7 @@
 #   streak      the contract failed its last 2 runs on main, whatever the version
 #   dispatch    cursor / kiro: the credential rotates, so the watcher never runs them
 #   credential  claude / copilot / agy while their CI secret is not configured
-#   manual      rtk: no contract exists, it is bumped by hand
+#   manual      a watch-only row (rtk, gh, gitleaks…): no contract exists, it is bumped by hand
 #   fragments   the latest release no longer contains upstream text Agent Fleet matches on
 #               (a row in `Red contracts`, written by cli-pin-bump.sh via cli-fragment-check.sh)
 #
@@ -104,15 +104,15 @@ sync_kind() { # sync_kind <kind> <pin> <latest>
   # The watcher's `red` marker says the same thing without a row: a failure recorded before
   # this issue existed, or a row a concurrent rewrite dropped. Never ignore it — the marker
   # also stops the watcher from running the contract again, so nothing else would ask.
-  [ -n "$red_ver" ] || [ "$kind" = rtk ] || red_ver="$("$RELEASE_STATE" get red "$kind")"
+  [ -n "$red_ver" ] || [ "${M_contract[$kind]}" = - ] || red_ver="$("$RELEASE_STATE" get red "$kind")"
   grep -q "<!-- cli-contract-streak $(workflow_of "$kind" | sed 's/\.yml$//') -->" "$WORK/rows" && streak=true
-  [ "$kind" = rtk ] || tested="$("$RELEASE_STATE" get tested "$kind")"
+  [ "${M_contract[$kind]}" = - ] || tested="$("$RELEASE_STATE" get tested "$kind")"
   eval "cred=\${CRED_$(printf '%s' "$kind" | tr '[:lower:]-' '[:upper:]_'):-}"
 
   if [ -n "$red_ver" ] && [ "$red_ver" = "$latest" ]; then state=red
   elif [ "$streak" = true ]; then state=streak
   elif [ "$pin" = "$latest" ]; then state=current
-  elif [ "$kind" = rtk ]; then state=manual
+  elif [ "${M_contract[$kind]}" = - ]; then state=manual
   elif [ "$tested" = "$latest" ]; then state=merge
   elif [ "${M_dispatch[$kind]}" = manual ]; then state=dispatch
   elif [ "$cred" = false ] && [ "${M_secrets[$kind]}" != - ]; then state=credential
@@ -165,7 +165,7 @@ sync_kind() { # sync_kind <kind> <pin> <latest>
       cmd="$(dispatch_cmd "$kind")" ;;
     manual)
       title="$kind CLI: bump the pin to $latest"
-      next="No contract covers \`$kind\`. Bump \`RTK_VERSION\` in \`workspace/Dockerfile\` to \`$latest\` by hand (\`docs/build/10-development.md\` §10.2.1) in a PR that closes this issue." ;;
+      next="No contract covers \`$kind\`. Bump \`${M_arg[$kind]}\` in \`workspace/Dockerfile\` to \`$latest\` by hand (\`docs/build/10-development.md\` §10.2.1) in a PR that closes this issue." ;;
     merge)
       local pr; pr="$(bump_pr_for "$kind" "$latest")"
       title="$kind CLI: merge the pin bump to $latest"
@@ -199,7 +199,7 @@ sync_kind() { # sync_kind <kind> <pin> <latest>
     printf '**Next step:** %s\n' "$next"
     if [ -n "$cmd" ]; then printf '\n```\n%s\n```\n' "$cmd"; fi
     printf '\n| CLI | Pin | Latest | Contract passed on |\n|---|---|---|---|\n'
-    printf '| %s | `%s` | `%s` | %s |\n' "$kind" "$pin" "$latest" "$([ "$kind" = rtk ] && echo 'no contract' || echo "\`${tested:-none}\`")"
+    printf '| %s | `%s` | `%s` | %s |\n' "$kind" "$pin" "$latest" "$([ "${M_contract[$kind]}" = - ] && echo 'no contract' || echo "\`${tested:-none}\`")"
     printf '\n<sub>One issue per CLI, kept by `cli-drift.yml` (`deploy/local/cli-update-issues.sh`) while a person has something to do. A PR that bumps the pin closes it; it also closes itself once nothing is left to do.</sub>\n'
     printf '<!-- cli-update kind=%s -->\n' "$kind"
   } > "$WORK/body.md"

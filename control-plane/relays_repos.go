@@ -13,6 +13,8 @@ var repoRelays = []agentRelay{
 	// display name is never read, so the audit records the action alone.
 	{route: "GET /api/spaces"},
 	{route: "POST /api/spaces", audit: auditAs("space.create", nil)},
+	// The display name only; the target is the folder, whose shape the Agent fixes.
+	{route: "PATCH /api/spaces/{folder}", audit: auditAs("space.rename", pathShaped("folder", spaceFolderRe))},
 	{route: "GET /api/repos/{name}/recreate"}, // deleted worktree back at its path (#1040)
 	{route: "POST /api/repos/{name}/recreate", audit: auditByName("repo.recreate")},
 	{route: "POST /api/repos/{name}/lock", audit: auditByName("repo.lock")}, // deletion lock (docs/log/45)

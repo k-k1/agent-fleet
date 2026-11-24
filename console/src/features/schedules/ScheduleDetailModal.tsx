@@ -82,6 +82,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   const [routeKey, setRouteKey] = useState(() => (s.route ? choiceKey({ route: s.route, connection: s.route_connection || undefined }) : ""));
   const [report, setReport] = useState(!!s.report);
   const [stopAfterRun, setStopAfterRun] = useState(!!s.stop_after_run);
+  const [showInSessions, setShowInSessions] = useState(!!s.show_in_sessions);
   const [targets, setTargets] = useState<string[]>(() => canonicalTargets(scheduleTargets(s)));
   const [silent, setSilent] = useState(!!s.silent);
   // The gate (ADR 0021 addendum). A gate can only sit on a recurring session_mode=new schedule; one
@@ -166,6 +167,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
     }
     if (report !== !!s.report) p.report = report;
     if (stopAfterRun !== !!s.stop_after_run) p.stop_after_run = stopAfterRun;
+    if (showInSessions !== !!s.show_in_sessions) p.show_in_sessions = showInSessions;
     if (targets.join(",") !== canonicalTargets(scheduleTargets(s)).join(",")) p.deliver_to = targets;
     if (silent !== !!s.silent) p.silent = silent;
     // A gate the schedule cannot carry (once, or not session_mode=new) is never patched in; only
@@ -176,7 +178,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
     }
     return p;
     // eslint-disable-next-line react-hooks/exhaustive-deps -- routePatch reads choices, keyed by routeKey and agent
-  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, routeKey, storedKey, report, stopAfterRun, targets, silent, gateKnown, gateFits, gateForm]);
+  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, routeKey, storedKey, report, stopAfterRun, showInSessions, targets, silent, gateKnown, gateFits, gateForm]);
 
   const dirty = Object.keys(patch).length > 0;
   // Reporting on with no target would deliver nowhere while looking switched on.
@@ -414,6 +416,18 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
             <span>
               {tr("sched.f_stop_after_run")}
               <span className="ui-field-hint"> — {tr("sched.f_stop_after_run_hint")}</span>
+            </span>
+          </label>
+        )}
+
+        {/* "Also show in the Sessions view", default off. Not offered for session_mode=assistant:
+            it holds no sessions with a worktree of their own for the flag to surface. */}
+        {s.session_mode !== "assistant" && (
+          <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+            <input type="checkbox" checked={showInSessions} onChange={(e) => setShowInSessions(e.target.checked)} />
+            <span>
+              {tr("sched.f_show_in_sessions")}
+              <span className="ui-field-hint"> — {tr("sched.f_show_in_sessions_hint")}</span>
             </span>
           </label>
         )}

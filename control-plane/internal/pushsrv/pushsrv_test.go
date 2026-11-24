@@ -369,7 +369,7 @@ func TestDeliverIsMinimal(t *testing.T) {
 		t.Fatalf("pushes: %d", f.count())
 	}
 	got := d.open(t, f.bodies[0])
-	if got != `{"v":1,"kind":"question","session":"s1","name":"My session"}` {
+	if got != `{"v":1,"kind":"question","session":"s1","name":"My session","origin":"own"}` {
 		t.Fatalf("payload %s", got)
 	}
 	if strings.Contains(got, "SECRET") {
@@ -387,8 +387,35 @@ func TestPayloadCarriesTheTenantSlug(t *testing.T) {
 	if f.count() != 1 {
 		t.Fatalf("pushes: %d", f.count())
 	}
-	if got := d.open(t, f.bodies[0]); got != `{"v":1,"kind":"question","session":"s1","name":"My session","tenant":"acme"}` {
+	if got := d.open(t, f.bodies[0]); got != `{"v":1,"kind":"question","session":"s1","name":"My session","tenant":"acme","origin":"own"}` {
 		t.Fatalf("payload %s", got)
+	}
+}
+
+// The payload names the notification's origin so the service worker can label the title; an entry
+// without one (an old Agent) is own.
+func TestPayloadCarriesTheOrigin(t *testing.T) {
+	cases := []struct {
+		root  string
+		child bool
+		want  string
+	}{
+		{"", false, "own"}, {"own", true, "own-child"}, {"autorun", false, "autorun"},
+		{"autorun", true, "autorun-child"}, {"schedule", false, "schedule"}, {"schedule", true, "schedule-child"},
+		{"bogus", true, "own-child"},
+	}
+	for _, c := range cases {
+		f := newFixture(t)
+		d := f.subscribe(t, "m1")
+		n := note("question")
+		n.OriginRoot, n.OriginChild = c.root, c.child
+		f.deliver(n)
+		if f.count() != 1 {
+			t.Fatalf("%v: pushes %d", c, f.count())
+		}
+		if got := d.open(t, f.bodies[0]); !strings.Contains(got, `"origin":"`+c.want+`"`) {
+			t.Fatalf("%v: payload %s", c, got)
+		}
 	}
 }
 
@@ -404,7 +431,7 @@ func TestOverlongNameDropsTheNameNotThePush(t *testing.T) {
 	if f.count() != 1 {
 		t.Fatalf("the push was lost to a long name: %d", f.count())
 	}
-	if got := d.open(t, f.bodies[0]); got != `{"v":1,"kind":"question","session":"s1","tenant":"acme"}` {
+	if got := d.open(t, f.bodies[0]); got != `{"v":1,"kind":"question","session":"s1","tenant":"acme","origin":"own"}` {
 		t.Fatalf("payload %s", got)
 	}
 }

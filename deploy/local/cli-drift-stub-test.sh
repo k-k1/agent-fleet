@@ -71,6 +71,7 @@ case "$2" in
   @opencode/cli)             name=opencode ;;
   @openai/codex)             name=codex ;;
   @github/copilot)           name=copilot ;;
+  confluence-cli)            name=confluence ;;
   *) echo "$2" >> "$STUB_NPM_LOG"; exit 1 ;;
 esac
 echo "$2" >> "$STUB_NPM_LOG"
@@ -81,7 +82,7 @@ case ",${STUB_DRIFT:-}," in *",$name,"*) echo "9.9.9"; exit 0 ;; esac
 cat "$STUB_PINS/$name"; echo
 FAKE
 
-# curl answers the agy / cursor / kiro / muse / rtk rows. The cursor body is deliberately far
+# curl answers the agy / cursor / kiro / muse / rtk rows and the GitHub rows of the image tools. The cursor body is deliberately far
 # bigger than a pipe buffer (64 KiB on Linux): that row used to be
 # `curl | sed | head -1`, and a fixture that fits in the buffer never makes the writer
 # block, so the SIGPIPE the split exists for cannot happen and the case passes either
@@ -89,12 +90,17 @@ FAKE
 cat > "$STUB/curl" <<'FAKE'
 #!/usr/bin/env bash
 url="${!#}"
+[ -z "${STUB_CURL_LOG:-}" ] || printf '%s\n' "$*" >> "$STUB_CURL_LOG"
 case "$url" in
   *antigravity*) name=agy ;;
   *cursor.com*)  name=cursor ;;
   *kiro.dev*)    name=kiro ;;
   *muse-code/channels*) name=muse ;;
   *rtk-ai/rtk*)  name=rtk ;;
+  *cli/cli/*)    name=gh ;;
+  *avivsinai/bitbucket-cli*) name=bkt ;;
+  *ankitpokhrel/jira-cli*)   name=jira ;;
+  *gitleaks/gitleaks*)       name=gitleaks ;;
   *) exit 22 ;;
 esac
 case ",${STUB_FAIL:-}," in *",$name,"*) exit 22 ;; esac
@@ -114,7 +120,7 @@ case ",${STUB_DRIFT:-}," in
 esac
 case "$name" in
   agy|kiro|muse) printf '{"version":"%s"}\n' "$version" ;;
-  rtk)      printf '{"tag_name":"v%s"}\n' "$version" ;;
+  rtk|gh|bkt|jira|gitleaks) printf '{"tag_name":"v%s"}\n' "$version" ;;
   cursor)
     # The real install script is a long shell file with the version buried in a URL.
     seq 1 4000 | sed 's/^/# leading padding line /'
@@ -154,12 +160,12 @@ code_is()   { [ "$rc" = "$1" ] || fail "expected exit $1, got $rc"; }
 # If the real script grows a row, this test must grow with it rather than quietly
 # exercise fewer rows than it claims.
 ROWS="$(. "$ROOT/deploy/local/cli-manifest.sh" && manifest_load && echo "${#M_NAMES[@]}")"
-[ "$ROWS" = 9 ] || fail "the CLI manifest has $ROWS rows, the stubs answer 9"
+[ "$ROWS" = 14 ] || fail "the CLI manifest has $ROWS rows, the stubs answer 14"
 
 echo "== case 1: nothing fails and every pin matches -> exit 0, no failed rows =="
 STUB_FAIL="" STUB_DRIFT="" run_check
 code_is 0
-for name in claude opencode codex copilot agy cursor kiro rtk; do
+for name in claude opencode codex copilot agy cursor kiro rtk confluence gh bkt jira gitleaks; do
   in_sync "$name"
 done
 out_has '^failed=$'
@@ -183,9 +189,9 @@ err_has "cli-drift-check: warning: rtk:"
 sum_has "could not be read"
 
 echo "== case 3: every source fails -> exit 2 (the control for case 2) =="
-STUB_FAIL="claude,codex,opencode,copilot,agy,cursor,kiro,muse,rtk" STUB_DRIFT="" run_check
+STUB_FAIL="claude,codex,opencode,copilot,agy,cursor,kiro,muse,rtk,confluence,gh,bkt,jira,gitleaks" STUB_DRIFT="" run_check
 code_is 2
-out_has '^failed=claude,codex,opencode,copilot,agy,cursor,kiro,muse,rtk$'
+out_has '^failed=claude,codex,opencode,copilot,agy,cursor,kiro,muse,rtk,confluence,gh,bkt,jira,gitleaks$'
 err_has "No release source could be read."
 
 echo "== case 4: two rows fail and a third drifts -> still exit 1, both named =="
@@ -204,6 +210,35 @@ code_is 0
 out_has '^failed=cursor$'
 out_has '^latest_cursor=$'
 says "Could not read: cursor"
+
+echo "== case 5b: a watch-only npm row (confluence) and a GitHub row (gh) read their sources and report drift =="
+: > "$WORK/npm.log"
+STUB_FAIL="" STUB_DRIFT="confluence,gh" run_check
+code_is 1
+grep -qx 'confluence-cli' "$WORK/npm.log" || fail "the confluence row did not ask npm for confluence-cli"
+out_has '^latest_confluence=9\.9\.9$'
+out_has '^latest_gh=9\.9\.9$'
+in_sync bkt
+in_sync jira
+in_sync gitleaks
+says "gh"
+# Control: the same run with nothing drifting is green, so the exit 1 above is the rows' doing.
+STUB_FAIL="" STUB_DRIFT="" run_check
+code_is 0
+
+echo "== case 5d: GH_TOKEN goes to api.github.com only, and nothing is sent without it =="
+export STUB_CURL_LOG="$WORK/curl.log"
+: > "$STUB_CURL_LOG"
+GH_TOKEN=dummy-token STUB_FAIL="" STUB_DRIFT="" run_check
+code_is 0
+grep -q 'Authorization: Bearer dummy-token .*api.github.com/repos/cli/cli/releases/latest' "$STUB_CURL_LOG" || fail "the GitHub call carried no Bearer header"
+if grep -v 'api.github.com' "$STUB_CURL_LOG" | grep -q 'Authorization'; then fail "the token was sent to a host other than api.github.com"; fi
+grep -q 'antigravity' "$STUB_CURL_LOG" || fail "control: the non-GitHub rows were not read"
+: > "$STUB_CURL_LOG"
+env -u GH_TOKEN STUB_FAIL="" STUB_DRIFT="" GITHUB_OUTPUT="$WORK/gh_out" GITHUB_STEP_SUMMARY="$WORK/summary.md" "$CHECK" > "$WORK/out" 2> "$WORK/err" || fail "the check failed without GH_TOKEN"
+grep -q 'api.github.com/repos/cli/cli' "$STUB_CURL_LOG" || fail "control: the GitHub row was not read without a token"
+if grep -q 'Authorization' "$STUB_CURL_LOG"; then fail "an Authorization header was sent without GH_TOKEN"; fi
+unset STUB_CURL_LOG
 
 echo "== case 5c: the opencode row reads @opencode/cli =="
 : > "$WORK/npm.log"
@@ -292,6 +327,16 @@ out_hasnt '^watcher_ok='      # a run with an unreadable row is not a clean run
 out_has '^watcher_at=2026-09-11T05:30:12Z$'
 sum_has 'not a dispatch target'
 sum_has '`claude=2.1.267`'
+
+echo "== case 8b: a drifting watch-only row is no edge, and nothing is dispatched for it =="
+run_edges LATEST_CONFLUENCE=9.9.9 LATEST_GH=9.9.9 LATEST_BKT=9.9.9 LATEST_JIRA=9.9.9 LATEST_GITLEAKS=9.9.9 LATEST_RTK=9.9.9
+out_has '^count=0$'
+out_hasnt '^(confluence|gh|bkt|jira|gitleaks|rtk)=true$'
+out_has '^skipped=$'
+# Control: the same call with a contract row drifting does dispatch it.
+run_edges LATEST_CONFLUENCE=9.9.9 LATEST_GH=9.9.9 LATEST_CLAUDE=9.9.9
+out_has '^claude=true$'
+out_has '^count=1$'
 
 echo "== case 9: the unreadable row IS a dispatch kind -> only that kind is held back =="
 run_edges FAILED=kiro LATEST_CLAUDE=2.1.267 LATEST_KIRO=
@@ -780,6 +825,19 @@ releases rtk=0.51.0:0.52.0
 sync_ok rtk
 title_is rtk "rtk CLI: bump the pin to 0.52.0"
 has rtk 'RTK_VERSION'
+
+echo "== case 30b: watch-only image tools (gh npm-style and GitHub rows) get a hand-bump issue naming their own ARG, never a contract command =="
+releases gh=2.105.0:2.106.0 confluence=2.31.2:2.31.3
+sync_ok gh confluence
+title_is gh "gh CLI: bump the pin to 2.106.0"
+has gh 'GH_VERSION'
+hasnt gh 'gh workflow run'
+title_is confluence "confluence CLI: bump the pin to 2.31.3"
+has confluence 'CONFLUENCE_CLI_VERSION'
+hasnt confluence 'RTK_VERSION'
+releases gh=2.106.0:2.106.0
+sync_ok gh
+no_issue gh
 
 echo "== case 31: a red row for latest names the fix, keeps the section, and the dispatch fits the kind =="
 releases muse=1.4.4:1.4.7 codex=0.162.1:0.163.1

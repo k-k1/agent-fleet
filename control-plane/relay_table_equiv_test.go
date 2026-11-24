@@ -410,6 +410,8 @@ var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/connections/unusable/remove": true,
 	// ADR 0142 decision 1: a new, empty space under ~/spaces.
 	"POST /api/spaces": true,
+	// ADR 0142 decision 3: renaming a space's display name.
+	"PATCH /api/spaces/{folder}": true,
 }
 
 // auditAddedSinceTheFreeze are routes that existed at the freeze and that the frozen switch

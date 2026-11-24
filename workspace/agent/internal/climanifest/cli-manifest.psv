@@ -11,6 +11,24 @@
 # `--tables` names whatever is still missing. No hosts of a deployment and no credentials
 # belong here: only public release endpoints and the NAMES of CI secrets.
 #
+# Rows with contract `-` are watch-only: the drift check reads their latest release and
+# cli-update-issues.sh keeps one "bump the pin by hand" issue per tool, and nothing else
+# touches them (no contract dispatch, no bump PR). rtk and the image tools below are such rows.
+#
+# Image pins that are NOT watched yet, and why (a row needs a name that is also its
+# versions.json key, so an underscore key such as mcp_grafana needs the name rule widened,
+# and a source the reader does not have needs a resolver in cli-drift-check.sh):
+#   go                      go.dev/dl JSON, not a GitHub or npm source
+#   awscli                  aws/aws-cli publishes tags only (releases/latest answers 404); needs a tag resolver
+#   session-manager-plugin  a four-part vendor build number, not a release tag of a source the reader has
+#   gcloud                  Google's rapid-channel JSON, not a GitHub or npm source
+#   mcp-grafana             GitHub releases, but its versions.json key is `mcp_grafana`
+#   cloudwatch-mcp, aws-mcp PyPI (uv-installed); needs a PyPI resolver (key has an underscore too)
+#   postgres, mysql         vendor download indexes, pinned with per-arch checksums
+#   npm                     held on a deliberate 11.x line (see its ARG comment in workspace/Dockerfile)
+#   chromium                a Debian pin; deploy/local/apt-pin-check.sh already reads it
+#   chromium-cft/-dl, noto-cjk  Chrome-for-Testing and font release tags; no source reader yet
+#
 # One CLI per line, `|` separated, `-` for "none". Order is the order the tools print rows in.
 #
 #  1 name         the kind; also the versions.json key, the watcher-state key, LATEST_<NAME>
@@ -39,3 +57,8 @@ cursor|CURSOR_VERSION|cursor|https://cursor.com/install|cursor-contract.yml|curs
 kiro|KIRO_VERSION|kiro|https://prod.download.cli.kiro.dev/stable/latest/manifest.json|kiro-contract.yml|kiro|manual|cli_version|E2E_KIRO_AUTH_DB_B64_1..8|(`deploy/local/set-kiro-ci-auth.sh`)|-
 muse|MUSE_VERSION|muse|https://api.meta.ai/muse-code/channels/muse-stable|muse-contract.yml|-|auto|version|-|-|-
 rtk|RTK_VERSION|github|rtk-ai/rtk|-|-|-|-|-|-|-
+confluence|CONFLUENCE_CLI_VERSION|npm|confluence-cli|-|-|-|-|-|-|-
+gh|GH_VERSION|github|cli/cli|-|-|-|-|-|-|-
+bkt|BKT_VERSION|github|avivsinai/bitbucket-cli|-|-|-|-|-|-|-
+jira|JIRA_CLI_VERSION|github|ankitpokhrel/jira-cli|-|-|-|-|-|-|-
+gitleaks|GITLEAKS_VERSION|github|gitleaks/gitleaks|-|-|-|-|-|-|-

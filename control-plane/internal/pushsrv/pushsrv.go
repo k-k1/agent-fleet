@@ -244,6 +244,9 @@ type pushPayload struct {
 	// browser registered under one tenant may have its Console on another; without it a tap would
 	// open a same-named session of the wrong tenant. Absent when the lookup failed.
 	Tenant string `json:"tenant,omitempty"`
+	// Origin is the originKey of the notification (one of the six switch names). The service worker
+	// turns it into a title prefix; it is always present, and own has no prefix there.
+	Origin string `json:"origin"`
 	// Text is a question's text. Present only when the tenant allows it (tenant_push_setting).
 	Text string `json:"text,omitempty"`
 }
@@ -350,7 +353,7 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 		}
 		return
 	}
-	pl := pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName, Tenant: dc.TenantSlug}
+	pl := pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName, Tenant: dc.TenantSlug, Origin: originKey(n.OriginRoot, n.OriginChild)}
 	body, _ := json.Marshal(pl)
 	if len(body) > webpush.MaxPayload {
 		// The display name is stored as the Agent sent it. A name that makes even the base payload

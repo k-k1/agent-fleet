@@ -80,6 +80,7 @@ Open **Details / edit** from the row's ⋯ menu.
 | Deliver to | Where the report goes (next section) |
 | Stay silent when there is nothing to report | Sends nothing when all is well (see below) |
 | Stop when done | Stops the session when the run is done |
+| Also show in the Sessions view | Lists the worktree sessions the runs start in the repository tree and the Sessions list too. Off by default |
 | Prompt | The text sent each time |
 
 Session mode, reuse target, rotation, overlap policy and the like cannot be changed here. Ask the operator in its conversation.
@@ -116,6 +117,16 @@ With **Stop when done** on, the session stops when the run is done. Asking the o
 - The report comes first and the stop after it. The stopped session can be resumed
 - A session started at an hour nobody is watching does not keep holding memory after its run
 - The time the workspace itself stops does not change: a session that has finished its work already does not hold off the idle auto-stop
+
+## Also show in the Sessions view
+
+Sessions a schedule starts stay out of the repository tree and the Sessions list; you reach them from the run's row in the Schedules view. When you want to follow up in the working copy of such a session (its pull request, a hand-over), turn on **Also show in the Sessions view** for that schedule.
+
+- It applies to the sessions a run starts that have a working copy of their own. They appear in the repository tree under that working copy and in the Sessions list, the working copy is an ordinary row, the filter finds them, and they count in the Sessions badge instead of the Schedules one
+- The schedule's own session and children without a working copy of their own stay in the Schedules view. All of them are still listed there, so the run keeps its place
+- Off by default. Turning it off puts them back in the Schedules view alone
+- Asking the operator, it is `show_in_sessions`
+- It does not apply to a schedule that runs in an assistant conversation
 
 ## Run only when a work item query has something new
 

@@ -161,6 +161,8 @@ dispatch '{"muse":"true"}'
 [ "$(cat "$WORK/gh.log")" = "workflow run muse-contract.yml -f version=latest" ] || fail "muse: $(cat "$WORK/gh.log")"
 dispatch '{"cursor":"true","kiro":"true","rtk":"true"}' E2E_CURSOR_AUTH_JSON=x
 [ ! -s "$WORK/gh.log" ] || fail "a manual or contract-less kind was dispatched: $(cat "$WORK/gh.log")"
+dispatch '{"confluence":"true","gh":"true","bkt":"true","jira":"true","gitleaks":"true"}' GH_TOKEN=x
+[ ! -s "$WORK/gh.log" ] || fail "a watch-only image tool was dispatched: $(cat "$WORK/gh.log")"
 dispatch '{"count":"0"}'
 [ ! -s "$WORK/gh.log" ] || fail "nothing changed, yet something was dispatched"
 echo "ok: dispatch"

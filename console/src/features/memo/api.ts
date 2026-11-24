@@ -21,6 +21,7 @@ export {
   memoRepoExport,
   memoRelease,
   memoStopChain,
+  memoSetRunNext,
   memoTidyApply,
   memoQueueFire,
   memoQueueFireOne,
