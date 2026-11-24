@@ -64,6 +64,16 @@ type CredentialResolver interface {
 	UsableRoutes() []string
 }
 
+// DefaultLaunchResolver is an optional capability of a CredentialResolver whose ResolveLaunch
+// cannot tell the route of a session that names no model from what it holds (opencode: the model
+// opencode picks depends on the directory's providers). ResolveDefaultLaunch may ask the
+// running tool, so it is for the launch RECORD only, never for judging a launch against a policy
+// (which has no working directory yet at a create, and must not wait on a probe at a resume). A
+// zero Launch is "cannot tell".
+type DefaultLaunchResolver interface {
+	ResolveDefaultLaunch(m session.Meta) routes.Launch
+}
+
 // OneRouteResolver marks a CredentialResolver whose launch with no selection runs on exactly the
 // one route its current login mode or connection resolves to (ADR 0138 D11b: agy, copilot,
 // cursor, kiro, muse and codex by their login mode, lcpp by its connection). Under a restriction

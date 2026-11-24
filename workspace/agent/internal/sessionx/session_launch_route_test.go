@@ -248,3 +248,41 @@ func plainFingerprint(k string) string {
 	h := sha256.Sum256([]byte(k))
 	return hex.EncodeToString(h[:])[:16]
 }
+
+// defaultResolvingAgent is resolvingAgent that also answers the launch of a session naming no
+// model (agents.DefaultLaunchResolver), counting the asks.
+type defaultResolvingAgent struct {
+	resolvingAgent
+	def   routes.Launch
+	asked *int
+}
+
+func (a defaultResolvingAgent) ResolveDefaultLaunch(session.Meta) routes.Launch {
+	*a.asked++
+	return a.def
+}
+
+// The record of a launch that names no model may ask the kind's DefaultLaunchResolver; a named
+// model, or a resolver that already answered, never does. Judging a launch against a policy
+// (ResolveLaunch) never does either: it has no working directory yet at a create and must not
+// wait on a probe.
+func TestLaunchRouteOfAsksTheDefaultResolverOnlyForANamelessLaunch(t *testing.T) {
+	isolateAgentState(t)
+	free := routes.Launch{Route: routes.RouteOpencodeZen, Binding: "opencode-zen@free"}
+	asked := 0
+	swapClaude(t, func(base agents.Agent) agents.Agent {
+		return defaultResolvingAgent{resolvingAgent: resolvingAgent{routeAgent: routeAgent{Agent: base}}, def: free, asked: &asked}
+	})
+	if l := launchRouteOf(session.Meta{Kind: session.KindClaude}); l == nil || *l != free || asked != 1 {
+		t.Errorf("no model: recorded %+v after %d asks, want %+v after 1", l, asked, free)
+	}
+	if l := launchRouteOf(session.Meta{Kind: session.KindClaude, Model: "m"}); l == nil || *l != (routes.Launch{}) || asked != 1 {
+		t.Errorf("a named model: recorded %+v after %d asks, want unresolved after 1", l, asked)
+	}
+	swapClaude(t, func(base agents.Agent) agents.Agent {
+		return defaultResolvingAgent{resolvingAgent: resolvingAgent{routeAgent: routeAgent{Agent: base}, launch: routes.Launch{Route: "r"}}, def: free, asked: &asked}
+	})
+	if l := launchRouteOf(session.Meta{Kind: session.KindClaude}); l == nil || *l != (routes.Launch{Route: "r"}) || asked != 1 {
+		t.Errorf("an answered resolver: recorded %+v after %d asks", l, asked)
+	}
+}

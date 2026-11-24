@@ -148,20 +148,20 @@ func init() {
 // ResolveLaunch implements agents.CredentialResolver: the route of the model the session is
 // launched on, from its provider id (ADR 0138 D2), and the credential the stored keys or the
 // account login give that provider. A session can change model later; this is the launch. A
-// launch on a provider whose payer cannot be told resolves to nothing rather than to a guess.
-//
-// A launch that names no model is opencode's own default: nothing read from files proves which
-// model it runs (a configured model falls back when unavailable, an agent's own model overrides
-// it), so only the running serve's answer for the session's directory counts, and only for the
-// one case it can prove, a directory that offers opencode.ai's free models and nothing else
-// (default_model.go). Every other case, and any case the serve does not answer within the launch
-// budget, stays unresolved.
+// launch on a provider whose payer cannot be told resolves to nothing rather than to a guess, and
+// so does one on opencode's own default model (no model named): opencode falls back from a
+// configured model that is unavailable or disabled, and an agent's own model (JSON or Markdown,
+// global or project) overrides it, so nothing read at launch proves which model will run.
 func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
-	if strings.TrimSpace(m.Model) == "" {
-		return resolveDefaultModelLaunch(m)
-	}
 	keys, pref, acct, custom := credentialView()
 	return resolveModel(m.Model, keys, pref, acct, engineProviderIDs(), custom)
+}
+
+// ResolveDefaultLaunch implements agents.DefaultLaunchResolver: the launch record of a session that
+// names no model, which ResolveLaunch leaves unresolved. Only the running serve's answer for the
+// session's working directory counts (default_model.go), and only for the one case it proves.
+func (agentImpl) ResolveDefaultLaunch(m session.Meta) routes.Launch {
+	return resolveDefaultModelLaunch(m)
 }
 
 // ModelLaunch is ResolveLaunch for an opencode run outside any session (the assistant chat and the

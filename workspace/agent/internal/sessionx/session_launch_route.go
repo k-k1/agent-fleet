@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"log"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
@@ -35,7 +36,13 @@ func launchRouteOf(m session.Meta) *routes.Launch {
 		return nil
 	}
 	if cr, ok := a.(agents.CredentialResolver); ok {
-		l, _ := withinBudget(m.Kind+" ResolveLaunch", func() routes.Launch { return cr.ResolveLaunch(m) })
+		l, _ := withinBudget(m.Kind+" ResolveLaunch", func() routes.Launch {
+			l := cr.ResolveLaunch(m)
+			if dr, ok := a.(agents.DefaultLaunchResolver); ok && l.Route == "" && strings.TrimSpace(m.Model) == "" {
+				return dr.ResolveDefaultLaunch(m)
+			}
+			return l
+		})
 		return &l
 	}
 	return nil

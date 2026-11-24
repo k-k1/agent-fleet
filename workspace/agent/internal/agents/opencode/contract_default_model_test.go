@@ -10,9 +10,11 @@ package opencode
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -30,7 +32,14 @@ func TestContractDefaultModel(t *testing.T) {
 	}
 	t.Cleanup(func() { resetServeAuth("") })
 	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", port)
-	cmd.Env = append(envWithHome(home), "OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
+	// Only what the daemon needs: a key or an AWS chain inherited from the machine would add a
+	// provider and change the plain case.
+	cmd.Env = []string{
+		"PATH=" + os.Getenv("PATH"), "HOME=" + home,
+		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "XDG_DATA_HOME=" + filepath.Join(home, ".local", "share"),
+		"XDG_STATE_HOME=" + filepath.Join(home, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(home, ".cache"),
+		"OPENCODE_SERVER_USERNAME=" + serveUser, "OPENCODE_SERVER_PASSWORD=" + password,
+	}
 	cmd.Dir = home
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -41,8 +50,14 @@ func TestContractDefaultModel(t *testing.T) {
 			t.Fatal("serve never became healthy through the production probe")
 		}
 	}
-	plain := t.TempDir()
-	withProvider := t.TempDir()
+	plain, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	withProvider, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := `{"provider":{"acme":{"npm":"@ai-sdk/openai-compatible","name":"Acme","options":{"baseURL":"http://127.0.0.1:1/v1","apiKey":"k"},"models":{"m1":{"name":"M1"}}}}}`
 	if err := os.WriteFile(filepath.Join(withProvider, "opencode.json"), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
@@ -52,14 +67,20 @@ func TestContractDefaultModel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	model, err := keylessDefaultModel(ctx, addr, filepath.Clean(plain))
+	model, err := keylessDefaultModel(ctx, addr, plain)
 	if err != nil || model == "" {
 		t.Fatalf("a directory with the built-in provider alone: %q, %v (opencode %s)", model, err, opencodeVersion(t))
 	}
 	if got := model[:len("opencode/")]; got != "opencode/" {
 		t.Errorf("default model %q is not an opencode one", model)
 	}
-	if m, err := keylessDefaultModel(ctx, addr, filepath.Clean(withProvider)); err == nil {
-		t.Errorf("a directory whose project adds a provider resolved to %q", m)
+	// Refused for THAT reason: a config that did not load, or a deadline that ran out, would end in
+	// an error too, and say nothing about the provider list.
+	m, err := keylessDefaultModel(ctx, addr, withProvider)
+	if err == nil {
+		t.Fatalf("a directory whose project adds a provider resolved to %q", m)
+	}
+	if !errors.Is(err, errNotFreeOnly) || !strings.Contains(err.Error(), "providers") {
+		t.Errorf("refused for another reason: %v", err)
 	}
 }
