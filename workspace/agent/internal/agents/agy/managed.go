@@ -365,6 +365,11 @@ func (h *streamHandle) spawn(gen int, sw *spawnWait) (*streamChild, error) {
 	h.mu.Lock()
 	st, conv := h.settings, h.conv
 	h.mu.Unlock()
+	if !waitidUsable() {
+		// Without waitid neither watch nor Go's own Wait (which uses it too) can follow or reap a
+		// child, so the route refuses before it creates one.
+		return failed(errors.New("agy の Managed はこのホストでは使えません（waitid が拒否されます）"))
+	}
 	cmd := h.command(h, st, conv)
 	cmd.Dir = h.dir
 	// All three pipes are our own files: Wait would close a StdoutPipe under the reader, which
@@ -390,15 +395,6 @@ func (h *streamHandle) spawn(gen int, sw *spawnWait) (*streamChild, error) {
 		return failed(fmt.Errorf("agy を起動できません: %w", err))
 	}
 	tail.Settle() // the stderr tail is kept for spawn failures only (StderrTail's contract)
-	if !waitidUsable(cmd.Process.Pid) {
-		// Without waitid neither watch nor Go's own Wait (which uses it too) can follow the child,
-		// so the route refuses here rather than lose track of a process it started.
-		_ = cmd.Process.Kill()
-		go func() { _ = cmd.Wait() }()
-		_ = inW.Close()
-		_ = outR.Close()
-		return failed(errors.New("agy の Managed はこのホストでは使えません（waitid が拒否されます）"))
-	}
 	c := &streamChild{cmd: cmd, stdin: inW, exited: make(chan struct{}), gen: gen, fresh: true, tr: newTurnTracker(conv != "")}
 	// Registered, and published or retired, before watch starts: a child that exits at once is
 	// then let go by watch rather than published after it was reaped.
@@ -498,14 +494,15 @@ func waitExitedNoReap(pid int) bool {
 // waitExited is waitExitedNoReap, replaceable by tests that need waitid refused.
 var waitExited = waitExitedNoReap
 
-// waitidUsable reports that waitid answers for pid, without waiting or reaping. Replaceable by
-// tests.
-var waitidUsable = func(pid int) bool {
+// waitidUsable reports that this host lets the Agent call waitid, without a child to ask about:
+// asked about the Agent's own pid, which is never its child, a working waitid answers ECHILD, and
+// one a sandbox refuses answers something else (EPERM, ENOSYS). Replaceable by tests.
+var waitidUsable = func() bool {
 	var info unix.Siginfo
 	for {
-		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOHANG|unix.WNOWAIT, nil)
+		err := unix.Waitid(unix.P_PID, os.Getpid(), &info, unix.WEXITED|unix.WNOHANG|unix.WNOWAIT, nil)
 		if err != unix.EINTR {
-			return err == nil
+			return err == unix.ECHILD
 		}
 	}
 }
@@ -527,7 +524,7 @@ func (h *streamHandle) watch(c *streamChild, tail *agents.StderrTail, r *os.File
 		c.reaped = true
 		c.reapMu.Unlock()
 	} else {
-		// waitid answered at spawn (waitidUsable) and is refused now. Group signalling ends
+		// waitid answered before the spawn (waitidUsable) and is refused now. Group signalling ends
 		// before the reap can happen, and Wait alone follows, with no group kill.
 		c.reapMu.Lock()
 		c.leaderOnly = true
@@ -850,10 +847,12 @@ func (h *streamHandle) runTurn(t *agents.Taken, lease *lifegate.Lease, gen int) 
 		}
 		h.mu.Lock()
 		h.sending = nil
-		if h.stopping || !h.alive {
-			// A stop or a teardown was aimed at this input, and ending the child is how it was
-			// delivered: the input is cancelled, not restored, and a first stop's queue goes on.
-			return h.landLocked(t, agents.TurnCancelled), ""
+		if h.stopping || !h.alive || h.gen != gen {
+			// A stop or a teardown ended the child before the prompt reached it. The prompt was
+			// never delivered, so the queue's own rules decide: a stop (stop-pending) or a detach
+			// (dropped) discards it and a first stop's queue goes on; a shutdown keeps it, with
+			// its held file, for the next boot.
+			return h.requeueLostLocked(t, gen), ""
 		}
 		if c.fresh || retried {
 			// A child spawned for this very prompt died before taking it: lost, not retried.
@@ -871,8 +870,9 @@ func (h *streamHandle) runTurn(t *agents.Taken, lease *lifegate.Lease, gen int) 
 			log.Printf("agy managed: %s: %v", h.name, err)
 			return h.requeueLostLocked(t, gen), ""
 		}
-		if err != nil || h.stopping || !h.alive {
-			return h.landLocked(t, agents.TurnCancelled), ""
+		if err != nil || h.stopping || !h.alive || h.gen != gen {
+			// Still undelivered: the same rules as a failed write under a stop or a teardown.
+			return h.requeueLostLocked(t, gen), ""
 		}
 		c = nc
 		h.sending, h.turnChild = c, c

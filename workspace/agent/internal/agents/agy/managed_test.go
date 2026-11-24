@@ -54,7 +54,7 @@ const (
 // A SIGINT between turns exits 1. With AGY_STREAM_TEST_NOREAD_FIRST=1 the first spawn of a
 // test never reads stdin. With AGY_STREAM_TEST_EXIT_AT_START=1 every spawn exits 2 before
 // reading anything. With AGY_STREAM_TEST_LINGER=1 a closed stdin is answered by exiting a second
-// later. With AGY_STREAM_TEST_EXIT_AFTER_READ=1 a spawn reads one line and exits 2 without a
+// later, with =gate once the gate file exists. With AGY_STREAM_TEST_EXIT_AFTER_READ=1 a spawn reads one line and exits 2 without a
 // word. The log gets "spawn conv=<id> pid=<pid>" per spawn, "turn <content>"
 // per message read and "grand <pid>" per grandchild.
 func TestStreamHelperProcess(t *testing.T) {
@@ -142,8 +142,16 @@ func runFakeAgy(argv []string) {
 		select {
 		case line, ok = <-lines:
 			if !ok {
-				if os.Getenv(streamLingerEnv) == "1" {
+				switch os.Getenv(streamLingerEnv) {
+				case "1":
 					time.Sleep(time.Second)
+				case "gate":
+					for {
+						if _, err := os.Stat(os.Getenv(streamGateEnv)); err == nil {
+							break
+						}
+						time.Sleep(10 * time.Millisecond)
+					}
 				}
 				return // stdin closed: exit 0
 			}
@@ -973,7 +981,9 @@ func TestStreamStopPendingIsDeliveredOnReceipt(t *testing.T) {
 	if got := f.spawns(); got[1] != conv {
 		t.Fatalf("respawn conversation = %q, want %q", got[1], conv)
 	}
-	if got := f.lines("turn "); strings.Join(got, ",") != "hello,slow,hello" {
+	// The stop lands as soon as the prompt is written, so the fake may take the SIGINT before it
+	// logs the line it was reading; what matters is that the queued turn ran once, after it.
+	if got := strings.Join(f.lines("turn "), ","); got != "hello,slow,hello" && got != "hello,hello" {
 		t.Fatalf("turns read = %q", got)
 	}
 }
@@ -1394,11 +1404,11 @@ func TestStreamDeafChildIsKilled(t *testing.T) {
 	}
 }
 
-// On a host that refuses waitid the route refuses at spawn: the child is ended at once, the
-// input is kept and the handle goes down, rather than running a child nothing can follow.
+// On a host that refuses waitid the route refuses before it creates a child: the input is kept
+// and the handle goes down, rather than starting a child nothing can follow or reap.
 func TestStreamWaitidRefusedAtSpawn(t *testing.T) {
 	orig := waitidUsable
-	waitidUsable = func(int) bool { return false }
+	waitidUsable = func() bool { return false }
 	t.Cleanup(func() { waitidUsable = orig })
 	f := newFakeStream(t)
 	send(t, f.h, "hello")
@@ -1413,8 +1423,8 @@ func TestStreamWaitidRefusedAtSpawn(t *testing.T) {
 	if kept != 1 || kids != 0 {
 		t.Fatalf("queue = %d, children = %d; want the input kept and no child tracked", kept, kids)
 	}
-	if got := f.lines("turn "); len(got) != 0 {
-		t.Fatalf("the refused child read %q", got)
+	if got := f.spawns(); len(got) != 0 {
+		t.Fatalf("spawns = %q, want no process created on such a host", got)
 	}
 }
 
@@ -1688,7 +1698,7 @@ func TestStreamEntryFromBeforeAShutdownStartsAgain(t *testing.T) {
 // for it.
 func TestStreamStopWhileWaitingForTheOldChild(t *testing.T) {
 	f := newFakeStream(t)
-	f.env = []string{streamLingerEnv + "=1"} // a closed stdin is answered a second later
+	f.env = []string{streamLingerEnv + "=gate"} // a closed stdin is answered once the gate opens
 	f.h.idleAfter = 50 * time.Millisecond
 	send(t, f.h, "hello")
 	settled(t, f.h)
@@ -1706,11 +1716,75 @@ func TestStreamStopWhileWaitingForTheOldChild(t *testing.T) {
 	if res, _ := f.h.Interrupt(agents.InterruptOpts{}); res.Discard == nil {
 		t.Fatalf("stop = %+v, want the waiting input discarded", res)
 	}
+	if err := os.WriteFile(f.gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if st := settled(t, f.h); st != agents.TurnCancelled {
 		t.Fatalf("turn = %s, want cancelled", st)
 	}
 	time.Sleep(300 * time.Millisecond)
 	if got := f.spawns(); len(got) != 1 {
 		t.Fatalf("spawns = %d, want no child started for the stopped input", len(got))
+	}
+}
+
+// A shutdown while a prompt moves to a new child after its write failed keeps the prompt: it was
+// never delivered, and after Resume it reaches a child once.
+func TestStreamDownDuringTheRetryKeepsThePrompt(t *testing.T) {
+	f := newFakeStream(t)
+	calls := 0
+	f.h.beforeWrite = func() {
+		f.h.mu.Lock()
+		calls++
+		n, c := calls, f.h.sending
+		f.h.mu.Unlock()
+		if n == 2 && c != nil {
+			<-c.exited
+		}
+	}
+	respawn := make(chan struct{})
+	release := make(chan struct{})
+	t.Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	inner := f.h.command
+	spawned := 0
+	f.h.command = func(h *streamHandle, st agents.ThreadSettings, conv string) *exec.Cmd {
+		spawned++
+		if spawned == 2 {
+			close(respawn)
+			<-release
+		}
+		return inner(h, st, conv)
+	}
+	firstAnswered := make(chan struct{})
+	f.h.beforeLand = func() {
+		select {
+		case <-firstAnswered:
+		default:
+			close(firstAnswered)
+		}
+	}
+	send(t, f.h, "result-exit")
+	waitChan(t, firstAnswered, "the first answer")
+	send(t, f.h, "hello")
+	waitChan(t, respawn, "the replacement spawn")
+	f.h.Down()()
+	close(release)
+	waitFor(t, "the prompt to go back", func() bool {
+		f.h.mu.Lock()
+		defer f.h.mu.Unlock()
+		return f.h.q.Len() == 1 && f.h.q.Head() == nil
+	})
+	f.h.Start(session.Meta{Name: f.h.name, Kind: session.KindAgy, Dir: f.h.dir})
+	if st := settled(t, f.h); st != agents.TurnCompleted {
+		t.Fatalf("prompt after Resume = %s, want completed", st)
+	}
+	if got := f.lines("turn "); strings.Join(got, ",") != "result-exit,hello" {
+		t.Fatalf("turns read = %q, want the kept prompt read once", got)
 	}
 }
