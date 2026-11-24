@@ -101,8 +101,8 @@ A session with no driving link has no row. The overview groups rows by item, by 
   re-labels them. Otherwise a member who switches from site A to site B and types A's `PROJ-12` would
   publish it as B's.
 - Two rows are the same item only when provider, folded key and a *known* site are equal. A row whose
-  site is unknown is its own group, merged with no other row (not even another unknown one), and never
-  dropped from its owner's view. The Console says "site unknown" on it. A wrong merge reads as "two members are on one ticket"
+  site is unknown is its own group by ticket, merged with no other row (not even another unknown one), and
+  never dropped from its owner's view. The Console says "site unknown" on it. A wrong merge reads as "two members are on one ticket"
   and sends them to talk about different tickets, which is worse than a missing hint.
 - **A Jira row whose site is unknown is shown to its owner only,** and to no other member, whatever the
   publication says. A consent given for a project key cannot say which site it covers, and a member who
@@ -148,8 +148,8 @@ A session with no driving link has no row. The overview groups rows by item, by 
   state is what the CP writes at start and stop
   (`workspace_handlers.go:735`, `:744`, `:787`; the stop path drops a failed database update, and a
   start can record `running` while the runtime is still `starting`), so it is not a guarantee. Two rules
-  keep that from showing an old `working`: an activity is shown only while the row is `current`
-  (decision 8), and a row older than 60 minutes that is not stopped shows
+  keep that from showing an old `working`: the activity last observed in the mirror is used only while the
+  row is `current` (decision 8), and a row older than 60 minutes that is not stopped shows
   `unknown`. Across a quick stop and restart, a row
   can show the last observed activity for up to 60 minutes, with its `observedAt` at the `state`
   level. That is a known limit, not a claim of liveness. Part 1 tests a stop with a `working` last
@@ -400,10 +400,10 @@ Part 1 (server):
   shown until consent is given anew.
 - A removed viewer, a left member and a deleted workspace stop appearing on the next read.
 - A Jira row with an unknown site is shown to its owner only: another viewer in the audience, with the
-  project key allowed or not, never receives it. It is never merged with another row, in the by-ticket
-  and the by-repository views alike, and never grouped with a known-site row. It is tested with the same
-  key from two members, and with two different keys of one project from one member: two groups by ticket,
-  one group by (owner, project) by repository. Two GitHub rows with the same key from two members are one
+  project key allowed or not, never receives it. In neither view is it merged with another member's row
+  or grouped with a known-site row. It is tested with the same key from two members (never together), and
+  with two different keys of one project from one member: two groups by ticket, one group by (owner,
+  project) by repository. Two GitHub rows with the same key from two members are one
   group.
 - Activity precedence, for a stopped workspace and, separately, for a stopped session in a running
   workspace: a stopped row reads `stopped` at 5 minutes and at 2 hours of age; a row that is not stopped
