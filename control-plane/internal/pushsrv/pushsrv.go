@@ -83,7 +83,7 @@ type Service struct {
 	droppedNotes, droppedFull, droppedStale atomic.Int64
 	// dropLogEvery is the ticker's period; 0 runs no ticker (tests call logDrops themselves).
 	dropLogEvery time.Duration
-	view         *viewing
+	view         viewing
 }
 
 // sendJob is one notification for one device, waiting for a send worker.
@@ -91,7 +91,10 @@ type sendJob struct {
 	membershipID string
 	sub          store.PushSubscription
 	body         []byte
-	queued       time.Time
+	// plain is body without the question's text; the same slice when body carries none. run sends
+	// it instead when the tenant setting has gone off, or cannot be read, by the time of the send.
+	plain  []byte
+	queued time.Time
 	// done, when set, is called once the job is sent or dropped (tests wait on it).
 	done func()
 }
@@ -176,7 +179,7 @@ func New(st *store.SQL) *Service {
 		}
 	}
 	p := &Service{store: st, sender: webpush.NewSender(keys, subject), pubKey: keys.PublicKey(),
-		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, dropLogEvery: pushDropLogEvery, view: newViewing()}
+		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, dropLogEvery: pushDropLogEvery}
 	p.start(pushMaxInFlight, pushQueueLen)
 	st.SetNotificationHook(p.onNotification)
 	log.Printf("web push enabled")
@@ -253,8 +256,8 @@ func (p *Service) onNotification(n store.Notification) {
 //
 // Before any send, in order: the member must still be active (a removed member gets nothing), the
 // kind must not be one the member turned off, and the session must not be on screen in an active
-// Console. For these checks every doubt resolves to "send": a lost question costs more than a
-// redundant buzz. Which devices hold the member is not such a check: a device list or a device
+// Console. run checks the membership and the text setting again after the wait for a worker. For
+// these checks every doubt resolves to "send": a lost question costs more than a redundant buzz. Which devices hold the member is not such a check: a device list or a device
 // that cannot be read is not sent to, since the browser may belong to someone else by now.
 func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.WaitGroup) {
 	// Each read has its own deadline: one that stalls until its deadline must not leave the next
@@ -301,6 +304,7 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 		pl.Name = ""
 		body, _ = json.Marshal(pl)
 	}
+	plain := body
 	if includeText && n.Kind == "question" {
 		// The text is optional, the question is not: JSON escaping can make 140 runes several
 		// times longer, so a text that would push the payload past what can be encrypted is dropped.
@@ -315,7 +319,7 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 		if p.check(s.Endpoint) != nil {
 			continue
 		}
-		j := sendJob{membershipID: n.MembershipID, sub: s, body: body, queued: time.Now()}
+		j := sendJob{membershipID: n.MembershipID, sub: s, body: body, plain: plain, queued: time.Now()}
 		if done != nil {
 			done.Add(1)
 			j.done = done.Done
@@ -354,9 +358,25 @@ func (p *Service) run(j sendJob) {
 	if !held {
 		return
 	}
+	// The membership and the tenant's text setting are read again too, for the same reason: a member
+	// removed, or text turned off, during the wait must not still get what deliver built before it.
+	// A failed read sends, as deliver does, but without the text.
+	body := j.body
+	dctx, dcancel := context.WithTimeout(context.Background(), p.timeout)
+	dc, err := p.store.PushDeliveryContext(dctx, j.membershipID)
+	dcancel()
+	switch {
+	case err != nil:
+		log.Printf("web push: delivery context before the send: %v", err)
+		body = j.plain
+	case !dc.Active:
+		return
+	case !dc.IncludeText:
+		body = j.plain
+	}
 	sctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
-	p.send(sctx, j.membershipID, cur, j.body)
+	p.send(sctx, j.membershipID, cur, body)
 }
 
 func (p *Service) send(ctx context.Context, membershipID string, s store.PushSubscription, body []byte) {

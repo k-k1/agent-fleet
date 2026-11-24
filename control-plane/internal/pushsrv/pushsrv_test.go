@@ -32,6 +32,7 @@ type memStore struct {
 	releaseErr error
 	getErr     error
 	gets       int
+	dcErr      error
 	subs       []store.PushSubscription
 	off        map[string][]string
 	inactive   map[string]bool
@@ -56,10 +57,13 @@ func (m *memStore) PutPushOffKinds(_ context.Context, mid string, k []string) er
 func (m *memStore) PushDeliveryContext(_ context.Context, mid string) (store.PushDelivery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.dcErr != nil {
+		return store.PushDelivery{}, m.dcErr
+	}
 	return store.PushDelivery{Active: !m.inactive[mid], IncludeText: m.includeTxt, TenantSlug: m.tenantSlug}, nil
 }
 func (m *memStore) GetTenantPushIncludeText(context.Context, string) (bool, error) { return false, nil }
-func (m *memStore) PutTenantPushIncludeText(context.Context, string, bool, string) error {
+func (m *memStore) PutTenantPushIncludeText(context.Context, string, string, bool, string) error {
 	return nil
 }
 
@@ -232,7 +236,7 @@ func newFixtureN(t *testing.T, workers, queueLen int, setup func(*fixture)) *fix
 		check: func(e string) error {
 			return webpush.CheckEndpoint(strings.Replace(e, f.srv.URL, "https://fcm.googleapis.com", 1), webpush.DefaultEndpointHosts)
 		},
-		timeout: 5 * time.Second, slotWait: 2 * time.Second, quit: make(chan struct{}), view: newViewing()}
+		timeout: 5 * time.Second, slotWait: 2 * time.Second, quit: make(chan struct{})}
 	if setup != nil {
 		setup(f)
 	}

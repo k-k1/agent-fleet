@@ -134,7 +134,14 @@ func TestPushReleaseWorksWithoutASession(t *testing.T) {
 			strings.NewReader(`{"endpoint":"`+ep+`","keys":{"p256dh":"`+p256+`","auth":"`+authKey+`"}}`)))
 		return rec.Code
 	}
-	held := func() int { rows, _ := sql.ListPushSubscriptions(ctx, m.ID); return len(rows) }
+	held := func() int {
+		t.Helper()
+		rows, err := sql.ListPushSubscriptions(ctx, m.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(rows)
+	}
 	if c := release("d3Jvbmc"); c != http.StatusNoContent || held() != 1 {
 		t.Fatalf("wrong key: code %d, subscriptions %d (want 204 and 1)", c, held())
 	}

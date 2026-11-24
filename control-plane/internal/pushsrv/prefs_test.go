@@ -2,9 +2,11 @@ package pushsrv
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -187,7 +189,7 @@ func TestOneDeviceClearingKeepsTheOthersSuppression(t *testing.T) {
 }
 
 func TestViewingIsBounded(t *testing.T) {
-	v := newViewing()
+	var v viewing
 	now := time.Now()
 	for i := 0; i < 1000; i++ {
 		v.set("m1", string(rune('a'+i%26))+string(rune('A'+i/26%26))+string(rune('0'+i/676)), "s", now)
@@ -271,4 +273,77 @@ func TestStalledReadStillDeliversTheQuestion(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A send that waited in the queue is checked against the state at the time of the send, not the
+// one deliver read: the first device is sent at once and holds the only worker, and the second
+// waits while the state changes.
+func TestQueuedSendRereadsTheDeliveryContext(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*memStore)
+		// sent is whether the waiting device gets a push; text, whether it carries the question.
+		sent, text bool
+	}{
+		{"member removed", func(m *memStore) { m.inactive = map[string]bool{"m1": true} }, false, false},
+		{"text turned off", func(m *memStore) { m.includeTxt = false }, true, false},
+		{"context unreadable", func(m *memStore) { m.dcErr = io.ErrUnexpectedEOF }, true, false},
+		{"nothing changed", func(*memStore) {}, true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixtureN(t, 1, pushQueueLen, nil)
+			arrived, release := f.hold()
+			defer release()
+			f.st.includeTxt = true
+			d1 := f.subscribe(t, "m1")
+			d2 := f.subscribe(t, "m1")
+			n := note("question")
+			n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
+			var wg sync.WaitGroup
+			f.svc.deliver(context.Background(), n, &wg)
+			waitArrival(t, arrived)
+			f.st.mu.Lock()
+			c.change(f.st)
+			f.st.mu.Unlock()
+			release()
+			wg.Wait()
+			want := 1
+			if c.sent {
+				want = 2
+			}
+			if f.count() != want {
+				t.Fatalf("%d pushes, want %d", f.count(), want)
+			}
+			if got := d1.open(t, f.bodies[0]); !strings.Contains(got, `"text":"Deploy to prod?"`) {
+				t.Fatalf("the send before the change lost its text: %s", got)
+			}
+			if !c.sent {
+				return
+			}
+			got := d2.open(t, f.bodies[1])
+			if strings.Contains(got, `"text"`) != c.text {
+				t.Fatalf("waiting send: %s (text wanted: %v)", got, c.text)
+			}
+			if !strings.Contains(got, `"kind":"question","session":"s1"`) {
+				t.Fatalf("waiting send lost the question: %s", got)
+			}
+		})
+	}
+}
+
+// A Service built as a literal, without New, takes a report and a delivery without panicking.
+func TestServiceLiteralHasUsableViewing(t *testing.T) {
+	p := &Service{store: &memStore{}, timeout: time.Second, jobs: make(chan sendJob, 1)}
+	if p.view.on("m1", "s1", time.Now()) {
+		t.Fatal("an empty map reports a session on screen")
+	}
+	w := httptest.NewRecorder()
+	p.Viewing(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"device":"d1","session":"s1"}`)), "m1")
+	if w.Code != http.StatusNoContent || !p.view.on("m1", "s1", time.Now()) {
+		t.Fatalf("report not recorded: %d", w.Code)
+	}
+	other := note("question")
+	other.TargetID = "s2"
+	p.deliver(context.Background(), other, nil)
 }

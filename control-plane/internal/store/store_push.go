@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 )
 
 // PushSubscription is one browser install a member enabled Web Push on (#4750).
@@ -48,7 +49,7 @@ type PushSubscriptionStore interface {
 	// name the Console selects a tenant by). An inactive or unknown membership is the zero value.
 	PushDeliveryContext(ctx context.Context, membershipID string) (PushDelivery, error)
 	GetTenantPushIncludeText(ctx context.Context, tenantID string) (bool, error)
-	PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error
+	PutTenantPushIncludeText(ctx context.Context, tenantID, tenantSlug string, on bool, actorID string) error
 }
 
 // PushDelivery is what one push send needs to know about the receiving membership.
@@ -213,13 +214,27 @@ func (s *SQL) GetTenantPushIncludeText(ctx context.Context, tenantID string) (bo
 	return v != 0, err
 }
 
-func (s *SQL) PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error {
+// PutTenantPushIncludeText stores the setting and its tenant.push_settings audit row in one
+// transaction: an admin's change to what leaves through the push services must not stand
+// without its audit row.
+func (s *SQL) PutTenantPushIncludeText(ctx context.Context, tenantID, tenantSlug string, on bool, actorID string) error {
 	v := 0
 	if on {
 		v = 1
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tenant_push_setting(tenant_id, include_text, updated_by, updated_at) VALUES(?,?,?,?)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_push_setting(tenant_id, include_text, updated_by, updated_at) VALUES(?,?,?,?)
 		ON CONFLICT(tenant_id) DO UPDATE SET include_text=excluded.include_text, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
-		tenantID, v, updatedBy, NowTS())
-	return err
+		tenantID, v, actorID, NowTS()); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at) VALUES(?, ?, 'user', ?, 'tenant.push_settings', ?, ?, ?)`,
+		NewID(), tenantID, actorID, tenantSlug, fmt.Sprintf("include_text=%t", on), NowTS()); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

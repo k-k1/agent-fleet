@@ -289,7 +289,7 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, slug, a, b string) {
 	if slug == "" || dc.TenantSlug != slug {
 		t.Fatalf("tenant slug = %q, want %q", dc.TenantSlug, slug)
 	}
-	if err := st.PutTenantPushIncludeText(ctx, tenantID, true, "admin"); err != nil {
+	if err := st.PutTenantPushIncludeText(ctx, tenantID, slug, true, "admin"); err != nil {
 		t.Fatal(err)
 	}
 	if on, _ := st.GetTenantPushIncludeText(ctx, tenantID); !on {
@@ -298,7 +298,7 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, slug, a, b string) {
 	if dc, _ := st.PushDeliveryContext(ctx, a); !dc.IncludeText {
 		t.Fatal("tenant setting not seen by the sender")
 	}
-	if err := st.PutTenantPushIncludeText(ctx, tenantID, false, "admin"); err != nil {
+	if err := st.PutTenantPushIncludeText(ctx, tenantID, slug, false, "admin"); err != nil {
 		t.Fatal(err)
 	}
 	if dc, _ := st.PushDeliveryContext(ctx, a); dc.IncludeText {
@@ -313,4 +313,52 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, slug, a, b string) {
 	if err := st.SetMembershipStatus(ctx, b, "active"); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// The text switch and its audit row are one write: a change that cannot be recorded is not
+// applied, and one that is applied has exactly one row naming the new value.
+func TestPutTenantPushIncludeTextIsAudited(t *testing.T) {
+	dialects(t, func(t *testing.T, st *SQL, pg bool) {
+		ctx := context.Background()
+		tn, err := st.EnsureDefaultTenant(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := st.PutTenantPushIncludeText(ctx, tn.ID, tn.Slug, true, "admin"); err != nil {
+			t.Fatal(err)
+		}
+		logs, err := st.ListAuditByTenant(ctx, tn.ID, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var rows []AuditLog
+		for _, l := range logs {
+			if l.Action == "tenant.push_settings" {
+				rows = append(rows, l)
+			}
+		}
+		if len(rows) != 1 || rows[0].Detail != "include_text=true" || rows[0].Target != tn.Slug || rows[0].ActorID != "admin" {
+			t.Fatalf("audit rows = %+v", rows)
+		}
+
+		ddl := []string{`CREATE TRIGGER audit_fail BEFORE INSERT ON audit_log WHEN NEW.action='tenant.push_settings'
+			BEGIN SELECT RAISE(ABORT,'audit down'); END`}
+		if pg {
+			ddl = []string{
+				`CREATE FUNCTION audit_fail() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'audit down'; END $$ LANGUAGE plpgsql`,
+				`CREATE TRIGGER audit_fail BEFORE INSERT ON audit_log FOR EACH ROW WHEN (NEW.action='tenant.push_settings') EXECUTE FUNCTION audit_fail()`,
+			}
+		}
+		for _, q := range ddl {
+			if _, err := st.db.ExecContext(ctx, q); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := st.PutTenantPushIncludeText(ctx, tn.ID, tn.Slug, false, "admin"); err == nil {
+			t.Fatal("the setting was written although its audit row could not be")
+		}
+		if on, err := st.GetTenantPushIncludeText(ctx, tn.ID); err != nil || !on {
+			t.Fatalf("a change without its audit row stayed applied: on=%v err=%v", on, err)
+		}
+	})
 }
