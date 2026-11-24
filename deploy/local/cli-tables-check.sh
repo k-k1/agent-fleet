@@ -214,7 +214,7 @@ done
 # --- Go ------------------------------------------------------------------------------
 if need_file "$GOSPECS"; then
   for n in "${M_NAMES[@]}"; do
-    grep -Eq "Pin: \"$n\"" "$GOSPECS" ||
+    grep -Eq "^[[:space:]]*(\\{Name: \"[^\"]*\",.*)?Pin: \"$n\"" "$GOSPECS" ||
       drift "$n: no toolSpecs row with Pin: \"$n\" in workspace/agent/env_tool_versions.go"
   done
 fi

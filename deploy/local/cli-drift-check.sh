@@ -138,20 +138,24 @@ for t in "${TARGETS[@]}"; do
     godev)
       # go.dev/dl lists releases newest first, stable ones flagged; the pin has no `go` prefix.
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
-        jq -r '[.[] | select(.stable)][0].version // empty | sub("^go";"")' 2>/dev/null)" ;;
+        jq -r '[.[] | select(.stable)][0].version // empty | sub("^go";"")' 2>/dev/null)" || latest="" ;;
     gittags)
       # aws/aws-cli publishes tags, not releases. The locator is `<repo-url> <glob>`; read the
       # tags with ls-remote (no API limit), drop peeled refs and pre-releases, take the highest.
       # Fetch first, sort after: no pipe into `head`/`tail` (SIGPIPE under pipefail).
-      body="$(git ls-remote --tags --refs "${locator%% *}" "${locator#* }" 2>/dev/null)"
-      latest="$(sed -n 's|.*refs/tags/\(.*\)$|\1|p' <<< "$body" | grep -E '^[0-9]+(\.[0-9]+)+$' | sort -V)"
-      latest="${latest##*$'\n'}" ;;
+      # A listing cut short by a failed run is not a listing: it would publish the highest
+      # tag of a subset, so a non-zero exit leaves `latest` empty (an unreadable row).
+      latest=""
+      if body="$(git ls-remote --tags --refs "${locator%% *}" "${locator#* }" 2>/dev/null)"; then
+        latest="$(sed -n 's|.*refs/tags/\(.*\)$|\1|p' <<< "$body" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)" || latest=""
+        latest="${latest##*$'\n'}"
+      fi ;;
     pypi)
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "https://pypi.org/pypi/${locator}/json" 2>/dev/null |
-        jq -r '.info.version // empty' 2>/dev/null)" ;;
+        jq -r '.info.version // empty' 2>/dev/null)" || latest="" ;;
     gcloud)
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
-        jq -r '.version // empty' 2>/dev/null)" ;;
+        jq -r '.version // empty' 2>/dev/null)" || latest="" ;;
     *)
       latest="" ;;
   esac

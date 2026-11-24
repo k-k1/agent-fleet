@@ -147,9 +147,11 @@ cat > "$STUB/git" <<'FAKE'
 case ",${STUB_FAIL:-}," in *",awscli,"*) exit 128 ;; esac
 v="$(cat "$STUB_PINS/awscli")"
 case ",${STUB_DRIFT:-}," in *",awscli,"*) v="9.9.9" ;; esac
-for t in "$v" "2.1.0" "2.10.0" "2.9.9" "2.99.99dev0"; do
+for t in "$v" "2.1.0" "2.10.0" "2.9.9" "2.99.99dev0" "2.99" "2.99.1.2"; do
   printf '0123456789abcdef0123456789abcdef01234567\trefs/tags/%s\n' "$t"
 done
+# STUB_GIT_PARTIAL: a listing cut short by a failed run (output, then non-zero exit).
+[ -z "${STUB_GIT_PARTIAL:-}" ] || exit 128
 FAKE
 chmod +x "$STUB"/npm "$STUB"/curl "$STUB"/git
 export PATH="$STUB:$PATH" STUB_PINS="$PINS" STUB_NPM_LOG="$WORK/npm.log"
@@ -261,6 +263,11 @@ code_is 0
 out_has '^failed=awscli$'
 in_sync go
 in_sync gcloud
+
+# A listing that printed and then failed is an unreadable row, not the highest tag of a subset.
+STUB_GIT_PARTIAL=1 STUB_FAIL="" STUB_DRIFT="" run_check
+out_has '^failed=awscli$'
+out_has '^latest_awscli=$'
 
 echo "== case 5d: GH_TOKEN goes to api.github.com only, and nothing is sent without it =="
 export STUB_CURL_LOG="$WORK/curl.log"
@@ -545,7 +552,7 @@ case "$1 $2" in
   "issue list")
     case "$*" in
       *"--label cli-drift"*)
-        kind="$(printf '%s' "$*" | sed -n 's/.*startswith("\([a-z0-9-]*\) CLI: ").*/\1/p')"
+        kind="$(printf '%s' "$*" | sed -n 's/.*startswith("\([a-z0-9_-]*\) CLI: ").*/\1/p')"
         # The search index has not caught up with a new issue yet: the kind has none.
         [ ! -e "$STUB_RUNS/nolist-$kind" ] || exit 0
         if [ -e "$STUB_RUNS/race-$kind" ]; then
@@ -874,6 +881,26 @@ hasnt confluence 'RTK_VERSION'
 releases gh=2.106.0:2.106.0
 sync_ok gh
 no_issue gh
+
+echo "== case 30c: underscore-named watch-only rows open, update, hold and close their hand-bump issue =="
+releases mcp_grafana=2.2.0:2.3.0 cloudwatch_mcp=0.2.1:0.3.2
+sync_ok mcp_grafana cloudwatch_mcp
+title_is mcp_grafana "mcp_grafana CLI: bump the pin to 2.3.0"
+has mcp_grafana 'MCP_GRAFANA_VERSION'
+hasnt mcp_grafana 'gh workflow run'
+has cloudwatch_mcp 'CLOUDWATCH_MCP_VERSION'
+mg_num="$(issue_of mcp_grafana)"
+releases mcp_grafana=2.2.0:2.3.1
+sync_ok mcp_grafana
+title_is mcp_grafana "mcp_grafana CLI: bump the pin to 2.3.1"
+[ "$(issue_of mcp_grafana)" = "$mg_num" ] || fail "a second mcp_grafana issue was opened"
+releases mcp_grafana=2.2.0:2.3.1 failed=mcp_grafana
+sync_ok mcp_grafana
+[ "$(issue_of mcp_grafana)" = "$mg_num" ] || fail "an unreadable mcp_grafana source touched its issue"
+releases mcp_grafana=2.3.1:2.3.1
+sync_ok mcp_grafana
+no_issue mcp_grafana
+[ "$(cat "$STUB_ISSUES/$mg_num/state")" = closed ] || fail "mcp_grafana issue not closed when the pin caught up"
 
 echo "== case 31: a red row for latest names the fix, keeps the section, and the dispatch fits the kind =="
 releases muse=1.4.4:1.4.7 codex=0.162.1:0.163.1
