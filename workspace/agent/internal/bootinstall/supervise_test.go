@@ -246,14 +246,18 @@ func TestNPMSupervisorKillsAChildWhoseLeaderThreadExited(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	// The thread reports ready only once the leader is a zombie, so npm exits after that.
 	script := `import ctypes, os, threading, time
-end = time.monotonic() + 10  # bounded: with the leader gone its cmdline is empty, so no cleanup can match it
+# Bounded, since with the leader gone its cmdline is empty and no cleanup can match it: at most
+# 10 s for the leader to exit, then 15 s of life, well past the supervisor's 5 s grace.
+end = time.monotonic() + 10
 def run():
     while open("/proc/%d/stat" % os.getpid()).read().rsplit(")", 1)[1].split()[0] != "Z":
         if time.monotonic() > end:
             return
         time.sleep(0.01)
+    if time.monotonic() > end:
+        return
     open(os.environ["SREADY_FILE"], "w").close()
-    time.sleep(max(0, end - time.monotonic()))
+    time.sleep(15)
 open(os.environ["PID_FILE"], "w").write(str(os.getpid()))
 threading.Thread(target=run).start()
 ctypes.CDLL(None).pthread_exit(None)
