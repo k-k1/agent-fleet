@@ -254,12 +254,26 @@ func agentMemDocBlob(ctx context.Context, gitDir, rev, path string) ([]byte, err
 	return agentMemLintGit(ctx, gitDir, nil, "cat-file", "blob", rev+":"+path)
 }
 
-// agentMemDocFollow follows path through the renames of since..ref, oldest first, and answers where
-// it is now and the commit of its last move; "" when it was not moved, or was deleted on the way.
+// agentMemDocFollow follows path through the default branch's renames after target, oldest
+// first, and answers where it is now and the commit of its last move; "" when it was not moved,
+// or was deleted on the way.
 // Following one file forward keeps a later file by the same name (a new AGENTS.md moved elsewhere)
 // out of its history. When the target's commit came in on a branch, the merge that brought it
 // adds the file, which leaves it where it is. A rename whose paths git had to quote cannot be read and is not followed.
-func agentMemDocFollow(ctx context.Context, gitDir, path, since, ref string) (to, commit string, err error) {
+func agentMemDocFollow(ctx context.Context, gitDir, path, target, ref string) (to, commit string, err error) {
+	// Start where the target entered the default branch: the oldest first-parent commit that
+	// descends from it (the target itself on the branch, else the merge that brought it in), from
+	// that commit's first parent. A range from the target alone would also hold the default
+	// branch's own commits from before that merge, a delete of the same name among them.
+	out, err := agentMemLintGit(ctx, gitDir, nil, "rev-list", "--first-parent", "--ancestry-path", "--reverse", target+".."+ref)
+	if err != nil {
+		return "", "", err
+	}
+	first, _, _ := strings.Cut(string(out), "\n")
+	if first = strings.TrimSpace(first); first == "" {
+		return "", "", nil // the target is the branch's head: nothing moved since
+	}
+	since := first + "^1"
 	// The default branch's own history: its first parents, a merge compared with its first parent.
 	// A branch's commits are not read one by one, so a delete the merge did not keep is not taken.
 	cmd := exec.CommandContext(ctx, "git", "--git-dir="+gitDir, "-c", "core.quotePath=false", "log", "--reverse",

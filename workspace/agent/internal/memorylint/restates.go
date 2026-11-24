@@ -53,7 +53,7 @@ func rootDocAt(body string, i, j int) bool {
 	pathByte := func(b byte) bool {
 		return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' || b == '-'
 	}
-	if j < len(body) && (pathByte(body[j]) || body[j] == '.' && j+1 < len(body) && pathByte(body[j+1])) {
+	if j < len(body) && (pathByte(body[j]) || body[j] == '+' || body[j] == '@' || body[j] == '.' && j+1 < len(body) && pathByte(body[j+1])) {
 		return false
 	}
 	if i == 0 {

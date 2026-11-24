@@ -446,3 +446,36 @@ func TestAgentMemorySupersedeIgnoresTheReportBound(t *testing.T) {
 	agentMemDocMaxBytes = 16
 	docTargetSetup(t) // fails unless the supersede of a larger document goes through
 }
+
+// A target named by a branch commit: the default branch deleted its own AGENTS.md before the
+// merge, the merge kept the branch's, and a later rename on the default branch is followed. The
+// pre-merge delete is not the target's history.
+func TestAgentMemoryDocumentTargetOnABranchCommit(t *testing.T) {
+	clone, a, _ := promoteRepo(t)
+	promoteSave(t, a, "release-steps", "procedure", "Run scripts/release.sh.", "scripts/release.sh")
+	docTargetGit(t, clone, []string{"switch", "--quiet", "-c", "docs"})
+	if err := os.WriteFile(filepath.Join(clone, "AGENTS.md"), []byte("# Agents\n\n## Release\n\nRun scripts/release.sh.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	branch := docTargetGit(t, clone, []string{"commit", "--quiet", "-am", "docs: release"})
+	docTargetGit(t, clone,
+		[]string{"switch", "--quiet", "main"},
+		[]string{"rm", "--quiet", "AGENTS.md"},
+		[]string{"commit", "--quiet", "-m", "drop the old agents file"})
+	// The merge conflicts (deleted here, changed there); it keeps the branch's file.
+	_ = agentMemGit(clone, "merge", "--quiet", "--no-edit", "docs")
+	docTargetGit(t, clone,
+		[]string{"checkout", "docs", "--", "AGENTS.md"},
+		[]string{"add", "AGENTS.md"},
+		[]string{"commit", "--quiet", "--no-edit"})
+	code, out := supersedeDoc(t, agentMemSupersedeDocReq{Project: a.Project.ID, Name: "release-steps", Revision: 1, Path: "AGENTS.md",
+		Heading: "Release", Commit: branch, BodySHA256: agentMemSHA256("Run scripts/release.sh.")})
+	if code != http.StatusOK {
+		t.Fatalf("supersede by the branch commit: %d %s", code, out)
+	}
+	docTargetClean(t, docTargetLint(t, a.Project.ID))
+	docTargetGit(t, clone, []string{"mv", "AGENTS.md", "docs/agents.md"}, []string{"commit", "--quiet", "-m", "move agents"})
+	if f := docTargetOne(t, docTargetLint(t, a.Project.ID), agentMemDocRenamed); f.Path != "docs/agents.md" {
+		t.Fatalf("%+v", f)
+	}
+}
