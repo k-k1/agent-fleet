@@ -17,9 +17,11 @@ interface Props {
   folder: string;
   onChange: (folder: string) => void;
   disabled?: boolean;
+  /** The form refuses this pick (the Agent said it does not exist) whatever the list holds. */
+  gone?: boolean;
 }
 
-export function SpacePlacePicker({ folder, onChange, disabled = false }: Props) {
+export function SpacePlacePicker({ folder, onChange, disabled = false, gone: refused = false }: Props) {
   const tr = useT();
   const [open, setOpen] = useState(false);
   const [all, setAll] = useState(false);
@@ -28,7 +30,7 @@ export function SpacePlacePicker({ folder, onChange, disabled = false }: Props) 
   const owner = spacesOwner();
   const spaces = useSpacesStore((s) => spacesFor(s, owner));
   const sessions = useSessionsStore((s) => s.sessions);
-  const gone = useSpaceGone(folder);
+  const gone = useSpaceGone(folder) || (!!folder && refused);
   const ranked = useMemo(() => rankSpaces(spaces, sessions), [spaces, sessions]);
   const recent = ranked.slice(0, RECENT_SPACES);
   const rest = ranked.slice(RECENT_SPACES);

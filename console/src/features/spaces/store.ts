@@ -24,9 +24,12 @@ interface SpacesStore {
   failures: number;
   failOwner: string;
   refresh(): Promise<void>;
-  /** Take the answer of a GET /api/spaces somebody else already made (the hub's support probe),
-   *  so one opening of the hub asks once. Anything but a list is ignored. */
-  adopt(d: unknown): void;
+  /** Start a GET /api/spaces somebody else makes (the hub's support probe), so one opening of the
+   *  hub asks once: the ticket records whose request it is and supersedes the ones before it. */
+  begin(): SpacesTicket;
+  /** Take that request's answer. Ignored unless it is a list and nothing newer has started or
+   *  cleared the store since (another workspace, a later refresh). */
+  adopt(ticket: SpacesTicket, d: unknown): void;
   /** Forget the list, for a tenant switch: the spaces belong to the previous workspace. */
   clear(): void;
 }
@@ -37,6 +40,12 @@ export const spacesOwner = (): string => getTenant() + "\n" + getUser();
 // Bumped by every refresh() and by clear(), so a slow answer to an older request (or for a
 // previous owner) never overwrites a newer one.
 let generation = 0;
+
+/** A request made outside refresh(): the workspace it was for and its place in the order. */
+export interface SpacesTicket {
+  owner: string;
+  gen: number;
+}
 
 export const useSpacesStore = create<SpacesStore>((set) => ({
   spaces: [],
@@ -64,11 +73,15 @@ export const useSpacesStore = create<SpacesStore>((set) => ({
     const spaces = d && !d.error && Array.isArray(d.spaces) ? (d.spaces as Space[]) : [];
     set({ spaces, owner, failures: 0, failOwner: "" });
   },
-  adopt(d) {
-    const list = (d as { spaces?: unknown; error?: unknown } | null | undefined);
+  begin() {
+    return { owner: spacesOwner(), gen: ++generation };
+  },
+  adopt(ticket, d) {
+    if (ticket.gen !== generation || ticket.owner !== spacesOwner()) return;
+    
+    const list = d as { spaces?: unknown; error?: unknown } | null | undefined;
     if (!list || list.error || !Array.isArray(list.spaces)) return;
-    generation++; // an older request still in flight must not overwrite this newer answer
-    set({ spaces: list.spaces as Space[], owner: spacesOwner(), failures: 0, failOwner: "" });
+    set({ spaces: list.spaces as Space[], owner: ticket.owner, failures: 0, failOwner: "" });
   },
   clear() {
     generation++;

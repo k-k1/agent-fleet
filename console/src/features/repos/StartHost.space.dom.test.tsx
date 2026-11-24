@@ -422,7 +422,7 @@ describe("Start hub — an existing space", () => {
     expect(createCalls()[0][2]).toMatchObject({ space: { name: "" }, initial_prompt: "続きの作業" });
   });
 
-  it("reads the list again when the Agent says the space is not found, and then refuses the same pick", async () => {
+  it("refuses the same pick right after the Agent says the space is not found, even while the list is still being read", async () => {
     withSpaces([space("gone-aaa", "Gone", "2026-11-01T00:00:00Z")]);
     apiPost.mockImplementation(async (...a: unknown[]) =>
       a[0] === "api/sessions" ? { error: { code: "space_not_found", message: "no such space: gone-aaa" } } : {},
@@ -430,13 +430,21 @@ describe("Start hub — an existing space", () => {
     await openHub();
     await click(chip());
     await click(options()[1]);
-    withSpaces([]); // removed meanwhile; the list in hand is stale
+    await typeInto(hubBox(), "続き");
+    // The re-read that follows the 404 never answers: the refusal cannot wait for it.
+    apiGet.mockImplementation(() => new Promise(() => {}));
     await click(spaceGo());
     expect(createCalls()).toHaveLength(1);
     expect(spaceAsks()).toBe(2); // the hub's one ask, then the re-read after the 404
     expect(spaceGo().disabled).toBe(true);
+    expect(chip().className).toContain("start-place-chip--gone");
     await click(spaceGo());
+    await act(async () => {
+      hubBox().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    });
+    await settle();
     expect(createCalls()).toHaveLength(1); // the retry is not sent
+    expect(hubBox().value).toBe("続き");
   });
 
   it("asks the Agent for the spaces once when the hub opens, and \"Check again\" refills the chip's list", async () => {

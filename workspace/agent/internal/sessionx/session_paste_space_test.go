@@ -3,6 +3,7 @@ package sessionx
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -106,5 +107,28 @@ func TestPasteToASpaceSessionFailsWhenTheCopyFails(t *testing.T) {
 	dir := pastedDir(session.UUID(sp.Dir, "in-space"))
 	if ents, _ := os.ReadDir(dir); len(ents) != 0 {
 		t.Fatalf("%d stored file(s) left behind", len(ents))
+	}
+}
+
+// The copy is made before the upload is published; a publish that then fails must take the copy
+// back, or the member finds a file in the space for an attachment the session never received.
+func TestPasteToASpaceSessionRollsTheCopyBackWhenPublishingFails(t *testing.T) {
+	isolateAgentState(t)
+	sp, err := spacex.Create("Research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "in-space", Kind: session.KindClaude, Dir: sp.Dir, CreatedAt: "2026-10-29T10:00:00+09:00"})
+	prev := renameFn
+	renameFn = func(string, string) error { return errors.New("injected: rename failed") }
+	t.Cleanup(func() { renameFn = prev })
+	rec := pasteTo(t, "in-space", "a.txt", "x")
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("paste: %d %s", rec.Code, rec.Body)
+	}
+	for _, dir := range []string{filepath.Join(sp.Dir, "attachments"), pastedDir(session.UUID(sp.Dir, "in-space"))} {
+		if ents, _ := os.ReadDir(dir); len(ents) != 0 {
+			t.Fatalf("%s holds %d file(s) after a failed upload", dir, len(ents))
+		}
 	}
 }

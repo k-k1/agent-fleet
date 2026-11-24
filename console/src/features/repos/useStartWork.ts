@@ -194,7 +194,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
           ? t("rp.worktree_launch_failed", { err: errDetail(res.error) })
           : t("rp.launch_failed", { err: errDetail(res.error) }),
       );
-      return { ok: false };
+      return { ok: false, spaceGone: code === "space_not_found" || undefined };
     }
     if (repo) {
       writeRepoLast(repo, kind, hasModel ? model : undefined, effort, startMode);

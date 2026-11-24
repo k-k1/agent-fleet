@@ -128,6 +128,10 @@ export interface LaunchResult {
   /** Name of the session that was created (only when ok). Accepting a handoff (docs/log/77)
    *  needs it to tell the offering side which session took the work. */
   name?: string;
+  /** The space the launch named does not exist (any more). The form keeps refusing that pick
+   *  until another place is chosen, whatever the list says: the list is re-read meanwhile and
+   *  can be slow or fail. */
+  spaceGone?: boolean;
   /** A launch from a handoff offer whose create got no definite answer: the session may exist,
    *  so the offer's take is kept for the next press to reconcile (acceptHandoff.ts). */
   unknown?: boolean;
@@ -485,7 +489,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   const [spaceFolder, setSpaceFolder] = useState("");
   // The picked space was removed since the list was read: the launch stops until another place is
   // chosen, and the draft stays as it is.
-  const spaceGone = useSpaceGone(space ? spaceFolder : "");
+  // A pick the Agent itself refused as unknown stays refused until another place is chosen.
+  const [refusedFolder, setRefusedFolder] = useState("");
+  const spaceGone = useSpaceGone(space ? spaceFolder : "") || (!!spaceFolder && spaceFolder === refusedFolder);
   const toggleSection = (key: LaunchSectionKey, open: boolean, set: (v: boolean) => void) => {
     set(!open);
     writeLaunchOpen(key, !open);
@@ -890,6 +896,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     // A create that got no answer at all (the connection dropped) throws: the form must come back
     // with the draft, or the dialog (and the Start hub around a space launch) stays locked.
     let noAnswer = false;
+    const sentFolder = spaceFolder;
     const r: LaunchResult = await onLaunch({
       kind,
       driver: agentOf(kind).managedDriver ? driver : "",
@@ -927,6 +934,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       return;
     }
     setBusy(false);
+    if (r?.spaceGone && sentFolder) setRefusedFolder(sentFolder);
     if (noAnswer) setLaunchUnknown(true);
     // The policy refused it: what the dialog offers may be out of date, so ask the Agent again.
     if (r?.policy) {
@@ -1642,7 +1650,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         <div className="ui-field">
           <span className="ui-field-label">{tr("start.place")}</span>
           <div className="start-place">
-            <SpacePlacePicker folder={spaceFolder} onChange={setSpaceFolder} disabled={busy} />
+            <SpacePlacePicker folder={spaceFolder} onChange={setSpaceFolder} disabled={busy} gone={spaceGone} />
             {!spaceFolder && (
               <input
                 type="text"

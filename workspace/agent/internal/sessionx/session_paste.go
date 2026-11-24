@@ -22,6 +22,9 @@ import (
 // Console then references that path in the prompt and claude opens it with the Read tool
 // (which reads images) — there's no native CLI image-input for a headless session.
 
+// renameFn publishes a stored upload; a variable so a test can make publishing fail.
+var renameFn = os.Rename
+
 // errCodeSpaceCopyFailed answers an upload to a space session whose copy into the space failed.
 const errCodeSpaceCopyFailed = "space_copy_failed"
 
@@ -145,7 +148,7 @@ func savePastedImage(w http.ResponseWriter, r *http.Request, dir string, afterSa
 		}
 		fname := fmt.Sprintf("paste-%d%s", time.Now().UnixNano(), suffix)
 		dest := filepath.Join(dir, fname)
-		if err := os.Rename(tmp.Name(), dest); err != nil {
+		if err := renameFn(tmp.Name(), dest); err != nil {
 			_ = os.Remove(tmp.Name())
 			if spaceCopy != "" {
 				_ = os.Remove(spaceCopy) // an upload that failed leaves no copy behind
