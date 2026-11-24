@@ -982,4 +982,24 @@ func TestMemoAnswerPinLaterTurnWithoutInput(t *testing.T) {
 			t.Fatalf("kept %q %q", got.AnswerHead, got.AnswerClass)
 		}
 	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// The later turn failed before it reached the model: opencode stores the error with its own
+		// time and id. It is not the run's last answer either.
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		ts := func(d time.Duration) string { return end.Add(d).UTC().Format(time.RFC3339Nano) }
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusOK, map[string]any{"name": "q-a", "status": "stopped", "firstLine": 0, "hasMore": false, "messages": []map[string]any{
+				{"role": "user", "ts": ts(-time.Hour), "anchorId": "msg_1", "parts": []map[string]any{{"kind": "text", "text": "the task"}}},
+				{"role": "assistant", "ts": ts(-time.Second), "anchorId": "msg_2", "parts": []map[string]any{{"kind": "text", "text": "Done: the run"}}},
+				{"role": "assistant", "ts": ts(4 * time.Minute), "anchorId": "msg_4", "parts": []map[string]any{{"kind": "error", "text": "provider failed"}}},
+			}}
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("later stored error: kept %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
 }

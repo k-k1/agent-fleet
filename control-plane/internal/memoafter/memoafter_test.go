@@ -231,6 +231,8 @@ func TestPinnedAnswer(t *testing.T) {
 			{Role: "assistant", TS: at(time.Minute), Parts: []TurnPart{{Kind: "tool"}}},
 			{Role: "assistant", TS: at(2 * time.Minute), Parts: text("Done: other")}}, true, "Partial: run", true},
 		{"only a later turn's answers, at the first line", []Turn{{Role: "assistant", TS: at(time.Minute), Parts: text("Done: other")}}, true, "", false},
+		{"a later turn's stored error (with its id) is passed over", []Turn{user(-time.Hour), said("Done: run"),
+			{Role: "assistant", TS: at(time.Minute), AnchorID: "msg_2", Parts: []TurnPart{{Kind: "error", Text: "failed"}}}}, true, "Done: run", true},
 		{"the run's error stamped when read", []Turn{user(-time.Hour), said("Done: first"), user(-time.Minute),
 			{Role: "assistant", TS: at(time.Hour), Parts: []TurnPart{{Kind: "error", Text: "refused"}}}}, false, "", true},
 	} {

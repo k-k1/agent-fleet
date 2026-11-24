@@ -31,6 +31,8 @@ type Turn struct {
 	Sidechain bool       `json:"sidechain"`
 	// TS is when the turn was written (RFC 3339, the Agent host's clock), "" when the kind keeps none.
 	TS string `json:"ts"`
+	// AnchorID is the kind's own id of the turn, "" for a turn the Agent made up.
+	AnchorID string `json:"anchorId"`
 }
 
 // TurnsBefore is turns up to the first user turn of the session itself (not a subagent's) stamped
@@ -55,9 +57,11 @@ func TurnsBefore(turns []Turn, pin time.Time) []Turn {
 // PinnedAnswer is LastAnswer of the turns before pin (TurnsBefore), turns being the transcript
 // from some line to its end. Every line of the run was written before pin, so an assistant turn
 // stamped at or after it is a later turn's even when no user turn of that turn is seen (opencode
-// drops an input of attachments alone from its turns): it is passed over. Only an error turn is
-// not, as one may be stamped when it is read (codex's synthetic error of a refused turn/start), and
-// passing over the run's own last error would read an earlier Done:.
+// drops an input of attachments alone from its turns): it is passed over. Only an error turn the
+// Agent made up (no AnchorID) is not, as it is stamped when it is read (codex's synthetic error of
+// a refused turn/start), and passing over the run's own last error would read an earlier Done:. An
+// error the kind stored (opencode's, with its message id) carries its own time and is passed over
+// like any other.
 //
 // A page can start inside a person's later turn, whose input, stamped after pin, is on the page
 // before: an answer counts when its own turn is stamped before pin, or else once a user turn of
@@ -78,7 +82,7 @@ func PinnedAnswer(turns []Turn, pin time.Time, atStart bool) (text string, found
 		if err == nil && ts.Before(pin) {
 			return text, true
 		}
-		if err != nil || hasError(kept[at]) {
+		if err != nil || (kept[at].AnchorID == "" && hasError(kept[at])) {
 			break // stamped late, or not at all
 		}
 		kept = kept[:at] // a later turn's
