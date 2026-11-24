@@ -1876,6 +1876,11 @@ const (
 	// memoAnswerPageMin is the smallest page a read cut at memoAnswerReplyMax is asked again in:
 	// the Agent's window takes no fewer lines.
 	memoAnswerPageMin = 50
+	// memoAnswerSlimPage and memoAnswerSlimPages are the same for the Agent's answer-turns route,
+	// whose turns carry no tool bodies: a page is a few hundred KiB at most, so the read goes back
+	// 6000 lines where the plain route reaches 800.
+	memoAnswerSlimPage  = 1000
+	memoAnswerSlimPages = 6
 	// memoAnswerReplyMax bounds one page's reply: a page of tool output can be large.
 	memoAnswerReplyMax = 8 << 20
 	// memoAnswerPinSlack makes the pinned turn end the first instant of the next second: the Agent
@@ -2404,28 +2409,41 @@ func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d s
 	before := ""
 	sawTurn := false
 	var read []memoafter.Turn // pinned: the pages read so far, oldest first
-	limit := memoAnswerPage
-	for page := 0; page < memoAnswerPages; page++ {
-		status, body, ok := r.askTranscript(ctx, v.res, d.Session, before, limit)
+	// The slim route first; an Agent without it (a plain 404 with no error code) is read through
+	// /messages, as before.
+	slim := true
+	pageSize, maxPages := memoAnswerSlimPage, memoAnswerSlimPages
+	limit := pageSize
+	for page := 0; page < maxPages; page++ {
+		route := "messages"
+		if slim {
+			route = "answer-turns"
+		}
+		status, body, ok := r.askTranscript(ctx, v.res, route, d.Session, before, limit)
 		if !ok {
 			return
 		}
 		switch {
 		case status == http.StatusOK:
+		case slim && page == 0 && status == http.StatusNotFound && agentErrCode(body) == "":
+			slim, pageSize, maxPages = false, memoAnswerPage, memoAnswerPages
+			limit = pageSize
+			page--
+			continue
 		case status == http.StatusBadRequest && agentErrCode(body) == "unsupported_kind" && row != nil:
 			r.keepAnswer(ctx, d, "", store.AnswerUnknown)
 			return
 		default:
 			return
 		}
-		if len(body) >= memoAnswerReplyMax && limit > memoAnswerPageMin {
+		if !slim && len(body) >= memoAnswerReplyMax && limit > memoAnswerPageMin {
 			// Cut at the bound (a page of large edits): the same place again, in a smaller page.
 			// Only this page shrinks: the next one is asked at full size again.
 			limit = max(limit/4, memoAnswerPageMin)
 			page--
 			continue
 		}
-		limit = memoAnswerPage
+		limit = pageSize
 		var reply memoAnswerReply
 		if json.Unmarshal(body, &reply) != nil || reply.Messages == nil || reply.Name != d.Session {
 			return // a cut answer, or one about another session, decides nothing
@@ -2491,9 +2509,9 @@ func memoTurnAfterClose(turnStart, closedAt string) bool {
 	return err == nil && t.After(c)
 }
 
-// askTranscript asks the Agent for one page of limit lines of a session's transcript: the tail,
+// askTranscript asks the Agent's route (messages, or the slim answer-turns) for one page of limit lines of a session's transcript: the tail,
 // or the page that ends at before. ok is false when no answer came.
-func (r *memoQueueRunner) askTranscript(ctx context.Context, res *resolved, session, before string, limit int) (int, []byte, bool) {
+func (r *memoQueueRunner) askTranscript(ctx context.Context, res *resolved, route, session, before string, limit int) (int, []byte, bool) {
 	cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
 	defer cancel()
 	q := url.Values{"since": {"0"}, "limit": {strconv.Itoa(limit)}}
@@ -2502,7 +2520,7 @@ func (r *memoQueueRunner) askTranscript(ctx context.Context, res *resolved, sess
 	} else {
 		q.Set("before", before)
 	}
-	req, err := http.NewRequestWithContext(cctx, http.MethodGet, res.rt.Endpoint()+"/sessions/"+url.PathEscape(session)+"/messages?"+q.Encode(), nil)
+	req, err := http.NewRequestWithContext(cctx, http.MethodGet, res.rt.Endpoint()+"/sessions/"+url.PathEscape(session)+"/"+route+"?"+q.Encode(), nil)
 	if err != nil {
 		return 0, nil, false
 	}

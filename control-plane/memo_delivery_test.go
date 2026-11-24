@@ -140,6 +140,10 @@ type fakeQueueAgent struct {
 	// without one gets a plain 404 (a route this fake does not have). answerCalls is every read.
 	answers     map[string]func() (int, any)
 	answerCalls []string
+	// slim is whether this Agent has the answer-turns route (an older one answers it with a plain
+	// 404); answerRoutes is the route of each read in answerCalls.
+	slim         bool
+	answerRoutes []string
 }
 
 // setAnswer makes the Agent answer the transcript reads of session with reply (nil: no route).
@@ -157,6 +161,19 @@ func (a *fakeQueueAgent) answerCallsSoFar() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return append([]string(nil), a.answerCalls...)
+}
+
+// setSlim makes the Agent have the answer-turns route; routesSoFar is the route of each read.
+func (a *fakeQueueAgent) setSlim(on bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.slim = on
+}
+
+func (a *fakeQueueAgent) routesSoFar() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.answerRoutes...)
 }
 
 // setPRs makes the Agent have the PR snapshot route, answering each read with reply.
@@ -464,9 +481,15 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		a.serveTidy(w, r)
 	case r.Method == "POST" && path == "/memos/pr-snapshot" && a.prs:
 		a.servePRSnapshot(w, r)
-	case r.Method == "GET" && strings.HasPrefix(path, "/sessions/") && strings.HasSuffix(path, "/messages"):
-		name := strings.TrimSuffix(strings.TrimPrefix(path, "/sessions/"), "/messages")
+	case r.Method == "GET" && strings.HasPrefix(path, "/sessions/") &&
+		(strings.HasSuffix(path, "/messages") || (a.slim && strings.HasSuffix(path, "/answer-turns"))):
+		route := "/messages"
+		if strings.HasSuffix(path, "/answer-turns") {
+			route = "/answer-turns"
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(path, "/sessions/"), route)
 		a.answerCalls = append(a.answerCalls, name+"?"+r.URL.RawQuery)
+		a.answerRoutes = append(a.answerRoutes, route)
 		reply := a.answers[name]
 		if reply == nil {
 			http.NotFound(w, r)

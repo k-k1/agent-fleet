@@ -329,6 +329,70 @@ func TestMemoAnswerReadsBack(t *testing.T) {
 	})
 }
 
+// The read goes through the Agent's slim answer-turns route (issue #4891 items 2 and 7): pages of
+// memoAnswerSlimPage lines, back as far as memoAnswerSlimPages of them, so an answer further back
+// than the plain route's pages is found. An Agent without the route (a plain 404) is read through
+// /messages as before, and a session the slim route says is missing does not fall back.
+func TestMemoAnswerSlimRoute(t *testing.T) {
+	page := func(firstLine int, msgs []map[string]any) map[string]any {
+		return map[string]any{"name": "q-a", "status": "idle", "alive": true, "messages": msgs, "firstLine": firstLine, "hasMore": firstLine > 0}
+	}
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setSlim(true)
+		calls := 0
+		agent.setAnswer("q-a", func() (int, any) {
+			calls++
+			if calls < memoAnswerSlimPages {
+				return http.StatusOK, page(100000-calls, []map[string]any{})
+			}
+			return http.StatusOK, page(0, []map[string]any{{"role": "assistant", "parts": []map[string]any{{"kind": "text", "text": "Done: very far back"}}}})
+		})
+		e.settleNow(now)
+		routes := agent.routesSoFar()
+		if len(routes) != memoAnswerSlimPages || routes[0] != "/answer-turns" || routes[len(routes)-1] != "/answer-turns" {
+			t.Fatalf("routes %v, want %d reads of /answer-turns", routes, memoAnswerSlimPages)
+		}
+		if first := agent.answerCallsSoFar()[0]; !strings.Contains(first, fmt.Sprintf("limit=%d", memoAnswerSlimPage)) {
+			t.Fatalf("first read %q, want a page of %d", first, memoAnswerSlimPage)
+		}
+		if d := e.delivery(da.ID); d.AnswerClass != store.AnswerDone || d.AnswerHead != "Done: very far back" {
+			t.Fatalf("kept %q %q", d.AnswerHead, d.AnswerClass)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// An older Agent: the plain 404 of the missing route, then the plain route.
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: old agent"))
+		e.settleNow(now)
+		if d := e.delivery(da.ID); d.AnswerClass != store.AnswerDone {
+			t.Fatalf("kept %q %q", d.AnswerHead, d.AnswerClass)
+		}
+		if routes := agent.routesSoFar(); len(routes) != 1 || routes[0] != "/messages" {
+			t.Fatalf("routes %v, want the plain route only", routes)
+		}
+	})
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		// The route answers 404 with an error code: the session is gone, not the route, so the
+		// read is left for the next tick rather than repeated on /messages.
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setSlim(true)
+		agent.setAnswer("q-a", func() (int, any) {
+			return http.StatusNotFound, map[string]any{"error": map[string]any{"code": "not_found", "message": "no such session"}, "code": "not_found"}
+		})
+		e.settleNow(now)
+		if routes := agent.routesSoFar(); len(routes) != 1 || routes[0] != "/answer-turns" {
+			t.Fatalf("routes %v, want one read of the slim route", routes)
+		}
+		if d := e.delivery(da.ID); d.AnswerClass != "" {
+			t.Fatalf("kept %q", d.AnswerClass)
+		}
+	})
+}
+
 // A chain A <- B <- C in a stopped workspace: C waits for B, which has not run, and that does not
 // keep the read B waits for (A's answer) from waking the workspace.
 func TestMemoAnswerWakesForAChain(t *testing.T) {
