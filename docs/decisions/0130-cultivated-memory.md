@@ -857,3 +857,13 @@ validation; the patch edits the description; superseded by a replace of the same
 validator's kind: changed or gone, no revival, name exists, secret scan, schema or link). The model's wording, a
 validator's own message and any memory text are never copied in, because they can quote secret material. The key is
 camelCase like the rest of the report. Not done: the live re-run of the #3788 check with the reason visible. Follow-up: #3863.
+
+**Note (2026-11-24, #3498): document targets are checked and repaired; skills are not written yet.** The member's lint
+report carries `documents`: each memory superseded by a document of the project's repository is checked against the
+pinned default branch and the first problem is reported (another repository, merge commit off the branch, a revert of
+the merge still in effect, the file renamed with its new path and commit, the file gone, the heading gone). Lint only
+reports it. The repairs are two member-origin routes, `document-retarget` (checked as the supersede is) and
+`document-restore` (the supersede undone), each quoting the revision the report showed and each one change (`retarget`,
+`restore`) that can be reverted. The redundancy check is `restates-document`: 80% of a memory's 12-rune runs (letters
+and digits, any script) found in a Markdown or text file it anchors; advice, never a reason. The Console has the
+promotion (candidates, proposal, supersede) and the repairs. Not built: verified procedures to skills.
