@@ -1207,7 +1207,18 @@ func TestMemoRuntimeStateDoesNotQueueOnTheBuildLock(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		start := time.Now()
-		st := e.runner().memoRuntimeState(ctx, id)
+		got := make(chan string, 1)
+		go func() { got <- e.runner().memoRuntimeState(ctx, id) }()
+		var st string
+		select {
+		case st = <-got:
+		case <-time.After(5 * time.Second):
+			// Release the lock and join before failing, so a regression fails here and not at
+			// the package timeout.
+			bl.Unlock()
+			<-got
+			t.Fatal("the state look-up queued behind the build lock")
+		}
 		if d := time.Since(start); st != "" || d > time.Second {
 			t.Fatalf("state %q after %v with the build lock held", st, d)
 		}

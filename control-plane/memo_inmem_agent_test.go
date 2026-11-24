@@ -90,6 +90,9 @@ func (t inMemTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
 	}
 	a := v.(*inMemAgent)
+	if req.Body != nil {
+		defer req.Body.Close() // a RoundTripper closes the body on every path, errors included
+	}
 	// A real Transport refuses a request whose context is already done before it sends anything.
 	if err := req.Context().Err(); err != nil {
 		return nil, err
@@ -102,7 +105,6 @@ func (t inMemTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		if body, err = io.ReadAll(req.Body); err != nil {
 			return nil, err
 		}
-		_ = req.Body.Close()
 	}
 	sreq := req.Clone(req.Context())
 	sreq.Body = io.NopCloser(bytes.NewReader(body))
@@ -123,11 +125,17 @@ func (t inMemTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	case <-req.Context().Done():
 		return nil, req.Context().Err()
 	}
-	// Both channels can be ready: a handler that gave up on the context wrote no answer, and the
-	// caller must see the cancellation, not a synthesised 200.
+	return rec.response(req)
+}
+
+// response builds the client's answer once the handler has returned. Both the handler's end and
+// the context can be ready together: a handler that gave up on the context wrote no answer, and
+// the caller must see the cancellation, not a synthesised 200.
+func (w *inMemWriter) response(req *http.Request) (*http.Response, error) {
 	if err := req.Context().Err(); err != nil {
 		return nil, err
 	}
+	rec := w
 	rec.mu.Lock()
 	defer rec.mu.Unlock()
 	if rec.hijacked {
