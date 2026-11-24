@@ -219,8 +219,7 @@ func TestNPMVerifyPresentSettlesBackupsWhenItsRetryGetsTheLock(t *testing.T) {
 	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
 	f.write(t, tree+npmBakSuffix+"/VERSION", "1.0.0")
 	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
-	// The first two attempts (the step's own and the keep-accepted recovery's) find the lock path
-	// unopenable; it is fixed before the verify pass asks.
+	// The step's first attempt finds the lock path unopenable; it is fixed before its retry.
 	lock := f.env.npmLockPath()
 	if err := os.MkdirAll(lock, 0o755); err != nil {
 		t.Fatal(err)
@@ -234,6 +233,11 @@ func TestNPMVerifyPresentSettlesBackupsWhenItsRetryGetsTheLock(t *testing.T) {
 	}
 	if rc := e.NPMVerifyPresentStep(); rc != ExitOK {
 		t.Fatalf("rc %d\n%s", rc, f.out)
+	}
+	// Two attempts in all: recovery, verify and settling ran under the retry's one hold, so no
+	// other start could take the lock between the verify and the delete.
+	if tries != 2 {
+		t.Fatalf("%d lock attempts, want 2 (the lock was let go and taken again)", tries)
 	}
 	if exists(tree + npmBakSuffix) {
 		t.Fatalf("the accepted backup waited for the next start\n%s", f.out)
@@ -395,30 +399,38 @@ func needSetsid(t *testing.T) {
 }
 
 // The supervisor reports a child it could not stop on its stdout, and the real install records it
-// from there: the writer left npm's group, so the caller's own listing never sees it.
+// from there: the writer left npm's group, so the caller's own listing never sees it. Padded, the
+// report puts the writer first and far more than any tail after it, and it is still recorded.
 func TestNPMInstallRecordsWhatTheSupervisorReports(t *testing.T) {
 	needSetsid(t)
-	f := newSU(t, goodRTK, "", "", "")
-	pidf := stuckNPM(t, f, 1)
-	e, rel := lockedEnv(t, f)
-	_, err := e.npmInstall([]string{"x"})
-	rel()
-	if !errors.Is(err, errNPMStuck) {
-		t.Fatalf("got %v, want errNPMStuck", err)
+	for _, pad := range []bool{false, true} {
+		t.Run(fmt.Sprintf("padded=%v", pad), func(t *testing.T) {
+			f := newSU(t, goodRTK, "", "", "")
+			pidf := stuckNPM(t, f, 1)
+			if pad {
+				t.Setenv(supervisePadEnv, "1")
+			}
+			e, rel := lockedEnv(t, f)
+			_, err := e.npmInstall([]string{"x"})
+			rel()
+			if !errors.Is(err, errNPMStuck) {
+				t.Fatalf("got %v, want errNPMStuck", err)
+			}
+			pid := strings.TrimSpace(f.read(pidf))
+			if pid == "" || !strings.Contains(f.read(f.env.npmStuckPath()), " "+pid+" ") {
+				t.Fatalf("the reported writer %q is not recorded: %q", pid, f.read(f.env.npmStuckPath()))
+			}
+			if _, _, ok := f.env.lockNPM(); ok {
+				t.Fatal("the lock was granted while the reported writer runs")
+			}
+			fakeNPM{token: tokenOf(t, f, pidf)}.kill(f, pidf)
+			waitFor(t, "the lock stayed refused after the writer was gone", func() bool {
+				_, release, ok := f.env.lockNPM()
+				release()
+				return ok
+			})
+		})
 	}
-	pid := strings.TrimSpace(f.read(pidf))
-	if pid == "" || !strings.Contains(f.read(f.env.npmStuckPath()), " "+pid+" ") {
-		t.Fatalf("the reported writer %q is not recorded: %q", pid, f.read(f.env.npmStuckPath()))
-	}
-	if _, _, ok := f.env.lockNPM(); ok {
-		t.Fatal("the lock was granted while the reported writer runs")
-	}
-	fakeNPM{token: tokenOf(t, f, pidf)}.kill(f, pidf)
-	waitFor(t, "the lock stayed refused after the writer was gone", func() bool {
-		_, release, ok := f.env.lockNPM()
-		release()
-		return ok
-	})
 }
 
 // tokenOf reads back the sleep token of the process pidf names.
@@ -550,5 +562,58 @@ func TestNPMStuckRecordThatIsAFIFORefusesWithoutBlocking(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		os.WriteFile(f.env.npmStuckPath(), nil, 0o600) // unblock the open before failing
 		t.Fatal("the check blocked on a FIFO")
+	}
+}
+
+// fakeProc builds a procfs tree whose /proc/self is this process: NSpid is given (one entry is
+// our own namespace, more is an ancestor's procfs), and pid is a zombie leader of group pgrp with
+// one running thread.
+func fakeProc(t *testing.T, nspid string, pid, pgrp int) string {
+	t.Helper()
+	root := t.TempDir()
+	me := strconv.Itoa(os.Getpid())
+	stat := func(pid int, state string) string {
+		return fmt.Sprintf("%d (x) %s 1 %d %s 5\n", pid, state, pgrp, strings.TrimSpace(strings.Repeat("0 ", 16)))
+	}
+	for path, body := range map[string]string{
+		filepath.Join(root, me, "status"):                                           "Name:\tx\nNSpid:\t" + nspid + "\n",
+		filepath.Join(root, strconv.Itoa(pid), "stat"):                              stat(pid, "Z"),
+		filepath.Join(root, strconv.Itoa(pid), "task", strconv.Itoa(pid+1), "stat"): stat(pid+1, "D"),
+	} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(me, filepath.Join(root, "self")); err != nil {
+		t.Fatal(err)
+	}
+	old := procRoot
+	procRoot = root
+	t.Cleanup(func() { procRoot = old })
+	return root
+}
+
+// A procfs whose /proc/self carries our pid by chance but whose NSpid shows another namespace is
+// not ours: a zombie leader in it is not taken for a running member of our group (main never
+// waited for one), and nothing is recorded from it.
+func TestForeignProcfsWithOurNumberIsNotOurs(t *testing.T) {
+	me := strconv.Itoa(os.Getpid())
+	fakeProc(t, me, 4000000, 4000000)
+	if !procfsOurs() || len(groupProcs(4000000)) != 1 {
+		t.Fatal("fixture: our own procfs must count the zombie leader with a running thread")
+	}
+	fakeProc(t, "77 "+me, 4000000, 4000000)
+	if procfsOurs() {
+		t.Fatal("a procfs of an ancestor namespace was taken for ours")
+	}
+	if got := groupProcs(4000000); len(got) != 0 {
+		t.Fatalf("a zombie leader of another namespace counted as a member: %v", got)
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	if runs, _ := f.env.npmRecordStuck([]npmProc{{os.Getpid(), 5}}); runs || exists(f.env.npmStuckPath()) {
+		t.Fatal("something was recorded through a foreign procfs")
 	}
 }

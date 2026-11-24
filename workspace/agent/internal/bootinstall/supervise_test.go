@@ -30,6 +30,9 @@ const superviseGraceEnv = "AF_TEST_NPM_SUPERVISE_GRACE"
 // outlives its grace the way one blocked in uninterruptible I/O would.
 const superviseNoKillEnv = "AF_TEST_NPM_SUPERVISE_NOKILL"
 
+// supervisePadEnv makes that supervisor pad its report (padAfter).
+const supervisePadEnv = "AF_TEST_NPM_SUPERVISE_PAD"
+
 // npmCallerHelper takes the npm lock and runs one supervised install, as NPM does.
 func npmCallerHelper() int {
 	e, _, ok := Env{Home: os.Getenv(npmCallerHome), NPM: os.Getenv(npmCallerNPM)}.lockNPM()

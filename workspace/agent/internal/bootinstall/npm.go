@@ -92,7 +92,9 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 		cmd.WaitDelay = time.Second
 		cmd.Stderr = se
-		so := &tailWriter{max: 16 << 10} // the supervisor's own report; npm's stdout is /dev/null
+		// The supervisor's own report (npm's stdout is /dev/null), kept whole: a writer dropped
+		// from it would go unrecorded. Its size is bounded by the supervisor's children.
+		so := &bytes.Buffer{}
 		cmd.Stdout = so
 		if err = cmd.Start(); err == nil {
 			if e.afterNPMStart != nil {

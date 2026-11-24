@@ -26,19 +26,20 @@ const superviseGrace = 5 * time.Second
 // MaybeSupervise runs the supervisor and exits when args (os.Args[1:]) ask for it; otherwise it
 // returns. Run calls it first, and the package's TestMain does too, because a test binary is
 // what the re-exec starts there.
-func MaybeSupervise(args []string) { maybeSupervise(args, superviseGrace, killPid) }
+func MaybeSupervise(args []string) { maybeSupervise(args, superviseGrace, killPid, os.Stdout) }
 
 // killPid is the supervisor's SIGKILL of one process.
 func killPid(pid int) { _ = unix.Kill(pid, unix.SIGKILL) }
 
-// maybeSupervise is MaybeSupervise with the grace and the kill given. Only the tests' TestMain
-// passes others (a shorter grace, a kill that fails as one into uninterruptible I/O would);
+// maybeSupervise is MaybeSupervise with the grace, the kill and the report's writer given. Only
+// the tests' TestMain passes others (a shorter grace, a kill that fails as one into
+// uninterruptible I/O would, a report padded past any size limit);
 // production never reads them from anywhere, so nothing inherited can change them.
-func maybeSupervise(args []string, grace time.Duration, kill func(pid int)) {
+func maybeSupervise(args []string, grace time.Duration, kill func(pid int), report io.Writer) {
 	if len(args) < 3 || args[0] != "boot-install" || args[1] != superviseStep {
 		return
 	}
-	os.Exit(supervise(args[2], args[3:], grace, kill))
+	os.Exit(supervise(args[2], args[3:], grace, kill, report))
 }
 
 // supervise runs npm in its own (the supervisor's) process group, passes the lock on to it, and
@@ -46,7 +47,7 @@ func maybeSupervise(args []string, grace time.Duration, kill func(pid int)) {
 // the last holder of the file description exits, so a postinstall child that does not inherit it
 // still cannot outlive the lock. The caller owns the deadline and kills the whole group
 // (supervisor included), so no signal handling is needed here.
-func supervise(npm string, args []string, grace time.Duration, kill func(pid int)) int {
+func supervise(npm string, args []string, grace time.Duration, kill func(pid int), report io.Writer) int {
 	// The step signals its whole group at the end: it must lead its own, never a caller's.
 	lock := os.NewFile(3, "npm-lock")
 	if lock == nil || syscall.Getpgrp() != os.Getpid() {
@@ -77,7 +78,7 @@ func supervise(npm string, args []string, grace time.Duration, kill func(pid int
 		stopped = stopGroup(deadline, kill)
 	}
 	if !stopped {
-		reportStuck(os.Stdout)
+		reportStuck(report)
 	}
 	return superviseExit(werr, stopped)
 }
@@ -241,10 +242,25 @@ func procPath(pid int, rest ...string) string {
 
 // procfsOurs reports whether procRoot numbers processes as this process's pid namespace does,
 // which every kill and waitid here uses. A procfs mounted for another namespace names other
-// processes by the same numbers.
+// processes by the same numbers, and its /proc/self may even carry the same number by chance:
+// NSpid lists the pid from the procfs's namespace down to ours, so it is one entry, ours, only in
+// our own. A kernel without NSpid (before 4.1) is judged by /proc/self alone.
 func procfsOurs() bool {
-	t, err := os.Readlink(filepath.Join(procRoot, "self"))
-	return err == nil && t == strconv.Itoa(os.Getpid())
+	me := strconv.Itoa(os.Getpid())
+	if t, err := os.Readlink(filepath.Join(procRoot, "self")); err != nil || t != me {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Join(procRoot, "self", "status"))
+	if err != nil {
+		return false
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if rest, ok := strings.CutPrefix(l, "NSpid:"); ok {
+			f := strings.Fields(rest)
+			return len(f) == 1 && f[0] == me
+		}
+	}
+	return true
 }
 
 func readStat(pid int) (procInfo, bool) {
@@ -331,7 +347,9 @@ func groupProcs(pgid int) []npmProc {
 	self := os.Getpid()
 	var out []npmProc
 	for _, p := range listProcs() {
-		if p.pid != self && p.pgrp == pgid && (p.live || threadsRun(p.pid)) {
+		// The threads of a zombie are looked at only in a procfs of our own namespace: in another,
+		// the number names someone else's process, which main never waited for either.
+		if p.pid != self && p.pgrp == pgid && (p.live || procfsOurs() && threadsRun(p.pid)) {
 			out = append(out, npmProc{pid: p.pid, start: p.start})
 		}
 	}

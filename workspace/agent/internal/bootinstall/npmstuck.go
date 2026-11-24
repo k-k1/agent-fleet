@@ -85,7 +85,7 @@ func (e Env) npmReadStuck() ([]npmProc, error) {
 	} else if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", e.npmStuckPath())
 	}
-	b, err := io.ReadAll(io.LimitReader(f, 1<<20))
+	b, err := io.ReadAll(f) // whole: an entry dropped by a cut would let a restore run under it
 	if err != nil {
 		return nil, err
 	}
