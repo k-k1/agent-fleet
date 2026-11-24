@@ -21,9 +21,24 @@ type viewing struct {
 	byMember map[string]map[string]viewReport
 }
 
+// A report with an empty session is a tombstone: it is kept (rather than deleted) when it carries a
+// seq, so a heartbeat that was sent before the clear but arrives after it is recognised as late.
 type viewReport struct {
 	session string
 	at      time.Time
+	seq     int64
+}
+
+// tombstoneTTL is how long a clear's seq is remembered. Longer than viewTTL: the late heartbeat it
+// guards against can only matter while a lost-order report is still in flight, but a generous
+// bound costs one small map entry per device.
+const tombstoneTTL = 5 * time.Minute
+
+func (r viewReport) expired(now time.Time) bool {
+	if r.session == "" {
+		return now.Sub(r.at) > tombstoneTTL
+	}
+	return now.Sub(r.at) > viewTTL
 }
 
 // maxViewDevices bounds the devices one member can have on record, so a client that sends a new
@@ -34,14 +49,18 @@ const maxViewDevices = 16
 // reclaims a member who stopped reporting.
 const sweepEvery = time.Minute
 
-func (v *viewing) set(member, device, session string, now time.Time) {
+// set records one report. seq is the device's own counter, rising with every report it makes; 0
+// means the Console does not send one (older Console), which keeps the arrival-order behaviour. A
+// report whose seq is below the last one kept for the device is dropped, so a heartbeat that
+// overtakes the clear sent after it cannot bring the suppression back.
+func (v *viewing) set(member, device, session string, seq int64, now time.Time) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if now.Sub(v.lastSweep) >= sweepEvery {
 		v.lastSweep = now
 		for m, ds := range v.byMember {
 			for d, r := range ds {
-				if now.Sub(r.at) > viewTTL {
+				if r.expired(now) {
 					delete(ds, d)
 				}
 			}
@@ -51,7 +70,10 @@ func (v *viewing) set(member, device, session string, now time.Time) {
 		}
 	}
 	devs := v.byMember[member]
-	if session == "" {
+	if prev, ok := devs[device]; ok && seq > 0 && prev.seq > 0 && seq < prev.seq {
+		return
+	}
+	if session == "" && seq == 0 {
 		delete(devs, device)
 		if len(devs) == 0 {
 			delete(v.byMember, member)
@@ -69,7 +91,7 @@ func (v *viewing) set(member, device, session string, now time.Time) {
 		// Make room by dropping this member's expired entries, then the oldest.
 		oldest, oldAt := "", now
 		for d, r := range devs {
-			if now.Sub(r.at) > viewTTL {
+			if r.expired(now) {
 				delete(devs, d)
 			} else if oldest == "" || r.at.Before(oldAt) {
 				oldest, oldAt = d, r.at
@@ -79,7 +101,7 @@ func (v *viewing) set(member, device, session string, now time.Time) {
 			delete(devs, oldest)
 		}
 	}
-	devs[device] = viewReport{session, now}
+	devs[device] = viewReport{session, now, seq}
 }
 
 // on reports whether any device of the member has shown session within viewTTL.
@@ -87,7 +109,7 @@ func (v *viewing) on(member, session string, now time.Time) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	for _, r := range v.byMember[member] {
-		if r.session == session && now.Sub(r.at) <= viewTTL {
+		if session != "" && r.session == session && now.Sub(r.at) <= viewTTL {
 			return true
 		}
 	}

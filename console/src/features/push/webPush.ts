@@ -51,8 +51,11 @@ const storeDeviceId = (id: string) => {
     /* quota / private mode: the list just marks no device */
   }
 };
+// The release token pushApi keeps beside the id; it ends with the id it belongs to.
+const RELEASE_TOKEN_KEY = "af-push-release-token";
 const forgetDeviceId = () => {
   try {
+    localStorage.removeItem(RELEASE_TOKEN_KEY);
     localStorage.removeItem(ID_KEY);
   } catch {
     /* ignore */

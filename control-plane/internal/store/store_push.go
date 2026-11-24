@@ -13,6 +13,9 @@ import (
 type PushSubscription struct {
 	ID, MembershipID, Endpoint, P256dh, Auth string
 	UserAgent, CreatedAt, LastOKAt           string
+	// ReleaseToken is set by the registration that wrote the row and replaced by every later one. It
+	// is write-only here: reads leave it empty, and only ReleasePushEndpointIfToken compares it.
+	ReleaseToken string
 }
 
 // PushSubscriptionID is the id a subscription is listed and removed by: derived from the
@@ -46,6 +49,10 @@ type PushSubscriptionStore interface {
 	// ReleasePushEndpoint drops the row for endpoint whoever holds it, but only when the caller
 	// presents the subscription's own keys: the endpoint alone is not proof of owning the browser.
 	ReleasePushEndpoint(ctx context.Context, endpoint, p256dh, auth string) error
+	// ReleasePushEndpointIfToken is ReleasePushEndpoint that also requires token to be the one the
+	// current registration of the row was made with, so a late release sent for an earlier
+	// registration (another member's, on a browser that has since switched) deletes nothing.
+	ReleasePushEndpointIfToken(ctx context.Context, endpoint, p256dh, auth, token string) error
 	TouchPushSubscription(ctx context.Context, membershipID, endpoint, at string) error
 	// GetPushPrefs reads the kinds and the origins (pushsrv.PrefOrigins) the member turned off for
 	// push (none by default) in one statement, so a send sees one saved state. A list that cannot
@@ -120,10 +127,10 @@ func upsertPushSubscription(ctx context.Context, q sqlExecQuery, p PushSubscript
 	if p.CreatedAt == "" {
 		p.CreatedAt = NowTS()
 	}
-	_, err := q.ExecContext(ctx, `INSERT INTO push_subscription(id, membership_id, endpoint, p256dh, auth, user_agent, created_at)
-		VALUES(?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET membership_id=excluded.membership_id,
-		p256dh=excluded.p256dh, auth=excluded.auth, user_agent=excluded.user_agent`,
-		p.ID, p.MembershipID, p.Endpoint, p.P256dh, p.Auth, p.UserAgent, p.CreatedAt)
+	_, err := q.ExecContext(ctx, `INSERT INTO push_subscription(id, membership_id, endpoint, p256dh, auth, user_agent, created_at, release_token)
+		VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET membership_id=excluded.membership_id,
+		p256dh=excluded.p256dh, auth=excluded.auth, user_agent=excluded.user_agent, release_token=excluded.release_token`,
+		p.ID, p.MembershipID, p.Endpoint, p.P256dh, p.Auth, p.UserAgent, p.CreatedAt, p.ReleaseToken)
 	return err
 }
 
@@ -215,6 +222,16 @@ func (s *SQL) TouchPushSubscription(ctx context.Context, membershipID, endpoint,
 
 func (s *SQL) ReleasePushEndpoint(ctx context.Context, endpoint, p256dh, auth string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE endpoint=? AND p256dh=? AND auth=?`, endpoint, p256dh, auth)
+	return err
+}
+
+func (s *SQL) ReleasePushEndpointIfToken(ctx context.Context, endpoint, p256dh, auth, token string) error {
+	// An empty token never matches: a row written before the column existed has '' and is released
+	// by the keys-only path, which is what a client without a token calls.
+	if token == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE endpoint=? AND p256dh=? AND auth=? AND release_token=?`, endpoint, p256dh, auth, token)
 	return err
 }
 

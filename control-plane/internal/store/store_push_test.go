@@ -172,6 +172,26 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 1 {
 		t.Fatalf("a release with foreign keys removed the row: %+v", rows)
 	}
+	// A token release applies only to the registration that wrote the current token.
+	sub.ReleaseToken = "tok-new"
+	if err := st.UpsertPushSubscription(ctx, sub); err != nil {
+		t.Fatal(err)
+	}
+	for _, tok := range []string{"tok-old", ""} {
+		if err := st.ReleasePushEndpointIfToken(ctx, ep, sub.P256dh, sub.Auth, tok); err != nil {
+			t.Fatal(err)
+		}
+		if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 1 {
+			t.Fatalf("token %q released the row: %+v", tok, rows)
+		}
+	}
+	if err := st.ReleasePushEndpointIfToken(ctx, ep, sub.P256dh, sub.Auth, "tok-new"); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 0 {
+		t.Fatalf("the current token did not release: %+v", rows)
+	}
+	_ = st.UpsertPushSubscription(ctx, sub)
 	if err := st.ReleasePushEndpoint(ctx, ep, sub.P256dh, sub.Auth); err != nil {
 		t.Fatal(err)
 	}

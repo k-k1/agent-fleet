@@ -220,6 +220,20 @@ func (m *memStore) ReleasePushEndpoint(ctx context.Context, ep, p256dh, auth str
 	}
 	return nil
 }
+func (m *memStore) ReleasePushEndpointIfToken(ctx context.Context, ep, p256dh, auth, token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.releaseErr != nil {
+		return m.releaseErr
+	}
+	for i, s := range m.subs {
+		if s.Endpoint == ep && s.P256dh == p256dh && s.Auth == auth && token != "" && s.ReleaseToken == token {
+			m.subs = append(m.subs[:i], m.subs[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
 func (m *memStore) TouchPushSubscription(_ context.Context, _, ep, at string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
