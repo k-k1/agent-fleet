@@ -528,30 +528,184 @@ func TestMemoAnswerListPages(t *testing.T) {
 
 // An Agent that reports its workspace running but does not answer the session list costs one try:
 // the row is stamped, so the next ticks reach the rows behind it. The first member's list call is
-// held until the pass's budget ends (the pass is run under a short budget of its own), and the
-// next tick, under the same budget, reads the following member's Done:.
+// held until the pass's budget ends (the pass is run under a short budget of its own), the member
+// behind is not read in that tick, and the next tick reads its Done:.
 func TestMemoAnswerUnansweredAgentIsStamped(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
 		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: the member behind"))
-		e.silentMember() // c: its Agent holds every call until the caller gives up
+		calls := e.silentMember() // c: its Agent holds every call until the caller gives up
 		silent := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), store.PRStateNone)[0]
-		budget := func(at time.Time) {
-			ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-			defer cancel()
-			e.runner().collectAnswers(ctx, map[string]*memoMemberView{}, at)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			e.runner().collectAnswers(ctx, map[string]*memoMemberView{}, now)
+		}()
+		select {
+		case path := <-calls:
+			if path != "/sessions" {
+				t.Fatalf("the silent Agent was first asked %s, want its session list", path)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("the silent Agent's session list was never asked")
 		}
-		budget(now)
+		<-done
+		cancel()
 		if got := e.delivery(silent); got.AnswerTriedAt == "" {
 			t.Fatal("a row of an Agent that did not answer was left unstamped")
 		}
 		if got := e.delivery(da.ID); got.AnswerClass != "" || len(agent.answerCallsSoFar()) != 0 {
 			t.Fatalf("the member behind was read in a tick the silent Agent used up: %+v", got)
 		}
-		budget(now.Add(time.Minute))
+		actx, acancel := context.WithTimeout(context.Background(), memoAnswerBudget)
+		defer acancel()
+		e.runner().collectAnswers(actx, map[string]*memoMemberView{}, now.Add(time.Minute))
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone || got.AnswerHead != "Done: the member behind" {
 			t.Fatalf("the next tick: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+		select {
+		case path := <-calls:
+			t.Fatalf("the stamped row's Agent was asked again (%s) within memoAnswerEvery", path)
+		default:
+		}
+	})
+}
+
+// stoppedMembers adds n members whose workspaces are recorded as stopped, each with a chain like
+// otherMemberChains', closed before closedAt, and answers the views a tick has of them (stopped)
+// and their deliveries.
+func (e *deliveryEnv) stoppedMembers(q string, n int, closedAt time.Time, prState string) (map[string]*memoMemberView, []string) {
+	e.t.Helper()
+	ctx := context.Background()
+	views := map[string]*memoMemberView{}
+	var ids []string
+	for i := 0; i < n; i++ {
+		name := fmt.Sprintf("stopped%d", i)
+		email := name + "@example.com"
+		id, err := e.st.UpsertIdentity(ctx, email, sanitizeUser(email), "")
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		mem, err := e.st.EnsureMembership(ctx, id.ID, e.t1.ID, "member")
+		if err != nil {
+			e.t.Fatal(err)
+		}
+		e.members[name] = mem.ID
+		if err := e.st.CreateWorkspace(ctx, store.Workspace{ID: "ws-" + name, TenantID: e.t1.ID, MembershipID: mem.ID,
+			ContainerName: name, Network: "n", DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "stopped",
+			CreatedAt: store.NowTS()}); err != nil {
+			e.t.Fatal(err)
+		}
+		views[mem.ID] = &memoMemberView{mirrorOK: true}
+		ids = append(ids, e.otherMemberChains(q, name, 1, closedAt.Add(-time.Duration(i)*time.Minute), prState)...)
+	}
+	return views, ids
+}
+
+// More members whose workspaces are recorded as stopped than the tick has pages, each ahead of a
+// running workspace's row: they are listed last, so the running one is read, and theirs stay
+// unstamped (read at the start).
+func TestMemoAnswerStoppedMembersLast(t *testing.T) {
+	saved := memoAnswersListed
+	memoAnswersListed = 1
+	t.Cleanup(func() { memoAnswersListed = saved })
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: behind the stopped members"))
+		views, stopped := e.stoppedMembers(q, memoAnswerListPages+1, now.Add(-time.Minute), store.PRStateNone)
+		e.runner().collectAnswers(context.Background(), views, now)
+		for _, id := range stopped {
+			if got := e.delivery(id); got.AnswerTriedAt != "" || got.AnswerClass != "" {
+				t.Fatalf("a stopped workspace's row was stamped or read: %+v", got)
+			}
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the running workspace's row behind them: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+	})
+}
+
+// A member the PR snapshot pass resolves as its budget runs out is not kept as unreachable: the
+// answer pass after it, in the same tick, resolves it within its own budget and reads its answer.
+func TestMemoAnswerNotStarvedByThePRPassBudget(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.prChain("clean", now.Add(-time.Minute))
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer() })
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: read in the same tick"))
+		agent.mu.Lock()
+		agent.sessionsDelay = time.Second
+		agent.mu.Unlock()
+		views := map[string]*memoMemberView{}
+		pctx, pcancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		e.runner().collectPRSnapshots(pctx, views, now)
+		pcancel()
+		if got := e.delivery(da.ID); got.PRState != "" || got.PRTriedAt != "" {
+			t.Fatalf("the PR pass read past its budget: %+v", got)
+		}
+		actx, acancel := context.WithTimeout(context.Background(), memoAnswerBudget)
+		defer acancel()
+		e.runner().collectAnswers(actx, views, now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the answer pass after it: %q %q (tried %q)", got.AnswerHead, got.AnswerClass, got.AnswerTriedAt)
+		}
+	})
+}
+
+// On Postgres, an answer whose RecordAnswer waits on a row only locked (FOR UPDATE, released with no
+// change, so the UPDATE would not re-check its WHERE) past the window's edge is not kept.
+func TestMemoAnswerWindowAfterALockWait(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		if !strings.HasSuffix(t.Name(), "/postgres") {
+			t.Skip("SQLite takes its write lock before it reads the clock")
+		}
+		_, _, da, _ := e.noPRChain(time.Now().Add(-time.Minute))
+		ctx := context.Background()
+		db := e.st.DB()
+		edge := time.Now().Add(1500 * time.Millisecond)
+		if _, err := db.ExecContext(ctx, `UPDATE memo_delivery SET closed_at=? WHERE id=?`,
+			store.DeliveryTS(edge.Add(-memoAnswerWindow)), da.ID); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := db.BeginTx(ctx, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback()
+		var one int
+		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM memo_delivery WHERE id=? FOR UPDATE`, da.ID).Scan(&one); err != nil {
+			t.Fatal(err)
+		}
+		type result struct {
+			ok  bool
+			err error
+		}
+		res := make(chan result, 1)
+		go func() {
+			ok, err := e.st.RecordAnswer(ctx, da.ID, "Done: after the wait", store.AnswerDone, "", memoAnswerWindow)
+			res <- result{ok, err}
+		}()
+		for waiting := 0; waiting == 0; {
+			if time.Now().After(edge) {
+				t.Fatal("RecordAnswer never waited on the lock before the edge")
+			}
+			if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_locks WHERE NOT granted`).Scan(&waiting); err != nil {
+				t.Fatal(err)
+			}
+		}
+		time.Sleep(time.Until(edge) + 300*time.Millisecond)
+		if err := tx.Commit(); err != nil {
+			t.Fatal(err)
+		}
+		r := <-res
+		if r.err != nil || r.ok {
+			t.Fatalf("kept after a lock wait past the edge: %v %v", r.ok, r.err)
+		}
+		if got := e.delivery(da.ID); got.AnswerClass != "" {
+			t.Fatalf("kept %q", got.AnswerClass)
 		}
 	})
 }

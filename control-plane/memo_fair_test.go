@@ -11,10 +11,15 @@ import (
 )
 
 // silentMember makes member "c" a running workspace whose Agent never answers until the request's
-// context ends, as a hung workspace does.
-func (e *deliveryEnv) silentMember() {
+// context ends, as a hung workspace does. The channel gets each call's path as it arrives.
+func (e *deliveryEnv) silentMember() <-chan string {
 	e.t.Helper()
+	calls := make(chan string, 64)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case calls <- r.URL.Path:
+		default:
+		}
 		select {
 		case <-r.Context().Done():
 		case <-time.After(10 * time.Second):
@@ -29,6 +34,7 @@ func (e *deliveryEnv) silentMember() {
 	e.mgr.mu.Lock()
 	e.mgr.rts[e.members["c"]] = cachedRT{rt: stubRuntime{endpoint: srv.URL, token: "tok", state: "running"}, ws: ws}
 	e.mgr.mu.Unlock()
+	return calls
 }
 
 // insertFairDelivery stores a delivery of a member, made ago before now.

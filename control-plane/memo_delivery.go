@@ -1860,21 +1860,22 @@ type memoAnswerReply struct {
 // collectAnswers reads the answers that are due: first those a pending message waits for, then
 // the rest, which only the run history shows. A waited-for one is not stamped while its workspace
 // is known to be stopped, so it is read as soon as the workspace runs (a dependent's wait wakes
-// it, prWake), and the list's next pages leave that member out, so its rows cannot hide a running
-// workspace's behind them however many there are: the pages are spent on distinct members, not
-// rows. Every other row is stamped when it is reached, read or not: an Agent that does not answer
-// is tried again after memoAnswerEvery, and the rows behind it are reached meanwhile.
+// it, prWake), and the list's next pages leave that member out. The list puts the members whose
+// workspace is recorded as stopped last, so their rows cannot hide a running workspace's behind
+// them however many there are. Every other row is stamped when it is reached, read or not: an
+// Agent that does not answer is tried again after memoAnswerEvery, and the rows behind it are
+// reached meanwhile. A row the page reached is thus stamped or its member left out, and the next
+// page goes on from the rows left.
 func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
 	read := 0
 	for _, waited := range []bool{true, false} {
-		var after *store.MemoDelivery
 		var except []string // the members whose rows this list leaves unstamped
 		for p := 0; p < memoAnswerListPages; p++ {
 			if ctx.Err() != nil || read >= memoAnswersPerTick {
 				return
 			}
 			ds, err := r.mgr.store.ListAnswersDue(ctx, store.DeliveryTS(now.Add(-memoAnswerWindow)),
-				store.DeliveryTS(now.Add(-memoAnswerEvery)), waited, after, except, memoAnswersListed)
+				store.DeliveryTS(now.Add(-memoAnswerEvery)), waited, except, memoAnswersListed)
 			if err != nil {
 				log.Printf("memo queue: list answers due: %v", err)
 				return
@@ -1883,7 +1884,6 @@ func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*
 			if len(ds) < memoAnswersListed {
 				break
 			}
-			after = &ds[len(ds)-1]
 		}
 	}
 }

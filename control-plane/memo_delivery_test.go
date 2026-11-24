@@ -85,8 +85,10 @@ type fakeQueueAgent struct {
 	createMode string
 	// abandonOverride, when set, is answered to every abandon instead of the record's state.
 	abandonOverride func(w http.ResponseWriter, key string)
-	// sessionsDown makes GET /sessions fail.
-	sessionsDown bool
+	// sessionsDown makes GET /sessions fail. sessionsDelay holds the next GET /sessions back that
+	// long, once.
+	sessionsDown  bool
+	sessionsDelay time.Duration
 	// reserveBarrier, when set, holds every reserve until all it counts have arrived.
 	reserveBarrier *sync.WaitGroup
 	// report makes GET /sessions send the envelope's queueReport marker (an Agent of step 2b).
@@ -376,6 +378,12 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 	defer a.mu.Unlock()
 	switch {
 	case r.Method == "GET" && path == "/sessions":
+		if d := a.sessionsDelay; d > 0 {
+			a.sessionsDelay = 0
+			a.mu.Unlock()
+			time.Sleep(d)
+			a.mu.Lock()
+		}
 		if a.sessionsDown {
 			agentErr(w, http.StatusBadGateway, "down")
 			return

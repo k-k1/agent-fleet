@@ -402,3 +402,27 @@ func TestMemoPRSnapshotListPages(t *testing.T) {
 		}
 	})
 }
+
+// More members whose workspaces are recorded as stopped than the tick has pages, each ahead of a
+// running workspace's snapshot: they are listed last, so the running one is read, and theirs stay
+// unstamped (read at the start).
+func TestMemoPRSnapshotStoppedMembersLast(t *testing.T) {
+	saved := memoPRSnapshotsListed
+	memoPRSnapshotsListed = 1
+	t.Cleanup(func() { memoPRSnapshotsListed = saved })
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.prChain("clean", now.Add(-time.Minute))
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
+		views, stopped := e.stoppedMembers(q, memoPRSnapshotListPages+1, now.Add(-time.Minute), "")
+		e.runner().collectPRSnapshots(context.Background(), views, now)
+		for _, id := range stopped {
+			if got := e.delivery(id); got.PRTriedAt != "" || got.PRState != "" {
+				t.Fatalf("a stopped workspace's snapshot was stamped or read: %+v", got)
+			}
+		}
+		if got := e.delivery(da.ID); got.PRState != store.PRStateMerged {
+			t.Fatalf("the running workspace's snapshot behind them: %+v", got)
+		}
+	})
+}

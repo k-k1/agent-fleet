@@ -1272,16 +1272,15 @@ type memoPRSnapshotReply struct {
 // not final, and they were not tried in the last 10 minutes. Only a running workspace whose Agent
 // has the endpoint is asked; every other read decides nothing, and the dependent waits. The list
 // is paged as collectAnswers pages its waited-for one: a member whose rows are left unstamped is
-// left out of the next pages, so they cannot hide a running workspace's rows behind them.
+// left out of the next pages, and members whose workspace is recorded as stopped come last.
 func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
 	read := 0
-	var after *store.MemoDelivery
 	var except []string
 	for p := 0; p < memoPRSnapshotListPages; p++ {
 		if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
 			return
 		}
-		ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, store.DeliveryTS(now.Add(-memoPRSnapshotEvery)), after, except, memoPRSnapshotsListed)
+		ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, store.DeliveryTS(now.Add(-memoPRSnapshotEvery)), except, memoPRSnapshotsListed)
 		if err != nil {
 			log.Printf("memo queue: list PR snapshots due: %v", err)
 			return
@@ -1290,7 +1289,6 @@ func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[stri
 		if len(ds) < memoPRSnapshotsListed {
 			return
 		}
-		after = &ds[len(ds)-1]
 	}
 }
 
@@ -1308,8 +1306,15 @@ func (r *memoQueueRunner) readPRSnapshotsOf(ctx context.Context, views map[strin
 		}
 		// Only a read that is made is stamped: a stamp on a stopped workspace's snapshot would keep
 		// the wake made for it from being read for 10 minutes after the start.
+		_, had := views[d.MembershipID]
 		v := r.view(ctx, views, d.MembershipID)
 		if v == nil || !v.liveOK || !v.prs {
+			if !had && ctx.Err() != nil {
+				// Resolved as this pass's budget ran out: not kept, so the answer pass after it
+				// resolves the member within its own budget instead of taking it for unreachable.
+				delete(views, d.MembershipID)
+				return read, except
+			}
 			except = memoExceptAdd(except, d.MembershipID)
 			continue
 		}
