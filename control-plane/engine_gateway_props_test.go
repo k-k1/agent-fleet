@@ -73,7 +73,7 @@ func enginePropsFixture(t *testing.T) (mgr *manager, signKey []byte, membershipI
 			return
 		}
 		enginePropsSharedDir = dir
-		st, err := store.OpenSQLite(filepath.Join(dir, "cp.db"))
+		st, err := openMigratedSQLite(filepath.Join(dir, "cp.db"))
 		if err != nil {
 			enginePropsShared.err = err
 			return
