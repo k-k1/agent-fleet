@@ -37,6 +37,44 @@ describe("push handler", () => {
     expect(sw.shown[0].opts.body).toBe("質問があります");
     expect(sw.shown[0].opts.data.session).toBe("my-sess");
   });
+  it("prefixes the title with a localized origin label, none for own", async () => {
+    const want: Record<string, [string, string]> = {
+      own: ["S", "S"],
+      "own-child": ["Child · S", "子 · S"],
+      autorun: ["Auto-run · S", "自動実行 · S"],
+      "autorun-child": ["Auto-run · Child · S", "自動実行 · 子 · S"],
+      schedule: ["Scheduled · S", "スケジュール · S"],
+      "schedule-child": ["Scheduled · Child · S", "スケジュール · 子 · S"],
+    };
+    for (const [origin, [en, ja]] of Object.entries(want)) {
+      for (const [lang, title] of [["en", en], ["ja", ja]]) {
+        const sw = loadSw(lang);
+        await push(sw, { v: 1, kind: "question", session: "s1", name: "S", origin });
+        expect(sw.shown[0].title).toBe(title);
+        // The tag does not depend on the origin.
+        expect(sw.shown[0].opts.tag).toBe("af-s1-question");
+      }
+    }
+  });
+  it("treats a missing or unknown origin as own", async () => {
+    for (const origin of [undefined, "constructor", "bogus", 7]) {
+      const sw = loadSw();
+      await push(sw, { v: 1, kind: "question", session: "s1", name: "S", origin });
+      expect(sw.shown[0].title).toBe("S");
+    }
+  });
+  it("sets the brand icon and the monochrome badge under the scope", async () => {
+    const sw = loadSw();
+    await push(sw, { v: 1, kind: "question", session: "s1", name: "S" });
+    expect(sw.shown[0].opts.icon).toBe("https://console.test/brand/icon-192.png");
+    expect(sw.shown[0].opts.badge).toBe("https://console.test/brand/badge-96.png");
+  });
+  it("ships the badge as a 96 px PNG with an alpha channel", () => {
+    const png = readFileSync(resolve(__dirname, "../public/brand/badge-96.png"));
+    expect(png.subarray(1, 4).toString()).toBe("PNG");
+    expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([96, 96]);
+    expect(png[25]).toBe(6); // colour type RGBA
+  });
   it("uses the payload text when the tenant allows it", async () => {
     const sw = loadSw();
     await push(sw, { v: 1, kind: "question", session: "my-sess", name: "S", text: "Deploy now?" });

@@ -17,6 +17,13 @@ glyph that carries colour of its own, quietly makes the recolour look wrong on e
 deployment that uses it. The base colour is a constant in `brand.go`, so a redraw in
 a different colour has to update it there too.
 
+## `badge-96.png`
+
+The Web Push `badge` (`console/public/sw.js`): the Android status-bar glyph. Android uses
+only the alpha channel, so it is white on transparent, 96 px, the mascot outline of
+`icon-512.png` without the ground. It is **not** in `brandTintedIcons`: it carries no
+brand colour, so it is served as shipped. A notification's `icon` is `icon-192.png`.
+
 ## `agent-fleet-banner.webp`
 
 The login landing page (`GET /login`, served by the CP — see
