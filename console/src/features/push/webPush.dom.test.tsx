@@ -358,13 +358,14 @@ describe("web push device lifecycle", () => {
     expect(seen).toEqual(["AgAB"]);
   });
   it("dropLocalSubscription leaves a subscription alone when it is not the one whose row was removed", async () => {
+    Object.assign(sub, { endpoint: "https://push.example/x" });
     localStorage.setItem("af-push-sub-id", "dev1");
-    await dropLocalSubscription("0000000000000000"); // a different registration took this one's place
+    await dropLocalSubscription("https://push.example/other"); // a different registration took its place
     expect(unsubscribed).toBe(0);
     expect(localStorage.getItem("af-push-sub-id")).toBe("dev1");
-    const own = await deviceIdFor(sub as unknown as PushSubscription);
-    await dropLocalSubscription(own);
+    await dropLocalSubscription("https://push.example/x");
     expect(unsubscribed).toBe(1);
+    expect(localStorage.getItem("af-push-sub-id")).toBeNull();
   });
   it("asks for the permission before anything else, so it runs inside the tap", async () => {
     const order: string[] = [];

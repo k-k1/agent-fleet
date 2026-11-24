@@ -12,6 +12,7 @@ let matchKey: string | null = null; // when set, the subscription was made with 
 let idGate: Promise<void> | null = null;
 let listHangs = false;
 let subHangs = false;
+let idHangs = false;
 let listGate: Promise<void> | null = null;
 const puts: string[][] = [];
 vi.mock("./pushApi.ts", async (orig) => ({
@@ -29,7 +30,8 @@ vi.mock("./webPush.ts", () => ({
   pushSupport: () => "ok",
   currentSubscription: () => (subHangs ? new Promise(() => {}) : Promise.resolve(sub)),
   subscriptionMatchesKey: (_s: unknown, k: string) => (matchKey !== null ? k === matchKey : matches),
-  deviceIdFor: () => (idGate ? idGate : Promise.resolve()).then(() => myId),
+  deviceIdFor: () => (idHangs ? new Promise<never>(() => {}) : idGate ? idGate : Promise.resolve()).then(() => myId),
+  thisDeviceId: () => "",
   dropLocalSubscription: vi.fn(() => Promise.resolve()),
   enablePush: vi.fn(),
   disablePush: vi.fn(),
@@ -62,6 +64,7 @@ beforeEach(() => {
   idGate = null;
   listHangs = false;
   subHangs = false;
+  idHangs = false;
   listGate = null;
   puts.length = 0;
 });
@@ -160,13 +163,13 @@ describe("PushSection", () => {
     expect(host.querySelector(".push-devices")).not.toBeNull();
   });
   it("removing this very device ends its subscription locally without asking the CP twice", async () => {
-    sub = {};
+    sub = { endpoint: "https://push.example/x" };
     const host = await mount();
     const btn = host.querySelector<HTMLButtonElement>(".push-devices button")!;
     await act(async () => void btn.click());
     await flush();
     expect(pushApi.removePushDevice).toHaveBeenCalledWith("d1");
-    expect(webPush.dropLocalSubscription).toHaveBeenCalledWith("d1");
+    expect(webPush.dropLocalSubscription).toHaveBeenCalledWith("https://push.example/x");
     expect(webPush.disablePush).not.toHaveBeenCalled();
   });
   it("leaves the switch usable, and off, when the device list never answers", async () => {
@@ -197,6 +200,41 @@ describe("PushSection", () => {
     await act(async () => void (await vi.advanceTimersByTimeAsync(10_000)));
     expect(host.querySelector<HTMLInputElement>("label input[role=switch]")!.disabled).toBe(false);
     vi.useRealTimers();
+  });
+  it("shows the device list even when deriving this browser's row id never answers", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    sub = {};
+    idHangs = true;
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => root!.render(<PushSection />));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(100)));
+    expect(host.querySelector(".push-devices")).toBeNull();
+    await act(async () => void (await vi.advanceTimersByTimeAsync(2000)));
+    expect(host.querySelector(".push-devices")).not.toBeNull();
+    expect(host.querySelector<HTMLInputElement>("label input[role=switch]")!.disabled).toBe(false);
+    vi.useRealTimers();
+  });
+  it("turns push on again with the key an earlier enable on this screen used, not the one the screen opened with", async () => {
+    key = "k1";
+    sub = {};
+    matchKey = "k2";
+    const enable = vi.mocked(webPush.enablePush);
+    enable.mockReset();
+    enable.mockImplementation(async (_k, onKey) => (onKey?.("k2"), "ok"));
+    const host = await mount();
+    const sw = host.querySelector<HTMLInputElement>("label input[role=switch]")!;
+    await act(async () => void sw.click()); // off -> on, subscribed with k2
+    await flush();
+    expect(sw.checked).toBe(true);
+    sub = null;
+    await act(async () => void sw.click()); // on -> off
+    await flush();
+    expect(sw.checked).toBe(false);
+    await act(async () => void sw.click()); // on again
+    await flush();
+    expect(enable.mock.calls.map((c) => c[0])).toEqual(["k1", "k2"]);
   });
   it("counts a matching subscription as on when its row id cannot be told at all", async () => {
     sub = {};

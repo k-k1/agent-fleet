@@ -11,7 +11,7 @@ import {
   type PushKind,
 } from "./pushApi.ts";
 import { usePushKey } from "./usePushKey.ts";
-import { currentSubscription, deviceIdFor, disablePush, dropLocalSubscription, enablePush, pushSupport, subscriptionMatchesKey } from "./webPush.ts";
+import { currentSubscription, deviceIdFor, disablePush, dropLocalSubscription, enablePush, pushSupport, subscriptionMatchesKey, thisDeviceId } from "./webPush.ts";
 
 const KIND_LABEL = {
   question: "push.kind_question",
@@ -24,10 +24,11 @@ const KIND_LABEL = {
 // when the deployment has no Web Push (the config probe answers no key). The kind choices and the
 // device list are the member's server-side state, so they follow the member to every device.
 const READ_TIMEOUT_MS = 10_000;
+const ID_TIMEOUT_MS = 2_000;
 /** Settings reads that never answer must not hold the switch for good. */
-function withTimeout<T>(p: Promise<T>): Promise<T> {
+function withTimeout<T>(p: Promise<T>, ms = READ_TIMEOUT_MS): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const limit = new Promise<never>((_, rej) => (timer = setTimeout(() => rej(new Error("timeout")), READ_TIMEOUT_MS)));
+  const limit = new Promise<never>((_, rej) => (timer = setTimeout(() => rej(new Error("timeout")), ms)));
   return Promise.race([p, limit]).finally(() => clearTimeout(timer));
 }
 
@@ -59,25 +60,28 @@ export function PushSection() {
     }
   }, []);
 
-  // The whole first read is bounded, not just the list: a browser call that never settles must not
-  // hold the switch for good either.
+  // Only the newest read is shown: one that outlived its limit must not overwrite a later one.
+  const readSeq = useRef(0);
+  // The endpoint of the subscription the list was read with, for "remove this device".
+  const myEndpoint = useRef("");
   const loadDevices = useCallback(async (k: string) => {
+    const mine = ++readSeq.current;
     try {
-      await withTimeout(
-        (async () => {
-          const [d, sub] = await Promise.all([listPushDevices(), currentSubscription()]);
-          const matches = !!sub && subscriptionMatchesKey(sub, k);
-          // The list and this browser's row id are published together: a "remove" pressed in
-          // between would otherwise not know which row is this device's own.
-          const id = sub ? await deviceIdFor(sub) : "";
-          setDevices(d);
-          setMyId(id);
-          setStale(!!sub && !matches);
-          // This browser counts as enabled only while its key is current and the CP lists its row.
-          // With no way to tell the row (no stored id and no SubtleCrypto) the subscription alone decides.
-          setHere(matches && (!id || d.some((x) => x.id === id)));
-        })(),
-      );
+      // Only fetching is under the limit, so that nothing applies after it has passed.
+      const [d, sub] = await withTimeout(Promise.all([listPushDevices(), currentSubscription()]));
+      const matches = !!sub && subscriptionMatchesKey(sub, k);
+      // This browser's row id is published together with the list: a "remove" pressed in between
+      // would otherwise not know which row is this device's own. A derivation that does not answer
+      // falls back to the stored id rather than holding the list back.
+      const id = sub ? await withTimeout(deviceIdFor(sub), ID_TIMEOUT_MS).catch(() => thisDeviceId()) : "";
+      if (mine !== readSeq.current) return;
+      myEndpoint.current = sub?.endpoint ?? "";
+      setDevices(d);
+      setMyId(id);
+      setStale(!!sub && !matches);
+      // This browser counts as enabled only while its key is current and the CP lists its row.
+      // With no way to tell the row (no stored id and no SubtleCrypto) the subscription alone decides.
+      setHere(matches && (!id || d.some((x) => x.id === id)));
     } catch {
       /* transient (a failed or unanswered read leaves the switch off and usable); keep the last view */
     } finally {
@@ -107,7 +111,7 @@ export function PushSection() {
     let leaving = false;
     try {
       if (on) {
-        const res = await enablePush(key, (k) => (usedKey.current = k));
+        const res = await enablePush(usedKey.current ?? key, (k) => (usedKey.current = k));
         // Signed out meanwhile: the page is leaving and nothing here is worth a toast or a read.
         if (res === "cancelled") {
           leaving = true;
@@ -147,7 +151,7 @@ export function PushSection() {
     try {
       await removePushDevice(d.id);
       // Removing this very device also ends the browser's own subscription.
-      if (d.id === myId) await dropLocalSubscription(d.id).catch(() => {});
+      if (d.id === myId) await dropLocalSubscription(myEndpoint.current).catch(() => {});
     } catch (e) {
       fail(e);
     } finally {
