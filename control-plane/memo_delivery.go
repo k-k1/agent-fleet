@@ -419,7 +419,7 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	// commits (the holds below stay), so a claim made before it would be left with no delivery.
 	var batch []store.Memo
 	// A run has one recipe: a batch holds only messages whose effective recipes are the same,
-	// and the first eligible message (oldest first) fixes it. One with another recipe is skipped
+	// and the first eligible message (in the order below) fixes it. One with another recipe is skipped
 	// and waits for its own run.
 	var batchRecipe memorecipe.Recipe
 	eligible := memoafter.EligibleIn(memoafter.TxLookup(tx, rows, time.Now()))
@@ -432,11 +432,31 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	notReady := func(why string) (store.MemoDelivery, *apiError, error) {
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueMemoNotReady, "this message cannot run now: " + why}, nil
 	}
+	// The messages marked "run next" (issue #5021) are looked at first, then every message in the
+	// oldest-first order. The mark only orders: a marked message that is not eligible is skipped like
+	// any other. A message the Agent would refuse never refuses a batch a marked message started: that
+	// batch's recipe can differ from the one the oldest-first claim would pick, so the refusal would
+	// stop messages the claim takes without the mark. Such a message is skipped then, and refused at
+	// its own place once the oldest-first order starts a batch, as it is without any mark.
+	order := make([]store.Memo, 0, len(rows))
 	for _, m := range rows {
+		if m.RunNext {
+			order = append(order, m)
+		}
+	}
+	marked := len(order)
+	order = append(order, rows...)
+	unsendable := map[string]bool{}
+	startedByMark := false
+	for i, m := range order {
 		if len(batch) >= limitBatch {
 			break
 		}
 		if only != "" && m.ID != only {
+			continue
+		}
+		markedPass := i < marked
+		if !markedPass && m.RunNext && !unsendable[m.ID] {
 			continue
 		}
 		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
@@ -504,11 +524,15 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 			continue
 		}
 		if why := memoDeliveryItemProblem(m); why != "" {
+			if only == "" && (markedPass || startedByMark) {
+				unsendable[m.ID] = true
+				continue
+			}
 			return none, &apiError{http.StatusConflict, errCodeMemoQueueItemInvalid,
 				fmt.Sprintf("message %s cannot be sent to a session: %s", m.ID, why)}, nil
 		}
 		if len(batch) == 0 {
-			batchRecipe = rc
+			batchRecipe, startedByMark = rc, markedPass
 		}
 		batch = append(batch, m)
 	}

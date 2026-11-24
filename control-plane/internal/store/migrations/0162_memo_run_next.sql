@@ -1,0 +1,11 @@
+-- Message queues, the "run next" mark of a waiting message (issue #5021). memo.run_next is 1 for a
+-- message the member put first: the claim takes the marked eligible messages before the others, and
+-- the oldest first within each group. It changes only who gets the next free slot: eligibility,
+-- prerequisites, start times, recipes, windows, the daily cap and the slots still apply.
+-- Not content: a release is not bound to it, and setting or clearing it leaves the release as it is.
+-- An edit (UpdateMemo) never writes it, so a write from inside the workspace cannot move a message
+-- to the front. A write that takes the row out of every queue clears it.
+-- Forward compatible: a column with a default that means today's behaviour. A binary that predates
+-- it claims oldest first and never sets it.
+-- NOTE the migrator splits on the semicolon, so comments must not contain one.
+ALTER TABLE memo ADD COLUMN run_next INTEGER NOT NULL DEFAULT 0

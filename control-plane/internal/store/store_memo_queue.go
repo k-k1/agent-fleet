@@ -174,6 +174,9 @@ type MemoTxOps interface {
 	// row itself: a guard elsewhere (an EXISTS on the same table) lets concurrent writers
 	// on Postgres both pass. False means nothing was written.
 	ReleaseMemo(seen Memo, hash, at string) (bool, error)
+	// SetMemoRunNext sets or clears the run-next mark of one waiting (held or pending) message of a
+	// queue. False means no such message: it is gone, claimed, sent, or not in a queue.
+	SetMemoRunNext(id string, on bool) (bool, error)
 	// CountQueueIntakeSince counts the creates into a queue from inside the workspace or
 	// /mcp logged at or after since, dropping older entries. Moving or deleting a message
 	// does not take its create off the log.
@@ -367,6 +370,13 @@ func (t memoTx) ReleaseMemo(seen Memo, hash, at string) (bool, error) {
 		MemoStatePending, hash, at, seen.ID, t.mid, MemoStateHeld,
 		seen.Repo, seen.Category, seen.Kind, seen.Body, seen.RefPath, seen.Attachments,
 		seen.RefProvider, seen.RefKey, seen.RefURL, seen.AfterIDs, seen.StartAfter, seen.Recipe))
+}
+
+func (t memoTx) SetMemoRunNext(id string, on bool) (bool, error) {
+	return affected(t.q.ExecContext(t.ctx,
+		`UPDATE memo SET run_next=? WHERE id=? AND membership_id=? AND state IN (?,?)
+		   AND sent_at='' AND send_token='' AND delivery_id=''`,
+		b2i(on), id, t.mid, MemoStateHeld, MemoStatePending))
 }
 
 func (t memoTx) CountQueueIntakeSince(since string) (int, error) {

@@ -81,6 +81,11 @@ type Memo struct {
 	// clears them in SQL (writeMemoRow, ReleaseMemo), a move to another queue in Go.
 	ChainID, ChainDelivery string
 	ChainSeq               int
+	// RunNext marks a waiting message the member put first (issue #5021): the claim takes the
+	// marked eligible messages before the others. It is not content, so a release is not bound to
+	// it. InsertMemo writes it and SetMemoRunNext changes it; UpdateMemo never writes it, so an edit
+	// cannot move a message to the front, and a write that takes the row out of every queue clears it.
+	RunNext bool
 }
 
 // MemoCategory persists a memo category as a first-class row (docs/log/21 UI overhaul), so a
@@ -128,17 +133,19 @@ const memoCols = `SELECT id, membership_id, repo, category, kind, body, ref_path
 	state, provenance, producer, producer_origin, release_hash, released_at, send_token, send_started_at, delivery_id,
 	ref_provider, ref_key, ref_url, released_by,
 	derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id, after_ids, held_reason,
-	not_before, defer_count, defer_reasons, chain_id, chain_seq, chain_delivery, start_after, recipe FROM memo`
+	not_before, defer_count, defer_reasons, chain_id, chain_seq, chain_delivery, start_after, recipe, run_next FROM memo`
 
 func scanMemo(row scanner) (Memo, error) {
 	var m Memo
+	var runNext int
 	err := row.Scan(&m.ID, &m.MembershipID, &m.Repo, &m.Category, &m.Kind,
 		&m.Body, &m.RefPath, &m.Attachments, &m.Position, &m.CreatedAt, &m.SentAt,
 		&m.OriginItemID, &m.OriginSenderMembershipID, &m.OriginSenderKey,
 		&m.State, &m.Provenance, &m.Producer, &m.ProducerOrigin, &m.ReleaseHash, &m.ReleasedAt, &m.SendToken, &m.SendStartedAt, &m.DeliveryID,
 		&m.RefProvider, &m.RefKey, &m.RefURL, &m.ReleasedBy,
 		&m.DerivedFrom, &m.SourceProvenance, &m.TidyFrom, &m.TidySeenHash, &m.TidyRunID, &m.AfterIDs, &m.HeldReason,
-		&m.NotBefore, &m.DeferCount, &m.DeferReasons, &m.ChainID, &m.ChainSeq, &m.ChainDelivery, &m.StartAfter, &m.Recipe)
+		&m.NotBefore, &m.DeferCount, &m.DeferReasons, &m.ChainID, &m.ChainSeq, &m.ChainDelivery, &m.StartAfter, &m.Recipe, &runNext)
+	m.RunNext = runNext != 0
 	return m, err
 }
 
@@ -187,14 +194,14 @@ func insertMemo(ctx context.Context, q memoQuerier, m Memo) error {
 		   release_repo, release_category, release_kind, release_body, release_ref_path, release_attachments,
 		   release_ref_provider, release_ref_key, release_ref_url, released_by,
 		   derived_from, source_provenance, tidy_from, tidy_seen_hash, tidy_run_id,
-		   after_ids, release_after_ids, held_reason, chain_id, chain_seq, chain_delivery, start_after, release_start_after, recipe, release_recipe)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		   after_ids, release_after_ids, held_reason, chain_id, chain_seq, chain_delivery, start_after, release_start_after, recipe, release_recipe, run_next)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		m.ID, m.MembershipID, m.Repo, m.Category, m.Kind, m.Body, m.RefPath, m.Attachments, m.Position, m.CreatedAt, m.SentAt,
 		m.State, m.Provenance, m.Producer, m.ProducerOrigin, m.ReleaseHash, m.ReleasedAt,
 		m.RefProvider, m.RefKey, m.RefURL,
 		rel[0], rel[1], rel[2], rel[3], rel[4], rel[5], rel[6], rel[7], rel[8], m.ReleasedBy,
 		m.DerivedFrom, m.SourceProvenance, m.TidyFrom, m.TidySeenHash, m.TidyRunID,
-		m.AfterIDs, rel[9], heldReasonOf(m), m.ChainID, m.ChainSeq, m.ChainDelivery, m.StartAfter, rel[10], m.Recipe, rel[11])
+		m.AfterIDs, rel[9], heldReasonOf(m), m.ChainID, m.ChainSeq, m.ChainDelivery, m.StartAfter, rel[10], m.Recipe, rel[11], b2i(m.RunNext))
 	return err
 }
 
@@ -260,6 +267,9 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 	// another queue clears ChainID on the struct, which clears the columns: a rename of the same
 	// queue keeps them.
 	args = append(args, m.State, m.State, m.ChainID, m.State, m.State, m.ChainID, m.State, m.State, m.ChainID)
+	// The run-next mark is written only by SetMemoRunNext. A plain note waits for no slot, so a
+	// write that takes the row out of every queue clears it, and a later queue does not inherit it.
+	args = append(args, m.State)
 	args = append(args, m.ID, m.MembershipID)
 	if !restore {
 		args = append(args, m.State)
@@ -277,7 +287,8 @@ func writeMemoRow(ctx context.Context, q memoQuerier, m Memo, withTidy, restore 
 		   defer_reasons=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' THEN '' ELSE defer_reasons END,
 		   chain_id=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' OR CAST(? AS TEXT)='' THEN '' ELSE chain_id END,
 		   chain_seq=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' OR CAST(? AS TEXT)='' THEN 0 ELSE chain_seq END,
-		   chain_delivery=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' OR CAST(? AS TEXT)='' THEN '' ELSE chain_delivery END
+		   chain_delivery=CASE WHEN (state='held' AND CAST(? AS TEXT)='pending') OR CAST(? AS TEXT)='' OR CAST(? AS TEXT)='' THEN '' ELSE chain_delivery END,
+		   run_next=CASE WHEN CAST(? AS TEXT)='' THEN 0 ELSE run_next END
 		   WHERE id=? AND membership_id=?`+guard, args...)
 	if err != nil {
 		return err
