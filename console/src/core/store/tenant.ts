@@ -52,7 +52,16 @@ let lastWhoamiAt = 0;
 // tenantHintFromURL reads the ?tenant= the Control Plane appends after a sign-in
 // that started at /login/<slug>. Read once at boot and never trusted beyond
 // picking among memberships the server itself returned.
+//
+// A push link's tenant arrives differently: sessionDeepLink.ts strips it from the URL at once and
+// hands it over here, so a reload after the person switched tenants is not pulled back to it.
+// It is dropped once the memberships have been resolved, so it serves the retries of one boot only.
+let landingHint = "";
+export function setLandingTenantHint(slug: string): void {
+  landingHint = slug;
+}
 function tenantHintFromURL(): string {
+  if (landingHint) return landingHint;
   try {
     return new URLSearchParams(location.search).get("tenant") || "";
   } catch {
@@ -92,6 +101,8 @@ const loadTenants = async (set: (p: Partial<TenantStore>) => void, boot: boolean
   // A later attempt succeeding clears it (an admin added them while the tab
   // was open, and the retry loop or a reconnect re-read /api/tenants).
   set({ notProvisioned: false });
+  const hint = boot ? tenantHintFromURL() : "";
+  if (boot) landingHint = "";
   const list: Tenant[] = data.tenants || [];
   set({ superAdmin: !!data.super_admin, tenants: list });
   if (list.length <= 1) {
@@ -107,7 +118,7 @@ const loadTenants = async (set: (p: Partial<TenantStore>) => void, boot: boolean
   // honoured only when the server already listed that tenant among this
   // person's memberships, and every request is authorized server-side
   // regardless (ADR0043 decision 14).
-  let cur = (boot && tenantHintFromURL()) || getTenant();
+  let cur = hint || getTenant();
   if (!list.some((t) => t.slug === cur)) cur = list[0].slug;
   setTenant(cur);
   set({ tenant: cur, showPicker: true });

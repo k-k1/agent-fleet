@@ -88,7 +88,7 @@ async function handleShare(req) {
 }
 
 // --- Web Push ---------------------------------------------------------------------------------
-// The payload is minimal by design (pushsrv.pushPayload): {v, kind, session, name, text?}. The
+// The payload is minimal by design (pushsrv.pushPayload): {v, kind, session, name, tenant?, text?}. The
 // wording is rendered here from kind, in the browser's language, so the push service never sees
 // it. A payload that does not parse still shows a generic notification: a push the browser
 // receives must show something (userVisibleOnly), and silence would let it revoke the permission.
@@ -110,6 +110,8 @@ const PUSH_TEXT = {
 };
 // Same rule as the Agent's session.ValidName: a name from a push may hold capitals and underscores.
 const SESSION_NAME = /^[A-Za-z0-9_-]{1,40}$/;
+// A tenant slug as the Console selects it; anything else is dropped rather than put in a URL.
+const TENANT_SLUG = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 const has = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
 
 function pushLines(data) {
@@ -131,12 +133,15 @@ self.addEventListener("push", (event) => {
   }
   const { title, body, kind } = pushLines(data);
   const session = data && typeof data.session === "string" && SESSION_NAME.test(data.session) ? data.session : "";
+  // Which tenant the session is in: a Console switched to another tenant must not open a
+  // same-named session of its own. Absent from an older server: the session opens where it is.
+  const tenant = session && data && typeof data.tenant === "string" && TENANT_SLUG.test(data.tenant) ? data.tenant : "";
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
-      // One notification per session and kind: a repeat replaces the earlier one instead of stacking.
-      tag: session ? `af-${session}-${kind}` : undefined,
-      data: { session },
+      // One notification per tenant, session and kind: a repeat replaces the earlier one instead of stacking.
+      tag: session ? `af-${tenant ? `${tenant}/` : ""}${session}-${kind}` : undefined,
+      data: { session, tenant },
     }),
   );
 });
@@ -144,6 +149,7 @@ self.addEventListener("push", (event) => {
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
   const session = (event.notification.data && event.notification.data.session) || "";
+  const tenant = (event.notification.data && event.notification.data.tenant) || "";
   const scope = self.registration.scope;
   event.waitUntil(
     (async () => {
@@ -162,7 +168,7 @@ self.addEventListener("notificationclick", (event) => {
       const search = async () => {
         for (const win of mine.slice(0, 5)) {
           if (over) return false;
-          if (await handOff(win, session, () => over)) {
+          if (await handOff(win, session, tenant, () => over)) {
             if (over) return false;
             // A page that answered but cannot be focused (closing, navigating away) is not a hit.
             if (await win.focus().then(() => true, () => false)) return true;
@@ -177,7 +183,10 @@ self.addEventListener("notificationclick", (event) => {
       clearTimeout(timer);
       over = true;
       if (found) return;
-      await self.clients.openWindow(session ? `${scope}?session=${encodeURIComponent(session)}` : scope);
+      // ?tenant= is the Console's own landing hint for choosing among memberships (it is honoured
+      // only when the person is a member there).
+      const q = session ? `?session=${encodeURIComponent(session)}${tenant ? `&tenant=${encodeURIComponent(tenant)}` : ""}` : "";
+      await self.clients.openWindow(scope + q);
     })(),
   );
 });
@@ -190,7 +199,7 @@ function isRoot(url, scope) {
   return u.origin + u.pathname === scope || u.pathname === new URL(scope).pathname + "index.html";
 }
 
-function handOff(win, session, cancelled) {
+function handOff(win, session, tenant, cancelled) {
   return new Promise((resolve) => {
     if (cancelled && cancelled()) return resolve(false);
     const ch = new MessageChannel();
@@ -200,7 +209,9 @@ function handOff(win, session, cancelled) {
       resolve(true);
     };
     try {
-      win.postMessage({ type: "af-open-session", session }, [ch.port2]);
+      // A hand-off that names a tenant has its own type: an open Console that predates it
+      // ignores the type, and the tap then opens a window that carries the tenant instead.
+      win.postMessage(tenant ? { type: "af-open-tenant-session", session, tenant } : { type: "af-open-session", session }, [ch.port2]);
     } catch {
       clearTimeout(timer);
       resolve(false);

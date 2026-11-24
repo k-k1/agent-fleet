@@ -192,6 +192,10 @@ type pushPayload struct {
 	Kind    string `json:"kind"`
 	Session string `json:"session"`
 	Name    string `json:"name,omitempty"`
+	// Tenant is the slug of the tenant the session belongs to (the receiving membership's). A
+	// browser registered under one tenant may have its Console on another; without it a tap would
+	// open a same-named session of the wrong tenant. Absent when the lookup failed.
+	Tenant string `json:"tenant,omitempty"`
 	// Text is a question's text. Present only when the tenant allows it (tenant_push_setting).
 	Text string `json:"text,omitempty"`
 }
@@ -260,15 +264,18 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 		return
 	}
 	cctx, ccancel := read()
-	active, includeText, err := p.store.PushDeliveryContext(cctx, n.MembershipID)
+	dc, err := p.store.PushDeliveryContext(cctx, n.MembershipID)
 	ccancel()
 	if err != nil {
+		// Unknown tenant: the payload then carries none, and the Console opens the session where
+		// it already is, as it did before the tenant was in the payload.
 		log.Printf("web push: delivery context: %v", err)
-		active, includeText = true, false
+		dc = store.PushDelivery{Active: true}
 	}
-	if !active {
+	if !dc.Active {
 		return
 	}
+	includeText := dc.IncludeText
 	octx, ocancel := read()
 	off, err := p.store.GetPushOffKinds(octx, n.MembershipID)
 	ocancel()
@@ -286,8 +293,14 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 		}
 		return
 	}
-	pl := pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName}
+	pl := pushPayload{V: 1, Kind: n.Kind, Session: n.TargetID, Name: n.DisplayName, Tenant: dc.TenantSlug}
 	body, _ := json.Marshal(pl)
+	if len(body) > webpush.MaxPayload {
+		// The display name is stored as the Agent sent it. A name that makes even the base payload
+		// unencryptable is dropped, not the push: the session and the tenant are what a tap needs.
+		pl.Name = ""
+		body, _ = json.Marshal(pl)
+	}
 	if includeText && n.Kind == "question" {
 		// The text is optional, the question is not: JSON escaping can make 140 runes several
 		// times longer, so a text that would push the payload past what can be encrypted is dropped.

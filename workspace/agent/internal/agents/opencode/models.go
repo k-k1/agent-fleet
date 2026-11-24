@@ -44,7 +44,8 @@ func Models() []string {
 	// same store offered 86（docs/log/54）. So an OAuth-only user would get a free-tier-only
 	// launch picker while their managed sessions could use the full catalog. The daemon
 	// is started with the same injected env, so its list also covers the API-key case.
-	if ids := modelsFromDaemon(); len(ids) > 0 {
+	ids, daemonUp := modelsFromDaemon()
+	if len(ids) > 0 {
 		modelsList = ids
 		modelsAt = time.Now()
 		modelsEnvKey = envKey
@@ -79,7 +80,14 @@ func Models() []string {
 	// documents ("price unknown ⇒ free"). Dropping current free models from the free menu is
 	// the visible half; the other half is Catalog's rescue then replacing the whole menu.
 	freeIDs, retiredIDs = nil, nil
+	// A daemon that is up but listed nothing is usually a serve still booting (from 2.4.0 its
+	// instance answers 200 with an empty list for about 3 s), and this CLI list is only its
+	// stand-in: it lacks every model a Console login brings. Caching it would hide those for a
+	// minute after the daemon is ready, so it is kept for stale-if-error but not as fresh.
 	modelsAt = time.Now()
+	if daemonUp {
+		modelsAt = time.Time{}
+	}
 	modelsEnvKey = envKey
 	return modelsList
 }
@@ -137,16 +145,18 @@ func isFreeModel(id string) bool {
 }
 
 // modelsFromDaemon reads the catalog from a serve that is ALREADY running (starting one
-// for a picker refresh would be a surprise). Returns nil when there is no daemon, so the
-// caller falls back to the CLI. Called with modelsMu held (it refreshes freeIDs).
-var modelsFromDaemon = func() []string {
+// for a picker refresh would be a surprise). Returns nil ids when there is no daemon or it
+// could not answer, so the caller falls back to the CLI; the bool says whether a daemon was
+// there, which decides whether that fallback may be cached. Called with modelsMu held (it
+// refreshes freeIDs).
+var modelsFromDaemon = func() ([]string, bool) {
 	addr, up := oauthProbe()
 	if !up {
-		return nil
+		return nil, false
 	}
 	var env envelope[[]daemonModel]
 	if err := daemonJSON("GET", addr, "/api/model", nil, &env); err != nil {
-		return nil
+		return nil, true
 	}
 	ids := filterDaemonModels(env.Data)
 	// Refresh the zero-cost set from the same read, so the free-tier verdict and the list come
@@ -167,7 +177,7 @@ var modelsFromDaemon = func() []string {
 	}
 	// caller (Models) already holds modelsMu - do not lock twice
 	freeIDs, retiredIDs = free, retired
-	return ids
+	return ids, true
 }
 
 // freeCost mirrors opencode's own rule: paid as soon as one input price is above zero.

@@ -145,3 +145,57 @@ func TestECSEC2GenCurrentDoesNotWriteAfterItsLeaseExpired(t *testing.T) {
 		t.Errorf("a stale diagnosis wrote after its lease expired and Stop returned: ran=%v phase=%q", ran, a.BootPhase())
 	}
 }
+
+// While another replica holds the claim lease, ifGenCurrent gives up at its caller's deadline
+// instead of waiting out its own budget: State is bounded by callers such as the notification
+// drain, and a Start can hold the lease for longer than they wait.
+func TestECSEC2GenCurrentKeepsTheCallersDeadline(t *testing.T) {
+	ctx := context.Background()
+	h, a, b, _ := twoReplicas(t)
+	homeOnSlot(h)
+	gen, err := a.startGenNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, unlock, err := b.lockHome(ctx, homeLockClaim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dctx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	ran := a.ifGenCurrent(dctx, gen, func() {})
+	if took := time.Since(start); ran || took > 3*time.Second {
+		t.Fatalf("ifGenCurrent under a held lease: ran=%v after %s, want false within the caller's 300ms", ran, took)
+	}
+	unlock()
+	if !a.ifGenCurrent(ctx, gen, func() {}) {
+		t.Fatal("positive control: ifGenCurrent did not run once the lease was free")
+	}
+}
+
+// With the lease free, a cancelled caller still has its diagnosis recorded (the wait is
+// detached from cancellation), but a caller whose deadline has already passed does not.
+func TestECSEC2GenCurrentIgnoresCancelButNotAPassedDeadline(t *testing.T) {
+	ctx := context.Background()
+	h, a, _, _ := twoReplicas(t)
+	homeOnSlot(h)
+	gen, err := a.startGenNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The passed deadline goes first: the lock and lease the other case takes are given back
+	// asynchronously, and this case must meet them free.
+	dctx, dcancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer dcancel()
+	ran := false
+	if a.ifGenCurrent(dctx, gen, func() { ran = true }) || ran {
+		t.Fatal("a caller whose deadline had passed still had f run")
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	ran = false
+	if !a.ifGenCurrent(cctx, gen, func() { ran = true }) || !ran {
+		t.Fatal("a cancelled caller with no deadline skipped the write")
+	}
+}

@@ -697,7 +697,7 @@ func TestNPMSupervisorHoldsTheLockForTheGroup(t *testing.T) {
 	// Cmd.Start reads the lock's descriptor; the ready file below orders it before the close only
 	// through the filesystem, which the race detector does not see.
 	started := make(chan struct{})
-	e.afterNPMStart = func() { close(started) }
+	e.afterNPMStart = func(*os.Process) { close(started) }
 	done := make(chan error, 1)
 	go func() {
 		se, err := e.npmInstall([]string{"x"})

@@ -105,6 +105,19 @@ func (d *notificationDrainer) sweep(ctx context.Context) {
 		}
 		pcancel()
 	}
+	// A member with no subscribed device has nobody to push to; leaving the outbox alone keeps
+	// the load off every other workspace. One read answers it for the whole sweep; when it
+	// fails the sweep is skipped like a failed tenant list, and the next tick asks again.
+	sctx, scancel := context.WithTimeout(ctx, d.queryTO())
+	subbed, err := d.store.ListPushSubscribedMemberships(sctx)
+	scancel()
+	if err != nil || len(subbed) == 0 {
+		return
+	}
+	subscribed := make(map[string]bool, len(subbed))
+	for _, m := range subbed {
+		subscribed[m] = true
+	}
 	sem := make(chan struct{}, notificationDrainParallel)
 	var wg sync.WaitGroup
 	for _, tn := range tenants {
@@ -115,9 +128,7 @@ func (d *notificationDrainer) sweep(ctx context.Context) {
 			continue
 		}
 		for _, ws := range wss {
-			// A member with no subscribed device has nobody to push to; leaving the outbox
-			// alone keeps the load off every other workspace.
-			if !d.hasSubscription(ctx, ws.MembershipID) {
+			if !subscribed[ws.MembershipID] {
 				continue
 			}
 			select {
@@ -143,13 +154,6 @@ func (d *notificationDrainer) sweep(ctx context.Context) {
 		}
 	}
 	wg.Wait()
-}
-
-func (d *notificationDrainer) hasSubscription(ctx context.Context, membershipID string) bool {
-	qctx, cancel := context.WithTimeout(ctx, d.queryTO())
-	defer cancel()
-	subs, err := d.store.ListPushSubscriptions(qctx, membershipID)
-	return err == nil && len(subs) > 0
 }
 
 // drainWorkspace drains one workspace's outbox, only while it is running: asking a stopped
