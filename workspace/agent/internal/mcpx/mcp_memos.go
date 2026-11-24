@@ -569,7 +569,7 @@ func memoRunNextProblem(args json.RawMessage, answer string) string {
 		}
 		// The answer cannot tell an unmarked note from one a hand send is taking (the DTO hides the
 		// mark then), so it says what did not happen and offers the Console only as a condition.
-		return "Nothing was added, and no mark was set: the queue already holds a note for the same item, returned " +
+		return "Nothing was added, and no mark was set: the queue already holds a matching note, returned " +
 			"as it is, and the answer shows no run-next mark on it. Do not report a new note or a mark; tell your " +
 			"user, who can mark it in the Console while it still waits in an auto-run category."
 	}
