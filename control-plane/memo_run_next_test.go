@@ -319,3 +319,37 @@ func TestMemoRunNextWriteBoundary(t *testing.T) {
 		}
 	})
 }
+
+// A batch a marked message started is not refused by a message the Agent would refuse that only
+// its recipe brings into reach: the oldest-first claim would skip that message for its other recipe
+// and claim the rest. The unsendable message is refused once the oldest-first order reaches it.
+func TestMemoRunNextBatchOfAnotherRecipeSkipsTheUnsendable(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		for _, markBig := range []bool{false, true} {
+			cat := map[bool]string{false: "plain", true: "both"}[markBig]
+			q := e.queueWith("app", cat, map[string]any{"batch": 2, "maxActive": 3})
+			a1 := e.pending("app", cat, "a1")
+			b1 := decode[memoDTO](t, e.recipeMemo("app", cat, strings.Repeat("x", memoDeliveryItemBodyMax+1), map[string]any{"agentKind": "codex"}))
+			a2 := e.pending("app", cat, "a2")
+			b2 := decode[memoDTO](t, e.recipeMemo("app", cat, "b2", map[string]any{"agentKind": "codex"}))
+			e.setRunNext(b2.ID, true)
+			if markBig {
+				e.setRunNext(b1.ID, true)
+			}
+			if d := e.fired(q); !sameIDs(d.MessageIDs, b2.ID) {
+				t.Fatalf("%s: fired %v, want the marked %s", cat, d.MessageIDs, b2.ID)
+			}
+			if d := e.fired(q); !sameIDs(d.MessageIDs, a1.ID, a2.ID) {
+				t.Fatalf("%s: then %v, want %v", cat, d.MessageIDs, []string{a1.ID, a2.ID})
+			}
+			rec := e.fire(q)
+			if rec.Code != http.StatusConflict || deliveryErrCode(t, rec) != errCodeMemoQueueItemInvalid || !strings.Contains(rec.Body.String(), b1.ID) {
+				t.Fatalf("%s: fire of the unsendable message: %d %s", cat, rec.Code, rec.Body.String())
+			}
+			// Free the member's slots for the next case.
+			if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET state='closed'`); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+}

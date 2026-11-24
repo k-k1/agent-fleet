@@ -434,8 +434,10 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	}
 	// The messages marked "run next" (issue #5021) are looked at first, then every message in the
 	// oldest-first order. The mark only orders: a marked message that is not eligible is skipped like
-	// any other, and one the Agent would refuse is left to its place in the oldest-first pass, where
-	// it is refused as it is without the mark, so a mark never stops a message main would claim.
+	// any other. A message the Agent would refuse never refuses a batch a marked message started: that
+	// batch's recipe can differ from the one the oldest-first claim would pick, so the refusal would
+	// stop messages the claim takes without the mark. Such a message is skipped then, and refused at
+	// its own place once the oldest-first order starts a batch, as it is without any mark.
 	order := make([]store.Memo, 0, len(rows))
 	for _, m := range rows {
 		if m.RunNext {
@@ -445,6 +447,7 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	marked := len(order)
 	order = append(order, rows...)
 	unsendable := map[string]bool{}
+	startedByMark := false
 	for i, m := range order {
 		if len(batch) >= limitBatch {
 			break
@@ -521,7 +524,7 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 			continue
 		}
 		if why := memoDeliveryItemProblem(m); why != "" {
-			if markedPass && only == "" {
+			if only == "" && (markedPass || startedByMark) {
 				unsendable[m.ID] = true
 				continue
 			}
@@ -529,7 +532,7 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 				fmt.Sprintf("message %s cannot be sent to a session: %s", m.ID, why)}, nil
 		}
 		if len(batch) == 0 {
-			batchRecipe = rc
+			batchRecipe, startedByMark = rc, markedPass
 		}
 		batch = append(batch, m)
 	}
