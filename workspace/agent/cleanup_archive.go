@@ -185,7 +185,9 @@ func listArchives(budget *int) []cleanupManifest {
 			continue
 		}
 		var m cleanupManifest
-		if json.Unmarshal(b, &m) == nil && m.ID != "" {
+		// The file name is the id: a sidecar that says another one is not trusted, or a purge by
+		// age could be steered at a different entry's folder.
+		if json.Unmarshal(b, &m) == nil && m.ID != "" && m.ID+".json" == e.Name() {
 			if info, err := os.Stat(filepath.Join(cleanupStoreDir(), m.ID+".tar.gz")); err == nil {
 				m.Bytes = info.Size()
 			}

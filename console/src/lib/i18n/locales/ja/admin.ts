@@ -991,7 +991,7 @@ export const admin = {
   "clean.purge_old_hint": "{days} 日より古いアーカイブ {count} 件（{size}）",
   "clean.purge_old_title": "{days} 日より古いアーカイブを完全に削除しますか？",
   "clean.purge_old_body": "{count} 件（{size}）が元に戻せなくなります。ごみ箱は自動では空になりません。",
-  "clean.purge_old_space": "含まれるスペースは、フォルダとその中のファイルがすべて完全に削除されます。",
+  "clean.purge_old_space": "含まれる削除済みのスペースは、フォルダとその中のファイルがすべて完全に削除されます。",
   "clean.purge_old_done": "{count} 件を完全に削除しました（{size}）。",
   "clean.purge_old_done_kept": "{count} 件を完全に削除しました。復元が途中で止まっているなどの理由で {kept} 件は残しました。",
   "clean.purge_restore_incomplete": "このアーカイブの復元が途中で止まっています。もう一度「復元」してから削除してください。",

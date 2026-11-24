@@ -995,7 +995,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.purge_old_hint": "{count} archive(s) older than {days} days ({size})",
   "clean.purge_old_title": "Permanently delete archives older than {days} days?",
   "clean.purge_old_body": "{count} archive(s) ({size}) can no longer be restored. The trash never empties on its own.",
-  "clean.purge_old_space": "Deleted spaces among them lose their folders and every file in them for good.",
+  "clean.purge_old_space": "Any deleted space among them loses their folders and every file in them for good.",
   "clean.purge_old_done": "Permanently deleted {count} archive(s) ({size}).",
   "clean.purge_old_done_kept": "Permanently deleted {count} archive(s). Kept {kept} (a restore stopped part way, or no readable date).",
   "clean.purge_restore_incomplete": "A restore of this archive stopped part way. Restore it again, then delete it.",

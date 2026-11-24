@@ -13,6 +13,9 @@ package main
 // before anything is changed.
 
 import (
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -59,12 +62,48 @@ type spaceTombstone struct {
 // spaceTrashDir is where the folder of archive id waits.
 func spaceTrashDir(id string) string { return filepath.Join(cleanupStoreDir(), id+".space") }
 
+// newSpaceArchiveID is a trash entry id for the space in folder: the usual time-sortable prefix,
+// then the folder's start and a random token, so two entries never share an id (a purge of one
+// and a later delete of another in the same second would otherwise be told apart by nothing).
+var newSpaceArchiveID = func(now time.Time, folder string) string {
+	slug := idSlug("space-" + folder)
+	if len(slug) > 17 {
+		slug = slug[:17]
+	}
+	var raw [4]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		panic(err) // crypto/rand does not fail on Linux; an id must never repeat silently
+	}
+	return newCleanupID(now, slug+"-"+hex.EncodeToString(raw[:]))
+}
+
+// sidecarReadable reports whether the listing's file for id exists and parses to id.
+func sidecarReadable(id string) bool {
+	b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json"))
+	if err != nil {
+		return false
+	}
+	var m cleanupManifest
+	return json.Unmarshal(b, &m) == nil && m.ID == id
+}
+
+// removeOwnEntry removes the manifest files a delete that stopped wrote itself. Unlike a purge it
+// never touches a folder waiting in the trash.
+func removeOwnEntry(id string) {
+	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
+	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz"))
+}
+
 // deleteSpaceResponse is DELETE /spaces/{folder}'s answer: the folder, and the id of the trash entry
 // that holds it.
 type deleteSpaceResponse struct {
 	Deleted string `json:"deleted"`
 	Archive string `json:"archive"`
 }
+
+// spaceBeforeMoveIn is a test seam inside a restore's lock, just before the folder moves back.
+// Nil in production.
+var spaceBeforeMoveIn func()
 
 // spaceAfterManifest is a test seam between publishing the trash entry and moving the folder,
 // where a purge of that entry would otherwise win. Nil in production.
@@ -123,7 +162,7 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 
 	now := nowUTC()
 	man := cleanupManifest{
-		ID: newCleanupID(now, idSlug("space-"+folder)), At: now.Format(time.RFC3339),
+		ID: newSpaceArchiveID(now, folder), At: now.Format(time.RFC3339),
 		Reason: "delete_space",
 		Space:  &spaceTombstone{Folder: folder, Name: sp.Name, Path: dir, Shelved: shelved},
 	}
@@ -136,20 +175,27 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 			moveErr = fmt.Errorf("could not record the space in the trash, so it was left as it is: %w", err)
 			return
 		}
-		// The list reads the sidecar alone; one that could not be written would hide a row whose
-		// folder is in the trash. Refused here, with nothing moved, rather than found out later.
-		if fi, err := os.Lstat(filepath.Join(cleanupStoreDir(), man.ID+".json")); err != nil || !fi.Mode().IsRegular() {
-			_, _ = purgeCleanupArchive(man.ID)
+		// The list reads the sidecar alone; one that could not be written (missing, or cut short)
+		// would hide a row whose folder is in the trash. Refused here, with nothing moved, rather
+		// than found out later.
+		if !sidecarReadable(man.ID) {
+			removeOwnEntry(man.ID)
 			moveErr = errors.New("could not list the space in the trash, so it was left as it is")
+			return
+		}
+		// A folder already waiting under this id belongs to another entry whose tarball is gone:
+		// never moved over, and never removed by this attempt's clean-up.
+		if _, err := os.Lstat(spaceTrashDir(man.ID)); err == nil {
+			removeOwnEntry(man.ID)
+			moveErr = errors.New("the trash already holds a folder under this entry's id, so the space was left as it is")
 			return
 		}
 		if spaceAfterManifest != nil {
 			spaceAfterManifest(man.ID)
 		}
 		if err := spacex.MoveOut(folder, spaceTrashDir(man.ID)); err != nil {
-			// Only this attempt's own entry goes; the folder was never moved, so no .space
-			// directory of ours exists to remove.
-			_, _ = purgeCleanupArchive(man.ID)
+			// Only the files this attempt wrote go, never a .space directory: none of ours exists.
+			removeOwnEntry(man.ID)
 			moveErr = err
 		}
 	})
@@ -227,6 +273,9 @@ func restoreDeletedSpace(id string, t spaceTombstone) error {
 				if _, err := os.Stat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
 					merr = spacex.ErrNotFound
 					return
+				}
+				if spaceBeforeMoveIn != nil {
+					spaceBeforeMoveIn()
 				}
 				merr = spacex.MoveIn(src, t.Folder)
 			})

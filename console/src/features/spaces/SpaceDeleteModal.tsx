@@ -11,6 +11,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import type { Session } from "../../types/session.ts";
 import { isTerminalSession } from "../../lib/project.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { deleteSpace, spacesOwner, useSpacesStore } from "./store.ts";
@@ -42,30 +43,45 @@ export function SpaceDeleteModal({
   const tr = useT();
   const toast = useToast();
   const closeSessionPanes = useLayoutStore((s) => s.closeSessionPanes);
-  // Which sessions go is frozen at open (a press must not land on a set the member never read),
-  // but whether each runs or is locked is read live: stopping or unlocking one elsewhere is the
-  // way to unblock the button. The Agent settles every session at or under the space's folder, so
-  // a session started in a subfolder counts as well as one named by `space`.
-  const dir = useSpacesStore((s) => s.spaces.find((x) => x.folder === folder)?.dir ?? "");
-  const [names] = useState(() => {
-    const under = (d?: string) => !!dir && !!d && (d === dir || d.startsWith(dir + "/"));
-    return new Set(
-      useSessionsStore
-        .getState()
-        .sessions.filter((s) => s.space === folder || under(s.dir))
-        .map((s) => s.name),
-    );
-  });
+  // The Agent settles every session at or under the space's folder, so one started in a
+  // subfolder counts as well as one named by `space`.
+  const dir = useSpacesStore(
+    (s) => s.spaces.find((x) => x.folder === folder)?.dir ?? "",
+  );
   const all = useSessionsStore((s) => s.sessions);
-  const mine = all.filter((s) => names.has(s.name));
+  const inSpace = (s: Session) =>
+    s.space === folder ||
+    (!!dir && !!s.dir && (s.dir === dir || s.dir.startsWith(dir + "/")));
+  const current = all.filter(inSpace);
+  // What the member read: frozen, so a press never lands on a set they did not see. When the
+  // sessions in the space change while the dialog is open (a shell opened elsewhere, one removed)
+  // the button waits for a second look rather than deleting what was never listed.
+  const [reviewed, setReviewed] = useState<Session[]>(() =>
+    useSessionsStore.getState().sessions.filter(inSpace),
+  );
+  const currentNames = current
+    .map((s) => s.name)
+    .sort()
+    .join("\n");
+  const changed =
+    currentNames !==
+    reviewed
+      .map((s) => s.name)
+      .sort()
+      .join("\n");
+  // Whether a reviewed session runs or is locked is read live: stopping or unlocking one
+  // elsewhere is the way to unblock the button.
+  const live = new Map(all.map((s) => [s.name, s]));
+  const mine = reviewed.map((s) => live.get(s.name) ?? s);
   const alive = mine.filter((s) => s.alive);
   const locked = mine.filter((s) => s.locked);
-  const shells = mine.filter((s) => isTerminalSession(s)).length;
-  const ai = mine.length - shells;
-  const blocked = alive.length > 0 || locked.length > 0;
+  const shells = reviewed.filter((s) => isTerminalSession(s)).length;
+  const ai = reviewed.length - shells;
+  const blocked = alive.length > 0 || locked.length > 0 || changed;
   const [busy, setBusy] = useState(false);
 
-  const listed = (list: typeof mine) => list.map((s) => displayName(s)).join(", ");
+  const listed = (list: typeof mine) =>
+    list.map((s) => displayName(s)).join(", ");
 
   const run = async () => {
     if (busy || blocked) return;
@@ -78,12 +94,17 @@ export function SpaceDeleteModal({
       }
       if (res?.error) {
         const err = res.error as Parameters<typeof errText>[0];
-        const code = err && typeof err === "object" && err.code ? (err.code as keyof typeof DELETE_ERRORS) : undefined;
+        const code =
+          err && typeof err === "object" && err.code
+            ? (err.code as keyof typeof DELETE_ERRORS)
+            : undefined;
         const key = code ? DELETE_ERRORS[code] : undefined;
-        toast(key ? tr(key) : tr("pj.space_delete_error", { detail: errText(err) }));
+        toast(
+          key ? tr(key) : tr("pj.space_delete_error", { detail: errText(err) }),
+        );
         return;
       }
-      for (const s of mine) closeSessionPanes(s.name);
+      for (const s of reviewed) closeSessionPanes(s.name);
       // The shelved sessions leave the list on the next poll; ask now so the row does not linger.
       void useSessionsStore.getState().refresh();
       toast(tr("pj.space_deleted", { name: label }));
@@ -96,10 +117,24 @@ export function SpaceDeleteModal({
   };
 
   return (
-    <Modal title={tr("pj.space_delete_title")} onClose={onClose} lockClose={busy}>
+    <Modal
+      title={tr("pj.space_delete_title")}
+      onClose={onClose}
+      lockClose={busy}
+    >
       <div className="ui-modal-body">
         <p>{tr("pj.space_delete_body", { name: label, folder })}</p>
-        {mine.length > 0 && <p>{tr("pj.space_delete_sessions", { ai, shells })}</p>}
+        {reviewed.length > 0 && (
+          <p>{tr("pj.space_delete_sessions", { ai, shells })}</p>
+        )}
+        {changed && (
+          <p role="alert" className="ui-field-hint">
+            {tr("pj.space_delete_changed")}{" "}
+            <Button variant="ghost" small onClick={() => setReviewed(current)}>
+              {tr("pj.space_delete_review")}
+            </Button>
+          </p>
+        )}
         <p className="ui-field-hint">{tr("pj.space_delete_restore")}</p>
         {alive.length > 0 && (
           <p role="alert" className="ui-field-hint">
@@ -116,7 +151,12 @@ export function SpaceDeleteModal({
         <Button variant="ghost" onClick={onClose} disabled={busy}>
           {tr("sx.cancel")}
         </Button>
-        <Button variant="danger" onClick={() => void run()} disabled={busy || blocked} data-autofocus>
+        <Button
+          variant="danger"
+          onClick={() => void run()}
+          disabled={busy || blocked}
+          data-autofocus
+        >
           {tr("pj.space_delete_do")}
         </Button>
       </footer>

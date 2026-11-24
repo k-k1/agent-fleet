@@ -231,6 +231,8 @@ export const repos = {
   "pj.space_delete_restore": "ファイルは完全には削除されません。掃除 → ごみ箱（復元）から復元すると、フォルダとアーカイブしたセッションが戻ります。ファイルが消えるのは、ごみ箱で「完全に削除」したときです。シェルの画面履歴は残りません。",
   "pj.space_delete_running": "次のセッションが実行中のため、まだ削除できません。先に停止してください：{names}",
   "pj.space_delete_locked": "次のセッションは削除ロックがかかっています。先にロックを外してください：{names}",
+  "pj.space_delete_changed": "このダイアログを開いている間に、スペースのセッションが変わりました。",
+  "pj.space_delete_review": "最新の一覧を表示",
   "pj.space_delete_do": "ごみ箱へ移す",
   "pj.space_deleted": "スペース「{name}」をごみ箱へ移しました。",
   "pj.space_delete_failed": "スペースを削除できませんでした（通信エラー）",

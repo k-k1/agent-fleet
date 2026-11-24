@@ -514,16 +514,38 @@ describe("Spaces section", () => {
       expect(dialog()!.textContent).toContain("1 shell / SSM session(s)");
     });
 
-    it("lifts the block when the running session is stopped elsewhere, without changing who goes", async () => {
+    it("lifts the block when the running session is stopped elsewhere", async () => {
       await open([inSpace("a1", "q3-abcdef"), { ...inSpace("a2", "q3-abcdef"), alive: false }]);
       expect(confirmBtn().disabled).toBe(true);
       await act(async () => {
-        useSessionsStore.setState({ sessions: [{ ...inSpace("a1", "q3-abcdef"), alive: false }, { ...inSpace("a2", "q3-abcdef"), alive: false }, inSpace("newcomer", "q3-abcdef")] });
+        useSessionsStore.setState({
+          sessions: [
+            { ...inSpace("a1", "q3-abcdef"), alive: false },
+            { ...inSpace("a2", "q3-abcdef"), alive: false },
+          ],
+        });
       });
       expect(confirmBtn().disabled).toBe(false);
-      // A session that appeared after the dialog opened is not one the member read, and the Agent
-      // will refuse if it runs; it is not added to the list.
       expect(dialog()!.textContent).toContain("2 AI session(s)");
+    });
+
+    it("waits for a second look when the sessions in the space change while the dialog is open", async () => {
+      await open([{ ...inSpace("a1", "q3-abcdef"), alive: false }]);
+      expect(confirmBtn().disabled).toBe(false);
+      // A shell opened elsewhere and already stopped: the Agent would trash it too.
+      await act(async () => {
+        useSessionsStore.setState({ sessions: [{ ...inSpace("a1", "q3-abcdef"), alive: false }, shell("sh9", "q3-abcdef")] });
+      });
+      expect(confirmBtn().disabled).toBe(true);
+      expect(dialog()!.textContent).toContain("The sessions in this space changed");
+      expect(dialog()!.textContent).toContain("1 AI session(s)");
+      await act(async () => confirmBtn().click());
+      expect(apiJSON).not.toHaveBeenCalled();
+      // Looking again shows the new list and allows the press.
+      const review = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Show the current list")!;
+      await act(async () => review.click());
+      expect(dialog()!.textContent).toContain("1 shell / SSM session(s)");
+      expect(confirmBtn().disabled).toBe(false);
     });
 
     it("keeps the dialog and words the Agent's refusal in the space's own terms", async () => {

@@ -340,10 +340,9 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const purgeOld = async () => {
     const ok = await askConfirm({
       title: tr("clean.purge_old_title", { days: PURGE_OLDER_DAYS }),
-      body:
-        tr("clean.purge_old_body", { count: oldArchives.length, size: humanSize(oldBytes) }) +
-        // A deleted space's folder goes with its entry: say so, as the single purge does.
-        (oldArchives.some((a) => a.space) ? " " + tr("clean.purge_old_space") : ""),
+      // Always said: the list this was drawn from can be older than the Agent's cut-off, and a
+      // deleted space's folder goes with its entry, as the single purge says.
+      body: tr("clean.purge_old_body", { count: oldArchives.length, size: humanSize(oldBytes) }) + " " + tr("clean.purge_old_space"),
       confirmLabel: tr("clean.purge_do"),
       danger: true,
     });

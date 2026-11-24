@@ -233,6 +233,8 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "pj.space_delete_restore": "Your files are not deleted for good. Restore it from Clean up → Trash (restore), which brings back the folder and the archived sessions; the trash's \"delete permanently\" is what removes the files. A shell's scrollback is not kept.",
   "pj.space_delete_running": "These sessions are running, so the space can't be deleted yet. Stop them first: {names}",
   "pj.space_delete_locked": "These sessions are locked against deletion. Unlock them first: {names}",
+  "pj.space_delete_changed": "The sessions in this space changed while this dialog was open.",
+  "pj.space_delete_review": "Show the current list",
   "pj.space_delete_do": "Move to trash",
   "pj.space_deleted": "Moved the space \"{name}\" to the trash.",
   "pj.space_delete_failed": "Couldn't delete the space (network error)",

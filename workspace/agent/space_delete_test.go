@@ -357,29 +357,143 @@ func TestPurgeCannotOvertakeTheDeleteOfTheSameSpace(t *testing.T) {
 	}
 }
 
-// The trash row is listed from its sidecar alone, so a delete whose sidecar cannot be written is
-// refused with the space where it was, instead of moving a folder no row names.
+// pinSpaceID makes the next delete's trash id the one returned, and gives it back.
+func pinSpaceID(t *testing.T, id string) {
+	t.Helper()
+	prev := newSpaceArchiveID
+	newSpaceArchiveID = func(time.Time, string) string { return id }
+	t.Cleanup(func() { newSpaceArchiveID = prev })
+}
+
+// The trash row is listed from its sidecar alone, so a delete whose sidecar cannot be written whole
+// is refused with the space where it was, instead of moving a folder no row names. Both ways it
+// fails are covered: nothing written (a directory in the way) and a write cut short (a read-only
+// file that stays behind with part of its content).
 func TestDeleteSpaceRefusesWhenTheEntryCannotBeListed(t *testing.T) {
-	e := spaceDeleteSetup(t)
-	sp := newSpace(t, "Hidden")
-	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
-	now := nowUTC()
-	id := newCleanupID(now, idSlug("space-"+sp.Folder))
-	// A directory where the sidecar goes: its best-effort write fails, the tarball's does not.
-	if err := os.MkdirAll(filepath.Join(cleanupStoreDir(), id+".json"), 0o700); err != nil {
-		t.Fatal(err)
+	for _, tc := range []struct {
+		name  string
+		plant func(t *testing.T, path string)
+	}{
+		{"directory in the way", func(t *testing.T, p string) {
+			if err := os.MkdirAll(p, 0o700); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"cut-short file", func(t *testing.T, p string) {
+			if os.Geteuid() == 0 {
+				t.Skip("a read-only file does not stop root")
+			}
+			if err := os.WriteFile(p, []byte(`{"id": "20261124-1`), 0o400); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := spaceDeleteSetup(t)
+			sp := newSpace(t, "Hidden")
+			writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+			id := "20261124-120000-space-hidden-aaaaaaaa"
+			pinSpaceID(t, id)
+			if err := os.MkdirAll(cleanupStoreDir(), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tc.plant(t, filepath.Join(cleanupStoreDir(), id+".json"))
+			if got := errCodeOf(t, e.srv, "DELETE", "/spaces/"+sp.Folder, http.StatusInternalServerError); got != errCodeSpaceTrashFailed {
+				t.Errorf("code = %q, want %q", got, errCodeSpaceTrashFailed)
+			}
+			if b, _ := os.ReadFile(filepath.Join(sp.Dir, "f.md")); string(b) != "x" {
+				t.Fatal("the space was moved although no row could name it")
+			}
+			if _, err := os.Lstat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); !os.IsNotExist(err) {
+				t.Fatalf("the refused delete left its tarball: %v", err)
+			}
+		})
 	}
-	prev := nowUTC
-	nowUTC = func() time.Time { return now }
-	t.Cleanup(func() { nowUTC = prev })
+}
+
+// A folder already waiting in the trash under the id a new delete drew belongs to another entry
+// (whose tarball may be gone). The delete is refused, and the clean-up of its own files leaves that
+// folder alone: a purge-shaped clean-up used to remove it.
+func TestDeleteSpaceNeverRemovesAnotherEntrysFolder(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Collide")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+	id := "20261124-120000-space-collide-bbbbbbbb"
+	pinSpaceID(t, id)
+	writeAt(t, filepath.Join(spaceTrashDir(id), "theirs.md"), "other entry's file")
 
 	if got := errCodeOf(t, e.srv, "DELETE", "/spaces/"+sp.Folder, http.StatusInternalServerError); got != errCodeSpaceTrashFailed {
 		t.Errorf("code = %q, want %q", got, errCodeSpaceTrashFailed)
 	}
-	if b, _ := os.ReadFile(filepath.Join(sp.Dir, "f.md")); string(b) != "x" {
-		t.Fatal("the space was moved although no row could name it")
+	if b, _ := os.ReadFile(filepath.Join(spaceTrashDir(id), "theirs.md")); string(b) != "other entry's file" {
+		t.Fatal("the other entry's folder was touched")
 	}
-	if _, err := os.Lstat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); !os.IsNotExist(err) {
-		t.Fatalf("the refused delete left its tarball: %v", err)
+	if b, _ := os.ReadFile(filepath.Join(sp.Dir, "f.md")); string(b) != "x" {
+		t.Fatal("the space was moved")
+	}
+}
+
+// A sidecar that names another id than its file is not trusted: the list skips it, so a purge by
+// age cannot be steered at another entry's folder.
+func TestListIgnoresASidecarThatNamesAnotherEntry(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Real")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+	var out struct{ Archive string }
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+	// An old entry whose sidecar was corrupted to carry the new entry's id.
+	old := "20200101-000000-space-old-cccccccc"
+	b, _ := os.ReadFile(filepath.Join(cleanupStoreDir(), out.Archive+".json"))
+	if err := os.WriteFile(filepath.Join(cleanupStoreDir(), old+".json"), b, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var list struct{ Archives []cleanupManifest }
+	do(t, e.srv, "GET", "/cleanup/archives", nil, http.StatusOK, &list)
+	for _, a := range list.Archives {
+		if a.ID == old {
+			t.Fatalf("a sidecar of another id was listed: %+v", a)
+		}
+	}
+	if len(list.Archives) != 1 || list.Archives[0].ID != out.Archive {
+		t.Fatalf("list = %+v, want the one real entry", list.Archives)
+	}
+}
+
+// A restore and a purge of the same entry never overlap: with the restore inside its lock, the
+// purge waits and finds the folder already back; with the purge first, the restore finds no entry
+// and moves nothing.
+func TestRestoreAndPurgeOfOneSpaceEntryAreSerialised(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Both")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+	var out struct{ Archive string }
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+
+	purged := make(chan int, 1)
+	spaceBeforeMoveIn = func() {
+		go func() { purged <- httpStatus(t, e.srv, "DELETE", "/cleanup/archives/"+out.Archive, nil) }()
+		select {
+		case code := <-purged:
+			t.Errorf("the purge ran inside the restore (status %d)", code)
+			purged <- code
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { spaceBeforeMoveIn = nil })
+	do(t, e.srv, "POST", "/cleanup/archives/"+out.Archive+"/restore", nil, http.StatusOK, nil)
+	<-purged
+	if b, _ := os.ReadFile(filepath.Join(sp.Dir, "f.md")); string(b) != "x" {
+		t.Fatalf("the purge took files the restore had put back: %q", b)
+	}
+	spaceBeforeMoveIn = nil
+
+	// Purge first: the restore has nothing to move.
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+	do(t, e.srv, "DELETE", "/cleanup/archives/"+out.Archive, nil, http.StatusOK, nil)
+	if code := httpStatus(t, e.srv, "POST", "/cleanup/archives/"+out.Archive+"/restore", nil); code < 400 {
+		t.Fatalf("restore after the purge = %d, want a refusal", code)
+	}
+	if _, err := os.Lstat(sp.Dir); !os.IsNotExist(err) {
+		t.Fatalf("a purged space came back: %v", err)
 	}
 }
