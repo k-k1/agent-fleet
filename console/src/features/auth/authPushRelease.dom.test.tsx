@@ -29,11 +29,15 @@ vi.mock("../../core/auth/providerRequired.ts", () => ({
   clearProviderRequired: () => {},
   reloginForTenant: () => order.push("relogin-tenant"),
 }));
-// location.assign cannot be spied on in jsdom; clearLocalState runs immediately before it.
+// location.assign cannot be spied on in jsdom; its argument is built by rel() on the line that
+// navigates, so rel("oauth2/logout") is the last thing observable before the page goes.
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...(await orig<typeof import("../../core/api/client.ts")>()),
-  rel: (p: string) => p,
-  clearLocalState: () => order.push("navigate"),
+  rel: (p: string) => {
+    if (p === "oauth2/logout") order.push("navigate");
+    return p;
+  },
+  clearLocalState: () => {},
 }));
 
 import { t } from "../../lib/i18n/index.ts";

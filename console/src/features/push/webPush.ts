@@ -73,7 +73,7 @@ async function derivedDeviceId(endpoint: string): Promise<string> {
 }
 
 /**
- * The CP row id of this browser's subscription. Derived from the endpoint rather than read from
+ * The CP row id of this browser's subscription, "" when it can be told by neither means. Derived from the endpoint rather than read from
  * localStorage alone: the stored id is lost with the storage (cleared site data, another profile
  * mode) while the subscription and its CP row live on.
  */
@@ -104,9 +104,16 @@ export function subscriptionMatchesKey(sub: PushSubscription, key: string): bool
 // "cancelled": the member signed out while the enable was running; nothing is left registered.
 export type EnableResult = "ok" | "denied" | "unsupported" | "unavailable" | "cancelled";
 
-// Bumped by every sign-out. A subscribe() or CP call that settles after the sign-out released this
-// browser would otherwise register it again under the account that is leaving.
-let accountEpoch = 0;
+// Set when a sign-out starts and never cleared: every path that calls releasePushForSignOut ends in
+// a page navigation. An enable that is running then stops and takes back what it made, and none
+// starts, because a subscription made after the release read would be registered under the account
+// that is leaving and reach whoever signs in next.
+let leaving = false;
+// Enables still running; the sign-out waits for them (inside its own deadline) so that what they
+// take back is done before the page goes.
+const running = new Set<Promise<unknown>>();
+
+const KEY_READ_TIMEOUT_MS = 5_000;
 
 const READY_TIMEOUT_MS = 10_000;
 // serviceWorker.ready never settles when the worker failed to register; bound it so the UI recovers.
@@ -122,56 +129,114 @@ function swReady(): Promise<ServiceWorkerRegistration> {
  * as the screen last saw it, loaded before the click: requestPermission is the first await so it
  * still runs inside the user's tap (iOS refuses the prompt once the activation has lapsed). The key
  * is read again right after the prompt, since the CP may have rotated it while the screen was open;
- * the screen's copy is used only when that read fails. Throws the CP's message on refusal.
+ * the screen's copy is used only when that read fails or takes too long. Throws the CP's message on
+ * refusal. Resolves "cancelled" (never an error) once a sign-out has started.
  */
-export async function enablePush(key: string | null): Promise<EnableResult> {
+export function enablePush(key: string | null): Promise<EnableResult> {
+  const p = doEnable(key);
+  running.add(p);
+  const done = () => void running.delete(p);
+  p.then(done, done);
+  return p;
+}
+
+async function doEnable(key: string | null): Promise<EnableResult> {
+  if (leaving) return "cancelled";
   if (pushSupport() !== "ok") return "unsupported";
   if (!key) return "unavailable";
-  const epoch = accountEpoch;
-  const signedOut = () => epoch !== accountEpoch;
-  const perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
-  if (perm !== "granted") return "denied";
-  const fresh = await probePushKey().catch(() => key);
-  if (!fresh) return "unavailable";
-  const reg = await swReady();
-  if (signedOut()) return "cancelled";
-  let sub = await reg.pushManager.getSubscription();
-  if (signedOut()) return "cancelled";
-  if (sub && !subscriptionMatchesKey(sub, fresh)) {
-    // Made with a key the CP no longer sends with (rotation): its pushes would be refused, so end
-    // it on both sides first (the old row also frees a slot at the device cap) and start over.
-    // The CP row goes first and its failure stops the swap: the old keys are needed to retry.
-    await releasePushEndpoint(sub.toJSON());
-    await sub.unsubscribe().catch(() => {});
-    forgetDeviceId();
-    sub = null;
-  }
-  // Only a subscription this call made is taken back on a failure: one that was already there
-  // belongs to an earlier enable and is not this call's to end.
-  let created = false;
-  if (!sub) {
-    sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(fresh) });
-    created = true;
-  }
-  if (signedOut()) {
-    if (created) await sub.unsubscribe().catch(() => {});
-    return "cancelled";
-  }
+  // An answer that arrives while the page is leaving says nothing the person will read.
+  const settle = <T extends EnableResult>(r: T): T | "cancelled" => (leaving ? "cancelled" : r);
+  let created: PushSubscription | null = null;
   try {
-    const id = await addPushDevice(sub.toJSON());
-    if (signedOut()) {
-      // The CP accepted it after the sign-out released this browser: take it off again.
-      await releasePushEndpoint(sub.toJSON()).catch(() => {});
+    const perm = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
+    if (perm !== "granted") return settle("denied");
+    const fresh = await readKey(key);
+    if (!fresh) return settle("unavailable");
+    const reg = await swReady();
+    if (leaving) return "cancelled";
+    let sub = await reg.pushManager.getSubscription();
+    if (leaving) return "cancelled";
+    if (sub && !subscriptionMatchesKey(sub, fresh)) {
+      // Made with a key the CP no longer sends with (rotation): its pushes would be refused, so end
+      // it on both sides first (the old row also frees a slot at the device cap) and start over.
+      // The CP row goes first and its failure stops the swap: the old keys are needed to retry.
+      await releasePushEndpoint(sub.toJSON());
+      if (leaving) return "cancelled";
       await sub.unsubscribe().catch(() => {});
+      forgetDeviceId();
+      sub = null;
+    }
+    if (leaving) return "cancelled";
+    // Only a subscription this call made is taken back on a failure: one that was already there
+    // belongs to an earlier enable and is not this call's to end.
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(fresh) });
+      created = sub;
+    }
+    if (leaving) {
+      if (created) await created.unsubscribe().catch(() => {});
+      return "cancelled";
+    }
+    // The endpoint and keys are taken before the POST: whatever the POST's fate, a sign-out that
+    // started meanwhile can still release this exact subscription.
+    const json = sub.toJSON();
+    let id: string;
+    try {
+      id = await addPushDevice(json);
+    } catch (e) {
+      // A subscription the CP does not know would be a device that silently gets nothing. When the
+      // answer was lost the CP may have the row anyway, so a sign-out also releases it.
+      if (leaving) await takeBack(json, sub);
+      else if (created) await created.unsubscribe().catch(() => {});
+      if (leaving) return "cancelled";
+      throw e;
+    }
+    if (leaving) {
+      // The CP accepted it after the sign-out released this browser: take it off again.
+      await takeBack(json, sub);
       return "cancelled";
     }
     storeDeviceId(id);
+    return "ok";
   } catch (e) {
-    // A subscription the CP does not know would be a device that silently gets nothing.
-    if (created) await sub.unsubscribe().catch(() => {});
+    // A failure on the way out (a permission or key read, a worker that is gone) is not news.
+    if (leaving) {
+      if (created) await created.unsubscribe().catch(() => {});
+      return "cancelled";
+    }
     throw e;
   }
-  return "ok";
+}
+
+/** The CP's key now; `cached` when the read fails or does not answer in time (a hung request must not hold the switch). */
+async function readKey(cached: string): Promise<string | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      probePushKey(),
+      new Promise<string>((res) => (timer = setTimeout(() => res(cached), KEY_READ_TIMEOUT_MS))),
+    ]);
+  } catch {
+    return cached;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Ends a subscription on both sides at once; neither half waits for the other. */
+async function takeBack(json: PushSubscriptionJSON, sub: PushSubscription): Promise<void> {
+  await Promise.allSettled([releasePushEndpoint(json), sub.unsubscribe()]);
+  forgetDeviceId();
+}
+
+/**
+ * Drops this browser's own subscription after its CP row is already gone (the device list's
+ * "remove" on this very device): nothing more to tell the CP.
+ */
+export async function dropLocalSubscription(): Promise<void> {
+  const sub = await currentSubscription();
+  forgetDeviceId();
+  await sub?.unsubscribe().catch(() => {});
 }
 
 /** Removes this browser's subscription from the CP and the push service. */
@@ -192,16 +257,19 @@ export async function disablePush(): Promise<void> {
  * still pending at the deadline is left to finish on its own, and the CP prunes on the next 410.
  */
 export async function releasePushForSignOut(timeoutMs = 2500): Promise<void> {
-  accountEpoch++;
+  leaving = true;
   const ctl = new AbortController();
   const work = (async () => {
+    // Enables already running take back what they made; waiting for them also keeps the page here
+    // until they have (the deadline below still bounds all of it).
+    const pending = Promise.allSettled([...running]);
     // One retry for a read that failed: reading nothing must not be taken for "no subscription".
     const sub = (await readSubscription().catch(() => readSubscription().catch(() => undefined))) ?? null;
-    if (!sub) return;
+    if (!sub) return void (await pending);
     // Both start now, side by side: a CP call that outlasts the deadline must not postpone ending
     // the browser's own subscription until after the page has navigated away.
     const json = sub.toJSON();
-    await Promise.allSettled([releasePushEndpoint(json, ctl.signal), sub.unsubscribe()]);
+    await Promise.allSettled([releasePushEndpoint(json, ctl.signal), sub.unsubscribe(), pending]);
   })();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<void>((res) => {

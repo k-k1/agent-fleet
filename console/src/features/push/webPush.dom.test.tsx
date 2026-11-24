@@ -20,7 +20,15 @@ vi.mock("./pushApi.ts", () => ({
 }));
 
 import { createHash } from "node:crypto";
-import { deviceIdFor, disablePush, enablePush, releasePushForSignOut, subscriptionMatchesKey } from "./webPush.ts";
+// The module remembers that a sign-out started (the page never comes back from one), so each test
+// loads a fresh copy.
+type WebPush = typeof import("./webPush.ts");
+let deviceIdFor: WebPush["deviceIdFor"];
+let disablePush: WebPush["disablePush"];
+let dropLocalSubscription: WebPush["dropLocalSubscription"];
+let enablePush: WebPush["enablePush"];
+let releasePushForSignOut: WebPush["releasePushForSignOut"];
+let subscriptionMatchesKey: WebPush["subscriptionMatchesKey"];
 
 let unsubscribed = 0;
 const keyBytes = (b64: string) => Uint8Array.from(atob(b64), (c) => c.charCodeAt(0)).buffer;
@@ -35,7 +43,9 @@ const sub = {
 let current: typeof sub | null = sub;
 let subscribed = 0;
 
-beforeEach(() => {
+beforeEach(async () => {
+  vi.resetModules();
+  ({ deviceIdFor, disablePush, dropLocalSubscription, enablePush, releasePushForSignOut, subscriptionMatchesKey } = await import("./webPush.ts"));
   released.length = 0;
   removed.length = 0;
   unsubscribed = 0;
@@ -224,5 +234,110 @@ describe("web push device lifecycle", () => {
   it("derives the CP's row id from the endpoint", async () => {
     const want = createHash("sha256").update("https://push.example/x").digest("hex").slice(0, 16);
     expect(await deviceIdFor({ endpoint: "https://push.example/x" } as PushSubscription)).toBe(want);
+  });
+
+  it("an enable pressed after the sign-out started registers nothing, even while the old release is still out", async () => {
+    const api = await import("./pushApi.ts");
+    let finish!: () => void;
+    vi.spyOn(api, "releasePushEndpoint").mockImplementation(() => new Promise<void>((r) => (finish = r)));
+    const out = releasePushForSignOut(5000); // the old subscription's release is held
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    unsubscribed = 0;
+    current = null; // the old subscription is already gone
+    expect(await enablePush("AQAB")).toBe("cancelled");
+    expect(subscribed).toBe(0);
+    finish();
+    await out;
+  });
+  it("a key swap whose old release answers after the sign-out neither unsubscribes nor subscribes again", async () => {
+    sub.options.applicationServerKey = keyBytes("AgAB");
+    const api = await import("./pushApi.ts");
+    let finish!: () => void;
+    vi.spyOn(api, "releasePushEndpoint").mockImplementationOnce(() => new Promise<void>((r) => (finish = r)));
+    localStorage.setItem("af-push-sub-id", "old");
+    const p = enablePush("AQAB");
+    await vi.waitFor(() => expect(finish).toBeTypeOf("function"));
+    const out = releasePushForSignOut(5000);
+    await vi.waitFor(() => expect(unsubscribed).toBe(1)); // the sign-out's own unsubscribe
+    finish();
+    expect(await p).toBe("cancelled");
+    await out;
+    expect(unsubscribed).toBe(1);
+    expect(subscribed).toBe(0);
+    expect(localStorage.getItem("af-push-sub-id")).toBe("old");
+  });
+  it("releases the CP row after a sign-out even when the registration's answer is lost", async () => {
+    let fail!: (e: Error) => void;
+    addDevice = () => new Promise((_, rej) => (fail = rej));
+    const p = enablePush("AQAB");
+    await vi.waitFor(() => expect(fail).toBeTypeOf("function"));
+    const out = releasePushForSignOut(50);
+    await out;
+    released.length = 0;
+    fail(new Error("network")); // the CP may have committed the row
+    expect(await p).toBe("cancelled");
+    expect(released).toEqual([sub.toJSON()]);
+  });
+  it("the sign-out waits for a running enable to take its registration back", async () => {
+    let answer!: (id: string) => void;
+    addDevice = () => new Promise((r) => (answer = r));
+    const p = enablePush("AQAB");
+    await vi.waitFor(() => expect(answer).toBeTypeOf("function"));
+    let out = false;
+    const done = releasePushForSignOut(5000).then(() => (out = true));
+    await new Promise((r) => setTimeout(r, 30));
+    expect(out).toBe(false); // the enable has not settled
+    released.length = 0;
+    answer("dev1");
+    await done;
+    expect(await p).toBe("cancelled");
+    expect(released).toEqual([sub.toJSON()]);
+  });
+  it("reports cancelled, not an error or a denial, when the sign-out comes first", async () => {
+    let decide!: (v: string) => void;
+    (window as any).Notification = { permission: "default", requestPermission: () => new Promise((r) => (decide = r)) };
+    const p = enablePush("AQAB");
+    await vi.waitFor(() => expect(decide).toBeTypeOf("function"));
+    await releasePushForSignOut();
+    decide("denied");
+    expect(await p).toBe("cancelled");
+    const reg = (await navigator.serviceWorker.getRegistration())!;
+    vi.spyOn(reg.pushManager, "subscribe").mockRejectedValue(new Error("gone"));
+    current = null;
+    expect(await enablePush("AQAB")).toBe("cancelled");
+  });
+  it("asks for the permission before anything else, so it runs inside the tap", async () => {
+    const order: string[] = [];
+    (window as any).Notification = {
+      permission: "default",
+      requestPermission: () => (order.push("permission"), Promise.resolve("granted")),
+    };
+    probe = () => (order.push("key"), Promise.resolve("AQAB"));
+    expect(await enablePush("AQAB")).toBe("ok");
+    expect(order).toEqual(["permission", "key"]);
+  });
+  it("uses the screen's key when the key read does not answer in time", async () => {
+    vi.useFakeTimers();
+    current = null;
+    probe = () => new Promise(() => {});
+    const p = enablePush("AQAB");
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(await p).toBe("ok");
+    expect(subscribed).toBe(1);
+  });
+  it("dropLocalSubscription ends the browser side only and forgets the id", async () => {
+    localStorage.setItem("af-push-sub-id", "dev1");
+    await dropLocalSubscription();
+    expect(unsubscribed).toBe(1);
+    expect(removed).toEqual([]);
+    expect(released).toEqual([]);
+    expect(localStorage.getItem("af-push-sub-id")).toBeNull();
+  });
+  it("falls back to the stored id when the endpoint cannot be hashed, and to none without one", async () => {
+    vi.spyOn(crypto.subtle, "digest").mockRejectedValue(new Error("no subtle"));
+    const s = { endpoint: "https://push.example/x" } as PushSubscription;
+    expect(await deviceIdFor(s)).toBe("");
+    localStorage.setItem("af-push-sub-id", "dev1");
+    expect(await deviceIdFor(s)).toBe("dev1");
   });
 });
