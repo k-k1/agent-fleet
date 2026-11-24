@@ -2,12 +2,10 @@ package pushsrv
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -288,7 +286,6 @@ func TestQueuedSendRereadsTheDeliveryContext(t *testing.T) {
 	}{
 		{"member removed", func(m *memStore) { m.inactive = map[string]bool{"m1": true} }, false, false},
 		{"text turned off", func(m *memStore) { m.includeTxt = false }, true, false},
-		{"context unreadable", func(m *memStore) { m.dcErr = io.ErrUnexpectedEOF }, true, false},
 		{"nothing changed", func(*memStore) {}, true, true},
 	}
 	for _, c := range cases {
@@ -347,67 +344,4 @@ func TestServiceLiteralHasUsableViewing(t *testing.T) {
 	other := note("question")
 	other.TargetID = "s2"
 	p.deliver(context.Background(), other, nil)
-}
-
-// runReadStore answers deliver's delivery-context read from memStore and hands every later one
-// (run's re-reads) to inRun.
-type runReadStore struct {
-	*memStore
-	calls *atomic.Int32
-	inRun func(context.Context, string) (store.PushDelivery, error)
-}
-
-func (r runReadStore) PushDeliveryContext(ctx context.Context, mid string) (store.PushDelivery, error) {
-	if r.calls.Add(1) == 1 {
-		return r.memStore.PushDeliveryContext(ctx, mid)
-	}
-	return r.inRun(ctx, mid)
-}
-
-// The subscription re-read stays the last read before the send: a device that moves to another
-// member while run re-reads the delivery context gets nothing.
-func TestDeviceMovedDuringTheContextRereadGetsNothing(t *testing.T) {
-	f := newFixture(t)
-	f.subscribe(t, "m1")
-	f.svc.store = runReadStore{f.st, new(atomic.Int32), func(ctx context.Context, mid string) (store.PushDelivery, error) {
-		f.st.mu.Lock()
-		f.st.subs[0].MembershipID = "m2"
-		f.st.mu.Unlock()
-		return f.st.PushDeliveryContext(ctx, mid)
-	}}
-	f.deliver(note("question"))
-	if f.count() != 0 {
-		t.Fatal("sent to a device that moved to another member before the send")
-	}
-}
-
-// A re-read that stalls costs the waiting sends their text, not the sends themselves: it runs on a
-// budget well below the queue wait, so the sends behind it are not made stale.
-func TestStalledContextRereadDoesNotStaleTheQueue(t *testing.T) {
-	f := newFixtureN(t, 1, pushQueueLen, func(f *fixture) {
-		f.svc.slotWait, f.svc.timeout, f.svc.reread = time.Second, 5*time.Second, 100*time.Millisecond
-	})
-	f.st.includeTxt = true
-	var devs []device
-	for i := 0; i < 4; i++ {
-		devs = append(devs, f.subscribe(t, "m1"))
-	}
-	f.svc.store = runReadStore{f.st, new(atomic.Int32), func(ctx context.Context, _ string) (store.PushDelivery, error) {
-		<-ctx.Done()
-		return store.PushDelivery{}, ctx.Err()
-	}}
-	n := note("question")
-	n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
-	f.deliver(n)
-	if f.count() != 4 || f.svc.droppedStale.Load() != 0 {
-		t.Fatalf("%d sent, %d stale; want 4 and 0", f.count(), f.svc.droppedStale.Load())
-	}
-	for i, d := range devs {
-		if got := d.open(t, f.bodies[i]); strings.Contains(got, `"text"`) || !strings.Contains(got, `"kind":"question"`) {
-			t.Fatalf("send %d: %s", i, got)
-		}
-	}
-	if got := f.svc.contextRereadFailed.Load(); got != 4 {
-		t.Fatalf("failed re-reads counted: %d, want 4", got)
-	}
 }

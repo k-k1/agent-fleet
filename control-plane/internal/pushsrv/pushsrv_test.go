@@ -32,7 +32,6 @@ type memStore struct {
 	releaseErr error
 	getErr     error
 	gets       int
-	dcErr      error
 	subs       []store.PushSubscription
 	off        map[string][]string
 	inactive   map[string]bool
@@ -57,9 +56,6 @@ func (m *memStore) PutPushOffKinds(_ context.Context, mid string, k []string) er
 func (m *memStore) PushDeliveryContext(_ context.Context, mid string) (store.PushDelivery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.dcErr != nil {
-		return store.PushDelivery{}, m.dcErr
-	}
 	return store.PushDelivery{Active: !m.inactive[mid], IncludeText: m.includeTxt, TenantSlug: m.tenantSlug}, nil
 }
 func (m *memStore) GetTenantPushIncludeText(context.Context, string) (bool, error) { return false, nil }
@@ -95,19 +91,19 @@ func (m *memStore) AddPushSubscription(ctx context.Context, p store.PushSubscrip
 	}
 	return true, m.UpsertPushSubscription(ctx, p)
 }
-func (m *memStore) GetPushSubscription(_ context.Context, mid, ep string) (store.PushSubscription, bool, error) {
+func (m *memStore) GetPushSubscription(_ context.Context, mid, ep string) (store.PushSubscription, store.PushDelivery, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.gets++
 	if m.getErr != nil {
-		return store.PushSubscription{}, false, m.getErr
+		return store.PushSubscription{}, store.PushDelivery{}, false, m.getErr
 	}
 	for _, s := range m.subs {
 		if s.MembershipID == mid && s.Endpoint == ep {
-			return s, true, nil
+			return s, store.PushDelivery{Active: !m.inactive[mid], IncludeText: m.includeTxt}, true, nil
 		}
 	}
-	return store.PushSubscription{}, false, nil
+	return store.PushSubscription{}, store.PushDelivery{}, false, nil
 }
 func (m *memStore) ListPushSubscriptions(_ context.Context, mid string) ([]store.PushSubscription, error) {
 	m.mu.Lock()

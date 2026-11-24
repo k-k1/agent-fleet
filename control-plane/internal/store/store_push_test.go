@@ -168,14 +168,14 @@ func checkPushCap(t *testing.T, st *SQL, a, b string) {
 	if _, err := st.DeletePushSubscription(ctx, a, PushSubscriptionID(ep(99))); err != nil {
 		t.Fatal(err)
 	}
-	if got, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || !ok || got.Endpoint != ep(0) || got.MembershipID != a {
-		t.Fatalf("get: %+v %v %v", got, ok, err)
+	if got, dc, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || !ok || got.Endpoint != ep(0) || got.MembershipID != a || !dc.Active {
+		t.Fatalf("get: %+v %+v %v %v", got, dc, ok, err)
 	}
 	// Moving one of a's endpoints to b frees a slot for a and is itself under b's cap.
 	if !add(b, ep(0)) {
 		t.Fatal("b could not take over an endpoint")
 	}
-	if _, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || ok {
+	if _, _, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || ok {
 		t.Fatalf("a still holds the moved endpoint: %v %v", ok, err)
 	}
 	if !add(a, ep(max)) {
@@ -311,6 +311,44 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, slug, a, b string) {
 		t.Fatal("a deactivated membership still counts as active")
 	}
 	if err := st.SetMembershipStatus(ctx, b, "active"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The send-time read answers the same context with the subscription, in one statement.
+	sub := PushSubscription{MembershipID: a, Endpoint: "https://fcm.googleapis.com/fcm/send/ctx", P256dh: "k", Auth: "x"}
+	if err := st.UpsertPushSubscription(ctx, sub); err != nil {
+		t.Fatal(err)
+	}
+	get := func() PushDelivery {
+		t.Helper()
+		got, dc, ok, err := st.GetPushSubscription(ctx, a, sub.Endpoint)
+		if err != nil || !ok || got.Endpoint != sub.Endpoint {
+			t.Fatalf("get: %+v %v %v", got, ok, err)
+		}
+		return dc
+	}
+	if dc := get(); !dc.Active || dc.IncludeText {
+		t.Fatalf("default send context = %+v", dc)
+	}
+	if err := st.PutTenantPushIncludeText(ctx, tenantID, slug, true, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if dc := get(); !dc.IncludeText {
+		t.Fatal("the send-time read missed the tenant setting")
+	}
+	if err := st.SetMembershipStatus(ctx, a, "inactive"); err != nil {
+		t.Fatal(err)
+	}
+	if dc := get(); dc.Active {
+		t.Fatal("the send-time read counts a deactivated membership as active")
+	}
+	if err := st.SetMembershipStatus(ctx, a, "active"); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.PutTenantPushIncludeText(ctx, tenantID, slug, false, "admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.DeletePushSubscription(ctx, a, PushSubscriptionID(sub.Endpoint)); err != nil {
 		t.Fatal(err)
 	}
 }

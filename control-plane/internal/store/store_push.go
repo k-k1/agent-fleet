@@ -29,8 +29,10 @@ type PushSubscriptionStore interface {
 	// moves to this one.
 	AddPushSubscription(ctx context.Context, sub PushSubscription, max int) (bool, error)
 	ListPushSubscriptions(ctx context.Context, membershipID string) ([]PushSubscription, error)
-	// GetPushSubscription answers the row for endpoint if membershipID still holds it.
-	GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error)
+	// GetPushSubscription answers the row for endpoint if membershipID still holds it, with the
+	// membership's delivery context (TenantSlug left empty) read in the same statement, so a send
+	// checks the device's owner, the member's status and the text setting at one point in time.
+	GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, PushDelivery, bool, error)
 	// DeletePushSubscription reports whether a row of that membership was removed.
 	DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error)
 	// DeletePushSubscriptionByEndpoint drops a subscription the push service says is gone. It is
@@ -126,14 +128,23 @@ func (s *SQL) ListPushSubscriptions(ctx context.Context, membershipID string) ([
 	return out, rows.Err()
 }
 
-func (s *SQL) GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error) {
+func (s *SQL) GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, PushDelivery, bool, error) {
 	var p PushSubscription
-	err := s.db.QueryRowContext(ctx, pushCols+` WHERE membership_id=? AND endpoint=?`, membershipID, endpoint).
-		Scan(&p.ID, &p.MembershipID, &p.Endpoint, &p.P256dh, &p.Auth, &p.UserAgent, &p.CreatedAt, &p.LastOKAt)
+	var active, inc int64
+	err := s.db.QueryRowContext(ctx, `SELECT s.id, s.membership_id, s.endpoint, s.p256dh, s.auth, s.user_agent, s.created_at, s.last_ok_at,
+		CASE WHEN m.status='active' THEN 1 ELSE 0 END, COALESCE(t.include_text, 0)
+		FROM push_subscription s
+		LEFT JOIN membership m ON m.id = s.membership_id
+		LEFT JOIN tenant_push_setting t ON t.tenant_id = m.tenant_id
+		WHERE s.membership_id=? AND s.endpoint=?`, membershipID, endpoint).
+		Scan(&p.ID, &p.MembershipID, &p.Endpoint, &p.P256dh, &p.Auth, &p.UserAgent, &p.CreatedAt, &p.LastOKAt, &active, &inc)
 	if err == sql.ErrNoRows {
-		return PushSubscription{}, false, nil
+		return PushSubscription{}, PushDelivery{}, false, nil
 	}
-	return p, err == nil, err
+	if err != nil {
+		return PushSubscription{}, PushDelivery{}, false, err
+	}
+	return p, PushDelivery{Active: active != 0, IncludeText: inc != 0}, true, nil
 }
 
 func (s *SQL) DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error) {
