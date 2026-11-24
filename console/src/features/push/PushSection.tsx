@@ -141,10 +141,10 @@ export function PushSection() {
     }
   };
 
-  const savePrefs = async (next: { off: string[]; offOrigins: string[] }) => {
+  const savePrefs = async (next: { off: string[]; offOrigins: string[] }, kindsOnly = false) => {
     setBusy(true);
     try {
-      await putPushPrefs(next);
+      await putPushPrefs(kindsOnly ? { off: next.off } : next);
       setPrefs(next);
     } catch (e) {
       fail(e);
@@ -154,7 +154,7 @@ export function PushSection() {
   };
   const flip = (list: string[], k: string, on: boolean) => (on ? list.filter((x) => x !== k) : [...list.filter((x) => x !== k), k]);
   const toggleKind = (k: PushKind, on: boolean) => {
-    if (prefs) void savePrefs({ ...prefs, off: flip(prefs.off, k, on) });
+    if (prefs) void savePrefs({ ...prefs, off: flip(prefs.off, k, on) }, true);
   };
   const toggleOrigin = (o: PushOrigin, on: boolean) => {
     if (prefs) void savePrefs({ ...prefs, offOrigins: flip(prefs.offOrigins, o, on) });

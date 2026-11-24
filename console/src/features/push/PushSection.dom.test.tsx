@@ -19,12 +19,12 @@ let listCalls = 0;
 const row = (id: string) => ({ id, userAgent: "Mozilla/5.0 (iPhone) Safari/605", createdAt: "2026-11-22T00:00:00Z", lastOkAt: "" });
 let rows = [row("d1")];
 let listGate: Promise<void> | null = null;
-const puts: { off: string[]; offOrigins: string[] }[] = [];
+const puts: { off: string[]; offOrigins?: string[] }[] = [];
 vi.mock("./pushApi.ts", async (orig) => ({
   ...(await orig<typeof import("./pushApi.ts")>()),
   probePushKey: () => Promise.resolve(key),
   getPushPrefs: () => (prefsGate ? prefsGate.then(() => ({ off, offOrigins })) : Promise.resolve({ off, offOrigins })),
-  putPushPrefs: (o: { off: string[]; offOrigins: string[] }) => {
+  putPushPrefs: (o: { off: string[]; offOrigins?: string[] }) => {
     puts.push(o);
     return Promise.resolve();
   },
@@ -112,7 +112,7 @@ describe("PushSection", () => {
     const q = host.querySelector<HTMLInputElement>(".push-kind input")!;
     await act(async () => void q.click());
     await flush();
-    expect(puts).toEqual([{ off: ["answer-ready", "question"], offOrigins: [] }]);
+    expect(puts).toEqual([{ off: ["answer-ready", "question"] }]);
   });
   it("shows the origin switches as three rows of two, from the saved list", async () => {
     offOrigins = ["autorun-child"];
@@ -128,7 +128,7 @@ describe("PushSection", () => {
     expect(new Set(names).size).toBe(6);
     expect(names.every((n) => n && n.includes(": "))).toBe(true);
   });
-  it("saves a turned-off origin together with the kinds, and keeps the origins when a kind changes", async () => {
+  it("saves origins with the kinds, and leaves origins out when only a kind changes (a stale screen must not undo them)", async () => {
     const host = await mount();
     const inputs = host.querySelectorAll<HTMLInputElement>(".push-origin-row input");
     await act(async () => void inputs[2].click()); // auto-run: the session itself
@@ -137,7 +137,7 @@ describe("PushSection", () => {
     const q = host.querySelector<HTMLInputElement>(".push-kind input")!;
     await act(async () => void q.click());
     await flush();
-    expect(puts[1]).toEqual({ off: ["answer-ready", "question"], offOrigins: ["autorun"] });
+    expect(puts[1]).toEqual({ off: ["answer-ready", "question"] });
   });
   it("keeps the kind switches locked until the saved choices arrive, so nothing is overwritten", async () => {
     let open!: () => void;
