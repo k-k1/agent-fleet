@@ -30,6 +30,8 @@ import type {
   MuseImportPreview,
   MuseImportSource,
   ProjectRow,
+  PromoteCandidates,
+  PromoteProposal,
   PurgePreview,
   RootsPayload,
   RunRevertReport,
@@ -157,6 +159,28 @@ export const putLintTerms = (body: { terms: string[]; rejected?: string[] }): Pr
   apiJSON("api/agents/memory/entries/lint-terms", "POST", body);
 export const getMemoryLint = (query: string): Promise<Reply<Partial<LintReport>>> =>
   api("api/agents/memory/entries/lint?" + query);
+
+// A memory superseded by a document: its repairs, and the promotion that leads to it. Each repair
+// quotes the revision the report showed, so a memory that moved meanwhile is refused.
+export type DocRepair = { project: string; name: string; revision: number; path?: string; heading?: string; commit?: string };
+export const retargetDocument = (body: DocRepair): Promise<Reply<{ revision?: number }>> =>
+  apiJSON("api/agents/memory/entries/document-retarget?project=" + encodeURIComponent(body.project), "POST", body);
+export const restoreDocument = (body: DocRepair): Promise<Reply<{ revision?: number }>> =>
+  apiJSON("api/agents/memory/entries/document-restore?project=" + encodeURIComponent(body.project), "POST", body);
+export const getPromoteCandidates = (project: string): Promise<Reply<Partial<PromoteCandidates>>> =>
+  api("api/agents/memory/entries/promotion-candidates?project=" + encodeURIComponent(project));
+export const proposePromotion = (body: { project: string; name: string }): Promise<Reply<PromoteProposal>> =>
+  apiJSON("api/agents/memory/entries/promotion-proposal?project=" + encodeURIComponent(body.project), "POST", body);
+export const supersedeByDocument = (body: {
+  project: string;
+  name: string;
+  revision: number;
+  path: string;
+  heading: string;
+  commit: string;
+  bodySha256: string;
+}): Promise<Reply<{ revision?: number }>> =>
+  apiJSON("api/agents/memory/entries/supersede-document?project=" + encodeURIComponent(body.project), "POST", body);
 
 // --- Claude / Muse / bundle import and Claude export ----------------------------------------
 export const getClaudeImportSources = (): Promise<Reply<{ sources?: ClaudeImportSource[]; withheld?: number }>> =>

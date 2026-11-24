@@ -22,10 +22,12 @@ func lintAgent(t *testing.T) (*Client, *[]string) {
 			io.WriteString(w, `{"projects":[{"project":{"id":"demo-0123456789ab","display":"demo"},"count":2},{"project":{"id":"empty-0123456789ab","display":"empty"},"count":0}]}`)
 		case "/agents/memory/entries/lint":
 			if r.URL.Query().Get("scope") == "user" {
-				io.WriteString(w, `{"scope":"user","terms":1,"report":{"checked":1,"findings":[{"memory":"u1","check":"oversize","subject":"5000"}],"counts":{"oversize":1},"skipped":["repository checks (paths, symbols, ADRs): user scope: no repository"]}}`)
+				io.WriteString(w, `{"scope":"user","terms":1,"report":{"checked":1,"findings":[{"memory":"u1","check":"oversize","subject":"5000"}],"counts":{"oversize":1},"skipped":["repository checks (paths, symbols, ADRs, document targets): user scope: no repository"]}}`)
 				return
 			}
-			io.WriteString(w, `{"scope":"project","project":{"id":"demo-0123456789ab","display":"demo"},"ref":"origin/main","commit":"abc123","terms":1,"report":{"checked":2,"findings":[{"memory":"a","check":"broken-link","subject":"ghost","line":3}],"counts":{"broken-link":1},"proposals":[{"term":"AF_OLD_SWITCH","kind":"removed-key","evidence":"removed in abc1234: drop it","memories":["a","b"]}]}}`)
+			io.WriteString(w, `{"scope":"project","project":{"id":"demo-0123456789ab","display":"demo"},"ref":"origin/main","commit":"abc123","terms":1,"report":{"checked":2,"findings":[{"memory":"a","check":"broken-link","subject":"ghost","line":3}],"counts":{"broken-link":1},"proposals":[{"term":"AF_OLD_SWITCH","kind":"removed-key","evidence":"removed in abc1234: drop it","memories":["a","b"]}]},`+
+				`"documents":{"checked":2,"findings":[{"memory":"rel","revision":3,"target":{"repo":"github.com/acme/demo","path":"AGENTS.md","heading":"Release","commit":"0123456789abcdef"},"problem":"renamed","path":"docs/agents.md","headingFound":true,"commit":"fedcba9876543210"},`+
+				`{"memory":"old","revision":2,"target":{"repo":"github.com/acme/demo","path":"x.md","commit":"0123456789abcdef"},"problem":"reverted","commit":"aaaabbbbccccdddd"}]}}`)
 		case "/agents/memory/entries/lint-apply":
 			io.WriteString(w, `{"scope":"user","marked":2,"renamed":1,"changed":0,"deferred":0}`)
 		default:
@@ -44,7 +46,8 @@ func TestAFMemoryLint(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errw)
 	}
-	for _, want := range []string{"== demo: 2 memories, 1 finding(s)  [origin/main @ abc123]", "broken-link    a:3  ghost", "== user", "oversize       u1  5000 bytes", "skipped: repository checks", `propose        "AF_OLD_SWITCH"  removed-key`, "evidence: removed in abc1234: drop it", "used by: a, b"} {
+	for _, want := range []string{"== demo: 2 memories, 1 finding(s)  [origin/main @ abc123]", "broken-link    a:3  ghost", "== user", "oversize       u1  5000 bytes", "skipped: repository checks", `propose        "AF_OLD_SWITCH"  removed-key`, "evidence: removed in abc1234: drop it", "used by: a, b",
+		"document targets: 2 checked, 2 to repair", "doc-renamed    rel  AGENTS.md # Release  now docs/agents.md @ fedcba987654", "doc-reverted   old  x.md  by aaaabbbbcccc"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)
 		}

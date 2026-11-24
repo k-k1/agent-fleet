@@ -107,6 +107,7 @@ describe("MemoryTab views", () => {
       t("mem.ce_title"),
       t("mem.pm_title"),
       t("mem.lint_title"),
+      t("mem.promo_title"),
     ]);
 
     await goto("settings");

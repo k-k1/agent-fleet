@@ -18,8 +18,9 @@ import { ClaudeExportPanel } from "../memoryClaudeExport.tsx";
 import { ProjectMovePanel } from "../memoryProjectMove.tsx";
 import { BundleImportWizard } from "../memoryBundleImport.tsx";
 import { LintPanel } from "../memoryLint.tsx";
+import { PromotionPanel } from "../memoryPromotion.tsx";
 
-type Source = "claude" | "muse" | "bundle" | "writeback" | "move" | "lint";
+type Source = "claude" | "muse" | "bundle" | "writeback" | "move" | "lint" | "promote";
 type Key = MsgKey;
 
 interface Card {
@@ -39,6 +40,7 @@ const EXPORTS: Card[] = [
 const MAINTENANCE: Card[] = [
   { source: "move", title: "mem.pm_title", desc: "mem.ie_desc_move" },
   { source: "lint", title: "mem.lint_title", desc: "mem.ie_desc_lint" },
+  { source: "promote", title: "mem.promo_title", desc: "mem.ie_desc_promote" },
 ];
 
 export function ImportExportView({
@@ -69,6 +71,7 @@ export function ImportExportView({
       <ProjectMovePanel reload={reload} onChanged={onChanged} onClose={close} />
     ),
     lint: <LintPanel reload={reload} onClose={close} />,
+    promote: <PromotionPanel reload={reload} onClose={close} />,
   };
   if (active) return WIZARDS[active];
 

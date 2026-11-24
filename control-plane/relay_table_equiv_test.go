@@ -202,6 +202,8 @@ var frozenMemberOriginRoutes = map[string]bool{
 	"POST /api/agents/memory/entries/pin":                true,
 	"POST /api/agents/memory/entries/lint-terms":         true, // added after the freeze (ADR 0130)
 	"POST /api/agents/memory/entries/supersede-document": true, // added after the freeze (ADR 0130 decision 11)
+	"POST /api/agents/memory/entries/document-retarget":  true, // added after the freeze (ADR 0130 decision 11)
+	"POST /api/agents/memory/entries/document-restore":   true, // added after the freeze (ADR 0130 decision 11)
 	"POST /api/agents/memory/entries/revert":             true,
 	"POST /api/agents/memory/entries/member-save":        true,
 	"POST /api/agents/memory/entries/purge":              true,
@@ -396,6 +398,11 @@ var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/agents/memory/entries/lint-terms": true,
 	// ADR 0130 decision 11: the member supersedes a memory by the document its promotion became.
 	"POST /api/agents/memory/entries/supersede-document": true,
+	// ADR 0130 decision 11: a promotion proposal runs the repository's pre-commit hook.
+	"POST /api/agents/memory/entries/promotion-proposal": true,
+	// ADR 0130 decision 11: the member's repairs of a document target lint reported.
+	"POST /api/agents/memory/entries/document-retarget": true,
+	"POST /api/agents/memory/entries/document-restore":  true,
 	// ADR 0130 decisions 6 and 7: the member's decisions on the consolidator's proposals.
 	"POST /api/agents/memory-consolidation/proposals/approve": true,
 	"POST /api/agents/memory-consolidation/proposals/reject":  true,
