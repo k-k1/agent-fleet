@@ -48,6 +48,7 @@ const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("./store.
 const { useUIStateStore } = await import("../../core/store/uiState.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { writeFoldValue } = await import("../../lib/foldStore.ts");
+const { useSpacesStore } = await import("../spaces/store.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -97,6 +98,8 @@ beforeEach(async () => {
   launchKinds = ["claude"];
   useUIStateStore.setState({ state: {} as never });
   useReposStore.setState({ repos: [{ name: "app", path: "/home/dev/repos/app", branch: "main" }] as never, loadState: "ok" });
+  useSpacesStore.getState().clear();
+  useSessionsStore.setState({ sessions: [] });
   apiGet.mockReset();
   apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? { spaces: [] } : []));
   apiPost.mockReset();
@@ -348,5 +351,71 @@ describe("Start hub — the draft's files and the memo it came from", () => {
     await click(head(t("start.sec_space")));
     await click(spaceGo());
     expect(launched).toHaveBeenCalledWith("space-1");
+  });
+});
+
+describe("Start hub — an existing space", () => {
+  const space = (folder: string, name: string, createdAt: string) => ({ folder, name, dir: "/home/dev/spaces/" + folder, createdAt });
+  const withSpaces = (spaces: ReturnType<typeof space>[]) =>
+    apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? { spaces } : []));
+  const chip = () => document.querySelector<HTMLButtonElement>(".start-place-chip--btn")!;
+  const options = () => [...document.querySelectorAll<HTMLButtonElement>(".start-place-opt")];
+  const optionLabels = () => options().map((o) => o.textContent);
+  const nameBox = () => document.querySelector<HTMLInputElement>(".start-place input[type=text]");
+
+  it("offers the spaces by last use, and starts a session in the one picked, by folder alone", async () => {
+    withSpaces([space("old-aaa", "Budget", "2026-09-01T00:00:00Z"), space("new-bbb", "", "2026-11-20T00:00:00Z")]);
+    // Budget's own age is older, but a session started in it yesterday.
+    useSessionsStore.setState({ sessions: [{ name: "s1", kind: "claude", space: "old-aaa", createdAt: "2026-11-23T10:00:00Z" }] as never });
+    await openHub();
+    expect(nameBox()).not.toBeNull(); // a new space is named in place
+    await click(chip());
+    expect(optionLabels()).toEqual([t("start.place_new_space"), "Budget", "new-bbb"]);
+    await click(options()[1]);
+    expect(chip().textContent).toContain("Budget");
+    expect(nameBox()).toBeNull(); // an existing space is not renamed by a launch
+    expect(spaceGo().textContent).toContain(t("start.space_launch_existing"));
+    await typeInto(hubBox(), "続きをお願い");
+    await click(spaceGo());
+    const body = createCalls()[0][2] as Record<string, unknown>;
+    expect(body).toMatchObject({ dir: "", space: { folder: "old-aaa" }, initial_prompt: "続きをお願い" });
+    expect((body.space as Record<string, unknown>).name).toBeUndefined();
+  });
+
+  it("lists five as recent and the rest behind All spaces", async () => {
+    const many = Array.from({ length: 8 }, (_, i) => space("sp-" + i, "Space " + i, `2026-11-0${i + 1}T00:00:00Z`));
+    withSpaces(many);
+    await openHub();
+    await click(chip());
+    expect(options()).toHaveLength(1 + 5); // New space + five recent
+    expect(optionLabels().slice(1)).toEqual(["Space 7", "Space 6", "Space 5", "Space 4", "Space 3"]);
+    await click(document.querySelector<HTMLButtonElement>(".start-place-more")!);
+    expect(optionLabels().slice(6)).toEqual(["Space 2", "Space 1", "Space 0"]);
+    await click(options()[8]); // an older one can be picked too
+    expect(chip().textContent).toContain("Space 0");
+  });
+
+  it("falls back to a new space when the picked one is gone", async () => {
+    withSpaces([space("gone-aaa", "Gone", "2026-11-01T00:00:00Z")]);
+    await openHub();
+    await click(chip());
+    await click(options()[1]);
+    expect(chip().textContent).toContain("Gone");
+    await act(async () => useSpacesStore.setState({ spaces: [] }));
+    await settle();
+    expect(chip().textContent).toContain(t("start.place_new_space"));
+    await click(spaceGo());
+    expect((createCalls()[0][2] as Record<string, unknown>).space).toEqual({ name: "" });
+  });
+
+  it("uploads the draft's files to the existing space's new session like a new one's", async () => {
+    withSpaces([space("sp-a", "Notes", "2026-11-01T00:00:00Z")]);
+    await openHub();
+    await click(chip());
+    await click(options()[1]);
+    const file = new File(["B"], "shot.png", { type: "image/png" });
+    await attachToHub(file);
+    await click(spaceGo());
+    expect(pasteImage.mock.calls[0]).toEqual(["space-1", file]);
   });
 });

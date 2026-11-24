@@ -13,6 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // Pasted-image support. A claude session driven over tmux can't receive an image through
@@ -20,6 +21,9 @@ import (
 // image here; we save it under the session's own dir and return its absolute path. The
 // Console then references that path in the prompt and claude opens it with the Read tool
 // (which reads images) — there's no native CLI image-input for a headless session.
+
+// errCodeSpaceCopyFailed answers an upload to a space session whose copy into the space failed.
+const errCodeSpaceCopyFailed = "space_copy_failed"
 
 // pastedDir is where a session's pasted images live — keyed by sid so they stay
 // associated with the session (and survive across turns for later reference / preview).
@@ -74,6 +78,14 @@ func imageMime(ext string) string {
 // bare paste-<n>.<ext> form (the bubble thumbnails key off it), any other file carries a
 // sanitized copy of its original name so the agent sees a meaningful filename.
 func SavePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
+	savePastedImage(w, r, dir, nil)
+}
+
+// savePastedImage is SavePastedImageTo with a step after the file is stored: afterSave gets the
+// stored path and the client's file name, and the path it answers goes into the 201 answer as
+// spaceCopy. An error removes the stored file and answers 500 space_copy_failed, so an upload is
+// never reported as taken when the step it promised did not happen.
+func savePastedImage(w http.ResponseWriter, r *http.Request, dir string, afterSave func(dest, origName string) (string, error)) {
 	mr, err := r.MultipartReader()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_form", "expected multipart/form-data")
@@ -125,7 +137,17 @@ func SavePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 			return
 		}
-		httpx.WriteJSON(w, http.StatusCreated, map[string]any{"path": dest, "name": fname})
+		out := map[string]any{"path": dest, "name": fname}
+		if afterSave != nil {
+			cp, err := afterSave(dest, part.FileName())
+			if err != nil {
+				_ = os.Remove(dest)
+				httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceCopyFailed, err.Error())
+				return
+			}
+			out["spaceCopy"] = cp
+		}
+		httpx.WriteJSON(w, http.StatusCreated, out)
 		return
 	}
 	httpx.WriteErr(w, http.StatusBadRequest, "no_file", "no file part")
@@ -203,7 +225,21 @@ func HandlePasteImage(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodePasteUnsupportedKind, "this session type cannot accept images")
 		return
 	}
-	SavePastedImageTo(w, r, pastedDir(session.UUID(meta.Dir, name)))
+	// A session in a space also leaves a copy of every attachment in the space (ADR 0142 P2), so
+	// the member finds the files beside their work and a later session in the space has them. The
+	// prompt keeps pointing at the stored path: the mirror recognises an attachment by its
+	// /pasted/<key>/paste-<n> shape.
+	var after func(dest, orig string) (string, error)
+	if spacex.FolderOf(meta.Dir) != "" {
+		after = func(dest, orig string) (string, error) {
+			cp, err := spacex.CopyAttachment(meta.Dir, dest, orig)
+			if err != nil {
+				return "", fmt.Errorf("could not copy the file into the space: %w", err)
+			}
+			return cp, nil
+		}
+	}
+	savePastedImage(w, r, pastedDir(session.UUID(meta.Dir, name)), after)
 }
 
 // HandlePastedImage serves a previously-pasted session image by basename (GET).

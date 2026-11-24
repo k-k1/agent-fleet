@@ -64,6 +64,7 @@ import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
 import { fetchMemoAttachments, stashLaunchDraft } from "../memo/launchStash.ts";
 import type { MemoAttachment } from "../../types/memo.ts";
 import type { SharedDraft } from "./hubDraft.ts";
+import { SpacePlacePicker } from "../spaces/SpacePlacePicker.tsx";
 
 // spacex.NameMaxRunes on the Agent, which refuses a longer name (bad_space). maxLength counts
 // UTF-16 units, never fewer than the runes, so a name it lets through is never refused.
@@ -479,6 +480,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   const [detailsOpen, setDetailsOpen] = useState(() => readLaunchOpen("details"));
   // A new space's display name; "" lets the Agent name the folder alone.
   const [spaceName, setSpaceName] = useState("");
+  // The existing space the launch runs in (its folder); "" starts a new one.
+  const [spaceFolder, setSpaceFolder] = useState("");
   const toggleSection = (key: LaunchSectionKey, open: boolean, set: (v: boolean) => void) => {
     set(!open);
     writeLaunchOpen(key, !open);
@@ -903,7 +906,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       newBranch: worktree && !useExisting ? newBranch : "",
       useExisting,
       spendCapUsd: hasBudget && budget.trim() && !budgetInvalid ? budgetCap : undefined,
-      space: space ? { name: spaceName.trim() } : undefined,
+      // An existing space is named by its folder alone; the Agent refuses a name with one.
+      space: space ? (spaceFolder ? { folder: spaceFolder } : { name: spaceName.trim() }) : undefined,
     }).catch(() => {
       noAnswer = true;
       return { ok: false };
@@ -1634,21 +1638,25 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         <div className="ui-field">
           <span className="ui-field-label">{tr("start.place")}</span>
           <div className="start-place">
-            <span className="start-place-chip">
-              <Icon name="new-folder" /> {tr("start.place_new_space")}
-            </span>
-            <input
-              type="text"
-              value={spaceName}
-              maxLength={SPACE_NAME_MAX}
-              readOnly={busy}
-              aria-label={tr("start.space_name_label")}
-              placeholder={tr("start.space_name_ph")}
-              onChange={(e) => setSpaceName(e.target.value)}
-            />
+            <SpacePlacePicker folder={spaceFolder} onChange={setSpaceFolder} disabled={busy} />
+            {!spaceFolder && (
+              <input
+                type="text"
+                value={spaceName}
+                maxLength={SPACE_NAME_MAX}
+                readOnly={busy}
+                aria-label={tr("start.space_name_label")}
+                placeholder={tr("start.space_name_ph")}
+                onChange={(e) => setSpaceName(e.target.value)}
+              />
+            )}
           </div>
           <span className="ui-field-hint">
-            <Trans k="start.space_note" components={[<code />]} />
+            {spaceFolder ? (
+              <Trans k="start.space_note_existing" vars={{ folder: spaceFolder }} components={[<code />]} />
+            ) : (
+              <Trans k="start.space_note" components={[<code />]} />
+            )}
           </span>
         </div>
         {filesStuck && <span className="ui-field-hint ui-field-hint--warn" role="status">{tr("launch.attach_not_taken")}</span>}
@@ -1665,7 +1673,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         {launchUnknown && unknownNote}
         <div className="start-space-actions">
           <Button variant="primary" icon="play" onClick={submit} disabled={busy || !canLaunch}>
-            {busy ? tr("launch.launching") : tr("start.space_launch")}
+            {busy ? tr("launch.launching") : tr(spaceFolder ? "start.space_launch_existing" : "start.space_launch")}
           </Button>
         </div>
       </div>

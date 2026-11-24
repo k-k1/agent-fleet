@@ -383,3 +383,91 @@ func TestHandlers(t *testing.T) {
 		t.Fatalf("list = %+v", list)
 	}
 }
+
+func TestCopyAttachmentKeepsTheMembersFileName(t *testing.T) {
+	withHome(t)
+	sp, err := Create("Reports")
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "paste-1.bin")
+	if err := os.WriteFile(src, []byte("quarterly"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, want string }{
+		{"売上 2026.xlsx", "売上 2026.xlsx"}, // Unicode and spaces survive: the member reads this name
+		{"../../etc/passwd", "passwd"},   // directory parts never reach the path
+		{`C:\Users\me\notes.txt`, "notes.txt"},
+		{"..", "file"}, // nothing usable
+		{".hidden.md", "hidden.md"},
+	} {
+		got, err := CopyAttachment(sp.Dir, src, c.name)
+		if err != nil {
+			t.Fatalf("%q: %v", c.name, err)
+		}
+		if want := filepath.Join(sp.Dir, AttachmentsDir, c.want); got != want {
+			t.Errorf("%q copied to %q, want %q", c.name, got, want)
+		}
+		if b, err := os.ReadFile(got); err != nil || string(b) != "quarterly" {
+			t.Errorf("%q: copy = %q, %v", c.name, b, err)
+		}
+	}
+}
+
+func TestCopyAttachmentNeverOverwrites(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Reports")
+	src := filepath.Join(t.TempDir(), "src")
+	_ = os.WriteFile(src, []byte("new"), 0o600)
+	first, err := CopyAttachment(sp.Dir, src, "report.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(first, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := CopyAttachment(sp.Dir, src, "report.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, _ := CopyAttachment(sp.Dir, src, "report.pdf")
+	if filepath.Base(second) != "report-2.pdf" || filepath.Base(third) != "report-3.pdf" {
+		t.Fatalf("second = %s, third = %s", second, third)
+	}
+	if b, _ := os.ReadFile(first); string(b) != "mine" {
+		t.Fatalf("the first file was overwritten: %q", b)
+	}
+}
+
+func TestCopyAttachmentCutsALongNameKeepingItsExtension(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Reports")
+	src := filepath.Join(t.TempDir(), "src")
+	_ = os.WriteFile(src, []byte("x"), 0o600)
+	got, err := CopyAttachment(sp.Dir, src, strings.Repeat("あ", 300)+".pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Base(got)
+	if n := len(base); n > attachmentNameMaxBytes || n < attachmentNameMaxBytes-3 || !strings.HasSuffix(base, ".pdf") {
+		t.Fatalf("name %q has %d bytes", base, n)
+	}
+}
+
+// An agent in the space can replace the attachments folder; the copy must not follow it out.
+func TestCopyAttachmentRefusesASymlinkedFolder(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Reports")
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(sp.Dir, AttachmentsDir)); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(t.TempDir(), "src")
+	_ = os.WriteFile(src, []byte("x"), 0o600)
+	if got, err := CopyAttachment(sp.Dir, src, "a.txt"); err == nil {
+		t.Fatalf("copied to %s through a symlinked folder", got)
+	}
+	if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+		t.Fatalf("the symlink target received %d file(s)", len(ents))
+	}
+}

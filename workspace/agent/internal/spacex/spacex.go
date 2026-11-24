@@ -424,3 +424,99 @@ func HandleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusCreated, createResponse{Space: sp})
 }
+
+// AttachmentsDir is the folder inside a space that holds the files attached to its sessions'
+// first prompts, so the member sees them next to their own work.
+const AttachmentsDir = "attachments"
+
+// attachmentNameMaxBytes bounds the name a copied attachment keeps. A file name is limited in
+// bytes (255 on the usual file systems), not characters, and a Japanese character takes three;
+// the margin leaves room for the "-2" a name collision adds.
+const attachmentNameMaxBytes = 200
+
+// attachmentName reduces a client-supplied file name to one safe, readable basename: directory
+// parts, control characters and leading dots dropped, a long name cut in the middle so its
+// extension survives. Unlike the agent-facing upload name, Unicode is kept: this is the name
+// the member sees, and a Japanese file name must not collapse to its extension.
+func attachmentName(name string) string {
+	base := name[strings.LastIndexAny(name, `/\`)+1:]
+	var b strings.Builder
+	for _, r := range base {
+		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	s := strings.Trim(strings.TrimLeft(b.String(), "."), " ")
+	if s == "" {
+		return "file"
+	}
+	if len(s) > attachmentNameMaxBytes {
+		ext := filepath.Ext(s)
+		if len(ext) > 32 {
+			ext = ""
+		}
+		stem := []rune(strings.TrimSuffix(s, ext))
+		for len(string(stem))+len(ext) > attachmentNameMaxBytes {
+			stem = stem[:len(stem)-1]
+		}
+		s = string(stem) + ext
+	}
+	return s
+}
+
+// CopyAttachment copies the file at src into dir/AttachmentsDir under name (see attachmentName)
+// and answers the copy's absolute path. A name already taken keeps both files: the copy gets
+// "-2", "-3" ... before its extension, claimed with O_EXCL so two copies at once never share one.
+// dir is the space's directory (a caller checked FolderOf); AttachmentsDir is never followed when
+// it is a symlink, so an agent that replaced it cannot send the member's files elsewhere.
+func CopyAttachment(dir, src, name string) (string, error) {
+	att := filepath.Join(dir, AttachmentsDir)
+	if fi, err := os.Lstat(att); err == nil {
+		if !fi.IsDir() {
+			return "", fmt.Errorf("%s is not a folder", AttachmentsDir)
+		}
+	} else if errors.Is(err, fs.ErrNotExist) {
+		if err := os.Mkdir(att, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+			return "", err
+		}
+		if fi, err := os.Lstat(att); err != nil || !fi.IsDir() {
+			return "", fmt.Errorf("%s is not a folder", AttachmentsDir)
+		}
+	} else {
+		return "", err
+	}
+	in, err := os.Open(src)
+	if err != nil {
+		return "", err
+	}
+	defer in.Close()
+	base := attachmentName(name)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	for n := 1; n < 1000; n++ {
+		cand := base
+		if n > 1 {
+			cand = fmt.Sprintf("%s-%d%s", stem, n, ext)
+		}
+		dest := filepath.Join(att, cand)
+		out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
+		if err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				continue
+			}
+			return "", err
+		}
+		if _, err := io.Copy(out, in); err != nil {
+			out.Close()
+			os.Remove(dest)
+			return "", err
+		}
+		if err := out.Close(); err != nil {
+			os.Remove(dest)
+			return "", err
+		}
+		return dest, nil
+	}
+	return "", errors.New("could not find a free attachment name")
+}
