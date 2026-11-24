@@ -297,6 +297,9 @@ export async function releasePushForSignOut(timeoutMs = 2500): Promise<void> {
     // One retry for a read that failed: reading nothing must not be taken for "no subscription".
     const sub = (await readSubscription().catch(() => readSubscription().catch(() => undefined))) ?? null;
     if (!sub) return void (await pending);
+    // The subscription read is not the one this sign-out was decided for (another tab replaced it
+    // meanwhile): it is that tab's registration, not ours to release or end.
+    if (binding && binding.endpoint !== sub.toJSON().endpoint) return void (await pending);
     // Both start now, side by side: a CP call that outlasts the deadline must not postpone ending
     // the browser's own subscription until after the page has navigated away.
     const json = sub.toJSON();

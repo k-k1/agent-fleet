@@ -40,7 +40,7 @@ type seqMark struct {
 // does not depend on when the last sweep ran.
 const seqTTL = 5 * time.Minute
 
-// maxSeqDevices bounds the seq marks one member can have on record; at the bound the oldest goes.
+// maxSeqDevices bounds the seq marks one member can have on record; at the bound a new device is not recorded.
 const maxSeqDevices = 64
 
 // maxViewDevices bounds the devices one member can have on record, so a client that sends a new
@@ -145,16 +145,16 @@ func (v *viewing) acceptSeq(member, device string, seq int64, now time.Time) boo
 		v.seqs[member] = ds
 	}
 	if _, known := ds[device]; !known && len(ds) >= maxSeqDevices {
-		oldest, oldAt := "", now
+		// Drop only expired marks. When every mark is still live the new device goes unrecorded
+		// (its reports apply in arrival order, as before): evicting a live mark would let a late
+		// report of that device revive a view inside the TTL.
 		for d, k := range ds {
 			if now.Sub(k.at) > seqTTL {
 				delete(ds, d)
-			} else if oldest == "" || k.at.Before(oldAt) {
-				oldest, oldAt = d, k.at
 			}
 		}
-		if len(ds) >= maxSeqDevices && oldest != "" {
-			delete(ds, oldest)
+		if len(ds) >= maxSeqDevices {
+			return true
 		}
 	}
 	ds[device] = seqMark{seq, now}

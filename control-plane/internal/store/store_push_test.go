@@ -182,6 +182,34 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 	if _, tok, err := st.AddPushSubscription(ctx, sub, 10); err != nil || tok != "tok-first" {
 		t.Fatalf("a same-owner re-registration rotated the token: %q %v", tok, err)
 	}
+	// Each of owner, p256dh and auth changing alone must take the new token (a non-empty one is held).
+	orig := sub
+	for name, mut := range map[string]func(*PushSubscription){
+		"owner":  func(p *PushSubscription) { p.MembershipID = a },
+		"p256dh": func(p *PushSubscription) { p.P256dh = "other-key" },
+		"auth":   func(p *PushSubscription) { p.Auth = "other-auth" },
+	} {
+		base := orig
+		base.ReleaseToken = "tok-held-" + name
+		if err := st.UpsertPushSubscription(ctx, base); err != nil { // back to the original owner and keys
+			t.Fatal(err)
+		}
+		_, held, err := st.AddPushSubscription(ctx, base, 10) // what the row holds now
+		if err != nil || held == "" {
+			t.Fatalf("%s: setup held=%q err=%v", name, held, err)
+		}
+		changed := orig
+		mut(&changed)
+		changed.ReleaseToken = "tok-changed-" + name
+		if _, tok, err := st.AddPushSubscription(ctx, changed, 10); err != nil || tok != "tok-changed-"+name || tok == held {
+			t.Fatalf("%s change kept the old token (held %q): %q %v", name, held, tok, err)
+		}
+	}
+	sub = orig
+	sub.ReleaseToken = "tok-first"
+	if err := st.UpsertPushSubscription(ctx, sub); err != nil {
+		t.Fatal(err)
+	}
 	// A token release applies only to the registration that wrote the current token.
 	sub.ReleaseToken = "tok-first"
 	if err := st.UpsertPushSubscription(ctx, sub); err != nil {

@@ -79,3 +79,16 @@ func TestViewingKeepsAClearUnderChurn(t *testing.T) {
 		t.Fatal("a late heartbeat revived the view after its clear was crowded out")
 	}
 }
+
+func TestViewingFullSeqMarksKeepTheLiveOnes(t *testing.T) {
+	var v viewing
+	now := time.Now()
+	v.set("m1", "d", "", 3, now)
+	for i := 0; i < maxSeqDevices+8; i++ {
+		v.set("m1", "other"+string(rune('a'+i%26))+string(rune('A'+i/26)), "s9", 1, now)
+	}
+	v.set("m1", "d", "s1", 2, now) // the heartbeat that overtook the clear
+	if v.on("m1", "s1", now) {
+		t.Fatal("a recorded clear was evicted by other devices")
+	}
+}
