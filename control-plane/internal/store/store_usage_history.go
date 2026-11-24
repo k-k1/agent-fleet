@@ -1,9 +1,11 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/usagehist"
@@ -105,6 +107,10 @@ type UsageHistoryStore interface {
 	// given override ran, each launch up to its End. It reads the launches, not the day rows, so
 	// an open launch counts up to its last sighting without waiting for a fold.
 	OverrideRunningSecs(ctx context.Context, membershipID, override string, from, to int64) (int64, error)
+	// TenantOverrideRunningSecs is OverrideRunningSecs for every membership of the tenant at
+	// once, by the same rule. Memberships with no seconds are left out; the rest come most
+	// seconds first.
+	TenantOverrideRunningSecs(ctx context.Context, tenantID, override string, from, to int64) ([]MemberRunningSecs, error)
 
 	// UsagePullCursor is how far the membership's Agent series has been folded (0 = never).
 	UsagePullCursor(ctx context.Context, membershipID string) (int64, error)
@@ -202,6 +208,62 @@ func (s *SQL) OverrideRunningSecs(ctx context.Context, membershipID, override st
 		total += min(end, to) - max(start, from)
 	}
 	return total, rows.Err()
+}
+
+// MemberRunningSecs is one membership's seconds from TenantOverrideRunningSecs, with the labels a
+// screen shows it by.
+type MemberRunningSecs struct {
+	MembershipID, UserKey, Email string
+	Secs                         int64
+}
+
+// TenantOverrideRunningSecs scopes by the membership's tenant, not the launch row's: a membership
+// belongs to exactly one tenant, and its launches are its own wherever the row says it ran.
+func (s *SQL) TenantOverrideRunningSecs(ctx context.Context, tenantID, override string, from, to int64) ([]MemberRunningSecs, error) {
+	if to <= from {
+		return nil, nil
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT l.membership_id, COALESCE(i.user_key,''), COALESCE(i.email,''), l.started_at, COALESCE(l.stopped_at, l.last_seen_at)
+		 FROM workspace_launch l
+		 JOIN membership m ON m.id = l.membership_id
+		 LEFT JOIN identity i ON i.id = m.identity_id
+		 WHERE m.tenant_id=? AND l.override=? AND l.started_at < ? AND COALESCE(l.stopped_at, l.last_seen_at) > ?`,
+		tenantID, override, to, from)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	byMember := map[string]*MemberRunningSecs{}
+	for rows.Next() {
+		var r MemberRunningSecs
+		var start, end int64
+		if err := rows.Scan(&r.MembershipID, &r.UserKey, &r.Email, &start, &end); err != nil {
+			return nil, err
+		}
+		cur, ok := byMember[r.MembershipID]
+		if !ok {
+			cur = &r
+			byMember[r.MembershipID] = cur
+		}
+		cur.Secs += min(end, to) - max(start, from)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	out := make([]MemberRunningSecs, 0, len(byMember))
+	for _, r := range byMember {
+		if r.Secs > 0 {
+			out = append(out, *r)
+		}
+	}
+	slices.SortFunc(out, func(a, b MemberRunningSecs) int {
+		if c := cmp.Compare(b.Secs, a.Secs); c != 0 {
+			return c
+		}
+		return cmp.Or(cmp.Compare(a.UserKey, b.UserKey), cmp.Compare(a.MembershipID, b.MembershipID))
+	})
+	return out, nil
 }
 
 func (s *SQL) ReopenLaunch(ctx context.Context, membershipID string, observedAt, closedSince int64) (Launch, bool, error) {

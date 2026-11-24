@@ -32,6 +32,16 @@ const (
 // nor show a number.
 type boostHoursCounter interface {
 	BoostedRunningHours(ctx context.Context, membershipID string, from, to time.Time) (hours float64, counted bool, err error)
+	// TenantBoostedRunningHours is the same count for every member of the tenant who has any,
+	// most first. It must agree with BoostedRunningHours member by member: the tenant admin
+	// reads an overrun from it that the member's own refusal was decided on.
+	TenantBoostedRunningHours(ctx context.Context, tenantID string, from, to time.Time) (members []memberBoostHours, counted bool, err error)
+}
+
+// memberBoostHours is one member's boosted running hours in a tenant-wide count.
+type memberBoostHours struct {
+	MembershipID, UserKey, Email string
+	Hours                        float64
 }
 
 // launchBoostHours counts from the CP's launch records (ADR 0139 decision 3): a launch the
@@ -43,6 +53,7 @@ type launchBoostHours struct{ st launchSecsReader }
 
 type launchSecsReader interface {
 	OverrideRunningSecs(ctx context.Context, membershipID, override string, from, to int64) (int64, error)
+	TenantOverrideRunningSecs(ctx context.Context, tenantID, override string, from, to int64) ([]store.MemberRunningSecs, error)
 }
 
 // boostHoursFor is the counter main wires: launchBoostHours while the usage sampler runs, nil
@@ -65,6 +76,24 @@ func (c launchBoostHours) BoostedRunningHours(ctx context.Context, membershipID 
 	return float64(secs) / 3600, true, nil
 }
 
+func (c launchBoostHours) TenantBoostedRunningHours(ctx context.Context, tenantID string, from, to time.Time) ([]memberBoostHours, bool, error) {
+	rows, err := c.st.TenantOverrideRunningSecs(ctx, tenantID, store.SizeOverrideBoost, from.Unix(), to.Unix())
+	if err != nil {
+		return nil, false, err
+	}
+	out := make([]memberBoostHours, len(rows))
+	for i, r := range rows {
+		out[i] = memberBoostHours{MembershipID: r.MembershipID, UserKey: r.UserKey, Email: r.Email, Hours: float64(r.Secs) / 3600}
+	}
+	return out, true, nil
+}
+
+// boostMonth is the window the budget counts: the current UTC month, up to now.
+func boostMonth() (from, now time.Time) {
+	now = boostNow().UTC()
+	return time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC), now
+}
+
 // boostBudget is a member's month so far against the tenant's budget.
 type boostBudget struct {
 	MonthlyHours int     `json:"monthly_hours"`
@@ -78,8 +107,7 @@ func (m *manager) boostBudgetOf(ctx context.Context, membershipID string, lim te
 	if m.boostHours == nil || lim.BoostMonthlyHours <= 0 {
 		return b
 	}
-	now := boostNow().UTC()
-	from := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+	from, now := boostMonth()
 	h, counted, err := m.boostHours.BoostedRunningHours(ctx, membershipID, from, now)
 	if err != nil || !counted {
 		return b // an unreadable count never locks a member out
@@ -370,6 +398,46 @@ type tenantBoostWire struct {
 	// BudgetCounted is false on a CP with no boostHoursCounter: the monthly budget is stored
 	// but not enforced.
 	BudgetCounted bool `json:"budget_counted"`
+	// Month ("2006-01", UTC) and Members are this month's boosted running hours of every member
+	// who has any, most first, from the count the budget is enforced on. Month is set only when
+	// the hours were read, and Members is then the whole answer (absent = nobody boosted); with
+	// no Month a screen shows no hours at all rather than a confident 0.
+	Month   string             `json:"month,omitempty"`
+	Members []tenantBoostUsage `json:"members,omitempty"`
+}
+
+// tenantBoostUsage is one member's month on the tenant's Boost card. OverHours is how far the
+// hours went past the budget: a running boosted workspace is never stopped at the budget, so
+// the count can pass it (ADR 0139 decision 5). It is 0 with no budget.
+type tenantBoostUsage struct {
+	UserKey   string  `json:"user_key"`
+	Email     string  `json:"email,omitempty"`
+	UsedHours float64 `json:"used_hours"`
+	Spent     bool    `json:"spent"`
+	OverHours float64 `json:"over_hours"`
+}
+
+// tenantBoostUsageOf is the Members of the wire, nil when it cannot be told. Spent uses the
+// same comparison boostBudgetOf refuses on.
+func (m *manager) tenantBoostUsageOf(ctx context.Context, tenantID string, monthlyHours int) (string, []tenantBoostUsage) {
+	if m.boostHours == nil {
+		return "", nil
+	}
+	from, now := boostMonth()
+	rows, counted, err := m.boostHours.TenantBoostedRunningHours(ctx, tenantID, from, now)
+	if err != nil || !counted {
+		return "", nil
+	}
+	out := make([]tenantBoostUsage, 0, len(rows))
+	for _, r := range rows {
+		u := tenantBoostUsage{UserKey: r.UserKey, Email: r.Email, UsedHours: r.Hours}
+		if monthlyHours > 0 {
+			u.Spent = r.Hours >= float64(monthlyHours)
+			u.OverHours = max(0, r.Hours-float64(monthlyHours))
+		}
+		out = append(out, u)
+	}
+	return from.Format("2006-01"), out
 }
 
 func (a workspaceAPI) tenantBoost(w http.ResponseWriter, r *http.Request) {
@@ -377,20 +445,23 @@ func (a workspaceAPI) tenantBoost(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a.writeTenantBoost(w, r.Context(), t)
+	a.writeTenantBoost(w, r.Context(), t, parseLimits(t.Limits))
 }
 
-func (a workspaceAPI) writeTenantBoost(w http.ResponseWriter, ctx context.Context, t store.Tenant) {
-	lim := parseLimits(t.Limits)
-	if fresh, err := a.mgr.store.GetTenant(ctx, t.ID); err == nil {
-		lim = parseLimits(fresh.Limits)
-	}
+// writeTenantBoost answers from the limits the caller hands it, never a re-read: after a PUT those
+// are the limits just saved, and a re-read that failed would fall back to the ones before the save
+// and judge the overrun against the old budget.
+func (a workspaceAPI) writeTenantBoost(w http.ResponseWriter, ctx context.Context, t store.Tenant, lim tenantLimits) {
 	p := a.mgr.workspaceSizing()
-	writeJSON(w, http.StatusOK, tenantBoostWire{
+	out := tenantBoostWire{
 		Tenant: t.Slug, Enabled: lim.BoostEnabled, MaxMemMiB: lim.BoostMaxMemMiB, MonthlyHours: lim.BoostMonthlyHours,
 		Editable:      p.MemMeaning == runtime.MemMeaningSlot,
 		BudgetCounted: a.mgr.boostHours != nil,
-	})
+	}
+	if out.Editable {
+		out.Month, out.Members = a.mgr.tenantBoostUsageOf(ctx, t.ID, lim.BoostMonthlyHours)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // setTenantBoost (PUT /api/admin/tenants/{slug}/boost) — tenant_admin of THAT tenant only
@@ -445,7 +516,7 @@ func (a workspaceAPI) setTenantBoost(w http.ResponseWriter, r *http.Request) {
 		Action: "tenant.boost", Target: t.Slug, At: store.NowTS(),
 		Detail: fmt.Sprintf("enabled=%t max_mem_mib=%d monthly_hours=%d", body.Enabled, body.MaxMemMiB, body.MonthlyHours),
 	})
-	a.writeTenantBoost(w, r.Context(), t)
+	a.writeTenantBoost(w, r.Context(), t, lim)
 }
 
 // declaresRung: some declared class has a rung of exactly this memory.

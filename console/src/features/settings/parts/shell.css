@@ -841,6 +841,22 @@
   color: var(--on-accent);
 }
 
+/* This month's boosted hours on the Boost card: one member per line, the over-budget note in the
+   warning colour beside the hours it qualifies. */
+.boost-policy .boost-usage {
+  margin-top: 12px;
+}
+
+.boost-policy .boost-usage-list {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+  list-style: disc;
+}
+
+.boost-policy .boost-usage-hours {
+  font-variant-numeric: tabular-nums;
+}
+
 /* The one-line spec under each machine chip: what the class actually buys. Monospace
    for the instance types so the ranges line up down the list. */
 .machine-picker .machine-specs {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -338,6 +339,40 @@ func checkOverrideRunningSecs(t *testing.T, st *SQL) {
 		if got, err := st.OverrideRunningSecs(ctx, mem.ID, "boost", w[0], w[1]); err != nil || got != 0 {
 			t.Fatalf("window %v counted %d (%v), want 0", w, got, err)
 		}
+	}
+
+	// The tenant-wide read: the same rule per member, most first, members with nothing left out,
+	// and a membership of another tenant is not in it even though it ran boosted.
+	tn2, err := st.CreateTenant(ctx, "elsewhere", "Elsewhere")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outsider, _ := st.EnsureMembership(ctx, ident.ID, tn2.ID, "member")
+	begin("L6", outsider.ID, "boost", h(0))
+	end(outsider.ID, h(9))
+	ident3, _ := st.UpsertIdentity(ctx, "c@x.com", "c-x-com", "")
+	idle, _ := st.EnsureMembership(ctx, ident3.ID, tn.ID, "member")
+	begin("L7", idle.ID, "", h(0))
+	end(idle.ID, h(9))
+	all, err := st.TenantOverrideRunningSecs(ctx, tn.ID, "boost", month, h(100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []MemberRunningSecs{
+		{MembershipID: other.ID, UserKey: "b-x-com", Email: "b@x.com", Secs: 50 * 3600},
+		{MembershipID: mem.ID, UserKey: "a-x-com", Email: "a@x.com", Secs: int64(3.5 * 3600)},
+	}
+	if !reflect.DeepEqual(all, want) {
+		t.Fatalf("tenant boosted secs = %+v, want %+v", all, want)
+	}
+	if all, _ := st.TenantOverrideRunningSecs(ctx, tn.ID, "boost", month, h(41)); len(all) != 2 || all[1].Secs != 3*3600 || all[0].Secs != 41*3600 {
+		t.Fatalf("clipped at the end = %+v", all)
+	}
+	if all, err := st.TenantOverrideRunningSecs(ctx, tn.ID, "boost", h(41), h(41)); err != nil || len(all) != 0 {
+		t.Fatalf("an empty window = %+v (%v)", all, err)
+	}
+	if all, _ := st.TenantOverrideRunningSecs(ctx, tn2.ID, "boost", month, h(100)); len(all) != 1 || all[0].Secs != 9*3600 {
+		t.Fatalf("the other tenant = %+v", all)
 	}
 
 	// ReopenLaunch: never while a launch is open; then only the newest, only when it was
