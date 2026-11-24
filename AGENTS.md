@@ -140,9 +140,10 @@ processes (`AF_MEMORYX_SHARDS=1` for the plain serial run): about 30 s on an idl
 minutes under load, against 1.5–3.5 minutes serially. A busy host can still stretch that
 past `go test`'s default 10-minute timeout, so keep `-timeout 20m` for the module.
 
-Expect the `control-plane` root package to take about 95–115 s in CI: the `ok` line of the
-`control-plane` job on green `main` runs read 114.3 s (run 43591247547), 98.7 s, 93.2 s, 103.3 s
-and 106.6 s. Locally on this shared host it is far slower and depends on the load: the #3523
+Expect the `control-plane` root package to take about 400–557 s in CI (measured on `main`
+on 2026-11-24, up from 95–115 s), against `go test`'s default 10-minute timeout, so the
+`control-plane` job in `ci.yml` passes `-timeout 20m`. Why it quadrupled is open work in #5119.
+Locally on this shared host it is far slower and depends on the load: the #3523
 baseline measured 4772 s (79.5 min), and the full local run has not been re-measured since. Run
 it once, in the background, with `go test -p 2 -timeout 150m .` and poll the output file.
 
