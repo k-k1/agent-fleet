@@ -252,13 +252,12 @@ async function takeBack(json: PushSubscriptionJSON, sub: PushSubscription): Prom
  * Drops this browser's own subscription after its CP row is already gone (the device list's
  * "remove" on this very device): nothing more to tell the CP.
  */
-export async function dropLocalSubscription(endpoint = ""): Promise<void> {
+export async function dropLocalSubscription(endpoint: string): Promise<void> {
   const sub = await currentSubscription();
-  if (!sub) return void forgetDeviceId();
   // Another subscription may have replaced the one whose row was removed while the CP was
   // answering; that one is a different device registration and stays. The endpoint is the one the
   // screen showed for this device (no hashing here: nothing after the CP's answer may wait).
-  if (endpoint && sub.endpoint !== endpoint) return;
+  if (!sub || !endpoint || sub.endpoint !== endpoint) return;
   forgetDeviceId();
   await sub?.unsubscribe().catch(() => {});
 }

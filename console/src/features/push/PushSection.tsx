@@ -62,8 +62,9 @@ export function PushSection() {
 
   // Only the newest read is shown: one that outlived its limit must not overwrite a later one.
   const readSeq = useRef(0);
-  // The endpoint of the subscription the list was read with, for "remove this device".
-  const myEndpoint = useRef("");
+  // This device's row id and the endpoint it was shown with, as one snapshot: "remove" takes both
+  // before its first await, so a later read cannot give it a different pair.
+  const me = useRef({ id: "", endpoint: "" });
   const loadDevices = useCallback(async (k: string) => {
     const mine = ++readSeq.current;
     try {
@@ -75,7 +76,7 @@ export function PushSection() {
       // falls back to the stored id rather than holding the list back.
       const id = sub ? await withTimeout(deviceIdFor(sub), ID_TIMEOUT_MS).catch(() => thisDeviceId()) : "";
       if (mine !== readSeq.current) return;
-      myEndpoint.current = sub?.endpoint ?? "";
+      me.current = { id, endpoint: sub?.endpoint ?? "" };
       setDevices(d);
       setMyId(id);
       setStale(!!sub && !matches);
@@ -147,11 +148,12 @@ export function PushSection() {
   };
 
   const remove = async (d: PushDevice) => {
+    const self = me.current;
     setBusy(true);
     try {
       await removePushDevice(d.id);
       // Removing this very device also ends the browser's own subscription.
-      if (d.id === myId) await dropLocalSubscription(myEndpoint.current).catch(() => {});
+      if (self.id && d.id === self.id) await dropLocalSubscription(self.endpoint).catch(() => {});
     } catch (e) {
       fail(e);
     } finally {

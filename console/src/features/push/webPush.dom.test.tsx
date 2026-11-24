@@ -357,6 +357,12 @@ describe("web push device lifecycle", () => {
     await enablePush("AQAB", (k) => seen.push(k));
     expect(seen).toEqual(["AgAB"]);
   });
+  it("dropLocalSubscription does nothing without the endpoint it was told about", async () => {
+    localStorage.setItem("af-push-sub-id", "dev1");
+    await dropLocalSubscription("");
+    expect(unsubscribed).toBe(0);
+    expect(localStorage.getItem("af-push-sub-id")).toBe("dev1");
+  });
   it("dropLocalSubscription leaves a subscription alone when it is not the one whose row was removed", async () => {
     Object.assign(sub, { endpoint: "https://push.example/x" });
     localStorage.setItem("af-push-sub-id", "dev1");
@@ -387,8 +393,9 @@ describe("web push device lifecycle", () => {
     expect(subscribed).toBe(1);
   });
   it("dropLocalSubscription ends the browser side only and forgets the id", async () => {
+    Object.assign(sub, { endpoint: "https://push.example/x" });
     localStorage.setItem("af-push-sub-id", "dev1");
-    await dropLocalSubscription();
+    await dropLocalSubscription("https://push.example/x");
     expect(unsubscribed).toBe(1);
     expect(removed).toEqual([]);
     expect(released).toEqual([]);

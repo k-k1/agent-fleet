@@ -13,6 +13,8 @@ let idGate: Promise<void> | null = null;
 let listHangs = false;
 let subHangs = false;
 let idHangs = false;
+let firstListGate: Promise<void> | null = null; // holds the first list read only, which then answers with no devices
+let listCalls = 0;
 let listGate: Promise<void> | null = null;
 const puts: string[][] = [];
 vi.mock("./pushApi.ts", async (orig) => ({
@@ -23,7 +25,7 @@ vi.mock("./pushApi.ts", async (orig) => ({
     puts.push(o);
     return Promise.resolve();
   },
-  listPushDevices: () => (listHangs ? new Promise<never>(() => {}) : listGate ? listGate : Promise.resolve()).then(() => [{ id: "d1", userAgent: "Mozilla/5.0 (iPhone) Safari/605", createdAt: "2026-11-22T00:00:00Z", lastOkAt: "" }]),
+  listPushDevices: () => (listCalls++ === 0 && firstListGate ? firstListGate.then(() => []) : listHangs ? new Promise<never>(() => {}) : listGate ? listGate : Promise.resolve()).then(() => [{ id: "d1", userAgent: "Mozilla/5.0 (iPhone) Safari/605", createdAt: "2026-11-22T00:00:00Z", lastOkAt: "" }]),
   removePushDevice: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("./webPush.ts", () => ({
@@ -65,6 +67,8 @@ beforeEach(() => {
   listHangs = false;
   subHangs = false;
   idHangs = false;
+  firstListGate = null;
+  listCalls = 0;
   listGate = null;
   puts.length = 0;
 });
@@ -235,6 +239,33 @@ describe("PushSection", () => {
     await act(async () => void sw.click()); // on again
     await flush();
     expect(enable.mock.calls.map((c) => c[0])).toEqual(["k1", "k2"]);
+  });
+  it("drops a read that answers after its limit instead of letting it overwrite a newer one", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    sub = {};
+    let late!: () => void;
+    firstListGate = new Promise<void>((r) => (late = r));
+    const host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    act(() => root!.render(<PushSection />));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(100)));
+    await act(async () => void (await vi.advanceTimersByTimeAsync(10_100))); // the first read gave up
+    const sw = host.querySelector<HTMLInputElement>("label input[role=switch]")!;
+    expect(sw.disabled).toBe(false);
+    matchKey = "k"; // a newer read: the subscription is current and the CP lists it
+    vi.mocked(webPush.enablePush).mockResolvedValue("ok");
+    await act(async () => void sw.click());
+    await act(async () => void (await vi.advanceTimersByTimeAsync(100)));
+    expect(sw.checked).toBe(true);
+    expect(host.querySelector(".push-devices")).not.toBeNull();
+    await act(async () => {
+      late(); // the first read now answers with an empty list
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(sw.checked).toBe(true);
+    expect(host.querySelector(".push-devices")).not.toBeNull();
+    vi.useRealTimers();
   });
   it("counts a matching subscription as on when its row id cannot be told at all", async () => {
     sub = {};
