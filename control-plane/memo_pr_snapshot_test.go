@@ -403,10 +403,10 @@ func TestMemoPRSnapshotListPages(t *testing.T) {
 	})
 }
 
-// More members whose workspaces are recorded as stopped than the tick has pages, each ahead of a
-// running workspace's snapshot: they are listed last, so the running one is read, and theirs stay
-// unstamped (read at the start).
-func TestMemoPRSnapshotStoppedMembersLast(t *testing.T) {
+// More stopped members than the tick has pages, each ahead of a running workspace's snapshot: the
+// tick reaches them alone, and the next tick leaves out from its first page those it still finds
+// stopped, so the running one is read. Theirs stay unstamped (read at the start).
+func TestMemoPRSnapshotStoppedMembersCarried(t *testing.T) {
 	saved := memoPRSnapshotsListed
 	memoPRSnapshotsListed = 1
 	t.Cleanup(func() { memoPRSnapshotsListed = saved })
@@ -415,14 +415,37 @@ func TestMemoPRSnapshotStoppedMembersLast(t *testing.T) {
 		agent, q, da, _ := e.prChain("clean", now.Add(-time.Minute))
 		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
 		views, stopped := e.stoppedMembers(q, memoPRSnapshotListPages+1, now.Add(-time.Minute), "")
-		e.runner().collectPRSnapshots(context.Background(), views, now)
+		r := e.runner()
+		r.collectPRSnapshots(context.Background(), views(), now)
+		if got := e.delivery(da.ID); got.PRState != "" {
+			t.Fatalf("read in the first tick, so the test does not need the carry: %+v", got)
+		}
+		r.collectPRSnapshots(context.Background(), views(), now.Add(time.Minute))
+		if got := e.delivery(da.ID); got.PRState != store.PRStateMerged {
+			t.Fatalf("the running workspace's snapshot in the next tick: %+v", got)
+		}
 		for _, id := range stopped {
 			if got := e.delivery(id); got.PRTriedAt != "" || got.PRState != "" {
 				t.Fatalf("a stopped workspace's snapshot was stamped or read: %+v", got)
 			}
 		}
+	})
+}
+
+// A member left out on the last tick whose workspace runs now is read in the tick.
+func TestMemoPRSnapshotCarriedMemberThatStartedIsRead(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.prChain("clean", now.Add(-time.Minute))
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
+		r := e.runner()
+		r.collectPRSnapshots(context.Background(), map[string]*memoMemberView{e.members["a"]: {mirrorOK: true}}, now)
+		if got := e.delivery(da.ID); got.PRTriedAt != "" || len(r.prSkipped) != 1 {
+			t.Fatalf("stopped: stamped %q, carried %v", got.PRTriedAt, r.prSkipped)
+		}
+		r.collectPRSnapshots(context.Background(), map[string]*memoMemberView{}, now.Add(time.Minute))
 		if got := e.delivery(da.ID); got.PRState != store.PRStateMerged {
-			t.Fatalf("the running workspace's snapshot behind them: %+v", got)
+			t.Fatalf("not read in the tick after the start: %+v", got)
 		}
 	})
 }

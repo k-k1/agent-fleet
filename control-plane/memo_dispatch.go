@@ -1272,15 +1272,25 @@ type memoPRSnapshotReply struct {
 // not final, and they were not tried in the last 10 minutes. Only a running workspace whose Agent
 // has the endpoint is asked; every other read decides nothing, and the dependent waits. The list
 // is paged as collectAnswers pages its waited-for one: a member whose rows are left unstamped is
-// left out of the next pages, and members whose workspace is recorded as stopped come last.
+// left out of the next pages, and of the next tick's from the first while it still is.
 func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
 	read := 0
+	var after *store.MemoDelivery
 	var except []string
+	for _, m := range r.prSkipped {
+		if ctx.Err() != nil {
+			break
+		}
+		if _, skip := r.prView(ctx, views, m); skip {
+			except = memoExceptAdd(except, m)
+		}
+	}
+	defer func() { r.prSkipped = except }()
 	for p := 0; p < memoPRSnapshotListPages; p++ {
 		if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
 			return
 		}
-		ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, store.DeliveryTS(now.Add(-memoPRSnapshotEvery)), except, memoPRSnapshotsListed)
+		ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, store.DeliveryTS(now.Add(-memoPRSnapshotEvery)), after, except, memoPRSnapshotsListed)
 		if err != nil {
 			log.Printf("memo queue: list PR snapshots due: %v", err)
 			return
@@ -1289,7 +1299,26 @@ func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[stri
 		if len(ds) < memoPRSnapshotsListed {
 			return
 		}
+		after = &ds[len(ds)-1]
 	}
+}
+
+// prView is the snapshot pass's view of a member, and whether the pass leaves the member's rows
+// unstamped: its workspace is not running, or its Agent has no snapshot route or did not answer
+// the session list. A view this pass resolved whose list could not be read is not kept for the
+// answer pass that follows: it resolves the member again within its own budget, as it did when
+// this pass read only its first page, instead of taking the member for unreachable and stamping
+// its answer unread.
+func (r *memoQueueRunner) prView(ctx context.Context, views map[string]*memoMemberView, membershipID string) (*memoMemberView, bool) {
+	_, had := views[membershipID]
+	v := r.view(ctx, views, membershipID)
+	if v != nil && v.liveOK && v.prs {
+		return v, false
+	}
+	if !had && (v == nil || (!v.liveOK && !v.mirrorOK)) {
+		delete(views, membershipID)
+	}
+	return v, true
 }
 
 // memoPRSnapshotsListed is a page of collectPRSnapshots' list. A variable only so a test can page
@@ -1306,15 +1335,8 @@ func (r *memoQueueRunner) readPRSnapshotsOf(ctx context.Context, views map[strin
 		}
 		// Only a read that is made is stamped: a stamp on a stopped workspace's snapshot would keep
 		// the wake made for it from being read for 10 minutes after the start.
-		_, had := views[d.MembershipID]
-		v := r.view(ctx, views, d.MembershipID)
-		if v == nil || !v.liveOK || !v.prs {
-			if !had && ctx.Err() != nil {
-				// Resolved as this pass's budget ran out: not kept, so the answer pass after it
-				// resolves the member within its own budget instead of taking it for unreachable.
-				delete(views, d.MembershipID)
-				return read, except
-			}
+		v, skip := r.prView(ctx, views, d.MembershipID)
+		if skip {
 			except = memoExceptAdd(except, d.MembershipID)
 			continue
 		}

@@ -573,14 +573,13 @@ func TestMemoAnswerUnansweredAgentIsStamped(t *testing.T) {
 	})
 }
 
-// stoppedMembers adds n members whose workspaces are recorded as stopped, each with a chain like
-// otherMemberChains', closed before closedAt, and answers the views a tick has of them (stopped)
-// and their deliveries.
-func (e *deliveryEnv) stoppedMembers(q string, n int, closedAt time.Time, prState string) (map[string]*memoMemberView, []string) {
+// stoppedMembers adds n members, each with a chain like otherMemberChains', closed before
+// closedAt, and answers the views a tick has of them (their workspaces stopped) and their
+// deliveries.
+func (e *deliveryEnv) stoppedMembers(q string, n int, closedAt time.Time, prState string) (func() map[string]*memoMemberView, []string) {
 	e.t.Helper()
 	ctx := context.Background()
-	views := map[string]*memoMemberView{}
-	var ids []string
+	var members, ids []string
 	for i := 0; i < n; i++ {
 		name := fmt.Sprintf("stopped%d", i)
 		email := name + "@example.com"
@@ -593,21 +592,23 @@ func (e *deliveryEnv) stoppedMembers(q string, n int, closedAt time.Time, prStat
 			e.t.Fatal(err)
 		}
 		e.members[name] = mem.ID
-		if err := e.st.CreateWorkspace(ctx, store.Workspace{ID: "ws-" + name, TenantID: e.t1.ID, MembershipID: mem.ID,
-			ContainerName: name, Network: "n", DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "stopped",
-			CreatedAt: store.NowTS()}); err != nil {
-			e.t.Fatal(err)
-		}
-		views[mem.ID] = &memoMemberView{mirrorOK: true}
+		members = append(members, mem.ID)
 		ids = append(ids, e.otherMemberChains(q, name, 1, closedAt.Add(-time.Duration(i)*time.Minute), prState)...)
+	}
+	views := func() map[string]*memoMemberView {
+		v := map[string]*memoMemberView{}
+		for _, m := range members {
+			v[m] = &memoMemberView{mirrorOK: true}
+		}
+		return v
 	}
 	return views, ids
 }
 
-// More members whose workspaces are recorded as stopped than the tick has pages, each ahead of a
-// running workspace's row: they are listed last, so the running one is read, and theirs stay
-// unstamped (read at the start).
-func TestMemoAnswerStoppedMembersLast(t *testing.T) {
+// More stopped members than the tick has pages, each ahead of a running workspace's row: the tick
+// reaches them alone, and the next tick leaves out from its first page those it still finds
+// stopped, so the running one is read. Theirs stay unstamped (read at the start).
+func TestMemoAnswerStoppedMembersCarried(t *testing.T) {
 	saved := memoAnswersListed
 	memoAnswersListed = 1
 	t.Cleanup(func() { memoAnswersListed = saved })
@@ -616,39 +617,69 @@ func TestMemoAnswerStoppedMembersLast(t *testing.T) {
 		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
 		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: behind the stopped members"))
 		views, stopped := e.stoppedMembers(q, memoAnswerListPages+1, now.Add(-time.Minute), store.PRStateNone)
-		e.runner().collectAnswers(context.Background(), views, now)
+		r := e.runner()
+		r.collectAnswers(context.Background(), views(), now)
+		if got := e.delivery(da.ID); got.AnswerClass != "" {
+			t.Fatalf("read in the first tick, so the test does not need the carry: %+v", got)
+		}
+		r.collectAnswers(context.Background(), views(), now.Add(time.Minute))
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
+			t.Fatalf("the running workspace's row in the next tick: %q %q", got.AnswerHead, got.AnswerClass)
+		}
 		for _, id := range stopped {
 			if got := e.delivery(id); got.AnswerTriedAt != "" || got.AnswerClass != "" {
 				t.Fatalf("a stopped workspace's row was stamped or read: %+v", got)
 			}
 		}
+	})
+}
+
+// A member left out as stopped on the last tick whose workspace runs now is not left out: its row
+// is read in the tick, as it was before the carry.
+func TestMemoAnswerCarriedMemberThatStartedIsRead(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, _, da, _ := e.noPRChain(now.Add(-time.Minute))
+		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: right after the start"))
+		r := e.runner()
+		r.collectAnswers(context.Background(), map[string]*memoMemberView{e.members["a"]: {mirrorOK: true}}, now)
+		if got := e.delivery(da.ID); got.AnswerTriedAt != "" || len(r.answerSkipped) != 1 {
+			t.Fatalf("stopped: stamped %q, carried %v", got.AnswerTriedAt, r.answerSkipped)
+		}
+		r.collectAnswers(context.Background(), map[string]*memoMemberView{}, now.Add(time.Minute))
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
-			t.Fatalf("the running workspace's row behind them: %q %q", got.AnswerHead, got.AnswerClass)
+			t.Fatalf("not read in the tick after the start: %q %q", got.AnswerHead, got.AnswerClass)
+		}
+		if len(r.answerSkipped) != 0 {
+			t.Fatalf("still carried %v", r.answerSkipped)
 		}
 	})
 }
 
-// A member the PR snapshot pass resolves as its budget runs out is not kept as unreachable: the
-// answer pass after it, in the same tick, resolves it within its own budget and reads its answer.
-func TestMemoAnswerNotStarvedByThePRPassBudget(t *testing.T) {
+// A member whose session list the PR snapshot pass could not read is not kept as unreachable: the
+// answer pass after it, in the same tick, resolves it again and reads its answer.
+func TestMemoAnswerNotStarvedByThePRPass(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, _, da, _ := e.prChain("clean", now.Add(-time.Minute))
 		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer() })
 		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: read in the same tick"))
 		agent.mu.Lock()
-		agent.sessionsDelay = time.Second
+		agent.sessionsFailNext = 1
 		agent.mu.Unlock()
 		views := map[string]*memoMemberView{}
-		pctx, pcancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		e.runner().collectPRSnapshots(pctx, views, now)
-		pcancel()
+		r := e.runner()
+		r.collectPRSnapshots(context.Background(), views, now)
 		if got := e.delivery(da.ID); got.PRState != "" || got.PRTriedAt != "" {
-			t.Fatalf("the PR pass read past its budget: %+v", got)
+			t.Fatalf("the PR pass read without a session list: %+v", got)
 		}
-		actx, acancel := context.WithTimeout(context.Background(), memoAnswerBudget)
-		defer acancel()
-		e.runner().collectAnswers(actx, views, now)
+		agent.mu.Lock()
+		left := agent.sessionsFailNext
+		agent.mu.Unlock()
+		if left != 0 {
+			t.Fatal("the PR pass never asked for the session list")
+		}
+		r.collectAnswers(context.Background(), views, now)
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
 			t.Fatalf("the answer pass after it: %q %q (tried %q)", got.AnswerHead, got.AnswerClass, got.AnswerTriedAt)
 		}
@@ -675,8 +706,11 @@ func TestMemoAnswerWindowAfterALockWait(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer tx.Rollback()
-		var one int
+		var one, holder int
 		if err := tx.QueryRowContext(ctx, `SELECT 1 FROM memo_delivery WHERE id=? FOR UPDATE`, da.ID).Scan(&one); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.QueryRowContext(ctx, `SELECT pg_backend_pid()`).Scan(&holder); err != nil {
 			t.Fatal(err)
 		}
 		type result struct {
@@ -692,7 +726,8 @@ func TestMemoAnswerWindowAfterALockWait(t *testing.T) {
 			if time.Now().After(edge) {
 				t.Fatal("RecordAnswer never waited on the lock before the edge")
 			}
-			if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_locks WHERE NOT granted`).Scan(&waiting); err != nil {
+			if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid))`,
+				holder).Scan(&waiting); err != nil {
 				t.Fatal(err)
 			}
 		}

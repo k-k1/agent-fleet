@@ -690,6 +690,11 @@ type memoQueueRunner struct {
 	tidyJobs []func(context.Context)
 	// tidyCallWait is the wait for the Agent's tidy answer, memoTidyCallWait when zero.
 	tidyCallWait time.Duration
+	// answerSkipped and prSkipped are the members the answer pass's waited-for list and the PR
+	// snapshot pass left out on the last tick, their rows unstamped (memoSkipCarried). In this
+	// process only, as settleOrder: they only order the work.
+	answerSkipped []string
+	prSkipped     []string
 }
 
 func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
@@ -1860,32 +1865,62 @@ type memoAnswerReply struct {
 // collectAnswers reads the answers that are due: first those a pending message waits for, then
 // the rest, which only the run history shows. A waited-for one is not stamped while its workspace
 // is known to be stopped, so it is read as soon as the workspace runs (a dependent's wait wakes
-// it, prWake), and the list's next pages leave that member out. The list puts the members whose
-// workspace is recorded as stopped last, so their rows cannot hide a running workspace's behind
-// them however many there are. Every other row is stamped when it is reached, read or not: an
-// Agent that does not answer is tried again after memoAnswerEvery, and the rows behind it are
-// reached meanwhile. A row the page reached is thus stamped or its member left out, and the next
-// page goes on from the rows left.
+// it, prWake), and the list's next pages leave that member out. The members so left out are kept
+// for the next tick, whose list leaves out from its first page those still stopped by this tick's
+// view (memoSkipCarried): their rows cannot hide a running workspace's behind them, however many
+// members or rows they are, and one that started is read at once. Every other row is stamped when
+// it is reached, read or not: an Agent that does not answer is tried again after
+// memoAnswerEvery, and the rows behind it are reached meanwhile.
 func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
 	read := 0
 	for _, waited := range []bool{true, false} {
+		var after *store.MemoDelivery
 		var except []string // the members whose rows this list leaves unstamped
-		for p := 0; p < memoAnswerListPages; p++ {
+		if waited {
+			except = r.memoSkipCarried(ctx, views, r.answerSkipped, func(v *memoMemberView) bool { return v != nil && v.mirrorOK })
+		}
+		done := false
+		for p := 0; p < memoAnswerListPages && !done; p++ {
 			if ctx.Err() != nil || read >= memoAnswersPerTick {
-				return
+				done = true
+				break
 			}
 			ds, err := r.mgr.store.ListAnswersDue(ctx, store.DeliveryTS(now.Add(-memoAnswerWindow)),
-				store.DeliveryTS(now.Add(-memoAnswerEvery)), waited, except, memoAnswersListed)
+				store.DeliveryTS(now.Add(-memoAnswerEvery)), waited, after, except, memoAnswersListed)
 			if err != nil {
 				log.Printf("memo queue: list answers due: %v", err)
-				return
+				done = true
+				break
 			}
 			read, except = r.readAnswersOf(ctx, views, ds, waited, read, except, now)
 			if len(ds) < memoAnswersListed {
 				break
 			}
+			after = &ds[len(ds)-1]
+		}
+		if waited {
+			r.answerSkipped = except
+		}
+		if done {
+			return
 		}
 	}
+}
+
+// memoSkipCarried starts a pass's except list: the members of carried (those the pass left out on
+// the last tick) that skip still holds for in this tick's view. A member whose workspace started
+// meanwhile is not left out, so its rows are read in this tick as before.
+func (r *memoQueueRunner) memoSkipCarried(ctx context.Context, views map[string]*memoMemberView, carried []string, skip func(*memoMemberView) bool) []string {
+	var except []string
+	for _, m := range carried {
+		if ctx.Err() != nil {
+			break
+		}
+		if skip(r.view(ctx, views, m)) {
+			except = memoExceptAdd(except, m)
+		}
+	}
+	return except
 }
 
 // memoAnswersListed is a page of collectAnswers' lists. A variable only so a test can page with
