@@ -414,7 +414,11 @@ Memos you accumulate and send to a session in one go (the tables are
   `memo_queue_memo_not_ready` and the reason (held, already in a run, prerequisites, start time,
   hand-back time) instead of taking another one, and a 404 for a message that is not in the
   category (checked before the queue's limits). It is a route of its own so that a replica that
-  predates it answers 404 and starts nothing. The quota is checked again in the move to `sending`, under the membership lock,
+  predates it answers 404 and starts nothing. The claim walks messages marked "Run next"
+  (`memo.run_next`, #5021) first, then the oldest; the mark changes no eligibility. `POST /api/memos/{id}/run-next`
+  `{"runNext": true|false}` (Console only, not on the token face or `/mcp`) sets or clears it on a `held` or `pending`
+  message of a queue that no delivery has claimed (`409 memo_locked` otherwise, `409 memo_in_queue` for a plain note) and
+  answers the message; the memo DTO carries `runNext` only on such a message. The quota is checked again in the move to `sending`, under the membership lock,
   so two sends of one member cannot both pass it. The send runs on the scheduler's
   next tick (§3.7): wake and wait as a schedule does, reserve the durable Agent key
   `q_<delivery>`, move the delivery to `sending` with a conditional write on its state,

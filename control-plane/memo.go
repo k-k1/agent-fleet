@@ -117,6 +117,10 @@ type memoDTO struct {
 	// Existing is set on the answer of a create into a queue that found the same reference
 	// already waiting there: the message returned is that one, and nothing was added.
 	Existing bool `json:"existing,omitempty"`
+	// RunNext is the member's "Run next" mark on a waiting message (setRunNext, memo_queue.go): the claim
+	// takes it before the oldest. Written only by POST /api/memos/{id}/run-next; validateMemo and
+	// memoPatch never read it, so no create or edit sets it.
+	RunNext bool `json:"runNext,omitempty"`
 	// The tidy fields of ADR 0137 section 8, written by the CP. DerivedFrom is the source ids of a
 	// message a tidy run made (Provenance is then "curator" and SourceProvenance the provenance of
 	// its sources), TidyRunID the run that made, moved or superseded the row, and TidyFrom the
@@ -157,6 +161,10 @@ func memoToDTO(m store.Memo) memoDTO {
 	}
 	if m.State == store.MemoStatePending {
 		d.NotBefore = m.NotBefore
+	}
+	// A claimed or sent row may keep the column set; the mark means something only while it waits.
+	if (m.State == store.MemoStateHeld || m.State == store.MemoStatePending) && m.DeliveryID == "" && m.SentAt == "" {
+		d.RunNext = m.RunNext
 	}
 	d.DeferCount = m.DeferCount
 	if m.TidyFrom != "" {

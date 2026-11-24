@@ -1154,3 +1154,56 @@ func memoHoldInvalidRecipes(tx store.MemoTxOps, q store.MemoQueue, rows []store.
 	}
 	return out, nil
 }
+
+// memoRunNextIn is the body of POST /api/memos/{id}/run-next: true sets the mark, false clears it.
+// A pointer, so an empty body is refused instead of read as a clear.
+type memoRunNextIn struct {
+	RunNext *bool `json:"runNext"`
+}
+
+// setRunNext is POST /api/memos/{id}/run-next: the member's "Run next" / "Clear run next" on a
+// waiting message of a queue (issue #5021). The mark only decides which eligible message the
+// claim takes first (memoReserveAndClaim); it never makes a message eligible.
+//
+// Console only, like Run now: every session of the workspace holds the token face, so a run that
+// read an injected message could otherwise move its own messages ahead of the member's.
+func (a memoAPI) setRunNext(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
+	var in memoRunNextIn
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.RunNext == nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "runNext (true or false) is required"})
+		return
+	}
+	id := r.PathValue("id")
+	var out memoDTO
+	err := a.store.MemoTx(r.Context(), mv.MembershipID, func(tx store.MemoTxOps) error {
+		m, ok, err := tx.GetMemo(id)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return memoTxFail(&apiError{http.StatusNotFound, "not_found", "memo not found"})
+		}
+		inQ, err := memoInQueue(tx, m.Repo, m.Category)
+		if err != nil {
+			return err
+		}
+		if !inQ {
+			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoInQueue, "this memo is not in a queue"})
+		}
+		won, err := tx.SetMemoRunNext(id, *in.RunNext)
+		if err != nil {
+			return err
+		}
+		if !won {
+			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoLocked, "only a waiting message can be marked to run next"})
+		}
+		m.RunNext = *in.RunNext
+		out = memoToDTO(m)
+		return nil
+	})
+	if aerr := memoTxResult(err); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}

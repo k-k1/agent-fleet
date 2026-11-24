@@ -27,6 +27,7 @@ const memoQueueDeliveryEnd = vi.fn();
 const memoQueueDeliveryReturn = vi.fn();
 const memoQueueDeliveries = vi.fn(async (_id: string, _openToo?: boolean, _since?: string) => servedDeliveries);
 const memoStopChain = vi.fn(async (_id: string) => ({}));
+const memoSetRunNext = vi.fn(async (_id: string, _on: boolean): Promise<unknown> => ({}));
 const memoQueueList = vi.fn(async () => {
   if (queuesFail) throw new Error("down");
   return servedQueues;
@@ -49,6 +50,7 @@ vi.mock("./api.ts", () => ({
   memoImageGC: async () => ({}),
   memoQueueList: () => memoQueueList(),
   memoStopChain: (id: string) => memoStopChain(id),
+  memoSetRunNext: (id: string, on: boolean) => memoSetRunNext(id, on),
   memoRelease: (items: unknown) => memoRelease(items),
   memoQueuePut: (id: string, body: unknown) => memoQueuePut(id, body),
   memoQueueDelete: (id: string) => memoQueueDelete(id),
@@ -187,7 +189,7 @@ beforeEach(() => {
   servedQueues = { tenantEnabled: true, queues: [aQueue()] };
   queuesFail = false;
   servedDeliveries = [];
-  for (const m of [memoCategoryUpdateMock, memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueFireOne, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueDeliveryReturn, memoQueueList, memoStopChain, openSessionChat]) m.mockClear();
+  for (const m of [memoCategoryUpdateMock, memoRelease, memoQueuePut, memoQueueDelete, memoQueueFire, memoQueueFireOne, memoQueueResume, memoQueueDeliveries, memoQueueDeliveryEnd, memoQueueDeliveryReturn, memoQueueList, memoStopChain, memoSetRunNext, openSessionChat]) m.mockClear();
   memoRelease.mockResolvedValue({ released: [], stale: [] });
   memoQueuePut.mockResolvedValue(aQueue());
   memoQueueDelete.mockResolvedValue({ ok: true });
@@ -2159,6 +2161,94 @@ describe("Stop chain in the memo menu", () => {
       await click(btn);
     }
     expect(memoStopChain).not.toHaveBeenCalled();
+  });
+});
+
+describe("Run next in the memo menu (#5021)", () => {
+  const rowMenuBtn = () => must(document.querySelector<HTMLElement>(".memo-row .memo-menu-btn"), "row menu button");
+  const nextItem = () => document.querySelector<HTMLElement>(".ui-menu .memo-menu-runnext");
+  const badge = () => document.querySelector<HTMLElement>(".memo-row .memo-qrunnext");
+  const waiting = (over: Partial<Memo> = {}) => aMemo({ id: "a", state: "pending", provenance: "member", ...over });
+
+  for (const lang of ["en", "ja"] as const) {
+    describe(lang, () => {
+      beforeEach(() => setLocale(lang));
+      afterEach(() => setLocale("en"));
+
+      it("marks an unmarked waiting memo, with no badge before", async () => {
+        servedMemos = [waiting()];
+        await render();
+        expect(badge()).toBeNull();
+        await click(rowMenuBtn());
+        const item = must(nextItem(), "run next item");
+        expect(item.getAttribute("role")).toBe("menuitem");
+        expect(item.textContent).toContain(t("memo.run_next"));
+        expect(item.querySelector(".memo-cat-menu-why")?.textContent).toBe(t("memo.run_next_hint"));
+        await click(item);
+        expect(memoSetRunNext).toHaveBeenCalledWith("a", true);
+        expect(document.body.textContent).toContain(t("memo.run_next_done"));
+        expect(document.querySelector(".ui-menu")).toBeNull();
+      });
+
+      it("shows the badge on a marked memo and offers to clear it", async () => {
+        servedMemos = [waiting({ runNext: true })];
+        await render();
+        const b = must(badge(), "run next badge");
+        expect(b.textContent).toContain(t("memo.run_next_badge"));
+        expect(b.getAttribute("title")).toBe(t("memo.run_next_badge_title"));
+        await click(rowMenuBtn());
+        const item = must(nextItem(), "clear run next item");
+        expect(item.textContent).toContain(t("memo.run_next_clear"));
+        await click(item);
+        expect(memoSetRunNext).toHaveBeenCalledWith("a", false);
+        expect(document.body.textContent).toContain(t("memo.run_next_cleared"));
+      });
+    });
+  }
+
+  it("is offered on a held memo too", async () => {
+    servedMemos = [waiting({ state: "held", provenance: "workspace" })];
+    await render();
+    await click(rowMenuBtn());
+    expect(nextItem()).not.toBeNull();
+  });
+
+  it("toasts the refusal and reads the list again", async () => {
+    memoSetRunNext.mockResolvedValueOnce({ error: { code: "memo_locked", message: "only a waiting message can be marked to run next" } });
+    servedMemos = [waiting()];
+    await render();
+    await click(rowMenuBtn());
+    const before = memoListCalls;
+    await click(must(nextItem(), "run next item"));
+    expect(document.body.textContent).not.toContain(t("memo.run_next_done"));
+    expect(document.querySelector(".ui-toast-msg")).not.toBeNull();
+    expect(memoListCalls).toBeGreaterThan(before);
+  });
+
+  it("is absent outside an auto-run category, and on a memo a run has taken or that already ran", async () => {
+    servedCats = [aCat({})];
+    servedQueues = { tenantEnabled: true, queues: [] };
+    servedMemos = [waiting()];
+    await render();
+    await click(rowMenuBtn());
+    expect(nextItem()).toBeNull();
+    servedCats = [aCat({ queue: true })];
+    servedQueues = { tenantEnabled: true, queues: [aQueue()] };
+    servedMemos = [waiting({ deliveryId: "d1" })];
+    await bump();
+    expect(nextItem()).toBeNull();
+  });
+
+  it("shows no badge on a memo that is not waiting, even if the field came along", async () => {
+    servedMemos = [aMemo({ id: "a", state: "delivered", runNext: true })];
+    await render();
+    await click(must(document.querySelector(".memo-sent-fold"), "history fold"));
+    expect(document.querySelector(".memo-row")).not.toBeNull();
+    expect(badge()).toBeNull();
+    servedMemos = [waiting({ runNext: true, deliveryId: "d1" })];
+    await bump();
+    expect(document.querySelector(".memo-row")).not.toBeNull();
+    expect(badge()).toBeNull();
   });
 });
 

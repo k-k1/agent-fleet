@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -350,6 +351,105 @@ func TestMemoRunNextBatchOfAnotherRecipeSkipsTheUnsendable(t *testing.T) {
 			if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_delivery SET state='closed'`); err != nil {
 				t.Fatal(err)
 			}
+		}
+	})
+}
+
+// runNextCall is the member's Run next / Clear run next on one message.
+func (e *deliveryEnv) runNextCall(member, id string, body any) *httptest.ResponseRecorder {
+	return e.do(member, "POST", "/api/memos/"+id+"/run-next", body)
+}
+
+// The member's route sets and clears the mark on a waiting message, the answer and the list carry
+// it, and the claim then takes the marked message first.
+func TestMemoRunNextRoute(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", nil)
+		older := e.pending("app", "impl", "older")
+		newer := e.pending("app", "impl", "newer")
+		rec := e.runNextCall("a", newer.ID, map[string]any{"runNext": true})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("set: %d %s", rec.Code, rec.Body.String())
+		}
+		if got := decode[memoDTO](t, rec); !got.RunNext || got.ID != newer.ID {
+			t.Fatalf("answer %+v", got)
+		}
+		if !e.memoRow(newer.ID).RunNext || !e.listed(newer.ID).RunNext || e.listed(older.ID).RunNext {
+			t.Fatal("the list does not show the mark on the marked message alone")
+		}
+		// Clear, then set again: each answer says where it stands.
+		if rec := e.runNextCall("a", newer.ID, map[string]any{"runNext": false}); rec.Code != http.StatusOK || decode[memoDTO](t, rec).RunNext {
+			t.Fatalf("clear: %d %s", rec.Code, rec.Body.String())
+		}
+		if e.memoRow(newer.ID).RunNext || e.listed(newer.ID).RunNext {
+			t.Fatal("the mark was not cleared")
+		}
+		if rec := e.runNextCall("a", newer.ID, map[string]any{"runNext": true}); rec.Code != http.StatusOK {
+			t.Fatalf("set again: %d %s", rec.Code, rec.Body.String())
+		}
+		d := e.fired(q)
+		if !sameIDs(d.MessageIDs, newer.ID) {
+			t.Fatalf("fired %v, want the marked %s before %s", d.MessageIDs, newer.ID, older.ID)
+		}
+		// A claimed message is no longer waiting: the route refuses it, and the list stops showing
+		// the mark the row still holds.
+		if row := e.memoRow(newer.ID); !row.RunNext {
+			t.Fatalf("claimed row %+v", row)
+		}
+		if e.listed(newer.ID).RunNext {
+			t.Fatal("a claimed message shows the mark")
+		}
+		rec = e.runNextCall("a", newer.ID, map[string]any{"runNext": false})
+		if rec.Code != http.StatusConflict || deliveryErrCode(t, rec) != errCodeMemoLocked {
+			t.Fatalf("clear on a claimed message: %d %s", rec.Code, rec.Body.String())
+		}
+	})
+}
+
+// The route refuses what is not a waiting message of the member's own queue, and a request that
+// does not say which way.
+func TestMemoRunNextRouteRefusals(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("app", "impl", nil)
+		e.category("app", "notes")
+		m := e.pending("app", "impl", "waiting")
+		for _, body := range []any{nil, map[string]any{}, map[string]any{"runNext": "yes"}} {
+			if rec := e.runNextCall("a", m.ID, body); rec.Code != http.StatusBadRequest {
+				t.Fatalf("body %v: %d %s", body, rec.Code, rec.Body.String())
+			}
+		}
+		if e.memoRow(m.ID).RunNext {
+			t.Fatal("a refused request set the mark")
+		}
+		if rec := e.runNextCall("a", "0123456789abcdef0123456789abcdef", map[string]any{"runNext": true}); rec.Code != http.StatusNotFound {
+			t.Fatalf("missing: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := e.runNextCall("b", m.ID, map[string]any{"runNext": true}); rec.Code != http.StatusNotFound || e.memoRow(m.ID).RunNext {
+			t.Fatalf("another member: %d %s", rec.Code, rec.Body.String())
+		}
+		rec := e.do("a", "POST", "/api/memos", textMemo("app", "notes", "a plain note"))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("plain create: %d %s", rec.Code, rec.Body.String())
+		}
+		plain := decode[memoDTO](t, rec)
+		rec = e.runNextCall("a", plain.ID, map[string]any{"runNext": true})
+		if rec.Code != http.StatusConflict || deliveryErrCode(t, rec) != errCodeMemoInQueue || e.memoRow(plain.ID).RunNext {
+			t.Fatalf("plain note: %d %s", rec.Code, rec.Body.String())
+		}
+		// The workspace's token face has no such route.
+		if rec := e.memoTokenDo("a", "POST", "/internal/memos/"+m.ID+"/run-next", map[string]any{"runNext": true}); rec.Code == http.StatusOK || e.memoRow(m.ID).RunNext {
+			t.Fatalf("token face: %d %s", rec.Code, rec.Body.String())
+		}
+		// Neither does a Console create or edit read the field.
+		rec = e.do("a", "POST", "/api/memos", map[string]any{"kind": "text", "repo": "app", "category": "impl", "body": "created marked", "runNext": true})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+		}
+		if c := decode[memoDTO](t, rec); c.RunNext || e.memoRow(c.ID).RunNext {
+			t.Fatal("a Console create set the mark")
+		}
+		if rec := e.do("a", "PATCH", "/api/memos/"+m.ID, map[string]any{"body": "edited", "runNext": true}); rec.Code != http.StatusOK || e.memoRow(m.ID).RunNext {
+			t.Fatalf("a Console edit set the mark: %d %s", rec.Code, rec.Body.String())
 		}
 	})
 }

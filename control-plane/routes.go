@@ -665,6 +665,8 @@ func registerMemoRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/memos/release", memo.withMembership(memo.release))
 	// Stop chain (ADR 0137, addendum 2026-11-20): Console only, like the release it takes back.
 	mux.HandleFunc("POST /api/memos/{id}/stop-chain", memo.withMembership(memo.stopChain))
+	// Run next (#5021): Console only, like Run now; the token face has no route that changes it.
+	mux.HandleFunc("POST /api/memos/{id}/run-next", memo.withMembership(memo.setRunNext))
 	mux.HandleFunc("PATCH /api/memos/{id}", memo.withMembership(memo.update(console)))
 	mux.HandleFunc("DELETE /api/memos/{id}", memo.withMembership(memo.delete(console)))
 

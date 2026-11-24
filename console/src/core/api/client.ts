@@ -1512,6 +1512,10 @@ export const memoRelease = (items: { id: string; contentHash: string }[]): Promi
 // Stop chain (ADR 0137, addendum 2026-11-20): the next continuation of the chain a message belongs to is held.
 export const memoStopChain = (id: string): Promise<MemoWriteResult> =>
   apiJSON(`api/memos/${encodeURIComponent(id)}/stop-chain`, "POST", {});
+// Run next / Clear run next (#5021): the claim takes a marked waiting message before the oldest.
+// Member login only. 409 memo_locked when the message is no longer waiting.
+export const memoSetRunNext = (id: string, runNext: boolean): Promise<MemoWriteResult> =>
+  apiJSON(`api/memos/${encodeURIComponent(id)}/run-next`, "POST", { runNext });
 // The manual Tidy's apply (ADR 0137 section 8): the operations the member approved, as one run.
 // 409 memo_tidy_stale (error.stale names the changed notes) and 400 memo_tidy_invalid
 // (error.tidyCode is the validator's code) both change nothing.
