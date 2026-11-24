@@ -2036,6 +2036,12 @@ func (e *memoExcept) add(membershipID string) {
 }
 
 const (
+	// memoAnswerRetries is how many such members a tick resolves again.
+	memoAnswerRetries = 3
+)
+
+// Variables only so a test can shorten the waits a silent Agent makes a pass spend.
+var (
 	// memoStoppedLookupBudget bounds the look-up of a pass's members recorded as stopped (the query
 	// and the runtime states together), outside the pass's read budget: what it does not reach is
 	// listed in the pages like any other member.
@@ -2043,8 +2049,6 @@ const (
 	// memoAnswerRetryWait bounds the answer pass's second resolution of a member the PR snapshot
 	// pass could not reach: one whose Agent still does not answer costs no more.
 	memoAnswerRetryWait = 3 * time.Second
-	// memoAnswerRetries is how many such members a tick resolves again.
-	memoAnswerRetries = 3
 )
 
 // memoStartPollEvery is the pause between two rounds of the background poll for started members.

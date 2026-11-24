@@ -538,22 +538,17 @@ func TestMemoAnswerUnansweredAgentIsStamped(t *testing.T) {
 		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: the member behind"))
 		calls := e.silentMember() // c: its Agent holds every call until the caller gives up
 		silent := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), store.PRStateNone)[0]
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			e.runner().collectAnswers(ctx, map[string]*memoMemberView{}, now)
-		}()
+		ctx, cancel := tickEndsOnFirstCall(t, calls)
+		defer cancel()
+		e.runner().collectAnswers(ctx, map[string]*memoMemberView{}, now)
 		select {
 		case path := <-calls:
 			if path != "/sessions" {
 				t.Fatalf("the silent Agent was first asked %s, want its session list", path)
 			}
-		case <-time.After(30 * time.Second):
+		default:
 			t.Fatal("the silent Agent's session list was never asked")
 		}
-		<-done
-		cancel()
 		if got := e.delivery(silent); got.AnswerTriedAt == "" {
 			t.Fatal("a row of an Agent that did not answer was left unstamped")
 		}
@@ -714,7 +709,7 @@ func TestMemoAnswerStaleRecordAsksNoAgentFirst(t *testing.T) {
 		calls := e.silentMember()
 		e.otherMemberChains(q, "c", 1, now.Add(-time.Minute+time.Second), store.PRStateNone) // newer than a's
 		e.recordStopped("c")
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := tickEndsOnFirstCall(t, calls)
 		defer cancel()
 		e.runner().collectAnswers(ctx, map[string]*memoMemberView{}, now)
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
@@ -825,6 +820,40 @@ func (e *deliveryEnv) setFlipRuntimeAt(member string, a *fakeQueueAgent, then st
 	return calls, ran
 }
 
+// tickEndsOnFirstCall returns a context cancelled as soon as the silent Agent behind calls has
+// been called once, in place of a fixed deadline the pass would sit out: the silent Agent holds
+// every call until its caller gives up, so the tick is used up at that moment. The 30 s bound only
+// ends a test whose Agent is never asked.
+func tickEndsOnFirstCall(t *testing.T, calls <-chan string) (context.Context, context.CancelFunc) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	stop := make(chan struct{})
+	t.Cleanup(func() { close(stop) })
+	go func() {
+		limit := time.After(30 * time.Second)
+		for len(calls) == 0 {
+			select {
+			case <-stop:
+				return
+			case <-limit:
+				cancel()
+				return
+			case <-time.After(time.Millisecond):
+			}
+		}
+		cancel()
+	}()
+	return ctx, cancel
+}
+
+// shortRetryWait shortens the wait on a member the PR pass could not reach, which a silent
+// Agent makes the answer pass sit out in full.
+func shortRetryWait(t *testing.T) {
+	saved := memoAnswerRetryWait
+	memoAnswerRetryWait = 200 * time.Millisecond
+	t.Cleanup(func() { memoAnswerRetryWait = saved })
+}
+
 // fastStartPoll shortens the pause between two rounds of the poll for started members.
 func fastStartPoll(t *testing.T) {
 	saved := memoStartPollEvery
@@ -836,6 +865,7 @@ func fastStartPoll(t *testing.T) {
 // healthy member's history-only row is read before the silent member's Agent is asked a second
 // time, and the retry is made afterwards.
 func TestMemoAnswerPRFailedRetryDoesNotDelayOthers(t *testing.T) {
+	shortRetryWait(t)
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		_, q, _, _ := e.noPRChain(now.Add(-time.Hour))
@@ -852,7 +882,7 @@ func TestMemoAnswerPRFailedRetryDoesNotDelayOthers(t *testing.T) {
 		}
 		views := map[string]*memoMemberView{}
 		r := e.runner()
-		pctx, pcancel := context.WithTimeout(context.Background(), time.Second)
+		pctx, pcancel := tickEndsOnFirstCall(t, calls)
 		r.collectPRSnapshots(pctx, views, now)
 		pcancel()
 		if !r.prFailed[e.members["c"]] {
@@ -1022,7 +1052,7 @@ func TestMemoAnswerPRFailedRetryDoesNotQueueOnTheBuildLock(t *testing.T) {
 		silent := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), "")[0]
 		views := map[string]*memoMemberView{}
 		r := e.runner()
-		pctx, pcancel := context.WithTimeout(context.Background(), time.Second)
+		pctx, pcancel := tickEndsOnFirstCall(t, calls)
 		r.collectPRSnapshots(pctx, views, now)
 		pcancel()
 		<-calls
@@ -1201,9 +1231,9 @@ func TestMemoAnswerOlderRowsFirst(t *testing.T) {
 		agent, q, da, _ := e.noPRChain(now.Add(-3 * time.Minute))
 		agent.setAnswer("q-a", transcriptReply("idle", true, "Done: older"))
 		more := e.otherMemberChains(q, "a", 2, now.Add(-2*time.Minute), store.PRStateNone)
-		e.silentMember()
+		calls := e.silentMember()
 		e.otherMemberChains(q, "c", 1, now.Add(-time.Minute+time.Second), store.PRStateNone) // newer than a's
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		ctx, cancel := tickEndsOnFirstCall(t, calls)
 		defer cancel()
 		e.runner().collectAnswers(ctx, map[string]*memoMemberView{}, now)
 		for _, id := range append([]string{da.ID}, more...) {
@@ -1248,6 +1278,7 @@ func TestMemoAnswerNotStarvedByThePRPass(t *testing.T) {
 // costs the answer pass at most memoAnswerRetryWait: the rows behind it are read, and its row is
 // stamped as an Agent's that does not answer is.
 func TestMemoAnswerPRFailedMemberRetriedBriefly(t *testing.T) {
+	shortRetryWait(t)
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
@@ -1257,7 +1288,7 @@ func TestMemoAnswerPRFailedMemberRetriedBriefly(t *testing.T) {
 		silent := e.otherMemberChains(q, "c", 1, now.Add(-time.Minute), "")[0] // ahead of a in both lists
 		views := map[string]*memoMemberView{}
 		r := e.runner()
-		pctx, pcancel := context.WithTimeout(context.Background(), time.Second)
+		pctx, pcancel := tickEndsOnFirstCall(t, calls)
 		r.collectPRSnapshots(pctx, views, now)
 		pcancel()
 		if !r.prFailed[e.members["c"]] {
@@ -1335,7 +1366,7 @@ func TestMemoAnswerWindowAfterALockWait(t *testing.T) {
 		_, _, da, _ := e.noPRChain(time.Now().Add(-time.Minute))
 		ctx := context.Background()
 		db := e.st.DB()
-		edge := time.Now().Add(5 * time.Second) // room for the writer to reach the wait on a loaded host
+		edge := time.Now().Add(2 * time.Second) // room for the writer to reach the wait (a statement away)
 		if _, err := db.ExecContext(ctx, `UPDATE memo_delivery SET closed_at=? WHERE id=?`,
 			store.DeliveryTS(edge.Add(-memoAnswerWindow)), da.ID); err != nil {
 			t.Fatal(err)
