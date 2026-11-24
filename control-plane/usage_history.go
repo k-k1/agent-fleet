@@ -58,9 +58,9 @@ const (
 )
 
 // launchReopenWindow is how long after a stop the sampler inferred it may still take that stop
-// back on seeing the workspace running (tickUsageHistory). It covers the start deadline (30
-// minutes by default), the longest a launch the sampler closed before its Start can take to
-// be seen running.
+// back on seeing the workspace running (tickUsageHistory), or three sampling intervals when
+// that is longer. It covers the start deadline (30 minutes by default), the longest a launch
+// the sampler closed before its Start can take to be seen running.
 const launchReopenWindow = time.Hour
 
 // usageStopPullTimeout bounds the pull made before a Stop: a Stop never waits longer than this
@@ -94,24 +94,38 @@ func newLaunchID() string {
 // answers "boost" (ADR 0139 decision 5), which splits the day row and is what the boost
 // budget counts.
 func (m *manager) beginLaunch(ctx context.Context, ws store.Workspace, rt runtime.Runtime, override string) (id, env string) {
-	mp, ok := usageHistoryRuntime(rt)
-	if !ok {
+	if _, ok := usageHistoryRuntime(rt); !ok {
 		return "", ""
 	}
+	id = newLaunchID()
+	if !m.recordLaunch(ctx, ws, rt, override, id) {
+		return "", ""
+	}
+	return id, usagehistory.LaunchEnv + "=" + id
+}
+
+// recordLaunch records launch id on rt's box, before rt is started. The Start path mints the id
+// first and builds the runtime it starts with the id in its env, so the record is read off the
+// very runtime that starts (a runtime built earlier for the record could name another box).
+// false when rt keeps no history or the record could not be written.
+func (m *manager) recordLaunch(ctx context.Context, ws store.Workspace, rt runtime.Runtime, override, id string) bool {
+	mp, ok := usageHistoryRuntime(rt)
+	if !ok {
+		return false
+	}
 	box := mp.MachineProfile()
-	now := time.Now().Unix()
 	l := store.Launch{
-		ID: newLaunchID(), WorkspaceID: ws.ID, MembershipID: ws.MembershipID, TenantID: ws.TenantID,
-		StartedAt: now, InstanceType: box.InstanceType, ClassID: box.ClassID, Override: override,
+		ID: id, WorkspaceID: ws.ID, MembershipID: ws.MembershipID, TenantID: ws.TenantID,
+		StartedAt: time.Now().Unix(), InstanceType: box.InstanceType, ClassID: box.ClassID, Override: override,
 		VCPU: box.VCPU, BaselinePct: box.BurstBaselinePct,
 	}
 	if err := m.store.BeginLaunch(ctx, l); err != nil {
 		log.Printf("usage history: begin launch (ws=%s): %v", ws.ID, err)
-		return "", ""
+		return false
 	}
 	// The launch it closed (a stale one) still has seconds to count.
 	m.foldRunning(ctx, ws.MembershipID)
-	return l.ID, usagehistory.LaunchEnv + "=" + l.ID
+	return true
 }
 
 // endLaunchFailed closes a launch whose Start did not succeed: it ran for no time.
@@ -158,6 +172,9 @@ func (m *manager) stopRecordedAt(ctx context.Context, ws store.Workspace, rt run
 		}
 		cancel()
 	}
+	if !atLastSeen {
+		atLastSeen = neverCameUp(ctx, rt)
+	}
 	err := rt.Stop(ctx)
 	if err == nil {
 		at := time.Now().Unix()
@@ -167,6 +184,22 @@ func (m *manager) stopRecordedAt(ctx context.Context, ws store.Workspace, rt run
 		m.closeLaunch(ctx, ws.MembershipID, at)
 	}
 	return err
+}
+
+// neverCameUp reports whether rt is stopped while its launch is still starting with no task up,
+// so the launch ends at its last sighting rather than at the stop: the minutes a launch waited
+// for a placement that never came are not running time. A launch with a task up is still
+// counted to the stop (its box is there and billed), and anything that cannot be told counts
+// to the stop too.
+func neverCameUp(ctx context.Context, rt runtime.Runtime) bool {
+	tc, ok := rt.(runtime.TaskCounter)
+	if !ok || rt.State(ctx) != "starting" {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	n, err := tc.RunningTasks(ctx)
+	return err == nil && n == 0
 }
 
 // closeLaunch ends the membership's open launch at `at` and counts its seconds.
@@ -296,9 +329,15 @@ func (m *manager) tickUsageHistory(ctx context.Context, ws store.Workspace, rt r
 			// its Start. The same container is then still running, on the box and under the
 			// override its launch recorded, so that launch is reopened rather than replaced by
 			// an adopted one, which would drop its hours from the boost budget.
-			if rl, ok, err := m.store.ReopenLaunch(ctx, ws.MembershipID, observedAt.Add(-launchReopenWindow).Unix()); err != nil {
+			// An error ends this tick without adopting: an adopted launch would stay open and
+			// stop the next tick from trying again.
+			window := max(launchReopenWindow, 3*m.usageInterval)
+			rl, ok, err := m.store.ReopenLaunch(ctx, ws.MembershipID, observedAt.Unix(), observedAt.Add(-window).Unix())
+			if err != nil {
 				log.Printf("usage history: reopen launch (ws=%s): %v", ws.ID, err)
-			} else if ok {
+				return false
+			}
+			if ok {
 				l, open = rl, true
 			} else if l, open, err = m.store.OpenLaunch(ctx, ws.MembershipID); err != nil {
 				return false // another replica may have reopened it; the next tick sees which

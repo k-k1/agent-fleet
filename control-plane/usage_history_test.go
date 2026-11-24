@@ -547,7 +547,7 @@ func TestSamplerReopensALaunchItClosedOnATransientState(t *testing.T) {
 	if again, _, _ := st.OpenLaunch(ctx, ws.MembershipID); again.ID == id || again.Override != "adopted" {
 		t.Fatalf("a CP stop was taken back: %+v", again)
 	}
-	if _, ok, _ := st.ReopenLaunch(ctx, ws.MembershipID, 0); ok {
+	if _, ok, _ := st.ReopenLaunch(ctx, ws.MembershipID, time.Now().Unix()+1e6, 0); ok {
 		t.Fatal("reopened while another launch is open")
 	}
 }
@@ -605,5 +605,101 @@ func TestStartDeadlineStopCountsNoTimeForALaunchNeverSeenRunning(t *testing.T) {
 	}
 	if *rt.stops != 1 {
 		t.Fatalf("stops = %d", *rt.stops)
+	}
+}
+
+// reopenFailingStore fails ReopenLaunch while fail is set.
+type reopenFailingStore struct {
+	store.Store
+	fail *bool
+}
+
+func (s reopenFailingStore) ReopenLaunch(ctx context.Context, membershipID string, observedAt, closedSince int64) (store.Launch, bool, error) {
+	if *s.fail {
+		return store.Launch{}, false, fmt.Errorf("injected")
+	}
+	return s.Store.ReopenLaunch(ctx, membershipID, observedAt, closedSince)
+}
+
+// A reopen that errors ends the tick: adopting instead would leave an adopted launch open, and
+// no later tick would try the reopen again.
+func TestSamplerDoesNotAdoptWhenTheReopenFails(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	fail := false
+	mgr.store = reopenFailingStore{Store: st, fail: &fail}
+	id, _ := mgr.beginLaunch(ctx, ws, rt, "boost")
+	l, _, _ := st.GetLaunch(ctx, id)
+	mgr.tickUsageHistory(ctx, ws, rt, "none", time.Unix(l.StartedAt+60, 0))
+	fail = true
+	mgr.tickUsageHistory(ctx, ws, rt, "running", time.Unix(l.StartedAt+300, 0))
+	if got, open, _ := st.OpenLaunch(ctx, ws.MembershipID); open {
+		t.Fatalf("a failed reopen adopted: %+v", got)
+	}
+	fail = false
+	mgr.tickUsageHistory(ctx, ws, rt, "running", time.Unix(l.StartedAt+600, 0))
+	if got, open, _ := st.OpenLaunch(ctx, ws.MembershipID); !open || got.ID != id {
+		t.Fatalf("the next tick did not reopen: %+v open=%v", got, open)
+	}
+}
+
+// A "running" read before a launch that then failed its Start is stale: it does not reopen it.
+func TestSamplerDoesNotReopenALaunchAfterItsReading(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	observed := time.Now().Add(-time.Second)
+	id, _ := mgr.beginLaunch(ctx, ws, rt, "boost")
+	mgr.endLaunchFailed(ctx, ws.MembershipID, id)
+	mgr.tickUsageHistory(ctx, ws, rt, "running", observed)
+	if got, _, _ := st.OpenLaunch(ctx, ws.MembershipID); got.ID == id {
+		t.Fatalf("a failed launch newer than the reading was reopened: %+v", got)
+	}
+}
+
+// With a sampling interval longer than the hour, a single bad reading is still taken back on the
+// next good one, three intervals after the last.
+func TestSamplerReopenWindowFollowsALongInterval(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	mgr.usageInterval = 40 * time.Minute
+	id, _ := mgr.beginLaunch(ctx, ws, rt, "boost")
+	l, _, _ := st.GetLaunch(ctx, id)
+	mgr.tickUsageHistory(ctx, ws, rt, "none", time.Unix(l.StartedAt+40*60, 0))
+	mgr.tickUsageHistory(ctx, ws, rt, "running", time.Unix(l.StartedAt+80*60, 0))
+	if got, open, _ := st.OpenLaunch(ctx, ws.MembershipID); !open || got.ID != id {
+		t.Fatalf("not reopened after 80 minutes at a 40-minute interval: %+v open=%v", got, open)
+	}
+}
+
+// taskBoxRT is a boxRT that counts its tasks, the ecs-ec2 capability neverCameUp reads.
+type taskBoxRT struct {
+	boxRT
+	tasks int
+}
+
+func (r taskBoxRT) RunningTasks(context.Context) (int, error) { return r.tasks, nil }
+
+// A Stop of a launch still starting with no task up ends it at its last sighting: the minutes
+// spent waiting for a placement are not running time. With a task up, the boot counts.
+func TestStopOfALaunchThatNeverCameUp(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		state string
+		tasks int
+		zero  bool
+	}{{"starting", 0, true}, {"starting", 1, false}, {"running", 0, false}} {
+		st, mgr, ws, _, rt := historyFixture(t, c.state)
+		trt := taskBoxRT{boxRT: rt, tasks: c.tasks}
+		if err := st.BeginLaunch(ctx, store.Launch{ID: "L", WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
+			TenantID: ws.TenantID, StartedAt: time.Now().Add(-15 * time.Minute).Unix(), Override: "boost"}); err != nil {
+			t.Fatal(err)
+		}
+		if err := mgr.stopRecorded(ctx, ws, trt, false); err != nil {
+			t.Fatal(err)
+		}
+		secs, _ := st.OverrideRunningSecs(ctx, ws.MembershipID, "boost", 0, time.Now().Unix()+60)
+		if (secs == 0) != c.zero {
+			t.Fatalf("%s with %d tasks: %d boosted secs, want zero=%t", c.state, c.tasks, secs, c.zero)
+		}
 	}
 }

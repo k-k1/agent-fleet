@@ -20,6 +20,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/agentroutes"
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+	"github.com/k-k1/agent-fleet/control-plane/internal/usagehistory"
 )
 
 // workspaceAPI is the handler set for the Workspace lifecycle and Session management. The
@@ -673,16 +674,13 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	startRes := *res
 	startRes.ws = sized
 	// The launch is recorded before Start and its id handed to the container, so the Agent's
-	// minutes carry it (usage_history.go). Where the runtime names no box this is a no-op.
-	boxRT := rt
-	if sized.MemBytes != res.ws.MemBytes || sized.SlotClass != res.ws.SlotClass {
-		// The memoized runtime still names a box a boost has since left (or entered): the ledger
-		// records the box this start lands on, which the rebuild below also uses.
-		boxRT = a.mgr.runtimeFor(sized, keys, a.mgr.workspaceExtraEnv(ctx, sized)...)
-	}
-	launchID, launchEnv := a.mgr.beginLaunch(ctx, res.ws, boxRT, override)
-	if launchEnv != "" {
-		extraEnv = append(append([]string(nil), extraEnv...), launchEnv)
+	// minutes carry it (usage_history.go). The id is minted here, the runtime that starts is
+	// built with it, and the record is read off that runtime below. Where the runtime names no
+	// box there is no history.
+	var launchID string
+	if _, ok := usageHistoryRuntime(rt); ok {
+		launchID = newLaunchID()
+		extraEnv = append(append([]string(nil), extraEnv...), usagehistory.LaunchEnv+"="+launchID)
 	}
 	if armed := a.mgr.armPreviewForStart(ctx, &startRes, keys, extraEnv); armed != nil {
 		rt = armed
@@ -692,6 +690,9 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		// Rebuilt for this start, keys or not: the memo's env was fixed when it was built,
 		// and what the deployment switches at runtime (the dev IdP's env) must be read now.
 		rt = a.mgr.runtimeFor(sized, keys, append(a.mgr.workspaceExtraEnv(ctx, sized), extraEnv...)...)
+	}
+	if launchID != "" && !a.mgr.recordLaunch(ctx, res.ws, rt, override, launchID) {
+		launchID = "" // unrecorded: the Agent's minutes under this id are dropped, as before
 	}
 	// The previous automatic stop stops describing this workspace once a new launch is
 	// attempted, whether or not it succeeds: a Start that fails (secrets, home, launch)

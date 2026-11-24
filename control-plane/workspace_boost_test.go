@@ -606,6 +606,37 @@ func TestStartRecordsTheBoxItStarts(t *testing.T) {
 	}
 }
 
+// TestStartRecordsTheRuntimeItStarts: the runtime handed to the Start was built for another box
+// than the one the Start resolves (an unattended start whose own read of the boost failed). The
+// launch record is read off the runtime that actually starts, not off the one handed in.
+func TestStartRecordsTheRuntimeItStarts(t *testing.T) {
+	ctx := context.Background()
+	e := newBoostEnv(t, onBoost)
+	f := &boxFactory{}
+	e.m.rtFactory = f
+	if err := e.m.store.CreateWorkspace(ctx, store.Workspace{ID: "W-1", TenantID: e.tenantID, MembershipID: e.memID,
+		ContainerName: "af-ws-acme-a", AgentPort: "7731", AgentToken: "tok", State: "stopped", CreatedAt: store.NowTS()}); err != nil {
+		t.Fatal(err)
+	}
+	e.grant(t, "standard", 16384, time.Hour)
+	mv, _, _ := e.m.store.GetMembershipByID(ctx, e.memID)
+	res, aerr := e.m.buildResolved(ctx, e.ident, mv)
+	if aerr != nil {
+		t.Fatal(aerr)
+	}
+	unboosted := f.New(runtime.Workspace{SlotClass: "standard"}, runtime.SecretKeys{}, nil)
+	if aerr := newWorkspaceAPI(e.m, false).ensureWorkspaceStartedRT(ctx, res, unboosted); aerr != nil {
+		t.Fatal(aerr)
+	}
+	l, _, _ := e.m.store.OpenLaunch(ctx, e.memID)
+	f.mu.Lock()
+	started := f.started
+	f.mu.Unlock()
+	if len(started) != 1 || started[0] != "m7i.xlarge" || l.InstanceType != "m7i.xlarge" || l.Override != "boost" {
+		t.Fatalf("started %v, recorded %s override %q", started, l.InstanceType, l.Override)
+	}
+}
+
 func TestBoostNoEndAndShadowedRows(t *testing.T) {
 	ctx := context.Background()
 	t.Run("an empty expiry means no end", func(t *testing.T) {
@@ -741,7 +772,7 @@ func TestBoostBudgetIsCountedOnlyWithTheSampler(t *testing.T) {
 	for _, c := range []struct {
 		interval time.Duration
 		counted  bool
-	}{{5 * time.Minute, true}, {0, false}} {
+	}{{5 * time.Minute, true}, {0, false}, {500 * time.Millisecond, false}} {
 		e := newBoostEnv(t, tenantLimits{BoostEnabled: true, BoostMonthlyHours: 1})
 		e.m.boostHours = boostHoursFor(e.m.store, c.interval)
 		if err := e.m.store.BeginLaunch(ctx, store.Launch{ID: "b", WorkspaceID: "w1", MembershipID: e.memID,

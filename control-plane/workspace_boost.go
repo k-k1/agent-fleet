@@ -46,11 +46,12 @@ type launchSecsReader interface {
 }
 
 // boostHoursFor is the counter main wires: launchBoostHours while the usage sampler runs, nil
-// when it is switched off (AF_USAGE_SAMPLE_INTERVAL=0). The sampler is what moves an open
-// launch's last sighting; without it a boosted workspace would read 0 hours for as long as it
-// runs, so the budget is reported as not counted instead of as counted and never reached.
+// when it does not (AF_USAGE_SAMPLE_INTERVAL=0, or under a second, which sample() treats as
+// off). The sampler is what moves an open launch's last sighting; without it a boosted
+// workspace would read 0 hours for as long as it runs, so the budget is reported as not counted
+// instead of as counted and never reached.
 func boostHoursFor(st launchSecsReader, sampleInterval time.Duration) boostHoursCounter {
-	if sampleInterval <= 0 {
+	if int(sampleInterval.Seconds()) <= 0 {
 		return nil
 	}
 	return launchBoostHours{st}

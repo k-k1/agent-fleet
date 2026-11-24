@@ -342,23 +342,27 @@ func checkOverrideRunningSecs(t *testing.T, st *SQL) {
 
 	// ReopenLaunch: never while a launch is open; then only the newest, only when it was
 	// closed at its last sighting, and only within closedSince.
-	if _, ok, _ := st.ReopenLaunch(ctx, mem.ID, 0); ok {
+	if _, ok, _ := st.ReopenLaunch(ctx, mem.ID, h(100), 0); ok {
 		t.Fatal("reopened while L5 is open")
 	}
 	if _, _, err := st.EndOpenLaunch(ctx, mem.ID, h(41.5)); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, _ := st.ReopenLaunch(ctx, mem.ID, h(42)); ok {
+	if _, ok, _ := st.ReopenLaunch(ctx, mem.ID, h(100), h(42)); ok {
 		t.Fatal("reopened a stop older than closedSince")
 	}
-	l, ok, err := st.ReopenLaunch(ctx, mem.ID, h(41))
+	// A reading taken before the stop (or before the launch) cannot take it back.
+	if _, ok, _ := st.ReopenLaunch(ctx, mem.ID, h(41.5), 0); ok {
+		t.Fatal("reopened a stop made after the reading")
+	}
+	l, ok, err := st.ReopenLaunch(ctx, mem.ID, h(41.6), h(41))
 	if err != nil || !ok || l.ID != "L5" || l.StoppedAt != 0 {
 		t.Fatalf("reopen = %+v %v %v, want L5 open", l, ok, err)
 	}
 	if _, _, err := st.EndOpenLaunch(ctx, mem.ID, h(45)); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, _ := st.ReopenLaunch(ctx, mem.ID, 0); ok {
+	if _, ok, _ := st.ReopenLaunch(ctx, mem.ID, h(100), 0); ok {
 		t.Fatal("reopened a launch closed after its last sighting (a stop the CP made)")
 	}
 }

@@ -96,8 +96,11 @@ type UsageHistoryStore interface {
 	GetLaunch(ctx context.Context, id string) (Launch, bool, error)
 	// ReopenLaunch reopens the membership's newest launch, and reports whether it did, when no
 	// launch of the membership is open and the newest one was closed at its own last sighting
-	// (which is where a stop the sampler inferred closes it) at or after closedSince.
-	ReopenLaunch(ctx context.Context, membershipID string, closedSince int64) (Launch, bool, error)
+	// (which is where a stop the sampler inferred closes it) at or after closedSince. The launch
+	// must also have started, and been closed, before observedAt, the moment the "running" that
+	// asks for this was read: a stop or a launch after that is something the reading cannot
+	// contradict.
+	ReopenLaunch(ctx context.Context, membershipID string, observedAt, closedSince int64) (Launch, bool, error)
 	// OverrideRunningSecs is how many seconds of [from, to) the membership's launches with the
 	// given override ran, each launch up to its End. It reads the launches, not the day rows, so
 	// an open launch counts up to its last sighting without waiting for a fold.
@@ -201,20 +204,19 @@ func (s *SQL) OverrideRunningSecs(ctx context.Context, membershipID, override st
 	return total, rows.Err()
 }
 
-func (s *SQL) ReopenLaunch(ctx context.Context, membershipID string, closedSince int64) (Launch, bool, error) {
-	res, err := s.db.ExecContext(ctx,
+func (s *SQL) ReopenLaunch(ctx context.Context, membershipID string, observedAt, closedSince int64) (Launch, bool, error) {
+	l, err := scanLaunch(s.db.QueryRowContext(ctx,
 		`UPDATE workspace_launch SET stopped_at = NULL
 		 WHERE id = (SELECT id FROM workspace_launch WHERE membership_id=? ORDER BY started_at DESC, id DESC LIMIT 1)
 		   AND stopped_at IS NOT NULL AND stopped_at = last_seen_at AND stopped_at >= ?
-		   AND NOT EXISTS (SELECT 1 FROM workspace_launch o WHERE o.membership_id=? AND o.stopped_at IS NULL)`,
-		membershipID, closedSince, membershipID)
-	if err != nil {
-		return Launch{}, false, err
-	}
-	if n, _ := res.RowsAffected(); n == 0 {
+		   AND started_at < ? AND stopped_at < ?
+		   AND NOT EXISTS (SELECT 1 FROM workspace_launch o WHERE o.membership_id=? AND o.stopped_at IS NULL)
+		 RETURNING `+launchCols,
+		membershipID, closedSince, observedAt, observedAt, membershipID))
+	if errors.Is(err, sql.ErrNoRows) {
 		return Launch{}, false, nil
 	}
-	return s.OpenLaunch(ctx, membershipID)
+	return l, err == nil, err
 }
 
 func (s *SQL) TouchLaunch(ctx context.Context, id string, at int64) error {
