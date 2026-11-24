@@ -983,3 +983,41 @@ func TestAgentMemoryPromoteProposalLimitsAreSeparate(t *testing.T) {
 	}
 	agentMemProposeBusy.Unlock()
 }
+
+// The change is staged as the bytes it was built from: a working-tree-encoding attribute does not
+// re-encode the document, so existing non-ASCII lines stay as they are and only the text is added.
+func TestAgentMemoryPromoteProposalStagesTheBlobAsBuilt(t *testing.T) {
+	clone, a, b := promoteRepo(t)
+	agentMemLintOrigin(t, clone, map[string]string{"AGENTS.md": "# Agents\n\n## Build\n\nUn café avant la build.\n"})
+	// The attribute comes after the blob, so the blob above is UTF-8 as written; only the
+	// attributes file is staged (git add -A could re-read AGENTS.md through the new attribute).
+	if err := os.WriteFile(filepath.Join(clone, ".gitattributes"), []byte("*.md working-tree-encoding=ISO-8859-1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{
+		{"add", "--", ".gitattributes"},
+		{"-c", "core.hooksPath=/dev/null", "commit", "--quiet", "-m", "attributes"},
+		{"update-ref", "refs/remotes/origin/main", "HEAD"},
+	} {
+		if err := agentMemGit(clone, args...); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	if blob := agentMemGitOut(t, clone, "cat-file", "blob", "HEAD:AGENTS.md"); !strings.Contains(blob, "Un café avant") {
+		t.Fatalf("the fixture's blob is not UTF-8: %q", blob)
+	}
+	promoteSave(t, a, "release-steps", "procedure", "Run scripts/release.sh.", "scripts/release.sh")
+	promoteConfirm(t, "release-steps", 1, a, b)
+	code, w, raw := promotePropose(t, agentMemProposeReq{Project: a.Project.ID, Name: "release-steps", Section: "Build"})
+	if code != http.StatusOK {
+		t.Fatalf("%d %s", code, raw)
+	}
+	for _, ln := range strings.Split(w.Patch, "\n") {
+		if strings.HasPrefix(ln, "-") && !strings.HasPrefix(ln, "---") {
+			t.Fatalf("the patch changes an existing line: %q\n%s", ln, w.Patch)
+		}
+	}
+	if !strings.Contains(w.Patch, " Un café avant la build.\n+\n+Run scripts/release.sh.\n") {
+		t.Fatalf("patch:\n%s\n%s", w.Patch, raw)
+	}
+}

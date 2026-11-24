@@ -465,12 +465,31 @@ func agentMemProposePatch(ctx context.Context, root, gitDir, commit, file string
 	if err := r.WriteFile(filepath.FromSlash(file), data, 0o644); err != nil {
 		return "", pc, err
 	}
-	if _, err := step(append(in, "add", "--", file)...); err != nil {
+	// The change is staged as the exact bytes it was built from, without the attributes' filters:
+	// the document was read as its blob, so `git add` would convert it a second time (a
+	// working-tree-encoding of ISO-8859-1 re-encodes UTF-8 text and garbles every existing
+	// non-ASCII line). The working tree copy above is only for hooks that read files.
+	blobFile := filepath.Join(tmp, "blob")
+	if err := os.WriteFile(blobFile, data, 0o600); err != nil {
 		return "", pc, err
 	}
+	oid, err := step(append(in, "hash-object", "-w", "--no-filters", "--", blobFile)...)
+	if err != nil {
+		return "", pc, err
+	}
+	mode := "100644"
+	if ls, err := step(append(in, "ls-tree", commit, "--", file)...); err != nil {
+		return "", pc, err
+	} else if f := strings.Fields(string(ls)); len(f) >= 1 && f[0] == "100755" {
+		mode = "100755"
+	}
+	if _, err := step(append(in, "update-index", "--add", "--cacheinfo", mode+","+strings.TrimSpace(string(oid))+","+file)...); err != nil {
+		return "", pc, err
+	}
+	diffArgs := append(append([]string{}, in...), "diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv",
+		"--no-renames", "--binary", "--full-index")
 	diff := func() (string, error) {
-		out, err := step(append(in, "diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
-			"--binary", "--full-index")...)
+		out, err := step(diffArgs...)
 		return string(out), err
 	}
 	patch, err := diff()
@@ -530,8 +549,7 @@ func agentMemProposePatch(ctx context.Context, root, gitDir, commit, file string
 	// scanned and says that the hook changed it.
 	actx, acancel := context.WithTimeout(ctx, agentMemProposeCloneTimeout)
 	defer acancel()
-	after, _, err := agentMemProposeRun(actx, tmp, env, agentMemProposePatchMax, "git", append(in, "diff", "--cached", "--no-color",
-		"--no-ext-diff", "--no-textconv", "--no-renames", "--binary", "--full-index")...)
+	after, _, err := agentMemProposeRun(actx, tmp, env, agentMemProposePatchMax, "git", diffArgs...)
 	if err != nil {
 		return "", pc, fmt.Errorf("git diff after the hook: %v", err)
 	}
