@@ -1,6 +1,6 @@
 // Browser side of Web Push (#4750): subscribe / unsubscribe this device through the service worker
 // (public/sw.js), and release it on sign-out. Nothing here caches or intercepts a request.
-import { addPushDevice, probePushKey, releasePushEndpoint, removePushDevice } from "./pushApi.ts";
+import { addPushDevice, probePushKey, releasePushEndpoint, removePushDevice, snapshotReleaseBinding, type ReleaseBinding } from "./pushApi.ts";
 
 // The CP's id of this browser's subscription, kept to mark "this device" in the list. Best effort:
 // without it the list simply marks nothing. The af prefix makes clearLocalState drop it at sign-out.
@@ -51,8 +51,11 @@ const storeDeviceId = (id: string) => {
     /* quota / private mode: the list just marks no device */
   }
 };
+// The release token pushApi keeps beside the id; it ends with the id it belongs to.
+const RELEASE_TOKEN_KEY = "af-push-release-token";
 const forgetDeviceId = () => {
   try {
+    localStorage.removeItem(RELEASE_TOKEN_KEY);
     localStorage.removeItem(ID_KEY);
   } catch {
     /* ignore */
@@ -198,7 +201,7 @@ async function doEnable(key: string | null, begin: () => void, onKey?: (used: st
       // A subscription the CP does not know would be a device that silently gets nothing. When the
       // answer was lost the CP may have the row anyway, so a sign-out also releases it.
       if (gone()) {
-        await takeBack(json, sub);
+        await takeBack(json, sub, null);
         return "cancelled";
       }
       if (created) await created.unsubscribe().catch(() => {});
@@ -210,9 +213,10 @@ async function doEnable(key: string | null, begin: () => void, onKey?: (used: st
       }
       throw e;
     }
+    const binding = snapshotReleaseBinding();
     if (gone()) {
       // The CP accepted it after the sign-out released this browser: take it off again.
-      await takeBack(json, sub);
+      await takeBack(json, sub, binding);
       return "cancelled";
     }
     storeDeviceId(id);
@@ -243,8 +247,8 @@ async function readKey(cached: string): Promise<string | null> {
 }
 
 /** Ends a subscription on both sides at once; neither half waits for the other. */
-async function takeBack(json: PushSubscriptionJSON, sub: PushSubscription): Promise<void> {
-  await Promise.allSettled([releasePushEndpoint(json), sub.unsubscribe()]);
+async function takeBack(json: PushSubscriptionJSON, sub: PushSubscription, binding?: ReleaseBinding | null): Promise<void> {
+  await Promise.allSettled([releasePushEndpoint(json, undefined, binding), sub.unsubscribe()]);
   forgetDeviceId();
 }
 
@@ -281,6 +285,9 @@ export async function disablePush(): Promise<void> {
  */
 export async function releasePushForSignOut(timeoutMs = 2500): Promise<void> {
   epoch++;
+  // Fixed before the subscription is read: a registration another tab makes while this waits is not
+  // the one this sign-out is about.
+  const binding = snapshotReleaseBinding();
   blockedUntil = Date.now() + timeoutMs + SIGN_OUT_BLOCK_EXTRA_MS;
   const ctl = new AbortController();
   const work = (async () => {
@@ -290,10 +297,13 @@ export async function releasePushForSignOut(timeoutMs = 2500): Promise<void> {
     // One retry for a read that failed: reading nothing must not be taken for "no subscription".
     const sub = (await readSubscription().catch(() => readSubscription().catch(() => undefined))) ?? null;
     if (!sub) return void (await pending);
+    // The subscription read is not the one this sign-out was decided for (another tab replaced it
+    // meanwhile): it is that tab's registration, not ours to release or end.
+    if (binding && binding.endpoint !== sub.toJSON().endpoint) return void (await pending);
     // Both start now, side by side: a CP call that outlasts the deadline must not postpone ending
     // the browser's own subscription until after the page has navigated away.
     const json = sub.toJSON();
-    await Promise.allSettled([releasePushEndpoint(json, ctl.signal), sub.unsubscribe(), pending]);
+    await Promise.allSettled([releasePushEndpoint(json, ctl.signal, binding), sub.unsubscribe(), pending]);
   })();
   let timer: ReturnType<typeof setTimeout> | undefined;
   const deadline = new Promise<void>((res) => {

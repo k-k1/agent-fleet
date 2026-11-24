@@ -4,6 +4,7 @@ package pushsrv
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -547,6 +548,9 @@ type listWire struct {
 
 type createdWire struct {
 	ID string `json:"id"`
+	// ReleaseToken binds a later release to this registration. The Console keeps it beside the
+	// device id and sends it back with the release.
+	ReleaseToken string `json:"releaseToken"`
 }
 
 // Config answers the applicationServerKey the browser subscribes with.
@@ -610,8 +614,14 @@ func (p *Service) Subscribe(w http.ResponseWriter, r *http.Request, membershipID
 	if len(ua) > 200 {
 		ua = ua[:200]
 	}
-	added, err := p.store.AddPushSubscription(r.Context(), store.PushSubscription{MembershipID: membershipID,
-		Endpoint: in.Endpoint, P256dh: in.Keys.P256dh, Auth: in.Keys.Auth, UserAgent: ua}, pushMaxPerMember)
+	var tok [16]byte
+	if _, err := rand.Read(tok[:]); err != nil {
+		internalErr(w, err)
+		return
+	}
+	fresh := base64.RawURLEncoding.EncodeToString(tok[:])
+	added, token, err := p.store.AddPushSubscription(r.Context(), store.PushSubscription{MembershipID: membershipID,
+		Endpoint: in.Endpoint, P256dh: in.Keys.P256dh, Auth: in.Keys.Auth, UserAgent: ua, ReleaseToken: fresh}, pushMaxPerMember)
 	if err != nil {
 		internalErr(w, err)
 		return
@@ -629,7 +639,7 @@ func (p *Service) Subscribe(w http.ResponseWriter, r *http.Request, membershipID
 		writeErr(w, http.StatusConflict, "too_many_devices", "too many registered devices; remove one first")
 		return
 	}
-	writeJSON(w, http.StatusCreated, createdWire{ID: store.PushSubscriptionID(in.Endpoint)})
+	writeJSON(w, http.StatusCreated, createdWire{ID: store.PushSubscriptionID(in.Endpoint), ReleaseToken: token})
 }
 
 // Remove deletes one of the caller's devices.
@@ -763,12 +773,14 @@ func (p *Service) Viewing(w http.ResponseWriter, r *http.Request, membershipID s
 	var in struct {
 		Device  string `json:"device"`
 		Session string `json:"session"`
+		// Seq is optional: the device's own counter, rising with each report. See viewing.set.
+		Seq int64 `json:"seq"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&in); err != nil || in.Device == "" || len(in.Device) > 100 || len(in.Session) > 200 {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<10)).Decode(&in); err != nil || in.Device == "" || len(in.Device) > 100 || len(in.Session) > 200 || in.Seq < 0 {
 		writeErr(w, http.StatusBadRequest, "bad_request", "device and session required")
 		return
 	}
-	p.view.set(membershipID, in.Device, in.Session, time.Now())
+	p.view.set(membershipID, in.Device, in.Session, in.Seq, time.Now())
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -785,12 +797,21 @@ func (p *Service) Release(w http.ResponseWriter, r *http.Request) {
 			P256dh string `json:"p256dh"`
 			Auth   string `json:"auth"`
 		} `json:"keys"`
+		// ReleaseToken is the token the registration answered with. Present: the release only
+		// applies to that registration. Absent (an older Console): keys alone, as before.
+		ReleaseToken string `json:"releaseToken"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<10)).Decode(&in); err != nil || in.Endpoint == "" {
 		writeErr(w, http.StatusBadRequest, "bad_request", "invalid JSON")
 		return
 	}
-	if err := p.store.ReleasePushEndpoint(r.Context(), in.Endpoint, in.Keys.P256dh, in.Keys.Auth); err != nil {
+	release := func() error {
+		if in.ReleaseToken != "" {
+			return p.store.ReleasePushEndpointIfToken(r.Context(), in.Endpoint, in.Keys.P256dh, in.Keys.Auth, in.ReleaseToken)
+		}
+		return p.store.ReleasePushEndpoint(r.Context(), in.Endpoint, in.Keys.P256dh, in.Keys.Auth)
+	}
+	if err := release(); err != nil {
 		internalErr(w, err)
 		return
 	}

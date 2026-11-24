@@ -172,6 +172,60 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 1 {
 		t.Fatalf("a release with foreign keys removed the row: %+v", rows)
 	}
+	// The same member re-registering with the same keys keeps the token, so a release started with
+	// it still applies; another owner or other keys take the new one.
+	sub.ReleaseToken = "tok-first"
+	if _, tok, err := st.AddPushSubscription(ctx, sub, 10); err != nil || tok != "tok-first" {
+		t.Fatalf("tok=%q err=%v", tok, err)
+	}
+	sub.ReleaseToken = "tok-second"
+	if _, tok, err := st.AddPushSubscription(ctx, sub, 10); err != nil || tok != "tok-first" {
+		t.Fatalf("a same-owner re-registration rotated the token: %q %v", tok, err)
+	}
+	// Each of owner, p256dh and auth changing alone must take the new token (a non-empty one is held).
+	orig := sub
+	for name, mut := range map[string]func(*PushSubscription){
+		"owner":  func(p *PushSubscription) { p.MembershipID = a },
+		"p256dh": func(p *PushSubscription) { p.P256dh = "other-key" },
+		"auth":   func(p *PushSubscription) { p.Auth = "other-auth" },
+	} {
+		base := orig
+		base.ReleaseToken = "tok-held-" + name
+		if err := st.UpsertPushSubscription(ctx, base); err != nil { // back to the original owner and keys
+			t.Fatal(err)
+		}
+		_, held, err := st.AddPushSubscription(ctx, base, 10) // what the row holds now
+		if err != nil || held == "" {
+			t.Fatalf("%s: setup held=%q err=%v", name, held, err)
+		}
+		changed := orig
+		mut(&changed)
+		changed.ReleaseToken = "tok-changed-" + name
+		if _, tok, err := st.AddPushSubscription(ctx, changed, 10); err != nil || tok != "tok-changed-"+name || tok == held {
+			t.Fatalf("%s change kept the old token (held %q): %q %v", name, held, tok, err)
+		}
+	}
+	sub = orig
+	sub.ReleaseToken = "tok-first"
+	if err := st.UpsertPushSubscription(ctx, sub); err != nil {
+		t.Fatal(err)
+	}
+	// A token release applies only to the registration that wrote the current token.
+	for _, tok := range []string{"tok-old", ""} {
+		if err := st.ReleasePushEndpointIfToken(ctx, ep, sub.P256dh, sub.Auth, tok); err != nil {
+			t.Fatal(err)
+		}
+		if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 1 {
+			t.Fatalf("token %q released the row: %+v", tok, rows)
+		}
+	}
+	if err := st.ReleasePushEndpointIfToken(ctx, ep, sub.P256dh, sub.Auth, "tok-first"); err != nil {
+		t.Fatal(err)
+	}
+	if rows, _ = st.ListPushSubscriptions(ctx, b); len(rows) != 0 {
+		t.Fatalf("the current token did not release: %+v", rows)
+	}
+	_ = st.UpsertPushSubscription(ctx, sub)
 	if err := st.ReleasePushEndpoint(ctx, ep, sub.P256dh, sub.Auth); err != nil {
 		t.Fatal(err)
 	}
@@ -197,7 +251,7 @@ func checkPushCap(t *testing.T, st *SQL, a, b string) {
 	const max = 3
 	add := func(mid, ep string) bool {
 		t.Helper()
-		ok, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: mid, Endpoint: ep, P256dh: "k", Auth: "a"}, max)
+		ok, _, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: mid, Endpoint: ep, P256dh: "k", Auth: "a"}, max)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -259,7 +313,7 @@ func checkPushCap(t *testing.T, st *SQL, a, b string) {
 			wg.Add(1)
 			go func(i int) {
 				defer wg.Done()
-				ok, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: a,
+				ok, _, err := st.AddPushSubscription(ctx, PushSubscription{MembershipID: a,
 					Endpoint: fmt.Sprintf("https://fcm.googleapis.com/fcm/send/race-%d-%d", round, i), P256dh: "k", Auth: "a"}, max)
 				if err != nil {
 					errs <- err

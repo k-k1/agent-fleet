@@ -2,6 +2,7 @@ package pushsrv
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -43,7 +44,7 @@ func TestOnScreenSessionIsNotPushed(t *testing.T) {
 	f := newFixture(t)
 	f.subscribe(t, "m1")
 	now := time.Now()
-	f.svc.view.set("m1", "desk", "s1", now)
+	f.svc.view.set("m1", "desk", "s1", 0, now)
 	f.deliver(note("question"))
 	if f.count() != 0 {
 		t.Fatal("pushed for a session on screen")
@@ -55,7 +56,7 @@ func TestOnScreenSessionIsNotPushed(t *testing.T) {
 		t.Fatal("a different session was suppressed")
 	}
 	// Another member's report does not suppress this one.
-	f.svc.view.set("m2", "desk", "s3", now)
+	f.svc.view.set("m2", "desk", "s3", 0, now)
 	third := note("question")
 	third.TargetID = "s3"
 	f.deliver(third)
@@ -63,12 +64,12 @@ func TestOnScreenSessionIsNotPushed(t *testing.T) {
 		t.Fatal("another member's view suppressed the push")
 	}
 	// Clearing, and expiry, both end the suppression.
-	f.svc.view.set("m1", "desk", "", now)
+	f.svc.view.set("m1", "desk", "", 0, now)
 	f.deliver(note("question"))
 	if f.count() != 3 {
 		t.Fatal("still suppressed after the device cleared")
 	}
-	f.svc.view.set("m1", "desk", "s1", now.Add(-2*viewTTL))
+	f.svc.view.set("m1", "desk", "s1", 0, now.Add(-2*viewTTL))
 	f.deliver(note("question"))
 	if f.count() != 4 {
 		t.Fatal("a stale report still suppressed the push")
@@ -144,6 +145,17 @@ func TestViewingAPI(t *testing.T) {
 	if post(`{"device":"d1","session":"s1"}`) != http.StatusNoContent || !f.svc.view.on("m1", "s1", time.Now()) {
 		t.Fatal("report not recorded")
 	}
+	// The order survives the HTTP entry: a heartbeat numbered below the clear is dropped.
+	if post(`{"device":"d2","session":"s7","seq":1}`) != 204 || post(`{"device":"d2","session":"","seq":3}`) != 204 ||
+		post(`{"device":"d2","session":"s7","seq":2}`) != 204 {
+		t.Fatal("report refused")
+	}
+	if f.svc.view.on("m1", "s7", time.Now()) {
+		t.Fatal("a late heartbeat revived the view through the handler")
+	}
+	if post(`{"device":"d2","session":"s7","seq":-1}`) != 400 {
+		t.Fatal("accepted a negative seq")
+	}
 	if post(`{"session":"s1"}`) != 400 {
 		t.Fatal("accepted a report with no device")
 	}
@@ -181,9 +193,9 @@ func TestOneDeviceClearingKeepsTheOthersSuppression(t *testing.T) {
 	f := newFixture(t)
 	f.subscribe(t, "m1")
 	now := time.Now()
-	f.svc.view.set("m1", "phone", "s1", now)
-	f.svc.view.set("m1", "desk", "s1", now)
-	f.svc.view.set("m1", "phone", "", now)
+	f.svc.view.set("m1", "phone", "s1", 0, now)
+	f.svc.view.set("m1", "desk", "s1", 0, now)
+	f.svc.view.set("m1", "phone", "", 0, now)
 	f.deliver(note("question"))
 	if f.count() != 0 {
 		t.Fatal("clearing one device lifted the other device's suppression")
@@ -194,14 +206,14 @@ func TestViewingIsBounded(t *testing.T) {
 	var v viewing
 	now := time.Now()
 	for i := 0; i < 1000; i++ {
-		v.set("m1", string(rune('a'+i%26))+string(rune('A'+i/26%26))+string(rune('0'+i/676)), "s", now)
+		v.set("m1", string(rune('a'+i%26))+string(rune('A'+i/26%26))+string(rune('0'+i/676)), "s", 0, now)
 	}
 	if n := len(v.byMember["m1"]); n > maxViewDevices {
 		t.Fatalf("%d devices on record for one member", n)
 	}
 	// A member who stopped reporting is reclaimed by someone else's report after the TTL.
-	v.set("gone", "d", "s", now)
-	v.set("other", "d", "s", now.Add(viewTTL+sweepEvery+time.Second))
+	v.set("gone", "d", "s", 0, now)
+	v.set("other", "d", "s", 0, now.Add(viewTTL+sweepEvery+time.Second))
 	if _, ok := v.byMember["gone"]; ok {
 		t.Fatal("an abandoned member's expired entry was never reclaimed")
 	}
@@ -631,5 +643,56 @@ func TestFailedPrefsSaveAnswers500AndChangesNothing(t *testing.T) {
 	k, o, _ := f.st.GetPushPrefs(ctx, "m1")
 	if len(k) != 1 || k[0] != "question" || len(o) != 1 || o[0] != "schedule" {
 		t.Fatalf("a failed save changed the stored prefs: %v %v", k, o)
+	}
+}
+
+func TestReleaseTokenBindsToTheLatestRegistration(t *testing.T) {
+	f := newFixture(t)
+	_, p256, auth := newDevice(t)
+	ep := f.srv.URL + "/tok"
+	body := `{"endpoint":"` + ep + `","keys":{"p256dh":"` + p256 + `","auth":"` + auth + `"}}`
+	sub := func(member string) string {
+		w := httptest.NewRecorder()
+		f.svc.Subscribe(w, httptest.NewRequest("POST", "/", strings.NewReader(body)), member)
+		var out struct{ ReleaseToken string }
+		if w.Code != http.StatusCreated || json.Unmarshal(w.Body.Bytes(), &out) != nil || out.ReleaseToken == "" {
+			t.Fatalf("%d %s", w.Code, w.Body)
+		}
+		return out.ReleaseToken
+	}
+	rel := func(token string) {
+		w := httptest.NewRecorder()
+		in := `{"endpoint":"` + ep + `","keys":{"p256dh":"` + p256 + `","auth":"` + auth + `"` + `}`
+		if token != "" {
+			in += `,"releaseToken":"` + token + `"`
+		}
+		f.svc.Release(w, httptest.NewRequest("POST", "/", strings.NewReader(in+`}`)))
+		if w.Code != 204 {
+			t.Fatalf("release answered %d", w.Code)
+		}
+	}
+	held := func() int { s, _ := f.st.ListPushSubscriptions(context.Background(), "m2"); return len(s) }
+	tokA := sub("m1")
+	if again := sub("m1"); again != tokA {
+		t.Fatal("a same-member re-registration rotated the token (a lost 201 would strand the release)")
+	}
+	tokB := sub("m2") // the browser switched member
+	if tokA == tokB {
+		t.Fatal("a new registration kept the old token")
+	}
+	rel(tokA) // member 1's late release
+	if held() != 1 {
+		t.Fatal("a late release for the previous registration deleted the next member's subscription")
+	}
+	rel(tokB)
+	if held() != 0 {
+		t.Fatal("the current token did not release")
+	}
+	if again := sub("m2"); again == tokB {
+		t.Fatal("the row was deleted, so a new registration must get a new token")
+	}
+	rel("") // an older Console sends no token: keys alone, as before
+	if held() != 0 {
+		t.Fatal("a release without a token must keep working")
 	}
 }

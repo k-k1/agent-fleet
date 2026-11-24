@@ -5,14 +5,18 @@ const removed: string[] = [];
 let releaseFails = false;
 let probe: () => Promise<string | null> = () => Promise.resolve("AQAB");
 let addDevice: () => Promise<string> = () => Promise.resolve("dev1");
+let bindingNow: { endpoint: string; token: string } | null = null;
+const releasedWith: unknown[] = [];
 vi.mock("./pushApi.ts", () => ({
+  snapshotReleaseBinding: () => bindingNow,
   probePushKey: () => probe(),
   addPushDevice: () => addDevice(),
   removePushDevice: (id: string) => {
     removed.push(id);
     return Promise.resolve();
   },
-  releasePushEndpoint: (sub: unknown) => {
+  releasePushEndpoint: (sub: unknown, _signal?: AbortSignal, binding?: unknown) => {
+    releasedWith.push(binding);
     if (releaseFails) return Promise.reject(new Error("offline"));
     released.push(sub);
     return Promise.resolve();
@@ -47,6 +51,8 @@ beforeEach(async () => {
   vi.resetModules();
   ({ deviceIdFor, disablePush, dropLocalSubscription, enablePush, releasePushForSignOut, subscriptionMatchesKey } = await import("./webPush.ts"));
   released.length = 0;
+  releasedWith.length = 0;
+  bindingNow = null;
   removed.length = 0;
   unsubscribed = 0;
   releaseFails = false;
@@ -95,6 +101,29 @@ describe("web push device lifecycle", () => {
     await releasePushForSignOut();
     expect(released).toEqual([sub.toJSON()]);
     expect(unsubscribed).toBe(1);
+  });
+  it("sign-out releases with the binding it took before reading the subscription", async () => {
+    const taken = { endpoint: "https://push.example/x", token: "tok-at-start" };
+    bindingNow = taken;
+    const reg = {
+      pushManager: {
+        getSubscription: () => {
+          bindingNow = { endpoint: "https://push.example/x", token: "another-tabs" }; // a registration lands while reading
+          return Promise.resolve(sub);
+        },
+      },
+    };
+    Object.defineProperty(navigator, "serviceWorker", { value: { getRegistration: () => Promise.resolve(reg) }, configurable: true });
+    await releasePushForSignOut();
+    expect(releasedWith).toEqual([taken]);
+  });
+  it("sign-out leaves a subscription another tab created while it was reading", async () => {
+    bindingNow = { endpoint: "https://push.example/not-this-one", token: "tok" };
+    const reg = { pushManager: { getSubscription: () => Promise.resolve(sub) } };
+    Object.defineProperty(navigator, "serviceWorker", { value: { getRegistration: () => Promise.resolve(reg) }, configurable: true });
+    await releasePushForSignOut();
+    expect(released).toEqual([]);
+    expect(unsubscribed).toBe(0);
   });
   it("a current subscription is reused, not recreated", async () => {
     expect(await enablePush("AQAB")).toBe("ok");

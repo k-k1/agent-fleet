@@ -22,11 +22,15 @@ const deviceId = (() => {
 // Reports go out one at a time, in the order they were made: a slow "on screen" POST must not land
 // after the "left" report that followed it and bring the suppression back.
 let chain: Promise<unknown> = Promise.resolve();
+// Counts the reports in the order they were made (not sent), so the CP can drop a heartbeat that
+// overtakes the clear that followed it on the network.
+let seq = 0;
 // `stillWanted` is asked when a report's turn comes: an "on screen" report the screen has since
 // outgrown (tab hidden, session or tenant switched while an earlier POST was slow) is dropped
 // instead of being sent late. A clearing report always goes.
 const post = (session: string, tenant: string, stillWanted: () => boolean = () => true) => {
-  chain = chain.then(() => (stillWanted() ? postViewing(deviceId, session, tenant).catch(() => {}) : undefined));
+  const n = ++seq;
+  chain = chain.then(() => (stillWanted() ? postViewing(deviceId, session, tenant, n).catch(() => {}) : undefined));
 };
 
 // A definite answer ("no Web Push here", or the key) stays for the page's lifetime; a transient

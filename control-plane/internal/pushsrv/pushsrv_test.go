@@ -110,17 +110,26 @@ func (m *memStore) PutTenantPushIncludeText(context.Context, string, string, boo
 func (m *memStore) UpsertPushSubscription(_ context.Context, p store.PushSubscription) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	_, err := m.upsertLocked(p)
+	return err
+}
+
+// upsertLocked mirrors the SQL store: the same member with the same keys keeps its release token.
+func (m *memStore) upsertLocked(p store.PushSubscription) (string, error) {
 	p.ID = store.PushSubscriptionID(p.Endpoint)
 	for i, s := range m.subs {
 		if s.Endpoint == p.Endpoint {
+			if s.MembershipID == p.MembershipID && s.P256dh == p.P256dh && s.Auth == p.Auth && s.ReleaseToken != "" {
+				p.ReleaseToken = s.ReleaseToken
+			}
 			m.subs[i] = p
-			return nil
+			return p.ReleaseToken, nil
 		}
 	}
 	m.subs = append(m.subs, p)
-	return nil
+	return p.ReleaseToken, nil
 }
-func (m *memStore) AddPushSubscription(ctx context.Context, p store.PushSubscription, max int) (bool, error) {
+func (m *memStore) AddPushSubscription(ctx context.Context, p store.PushSubscription, max int) (bool, string, error) {
 	m.mu.Lock()
 	total, held := 0, false
 	for _, s := range m.subs {
@@ -129,11 +138,13 @@ func (m *memStore) AddPushSubscription(ctx context.Context, p store.PushSubscrip
 			held = held || s.Endpoint == p.Endpoint
 		}
 	}
-	m.mu.Unlock()
 	if !held && total >= max {
-		return false, nil
+		m.mu.Unlock()
+		return false, "", nil
 	}
-	return true, m.UpsertPushSubscription(ctx, p)
+	defer m.mu.Unlock()
+	tok, err := m.upsertLocked(p)
+	return true, tok, err
 }
 func (m *memStore) GetPushSubscription(_ context.Context, mid, ep string) (store.PushSubscription, bool, error) {
 	m.mu.Lock()
@@ -214,6 +225,20 @@ func (m *memStore) ReleasePushEndpoint(ctx context.Context, ep, p256dh, auth str
 	}
 	for i, s := range m.subs {
 		if s.Endpoint == ep && s.P256dh == p256dh && s.Auth == auth {
+			m.subs = append(m.subs[:i], m.subs[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+func (m *memStore) ReleasePushEndpointIfToken(ctx context.Context, ep, p256dh, auth, token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.releaseErr != nil {
+		return m.releaseErr
+	}
+	for i, s := range m.subs {
+		if s.Endpoint == ep && s.P256dh == p256dh && s.Auth == auth && token != "" && s.ReleaseToken == token {
 			m.subs = append(m.subs[:i], m.subs[i+1:]...)
 			break
 		}

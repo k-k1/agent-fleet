@@ -3,6 +3,41 @@
 // string literals: control-plane/console_routes_test.go reads them as text.
 import { raw, rawJSON } from "../../core/api/client.ts";
 
+// The CP's release token for this browser's registration (answered by the add). Sent back with a
+// release so a late release for an earlier registration cannot delete a later member's. The af
+// prefix makes clearLocalState drop it at sign-out.
+// webPush.ts removes it by the same key when it forgets the device id.
+const RELEASE_TOKEN_KEY = "af-push-release-token";
+/** The token and the subscription (by endpoint) it was issued for. */
+export interface ReleaseBinding {
+  endpoint: string;
+  token: string;
+}
+/** What storage holds right now; take it when a release is decided on, not when it is sent. */
+export const snapshotReleaseBinding = (): ReleaseBinding | null => {
+  try {
+    const j = JSON.parse(localStorage.getItem(RELEASE_TOKEN_KEY) || "null");
+    return j && typeof j.endpoint === "string" && typeof j.token === "string" && j.token ? j : null;
+  } catch {
+    return null;
+  }
+};
+const storeReleaseBinding = (b: ReleaseBinding | null) => {
+  try {
+    if (b) localStorage.setItem(RELEASE_TOKEN_KEY, JSON.stringify(b));
+    else localStorage.removeItem(RELEASE_TOKEN_KEY);
+  } catch {
+    // The new binding could not be written, and the old one names a subscription this call has just
+    // replaced: leaving it would make the next sign-out skip the new subscription. Without a
+    // binding the release falls back to the keys alone.
+    try {
+      localStorage.removeItem(RELEASE_TOKEN_KEY);
+    } catch {
+      /* storage is unusable; nothing more to do */
+    }
+  }
+};
+
 export interface PushDevice {
   id: string;
   userAgent: string;
@@ -51,7 +86,9 @@ export async function addPushDevice(sub: PushSubscriptionJSON): Promise<string> 
     }
     throw new Error(msg);
   }
-  return String((await r.json())?.id || "");
+  const j = await r.json();
+  storeReleaseBinding(typeof j?.releaseToken === "string" && j.releaseToken ? { endpoint: String(sub.endpoint), token: j.releaseToken } : null);
+  return String(j?.id || "");
 }
 
 export async function removePushDevice(id: string): Promise<void> {
@@ -71,23 +108,34 @@ export async function putPushOff(off: string[]): Promise<void> {
   if (!r.ok) throw new Error(String(r.status));
 }
 
-/** `tenant` pins the report to the tenant it was made for: a later tenant switch must not re-aim it. */
-export async function postViewing(device: string, session: string, tenant?: string): Promise<void> {
+/**
+ * `tenant` pins the report to the tenant it was made for: a later tenant switch must not re-aim it.
+ * `seq` rises with every report the device makes; the CP drops one that arrives after a later one.
+ */
+export async function postViewing(device: string, session: string, tenant?: string, seq?: number): Promise<void> {
   await raw("api/push/viewing", {
     method: "POST",
     headers: { "Content-Type": "application/json", ...(tenant ? { "X-AF-Tenant": tenant } : {}) },
-    body: JSON.stringify({ device, session }),
+    body: JSON.stringify({ device, session, ...(seq ? { seq } : {}) }),
     // A POST that never answers must not hold the reports queued behind it.
     signal: AbortSignal.timeout(10_000),
   });
 }
 
 /** Sign-out: drops the browser's subscription server-side; the keys are the proof (no session needed). */
-export async function releasePushEndpoint(sub: PushSubscriptionJSON, signal?: AbortSignal): Promise<void> {
+export async function releasePushEndpoint(
+  sub: PushSubscriptionJSON,
+  signal?: AbortSignal,
+  binding: ReleaseBinding | null = snapshotReleaseBinding(),
+): Promise<void> {
+  // A token issued for another subscription is not this one's. Callers that decide on a release
+  // before an asynchronous step pass the binding they took first, so a registration made in
+  // between (another tab, another member) is not the one released.
+  const releaseToken = binding && binding.endpoint === sub.endpoint ? binding.token : "";
   const r = await raw("api/push/release", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ endpoint: sub.endpoint, keys: sub.keys }),
+    body: JSON.stringify({ endpoint: sub.endpoint, keys: sub.keys, ...(releaseToken ? { releaseToken } : {}) }),
     signal,
   });
   // A 500 is not "released": the caller must not report the device as gone.
