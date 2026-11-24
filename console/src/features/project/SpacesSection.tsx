@@ -3,7 +3,7 @@
 // Other sessions. Which sessions belong here is the Agent's answer (Session.space, decided by
 // the directory's root), never the folder name, so a space that shares a repository's name
 // stays out of the repository tree.
-import { memo, useId } from "react";
+import { memo, useId, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -17,6 +17,7 @@ import { useRefIndex } from "../sessions/useRefIndex.ts";
 import { useRailRoving } from "./useRailRoving.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
 import { spaceLabel } from "../spaces/store.ts";
+import { SpaceRenameModal } from "../spaces/SpaceRenameModal.tsx";
 import { useSpaceNames } from "../spaces/useSpaceNames.ts";
 import { TerminalChip } from "../terminals/TerminalChip.tsx";
 import { useTerminalView } from "../terminals/useTerminalView.ts";
@@ -32,6 +33,8 @@ export const SpacesSection = memo(function SpacesSection() {
   const nq = normQuery(useProjectFilter((f) => f.q));
   const refs = useRefIndex();
   const rail = useRailRoving();
+  // The folder whose rename dialog is open; the name is read when it opens, from the list.
+  const [renaming, setRenaming] = useState<string | null>(null);
   // A space session is repo-less, so a working set holds it by direct assignment only. The
   // search box matches a session's own text or the name its space is shown under.
   const wset = useActiveWorkingSet();
@@ -88,6 +91,19 @@ export const SpacesSection = memo(function SpacesSection() {
                 <Icon name="folder" />
                 <span className="space-group-name">{g.label}</span>
                 <TerminalChip groupKey={shellPlaceKey({ kind: "space", folder: g.folder })} />
+                <button
+                  type="button"
+                  className="space-group-rename"
+                  title={tr("pj.space_rename")}
+                  aria-label={tr("pj.space_rename_aria", { name: g.label })}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setRenaming(g.folder);
+                  }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                >
+                  <Icon name="edit" />
+                </button>
               </div>
             </div>
             {g.sessions.length > 0 && (
@@ -108,6 +124,12 @@ export const SpacesSection = memo(function SpacesSection() {
           </li>
         ))}
       </ul>
+      {renaming !== null && (
+        <SpaceRenameModal
+          space={{ folder: renaming, name: spaces.find((x) => x.folder === renaming)?.name ?? "" }}
+          onClose={() => setRenaming(null)}
+        />
+      )}
     </Section>
   );
 });

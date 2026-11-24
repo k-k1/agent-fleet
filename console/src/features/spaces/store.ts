@@ -2,7 +2,7 @@
 // Sessions view's Spaces section reads display names from it; which sessions run in a space
 // comes from the session list itself (Session.space), so this list only has to name them.
 import { create } from "zustand";
-import { api, getTenant, getUser, isTransientErr } from "../../core/api/client.ts";
+import { api, apiJSON, getTenant, getUser, isTransientErr } from "../../core/api/client.ts";
 
 /** A space as GET /api/spaces reports it. */
 export interface Space {
@@ -100,6 +100,24 @@ const NO_SPACES: Space[] = [];
 /** Transient failures in a row for `owner`'s requests. */
 export function failuresFor(st: { failures: number; failOwner: string }, owner: string): number {
   return st.failOwner === owner ? st.failures : 0;
+}
+
+/** Rename a space's display name (the folder never changes). Resolves to the server's error, or
+ *  null once the name is stored; the list is then read again, so every view names the space the
+ *  new way and a space another tab removed drops out. */
+export async function renameSpace(folder: string, name: string): Promise<{ error?: unknown } | null> {
+  const owner = spacesOwner();
+  const d = await apiJSON(`api/spaces/${encodeURIComponent(folder)}`, "PATCH", { name });
+  if (d?.error) return { error: d.error };
+  // Show the new name at once; the answer to the refresh below replaces the list anyway. A switch
+  // of workspace while the request ran leaves the (other owner's) list alone.
+  if (spacesOwner() === owner && d?.space) {
+    useSpacesStore.setState((s) =>
+      s.owner === owner ? { spaces: s.spaces.map((x) => (x.folder === folder ? { ...x, name: d.space.name ?? name } : x)) } : s,
+    );
+  }
+  void useSpacesStore.getState().refresh();
+  return null;
 }
 
 /** The name a space is shown under: its display name, or its folder when it has none. */

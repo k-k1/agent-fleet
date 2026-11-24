@@ -372,7 +372,7 @@
 
 /* Spaces section (ADR 0142 decision 9): one row per space, its sessions beneath it in the
    same nested list the repository nodes use. The space row is a rail row (arrow keys reach
-   it) but has no actions of its own yet. */
+   it) and carries a rename button that shows on hover or focus. */
 .space-group-row {
   display: flex;
   align-items: center;
@@ -388,6 +388,41 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.space-group-rename {
+  flex: none;
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 4px;
+  color: var(--muted);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+}
+.space-group-rename .codicon {
+  font-size: 12px;
+}
+.space-group-row:hover .space-group-rename,
+.space-group-rename:focus-visible {
+  opacity: 1;
+}
+.space-group-rename:hover {
+  color: var(--text);
+  background: color-mix(in srgb, var(--fg) 9%, transparent);
+}
+.space-group-rename:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* Touch: no hover, so keep the button visible and tappable. */
+@media (hover: none) {
+  .space-group-rename {
+    opacity: 1;
+    padding: 3px 6px;
+  }
 }
 .sess-list.space-list {
   padding-top: 2px;

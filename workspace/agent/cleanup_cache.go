@@ -290,7 +290,8 @@ var homeUsageRunner homeusage.Runner
 // homeRoots lists the classified directories for home. The tool-cache rows come from
 // toolCaches, so a GOCACHE pointed to another place inside home is still filed where the
 // button would empty it. One pointed outside home is not walked and is left out rather than
-// listed with a zero; the Tool caches section still measures it.
+// listed with a zero; the Tool caches section still measures it. ~/spaces holds the member's
+// own work and is never reclaimable: Recreate keeps it and Clean home deletes it with the rest.
 func homeRoots(home string) map[string]homeusage.Root {
 	at := func(rel ...string) string { return filepath.Join(append([]string{home}, rel...)...) }
 	r := map[string]homeusage.Root{
@@ -312,6 +313,7 @@ func homeRoots(home string) map[string]homeusage.Root {
 		at(".pyenv"):                   {Cat: homeusage.CatTools, Part: ".pyenv"},
 		at(".android"):                 {Cat: homeusage.CatTools, Part: ".android"},
 		at(".af-work"):                 {Cat: homeusage.CatAfWork, Part: ".af-work"},
+		at("spaces"):                   {Cat: homeusage.CatSpaces, Part: "spaces"},
 		paths.AgentDataDir():           {Cat: homeusage.CatAgent, Part: ".local/share/agent-fleet"},
 		sessionx.CacheRoot():           {Cat: homeusage.CatAgent, Part: ".cache/agent-fleet"},
 		cleanupStoreDir():              {Cat: homeusage.CatTrash, Part: "trash", Reclaimable: true},

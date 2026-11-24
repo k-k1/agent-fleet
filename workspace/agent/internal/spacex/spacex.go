@@ -377,6 +377,115 @@ func List() ([]Space, error) {
 	return out, nil
 }
 
+// ErrNotFound is what Rename answers for a folder that is no space (never made, removed, or a
+// symlink in its place).
+var ErrNotFound = errors.New("no such space")
+
+// Rename changes the display name of the space in folder to name (already cleaned) and answers
+// the space as it now is. Only the marker is rewritten: the folder keeps its name, so the
+// sessions in it keep their ids and their transcripts (see the package comment).
+//
+// The rewrite runs inside an os.Root opened on the space, as CopyAttachment's does, so a symlink
+// that an agent put at the marker's or the folder's place cannot send the write outside the
+// space. The new marker replaces the old one by a rename, so a reader sees one or the other and
+// a crash leaves the old name. Two renames at once leave the last rename's name.
+func Rename(folder, name string) (Space, error) {
+	if !ValidFolder(folder) {
+		return Space{}, ErrNotFound
+	}
+	top, err := os.OpenRoot(Root())
+	if err != nil {
+		return Space{}, notFoundOr(err)
+	}
+	defer top.Close()
+	sp, err := top.OpenRoot(folder)
+	if err != nil {
+		return Space{}, notFoundOr(err)
+	}
+	defer sp.Close()
+	if fi, err := sp.Lstat(MarkerFile); err != nil || !fi.Mode().IsRegular() {
+		return Space{}, ErrNotFound
+	}
+	// The creation time is kept; a marker that does not parse has none to keep.
+	var m marker
+	if cur, err := sp.ReadFile(MarkerFile); err == nil && len(cur) <= markerMaxBytes {
+		_ = json.Unmarshal(cur, &m)
+	}
+	m.Name = name
+	b, err := json.Marshal(m)
+	if err != nil {
+		return Space{}, err
+	}
+	var tmp string
+	for attempt := 0; ; attempt++ {
+		tmp = fmt.Sprintf(".af-space-%s.tmp", randSuffix())
+		f, err := sp.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			if errors.Is(err, fs.ErrExist) && attempt < 8 {
+				continue
+			}
+			return Space{}, err
+		}
+		_, werr := f.Write(append(b, '\n'))
+		if cerr := f.Close(); werr == nil {
+			werr = cerr
+		}
+		if werr != nil {
+			_ = sp.Remove(tmp)
+			return Space{}, werr
+		}
+		break
+	}
+	if err := sp.Rename(tmp, MarkerFile); err != nil {
+		_ = sp.Remove(tmp)
+		return Space{}, err
+	}
+	return Space{Folder: folder, Name: name, Dir: filepath.Join(Root(), folder), CreatedAt: m.CreatedAt}, nil
+}
+
+// notFoundOr maps "the folder (or ~/spaces) is not there, or is a link out of Root" to
+// ErrNotFound and leaves every other error as it is.
+func notFoundOr(err error) error {
+	if errors.Is(err, fs.ErrNotExist) {
+		return ErrNotFound
+	}
+	// os.Root refuses a symlink that leaves it with a plain error and no sentinel; a space is
+	// never one, so the caller sees the same answer as for a folder that is not there.
+	if strings.Contains(err.Error(), "escapes from parent") || errors.Is(err, syscall.ELOOP) || errors.Is(err, syscall.ENOTDIR) {
+		return ErrNotFound
+	}
+	return err
+}
+
+// renameRequest is PATCH /spaces/{folder}.
+type renameRequest struct {
+	Name string `json:"name"`
+}
+
+// HandleRename is PATCH /spaces/{folder}: the display name only (the folder never changes).
+func HandleRename(w http.ResponseWriter, r *http.Request) {
+	folder := r.PathValue("folder")
+	var req renameRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	name, ok := CleanName(req.Name)
+	if !ok {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_name",
+			fmt.Sprintf("name is too long (max %d) or contains control characters", NameMaxRunes))
+		return
+	}
+	sp, err := Rename(folder, name)
+	switch {
+	case errors.Is(err, ErrNotFound):
+		httpx.WriteErr(w, http.StatusNotFound, "space_not_found", "no such space")
+	case err != nil:
+		httpx.WriteErr(w, http.StatusInternalServerError, "rename_failed", err.Error())
+	default:
+		httpx.WriteJSON(w, http.StatusOK, createResponse{Space: sp})
+	}
+}
+
 // listResponse is GET /spaces.
 type listResponse struct {
 	// Root is the absolute path of ~/spaces, so the Console can tell a space session by its

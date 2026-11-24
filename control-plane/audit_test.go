@@ -66,8 +66,10 @@ func TestAuditActionTarget(t *testing.T) {
 		{"GET", "/api/aws-confirm", "", "", "", false},
 		{"POST", "/api/connections/unusable/remove", "", "connection.unusable.remove", "", true},
 		{"GET", "/api/connections/unusable", "", "", "", false},
-		// ADR 0142 decision 1: making a space is audited; listing them is a read.
+		// ADR 0142 decisions 1 and 3: making and renaming a space are audited; listing them is a read.
 		{"POST", "/api/spaces", "", "space.create", "", true},
+		{"PATCH", "/api/spaces/q3-abc123", "", "space.rename", "q3-abc123", true},
+		{"PATCH", "/api/spaces/Not-A-Folder", "", "space.rename", "", true},
 		{"GET", "/api/spaces", "", "", "", false},
 		{"GET", "/api/aws-login", "", "", "", false},
 		// ADR 0107 decision 3: the presses, the cancel and the code; the code route names the
@@ -124,6 +126,9 @@ func TestAuditActionTarget(t *testing.T) {
 		r := httptest.NewRequest(c.method, c.target, nil)
 		if c.name != "" {
 			r.SetPathValue("name", c.name)
+		}
+		if folder, ok := strings.CutPrefix(c.target, "/api/spaces/"); ok {
+			r.SetPathValue("folder", folder)
 		}
 		if strings.Contains(c.target, "/attempts/abc") {
 			r.SetPathValue("attempt", "abc")

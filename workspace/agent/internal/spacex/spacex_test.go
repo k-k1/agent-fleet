@@ -525,3 +525,157 @@ func TestCopyAttachmentRefusesAFolderThatIsNoSpace(t *testing.T) {
 		}
 	}
 }
+
+// A rename changes the name the marker holds and nothing else: the folder, the creation time and
+// the directory (so every session id and transcript path derived from it) stay as they are.
+func TestRenameChangesOnlyTheDisplayName(t *testing.T) {
+	withHome(t)
+	sp, err := Create("Draft")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Rename(sp.Folder, "Q3 report")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Folder != sp.Folder || got.Dir != sp.Dir || got.CreatedAt != sp.CreatedAt || got.Name != "Q3 report" {
+		t.Fatalf("Rename = %+v, was %+v", got, sp)
+	}
+	again, ok := Lookup(sp.Folder)
+	if !ok || again.Name != "Q3 report" || again.CreatedAt != sp.CreatedAt {
+		t.Fatalf("Lookup after rename = %+v, %v", again, ok)
+	}
+	if FolderOf(sp.Dir) != sp.Folder {
+		t.Fatalf("the space stopped being a space: FolderOf = %q", FolderOf(sp.Dir))
+	}
+	// No temporary file is left beside the marker.
+	ents, _ := os.ReadDir(sp.Dir)
+	if len(ents) != 1 || ents[0].Name() != MarkerFile {
+		t.Fatalf("space holds %v after a rename", ents)
+	}
+	// The empty name is allowed: the Console then shows the folder.
+	if got, err := Rename(sp.Folder, ""); err != nil || got.Name != "" {
+		t.Fatalf("Rename to empty = %+v, %v", got, err)
+	}
+}
+
+func TestRenameKeepsTheFilesInTheSpace(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	note := filepath.Join(sp.Dir, "notes.md")
+	if err := os.WriteFile(note, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Rename(sp.Folder, "Other"); err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(note); err != nil || string(b) != "x" {
+		t.Fatalf("the member's file changed: %q, %v", b, err)
+	}
+}
+
+func TestRenameRefusesWhatIsNoSpace(t *testing.T) {
+	home := withHome(t)
+	if _, err := Rename("nope-abcdef", "x"); err != ErrNotFound {
+		t.Fatalf("no ~/spaces at all: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(Root(), "plain-abcdef"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"plain-abcdef", "missing-abcdef", "../escape", "", ".."} {
+		if _, err := Rename(f, "x"); err != ErrNotFound {
+			t.Fatalf("Rename(%q) = %v, want ErrNotFound", f, err)
+		}
+	}
+	// A symlink standing where a space folder should be is followed by nothing: the marker it
+	// points at is another folder's, and it must stay as it is.
+	outside := filepath.Join(home, "elsewhere")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(outside, MarkerFile)
+	if err := os.WriteFile(marker, []byte(`{"name":"theirs"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(Root(), "link-abcdef")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Rename("link-abcdef", "mine"); err != ErrNotFound {
+		t.Fatalf("Rename through a folder symlink = %v", err)
+	}
+	if b, _ := os.ReadFile(marker); string(b) != `{"name":"theirs"}` {
+		t.Fatalf("the marker outside the space was written: %s", b)
+	}
+}
+
+// A symlink an agent put in the marker's place must not carry the write out of the space.
+func TestRenameDoesNotFollowAMarkerSymlink(t *testing.T) {
+	home := withHome(t)
+	sp, _ := Create("Draft")
+	target := filepath.Join(home, "victim.txt")
+	if err := os.WriteFile(target, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(sp.Dir, MarkerFile)
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, marker); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Rename(sp.Folder, "x"); err != ErrNotFound {
+		t.Fatalf("Rename with a symlinked marker = %v", err)
+	}
+	if b, _ := os.ReadFile(target); string(b) != "keep" {
+		t.Fatalf("the symlink target was written: %q", b)
+	}
+}
+
+// A marker that does not parse still marks the space; a rename gives it a name again.
+func TestRenameRepairsAnUnparsableMarker(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	if err := os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte("not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Rename(sp.Folder, "Fixed")
+	if err != nil || got.Name != "Fixed" {
+		t.Fatalf("Rename = %+v, %v", got, err)
+	}
+	if again, _ := Lookup(sp.Folder); again.Name != "Fixed" {
+		t.Fatalf("Lookup = %+v", again)
+	}
+}
+
+func TestRenameHandler(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	call := func(folder, body string) *httptest.ResponseRecorder {
+		mux := http.NewServeMux()
+		mux.HandleFunc("PATCH /spaces/{folder}", HandleRename)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/spaces/"+folder, strings.NewReader(body)))
+		return rec
+	}
+	rec := call(sp.Folder, `{"name":"  Renamed  "}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rename: %d %s", rec.Code, rec.Body)
+	}
+	var out createResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil || out.Space.Name != "Renamed" || out.Space.Folder != sp.Folder {
+		t.Fatalf("rename body %s: %v", rec.Body, err)
+	}
+	if rec := call(sp.Folder, `{"name":"a\u0007b"}`); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "bad_name") {
+		t.Fatalf("control character: %d %s", rec.Code, rec.Body)
+	}
+	if rec := call(sp.Folder, `{"name":"`+strings.Repeat("x", NameMaxRunes+1)+`"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("too long: %d", rec.Code)
+	}
+	if rec := call("gone-abcdef", `{"name":"x"}`); rec.Code != http.StatusNotFound || !strings.Contains(rec.Body.String(), "space_not_found") {
+		t.Fatalf("unknown space: %d %s", rec.Code, rec.Body)
+	}
+	// A refused rename leaves the name it had.
+	if got, _ := Lookup(sp.Folder); got.Name != "Renamed" {
+		t.Fatalf("Lookup = %+v", got)
+	}
+}

@@ -9,9 +9,15 @@ const LIST = { root: "/home/dev/spaces", spaces: [{ folder: "q3-abcdef", name: "
 let spacesAnswer: () => unknown = () => LIST;
 const api = vi.fn(async (url: string): Promise<unknown> => (url.startsWith("api/spaces") ? spacesAnswer() : {}));
 let tenant = "";
+let patchAnswer: (folder: string, body: { name: string }) => unknown = () => ({});
+const apiJSON = vi.fn(async (path: string, method: string, body?: unknown): Promise<unknown> => {
+  const m = /^api\/spaces\/([^/]+)$/.exec(path);
+  return m && method === "PATCH" ? patchAnswer(decodeURIComponent(m[1]), body as { name: string }) : {};
+});
 
 vi.mock("../../core/api/client.ts", () => ({
-  apiJSON: async () => ({}),
+  apiJSON: (path: string, method: string, body?: unknown) => apiJSON(path, method, body),
+  errText: (e: { message?: string } | string) => (typeof e === "string" ? e : (e?.message ?? "error")),
   api: (url: string) => api(url),
   isTransientErr: (d: { error?: { status?: number } }) => (d?.error?.status ?? 0) >= 500,
   getTenant: () => tenant,
@@ -62,6 +68,8 @@ const heads = () => [...host.querySelectorAll(".space-group-name")].map((e) => e
 beforeEach(() => {
   localStorage.clear();
   api.mockClear();
+  apiJSON.mockClear();
+  patchAnswer = () => ({});
   spacesAnswer = () => LIST;
   tenant = "";
   useSpacesStore.getState().clear();
@@ -236,6 +244,69 @@ describe("Spaces section", () => {
       expect(heads()).toEqual(["notes-ghijkl"]);
       await act(async () => useProjectFilter.setState({ q: "shell title" }));
       expect(host.querySelector(".ui-section")).toBeNull();
+    });
+  });
+
+  describe("rename", () => {
+    const open = async () => {
+      useSessionsStore.setState({ sessions: [inSpace("s1", "q3-abcdef")] });
+      await render();
+      const btn = host.querySelector<HTMLButtonElement>(".space-group-rename");
+      expect(btn).not.toBeNull();
+      await act(async () => btn!.click());
+    };
+    const dialog = () => document.querySelector<HTMLElement>(".ui-modal, [role=dialog]");
+    const input = () => document.querySelector<HTMLInputElement>("input[type=text]")!;
+    const type = async (v: string) => {
+      await act(async () => {
+        // React tracks the value setter: go through the prototype's, as a user's typing does.
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input(), v);
+        input().dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const submit = async () => {
+      await act(async () => {
+        input().form!.requestSubmit();
+      });
+      await flush();
+    };
+
+    it("opens on the space's own name and sends the new one for that folder only", async () => {
+      patchAnswer = (folder, body) => {
+        // The Agent's list names the space the new way from now on.
+        spacesAnswer = () => ({ root: LIST.root, spaces: [{ ...LIST.spaces[0], folder, name: body.name }] });
+        return { space: { ...LIST.spaces[0], folder, name: body.name } };
+      };
+      await open();
+      expect(dialog()).not.toBeNull();
+      expect(input().value).toBe("Q3 report");
+      await type("  Q4 plan  ");
+      await submit();
+      expect(apiJSON).toHaveBeenCalledWith("api/spaces/q3-abcdef", "PATCH", { name: "Q4 plan" });
+      expect(dialog()).toBeNull();
+      expect(heads()).toEqual(["Q4 plan"]);
+    });
+
+    it("sends an empty name as it is, so the folder shows again", async () => {
+      patchAnswer = (folder, body) => {
+        spacesAnswer = () => ({ root: LIST.root, spaces: [{ ...LIST.spaces[0], folder, name: body.name }] });
+        return { space: { ...LIST.spaces[0], folder, name: body.name } };
+      };
+      await open();
+      await type("");
+      await submit();
+      expect(apiJSON).toHaveBeenCalledWith("api/spaces/q3-abcdef", "PATCH", { name: "" });
+      expect(heads()).toEqual(["q3-abcdef"]);
+    });
+
+    it("keeps the dialog and the old name when the Agent refuses", async () => {
+      patchAnswer = () => ({ error: { code: "bad_name", message: "name is too long" } });
+      await open();
+      await type("x");
+      await submit();
+      expect(dialog()).not.toBeNull();
+      expect(input().value).toBe("x");
+      expect(heads()).toEqual(["Q3 report"]);
     });
   });
 });
