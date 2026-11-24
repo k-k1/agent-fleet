@@ -431,13 +431,19 @@ func agentMemMemberLint(ctx context.Context, scope, project string) (agentMemLin
 	// A target is judged against the default branch, and a repair is offered from that judgement:
 	// a branch only guessed (no origin/HEAD) could call a sound target unreachable. The repairs
 	// refuse a guessed branch as well.
+	// The targets name the repository the project was recorded with: a working copy whose origin
+	// now points elsewhere (a fork) would judge them against another repository's history.
 	note := ""
-	if !agentMemPromoteDefaultKnownCtx(ctx, r, out.Ref) {
-		if agentMemDocAny(es) {
-			note = "document targets: origin/HEAD does not name the default branch, so " + out.Ref +
-				" is only a guess (`git remote set-head origin --auto` sets it)"
+	switch {
+	case !agentMemDocAny(es):
+	case !agentMemPromoteDefaultKnownCtx(ctx, r, out.Ref):
+		note = "document targets: origin/HEAD does not name the default branch, so " + out.Ref +
+			" is only a guess (`git remote set-head origin --auto` sets it)"
+	default:
+		if err := agentMemRemoteCheck(ctx, c.Project); err != nil {
+			note = "document targets: " + err.Error()
+			break
 		}
-	} else {
 		out.Documents, note = agentMemDocLint(ctx, c.Project, r, es)
 	}
 	if note != "" {

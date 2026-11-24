@@ -335,8 +335,12 @@ export function PromotionPanel({
                     p={proposal.p}
                     project={proposal.project}
                     onSuperseded={() => {
-                      setProposal(null);
-                      setAgain((n) => n + 1);
+                      // The answer may come after another project or proposal was opened: only
+                      // the proposal it was for is closed, and only its project's list re-read.
+                      const done = proposal;
+                      setProposal((cur) => (cur === done ? null : cur));
+                      if (current.current === done.project)
+                        setAgain((n) => n + 1);
                     }}
                   />
                 )}

@@ -63,23 +63,29 @@ function Row({
       <code>{f.memory}</code> → <code>{where}</code>{" "}
       <span className="muted">@{short(f.target.commit)}</span> —{" "}
       <Problem f={f} />{" "}
-      {f.problem === "renamed" && f.headingFound && f.path && head && (
-        <>
-          <Button
-            disabled={busy}
-            onClick={() =>
-              repair("retarget", {
-                ...base,
-                path: f.path,
-                heading: f.target.heading ?? "",
-                commit: head,
-              })
-            }
-          >
-            {tr("mem.lint_doc_follow", { path: f.path })}
-          </Button>{" "}
-        </>
-      )}
+      {/* Only when the API can take it as is: a re-point needs a heading, and a target stored
+          without one gets it through the form. */}
+      {f.problem === "renamed" &&
+        f.headingFound &&
+        f.path &&
+        f.target.heading &&
+        head && (
+          <>
+            <Button
+              disabled={busy}
+              onClick={() =>
+                repair("retarget", {
+                  ...base,
+                  path: f.path,
+                  heading: f.target.heading ?? "",
+                  commit: head,
+                })
+              }
+            >
+              {tr("mem.lint_doc_follow", { path: f.path })}
+            </Button>{" "}
+          </>
+        )}
       {/* Offered for another repository too: the re-point is checked against this project's. */}
       <Button
         disabled={busy}

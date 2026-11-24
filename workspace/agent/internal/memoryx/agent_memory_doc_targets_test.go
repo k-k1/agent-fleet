@@ -287,7 +287,7 @@ func TestAgentMemoryDocumentTargetRevertDepthBound(t *testing.T) {
 	docTargetClean(t, docTargetLint(t, project)) // depth 2: the merge is back
 	docTargetGit(t, clone, []string{"revert", "--no-edit", r2})
 	w := docTargetLint(t, project)
-	if w.Documents == nil || len(w.Documents.Findings) != 0 || !strings.Contains(strings.Join(w.Report.Skipped, "\n"), "document target of release-steps: too many reverts") {
+	if w.Documents == nil || w.Documents.Checked != 0 || len(w.Documents.Findings) != 0 || !strings.Contains(strings.Join(w.Report.Skipped, "\n"), "document target of release-steps: too many reverts") {
 		t.Fatalf("past the bound: %+v %v", w.Documents, w.Report.Skipped)
 	}
 }
@@ -372,5 +372,44 @@ func TestAgentMemoryRestatesIsReportOnly(t *testing.T) {
 	}
 	if names := promoteNames(promoteGet(t, "project="+a.Project.ID)); len(names) != 1 || names[0] != "release-steps" {
 		t.Fatalf("candidates: %v", names)
+	}
+}
+
+// A file followed forward: the target moved to docs/agents.md, and a new AGENTS.md made later and
+// moved elsewhere is not its history.
+func TestAgentMemoryDocumentTargetRenameFollowsTheFile(t *testing.T) {
+	clone, project, _ := docTargetSetup(t)
+	docTargetGit(t, clone, []string{"mv", "AGENTS.md", "docs/agents.md"}, []string{"commit", "--quiet", "-m", "move agents"})
+	agentMemLintOrigin(t, clone, map[string]string{"AGENTS.md": "# New\n\n## Release\n\nOther text.\n"})
+	docTargetGit(t, clone, []string{"mv", "AGENTS.md", "docs/reference.md"}, []string{"commit", "--quiet", "-m", "move the new one"})
+	if f := docTargetOne(t, docTargetLint(t, project), agentMemDocRenamed); f.Path != "docs/agents.md" {
+		t.Fatalf("followed the wrong file: %+v", f)
+	}
+}
+
+// A target document grown past the bound is not read: that memory is left unjudged (and not
+// counted as checked), and the report says so.
+func TestAgentMemoryDocumentTargetTooLarge(t *testing.T) {
+	old := agentMemDocMaxBytes
+	t.Cleanup(func() { agentMemDocMaxBytes = old })
+	clone, project, _ := docTargetSetup(t)
+	agentMemDocMaxBytes = 64
+	agentMemLintOrigin(t, clone, map[string]string{"AGENTS.md": "# Agents\n\n## Release\n\n" + strings.Repeat("x", 100) + "\n"})
+	w := docTargetLint(t, project)
+	if w.Documents == nil || w.Documents.Checked != 0 || len(w.Documents.Findings) != 0 ||
+		!strings.Contains(strings.Join(w.Report.Skipped, "\n"), "document target of release-steps: the document is too large") {
+		t.Fatalf("%+v %v", w.Documents, w.Report.Skipped)
+	}
+}
+
+// A working copy whose origin now names another repository is not used to judge the targets.
+func TestAgentMemoryDocumentTargetNeedsTheSameOrigin(t *testing.T) {
+	clone, project, _ := docTargetSetup(t)
+	if err := agentMemGit(clone, "remote", "set-url", "origin", "https://github.com/fork/demo.git"); err != nil {
+		t.Fatal(err)
+	}
+	w := docTargetLint(t, project)
+	if w.Documents != nil || !strings.Contains(strings.Join(w.Report.Skipped, "\n"), "document targets: the working copy's origin") {
+		t.Fatalf("%+v %v", w.Documents, w.Report.Skipped)
 	}
 }

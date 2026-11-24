@@ -248,4 +248,68 @@ describe("LintPanel document targets", () => {
     expect(lintCalls()).toBe(before);
     expect(document.body.textContent).toContain("revision 3");
   });
+
+  it("offers no one-click re-point for a target stored without a heading", async () => {
+    api.mockImplementation(async (path: string) => {
+      if (path.startsWith("api/agents/memory/entries/projects"))
+        return {
+          projects: [{ project: proj, count: 3, orphaned: false, live: true }],
+        };
+      if (path.startsWith("api/agents/memory/entries/lint-terms"))
+        return { terms: [] };
+      return {
+        ...report,
+        report: { checked: 1, counts: {}, findings: [] },
+        documents: {
+          checked: 1,
+          findings: [
+            {
+              memory: "moved",
+              revision: 4,
+              target: {
+                repo: target.repo,
+                path: "AGENTS.md",
+                commit: target.commit,
+              },
+              problem: "renamed",
+              path: "docs/agents.md",
+              headingFound: true,
+              commit: "aaaabbbbccccdddd",
+            },
+          ],
+        },
+      };
+    });
+    await mount();
+    await chooseProject();
+    expect(button("Point at docs/agents.md")).toBeUndefined();
+    expect(button("Re-point…")).toBeTruthy();
+  });
+
+  it("does not call a report clean when a target was left unjudged", async () => {
+    api.mockImplementation(async (path: string) => {
+      if (path.startsWith("api/agents/memory/entries/projects"))
+        return {
+          projects: [{ project: proj, count: 3, orphaned: false, live: true }],
+        };
+      if (path.startsWith("api/agents/memory/entries/lint-terms"))
+        return { terms: [] };
+      return {
+        ...report,
+        report: {
+          checked: 1,
+          counts: {},
+          findings: [],
+          skipped: [
+            "document target of moved: the document is too large to read its headings",
+          ],
+        },
+        documents: { checked: 0, findings: [] },
+      };
+    });
+    await mount();
+    await chooseProject();
+    expect(document.body.textContent).toContain("too large");
+    expect(document.body.textContent).not.toContain("Nothing to report.");
+  });
 });

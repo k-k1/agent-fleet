@@ -90,7 +90,10 @@ func agentMemSupersedeDocCheck(ctx context.Context, p *agentMemProject, path, he
 		if !blob {
 			return agentMemDocTarget{}, conflict("%s is not a file at %s", path, at.name)
 		}
-		doc, err := agentMemLintGit(ctx, lr.gitDir, nil, "cat-file", "blob", at.commit+":"+path)
+		doc, err := agentMemDocBlob(ctx, lr.gitDir, at.commit, path)
+		if errors.Is(err, errAgentMemDocTooLarge) {
+			return agentMemDocTarget{}, conflict("%s at %s: %v", path, at.name, err)
+		}
 		if err != nil {
 			return agentMemDocTarget{}, err
 		}

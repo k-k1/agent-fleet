@@ -11,10 +11,15 @@ package memoryx
 // report, and fetches nothing.
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"os/exec"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -81,17 +86,40 @@ var agentMemDocRevertDepth = 16
 var errAgentMemDocRevertDeep = errors.New("too many reverts of reverts to tell whether the merge is in effect")
 
 // agentMemDocSaysRevert says whether msg says, as git revert writes it, that it reverts commit:
-// a line that starts with the sentence (a quote indented in prose does not), the full id, then
-// the end of the sentence or, for a merge, ", reversing".
+// outside a code fence, a line that starts with the sentence and the full id, then "." or, for a
+// merge, ", reversing" with the next line "changes made to <parent>.". A quote of git's output in
+// a fence, an indented quote or a longer id is no evidence.
 func agentMemDocSaysRevert(msg, commit string) bool {
-	for _, ln := range strings.Split(msg, "\n") {
-		rest, ok := strings.CutPrefix(strings.TrimRight(ln, " \t\r"), agentMemDocRevertMsg+commit)
-		if ok && (rest == "." || rest == "," || strings.HasPrefix(rest, ", reversing")) {
+	lines := strings.Split(msg, "\n")
+	fence := ""
+	for i, ln := range lines {
+		ln = strings.TrimRight(ln, " \t\r")
+		if t := strings.TrimLeft(ln, " "); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
+			switch {
+			case fence == "":
+				fence = t[:3]
+			case strings.HasPrefix(t, fence):
+				fence = ""
+			}
+			continue
+		}
+		if fence != "" {
+			continue
+		}
+		rest, ok := strings.CutPrefix(ln, agentMemDocRevertMsg+commit)
+		switch {
+		case !ok:
+		case rest == ".":
+			return true
+		case rest == ", reversing" && i+1 < len(lines) &&
+			agentMemDocRevertParentRe.MatchString(strings.TrimRight(lines[i+1], " \t\r")):
 			return true
 		}
 	}
 	return false
 }
+
+var agentMemDocRevertParentRe = regexp.MustCompile(`^changes made to [0-9a-f]{40}(?:[0-9a-f]{24})?\.$`)
 
 // agentMemDocRevertOf finds the newest commit in (commit, ref] that reverts commit and is itself in
 // effect (no later commit reverts it, and stays so). "" when there is none.
@@ -162,7 +190,7 @@ func agentMemDocCheckOne(ctx context.Context, repo agentMemLintRepo, remote stri
 		if t.Heading == "" {
 			return true, nil
 		}
-		doc, err := agentMemLintGit(ctx, repo.gitDir, nil, "cat-file", "blob", repo.ref+":"+path)
+		doc, err := agentMemDocBlob(ctx, repo.gitDir, repo.ref, path)
 		if err != nil {
 			return false, err
 		}
@@ -174,19 +202,14 @@ func agentMemDocCheckOne(ctx context.Context, repo agentMemLintRepo, remote stri
 		return f, false, err
 	}
 	if !blob {
-		// Only renames after the target's commit: an older move of another file by the same name
-		// says nothing about this one. A file rename only: the target is a file, and a directory
-		// move shows as its files' renames.
-		r, err := agentMemLintReadRenames(ctx, repo.gitDir, full+".."+repo.ref)
+		to, commit, err := agentMemDocFollow(ctx, repo.gitDir, t.Path, full, repo.ref)
 		if err != nil {
 			return f, false, err
 		}
-		hops, ok := agentMemLintResolveRename(t.Path, agentMemLintRenames{File: r.File}, func(p string) bool { return have[p] }, nil)
-		if !ok {
+		if to == "" || !have[to] {
 			return report(agentMemDocMissing)
 		}
-		last := hops[len(hops)-1]
-		f.Path, f.Commit = last.To, last.Commit
+		f.Path, f.Commit = to, commit
 		if f.HeadingFound, err = hasHeading(f.Path); err != nil {
 			return f, false, err
 		}
@@ -200,6 +223,74 @@ func agentMemDocCheckOne(ctx context.Context, repo agentMemLintRepo, remote stri
 		return report(agentMemDocHeading)
 	}
 	return f, false, nil
+}
+
+// agentMemDocMaxBytes bounds a document read for its headings; a larger one is not judged, so a
+// generated file that replaced a small document never lands whole in the Agent's memory. A
+// variable so a test can lower it.
+var agentMemDocMaxBytes int64 = 4 << 20
+
+var errAgentMemDocTooLarge = errors.New("the document is too large to read its headings")
+
+// agentMemDocBlob reads path at rev after asking its size.
+func agentMemDocBlob(ctx context.Context, gitDir, rev, path string) ([]byte, error) {
+	out, err := agentMemLintGit(ctx, gitDir, nil, "cat-file", "-s", rev+":"+path)
+	if err != nil {
+		return nil, err
+	}
+	if n, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64); err != nil || n > agentMemDocMaxBytes {
+		return nil, errAgentMemDocTooLarge
+	}
+	return agentMemLintGit(ctx, gitDir, nil, "cat-file", "blob", rev+":"+path)
+}
+
+// agentMemDocFollow follows path through the renames of since..ref, oldest first, and answers where
+// it is now and the commit of its last move; "" when it was not moved, or was deleted on the way.
+// Following one file forward keeps a later file by the same name (a new AGENTS.md moved elsewhere)
+// out of its history. A rename whose paths git had to quote cannot be read and is not followed.
+func agentMemDocFollow(ctx context.Context, gitDir, path, since, ref string) (to, commit string, err error) {
+	cmd := exec.CommandContext(ctx, "git", "--git-dir="+gitDir, "-c", "core.quotePath=false", "log", "--reverse",
+		"--no-merges", "-M", "--name-status", "--no-color", "--no-ext-diff", "--format=%x01%H", since+".."+ref)
+	cmd.Env = append(cmd.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", "", err
+	}
+	if err := cmd.Start(); err != nil {
+		return "", "", err
+	}
+	cur, at, gone := path, "", false
+	sc := bufio.NewScanner(stdout)
+	sc.Buffer(make([]byte, 64<<10), 4<<20)
+	for sc.Scan() {
+		line := sc.Text()
+		if rest, ok := strings.CutPrefix(line, "\x01"); ok {
+			at = rest
+			continue
+		}
+		if gone {
+			continue
+		}
+		f := strings.Split(line, "\t")
+		switch {
+		case len(f) == 3 && strings.HasPrefix(f[0], "R") && f[1] == cur:
+			cur, commit = f[2], at
+		case len(f) == 2 && f[0] == "D" && f[1] == cur:
+			gone = true
+		}
+	}
+	scanErr := sc.Err()
+	_, _ = io.Copy(io.Discard, stdout)
+	if err := cmd.Wait(); err != nil {
+		return "", "", fmt.Errorf("git log: %w", err)
+	}
+	if scanErr != nil {
+		return "", "", scanErr
+	}
+	if gone || cur == path {
+		return "", "", nil
+	}
+	return cur, commit, nil
 }
 
 // agentMemDocAny says whether any of es is superseded by a document.
@@ -242,7 +333,9 @@ func agentMemDocLint(ctx context.Context, p *agentMemProject, repo agentMemLintR
 		cctx, cancel := context.WithTimeout(ctx, agentMemLintGitTimeout)
 		f, bad, err := agentMemDocCheckOne(cctx, repo, remote, *e.SupersededBy.Document, have)
 		cancel()
-		if errors.Is(err, errAgentMemDocRevertDeep) {
+		if errors.Is(err, errAgentMemDocRevertDeep) || errors.Is(err, errAgentMemDocTooLarge) {
+			// Not judged: it does not count as checked, so the report never reads as clean.
+			out.Checked--
 			notes = append(notes, "document target of "+e.Name+": "+err.Error())
 			continue
 		}

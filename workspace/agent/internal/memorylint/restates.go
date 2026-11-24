@@ -45,7 +45,26 @@ type FileSizer interface {
 
 // rootDocRe finds a bare document name in a body ("See README.md"): the path rule needs a slash,
 // so a top-level document named in prose would never be compared.
-var rootDocRe = regexp.MustCompile(`[A-Za-z0-9_.-]+\.(?i:md|markdown|txt|rst|adoc)\b`)
+var rootDocRe = regexp.MustCompile(`[A-Za-z0-9_.-]+\.(?i:md|markdown|txt|rst|adoc)`)
+
+// rootDocAt says whether the name at body[i:j] stands alone: written bare or as "./name", and not
+// followed by more of a name ("README.md.bak", "README.mdx").
+func rootDocAt(body string, i, j int) bool {
+	pathByte := func(b byte) bool {
+		return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9' || b == '_' || b == '-'
+	}
+	if j < len(body) && (pathByte(body[j]) || body[j] == '.' && j+1 < len(body) && pathByte(body[j+1])) {
+		return false
+	}
+	if i == 0 {
+		return true
+	}
+	if body[i-1] == '/' {
+		// "./name": the dot must begin the token, so "x./name", "../name" and URLs stay out.
+		return i >= 2 && body[i-2] == '.' && (i == 2 || !pathByte(body[i-3]) && strings.IndexByte("./~:$*{<%\\", body[i-3]) < 0)
+	}
+	return strings.IndexByte("~:$*{<%\\", body[i-1]) < 0
+}
 
 // restateDocExt are the file kinds that are documents. A memory naming a script or a source file
 // is about it, not a copy of it.
@@ -95,8 +114,8 @@ func restateDocs(m Memory, rc *repoCtx) []string {
 	// A top-level document has no directory, so the path rule above never sees it: a bare name in
 	// the body that is a file at the root, or a stored anchor naming one, is taken as it is.
 	for _, loc := range rootDocRe.FindAllStringIndex(m.Body, -1) {
-		if loc[0] > 0 && strings.IndexByte("/~:$*{<%\\", m.Body[loc[0]-1]) >= 0 {
-			continue // the tail of a longer path or a URL
+		if !rootDocAt(m.Body, loc[0], loc[1]) {
+			continue // the tail of a longer path or a URL, or the head of a longer name
 		}
 		if a := m.Body[loc[0]:loc[1]]; !seen[a] && rc.files[a] {
 			seen[a] = true

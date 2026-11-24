@@ -187,7 +187,9 @@ export function LintPanel({
               {tr("mem.lint_skipped", { what: s })}
             </p>
           ))}
-          {grouped.length === 0 && report.report.checked > 0 && !report.documents?.findings.length && (
+          {grouped.length === 0 && report.report.checked > 0 && !report.documents?.findings.length &&
+            // A target left unjudged (too large, too many reverts) is not "nothing to report".
+            !report.report.skipped?.some((s) => s.startsWith("document target")) && (
             <p className="muted">{tr("mem.lint_clean")}</p>
           )}
           {grouped.map((g) => (

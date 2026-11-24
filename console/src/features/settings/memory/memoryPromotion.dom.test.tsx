@@ -270,4 +270,61 @@ describe("PromotionPanel", () => {
     );
     expect(button("Supersede by the document")).toBeUndefined();
   });
+
+  it("keeps the next project's proposal when an earlier supersede answers late", async () => {
+    const projB = { ...proj, id: "other-0123456789ab", display: "other" };
+    api.mockImplementation(async (path: string) => {
+      if (path.startsWith("api/agents/memory/entries/projects"))
+        return {
+          projects: [
+            { project: proj, count: 3, orphaned: false, live: true },
+            { project: projB, count: 1, orphaned: false, live: true },
+          ],
+        };
+      if (path.startsWith("api/agents/memory/entries/promotion-candidates"))
+        return candidates;
+      return {};
+    });
+    apiJSON.mockResolvedValueOnce(proposal(true));
+    await mount();
+    await click(button("Propose"));
+    const type = async (v: string) => {
+      const input = document.body.querySelector<HTMLInputElement>(
+        ".mem-promo-merged input",
+      )!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )!.set!.call(input, v);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      await flush();
+    };
+    await type("deadbeef12");
+    let answer: (v: unknown) => void = () => {};
+    apiJSON.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    await click(button("Supersede by the document"));
+    // Switch to B and open its proposal while A's supersede is pending.
+    const sel = document.body.querySelector<HTMLSelectElement>("select")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        HTMLSelectElement.prototype,
+        "value",
+      )!.set!.call(sel, projB.id);
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await flush();
+    apiJSON.mockResolvedValueOnce(proposal(true));
+    await click(button("Propose"));
+    await type("cafe1234");
+    const reads = api.mock.calls.length;
+    await act(async () => answer({ name: "release-steps", revision: 4 }));
+    await flush();
+    expect(
+      document.body.querySelector<HTMLInputElement>(".mem-promo-merged input")
+        ?.value,
+    ).toBe("cafe1234");
+    expect(api.mock.calls.length).toBe(reads); // B's list is not re-read for A's write
+  });
 });

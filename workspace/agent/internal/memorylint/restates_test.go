@@ -125,8 +125,21 @@ func TestRestatesRootDocumentNamedInTheBody(t *testing.T) {
 	rep := restateReport([]Memory{
 		{Name: "bare", Body: "See README.md.\n" + restateGuide},
 		{Name: "url", Body: "See https://example.invalid/README.md\n" + restateGuide},
+		{Name: "dotslash", Body: "[steps](./README.md)\n" + restateGuide},
+		{Name: "longer", Body: "See README.md.bak and README.mdx\n" + restateGuide},
+		{Name: "parent", Body: "See ../README.md\n" + restateGuide},
 	}, r)
-	if !sameSet(subjects(rep, "bare", CheckRestatesDoc), []string{"README.md"}) || len(subjects(rep, "url", CheckRestatesDoc)) != 0 {
+	for _, n := range []string{"bare", "dotslash"} {
+		if !sameSet(subjects(rep, n, CheckRestatesDoc), []string{"README.md"}) {
+			t.Errorf("%s: %v", n, subjects(rep, n, CheckRestatesDoc))
+		}
+	}
+	for _, n := range []string{"url", "longer", "parent"} {
+		if len(subjects(rep, n, CheckRestatesDoc)) != 0 {
+			t.Errorf("%s: %v", n, subjects(rep, n, CheckRestatesDoc))
+		}
+	}
+	if t.Failed() {
 		t.Fatalf("%+v", rep)
 	}
 }
