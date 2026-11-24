@@ -13,9 +13,11 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -466,18 +468,36 @@ func Rename(folder, name string) (Space, error) {
 		return Space{}, err
 	}
 	// Every other field of the marker is kept as it is: only the name is the rename's.
+	//
+	// The readers decode the marker with encoding/json, which matches keys without regard to case
+	// and drops the whole marker (name included) when name or createdAt has the wrong type. So
+	// the two keys are normalised the way the readers see them: every spelling is taken out, the
+	// first createdAt that is a string is kept under its own name, and the new name is set; any
+	// other createdAt is dropped, which is what lets the new name be read back.
+	createdAt := ""
+	for _, k := range slices.Sorted(maps.Keys(fields)) {
+		switch {
+		case strings.EqualFold(k, "name"):
+			delete(fields, k)
+		case strings.EqualFold(k, "createdAt"):
+			var v string
+			if createdAt == "" && json.Unmarshal(fields[k], &v) == nil {
+				createdAt = v
+			}
+			delete(fields, k)
+		}
+	}
 	nameJSON, err := json.Marshal(name)
 	if err != nil {
 		return Space{}, err
 	}
 	fields["name"] = nameJSON
-	// The readers decode name and createdAt as strings and give up on the whole marker when one
-	// is not, so a createdAt of another type cannot be kept: dropping it is what lets the new
-	// name be read back.
-	var createdAt string
-	if err := json.Unmarshal(fields["createdAt"], &createdAt); err != nil {
-		delete(fields, "createdAt")
-		createdAt = ""
+	if createdAt != "" {
+		createdJSON, err := json.Marshal(createdAt)
+		if err != nil {
+			return Space{}, err
+		}
+		fields["createdAt"] = createdJSON
 	}
 	b, err := json.Marshal(fields)
 	if err != nil {

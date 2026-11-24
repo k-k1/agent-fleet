@@ -1132,3 +1132,35 @@ func TestRenameDropsACreatedAtTheReadersCannotDecode(t *testing.T) {
 		t.Fatalf("another field was lost: %s", markerText(t, sp))
 	}
 }
+
+// encoding/json matches keys without regard to case, so a hand-written marker may spell them
+// otherwise; the rename treats every spelling the way the readers do, and what it answers is what
+// Lookup reads next.
+func TestRenameAgreesWithLookupOnKeySpellings(t *testing.T) {
+	for name, orig := range map[string]string{
+		"numeric CreatedAt":    `{"name":"Draft","CreatedAt":12345,"keep":1}`,
+		"numeric Name":         `{"Name":7,"createdAt":"2021-02-03T04:05:06Z","keep":1}`,
+		"upper-case CreatedAt": `{"Name":"Draft","CREATEDAT":"2021-02-03T04:05:06Z","keep":1}`,
+		"two spellings":        `{"name":"Draft","createdat":9,"CreatedAt":"2021-02-03T04:05:06Z","keep":1}`,
+		"canonical and typed":  `{"name":"Draft","createdAt":"2021-02-03T04:05:06Z","keep":1}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			withHome(t)
+			sp, _ := Create("Draft")
+			if err := os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte(orig), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := Rename(sp.Folder, "Updated")
+			if err != nil {
+				t.Fatal(err)
+			}
+			read, ok := Lookup(sp.Folder)
+			if !ok || read.Name != "Updated" || got.Name != read.Name || got.CreatedAt != read.CreatedAt {
+				t.Fatalf("Rename answered %+v, Lookup reads %+v, %v (marker %s)", got, read, ok, markerText(t, sp))
+			}
+			if !strings.Contains(markerText(t, sp), `"keep":1`) {
+				t.Fatalf("another field was lost: %s", markerText(t, sp))
+			}
+		})
+	}
+}
