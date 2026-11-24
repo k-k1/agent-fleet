@@ -402,141 +402,29 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	if err != nil {
 		return none, nil, err
 	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		// created_at has a second's precision: two messages added in one second are told
-		// apart by the position each was appended at.
-		if rows[i].CreatedAt != rows[j].CreatedAt {
-			return rows[i].CreatedAt < rows[j].CreatedAt
-		}
-		if rows[i].Position != rows[j].Position {
-			return rows[i].Position < rows[j].Position
-		}
-		return rows[i].ID < rows[j].ID
-	})
+	memoSortOldestFirst(rows)
 	now := store.DeliveryTS(time.Now())
 	d := store.MemoDelivery{ID: store.NewID(), QueueID: c.ID, State: store.DeliveryClaimed, MessageIDs: []string{},
 		CreatedAt: now, UpdatedAt: now, Auto: auto}
-	// Pick the batch and check every message of it before anything is claimed: a refusal
-	// commits (the holds below stay), so a claim made before it would be left with no delivery.
-	var batch []store.Memo
-	// A run has one recipe: a batch holds only messages whose effective recipes are the same,
-	// and the first eligible message (in the order below) fixes it. One with another recipe is skipped
-	// and waits for its own run.
-	var batchRecipe memorecipe.Recipe
-	eligible := memoafter.EligibleIn(memoafter.TxLookup(tx, rows, time.Now()))
-	// A press for one message names it: the batch is that message alone, and where the oldest-first
-	// claim would skip it the press is refused with the reason instead.
-	limitBatch := q.Batch
-	if only != "" {
-		limitBatch = 1
-	}
-	notReady := func(why string) (store.MemoDelivery, *apiError, error) {
-		return none, &apiError{http.StatusConflict, errCodeMemoQueueMemoNotReady, "this message cannot run now: " + why}, nil
-	}
-	// The messages marked "run next" (issue #5021) are looked at first, then every message in the
-	// oldest-first order. The mark only orders: a marked message that is not eligible is skipped like
-	// any other. A message the Agent would refuse never refuses a batch a marked message started: that
-	// batch's recipe can differ from the one the oldest-first claim would pick, so the refusal would
-	// stop messages the claim takes without the mark. Such a message is skipped then, and refused at
-	// its own place once the oldest-first order starts a batch, as it is without any mark.
-	order := make([]store.Memo, 0, len(rows))
-	for _, m := range rows {
-		if m.RunNext {
-			order = append(order, m)
-		}
-	}
-	marked := len(order)
-	order = append(order, rows...)
-	unsendable := map[string]bool{}
-	startedByMark := false
-	for i, m := range order {
-		if len(batch) >= limitBatch {
-			break
-		}
-		if only != "" && m.ID != only {
-			continue
-		}
-		markedPass := i < marked
-		if !markedPass && m.RunNext && !unsendable[m.ID] {
-			continue
-		}
-		if m.State != store.MemoStatePending || m.SentAt != "" || m.SendToken != "" || m.DeliveryID != "" {
-			if only != "" {
-				if m.State == store.MemoStateHeld {
-					return notReady(memoNotReadyHeld)
-				}
-				return notReady(memoNotReadyClaimed)
-			}
-			continue
-		}
-		// A message whose prerequisites are not all satisfied is skipped, a press included: it holds
-		// no slot and does not stop the messages behind it. A prerequisite in this same batch is
-		// pending, so not satisfied, and a dependent never rides with it.
-		if !eligible(m) {
-			if only != "" {
-				switch now := time.Now(); {
-				case memoafter.Deferred(m, now):
-					return notReady(memoNotReadyDeferred)
-				case memoafter.Scheduled(m, now):
-					return notReady(memoNotReadyScheduled)
-				}
-				return notReady(memoNotReadyPrerequisites)
-			}
-			continue
-		}
-		// A fire by itself leaves a reference where it is while the Agent cannot show one: the
-		// message stays pending and the queue says why (waitNoRefs). A press is the member's own
-		// try: it claims the reference, and the send asks the Agent again before it sends.
-		if auto && m.RefKey != "" && q.NoRefsAt != "" {
-			continue
-		}
-		// The same for a derived message while the Agent cannot take one: it waits, and the queue
-		// says why (waitNoTidy). Nothing derived is ever sent to an Agent without the marker.
-		if auto && m.Provenance == store.MemoProvenanceCurator && q.NoTidyAt != "" {
-			continue
-		}
-		// A release is bound to the content it showed. One that no longer matches goes back
-		// for a new press instead of being fired.
-		if m.ReleaseHash != memoContentHash(m) {
-			m.State, m.ReleaseHash, m.ReleasedAt, m.ReleasedBy = store.MemoStateHeld, "", "", ""
-			if err := tx.WriteMemo(m); err != nil {
+	// The pick is pure (memo_pick.go); this function applies it. Every message of the batch is checked
+	// before anything is claimed: a refusal commits (the holds stay), so a claim made before it would
+	// be left with no delivery.
+	clock := time.Now()
+	pick := memoPickBatch(memoPickInput{Queue: q, Rows: rows, Only: only, Auto: auto, Now: clock,
+		Eligible: memoafter.EligibleIn(memoafter.TxLookup(tx, rows, clock))})
+	for _, h := range pick.Holds {
+		if h.Kind == memoHoldRecipe {
+			if err := memoHoldForRecipe(tx, h.Memo, h.Why); err != nil {
 				return none, nil, err
 			}
-			if only != "" {
-				return notReady(memoNotReadyHeld)
-			}
-			continue
+		} else if err := tx.WriteMemo(h.Memo); err != nil {
+			return none, nil, err
 		}
-		// A recipe the run could not be created with (a route another agent does not take, after
-		// a move or a change of the category's agent) sends the message back to a person.
-		if why := memoRecipeEffectiveProblem(q, m); why != "" {
-			if err := memoHoldForRecipe(tx, m, why); err != nil {
-				return none, nil, err
-			}
-			if only != "" {
-				return notReady(memoNotReadyHeld)
-			}
-			continue
-		}
-		// A message with another recipe is skipped before anything else is asked of it: it waits for
-		// its own run and must not stop this one.
-		rc := memorecipe.Effective(q, m)
-		if len(batch) > 0 && rc != batchRecipe {
-			continue
-		}
-		if why := memoDeliveryItemProblem(m); why != "" {
-			if only == "" && (markedPass || startedByMark) {
-				unsendable[m.ID] = true
-				continue
-			}
-			return none, &apiError{http.StatusConflict, errCodeMemoQueueItemInvalid,
-				fmt.Sprintf("message %s cannot be sent to a session: %s", m.ID, why)}, nil
-		}
-		if len(batch) == 0 {
-			batchRecipe, startedByMark = rc, markedPass
-		}
-		batch = append(batch, m)
 	}
+	if pick.Refusal != nil {
+		return none, pick.Refusal, nil
+	}
+	batch := pick.Batch
 	for _, m := range batch {
 		won, err := tx.ClaimMemo(m, d.ID)
 		if err != nil {
