@@ -116,6 +116,10 @@ func TestAgentMemoryPromoteCandidatesFromSignals(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// A link that never had a target: lint and the anchor check say so; nothing moved.
+	promoteSave(t, a, "ghost-link", "lesson", "see the other note", "[[ghost]]")
+	promoteConfirm(t, "ghost-link", 1, a, b)
+
 	promoteSave(t, a, "no-anchor", "lesson", "plain advice")
 	promoteConfirm(t, "no-anchor", 1, a, b)
 
@@ -157,6 +161,7 @@ func TestAgentMemoryPromoteCandidatesFromSignals(t *testing.T) {
 		"one-session": "confirmations=1 of 2 sessions on revision 1",
 		"changed":     "confirmations=0 of 2 sessions on revision 2",
 		"no-anchor":   "no-anchors=",
+		"ghost-link":  "anchor-not-found=[[ghost]];lint=broken-link",
 	}
 	if len(w.Held) != len(want) {
 		t.Errorf("held = %+v", w.Held)
@@ -241,6 +246,15 @@ func TestAgentMemoryPromoteHoldsAnUnpublishedFile(t *testing.T) {
 	w = promoteGet(t, "project="+a.Project.ID)
 	if len(w.Candidates) != 0 || strings.Join(promoteHeldRules(w, "m"), ";") != memorypromote.RuleUnpublished+"=the revision does not follow the change before it" {
 		t.Fatalf("after a pin: candidates %v, held %v", promoteNames(w), promoteHeldRules(w, "m"))
+	}
+	// Unpinned again: the last two changes now agree with each other, and the walk back to where
+	// revision 1 began still finds revision 2 before it.
+	if _, err := agentMemPin(agentMemPinReq{Scope: agentMemScopeProject, Project: a.Project.ID, Name: "m", Pinned: false}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	w = promoteGet(t, "project="+a.Project.ID)
+	if len(w.Candidates) != 0 || strings.Join(promoteHeldRules(w, "m"), ";") != memorypromote.RuleUnpublished+"=the revision does not follow the change before it" {
+		t.Fatalf("after pin and unpin: candidates %v, held %v", promoteNames(w), promoteHeldRules(w, "m"))
 	}
 }
 
@@ -346,7 +360,7 @@ func TestAgentMemoryPromotePartialCloneFetchesNothing(t *testing.T) {
 		return dir, a
 	}
 	for _, tc := range []struct{ name, filter, skipped string }{
-		{"blobless", "blob:none", "symbol checks: a partial clone that lacks some of the files' contents"},
+		{"blobless", "blob:none", "symbol checks: the default branch's files are not all present"},
 		{"treeless", "tree:0", "repository checks"},
 	} {
 		dir, a := partial(tc.name, tc.filter)
@@ -376,9 +390,29 @@ func TestAgentMemoryPromotePartialCloneFetchesNothing(t *testing.T) {
 		t.Error("control: a lazy fetch did not run upload-pack, so the test cannot see one")
 	}
 
+	// A blob:none clone that has fetched only the file holding the symbol, with its promisor
+	// remote declared as a bare key (`promisor`, which git reads as true): the tree is still
+	// incomplete, so the symbol search is not trusted.
+	dir, a := partial("someblobs", "blob:none")
+	if err := agentMemGit(dir, "cat-file", "blob", "origin/HEAD:main.go"); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(dir, ".git", "config")
+	raw, err := os.ReadFile(cfg)
+	if err != nil || !strings.Contains(string(raw), "promisor = true") {
+		t.Fatalf("fixture config: %v\n%s", err, raw)
+	}
+	if err := os.WriteFile(cfg, []byte(strings.Replace(string(raw), "promisor = true", "promisor", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := promoteGet(t, "project="+a.Project.ID)
+	if len(w.Candidates) != 0 || len(w.Skipped) != 1 || !strings.HasPrefix(w.Skipped[0], "symbol checks: the default branch's files are not all present") {
+		t.Errorf("some blobs: candidates %v, skipped %v", promoteNames(w), w.Skipped)
+	}
+
 	// A blob:none clone with the default branch checked out has the whole tree: lint searches its
 	// symbols as before, and the memory qualifies.
-	dir, a := partial("complete", "blob:none")
+	dir, a = partial("complete", "blob:none")
 	if err := agentMemGit(dir, "checkout", "--quiet"); err != nil {
 		t.Fatal(err)
 	}

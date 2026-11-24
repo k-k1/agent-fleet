@@ -252,7 +252,7 @@ A memory is a candidate when all of these hold:
 
 - Its kind is `lesson`, `procedure` or `preference`, and its type is not `user` (it is about the repository, not about you)
 - At least two different sessions confirmed its current revision with `memory_feedback`. A confirmation of an earlier revision does not count
-- It has stored anchors, and each one is found on the default branch: a file or directory of the tree, an `ADR <n>` with a record, a `[[name]]` of a memory, or a code-shaped symbol found in the files. The whole anchor has to be that one thing: a command, or anything else that cannot be looked up, holds it, even when it mentions a name that exists
+- It has stored anchors, and each one is found on the default branch: a file or directory of the tree, an `ADR <n>` with a record, a `[[name]]` of a memory, or a code-shaped symbol found in the files (unqualified: `pkg.Func` cannot be looked up). The whole anchor has to be that one thing: a command, or anything else that cannot be looked up, holds it, even when it mentions a name that exists
 - Lint finds nothing about it on the default branch
 - It has no open reasons
 - Its file has not changed for N days, by the store's history (a reason lint adds or clears is a change too), and it is the same as its last published change

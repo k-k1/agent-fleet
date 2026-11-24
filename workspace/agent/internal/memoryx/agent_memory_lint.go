@@ -255,16 +255,16 @@ func (r agentMemLintRepo) FindSymbols(syms []string) (map[string]bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
 	defer cancel()
 	// In a partial clone git grep passes over the blobs it does not have without a word, and with
-	// lazy fetching off it must not get them: every symbol would read as missing. A partial clone
-	// whose pinned tree is complete (a checkout fetched it) is searched as usual.
-	if agentMemLintPartial(ctx, r.gitDir) {
-		complete, err := agentMemLintTreeComplete(ctx, r.gitDir, r.ref)
-		if err != nil {
-			return nil, err
-		}
-		if !complete {
-			return nil, errors.New("a partial clone that lacks some of the files' contents")
-		}
+	// lazy fetching off it must not get them: every symbol would read as missing. Whether the
+	// pinned tree is complete is asked of the objects themselves, not of the configuration (a
+	// promisor remote can be declared in more than one form), and a complete partial clone (a
+	// checkout fetched its tree) is searched as usual.
+	complete, err := agentMemLintTreeComplete(ctx, r.gitDir, r.ref)
+	if err != nil {
+		return nil, err
+	}
+	if !complete {
+		return nil, errors.New("the default branch's files are not all present (a partial clone)")
 	}
 	found := make(map[string]bool, len(syms))
 	for i := 0; i < len(syms); i += agentMemLintSymChunk {
@@ -300,22 +300,6 @@ func (r agentMemLintRepo) FindSymbols(syms []string) (map[string]bool, error) {
 		}
 	}
 	return found, nil
-}
-
-// agentMemLintPartial says whether the repository is a partial clone: a promisor remote (what
-// `git clone --filter` sets) or the older extensions.partialClone.
-func agentMemLintPartial(ctx context.Context, gitDir string) bool {
-	out, err := agentMemLintGit(ctx, gitDir, nil, "config", "--get-regexp", `^(extensions\.partialclone|remote\..*\.promisor)$`)
-	if err != nil {
-		return false
-	}
-	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		_, v, _ := strings.Cut(ln, " ")
-		if v != "" && !strings.EqualFold(v, "false") {
-			return true
-		}
-	}
-	return false
 }
 
 // agentMemLintTreeComplete says whether every object of the pinned commit's tree is present.

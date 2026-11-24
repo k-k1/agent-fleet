@@ -31,7 +31,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memorypromote"
 )
 
-const agentMemPromoteMaxDays = 90
+const (
+	agentMemPromoteMaxDays = 90
+	// agentMemPromoteHistoryMax bounds how many published changes of one memory are followed back
+	// to where its revision number began; past it the memory is held.
+	agentMemPromoteHistoryMax = 100
+)
 
 // agentMemPromoteWire is what `af-memory promote-candidates` reads.
 type agentMemPromoteWire struct {
@@ -143,7 +148,8 @@ func agentMemPromoteHistory(head string, s agentMemPromoteSnap) (at time.Time, m
 		return time.Time{}, unpublished("no published change")
 	}
 	path := agentMemRepoPrefix + "/" + s.fileRel
-	out, err := agentMemPromoteGit("log", "-2", "--no-renames", "--diff-filter=AM", "--format=%H %cI", head, "--", path)
+	out, err := agentMemPromoteGit("log", "-n", strconv.Itoa(agentMemPromoteHistoryMax+1), "--no-renames", "--diff-filter=AM",
+		"--format=%H %cI", head, "--", path)
 	if err != nil {
 		return time.Time{}, unpublished("the history could not be read")
 	}
@@ -159,15 +165,26 @@ func agentMemPromoteHistory(head string, s agentMemPromoteSnap) (at time.Time, m
 	if err != nil || !bytes.Equal(blob, s.file) {
 		return at, unpublished("the file differs from its last published change")
 	}
-	if len(lines) > 1 {
-		prev, _, _ := strings.Cut(lines[1], " ")
+	// Back through every published change that carries the current revision number (a pin or a
+	// feedback mark republishes the file without a new revision): each must hold the same text,
+	// and the change before them a lower revision. Comparing only the last two would lose a broken
+	// revision line after two pins.
+	for _, ln := range lines[1:] {
+		prev, _, _ := strings.Cut(ln, " ")
 		pb, err := agentMemPromoteGit("cat-file", "blob", prev+":"+path)
 		if err != nil {
 			return at, unpublished("the history could not be read")
 		}
-		if pe, ok := agentMemParse(pb); !ok || pe.Revision > s.revision || pe.Revision == s.revision && pe.Body != s.body {
+		pe, ok := agentMemParse(pb)
+		switch {
+		case !ok || pe.Revision > s.revision || pe.Revision == s.revision && pe.Body != s.body:
 			return at, unpublished("the revision does not follow the change before it")
+		case pe.Revision < s.revision:
+			return at, nil
 		}
+	}
+	if len(lines) > agentMemPromoteHistoryMax {
+		return at, unpublished("the revision's history is too long to follow")
 	}
 	return at, nil
 }
@@ -260,9 +277,17 @@ func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (ag
 			!slicesEqual(was.Anchors, e.Anchors) || was.Body != e.Body {
 			moved = true
 		}
-		// A [[link]] anchor was found among the names lint loaded; its target must still be there.
+		// Lint judged the links (anchors and body) against the names it loaded; a target that was
+		// there then and is gone now makes that judgement stale. One missing both times is a lint
+		// finding or an anchor not found, not a move.
+		targets := memorylint.Links(e.Body)
 		for _, a := range e.Anchors {
-			if t, ok := agentMemPromoteLink(a); ok && !names[t] {
+			if t, ok := agentMemPromoteLink(a); ok {
+				targets = append(targets, t)
+			}
+		}
+		for _, t := range targets {
+			if _, was := checked[t]; was && !names[t] {
 				moved = true
 			}
 		}
@@ -272,12 +297,16 @@ func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (ag
 		// The history is read only for a memory every other signal already admits.
 		if unverified == "" && !moved && m.Reasons == 0 && len(m.Anchors) > 0 && len(m.Missing) == 0 &&
 			len(m.Findings) == 0 && m.Type != "user" && memorypromote.Sessions(m.Reports, m.Revision) >= out.MinSessions {
+			// The bytes compared with the history must be the ones judged: a process that edits the
+			// store directly is not held off by the lock, so they are parsed again and must agree.
 			fileRel := rel + "/" + e.Name + ".md"
 			b, ok, err := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(fileRel)))
-			if err != nil || !ok {
-				b = nil
+			pe, parsed := agentMemParse(b)
+			if err != nil || !ok || !parsed || !agentMemPromoteSameEntry(pe, e) {
+				m.Also = append(m.Also, memorypromote.Miss{Rule: memorypromote.RuleMoved})
+			} else {
+				snaps = append(snaps, agentMemPromoteSnap{idx: len(mems), fileRel: fileRel, file: b, revision: e.Revision, body: e.Body})
 			}
-			snaps = append(snaps, agentMemPromoteSnap{idx: len(mems), fileRel: fileRel, file: b, revision: e.Revision, body: e.Body})
 		}
 		mems = append(mems, m)
 	}
@@ -299,6 +328,13 @@ func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (ag
 		Now: now, Quiet: time.Duration(quietDays) * 24 * time.Hour, Unverified: unverified,
 	})
 	return out, nil
+}
+
+// agentMemPromoteSameEntry says whether two reads of a memory agree on everything selection uses.
+func agentMemPromoteSameEntry(a, b agentMemEntry) bool {
+	return a.Revision == b.Revision && a.Type == b.Type && a.Body == b.Body && a.MemKind == b.MemKind &&
+		slicesEqual(a.Anchors, b.Anchors) && agentMemReasonsEqual(a.Reasons, b.Reasons) &&
+		agentMemExcluded(a) == agentMemExcluded(b)
 }
 
 // agentMemPromoteLink is the target of an anchor that is a whole [[link]].

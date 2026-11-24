@@ -98,25 +98,34 @@ func hasParentSeg(p string) bool {
 	return false
 }
 
-// wholeSymbol is the name to search for when the whole anchor is one code-shaped symbol (in
-// backticks or not, with an optional "()"), and "" otherwise. The body's rules find a symbol
-// inside a longer text; here the anchor must be nothing but the symbol, or a command that
-// mentions a real test name ("go test -run TestX") or a missing file named after one
-// ("TestX.go") would pass for it.
+// wholeSymbol is the name to search for when the whole anchor is one unqualified code-shaped
+// symbol (in backticks or not, with an optional "()"), and "" otherwise. The body's rules find a
+// symbol inside a longer text; here the anchor must be nothing but the symbol, or a command that
+// mentions a real test name ("go test -run TestX") or a missing file named after one ("TestX.go")
+// would pass for it. A qualified name ("pkg.Func") is not searched: only its last part could be,
+// and that part existing elsewhere says nothing about the package.
 func wholeSymbol(a string) string {
 	t := strings.TrimSpace(a)
 	if strings.HasPrefix(t, "`") && strings.HasSuffix(t, "`") && len(t) >= 2 {
 		t = t[1 : len(t)-1]
 	}
-	if !identRe.MatchString(t) {
+	if !identRe.MatchString(t) || strings.Contains(t, ".") {
 		return ""
 	}
-	segs := strings.Split(strings.TrimSuffix(t, "()"), ".")
-	last := segs[len(segs)-1]
+	name := strings.TrimSuffix(t, "()")
 	for _, f := range extractSymbols("`" + t + "`") {
-		if f.text == last {
-			return last
+		if f.text == name {
+			return name
 		}
 	}
 	return ""
+}
+
+// Links lists the [[name]] targets a body links to, each once, in order.
+func Links(body string) []string {
+	var out []string
+	for _, a := range extractLinks(body) {
+		out = append(out, a.text)
+	}
+	return out
 }

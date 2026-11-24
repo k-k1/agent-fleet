@@ -18,14 +18,16 @@ func TestVerifyAnchorsNeedsAPositiveMatch(t *testing.T) {
 		{Name: "bad", Anchors: []string{"GONE.md", "scripts/gone.sh", "build/", "[[ghost]]", "ADR 4242", "agentMemGone", "TestGoneAway", "make release", "  ", "/etc/passwd", "../x", "plain",
 			// A real test name inside a command or a missing file's name is not that symbol.
 			"go test -run TestRealOne", "TestRealOne.go", "`agentMemSave` twice", "docs/../README.md"}},
-		{Name: "dots", Anchors: []string{"docs/v1..v2.md", "pkg.agentMemSave"}},
+		{Name: "dots", Anchors: []string{"docs/v1..v2.md"}},
+		// Only the last part of a qualified name could be searched; it is not, found or not.
+		{Name: "qualified", Anchors: []string{"pkg.agentMemSave", "removedpkg.releaseAll()", "`pkg.agentMemSave`"}},
 		{Name: "other"},
 	}
 	got, err := VerifyAnchors(mems, Options{}, repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string][]string{"bad": {"GONE.md", "scripts/gone.sh", "build/", "[[ghost]]", "ADR 4242", "make release", "  ", "/etc/passwd", "../x", "plain", "go test -run TestRealOne", "TestRealOne.go", "`agentMemSave` twice", "docs/../README.md", "agentMemGone", "TestGoneAway"}}
+	want := map[string][]string{"bad": {"GONE.md", "scripts/gone.sh", "build/", "[[ghost]]", "ADR 4242", "make release", "  ", "/etc/passwd", "../x", "plain", "go test -run TestRealOne", "TestRealOne.go", "`agentMemSave` twice", "docs/../README.md", "agentMemGone", "TestGoneAway"}, "qualified": {"pkg.agentMemSave", "removedpkg.releaseAll()", "`pkg.agentMemSave`"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("unverified = %#v\nwant %#v", got, want)
 	}
@@ -34,6 +36,12 @@ func TestVerifyAnchorsNeedsAPositiveMatch(t *testing.T) {
 	got, err = VerifyAnchors([]Memory{{Name: "m", Anchors: []string{"ADR 130"}}}, Options{}, fakeRepo{paths: []string{"README.md"}})
 	if err != nil || !reflect.DeepEqual(got, map[string][]string{"m": {"ADR 130"}}) {
 		t.Errorf("no ADR dir: %v %v", got, err)
+	}
+}
+
+func TestLinks(t *testing.T) {
+	if got := Links("see [[a]] and [[b|label]], again [[a]]; not [[ -f x ]]"); !reflect.DeepEqual(got, []string{"a", "b"}) {
+		t.Errorf("Links = %v", got)
 	}
 }
 
