@@ -43,7 +43,7 @@ case "$namespace" in
   tested|seen|red|watcher) ;;
   *) echo "namespace must be tested, seen, red or watcher" >&2; exit 2 ;;
 esac
-[[ "$cli" =~ ^[a-z0-9-]+$ ]] || { echo "invalid CLI name: $cli" >&2; exit 2; }
+[[ "$cli" =~ ^[a-z0-9_-]+$ ]] || { echo "invalid CLI name: $cli" >&2; exit 2; }
 
 tmp_body="$(mktemp)"
 trap 'rm -f "$tmp_body"' EXIT

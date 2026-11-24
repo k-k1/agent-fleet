@@ -9,8 +9,8 @@ import (
 
 func TestEntriesParse(t *testing.T) {
 	es := Entries()
-	if len(es) != 14 {
-		t.Fatalf("entries = %d, want 14 (8 agent CLIs, rtk and 5 image tools)", len(es))
+	if len(es) != 20 {
+		t.Fatalf("entries = %d, want 20 (8 agent CLIs, rtk and 11 image tools)", len(es))
 	}
 	claude, ok := Lookup("claude")
 	if !ok || claude.Arg != "CLAUDE_CODE_VERSION" || claude.Contract != "claude-tui-contract.yml" ||

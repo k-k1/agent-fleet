@@ -101,6 +101,11 @@ case "$url" in
   *avivsinai/bitbucket-cli*) name=bkt ;;
   *ankitpokhrel/jira-cli*)   name=jira ;;
   *gitleaks/gitleaks*)       name=gitleaks ;;
+  *go.dev/dl*)               name=go ;;
+  *cloudsdk/channels*)       name=gcloud ;;
+  *grafana/mcp-grafana*)     name=mcp_grafana ;;
+  *pypi.org/pypi/awslabs.cloudwatch-mcp-server/*) name=cloudwatch_mcp ;;
+  *pypi.org/pypi/mcp-proxy-for-aws/*)             name=aws_mcp_proxy ;;
   *) exit 22 ;;
 esac
 case ",${STUB_FAIL:-}," in *",$name,"*) exit 22 ;; esac
@@ -120,7 +125,11 @@ case ",${STUB_DRIFT:-}," in
 esac
 case "$name" in
   agy|kiro|muse) printf '{"version":"%s"}\n' "$version" ;;
-  rtk|gh|bkt|jira|gitleaks) printf '{"tag_name":"v%s"}\n' "$version" ;;
+  rtk|gh|bkt|jira|gitleaks|mcp_grafana) printf '{"tag_name":"v%s"}\n' "$version" ;;
+  # An unstable entry first, as go.dev/dl lists a release candidate ahead of the stable line.
+  go)  printf '[{"version":"go9.99rc1","stable":false},{"version":"go%s","stable":true},{"version":"go1.0.1","stable":true}]\n' "$version" ;;
+  gcloud) printf '{"version":"%s"}\n' "$version" ;;
+  cloudwatch_mcp|aws_mcp_proxy) printf '{"info":{"version":"%s"}}\n' "$version" ;;
   cursor)
     # The real install script is a long shell file with the version buried in a URL.
     seq 1 4000 | sed 's/^/# leading padding line /'
@@ -128,7 +137,21 @@ case "$name" in
     seq 1 4000 | sed 's/^/# trailing padding line /' ;;
 esac
 FAKE
-chmod +x "$STUB"/npm "$STUB"/curl
+# git answers `ls-remote --tags --refs <url> <glob>` for the awscli row. Tags come out in
+# lexicographic order, as the real command prints them, with a pre-release and a lower
+# two-digit minor around the answer: a reader that sorted as text, or took the last line,
+# would pick the wrong one (2.9.x sorts after 2.36.x as text).
+cat > "$STUB/git" <<'FAKE'
+#!/usr/bin/env bash
+[ "$1" = ls-remote ] || exit 1
+case ",${STUB_FAIL:-}," in *",awscli,"*) exit 128 ;; esac
+v="$(cat "$STUB_PINS/awscli")"
+case ",${STUB_DRIFT:-}," in *",awscli,"*) v="9.9.9" ;; esac
+for t in "$v" "2.1.0" "2.10.0" "2.9.9" "2.99.99dev0"; do
+  printf '0123456789abcdef0123456789abcdef01234567\trefs/tags/%s\n' "$t"
+done
+FAKE
+chmod +x "$STUB"/npm "$STUB"/curl "$STUB"/git
 export PATH="$STUB:$PATH" STUB_PINS="$PINS" STUB_NPM_LOG="$WORK/npm.log"
 : > "$WORK/npm.log"
 
@@ -160,12 +183,12 @@ code_is()   { [ "$rc" = "$1" ] || fail "expected exit $1, got $rc"; }
 # If the real script grows a row, this test must grow with it rather than quietly
 # exercise fewer rows than it claims.
 ROWS="$(. "$ROOT/deploy/local/cli-manifest.sh" && manifest_load && echo "${#M_NAMES[@]}")"
-[ "$ROWS" = 14 ] || fail "the CLI manifest has $ROWS rows, the stubs answer 14"
+[ "$ROWS" = 20 ] || fail "the CLI manifest has $ROWS rows, the stubs answer 20"
 
 echo "== case 1: nothing fails and every pin matches -> exit 0, no failed rows =="
 STUB_FAIL="" STUB_DRIFT="" run_check
 code_is 0
-for name in claude opencode codex copilot agy cursor kiro rtk confluence gh bkt jira gitleaks; do
+for name in claude opencode codex copilot agy cursor kiro rtk confluence gh bkt jira gitleaks go awscli gcloud mcp_grafana cloudwatch_mcp aws_mcp_proxy; do
   in_sync "$name"
 done
 out_has '^failed=$'
@@ -189,9 +212,9 @@ err_has "cli-drift-check: warning: rtk:"
 sum_has "could not be read"
 
 echo "== case 3: every source fails -> exit 2 (the control for case 2) =="
-STUB_FAIL="claude,codex,opencode,copilot,agy,cursor,kiro,muse,rtk,confluence,gh,bkt,jira,gitleaks" STUB_DRIFT="" run_check
+STUB_FAIL="claude,codex,opencode,copilot,agy,cursor,kiro,muse,rtk,confluence,gh,bkt,jira,gitleaks,go,awscli,gcloud,mcp_grafana,cloudwatch_mcp,aws_mcp_proxy" STUB_DRIFT="" run_check
 code_is 2
-out_has '^failed=claude,codex,opencode,copilot,agy,cursor,kiro,muse,rtk,confluence,gh,bkt,jira,gitleaks$'
+out_has '^failed=claude,codex,opencode,copilot,agy,cursor,kiro,muse,rtk,confluence,gh,bkt,jira,gitleaks,go,awscli,gcloud,mcp_grafana,cloudwatch_mcp,aws_mcp_proxy$'
 err_has "No release source could be read."
 
 echo "== case 4: two rows fail and a third drifts -> still exit 1, both named =="
@@ -225,6 +248,19 @@ says "gh"
 # Control: the same run with nothing drifting is green, so the exit 1 above is the rows' doing.
 STUB_FAIL="" STUB_DRIFT="" run_check
 code_is 0
+
+echo "== case 5e: go (go.dev/dl), awscli (tags), gcloud, mcp-grafana and the PyPI rows read their sources =="
+STUB_FAIL="" STUB_DRIFT="go,awscli,gcloud,mcp_grafana,cloudwatch_mcp,aws_mcp_proxy" run_check
+code_is 1
+for name in go awscli gcloud mcp_grafana cloudwatch_mcp aws_mcp_proxy; do
+  out_has "^latest_$name=9\\.9\\.9\$"
+done
+# One of them unreadable is named and the others still answer.
+STUB_FAIL="awscli" STUB_DRIFT="" run_check
+code_is 0
+out_has '^failed=awscli$'
+in_sync go
+in_sync gcloud
 
 echo "== case 5d: GH_TOKEN goes to api.github.com only, and nothing is sent without it =="
 export STUB_CURL_LOG="$WORK/curl.log"
@@ -329,9 +365,9 @@ sum_has 'not a dispatch target'
 sum_has '`claude=2.1.267`'
 
 echo "== case 8b: a drifting watch-only row is no edge, and nothing is dispatched for it =="
-run_edges LATEST_CONFLUENCE=9.9.9 LATEST_GH=9.9.9 LATEST_BKT=9.9.9 LATEST_JIRA=9.9.9 LATEST_GITLEAKS=9.9.9 LATEST_RTK=9.9.9
+run_edges LATEST_CONFLUENCE=9.9.9 LATEST_GH=9.9.9 LATEST_BKT=9.9.9 LATEST_JIRA=9.9.9 LATEST_GITLEAKS=9.9.9 LATEST_RTK=9.9.9 LATEST_GO=9.9.9 LATEST_AWSCLI=9.9.9 LATEST_MCP_GRAFANA=9.9.9
 out_has '^count=0$'
-out_hasnt '^(confluence|gh|bkt|jira|gitleaks|rtk)=true$'
+out_hasnt '^(confluence|gh|bkt|jira|gitleaks|rtk|go|awscli|mcp_grafana)=true$'
 out_has '^skipped=$'
 # Control: the same call with a contract row drifting does dispatch it.
 run_edges LATEST_CONFLUENCE=9.9.9 LATEST_GH=9.9.9 LATEST_CLAUDE=9.9.9
