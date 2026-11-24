@@ -334,4 +334,31 @@ func checkOverrideRunningSecs(t *testing.T, st *SQL) {
 	if got, _ := st.OverrideRunningSecs(ctx, mem.ID, "boost", h(100), h(200)); got != 0 {
 		t.Fatalf("an empty window counted %d", got)
 	}
+	for _, w := range [][2]int64{{h(41), h(41)}, {h(41), h(40.5)}} {
+		if got, err := st.OverrideRunningSecs(ctx, mem.ID, "boost", w[0], w[1]); err != nil || got != 0 {
+			t.Fatalf("window %v counted %d (%v), want 0", w, got, err)
+		}
+	}
+
+	// ReopenLaunch: never while a launch is open; then only the newest, only when it was
+	// closed at its last sighting, and only within closedSince.
+	if _, ok, _ := st.ReopenLaunch(ctx, mem.ID, 0); ok {
+		t.Fatal("reopened while L5 is open")
+	}
+	if _, _, err := st.EndOpenLaunch(ctx, mem.ID, h(41.5)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := st.ReopenLaunch(ctx, mem.ID, h(42)); ok {
+		t.Fatal("reopened a stop older than closedSince")
+	}
+	l, ok, err := st.ReopenLaunch(ctx, mem.ID, h(41))
+	if err != nil || !ok || l.ID != "L5" || l.StoppedAt != 0 {
+		t.Fatalf("reopen = %+v %v %v, want L5 open", l, ok, err)
+	}
+	if _, _, err := st.EndOpenLaunch(ctx, mem.ID, h(45)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := st.ReopenLaunch(ctx, mem.ID, 0); ok {
+		t.Fatal("reopened a launch closed after its last sighting (a stop the CP made)")
+	}
 }

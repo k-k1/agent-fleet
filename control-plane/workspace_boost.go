@@ -26,7 +26,7 @@ const (
 
 // boostHoursCounter counts the hours a member actually RAN on a box a boost put them on,
 // including hours after the boost expired while the workspace kept running (ADR 0139 decision
-// 5). main wires launchBoostHours; a manager built without one does not enforce the budget.
+// 5). main wires boostHoursFor; a manager built without one does not enforce the budget.
 //
 // counted=false means "this deployment cannot count", and the caller must neither block on it
 // nor show a number.
@@ -39,10 +39,21 @@ type boostHoursCounter interface {
 // expired are in it, and a launch whose Start failed was closed at its own start and adds
 // nothing. A launch the sampler adopted with no record of its start does not count: what chose
 // its box is unknown, and a guess must not lock a member out.
-type launchBoostHours struct {
-	st interface {
-		OverrideRunningSecs(ctx context.Context, membershipID, override string, from, to int64) (int64, error)
+type launchBoostHours struct{ st launchSecsReader }
+
+type launchSecsReader interface {
+	OverrideRunningSecs(ctx context.Context, membershipID, override string, from, to int64) (int64, error)
+}
+
+// boostHoursFor is the counter main wires: launchBoostHours while the usage sampler runs, nil
+// when it is switched off (AF_USAGE_SAMPLE_INTERVAL=0). The sampler is what moves an open
+// launch's last sighting; without it a boosted workspace would read 0 hours for as long as it
+// runs, so the budget is reported as not counted instead of as counted and never reached.
+func boostHoursFor(st launchSecsReader, sampleInterval time.Duration) boostHoursCounter {
+	if sampleInterval <= 0 {
+		return nil
 	}
+	return launchBoostHours{st}
 }
 
 func (c launchBoostHours) BoostedRunningHours(ctx context.Context, membershipID string, from, to time.Time) (float64, bool, error) {
@@ -602,14 +613,6 @@ func (m *manager) resolveNextStart(ctx context.Context, ws store.Workspace) next
 	mem := m.resolveWorkspaceMemBytes(ctx, ws)
 	class, _ := m.resolveSlotClass(ctx, ws)
 	return m.overlaySizeOverrides(ctx, ws, mem, class)
-}
-
-// sizeDrifted returns ws resolved afresh and whether that differs from the box ws was resolved to
-// when its runtime was memoized. A boost ends by the clock, with nothing to evict the memo, so a
-// start that reads the box off the memoized runtime would record (and size) the expired boost.
-func (m *manager) sizeDrifted(ctx context.Context, ws store.Workspace) (store.Workspace, bool) {
-	fresh := m.withResolvedSize(ctx, ws)
-	return fresh, fresh.MemBytes != ws.MemBytes || fresh.SlotClass != ws.SlotClass
 }
 
 // sizeUntil is when the override deciding ws's next-start box ends, zero when none does.

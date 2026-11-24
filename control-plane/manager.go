@@ -127,7 +127,7 @@ type manager struct {
 	// sized past what the shared host can bear. See resolveWorkspaceMemBytes.
 	memMaxBytes int64
 	// boostHours counts a member's boosted RUNNING hours for the monthly budget (ADR 0139
-	// decision 5). main wires launchBoostHours. nil (a manager built without it) makes
+	// decision 5). main wires boostHoursFor, nil when the usage sampler is off. nil makes
 	// boostBudgetOf report "not counted", and the budget is not enforced.
 	boostHours boostHoursCounter
 	// cpuMaxUnits and diskMaxGB are the deployment-wide ceilings for a per-workspace CPU

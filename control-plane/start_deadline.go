@@ -231,7 +231,7 @@ func (d *startDeadline) stop(ctx context.Context, rt runtime.Runtime, ws store.W
 	if bp, ok := rt.(interface{ BootPhase() string }); ok {
 		phase = bp.BootPhase()
 	}
-	if err := d.mgr.stopRecorded(lease.Context(), ws, rt, false); err != nil {
+	if err := d.mgr.stopAtLastSighting(lease.Context(), ws, rt); err != nil {
 		log.Printf("start-deadline: stop %s: %v", ws.ContainerName, err)
 		return
 	}

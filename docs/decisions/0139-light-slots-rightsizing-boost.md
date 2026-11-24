@@ -406,10 +406,23 @@ The tenant-wide `GET /api/admin/usage/history?tenant=` is shown too (#4493): und
 
 ## Addendum — the boosted hours are counted (2026-11-24)
 
-#4417 wires the counter the decision 5 addendum left out, and the monthly budget is enforced. `launchBoostHours`
-sums the launch records (decision 3) whose `override` is `boost`, each clipped to the current UTC month and ending
-at its stop, or at its last sighting while it is still open. A launch keeps `boost` until it stops, so the hours
-after expiry are in the count; a boost whose Start failed was closed at its own start and adds nothing. A launch
-the sampler adopted with no record of its start (`adopted`) is not counted, because what chose its box is unknown.
-At the budget, a new boost and an extension are both refused (`boost_budget_spent`). Showing the overrun to the
-tenant admin and on the cost line is the next part of #4417.
+#4417 wires the counter the decision 5 addendum left out, and the monthly budget is enforced.
+
+- **What counts.** `launchBoostHours` sums the launch records (decision 3) whose `override` is `boost`, each
+  clipped to the current UTC month. A launch runs from the Start request (the box's boot is included) to its
+  stop, or to its last sighting while it is still open. It keeps `boost` until it stops, so the hours after
+  expiry are in the count.
+- **What does not.** A boost whose Start failed was closed at its own start. A launch the start deadline
+  stopped is closed at its last sighting, so one that was never placed adds nothing for the minutes it waited.
+  A launch the sampler adopted with no record of its start (`adopted`) is not counted: what chose its box is
+  unknown.
+- **One answer per Start.** The Start resolves the box once and takes both the runtime and the launch's
+  `override` from that answer, so a boost ending mid-start cannot record an unboosted box as boosted.
+- **A wrong inferred stop is taken back.** ecs-ec2 answers `none` when one read of the home volume fails, and
+  the sampler can read `stopped` between a recorded launch and its Start. When the same workspace is seen
+  running within an hour of such a stop (a launch closed at its own last sighting, with nothing open since),
+  the launch is reopened rather than replaced by an `adopted` one.
+- **Only with the usage sampler.** The sampler is what moves an open launch's last sighting. With
+  `AF_USAGE_SAMPLE_INTERVAL=0` no counter is wired, and the budget reads as not counted, as before.
+- At the budget a new boost and an extension are both refused (`boost_budget_spent`). Showing the overrun to the
+  tenant admin and on the cost line is the next part of #4417.

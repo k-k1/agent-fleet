@@ -667,27 +667,31 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 		}
 		extraEnv = append(append([]string(nil), extraEnv...), homeKeyStartEnv+"="+homeStart)
 	}
+	// The box is resolved ONCE for this start: the launch record and every runtime built below
+	// take it from this answer, so a boost ending mid-start cannot leave them disagreeing.
+	sized, override := a.mgr.withResolvedSizeSource(ctx, res.ws)
+	startRes := *res
+	startRes.ws = sized
 	// The launch is recorded before Start and its id handed to the container, so the Agent's
 	// minutes carry it (usage_history.go). Where the runtime names no box this is a no-op.
 	boxRT := rt
-	if fresh, drifted := a.mgr.sizeDrifted(ctx, res.ws); drifted {
+	if sized.MemBytes != res.ws.MemBytes || sized.SlotClass != res.ws.SlotClass {
 		// The memoized runtime still names a box a boost has since left (or entered): the ledger
 		// records the box this start lands on, which the rebuild below also uses.
-		boxRT = a.mgr.runtimeFor(fresh, keys, a.mgr.workspaceExtraEnv(ctx, fresh)...)
+		boxRT = a.mgr.runtimeFor(sized, keys, a.mgr.workspaceExtraEnv(ctx, sized)...)
 	}
-	launchID, launchEnv := a.mgr.beginLaunch(ctx, res.ws, boxRT)
+	launchID, launchEnv := a.mgr.beginLaunch(ctx, res.ws, boxRT, override)
 	if launchEnv != "" {
 		extraEnv = append(append([]string(nil), extraEnv...), launchEnv)
 	}
-	if armed := a.mgr.armPreviewForStart(ctx, res, keys, extraEnv); armed != nil {
+	if armed := a.mgr.armPreviewForStart(ctx, &startRes, keys, extraEnv); armed != nil {
 		rt = armed
-	} else if fresh := a.mgr.refreshGitTokenForStart(ctx, res, keys, extraEnv); fresh != nil {
+	} else if fresh := a.mgr.refreshGitTokenForStart(ctx, &startRes, keys, extraEnv); fresh != nil {
 		rt = fresh // armPreviewForStart built its env just now; this covers the other starts
 	} else if a.mgr.rtFactory != nil {
 		// Rebuilt for this start, keys or not: the memo's env was fixed when it was built,
 		// and what the deployment switches at runtime (the dev IdP's env) must be read now.
-		ws := a.mgr.withResolvedSize(ctx, res.ws)
-		rt = a.mgr.runtimeFor(ws, keys, append(a.mgr.workspaceExtraEnv(ctx, ws), extraEnv...)...)
+		rt = a.mgr.runtimeFor(sized, keys, append(a.mgr.workspaceExtraEnv(ctx, sized), extraEnv...)...)
 	}
 	// The previous automatic stop stops describing this workspace once a new launch is
 	// attempted, whether or not it succeeds: a Start that fails (secrets, home, launch)

@@ -146,7 +146,7 @@ func TestUsageHistoryCountsEachMinuteOnceAndOnItsOwnBox(t *testing.T) {
 	st, mgr, ws, ag, rt := historyFixture(t, "running")
 	now := time.Now().Unix()
 
-	idA, env := mgr.beginLaunch(ctx, ws, rt)
+	idA, env := mgr.beginLaunch(ctx, ws, rt, "")
 	if idA == "" || env != "AF_LAUNCH_ID="+idA {
 		t.Fatalf("launch id / env = %q / %q", idA, env)
 	}
@@ -185,7 +185,7 @@ func TestUsageHistoryCountsEachMinuteOnceAndOnItsOwnBox(t *testing.T) {
 	// Next start on another box. A's last minutes were still behind the cursor and are fetched now.
 	rtB := rt
 	rtB.box = runtime.WorkspaceMachine{InstanceType: "m7i.xlarge", VCPU: 4}
-	idB, _ := mgr.beginLaunch(ctx, ws, rtB)
+	idB, _ := mgr.beginLaunch(ctx, ws, rtB, "")
 	ag.add(now-120, idA, map[string]any{"cpu_pct": 10.0})
 	ag.add(now-60, idB, map[string]any{"cpu_pct": 20.0, "ws": 1 << 30})
 	if err := mgr.pullUsageHistory(ctx, ws.MembershipID, rtB); err != nil {
@@ -221,7 +221,7 @@ func TestStopDoesNotWaitOnASlowOrAbsentAgent(t *testing.T) {
 					close(ag.block)
 				}
 			})
-			mgr.beginLaunch(ctx, ws, rt)
+			mgr.beginLaunch(ctx, ws, rt, "")
 			begin := time.Now()
 			if err := mgr.stopRecorded(ctx, ws, rt, true); err != nil {
 				t.Fatal(err)
@@ -244,7 +244,7 @@ func TestStopDoesNotWaitOnASlowOrAbsentAgent(t *testing.T) {
 func TestSamplerClosesAStoppedLaunchButNotANewerOne(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, ws, _, rt := historyFixture(t, "stopped")
-	id, _ := mgr.beginLaunch(ctx, ws, rt)
+	id, _ := mgr.beginLaunch(ctx, ws, rt, "")
 	l, _, _ := st.GetLaunch(ctx, id)
 	if err := st.TouchLaunch(ctx, id, l.StartedAt+120); err != nil {
 		t.Fatal(err)
@@ -264,7 +264,7 @@ func TestSamplerClosesAStoppedLaunchButNotANewerOne(t *testing.T) {
 		t.Fatalf("running secs = %d, want 120 (the dead time must not count)", secs)
 	}
 	// "starting" leaves an open launch alone.
-	id2, _ := mgr.beginLaunch(ctx, ws, rt)
+	id2, _ := mgr.beginLaunch(ctx, ws, rt, "")
 	mgr.tickUsageHistory(ctx, ws, rt, "starting", time.Now().Add(time.Hour))
 	if l2, _, _ := st.GetLaunch(ctx, id2); l2.StoppedAt != 0 {
 		t.Fatal("a starting workspace's launch was closed")
@@ -297,7 +297,7 @@ func TestNoLaunchRecordedWhereTheRuntimeNamesNoBox(t *testing.T) {
 	st, mgr, _, _, ws := usageHourFixture(t)
 	rt := stubRuntime{}
 	mgr.rtFactory = stubFactory{rt: rt}
-	if id, env := mgr.beginLaunch(ctx, ws, rt); id != "" || env != "" {
+	if id, env := mgr.beginLaunch(ctx, ws, rt, ""); id != "" || env != "" {
 		t.Fatalf("launch for a boxless runtime: %q %q", id, env)
 	}
 	newUsageSampler(mgr, 5*time.Minute).sample(ctx)
@@ -312,7 +312,7 @@ func TestNoLaunchRecordedWhereTheRuntimeNamesNoBox(t *testing.T) {
 func TestPullIgnoresAnAgentThatAnswersBehindTheCursor(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, ws, ag, rt := historyFixture(t, "running")
-	id, _ := mgr.beginLaunch(ctx, ws, rt)
+	id, _ := mgr.beginLaunch(ctx, ws, rt, "")
 	now := time.Now().Unix()
 	ag.add(now-60, id, map[string]any{"cpu_pct": 5.0})
 	if err := mgr.pullUsageHistory(ctx, ws.MembershipID, rt); err != nil {
@@ -438,7 +438,7 @@ func TestUsageHistoryAPIScopeAndUnmeasuredIsNull(t *testing.T) {
 func TestConcurrentPullsCountEachMinuteOnce(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, ws, ag, rt := historyFixture(t, "running")
-	id, _ := mgr.beginLaunch(ctx, ws, rt)
+	id, _ := mgr.beginLaunch(ctx, ws, rt, "")
 	now := time.Now().Unix()
 	for i := int64(0); i < 3; i++ {
 		ag.add(now-300+i*60, id, map[string]any{"cpu_pct": 10.0})
@@ -467,7 +467,7 @@ func TestConcurrentPullsCountEachMinuteOnce(t *testing.T) {
 func TestPullHoldsTheCursorBeforeWindowsFromTheFuture(t *testing.T) {
 	ctx := context.Background()
 	st, mgr, ws, ag, rt := historyFixture(t, "running")
-	id, _ := mgr.beginLaunch(ctx, ws, rt)
+	id, _ := mgr.beginLaunch(ctx, ws, rt, "")
 	now := time.Now().Unix()
 	ag.add(now-120, id, map[string]any{"cpu_pct": 10.0})
 	ag.add(now-60, id, map[string]any{"cpu_pct": 10.0})
@@ -489,7 +489,7 @@ func TestPullHoldsTheCursorBeforeWindowsFromTheFuture(t *testing.T) {
 func TestStopWithoutPullDoesNotCallTheAgent(t *testing.T) {
 	ctx := context.Background()
 	_, mgr, ws, ag, rt := historyFixture(t, "running")
-	mgr.beginLaunch(ctx, ws, rt)
+	mgr.beginLaunch(ctx, ws, rt, "")
 	if err := mgr.stopRecorded(ctx, ws, rt, false); err != nil {
 		t.Fatal(err)
 	}
@@ -506,5 +506,104 @@ func TestUsageHistoryRefusesAnInvertedRange(t *testing.T) {
 		"/api/admin/usage/history?tenant=sales&from=2026-12-01&to=2026-01-01", "boss@acme.co.jp")
 	if code != 400 {
 		t.Fatalf("inverted range = %d", code)
+	}
+}
+
+// A stop the sampler inferred wrongly (ecs-ec2 answers "none" when one read of the home volume
+// fails) is taken back when the same container is seen running again: the launch keeps its
+// box, its override and its hours, instead of the rest of its run going to an adopted launch
+// the boost budget does not count.
+func TestSamplerReopensALaunchItClosedOnATransientState(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	id, _ := mgr.beginLaunch(ctx, ws, rt, "boost")
+	l, _, _ := st.GetLaunch(ctx, id)
+	if err := st.TouchLaunch(ctx, id, l.StartedAt+600); err != nil {
+		t.Fatal(err)
+	}
+	mgr.tickUsageHistory(ctx, ws, rt, "none", time.Unix(l.StartedAt+900, 0))
+	if _, open, _ := st.OpenLaunch(ctx, ws.MembershipID); open {
+		t.Fatal("the launch is still open after a none")
+	}
+	mgr.tickUsageHistory(ctx, ws, rt, "running", time.Unix(l.StartedAt+1200, 0))
+	got, open, _ := st.OpenLaunch(ctx, ws.MembershipID)
+	if !open || got.ID != id || got.Override != "boost" {
+		t.Fatalf("after running again: %+v open=%v, want %s reopened", got, open, id)
+	}
+	// Seen running on: the hours across the false stop count, all as boosted.
+	if err := st.TouchLaunch(ctx, id, l.StartedAt+1500); err != nil {
+		t.Fatal(err)
+	}
+	if secs, _ := st.OverrideRunningSecs(ctx, ws.MembershipID, "boost", l.StartedAt, l.StartedAt+1e6); secs != 1500 {
+		t.Fatalf("boosted secs = %d, want 1500", secs)
+	}
+
+	// A launch the CP itself stopped (closed at the stop, after its last sighting) is not taken
+	// back: a workspace running after that is a new launch.
+	if _, _, err := st.EndOpenLaunch(ctx, ws.MembershipID, l.StartedAt+1600); err != nil {
+		t.Fatal(err)
+	}
+	mgr.tickUsageHistory(ctx, ws, rt, "running", time.Unix(l.StartedAt+1700, 0))
+	if again, _, _ := st.OpenLaunch(ctx, ws.MembershipID); again.ID == id || again.Override != "adopted" {
+		t.Fatalf("a CP stop was taken back: %+v", again)
+	}
+	if _, ok, _ := st.ReopenLaunch(ctx, ws.MembershipID, 0); ok {
+		t.Fatal("reopened while another launch is open")
+	}
+}
+
+// A stop the sampler inferred longer ago than launchReopenWindow stays a stop.
+func TestSamplerDoesNotReopenAnOldStop(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	id, _ := mgr.beginLaunch(ctx, ws, rt, "boost")
+	l, _, _ := st.GetLaunch(ctx, id)
+	mgr.tickUsageHistory(ctx, ws, rt, "none", time.Unix(l.StartedAt+60, 0))
+	mgr.tickUsageHistory(ctx, ws, rt, "running", time.Unix(l.StartedAt, 0).Add(launchReopenWindow+time.Minute))
+	if got, _, _ := st.OpenLaunch(ctx, ws.MembershipID); got.ID == id || got.Override != "adopted" {
+		t.Fatalf("an old stop was taken back: %+v", got)
+	}
+}
+
+// The sampler reading "stopped" in the moment between a recorded launch and its Start closes
+// the launch at its start. The Start then comes up: the launch is reopened, not adopted.
+func TestSamplerReopensALaunchItClosedBeforeItsStart(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	id, _ := mgr.beginLaunch(ctx, ws, rt, "boost")
+	l, _, _ := st.GetLaunch(ctx, id)
+	mgr.tickUsageHistory(ctx, ws, rt, "stopped", time.Unix(l.StartedAt+1, 0))
+	if got, _, _ := st.GetLaunch(ctx, id); got.StoppedAt != l.StartedAt {
+		t.Fatalf("closed at %d, want its start %d", got.StoppedAt, l.StartedAt)
+	}
+	mgr.tickUsageHistory(ctx, ws, rt, "running", time.Unix(l.StartedAt+600, 0))
+	if got, open, _ := st.OpenLaunch(ctx, ws.MembershipID); !open || got.ID != id || got.Override != "boost" {
+		t.Fatalf("%+v open=%v, want %s reopened", got, open, id)
+	}
+}
+
+// The start deadline stops a launch that never came up: it ran for no time, so the minutes it
+// waited count neither as running time nor against a boost budget.
+func TestStartDeadlineStopCountsNoTimeForALaunchNeverSeenRunning(t *testing.T) {
+	ctx := context.Background()
+	st, mgr, ws, _, rt := historyFixture(t, "starting")
+	// Recorded half an hour ago, when the Start was asked for, and never seen running since.
+	id := "unplaced"
+	if err := st.BeginLaunch(ctx, store.Launch{ID: id, WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
+		TenantID: ws.TenantID, StartedAt: time.Now().Add(-30 * time.Minute).Unix(), Override: "boost"}); err != nil {
+		t.Fatal(err)
+	}
+	l, _, _ := st.GetLaunch(ctx, id)
+	if err := mgr.stopAtLastSighting(ctx, ws, rt); err != nil {
+		t.Fatal(err)
+	}
+	if got, _, _ := st.GetLaunch(ctx, id); got.StoppedAt != l.StartedAt {
+		t.Fatalf("closed at %d, want its start %d", got.StoppedAt, l.StartedAt)
+	}
+	if secs, _ := st.OverrideRunningSecs(ctx, ws.MembershipID, "boost", 0, time.Now().Unix()+3600); secs != 0 {
+		t.Fatalf("boosted secs = %d, want 0", secs)
+	}
+	if *rt.stops != 1 {
+		t.Fatalf("stops = %d", *rt.stops)
 	}
 }

@@ -94,6 +94,10 @@ type UsageHistoryStore interface {
 	FoldRunning(ctx context.Context, membershipID string) error
 	// GetLaunch reads one launch.
 	GetLaunch(ctx context.Context, id string) (Launch, bool, error)
+	// ReopenLaunch reopens the membership's newest launch, and reports whether it did, when no
+	// launch of the membership is open and the newest one was closed at its own last sighting
+	// (which is where a stop the sampler inferred closes it) at or after closedSince.
+	ReopenLaunch(ctx context.Context, membershipID string, closedSince int64) (Launch, bool, error)
 	// OverrideRunningSecs is how many seconds of [from, to) the membership's launches with the
 	// given override ran, each launch up to its End. It reads the launches, not the day rows, so
 	// an open launch counts up to its last sighting without waiting for a fold.
@@ -175,6 +179,9 @@ func (s *SQL) GetLaunch(ctx context.Context, id string) (Launch, bool, error) {
 }
 
 func (s *SQL) OverrideRunningSecs(ctx context.Context, membershipID, override string, from, to int64) (int64, error) {
+	if to <= from {
+		return 0, nil
+	}
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT started_at, COALESCE(stopped_at, last_seen_at) FROM workspace_launch
 		 WHERE membership_id=? AND override=? AND started_at < ? AND COALESCE(stopped_at, last_seen_at) > ?`,
@@ -192,6 +199,22 @@ func (s *SQL) OverrideRunningSecs(ctx context.Context, membershipID, override st
 		total += min(end, to) - max(start, from)
 	}
 	return total, rows.Err()
+}
+
+func (s *SQL) ReopenLaunch(ctx context.Context, membershipID string, closedSince int64) (Launch, bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE workspace_launch SET stopped_at = NULL
+		 WHERE id = (SELECT id FROM workspace_launch WHERE membership_id=? ORDER BY started_at DESC, id DESC LIMIT 1)
+		   AND stopped_at IS NOT NULL AND stopped_at = last_seen_at AND stopped_at >= ?
+		   AND NOT EXISTS (SELECT 1 FROM workspace_launch o WHERE o.membership_id=? AND o.stopped_at IS NULL)`,
+		membershipID, closedSince, membershipID)
+	if err != nil {
+		return Launch{}, false, err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return Launch{}, false, nil
+	}
+	return s.OpenLaunch(ctx, membershipID)
 }
 
 func (s *SQL) TouchLaunch(ctx context.Context, id string, at int64) error {

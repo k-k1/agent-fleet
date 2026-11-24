@@ -57,6 +57,12 @@ const (
 	usageAfterStartEvery  = 15 * time.Second
 )
 
+// launchReopenWindow is how long after a stop the sampler inferred it may still take that stop
+// back on seeing the workspace running (tickUsageHistory). It covers the start deadline (30
+// minutes by default), the longest a launch the sampler closed before its Start can take to
+// be seen running.
+const launchReopenWindow = time.Hour
+
 // usageStopPullTimeout bounds the pull made before a Stop: a Stop never waits longer than this
 // for the Agent, whatever the Agent client's own timeout is. A variable so a test can shrink it.
 var usageStopPullTimeout = 3 * time.Second
@@ -66,16 +72,6 @@ var usageStopPullTimeout = 3 * time.Second
 func usageHistoryRuntime(rt runtime.Runtime) (machineProfiler, bool) {
 	mp, ok := rt.(machineProfiler)
 	return mp, ok
-}
-
-// launchOverride names what chose the box this start lands on, "" when nothing overrode the
-// member's own setting. A live boost answers "boost" (ADR 0139 decision 5), which splits the day
-// row (a boosted day has two). The right-sizing override will answer "auto" the same way.
-func (m *manager) launchOverride(ctx context.Context, ws store.Workspace) string {
-	if ns := m.resolveNextStart(ctx, ws); ns.Source != "stored" {
-		return ns.Source
-	}
-	return ""
 }
 
 func newLaunchID() string {
@@ -92,7 +88,12 @@ func newLaunchID() string {
 // that hands its id to the container ("" when this runtime keeps no history). It is recorded
 // first so a CP that dies between Start and a record written afterwards still knows the id the
 // Agent will stamp on its minutes. endLaunchFailed undoes it when Start fails.
-func (m *manager) beginLaunch(ctx context.Context, ws store.Workspace, rt runtime.Runtime) (id, env string) {
+//
+// override names what chose rt's box, "" when nothing overrode the member's own setting: the
+// caller takes it from the same withResolvedSizeSource answer it sized rt with. A boost
+// answers "boost" (ADR 0139 decision 5), which splits the day row and is what the boost
+// budget counts.
+func (m *manager) beginLaunch(ctx context.Context, ws store.Workspace, rt runtime.Runtime, override string) (id, env string) {
 	mp, ok := usageHistoryRuntime(rt)
 	if !ok {
 		return "", ""
@@ -101,7 +102,7 @@ func (m *manager) beginLaunch(ctx context.Context, ws store.Workspace, rt runtim
 	now := time.Now().Unix()
 	l := store.Launch{
 		ID: newLaunchID(), WorkspaceID: ws.ID, MembershipID: ws.MembershipID, TenantID: ws.TenantID,
-		StartedAt: now, InstanceType: box.InstanceType, ClassID: box.ClassID, Override: m.launchOverride(ctx, ws),
+		StartedAt: now, InstanceType: box.InstanceType, ClassID: box.ClassID, Override: override,
 		VCPU: box.VCPU, BaselinePct: box.BurstBaselinePct,
 	}
 	if err := m.store.BeginLaunch(ctx, l); err != nil {
@@ -135,6 +136,18 @@ func (m *manager) foldRunning(ctx context.Context, membershipID string) {
 // minutes before (pull=false where the Agent is the reason for the stop, or does not exist yet),
 // and the launch closed after. The Stop itself is exactly rt.Stop's result.
 func (m *manager) stopRecorded(ctx context.Context, ws store.Workspace, rt runtime.Runtime, pull bool) error {
+	return m.stopRecordedAt(ctx, ws, rt, pull, false)
+}
+
+// stopAtLastSighting is stopRecorded for the start deadline's stop, of a workspace with no task
+// up: its launch ends where it was last seen running, not at the stop. One never seen running
+// ends at its own start, so a launch that could not be placed adds no running time (and nothing
+// to a boost budget) for the minutes it waited.
+func (m *manager) stopAtLastSighting(ctx context.Context, ws store.Workspace, rt runtime.Runtime) error {
+	return m.stopRecordedAt(ctx, ws, rt, false, true)
+}
+
+func (m *manager) stopRecordedAt(ctx context.Context, ws store.Workspace, rt runtime.Runtime, pull, atLastSeen bool) error {
 	if _, ok := usageHistoryRuntime(rt); !ok {
 		return rt.Stop(ctx)
 	}
@@ -147,7 +160,11 @@ func (m *manager) stopRecorded(ctx context.Context, ws store.Workspace, rt runti
 	}
 	err := rt.Stop(ctx)
 	if err == nil {
-		m.closeLaunch(ctx, ws.MembershipID, time.Now().Unix())
+		at := time.Now().Unix()
+		if atLastSeen {
+			at = 0 // EndOpenLaunch never ends a launch before its last sighting
+		}
+		m.closeLaunch(ctx, ws.MembershipID, at)
 	}
 	return err
 }
@@ -273,6 +290,20 @@ func (m *manager) tickUsageHistory(ctx context.Context, ws store.Workspace, rt r
 	}
 	switch state {
 	case "running":
+		if !open {
+			// A stop this sampler inferred can be wrong: ecs-ec2 answers "none" when it cannot
+			// read the home volume, and "stopped" in the moment between a recorded launch and
+			// its Start. The same container is then still running, on the box and under the
+			// override its launch recorded, so that launch is reopened rather than replaced by
+			// an adopted one, which would drop its hours from the boost budget.
+			if rl, ok, err := m.store.ReopenLaunch(ctx, ws.MembershipID, observedAt.Add(-launchReopenWindow).Unix()); err != nil {
+				log.Printf("usage history: reopen launch (ws=%s): %v", ws.ID, err)
+			} else if ok {
+				l, open = rl, true
+			} else if l, open, err = m.store.OpenLaunch(ctx, ws.MembershipID); err != nil {
+				return false // another replica may have reopened it; the next tick sees which
+			}
+		}
 		if !open {
 			box := mp.MachineProfile()
 			now := observedAt.Unix()
