@@ -340,7 +340,10 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const purgeOld = async () => {
     const ok = await askConfirm({
       title: tr("clean.purge_old_title", { days: PURGE_OLDER_DAYS }),
-      body: tr("clean.purge_old_body", { count: oldArchives.length, size: humanSize(oldBytes) }),
+      body:
+        tr("clean.purge_old_body", { count: oldArchives.length, size: humanSize(oldBytes) }) +
+        // A deleted space's folder goes with its entry: say so, as the single purge does.
+        (oldArchives.some((a) => a.space) ? " " + tr("clean.purge_old_space") : ""),
       confirmLabel: tr("clean.purge_do"),
       danger: true,
     });
@@ -719,6 +722,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                               ? tr("clean.archive_reason_delete_space", { name: a.space?.name || a.space?.folder || "" })
                               : tr("clean.archive_reason_delete_session")}
                         {a.worktree?.snapshot ? " · " + tr("clean.archive_worktree_snapshot") : ""}
+                        {a.space && a.bytes ? " · " + humanSize(a.bytes) : ""}
                         {a.sessions && a.sessions.length > 0
                           ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
                           : ""}

@@ -321,3 +321,65 @@ func TestDeleteSpaceWithoutATrashDirectoryChangesNothing(t *testing.T) {
 		t.Fatal("the space was changed")
 	}
 }
+
+// A purge pressed on the new trash row while the delete is still between publishing the entry and
+// moving the folder waits for it, so the folder is never left in the trash with no entry to name
+// it. Without the shared lock the purge removed the manifest first and the move then stranded the
+// files.
+func TestPurgeCannotOvertakeTheDeleteOfTheSameSpace(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Racing")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+
+	purged := make(chan int, 1)
+	spaceAfterManifest = func(id string) {
+		go func() { purged <- httpStatus(t, e.srv, "DELETE", "/cleanup/archives/"+id, nil) }()
+		select {
+		case code := <-purged:
+			t.Errorf("the purge ran inside the delete (status %d)", code)
+			purged <- code
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	t.Cleanup(func() { spaceAfterManifest = nil })
+
+	var out struct{ Archive string }
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+	// The purge then runs on the finished entry and takes the folder with it.
+	if code := <-purged; code != http.StatusOK {
+		t.Fatalf("purge after the delete = %d", code)
+	}
+	if _, err := os.Lstat(spaceTrashDir(out.Archive)); !os.IsNotExist(err) {
+		t.Fatalf("the folder was stranded in the trash: %v", err)
+	}
+	if n := len(spaceArchives(t, e.srv)); n != 0 {
+		t.Fatalf("%d entries left", n)
+	}
+}
+
+// The trash row is listed from its sidecar alone, so a delete whose sidecar cannot be written is
+// refused with the space where it was, instead of moving a folder no row names.
+func TestDeleteSpaceRefusesWhenTheEntryCannotBeListed(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Hidden")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+	now := nowUTC()
+	id := newCleanupID(now, idSlug("space-"+sp.Folder))
+	// A directory where the sidecar goes: its best-effort write fails, the tarball's does not.
+	if err := os.MkdirAll(filepath.Join(cleanupStoreDir(), id+".json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	prev := nowUTC
+	nowUTC = func() time.Time { return now }
+	t.Cleanup(func() { nowUTC = prev })
+
+	if got := errCodeOf(t, e.srv, "DELETE", "/spaces/"+sp.Folder, http.StatusInternalServerError); got != errCodeSpaceTrashFailed {
+		t.Errorf("code = %q, want %q", got, errCodeSpaceTrashFailed)
+	}
+	if b, _ := os.ReadFile(filepath.Join(sp.Dir, "f.md")); string(b) != "x" {
+		t.Fatal("the space was moved although no row could name it")
+	}
+	if _, err := os.Lstat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); !os.IsNotExist(err) {
+		t.Fatalf("the refused delete left its tarball: %v", err)
+	}
+}

@@ -275,6 +275,7 @@ describe("CleanupModal cache section", () => {
         at: "2026-09-01T00:00:00Z",
         reason: "delete_space",
         space: { folder: "q3-abcdef", name: "Q3 report", path: "/home/dev/spaces/q3-abcdef" },
+        bytes: 3 * 2 ** 20,
       },
     ];
     restoreStatus = 409;
@@ -282,6 +283,8 @@ describe("CleanupModal cache section", () => {
     await render();
     await click(document.querySelectorAll<HTMLButtonElement>(".clean-tab")[1]);
     expect(document.querySelector(".clean-arch-what")?.textContent).toContain("スペース削除（Q3 report）");
+    // The folder's size: what a purge gives back.
+    expect(document.querySelector(".clean-arch-what")?.textContent).toContain("3.0 MB");
     await click(document.querySelector<HTMLButtonElement>(".clean-arch-actions button"));
     // Not "restore again to finish it": the folder's place has to be cleared first.
     expect(document.body.textContent).toContain("フォルダ名の場所に、すでに何かがあるため戻しませんでした");

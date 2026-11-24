@@ -66,6 +66,10 @@ type deleteSpaceResponse struct {
 	Archive string `json:"archive"`
 }
 
+// spaceAfterManifest is a test seam between publishing the trash entry and moving the folder,
+// where a purge of that entry would otherwise win. Nil in production.
+var spaceAfterManifest func(id string)
+
 // handleDeleteSpace is DELETE /spaces/{folder}. The order is the safety, as for a working copy:
 // refuse while anything runs or is locked, trash the shell / ssm sessions (a failure stops the
 // delete with nothing removed), record the entry, move the folder, and only then shelve the AI
@@ -87,7 +91,7 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("could not open the trash, so the space was not deleted: %v", err))
 		return
 	}
-	if same, err := spacex.SameDevice(spacex.Root(), store); err != nil || !same {
+	if same, err := spacex.SameDevice(dir, store); err != nil || !same {
 		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceTrashFS,
 			"the trash is on another file system than ~/spaces, so the space cannot be moved to it; nothing was deleted")
 		return
@@ -123,20 +127,40 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 		Reason: "delete_space",
 		Space:  &spaceTombstone{Folder: folder, Name: sp.Name, Path: dir, Shelved: shelved},
 	}
-	if err := writeCleanupArchive(&man, nil); err != nil {
-		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceTrashFailed,
-			fmt.Sprintf("could not record the space in the trash, so it was left as it is: %v", err))
-		return
-	}
-	if err := spacex.MoveOut(folder, spaceTrashDir(man.ID)); err != nil {
-		sessionx.WithCleanupLock(func() { _, _ = purgeCleanupArchive(man.ID) })
+	// The entry is published and the folder moved under the cleanup lock a purge takes, so a purge
+	// pressed on the new row in another tab cannot remove the manifest before the folder is in the
+	// trash (which would leave the files with nothing to name them).
+	var moveErr error
+	sessionx.WithCleanupLock(func() {
+		if err := writeCleanupArchive(&man, nil); err != nil {
+			moveErr = fmt.Errorf("could not record the space in the trash, so it was left as it is: %w", err)
+			return
+		}
+		// The list reads the sidecar alone; one that could not be written would hide a row whose
+		// folder is in the trash. Refused here, with nothing moved, rather than found out later.
+		if fi, err := os.Lstat(filepath.Join(cleanupStoreDir(), man.ID+".json")); err != nil || !fi.Mode().IsRegular() {
+			_, _ = purgeCleanupArchive(man.ID)
+			moveErr = errors.New("could not list the space in the trash, so it was left as it is")
+			return
+		}
+		if spaceAfterManifest != nil {
+			spaceAfterManifest(man.ID)
+		}
+		if err := spacex.MoveOut(folder, spaceTrashDir(man.ID)); err != nil {
+			// Only this attempt's own entry goes; the folder was never moved, so no .space
+			// directory of ours exists to remove.
+			_, _ = purgeCleanupArchive(man.ID)
+			moveErr = err
+		}
+	})
+	if moveErr != nil {
 		invalidateCleanupUsage()
-		if errors.Is(err, spacex.ErrNotFound) {
+		if errors.Is(moveErr, spacex.ErrNotFound) {
 			httpx.WriteErr(w, http.StatusNotFound, errCodeSpaceNotFound, "no such space")
 			return
 		}
 		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceTrashFailed,
-			fmt.Sprintf("could not move the space to the trash, so it was left as it is: %v", err))
+			fmt.Sprintf("could not move the space to the trash, so it was left as it is: %v", moveErr))
 		return
 	}
 	gitx.ShelveSessionsUnder(dir)
@@ -195,7 +219,18 @@ func restoreDeletedSpace(id string, t spaceTombstone) error {
 		case statErr != nil:
 			err = &restoreConflict{errCodeSpaceRestoreMissing, "the space's folder is no longer in the trash"}
 		default:
-			switch merr := spacex.MoveIn(src, t.Folder); {
+			// Under the cleanup lock a purge takes, and only while the entry still exists: a
+			// purge that won removes the folder, and one that is removing it must not run
+			// alongside the move back.
+			var merr error
+			sessionx.WithCleanupLock(func() {
+				if _, err := os.Stat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
+					merr = spacex.ErrNotFound
+					return
+				}
+				merr = spacex.MoveIn(src, t.Folder)
+			})
+			switch {
 			case errors.Is(merr, spacex.ErrExists):
 				err = &restoreConflict{errCodeSpaceRestoreExists, "something already exists at ~/spaces/" + t.Folder}
 			case errors.Is(merr, spacex.ErrNotFound):

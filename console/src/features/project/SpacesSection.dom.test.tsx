@@ -449,7 +449,7 @@ describe("Spaces section", () => {
     });
   });
   describe("delete", () => {
-    const shell = (name: string, folder: string) => ({ ...inSpace(name, folder), kind: "shell", alive: false });
+    const shell = (name: string, folder: string): Session => ({ ...inSpace(name, folder), kind: "shell", alive: false });
     const open = async (sessions: Session[]) => {
       useSessionsStore.setState({ sessions });
       await render();
@@ -501,6 +501,29 @@ describe("Spaces section", () => {
       expect(text).toContain("Runner");
       expect(text).toContain("Keeper");
       expect(confirmBtn().disabled).toBe(true);
+    });
+
+    it("counts a session started in a subfolder, which the Agent settles too", async () => {
+      await open([
+        { ...inSpace("a1", "q3-abcdef"), alive: false },
+        // Not named by `space` (the folder is not directly under ~/spaces), but at or under the space.
+        sess("sub1", { kind: "shell", alive: false, dir: "/home/dev/spaces/q3-abcdef/notes", repo: "notes" }),
+        sess("other", { kind: "shell", alive: false, dir: "/home/dev/spaces/q3-abcdef-other" }),
+      ]);
+      expect(dialog()!.textContent).toContain("1 AI session(s)");
+      expect(dialog()!.textContent).toContain("1 shell / SSM session(s)");
+    });
+
+    it("lifts the block when the running session is stopped elsewhere, without changing who goes", async () => {
+      await open([inSpace("a1", "q3-abcdef"), { ...inSpace("a2", "q3-abcdef"), alive: false }]);
+      expect(confirmBtn().disabled).toBe(true);
+      await act(async () => {
+        useSessionsStore.setState({ sessions: [{ ...inSpace("a1", "q3-abcdef"), alive: false }, { ...inSpace("a2", "q3-abcdef"), alive: false }, inSpace("newcomer", "q3-abcdef")] });
+      });
+      expect(confirmBtn().disabled).toBe(false);
+      // A session that appeared after the dialog opened is not one the member read, and the Agent
+      // will refuse if it runs; it is not added to the list.
+      expect(dialog()!.textContent).toContain("2 AI session(s)");
     });
 
     it("keeps the dialog and words the Agent's refusal in the space's own terms", async () => {

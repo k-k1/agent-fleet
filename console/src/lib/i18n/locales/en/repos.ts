@@ -230,7 +230,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "pj.space_delete_title": "Delete space",
   "pj.space_delete_body": "Move the space \"{name}\" (~/spaces/{folder}) and every file in it to the trash?",
   "pj.space_delete_sessions": "Its sessions go with it: {ai} AI session(s) move to the archive and {shells} shell / SSM session(s) to the trash.",
-  "pj.space_delete_restore": "Nothing is deleted for good. Restore it from Clean up → Trash (restore), which brings back the folder and the archived sessions; the trash's \"delete permanently\" is what removes the files.",
+  "pj.space_delete_restore": "Your files are not deleted for good. Restore it from Clean up → Trash (restore), which brings back the folder and the archived sessions; the trash's \"delete permanently\" is what removes the files. A shell's scrollback is not kept.",
   "pj.space_delete_running": "These sessions are running, so the space can't be deleted yet. Stop them first: {names}",
   "pj.space_delete_locked": "These sessions are locked against deletion. Unlock them first: {names}",
   "pj.space_delete_do": "Move to trash",

@@ -65,10 +65,10 @@ shell and SSM sessions to the trash.
 
 - **A session that is running, or locked against deletion, stops it.** The dialog names it, and the button stays off.
   Stop it, or unlock it, and press again
-- **Nothing is deleted for good.** The space is a folder moved into the trash, so every file keeps its content and
+- **Your files are not deleted for good.** The space is a folder moved into the trash, so every file keeps its content and
   its modification time. **Clean up → "Trash (restore)" → "Restore"** moves the folder back to `~/spaces` under the same name and takes the archived
   sessions off the archive, so they resume where they left off. Shell and SSM sessions are separate rows in the trash,
-  restored one by one
+  restored one by one. A shell's scrollback (its recorded terminal output) is not kept, as when you delete a shell
 - A restore is refused when something already sits at the space's folder name under `~/spaces`: move or delete that,
   then restore again
 - **"Delete permanently"** on the trash row removes the folder and its files for good. The row's size is the

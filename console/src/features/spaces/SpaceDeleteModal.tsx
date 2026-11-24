@@ -13,7 +13,7 @@ import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { isTerminalSession } from "../../lib/project.ts";
 import { displayName } from "../../lib/sessionview.ts";
-import { deleteSpace, spacesOwner } from "./store.ts";
+import { deleteSpace, spacesOwner, useSpacesStore } from "./store.ts";
 
 // The Agent's refusals, worded here: the shared codes say "working copy".
 const DELETE_ERRORS = {
@@ -42,9 +42,22 @@ export function SpaceDeleteModal({
   const tr = useT();
   const toast = useToast();
   const closeSessionPanes = useLayoutStore((s) => s.closeSessionPanes);
-  // Frozen at open: the list is polled, and a row changing under the pointer is how a press lands
-  // on something the member never read.
-  const [mine] = useState(() => useSessionsStore.getState().sessions.filter((s) => s.space === folder));
+  // Which sessions go is frozen at open (a press must not land on a set the member never read),
+  // but whether each runs or is locked is read live: stopping or unlocking one elsewhere is the
+  // way to unblock the button. The Agent settles every session at or under the space's folder, so
+  // a session started in a subfolder counts as well as one named by `space`.
+  const dir = useSpacesStore((s) => s.spaces.find((x) => x.folder === folder)?.dir ?? "");
+  const [names] = useState(() => {
+    const under = (d?: string) => !!dir && !!d && (d === dir || d.startsWith(dir + "/"));
+    return new Set(
+      useSessionsStore
+        .getState()
+        .sessions.filter((s) => s.space === folder || under(s.dir))
+        .map((s) => s.name),
+    );
+  });
+  const all = useSessionsStore((s) => s.sessions);
+  const mine = all.filter((s) => names.has(s.name));
   const alive = mine.filter((s) => s.alive);
   const locked = mine.filter((s) => s.locked);
   const shells = mine.filter((s) => isTerminalSession(s)).length;
@@ -52,7 +65,7 @@ export function SpaceDeleteModal({
   const blocked = alive.length > 0 || locked.length > 0;
   const [busy, setBusy] = useState(false);
 
-  const names = (list: typeof mine) => list.map((s) => displayName(s)).join(", ");
+  const listed = (list: typeof mine) => list.map((s) => displayName(s)).join(", ");
 
   const run = async () => {
     if (busy || blocked) return;
@@ -90,12 +103,12 @@ export function SpaceDeleteModal({
         <p className="ui-field-hint">{tr("pj.space_delete_restore")}</p>
         {alive.length > 0 && (
           <p role="alert" className="ui-field-hint">
-            {tr("pj.space_delete_running", { names: names(alive) })}
+            {tr("pj.space_delete_running", { names: listed(alive) })}
           </p>
         )}
         {locked.length > 0 && (
           <p role="alert" className="ui-field-hint">
-            {tr("pj.space_delete_locked", { names: names(locked) })}
+            {tr("pj.space_delete_locked", { names: listed(locked) })}
           </p>
         )}
       </div>

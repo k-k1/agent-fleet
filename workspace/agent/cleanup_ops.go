@@ -543,7 +543,7 @@ func deleteRemoteBranch(dir, branch string) (string, error) {
 }
 
 func handleListCleanupArchives(w http.ResponseWriter, r *http.Request) {
-	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archives": listCleanupArchives()})
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archives": listCleanupArchivesSized()})
 }
 
 func handleRestoreCleanupArchive(w http.ResponseWriter, r *http.Request) {
@@ -588,7 +588,7 @@ func handlePurgeOldCleanupArchives(w http.ResponseWriter, r *http.Request) {
 	purged, kept := 0, 0
 	var bytes int64
 	var gone []cleanupManifest
-	for _, m := range listCleanupArchives() {
+	for _, m := range listCleanupArchivesSized() {
 		at, err := time.Parse(time.RFC3339, m.At)
 		if err != nil {
 			kept++ // no readable date: it cannot be said to be old, so it stays, and says so

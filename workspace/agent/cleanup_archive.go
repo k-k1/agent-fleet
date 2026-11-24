@@ -160,8 +160,20 @@ func tarAdd(tw *tar.Writer, name string, b []byte) error {
 	return err
 }
 
-// listCleanupArchives returns stored manifests, newest first (id is time-sortable).
-func listCleanupArchives() []cleanupManifest {
+// listCleanupArchives returns stored manifests, newest first (id is time-sortable). Bytes is the
+// tarball's size only: measuring a deleted space's folder walks it, which callers that only read
+// manifests must not pay for.
+func listCleanupArchives() []cleanupManifest { return listArchives(nil) }
+
+// listCleanupArchivesSized is listCleanupArchives with each deleted space's folder counted into
+// Bytes (what a purge gives back), the whole list sharing one walk budget so a trash full of
+// large spaces is bounded as a whole.
+func listCleanupArchivesSized() []cleanupManifest {
+	budget := cleanupUsageMaxEntries
+	return listArchives(&budget)
+}
+
+func listArchives(budget *int) []cleanupManifest {
 	entries, _ := os.ReadDir(cleanupStoreDir())
 	var out []cleanupManifest
 	for _, e := range entries {
@@ -177,9 +189,8 @@ func listCleanupArchives() []cleanupManifest {
 			if info, err := os.Stat(filepath.Join(cleanupStoreDir(), m.ID+".tar.gz")); err == nil {
 				m.Bytes = info.Size()
 			}
-			if m.Space != nil {
-				budget := cleanupUsageMaxEntries
-				b, _ := walkSize(spaceTrashDir(m.ID), &budget)
+			if m.Space != nil && budget != nil {
+				b, _ := walkSize(spaceTrashDir(m.ID), budget)
 				m.Bytes += b
 			}
 			out = append(out, m)
@@ -556,7 +567,9 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 		restored["worktree"] = m.Worktree.Name
 	}
 	if m.Space != nil {
-		if err := restoreDeletedSpace(m.ID, *m.Space); err != nil {
+		// The id the request named, which was checked to be a bare file name; a manifest that
+		// says another id is not used to build a path.
+		if err := restoreDeletedSpace(id, *m.Space); err != nil {
 			return nil, err
 		}
 		restored["space"] = m.Space.Folder

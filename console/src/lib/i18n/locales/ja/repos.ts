@@ -228,7 +228,7 @@ export const repos = {
   "pj.space_delete_title": "スペースを削除",
   "pj.space_delete_body": "スペース「{name}」（~/spaces/{folder}）とその中のファイルをすべてごみ箱に移しますか？",
   "pj.space_delete_sessions": "中のセッションも一緒に移ります：AI セッション {ai} 件はアーカイブへ、シェル / SSM セッション {shells} 件はごみ箱へ。",
-  "pj.space_delete_restore": "完全には削除されません。掃除 → ごみ箱（復元）から復元すると、フォルダとアーカイブしたセッションが戻ります。ファイルが消えるのは、ごみ箱で「完全に削除」したときです。",
+  "pj.space_delete_restore": "ファイルは完全には削除されません。掃除 → ごみ箱（復元）から復元すると、フォルダとアーカイブしたセッションが戻ります。ファイルが消えるのは、ごみ箱で「完全に削除」したときです。シェルの画面履歴は残りません。",
   "pj.space_delete_running": "次のセッションが実行中のため、まだ削除できません。先に停止してください：{names}",
   "pj.space_delete_locked": "次のセッションは削除ロックがかかっています。先にロックを外してください：{names}",
   "pj.space_delete_do": "ごみ箱へ移す",
