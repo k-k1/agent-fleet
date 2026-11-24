@@ -77,7 +77,8 @@ type Env struct {
 	Stderr                                                                            io.Writer
 	RunTimeout                                                                        time.Duration // --version probe bound
 	afterNPMLock                                                                      func()        // tests: runs right after NPM takes the lock, before it re-reads its plan
-	afterNPMStart                                                                     func()        // tests: runs once npmInstall's supervisor has started, so a test may close the lock after Cmd.Start read it
+	afterNPMStart                                                                     func(sup int) // tests: runs once npmInstall's supervisor (pid sup) has started, so a test may close the lock after Cmd.Start read it
+	npmTimeout                                                                        time.Duration // tests: replaces npmInstallTimeout when set
 	npmLockErr                                                                        error         // set by lockNPM when the lock file cannot be opened (not the same as busy)
 	npmLockFile                                                                       *os.File      // held by lockNPM; handed to npm so it outlives this process
 }

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
 // superviseStep is the hidden boot-install step npmInstall re-executes this binary as. Its
@@ -29,10 +31,10 @@ func MaybeSupervise(args []string) {
 }
 
 // supervise runs npm in its own (the supervisor's) process group, passes the lock on to it, and
-// keeps the lock open until nothing but itself is left in the group: the lock is an flock,
-// dropped only when the last holder of the file description exits, so a postinstall child that
-// does not inherit it still cannot outlive the lock. The caller owns the deadline and kills the
-// whole group (supervisor included), so no signal handling is needed here.
+// keeps the lock open until nothing npm started is left: the lock is an flock, dropped only when
+// the last holder of the file description exits, so a postinstall child that does not inherit it
+// still cannot outlive the lock. The caller owns the deadline and kills the whole group
+// (supervisor included), so no signal handling is needed here.
 func supervise(npm string, args []string) int {
 	// The step signals its whole group at the end: it must lead its own, never a caller's.
 	lock := os.NewFile(3, "npm-lock")
@@ -40,6 +42,10 @@ func supervise(npm string, args []string) int {
 		return 125
 	}
 	defer lock.Close() // the last holder if npm's children did not inherit it: live until the end
+	// As a subreaper, every orphan of npm's tree is re-parented here rather than to init, so
+	// "no child left" proves that no descendant is left, including one that left the group with
+	// setsid or was forked while /proc was being read. It needs no privilege (Linux 3.4).
+	reaper := unix.Prctl(unix.PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) == nil
 	cmd := exec.Command(npm, args...)
 	cmd.ExtraFiles = []*os.File{lock}
 	cmd.Stderr = os.Stderr
@@ -48,19 +54,11 @@ func supervise(npm string, args []string) int {
 		return 127
 	}
 	werr := cmd.Wait()
-	// Nothing npm started may outlive it: kill what is left, wait for it to be gone.
-	// Re-listed each round: a child that forks between a listing and the kill is caught by the next.
-	// A single /proc listing can miss a child forked while it was read, so the group counts as
-	// empty only after several empty listings in a row; every round kills what it sees.
-	pgid := syscall.Getpgrp()
-	empty := 0
-	for deadline := time.Now().Add(superviseGrace); empty < 3 && time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
-		if m := groupMembers(pgid); len(m) > 0 {
-			empty = 0
-			killGroupMembers(pgid)
-		} else {
-			empty++
-		}
+	if !stopDescendants(os.Getpid(), reaper, superviseGrace) && werr == nil {
+		// The caller's own rule for its group: an install whose processes may still write is
+		// not a success.
+		fmt.Fprintln(os.Stderr, "npm's processes did not stop")
+		return 1
 	}
 	if werr == nil {
 		return 0
@@ -74,44 +72,162 @@ func supervise(npm string, args []string) int {
 	return 1
 }
 
-// groupMembers lists the live (not zombie) processes of group pgid other than this one. A
-// zombie is a dead process nobody has reaped yet: it writes nothing, so it does not count.
-func groupMembers(pgid int) []int {
+// stopDescendants kills every live descendant of self and member of self's group, reaps them,
+// and reports whether none was left within d. Every round re-lists: a child forked between a
+// listing and the kill is caught by the next one. With reaper, the end is the kernel's answer
+// that self has no child at all, which no listing race can fake; without it, an orphan goes to
+// init and is seen only in a listing, so three empty listings in a row are asked for as well.
+func stopDescendants(self int, reaper bool, d time.Duration) bool {
+	empty := 0
+	for deadline := time.Now().Add(d); ; time.Sleep(20 * time.Millisecond) {
+		none := reapChildren()
+		if none && reaper {
+			return true
+		}
+		left := strays(self)
+		for _, p := range left {
+			killProc(p)
+		}
+		if len(left) > 0 {
+			empty = 0
+		} else {
+			empty++
+		}
+		if none && empty >= 3 {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
+}
+
+// reapChildren collects every exited child without blocking; none is true when self has no
+// child left, live or exited.
+func reapChildren() (none bool) {
+	for {
+		var ws unix.WaitStatus
+		pid, err := unix.Wait4(-1, &ws, unix.WNOHANG, nil)
+		switch {
+		case errors.Is(err, unix.EINTR):
+			continue
+		case errors.Is(err, unix.ECHILD):
+			return true
+		case err != nil || pid <= 0:
+			return false
+		}
+	}
+}
+
+// procInfo is one /proc/<pid>/stat. pid and start together name one process: a pid is reused,
+// a (pid, start time) pair is not.
+type procInfo struct {
+	pid, ppid, pgrp int
+	start           string // field 22, clock ticks since boot
+	live            bool   // not a zombie
+}
+
+func readStat(pid int) (procInfo, bool) {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return procInfo{}, false
+	}
+	s := string(b)
+	i := strings.LastIndexByte(s, ')')
+	if i < 0 {
+		return procInfo{}, false
+	}
+	f := strings.Fields(s[i+1:]) // state ppid pgrp session tty tpgid flags ... starttime is f[19]
+	if len(f) < 20 {
+		return procInfo{}, false
+	}
+	ppid, err1 := strconv.Atoi(f[1])
+	pgrp, err2 := strconv.Atoi(f[2])
+	if err1 != nil || err2 != nil {
+		return procInfo{}, false
+	}
+	return procInfo{pid: pid, ppid: ppid, pgrp: pgrp, start: f[19], live: f[0] != "Z" && f[0] != "X"}, true
+}
+
+func listProcs() []procInfo {
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
 		return nil
 	}
-	self := os.Getpid()
-	var out []int
+	var out []procInfo
 	for _, d := range ents {
 		pid, err := strconv.Atoi(d.Name())
-		if err != nil || pid == self {
-			continue
-		}
-		b, err := os.ReadFile("/proc/" + d.Name() + "/stat")
 		if err != nil {
 			continue
 		}
-		s := string(b)
-		i := strings.LastIndexByte(s, ')')
-		if i < 0 {
-			continue
-		}
-		f := strings.Fields(s[i+1:]) // state ppid pgrp ...
-		if len(f) < 3 || f[0] == "Z" || f[0] == "X" {
-			continue
-		}
-		if g, err := strconv.Atoi(f[2]); err == nil && g == pgid {
-			out = append(out, pid)
+		if p, ok := readStat(pid); ok {
+			out = append(out, p)
 		}
 	}
 	return out
 }
 
-func killGroupMembers(pgid int) {
-	for _, p := range groupMembers(pgid) {
-		_ = syscall.Kill(p, syscall.SIGKILL)
+// strays lists the live processes, other than self, that are in self's group or descend from
+// self, from one /proc snapshot.
+func strays(self int) []procInfo {
+	all := listProcs()
+	parent := make(map[int]int, len(all))
+	for _, p := range all {
+		parent[p.pid] = p.ppid
 	}
+	var out []procInfo
+	for _, p := range all {
+		if p.pid != self && p.live && (p.pgrp == self || descends(p.pid, self, parent)) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// descends reports whether pid has root as an ancestor in the snapshot parent. The walk is
+// bounded: a snapshot read while processes come and go can hold a cycle of reused pids.
+func descends(pid, root int, parent map[int]int) bool {
+	for i := 0; i <= len(parent) && pid > 1; i++ {
+		pid = parent[pid]
+		if pid == root {
+			return true
+		}
+	}
+	return false
+}
+
+// killProc sends SIGKILL to the process p was read from, and never to one that took its pid
+// since: the pidfd pins whatever has the pid when it is opened, and the start time read after
+// that proves it is still p. Without pidfds (a kernel before 5.3, or a seccomp filter that
+// refuses the call) the check and the kill go by pid, which leaves only the window between them.
+func killProc(p procInfo) {
+	fd, err := unix.PidfdOpen(p.pid, 0)
+	if err != nil {
+		if errors.Is(err, unix.ESRCH) {
+			return
+		}
+		if q, ok := readStat(p.pid); ok && q.start == p.start {
+			_ = unix.Kill(p.pid, unix.SIGKILL)
+		}
+		return
+	}
+	defer unix.Close(fd)
+	if q, ok := readStat(p.pid); ok && q.start == p.start {
+		_ = unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
+	}
+}
+
+// groupMembers lists the live (not zombie) processes of group pgid other than this one. A
+// zombie is a dead process nobody has reaped yet: it writes nothing, so it does not count.
+func groupMembers(pgid int) []int {
+	self := os.Getpid()
+	var out []int
+	for _, p := range listProcs() {
+		if p.pid != self && p.live && p.pgrp == pgid {
+			out = append(out, p.pid)
+		}
+	}
+	return out
 }
 
 // waitGroupGone polls until group pgid has no live member besides the caller; it reports whether

@@ -11,5 +11,8 @@ import (
 // Agent (testguard).
 func TestMain(m *testing.M) {
 	MaybeSupervise(os.Args[1:])
+	if os.Getenv(npmCallerHome) != "" { // after the supervisor check: the supervisor inherits the env
+		os.Exit(npmCallerHelper())
+	}
 	os.Exit(testguard.Run(m, nil))
 }
