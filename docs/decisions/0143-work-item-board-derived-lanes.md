@@ -92,9 +92,11 @@ has to be added so that the sources say enough.
   freshest observation (`observedAt`, or the row's fetch time), `merged` is final and wins over any
   older `open`, and a fact only one source has (checks from the cache, the review decision from the
   Agent) is taken from that source, never defaulted. The same PR is never counted as two open PRs.
-  A derived verdict does not outlive the facts it was built from: a link's `ready` is not used while
-  a newer observation of the same PR (an inbox row's checks or mergeable) says it is not green or not
-  mergeable, because the Console must not recompute `ready` and so cannot repair it, only ignore it.
+  A derived verdict does not outlive the facts it was built from: a link's `ready` is used only while
+  it is the newest observation of that PR. A newer inbox observation (checks or mergeable) retires it,
+  and it stays retired even if that observation is green, until a newer Agent observation supplies a
+  fresh verdict, because the inbox row has no review decision and the Console must not recompute
+  `ready`. Without a verdict the PR is not `ready`, so it reads In review meanwhile.
 
 ### 2. A lane is a pure function of a card's facts. First match wins.
 
