@@ -343,14 +343,22 @@ export function lineageNodes(n: RepoTreeNode): RepoTreeNode[] {
 // the member launched from a run keeps origin=user while carrying originSession, so it
 // ends the walk as "the member's" and everything it spawns stays visible. A missing
 // parent or a cycle answers "" (ordinary display), never a guess.
-export function sessionAutoKind(s: Session | undefined, byName: Map<string, Session>): AutoKind | "" {
+//
+// `shown` holds the ids of schedules the member set to also show in the Sessions view: a session
+// that run's root started and that has its own worktree is then the member's own (""). The root
+// itself and a child without a worktree stay the Schedules view's; a root with no id, or whose
+// schedule is not in `shown` (gone, not loaded), keeps the default.
+export function sessionAutoKind(s: Session | undefined, byName: Map<string, Session>, shown?: ReadonlySet<string>): AutoKind | "" {
   const seen = new Set<string>();
   let cur = s;
   while (cur) {
     if (seen.has(cur.name)) return "";
     seen.add(cur.name);
     if (cur.origin === "queue") return "autorun";
-    if (cur.origin === "schedule") return "schedule";
+    if (cur.origin === "schedule") {
+      if (shown && cur !== s && s?.worktree === true && !!cur.scheduleId && shown.has(cur.scheduleId)) return "";
+      return "schedule";
+    }
     if (cur.origin !== "session") return "";
     cur = cur.originSession ? byName.get(cur.originSession) : undefined;
   }
@@ -360,21 +368,21 @@ export function sessionAutoKind(s: Session | undefined, byName: Map<string, Sess
 /** Sessions the member's own views list: everything except an unattended run and the sessions it
  *  started. The Auto-run view lists the runs of an auto-run queue, the Schedules view the
  *  runs of a schedule. */
-export function withoutUnattended(sessions: Session[]): Session[] {
+export function withoutUnattended(sessions: Session[], shown?: ReadonlySet<string>): Session[] {
   const byName = new Map(sessions.map((s) => [s.name, s]));
-  return sessions.filter((s) => !sessionAutoKind(s, byName));
+  return sessions.filter((s) => !sessionAutoKind(s, byName, shown));
 }
 
 /** A worktree that only unattended work lives in: the tree keeps it out of sight. A base clone an
  *  unattended run reused stays a row of the tree, so it is never one of these. */
-export function isUnattendedOnlyFolder(sessions: Session[], repo: Repo | undefined, repos: Repo[]): boolean {
+export function isUnattendedOnlyFolder(sessions: Session[], repo: Repo | undefined, repos: Repo[], shown?: ReadonlySet<string>): boolean {
   // A worktree whose base clone is not listed is a root of its own in the tree, so it is shown.
   if (!repo?.worktree || !repo.parent || !repos.some((r) => r.worktree !== true && r.name === repo.parent)) return false;
   const here = sessionsInFolder(sessions, repo.name);
   if (here.length === 0) return false;
   const byName = new Map(sessions.map((s) => [s.name, s]));
   // The tree's own rule for a mixed copy: sessions of two unattended kinds keep the row in the tree.
-  const kinds = new Set(here.map((s) => sessionAutoKind(s, byName)));
+  const kinds = new Set(here.map((s) => sessionAutoKind(s, byName, shown)));
   return kinds.size === 1 && !kinds.has("");
 }
 
@@ -382,9 +390,9 @@ export function isUnattendedOnlyFolder(sessions: Session[], repo: Repo | undefin
  *  nested copies. Unattended sessions are the Auto-run and Schedules views', not the rail's, and
  *  shells and SSM logins the Terminal view's. `terminals` keeps them, for the one caller that
  *  uses the order as a position (the swipe rotation steps on from a shell by where it sat). */
-export function railNodeSessions(n: RepoTreeNode, sessions: Session[], byName: Map<string, Session>, terminals = false): Session[] {
-  const out = sessionsInFolder(sessions, n.repo.name).filter((s) => !sessionAutoKind(s, byName) && (terminals || !isTerminalSession(s)));
-  for (const c of n.children) out.push(...railNodeSessions(c, sessions, byName, terminals));
+export function railNodeSessions(n: RepoTreeNode, sessions: Session[], byName: Map<string, Session>, terminals = false, shown?: ReadonlySet<string>): Session[] {
+  const out = sessionsInFolder(sessions, n.repo.name).filter((s) => !sessionAutoKind(s, byName, shown) && (terminals || !isTerminalSession(s)));
+  for (const c of n.children) out.push(...railNodeSessions(c, sessions, byName, terminals, shown));
   return out;
 }
 
@@ -394,7 +402,7 @@ export function railNodeSessions(n: RepoTreeNode, sessions: Session[], byName: M
 //
 // Where each worktree hangs, and the cases where that does not resolve, are
 // worktreeParentFolder's business.
-export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
+export function repoTree(repos: Repo[], sessions: Session[], shown?: ReadonlySet<string>): RepoTreeNode[] {
   const ix = lineageIndex(sessions);
   const lineages = sessionLineages(sessions);
   const spineOf = (folder: string): string => {
@@ -419,9 +427,9 @@ export function repoTree(repos: Repo[], sessions: Session[]): RepoTreeNode[] {
     // later) stays in the ordinary tree, so that session is not buried; unattended copies are kept
     // out of sight in `detached`, where stop / delete still reach them.
     for (const w of worktrees) {
-      const k = sessionAutoKind(ix.owners.get(w.name), ix.byName);
+      const k = sessionAutoKind(ix.owners.get(w.name), ix.byName, shown);
       // Mixed = any session of a different origin kind, a run of another category included.
-      const mixed = sessionsInFolder(sessions, w.name).some((s) => sessionAutoKind(s, ix.byName) !== k);
+      const mixed = sessionsInFolder(sessions, w.name).some((s) => sessionAutoKind(s, ix.byName, shown) !== k);
       kindOf.set(w.name, mixed ? "" : k);
     }
     // A copy whose parent copy is unattended nests under it as a plain child (the run's reviewers
@@ -533,9 +541,9 @@ function pruneForest(
 // orphanSessions returns sessions that belong to no known working copy — a folder
 // that isn't in the repo list (e.g. a shell in home, or a session whose repo was
 // removed). These land in the rail's "other sessions" catch-all (pj.other_sessions).
-export function orphanSessions(sessions: Session[], repos: Repo[], terminals = false): Session[] {
+export function orphanSessions(sessions: Session[], repos: Repo[], terminals = false, shown?: ReadonlySet<string>): Session[] {
   const names = new Set(repos.map((r) => r.name));
-  return withoutUnattended(sessions)
+  return withoutUnattended(sessions, shown)
     .filter((s) => {
       if (s.space) return false; // the Spaces section's (spaceGroups)
       if (!terminals && isTerminalSession(s)) return false; // the Terminal view's
@@ -554,9 +562,9 @@ export interface SpaceGroup {
 // spaceGroups groups the sessions that run in a space (ADR 0142 decision 9) by space. A space
 // whose newest session is newer comes first, so the space being worked in stays at the top;
 // the folder breaks ties. Unattended runs are left to their own views, as orphanSessions does.
-export function spaceGroups(sessions: Session[], terminals = false): SpaceGroup[] {
+export function spaceGroups(sessions: Session[], terminals = false, shown?: ReadonlySet<string>): SpaceGroup[] {
   const by = new Map<string, Session[]>();
-  for (const s of withoutUnattended(sessions)) {
+  for (const s of withoutUnattended(sessions, shown)) {
     if (!s.space || (!terminals && isTerminalSession(s))) continue; // a space's shells are the Terminal view's
     const list = by.get(s.space);
     if (list) list.push(s);

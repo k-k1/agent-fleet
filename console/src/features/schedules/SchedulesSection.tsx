@@ -519,6 +519,13 @@ export const SchedulesSection = memo(function SchedulesSection() {
     else setFailed(failedScheduleKeys(scoped), failedScheduleKeys(sorted));
   }, [scoped, sorted, loadedFor, tenant, setFailed, clearFailed]);
   useEffect(() => clearFailed, [clearFailed]);
+  // The Sessions view lists the worktree children of the schedules flagged here (sessionAutoKind).
+  // Published from the whole loaded list, not the working-set scope: the set narrows rows, not meaning.
+  const setShownIds = useSchedulesStore((s) => s.setShownIds);
+  useEffect(() => {
+    setShownIds(loadedFor === tenant ? sorted.filter((x) => x.show_in_sessions === true).map((x) => x.id) : []);
+  }, [sorted, loadedFor, tenant, setShownIds]);
+  useEffect(() => () => setShownIds([]), [setShownIds]);
 
   const setRowBusy = (id: string, v: boolean) => setBusy((b) => ({ ...b, [id]: v }));
 

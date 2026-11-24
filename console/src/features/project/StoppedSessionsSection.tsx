@@ -3,6 +3,7 @@
 // Show every session as one history list instead of misclassifying all of them
 // as "other" merely because the repo endpoint is unavailable.
 import { memo, useMemo } from "react";
+import { useShownSchedules } from "..//schedules/store.ts";
 import { withoutUnattended } from "../../lib/project.ts";
 import { Section } from "../../ui/Section.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -25,7 +26,8 @@ export const StoppedSessionsSection = memo(function StoppedSessionsSection() {
   // scope keeps working here even though the repo list needs the (stopped) agent.
   const wset = useActiveWorkingSet();
   // An auto-run's sessions are the Auto-run view's, here too (nothing else would list them).
-  const own = useMemo(() => withoutUnattended(sessions), [sessions]);
+  const shownSchedules = useShownSchedules();
+  const own = useMemo(() => withoutUnattended(sessions, shownSchedules), [sessions, shownSchedules]);
   const shown = wset ? own.filter((s) => sessionInSet(wset, s)) : own;
 
   // Collapsed, the header is all that is left of these rows — roll their unread dot up.

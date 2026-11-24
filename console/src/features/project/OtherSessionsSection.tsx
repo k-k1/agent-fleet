@@ -10,6 +10,7 @@ import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { SessionRow } from "../sessions/SessionRow.tsx";
 import { useReposStore } from "../repos/store.ts";
 import { useRepoRailContext } from "../repos/useRepoRail.ts";
+import { useShownSchedules } from "..//schedules/store.ts";
 import { orphanSessions } from "../../lib/project.ts";
 import { useActiveWorkingSet, sessionInSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
@@ -31,7 +32,7 @@ export const OtherSessionsSection = memo(function OtherSessionsSection() {
   // folder-name inheritance (covers a session whose repo was deleted) — then the
   // rail filter (the ProjectTree search box) narrows it further.
   const wset = useActiveWorkingSet();
-  const orphans = orphanSessions(sessions, repos)
+  const orphans = orphanSessions(sessions, repos, false, useShownSchedules())
     .filter((s) => !wset || sessionInSet(wset, s))
     .filter((s) => sessionMatches(s, nq, refs));
 

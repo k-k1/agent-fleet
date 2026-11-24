@@ -20,7 +20,14 @@ interface SchedulesStore {
   setFailed(keys: string[], all: string[]): void;
   /** The list is not known (not loaded yet, another tenant's, the section gone). */
   clearFailed(): void;
+  /** Ids of the schedules set to also show their worktree children in the Sessions view. Like
+   * `failedAll` it comes from the section's list; empty until that list has loaded, which keeps
+   * the default (hidden) rather than guessing. */
+  shownIds: ReadonlySet<string>;
+  setShownIds(ids: string[]): void;
 }
+
+const NO_IDS: ReadonlySet<string> = new Set();
 
 const sameKeys = (a: string[], b: string[]) => a.length === b.length && a.every((k, i) => k === b[i]);
 
@@ -31,5 +38,14 @@ export const useSchedulesStore = create<SchedulesStore>((set) => ({
   failedAll: null,
   setFailed: (keys, all) =>
     set((s) => (s.failedAll && sameKeys(s.failed, keys) && sameKeys(s.failedAll, all) ? s : { failed: keys, failedAll: all })),
+  shownIds: NO_IDS,
+  setShownIds: (ids) =>
+    set((s) => {
+      if (ids.length === s.shownIds.size && ids.every((i) => s.shownIds.has(i))) return s;
+      return { shownIds: ids.length ? new Set(ids) : NO_IDS };
+    }),
   clearFailed: () => set((s) => (s.failedAll === null && s.failed.length === 0 ? s : { failed: [], failedAll: null })),
 }));
+
+/** Schedules whose worktree children the Sessions view lists too (see sessionAutoKind). */
+export const useShownSchedules = (): ReadonlySet<string> => useSchedulesStore((s) => s.shownIds);

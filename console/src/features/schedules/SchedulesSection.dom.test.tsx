@@ -761,3 +761,33 @@ describe("SchedulesSection held row after a 409", () => {
     expect([...host.querySelectorAll<HTMLButtonElement>(".sched-approve-btn")].map((b) => b.disabled)).toEqual([false, false]);
   });
 });
+
+describe("SchedulesSection show_in_sessions", () => {
+  it("publishes the flagged ids from the loaded list and clears them on unmount", async () => {
+    const { useSchedulesStore } = await import("./store.ts");
+    expect(useSchedulesStore.getState().shownIds.size).toBe(0);
+    scheduleList.mockResolvedValue([{ ...sched, show_in_sessions: true }, { ...sched, id: "sch_2" }]);
+    await render();
+    expect([...useSchedulesStore.getState().shownIds]).toEqual(["sch_1"]);
+    // A later poll that drops the flag takes the child out of the Sessions view again.
+    scheduleList.mockResolvedValue([{ ...sched, show_in_sessions: false }]);
+    await act(async () => {
+      useTenantStore.setState({ tenant: "other" });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(useSchedulesStore.getState().shownIds.size).toBe(0);
+    scheduleList.mockResolvedValue([{ ...sched, show_in_sessions: true }]);
+    await act(async () => {
+      useTenantStore.setState({ tenant: "" });
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect([...useSchedulesStore.getState().shownIds]).toEqual(["sch_1"]);
+    await act(async () => root?.unmount());
+    root = null;
+    expect(useSchedulesStore.getState().shownIds.size).toBe(0);
+  });
+});
