@@ -92,6 +92,21 @@ func TestInsertAtTheEndOfTheSectionOrANewOne(t *testing.T) {
 			t.Errorf("%q: %v", body, err)
 		}
 	}
+	// The section ends in an unclosed fence and the text is a closed empty fence: the text's
+	// opening line would close the old fence and its closing line open a new one. The kinds still
+	// line up; the contents do not.
+	if _, _, err := Insert([]byte("## A\n\n```\ncode\n"), "A", "```\n```"); !errors.Is(err, ErrNotPlaced) {
+		t.Fatalf("fence across the seam: %v", err)
+	}
+	// Text that leaves a fence open at the very end of the document is refused too.
+	if _, _, err := Insert([]byte("# Doc\n"), "New", "```\nnever closed"); !errors.Is(err, ErrNotPlaced) {
+		t.Fatalf("unclosed fence at the end: %v", err)
+	}
+	// A link reference definition in the text could take over an existing link's target.
+	refDoc := "## Build\n\nSee [steps][setup].\n\n## Notes\n\n[setup]: ./old.md\n"
+	if _, _, err := Insert([]byte(refDoc), "Build", "[setup]: ./new.md"); !errors.Is(err, ErrReferenceDefinition) {
+		t.Fatalf("reference definition: %v", err)
+	}
 	// A heading without text cannot be placed by line: refused rather than guessed.
 	if _, _, err := Insert([]byte("## A\n\nx\n\n##\n\ny\n"), "A", "t"); !errors.Is(err, ErrNotPlaced) {
 		t.Fatalf("empty heading: %v", err)

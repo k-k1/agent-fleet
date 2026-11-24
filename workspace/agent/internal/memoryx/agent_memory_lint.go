@@ -345,6 +345,11 @@ func agentMemLintDefaultRef(ctx context.Context, gitDir string) (ref string, ok 
 // repository cannot be found) and one without an origin default branch get link, term and size
 // checks only.
 func agentMemLintRepoFor(p *agentMemProject) (repo memorylint.Repo, ref string, why string) {
+	return agentMemLintRepoForCtx(context.Background(), p)
+}
+
+// agentMemLintRepoForCtx is agentMemLintRepoFor that stops with ctx (a request that ended).
+func agentMemLintRepoForCtx(ctx context.Context, p *agentMemProject) (repo memorylint.Repo, ref string, why string) {
 	if p == nil {
 		return nil, "", "user scope: no repository"
 	}
@@ -362,19 +367,20 @@ func agentMemLintRepoFor(p *agentMemProject) (repo memorylint.Repo, ref string, 
 	if agentMemRootGone(p.Root) {
 		return nil, "", "orphaned project: its working copy is gone"
 	}
-	common, err := gitx.Run(p.Root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+	ctx, cancel := context.WithTimeout(ctx, agentMemLintGitTimeout)
+	defer cancel()
+	out, err := gitx.CmdContext(ctx, p.Root, "rev-parse", "--path-format=absolute", "--git-common-dir").Output()
+	common := strings.TrimSpace(string(out))
 	if err != nil || common == "" {
 		return nil, "", "the repository could not be found"
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
-	defer cancel()
 	r, ok := agentMemLintDefaultRef(ctx, common)
 	if !ok {
 		return nil, "", "no origin/<default> branch in the repository"
 	}
 	// Pin the revision: a fetch by another session while the lint runs must not give the path
 	// check one tree and the symbol check another. Only the displayed ref keeps its name.
-	out, err := agentMemLintGit(ctx, common, nil, "rev-parse", "--verify", "-q", r+"^{commit}")
+	out, err = agentMemLintGit(ctx, common, nil, "rev-parse", "--verify", "-q", r+"^{commit}")
 	oid := strings.TrimSpace(string(out))
 	if err != nil || oid == "" {
 		return nil, "", "no origin/<default> branch in the repository"

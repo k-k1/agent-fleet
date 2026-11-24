@@ -6,6 +6,8 @@ package memorypromote
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"regexp"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 )
 
@@ -88,6 +91,17 @@ func topBlocks(doc []byte) []block {
 	var out []block
 	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
 		bl := block{key: n.Kind().String()}
+		// A block's own lines are part of its key, so a fence that closes or opens at a seam
+		// changes some block's content even when the kinds line up.
+		if lines := n.Lines(); lines.Len() > 0 {
+			sum := sha256.New()
+			for i := 0; i < lines.Len(); i++ {
+				seg := lines.At(i)
+				sum.Write(seg.Value(doc))
+				sum.Write([]byte{0})
+			}
+			bl.key += " " + hex.EncodeToString(sum.Sum(nil)[:8])
+		}
 		if h, ok := n.(*ast.Heading); ok {
 			var b strings.Builder
 			for i := 0; i < h.Lines().Len(); i++ {
@@ -153,6 +167,11 @@ func SectionOK(section string) bool {
 	return len(hs) == 1 && hs[0].Level == 2 && hs[0].Text == section
 }
 
+// ErrReferenceDefinition is returned by Insert when the text defines a link reference
+// ([label]: url): the first definition of a label wins anywhere in the document, so it could
+// change where an existing link points.
+var ErrReferenceDefinition = errors.New("the text defines a link reference, which could change existing links")
+
 // ErrNotPlaced is returned by Insert when the text would not stand as its own blocks in the
 // section: an unclosed code fence before it would swallow it, one in it would swallow what
 // follows, a heading in it would end the section, or the document has a heading without text
@@ -175,6 +194,14 @@ func Insert(doc []byte, section, body string) (out []byte, existed bool, err err
 		src = bytes.ReplaceAll(doc, []byte("\r\n"), []byte("\n"))
 	}
 	body = TrimBlankLines(strings.ReplaceAll(body, "\r\n", "\n"))
+	if hasReferenceDefinition(body) {
+		return nil, false, ErrReferenceDefinition
+	}
+	// The text must end every block it opens (no unclosed fence at its end, even at the end of
+	// the document).
+	if !closed(body) {
+		return nil, false, ErrNotPlaced
+	}
 	heads := Headings(src)
 	for _, h := range heads {
 		if h.Line < 0 {
@@ -217,6 +244,10 @@ func Insert(doc []byte, section, body string) (out []byte, existed bool, err err
 		if !sameKeys(blockKeys(string(src)), blockKeys(prefix), blockKeys(suffix)) {
 			return nil, ok, ErrNotPlaced
 		}
+	}
+	// What comes before the text must not leave a block open for the text to fall into.
+	if !closed(prefix) {
+		return nil, ok, ErrNotPlaced
 	}
 	res := prefix + "\n\n" + body + "\n"
 	if suffix != "" {
@@ -321,3 +352,21 @@ var memoryLink = regexp.MustCompile(`\[\[[^\[\]\n]+\]\]`)
 
 // HasMemoryLinks says whether text links a memory with [[name]].
 func HasMemoryLinks(text string) bool { return memoryLink.MatchString(text) }
+
+// closedSentinel is a paragraph no document is expected to contain.
+const closedSentinel = "af-memory-promote-closed-check-7f3a9c"
+
+// closed says whether s leaves no block open: a paragraph after it, past a blank line, parses as a
+// paragraph of its own, with s's blocks unchanged before it.
+func closed(s string) bool {
+	keys := blockKeys(s)
+	got := blockKeys(s + "\n\n" + closedSentinel + "\n")
+	return sameKeys(got, keys, blockKeys(closedSentinel+"\n"))
+}
+
+// hasReferenceDefinition says whether s defines a link reference.
+func hasReferenceDefinition(s string) bool {
+	pc := parser.NewContext()
+	goldmark.New().Parser().Parse(text.NewReader([]byte(s)), parser.WithContext(pc))
+	return len(pc.References()) > 0
+}

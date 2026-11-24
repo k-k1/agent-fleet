@@ -53,12 +53,15 @@ func agentMemSupersedeDocCheck(ctx context.Context, p *agentMemProject, path, he
 	if err := agentMemRemoteCheck(ctx, p); err != nil {
 		return agentMemDocTarget{}, err
 	}
-	repo, ref, why := agentMemLintRepoFor(p)
+	repo, ref, why := agentMemLintRepoForCtx(ctx, p)
 	if repo == nil {
 		return agentMemDocTarget{}, conflict("the repository could not be read: %s", why)
 	}
 	lr := repo.(agentMemLintRepo)
-	if !agentMemPromoteDefaultKnown(repo, ref) {
+	if err := ctx.Err(); err != nil {
+		return agentMemDocTarget{}, err
+	}
+	if !agentMemPromoteDefaultKnownCtx(ctx, repo, ref) {
 		return agentMemDocTarget{}, conflict("origin/HEAD does not name the default branch, so %s is only a guess (`git remote set-head origin --auto` sets it)", ref)
 	}
 	ctx, cancel := context.WithTimeout(ctx, agentMemLintGitTimeout)

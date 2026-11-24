@@ -338,4 +338,6 @@ diff --git a/AGENTS.md b/AGENTS.md
 - A section heading must read back as itself: a trailing `#` closes an ATX heading, so `Release #`
   is refused. Only a top-level heading is a target (not one inside a list or a quote). The text has
   to stand as its own blocks in the section: an unclosed code fence before it or in it, a heading in
-  it at the section's level or higher, or a heading without text in the document refuses the proposal
+  it at the section's level or higher, or a heading without text in the document refuses the proposal.
+  So does a text that defines a link reference (`[label]: url`): it could change where an existing
+  link of the document points

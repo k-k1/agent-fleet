@@ -361,9 +361,15 @@ func agentMemProposeHooks(ctx context.Context, root, tmp string) (hook, shown st
 // directory, the working copy, the hook's directory and the home directory.
 func agentMemProposeScrub(s string, paths map[string]string) string {
 	for _, k := range []string{"clone", "tmp", "hooks", "root", "home"} {
-		if p := paths[k]; p != "" && p != "/" {
-			s = strings.ReplaceAll(s, p, "<"+k+">")
+		p := paths[k]
+		if p == "" || p == "/" {
+			continue
 		}
+		// A hook that prints realpath "$0" shows the path with its links resolved.
+		if real, err := filepath.EvalSymlinks(p); err == nil && real != p && real != "/" {
+			s = strings.ReplaceAll(s, real, "<"+k+">")
+		}
+		s = strings.ReplaceAll(s, p, "<"+k+">")
 	}
 	return s
 }
@@ -731,7 +737,7 @@ func agentMemPropose(ctx context.Context, req agentMemProposeReq, now time.Time)
 	}
 	newDoc, existed, err := memorypromote.Insert(doc, section, text)
 	if err != nil {
-		return out, conflict("%s: %v (an unclosed code fence at its end?); name another file or section", file, err)
+		return out, conflict("%s: %v; name another file or section, or edit the memory", file, err)
 	}
 	out.SectionExists = existed
 	patch, pc, err := agentMemProposePatch(ctx, out.Project.Root, lr.gitDir, lr.ref, file, newDoc)

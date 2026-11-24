@@ -88,11 +88,16 @@ func agentMemLintLoadDocStrict() (agentMemLintTermsDoc, error) {
 // report but is a guess, and an anchor present only on a branch that is not the default must not
 // promote a memory.
 func agentMemPromoteDefaultKnown(repo memorylint.Repo, ref string) bool {
+	return agentMemPromoteDefaultKnownCtx(context.Background(), repo, ref)
+}
+
+// agentMemPromoteDefaultKnownCtx is agentMemPromoteDefaultKnown that stops with ctx.
+func agentMemPromoteDefaultKnownCtx(ctx context.Context, repo memorylint.Repo, ref string) bool {
 	r, ok := repo.(agentMemLintRepo)
 	if !ok || ref == "" {
 		return false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
+	ctx, cancel := context.WithTimeout(ctx, agentMemLintGitTimeout)
 	defer cancel()
 	out, err := agentMemLintGit(ctx, r.gitDir, nil, "symbolic-ref", "-q", "refs/remotes/origin/HEAD")
 	return err == nil && strings.TrimSpace(string(out)) == "refs/remotes/"+ref

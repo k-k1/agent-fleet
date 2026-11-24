@@ -789,7 +789,7 @@ func TestAgentMemoryPromoteProposalPicksTheDocument(t *testing.T) {
 	// A document that ends inside an unclosed fence would swallow a new section.
 	agentMemLintOrigin(t, clone, map[string]string{"AGENTS.md": "# Agents\n\n```sh\nmake\n"})
 	code, _, raw := promotePropose(t, agentMemProposeReq{Project: a.Project.ID, Name: "release-steps"})
-	if code != http.StatusConflict || !strings.Contains(raw, "unclosed code fence") {
+	if code != http.StatusConflict || !strings.Contains(raw, "would not stand as its own blocks") {
 		t.Fatalf("unclosed fence: %d %s", code, raw)
 	}
 }
@@ -914,21 +914,28 @@ func TestAgentMemoryPromoteProposalResolvesTheHookAsGitDoes(t *testing.T) {
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(abs, "pre-commit"), []byte("#!/bin/sh\necho \"$0 in $PWD, home $HOME, wc "+clone+"\" >&2\nexit 1\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(abs, "pre-commit"), []byte("#!/bin/sh\necho \"$0 in $PWD, home $HOME, wc "+clone+"\" >&2\n"+
+		"echo \"real $(readlink -f \"$0\")\" >&2\nexit 1\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := agentMemGit(clone, "config", "core.hooksPath", abs); err != nil {
+	// Reached through a link: the hook's own realpath is the target's, and is hidden too.
+	absLink := filepath.Join(t.TempDir(), "abs-link")
+	if err := os.Symlink(abs, absLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := agentMemGit(clone, "config", "core.hooksPath", absLink); err != nil {
 		t.Fatal(err)
 	}
 	pc := propose()
 	scans, _ := json.Marshal(pc)
 	home, _ := os.UserHomeDir()
-	for _, p := range []string{abs, clone, home, os.TempDir()} {
+	for _, p := range []string{abs, absLink, clone, home, os.TempDir()} {
 		if strings.Contains(string(scans), p) {
 			t.Errorf("the scans carry the path %s: %s", p, scans)
 		}
 	}
-	if !pc.Ran || pc.Passed || pc.Hook != "core.hooksPath (an absolute path)" || !strings.Contains(pc.Output, "<hooks>/pre-commit in <clone>") {
+	if !pc.Ran || pc.Passed || pc.Hook != "core.hooksPath (an absolute path)" || !strings.Contains(pc.Output, "<hooks>/pre-commit in <clone>") ||
+		!strings.Contains(pc.Output, "real <hooks>/pre-commit") {
 		t.Fatalf("%+v", pc)
 	}
 }
@@ -956,6 +963,14 @@ func TestAgentMemoryPromoteProposalLimitsAreSeparate(t *testing.T) {
 	}
 	if _, err := agentMemSupersedeDocCheck(ctx, a.Project, "AGENTS.md", "Build", strings.Repeat("a", 40)); err == nil {
 		t.Fatal("the supersede's checks ran for an ended request")
+	}
+	// The steps after the origin check stop with the request too.
+	if repo, _, _ := agentMemLintRepoForCtx(ctx, a.Project); repo != nil {
+		t.Fatal("the repository was read for an ended request")
+	}
+	if repo, ref, _ := agentMemLintRepoFor(a.Project); repo == nil || agentMemPromoteDefaultKnownCtx(ctx, repo, ref) ||
+		!agentMemPromoteDefaultKnown(repo, ref) {
+		t.Fatal("the default-branch check ignores the request's end, or the positive control fails")
 	}
 	if _, err := agentMemPropose(ctx, agentMemProposeReq{Project: a.Project.ID, Name: "release-steps"}, time.Now()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("an ended request: %v", err)
