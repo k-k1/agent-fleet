@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 )
 
 // PushSubscription is one browser install a member enabled Web Push on (#4750).
@@ -28,8 +29,14 @@ type PushSubscriptionStore interface {
 	// moves to this one.
 	AddPushSubscription(ctx context.Context, sub PushSubscription, max int) (bool, error)
 	ListPushSubscriptions(ctx context.Context, membershipID string) ([]PushSubscription, error)
-	// GetPushSubscription answers the row for endpoint if membershipID still holds it.
+	// GetPushSubscription answers the row for endpoint if membershipID still holds it. A send
+	// falls back to it when the member's status cannot be read, so it must not touch membership.
 	GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error)
+	// GetPushSendTarget is GetPushSubscription with the membership's delivery context (TenantSlug
+	// left empty) read in the same statement, so a send checks the device's owner, the member's
+	// status and the text setting at one point in time. withText false leaves the tenant setting
+	// out of the statement and answers IncludeText false.
+	GetPushSendTarget(ctx context.Context, membershipID, endpoint string, withText bool) (PushSubscription, PushDelivery, bool, error)
 	// DeletePushSubscription reports whether a row of that membership was removed.
 	DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error)
 	// DeletePushSubscriptionByEndpoint drops a subscription the push service says is gone. It is
@@ -48,7 +55,7 @@ type PushSubscriptionStore interface {
 	// name the Console selects a tenant by). An inactive or unknown membership is the zero value.
 	PushDeliveryContext(ctx context.Context, membershipID string) (PushDelivery, error)
 	GetTenantPushIncludeText(ctx context.Context, tenantID string) (bool, error)
-	PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error
+	PutTenantPushIncludeText(ctx context.Context, tenantID, tenantSlug string, on bool, actorID string) error
 }
 
 // PushSubscribedMembershipStore is kept apart from PushSubscriptionStore because only the
@@ -160,6 +167,29 @@ func (s *SQL) GetPushSubscription(ctx context.Context, membershipID, endpoint st
 	return p, err == nil, err
 }
 
+func (s *SQL) GetPushSendTarget(ctx context.Context, membershipID, endpoint string, withText bool) (PushSubscription, PushDelivery, bool, error) {
+	var p PushSubscription
+	var active, inc int64
+	text, join := `0`, ``
+	if withText {
+		text, join = `COALESCE(t.include_text, 0)`, `LEFT JOIN tenant_push_setting t ON t.tenant_id = m.tenant_id`
+	}
+	err := s.db.QueryRowContext(ctx, `SELECT s.id, s.membership_id, s.endpoint, s.p256dh, s.auth, s.user_agent, s.created_at, s.last_ok_at,
+		CASE WHEN m.status='active' THEN 1 ELSE 0 END, `+text+`
+		FROM push_subscription s
+		LEFT JOIN membership m ON m.id = s.membership_id
+		`+join+`
+		WHERE s.membership_id=? AND s.endpoint=?`, membershipID, endpoint).
+		Scan(&p.ID, &p.MembershipID, &p.Endpoint, &p.P256dh, &p.Auth, &p.UserAgent, &p.CreatedAt, &p.LastOKAt, &active, &inc)
+	if err == sql.ErrNoRows {
+		return PushSubscription{}, PushDelivery{}, false, nil
+	}
+	if err != nil {
+		return PushSubscription{}, PushDelivery{}, false, err
+	}
+	return p, PushDelivery{Active: active != 0, IncludeText: inc != 0}, true, nil
+}
+
 func (s *SQL) DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE membership_id=? AND id=?`, membershipID, id)
 	if err != nil {
@@ -238,13 +268,27 @@ func (s *SQL) GetTenantPushIncludeText(ctx context.Context, tenantID string) (bo
 	return v != 0, err
 }
 
-func (s *SQL) PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error {
+// PutTenantPushIncludeText stores the setting and its tenant.push_settings audit row in one
+// transaction: an admin's change to what leaves through the push services must not stand
+// without its audit row.
+func (s *SQL) PutTenantPushIncludeText(ctx context.Context, tenantID, tenantSlug string, on bool, actorID string) error {
 	v := 0
 	if on {
 		v = 1
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tenant_push_setting(tenant_id, include_text, updated_by, updated_at) VALUES(?,?,?,?)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_push_setting(tenant_id, include_text, updated_by, updated_at) VALUES(?,?,?,?)
 		ON CONFLICT(tenant_id) DO UPDATE SET include_text=excluded.include_text, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
-		tenantID, v, updatedBy, NowTS())
-	return err
+		tenantID, v, actorID, NowTS()); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at) VALUES(?, ?, 'user', ?, 'tenant.push_settings', ?, ?, ?)`,
+		NewID(), tenantID, actorID, tenantSlug, fmt.Sprintf("include_text=%t", on), NowTS()); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

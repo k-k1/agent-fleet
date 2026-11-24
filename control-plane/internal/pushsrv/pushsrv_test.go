@@ -32,6 +32,8 @@ type memStore struct {
 	releaseErr error
 	getErr     error
 	gets       int
+	joins      int
+	joinErr    error
 	subs       []store.PushSubscription
 	off        map[string][]string
 	inactive   map[string]bool
@@ -59,7 +61,7 @@ func (m *memStore) PushDeliveryContext(_ context.Context, mid string) (store.Pus
 	return store.PushDelivery{Active: !m.inactive[mid], IncludeText: m.includeTxt, TenantSlug: m.tenantSlug}, nil
 }
 func (m *memStore) GetTenantPushIncludeText(context.Context, string) (bool, error) { return false, nil }
-func (m *memStore) PutTenantPushIncludeText(context.Context, string, bool, string) error {
+func (m *memStore) PutTenantPushIncludeText(context.Context, string, string, bool, string) error {
 	return nil
 }
 
@@ -104,6 +106,30 @@ func (m *memStore) GetPushSubscription(_ context.Context, mid, ep string) (store
 		}
 	}
 	return store.PushSubscription{}, false, nil
+}
+
+// GetPushSendTarget fails withText reads on joinErr (the setting table) and counts the reads
+// without the setting in gets, as the subscription re-read they stand in for.
+func (m *memStore) GetPushSendTarget(_ context.Context, mid, ep string, withText bool) (store.PushSubscription, store.PushDelivery, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if withText {
+		m.joins++
+		if m.joinErr != nil || m.getErr != nil {
+			return store.PushSubscription{}, store.PushDelivery{}, false, errors.Join(m.joinErr, m.getErr)
+		}
+	} else {
+		m.gets++
+		if m.getErr != nil {
+			return store.PushSubscription{}, store.PushDelivery{}, false, m.getErr
+		}
+	}
+	for _, s := range m.subs {
+		if s.MembershipID == mid && s.Endpoint == ep {
+			return s, store.PushDelivery{Active: !m.inactive[mid], IncludeText: withText && m.includeTxt}, true, nil
+		}
+	}
+	return store.PushSubscription{}, store.PushDelivery{}, false, nil
 }
 func (m *memStore) ListPushSubscriptions(_ context.Context, mid string) ([]store.PushSubscription, error) {
 	m.mu.Lock()
@@ -232,7 +258,7 @@ func newFixtureN(t *testing.T, workers, queueLen int, setup func(*fixture)) *fix
 		check: func(e string) error {
 			return webpush.CheckEndpoint(strings.Replace(e, f.srv.URL, "https://fcm.googleapis.com", 1), webpush.DefaultEndpointHosts)
 		},
-		timeout: 5 * time.Second, slotWait: 2 * time.Second, quit: make(chan struct{}), view: newViewing()}
+		timeout: 5 * time.Second, slotWait: 2 * time.Second, quit: make(chan struct{})}
 	if setup != nil {
 		setup(f)
 	}
@@ -790,14 +816,14 @@ func TestQueuedSendRereadsTheDevice(t *testing.T) {
 	}
 }
 
-// A failed re-read skips the send, as a failed list read does.
+// A failed re-read of the row skips the send, as a failed list read does.
 func TestFailedRereadSkipsTheSend(t *testing.T) {
 	f := newFixture(t)
 	f.subscribe(t, "m1")
 	f.st.getErr = io.ErrUnexpectedEOF
 	f.deliver(note("question"))
-	if f.count() != 0 || f.st.gets != 1 {
-		t.Fatalf("sent %d with %d re-reads; want none sent after one failed re-read", f.count(), f.st.gets)
+	if f.count() != 0 || f.st.gets != 2 {
+		t.Fatalf("sent %d with %d re-reads; want none sent after the status and row reads failed", f.count(), f.st.gets)
 	}
 }
 

@@ -2,9 +2,12 @@ package pushsrv
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+
 	"testing"
 	"time"
 
@@ -187,7 +190,7 @@ func TestOneDeviceClearingKeepsTheOthersSuppression(t *testing.T) {
 }
 
 func TestViewingIsBounded(t *testing.T) {
-	v := newViewing()
+	var v viewing
 	now := time.Now()
 	for i := 0; i < 1000; i++ {
 		v.set("m1", string(rune('a'+i%26))+string(rune('A'+i/26%26))+string(rune('0'+i/676)), "s", now)
@@ -270,5 +273,256 @@ func TestStalledReadStillDeliversTheQuestion(t *testing.T) {
 				t.Fatalf("text lost when only the opt-out read stalled: %s", got)
 			}
 		})
+	}
+}
+
+// A send that waited in the queue is checked against the state at the time of the send, not the
+// one deliver read: the first device is sent at once and holds the only worker, and the second
+// waits while the state changes.
+func TestQueuedSendRereadsTheDeliveryContext(t *testing.T) {
+	cases := []struct {
+		name   string
+		change func(*memStore)
+		// sent is whether the waiting device gets a push; text, whether it carries the question.
+		sent, text bool
+	}{
+		{"member removed", func(m *memStore) { m.inactive = map[string]bool{"m1": true} }, false, false},
+		{"text turned off", func(m *memStore) { m.includeTxt = false }, true, false},
+		{"nothing changed", func(*memStore) {}, true, true},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixtureN(t, 1, pushQueueLen, nil)
+			arrived, release := f.hold()
+			defer release()
+			f.st.includeTxt = true
+			d1 := f.subscribe(t, "m1")
+			d2 := f.subscribe(t, "m1")
+			n := note("question")
+			n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
+			var wg sync.WaitGroup
+			f.svc.deliver(context.Background(), n, &wg)
+			waitArrival(t, arrived)
+			f.st.mu.Lock()
+			c.change(f.st)
+			f.st.mu.Unlock()
+			release()
+			wg.Wait()
+			want := 1
+			if c.sent {
+				want = 2
+			}
+			if f.count() != want {
+				t.Fatalf("%d pushes, want %d", f.count(), want)
+			}
+			if got := d1.open(t, f.bodies[0]); !strings.Contains(got, `"text":"Deploy to prod?"`) {
+				t.Fatalf("the send before the change lost its text: %s", got)
+			}
+			if !c.sent {
+				return
+			}
+			got := d2.open(t, f.bodies[1])
+			if strings.Contains(got, `"text"`) != c.text {
+				t.Fatalf("waiting send: %s (text wanted: %v)", got, c.text)
+			}
+			if !strings.Contains(got, `"kind":"question","session":"s1"`) {
+				t.Fatalf("waiting send lost the question: %s", got)
+			}
+		})
+	}
+}
+
+// A Service built as a literal, without New, takes a report and a delivery without panicking.
+func TestServiceLiteralHasUsableViewing(t *testing.T) {
+	p := &Service{store: &memStore{}, timeout: time.Second, jobs: make(chan sendJob, 1)}
+	if p.view.on("m1", "s1", time.Now()) {
+		t.Fatal("an empty map reports a session on screen")
+	}
+	w := httptest.NewRecorder()
+	p.Viewing(w, httptest.NewRequest("POST", "/", strings.NewReader(`{"device":"d1","session":"s1"}`)), "m1")
+	if w.Code != http.StatusNoContent || !p.view.on("m1", "s1", time.Now()) {
+		t.Fatalf("report not recorded: %d", w.Code)
+	}
+	other := note("question")
+	other.TargetID = "s2"
+	p.deliver(context.Background(), other, nil)
+}
+
+// When the send-time joined read fails, the device is still sent to, without the text, after its
+// row alone was read; once the read is skipped for joinOffFor, it is tried again.
+func TestFailedJoinedReadSendsWithoutText(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, func(f *fixture) { f.svc.joinOffFor = 200 * time.Millisecond })
+	f.st.includeTxt = true
+	d := f.subscribe(t, "m1")
+	n := note("question")
+	n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
+	f.st.joinErr = io.ErrUnexpectedEOF
+	f.deliver(n)
+	if f.count() != 1 || f.svc.joinFailed.Load() != 1 {
+		t.Fatalf("%d sent, %d failed joins; want 1 and 1", f.count(), f.svc.joinFailed.Load())
+	}
+	if got := d.open(t, f.bodies[0]); strings.Contains(got, `"text"`) || !strings.Contains(got, `"kind":"question"`) {
+		t.Fatalf("fallback send: %s", got)
+	}
+	f.st.mu.Lock()
+	f.st.joinErr = nil
+	f.st.mu.Unlock()
+	time.Sleep(300 * time.Millisecond)
+	f.deliver(n)
+	if got := d.open(t, f.bodies[1]); !strings.Contains(got, `"text":"Deploy to prod?"`) {
+		t.Fatalf("the joined read was not tried again after joinOffFor: %s", got)
+	}
+}
+
+// stallJoin makes the send-time read with the setting hang until its deadline, as a lock on the
+// setting table would, while the read without it still answers at once.
+type stallJoin struct{ *memStore }
+
+func (s stallJoin) GetPushSendTarget(ctx context.Context, mid, ep string, withText bool) (store.PushSubscription, store.PushDelivery, bool, error) {
+	if !withText {
+		return s.memStore.GetPushSendTarget(ctx, mid, ep, false)
+	}
+	<-ctx.Done()
+	return store.PushSubscription{}, store.PushDelivery{}, false, ctx.Err()
+}
+
+// A joined read that stalls costs one short wait, not one per queued send: with more sends queued
+// than budgets fit in the queue wait, every one is still sent, without the text.
+func TestStalledJoinedReadDoesNotStaleTheQueue(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, func(f *fixture) {
+		f.svc.slotWait, f.svc.timeout, f.svc.joinBudget = time.Second, 5*time.Second, 100*time.Millisecond
+	})
+	f.st.includeTxt = true
+	var devs []device
+	for i := 0; i < 15; i++ {
+		devs = append(devs, f.subscribe(t, "m1"))
+	}
+	f.svc.store = stallJoin{f.st}
+	n := note("question")
+	n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
+	f.deliver(n)
+	if f.count() != len(devs) || f.svc.droppedStale.Load() != 0 {
+		t.Fatalf("%d sent, %d stale; want %d and 0", f.count(), f.svc.droppedStale.Load(), len(devs))
+	}
+	for i, d := range devs {
+		if got := d.open(t, f.bodies[i]); strings.Contains(got, `"text"`) {
+			t.Fatalf("send %d kept the text: %s", i, got)
+		}
+	}
+	if got := f.svc.joinFailed.Load(); got != 1 {
+		t.Fatalf("joined reads that waited out their budget: %d, want 1", got)
+	}
+}
+
+// After one failed read with the setting, the reads that leave it out still check the member: a
+// member removed while their send waited is not sent to, even inside joinOffFor.
+func TestFailedJoinedReadStillChecksTheMember(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, nil)
+	arrived, release := f.hold()
+	defer release()
+	f.subscribe(t, "m1")
+	f.subscribe(t, "m2")
+	f.st.mu.Lock()
+	f.st.joinErr = io.ErrUnexpectedEOF
+	f.st.mu.Unlock()
+	var wg sync.WaitGroup
+	f.svc.deliver(context.Background(), note("question"), &wg) // m1: its read with the setting fails
+	waitArrival(t, arrived)
+	other := note("question")
+	other.MembershipID = "m2"
+	f.svc.deliver(context.Background(), other, &wg) // m2: queued while still active
+	f.st.mu.Lock()
+	f.st.joinErr = nil // the database is back
+	f.st.inactive = map[string]bool{"m2": true}
+	f.st.mu.Unlock()
+	release()
+	wg.Wait()
+	if f.count() != 1 || f.svc.joinFailed.Load() != 1 {
+		t.Fatalf("%d sent, %d failed joins; want 1 (m1 only) and 1", f.count(), f.svc.joinFailed.Load())
+	}
+}
+
+// stallMember makes every send-time read that joins the status of a member in stalled hang until
+// its deadline, as an ACCESS EXCLUSIVE lock on the membership table would (a row lock does not
+// block these reads); the device row alone still answers at once. The store test
+// TestPushRowReadIgnoresMembershipLockPostgres shows the real SQL behaves this way.
+type stallMember struct {
+	*memStore
+	stalled map[string]bool
+}
+
+func (s stallMember) GetPushSendTarget(ctx context.Context, mid, ep string, withText bool) (store.PushSubscription, store.PushDelivery, bool, error) {
+	if !s.stalled[mid] {
+		return s.memStore.GetPushSendTarget(ctx, mid, ep, withText)
+	}
+	<-ctx.Done()
+	return store.PushSubscription{}, store.PushDelivery{}, false, ctx.Err()
+}
+
+// When only the member's status cannot be read, a device the member still holds is sent to on its
+// row alone, without the text, and one released meanwhile is not. The next member's send reads
+// that member's status itself: one confirmed inactive is not sent to.
+func TestStalledMemberReadSendsOnTheRow(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, func(f *fixture) {
+		f.svc.joinBudget, f.svc.statusBudget = 100*time.Millisecond, 100*time.Millisecond
+	})
+	arrived, release := f.hold()
+	defer release()
+	f.st.includeTxt = true
+	d := f.subscribe(t, "m1")
+	f.subscribe(t, "m1")
+	f.subscribe(t, "m2")
+	released := f.st.subs[1]
+	f.svc.store = stallMember{f.st, map[string]bool{"m1": true}}
+	n := note("question")
+	n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
+	var wg sync.WaitGroup
+	f.svc.deliver(context.Background(), n, &wg) // m1's two devices; their status reads stall
+	waitArrival(t, arrived)
+	other := n
+	other.MembershipID = "m2"
+	f.svc.deliver(context.Background(), other, &wg) // m2: queued while still active
+	if err := f.st.ReleasePushEndpoint(context.Background(), released.Endpoint, released.P256dh, released.Auth); err != nil {
+		t.Fatal(err)
+	}
+	f.st.mu.Lock()
+	f.st.inactive = map[string]bool{"m2": true}
+	f.st.mu.Unlock()
+	release()
+	wg.Wait()
+	if f.count() != 1 {
+		t.Fatalf("%d sent; want 1 (m1's held device only)", f.count())
+	}
+	if got := d.open(t, f.bodies[0]); strings.Contains(got, `"text"`) || !strings.Contains(got, `"kind":"question"`) {
+		t.Fatalf("send on the row alone: %s", got)
+	}
+	if got := f.svc.statusFailed.Load(); got != 2 {
+		t.Fatalf("failed status reads: %d, want 2 (m1's devices only)", got)
+	}
+}
+
+// stallAll makes every send-time read hang until its deadline, as a stall on the device table
+// would.
+type stallAll struct{ *memStore }
+
+func (stallAll) GetPushSendTarget(ctx context.Context, _, _ string, _ bool) (store.PushSubscription, store.PushDelivery, bool, error) {
+	<-ctx.Done()
+	return store.PushSubscription{}, store.PushDelivery{}, false, ctx.Err()
+}
+func (stallAll) GetPushSubscription(ctx context.Context, _, _ string) (store.PushSubscription, bool, error) {
+	<-ctx.Done()
+	return store.PushSubscription{}, false, ctx.Err()
+}
+
+// The send-time reads share one budget of timeout, as main's single re-read had: the short reads
+// with the setting and the status come out of it, not on top of it, so a stall on every table
+// holds the worker no longer before its send than it did on main.
+func TestSendTimeReadsShareTheReadBudget(t *testing.T) {
+	p := &Service{store: stallAll{&memStore{}}, timeout: time.Second,
+		joinBudget: 400 * time.Millisecond, statusBudget: 400 * time.Millisecond}
+	start := time.Now()
+	_, _, _, err := p.sendTarget(sendJob{membershipID: "m1", sub: store.PushSubscription{Endpoint: "https://x.invalid/p"}})
+	if took := time.Since(start); err == nil || took > 1400*time.Millisecond {
+		t.Fatalf("reads took %s (err %v); want a failure within the 1s budget", took, err)
 	}
 }

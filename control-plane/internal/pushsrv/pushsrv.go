@@ -60,6 +60,14 @@ const (
 	pushReaders = 4
 	// pushDropLogEvery is how often the counts of dropped notifications and messages are logged.
 	pushDropLogEvery = 10 * time.Second
+	// pushJoinBudget bounds sendTarget's read with the text setting, well below pushSlotWait, and
+	// pushJoinOffFor is how long sendTarget leaves the setting out after that read failed.
+	// pushStatusBudget bounds its read of the member's status without the setting: past it the
+	// device row is read alone, so a stall on the membership table costs each send that much, not
+	// the whole send budget.
+	pushJoinBudget   = 2 * time.Second
+	pushJoinOffFor   = 30 * time.Second
+	pushStatusBudget = 2 * time.Second
 	// A question that waits an hour is stale for a phone; the service drops it after that.
 	pushTTL = time.Hour
 )
@@ -81,9 +89,20 @@ type Service struct {
 	// (droppedNotes), a reader (droppedFull) or a send worker (droppedStale), and none of them may
 	// wait on a stalled log sink, which would stop later healthy deliveries behind it.
 	droppedNotes, droppedFull, droppedStale atomic.Int64
+	// joinFailed counts send-time reads with the text setting that failed; sendTarget then read
+	// the member's status again without it.
+	joinFailed atomic.Int64
+	// statusFailed counts send-time reads of the member's status that failed; sendTarget then read
+	// the device row alone, and a row this member still held was sent to without the text.
+	statusFailed atomic.Int64
+	// joinOffUntil (unix nanoseconds) is when sendTarget tries the joined read again after a failure.
+	joinOffUntil atomic.Int64
+	// joinBudget, joinOffFor and statusBudget override pushJoinBudget, pushJoinOffFor and
+	// pushStatusBudget when set (tests).
+	joinBudget, joinOffFor, statusBudget time.Duration
 	// dropLogEvery is the ticker's period; 0 runs no ticker (tests call logDrops themselves).
 	dropLogEvery time.Duration
-	view         *viewing
+	view         viewing
 }
 
 // sendJob is one notification for one device, waiting for a send worker.
@@ -91,7 +110,10 @@ type sendJob struct {
 	membershipID string
 	sub          store.PushSubscription
 	body         []byte
-	queued       time.Time
+	// plain is body without the question's text; the same slice when body carries none. run sends
+	// it instead when the tenant setting has gone off by the time of the send.
+	plain  []byte
+	queued time.Time
 	// done, when set, is called once the job is sent or dropped (tests wait on it).
 	done func()
 }
@@ -176,7 +198,7 @@ func New(st *store.SQL) *Service {
 		}
 	}
 	p := &Service{store: st, sender: webpush.NewSender(keys, subject), pubKey: keys.PublicKey(),
-		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, dropLogEvery: pushDropLogEvery, view: newViewing()}
+		check: func(e string) error { return webpush.CheckEndpoint(e, hosts) }, timeout: pushSendTimeout, slotWait: pushSlotWait, dropLogEvery: pushDropLogEvery}
 	p.start(pushMaxInFlight, pushQueueLen)
 	st.SetNotificationHook(p.onNotification)
 	log.Printf("web push enabled")
@@ -231,6 +253,12 @@ func (p *Service) logDrops() {
 	if d := p.droppedStale.Swap(0); d > 0 {
 		log.Printf("web push: %d messages waited over %s in the send queue; dropped", d, p.slotWait)
 	}
+	if d := p.joinFailed.Swap(0); d > 0 {
+		log.Printf("web push: %d send-time reads with the text setting failed", d)
+	}
+	if d := p.statusFailed.Swap(0); d > 0 {
+		log.Printf("web push: %d send-time reads of the member's status failed; the device row alone decided those sends, without the text", d)
+	}
 }
 
 // onNotification runs on the inserting caller, so it only queues the delivery and never blocks,
@@ -253,8 +281,8 @@ func (p *Service) onNotification(n store.Notification) {
 //
 // Before any send, in order: the member must still be active (a removed member gets nothing), the
 // kind must not be one the member turned off, and the session must not be on screen in an active
-// Console. For these checks every doubt resolves to "send": a lost question costs more than a
-// redundant buzz. Which devices hold the member is not such a check: a device list or a device
+// Console. run checks the membership and the text setting again after the wait for a worker. For
+// these checks every doubt resolves to "send": a lost question costs more than a redundant buzz. Which devices hold the member is not such a check: a device list or a device
 // that cannot be read is not sent to, since the browser may belong to someone else by now.
 func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.WaitGroup) {
 	// Each read has its own deadline: one that stalls until its deadline must not leave the next
@@ -301,12 +329,14 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 		pl.Name = ""
 		body, _ = json.Marshal(pl)
 	}
+	plain := body
 	if includeText && n.Kind == "question" {
 		// The text is optional, the question is not: JSON escaping can make 140 runes several
 		// times longer, so a text that would push the payload past what can be encrypted is dropped.
-		pl.Text = questionText(n.Payload)
-		if withText, _ := json.Marshal(pl); len(withText) <= webpush.MaxPayload {
-			body = withText
+		if pl.Text = questionText(n.Payload); pl.Text != "" {
+			if withText, _ := json.Marshal(pl); len(withText) <= webpush.MaxPayload {
+				body = withText
+			}
 		}
 	}
 	for _, s := range subs {
@@ -315,7 +345,7 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 		if p.check(s.Endpoint) != nil {
 			continue
 		}
-		j := sendJob{membershipID: n.MembershipID, sub: s, body: body, queued: time.Now()}
+		j := sendJob{membershipID: n.MembershipID, sub: s, body: body, plain: plain, queued: time.Now()}
 		if done != nil {
 			done.Add(1)
 			j.done = done.Done
@@ -340,23 +370,81 @@ func (p *Service) run(j sendJob) {
 		p.droppedStale.Add(1)
 		return
 	}
-	// The row is read again just before the send: in the queue it may have moved to another member
-	// (the same browser signed in as someone else) or been removed, and this member's message must
-	// not reach that browser. A failed read skips the send, as a failed list read does. A move that
-	// commits after this read can still get the one message being sent.
-	rctx, rcancel := context.WithTimeout(context.Background(), p.timeout)
-	cur, held, err := p.store.GetPushSubscription(rctx, j.membershipID, j.sub.Endpoint)
-	rcancel()
+	// The row is read again just before the send: in the queue the device may have moved to another
+	// member (the same browser signed in as someone else) or been removed, the member may have been
+	// removed, or text turned off, and none of that may still get what deliver built before it. A
+	// failed read of the row skips the send, as a failed list read does; a failed read of only the
+	// member's status does not (see sendTarget). A change that commits after this read can still
+	// reach the one message being sent.
+	cur, dc, held, err := p.sendTarget(j)
 	if err != nil {
 		log.Printf("web push: re-read %s before the send: %v", j.sub.ID, err)
 		return
 	}
-	if !held {
+	if !held || !dc.Active {
 		return
+	}
+	body := j.body
+	if !dc.IncludeText {
+		body = j.plain
 	}
 	sctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
-	p.send(sctx, j.membershipID, cur, j.body)
+	p.send(sctx, j.membershipID, cur, body)
+}
+
+// sendTarget reads the device's row with the member's status and the tenant's text setting in one
+// statement, so all three are checked at one point in time. The setting is the part a send can do
+// without, so that statement runs on a short budget of its own, and when it fails the row and the
+// member's status are read again without the setting, and the send goes out without the text. A
+// failure also leaves the setting out for joinOffFor, so a stall on its table costs one short wait
+// per worker rather than one per queued send, which would make the sends behind them stale.
+//
+// The member's status is read on every send, also on a short budget, and never skipped because
+// another send's read failed. Only when this send's own status read fails is the device row read
+// alone, and a row this member still holds is sent to without the text, as main's worker did; a
+// lock on the membership table (DDL's ACCESS EXCLUSIVE; a row lock does not block these reads)
+// must not silence every push. So a member the read answered as inactive is never sent to, but
+// while their status cannot be read, each queued send to a device they still hold (a deactivated
+// membership keeps its rows) can go out without the text.
+//
+// All of these reads share one budget of timeout, the one main's single re-read had, so a stall on
+// every table holds the worker no longer before its send than it did there. The cost is that a row
+// read which needed nearly all of it on main can now run out after the short reads took their part.
+func (p *Service) sendTarget(j sendJob) (store.PushSubscription, store.PushDelivery, bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+	defer cancel()
+	if time.Now().UnixNano() >= p.joinOffUntil.Load() {
+		jctx, jcancel := context.WithTimeout(ctx, orDefault(p.joinBudget, pushJoinBudget))
+		cur, dc, held, err := p.store.GetPushSendTarget(jctx, j.membershipID, j.sub.Endpoint, true)
+		jcancel()
+		if err == nil {
+			return cur, dc, held, nil
+		}
+		p.joinFailed.Add(1)
+		p.joinOffUntil.Store(time.Now().Add(orDefault(p.joinOffFor, pushJoinOffFor)).UnixNano())
+	}
+	sctx, scancel := context.WithTimeout(ctx, orDefault(p.statusBudget, pushStatusBudget))
+	cur, dc, held, err := p.store.GetPushSendTarget(sctx, j.membershipID, j.sub.Endpoint, false)
+	scancel()
+	if err == nil {
+		return cur, dc, held, nil
+	}
+	p.statusFailed.Add(1)
+	cur, held, rerr := p.store.GetPushSubscription(ctx, j.membershipID, j.sub.Endpoint)
+	if rerr != nil {
+		return store.PushSubscription{}, store.PushDelivery{}, false, errors.Join(err, rerr)
+	}
+	// The status is unknown here, not inactive; IncludeText stays false.
+	return cur, store.PushDelivery{Active: true}, held, nil
+}
+
+// orDefault is d, or def when d is zero (a Service literal leaves the tuning fields zero).
+func orDefault(d, def time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
+	return def
 }
 
 func (p *Service) send(ctx context.Context, membershipID string, s store.PushSubscription, body []byte) {

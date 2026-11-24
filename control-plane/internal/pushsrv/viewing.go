@@ -12,7 +12,8 @@ const viewTTL = 45 * time.Second
 
 // viewing is the in-memory "which session is on screen where" map. It is per Control Plane
 // process: with several replicas a report only suppresses pushes that this replica sends, and a
-// restart forgets it. Both fail toward sending a push.
+// restart forgets it. Both fail toward sending a push. The zero value is ready to use, so a Service
+// built as a literal (tests, or a later constructor) cannot panic on its first report or delivery.
 type viewing struct {
 	mu        sync.Mutex
 	lastSweep time.Time
@@ -24,8 +25,6 @@ type viewReport struct {
 	session string
 	at      time.Time
 }
-
-func newViewing() *viewing { return &viewing{byMember: map[string]map[string]viewReport{}} }
 
 // maxViewDevices bounds the devices one member can have on record, so a client that sends a new
 // device id every time cannot grow the map or make each report scan an ever longer list.
@@ -60,6 +59,9 @@ func (v *viewing) set(member, device, session string, now time.Time) {
 		return
 	}
 	if devs == nil {
+		if v.byMember == nil {
+			v.byMember = map[string]map[string]viewReport{}
+		}
 		devs = map[string]viewReport{}
 		v.byMember[member] = devs
 	}
