@@ -170,6 +170,9 @@ var Entries = []string{
 	"copilot-msgledger",
 	"cursor-msgledger",
 	"kiro-msgledger",
+	// The Managed agy route's ClientMessageID ledger (agy/managed.go), same shape as the other
+	// *-msgledger entries. Introduced directly under AgentStateDir; it never existed under .config.
+	"agy-msgledger",
 	// lcpp's own ClientMessageID ledger (agents.NewMsgLedger, driver.go) — a different store
 	// from "lcpp" above (that one is the transcript, keyed by sid; this one is the resend/
 	// idempotency ledger, keyed by session name, same shape as the other *-msgledger entries).
