@@ -403,12 +403,12 @@ func TestMemoPRSnapshotListPages(t *testing.T) {
 	})
 }
 
-// Stopped members whose rows would fill more pages than the tick has, ahead of a running
-// workspace's snapshot: each member's first row comes before any second, so the running one is
-// read in the tick. Theirs stay unstamped (read at the start).
-func TestMemoPRSnapshotStoppedMembersRanked(t *testing.T) {
+// More stopped members than the tick has pages, each ahead of a running workspace's snapshot: the
+// pass looks up the members recorded as stopped first and leaves out those its view finds stopped,
+// so the running one is read in the tick. Theirs stay unstamped (read at the start).
+func TestMemoPRSnapshotStoppedMembersLookedUp(t *testing.T) {
 	saved := memoPRSnapshotsListed
-	memoPRSnapshotsListed = 2
+	memoPRSnapshotsListed = 1
 	t.Cleanup(func() { memoPRSnapshotsListed = saved })
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()

@@ -27,12 +27,15 @@ const AnswerHeadMax = 200
 // MemoAnswerStore is what the dispatcher's answer pass reads and writes, outside any membership
 // lock: no slot and no message is written by it.
 type MemoAnswerStore interface {
-	// ListAnswersDue returns, of every member, the deliveries closed at or after since with a
-	// session and no answer decided, last tried before before (never tried first), at most limit,
-	// leaving skip out: each member's in (answer_tried_at, closed_at, id) order, the members'
-	// first rows before any second (memoDueRankedSQL). With waited, those a pending message of the
-	// same bucket waits for, else the others.
-	ListAnswersDue(ctx context.Context, since, before string, waited bool, skip MemoDueSkip, limit int) ([]MemoDelivery, error)
+	// ListAnswersDue returns, of every member but those in except, the deliveries closed at or
+	// after since with a session and no answer decided, last tried before before (never tried
+	// first), at most limit, in (answer_tried_at, closed_at, id) order and past after when it is
+	// given (the last row of the page before): with waited, those a pending message of the same
+	// bucket waits for, else the others.
+	ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, except []string, limit int) ([]MemoDelivery, error)
+	// ListAnswerStoppedMembers returns the members with a row ListAnswersDue would list whose
+	// workspace is recorded as stopped, at most limit (memoDueStoppedMembersSQL).
+	ListAnswerStoppedMembers(ctx context.Context, since, before string, waited bool, limit int) ([]string, error)
 	// MarkAnswerTried stamps a delivery whose answer is about to be read.
 	MarkAnswerTried(ctx context.Context, id, at string) error
 	// RecordAnswer keeps a read's answer on a closed delivery that has none and closed at or after
@@ -49,46 +52,78 @@ const memoDeliveryWaitedSQL = `EXISTS (SELECT 1 FROM memo p JOIN memo m ON m.mem
 	  WHERE p.membership_id=memo_delivery.membership_id AND p.delivery_id=memo_delivery.id AND p.state='delivered'
 	    AND m.state='pending' AND m.after_ids LIKE '%"' || p.id || '"%')`
 
-// MemoDueSkip is what a pass's next page of a due list leaves out: the members whose rows the
-// pass leaves unstamped (a stopped workspace), and the rows whose stamp it could not write. Every
-// row a page returns is stamped or named here, so the next page goes on from the rows left.
-type MemoDueSkip struct {
-	Members []string
-	IDs     []string
-}
-
-// memoDueRankedSQL lists the ids of the deliveries that match cond (its args), each ranked within
-// its member in (tried, closed_at, id) order, and leaves skip out. The list is ordered by that
-// rank first: every member's first row comes before any member's second, so a member whose rows
-// a pass leaves unstamped costs one row of a page however many rows it has, and a page bound is
-// spent on distinct members.
-func memoDueRankedSQL(tried, cond string, args []any, skip MemoDueSkip, limit int) (string, []any) {
-	for _, list := range []struct {
-		col string
-		ids []string
-	}{{"membership_id", skip.Members}, {"id", skip.IDs}} {
-		if len(list.ids) == 0 {
-			continue
-		}
-		cond += ` AND ` + list.col + ` NOT IN (` + inList(len(list.ids)) + `)`
-		for _, v := range list.ids {
-			args = append(args, v)
+// memoDeliveryPageSQL narrows a list of deliveries in (tried, closed_at, id) order, tried being the
+// column of the pass's own stamp, to the rows past after (the last row of the page before, when
+// given) and outside the members in except. The except list is how a pass rotates past the
+// members whose rows it leaves unstamped (a stopped workspace): one entry skips all of a member's
+// rows, however many, where a page bound alone would let them fill every page.
+func memoDeliveryPageSQL(tried string, triedOf func(MemoDelivery) string, after *MemoDelivery, except []string) (string, []any) {
+	cond, args := "", []any{}
+	if after != nil {
+		t := triedOf(*after)
+		cond += ` AND (` + tried + `>? OR (` + tried + `=? AND (closed_at>? OR (closed_at=? AND id>?))))`
+		args = append(args, t, t, after.ClosedAt, after.ClosedAt, after.ID)
+	}
+	if len(except) > 0 {
+		cond += ` AND membership_id NOT IN (` + inList(len(except)) + `)`
+		for _, m := range except {
+			args = append(args, m)
 		}
 	}
-	args = append(args, limit)
-	return memoDeliveryCols + ` JOIN (SELECT id AS ranked_id, ROW_NUMBER() OVER (PARTITION BY membership_id ORDER BY ` + tried + `, closed_at, id) AS member_rank
-		  FROM memo_delivery WHERE ` + cond + `) ranked ON ranked.ranked_id=memo_delivery.id
-		ORDER BY ranked.member_rank, ` + tried + `, closed_at, id LIMIT ?`, args
+	return cond, args
 }
 
-func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, skip MemoDueSkip, limit int) ([]MemoDelivery, error) {
-	waitedCond := memoDeliveryWaitedSQL
+// memoDueStoppedMembersSQL lists, of the deliveries that match cond (its args), the members whose
+// workspace the Control Plane recorded as stopped, at most limit, those with the oldest row first.
+// A pass looks only these up before it lists rows, and leaves out the ones its own view finds
+// stopped: their rows would otherwise come first on every tick (a pass leaves them unstamped), and
+// more such members than the pass has pages would keep a running member's rows from being read.
+// The record only picks whom to look up: one that is stale costs a look-up, and its member's rows
+// are listed as before.
+func memoDueStoppedMembersSQL(tried, cond string, args []any, limit int) (string, []any) {
+	return `SELECT membership_id FROM memo_delivery WHERE ` + cond + `
+		  AND EXISTS (SELECT 1 FROM workspace w WHERE w.membership_id=memo_delivery.membership_id AND w.state='stopped')
+		GROUP BY membership_id ORDER BY MIN(` + tried + `), MIN(closed_at), membership_id LIMIT ?`, append(args, limit)
+}
+
+func scanMembershipIDs(rows *sql.Rows, err error) ([]string, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// memoAnswersDueSQL is ListAnswersDue's condition and its args.
+func memoAnswersDueSQL(since, before string, waited bool) (string, []any) {
+	cond := memoDeliveryWaitedSQL
 	if !waited {
-		waitedCond = `NOT ` + waitedCond
+		cond = `NOT ` + cond
 	}
-	q, args := memoDueRankedSQL("answer_tried_at", `state=? AND session<>'' AND answer_class=''
-		  AND closed_at>=? AND answer_tried_at<? AND `+waitedCond, []any{DeliveryClosed, since, before}, skip, limit)
-	return scanMemoDeliveries(s.db.QueryContext(ctx, q, args...))
+	return `state=? AND session<>'' AND answer_class='' AND closed_at>=? AND answer_tried_at<? AND ` + cond,
+		[]any{DeliveryClosed, since, before}
+}
+
+func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, except []string, limit int) ([]MemoDelivery, error) {
+	cond, args := memoAnswersDueSQL(since, before, waited)
+	page, pargs := memoDeliveryPageSQL("answer_tried_at", func(d MemoDelivery) string { return d.AnswerTriedAt }, after, except)
+	args = append(append(args, pargs...), limit)
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE `+cond+page+`
+		ORDER BY answer_tried_at, closed_at, id LIMIT ?`, args...))
+}
+
+func (s *SQL) ListAnswerStoppedMembers(ctx context.Context, since, before string, waited bool, limit int) ([]string, error) {
+	cond, args := memoAnswersDueSQL(since, before, waited)
+	q, args := memoDueStoppedMembersSQL("answer_tried_at", cond, args, limit)
+	return scanMembershipIDs(s.db.QueryContext(ctx, q, args...))
 }
 
 func (s *SQL) MarkAnswerTried(ctx context.Context, id, at string) error {
