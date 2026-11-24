@@ -27,7 +27,14 @@ const storeReleaseBinding = (b: ReleaseBinding | null) => {
     if (b) localStorage.setItem(RELEASE_TOKEN_KEY, JSON.stringify(b));
     else localStorage.removeItem(RELEASE_TOKEN_KEY);
   } catch {
-    /* best effort: without it the release falls back to the keys alone */
+    // The new binding could not be written, and the old one names a subscription this call has just
+    // replaced: leaving it would make the next sign-out skip the new subscription. Without a
+    // binding the release falls back to the keys alone.
+    try {
+      localStorage.removeItem(RELEASE_TOKEN_KEY);
+    } catch {
+      /* storage is unusable; nothing more to do */
+    }
   }
 };
 

@@ -36,6 +36,18 @@ describe("release token", () => {
     await releasePushEndpoint(sub);
     expect(bodyOf(spy, 2).releaseToken).toBe("tok1");
   });
+  it("drops the old binding when the new one cannot be stored", async () => {
+    const spy = reply(200, { id: "d", releaseToken: "tokA" });
+    await addPushDevice(sub);
+    const real = Storage.prototype.setItem;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    spy.mockResolvedValue(new Response(JSON.stringify({ id: "d", releaseToken: "tokB" }), { status: 201 }));
+    await addPushDevice({ ...sub, endpoint: "https://push.example/new" });
+    expect(snapshotReleaseBinding()).toBeNull();
+    Storage.prototype.setItem = real;
+  });
   it("does not send a token issued for another subscription, and uses a binding taken earlier", async () => {
     const spy = reply(200, { id: "d", releaseToken: "tokA" });
     await addPushDevice(sub);

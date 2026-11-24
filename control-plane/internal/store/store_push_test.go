@@ -211,10 +211,6 @@ func checkPushSubscriptions(t *testing.T, st *SQL) {
 		t.Fatal(err)
 	}
 	// A token release applies only to the registration that wrote the current token.
-	sub.ReleaseToken = "tok-first"
-	if err := st.UpsertPushSubscription(ctx, sub); err != nil {
-		t.Fatal(err)
-	}
 	for _, tok := range []string{"tok-old", ""} {
 		if err := st.ReleasePushEndpointIfToken(ctx, ep, sub.P256dh, sub.Auth, tok); err != nil {
 			t.Fatal(err)

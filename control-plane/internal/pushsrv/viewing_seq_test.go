@@ -83,12 +83,27 @@ func TestViewingKeepsAClearUnderChurn(t *testing.T) {
 func TestViewingFullSeqMarksKeepTheLiveOnes(t *testing.T) {
 	var v viewing
 	now := time.Now()
-	v.set("m1", "d", "", 3, now)
+	v.set("m1", "d", "", 3, now) // the oldest mark by a clear margin
+	at := now
 	for i := 0; i < maxSeqDevices+8; i++ {
-		v.set("m1", "other"+string(rune('a'+i%26))+string(rune('A'+i/26)), "s9", 1, now)
+		at = at.Add(time.Millisecond)
+		v.set("m1", "other"+string(rune('a'+i%26))+string(rune('A'+i/26)), "s9", 1, at)
 	}
-	v.set("m1", "d", "s1", 2, now) // the heartbeat that overtook the clear
-	if v.on("m1", "s1", now) {
+	if n := len(v.seqs["m1"]); n > maxSeqDevices {
+		t.Fatalf("%d seq marks on record", n)
+	}
+	v.set("m1", "d", "s1", 2, at) // the heartbeat that overtook the clear
+	if v.on("m1", "s1", at) {
 		t.Fatal("a recorded clear was evicted by other devices")
+	}
+	// A device that did not get a mark still works in arrival order.
+	late := "otherZ" + "Z"
+	v.set("m1", late, "s5", 1, at)
+	if !v.on("m1", "s5", at) {
+		t.Fatal("an unrecorded device's report was refused")
+	}
+	v.set("m1", late, "", 2, at)
+	if v.on("m1", "s5", at) {
+		t.Fatal("an unrecorded device's clear was not applied")
 	}
 }
