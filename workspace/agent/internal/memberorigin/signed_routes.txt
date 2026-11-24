@@ -28,6 +28,7 @@ POST /agents/memory/entries/pin relay
 POST /agents/memory/entries/project-move relay
 POST /agents/memory/entries/purge relay
 POST /agents/memory/entries/revert relay
+POST /agents/memory/entries/supersede-document relay
 POST /agents/memory/import relay
 POST /agents/memory/import/apply relay
 POST /agents/memory/snapshots relay
