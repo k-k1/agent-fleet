@@ -419,7 +419,8 @@ Memos you accumulate and send to a session in one go (the tables are
   `{"runNext": true|false}` (Console only, not on the token face or `/mcp`) sets or clears it on a `held` or `pending`
   message of a queue that no delivery has claimed (`409 memo_locked` otherwise, `409 memo_in_queue` for a plain note) and
   answers the message; the memo DTO carries `runNext` only on such a message (not while a send is in flight). A move to
-  another category clears it (an edit, any face, and a tidy move), and so does a token-face or `/mcp` edit of the content. The quota is checked again in the move to `sending`, under the membership lock,
+  another queue clears it (an edit from any face, a category merge, a tidy move and its undo; a rename keeps it), and so
+  does a token-face or `/mcp` edit of the content. The quota is checked again in the move to `sending`, under the membership lock,
   so two sends of one member cannot both pass it. The send runs on the scheduler's
   next tick (§3.7): wake and wait as a schedule does, reserve the durable Agent key
   `q_<delivery>`, move the delivery to `sending` with a conditional write on its state,
