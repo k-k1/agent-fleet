@@ -800,7 +800,8 @@ export const sessions = {
   "start.space_unsupported": "このワークスペースの Agent は古く、スペースでは始められません。ワークスペースを停止して起動し直すと新しくなります。それまでは、リポジトリかホーム（その他）で始めてください。",
   "start.space_check_failed": "このワークスペースがスペースで始められるか確かめられませんでした。",
   "start.space_check_again": "もう一度確かめる",
-  "launch.attach_not_sent": "このエージェントは添付を受け取れません。ファイルは下書きに残り、送られません。",
+  "launch.attach_not_taken": "このエージェントは添付を受け取れません。ファイルを外すか、添付を受け取れるエージェントを選んでください。",
+  "launch.result_unknown": "起動の応答がなかったため、セッションが始まっている可能性があります。もう一度起動する前に、セッションビューを確かめてください。",
 
   // === P5 実行設定モーダル（ManagedSettingsModal/MirrorToggle） ===
   "mgr.load_failed": "設定を読み込めませんでした",

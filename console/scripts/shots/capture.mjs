@@ -1332,7 +1332,8 @@ const SCENES = [
     settle: 1200,
   },
   {
-    // The Start hub opened from the WS bar, on "Start in a space" (the first-time section).
+    // The Start hub opened from the WS bar, on "Start in a space". Opened by hand: a scene run
+    // before it in the same profile may have left another section remembered.
     name: "sessions-start",
     guide: true,
     clip: ".ui-modal",
@@ -1342,8 +1343,11 @@ const SCENES = [
     height: 1100,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
     action: `(async () => {${OPEN_START_HUB}
+      [...document.querySelectorAll(".start-sec-head")].find((el) => /スペースで始める|Start in a space/.test(el.textContent || ""))?.click();
+      await wait(600);
     })()`,
     settle: 1500,
+    verify: `!!document.querySelector(".start-space-actions button:not([disabled])")`,
   },
   {
     // "Start work" for a repository as it opens: agent, model, first prompt, and the folded

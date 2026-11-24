@@ -770,7 +770,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     if (!canStash) return;
     setBusy(true);
     setStash("busy");
-    const files = canPasteImage ? images.flatMap((x) => (x.file ? [x.file] : [])) : [];
+    // Every staged file, whatever the agent: the memo keeps the draft whole, and the box is
+    // emptied after it (a shared draft keeps files the agent picked here cannot take).
+    const files = images.flatMap((x) => (x.file ? [x.file] : []));
     const r = await stashLaunchDraft(repo, prompt.trim(), files);
     setBusy(false);
     if (!r.ok) {
@@ -874,9 +876,13 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     setBusy(true);
     setConflict(null);
     setPolicyErr(null);
+    setLaunchUnknown(false);
     const useExisting = existingMode || resolveCollision;
     const wtBase = existingMode ? existingBranch : resolveCollision ? newBranch : base.trim();
-    const r = await onLaunch({
+    // A create that got no answer at all (the connection dropped) throws: the form must come back
+    // with the draft, or the dialog (and the Start hub around a space launch) stays locked.
+    let noAnswer = false;
+    const r: LaunchResult = await onLaunch({
       kind,
       driver: agentOf(kind).managedDriver ? driver : "",
       // The bedrock route runs on the one Bedrock id typed here, never on the picker's alias: Claude
@@ -897,6 +903,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       useExisting,
       spendCapUsd: hasBudget && budget.trim() && !budgetInvalid ? budgetCap : undefined,
       space: space ? { name: spaceName.trim() } : undefined,
+    }).catch(() => {
+      noAnswer = true;
+      return { ok: false };
     });
     if (r?.ok) {
       if (onBedrock && bedrockPick) rememberBedrockModel(bedrockPick.id, bedrockModel.trim());
@@ -909,6 +918,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       return;
     }
     setBusy(false);
+    if (noAnswer) setLaunchUnknown(true);
     // The policy refused it: what the dialog offers may be out of date, so ask the Agent again.
     if (r?.policy) {
       setPolicyErr(r.policy);
@@ -927,11 +937,16 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   };
   const submit = () => void start(false);
   const [policyErr, setPolicyErr] = useState<PolicyRefusal | null>(null);
+  const [launchUnknown, setLaunchUnknown] = useState(false);
+  // Files the picked agent cannot take: launching would drop them from the draft unsent, so the
+  // launch waits until they are removed or an agent that takes them is picked. Only a shared
+  // draft can hold them; a dialog's own draft drops them on the switch.
+  const filesStuck = !canPasteImage && images.length > 0;
   // Existing-branch mode is only launchable once a branch is picked.
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked && !prefsLoading && !launchBlocked;
+  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked && !prefsLoading && !launchBlocked && !filesStuck;
   useEffect(() => {
     if (submitRef) submitRef.current = () => canLaunch && submit();
   });
@@ -949,6 +964,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     }
   };
 
+  const unknownNote = (
+    <div className="ui-field-hint ui-field-hint--warn" role="alert">
+      {tr("launch.result_unknown")}
+    </div>
+  );
   // The blocks of the form, laid out below for a dialog or for the hub's space section.
   const agentBlock = (
     <>
@@ -1239,6 +1259,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             {tr("launch.first_prompt_note")}
             {canPasteImage && " " + tr("launch.attach_note")}
           </span>
+          {filesStuck && <span className="ui-field-hint ui-field-hint--warn" role="status">{tr("launch.attach_not_taken")}</span>}
         </div>
 
     </>
@@ -1599,7 +1620,12 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
 
   if (space) {
     // Agent and model are folded into Details here, so its summary names them first.
-    const detailsParts = [kinds.length ? kindDisplayName(kind) : "", hasModel && !onBedrock ? model : "", ...advParts].filter(Boolean);
+    const detailsParts = [
+      kinds.length ? kindDisplayName(kind) : "",
+      chosenRoute ? tr(("cred.route." + chosenRoute) as never) : "",
+      onBedrock ? bedrockModel.trim() : hasModel ? model : "",
+      ...advParts,
+    ].filter(Boolean);
     // Something the launch cannot go ahead with is never left behind the fold.
     const detailsForced = !kinds.length || routeMissing || !!policyErr || savedUnusable || bedrockBlocked || routeModelBlocked || budgetInvalid;
     return (
@@ -1611,6 +1637,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               <Icon name="new-folder" /> {tr("start.place_new_space")}
             </span>
             <input
+              type="text"
               value={spaceName}
               maxLength={SPACE_NAME_MAX}
               readOnly={busy}
@@ -1623,7 +1650,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             <Trans k="start.space_note" components={[<code />]} />
           </span>
         </div>
-        {!canPasteImage && images.length > 0 && <span className="ui-field-hint ui-field-hint--warn">{tr("launch.attach_not_sent")}</span>}
+        {filesStuck && <span className="ui-field-hint ui-field-hint--warn" role="status">{tr("launch.attach_not_taken")}</span>}
         <LaunchSection
           label={tr("start.details")}
           summary={detailsParts.join(" · ")}
@@ -1634,6 +1661,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           {agentBlock}
           {advBody}
         </LaunchSection>
+        {launchUnknown && unknownNote}
         <div className="start-space-actions">
           <Button variant="primary" icon="play" onClick={submit} disabled={busy || !canLaunch}>
             {busy ? tr("launch.launching") : tr("start.space_launch")}
@@ -1649,6 +1677,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         {agentBlock}
         {promptBlock}
         {locationBlock}
+        {launchUnknown && unknownNote}
         {/* Advanced: settings that stay put once decided (execution method, effort, start mode,
             session name). Only the items that moved off their default reach the summary line. */}
         <LaunchSection

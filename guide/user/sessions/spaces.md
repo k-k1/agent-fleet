@@ -26,7 +26,8 @@ spreadsheet, researching a question. What the agent writes stays there, apart fr
 4. **Details** stays folded with a summary of the agent, the model and what else it will use. Open it to change the
    agent, the model route, the model, the execution method, the reasoning effort, the start mode or the tool permissions.
    There is no branch: a space is not a repository
-5. Press **Start in a new space** (Ctrl+Enter in the box does the same, or Enter, as your send key is set)
+5. Press **Start in a new space** (Ctrl+Enter in the box does the same, or Enter, as your send key is set). With files
+   attached, pick an agent that takes attachments; otherwise remove them first
 
 The session opens in the chat view.
 
@@ -45,8 +46,8 @@ Each start from this section makes a new space.
 - **Clean home deletes it**, like the rest of your home
 
 > [!NOTE]
-> A session in a space has no agent memory, no skills from a repository and no repository templates. Your own prompt
-> templates work as they do in home.
+> A session in a space has no agent memory and no skills from a repository, and the box on Start offers no prompt
+> templates.
 
 ## When it goes wrong
 

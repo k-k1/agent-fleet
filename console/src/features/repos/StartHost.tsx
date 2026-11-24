@@ -50,6 +50,14 @@ export function StartHost() {
   // A repository picked in the hub with something in the draft takes the draft into its dialog;
   // with nothing in it, the dialog shows that repository's own stored draft as before.
   const [carry, setCarry] = useState(false);
+  // A pick waiting for a memo restore to set the repository's draft aside: the hub takes no other
+  // way out meanwhile, or the late save would open that dialog over a launch already under way.
+  const [pickPending, setPickPending] = useState(false);
+  // A memo whose files did not all come back is not finished by a launch: deleting it would lose
+  // the ones that never reached the session.
+  const finishSeed = (name: string) => {
+    if (draft.missing === 0) useLaunchSeed.getState().onLaunched?.(name);
+  };
   // Open the hub whenever the global tick changes (skip the mount value).
   const lastTickRef = useRef(startTick);
   useEffect(() => {
@@ -97,7 +105,7 @@ export function StartHost() {
             // dir "" with a space: the Agent makes ~/spaces/<folder> and starts the session there.
             const r = await startWork({ dir: "", repo: "" }, o);
             // A memo that seeded the draft is done with once its text reached a session.
-            if (r.ok) useLaunchSeed.getState().onLaunched?.(r.name || "");
+            if (r.ok) finishSeed(r.name || "");
             return r;
           }}
           onClose={() => {
@@ -105,18 +113,23 @@ export function StartHost() {
             setShow(false);
             clearSeed();
           }}
+          pickPending={pickPending}
           onPickHome={() => setHome(true)}
-          onPickRepo={async (r) => {
+          onPickRepo={async (r, fromRepoSection) => {
             // A memo being restored (#3289) outranks the picked repo's stored draft: set that
             // draft aside first, and open nothing when it could not be saved.
             const { memoId, prompt, attachments } = useLaunchSeed.getState();
-            setCarry(draftHasContent(draft));
+            // Only a repository picked in its own section takes the draft: Other's draft is the
+            // home launch's, and a folder cloned or created there must not receive it.
+            setCarry(fromRepoSection && draftHasContent(draft));
             if (!memoId) return openLaunch(r);
             if (picking.current) return; // one save at a time; a second click would save it twice
             picking.current = true;
+            setPickPending(true);
             const gen = hubGen.current;
             const s = await stashStoredDraft(r.name, { body: prompt, attachments }).finally(() => {
               picking.current = false;
+              setPickPending(false);
             });
             // The hub was closed (or another memo seeded) while saving: do not reopen anything.
             if (gen !== hubGen.current || useLaunchSeed.getState().memoId !== memoId) return;
@@ -146,7 +159,7 @@ export function StartHost() {
             // bookkeeping and adds the new session to the active working set.
             const r = await startWork({ dir: "", repo: "" }, o);
             if (r.ok) {
-              useLaunchSeed.getState().onLaunched?.(r.name || "");
+              finishSeed(r.name || "");
               setHome(false);
               setShow(false); // launched — drop the hub underneath too
               clearSeed();
@@ -177,9 +190,11 @@ export function StartHost() {
           workItem={seedWorkItem && !launchExisting ? branchItemOf(seedWorkItem) : undefined}
           initialWorktree={launchInPlace ? false : undefined}
           initialExistingBranch={launchExisting || undefined}
+          // Closed over the hub, it goes back to the hub like Back: the seed stays with the hub's
+          // draft, so a launch from there still finishes the memo it holds.
           onClose={() => {
             clearLaunch();
-            clearSeed();
+            if (!show) clearSeed();
           }}
           onBack={show ? clearLaunch : undefined}
           onLaunch={async (o) => {
@@ -198,7 +213,8 @@ export function StartHost() {
               if (seedWorkItem && r.name) {
                 void recordWorkItemLaunch(seedWorkItem, r.name, launch.name, workItemLaunchBranch(o, launch.branch || ""));
               }
-              useLaunchSeed.getState().onLaunched?.(r.name || "");
+              if (show && carry) finishSeed(r.name || "");
+              else useLaunchSeed.getState().onLaunched?.(r.name || "");
               setShow(false); // launched — drop the hub underneath too
               clearSeed();
             }

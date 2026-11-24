@@ -52,9 +52,9 @@ const onClose = vi.fn();
 const access = { kinds: { get: (k: string) => ({ kind: k }), has: () => true } as never, noRoute: false, allOff: false, refresh: () => {} };
 
 // The draft is the host's (StartHost); a stand-in host owns it the same way.
-function Host({ kinds }: { kinds: string[] }) {
+function Host({ kinds, pickPending }: { kinds: string[]; pickPending?: boolean }) {
   const draft = useHubDraft();
-  return <StartModal kinds={kinds} access={access} draft={draft} onLaunchSpace={onLaunchSpace} onClose={onClose} onPickRepo={onPickRepo} onPickHome={onPickHome} />;
+  return <StartModal kinds={kinds} access={access} draft={draft} pickPending={pickPending} onLaunchSpace={onLaunchSpace} onClose={onClose} onPickRepo={onPickRepo} onPickHome={onPickHome} />;
 }
 
 const rows = () => [...document.querySelectorAll<HTMLButtonElement>(".start-row")];
@@ -76,14 +76,14 @@ async function type(input: HTMLInputElement, value: string): Promise<void> {
   });
 }
 
-async function mount(kinds: string[] = ["claude"]): Promise<void> {
+async function mount(kinds: string[] = ["claude"], pickPending = false): Promise<void> {
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
     root!.render(
       <ToastProvider>
-        <Host kinds={kinds} />
+        <Host kinds={kinds} pickPending={pickPending} />
       </ToastProvider>,
     );
   });
@@ -130,7 +130,8 @@ describe("StartModal — start in a new folder", () => {
     await click(footButton(t("start.create_and_continue")));
 
     expect(initRepo).toHaveBeenCalledWith("new-project", expect.any(Function));
-    expect(onPickRepo).toHaveBeenCalledWith(created);
+    // Other's draft is the home launch's: a folder created here does not take it.
+    expect(onPickRepo).toHaveBeenCalledWith(created, false);
   });
 
   it("stays on the stage and does not proceed to the launch when creation fails", async () => {
@@ -396,6 +397,31 @@ describe("StartModal — sections and the shared draft", () => {
       box().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
     });
     expect(onLaunchSpace).not.toHaveBeenCalled();
+  });
+
+  it("reads a plain-text 404 (an Agent without the route) as no spaces, not as a failed check", async () => {
+    await fresh({ error: { code: "http_404", message: "404 page not found" } });
+    expect(document.body.textContent).toContain(t("start.space_unsupported"));
+    expect(document.body.textContent).not.toContain(t("start.space_check_failed"));
+  });
+
+  it("hands a repository row's pick on as one from the repository section", async () => {
+    unmount();
+    useReposStore.setState({ repos: [{ name: "app", branch: "main" }] as never, loadState: "ok" });
+    writeFoldValue("af-start-section", "repo");
+    await mount();
+    await click(rowFor("app"));
+    expect(onPickRepo).toHaveBeenCalledWith(expect.objectContaining({ name: "app" }), true);
+  });
+
+  it("takes no other way out while a pick waits on a memo restore", async () => {
+    unmount();
+    apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? { spaces: [] } : []));
+    writeFoldValue("af-start-section", "repo");
+    await mount(["claude"], true);
+    await act(async () => {});
+    expect(head(t("start.sec_space")).disabled).toBe(true);
+    expect(head(t("start.sec_other")).disabled).toBe(true);
   });
 
   it("offers a second check when the first could not be answered", async () => {

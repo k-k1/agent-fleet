@@ -54,7 +54,9 @@ interface StartModalProps {
   onClose: () => void;
   /** A working copy was picked (existing or freshly cloned) — the host closes
    * this hub and opens the per-repo start-work dialog on it. */
-  onPickRepo: (r: Repo) => void;
+  onPickRepo: (r: Repo, fromRepoSection: boolean) => void;
+  /** A pick is waiting on a memo restore: nothing else may start meanwhile. */
+  pickPending?: boolean;
   /** "Launch an agent at home" was picked — the host opens the start-work dialog in its
    * repo-less (home) form on top of this hub. */
   onPickHome: () => void;
@@ -70,10 +72,10 @@ const SECTION_KEY = "af-start-section";
  *  field and would start in home instead (#4978), so the hub asks GET /api/spaces first. */
 type SpaceSupport = "checking" | "yes" | "no" | "failed";
 
-function HubSection({ open, icon, label, onOpen, children }: { open: boolean; icon: string; label: string; onOpen: () => void; children: ReactNode }) {
+function HubSection({ open, icon, label, disabled, onOpen, children }: { open: boolean; icon: string; label: string; disabled: boolean; onOpen: () => void; children: ReactNode }) {
   return (
     <section className={"start-sec" + (open ? " start-sec--open" : "")}>
-      <button type="button" className="start-sec-head" aria-expanded={open} onClick={onOpen}>
+      <button type="button" className="start-sec-head" aria-expanded={open} disabled={disabled && !open} onClick={onOpen}>
         <Icon name={open ? "chevron-down" : "chevron-right"} className="start-sec-chev" />
         <Icon name={icon} className="start-row-ic" />
         <span className="start-sec-label">{label}</span>
@@ -101,7 +103,7 @@ interface SsmInstance {
   pingStatus: string;
 }
 
-export function StartModal({ kinds, access, claudeExpired, settling, draft, onLaunchSpace, onClose, onPickRepo, onPickHome }: StartModalProps) {
+export function StartModal({ kinds, access, claudeExpired, settling, draft, onLaunchSpace, onClose, onPickRepo, onPickHome, pickPending = false }: StartModalProps) {
   useKindCatalogVersion(); // effort / start-mode rows and the driver sent depend on the catalog's facts
   const toast = useToast();
   const tr = useT();
@@ -128,8 +130,9 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
       .then((d) => {
         if (!alive) return;
         if (d && !d.error && Array.isArray(d.spaces)) setSpaceSupport("yes");
-        // Only "no such route" means an Agent without spaces; anything else may pass.
-        else if (d?.error && !isTransientErr(d) && (d.error.status === 404 || d.error.status === 405)) setSpaceSupport("no");
+        // Only "no such route" means an Agent without spaces; anything else may pass. A plain-text
+        // 404 / 405 (the Agent's mux) arrives as http_404 / http_405 with no status.
+        else if (d?.error && !isTransientErr(d) && (d.error.status === 404 || d.error.status === 405 || d.error.code === "http_404" || d.error.code === "http_405")) setSpaceSupport("no");
         else setSpaceSupport("failed");
       })
       .catch(() => alive && setSpaceSupport("failed"));
@@ -180,7 +183,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
   });
 
   const baseRow = (r: Repo) => (
-    <button key={r.name} type="button" className="start-row" onClick={() => onPickRepo(r)}>
+    <button key={r.name} type="button" className="start-row" disabled={pickPending} onClick={() => onPickRepo(r, true)}>
       <Icon name="repo" className="start-row-ic" />
       <span className="start-row-body">
         <span className="start-row-title">{r.name}</span>
@@ -206,7 +209,9 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
   const [src, setSrc] = useState<CloneSource>({ cloneUrl: "", branch: "" });
   const derived = src.cloneUrl ? deriveRepoName(src.cloneUrl) : "";
   const already = derived ? repos.find((r) => r.name === derived) : undefined;
-  const doClone = async (url = src.cloneUrl, branch = src.branch) => {
+  // fromRepoSection: a team repository's shortcut in the repository section, which takes the draft
+  // like any repository row there; the clone stage is Other's and does not.
+  const doClone = async (url = src.cloneUrl, branch = src.branch, fromRepoSection = false) => {
     if (!url || busy) return;
     setBusy(true);
     const res = await cloneRepo({ remote_url: url, branch, name: "" }, toast);
@@ -215,7 +220,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
     const repo = useReposStore.getState().repos.find((r) => r.name === res.name);
     if (repo) {
       setStage("place"); // the hub stays mounted below the launch stage — leave it reset
-      onPickRepo(repo);
+      onPickRepo(repo, fromRepoSection);
     } else onClose(); // clone landed but the fresh list hasn't caught up — the tree has it
   };
 
@@ -235,7 +240,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
         toast(tr("start.team_clone_host_changed"), { kind: "error" });
         return;
       }
-      await doClone(c.cloneUrl, "");
+      await doClone(c.cloneUrl, "", true);
     } finally {
       setBusy(false);
       teamCloneLock.current = false;
@@ -258,7 +263,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
     const repo = useReposStore.getState().repos.find((r) => r.name === res.name);
     if (repo) {
       setStage("place"); // the hub stays mounted below — leave it reset
-      onPickRepo(repo);
+      onPickRepo(repo, false);
     } else onClose(); // created, but the list hasn't caught up — the tree has it
   };
 
@@ -412,7 +417,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
     >
       {stage === "place" && (
         <div className="ui-modal-body start-hub">
-          <HubSection open={section === "space"} icon="folder-library" label={tr("start.sec_space")} onOpen={() => setSection("space")}>
+          <HubSection open={section === "space"} disabled={pickPending} icon="folder-library" label={tr("start.sec_space")} onOpen={() => setSection("space")}>
             <HubComposer draft={draft} busy={busy} onSubmit={() => spaceSubmit.current?.()} />
             {spaceSupport !== "yes" && (
               <span className={"ui-field-hint" + (spaceSupport === "checking" ? "" : " ui-field-hint--warn")} role="status">
@@ -435,13 +440,13 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
               shared={draft}
               busy={busy}
               setBusy={setBusy}
-              launchBlocked={spaceSupport !== "yes"}
+              launchBlocked={spaceSupport !== "yes" || pickPending}
               submitRef={spaceSubmit}
               onClose={onClose}
               onLaunch={onLaunchSpace}
             />
           </HubSection>
-          <HubSection open={section === "repo"} icon="repo" label={tr("start.sec_repo")} onOpen={() => setSection("repo")}>
+          <HubSection open={section === "repo"} disabled={pickPending} icon="repo" label={tr("start.sec_repo")} onOpen={() => setSection("repo")}>
             <HubComposer draft={draft} busy={busy} note={tr("start.draft_note_repo")} />
             <div className="ui-field start-repos">
               <label className="ui-field-label" htmlFor="start-repo-search">{tr("start.repo_launch_label")}</label>
@@ -468,7 +473,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
               </div>
             </div>
           </HubSection>
-          <HubSection open={section === "other"} icon="ellipsis" label={tr("start.sec_other")} onOpen={() => setSection("other")}>
+          <HubSection open={section === "other"} disabled={pickPending} icon="ellipsis" label={tr("start.sec_other")} onOpen={() => setSection("other")}>
             <HubComposer draft={draft} busy={busy} note={tr("start.draft_note_other")} />
             <div className="start-list">
               {kinds.length > 0 && (
@@ -532,7 +537,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
                   icon="repo"
                   onClick={() => {
                     setStage("place");
-                    onPickRepo(already);
+                    onPickRepo(already, false);
                   }}
                 >
                   {tr("start.begin_from_existing", { name: already.name })}

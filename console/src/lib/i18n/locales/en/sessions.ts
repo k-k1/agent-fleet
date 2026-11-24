@@ -790,7 +790,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "start.space_unsupported": "This workspace's Agent is too old to start in a space. Stop and start the workspace to bring it up to date; until then, start in a repository or in home (Other).",
   "start.space_check_failed": "Could not check whether this workspace can start in a space.",
   "start.space_check_again": "Check again",
-  "launch.attach_not_sent": "This agent takes no attachments: the files stay in the draft and are not sent.",
+  "launch.attach_not_taken": "This agent takes no attachments. Remove the files, or pick an agent that takes them.",
+  "launch.result_unknown": "The launch got no answer, so the session may have started. Check the Sessions view before you launch again.",
 
   // === P5 実行設定モーダル（ManagedSettingsModal/MirrorToggle） ===
   "mgr.load_failed": "Failed to load settings",
