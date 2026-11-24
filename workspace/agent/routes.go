@@ -660,6 +660,10 @@ func buildMux() *http.ServeMux {
 	mux.Handle("POST /agents/memory/entries/lint-terms", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemoryLintTermsSave)))
 	// Promotion candidates (ADR 0130 decision 11): read-only, like the lint report it builds on.
 	mux.HandleFunc("GET /agents/memory/entries/promotion-candidates", memoryx.HandleAgentMemoryPromoteCandidates)
+	// The proposed change for one candidate writes nothing (it runs the repository's pre-commit
+	// hook in a throwaway clone); the supersede by the merged document is the member's, behind the mark.
+	mux.HandleFunc("POST /agents/memory/entries/promotion-proposal", memoryx.HandleAgentMemoryPromoteProposal)
+	mux.Handle("POST /agents/memory/entries/supersede-document", memberorigin.Require(memoryx.MemberWriteMaxRequest, http.HandlerFunc(memoryx.HandleAgentMemorySupersedeDocument)))
 	mux.HandleFunc("GET /agents/memory/entries/member-latest", memoryx.HandleAgentMemoryMemberLatest)
 	mux.HandleFunc("GET /agents/memory/entries/member-forgotten", memoryx.HandleAgentMemoryMemberForgotten)
 	// The member's purge of one memory's past revisions from the history (#1982): a read-only

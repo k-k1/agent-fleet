@@ -76,6 +76,8 @@ var memoryTestRoutes = map[string]http.HandlerFunc{
 	"GET /agents/memory/entries/lint-terms":           HandleAgentMemoryLintTerms,
 	"POST /agents/memory/entries/lint-terms":          HandleAgentMemoryLintTermsSave,
 	"GET /agents/memory/entries/promotion-candidates": HandleAgentMemoryPromoteCandidates,
+	"POST /agents/memory/entries/promotion-proposal":  HandleAgentMemoryPromoteProposal,
+	"POST /agents/memory/entries/supersede-document":  HandleAgentMemorySupersedeDocument,
 	"GET /agents/memory/entries/member-forgotten":     HandleAgentMemoryMemberForgotten,
 	"GET /agents/memory/entries/purge-preview":        HandleAgentMemoryPurgePreview,
 	"POST /agents/memory/entries/purge":               HandleAgentMemoryPurge,
@@ -103,16 +105,17 @@ var memoryTestRoutes = map[string]http.HandlerFunc{
 
 // memberOnlyTestRoutes are wrapped in memberorigin.Require, as routes.go wraps them.
 var memberOnlyTestRoutes = map[string]bool{
-	"POST /agents/memory/entries/pin":          true,
-	"POST /agents/memory/entries/revert":       true,
-	"POST /agents/memory/entries/member-save":  true,
-	"POST /agents/memory/af-import":            true,
-	"POST /agents/memory/auto-sync":            true,
-	"POST /agents/memory/entries/purge":        true,
-	"POST /agents/memory/snapshots":            true,
-	"POST /agents/memory/import/apply":         true,
-	"POST /agents/memory/entries/project-move": true,
-	"POST /agents/memory/entries/lint-terms":   true,
+	"POST /agents/memory/entries/pin":                true,
+	"POST /agents/memory/entries/revert":             true,
+	"POST /agents/memory/entries/member-save":        true,
+	"POST /agents/memory/af-import":                  true,
+	"POST /agents/memory/auto-sync":                  true,
+	"POST /agents/memory/entries/purge":              true,
+	"POST /agents/memory/snapshots":                  true,
+	"POST /agents/memory/import/apply":               true,
+	"POST /agents/memory/entries/project-move":       true,
+	"POST /agents/memory/entries/lint-terms":         true,
+	"POST /agents/memory/entries/supersede-document": true,
 }
 
 func buildMux() *http.ServeMux {

@@ -85,8 +85,11 @@ type scheduleDTO struct {
 	// report; the output always names the resolved list.
 	DeliverTo []string `json:"deliver_to"`
 	// Silent lets an answer that is exactly scheduleSilentSentinel deliver nothing.
-	Silent  bool `json:"silent"`
-	Enabled bool `json:"enabled"`
+	Silent bool `json:"silent"`
+	// ShowInSessions lists the worktree children a run starts in the Console's repository tree and
+	// Sessions list as the member's own (#5070). Default false = Schedules view only.
+	ShowInSessions bool `json:"show_in_sessions"`
+	Enabled        bool `json:"enabled"`
 	// ApprovalPending is true while a schedule a session wrote waits for the member's approval:
 	// it does not fire until then (#4631).
 	ApprovalPending bool `json:"approval_pending,omitempty"`
@@ -128,7 +131,7 @@ func scheduleToDTO(s store.Schedule) scheduleDTO {
 		Rotation: s.Rotation, MissingTargetPolicy: s.MissingTargetPolicy,
 		ReuseSession: s.ReuseSession, ReuseRunCount: s.ReuseRunCount,
 		OwnerConv: s.OwnerConv, Report: s.Report, StopAfterRun: s.StopAfterRun,
-		DeliverTo: scheduleTargets(s.DeliverTo), Silent: s.Silent, Enabled: s.Enabled, ApprovalPending: s.ApprovalPending, Generation: s.Generation, NextRun: s.NextRun, LastRun: s.LastRun,
+		DeliverTo: scheduleTargets(s.DeliverTo), Silent: s.Silent, ShowInSessions: s.ShowInSessions, Enabled: s.Enabled, ApprovalPending: s.ApprovalPending, Generation: s.Generation, NextRun: s.NextRun, LastRun: s.LastRun,
 		LastStatus: s.LastStatus, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
 		Gate: scheduleGateToDTO(s),
 	}
@@ -193,7 +196,7 @@ func validateScheduleDTO(mv store.MembershipView, in scheduleDTO) (store.Schedul
 		Worktree: strings.TrimSpace(in.Worktree), NewBranch: in.NewBranch,
 		Prompt: in.Prompt, OverlapPolicy: strings.TrimSpace(in.OverlapPolicy),
 		Rotation: strings.TrimSpace(in.Rotation), MissingTargetPolicy: strings.TrimSpace(in.MissingTargetPolicy),
-		Report: in.Report, StopAfterRun: in.StopAfterRun, Silent: in.Silent,
+		Report: in.Report, StopAfterRun: in.StopAfterRun, Silent: in.Silent, ShowInSessions: in.ShowInSessions,
 	}
 	// Checked on the raw value: the trim above would turn " codex" into a registered kind, and
 	// the create paths take a kind exactly or not at all (the stored row is then exact too).
@@ -884,6 +887,7 @@ type schedulePatch struct {
 	StopAfterRun        *bool            `json:"stop_after_run"`
 	DeliverTo           *[]string        `json:"deliver_to"`
 	Silent              *bool            `json:"silent"`
+	ShowInSessions      *bool            `json:"show_in_sessions"`
 	Gate                *scheduleGateDTO `json:"gate"`
 	// owner_conv is intentionally NOT patchable: create stamps it to the operator's own
 	// conversation (mcp_stdio withOwnerConv) so completion reports always return to the
@@ -982,6 +986,9 @@ func (p schedulePatch) apply(sch *store.Schedule) (specChanged bool, aerr *apiEr
 	}
 	if p.Silent != nil {
 		sch.Silent = *p.Silent
+	}
+	if p.ShowInSessions != nil {
+		sch.ShowInSessions = *p.ShowInSessions
 	}
 	return specChanged, nil
 }

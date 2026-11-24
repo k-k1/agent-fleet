@@ -198,13 +198,14 @@ var frozenMemberOriginRoutes = map[string]bool{
 	// Every settings write is signed, because some settings are the member's alone: Muse
 	// Code's contributor mode is one, and a session holds the same AGENT_TOKEN the relay uses.
 	// The Agent asks for the mark only on a write that arms such a setting (workspace/agent/ui_prefs.go); the rest ignore it.
-	"PUT /api/env/ui-prefs":                        true,
-	"POST /api/agents/memory/entries/pin":          true,
-	"POST /api/agents/memory/entries/lint-terms":   true, // added after the freeze (ADR 0130)
-	"POST /api/agents/memory/entries/revert":       true,
-	"POST /api/agents/memory/entries/member-save":  true,
-	"POST /api/agents/memory/entries/purge":        true,
-	"POST /api/agents/memory/entries/project-move": true,
+	"PUT /api/env/ui-prefs":                              true,
+	"POST /api/agents/memory/entries/pin":                true,
+	"POST /api/agents/memory/entries/lint-terms":         true, // added after the freeze (ADR 0130)
+	"POST /api/agents/memory/entries/supersede-document": true, // added after the freeze (ADR 0130 decision 11)
+	"POST /api/agents/memory/entries/revert":             true,
+	"POST /api/agents/memory/entries/member-save":        true,
+	"POST /api/agents/memory/entries/purge":              true,
+	"POST /api/agents/memory/entries/project-move":       true,
 	// Undoing a past review run (ADR 0117 decision 5): it writes into every kind's memory, so a
 	// session's own AGENT_TOKEN must not be able to do it.
 	"POST /api/agents/memory-review/runs/revert": true,
@@ -393,6 +394,8 @@ var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/aws-confirm/{id}/deny":    true,
 	// ADR 0130 decision 5: the member's retired-term list for the memory lint report.
 	"POST /api/agents/memory/entries/lint-terms": true,
+	// ADR 0130 decision 11: the member supersedes a memory by the document its promotion became.
+	"POST /api/agents/memory/entries/supersede-document": true,
 	// ADR 0130 decisions 6 and 7: the member's decisions on the consolidator's proposals.
 	"POST /api/agents/memory-consolidation/proposals/approve": true,
 	"POST /api/agents/memory-consolidation/proposals/reject":  true,
