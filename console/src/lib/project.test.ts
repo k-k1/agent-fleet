@@ -841,6 +841,12 @@ describe("a schedule that also shows in the Sessions view", () => {
     // The root's copy stays detached, with the child that has no worktree nested under it.
     expect(shapes(tree.detached ?? [])).toEqual([["af@cron", [["af@plain", []]]]]);
   });
+  it("on: stop / delete still reach every copy once, displayed or detached", () => {
+    const tree = repoTree(repos, sessions, on)[0];
+    const reach = (n: RepoTreeNode): string[] => lineageNodes(n).flatMap((c) => [c.repo.name, ...reach(c)]);
+    // Walkers dedupe by folder (see lineageNodes); what matters is nothing is lost.
+    expect([...new Set(reach(tree))].sort()).toEqual(["af@cron", "af@kid", "af@plain"]);
+  });
   it("on: the filter's match rule finds the child and not the root", () => {
     const hit = (folder: string) => sessionsInFolder(withoutUnattended(sessions, on), folder).length > 0;
     expect(hit("af@kid")).toBe(true);

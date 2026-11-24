@@ -5,6 +5,7 @@
 // a group of its own, newest first.
 import type { Session } from "../../types/session.ts";
 import { waitsForMember } from "../autorun/runs.ts";
+import { isWaitingSession } from "../../app/activity/badges.ts";
 import { repoInSet, sessionInSet, type WorkingSet } from "../../lib/workingSets.ts";
 import { sessionAutoKind, sessionFolder } from "../../lib/project.ts";
 import type { Repo } from "../repos/store.ts";
@@ -84,10 +85,12 @@ export function buildScheduledRuns(sessions: Session[], set: WorkingSet | null =
  *  counts on that icon instead, not on both. */
 export const waitingScheduledCount = (sessions: Session[], set: WorkingSet | null = null, repos: Repo[] = [], shown?: ReadonlySet<string>): number => {
   const byName = new Map(sessions.map((s) => [s.name, s]));
+  // Moved to the Sessions icon only when that icon really counts it (waitingSessions: alive and
+  // waiting, placed by sessionInSet); a stopped session that still carries its question, or one
+  // the set places differently there, stays here so it is never on neither.
+  const countedBySessions = (s: Session) => sessionAutoKind(s, byName, shown) === "" && isWaitingSession(s) && (!set || sessionInSet(set, s));
   return buildScheduledRuns(sessions, set, repos).reduce(
-    (n, r) =>
-      n +
-      [r.root, ...r.children].filter((s) => waitsForMember(s) && (!set || scheduledSessionInSet(set, s, repos)) && sessionAutoKind(s, byName, shown) !== "").length,
+    (n, r) => n + [r.root, ...r.children].filter((s) => waitsForMember(s) && (!set || scheduledSessionInSet(set, s, repos)) && !countedBySessions(s)).length,
     0,
   );
 };
