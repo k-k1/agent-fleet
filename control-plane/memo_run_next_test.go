@@ -355,6 +355,15 @@ func TestMemoRunNextBatchOfAnotherRecipeSkipsTheUnsendable(t *testing.T) {
 	})
 }
 
+// makeOldest backdates a message, so the oldest-first order does not hang on two creates landing
+// in the same second (created_at has second resolution; the tie falls to position and id).
+func (e *deliveryEnv) makeOldest(id string) {
+	e.t.Helper()
+	if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET created_at='2000-01-01T00:00:00Z' WHERE id=?`, id); err != nil {
+		e.t.Fatal(err)
+	}
+}
+
 // runNextCall is the member's Run next / Clear run next on one message.
 func (e *deliveryEnv) runNextCall(member, id string, body any) *httptest.ResponseRecorder {
 	return e.do(member, "POST", "/api/memos/"+id+"/run-next", body)
@@ -462,6 +471,7 @@ func TestMemoRunNextLeavesWithAMove(t *testing.T) {
 		e.queueWith("r", "a-src", nil)
 		dst := e.queueWith("r", "a-dst", map[string]any{"acceptOwnSessions": true, "maxActive": 1})
 		older := e.pending("r", "a-dst", "older, unmarked")
+		e.makeOldest(older.ID)
 		_, held := e.fromSession("a-src", "by a session the member started", "user", nil)
 		if rec := e.release(held.ID, held.ContentHash); rec.Code != http.StatusOK {
 			t.Fatalf("release: %d %s", rec.Code, rec.Body.String())
@@ -551,6 +561,59 @@ func TestMemoRunNextLeavesWithATidyMove(t *testing.T) {
 		}
 		if m := e.memoRow(ids[1]); !m.RunNext {
 			t.Fatalf("the message that stayed lost its mark: %+v", m)
+		}
+	})
+}
+
+// A merge of a queue into another leaves the mark; a rename of the same queue keeps it.
+func TestMemoRunNextCategoryRenameAndMerge(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		src := e.queueWith("app", "src", nil)
+		dst := e.queueWith("app", "dst", map[string]any{"maxActive": 1})
+		older := e.pending("app", "dst", "older, unmarked")
+		e.makeOldest(older.ID)
+		m := e.pending("app", "src", "marked in src")
+		e.runNextCall("a", m.ID, map[string]any{"runNext": true})
+		if rec := e.do("a", "PATCH", "/api/memo-categories/"+src, map[string]any{"name": "src2"}); rec.Code != http.StatusOK {
+			t.Fatalf("rename: %d %s", rec.Code, rec.Body.String())
+		}
+		if row := e.memoRow(m.ID); row.Category != "src2" || !row.RunNext {
+			t.Fatalf("a rename dropped the mark: %+v", row)
+		}
+		if rec := e.do("a", "PATCH", "/api/memo-categories/"+src, map[string]any{"name": "dst"}); rec.Code != http.StatusOK {
+			t.Fatalf("merge: %d %s", rec.Code, rec.Body.String())
+		}
+		row := e.memoRow(m.ID)
+		if row.Category != "dst" || row.State != store.MemoStatePending || row.RunNext {
+			t.Fatalf("after the merge: %+v, want pending in dst without the mark", row)
+		}
+		if d := e.fired(dst); !sameIDs(d.MessageIDs, older.ID) {
+			t.Fatalf("fired %v, want the older %s", d.MessageIDs, older.ID)
+		}
+	})
+}
+
+// Undoing a tidy move does not take a mark set where the run put the message back home with it.
+func TestMemoRunNextTidyUndoLeavesTheDestinationsMark(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		listed := e.queueWith("other", "inbox", nil)
+		agent, q, ids := e.tidyAuto(map[string]any{"tidyDestinations": []string{listed}}, 2)
+		agent.tidyReply = tidyOpsReply(func(ids []string, _ map[string]any) []any {
+			return []any{map[string]any{"op": "move", "id": ids[0], "to": listed}}
+		})
+		e.tidyTick(e.runner(), time.Now())
+		run := e.onlyRun(q)
+		if m := e.memoRow(ids[0]); m.State != store.MemoStatePending || m.Repo != "other" {
+			t.Fatalf("the moved message %+v", m)
+		}
+		if rec := e.runNextCall("a", ids[0], map[string]any{"runNext": true}); rec.Code != http.StatusOK {
+			t.Fatalf("mark: %d %s", rec.Code, rec.Body.String())
+		}
+		if rec := e.undo(run.ID); rec.Code != http.StatusOK {
+			t.Fatalf("undo: %d %s", rec.Code, rec.Body.String())
+		}
+		if m := e.memoRow(ids[0]); m.Repo == "other" || m.State != store.MemoStatePending || m.RunNext {
+			t.Fatalf("after the undo: %+v, want pending at home without the mark", m)
 		}
 	})
 }

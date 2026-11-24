@@ -514,7 +514,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.run_next_done": "Marked to run next.",
   "memo.run_next_cleared": "Run next cleared.",
   "memo.run_next_failed": "Could not change run next.",
-  "memo.run_next_not_waiting": "This memo is no longer waiting in an auto-run category. The list has been refreshed.",
+  "memo.run_next_not_waiting": "This memo is no longer waiting in an auto-run category.",
   "memo.continuation_held": "Waits for approval as a follow-up: {why}. Approve it to start a new chain from it.",
   "memo.cont_r_origin": "it did not come from a session this queue started",
   "memo.cont_r_delivery": "its run could not be matched to this queue",

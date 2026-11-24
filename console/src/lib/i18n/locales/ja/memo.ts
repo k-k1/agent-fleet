@@ -511,7 +511,7 @@ export const memo = {
   "memo.run_next_done": "「次に実行」にしました。",
   "memo.run_next_cleared": "「次に実行」を解除しました。",
   "memo.run_next_failed": "「次に実行」を変更できませんでした。",
-  "memo.run_next_not_waiting": "このメモはもう自動実行のカテゴリで待っていません。一覧を読み直しました。",
+  "memo.run_next_not_waiting": "このメモはもう自動実行のカテゴリで待っていません。",
   "memo.continuation_held": "続きとして承認待ちです（{why}）。承認すると、ここから新しい連鎖が始まります。",
   "memo.cont_r_origin": "このキューが起動したセッションからではないため",
   "memo.cont_r_delivery": "その実行をこのキューのものと確かめられないため",

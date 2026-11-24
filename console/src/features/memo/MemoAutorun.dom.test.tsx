@@ -2228,6 +2228,29 @@ describe("Run next in the memo menu (#5021)", () => {
     });
   }
 
+  it("sends one write per memo until it answers, then offers the other way", async () => {
+    servedMemos = [waiting()];
+    await render();
+    let answer: (v: unknown) => void = () => {};
+    memoSetRunNext.mockImplementationOnce(() => new Promise((r) => (answer = r)));
+    await click(rowMenuBtn());
+    await click(must(nextItem(), "run next item"));
+    await click(rowMenuBtn());
+    const busy = must(nextItem(), "run next item while sending");
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
+    await click(busy);
+    expect(memoSetRunNext).toHaveBeenCalledTimes(1);
+    servedMemos = [waiting({ runNext: true })];
+    await act(async () => answer({ id: "a", runNext: true }));
+    await click(rowMenuBtn());
+    const clear = must(nextItem(), "clear run next item");
+    expect(clear.getAttribute("aria-disabled")).toBeNull();
+    expect(clear.textContent).toContain(t("memo.run_next_clear"));
+    await click(clear);
+    expect(memoSetRunNext).toHaveBeenCalledTimes(2);
+    expect(memoSetRunNext).toHaveBeenLastCalledWith("a", false);
+  });
+
   it("shows the answer at once when the re-read fails", async () => {
     servedMemos = [waiting()];
     await render();

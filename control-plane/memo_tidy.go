@@ -629,6 +629,13 @@ func memoTidyUndo(ctx context.Context, st store.MemoQueueStore, membershipID, ru
 				return err
 			}
 		}
+		// A moved message goes back to another queue's order: a run-next mark set where the run put it
+		// does not follow it home, and the move already cleared any it had there (#5075).
+		for _, mv := range rec.Moves {
+			if _, err := tx.SetMemoRunNext(mv.ID, false); err != nil {
+				return err
+			}
+		}
 		at := memoNow()
 		if won, err := tx.UndoTidyRun(run.ID, at); err != nil {
 			return err

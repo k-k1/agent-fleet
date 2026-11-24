@@ -424,7 +424,18 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   // Run next / Clear run next (#5021): the mark only decides which eligible waiting note a free
   // slot takes first, so it is offered on any waiting note no run has taken.
   const canRunNext = (m: Memo) => !!runOneCat(m) && !m.deliveryId && !m.sentAt;
+  // One write per note at a time: a second press sent before the first answers could land after a
+  // later clear and bring the mark back.
+  const [runNextBusy, setRunNextBusy] = useState<ReadonlySet<string>>(() => new Set());
+  const runNextBusyRef = useRef(new Set<string>());
+  const setRunNextBusyFor = (id: string, on: boolean) => {
+    if (on) runNextBusyRef.current.add(id);
+    else runNextBusyRef.current.delete(id);
+    setRunNextBusy(new Set(runNextBusyRef.current));
+  };
   const toggleRunNext = async (m: Memo) => {
+    if (runNextBusyRef.current.has(m.id)) return;
+    setRunNextBusyFor(m.id, true);
     const on = !m.runNext;
     try {
       const res = await memoSetRunNext(m.id, on);
@@ -445,6 +456,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
       }
     } catch {
       toast(t("memo.run_next_failed"), { kind: "warn" });
+    } finally {
+      setRunNextBusyFor(m.id, false);
     }
     bumpMemos();
   };
@@ -1653,9 +1666,14 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                     className="ui-menu-item memo-cat-menu-item memo-menu-runnext"
                     // Set here: useMenuRoving tags only the items present when the menu opened, and this one can appear later.
                     role="menuitem"
-                    onClick={() => runMemoMenu(() => void toggleRunNext(menuLive))}
+                    // aria-disabled, not disabled, as for Run now: the arrow keys skip a native disabled item.
+                    aria-disabled={runNextBusy.has(menuLive.id) ? true : undefined}
+                    onClick={() => {
+                      if (runNextBusy.has(menuLive.id)) return;
+                      runMemoMenu(() => void toggleRunNext(menuLive));
+                    }}
                   >
-                    <Icon name="arrow-up" />
+                    <Icon name={runNextBusy.has(menuLive.id) ? "loading" : "arrow-up"} spin={runNextBusy.has(menuLive.id)} />
                     <span className="memo-cat-menu-txt">
                       {tr(menuLive.runNext ? "memo.run_next_clear" : "memo.run_next")}
                       <span className="memo-cat-menu-why">{tr(menuLive.runNext ? "memo.run_next_clear_hint" : "memo.run_next_hint")}</span>

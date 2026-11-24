@@ -305,6 +305,13 @@ func memoMoveBucket(tx store.MemoTxOps, repo, from, to string, inPrev, inNext, s
 				return err
 			}
 		}
+		// A merge into another queue leaves the order the run-next mark was a place in (memoUpdateFor);
+		// a rename of the same queue keeps it.
+		if !sameQueue && prev.RunNext {
+			if _, err := tx.SetMemoRunNext(prev.ID, false); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
