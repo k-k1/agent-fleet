@@ -226,6 +226,11 @@ func TestPinnedAnswer(t *testing.T) {
 			{Role: "assistant", TS: at(-time.Hour), Parts: []TurnPart{{Kind: "tool"}}},
 			{Role: "assistant", TS: at(-2 * time.Second), Parts: text("Done: long run")}}, false, "Done: long run", true},
 		{"a later turn's answer stamped after the pin", []Turn{{Role: "assistant", TS: at(time.Minute), Parts: text("Done: other")}}, false, "", false},
+		{"a later input dropped (attachments alone): its answer is passed over", []Turn{user(-time.Hour),
+			{Role: "assistant", TS: at(-time.Second), Parts: text("Partial: run")},
+			{Role: "assistant", TS: at(time.Minute), Parts: []TurnPart{{Kind: "tool"}}},
+			{Role: "assistant", TS: at(2 * time.Minute), Parts: text("Done: other")}}, true, "Partial: run", true},
+		{"only a later turn's answers, at the first line", []Turn{{Role: "assistant", TS: at(time.Minute), Parts: text("Done: other")}}, true, "", false},
 		{"the run's error stamped when read", []Turn{user(-time.Hour), said("Done: first"), user(-time.Minute),
 			{Role: "assistant", TS: at(time.Hour), Parts: []TurnPart{{Kind: "error", Text: "refused"}}}}, false, "", true},
 	} {

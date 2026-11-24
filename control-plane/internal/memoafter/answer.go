@@ -53,20 +53,37 @@ func TurnsBefore(turns []Turn, pin time.Time) []Turn {
 }
 
 // PinnedAnswer is LastAnswer of the turns before pin (TurnsBefore), turns being the transcript
-// from some line to its end. A page can start inside a person's later turn, whose input, stamped
-// after pin, is on the page before: an answer counts when its own turn is stamped before pin (a
-// later turn's lines are written after it), or else once a user turn of the session itself is
-// seen before it (an answer stamped late, or not at all). found is false until then, so the caller
-// reads back a page; atStart says turns begin at the transcript's first line, where nothing
-// earlier can be such an input. A run that called tools for more lines than the pages read holds
-// no user turn in them: its own answer, stamped before pin, is taken all the same.
+// from some line to its end. Every line of the run was written before pin, so an assistant turn
+// stamped at or after it is a later turn's even when no user turn of that turn is seen (opencode
+// drops an input of attachments alone from its turns): it is passed over. Only an error turn is
+// not, as one may be stamped when it is read (codex's synthetic error of a refused turn/start), and
+// passing over the run's own last error would read an earlier Done:.
+//
+// A page can start inside a person's later turn, whose input, stamped after pin, is on the page
+// before: an answer counts when its own turn is stamped before pin, or else once a user turn of
+// the session itself is seen before it (an answer stamped late, or not at all). found is false
+// until then, so the caller reads back a page; atStart says turns begin at the transcript's first
+// line, where nothing earlier can be such an input. A run that called tools for more lines than
+// the pages read holds no user turn in them: its own answer, stamped before pin, is taken all the
+// same.
 func PinnedAnswer(turns []Turn, pin time.Time, atStart bool) (text string, found bool) {
 	kept := TurnsBefore(turns, pin)
-	text, at, found := lastAnswerAt(kept)
-	if !found || atStart {
-		return text, found
+	var at int
+	for {
+		text, at, found = lastAnswerAt(kept)
+		if !found {
+			return "", false
+		}
+		ts, err := time.Parse(time.RFC3339Nano, kept[at].TS)
+		if err == nil && ts.Before(pin) {
+			return text, true
+		}
+		if err != nil || hasError(kept[at]) {
+			break // stamped late, or not at all
+		}
+		kept = kept[:at] // a later turn's
 	}
-	if ts, err := time.Parse(time.RFC3339Nano, kept[at].TS); err == nil && ts.Before(pin) {
+	if atStart {
 		return text, true
 	}
 	for _, t := range kept[:at] {
@@ -87,6 +104,16 @@ func PinnedAnswer(turns []Turn, pin time.Time, atStart bool) (text string, found
 func LastAnswer(turns []Turn) (text string, found bool) {
 	text, _, found = lastAnswerAt(turns)
 	return text, found
+}
+
+// hasError reports whether t holds an error part.
+func hasError(t Turn) bool {
+	for _, p := range t.Parts {
+		if p.Kind == "error" {
+			return true
+		}
+	}
+	return false
 }
 
 // lastAnswerAt is LastAnswer and the index of the turn it was read from.

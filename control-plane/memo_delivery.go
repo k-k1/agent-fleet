@@ -2006,12 +2006,12 @@ func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d s
 }
 
 // memoAnswerPinKinds are the kinds whose lastTurnEndAt is the end the kind itself told (a hook, or
-// the managed driver's turn completion). The Agent reads the others' ends off a poll of their
+// the managed driver's turn completion: lcpp is managed only). The Agent reads the others' ends off a poll of their
 // state, and an idle left over from the turn before can be stamped as the end of a turn that has
 // not yet taken its input (workspace/agent/internal/sessionx/turn_end_poll.go, "a stale idle that
 // outlives the window is still stamped"): pinned to it, the read would drop the run's own input
 // and answer. Their answer is read without the pin. A kind not listed is not pinned.
-var memoAnswerPinKinds = map[string]bool{"claude": true, "codex": true, "opencode": true, "muse": true}
+var memoAnswerPinKinds = map[string]bool{"claude": true, "codex": true, "opencode": true, "muse": true, "lcpp": true}
 
 // memoAnswerPin is the first instant a delivery's answer read takes as past the run: the end of
 // the root session's turn the close's read saw, plus memoAnswerPinSlack. false when that read saw
