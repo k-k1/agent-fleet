@@ -63,7 +63,9 @@ func rootDocAt(body string, i, j int) bool {
 		// "./name": the dot must begin the token, so "x./name", "../name" and URLs stay out.
 		return i >= 2 && body[i-2] == '.' && (i == 2 || !pathByte(body[i-3]) && strings.IndexByte("./~:$*{<%\\", body[i-3]) < 0)
 	}
-	return strings.IndexByte("~:$*{<%\\", body[i-1]) < 0
+	// A name the regexp picked up again after a character it does not take ("Guide+README.md",
+	// "x@README.md") is the tail of a longer one.
+	return strings.IndexByte("~:$*{<%\\+@", body[i-1]) < 0
 }
 
 // restateDocExt are the file kinds that are documents. A memory naming a script or a source file

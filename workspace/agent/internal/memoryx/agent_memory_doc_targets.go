@@ -91,19 +91,29 @@ var errAgentMemDocRevertDeep = errors.New("too many reverts of reverts to tell w
 // a fence, an indented quote or a longer id is no evidence.
 func agentMemDocSaysRevert(msg, commit string) bool {
 	lines := strings.Split(msg, "\n")
-	fence := ""
+	var fence byte // the fence character while inside a fenced block
+	fenceLen := 0
 	for i, ln := range lines {
 		ln = strings.TrimRight(ln, " \t\r")
-		if t := strings.TrimLeft(ln, " "); strings.HasPrefix(t, "```") || strings.HasPrefix(t, "~~~") {
-			switch {
-			case fence == "":
-				fence = t[:3]
-			case strings.HasPrefix(t, fence):
-				fence = ""
+		// CommonMark fences: up to three spaces, then three or more of ` or ~. A block closes
+		// only on a run of the same character at least as long, with nothing after it.
+		t := strings.TrimLeft(ln, " ")
+		if len(ln)-len(t) <= 3 && len(t) >= 3 && (t[0] == '`' || t[0] == '~') {
+			n := 0
+			for n < len(t) && t[n] == t[0] {
+				n++
 			}
-			continue
+			switch {
+			case n < 3:
+			case fence == 0 && !(t[0] == '`' && strings.ContainsRune(t[n:], '`')):
+				fence, fenceLen = t[0], n
+				continue
+			case fence == t[0] && n >= fenceLen && n == len(t):
+				fence, fenceLen = 0, 0
+				continue
+			}
 		}
-		if fence != "" {
+		if fence != 0 {
 			continue
 		}
 		rest, ok := strings.CutPrefix(ln, agentMemDocRevertMsg+commit)
@@ -247,10 +257,13 @@ func agentMemDocBlob(ctx context.Context, gitDir, rev, path string) ([]byte, err
 // agentMemDocFollow follows path through the renames of since..ref, oldest first, and answers where
 // it is now and the commit of its last move; "" when it was not moved, or was deleted on the way.
 // Following one file forward keeps a later file by the same name (a new AGENTS.md moved elsewhere)
-// out of its history. A rename whose paths git had to quote cannot be read and is not followed.
+// out of its history. When the target's commit came in on a branch, the merge that brought it
+// adds the file, which leaves it where it is. A rename whose paths git had to quote cannot be read and is not followed.
 func agentMemDocFollow(ctx context.Context, gitDir, path, since, ref string) (to, commit string, err error) {
+	// The default branch's own history: its first parents, a merge compared with its first parent.
+	// A branch's commits are not read one by one, so a delete the merge did not keep is not taken.
 	cmd := exec.CommandContext(ctx, "git", "--git-dir="+gitDir, "-c", "core.quotePath=false", "log", "--reverse",
-		"--no-merges", "-M", "--name-status", "--no-color", "--no-ext-diff", "--format=%x01%H", since+".."+ref)
+		"--first-parent", "--diff-merges=first-parent", "-M", "--name-status", "--no-color", "--no-ext-diff", "--format=%x01%H", since+".."+ref)
 	cmd.Env = append(cmd.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

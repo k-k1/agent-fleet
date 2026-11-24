@@ -227,11 +227,18 @@ func TestAgentMemoryDocumentTargetUnreachableMissingOtherRepo(t *testing.T) {
 func TestAgentMemoryDocumentTargetRevertMessages(t *testing.T) {
 	full := strings.Repeat("ab", 20)
 	for msg, want := range map[string]bool{
-		"Revert \"x\"\n\nThis reverts commit " + full + ".\n":                                          true,
-		"Revert \"x\"\n\nThis reverts commit " + full + ", reversing\nchanges made to " + full + ".\n": true,
-		"docs: explain\n\n    This reverts commit " + full + ".\n":                                     false,
-		"docs: explain\n\nThis reverts commit " + full + "cd.\n":                                       false,
-		"docs: explain\n\nThis reverts commit " + full + " and more\n":                                 false,
+		"Revert \"x\"\n\nThis reverts commit " + full + ".\n":                                               true,
+		"Revert \"x\"\n\nThis reverts commit " + full + ", reversing\nchanges made to " + full + ".\n":      true,
+		"docs: explain\n\n    This reverts commit " + full + ".\n":                                          false,
+		"docs: explain\n\nThis reverts commit " + full + "cd.\n":                                            false,
+		"docs: explain\n\nThis reverts commit " + full + " and more\n":                                      false,
+		"docs: explain\n\n```\nThis reverts commit " + full + ".\n```\n":                                    false,
+		"docs: explain\n\n~~~\nThis reverts commit " + full + ".\n~~~\nThis reverts commit " + full + ".\n": true,
+		"docs: explain\n\n````\n```sh\nThis reverts commit " + full + ".\n````\n":                           false,
+		"docs: explain\n\n```\nx\n``` not a close\nThis reverts commit " + full + ".\n```\n":                false,
+		"Revert\n\nThis reverts commit " + full + ", reversing\n":                                           false,
+		"Revert\n\nThis reverts commit " + full + ", reversing\nsomething else.\n":                          false,
+		"Revert\n\nThis reverts commit " + full + ",\n":                                                     false,
 	} {
 		if got := agentMemDocSaysRevert(msg, full); got != want {
 			t.Errorf("%q: %v, want %v", msg, got, want)
@@ -412,4 +419,30 @@ func TestAgentMemoryDocumentTargetNeedsTheSameOrigin(t *testing.T) {
 	if w.Documents != nil || !strings.Contains(strings.Join(w.Report.Skipped, "\n"), "document targets: the working copy's origin") {
 		t.Fatalf("%+v %v", w.Documents, w.Report.Skipped)
 	}
+}
+
+// The default branch's history is its first parents: a branch that deleted the file, merged
+// without keeping the delete, is not the file's history; the later rename on the default branch is.
+func TestAgentMemoryDocumentTargetRenameAfterAMergeThatKeptTheFile(t *testing.T) {
+	clone, project, _ := docTargetSetup(t)
+	docTargetGit(t, clone,
+		[]string{"switch", "--quiet", "-c", "side"},
+		[]string{"rm", "--quiet", "AGENTS.md"},
+		[]string{"commit", "--quiet", "-m", "drop agents on a branch"},
+		[]string{"switch", "--quiet", "main"},
+		[]string{"commit", "--quiet", "--allow-empty", "-m", "main moves on"},
+		[]string{"merge", "--quiet", "-s", "ours", "-m", "merge side, keeping AGENTS.md", "side"},
+		[]string{"mv", "AGENTS.md", "docs/agents.md"},
+		[]string{"commit", "--quiet", "-m", "move agents"})
+	if f := docTargetOne(t, docTargetLint(t, project), agentMemDocRenamed); f.Path != "docs/agents.md" {
+		t.Fatalf("%+v", f)
+	}
+}
+
+// The lint report's read bound does not narrow what an explicit supersede accepts.
+func TestAgentMemorySupersedeIgnoresTheReportBound(t *testing.T) {
+	old := agentMemDocMaxBytes
+	t.Cleanup(func() { agentMemDocMaxBytes = old })
+	agentMemDocMaxBytes = 16
+	docTargetSetup(t) // fails unless the supersede of a larger document goes through
 }

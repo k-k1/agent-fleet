@@ -90,10 +90,9 @@ func agentMemSupersedeDocCheck(ctx context.Context, p *agentMemProject, path, he
 		if !blob {
 			return agentMemDocTarget{}, conflict("%s is not a file at %s", path, at.name)
 		}
-		doc, err := agentMemDocBlob(ctx, lr.gitDir, at.commit, path)
-		if errors.Is(err, errAgentMemDocTooLarge) {
-			return agentMemDocTarget{}, conflict("%s at %s: %v", path, at.name, err)
-		}
+		// An explicit supersede or re-point reads the whole document, as it always has: the lint
+		// report's bound is for reads nobody asked for.
+		doc, err := agentMemLintGit(ctx, lr.gitDir, nil, "cat-file", "blob", at.commit+":"+path)
 		if err != nil {
 			return agentMemDocTarget{}, err
 		}

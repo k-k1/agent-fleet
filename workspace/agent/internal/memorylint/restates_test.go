@@ -128,13 +128,14 @@ func TestRestatesRootDocumentNamedInTheBody(t *testing.T) {
 		{Name: "dotslash", Body: "[steps](./README.md)\n" + restateGuide},
 		{Name: "longer", Body: "See README.md.bak and README.mdx\n" + restateGuide},
 		{Name: "parent", Body: "See ../README.md\n" + restateGuide},
+		{Name: "compound", Body: "See Guide+README.md and https://example.invalid/Guide+README.md\n" + restateGuide},
 	}, r)
 	for _, n := range []string{"bare", "dotslash"} {
 		if !sameSet(subjects(rep, n, CheckRestatesDoc), []string{"README.md"}) {
 			t.Errorf("%s: %v", n, subjects(rep, n, CheckRestatesDoc))
 		}
 	}
-	for _, n := range []string{"url", "longer", "parent"} {
+	for _, n := range []string{"url", "longer", "parent", "compound"} {
 		if len(subjects(rep, n, CheckRestatesDoc)) != 0 {
 			t.Errorf("%s: %v", n, subjects(rep, n, CheckRestatesDoc))
 		}
