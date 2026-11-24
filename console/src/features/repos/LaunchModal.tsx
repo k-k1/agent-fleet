@@ -872,7 +872,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // typed name turned out to exist, so check THAT branch out instead of creating it.
   // Existing-branch mode arrives here already resolved, with a branch picked from the list.
   const start = async (resolveCollision: boolean) => {
-    if (busy || seedLoading) return;
+    // Checked here, not only on the button: the send key and the collision retry come in this way.
+    if (busy || seedLoading || filesStuck || launchBlocked) return;
     setBusy(true);
     setConflict(null);
     setPolicyErr(null);

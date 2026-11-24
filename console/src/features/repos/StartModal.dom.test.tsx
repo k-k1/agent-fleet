@@ -295,6 +295,15 @@ describe("StartModal — uncloned team repositories", () => {
     expect(rows().some((b) => b.textContent?.includes("acme/docs"))).toBe(true);
   });
 
+  it("offers no team clone while a pick waits on a memo restore", async () => {
+    apiGet.mockImplementation(async (path: string) => (path === "api/connections" ? { github: { connected: true } } : []));
+    await team(["acme/docs"]);
+    unmount();
+    writeFoldValue("af-start-section", "repo");
+    await mount(["claude"], true);
+    expect(rowFor("acme/docs").disabled).toBe(true);
+  });
+
   it("refuses to clone when the connections changed after the list was drawn", async () => {
     let conns: unknown = { github: { connected: true } };
     apiGet.mockImplementation(async (path: string) => (path === "api/connections" ? conns : []));

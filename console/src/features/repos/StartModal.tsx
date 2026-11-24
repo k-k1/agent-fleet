@@ -230,7 +230,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
   // before the first await; without it two clicks start two clone jobs for one repository.
   const teamCloneLock = useRef(false);
   const cloneTeam = async (c: TeamCloneTarget) => {
-    if (busy || teamCloneLock.current) return;
+    if (busy || pickPending || teamCloneLock.current) return;
     teamCloneLock.current = true;
     setBusy(true);
     try {
@@ -460,7 +460,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
               <div className="start-list start-repo-list">
                 {visibleBases.filter((r) => teamBases.has(r)).map(baseRow)}
                 {teamClones.map((c) => (
-                  <button key={c.path} type="button" className="start-row" disabled={busy} onClick={() => void cloneTeam(c)}>
+                  <button key={c.path} type="button" className="start-row" disabled={busy || pickPending} onClick={() => void cloneTeam(c)}>
                     <Icon name="add" className="start-row-ic" />
                     <span className="start-row-body">
                       <span className="start-row-title">{c.path}</span>

@@ -39,6 +39,9 @@ vi.mock("../memo/launchStash.ts", () => ({
   stashLaunchDraft: (...a: unknown[]) => stashLaunchDraft(...a),
 }));
 
+const initRepo = vi.fn();
+vi.mock("./clone.ts", () => ({ cloneRepo: vi.fn(), svnCheckout: vi.fn(), initRepo: (...a: unknown[]) => initRepo(...a) }));
+
 const { StartHost } = await import("./StartHost.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("./store.ts");
@@ -237,6 +240,60 @@ describe("Start hub — the draft's files and the memo it came from", () => {
     await click([...document.querySelectorAll<HTMLButtonElement>(".start-row")].find((b) => b.textContent?.includes("app"))!);
     await click(document.querySelector<HTMLButtonElement>(".launch-stash-btn")!);
     expect(stashLaunchDraft).toHaveBeenCalledWith("app", "あとでやる", [file]);
+  });
+
+  it("refuses the send key and keeps the files in a home dialog whose agent cannot take them", async () => {
+    launchKinds = ["cursor"];
+    await openHub("other");
+    await attachToHub(shot());
+    await click([...document.querySelectorAll<HTMLButtonElement>(".start-row")].find((b) => b.textContent?.includes(t("start.home_title")))!);
+    expect(document.querySelectorAll(".ui-modal")).toHaveLength(2);
+    await act(async () => {
+      lastBox().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    });
+    await settle();
+    expect(createCalls()).toHaveLength(0);
+    const modals = document.querySelectorAll(".ui-modal");
+    expect(modals[modals.length - 1].querySelectorAll(".ma-chip")).toHaveLength(1);
+  });
+
+  it("keeps the memo when the launch did not take the hub's draft (Other → Start in a new folder)", async () => {
+    const launched = vi.fn();
+    initRepo.mockImplementation(async () => {
+      useReposStore.setState({ repos: [{ name: "app", path: "/home/dev/repos/app", branch: "main" }, { name: "fresh", path: "/home/dev/repos/fresh", branch: "main", unborn: true }] as never });
+      return { ok: true, name: "fresh" };
+    });
+    useLaunchSeed.getState().set("メモの本文");
+    useLaunchSeed.getState().setMemoId("m1");
+    useLaunchSeed.getState().setOnLaunched(launched);
+    await openHub("other");
+    await click([...document.querySelectorAll<HTMLButtonElement>(".start-row")].find((b) => b.textContent?.includes(t("start.newdir_title")))!);
+    const name = document.querySelector<HTMLInputElement>(".ui-modal-body input")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(name, "fresh");
+      name.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const foot = () => document.querySelectorAll(".ui-modal-foot")[document.querySelectorAll(".ui-modal-foot").length - 1];
+    await click([...foot().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("start.create_and_continue")))!);
+    expect(lastBox().value).not.toBe("メモの本文"); // the dialog shows its own draft, not the memo
+    await click([...foot().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === t("launch.launch"))!);
+    expect(createCalls()).toHaveLength(1);
+    expect(launched).not.toHaveBeenCalled();
+  });
+
+  it("keeps a files-only memo whose file could not be fetched when a repository is launched", async () => {
+    const launched = vi.fn();
+    fetchMemoAttachments.mockImplementation(async () => []);
+    useLaunchSeed.getState().set("");
+    useLaunchSeed.getState().setAttachments([{ path: "/m/a.png", name: "a.png" }]);
+    useLaunchSeed.getState().setMemoId("m1");
+    useLaunchSeed.getState().setOnLaunched(launched);
+    await openHub("repo");
+    await click([...document.querySelectorAll<HTMLButtonElement>(".start-row")].find((b) => b.textContent?.includes("app"))!);
+    const foots = document.querySelectorAll(".ui-modal-foot");
+    await click([...foots[foots.length - 1].querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === t("launch.start_worktree"))!);
+    expect(createCalls()).toHaveLength(1);
+    expect(launched).not.toHaveBeenCalled();
   });
 
   it("waits for a memo's files, and keeps the memo when one of them could not be fetched", async () => {

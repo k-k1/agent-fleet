@@ -121,8 +121,11 @@ export function StartHost() {
             const { memoId, prompt, attachments } = useLaunchSeed.getState();
             // Only a repository picked in its own section takes the draft: Other's draft is the
             // home launch's, and a folder cloned or created there must not receive it.
-            setCarry(fromRepoSection && draftHasContent(draft));
-            if (!memoId) return openLaunch(r);
+            const take = fromRepoSection && draftHasContent(draft);
+            setCarry(take);
+            // A dialog that does not take the draft shows the repository's own stored draft and
+            // restores nothing, so there is nothing to set aside.
+            if (!memoId || !take) return openLaunch(r);
             if (picking.current) return; // one save at a time; a second click would save it twice
             picking.current = true;
             setPickPending(true);
@@ -213,8 +216,10 @@ export function StartHost() {
               if (seedWorkItem && r.name) {
                 void recordWorkItemLaunch(seedWorkItem, r.name, launch.name, workItemLaunchBranch(o, launch.branch || ""));
               }
-              if (show && carry) finishSeed(r.name || "");
-              else useLaunchSeed.getState().onLaunched?.(r.name || "");
+              // Over the hub the memo is finished only by a launch that took the hub's draft (the
+              // seed is in it); without the hub the dialog was seeded directly, as before.
+              if (!show) useLaunchSeed.getState().onLaunched?.(r.name || "");
+              else if (carry) finishSeed(r.name || "");
               setShow(false); // launched — drop the hub underneath too
               clearSeed();
             }
