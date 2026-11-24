@@ -216,7 +216,7 @@ af-memory lint [--user | --project <ID か名前>] [--json] [--apply]
 | `oversize` | 4,096 バイトを超える本文 |
 
 - `--apply` なしでは何も書きません。読み取りもメモリの使用回数に数えません
-- リポジトリは作業コピーではなく、`origin` の既定ブランチを ref で読みます。fetch はしないので、古いクローンでは古い答えになります
+- リポジトリは作業コピーではなく、`origin` の既定ブランチを ref で読みます。fetch はしないので、古いクローンでは古い答えになります。部分クローン（`git clone --filter`）ではファイルの中身がそろっていないので、シンボルの検査は飛ばします
 - 廃止した用語の提案が出ることがあります。一覧に入れるかどうかは Console で決めます
 - 終了コードは、コマンドが動いたかどうかです。指摘があっても 0 で終わります
 
@@ -251,15 +251,16 @@ af-memory promote-candidates [--project <ID か名前>] [--days N] [--json]
 
 - 種類（kind）が `lesson`・`procedure`・`preference` のどれかで、タイプ（type）が `user` ではありません（あなたではなく、リポジトリについてのメモリです）
 - 異なる 2 つ以上のセッションが、今のリビジョンを `memory_feedback` で確かめています。前のリビジョンへの確認は数えません
-- 保存されたアンカーがあり、既定ブランチで lint がそのメモリについて何も指摘していません
+- 保存されたアンカーがあり、どれも既定ブランチで見つかります。ツリーのファイルかディレクトリ、記録のある `ADR <番号>`、メモリの `[[名前]]`、ファイルの中に見つかるコードの形のシンボルのどれかです。コマンドなど、調べようのないアンカーがあると保留になります
+- 既定ブランチで lint がそのメモリについて何も指摘していません
 - 未解決の理由がありません
-- 今のリビジョンが N 日以上前のものです
+- ストアの履歴で、ファイルが N 日以上変わっていません（lint が理由を足したり消したりするのも変更です）。また、最後に公開した変更と同じ内容です
 
 ```
 == acme-shop: 1 candidate(s), 1 held (confirmed by 2 sessions, unchanged for 7 days)  [origin/main @ 3f9c2a1e5b07]
    candidate  release-steps r3  procedure, 2 sessions, since 2026-11-01T00:00:00Z
               anchors: scripts/release.sh
-   held       deploy-notes r1  lesson: confirmations (1 of 2 sessions on revision 1); no-anchors
+   held       deploy-notes r1  lesson: no-anchors; confirmations (1 of 2 sessions on revision 1)
 ```
 
 その種類のメモリで条件を満たさないものは `held` として、足りないものをすべて添えて表示します。
@@ -269,8 +270,11 @@ af-memory promote-candidates [--project <ID か名前>] [--days N] [--json]
 | `about-member` | タイプが `user` です |
 | `open-reasons` | 「要確認」です |
 | `no-anchors` | 保存されたアンカーがありません |
-| `unverified` | 既定ブランチを読めなかったので、アンカーを確かめていません |
+| `unverified` | 確かめられないものがあったので、どのメモリも候補になりません。既定ブランチを読めなかったか、その上の検査が失敗した、`origin/HEAD` が設定されていない（既定ブランチが推測にすぎません。`git remote set-head origin --auto` で設定できます）、部分クローンである、廃止した用語の一覧を読めない、のどれかです。どれだったかは `skipped` の行に出ます |
+| `anchor-not-found` | 保存されたアンカーが既定ブランチで見つかりません（そのアンカーを添えます） |
 | `lint` | lint がそのメモリについて指摘しています（指摘の名前を添えます） |
+| `moved` | 一覧を作っている間に変わりました。もう一度実行してください |
+| `unpublished` | ファイルが、最後に公開した変更と違います。Agent Fleet の外で編集したときなどです |
 | `confirmations` | 今のリビジョンを確かめたセッションが足りません |
 | `changed-recently` | 今のリビジョンができてから N 日経っていません |
 

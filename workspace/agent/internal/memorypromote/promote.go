@@ -31,7 +31,10 @@ const (
 	RuleOpenReasons  = "open-reasons"     // it is suspect
 	RuleNoAnchors    = "no-anchors"       // nothing ties it to the repository
 	RuleLint         = "lint"             // lint reports something about it (a missing anchor, a retired term, its size)
-	RuleUnverified   = "unverified"       // the repository could not be read, so its anchors are unchecked
+	RuleUnverified   = "unverified"       // the default branch or the retired-term list could not be read, so nothing is checked
+	RuleAnchor       = "anchor-not-found" // a stored anchor was not found on the default branch
+	RuleMoved        = "moved"            // it changed while it was being checked
+	RuleUnpublished  = "unpublished"      // the file differs from its last published change
 	RuleConfirmation = "confirmations"    // fewer distinct sessions confirmed the current revision than needed
 	RuleRecent       = "changed-recently" // the current revision is younger than the quiet period
 )
@@ -67,6 +70,10 @@ type Memory struct {
 	Reports  []Confirmation
 	// Findings are the lint check ids that fired for this memory on the default branch.
 	Findings []string
+	// Missing are anchors that were not found on the default branch (memorylint.VerifyAnchors).
+	Missing []string
+	// Also are misses the caller found itself (RuleMoved, RuleUnpublished).
+	Also []Miss
 }
 
 // Options tunes a run. Now is required; the zero value of the rest means the defaults.
@@ -74,9 +81,9 @@ type Options struct {
 	Now         time.Time
 	MinSessions int
 	Quiet       time.Duration
-	// RepoChecked says that lint read the default branch, so Findings covers the anchors. Without
-	// it no memory qualifies: an anchor nobody checked is not one that exists.
-	RepoChecked bool
+	// Unverified, when set, says why the default branch or the retired-term list could not be
+	// read. Then no memory qualifies: an anchor nobody checked is not one that exists.
+	Unverified string
 }
 
 // Candidate is a memory that qualifies.
@@ -147,12 +154,18 @@ func Select(mems []Memory, opts Options) Result {
 		}
 		if len(m.Anchors) == 0 {
 			miss = append(miss, Miss{Rule: RuleNoAnchors})
-		} else if !opts.RepoChecked {
-			miss = append(miss, Miss{Rule: RuleUnverified})
+		}
+		if opts.Unverified != "" {
+			miss = append(miss, Miss{Rule: RuleUnverified, Detail: opts.Unverified})
+		} else {
+			for _, a := range m.Missing {
+				miss = append(miss, Miss{Rule: RuleAnchor, Detail: a})
+			}
 		}
 		for _, f := range dedupe(m.Findings) {
 			miss = append(miss, Miss{Rule: RuleLint, Detail: f})
 		}
+		miss = append(miss, m.Also...)
 		n := Sessions(m.Reports, m.Revision)
 		if n < minSessions {
 			miss = append(miss, Miss{Rule: RuleConfirmation, Detail: fmt.Sprintf("%d of %d sessions on revision %d", n, minSessions, m.Revision)})

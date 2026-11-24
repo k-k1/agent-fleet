@@ -78,12 +78,15 @@ func TestSelectEachRuleHoldsOnItsOwn(t *testing.T) {
 		{"no-session", func(m *Memory) { m.Reports[1].Session = "" }, RuleConfirmation},
 		{"recent", func(m *Memory) { m.Updated = now.Add(-6 * 24 * time.Hour) }, RuleRecent},
 		{"unknown-time", func(m *Memory) { m.Updated = time.Time{} }, RuleRecent},
+		{"anchor-not-found", func(m *Memory) { m.Missing = []string{"scripts/release.sh"} }, RuleAnchor},
+		{"moved", func(m *Memory) { m.Also = []Miss{{Rule: RuleMoved}} }, RuleMoved},
+		{"unpublished", func(m *Memory) { m.Also = []Miss{{Rule: RuleUnpublished}} }, RuleUnpublished},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			m := proven(tc.name)
 			tc.mutate(&m)
-			res := Select([]Memory{proven("ok"), m}, Options{Now: now, RepoChecked: true})
+			res := Select([]Memory{proven("ok"), m}, Options{Now: now})
 			if len(res.Candidates) != 1 || res.Candidates[0].Name != "ok" {
 				t.Fatalf("candidates = %+v", res.Candidates)
 			}
@@ -95,8 +98,10 @@ func TestSelectEachRuleHoldsOnItsOwn(t *testing.T) {
 }
 
 func TestSelectNeedsACheckedRepository(t *testing.T) {
-	res := Select([]Memory{proven("m")}, Options{Now: now})
-	if len(res.Candidates) != 0 || len(res.Held) != 1 || !reflect.DeepEqual(rules(res.Held[0]), []string{RuleUnverified}) {
+	m := proven("m")
+	m.Missing = []string{"x"} // not reported again: nothing was checked
+	res := Select([]Memory{m}, Options{Now: now, Unverified: "no origin/HEAD"})
+	if len(res.Candidates) != 0 || len(res.Held) != 1 || !reflect.DeepEqual(res.Held[0].Missing, []Miss{{Rule: RuleUnverified, Detail: "no origin/HEAD"}}) {
 		t.Fatalf("unchecked repository: %+v", res)
 	}
 }
@@ -111,14 +116,14 @@ func TestSelectLeavesOutOtherKindsAndExcluded(t *testing.T) {
 	ex := proven("superseded")
 	ex.Excluded = true
 	mems = append(mems, ex)
-	res := Select(mems, Options{Now: now, RepoChecked: true})
+	res := Select(mems, Options{Now: now})
 	if len(res.Candidates) != 0 || len(res.Held) != 0 {
 		t.Fatalf("got %+v", res)
 	}
 	for _, k := range []string{"lesson", "procedure", "preference"} {
 		m := proven("k")
 		m.Kind = k
-		if r := Select([]Memory{m}, Options{Now: now, RepoChecked: true}); len(r.Candidates) != 1 {
+		if r := Select([]Memory{m}, Options{Now: now}); len(r.Candidates) != 1 {
 			t.Errorf("kind %s is not promoted: %+v", k, r)
 		}
 	}
@@ -127,7 +132,7 @@ func TestSelectLeavesOutOtherKindsAndExcluded(t *testing.T) {
 func TestSelectOrderAndOutput(t *testing.T) {
 	a, b, c := proven("b-two"), proven("a-two"), proven("c-three")
 	c.Reports = append(c.Reports, Confirmation{"s3", 3, VerdictConfirmed})
-	res := Select([]Memory{a, b, c}, Options{Now: now, RepoChecked: true})
+	res := Select([]Memory{a, b, c}, Options{Now: now})
 	var names []string
 	for _, x := range res.Candidates {
 		names = append(names, x.Name)
@@ -140,16 +145,16 @@ func TestSelectOrderAndOutput(t *testing.T) {
 		t.Errorf("candidate = %+v", res.Candidates[0])
 	}
 	// The quiet period and the session count can be raised, never lowered below decision 11's two.
-	if r := Select([]Memory{a}, Options{Now: now, RepoChecked: true, Quiet: 10 * 24 * time.Hour}); len(r.Candidates) != 0 {
+	if r := Select([]Memory{a}, Options{Now: now, Quiet: 10 * 24 * time.Hour}); len(r.Candidates) != 0 {
 		t.Errorf("a longer quiet period still promotes: %+v", r)
 	}
-	if r := Select([]Memory{a}, Options{Now: now, RepoChecked: true, MinSessions: 1}); len(r.Candidates) != 1 {
+	if r := Select([]Memory{a}, Options{Now: now, MinSessions: 1}); len(r.Candidates) != 1 {
 		t.Errorf("min sessions below two changed the result: %+v", r)
 	}
-	if r := Select([]Memory{a}, Options{Now: now, RepoChecked: true, MinSessions: 3}); len(r.Candidates) != 0 {
+	if r := Select([]Memory{a}, Options{Now: now, MinSessions: 3}); len(r.Candidates) != 0 {
 		t.Errorf("min sessions 3 still promotes two: %+v", r)
 	}
-	if r := Select([]Memory{a}, Options{Now: now, RepoChecked: true, MinSessions: 1}); r.Candidates[0].Sessions != 2 {
+	if r := Select([]Memory{a}, Options{Now: now, MinSessions: 1}); r.Candidates[0].Sessions != 2 {
 		t.Errorf("sessions = %d", r.Candidates[0].Sessions)
 	}
 }
@@ -157,7 +162,7 @@ func TestSelectOrderAndOutput(t *testing.T) {
 func TestSelectListsEveryMissOfAHeldMemory(t *testing.T) {
 	m := proven("m")
 	m.Type, m.Reasons, m.Findings, m.Reports, m.Updated = "user", 2, []string{"retired-term", "missing-path"}, nil, now
-	res := Select([]Memory{m}, Options{Now: now, RepoChecked: true})
+	res := Select([]Memory{m}, Options{Now: now})
 	want := []Miss{
 		{Rule: RuleAboutMember},
 		{Rule: RuleOpenReasons, Detail: "2 open"},

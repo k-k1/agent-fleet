@@ -19,7 +19,9 @@ func promoteAgent(t *testing.T) (*Client, *[]string) {
 		mu.Unlock()
 		switch r.URL.Path {
 		case "/agents/memory/entries/projects":
-			io.WriteString(w, `{"projects":[{"project":{"id":"demo-0123456789ab","display":"demo"},"count":2},{"project":{"id":"empty-0123456789ab","display":"empty"},"count":0}]}`)
+			io.WriteString(w, `{"projects":[{"project":{"id":"demo-0123456789ab","display":"demo"},"count":2},{"project":{"id":"empty-0123456789ab","display":"empty"},"count":0},`+
+				`{"project":{"id":"held-0123456789ab","display":"held"},"count":0,"withheld":1},`+
+				`{"project":{"id":"twin-0123456789ab","display":"twin"},"count":1},{"project":{"id":"twin-ba9876543210","display":"twin"},"count":1}]}`)
 		case "/agents/memory/entries/promotion-candidates":
 			io.WriteString(w, `{"project":{"id":"demo-0123456789ab","display":"demo"},"ref":"origin/main","commit":"abc123","minSessions":2,"quietDays":7,`+
 				`"candidates":[{"name":"release-steps","revision":3,"kind":"procedure","sessions":2,"anchors":["scripts/release.sh"],"updated":"2026-11-01T00:00:00Z"}],`+
@@ -59,8 +61,12 @@ func TestAFMemoryPromoteCandidates(t *testing.T) {
 			asked = append(asked, r)
 		}
 	}
-	if len(asked) != 1 || asked[0] != "GET /agents/memory/entries/promotion-candidates?project=demo-0123456789ab" {
-		t.Errorf("asked %v: a project without memory must be left out", asked)
+	// A project whose only files are withheld is still asked: the answer says how many.
+	if strings.Join(asked, " ") != "GET /agents/memory/entries/promotion-candidates?project=demo-0123456789ab "+
+		"GET /agents/memory/entries/promotion-candidates?project=held-0123456789ab "+
+		"GET /agents/memory/entries/promotion-candidates?project=twin-0123456789ab "+
+		"GET /agents/memory/entries/promotion-candidates?project=twin-ba9876543210" {
+		t.Errorf("asked %v: only a project without any file must be left out", asked)
 	}
 
 	*reqs = nil
@@ -75,5 +81,25 @@ func TestAFMemoryPromoteCandidates(t *testing.T) {
 	}
 	if code, _, _ := run(c, "promote-candidates", "extra"); code != 2 {
 		t.Errorf("stray argument: %d, want 2", code)
+	}
+	// A name two projects share is refused; the id of either still works.
+	if code, _, e := run(c, "promote-candidates", "--project", "twin"); code != 1 || !strings.Contains(e, "several projects") {
+		t.Errorf("ambiguous name: %d %q", code, e)
+	}
+	if code, _, e := run(c, "promote-candidates", "--project", "twin-ba9876543210"); code != 0 {
+		t.Errorf("id of a twin: %d %q", code, e)
+	}
+	// --days is checked before anything is asked, with the Agent's rule: decimal 1 to 90.
+	for _, d := range []string{"0", "91", "", "x", "-1", "+5", "0x10"} {
+		*reqs = nil
+		if code, _, _ := run(c, "promote-candidates", "--days="+d); code != 2 || len(*reqs) != 0 {
+			t.Errorf("--days=%q: exit %d after %v, want 2 and no request", d, code, *reqs)
+		}
+	}
+	for d, sent := range map[string]string{"1": "days=1", "90": "days=90", "08": "days=8"} {
+		*reqs = nil
+		if code, _, _ := run(c, "promote-candidates", "--project", "demo", "--days", d); code != 0 || len(*reqs) != 2 || !strings.HasSuffix((*reqs)[1], "&"+sent) {
+			t.Errorf("--days %s: exit %d, %v", d, code, *reqs)
+		}
 	}
 }

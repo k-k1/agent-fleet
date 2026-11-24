@@ -30,41 +30,63 @@ func cmdPromoteCandidates(c *Client, args []string, out io.Writer) error {
 	fs := flag.NewFlagSet("promote-candidates", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	proj := fs.String("project", "", "")
-	days := fs.Int("days", 0, "")
+	daysArg := fs.String("days", "", "")
 	asJSON := fs.Bool("json", false, "")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *days < 0 {
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 {
 		return &usageError{"promote-candidates takes --project <id|name> (without it, every project that holds memory), and optionally --days N and --json"}
+	}
+	// The Agent applies the same rule; checking here first refuses a bad value even when there is
+	// no project to ask about.
+	days := 0
+	daysSet := false
+	fs.Visit(func(f *flag.Flag) { daysSet = daysSet || f.Name == "days" })
+	if daysSet {
+		n, err := strconv.Atoi(*daysArg)
+		if err != nil || n < 1 || n > 90 || strings.TrimLeft(*daysArg, "0123456789") != "" {
+			return &usageError{"--days is a whole number from 1 to 90"}
+		}
+		days = n
 	}
 	var projects struct {
 		Projects []struct {
-			Project *project
-			Count   int
+			Project  *project
+			Count    int
+			Withheld int
 		}
 	}
 	if err := c.do("GET", "/agents/memory/entries/projects", nil, &projects); err != nil {
 		return err
 	}
-	var ids []string
+	var ids, named []string
 	for _, p := range projects.Projects {
-		if p.Project == nil {
-			continue
-		}
-		if *proj != "" && (p.Project.ID == *proj || p.Project.Display == *proj) {
+		switch {
+		case p.Project == nil:
+		case *proj != "" && p.Project.ID == *proj:
 			ids = []string{p.Project.ID}
-			break
-		}
-		if *proj == "" && p.Count > 0 {
+		case *proj != "" && p.Project.Display == *proj:
+			named = append(named, p.Project.ID)
+		case *proj == "" && (p.Count > 0 || p.Withheld > 0):
 			ids = append(ids, p.Project.ID)
+		}
+		if *proj != "" && len(ids) == 1 {
+			break
 		}
 	}
 	if *proj != "" && len(ids) == 0 {
-		return fmt.Errorf("no project %q (the ids and names are in `af-memory export-sources`)", *proj)
+		switch len(named) {
+		case 0:
+			return fmt.Errorf("no project %q (the ids and names are in `af-memory export-sources`)", *proj)
+		case 1:
+			ids = named
+		default:
+			return fmt.Errorf("%q names several projects; use the id (see `af-memory export-sources`)", *proj)
+		}
 	}
 	var reports []promoteReport
 	for _, id := range ids {
 		q := "project=" + queryEscape(id)
-		if *days > 0 {
-			q += "&days=" + strconv.Itoa(*days)
+		if days > 0 {
+			q += "&days=" + strconv.Itoa(days)
 		}
 		var r promoteReport
 		if err := c.do("GET", "/agents/memory/entries/promotion-candidates?"+q, nil, &r); err != nil {

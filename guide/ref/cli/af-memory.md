@@ -216,7 +216,7 @@ af-memory lint [--user | --project <id or name>] [--json] [--apply]
 | `oversize` | A body over 4,096 bytes |
 
 - Without `--apply` nothing is written, and reading does not count as a use of a memory
-- The repository is read by ref from `origin`'s default branch, never through a working copy. Nothing is fetched, so a stale clone gives a stale answer
+- The repository is read by ref from `origin`'s default branch, never through a working copy. Nothing is fetched, so a stale clone gives a stale answer. In a partial clone (`git clone --filter`) the symbol check is skipped, because the files' contents are not all there
 - Proposed retired terms may be listed. Whether one goes on your list is decided in the Console
 - The exit status says whether the command worked. It is 0 even when there are findings
 
@@ -252,15 +252,16 @@ A memory is a candidate when all of these hold:
 
 - Its kind is `lesson`, `procedure` or `preference`, and its type is not `user` (it is about the repository, not about you)
 - At least two different sessions confirmed its current revision with `memory_feedback`. A confirmation of an earlier revision does not count
-- It has stored anchors, and lint finds nothing about it on the default branch
+- It has stored anchors, and each one is found on the default branch: a file or directory of the tree, an `ADR <n>` with a record, a `[[name]]` of a memory, or a code-shaped symbol found in the files. A command or anything else that cannot be looked up holds it
+- Lint finds nothing about it on the default branch
 - It has no open reasons
-- Its current revision is at least N days old
+- Its file has not changed for N days, by the store's history (a reason lint adds or clears is a change too), and it is the same as its last published change
 
 ```
 == acme-shop: 1 candidate(s), 1 held (confirmed by 2 sessions, unchanged for 7 days)  [origin/main @ 3f9c2a1e5b07]
    candidate  release-steps r3  procedure, 2 sessions, since 2026-11-01T00:00:00Z
               anchors: scripts/release.sh
-   held       deploy-notes r1  lesson: confirmations (1 of 2 sessions on revision 1); no-anchors
+   held       deploy-notes r1  lesson: no-anchors; confirmations (1 of 2 sessions on revision 1)
 ```
 
 A memory of those kinds that does not qualify is listed as `held`, with everything it misses:
@@ -270,8 +271,11 @@ A memory of those kinds that does not qualify is listed as `held`, with everythi
 | `about-member` | Its type is `user` |
 | `open-reasons` | It is suspect |
 | `no-anchors` | It has no stored anchors |
-| `unverified` | The default branch could not be read, so its anchors are unchecked |
+| `unverified` | Something could not be checked, so nothing qualifies: the default branch could not be read or a check over it failed, `origin/HEAD` is not set (the default branch would only be a guess; `git remote set-head origin --auto` sets it), the clone is partial, or the retired-term list cannot be read. The `skipped` lines say which |
+| `anchor-not-found` | A stored anchor was not found on the default branch (the anchor is named) |
 | `lint` | Lint reports something about it (the finding is named) |
+| `moved` | It changed while the list was being made. Run it again |
+| `unpublished` | Its file differs from its last published change, for example after an edit outside Agent Fleet |
 | `confirmations` | Too few sessions confirmed its current revision |
 | `changed-recently` | Its current revision is younger than N days |
 

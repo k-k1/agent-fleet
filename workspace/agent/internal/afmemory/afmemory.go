@@ -52,8 +52,9 @@ Usage:
                                              bodies over 4,096 bytes (nothing is written)
   af-memory promote-candidates [--project <id|name>] [--days N] [--json]
                                              read-only: project memories confirmed by two sessions
-                                             on their current revision, with existing anchors and no
-                                             open reasons, unchanged for N days (default 7)
+                                             on their current revision, with anchors found on the
+                                             default branch and no open reasons, unchanged for N
+                                             days (1-90, default 7)
   af-memory --help
 
 <slug> is a name from import-sources. The import needs "Agent Fleet memory" turned on in
@@ -75,9 +76,10 @@ the link, term and size checks only. The retired-term list is edited in Settings
 
 promote-candidates lists the project memories worth proposing to the repository's own documents: a
 lesson, procedure or preference about the repository, confirmed by at least two different sessions
-(memory_feedback) on its current revision, with stored anchors that lint finds on the default
-branch, no open reasons and unchanged for N days. The rest of those kinds are listed as held, with
-what each one misses. Nothing is written and nothing is proposed yet.
+(memory_feedback) on its current revision, whose every stored anchor is found on the default branch
+(origin/HEAD must name it), with no lint finding, no open reasons, and a file unchanged in the
+store's history for N days. The rest of those kinds are listed as held, with what each one misses.
+Nothing is written and nothing is proposed yet.
 
 export is the other direction, one-shot: new and changed AF memories become files in claude's
 memory directory for the project, MEMORY.md is regenerated, and claude's memory is snapshotted

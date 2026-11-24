@@ -348,7 +348,7 @@ func (r agentMemLintRepo) readRenames() (agentMemLintRenames, error) {
 	cmd := exec.CommandContext(ctx, "git", "--git-dir="+r.gitDir, "-c", "core.quotePath=false", "log",
 		"-n", fmt.Sprint(agentMemLintRenameCommits), "--no-merges", "-M", "--diff-filter=R", "--name-status",
 		"--no-color", "--no-ext-diff", "--format=%x01%H", r.ref)
-	cmd.Env = append(cmd.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
+	cmd.Env = append(cmd.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return agentMemLintRenames{}, fmt.Errorf("git log failed")

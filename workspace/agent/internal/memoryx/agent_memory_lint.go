@@ -138,7 +138,7 @@ func agentMemLintSaveTerms(doc agentMemLintTermsDoc) error {
 // agentMemLintGit runs git against one git directory by ref, never in a working copy.
 func agentMemLintGit(ctx context.Context, gitDir string, stdin []byte, args ...string) ([]byte, error) {
 	cmd := exec.CommandContext(ctx, "git", append([]string{"--git-dir=" + gitDir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
 	if stdin != nil {
 		cmd.Stdin = bytes.NewReader(stdin)
 	}
@@ -205,7 +205,7 @@ func (r agentMemLintRepo) RemovedKeys() ([]memorylint.RemovedKey, error) {
 			cmd.Env = append(cmd.Env, e)
 		}
 	}
-	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
+	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, errors.New("git log failed")
@@ -254,6 +254,12 @@ func (r agentMemLintRepo) RemovedKeys() ([]memorylint.RemovedKey, error) {
 func (r agentMemLintRepo) FindSymbols(syms []string) (map[string]bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
 	defer cancel()
+	// In a partial clone git grep passes over the blobs it does not have without a word, and with
+	// lazy fetching off it must not get them: every symbol would read as missing. Say the check
+	// could not run instead.
+	if agentMemLintPartial(ctx, r.gitDir) {
+		return nil, errors.New("a partial clone: the files' contents are not all present")
+	}
 	found := make(map[string]bool, len(syms))
 	for i := 0; i < len(syms); i += agentMemLintSymChunk {
 		chunk := syms[i:min(i+agentMemLintSymChunk, len(syms))]
@@ -262,7 +268,7 @@ func (r agentMemLintRepo) FindSymbols(syms []string) (map[string]bool, error) {
 			pat.WriteString(s + "\n")
 		}
 		cmd := exec.CommandContext(ctx, "git", "--git-dir="+r.gitDir, "grep", "-h", "-o", "-w", "-F", "-I", "-f", "-", r.ref)
-		cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1")
+		cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0", "GIT_TERMINAL_PROMPT=0", "GIT_NO_REPLACE_OBJECTS=1", "GIT_NO_LAZY_FETCH=1")
 		cmd.Stdin = &pat
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -288,6 +294,22 @@ func (r agentMemLintRepo) FindSymbols(syms []string) (map[string]bool, error) {
 		}
 	}
 	return found, nil
+}
+
+// agentMemLintPartial says whether the repository is a partial clone: a promisor remote (what
+// `git clone --filter` sets) or the older extensions.partialClone.
+func agentMemLintPartial(ctx context.Context, gitDir string) bool {
+	out, err := agentMemLintGit(ctx, gitDir, nil, "config", "--get-regexp", `^(extensions\.partialclone|remote\..*\.promisor)$`)
+	if err != nil {
+		return false
+	}
+	for _, ln := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		_, v, _ := strings.Cut(ln, " ")
+		if v != "" && !strings.EqualFold(v, "false") {
+			return true
+		}
+	}
+	return false
 }
 
 // agentMemLintDefaultRef names the project's default branch as the remote has it. No fetch
