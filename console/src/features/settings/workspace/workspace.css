@@ -278,6 +278,15 @@
   font-family: var(--mono, monospace);
 }
 
+.tool-ver-title {
+  font-family: var(--font-sans, inherit);
+}
+
+.tool-ver-cmd {
+  color: var(--muted);
+  font-size: 11px;
+}
+
 .tool-ver-badge {
   margin-left: 6px;
   padding: 1px 6px;
