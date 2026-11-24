@@ -603,3 +603,78 @@ func TestRunningBoxFallsBackToTheMemoryCap(t *testing.T) {
 		t.Fatalf("%+v", sz)
 	}
 }
+
+// TestBoostBudgetCountsLaunchRecords: the production counter reads the launch records, so the
+// budget is enforced from the hours a member actually ran boosted this month (ADR 0139 decision
+// 5), whether or not the boost has since expired.
+func TestBoostBudgetCountsLaunchRecords(t *testing.T) {
+	ctx := context.Background()
+	e := newBoostEnv(t, tenantLimits{BoostEnabled: true, BoostMonthlyHours: 5})
+	e.m.boostHours = launchBoostHours{e.m.store}
+	at := func(d time.Duration) int64 { return e.now.Add(d).Unix() }
+	launch := func(id, override string, from, to time.Duration) {
+		t.Helper()
+		if err := e.m.store.BeginLaunch(ctx, store.Launch{ID: id, WorkspaceID: "w1", MembershipID: e.memID,
+			TenantID: e.tenantID, StartedAt: at(from), Override: override}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := e.m.store.EndOpenLaunch(ctx, e.memID, at(to)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Last month's boosted hours, unboosted and adopted launches, and a boost that never ran
+	// count for nothing.
+	launch("prev", store.SizeOverrideBoost, -40*24*time.Hour, -39*24*time.Hour)
+	launch("plain", "", -100*time.Hour, -90*time.Hour)
+	launch("adopted", "adopted", -80*time.Hour, -70*time.Hour)
+	launch("never", store.SizeOverrideBoost, -60*time.Hour, -60*time.Hour)
+	// Four boosted hours this month: well past any boost's end, which is the point.
+	launch("b1", store.SizeOverrideBoost, -50*time.Hour, -46*time.Hour)
+
+	sz := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident})
+	if b := sz.Boost.Budget; !b.Counted || b.UsedHours != 4 || b.Spent || !sz.Boost.Available {
+		t.Fatalf("4 of 5 hours: %+v available=%t", b, sz.Boost.Available)
+	}
+	if code, _, body := e.call(t, http.MethodPost, ``); code != 200 {
+		t.Fatalf("under budget: %d %s", code, body)
+	}
+
+	// One more boosted hour, still open and last seen an hour in.
+	if err := e.m.store.BeginLaunch(ctx, store.Launch{ID: "b2", WorkspaceID: "w1", MembershipID: e.memID,
+		TenantID: e.tenantID, StartedAt: at(-2 * time.Hour), Override: store.SizeOverrideBoost}); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.m.store.TouchLaunch(ctx, "b2", at(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	sz = e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident})
+	if b := sz.Boost.Budget; b.UsedHours != 5 || !b.Spent || sz.Boost.Reason != "budget_spent" {
+		t.Fatalf("5 of 5 hours: %+v reason=%q", b, sz.Boost.Reason)
+	}
+	// Spent refuses an extension of the live boost as well as a new one.
+	if code, _, body := e.call(t, http.MethodPost, `{"hours":2}`); code != http.StatusConflict || !strings.Contains(body, "boost_budget_spent") {
+		t.Fatalf("over budget: %d %s", code, body)
+	}
+
+	// A new month starts from zero.
+	e.now = time.Date(2026, 12, 1, 0, 30, 0, 0, time.UTC)
+	if b := e.m.boostBudgetOf(ctx, e.memID, tenantLimits{BoostEnabled: true, BoostMonthlyHours: 5}); b.UsedHours != 0 || b.Spent {
+		t.Fatalf("a new month: %+v", b)
+	}
+}
+
+// TestTenantBoostSaysTheBudgetIsCounted: with the counter wired, the tenant admin's card no
+// longer says the budget is unenforced.
+func TestTenantBoostSaysTheBudgetIsCounted(t *testing.T) {
+	ctx := context.Background()
+	st := p3Store(t)
+	m := p3Manager(t, st)
+	m.rtFactory = sizingOnlyFactory{sizing: boostSizing()}
+	m.boostHours = launchBoostHours{st}
+	acme, _ := st.CreateTenant(ctx, "acme", "Acme")
+	w := httptest.NewRecorder()
+	newWorkspaceAPI(m, false).writeTenantBoost(w, ctx, acme)
+	if !strings.Contains(w.Body.String(), `"budget_counted":true`) {
+		t.Fatalf("GET %s", w.Body.String())
+	}
+}

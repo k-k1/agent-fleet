@@ -403,3 +403,13 @@ The optional view of decision 3 is built (#4414): a table of the day rows under 
 ## Addendum — the tenant roll-up in the Console (2026-11-18)
 
 The tenant-wide `GET /api/admin/usage/history?tenant=` is shown too (#4493): under the tenant admin's running-time grid, with a member column (and a tenant column for a super admin's deployment-wide view), in the same range as the grid. A `null` figure still reads "not measured".
+
+## Addendum — the boosted hours are counted (2026-11-24)
+
+#4417 wires the counter the decision 5 addendum left out, and the monthly budget is enforced. `launchBoostHours`
+sums the launch records (decision 3) whose `override` is `boost`, each clipped to the current UTC month and ending
+at its stop, or at its last sighting while it is still open. A launch keeps `boost` until it stops, so the hours
+after expiry are in the count; a boost whose Start failed was closed at its own start and adds nothing. A launch
+the sampler adopted with no record of its start (`adopted`) is not counted, because what chose its box is unknown.
+At the budget, a new boost and an extension are both refused (`boost_budget_spent`). Showing the overrun to the
+tenant admin and on the cost line is the next part of #4417.

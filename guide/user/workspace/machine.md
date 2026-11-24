@@ -69,7 +69,7 @@ On a deployment where each workspace gets a whole instance, a tenant administrat
 - **Extend boost** sets a new end time; **End boost** goes back to your usual size at the next start
 - When a boost ends while the workspace runs, it is not shrunk. The usual size comes back at the next start
 - Where the tenant has not enabled it, there is no **Boost** button. When it is greyed out, the line under it says why: there is no bigger machine in the class, the next size is above a limit, the class is not allowed for the tenant, or this month's hours are used up
-- The tenant can set monthly hours per member. They are not counted yet, so that budget is not enforced
+- The tenant can set monthly hours per member. They count the hours you actually ran on a boosted size this month (UTC), including after the boost ended while the workspace kept running. Once they are used up, you cannot boost or extend until next month; a running workspace is not stopped
 - When memory stays tight, the memory pressure part points at Boost too
 
 ## See the usage

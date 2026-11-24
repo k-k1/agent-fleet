@@ -94,6 +94,10 @@ type UsageHistoryStore interface {
 	FoldRunning(ctx context.Context, membershipID string) error
 	// GetLaunch reads one launch.
 	GetLaunch(ctx context.Context, id string) (Launch, bool, error)
+	// OverrideRunningSecs is how many seconds of [from, to) the membership's launches with the
+	// given override ran, each launch up to its End. It reads the launches, not the day rows, so
+	// an open launch counts up to its last sighting without waiting for a fold.
+	OverrideRunningSecs(ctx context.Context, membershipID, override string, from, to int64) (int64, error)
 
 	// UsagePullCursor is how far the membership's Agent series has been folded (0 = never).
 	UsagePullCursor(ctx context.Context, membershipID string) (int64, error)
@@ -168,6 +172,26 @@ func (s *SQL) GetLaunch(ctx context.Context, id string) (Launch, bool, error) {
 		return Launch{}, false, nil
 	}
 	return l, err == nil, err
+}
+
+func (s *SQL) OverrideRunningSecs(ctx context.Context, membershipID, override string, from, to int64) (int64, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT started_at, COALESCE(stopped_at, last_seen_at) FROM workspace_launch
+		 WHERE membership_id=? AND override=? AND started_at < ? AND COALESCE(stopped_at, last_seen_at) > ?`,
+		membershipID, override, to, from)
+	if err != nil {
+		return 0, err
+	}
+	defer rows.Close()
+	var total int64
+	for rows.Next() {
+		var start, end int64
+		if err := rows.Scan(&start, &end); err != nil {
+			return 0, err
+		}
+		total += min(end, to) - max(start, from)
+	}
+	return total, rows.Err()
 }
 
 func (s *SQL) TouchLaunch(ctx context.Context, id string, at int64) error {

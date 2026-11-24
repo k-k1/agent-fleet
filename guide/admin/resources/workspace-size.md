@@ -132,7 +132,7 @@ Open **Tenant settings → Limits & idle**; the **Boost** card is under the defa
 |---|---|
 | **Allow members to boost** | Off to begin with. Nothing can be boosted while it is off |
 | **Highest size a boost may reach** | The largest size a boost can land on. **The top of the class** puts no cap below the class's largest |
-| **Monthly budget per member** | Boosted running hours per month, 0 for none. Running hours are not counted yet, so the budget is saved but not enforced |
+| **Monthly budget per member** | Boosted running hours per month, 0 for none. They are the hours a member actually ran on a boosted size this month (UTC), including hours after the boost ended while the workspace kept running; hours granted but never started do not count. Once they reach the budget, the member cannot boost or extend a boost until next month. A boost already on still applies until it ends, and a running workspace is not stopped |
 
 - A boost applies at the member's next start only. A running workspace is never restarted or shrunk by it
 - It is checked again at every start; when it no longer fits (the tenant switched it off, the class changed, the size is above a ceiling), it is not applied and the member's usual size is used

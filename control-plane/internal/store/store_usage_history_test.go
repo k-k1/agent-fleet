@@ -250,3 +250,88 @@ func checkUsageHistory(t *testing.T, st *SQL) {
 		t.Fatalf("rows before the cutoff survive: %d", len(rows))
 	}
 }
+
+func TestOverrideRunningSecsSQLite(t *testing.T) {
+	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	checkOverrideRunningSecs(t, st)
+}
+
+func TestOverrideRunningSecsPostgres(t *testing.T) {
+	url, ok := pgtest.Schema(t)
+	if !ok {
+		t.Skip("set AF_TEST_DATABASE_URL to run against Postgres")
+	}
+	st, err := OpenPostgres(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	checkOverrideRunningSecs(t, st)
+}
+
+// checkOverrideRunningSecs: only launches with the override count, each clipped to the window,
+// an open one up to its last sighting, and a launch that never ran adds nothing.
+func checkOverrideRunningSecs(t *testing.T, st *SQL) {
+	t.Helper()
+	ctx := context.Background()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tn, _ := st.EnsureDefaultTenant(ctx)
+	ident, _ := st.UpsertIdentity(ctx, "a@x.com", "a-x-com", "")
+	mem, _ := st.EnsureMembership(ctx, ident.ID, tn.ID, "member")
+	ident2, _ := st.UpsertIdentity(ctx, "b@x.com", "b-x-com", "")
+	other, _ := st.EnsureMembership(ctx, ident2.ID, tn.ID, "member")
+
+	month := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC).Unix()
+	h := func(n float64) int64 { return month + int64(n*3600) }
+	begin := func(id, membership, override string, start int64) {
+		t.Helper()
+		if err := st.BeginLaunch(ctx, Launch{ID: id, WorkspaceID: "w-" + membership, MembershipID: membership,
+			TenantID: tn.ID, StartedAt: start, Override: override}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	end := func(membership string, at int64) {
+		t.Helper()
+		if _, _, err := st.EndOpenLaunch(ctx, membership, at); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Straddles the start of the month: only its 2 hours inside count.
+	begin("L1", mem.ID, "boost", h(-3))
+	end(mem.ID, h(2))
+	// Not boosted.
+	begin("L2", mem.ID, "", h(10))
+	end(mem.ID, h(20))
+	// Boosted, never ran (a failed Start closes at its own start).
+	begin("L3", mem.ID, "boost", h(30))
+	end(mem.ID, h(30))
+	// Another member's boost.
+	begin("L4", other.ID, "boost", h(0))
+	end(other.ID, h(50))
+	// Open, last seen 1.5 hours in.
+	begin("L5", mem.ID, "boost", h(40))
+	if err := st.TouchLaunch(ctx, "L5", h(41.5)); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := st.OverrideRunningSecs(ctx, mem.ID, "boost", month, h(100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := int64(3.5 * 3600); got != want {
+		t.Fatalf("boosted secs = %d, want %d", got, want)
+	}
+	// The window's end clips an open launch too.
+	if got, _ := st.OverrideRunningSecs(ctx, mem.ID, "boost", month, h(41)); got != int64(3*3600) {
+		t.Fatalf("clipped at the end = %d, want %d", got, 3*3600)
+	}
+	if got, _ := st.OverrideRunningSecs(ctx, mem.ID, "boost", h(100), h(200)); got != 0 {
+		t.Fatalf("an empty window counted %d", got)
+	}
+}

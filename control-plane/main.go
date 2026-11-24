@@ -283,6 +283,7 @@ func main() {
 		log.Fatalf("route policy: %v", err)
 	}
 	mgr.store = st
+	mgr.boostHours = launchBoostHours{st}
 	mgr.push = pushsrv.New(st)
 	mgr.initGitDataGuard()
 	logOrphanGitRepos(ctx, st, mgr.dataRoot)
