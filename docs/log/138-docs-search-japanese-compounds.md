@@ -19,10 +19,13 @@ On the docs site (Pagefind 1.6.0 through Starlight) the query 「ワークツリ
   results.
 - **Baseline**: the site's own `scripts/search_quality.mjs` (Pagefind's browser library over `dist/pagefind`, with the
   ranking Starlight embeds).
-- **Other engines** index the same text. It was dumped from the Pagefind index itself (title, heading texts, body), so
-  an engine can only differ by tokenizing and ranking, not by what it was given. Every engine got the same field
-  weights (title 10, headings 5, body 1), AND semantics between terms and prefix matching where the engine has it. They
-  are **untuned**; Pagefind ships with Starlight's tuning. Read the gaps below with that in mind.
+- **Other engines** index text dumped from the Pagefind index itself, per page: the title, the heading texts, and the
+  body. The body field as Pagefind stores it already contains the title and heading text, so for the other engines
+  those words count twice (once in their own field, once in the body). Pagefind indexes the same source text with its
+  own structure and weights. This is therefore an approximation from one source, not proof that only tokenizing and
+  ranking differ. Every engine got the same field weights (title 10, headings 5, body 1), AND semantics between terms
+  and prefix matching where the engine has it. They are **untuned**; Pagefind ships with Starlight's tuning. Read the
+  gaps below with that in mind.
 - Throwaway scripts, not kept: a page dump through Pagefind's library, one adapter per engine, and a summary.
 
 ## Results
@@ -67,13 +70,14 @@ Typesense returned nothing for `af-aws-exec` (probably its handling of hyphens, 
 ### Why no engine reaches 3 for ワークツリー
 
 Counting occurrences in the 335 Japanese pages: eleven contain 「ワークツリー」. The release-note index has 15,
-`memo-auto-run` 12, `memos` 4, a few release notes 2–3, and the worktrees page **one**. Even an engine that treats
-the word as a single token (Typesense 6, Orama 7, bigrams 9) ranks pages that say it more often above the page that
-answers the question, because none of them has a signal that says "this page is about it". The page's title says
-`worktree`, not the katakana.
+`memo-auto-run` 12, `memos` 4, a few release notes 2–3, and the worktrees page **one**. With these untuned settings, engines that
+keep the word as one token (Typesense 6, Orama 7, bigrams 9) still did not put the page in the top 3. The one hit list
+that was read, Typesense's, had release notes and the memo pages above it, which fits the explanation that pages
+saying the word more often win; that is a hypothesis, since the stored results hold only the expected page's rank, and
+the title and BM25-style effects were not separated. The page's title says `worktree`, not the katakana.
 
-So the lever is not the tokenizer. Replacing Pagefind buys rank 25 → 6–17 for this query and costs ranks elsewhere
-(table above). What puts the page at the top is a signal on the page itself.
+What was observed: replacing Pagefind moved this query from rank 25 to 6–17 and cost ranks on other queries (table
+above), while a signal on the page itself moved it to 2.
 
 ### Per-page search keywords in Pagefind
 
@@ -89,7 +93,10 @@ was added to the worktrees page (and エージェントメモリ to the memory o
 | 7 | 2 | 5 | 50 |
 | 10 | 2 | 5 | 50 |
 
-Nothing else moved at 7 (52 of 53 rows still within their own N), and the page prose is untouched. エージェントメモリ stays at 5:
+In both non-control runs the worktrees keyword and the memory overview keyword were added together. At weight 7 the
+expected page's rank and the result count of the other 52 queries are identical to the control (the ranks of the
+other pages in each result list were not recorded), and the page prose is untouched. Only the weight-7 run's
+per-query results were kept; the other weights are read off the console. エージェントメモリ stays at 5:
 the other memory pages say it far more often, and a weight of 10 on the overview was not enough. That row needs its
 own look (a second keyword, or loosening the row to 5).
 
@@ -106,7 +113,8 @@ running them, from the issue's table:
 - Orama needs its own Starlight integration, and its index is one file: 8.3 MB raw / 2.9 MB gzipped for the
   Japanese pages with the Japanese tokenizer. Pagefind's 8.3 MB covers both languages and is split into 128 index
   and 670 fragment files that the browser fetches on demand. MiniSearch's index for the Japanese pages was
-  2.3 MB / 0.8 MB (no stored text).
+  2.3 MB / 0.8 MB, built with the same three fields and without stored field values; the Orama figure comes from
+  its `save()` output with the same fields.
 
 None of these is worth a measurement round until a signal on the page is shown not to be enough: the measured
 engines do not beat Pagefind on the 53 queries.
@@ -124,6 +132,6 @@ conversion from front matter), starting with the pages whose answer word is not 
 
 - The hidden element was added to a copy of `dist/` and the index rebuilt with the Pagefind CLI. It was not built
   through the site's own pipeline, and the weight was not tried together with Starlight's own `pagefind` options.
-- Engines other than Pagefind were not tuned; a tuned Typesense or Orama may close part of the gap, but cannot
-  avoid the ranking problem above.
+- Engines other than Pagefind were not tuned; a tuned Typesense or Orama may close part of the gap. Whether
+  tuning could put the page in the top 3 for ワークツリー was not tried.
 - Hosted engines: not run, see above.
