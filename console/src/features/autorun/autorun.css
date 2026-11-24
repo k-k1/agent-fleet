@@ -4,7 +4,7 @@
 .autorun-cat-head {
   display: flex; align-items: center; gap: 5px; padding: 6px 10px 2px; font-size: 11px; font-weight: 600;
   letter-spacing: 0.03em; text-transform: uppercase; color: var(--muted);
-  position: sticky; top: var(--sec-head-h, 34px); z-index: 2; background: var(--leftpane-bg, var(--panel));
+  position: sticky; top: calc(var(--sec-head-h, 34px) + var(--autorun-filter-h, 33px)); z-index: 2; background: var(--leftpane-bg, var(--panel));
 }
 .autorun-cat-ic { font-size: 12px; }
 .autorun-cat-name { flex: 1; min-width: 0; margin: 0; font: inherit; letter-spacing: inherit; text-transform: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -27,7 +27,7 @@
 /* After the shared button rule above, which resets the background. Opaque, with the hover tint
    laid over the base: a pinned band must never show the rows scrolling under it. */
 .autorun-sub-head {
-  position: sticky; top: calc(var(--sec-head-h, 34px) + var(--autorun-cat-head-h, 0px)); z-index: 1;
+  position: sticky; top: calc(var(--sec-head-h, 34px) + var(--autorun-filter-h, 33px) + var(--autorun-cat-head-h, 0px)); z-index: 1;
   background: var(--leftpane-bg, var(--panel));
 }
 .autorun-sub-head:hover {

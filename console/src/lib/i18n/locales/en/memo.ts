@@ -662,4 +662,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "autorun.show_in_memo": "Show in Memo queue",
   "autorun.running_head": "Running / waiting {n}",
   "autorun.reload": "Refresh",
+  "autorun.filter_ph": "Filter runs",
+  "autorun.filter_aria": "Filter auto-run runs",
+  "autorun.no_match": "No runs match the filter.",
 };

@@ -656,4 +656,80 @@ describe("AutoRunSection", () => {
     await mount();
     expect(host.querySelector(".pane-empty")).not.toBeNull();
   });
+
+  describe("quick filter", () => {
+    const type = async (v: string) => {
+      const input = host.querySelector<HTMLInputElement>(".autorun-filter-bar input")!;
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, v);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+      return input;
+    };
+    const twoCategories = () => {
+      memoQueueList.mockResolvedValue({
+        tenantEnabled: true,
+        queues: [
+          { categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" },
+          { categoryId: "c2", repo: "other", category: "nightly" },
+        ],
+      });
+      memoQueueDeliveries.mockImplementation(async (id: string) =>
+        id === "c1" ? [{ id: "d1", session: "run-a", state: "open" }] : [{ id: "d2", session: "run-z", state: "open" }],
+      );
+      useSessionsStore.setState({
+        sessions: [
+          ...useSessionsStore.getState().sessions,
+          sess("run-z", { origin: "queue", title: "Sweep logs", createdAt: new Date().toISOString() }),
+        ],
+      });
+    };
+    const runs = () => [...host.querySelectorAll("[data-autorun-run]")].map((e) => e.getAttribute("data-autorun-run"));
+    const cats = () => [...host.querySelectorAll("[data-autorun-category]")].map((e) => e.getAttribute("data-autorun-category"));
+
+    it("matches by title, #N, category label and a child's name, hiding categories with no match", async () => {
+      twoCategories();
+      await mount();
+      expect(cats()).toEqual(expect.arrayContaining(["agent-fleet / issue-rounds", "other / nightly"]));
+      await type("FIX IT");
+      expect(runs()).toEqual(["run-a"]);
+      expect(cats()).toEqual(["agent-fleet / issue-rounds"]);
+      await type("#12");
+      expect(runs()).toEqual(["run-a"]);
+      await type("nightly");
+      expect(runs()).toEqual(["run-z"]);
+      expect(cats()).toEqual(["other / nightly"]);
+      await type("rev-a");
+      expect(runs()).toEqual(["run-a"]);
+    });
+
+    it("clears on Escape and on the × button", async () => {
+      twoCategories();
+      await mount();
+      const input = await type("nightly");
+      expect(runs()).toEqual(["run-z"]);
+      await act(async () => {
+        input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(input.value).toBe("");
+      expect(runs().sort()).toEqual(["run-a", "run-z"]);
+      await type("nightly");
+      await act(async () => host.querySelector<HTMLButtonElement>(".proj-filter-clear")!.click());
+      expect(runs().sort()).toEqual(["run-a", "run-z"]);
+    });
+
+    it("says so when the filter, not the data, empties the list", async () => {
+      await mount();
+      await type("zzz-nothing");
+      expect(host.querySelector("[data-autorun-nomatch]")!.textContent).toBe("No runs match the filter.");
+      expect(host.textContent).not.toContain("No auto-run runs yet.");
+    });
+
+    it("opens the Ended fold while filtering so a match there is visible", async () => {
+      await mount();
+      expect(runs()).not.toContain("run-old");
+      await type("run-old");
+      expect(runs()).toEqual(["run-old"]);
+    });
+  });
 });
