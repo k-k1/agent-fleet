@@ -165,6 +165,42 @@ describe("ScheduleDetailModal delivery", () => {
     expect(update).toHaveBeenCalledWith("sch_1", { deliver_to: ["operator", "slack"], silent: true });
   });
 
+  const showBox = (): HTMLInputElement | undefined => {
+    const row = Array.from(document.querySelectorAll("label")).find((l) =>
+      l.textContent?.includes(t("sched.f_show_in_sessions")),
+    );
+    return row?.querySelector("input") as HTMLInputElement | undefined;
+  };
+
+  it("shows the Sessions-view setting off by default and patches only it when ticked", async () => {
+    await renderWith({});
+    expect(showBox()!.checked).toBe(false);
+    await act(async () => {
+      showBox()!.click();
+    });
+    await act(async () => {
+      saveButton().click();
+    });
+    expect(update).toHaveBeenCalledWith("sch_1", { show_in_sessions: true });
+  });
+
+  it("reads the stored Sessions-view setting and patches the clear", async () => {
+    await renderWith({ show_in_sessions: true });
+    expect(showBox()!.checked).toBe(true);
+    await act(async () => {
+      showBox()!.click();
+    });
+    await act(async () => {
+      saveButton().click();
+    });
+    expect(update).toHaveBeenCalledWith("sch_1", { show_in_sessions: false });
+  });
+
+  it("offers no Sessions-view setting for an assistant-mode schedule", async () => {
+    await renderWith({ session_mode: "assistant" });
+    expect(showBox()).toBeUndefined();
+  });
+
   it("refuses to save a report with no target", async () => {
     await renderWith({ report: true, deliver_to: ["operator"] });
     await act(async () => {

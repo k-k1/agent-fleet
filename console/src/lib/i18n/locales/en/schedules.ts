@@ -80,6 +80,8 @@ export const schedules: Record<keyof typeof jaSchedules, string> = {
   "sched.f_silent_hint": "the agent is told to answer exactly [SILENT] when all is well; such a run delivers nothing and shows as silent in the history. Failures are always notified (default: off)",
   "sched.f_stop_after_run": "Stop when done",
   "sched.f_stop_after_run_hint": "stop the session once the run finishes — after any report, and resumable (default: off)",
+  "sched.f_show_in_sessions": "Also show in the Sessions view",
+  "sched.f_show_in_sessions_hint": "list the worktree sessions this schedule's runs start in the repository tree and the Sessions list too (default: off)",
   "sched.f_prompt": "Prompt",
   "sched.f_session_mode": "Session mode",
   "sched.f_reuse_target": "Reuse target",
