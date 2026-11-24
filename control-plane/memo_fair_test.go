@@ -14,16 +14,31 @@ import (
 // context ends, as a hung workspace does. The channel gets each call's path as it arrives.
 func (e *deliveryEnv) silentMember() <-chan string {
 	e.t.Helper()
+	return e.memberCAgent(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(10 * time.Second):
+		}
+	})
+}
+
+// downMember is silentMember with an Agent that answers every call 502 at once.
+func (e *deliveryEnv) downMember() <-chan string {
+	e.t.Helper()
+	return e.memberCAgent(func(w http.ResponseWriter, r *http.Request) { agentErr(w, http.StatusBadGateway, "down") })
+}
+
+// memberCAgent puts serve behind member "c"'s running workspace. The channel gets each call's
+// path as it arrives.
+func (e *deliveryEnv) memberCAgent(serve http.HandlerFunc) <-chan string {
+	e.t.Helper()
 	calls := make(chan string, 64)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
 		case calls <- r.URL.Path:
 		default:
 		}
-		select {
-		case <-r.Context().Done():
-		case <-time.After(10 * time.Second):
-		}
+		serve(w, r)
 	}))
 	e.t.Cleanup(srv.Close)
 	ws := store.Workspace{ID: "ws-c", TenantID: e.t1.ID, MembershipID: e.members["c"], ContainerName: "c", Network: "n",

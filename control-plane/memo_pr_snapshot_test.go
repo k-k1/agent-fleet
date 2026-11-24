@@ -403,26 +403,21 @@ func TestMemoPRSnapshotListPages(t *testing.T) {
 	})
 }
 
-// More stopped members than the tick has pages, each ahead of a running workspace's snapshot: the
-// tick reaches them alone, and the next tick leaves out from its first page those it still finds
-// stopped, so the running one is read. Theirs stay unstamped (read at the start).
-func TestMemoPRSnapshotStoppedMembersCarried(t *testing.T) {
+// Stopped members whose rows would fill more pages than the tick has, ahead of a running
+// workspace's snapshot: each member's first row comes before any second, so the running one is
+// read in the tick. Theirs stay unstamped (read at the start).
+func TestMemoPRSnapshotStoppedMembersRanked(t *testing.T) {
 	saved := memoPRSnapshotsListed
-	memoPRSnapshotsListed = 1
+	memoPRSnapshotsListed = 2
 	t.Cleanup(func() { memoPRSnapshotsListed = saved })
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, q, da, _ := e.prChain("clean", now.Add(-time.Minute))
 		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
-		views, stopped := e.stoppedMembers(q, memoPRSnapshotListPages+1, now.Add(-time.Minute), "")
-		r := e.runner()
-		r.collectPRSnapshots(context.Background(), views(), now)
-		if got := e.delivery(da.ID); got.PRState != "" {
-			t.Fatalf("read in the first tick, so the test does not need the carry: %+v", got)
-		}
-		r.collectPRSnapshots(context.Background(), views(), now.Add(time.Minute))
+		views, stopped := e.stoppedMembers(q, memoPRSnapshotListPages+1, 2, now.Add(-time.Minute), "")
+		e.runner().collectPRSnapshots(context.Background(), views(), now)
 		if got := e.delivery(da.ID); got.PRState != store.PRStateMerged {
-			t.Fatalf("the running workspace's snapshot in the next tick: %+v", got)
+			t.Fatalf("the running workspace's snapshot behind them: %+v", got)
 		}
 		for _, id := range stopped {
 			if got := e.delivery(id); got.PRTriedAt != "" || got.PRState != "" {
@@ -432,20 +427,21 @@ func TestMemoPRSnapshotStoppedMembersCarried(t *testing.T) {
 	})
 }
 
-// A member left out on the last tick whose workspace runs now is read in the tick.
-func TestMemoPRSnapshotCarriedMemberThatStartedIsRead(t *testing.T) {
+// A member whose session list fails is asked once in the pass however many of its rows the page
+// holds (its failed view is kept), and the member behind it is read.
+func TestMemoPRSnapshotFailedMemberAskedOnce(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
-		agent, _, da, _ := e.prChain("clean", now.Add(-time.Minute))
+		agent, q, da, _ := e.prChain("clean", now.Add(-time.Minute))
 		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
-		r := e.runner()
-		r.collectPRSnapshots(context.Background(), map[string]*memoMemberView{e.members["a"]: {mirrorOK: true}}, now)
-		if got := e.delivery(da.ID); got.PRTriedAt != "" || len(r.prSkipped) != 1 {
-			t.Fatalf("stopped: stamped %q, carried %v", got.PRTriedAt, r.prSkipped)
-		}
-		r.collectPRSnapshots(context.Background(), map[string]*memoMemberView{}, now.Add(time.Minute))
+		calls := e.downMember()
+		e.otherMemberChains(q, "c", 2, now.Add(-time.Minute), "") // both ahead of a, in one page
+		e.runner().collectPRSnapshots(context.Background(), map[string]*memoMemberView{}, now)
 		if got := e.delivery(da.ID); got.PRState != store.PRStateMerged {
-			t.Fatalf("not read in the tick after the start: %+v", got)
+			t.Fatalf("the member behind: %+v", got)
+		}
+		if n := len(calls); n != 1 {
+			t.Fatalf("the failing member's session list was asked %d times, want once", n)
 		}
 	})
 }

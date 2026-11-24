@@ -27,7 +27,6 @@ import (
 	"net/http"
 	"net/url"
 	"path/filepath"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -690,11 +689,6 @@ type memoQueueRunner struct {
 	tidyJobs []func(context.Context)
 	// tidyCallWait is the wait for the Agent's tidy answer, memoTidyCallWait when zero.
 	tidyCallWait time.Duration
-	// answerSkipped and prSkipped are the members the answer pass's waited-for list and the PR
-	// snapshot pass left out on the last tick, their rows unstamped (memoSkipCarried). In this
-	// process only, as settleOrder: they only order the work.
-	answerSkipped []string
-	prSkipped     []string
 }
 
 func newMemoQueueRunner(mgr *manager, f *wakeFirer) *memoQueueRunner {
@@ -731,7 +725,11 @@ type memoMemberView struct {
 	prs bool
 	// defers is set when the Agent that answered reports the turn starts (queueDefer).
 	defers bool
-	readAt string
+	// prFailed is set when the PR snapshot pass resolved this view and the Agent's session list
+	// could not be read: the answer pass resolves the member again once its other rows are done
+	// (retryAnswersOf).
+	prFailed bool
+	readAt   string
 	// readDone is when the session list finished arriving by the local clock: a list that waited
 	// behind a long tick is stale for the close decision.
 	readDone time.Time
@@ -1865,101 +1863,135 @@ type memoAnswerReply struct {
 // collectAnswers reads the answers that are due: first those a pending message waits for, then
 // the rest, which only the run history shows. A waited-for one is not stamped while its workspace
 // is known to be stopped, so it is read as soon as the workspace runs (a dependent's wait wakes
-// it, prWake), and the list's next pages leave that member out. The members so left out are kept
-// for the next tick, whose list leaves out from its first page those still stopped by this tick's
-// view (memoSkipCarried): their rows cannot hide a running workspace's behind them, however many
-// members or rows they are, and one that started is read at once. Every other row is stamped when
-// it is reached, read or not: an Agent that does not answer is tried again after
-// memoAnswerEvery, and the rows behind it are reached meanwhile.
+// it, prWake), and the list's next pages leave that member out; the list gives each member's
+// first row before any second, so such members cannot fill the pages ahead of a running one
+// either. A waited-for row of a member whose session list the PR snapshot pass could not read is
+// tried after the others, with the member resolved again. Every other row is stamped when it is
+// reached, read or not: an Agent that does not answer is tried again after memoAnswerEvery, and
+// the rows behind it are reached meanwhile.
 func (r *memoQueueRunner) collectAnswers(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
 	read := 0
 	for _, waited := range []bool{true, false} {
-		var after *store.MemoDelivery
-		var except []string // the members whose rows this list leaves unstamped
-		if waited {
-			except = r.memoSkipCarried(ctx, views, r.answerSkipped, func(v *memoMemberView) bool { return v != nil && v.mirrorOK })
-		}
-		done := false
-		for p := 0; p < memoAnswerListPages && !done; p++ {
+		var skip memoDueSkipper
+		var retry []store.MemoDelivery
+		for p := 0; p < memoAnswerListPages; p++ {
 			if ctx.Err() != nil || read >= memoAnswersPerTick {
-				done = true
-				break
+				return
 			}
 			ds, err := r.mgr.store.ListAnswersDue(ctx, store.DeliveryTS(now.Add(-memoAnswerWindow)),
-				store.DeliveryTS(now.Add(-memoAnswerEvery)), waited, after, except, memoAnswersListed)
+				store.DeliveryTS(now.Add(-memoAnswerEvery)), waited, skip.MemoDueSkip, memoAnswersListed)
 			if err != nil {
 				log.Printf("memo queue: list answers due: %v", err)
-				done = true
-				break
+				return
 			}
-			read, except = r.readAnswersOf(ctx, views, ds, waited, read, except, now)
+			read = r.readAnswersOf(ctx, views, ds, waited, read, &skip, &retry, now)
 			if len(ds) < memoAnswersListed {
 				break
 			}
-			after = &ds[len(ds)-1]
 		}
-		if waited {
-			r.answerSkipped = except
-		}
-		if done {
-			return
-		}
+		read = r.retryAnswersOf(ctx, views, retry, read, now)
 	}
-}
-
-// memoSkipCarried starts a pass's except list: the members of carried (those the pass left out on
-// the last tick) that skip still holds for in this tick's view. A member whose workspace started
-// meanwhile is not left out, so its rows are read in this tick as before.
-func (r *memoQueueRunner) memoSkipCarried(ctx context.Context, views map[string]*memoMemberView, carried []string, skip func(*memoMemberView) bool) []string {
-	var except []string
-	for _, m := range carried {
-		if ctx.Err() != nil {
-			break
-		}
-		if skip(r.view(ctx, views, m)) {
-			except = memoExceptAdd(except, m)
-		}
-	}
-	return except
 }
 
 // memoAnswersListed is a page of collectAnswers' lists. A variable only so a test can page with
 // a handful of rows.
 var memoAnswersListed = 200
 
-// readAnswersOf reads the answers of one page of collectAnswers' list, read being the reads the
-// tick made so far and except the members left unstamped so far, and answers both, grown.
-func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, waited bool, read int, except []string, now time.Time) (int, []string) {
-	for _, d := range ds {
-		if ctx.Err() != nil || read >= memoAnswersPerTick {
-			return read, except
-		}
-		v := r.view(ctx, views, d.MembershipID)
-		live := v != nil && v.liveOK
-		if waited && v != nil && v.mirrorOK {
-			except = memoExceptAdd(except, d.MembershipID)
-			continue // stopped: read at the start
-		}
-		sctx, cancel := memoProgressCtx(ctx)
-		err := r.mgr.store.MarkAnswerTried(sctx, d.ID, store.DeliveryTS(now))
-		cancel()
-		if err != nil {
-			log.Printf("memo queue: delivery %s: stamp the answer tried: %v", d.ID, err)
-		}
-		if live {
-			read++
-			r.readAnswer(ctx, v, d)
-		}
-	}
-	return read, except
+// memoDueSkipper is a pass's store.MemoDueSkip, with the lookups the pass needs within a page:
+// the page was listed before the members it names were left out.
+type memoDueSkipper struct {
+	store.MemoDueSkip
+	left, retry map[string]bool
 }
 
-// memoExceptAdd adds a member to a pass's except list once.
-func memoExceptAdd(except []string, membershipID string) []string {
-	if slices.Contains(except, membershipID) {
-		return except
+// leave leaves a member's rows out of the rest of the pass.
+func (s *memoDueSkipper) leave(membershipID string) {
+	if s.left[membershipID] {
+		return
 	}
-	return append(except, membershipID)
+	if s.left == nil {
+		s.left = map[string]bool{}
+	}
+	s.left[membershipID] = true
+	s.Members = append(s.Members, membershipID)
+}
+
+// unstamped leaves out a row whose stamp could not be written, so the pass does not reach it twice.
+func (s *memoDueSkipper) unstamped(id string) { s.IDs = append(s.IDs, id) }
+
+// readAnswersOf reads the answers of one page of collectAnswers' list, read being the reads the
+// tick made so far, and answers the new count. Rows put off for a retry are added to retry.
+func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, waited bool, read int, skip *memoDueSkipper, retry *[]store.MemoDelivery, now time.Time) int {
+	for _, d := range ds {
+		if ctx.Err() != nil || read >= memoAnswersPerTick {
+			return read
+		}
+		if skip.retry[d.MembershipID] {
+			*retry = append(*retry, d)
+			continue
+		}
+		if skip.left[d.MembershipID] {
+			continue
+		}
+		v := r.view(ctx, views, d.MembershipID)
+		if waited && v != nil && v.mirrorOK {
+			skip.leave(d.MembershipID)
+			continue // stopped: read at the start
+		}
+		if waited && v != nil && v.prFailed {
+			skip.leave(d.MembershipID)
+			if skip.retry == nil {
+				skip.retry = map[string]bool{}
+			}
+			skip.retry[d.MembershipID] = true
+			*retry = append(*retry, d)
+			continue
+		}
+		read = r.tryAnswer(ctx, v, d, read, skip, now)
+	}
+	return read
+}
+
+// retryAnswersOf tries the rows put off because the PR snapshot pass could not read the member's
+// session list: the member is resolved again within what is left of the pass's budget, after
+// every other row, so an Agent that still does not answer delays no other member's read. One that
+// answers now is read as usual.
+func (r *memoQueueRunner) retryAnswersOf(ctx context.Context, views map[string]*memoMemberView, retry []store.MemoDelivery, read int, now time.Time) int {
+	for _, d := range retry {
+		if ctx.Err() != nil || read >= memoAnswersPerTick {
+			return read
+		}
+		v := views[d.MembershipID]
+		if v != nil && v.prFailed {
+			delete(views, d.MembershipID)
+			v = r.view(ctx, views, d.MembershipID)
+		}
+		if v != nil && v.mirrorOK {
+			continue // stopped meanwhile: read at the start
+		}
+		read = r.tryAnswer(ctx, v, d, read, nil, now)
+	}
+	return read
+}
+
+// tryAnswer stamps a row as tried and reads it when its member's Agent answered the session list,
+// and answers the reads made so far. A stamp that could not be written leaves the row out of the
+// pass's next pages (skip, when given).
+func (r *memoQueueRunner) tryAnswer(ctx context.Context, v *memoMemberView, d store.MemoDelivery, read int, skip *memoDueSkipper, now time.Time) int {
+	sctx, cancel := memoProgressCtx(ctx)
+	err := r.mgr.store.MarkAnswerTried(sctx, d.ID, store.DeliveryTS(now))
+	cancel()
+	if err != nil {
+		log.Printf("memo queue: delivery %s: stamp the answer tried: %v", d.ID, err)
+		if skip != nil {
+			skip.unstamped(d.ID)
+		}
+	}
+	if v != nil && v.liveOK {
+		read++
+		r.readAnswer(ctx, v, d)
+	}
+	return read
 }
 
 // readAnswer reads the delivery's root session for its last answer and keeps it. unknown is kept
