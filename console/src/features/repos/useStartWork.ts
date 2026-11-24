@@ -34,9 +34,10 @@ export interface StartTarget {
   seedless?: boolean;
 }
 
-/** The handoff take a launch from another member's offer carries (acceptHandoff.ts). */
+// What a seedless launch reads in place of the launch seed.
 const EMPTY_SEED = { handoffSession: "", handoffId: "", workItem: null, inboxItemId: "", inboxMemoId: "" } as const;
 
+/** The handoff take a launch from another member's offer carries (acceptHandoff.ts). */
 export interface HandoffTake {
   offerId: string;
   token: string;
