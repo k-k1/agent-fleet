@@ -126,14 +126,22 @@ describe("autofill opt-out guard", () => {
   });
 
   it("keeps real autofill on personal-data and credential fields", () => {
-    const want: [string, string][] = [
-      ["src/features/settings/connect/GitTab.tsx", 'autoComplete="email"'],
-      ["src/features/settings/connect/GitTab.tsx", 'autoComplete="name"'],
-      ["src/features/settings/connect/GitTab.tsx", 'autoComplete="username"'],
-      ["src/features/scm/ChangesView.tsx", 'autoComplete="email"'],
-      ["src/features/settings/tenant/tenantMembers.tsx", 'autoComplete="email"'],
-    ];
-    for (const [f, needle] of want) expect(fs.readFileSync(f, "utf8")).toContain(needle);
+    // Exact number of controls per file whose autoComplete is the given literal. Putting any one
+    // of them back on NO_AUTOFILL lowers its count, so each field is pinned on its own.
+    const want: Record<string, Record<string, number>> = {
+      "src/features/settings/connect/GitTab.tsx": { username: 1, name: 2, email: 3 },
+      "src/features/scm/ChangesView.tsx": { name: 1, email: 1 },
+      "src/features/settings/tenant/tenantMembers.tsx": { email: 1 },
+      "src/features/settings/workspace/GcpTab.tsx": { email: 1 },
+    };
+    for (const [f, counts] of Object.entries(want)) {
+      const got: Record<string, number> = {};
+      for (const c of parseControls(fs.readFileSync(f, "utf8"))) {
+        const v = c.attrs.find((a) => a.name === "autoComplete")?.value;
+        if (v && counts[v] !== undefined) got[v] = (got[v] ?? 0) + 1;
+      }
+      expect({ f, got }).toEqual({ f, got: counts });
+    }
   });
 
   it("has no unmarked free-text control in console/src", () => {

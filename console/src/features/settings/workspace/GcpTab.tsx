@@ -188,7 +188,7 @@ export function GcpTab() {
             <input {...NO_AUTOFILL} className="cinput" placeholder={f.project.trim() || "my-project-123"} value={f.quotaProject} onChange={set("quotaProject")} />
           </Field>
           <Field label={tr("gcp.f_account")} hint={tr("gcp.f_account_hint")}>
-            <input {...NO_AUTOFILL} className="cinput" placeholder="you@example.com" value={f.account} onChange={set("account")} />
+            <input autoComplete="email" className="cinput" placeholder="you@example.com" value={f.account} onChange={set("account")} />
           </Field>
           <Field label={tr("gcp.f_impersonate")} wide hint={tr("gcp.f_impersonate_hint")}>
             <input {...NO_AUTOFILL}
