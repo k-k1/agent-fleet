@@ -486,13 +486,33 @@ func TestStartNotificationDrainNeedsASender(t *testing.T) {
 }
 
 // statefulOutbox is an Agent outbox that serves what has not been acked, oldest first, up to
-// the Agent's 100 entries, and drops what is acked except keep.
+// the Agent's 100 entries, and drops what is acked, except where a delete fails: the ack is
+// still answered with a 204, as the Agent does.
 type statefulOutbox struct {
-	mu      sync.Mutex
-	pending []string // ids, oldest first
-	pad     string
-	acked   []string
-	keep    string // an id whose delete fails: acked, but never dropped
+	mu       sync.Mutex
+	pending  []string // ids, oldest first
+	pad      string
+	acked    []string
+	keep     string // an id whose delete always fails
+	failOnce string // an id whose first delete fails
+}
+
+// snapshot copies pending and acked under the lock; a handler may still be returning.
+func (o *statefulOutbox) snapshot() (pending, acked []string) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return append([]string(nil), o.pending...), append([]string(nil), o.acked...)
+}
+
+// countingInserts counts InsertNotification calls, duplicates included.
+type countingInserts struct {
+	store.NotificationStore
+	n atomic.Int32
+}
+
+func (c *countingInserts) InsertNotification(ctx context.Context, n store.Notification) error {
+	c.n.Add(1)
+	return c.NotificationStore.InsertNotification(ctx, n)
 }
 
 func (o *statefulOutbox) handler(w http.ResponseWriter, r *http.Request) {
@@ -508,6 +528,10 @@ func (o *statefulOutbox) handler(w http.ResponseWriter, r *http.Request) {
 			if id == o.keep {
 				continue
 			}
+			if id == o.failOnce {
+				o.failOnce = ""
+				continue
+			}
 			for i, p := range o.pending {
 				if p == id {
 					o.pending = append(o.pending[:i], o.pending[i+1:]...)
@@ -515,6 +539,7 @@ func (o *statefulOutbox) handler(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 	o.mu.Lock()
@@ -583,11 +608,12 @@ func TestDrainAgentOutboxFoldsABatchUpOverSeveralDrains(t *testing.T) {
 	if got := drainAgentOutbox(ctx, st, drainFakeRT{state: "running", endpoint: srv.URL}, mem); got != "ready" {
 		t.Fatalf("drain = %q", got)
 	}
-	if len(o.pending) != 0 {
-		t.Fatalf("still pending after repeated drains: %v", o.pending)
+	pending, acked := o.snapshot()
+	if len(pending) != 0 {
+		t.Fatalf("still pending after repeated drains: %v", pending)
 	}
-	if strings.Join(o.acked, ",") != strings.Join(want, ",") {
-		t.Fatalf("acked %v, want %v once each, in order", o.acked, want)
+	if strings.Join(acked, ",") != strings.Join(want, ",") {
+		t.Fatalf("acked %v, want %v once each, in order", acked, want)
 	}
 	rows, _ := st.ListNotifications(context.Background(), mem, "2000-01-01T00:00:00Z", 50)
 	if len(rows) != len(want) {
@@ -661,7 +687,8 @@ func TestDrainAgentOutboxTruncatedBodyIsOffline(t *testing.T) {
 
 // Asking again after a bound-cut response needs the ack to have been accepted and to have
 // moved the outbox: a 503 ends the drain after one fetch, and a 204 that drops nothing after
-// a second fetch that finds every acked id again, before it stores or acks them again.
+// a second fetch that finds every acked id again. That fetch is acked once more but not
+// stored again.
 func TestDrainAgentOutboxDoesNotReaskWithoutProgress(t *testing.T) {
 	old := maxOutboxEntries
 	maxOutboxEntries = 1
@@ -672,7 +699,8 @@ func TestDrainAgentOutboxDoesNotReaskWithoutProgress(t *testing.T) {
 		want   int32 // GETs
 	}{{"ack refused", http.StatusServiceUnavailable, 1}, {"ack accepted but nothing dropped", http.StatusNoContent, 2}} {
 		t.Run(tc.name, func(t *testing.T) {
-			st, mem := drainFixture(t)
+			sql, mem := drainFixture(t)
+			st := &countingInserts{NotificationStore: sql}
 			var gets, acks atomic.Int32
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.URL.Path == "/notifications/ack" {
@@ -688,8 +716,11 @@ func TestDrainAgentOutboxDoesNotReaskWithoutProgress(t *testing.T) {
 			if got := gets.Load(); got != tc.want {
 				t.Fatalf("%d fetches, want %d", got, tc.want)
 			}
-			if got := acks.Load(); got != 1 {
-				t.Fatalf("%d acks, want 1: the same ids were acked again", got)
+			if got := acks.Load(); got != tc.want {
+				t.Fatalf("%d acks, want one per fetch", got)
+			}
+			if got := st.n.Load(); got != 1 {
+				t.Fatalf("%d inserts, want 1: an id stored last round was stored again", got)
 			}
 		})
 	}
@@ -709,11 +740,83 @@ func TestDrainAgentOutboxReasksWhenOnlyTheFirstIdStays(t *testing.T) {
 	if got := drainAgentOutbox(context.Background(), st, drainFakeRT{state: "running", endpoint: srv.URL}, mem); got != "ready" {
 		t.Fatalf("drain = %q", got)
 	}
-	if strings.Join(o.pending, ",") != "a" {
-		t.Fatalf("pending %v, want only the stuck a", o.pending)
+	if pending, _ := o.snapshot(); strings.Join(pending, ",") != "a" {
+		t.Fatalf("pending %v, want only the stuck a", pending)
 	}
 	rows, _ := st.ListNotifications(context.Background(), mem, "2000-01-01T00:00:00Z", 50)
 	if len(rows) != 4 {
 		t.Fatalf("stored %d rows, want 4", len(rows))
+	}
+}
+
+// A delete that fails only once is retried: the fetch that finds every acked id again acks
+// them a second time before the drain stops, without storing them again.
+func TestDrainAgentOutboxReacksADeleteThatFailedOnce(t *testing.T) {
+	old := maxOutboxEntries
+	maxOutboxEntries = 1
+	defer func() { maxOutboxEntries = old }()
+	sql, mem := drainFixture(t)
+	st := &countingInserts{NotificationStore: sql}
+	o := &statefulOutbox{pending: []string{"a", "b"}, failOnce: "a"}
+	srv := httptest.NewServer(http.HandlerFunc(o.handler))
+	defer srv.Close()
+	if got := drainAgentOutbox(context.Background(), st, drainFakeRT{state: "running", endpoint: srv.URL}, mem); got != "ready" {
+		t.Fatalf("drain = %q", got)
+	}
+	pending, acked := o.snapshot()
+	if strings.Join(pending, ",") != "b" || strings.Join(acked, ",") != "a,a" {
+		t.Fatalf("pending %v acked %v, want [b] and a acked twice", pending, acked)
+	}
+	if got := st.n.Load(); got != 1 {
+		t.Fatalf("%d inserts, want 1", got)
+	}
+}
+
+// When every acked id comes back alongside an entry not read before (it fits under the byte
+// bound now, or the Agent listed it ahead of a large one), that entry is stored and acked
+// before the drain stops.
+func TestDrainAgentOutboxStoresANewEntryInAStalledFetch(t *testing.T) {
+	old := maxOutboxBody
+	maxOutboxBody = 1 << 20
+	defer func() { maxOutboxBody = old }()
+	st, mem := drainFixture(t)
+	entry := func(id, pad string) string {
+		return `{"id":"` + id + `","kind":"question","sessionName":"s","displayName":"` + pad + `"}`
+	}
+	big := entry("z", strings.Repeat("x", 2<<20))
+	var gets atomic.Int32
+	var mu sync.Mutex
+	var acked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/notifications/ack" {
+			var b struct {
+				IDs []string `json:"ids"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			mu.Lock()
+			acked = append(acked, strings.Join(b.IDs, ","))
+			mu.Unlock()
+			w.WriteHeader(http.StatusNoContent) // every delete failed
+			return
+		}
+		list := []string{entry("a", ""), entry("b", ""), big}
+		if gets.Add(1) > 1 {
+			list = []string{entry("a", ""), entry("b", ""), entry("c", ""), big}
+		}
+		_, _ = w.Write([]byte(`{"notifications":[` + strings.Join(list, ",") + `]}`))
+	}))
+	defer srv.Close()
+	if got := drainAgentOutbox(context.Background(), st, drainFakeRT{state: "running", endpoint: srv.URL}, mem); got != "ready" {
+		t.Fatalf("drain = %q", got)
+	}
+	mu.Lock()
+	got := strings.Join(acked, " | ")
+	mu.Unlock()
+	if gets.Load() != 2 || got != "a,b | a,b,c" {
+		t.Fatalf("%d fetches, acks %q; want 2 fetches and acks \"a,b | a,b,c\"", gets.Load(), got)
+	}
+	rows, _ := st.ListNotifications(context.Background(), mem, "2000-01-01T00:00:00Z", 50)
+	if len(rows) != 3 {
+		t.Fatalf("stored %d rows, want a, b and c", len(rows))
 	}
 }

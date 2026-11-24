@@ -447,14 +447,17 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 // maxDrainRounds bounds how many times one drain asks again after a response cut by a bound.
 const maxDrainRounds = 8
 
-// drainAgentOutboxOnce reads one response. more is true when a bound cut it and the entries
-// read were stored and the Agent answered the ack with a 2xx, so asking again can make
-// progress. acked is what this call acked; the caller passes it back as prevAcked.
+// drainAgentOutboxOnce reads one response. more is true when a bound cut it, the entries
+// read were stored, the Agent answered the ack with a 2xx, and that ack dropped at least one
+// of the ids acked last round (prevAcked), so asking again can make progress. acked is what
+// this call acked; the caller passes it back as prevAcked.
 //
-// When every id in prevAcked is read again, the Agent dropped none of them, and storing and
-// acking the same response again would only repeat the work: the call stops before either.
-// The whole set is compared, not the first id, because the Agent answers the ack with a 204
-// even when some deletes failed, so the first id can survive while the rest moved on.
+// Progress is judged by the whole prevAcked set, not the first id: the Agent answers the ack
+// with a 204 even when some deletes failed, so the first id can survive while the rest moved
+// on. When every prevAcked id is read again, the response is still stored and acked once more
+// before the drain stops, as with a first-id stop: an entry new to this response must not be
+// left unstored, and a delete that failed only once gets its second try. Only the inserts of
+// ids stored last round are skipped, because the store already holds those rows.
 func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string, prevAcked []string) (state string, more bool, acked []string) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
 	if tok := rt.Token(); tok != "" {
@@ -479,54 +482,43 @@ func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt ru
 	if !ok {
 		return "offline", false, nil
 	}
-	if noneDropped(prevAcked, entries) {
-		return "ready", false, nil
+	stored := make(map[string]struct{}, len(prevAcked))
+	for _, id := range prevAcked {
+		stored[id] = struct{}{}
 	}
+	seen := make(map[string]struct{}, len(stored))
 	acked = make([]string, 0, len(entries))
 	for _, in := range entries {
-		n := agentNotificationRow(in, membershipID)
-		if err := st.InsertNotification(ctx, n); err != nil {
+		if _, ok := stored[in.ID]; ok {
+			seen[in.ID] = struct{}{}
+		} else if err := st.InsertNotification(ctx, agentNotificationRow(in, membershipID)); err != nil {
 			return "offline", false, nil
 		}
 		acked = append(acked, in.ID)
 	}
-	if len(acked) > 0 {
-		b, _ := json.Marshal(map[string]any{"ids": acked})
-		req, _ = http.NewRequestWithContext(ctx, http.MethodPost, rt.Endpoint()+"/notifications/ack", bytes.NewReader(b))
-		req.Header.Set("Content-Type", "application/json")
-		if tok := rt.Token(); tok != "" {
-			req.Header.Set("Authorization", "Bearer "+tok)
-		}
-		ackResp, err := agentHTTPClient.Do(req)
-		if err != nil {
-			return "ready", false, acked
-		}
-		ackResp.Body.Close()
-		if ackResp.StatusCode/100 != 2 {
-			return "ready", false, acked
-		}
-	}
 	if len(acked) == 0 {
 		return "ready", false, nil
 	}
+	b, _ := json.Marshal(map[string]any{"ids": acked})
+	req, _ = http.NewRequestWithContext(ctx, http.MethodPost, rt.Endpoint()+"/notifications/ack", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	if tok := rt.Token(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	ackResp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		return "ready", false, nil
+	}
+	ackResp.Body.Close()
+	if ackResp.StatusCode/100 != 2 {
+		return "ready", false, nil
+	}
+	// Every id acked last round came back: that ack dropped none of them, so asking again
+	// would only repeat this work.
+	if len(stored) > 0 && len(seen) == len(stored) {
+		return "ready", false, acked
+	}
 	return "ready", more, acked
-}
-
-// noneDropped reports whether every id acked last round is among the entries read now.
-func noneDropped(prevAcked []string, entries []agentNotification) bool {
-	if len(prevAcked) == 0 {
-		return false
-	}
-	read := make(map[string]struct{}, len(entries))
-	for _, in := range entries {
-		read[in.ID] = struct{}{}
-	}
-	for _, id := range prevAcked {
-		if _, ok := read[id]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 // listPayload composes the GET /api/notifications body (drain the Agent's
