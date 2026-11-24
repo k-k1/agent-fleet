@@ -1110,14 +1110,15 @@ func memoRepoCheckOf(q store.MemoQueue, c store.MemoCategory) *memoRepoCheckWire
 const (
 	// memoRepoRecheckReads bounds the reads in flight across every member and host.
 	memoRepoRecheckReads = 6
-	// memoRepoRecheckPerHost bounds the reads in flight against one Git host. Most members share
-	// one or two hosts, so this is also what one host's traffic from the re-read is.
+	// memoRepoRecheckPerHost bounds the reads in flight against one Git host, as the workspaces
+	// name it. Repositories whose host could not be learned share one such bucket.
 	memoRepoRecheckPerHost = 2
-	// memoRepoRecheckPrepare bounds the members finding their workspace at once: database reads,
-	// the runtime's state and the Agent's list of working copies.
+	// memoRepoRecheckPrepare bounds the members finding their due queues, their workspace and
+	// their repositories' hosts at once.
 	memoRepoRecheckPrepare = 4
-	// memoRepoRecheckListWait bounds the Agent's list of working copies, which reads no remote.
-	memoRepoRecheckListWait = 15 * time.Second
+	// memoRepoRecheckHostWait bounds learning one member's repositories' hosts. The Agent answers
+	// from the clone's configuration and asks no remote.
+	memoRepoRecheckHostWait = 15 * time.Second
 )
 
 // memoRepoRechecker reads the settings file again for every enabled queue on an interval.
@@ -1182,11 +1183,8 @@ func (rc *memoRepoRechecker) tick(ctx context.Context) {
 	rc.wg.Wait()
 }
 
-// start reads each member's files once per repository and records the result on each enabled
-// queue of that repository, each member on its own goroutine; it does not wait for them. A
-// member whose earlier pass is still running is left out. A workspace that is not running is left
-// alone: a read never starts one. A queue read less than half an interval ago (by the member, or
-// by an earlier pass) is skipped.
+// start begins a pass for each member with an enabled queue, each on its own goroutine, and
+// does not wait for them. A member whose earlier pass is still running is left out.
 func (rc *memoRepoRechecker) start(ctx context.Context) {
 	if !rc.mgr.memoRepoSettings {
 		return
@@ -1197,21 +1195,16 @@ func (rc *memoRepoRechecker) start(ctx context.Context) {
 		log.Printf("memo repo recheck: list queues: %v", err)
 		return
 	}
-	byMember := map[string][]store.MemoQueue{}
-	var order []string
+	seen := map[string]bool{}
 	for _, q := range qs {
-		if !q.Enabled {
+		if !q.Enabled || seen[q.MembershipID] {
 			continue
 		}
-		if _, ok := byMember[q.MembershipID]; !ok {
-			order = append(order, q.MembershipID)
-		}
-		byMember[q.MembershipID] = append(byMember[q.MembershipID], q)
-	}
-	for _, mid := range order {
+		seen[q.MembershipID] = true
 		if ctx.Err() != nil {
 			return
 		}
+		mid := q.MembershipID
 		rc.mu.Lock()
 		busy := rc.busy[mid]
 		rc.busy[mid] = true
@@ -1220,15 +1213,15 @@ func (rc *memoRepoRechecker) start(ctx context.Context) {
 			continue
 		}
 		rc.wg.Add(1)
-		go func(mid string, qs []store.MemoQueue) {
+		go func() {
 			defer rc.wg.Done()
 			defer func() {
 				rc.mu.Lock()
 				delete(rc.busy, mid)
 				rc.mu.Unlock()
 			}()
-			rc.member(ctx, mid, qs)
-		}(mid, byMember[mid])
+			rc.member(ctx, mid)
+		}()
 	}
 }
 
@@ -1270,59 +1263,71 @@ func (rc *memoRepoRechecker) acquireRead(ctx context.Context, host string) (rele
 	}, true
 }
 
-// memoRepoRemoteHosts maps each working copy's name to its origin's host, as the Agent's
-// GET /repos names it (no remote is asked). Nil when the Agent did not answer.
-func memoRepoRemoteHosts(ctx context.Context, res *resolved) map[string]string {
-	cctx, cancel := context.WithTimeout(ctx, memoRepoRecheckListWait)
+// memoRepoRemoteHosts maps each repository to its origin's host, from the Agent's
+// GET /repos/{name}/identity: the clone's configuration only, no status and no remote. A
+// repository it did not answer for is left out, and so shares the unknown host's bucket.
+func memoRepoRemoteHosts(ctx context.Context, res *resolved, repos []string) map[string]string {
+	cctx, cancel := context.WithTimeout(ctx, memoRepoRecheckHostWait)
 	defer cancel()
-	body, err := agentText(cctx, res.rt, http.MethodGet, "/repos", nil)
-	if err != nil {
-		return nil
-	}
-	var inventory struct {
-		Repos []struct {
-			Name   string `json:"name"`
-			Remote string `json:"remote"`
-		} `json:"repos"`
-	}
-	if json.Unmarshal([]byte(body), &inventory) != nil {
-		return nil
-	}
 	out := map[string]string{}
-	for _, r := range inventory.Repos {
-		out[r.Name] = strings.ToLower(r.Remote)
+	for _, repo := range repos {
+		body, err := agentText(cctx, res.rt, http.MethodGet, "/repos/"+url.PathEscape(repo)+"/identity", nil)
+		if err != nil {
+			if cctx.Err() != nil {
+				break
+			}
+			continue
+		}
+		var id struct {
+			Provider struct {
+				Host string `json:"host"`
+			} `json:"provider"`
+		}
+		if json.Unmarshal([]byte(body), &id) == nil && id.Provider.Host != "" {
+			out[repo] = strings.ToLower(id.Provider.Host)
+		}
 	}
 	return out
 }
 
-func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string, qs []store.MemoQueue) {
+// member reads the member's files once per repository and records the result on each due queue
+// of that repository. A workspace that is not running is left alone: a read never starts one. A
+// queue read less than half an interval ago (by the member, or by an earlier pass) is skipped.
+func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string) {
 	select {
 	case rc.prepSlots <- struct{}{}:
 	case <-ctx.Done():
 		return
 	}
-	res, work, hosts := rc.prepareMember(ctx, membershipID, qs)
-	<-rc.prepSlots
+	res, work := rc.prepareMember(ctx, membershipID)
 	if res == nil {
+		<-rc.prepSlots
 		return
 	}
-	// The tenant's switch is asked again before each read and each write: turned off while a
-	// read waits on the workspace, nothing more is fetched and nothing is recorded.
+	// The tenant's switch is asked again before the Agent is asked anything, before and after
+	// waiting for a read's slots, and before each write: turned off meanwhile, nothing more is
+	// fetched and nothing is recorded. A failed answer counts as off for that step only; the
+	// next step asks again.
 	on := func() bool {
 		v, err := rc.mgr.store.GetTenantMemoQueues(ctx, res.mv.TenantID)
 		return err == nil && v
 	}
+	var hosts map[string]string
+	if on() {
+		hosts = memoRepoRemoteHosts(ctx, res, work.order)
+	}
+	<-rc.prepSlots
 	for _, repo := range work.order {
 		if !on() {
-			return
+			continue
 		}
-		// A repository whose host is unknown (not in the Agent's list, no origin, or no list at
-		// all) shares the bucket "" with every other such repository.
 		release, ok := rc.acquireRead(ctx, hosts[repo])
 		if !ok {
 			return
 		}
-		rc.readRepo(ctx, res, membershipID, repo, work.byRepo[repo], on)
+		if on() {
+			rc.readRepo(ctx, res, membershipID, repo, work.byRepo[repo], on)
+		}
 		release()
 	}
 }
@@ -1339,12 +1344,22 @@ type memoRepoWork struct {
 	byRepo map[string][]memoRepoDue
 }
 
-// prepareMember finds the member's due queues and running workspace, and its working copies'
-// hosts. A nil resolved means there is nothing to read.
-func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID string, qs []store.MemoQueue) (*resolved, memoRepoWork, map[string]string) {
-	now := rc.now()
+// prepareMember finds the member's due queues and running workspace; a nil resolved means there
+// is nothing to read. The queues are listed here, after start marked the member busy, and not
+// taken from start's list: that list can predate the record an earlier pass of this member
+// wrote just before it ended, and would make a queue read moments ago look due.
+func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID string) (*resolved, memoRepoWork) {
 	work := memoRepoWork{byRepo: map[string][]memoRepoDue{}}
+	qs, err := rc.mgr.store.ListMemoQueues(ctx, membershipID)
+	if err != nil {
+		log.Printf("memo repo recheck: %s: list queues: %v", membershipID, err)
+		return nil, work
+	}
+	now := rc.now()
 	for _, q := range qs {
+		if !q.Enabled {
+			continue
+		}
 		c, ok, err := rc.mgr.store.GetCategory(ctx, q.CategoryID)
 		if err != nil || !ok || c.Repo == "" || c.MembershipID != membershipID {
 			continue
@@ -1359,7 +1374,7 @@ func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID str
 		work.byRepo[c.Repo] = append(work.byRepo[c.Repo], memoRepoDue{q, c})
 	}
 	if len(work.order) == 0 {
-		return nil, work, nil
+		return nil, work
 	}
 	// The workspace row is read, never built: resolving it for a start would create a missing one,
 	// make a stopped one's keys and publish a runtime in the cache. A read needs the Agent's
@@ -1367,15 +1382,15 @@ func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID str
 	// column, which a failed state write or an adopted container can leave at stopped.
 	ws, ok, err := rc.mgr.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
-		return nil, work, nil
+		return nil, work
 	}
 	identityID, ok, err := rc.mgr.store.IdentityIDForMembership(ctx, membershipID)
 	if err != nil || !ok {
-		return nil, work, nil
+		return nil, work
 	}
 	ident, mv, aerr := rc.mgr.activeMembership(ctx, identityID, membershipID)
 	if aerr != nil {
-		return nil, work, nil
+		return nil, work
 	}
 	var rt runtime.Runtime
 	if c, ok := rc.mgr.cachedRTFor(membershipID); ok && c.ws.ID == ws.ID {
@@ -1384,10 +1399,9 @@ func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID str
 		rt = rc.mgr.runtimeFor(ws, noSecretKeys)
 	}
 	if rt == nil || rt.Endpoint() == "" || rt.State(ctx) != "running" {
-		return nil, work, nil
+		return nil, work
 	}
-	res := &resolved{rt: rt, ws: ws, ident: ident, mv: mv}
-	return res, work, memoRepoRemoteHosts(ctx, res)
+	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv}, work
 }
 
 // readRepo reads one repository's file once and records it on each of its due queues.
@@ -1401,7 +1415,7 @@ func (rc *memoRepoRechecker) readRepo(ctx context.Context, res *resolved, member
 	}
 	for _, d := range due {
 		if !on() {
-			return
+			continue
 		}
 		out := memoRepoSettingsWire{Found: f.Found, Commit: f.Commit}
 		if aerr := rc.mgr.memoRepoEvaluate(ctx, res, d.c, f, d.q, true, &out); aerr != nil {

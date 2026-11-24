@@ -34,9 +34,13 @@ type fakeAutorunAgent struct {
 	instrCommit string
 	// instrAsked are the instruction reads' queries, "commit path".
 	instrAsked []string
-	// remotes answers GET /repos: each working copy's origin host by name. That route is not in
-	// paths and does not run onServe.
-	remotes map[string]string
+	// remotes answers GET /repos/{name}/identity: each working copy's origin host by name. That
+	// route is not in paths and does not run onServe; it runs onIdentity, and answers
+	// identityStatus when that is set. identityAsked counts its requests.
+	remotes        map[string]string
+	onIdentity     func()
+	identityStatus int
+	identityAsked  int
 }
 
 // instruction sets what the fake Agent's instruction route answers for p.
@@ -60,6 +64,12 @@ func (a *fakeAutorunAgent) file(content string) {
 	a.answer(http.StatusOK, string(b))
 }
 
+func (a *fakeAutorunAgent) hostsAsked() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.identityAsked
+}
+
 func (a *fakeAutorunAgent) requested() []string {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -80,21 +90,20 @@ func (e *inboxEnv) repoAgent(who, state string) *fakeAutorunAgent {
 	t := e.t
 	a := &fakeAutorunAgent{status: http.StatusOK}
 	a.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/repos" {
+		if name, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/repos/"), "/identity"); ok && r.Method == http.MethodGet {
 			a.mu.Lock()
-			type repo struct {
-				Name   string `json:"name"`
-				Remote string `json:"remote"`
-			}
-			out := struct {
-				Repos []repo `json:"repos"`
-			}{Repos: []repo{}}
-			for name, host := range a.remotes {
-				out.Repos = append(out.Repos, repo{name, host})
-			}
+			a.identityAsked++
+			hook, status, host := a.onIdentity, a.identityStatus, a.remotes[name]
 			a.mu.Unlock()
+			if hook != nil {
+				hook()
+			}
+			if status != 0 {
+				agentErr(w, status, "x")
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(out)
+			_ = json.NewEncoder(w).Encode(map[string]any{"provider": map[string]any{"host": host}})
 			return
 		}
 		a.mu.Lock()
