@@ -268,7 +268,10 @@ jobs:
         env: { CGO_ENABLED: "0", GOOS: linux, GOARCH: arm64 }
         run: go build ./...
       - name: go test
-        run: go test ./...
+        # -timeout: the root package alone takes 400-557 s on main, close to go test's
+        # default 10 minutes, and a package that runs out of time fails unrelated work.
+        # The job's timeout-minutes stays the backstop for a hang.
+        run: go test -timeout 20m ./...
       # The kubernetes adapter's envtest cases skip without kube-apiserver, etcd and
       # kube-controller-manager, so the step above does not run them. This one installs the
       # pinned binaries and makes their absence a failure: without it the controller timing,
