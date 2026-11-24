@@ -38,8 +38,14 @@ func cmdPromoteCandidates(c *Client, args []string, out io.Writer) error {
 	// The Agent applies the same rule; checking here first refuses a bad value even when there is
 	// no project to ask about.
 	days := 0
-	daysSet := false
-	fs.Visit(func(f *flag.Flag) { daysSet = daysSet || f.Name == "days" })
+	daysSet, projSet := false, false
+	fs.Visit(func(f *flag.Flag) {
+		daysSet = daysSet || f.Name == "days"
+		projSet = projSet || f.Name == "project"
+	})
+	if projSet && *proj == "" {
+		return &usageError{"--project needs an id or a name; leave it out to list every project"}
+	}
 	if daysSet {
 		n, err := strconv.Atoi(*daysArg)
 		if err != nil || n < 1 || n > 90 || strings.TrimLeft(*daysArg, "0123456789") != "" {

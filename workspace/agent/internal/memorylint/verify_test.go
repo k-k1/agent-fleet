@@ -10,19 +10,22 @@ import (
 // root-level file, a command, an ignored path, an ADR without an ADR directory) are unverified.
 func TestVerifyAnchorsNeedsAPositiveMatch(t *testing.T) {
 	repo := fakeRepo{
-		paths:   []string{"README.md", "scripts/release.sh", "docs/decisions/0130-cultivated-memory.md", ".gitignore"},
+		paths:   []string{"README.md", "scripts/release.sh", "docs/decisions/0130-cultivated-memory.md", ".gitignore", "docs/v1..v2.md"},
 		symbols: map[string]bool{"agentMemSave": true, "TestRealOne": true},
 	}
 	mems := []Memory{
 		{Name: "ok", Anchors: []string{"README.md", "./scripts/release.sh", "scripts/", "docs/decisions", "[[other]]", "ADR 0130", "agentMemSave", "`agentMemSave()`", "TestRealOne"}},
-		{Name: "bad", Anchors: []string{"GONE.md", "scripts/gone.sh", "build/", "[[ghost]]", "ADR 4242", "agentMemGone", "TestGoneAway", "make release", "  ", "/etc/passwd", "../x", "plain"}},
+		{Name: "bad", Anchors: []string{"GONE.md", "scripts/gone.sh", "build/", "[[ghost]]", "ADR 4242", "agentMemGone", "TestGoneAway", "make release", "  ", "/etc/passwd", "../x", "plain",
+			// A real test name inside a command or a missing file's name is not that symbol.
+			"go test -run TestRealOne", "TestRealOne.go", "`agentMemSave` twice", "docs/../README.md"}},
+		{Name: "dots", Anchors: []string{"docs/v1..v2.md", "pkg.agentMemSave"}},
 		{Name: "other"},
 	}
 	got, err := VerifyAnchors(mems, Options{}, repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string][]string{"bad": {"GONE.md", "scripts/gone.sh", "build/", "[[ghost]]", "ADR 4242", "make release", "  ", "/etc/passwd", "../x", "plain", "agentMemGone", "TestGoneAway"}}
+	want := map[string][]string{"bad": {"GONE.md", "scripts/gone.sh", "build/", "[[ghost]]", "ADR 4242", "make release", "  ", "/etc/passwd", "../x", "plain", "go test -run TestRealOne", "TestRealOne.go", "`agentMemSave` twice", "docs/../README.md", "agentMemGone", "TestGoneAway"}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("unverified = %#v\nwant %#v", got, want)
 	}

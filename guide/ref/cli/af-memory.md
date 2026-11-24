@@ -216,7 +216,7 @@ af-memory lint [--user | --project <id or name>] [--json] [--apply]
 | `oversize` | A body over 4,096 bytes |
 
 - Without `--apply` nothing is written, and reading does not count as a use of a memory
-- The repository is read by ref from `origin`'s default branch, never through a working copy. Nothing is fetched, so a stale clone gives a stale answer. In a partial clone (`git clone --filter`) the symbol check is skipped, because the files' contents are not all there
+- The repository is read by ref from `origin`'s default branch, never through a working copy. Nothing is fetched, so a stale clone gives a stale answer. In a partial clone (`git clone --filter`) the symbol check is skipped unless the default branch's files are all present (a checkout of it fetches them)
 - Proposed retired terms may be listed. Whether one goes on your list is decided in the Console
 - The exit status says whether the command worked. It is 0 even when there are findings
 
@@ -252,7 +252,7 @@ A memory is a candidate when all of these hold:
 
 - Its kind is `lesson`, `procedure` or `preference`, and its type is not `user` (it is about the repository, not about you)
 - At least two different sessions confirmed its current revision with `memory_feedback`. A confirmation of an earlier revision does not count
-- It has stored anchors, and each one is found on the default branch: a file or directory of the tree, an `ADR <n>` with a record, a `[[name]]` of a memory, or a code-shaped symbol found in the files. A command or anything else that cannot be looked up holds it
+- It has stored anchors, and each one is found on the default branch: a file or directory of the tree, an `ADR <n>` with a record, a `[[name]]` of a memory, or a code-shaped symbol found in the files. The whole anchor has to be that one thing: a command, or anything else that cannot be looked up, holds it, even when it mentions a name that exists
 - Lint finds nothing about it on the default branch
 - It has no open reasons
 - Its file has not changed for N days, by the store's history (a reason lint adds or clears is a change too), and it is the same as its last published change
@@ -264,7 +264,7 @@ A memory is a candidate when all of these hold:
    held       deploy-notes r1  lesson: no-anchors; confirmations (1 of 2 sessions on revision 1)
 ```
 
-A memory of those kinds that does not qualify is listed as `held`, with everything it misses:
+A memory of those kinds that does not qualify is listed as `held`, with what it misses. The store's history (`changed-recently` by the history, `unpublished`) is read only for a memory that meets every other requirement, so a memory that misses something else may show more once that is fixed:
 
 | Missing | Meaning |
 |---|---|
@@ -275,7 +275,7 @@ A memory of those kinds that does not qualify is listed as `held`, with everythi
 | `anchor-not-found` | A stored anchor was not found on the default branch (the anchor is named) |
 | `lint` | Lint reports something about it (the finding is named) |
 | `moved` | It changed while the list was being made. Run it again |
-| `unpublished` | Its file differs from its last published change, for example after an edit outside Agent Fleet |
+| `unpublished` | Its file differs from its last published change, for example after an edit outside Agent Fleet, or its revision does not follow the change before it |
 | `confirmations` | Too few sessions confirmed its current revision |
 | `changed-recently` | Its current revision is younger than N days |
 

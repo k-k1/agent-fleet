@@ -82,12 +82,41 @@ func (rc *repoCtx) verifyLocal(a string, names map[string]bool) (ok bool, sym st
 		return rc.hasADRs && rc.adrs[trimZeros(m[1])], ""
 	}
 	p := strings.TrimSuffix(strings.TrimPrefix(a, "./"), "/")
-	if p != "" && !strings.HasPrefix(p, "/") && !strings.Contains(p, "..") && rc.hasPath(p) {
+	if p != "" && !strings.HasPrefix(p, "/") && !hasParentSeg(p) && rc.hasPath(p) {
 		return true, ""
 	}
-	t := strings.Trim(a, "`")
-	if found := extractSymbols("`" + t + "`"); len(found) == 1 {
-		return false, found[0].text
+	return false, wholeSymbol(a)
+}
+
+// hasParentSeg says whether a path climbs out with a ".." segment; "v1..v2.md" is a name.
+func hasParentSeg(p string) bool {
+	for _, seg := range strings.Split(p, "/") {
+		if seg == ".." {
+			return true
+		}
 	}
-	return false, ""
+	return false
+}
+
+// wholeSymbol is the name to search for when the whole anchor is one code-shaped symbol (in
+// backticks or not, with an optional "()"), and "" otherwise. The body's rules find a symbol
+// inside a longer text; here the anchor must be nothing but the symbol, or a command that
+// mentions a real test name ("go test -run TestX") or a missing file named after one
+// ("TestX.go") would pass for it.
+func wholeSymbol(a string) string {
+	t := strings.TrimSpace(a)
+	if strings.HasPrefix(t, "`") && strings.HasSuffix(t, "`") && len(t) >= 2 {
+		t = t[1 : len(t)-1]
+	}
+	if !identRe.MatchString(t) {
+		return ""
+	}
+	segs := strings.Split(strings.TrimSuffix(t, "()"), ".")
+	last := segs[len(segs)-1]
+	for _, f := range extractSymbols("`" + t + "`") {
+		if f.text == last {
+			return last
+		}
+	}
+	return ""
 }

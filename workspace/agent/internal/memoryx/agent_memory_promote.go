@@ -16,8 +16,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -47,19 +50,32 @@ type agentMemPromoteWire struct {
 	memorypromote.Result
 }
 
-// agentMemLintTermsErr says whether the retired-term list can be read. A missing file is an
-// empty list; an unreadable or malformed one is an error, which the lint report shows as an empty
-// list but promotion must not: a retired term would then pass unseen.
-func agentMemLintTermsErr() error {
+// agentMemLintLoadDocStrict reads the retired-term list once and says whether it could be. A
+// missing file is an empty list. An unreadable file, or one that is not an object with a "terms"
+// array (what the save route always writes), is an error: the lint report shows such a list as
+// empty, but promotion must not, or a retired term would pass unseen.
+func agentMemLintLoadDocStrict() (agentMemLintTermsDoc, error) {
+	d := agentMemLintTermsDoc{Terms: []string{}, Rejected: []string{}}
 	b, ok, err := agentMemReadFile(agentMemLintTermsPath())
-	if err != nil {
-		return err
+	if err != nil || !ok {
+		return d, err
 	}
-	if !ok {
-		return nil
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil || raw == nil {
+		return d, errors.New("not a JSON object")
 	}
 	var f agentMemLintTermsDoc
-	return json.Unmarshal(b, &f)
+	if t := bytes.TrimSpace(raw["terms"]); len(t) == 0 || t[0] != '[' {
+		return d, errors.New("no terms array")
+	}
+	if err := json.Unmarshal(b, &f); err != nil {
+		return d, err
+	}
+	d.Terms = f.Terms
+	if f.Rejected != nil {
+		d.Rejected = f.Rejected
+	}
+	return d, nil
 }
 
 // agentMemPromoteDefaultKnown says whether the ref lint read is the one origin/HEAD names. Lint
@@ -77,37 +93,91 @@ func agentMemPromoteDefaultKnown(repo memorylint.Repo, ref string) bool {
 	return err == nil && strings.TrimSpace(string(out)) == "refs/remotes/"+ref
 }
 
-// agentMemPromotePublished answers when the memory's file last changed in the store's history and
-// whether the file is byte-identical to that change. The frontmatter's updated stamp is not
-// enough: a lint reason write moves the revision but not the stamp, and a file edited outside AF
-// carries whatever it says. Called with agentMemMu held for reading.
-func agentMemPromotePublished(fileRel string) (at time.Time, same bool) {
-	if !memoryHasCommits() {
-		return time.Time{}, false
+// agentMemPromoteGit reads the store's history straight from its bare repository. memoryGit is
+// not used: it creates the staging directory it runs in, and this list writes nothing.
+func agentMemPromoteGit(args ...string) ([]byte, error) {
+	cmd := exec.Command("git", append([]string{"--git-dir=" + memoryRepoDir()}, args...)...)
+	for _, e := range os.Environ() {
+		if !strings.HasPrefix(e, "GIT_DIR=") && !strings.HasPrefix(e, "GIT_WORK_TREE=") {
+			cmd.Env = append(cmd.Env, e)
+		}
 	}
-	commit, err := agentMemLatestChange(fileRel)
-	if err != nil || commit == "" {
-		return time.Time{}, false
+	cmd.Env = append(cmd.Env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_OPTIONAL_LOCKS=0",
+		"GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_NO_REPLACE_OBJECTS=1")
+	return cmd.Output()
+}
+
+// agentMemPromoteHead is the commit of the store's history, read under agentMemMu so that it
+// matches the files read under the same lock; "" when there is no history.
+func agentMemPromoteHead() string {
+	if _, err := os.Stat(memoryRepoDir()); err != nil {
+		return ""
 	}
-	stamp, err := memoryGitRun("log", "-1", "--format=%cI", commit)
+	out, err := agentMemPromoteGit("rev-parse", "--verify", "--quiet", memoryBranch+"^{commit}")
 	if err != nil {
-		return time.Time{}, false
+		return ""
 	}
-	if at, err = time.Parse(time.RFC3339, strings.TrimSpace(stamp)); err != nil {
-		return time.Time{}, false
+	return strings.TrimSpace(string(out))
+}
+
+// agentMemPromoteSnap is what the history check of one memory needs, taken under the lock.
+type agentMemPromoteSnap struct {
+	idx      int // into the memories handed to Select
+	fileRel  string
+	file     []byte
+	revision int
+	body     string
+}
+
+// agentMemPromoteHistory checks one memory against the store's history at head, outside the lock:
+// when its file last changed (the frontmatter's updated stamp does not move on a lint reason write,
+// which still makes a new revision), whether the file is the one that change published (an edit
+// outside AF is not), and whether the change before it agrees with the revision (a revision line
+// broken by hand reads as revision 1; republished by a pin, it would let revision 1's
+// confirmations vouch for a later text).
+func agentMemPromoteHistory(head string, s agentMemPromoteSnap) (at time.Time, miss []memorypromote.Miss) {
+	unpublished := func(detail string) []memorypromote.Miss {
+		return []memorypromote.Miss{{Rule: memorypromote.RuleUnpublished, Detail: detail}}
 	}
-	blob, err := memoryGit("cat-file", "blob", commit+":"+agentMemRepoPrefix+"/"+fileRel).Output()
+	if head == "" {
+		return time.Time{}, unpublished("no published change")
+	}
+	path := agentMemRepoPrefix + "/" + s.fileRel
+	out, err := agentMemPromoteGit("log", "-2", "--no-renames", "--diff-filter=AM", "--format=%H %cI", head, "--", path)
 	if err != nil {
-		return at, false
+		return time.Time{}, unpublished("the history could not be read")
 	}
-	cur, ok, err := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(fileRel)))
-	return at, err == nil && ok && bytes.Equal(blob, cur)
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	commit, stamp, _ := strings.Cut(lines[0], " ")
+	if commit == "" {
+		return time.Time{}, unpublished("no published change")
+	}
+	if at, err = time.Parse(time.RFC3339, stamp); err != nil {
+		return time.Time{}, unpublished("the history could not be read")
+	}
+	blob, err := agentMemPromoteGit("cat-file", "blob", commit+":"+path)
+	if err != nil || !bytes.Equal(blob, s.file) {
+		return at, unpublished("the file differs from its last published change")
+	}
+	if len(lines) > 1 {
+		prev, _, _ := strings.Cut(lines[1], " ")
+		pb, err := agentMemPromoteGit("cat-file", "blob", prev+":"+path)
+		if err != nil {
+			return at, unpublished("the history could not be read")
+		}
+		if pe, ok := agentMemParse(pb); !ok || pe.Revision > s.revision || pe.Revision == s.revision && pe.Body != s.body {
+			return at, unpublished("the revision does not follow the change before it")
+		}
+	}
+	return at, nil
 }
 
 // agentMemPromoteCandidates lists the candidates of one project. Read-only.
 func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (agentMemPromoteWire, error) {
 	out := agentMemPromoteWire{MinSessions: memorypromote.DefaultMinSessions, QuietDays: quietDays}
-	lint, es, c, repo, err := agentMemLintCollect(agentMemScopeProject, project)
+	// One read of the term list serves the lint run and the check that it was read.
+	terms, termsErr := agentMemLintLoadDocStrict()
+	lint, es, c, repo, err := agentMemLintCollectDoc(agentMemScopeProject, project, nil, &terms)
 	if err != nil {
 		return out, err
 	}
@@ -128,7 +198,7 @@ func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (ag
 		out.Skipped = append(out.Skipped, "anchor checks: origin/HEAD does not name the default branch, so "+lint.Ref+
 			" is only a guess (`git remote set-head origin --auto` sets it)")
 	}
-	if err := agentMemLintTermsErr(); err != nil {
+	if termsErr != nil {
 		out.Skipped = append(out.Skipped, "retired-term checks: the list could not be read")
 	}
 	if len(out.Skipped) == 0 {
@@ -155,16 +225,22 @@ func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (ag
 		return out, err
 	}
 
-	// The entries, their records and their published history are read again under one read lock,
-	// so a reason, a confirmation and a revision are judged together; a memory that moved since
-	// the lint read it is held, never judged on a mix of the two.
+	// The entries, their records, the link targets and the head of the store's history are read
+	// again under one read lock, so a reason, a confirmation and a revision are judged together; a
+	// memory that moved since the lint read it is held, never judged on a mix of the two. The
+	// history itself is read after the lock, at that head.
 	agentMemMu.RLock()
-	defer agentMemMu.RUnlock()
 	cur, _, err := agentMemLoadDir(agentMemScopeProject, rel)
 	if err != nil {
+		agentMemMu.RUnlock()
 		return out, err
 	}
+	names := make(map[string]bool, len(cur))
+	for _, e := range cur {
+		names[e.Name] = true
+	}
 	mems := make([]memorypromote.Memory, 0, len(cur))
+	var snaps []agentMemPromoteSnap
 	for _, e := range cur {
 		if !memorypromote.Promotable(e.MemKind) || agentMemExcluded(e) {
 			continue
@@ -179,27 +255,59 @@ func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (ag
 		for _, r := range agentMemFeedbackRecords(rel, e.Name) {
 			m.Reports = append(m.Reports, memorypromote.Confirmation{Session: r.Session, Revision: r.Revision, Verdict: r.Verdict})
 		}
+		moved := false
 		if was, ok := checked[e.Name]; !ok || was.Revision != e.Revision || !agentMemReasonsEqual(was.Reasons, e.Reasons) ||
 			!slicesEqual(was.Anchors, e.Anchors) || was.Body != e.Body {
+			moved = true
+		}
+		// A [[link]] anchor was found among the names lint loaded; its target must still be there.
+		for _, a := range e.Anchors {
+			if t, ok := agentMemPromoteLink(a); ok && !names[t] {
+				moved = true
+			}
+		}
+		if moved {
 			m.Also = append(m.Also, memorypromote.Miss{Rule: memorypromote.RuleMoved})
 		}
-		// The history is read only for a memory every cheaper signal already admits.
-		if unverified == "" && len(m.Also) == 0 && m.Reasons == 0 && len(m.Anchors) > 0 && len(m.Missing) == 0 &&
+		// The history is read only for a memory every other signal already admits.
+		if unverified == "" && !moved && m.Reasons == 0 && len(m.Anchors) > 0 && len(m.Missing) == 0 &&
 			len(m.Findings) == 0 && m.Type != "user" && memorypromote.Sessions(m.Reports, m.Revision) >= out.MinSessions {
-			at, same := agentMemPromotePublished(rel + "/" + e.Name + ".md")
-			if !same {
-				m.Also = append(m.Also, memorypromote.Miss{Rule: memorypromote.RuleUnpublished})
+			fileRel := rel + "/" + e.Name + ".md"
+			b, ok, err := agentMemReadFile(filepath.Join(agentMemDir(), filepath.FromSlash(fileRel)))
+			if err != nil || !ok {
+				b = nil
 			}
-			if at.After(m.Updated) {
-				m.Updated = at
-			}
+			snaps = append(snaps, agentMemPromoteSnap{idx: len(mems), fileRel: fileRel, file: b, revision: e.Revision, body: e.Body})
 		}
 		mems = append(mems, m)
+	}
+	head := ""
+	if len(snaps) > 0 {
+		head = agentMemPromoteHead()
+	}
+	agentMemMu.RUnlock()
+
+	for _, s := range snaps {
+		at, miss := agentMemPromoteHistory(head, s)
+		m := &mems[s.idx]
+		m.Also = append(m.Also, miss...)
+		if at.After(m.Updated) {
+			m.Updated = at
+		}
 	}
 	out.Result = memorypromote.Select(mems, memorypromote.Options{
 		Now: now, Quiet: time.Duration(quietDays) * 24 * time.Hour, Unverified: unverified,
 	})
 	return out, nil
+}
+
+// agentMemPromoteLink is the target of an anchor that is a whole [[link]].
+func agentMemPromoteLink(a string) (string, bool) {
+	a = strings.TrimSpace(a)
+	if !strings.HasPrefix(a, "[[") || !strings.HasSuffix(a, "]]") {
+		return "", false
+	}
+	return strings.TrimSpace(a[2 : len(a)-2]), true
 }
 
 func slicesEqual(a, b []string) bool {
@@ -226,6 +334,12 @@ func HandleAgentMemoryPromoteCandidates(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		agentMemWriteErr(w, agentMemPromoteBad("the query does not parse"))
 		return
+	}
+	for k, vs := range q {
+		if len(vs) > 1 {
+			agentMemWriteErr(w, agentMemPromoteBad("%s is given more than once", k))
+			return
+		}
 	}
 	if s := q.Get("scope"); q.Has("scope") && s != agentMemScopeProject {
 		agentMemWriteErr(w, agentMemPromoteBad("promotion candidates are per project: scope must be %q or left out", agentMemScopeProject))

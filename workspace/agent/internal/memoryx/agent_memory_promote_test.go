@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -125,6 +126,10 @@ func TestAgentMemoryPromoteCandidatesFromSignals(t *testing.T) {
 	lifeSet(t, a, agentMemScopeProject, "archived", func(e *agentMemEntry) { e.Status = agentMemStatusArchived })
 
 	AgentMemoryEnabled = func() bool { return false } // the list is the member's, not gated by the sessions' switch
+	// The history is read from the bare repository: a missing staging directory stays missing.
+	if err := os.RemoveAll(memoryStagingDir()); err != nil {
+		t.Fatal(err)
+	}
 	storeBefore := agentMemLintSnapshot(t, agentMemDir())
 	cloneBefore := agentMemLintSnapshot(t, clone)
 	w := promoteGet(t, "project="+a.Project.ID)
@@ -133,6 +138,9 @@ func TestAgentMemoryPromoteCandidatesFromSignals(t *testing.T) {
 	}
 	if !reflectEq(cloneBefore, agentMemLintSnapshot(t, clone)) {
 		t.Error("a run changed the working copy")
+	}
+	if _, err := os.Stat(memoryStagingDir()); !os.IsNotExist(err) {
+		t.Errorf("a run created the store's staging directory: %v", err)
 	}
 
 	if w.Ref != "origin/main" || w.Commit == "" || w.MinSessions != 2 || w.QuietDays != 7 || len(w.Skipped) != 0 {
@@ -222,8 +230,17 @@ func TestAgentMemoryPromoteHoldsAnUnpublishedFile(t *testing.T) {
 		t.Fatalf("the broken line should read as revision 1, got %d", got.Revision)
 	}
 	w := promoteGet(t, "project="+a.Project.ID)
-	if len(w.Candidates) != 0 || strings.Join(promoteHeldRules(w, "m"), ";") != memorypromote.RuleUnpublished+"=" {
+	if len(w.Candidates) != 0 || strings.Join(promoteHeldRules(w, "m"), ";") != memorypromote.RuleUnpublished+"=the file differs from its last published change" {
 		t.Fatalf("candidates %v, held %v", promoteNames(w), promoteHeldRules(w, "m"))
+	}
+	// A pin republishes the file as it parsed, revision 1 over revision 2's text: the file now is
+	// its last published change, and the history shows the revision going back.
+	if _, err := agentMemPin(agentMemPinReq{Scope: agentMemScopeProject, Project: a.Project.ID, Name: "m", Pinned: true}, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	w = promoteGet(t, "project="+a.Project.ID)
+	if len(w.Candidates) != 0 || strings.Join(promoteHeldRules(w, "m"), ";") != memorypromote.RuleUnpublished+"=the revision does not follow the change before it" {
+		t.Fatalf("after a pin: candidates %v, held %v", promoteNames(w), promoteHeldRules(w, "m"))
 	}
 }
 
@@ -268,24 +285,40 @@ func TestAgentMemoryPromoteCandidatesNeedTheRepository(t *testing.T) {
 	if err := agentMemGit(clone, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(agentMemLintTermsPath(), []byte("{not json"), 0o600); err != nil {
+	for _, bad := range []string{"{not json", "null", `{"terms":null}`, `{"rejected":[]}`, `[]`} {
+		if err := os.WriteFile(agentMemLintTermsPath(), []byte(bad), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		check("term list "+bad, "retired-term")
+	}
+	// A list that cannot be read at all (here a directory in its place).
+	if err := os.Remove(agentMemLintTermsPath()); err != nil {
 		t.Fatal(err)
 	}
-	check("broken term list", "retired-term")
+	if err := os.Mkdir(agentMemLintTermsPath(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	check("unreadable term list", "retired-term")
+	if err := os.Remove(agentMemLintTermsPath()); err != nil {
+		t.Fatal(err)
+	}
+	if w := promoteGet(t, "project="+a.Project.ID); strings.Join(promoteNames(w), ",") != "release-steps" {
+		t.Errorf("with no list file the memory qualifies again: %+v %v", w.Held, w.Skipped)
+	}
 }
 
-// A partial clone: lint's reads must not fetch the blobs it lacks. With lazy fetching off the
-// symbol search fails (blob:none) or the file list does (tree:0); either holds the memory as
-// unverified, no upload-pack is run and no object is written.
+// A partial clone: lint's reads must not fetch the blobs it lacks. With lazy fetching off, a
+// blob:none clone is refused by the partial-clone check before git grep runs (grep would pass over
+// the missing blobs silently), and in a tree:0 clone the file list itself fails; either holds the
+// memory as unverified, no upload-pack is run and no object is written. A partial clone whose
+// tree a checkout completed is searched as usual.
 func TestAgentMemoryPromotePartialCloneFetchesNothing(t *testing.T) {
 	home, clone, _ := agentMemTestEnv(t)
 	promoteBackdate(t)
 	agentMemLintOrigin(t, clone, map[string]string{"scripts/release.sh": "#!/bin/sh\n", "main.go": "package main\nfunc releaseAll() {}\n"})
 	origin := filepath.Join(home, "origin.git")
-	for _, args := range [][]string{{"clone", "--quiet", "--bare", clone, origin}} {
-		if err := agentMemGit(home, args...); err != nil {
-			t.Fatal(err)
-		}
+	if err := agentMemGit(home, "clone", "--quiet", "--bare", clone, origin); err != nil {
+		t.Fatal(err)
 	}
 	if err := agentMemGit(origin, "config", "uploadpack.allowFilter", "true"); err != nil {
 		t.Fatal(err)
@@ -295,42 +328,120 @@ func TestAgentMemoryPromotePartialCloneFetchesNothing(t *testing.T) {
 	if err := os.WriteFile(script, []byte("#!/bin/sh\necho x >> "+calls+"\nexec git-upload-pack \"$@\"\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for i, filter := range []string{"blob:none", "tree:0"} {
-		dir := filepath.Join(home, "repos", "part"+string(rune('a'+i)))
+	partial := func(name, filter string) (string, agentMemCaller) {
+		t.Helper()
+		dir := filepath.Join(home, "repos", name)
 		if err := agentMemGit(home, "clone", "--quiet", "--filter="+filter, "--no-checkout", "file://"+origin, dir); err != nil {
 			t.Fatal(err)
 		}
 		if err := agentMemGit(dir, "config", "remote.origin.uploadpack", script); err != nil {
 			t.Fatal(err)
 		}
-		_ = os.Remove(calls)
-		s1, s2 := "claude-"+filter[:4], "codex-"+filter[:4]
+		s1, s2 := "claude-"+name, "codex-"+name
 		session.WriteMeta(session.Meta{Name: s1, Dir: dir, Kind: "claude"})
 		session.WriteMeta(session.Meta{Name: s2, Dir: dir, Kind: "codex"})
 		a, b := agentMemCallerT(t, s1), agentMemCallerT(t, s2)
 		promoteSave(t, a, "release-steps", "procedure", "run scripts/release.sh via `releaseAll`", "scripts/release.sh", "releaseAll")
 		promoteConfirm(t, "release-steps", 1, a, b)
+		return dir, a
+	}
+	for _, tc := range []struct{ name, filter, skipped string }{
+		{"blobless", "blob:none", "symbol checks: a partial clone that lacks some of the files' contents"},
+		{"treeless", "tree:0", "repository checks"},
+	} {
+		dir, a := partial(tc.name, tc.filter)
+		_ = os.Remove(calls)
 		before := agentMemLintSnapshot(t, filepath.Join(dir, ".git", "objects"))
 		w := promoteGet(t, "project="+a.Project.ID)
-		if len(w.Candidates) != 0 || len(w.Skipped) == 0 {
-			t.Errorf("%s: candidates %v, skipped %v, held %v", filter, promoteNames(w), w.Skipped, promoteHeldRules(w, "release-steps"))
+		if len(w.Candidates) != 0 || len(w.Skipped) != 1 || !strings.HasPrefix(w.Skipped[0], tc.skipped) {
+			t.Errorf("%s: candidates %v, skipped %v", tc.filter, promoteNames(w), w.Skipped)
+		}
+		if got := promoteHeldRules(w, "release-steps"); len(got) != 1 || !strings.HasPrefix(got[0], memorypromote.RuleUnverified+"=") {
+			t.Errorf("%s: held %v", tc.filter, got)
 		}
 		if _, err := os.Stat(calls); err == nil {
-			t.Errorf("%s: the run reached the remote (upload-pack ran)", filter)
+			t.Errorf("%s: the run reached the remote (upload-pack ran)", tc.filter)
 		}
 		if !reflectEq(before, agentMemLintSnapshot(t, filepath.Join(dir, ".git", "objects"))) {
-			t.Errorf("%s: the run wrote objects into the clone", filter)
+			t.Errorf("%s: the run wrote objects into the clone", tc.filter)
 		}
 	}
 	// Positive control: the same clone does fetch when lazy fetching is on, so the check above
 	// can see a fetch at all.
-	dir := filepath.Join(home, "repos", "parta")
 	_ = os.Remove(calls)
-	if err := agentMemGit(dir, "cat-file", "blob", "HEAD:main.go"); err != nil {
+	if err := agentMemGit(filepath.Join(home, "repos", "blobless"), "cat-file", "blob", "HEAD:main.go"); err != nil {
 		t.Fatalf("control fetch: %v", err)
 	}
 	if _, err := os.Stat(calls); err != nil {
 		t.Error("control: a lazy fetch did not run upload-pack, so the test cannot see one")
+	}
+
+	// A blob:none clone with the default branch checked out has the whole tree: lint searches its
+	// symbols as before, and the memory qualifies.
+	dir, a := partial("complete", "blob:none")
+	if err := agentMemGit(dir, "checkout", "--quiet"); err != nil {
+		t.Fatal(err)
+	}
+	lw := agentMemLintGet(t, "scope=project&project="+a.Project.ID)
+	if len(lw.Report.Findings) != 0 || strings.Contains(strings.Join(lw.Report.Skipped, ";"), "symbol checks") {
+		t.Errorf("complete partial clone, lint: findings %+v, skipped %v", lw.Report.Findings, lw.Report.Skipped)
+	}
+	if w := promoteGet(t, "project="+a.Project.ID); strings.Join(promoteNames(w), ",") != "release-steps" {
+		t.Errorf("complete partial clone: held %+v, skipped %v", w.Held, w.Skipped)
+	}
+}
+
+// Lint's removed-key history reads `git log -p`; a textconv driver configured in the repository
+// (with cachetextconv, which writes notes) must not run for it.
+func TestAgentMemoryPromoteRunsNoTextconv(t *testing.T) {
+	home, clone, _ := agentMemTestEnv(t)
+	promoteBackdate(t)
+	conv := filepath.Join(home, "textconv-calls")
+	script := filepath.Join(home, "textconv.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho x >> "+conv+"\ncat \"$1\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"config", "diff.rec.textconv", script}, {"config", "diff.rec.cachetextconv", "true"}} {
+		if err := agentMemGit(clone, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// info/attributes, because lint reads by --git-dir without a work tree, where a tree's
+	// .gitattributes is not read but the repository's own attributes are.
+	if err := os.MkdirAll(filepath.Join(clone, ".git", "info"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, ".git", "info", "attributes"), []byte("*.txt diff=rec\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	agentMemLintOrigin(t, clone, map[string]string{"notes.txt": "AF_OLD_SWITCH=1\n", "scripts/release.sh": "#!/bin/sh\n"})
+	agentMemLintOrigin(t, clone, map[string]string{"notes.txt": "nothing\n"})
+	a, b := agentMemCallerT(t, "claude-main"), agentMemCallerT(t, "codex-wt")
+	promoteSave(t, a, "release-steps", "procedure", "run scripts/release.sh", "scripts/release.sh")
+	promoteConfirm(t, "release-steps", 1, a, b)
+	_ = os.Remove(conv)
+	objects := agentMemLintSnapshot(t, filepath.Join(clone, ".git", "objects"))
+	if w := promoteGet(t, "project="+a.Project.ID); strings.Join(promoteNames(w), ",") != "release-steps" {
+		t.Fatalf("held %+v, skipped %v", w.Held, w.Skipped)
+	}
+	if _, err := os.Stat(conv); err == nil {
+		t.Error("the run ran the textconv driver")
+	}
+	if out := agentMemGitOut(t, clone, "for-each-ref", "refs/notes"); strings.TrimSpace(out) != "" {
+		t.Errorf("the run wrote notes: %s", out)
+	}
+	if !reflectEq(objects, agentMemLintSnapshot(t, filepath.Join(clone, ".git", "objects"))) {
+		t.Error("the run wrote objects")
+	}
+	// Positive control: a plain `git log -p` over the same history does run the driver.
+	ctl := exec.Command("git", "--git-dir="+filepath.Join(clone, ".git"), "log", "-p", "-n", "2", "--format=%h", "refs/remotes/origin/main")
+	// cachetextconv commits notes, so the control needs an identity.
+	ctl.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+	if out, err := ctl.CombinedOutput(); err != nil {
+		t.Fatalf("control: %v %s", err, out)
+	}
+	if _, err := os.Stat(conv); err != nil {
+		t.Error("control: git log -p did not run the driver, so the test cannot see one")
 	}
 }
 
@@ -341,21 +452,24 @@ func TestAgentMemoryPromoteCandidatesRefusesBadInput(t *testing.T) {
 	promoteSave(t, a, "m", "lesson", "x")
 	p := "project=" + a.Project.ID
 	for q, want := range map[string]int{
-		"":                          http.StatusBadRequest,
-		"project=":                  http.StatusBadRequest,
-		"project=Not%20An%20Id":     http.StatusBadRequest,
-		"project=nope-0123456789ab": http.StatusNotFound,
-		"scope=user&" + p:           http.StatusBadRequest,
-		p + "&days=":                http.StatusBadRequest,
-		p + "&days=0":               http.StatusBadRequest,
-		p + "&days=91":              http.StatusBadRequest,
-		p + "&days=x":               http.StatusBadRequest,
-		p + "&days=+5":              http.StatusBadRequest,
-		p + "&days=%zz":             http.StatusBadRequest,
-		p + "&days=1":               http.StatusOK,
-		p + "&days=90":              http.StatusOK,
-		p + "&days=08":              http.StatusOK,
-		"scope=project&" + p:        http.StatusOK,
+		"":                              http.StatusBadRequest,
+		"project=":                      http.StatusBadRequest,
+		"project=Not%20An%20Id":         http.StatusBadRequest,
+		"project=nope-0123456789ab":     http.StatusNotFound,
+		"scope=user&" + p:               http.StatusBadRequest,
+		p + "&days=":                    http.StatusBadRequest,
+		p + "&days=0":                   http.StatusBadRequest,
+		p + "&days=91":                  http.StatusBadRequest,
+		p + "&days=x":                   http.StatusBadRequest,
+		p + "&days=+5":                  http.StatusBadRequest,
+		p + "&days=%zz":                 http.StatusBadRequest,
+		p + "&days=1":                   http.StatusOK,
+		p + "&days=90":                  http.StatusOK,
+		p + "&days=08":                  http.StatusOK,
+		"scope=project&" + p:            http.StatusOK,
+		p + "&days=7&days=0":            http.StatusBadRequest,
+		"scope=project&scope=user&" + p: http.StatusBadRequest,
+		p + "&" + p:                     http.StatusBadRequest,
 	} {
 		if code, b := memberDo(t, http.MethodGet, "/agents/memory/entries/promotion-candidates?"+q, nil); code != want {
 			t.Errorf("%q: %d, want %d (%s)", q, code, want, b)

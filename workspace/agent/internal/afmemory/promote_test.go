@@ -79,6 +79,9 @@ func TestAFMemoryPromoteCandidates(t *testing.T) {
 	if code, _, e := run(c, "promote-candidates", "--project", "nope"); code != 1 || !strings.Contains(e, `no project "nope"`) {
 		t.Errorf("unknown project: %d %q", code, e)
 	}
+	if code, _, _ := run(c, "promote-candidates", "--project="); code != 2 {
+		t.Errorf("empty --project: %d, want 2", code)
+	}
 	if code, _, _ := run(c, "promote-candidates", "extra"); code != 2 {
 		t.Errorf("stray argument: %d, want 2", code)
 	}
