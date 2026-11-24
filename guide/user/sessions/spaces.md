@@ -16,6 +16,7 @@ spreadsheet, researching a question. What the agent writes stays there, apart fr
 |---|---|
 | Write what you want done under **Start in a space** and press **Start in a new space** | A new folder is made under `~/spaces` and the agent starts in it with your text as its first prompt |
 | Look in the Sessions view | The session is listed under **Spaces**, below the space's name |
+| Delete the space | The folder and its sessions go to the trash, and **Clean up → "Trash (restore)"** brings them back ([Delete a space](#delete-a-space)) |
 | Recreate the workspace | The space is kept: Recreate deletes only `~/repos` ([Recreate the workspace](../workspace/recreate.md#what-stays-and-what-goes)) |
 
 ## Start in a new space
@@ -53,7 +54,29 @@ Without a pick, each start makes a new space.
 In the **Spaces** section of the Sessions view, point at a space's row and press the pencil. Type the new name and
 **Save** (on a touch screen the pencil is always shown). Leave the name empty to show the folder name again. Only the name shown in the Console changes: the folder
 and the files in it stay where they are, and so do the sessions. A space shows in this section while it has a session or a shell; after you delete the last one,
-the space and its files stay, but it has no row to rename from.
+the space and its files stay, but it has no row to rename or delete it from.
+
+## Delete a space
+
+In the **Spaces** section of the Sessions view, point at a space's row and press the trash can (on a touch screen it is
+always shown). The dialog says what goes: the space's folder and every file in it move to the trash, and its sessions go
+with it, the way [deleting a working copy](cleanup.md#delete-one-jobs-working-copies) does. Stopped AI sessions move to the archive, and
+shell and SSM sessions to the trash.
+
+- **A session that is running, or locked against deletion, stops it.** The dialog names it, and the button stays off.
+  Stop it, or unlock it, and press again
+- **Nothing is deleted for good.** The space is a folder moved into the trash, so every file keeps its content and
+  its modification time. **Clean up → "Trash (restore)" → "Restore"** moves the folder back to `~/spaces` under the same name and takes the archived
+  sessions off the archive, so they resume where they left off. Shell and SSM sessions are separate rows in the trash,
+  restored one by one
+- A restore is refused when something already sits at the space's folder name under `~/spaces`: move or delete that,
+  then restore again
+- **"Delete permanently"** on the trash row removes the folder and its files for good. The row's size is the
+  folder's. The trash never empties on its own, and it takes the room until then
+- The space needs the trash and `~/spaces` to be on one file system, which they are in a workspace. If they are not, nothing is deleted and
+  the dialog says so
+
+Deleting a single session never deletes its space.
 
 ## Files you attach
 
@@ -67,7 +90,8 @@ If a file cannot be copied into the space, it is not attached, and the launch sa
 - **The folder name never changes.** The session and its conversation history are tied to the folder, so the folder is
   never renamed or moved. The name you gave is shown in the Sessions view and is stored apart from the folder, so you
   can [rename](#rename-a-space) it while it has a row in the Sessions view
-- **Deleting a session keeps its space**, and the files in it
+- **Deleting a session keeps its space**, and the files in it. Deleting the space is the other way round: its sessions
+  go with it, to the archive and the trash, and come back with it
 - **Clean home deletes it**, like the rest of your home
 
 > [!NOTE]

@@ -10,8 +10,10 @@ let spacesAnswer: () => unknown = () => LIST;
 const api = vi.fn(async (url: string): Promise<unknown> => (url.startsWith("api/spaces") ? spacesAnswer() : {}));
 let tenant = "";
 let patchAnswer: (folder: string, body: { name: string }) => unknown = () => ({});
+let deleteAnswer: (folder: string) => unknown = () => ({ deleted: "x" });
 const apiJSON = vi.fn(async (path: string, method: string, body?: unknown): Promise<unknown> => {
   const m = /^api\/spaces\/([^/]+)$/.exec(path);
+  if (m && method === "DELETE") return deleteAnswer(decodeURIComponent(m[1]));
   return m && method === "PATCH" ? patchAnswer(decodeURIComponent(m[1]), body as { name: string }) : {};
 });
 
@@ -70,6 +72,7 @@ beforeEach(() => {
   api.mockClear();
   apiJSON.mockClear();
   patchAnswer = () => ({});
+  deleteAnswer = () => ({ deleted: "x" });
   spacesAnswer = () => LIST;
   tenant = "";
   useSpacesStore.getState().clear();
@@ -443,6 +446,112 @@ describe("Spaces section", () => {
       patchAnswer = () => ({ error: { code: "rename_failed", message: "permission denied" } });
       await submit();
       expect(document.body.textContent).toContain("Couldn't rename the space. permission denied");
+    });
+  });
+  describe("delete", () => {
+    const shell = (name: string, folder: string) => ({ ...inSpace(name, folder), kind: "shell", alive: false });
+    const open = async (sessions: Session[]) => {
+      useSessionsStore.setState({ sessions });
+      await render();
+      const btn = host.querySelector<HTMLButtonElement>(".space-group-delete");
+      expect(btn).not.toBeNull();
+      await act(async () => {
+        btn!.focus();
+        btn!.click();
+      });
+    };
+    const dialog = () => document.querySelector<HTMLElement>(".ui-modal, [role=dialog]");
+    const confirmBtn = () => [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Move to trash")!;
+    const press = async () => {
+      await act(async () => confirmBtn().click());
+      await flush();
+    };
+
+    it("says what goes with the space, and offers no press while one of its sessions runs", async () => {
+      await open([inSpace("a1", "q3-abcdef"), { ...inSpace("a2", "q3-abcdef"), alive: false }, shell("sh1", "q3-abcdef")]);
+      const text = dialog()!.textContent!;
+      expect(text).toContain("Q3 report");
+      expect(text).toContain("~/spaces/q3-abcdef");
+      expect(text).toContain("2 AI session(s)");
+      expect(text).toContain("1 shell / SSM session(s)");
+      // A running session blocks it: the press would only be refused.
+      expect(confirmBtn().disabled).toBe(true);
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("sends the delete for that folder once nothing runs, and drops the space from the list", async () => {
+      deleteAnswer = () => ({ deleted: "q3-abcdef", archive: "a1" });
+      await open([{ ...inSpace("a1", "q3-abcdef"), alive: false }, shell("sh1", "q3-abcdef")]);
+      expect(confirmBtn().disabled).toBe(false);
+      spacesAnswer = () => ({ root: LIST.root, spaces: [] });
+      await press();
+      expect(apiJSON).toHaveBeenCalledTimes(1);
+      expect(apiJSON).toHaveBeenCalledWith("api/spaces/q3-abcdef", "DELETE", undefined);
+      expect(dialog()).toBeNull();
+      expect(useSpacesStore.getState().spaces).toEqual([]);
+      expect(document.body.textContent).toContain("Moved the space \"Q3 report\" to the trash.");
+    });
+
+    it("names the sessions that are running or locked, and offers no press while any is", async () => {
+      await open([
+        { ...inSpace("run1", "q3-abcdef"), title: "Runner" },
+        { ...inSpace("lock1", "q3-abcdef"), alive: false, locked: true, title: "Keeper" },
+      ]);
+      const text = dialog()!.textContent!;
+      expect(text).toContain("Runner");
+      expect(text).toContain("Keeper");
+      expect(confirmBtn().disabled).toBe(true);
+    });
+
+    it("keeps the dialog and words the Agent's refusal in the space's own terms", async () => {
+      deleteAnswer = () => ({ error: { code: "space_sessions_running", message: "1 session(s) are running in this space" } });
+      await open([{ ...inSpace("a1", "q3-abcdef"), alive: false }]);
+      await press();
+      expect(dialog()).not.toBeNull();
+      expect(document.body.textContent).toContain("Sessions are running in this space. Stop them first.");
+      expect(document.body.textContent).not.toContain("working copy");
+      deleteAnswer = () => ({ error: { code: "space_trash_failed", message: "x" } });
+      await press();
+      expect(document.body.textContent).toContain("Couldn't move the space to the trash, so it was not deleted");
+      expect(useSpacesStore.getState().spaces.map((x) => x.folder)).toContain("q3-abcdef");
+    });
+
+    it("tells a network failure, and shows the Agent's own text for an unknown code", async () => {
+      deleteAnswer = () => Promise.reject(new Error("offline"));
+      await open([{ ...inSpace("a1", "q3-abcdef"), alive: false }]);
+      await press();
+      expect(document.body.textContent).toContain("network error");
+      deleteAnswer = () => ({ error: { code: "weird", message: "disk on fire" } });
+      await press();
+      expect(document.body.textContent).toContain("Couldn't delete the space. disk on fire");
+      expect(dialog()).not.toBeNull();
+    });
+
+    it("closes a dialog left open across a workspace switch, and sends nothing to the new one", async () => {
+      await open([{ ...inSpace("a1", "q3-abcdef"), alive: false }]);
+      expect(dialog()).not.toBeNull();
+      tenant = "other";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+      });
+      await flush();
+      expect(dialog()).toBeNull();
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("says nothing about an answer that arrives after a workspace switch", async () => {
+      let answer: (v: unknown) => void = () => {};
+      deleteAnswer = () => new Promise((r) => (answer = r));
+      await open([{ ...inSpace("a1", "q3-abcdef"), alive: false }]);
+      await act(async () => confirmBtn().click());
+      tenant = "other";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+        answer({ error: { code: "space_not_found", message: "no such space" } });
+      });
+      await flush();
+      expect(document.body.textContent).not.toContain("This space no longer exists");
+      expect(dialog()).toBeNull();
     });
   });
 });

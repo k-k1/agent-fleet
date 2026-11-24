@@ -57,6 +57,10 @@ export const errors = {
   "err.recreate_stale":
     "この作り直し方はもう使えません（ブランチが変わった可能性があります）。候補を読み直したので、選び直してください。",
   "err.recreate_failed": "作業コピーを作り直せませんでした。",
+  "err.space_restore_exists":
+    "~/spaces のこのスペースのフォルダ名の場所に、すでに何かがあるため戻しませんでした。それを動かすか削除してから、もう一度復元してください。",
+  "err.space_restore_missing":
+    "このスペースのフォルダはごみ箱にもうないため、復元できません。",
   "err.worktree_archive_failed":
     "worktree をごみ箱に記録できなかったため、削除していません（ディスクの空きを確認してください）。",
   "err.recreate_needs_new_branch":

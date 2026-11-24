@@ -2,6 +2,8 @@ package spacex
 
 import (
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1163,4 +1165,179 @@ func TestRenameAgreesWithLookupOnKeySpellings(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestMoveOutAndInKeepTheWholeFolder(t *testing.T) {
+	home := withHome(t)
+	sp, err := Create("Notes")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(sp.Dir, "a", "b"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sp.Dir, "a", "b", "f.txt"), []byte("body"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(home, "trash", "x.space")
+	if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveOut(sp.Folder, dest); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := Lookup(sp.Folder); ok {
+		t.Fatal("the moved space is still a space")
+	}
+	if err := MoveOut(sp.Folder, dest+"2"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("moving a space that is gone = %v, want ErrNotFound", err)
+	}
+	// Something already at the folder's name wins, an empty directory included (a rename would
+	// replace it).
+	if err := os.MkdirAll(sp.Dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveIn(dest, sp.Folder); !errors.Is(err, ErrExists) {
+		t.Fatalf("MoveIn onto an empty directory = %v, want ErrExists", err)
+	}
+	if err := os.Remove(sp.Dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveIn(dest, sp.Folder); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(filepath.Join(sp.Dir, "a", "b", "f.txt"))
+	if err != nil || fi.Mode().Perm() != 0o640 {
+		t.Fatalf("file after the round trip: %v %v", fi, err)
+	}
+	if got, ok := Lookup(sp.Folder); !ok || got.Name != "Notes" {
+		t.Fatalf("Lookup = %+v %v, want the space back under its name", got, ok)
+	}
+}
+
+func TestMoveOutRefusesWhatIsNoSpace(t *testing.T) {
+	home := withHome(t)
+	if err := os.MkdirAll(filepath.Join(home, "spaces", "plain"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	real, err := Create("Real")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(real.Dir, filepath.Join(home, "spaces", "link")); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(home, "x.space")
+	for _, folder := range []string{"plain", "link", "../repos", "", "nope"} {
+		if err := MoveOut(folder, dest); !errors.Is(err, ErrNotFound) {
+			t.Errorf("MoveOut(%q) = %v, want ErrNotFound", folder, err)
+		}
+	}
+	if _, err := os.Stat(dest); err == nil {
+		t.Fatal("something was moved")
+	}
+	// A trash entry that lost its marker is not turned into a space.
+	src := filepath.Join(home, "entry.space")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := MoveIn(src, "back-abc123"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("MoveIn of an unmarked folder = %v, want ErrNotFound", err)
+	}
+}
+
+// A write inside a space and the move of the whole folder never overlap: the move waits for the
+// copy (or rename) in flight, so a path handed out for the copy is not left in the trash.
+func TestMoveOutWaitsForWritesInTheSpace(t *testing.T) {
+	home := withHome(t)
+	sp, err := Create("Busy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(home, "x.space")
+
+	release := make(chan struct{})
+	started := make(chan struct{})
+	copied := make(chan string, 1)
+	go func() {
+		p, err := CopyAttachment(sp.Folder, blockingReader{started: started, release: release, data: "payload"}, "f.txt")
+		if err != nil {
+			t.Error(err)
+		}
+		copied <- p
+	}()
+	<-started
+	moved := make(chan error, 1)
+	go func() { moved <- MoveOut(sp.Folder, dest) }()
+	select {
+	case err := <-moved:
+		t.Fatalf("the move did not wait for the copy in flight: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	if p := <-copied; filepath.Dir(filepath.Dir(p)) != sp.Dir {
+		t.Fatalf("copy landed at %q", p)
+	}
+	if err := <-moved; err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dest, "attachments", "f.txt")); err != nil || string(b) != "payload" {
+		t.Fatalf("the copy is not in the moved folder: %q %v", b, err)
+	}
+}
+
+func TestMoveOutWaitsForARename(t *testing.T) {
+	home := withHome(t)
+	sp, err := Create("Before")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(home, "x.space")
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	beforePublish = func() {
+		close(reached)
+		<-release
+	}
+	t.Cleanup(func() { beforePublish = func() {} })
+	renamed := make(chan error, 1)
+	go func() {
+		_, err := Rename(sp.Folder, "After")
+		renamed <- err
+	}()
+	<-reached
+	moved := make(chan error, 1)
+	go func() { moved <- MoveOut(sp.Folder, dest) }()
+	select {
+	case err := <-moved:
+		t.Fatalf("the move did not wait for the rename: %v", err)
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(release)
+	if err := <-renamed; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-moved; err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dest, MarkerFile)); !strings.Contains(string(b), "After") {
+		t.Fatalf("the moved marker = %q, want the new name", b)
+	}
+}
+
+// blockingReader reads nothing until release is closed, and says when it was first read.
+type blockingReader struct {
+	started chan struct{}
+	release chan struct{}
+	data    string
+}
+
+func (b blockingReader) Read(p []byte) (int, error) {
+	select {
+	case <-b.started:
+	default:
+		close(b.started)
+	}
+	<-b.release
+	return copy(p, b.data), io.EOF
 }

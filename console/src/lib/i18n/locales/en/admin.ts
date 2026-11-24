@@ -977,6 +977,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "clean.archive_reason_delete_session": "Session delete",
   "clean.archive_reason_delete_branch": "Branch delete",
   "clean.archive_reason_delete_worktree": "Working copy deleted ({name})",
+  "clean.archive_reason_delete_space": "Space deleted ({name})",
+  "clean.purge_space_body": "The space's folder and every file in it are deleted for good, and it can no longer be restored (reclaims its space).",
   "clean.archive_worktree_snapshot": "uncommitted changes included",
   "clean.archive_sessions_n": "{count} session(s)",
   "clean.archive_branches_n": "{count} branch(es)",

@@ -1,0 +1,217 @@
+package main
+
+// Deleting a space (ADR 0142 decision 2): DELETE /spaces/{folder} moves the folder to the trash
+// and takes its sessions with it the way deleting a working copy does (ADR 0101 decision 4), and
+// restoring the trash entry puts both back. Deleting a session never reaches here: a session's
+// delete keeps its space.
+//
+// The trash entry is the usual archive (a manifest, no payload) plus the folder itself, moved
+// beside it as <id>.space. A rename keeps every file, its mode and its time, whatever the
+// folder's size; a tarball would hold the whole folder in memory (writeCleanupArchive) and would
+// have to cap what a restore reads (maxCleanupEntryBytes), neither of which fits a member's
+// documents. The price is that the trash and ~/spaces must share a file system, which is checked
+// before anything is changed.
+
+import (
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
+)
+
+// Error codes of a space's delete and restore. Worded in the Console's own table, not err.*: the
+// shared codes it would otherwise reuse say "working copy".
+const (
+	errCodeSpaceNotFound            = "space_not_found"
+	errCodeSpaceSessionsRunning     = "space_sessions_running"
+	errCodeSpaceLockedSessions      = "space_locked_sessions"
+	errCodeSpaceSessionsTrashFailed = "space_sessions_trash_failed"
+	errCodeSpaceTrashFailed         = "space_trash_failed"
+	errCodeSpaceTrashFS             = "space_trash_other_filesystem"
+	errCodeSpaceRestoreExists       = "space_restore_exists"
+	errCodeSpaceRestoreMissing      = "space_restore_missing"
+)
+
+// spaceTombstone is what a deleted space's trash entry records. The folder itself sits in the
+// trash directory as <id>.space.
+type spaceTombstone struct {
+	// Folder is the space's identity; a restore puts it back under this name, so the sessions'
+	// ids (derived from their directory) and Claude's transcript paths stay valid.
+	Folder string `json:"folder"`
+	// Name is the display name at the time of the delete, for the trash row.
+	Name string `json:"name,omitempty"`
+	// Path is the folder's absolute path when it was deleted.
+	Path string `json:"path"`
+	// Shelved lists the AI sessions the delete moved to the shelf; a restore takes them off it.
+	// Shell and ssm sessions go to the trash as entries of their own, and are restored from there.
+	Shelved []string `json:"shelved,omitempty"`
+}
+
+// spaceTrashDir is where the folder of archive id waits.
+func spaceTrashDir(id string) string { return filepath.Join(cleanupStoreDir(), id+".space") }
+
+// deleteSpaceResponse is DELETE /spaces/{folder}'s answer: the folder, and the id of the trash entry
+// that holds it.
+type deleteSpaceResponse struct {
+	Deleted string `json:"deleted"`
+	Archive string `json:"archive"`
+}
+
+// handleDeleteSpace is DELETE /spaces/{folder}. The order is the safety, as for a working copy:
+// refuse while anything runs or is locked, trash the shell / ssm sessions (a failure stops the
+// delete with nothing removed), record the entry, move the folder, and only then shelve the AI
+// sessions, whose conversations stay readable.
+func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
+	folder := r.PathValue("folder")
+	sp, ok := spacex.Lookup(folder)
+	if !ok {
+		httpx.WriteErr(w, http.StatusNotFound, errCodeSpaceNotFound, "no such space")
+		return
+	}
+	dir := sp.Dir
+	// Before anything is changed: a trash on another file system could only copy the folder, and
+	// a rename that fails after the shells were trashed would leave them trashed with the space
+	// still there.
+	store := cleanupStoreDir()
+	if err := os.MkdirAll(store, 0o700); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceTrashFailed,
+			fmt.Sprintf("could not open the trash, so the space was not deleted: %v", err))
+		return
+	}
+	if same, err := spacex.SameDevice(spacex.Root(), store); err != nil || !same {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceTrashFS,
+			"the trash is on another file system than ~/spaces, so the space cannot be moved to it; nothing was deleted")
+		return
+	}
+
+	// Only the decision runs inside the deletion gate, as for a working copy: a lock request
+	// either lands before the guards read it or meets the mark and is refused.
+	var end func()
+	sessionx.WithDeletionGate(func() { end = decideDeleteSpace(w, folder, dir) })
+	if end == nil {
+		return
+	}
+	defer end()
+
+	// Shell / ssm sessions first: the trash can fail (a full disk), and removing the folder first
+	// would leave them listed with no folder.
+	var shelved []string
+	for _, m := range gitx.SessionsToSettleUnder(dir) {
+		if m.Kind == session.KindShell || m.Kind == session.KindSSM {
+			if err := trashStoppedSession(m); err != nil {
+				httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceSessionsTrashFailed,
+					fmt.Sprintf("could not move session %s to the trash, so the space was left as it is: %v", m.Name, err))
+				return
+			}
+			continue
+		}
+		shelved = append(shelved, m.Name)
+	}
+
+	now := nowUTC()
+	man := cleanupManifest{
+		ID: newCleanupID(now, idSlug("space-"+folder)), At: now.Format(time.RFC3339),
+		Reason: "delete_space",
+		Space:  &spaceTombstone{Folder: folder, Name: sp.Name, Path: dir, Shelved: shelved},
+	}
+	if err := writeCleanupArchive(&man, nil); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceTrashFailed,
+			fmt.Sprintf("could not record the space in the trash, so it was left as it is: %v", err))
+		return
+	}
+	if err := spacex.MoveOut(folder, spaceTrashDir(man.ID)); err != nil {
+		sessionx.WithCleanupLock(func() { _, _ = purgeCleanupArchive(man.ID) })
+		invalidateCleanupUsage()
+		if errors.Is(err, spacex.ErrNotFound) {
+			httpx.WriteErr(w, http.StatusNotFound, errCodeSpaceNotFound, "no such space")
+			return
+		}
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceTrashFailed,
+			fmt.Sprintf("could not move the space to the trash, so it was left as it is: %v", err))
+		return
+	}
+	gitx.ShelveSessionsUnder(dir)
+	invalidateCleanupUsage()
+	httpx.WriteJSON(w, http.StatusOK, deleteSpaceResponse{Deleted: folder, Archive: man.ID})
+}
+
+// decideDeleteSpace is the part of a delete that runs inside the gate. It returns the function
+// that clears the "being deleted" mark, or nil after answering the refusal itself.
+func decideDeleteSpace(w http.ResponseWriter, folder, dir string) (end func()) {
+	if running := sessionx.LiveSessionsInDir(dir); len(running) > 0 {
+		httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
+			fmt.Sprintf("%d session(s) are running in this space (%s); stop them first", len(running), strings.Join(running, ", ")))
+		return nil
+	}
+	if locked := sessionx.LockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
+		httpx.WriteErr(w, http.StatusForbidden, errCodeSpaceLockedSessions,
+			fmt.Sprintf("%d locked session(s) live in this space (%s); unlock them first", len(locked), strings.Join(locked, ", ")))
+		return nil
+	}
+	release, ok, why := gitx.BeginDelete(dir, "", gitx.SessionNamesUnder(dir)...)
+	if !ok {
+		httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(), why)
+		return nil
+	}
+	// Existence is read again with the mark held: a delete of this same space that finished
+	// before the mark was taken has taken the folder with it, and this one answers 404.
+	if _, ok := spacex.Lookup(folder); !ok {
+		release()
+		httpx.WriteErr(w, http.StatusNotFound, errCodeSpaceNotFound, "no such space")
+		return nil
+	}
+	return release
+}
+
+// restoreDeletedSpace puts a deleted space back from the trash entry id, then takes the sessions
+// its delete shelved off the shelf. A space that is already back (the entry was restored before,
+// or the folder was recreated) is left as it is and only the sessions are restored, which makes
+// restoring twice safe.
+func restoreDeletedSpace(id string, t spaceTombstone) error {
+	if !spacex.ValidFolder(t.Folder) {
+		return &restoreConflict{errCodeSpaceRestoreMissing, "the trash entry names no space folder"}
+	}
+	src := spaceTrashDir(id)
+	var err error
+	sessionx.WithDeletionGate(func() {
+		if gitx.UnderDeletion(filepath.Join(spacex.Root(), t.Folder)) {
+			err = &restoreConflict{gitx.ErrCodeDeleteInProgress(), "a delete of this space is still in progress; try again in a moment"}
+			return
+		}
+		_, statErr := os.Lstat(src)
+		_, back := spacex.Lookup(t.Folder)
+		switch {
+		case statErr != nil && back:
+			// Moved back by an earlier restore.
+		case statErr != nil:
+			err = &restoreConflict{errCodeSpaceRestoreMissing, "the space's folder is no longer in the trash"}
+		default:
+			switch merr := spacex.MoveIn(src, t.Folder); {
+			case errors.Is(merr, spacex.ErrExists):
+				err = &restoreConflict{errCodeSpaceRestoreExists, "something already exists at ~/spaces/" + t.Folder}
+			case errors.Is(merr, spacex.ErrNotFound):
+				err = &restoreConflict{errCodeSpaceRestoreMissing, "the space's folder in the trash is not a space any more"}
+			case merr != nil:
+				err = merr
+			}
+		}
+	})
+	if err != nil {
+		return err
+	}
+	for _, name := range t.Shelved {
+		if m, ok := session.ReadMeta(name); ok && m.Archived && underDir(filepath.Clean(m.Dir), filepath.Clean(t.Path)) {
+			sessionx.RestoreSession(name)
+		}
+	}
+	return nil
+}

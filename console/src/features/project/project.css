@@ -405,6 +405,9 @@
 .space-group-rename .codicon {
   font-size: 12px;
 }
+.space-group-rename.space-group-delete {
+  margin-left: 0;
+}
 .space-group-row:hover .space-group-rename,
 .space-group-row:focus-within .space-group-rename,
 .space-group-rename:focus-visible {

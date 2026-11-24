@@ -79,6 +79,7 @@ session_translate.go
 session_wiring.go
 share_operation.go
 shutdown.go
+space_delete.go
 ssm_instances.go
 svn_wiring.go
 terminal.go

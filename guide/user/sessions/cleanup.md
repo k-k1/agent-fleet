@@ -104,6 +104,10 @@ The **"Trash (restore)"** tab of the Clean up window lists the sessions, branche
 - The trash never empties on its own. Its size is also shown in **⚙ Settings → "Machine"**
 - If a restore stopped part way, **"Restore"** again finishes it. Until then it cannot be deleted permanently
 
+### When you delete a space
+
+[Deleting a space](spaces.md#delete-a-space) goes through the trash too: its folder waits there, and the row is named "Space deleted (name)". **"Restore"** moves the folder back to `~/spaces` and takes its archived sessions off the archive; it is refused while something else sits at the folder's name. The row's size counts the folder, and **"Delete permanently"** removes the folder and its files for good.
+
 ### When you delete a worktree
 
 Deleting a worktree goes through the trash too.

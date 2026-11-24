@@ -425,6 +425,9 @@ func Rename(folder, name string) (Space, error) {
 	}
 	renameMu.Lock()
 	defer renameMu.Unlock()
+	// Shared with every other write inside a space; a delete moving the folder away waits for it.
+	lifeMu.RLock()
+	defer lifeMu.RUnlock()
 	// Go opens a Root without O_DIRECTORY or O_NONBLOCK, so a FIFO in the place of ~/spaces would
 	// block here (with renameMu held): refuse anything that is no directory first.
 	if fi, err := os.Stat(Root()); err != nil {
@@ -780,6 +783,10 @@ func CopyAttachment(folder string, src io.Reader, name string) (string, error) {
 	if !ValidFolder(folder) {
 		return "", errors.New("not a space folder")
 	}
+	// Shared with every other write inside a space: a delete moves the folder away only between
+	// copies, never under one, so a copy is not left in the trash with its path handed out.
+	lifeMu.RLock()
+	defer lifeMu.RUnlock()
 	top, err := os.OpenRoot(Root())
 	if err != nil {
 		return "", err

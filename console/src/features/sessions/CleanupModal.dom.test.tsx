@@ -266,4 +266,29 @@ describe("CleanupModal cache section", () => {
       expect.stringContaining("api/repos/app%40wip/recreate"),
     );
   });
+
+  it("names a deleted space in the trash, says what a restore refused for, and warns that a purge removes the files", async () => {
+    candidates = [];
+    archives = [
+      {
+        id: "20260901-000000-space-q3",
+        at: "2026-09-01T00:00:00Z",
+        reason: "delete_space",
+        space: { folder: "q3-abcdef", name: "Q3 report", path: "/home/dev/spaces/q3-abcdef" },
+      },
+    ];
+    restoreStatus = 409;
+    restoreBody = { error: { code: "space_restore_exists", message: "x" } };
+    await render();
+    await click(document.querySelectorAll<HTMLButtonElement>(".clean-tab")[1]);
+    expect(document.querySelector(".clean-arch-what")?.textContent).toContain("スペース削除（Q3 report）");
+    await click(document.querySelector<HTMLButtonElement>(".clean-arch-actions button"));
+    // Not "restore again to finish it": the folder's place has to be cleared first.
+    expect(document.body.textContent).toContain("フォルダ名の場所に、すでに何かがあるため戻しませんでした");
+    expect(document.body.textContent).not.toContain("もう一度「復元」すると続きから終わります");
+    await click(document.querySelectorAll<HTMLButtonElement>(".clean-arch-actions button")[1]);
+    expect(document.querySelector(".ui-confirm")?.textContent ?? document.body.textContent).toContain(
+      "スペースのフォルダとその中のファイルがすべて完全に削除され",
+    );
+  });
 });

@@ -135,6 +135,26 @@ export async function renameSpace(folder: string, name: string, owner: string): 
   return null;
 }
 
+/** Delete a space (its folder goes to the trash with its sessions) in the workspace `owner`, the one
+ *  the dialog was opened in, under the same rule as renameSpace: nothing is sent to another
+ *  workspace, and an answer that arrives after a switch says nothing about this one. Null once the
+ *  Agent has moved it; the space leaves the list at once and the list is read again. */
+export async function deleteSpace(folder: string, owner: string): Promise<RenameResult> {
+  if (spacesOwner() !== owner) return { stale: true };
+  let d;
+  try {
+    d = await apiJSON(`api/spaces/${encodeURIComponent(folder)}`, "DELETE");
+  } catch (e) {
+    if (spacesOwner() !== owner) return { stale: true };
+    throw e;
+  }
+  if (spacesOwner() !== owner) return { stale: true };
+  if (d?.error) return { error: d.error };
+  useSpacesStore.setState((s) => (s.owner === owner ? { spaces: s.spaces.filter((x) => x.folder !== folder) } : s));
+  void useSpacesStore.getState().refresh();
+  return null;
+}
+
 /** The name a space is shown under: its display name, or its folder when it has none. */
 export function spaceLabel(folder: string, spaces: Space[]): string {
   return spaces.find((s) => s.folder === folder)?.name || folder;

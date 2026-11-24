@@ -68,6 +68,9 @@ type cleanupManifest struct {
 	Sessions []cleanupArchivedSession `json:"sessions,omitempty"`
 	Branches []cleanupArchivedBranch  `json:"branches,omitempty"`
 	Worktree *gitx.WorktreeTombstone  `json:"worktree,omitempty"`
+	// Space records a deleted space (space_delete.go); its folder waits in the trash directory
+	// as <id>.space.
+	Space *spaceTombstone `json:"space,omitempty"`
 	// Bytes is the size of the archive's tarball, filled in by listCleanupArchives for the
 	// trash tab (what a purge reclaims). Never written into the archive itself.
 	Bytes int64 `json:"bytes,omitempty"`
@@ -173,6 +176,11 @@ func listCleanupArchives() []cleanupManifest {
 		if json.Unmarshal(b, &m) == nil && m.ID != "" {
 			if info, err := os.Stat(filepath.Join(cleanupStoreDir(), m.ID+".tar.gz")); err == nil {
 				m.Bytes = info.Size()
+			}
+			if m.Space != nil {
+				budget := cleanupUsageMaxEntries
+				b, _ := walkSize(spaceTrashDir(m.ID), &budget)
+				m.Bytes += b
 			}
 			out = append(out, m)
 		}
@@ -322,6 +330,12 @@ func purgeCleanupArchive(id string) (cleanupManifest, error) {
 	}
 	if b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json")); err == nil {
 		_ = json.Unmarshal(b, &man)
+	}
+	// A deleted space's folder goes first, whatever the manifest says (it may be unreadable): with
+	// the archive gone nothing could name the folder again, and it would stay for ever. A removal
+	// that stops part way leaves the archive, so the purge can be pressed again.
+	if err := os.RemoveAll(spaceTrashDir(id)); err != nil {
+		return man, err
 	}
 	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
 	if err := os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
@@ -540,6 +554,12 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			return nil, err
 		}
 		restored["worktree"] = m.Worktree.Name
+	}
+	if m.Space != nil {
+		if err := restoreDeletedSpace(m.ID, *m.Space); err != nil {
+			return nil, err
+		}
+		restored["space"] = m.Space.Folder
 	}
 	return restored, nil
 }

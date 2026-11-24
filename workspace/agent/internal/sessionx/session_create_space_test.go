@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
@@ -170,5 +171,34 @@ func TestCreateSpaceRefusals(t *testing.T) {
 				t.Fatalf("a refused create wrote a meta: %d -> %d", metas, got)
 			}
 		})
+	}
+}
+
+// A space whose delete has decided is going away: a session started in it now would run in a folder
+// that is gone, so the create is refused and no meta is written. Once the delete is over the
+// refusal is gone with the mark.
+func TestCreateInASpaceBeingDeletedIsRefused(t *testing.T) {
+	p := newCreateProbe(t)
+	launchTmuxFn = func(session.Meta, bool) error { return nil }
+	sp, err := spacex.Create("going")
+	if err != nil {
+		t.Fatal(err)
+	}
+	end, ok, why := gitx.BeginDelete(sp.Dir, "")
+	if !ok {
+		t.Fatal(why)
+	}
+	metas := len(session.ListMetas())
+	rec := p.post(map[string]any{"kind": "shell", "space": map[string]any{"folder": sp.Folder}}, "")
+	if got := spaceErrCode(t, rec.Body.Bytes()); got != gitx.ErrCodeDeleteInProgress() || rec.Code != http.StatusConflict {
+		t.Fatalf("create in a space being deleted: %d %s", rec.Code, rec.Body)
+	}
+	if got := len(session.ListMetas()); got != metas {
+		t.Fatalf("the refused create wrote a meta: %d -> %d", metas, got)
+	}
+	end()
+	rec = p.post(map[string]any{"kind": "shell", "space": map[string]any{"folder": sp.Folder}}, "")
+	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("create after the delete ended: %d %s", rec.Code, rec.Body)
 	}
 }

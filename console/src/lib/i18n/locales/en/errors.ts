@@ -59,6 +59,10 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.recreate_stale":
     "That way of recreating it is no longer available (the branch may have changed). The options were reloaded; choose again.",
   "err.recreate_failed": "Couldn't recreate the working copy.",
+  "err.space_restore_exists":
+    "Something already exists at this space's folder under ~/spaces, so it was not put back. Move or delete that, then restore again.",
+  "err.space_restore_missing":
+    "This space's folder is no longer in the trash, so it can't be restored.",
   "err.worktree_archive_failed":
     "Couldn't record the worktree in the trash, so it was not deleted (check the free disk space).",
   "err.recreate_needs_new_branch":

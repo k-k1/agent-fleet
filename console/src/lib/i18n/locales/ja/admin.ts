@@ -973,6 +973,8 @@ export const admin = {
   "clean.archive_reason_delete_session": "セッション削除",
   "clean.archive_reason_delete_branch": "ブランチ削除",
   "clean.archive_reason_delete_worktree": "作業コピー削除（{name}）",
+  "clean.archive_reason_delete_space": "スペース削除（{name}）",
+  "clean.purge_space_body": "スペースのフォルダとその中のファイルがすべて完全に削除され、元に戻せなくなります（容量を回収します）。",
   "clean.archive_worktree_snapshot": "未コミットの変更を含む",
   "clean.archive_sessions_n": "セッション {count} 件",
   "clean.archive_branches_n": "ブランチ {count} 件",

@@ -170,3 +170,35 @@ Five facts in the code shape the answer:
 - Moving an existing session into a space, and promoting a space into a repository (copy the files
   into a new repository and start a new session there; a move would break `--resume`), are not part
   of this record.
+
+## Amendment: how deleting a space works (#4965 part 3)
+
+Decision 2 says a deleted space goes through the trash with its sessions. As built:
+
+- **The folder is moved, not archived.** The trash entry is the usual archive (a manifest, no
+  payload) and the folder waits beside it as `<id>.space`. A rename keeps every file, mode and
+  time whatever the size; a tarball would be held in memory and capped at the per-entry limit a
+  restore reads. It needs `~/spaces` and the trash on one file system, which is checked before
+  anything is changed (a workspace's home is one; if not, nothing is deleted). Purging the entry
+  removes the folder.
+- **The sessions follow a working copy's delete (ADR 0101 decision 4).** A running or locked
+  session refuses the delete. Stopped shell / ssm sessions go to the trash first (a failure stops
+  the delete), then the folder moves, then stopped AI sessions go to the shelf. Restoring the entry
+  moves the folder back under the same name (so session ids and Claude's transcript paths hold)
+  and takes the shelved sessions off the shelf; it is refused while anything is at that name.
+- **A delete blocks a session start in that space** (the "being deleted" mark a working-copy delete
+  uses), and waits for a rename or an attachment copy in flight (a read-write lock in `spacex`).
+
+Settling the open points of #5085 that this touches:
+
+- *A paste to a session whose space is gone* (item 2). Lifetimes are tied through the delete: a
+  space deleted from the Console takes its sessions off the list, so they are not pasted to. A
+  space removed some other way (Clean, a folder removed by hand) leaves the paste an ordinary upload:
+  it answers 201 with the stored path and no `spaceCopy`, and does not recreate the folder.
+  A test pins it. Storing the space on the session at creation is not needed.
+- *The space copy is confined by `os.Root`, not per-component `O_NOFOLLOW`* (item 3). The delete
+  takes the same lock as the copy and the rename, which closes the overlap this Agent can cause
+  itself. The two compositions that need another process of the same user to rewrite the workspace
+  during the upload stay open, as before: that process already has the user's rights.
+- *Archived sessions and the recent order* (item 1) is unchanged: a deleted space is gone from the
+  list, so it has no rank to lose.
