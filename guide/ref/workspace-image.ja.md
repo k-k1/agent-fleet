@@ -106,7 +106,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
-| [Chromium](https://www.chromium.org/) | エージェントがスクリーンショットやページの確認に使うヘッドレスブラウザ | `156.0.8078.79` | [BSD-3-Clause](https://github.com/chromium/chromium/blob/156.0.8078.79/LICENSE) |
+| [Chromium](https://www.chromium.org/) | エージェントがスクリーンショットやページの確認に使うヘッドレスブラウザ | `156.0.8078.108` | [BSD-3-Clause](https://github.com/chromium/chromium/blob/156.0.8078.108/LICENSE) |
 | [Noto Sans CJK](https://github.com/notofonts/noto-cjk) | 日本語・中国語・韓国語のページを表示するフォント | Debian 13 (trixie) のパッケージ | [OFL-1.1](https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE) |
 
 ## ライセンス
