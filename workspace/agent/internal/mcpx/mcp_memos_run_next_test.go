@@ -47,7 +47,16 @@ func TestMemoCreateResultReportsEveryProblem(t *testing.T) {
 			t.Errorf("%s: %q", answer, got)
 		}
 	}
-	if got := memoRunNextProblem(json.RawMessage(`{"kind":"text","runNext":true}`), `{"id":"m0","existing":true,"state":"held"}`); !strings.Contains(got, "Console") {
-		t.Errorf("a waiting existing note: %q", got)
+	// A pending note with no delivery may be in a hand send, whose answer hides the mark: the result
+	// says what did not happen and offers the Console only while the note waits.
+	for _, answer := range []string{`{"id":"m0","existing":true,"state":"held"}`, `{"id":"m0","existing":true,"state":"pending"}`} {
+		got := memoRunNextProblem(json.RawMessage(`{"kind":"text","runNext":true}`), answer)
+		if !strings.Contains(got, "no mark was set") || !strings.Contains(got, "while it still waits") {
+			t.Errorf("%s: %q", answer, got)
+		}
+	}
+	// An older Control Plane has no mark to set by hand either: no Console advice.
+	if got := memoRunNextProblem(json.RawMessage(`{"kind":"text","runNext":true}`), `{"id":"m1"}`); strings.Contains(got, "Console") {
+		t.Errorf("an older Control Plane: %q", got)
 	}
 }

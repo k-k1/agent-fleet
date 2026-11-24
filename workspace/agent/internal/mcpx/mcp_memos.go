@@ -567,12 +567,14 @@ func memoRunNextProblem(args json.RawMessage, answer string) string {
 			return "Nothing was added: a run has already taken the note this queue holds for the same item, so " +
 				"marking it to run next means nothing now. Do not report a new note or a mark."
 		}
-		return "Nothing was added: the queue already holds a waiting note for the same item, and it was returned " +
-			"unchanged, so it is NOT marked to run next. Do not report it as marked; tell your user, who can mark it " +
-			"in the Console."
+		// The answer cannot tell an unmarked note from one a hand send is taking (the DTO hides the
+		// mark then), so it says what did not happen and offers the Console only as a condition.
+		return "Nothing was added, and no mark was set: the queue already holds a note for the same item, returned " +
+			"as it is, and the answer shows no run-next mark on it. Do not report a new note or a mark; tell your " +
+			"user, who can mark it in the Console while it still waits in an auto-run category."
 	}
 	return "The note was saved, but it was NOT marked to run next: this Control Plane does not support it yet. " +
-		"Do not report it as marked; tell your user, who can mark it in the Console."
+		"Do not report it as marked; tell your user."
 }
 
 // memoRefSent reports whether the call's reference is one to be kept: any non-empty field counts,
