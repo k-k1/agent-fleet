@@ -22,6 +22,7 @@ import { useInboxStore } from "../inbox/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
+import { useSpacesStore } from "../spaces/store.ts";
 
 export interface StartTarget {
   /** Working-copy path ("" = home / repo-less). */
@@ -168,6 +169,9 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     if (res && res.error) {
       const code = typeof res.error === "object" ? res.error.code : "";
       if (take && (String(code).startsWith("http_") || code === "create_in_progress")) return { ok: false, unknown: true };
+      // The space was removed since the list was read: read it again, so the form shows that it is
+      // gone instead of offering the same pick for a retry.
+      if (code === "space_not_found") void useSpacesStore.getState().refresh();
       if (code === "branch_exists") return { ok: false, conflict: "local" as const };
       if (code === "branch_exists_remote") return { ok: false, conflict: "remote" as const };
       // The branch is checked out in another working copy (git allows only one). The

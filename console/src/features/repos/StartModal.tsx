@@ -37,6 +37,7 @@ import { deriveRepoName } from "./reponame.ts";
 import { useFoldValue } from "../../lib/useFold.ts";
 import { HubComposer } from "./HubComposer.tsx";
 import { SpaceLaunchForm } from "./LaunchModal.tsx";
+import { useSpacesStore } from "../spaces/store.ts";
 import type { LaunchAccess, LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import type { SharedDraft } from "./hubDraft.ts";
 
@@ -129,7 +130,12 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
     api("api/spaces")
       .then((d) => {
         if (!alive) return;
-        if (d && !d.error && Array.isArray(d.spaces)) setSpaceSupport("yes");
+        if (d && !d.error && Array.isArray(d.spaces)) {
+          setSpaceSupport("yes");
+          // The same answer is the place chip's list: the hub asks the Agent once, and "Check
+          // again" refreshes both.
+          useSpacesStore.getState().adopt(d);
+        }
         // Only "no such route" means an Agent without spaces; anything else may pass. A plain-text
         // 404 / 405 (the Agent's mux) arrives as http_404 / http_405 with no status.
         else if (d?.error && !isTransientErr(d) && (d.error.status === 404 || d.error.status === 405 || d.error.code === "http_404" || d.error.code === "http_405")) setSpaceSupport("no");

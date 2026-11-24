@@ -65,6 +65,7 @@ import { fetchMemoAttachments, stashLaunchDraft } from "../memo/launchStash.ts";
 import type { MemoAttachment } from "../../types/memo.ts";
 import type { SharedDraft } from "./hubDraft.ts";
 import { SpacePlacePicker } from "../spaces/SpacePlacePicker.tsx";
+import { useSpaceGone } from "../spaces/useSpaceGone.ts";
 
 // spacex.NameMaxRunes on the Agent, which refuses a longer name (bad_space). maxLength counts
 // UTF-16 units, never fewer than the runes, so a name it lets through is never refused.
@@ -482,6 +483,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   const [spaceName, setSpaceName] = useState("");
   // The existing space the launch runs in (its folder); "" starts a new one.
   const [spaceFolder, setSpaceFolder] = useState("");
+  // The picked space was removed since the list was read: the launch stops until another place is
+  // chosen, and the draft stays as it is.
+  const spaceGone = useSpaceGone(space ? spaceFolder : "");
   const toggleSection = (key: LaunchSectionKey, open: boolean, set: (v: boolean) => void) => {
     set(!open);
     writeLaunchOpen(key, !open);
@@ -876,7 +880,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // Existing-branch mode arrives here already resolved, with a branch picked from the list.
   const start = async (resolveCollision: boolean) => {
     // Checked here, not only on the button: the send key and the collision retry come in this way.
-    if (busy || seedLoading || filesStuck || launchBlocked) return;
+    if (busy || seedLoading || filesStuck || launchBlocked || spaceGone) return;
     setBusy(true);
     setConflict(null);
     setPolicyErr(null);
@@ -951,7 +955,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked && !prefsLoading && !launchBlocked && !filesStuck;
+  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked && !prefsLoading && !launchBlocked && !filesStuck && !spaceGone;
   useEffect(() => {
     if (submitRef) submitRef.current = () => canLaunch && submit();
   });
@@ -1651,6 +1655,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               />
             )}
           </div>
+          {spaceGone && (
+            <span className="ui-field-hint ui-field-hint--warn" role="status">
+              {tr("start.space_gone")}
+            </span>
+          )}
           <span className="ui-field-hint">
             {spaceFolder ? (
               <Trans k="start.space_note_existing" vars={{ folder: spaceFolder }} components={[<code />]} />

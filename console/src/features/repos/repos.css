@@ -1149,11 +1149,26 @@
 }
 .start-place-pick {
   position: relative;
-  flex: none;
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 60%;
 }
 button.start-place-chip--btn {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 100%;
   background: transparent;
   cursor: pointer;
+}
+button.start-place-chip--gone {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+.start-place-chip-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .start-place-list {
   position: absolute;

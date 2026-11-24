@@ -395,17 +395,77 @@ describe("Start hub — an existing space", () => {
     expect(chip().textContent).toContain("Space 0");
   });
 
-  it("falls back to a new space when the picked one is gone", async () => {
+  const spaceAsks = () => apiGet.mock.calls.filter((c) => c[0] === "api/spaces").length;
+
+  it("stops a launch aimed at a space that is gone, keeps the draft, and goes on once another place is picked", async () => {
     withSpaces([space("gone-aaa", "Gone", "2026-11-01T00:00:00Z")]);
     await openHub();
     await click(chip());
     await click(options()[1]);
-    expect(chip().textContent).toContain("Gone");
+    await typeInto(hubBox(), "続きの作業");
     await act(async () => useSpacesStore.setState({ spaces: [] }));
     await settle();
-    expect(chip().textContent).toContain(t("start.place_new_space"));
+    // Not silently a new space: the pick stays, marked, and nothing can launch it.
+    expect(chip().textContent).toContain("gone-aaa"); // its name left with the list; the folder stands in
+    expect(chip().className).toContain("start-place-chip--gone");
+    expect(document.body.textContent).toContain(t("start.space_gone"));
+    expect(spaceGo().disabled).toBe(true);
+    await act(async () => {
+      hubBox().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    });
+    await settle();
+    expect(createCalls()).toHaveLength(0);
+    expect(hubBox().value).toBe("続きの作業");
+    await click(chip());
+    await click(options()[0]); // New space, chosen on purpose
     await click(spaceGo());
-    expect((createCalls()[0][2] as Record<string, unknown>).space).toEqual({ name: "" });
+    expect(createCalls()[0][2]).toMatchObject({ space: { name: "" }, initial_prompt: "続きの作業" });
+  });
+
+  it("reads the list again when the Agent says the space is not found, and then refuses the same pick", async () => {
+    withSpaces([space("gone-aaa", "Gone", "2026-11-01T00:00:00Z")]);
+    apiPost.mockImplementation(async (...a: unknown[]) =>
+      a[0] === "api/sessions" ? { error: { code: "space_not_found", message: "no such space: gone-aaa" } } : {},
+    );
+    await openHub();
+    await click(chip());
+    await click(options()[1]);
+    withSpaces([]); // removed meanwhile; the list in hand is stale
+    await click(spaceGo());
+    expect(createCalls()).toHaveLength(1);
+    expect(spaceAsks()).toBe(2); // the hub's one ask, then the re-read after the 404
+    expect(spaceGo().disabled).toBe(true);
+    await click(spaceGo());
+    expect(createCalls()).toHaveLength(1); // the retry is not sent
+  });
+
+  it("asks the Agent for the spaces once when the hub opens, and \"Check again\" refills the chip's list", async () => {
+    apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? { error: { code: "http_500", message: "x" } } : []));
+    await openHub();
+    expect(spaceAsks()).toBe(1);
+    expect(document.body.textContent).toContain(t("start.space_check_failed"));
+    withSpaces([space("sp-a", "Notes", "2026-11-01T00:00:00Z")]);
+    await click([...document.querySelectorAll<HTMLButtonElement>("button.linklike")].find((b) => b.textContent === t("start.space_check_again"))!);
+    expect(spaceAsks()).toBe(2);
+    await click(chip());
+    expect(optionLabels()).toEqual([t("start.place_new_space"), "Notes"]);
+  });
+
+  it("closes the list with Escape alone, and returns the focus to the chip after a pick", async () => {
+    withSpaces([space("sp-a", "Notes", "2026-11-01T00:00:00Z")]);
+    await openHub();
+    await click(chip());
+    expect(options()).toHaveLength(2);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await settle();
+    expect(options()).toHaveLength(0);
+    expect(document.querySelector(".start-hub")).not.toBeNull(); // the hub itself stayed open
+    expect(document.activeElement).toBe(chip());
+    await click(chip());
+    await click(options()[1]);
+    expect(document.activeElement).toBe(chip());
   });
 
   it("uploads the draft's files to the existing space's new session like a new one's", async () => {

@@ -789,6 +789,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "start.place_all": "All spaces ({n})",
   "start.place_all_head": "Older",
   "start.space_note_existing": "Runs in <0>~/spaces/{folder}</0>, with the files earlier sessions left there.",
+  "start.space_gone": "This space no longer exists. Pick another place or New space; your text and files are kept.",
   "start.space_launch": "Start in a new space",
   "start.space_launch_existing": "Start in this space",
   "start.space_checking": "Checking whether this workspace can start in a space…",

@@ -17,9 +17,13 @@ export function rankSpaces(spaces: Space[], sessions: Session[]): Space[] {
     if (Number.isNaN(at)) continue;
     if (at > (lastUse.get(s.space) ?? -Infinity)) lastUse.set(s.space, at);
   }
+  // A session's time wins even when it is older than the space (a clock set back): the creation
+  // time stands in only for a space no session was started in.
   const used = (sp: Space): number => {
+    const seen = lastUse.get(sp.folder);
+    if (seen !== undefined) return seen;
     const made = sp.createdAt ? Date.parse(sp.createdAt) : NaN;
-    return Math.max(lastUse.get(sp.folder) ?? -Infinity, Number.isNaN(made) ? -Infinity : made);
+    return Number.isNaN(made) ? -Infinity : made;
   };
   return [...spaces].sort((a, b) => used(b) - used(a) || (a.folder < b.folder ? -1 : a.folder > b.folder ? 1 : 0));
 }

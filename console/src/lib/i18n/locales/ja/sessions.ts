@@ -799,6 +799,7 @@ export const sessions = {
   "start.place_all": "すべてのスペース（{n}）",
   "start.place_all_head": "それ以前",
   "start.space_note_existing": "<0>~/spaces/{folder}</0> で動きます。これまでのセッションが残したファイルもそこにあります。",
+  "start.space_gone": "このスペースはもうありません。ほかの場所か「新しいスペース」を選んでください。書いた文章とファイルはそのままです。",
   "start.space_launch": "新しいスペースで始める",
   "start.space_launch_existing": "このスペースで始める",
   "start.space_checking": "このワークスペースがスペースで始められるか確かめています…",

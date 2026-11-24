@@ -81,11 +81,12 @@ func SavePastedImageTo(w http.ResponseWriter, r *http.Request, dir string) {
 	savePastedImage(w, r, dir, nil)
 }
 
-// savePastedImage is SavePastedImageTo with a step after the file is stored: afterSave gets the
-// stored path and the client's file name, and the path it answers goes into the 201 answer as
-// spaceCopy. An error removes the stored file and answers 500 space_copy_failed, so an upload is
-// never reported as taken when the step it promised did not happen.
-func savePastedImage(w http.ResponseWriter, r *http.Request, dir string, afterSave func(dest, origName string) (string, error)) {
+// savePastedImage is SavePastedImageTo with a step before the file is published: afterSave reads
+// the bytes just received (the same open file, never a path opened again, so the copy is exactly
+// what was stored) with the client's file name, and the path it answers goes into the 201 answer
+// as spaceCopy. An error stores nothing and answers 500 space_copy_failed, so an upload is never
+// reported as taken when the step it promised did not happen.
+func savePastedImage(w http.ResponseWriter, r *http.Request, dir string, afterSave func(content io.Reader, origName string) (string, error)) {
 	mr, err := r.MultipartReader()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_form", "expected multipart/form-data")
@@ -120,7 +121,19 @@ func savePastedImage(w http.ResponseWriter, r *http.Request, dir string, afterSa
 			return
 		}
 		n, err := io.Copy(tmp, io.LimitReader(part, max+1))
+		spaceCopy := ""
+		var copyErr error
+		if err == nil && n <= max && afterSave != nil {
+			if _, err = tmp.Seek(0, io.SeekStart); err == nil {
+				spaceCopy, copyErr = afterSave(io.LimitReader(tmp, n), part.FileName())
+			}
+		}
 		_ = tmp.Close()
+		if copyErr != nil {
+			_ = os.Remove(tmp.Name())
+			httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceCopyFailed, copyErr.Error())
+			return
+		}
 		if err != nil || n > max {
 			_ = os.Remove(tmp.Name())
 			if n > max {
@@ -134,18 +147,15 @@ func savePastedImage(w http.ResponseWriter, r *http.Request, dir string, afterSa
 		dest := filepath.Join(dir, fname)
 		if err := os.Rename(tmp.Name(), dest); err != nil {
 			_ = os.Remove(tmp.Name())
+			if spaceCopy != "" {
+				_ = os.Remove(spaceCopy) // an upload that failed leaves no copy behind
+			}
 			httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 			return
 		}
 		out := map[string]any{"path": dest, "name": fname}
-		if afterSave != nil {
-			cp, err := afterSave(dest, part.FileName())
-			if err != nil {
-				_ = os.Remove(dest)
-				httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceCopyFailed, err.Error())
-				return
-			}
-			out["spaceCopy"] = cp
+		if spaceCopy != "" {
+			out["spaceCopy"] = spaceCopy
 		}
 		httpx.WriteJSON(w, http.StatusCreated, out)
 		return
@@ -229,10 +239,13 @@ func HandlePasteImage(w http.ResponseWriter, r *http.Request) {
 	// the member finds the files beside their work and a later session in the space has them. The
 	// prompt keeps pointing at the stored path: the mirror recognises an attachment by its
 	// /pasted/<key>/paste-<n> shape.
-	var after func(dest, orig string) (string, error)
-	if spacex.FolderOf(meta.Dir) != "" {
-		after = func(dest, orig string) (string, error) {
-			cp, err := spacex.CopyAttachment(meta.Dir, dest, orig)
+	var after func(content io.Reader, orig string) (string, error)
+	// The folder FolderOf answered names the space from here on, never meta.Dir again: the copy
+	// resolves it under ~/spaces itself, so a spelling of the directory that FolderOf and a
+	// lexical join read differently cannot send the file elsewhere.
+	if folder := spacex.FolderOf(meta.Dir); folder != "" {
+		after = func(content io.Reader, orig string) (string, error) {
+			cp, err := spacex.CopyAttachment(folder, content, orig)
 			if err != nil {
 				return "", fmt.Errorf("could not copy the file into the space: %w", err)
 			}

@@ -74,6 +74,11 @@ The workspace runs an older Agent, which would start the session in home instead
 again: it starts from the latest image ([Pick up a new image](../workspace/recreate.md#pick-up-a-new-image)). Until then, start in a
 repository or use **Other → Launch an agent in home**.
 
+### "This space no longer exists"
+
+The space you picked was removed after the list was read. The start is stopped rather than sent to another place, and
+your text and files stay in the box. Pick another place or **New space**.
+
 ### "Could not check whether this workspace can start in a space"
 
 The workspace did not answer, often because it is still starting. Press **Check again** after a moment.

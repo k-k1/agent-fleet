@@ -435,9 +435,9 @@ const AttachmentsDir = "attachments"
 const attachmentNameMaxBytes = 200
 
 // attachmentName reduces a client-supplied file name to one safe, readable basename: directory
-// parts, control characters and leading dots dropped, a long name cut in the middle so its
-// extension survives. Unlike the agent-facing upload name, Unicode is kept: this is the name
-// the member sees, and a Japanese file name must not collapse to its extension.
+// parts, control characters and leading dots dropped, a long name cut (at a character boundary,
+// in one pass) so its extension survives. Unlike the agent-facing upload name, Unicode is kept:
+// this is the name the member sees, and a Japanese file name must not collapse to its extension.
 func attachmentName(name string) string {
 	base := name[strings.LastIndexAny(name, `/\`)+1:]
 	var b strings.Builder
@@ -456,41 +456,55 @@ func attachmentName(name string) string {
 		if len(ext) > 32 {
 			ext = ""
 		}
-		stem := []rune(strings.TrimSuffix(s, ext))
-		for len(string(stem))+len(ext) > attachmentNameMaxBytes {
-			stem = stem[:len(stem)-1]
+		cut := attachmentNameMaxBytes - len(ext)
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
 		}
-		s = string(stem) + ext
+		s = s[:cut] + ext
 	}
 	return s
 }
 
-// CopyAttachment copies the file at src into dir/AttachmentsDir under name (see attachmentName)
-// and answers the copy's absolute path. A name already taken keeps both files: the copy gets
-// "-2", "-3" ... before its extension, claimed with O_EXCL so two copies at once never share one.
-// dir is the space's directory (a caller checked FolderOf); AttachmentsDir is never followed when
-// it is a symlink, so an agent that replaced it cannot send the member's files elsewhere.
-func CopyAttachment(dir, src, name string) (string, error) {
-	att := filepath.Join(dir, AttachmentsDir)
-	if fi, err := os.Lstat(att); err == nil {
-		if !fi.IsDir() {
-			return "", fmt.Errorf("%s is not a folder", AttachmentsDir)
-		}
-	} else if errors.Is(err, fs.ErrNotExist) {
-		if err := os.Mkdir(att, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
-			return "", err
-		}
-		if fi, err := os.Lstat(att); err != nil || !fi.IsDir() {
-			return "", fmt.Errorf("%s is not a folder", AttachmentsDir)
-		}
-	} else {
-		return "", err
+// CopyAttachment copies src into the attachments folder of the space in folder (as FolderOf
+// answered it) under name (see attachmentName) and answers the copy's absolute path. A name
+// already taken keeps both files: the copy gets "-2", "-3" ... before its extension, claimed with
+// O_EXCL so two copies at once never share one.
+//
+// Every step runs inside an os.Root opened on the space, so the folder, the marker and the
+// attachments folder are all resolved relative to it and a symlink that points outside the space
+// is refused whenever it was put there, however the check and the write interleave with an agent
+// that is rewriting the space. src is the bytes the caller already holds open: the copy is of
+// those, not of a path opened again.
+func CopyAttachment(folder string, src io.Reader, name string) (string, error) {
+	if !ValidFolder(folder) {
+		return "", errors.New("not a space folder")
 	}
-	in, err := os.Open(src)
+	top, err := os.OpenRoot(Root())
 	if err != nil {
 		return "", err
 	}
-	defer in.Close()
+	defer top.Close()
+	sp, err := top.OpenRoot(folder)
+	if err != nil {
+		return "", err
+	}
+	defer sp.Close()
+	if fi, err := sp.Lstat(MarkerFile); err != nil || !fi.Mode().IsRegular() {
+		return "", errors.New("the space was removed")
+	}
+	fi, err := sp.Lstat(AttachmentsDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err = sp.Mkdir(AttachmentsDir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+			return "", err
+		}
+		fi, err = sp.Lstat(AttachmentsDir)
+	}
+	if err != nil {
+		return "", err
+	}
+	if !fi.IsDir() {
+		return "", fmt.Errorf("%s is not a folder", AttachmentsDir)
+	}
 	base := attachmentName(name)
 	ext := filepath.Ext(base)
 	stem := strings.TrimSuffix(base, ext)
@@ -499,24 +513,24 @@ func CopyAttachment(dir, src, name string) (string, error) {
 		if n > 1 {
 			cand = fmt.Sprintf("%s-%d%s", stem, n, ext)
 		}
-		dest := filepath.Join(att, cand)
-		out, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
+		rel := AttachmentsDir + "/" + cand
+		out, err := sp.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 		if err != nil {
 			if errors.Is(err, fs.ErrExist) {
 				continue
 			}
 			return "", err
 		}
-		if _, err := io.Copy(out, in); err != nil {
+		if _, err := io.Copy(out, src); err != nil {
 			out.Close()
-			os.Remove(dest)
+			_ = sp.Remove(rel)
 			return "", err
 		}
 		if err := out.Close(); err != nil {
-			os.Remove(dest)
+			_ = sp.Remove(rel)
 			return "", err
 		}
-		return dest, nil
+		return filepath.Join(Root(), folder, rel), nil
 	}
 	return "", errors.New("could not find a free attachment name")
 }

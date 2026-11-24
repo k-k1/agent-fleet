@@ -25,6 +25,12 @@ describe("rankSpaces", () => {
     expect(spaces.map((s) => s.folder)).toEqual(["a-1", "b-1"]);
   });
 
+  it("uses the creation time only for a space with no session, even when a session's time is older", () => {
+    const spaces = [sp("a-1", "2026-11-20T00:00:00Z"), sp("b-1", "2026-11-10T00:00:00Z")];
+    const sessions = [ses("early", "a-1", "2026-10-01T00:00:00Z")]; // clock set back: before the space was made
+    expect(rankSpaces(spaces, sessions).map((s) => s.folder)).toEqual(["b-1", "a-1"]);
+  });
+
   it("breaks a tie by folder", () => {
     const at = "2026-11-01T00:00:00Z";
     expect(rankSpaces([sp("b-1", at), sp("a-1", at)], []).map((s) => s.folder)).toEqual(["a-1", "b-1"]);

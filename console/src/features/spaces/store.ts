@@ -24,6 +24,9 @@ interface SpacesStore {
   failures: number;
   failOwner: string;
   refresh(): Promise<void>;
+  /** Take the answer of a GET /api/spaces somebody else already made (the hub's support probe),
+   *  so one opening of the hub asks once. Anything but a list is ignored. */
+  adopt(d: unknown): void;
   /** Forget the list, for a tenant switch: the spaces belong to the previous workspace. */
   clear(): void;
 }
@@ -60,6 +63,12 @@ export const useSpacesStore = create<SpacesStore>((set) => ({
     // A 4xx (an Agent without the route) will not change on a retry: the folders stand in.
     const spaces = d && !d.error && Array.isArray(d.spaces) ? (d.spaces as Space[]) : [];
     set({ spaces, owner, failures: 0, failOwner: "" });
+  },
+  adopt(d) {
+    const list = (d as { spaces?: unknown; error?: unknown } | null | undefined);
+    if (!list || list.error || !Array.isArray(list.spaces)) return;
+    generation++; // an older request still in flight must not overwrite this newer answer
+    set({ spaces: list.spaces as Space[], owner: spacesOwner(), failures: 0, failOwner: "" });
   },
   clear() {
     generation++;
