@@ -29,7 +29,8 @@ type PushSubscriptionStore interface {
 	// moves to this one.
 	AddPushSubscription(ctx context.Context, sub PushSubscription, max int) (bool, error)
 	ListPushSubscriptions(ctx context.Context, membershipID string) ([]PushSubscription, error)
-	// GetPushSubscription answers the row for endpoint if membershipID still holds it.
+	// GetPushSubscription answers the row for endpoint if membershipID still holds it. A send
+	// falls back to it when the member's status cannot be read, so it must not touch membership.
 	GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error)
 	// GetPushSendTarget is GetPushSubscription with the membership's delivery context (TenantSlug
 	// left empty) read in the same statement, so a send checks the device's owner, the member's

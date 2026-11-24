@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+
 	"testing"
 	"time"
 
@@ -438,5 +439,63 @@ func TestFailedJoinedReadStillChecksTheMember(t *testing.T) {
 	wg.Wait()
 	if f.count() != 1 || f.svc.joinFailed.Load() != 1 {
 		t.Fatalf("%d sent, %d failed joins; want 1 (m1 only) and 1", f.count(), f.svc.joinFailed.Load())
+	}
+}
+
+// stallMember makes every send-time read that joins the status of a member in stalled hang until
+// its deadline, as a lock on that member's membership row would; the device row alone still
+// answers at once.
+type stallMember struct {
+	*memStore
+	stalled map[string]bool
+}
+
+func (s stallMember) GetPushSendTarget(ctx context.Context, mid, ep string, withText bool) (store.PushSubscription, store.PushDelivery, bool, error) {
+	if !s.stalled[mid] {
+		return s.memStore.GetPushSendTarget(ctx, mid, ep, withText)
+	}
+	<-ctx.Done()
+	return store.PushSubscription{}, store.PushDelivery{}, false, ctx.Err()
+}
+
+// When only the member's status cannot be read, a device the member still holds is sent to on its
+// row alone, without the text, and one released meanwhile is not. The next member's send reads
+// that member's status itself: one confirmed inactive is not sent to.
+func TestStalledMemberReadSendsOnTheRow(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, func(f *fixture) {
+		f.svc.joinBudget, f.svc.statusBudget = 100*time.Millisecond, 100*time.Millisecond
+	})
+	arrived, release := f.hold()
+	defer release()
+	f.st.includeTxt = true
+	d := f.subscribe(t, "m1")
+	f.subscribe(t, "m1")
+	f.subscribe(t, "m2")
+	released := f.st.subs[1]
+	f.svc.store = stallMember{f.st, map[string]bool{"m1": true}}
+	n := note("question")
+	n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
+	var wg sync.WaitGroup
+	f.svc.deliver(context.Background(), n, &wg) // m1's two devices; their status reads stall
+	waitArrival(t, arrived)
+	other := n
+	other.MembershipID = "m2"
+	f.svc.deliver(context.Background(), other, &wg) // m2: queued while still active
+	if err := f.st.ReleasePushEndpoint(context.Background(), released.Endpoint, released.P256dh, released.Auth); err != nil {
+		t.Fatal(err)
+	}
+	f.st.mu.Lock()
+	f.st.inactive = map[string]bool{"m2": true}
+	f.st.mu.Unlock()
+	release()
+	wg.Wait()
+	if f.count() != 1 {
+		t.Fatalf("%d sent; want 1 (m1's held device only)", f.count())
+	}
+	if got := d.open(t, f.bodies[0]); strings.Contains(got, `"text"`) || !strings.Contains(got, `"kind":"question"`) {
+		t.Fatalf("send on the row alone: %s", got)
+	}
+	if got := f.svc.statusFailed.Load(); got != 2 {
+		t.Fatalf("failed status reads: %d, want 2 (m1's devices only)", got)
 	}
 }

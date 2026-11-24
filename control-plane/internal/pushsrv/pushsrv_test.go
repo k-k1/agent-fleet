@@ -816,14 +816,14 @@ func TestQueuedSendRereadsTheDevice(t *testing.T) {
 	}
 }
 
-// A failed re-read skips the send, as a failed list read does.
+// A failed re-read of the row skips the send, as a failed list read does.
 func TestFailedRereadSkipsTheSend(t *testing.T) {
 	f := newFixture(t)
 	f.subscribe(t, "m1")
 	f.st.getErr = io.ErrUnexpectedEOF
 	f.deliver(note("question"))
-	if f.count() != 0 || f.st.gets != 1 {
-		t.Fatalf("sent %d with %d re-reads; want none sent after one failed re-read", f.count(), f.st.gets)
+	if f.count() != 0 || f.st.gets != 2 {
+		t.Fatalf("sent %d with %d re-reads; want none sent after the status and row reads failed", f.count(), f.st.gets)
 	}
 }
 
