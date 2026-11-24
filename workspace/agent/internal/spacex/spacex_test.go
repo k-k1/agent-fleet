@@ -1071,3 +1071,64 @@ func TestReadMarkerBytesRefusesAnotherFile(t *testing.T) {
 		t.Fatalf("readMarkerBytes = %q, %v", b, err)
 	}
 }
+
+// What a rename writes is read back by the same limit: a marker that would end up over it is
+// refused with the old one left, and one that fits exactly is read whole afterwards.
+func TestRenameOutputStaysWithinWhatLookupReads(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	marker := filepath.Join(sp.Dir, MarkerFile)
+	// A marker of exactly the limit (with its newline) holding the 5-letter name "Draft".
+	build := func(pad int) string {
+		return `{"name":"Draft","createdAt":"2021-02-03T04:05:06Z","pad":"` + strings.Repeat("x", pad) + `"}` + "\n"
+	}
+	pad := markerMaxBytes - len(build(0))
+	orig := build(pad)
+	if len(orig) != markerMaxBytes {
+		t.Fatalf("test marker is %d bytes", len(orig))
+	}
+	if err := os.WriteFile(marker, []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := Lookup(sp.Folder); !ok || got.Name != "Draft" {
+		t.Fatalf("a marker of the limit is not readable: %+v", got)
+	}
+	// "Updated" is 2 bytes longer than "Draft": over the limit, refused, the old bytes stay.
+	if _, err := Rename(sp.Folder, "Updated"); err != ErrMarkerTooBig {
+		t.Fatalf("Rename to a longer name = %v", err)
+	}
+	if got := markerText(t, sp); got != orig {
+		t.Fatalf("the marker changed on a refused rename (%d bytes)", len(got))
+	}
+	ents, _ := os.ReadDir(sp.Dir)
+	if len(ents) != 1 {
+		t.Fatalf("a temporary file was left: %v", ents)
+	}
+	// The same size is written and read back.
+	if _, err := Rename(sp.Folder, "Drift"); err != nil {
+		t.Fatalf("Rename to a name of the same length = %v", err)
+	}
+	if got, ok := Lookup(sp.Folder); !ok || got.Name != "Drift" || got.CreatedAt != "2021-02-03T04:05:06Z" {
+		t.Fatalf("Lookup after the rename = %+v, %v", got, ok)
+	}
+}
+
+// A createdAt of another type makes the readers drop the whole marker (name included), so the
+// rename does not keep it: the new name must be readable right after.
+func TestRenameDropsACreatedAtTheReadersCannotDecode(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	if err := os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte(`{"name":"Draft","createdAt":12345,"keep":true}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Rename(sp.Folder, "Updated"); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := Lookup(sp.Folder)
+	if !ok || got.Name != "Updated" {
+		t.Fatalf("Lookup after the rename = %+v, %v", got, ok)
+	}
+	if !strings.Contains(markerText(t, sp), `"keep":true`) {
+		t.Fatalf("another field was lost: %s", markerText(t, sp))
+	}
+}

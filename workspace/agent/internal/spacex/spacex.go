@@ -471,13 +471,25 @@ func Rename(folder, name string) (Space, error) {
 		return Space{}, err
 	}
 	fields["name"] = nameJSON
+	// The readers decode name and createdAt as strings and give up on the whole marker when one
+	// is not, so a createdAt of another type cannot be kept: dropping it is what lets the new
+	// name be read back.
 	var createdAt string
-	_ = json.Unmarshal(fields["createdAt"], &createdAt)
+	if err := json.Unmarshal(fields["createdAt"], &createdAt); err != nil {
+		delete(fields, "createdAt")
+		createdAt = ""
+	}
 	b, err := json.Marshal(fields)
 	if err != nil {
 		return Space{}, err
 	}
-	tmp, err := writeTempIn(sp, append(b, '\n'))
+	b = append(b, '\n')
+	// What is written has to be readable again by the same limit, or the rename would succeed and
+	// the next Lookup lose both names. Nothing has been created yet, so the old marker stays.
+	if len(b) > markerMaxBytes {
+		return Space{}, ErrMarkerTooBig
+	}
+	tmp, err := writeTempIn(sp, b)
 	if err != nil {
 		return Space{}, err
 	}
