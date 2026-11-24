@@ -402,6 +402,11 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 		return none, nil, err
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
+		// A message the member marked "run next" (issue #5021) goes before the others. The mark only
+		// orders: one that is not eligible is skipped below like any other and holds nobody back.
+		if rows[i].RunNext != rows[j].RunNext {
+			return rows[i].RunNext
+		}
 		// created_at has a second's precision: two messages added in one second are told
 		// apart by the position each was appended at.
 		if rows[i].CreatedAt != rows[j].CreatedAt {
@@ -419,7 +424,7 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	// commits (the holds below stay), so a claim made before it would be left with no delivery.
 	var batch []store.Memo
 	// A run has one recipe: a batch holds only messages whose effective recipes are the same,
-	// and the first eligible message (oldest first) fixes it. One with another recipe is skipped
+	// and the first eligible message (run-next marks first, then oldest first) fixes it. One with another recipe is skipped
 	// and waits for its own run.
 	var batchRecipe memorecipe.Recipe
 	eligible := memoafter.EligibleIn(memoafter.TxLookup(tx, rows, time.Now()))
