@@ -529,7 +529,9 @@ func main() {
 	// admin usage view can attribute infra occupancy per tenant/member. Non-
 	// destructive (DB writes only), so it is on by default; AF_USAGE_SAMPLE_INTERVAL=0
 	// disables it.
-	if iv := intervalOff(os.Getenv("AF_USAGE_SAMPLE_INTERVAL"), 5*time.Minute); iv > 0 {
+	usageIV := intervalOff(os.Getenv("AF_USAGE_SAMPLE_INTERVAL"), 5*time.Minute)
+	mgr.boostHours = boostHoursFor(st, usageIV)
+	if iv := usageIV; iv > 0 {
 		// Recorded before the goroutine starts: the heatmap API divides by it, and a
 		// zero here would make every cell read as "ran the whole hour" (docs/log/83).
 		mgr.usageInterval = iv
