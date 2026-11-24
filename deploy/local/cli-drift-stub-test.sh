@@ -90,6 +90,7 @@ FAKE
 cat > "$STUB/curl" <<'FAKE'
 #!/usr/bin/env bash
 url="${!#}"
+[ -z "${STUB_CURL_LOG:-}" ] || printf '%s\n' "$*" >> "$STUB_CURL_LOG"
 case "$url" in
   *antigravity*) name=agy ;;
   *cursor.com*)  name=cursor ;;
@@ -225,6 +226,20 @@ says "gh"
 STUB_FAIL="" STUB_DRIFT="" run_check
 code_is 0
 
+echo "== case 5d: GH_TOKEN goes to api.github.com only, and nothing is sent without it =="
+export STUB_CURL_LOG="$WORK/curl.log"
+: > "$STUB_CURL_LOG"
+GH_TOKEN=dummy-token STUB_FAIL="" STUB_DRIFT="" run_check
+code_is 0
+grep -q 'Authorization: Bearer dummy-token .*api.github.com/repos/cli/cli/releases/latest' "$STUB_CURL_LOG" || fail "the GitHub call carried no Bearer header"
+if grep -v 'api.github.com' "$STUB_CURL_LOG" | grep -q 'Authorization'; then fail "the token was sent to a host other than api.github.com"; fi
+grep -q 'antigravity' "$STUB_CURL_LOG" || fail "control: the non-GitHub rows were not read"
+: > "$STUB_CURL_LOG"
+env -u GH_TOKEN STUB_FAIL="" STUB_DRIFT="" GITHUB_OUTPUT="$WORK/gh_out" GITHUB_STEP_SUMMARY="$WORK/summary.md" "$CHECK" > "$WORK/out" 2> "$WORK/err" || fail "the check failed without GH_TOKEN"
+grep -q 'api.github.com/repos/cli/cli' "$STUB_CURL_LOG" || fail "control: the GitHub row was not read without a token"
+if grep -q 'Authorization' "$STUB_CURL_LOG"; then fail "an Authorization header was sent without GH_TOKEN"; fi
+unset STUB_CURL_LOG
+
 echo "== case 5c: the opencode row reads @opencode/cli =="
 : > "$WORK/npm.log"
 STUB_FAIL="" STUB_DRIFT="" run_check opencode
@@ -312,6 +327,16 @@ out_hasnt '^watcher_ok='      # a run with an unreadable row is not a clean run
 out_has '^watcher_at=2026-09-11T05:30:12Z$'
 sum_has 'not a dispatch target'
 sum_has '`claude=2.1.267`'
+
+echo "== case 8b: a drifting watch-only row is no edge, and nothing is dispatched for it =="
+run_edges LATEST_CONFLUENCE=9.9.9 LATEST_GH=9.9.9 LATEST_BKT=9.9.9 LATEST_JIRA=9.9.9 LATEST_GITLEAKS=9.9.9 LATEST_RTK=9.9.9
+out_has '^count=0$'
+out_hasnt '^(confluence|gh|bkt|jira|gitleaks|rtk)=true$'
+out_has '^skipped=$'
+# Control: the same call with a contract row drifting does dispatch it.
+run_edges LATEST_CONFLUENCE=9.9.9 LATEST_GH=9.9.9 LATEST_CLAUDE=9.9.9
+out_has '^claude=true$'
+out_has '^count=1$'
 
 echo "== case 9: the unreadable row IS a dispatch kind -> only that kind is held back =="
 run_edges FAILED=kiro LATEST_CLAUDE=2.1.267 LATEST_KIRO=
