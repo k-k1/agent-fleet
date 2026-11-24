@@ -2212,12 +2212,6 @@ func (r *memoQueueRunner) watchStarts(ctx context.Context, stopped []string) *me
 				mu.Lock()
 				e.busy = false
 				e.due = time.Now().Add(every)
-				if !e.polled {
-					e.polled = true
-					if unpolled--; unpolled == 0 {
-						close(w.first)
-					}
-				}
 				if st == "running" {
 					for i, x := range entries {
 						if x == e {
@@ -2225,9 +2219,17 @@ func (r *memoQueueRunner) watchStarts(ctx context.Context, stopped []string) *me
 							break
 						}
 					}
+					// Published before the first round is reported done: a pass that waits for the
+					// round (settle) must find the result when it takes.
 					w.mu.Lock()
 					w.seen = append(w.seen, e.id)
 					w.mu.Unlock()
+				}
+				if !e.polled {
+					e.polled = true
+					if unpolled--; unpolled == 0 {
+						close(w.first)
+					}
 				}
 				mu.Unlock()
 			}

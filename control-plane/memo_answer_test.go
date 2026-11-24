@@ -1884,3 +1884,52 @@ func TestMemoAnswerPinLaterTurnWithoutInput(t *testing.T) {
 		}
 	})
 }
+
+// gatedRuntime answers "running" once release is closed.
+type gatedRuntime struct {
+	stubRuntime
+	release chan struct{}
+}
+
+func (g gatedRuntime) State(ctx context.Context) string {
+	select {
+	case <-g.release:
+		return "running"
+	case <-ctx.Done():
+		return ""
+	}
+}
+
+// The poll reports its first round done only after a member seen running is published: a pass
+// that waits for the round must find the result when it takes.
+func TestMemoStartWatchPublishesBeforeTheFirstRoundIsDone(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.noPRChain(time.Now().Add(-time.Minute))
+		a := e.queueAgentFor("c", "stopped")
+		ws, _, _ := e.st.GetWorkspaceByMembership(context.Background(), e.members["c"])
+		release := make(chan struct{})
+		e.mgr.mu.Lock()
+		e.mgr.rts[e.members["c"]] = cachedRT{rt: gatedRuntime{stubRuntime: stubRuntime{endpoint: a.srv.URL, token: "tok"}, release: release}, ws: ws}
+		e.mgr.mu.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		w := e.runner().watchStarts(ctx, []string{e.members["c"]})
+		w.mu.Lock() // the publish waits here
+		close(release)
+		select {
+		case <-w.first:
+			w.mu.Unlock()
+			t.Fatal("the first round was reported done before the running member was published")
+		case <-time.After(200 * time.Millisecond):
+		}
+		w.mu.Unlock()
+		select {
+		case <-w.first:
+		case <-time.After(5 * time.Second):
+			t.Fatal("the first round never ended")
+		}
+		if got := w.take(); len(got) != 1 || got[0] != e.members["c"] {
+			t.Fatalf("taken %v after the first round", got)
+		}
+	})
+}
