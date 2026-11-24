@@ -24,32 +24,42 @@ row. Nothing says "this ticket is waiting for review" or "this ticket's session 
 #3129 have since landed the two inputs a board needs. What the tree has now, and what it lacks:
 
 1. **Links exist and are mirrored.** A session holds many links with a role (`started`, `created`,
-   `working`, `reviewing`, `watching`; `workspace/agent/internal/session/links.go:21-25`). The CP
-   mirrors them into `session_work_link` (SQLite 0118/0119, Postgres 0103/0104), so they are
-   readable while the Workspace is stopped.
-2. **The mirror does not hold activity.** `SessionRow` carries `State` (`running` | `stopped`) and
-   `Carried` (an interaction still waiting when the session was folded away;
-   `control-plane/internal/store/store_session_index.go:11-19`). Working, question, plan, permission
-   and blocked exist only in the live Agent list, and are classified in the Console by `stateInfo()`
+   `working`, `reviewing`, `watching`; `workspace/agent/internal/session/links.go:21-25`). The Agent
+   returns them on its live session list; the CP writes them into `session_work_link` (SQLite
+   0118/0119, Postgres 0103/0104) in the same transaction as the session rows
+   (`ReplaceSessions`), so they are readable while the Workspace is stopped. A link the Agent has just
+   made is in that table only after the CP's next mirror of the list.
+2. **The mirror does not hold activity.** Of what `SessionRow` carries (identity, origin, links and more;
+   `control-plane/internal/store/store_session_index.go:11-32`), the only activity information is
+   `State` (`running` | `stopped`) and `Carried` (an interaction still waiting when the session was
+   folded away). Working, question, plan, permission and blocked exist only in the live Agent list, and are classified in the Console by `stateInfo()`
    (`console/src/lib/sessionview.ts:149`), the one derivation ADR 0078 decision 5 says must not be
    duplicated.
 3. **A link carries a PR's state and nothing else.** `WorkItemLink.State` is `open`, `draft`,
-   `merged` or `closed`. CI, changes-requested and conflict are on the wire only for the PR of the
-   session's *current branch* (`branchpr.PR`, `ChangesRequested`/`Conflict`, `branchpr.go:59-60`).
-   `Ready()` (`branchpr.go:118`), `ReviewDecision` and `Mergeable` are `json:"-"`: the verdict that
-   decides "ready to merge" never leaves the Agent.
-4. **A PR a session has left is not read again unless a switch is on.** The Agent reads a link's PR
-   state "only while a session is on its branch" (`links.go:57`). The only code that reads held PR
-   links by number is the PR-feedback tick, and it returns first when PR feedback is off
-   (`sessionx/pr_feedback.go:503-510`), which is the default. A merged PR would stay `open` on its
-   link for good.
-5. **The inbox is stale while stopped, by design, and omits done items by default.** The CP draws its
-   cache with "last fetched" times (ADR 0061 decisions 1, 15). The default query is "assigned to me
-   and not done" (decision 8), so an item that is done in the tracker leaves the cache. `Done`
-   cannot be read from the cache alone.
+   `merged` or `closed`. For a session's PR, CI, changes-requested and conflict are on the wire only
+   for the PR of its *current branch* (`branchpr.PR`, `ChangesRequested`/`Conflict`,
+   `branchpr.go:59-60`). An open PR that is a row of the member's inbox has its own route: the Agent
+   fills `Checks` and `Mergeable` for the row and the CP serves them (`work_item_cache.checks` and
+   `.mergeable`, migration 0074; `workitems_prstatus.go:34-45`). `ReviewDecision` and `Mergeable` on
+   `branchpr.PR` are `json:"-"`, and `Ready()` (`branchpr.go:118`) is a method over them: the Agent
+   uses it for its own `pr.ready` notice, but no list the Console reads has a `ready` boolean.
+4. **A PR a session has left is not written back to its link unless a switch is on.** The Agent
+   reads a link's PR state "only while a session is on its branch" (`links.go:57`). The only code
+   that writes a held link's state is the PR-feedback tick, and it returns first when PR feedback is
+   off (`sessionx/pr_feedback.go:503-511`), which is the default; the tick's own reads and write-back
+   are `pr_feedback.go:603-635`. The message queue's PR snapshot also reads held links by number
+   (`sessionx/queue_pr_snapshot.go`), but only to answer that queue's delivery, and it writes
+   nothing back. A merged PR would stay `open` on its link for good.
+5. **The inbox is stale while stopped, by design, and absence from it proves nothing.** The CP draws
+   its cache with "last fetched" times (ADR 0061 decisions 1, 15). A row leaves the cache when the
+   query that returned it next succeeds and no longer returns it. The default query differs by
+   provider (a Jira query excludes done items; a GitHub one is `is:open` and `involves:@me`; a
+   Bitbucket one starts from reviews addressed to the member), so a missing row is not evidence that
+   an item is done. For a pull request the tracker state is coarser still: GitHub maps closed to
+   `done` whether merged or not (`workitems.go:460-472`), and a draft is `in_progress`.
 6. **There are two ledgers.** `work_item_session` is written only by the Console's launch
-   (ADR 0061 decision 9). `session_work_link` is written by the Agent for every role. Only the
-   second sees a PR a session opened or a child that watches a ticket.
+   (ADR 0061 decision 9). `session_work_link` carries the Agent's links of every role, written by the
+   CP's mirror. Only the second sees a PR a session opened or a child that watches a ticket.
 
 The question is how a card and a lane are defined so that they follow the sources of truth, and what
 has to be added so that the sources say enough.
@@ -59,39 +69,64 @@ has to be added so that the sources say enough.
 ### 1. A card is one work item. Sessions and PRs attach to it through links.
 
 - **Identity** is `(provider, case-folded key)`, the same fold `session_work_link` uses.
-- **Attachment.** A session is attached to every non-PR item it holds a link to with a *driving
-  role*: `started`, `working` or `created`. A PR link of that session is attached to the same cards.
-  A PR link whose session holds no driving item link is its own card (an inbox PR row, or a PR
-  opened with no ticket). `watching` and `reviewing` links do not attach a session to a card: they
-  show as a chip on the card of the item they name, and they do not move its lane (open question 3).
-- **Orphans.** A session with no driving link is its own card, keyed by workspace and session name.
-- **A card exists** when at least one of these holds: an inbox row, a driving session, a PR link. A
-  `watching` link to an item that is in none of those creates no card. The board stores no card.
+- **Driving role.** `started`, `working` or `created`. Only a link with a driving role attaches
+  anything to a card or moves a lane; `watching` and `reviewing` links show as a chip on the card of
+  the item they name and do nothing else (open question 3).
+- **Attachment.** A session is attached to every non-PR item it holds a driving link to. A PR link
+  attaches to those same cards only when the PR link itself has a driving role: a session that
+  drives ticket A and merely watches PR B does not let B's failing CI move A. A session whose
+  driving link is a PR, with no driving ticket, is attached to that PR's own card. An inbox PR row,
+  or a PR opened with no ticket, is its own card.
+- **Orphans.** A session with no driving link (including one that only watches or reviews) is its own
+  card, keyed by workspace and session name, and counts as its own driving session in decision 2.
+- **A card exists** when at least one of these holds: an inbox row; a driving session; an open or
+  merged PR link. A PR that closed unmerged creates no card by itself, and a `watching` link to an
+  item that is in none of those creates none either. The board stores no card.
 
 ### 2. A lane is a pure function of a card's facts. First match wins.
 
 | # | Lane | A card is here when |
 |---|------|---------------------|
-| 1 | **Done** | no open PR, and (a PR is merged, or the tracker says done) |
-| 2 | **Needs you** | a driving session is alive in question, plan, permission or blocked, or is stopped with a carried interaction; or an open PR has failed CI, changes requested or a conflict |
+| 1 | **Done** | no open PR, and either the tracker says a ticket is done, or a PR is merged and no driving session is alive |
+| 2 | **Needs you** | a driving session is alive in an attention state, or is stopped with a carried interaction; or an open PR has failed CI, changes requested or a conflict |
 | 3 | **Ready to merge** | at least one open PR, none a draft, and every one `ready` |
 | 4 | **In review** | any open PR that is not a draft |
 | 5 | **In progress** | a driving session that is not archived, or an open draft PR |
 | 6 | **To do** | an inbox row, no driving session, no PR |
 
-- **Attention beats PR state beats activity**, as the issue asks. The two rules that need a reason:
-  - **Done beats Needs you.** A merged card with a session still asking a question stays in Done.
-    The question is on the session's own chip and in the session list; a merged card must not keep
-    a lane open that the tracker has closed.
-  - **Unknown is never good.** A PR with no observation has empty `checks`, and an empty value is not
-    green (the comment on `branchpr.PR` already says so). It is not `ready`, so it lands in In review.
-- **`limited` is not attention.** A session waiting for a usage window to reset (`limited`)
-  needs nobody; it counts as In progress. A session in `blocked` is attention, as `stateInfo` says.
+"Open" means not merged and not closed, so a draft and a PR whose state was never observed are open.
+A PR card (decision 1) takes its PR's own state; a merged PR is Done for it whatever its session
+does.
+
+- **Attention beats PR state beats activity**, as the issue asks. The rules that need a reason:
+  - **Done by the tracker beats Needs you.** A ticket the tracker calls done stays in Done even if a
+    session is still asking a question: the question is on the session's own chip and in the session
+    list, and the card must not keep a lane open that the tracker has closed.
+  - **A merged PR alone does not close a ticket while a session is alive.** A ticket with PR A merged
+    and another session now asking a question about PR B is not finished: the tracker has not said so
+    and the live session is more work. Without a live driving session, a merged PR and no open one
+    is Done. A PR-only card has no ticket and is Done when its PR is merged.
+  - **Unknown is never good.** An open, non-draft PR with no observation has empty `checks`, and an
+    empty value is not green (the comment on `branchpr.PR` already says so). It is not `ready`, so
+    unless a higher row matches it lands in In review. A PR whose state was never observed counts
+    as open, which is the known stale case decisions 4 and 5 remove.
+- **What attention is** is not listed here. A live session is in attention when `stateInfo()` gives
+  it the `question` colour class and not `limited`, which covers question, plan, permission,
+  blocked, auth, spend limit and input not delivered; a stopped session is in attention when it has a
+  carried interaction. The board calls the shared helper, so it follows `stateInfo` when that
+  changes. `limited` (waiting for a usage window to reset) needs nobody and counts as In progress.
 - **A PR closed unmerged** leaves the card's PR set; the card falls to In progress or To do on the
-  other facts.
+  other facts, and a PR-only card with nothing else disappears (decision 1).
 - **Tracker state.** Done by the tracker reads the provider-independent state ADR 0061 decision 9.5
-  fixed (a Jira status *category*, not a name). An item not in the inbox has no known tracker state,
-  and unknown is not done.
+  fixed (a Jira status *category*, not a name), and only for a ticket or issue. An item not in the
+  inbox has no known tracker state, and unknown is not done. An inbox *pull request* row is read as
+  follows: `open` is an open PR, `in_progress` is a draft, and `done` only means ended, merged or
+  not (fact 5), so it is not evidence of Done. A PR-only card is Done only when a session's link
+  says `merged`; an ended PR row with no such link has no card.
+- **Inbox pull requests supply facts too.** An open PR that is only an inbox row, with no session,
+  takes its checks and mergeable from the cache (fact 3), so a failing CI on a review request lands
+  in Needs you and an open PR with none of it in In review. It has no review decision there, so it
+  can never be `ready` from the cache alone.
 - **A lane is never a stored value.** There is no `lane` column, no per-card override and no history.
   Recomputing it on every read is what keeps it from disagreeing with the session and the PR.
 
@@ -117,7 +152,8 @@ additive, defaulted columns (#5052).
   it from checks, review and mergeable: that is a second definition of "ready to merge", and the
   Agent already uses the first for the `pr.ready` notice and the merge lifecycle.
 - **Only enumerations and a timestamp.** No check names, thread text or reviewer names (ADR 0061
-  decision 2). The failing check *names* stay Agent-private, as `branchpr.PR` keeps them.
+  decision 2). The failing check *names* stay off the links and lists, as `branchpr.PR` keeps them; the
+  PR-feedback notice still delivers them to the session it is for.
 - The migration adds columns with defaults and nothing is dropped or rewritten, so it ships like
   0119 did.
 
@@ -127,6 +163,13 @@ Today one switch gates both (fact 4). Split them (#5053): the read of held PR li
 whenever the Workspace runs, for sessions with a driving PR link, under the caps the PR-feedback tick
 already has (`prFeedbackMaxLinks`, the cache's TTLs); injecting a notice stays opt-in. Without this,
 the board shows merged PRs as In review.
+
+The observation the tick does today has two gaps the board cannot live with
+(`pr_feedback.go:168-189`). It keeps the first `prFeedbackMaxLinks` links by role and age per
+session, so a sixth open PR is never read while the first five stay open. And it skips a link once
+it is `merged` or `closed`, so a PR closed and then reopened is never read again. The observation
+must therefore rotate through links by oldest `observedAt` within the cap, and re-read a `closed`
+link slowly (`merged` is final); #5053 carries both.
 
 The cost is bounded by those caps per session and by the cache TTL per PR; whether to run it always or
 only after the board has been opened is open question 4. Nothing here reads while the Workspace is
@@ -140,15 +183,22 @@ The mirror gives links, link state and `carried`; the facts of decision 4 give P
 - Every card shows **"as of hh:mm"**: the oldest `observedAt` among the facts that put it in its lane
   (ADR 0061 decision 1's rule, "each row carries last fetched"). When no fact has a time, nothing is
   shown, never an invented one (ADR 0078 decision 11).
-- Attention while stopped is only `carried`. A session that was working when the Workspace stopped is
-  stopped, so its card reads In progress with a stopped chip, not Needs you.
+- Attention that comes from a *session* while stopped is only `carried`. A session that was working
+  when the Workspace stopped is stopped, so its card reads In progress with a stopped chip, not Needs
+  you. Attention that comes from a *PR* stays, as the PR facts last recorded with their `observedAt`:
+  a card with a failing CI the cache or the link recorded before the stop is still in Needs you, and
+  says as of when.
 - **Age never orders cards or moves a lane.** It is shown, not used.
 
 ### 7. Actions reuse what exists. The board adds no write.
 
 Start a session from a To do card (ADR 0061 decision 20's launch), open a session beside the board
 (ADR 0078 decision 3), open the PR (decision 24.1), link and unlink (#3134's Console paths), and the
-detail modal's human-gated Merge button (the 2026-10-25 note) on a Ready to merge card.
+detail modal's human-gated Merge button (the 2026-10-25 note) on a Ready to merge card. The lane
+and the button are not the same test: `ready` is the Agent's approximation that the notice and the
+lane use, while the modal also disables Merge for a PR that is behind its base, and checks the
+member's permission (`console/src/features/workitems/read.ts:323-379`). A Ready to merge card may
+therefore open a modal whose button is off, and the modal says why.
 
 - **No drag.** A lane is derived, so a card cannot be moved: nothing could hold the move.
 - **No tracker write-back.** Starting a session does not move a Jira ticket to In Progress, and a lane
@@ -157,8 +207,8 @@ detail modal's human-gated Merge button (the 2026-10-25 note) on a Ready to merg
 
 ### 8. Where it lives: a second view of the sessions overview, not a new pane kind.
 
-The overview pane (ADR 0078) already owns cards, `stateInfo`, the session menu and the two entry
-points. The board is a *group by* choice in its head: repository (today) or lane. A work-item card is
+The overview pane (ADR 0078) already owns cards, `stateInfo`, the session menu and the two on-screen
+buttons that open it. The board is a *group by* choice in its head: repository (today) or lane. A work-item card is
 a different card, but it reuses the chip, the menu and the open-beside behaviour. ADR 0049 decision 4
 says not to mint a pane kind lightly, and ADR 0078 had to argue its exception; this has none. The alternative is open question 2.
 
@@ -194,6 +244,7 @@ These are the owner's, and are collected on #5051. Each has a recommendation abo
    retention archives it. A months-old paused session therefore holds a card. This ADR does not add a
    threshold, because a number chosen without data would decide what the member sees. Look at real
    boards after P3 and decide then.
+6. **No tracker write-back** (decision 7). Confirm that no lane change writes to a tracker.
 
 ## Alternatives set aside
 
