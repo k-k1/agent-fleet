@@ -8,7 +8,7 @@ source_of_truth: "af-memory --help, from the workspace-agent in the workspace"
 English | [日本語](af-memory.ja.md)
 
 Works with Agent Fleet memory from the workspace's terminal: list the changes, import Claude Code's and muse's memory,
-write back to Claude Code, lint, and list promotion candidates. Every command asks the workspace's Agent, so the same switch and secret scan as in the Console apply.
+write back to Claude Code, lint, list promotion candidates and propose one to the repository. Every command asks the workspace's Agent, so the same switch and secret scan as in the Console apply.
 The Console flow is in [Import and export memory](../../user/memory/import-export.md).
 
 ## Synopsis
@@ -24,6 +24,7 @@ af-memory export-sources
 af-memory export --project <id or name> [--dry-run] [--overwrite <name>]...
 af-memory lint [--user | --project <id or name>] [--json] [--apply]
 af-memory promote-candidates [--project <id or name>] [--days N] [--json]
+af-memory promote-proposal --project <id or name> --name <memory> [--file <path.md>] [--section <heading>] [--days N] [--json | --patch]
 af-memory --help
 ```
 
@@ -40,6 +41,7 @@ af-memory --help
 | `export` | Writes a project's memory back into Claude Code's own memory | Yes, without `--dry-run` |
 | `lint` | Checks the memories and prints a report | Only with `--apply` |
 | `promote-candidates` | Lists the project memories worth proposing to the repository's documents | No |
+| `promote-proposal` | Builds the proposed change for one candidate: document, section, text, scans and a patch | No |
 | `--help` (`-h`, `help`) | Prints the usage | No |
 
 ## Exit status
@@ -235,7 +237,7 @@ Writes what the report finds into the memories.
 ## promote-candidates
 
 Lists the project memories that have proven themselves enough to be proposed to the repository's own
-documents. It only lists them: nothing is written and no text is proposed yet.
+documents. It only lists them and writes nothing; `promote-proposal` turns one of them into a change.
 
 ```sh
 af-memory promote-candidates [--project <id or name>] [--days N] [--json]
@@ -283,3 +285,51 @@ A memory of those kinds that does not qualify is listed as `held`, with what it 
 - Archived and superseded memories, and the kinds `state` and `log`, are not listed
 - The repository is read the way `lint` reads it: by ref from `origin`'s default branch, never through a working copy and without a fetch
 - Reading does not count as a use of a memory. The exit status says whether the command worked
+
+## promote-proposal
+
+Builds the proposed change to the repository for one candidate of `promote-candidates`. Agent Fleet
+never commits, pushes or opens a pull request: you apply the patch and open the pull request, or ask
+a session to.
+
+```sh
+af-memory promote-proposal --project <id or name> --name <memory> [--file <path.md>] [--section <heading>] [--days N] [--json | --patch]
+```
+
+| Option | Meaning |
+|---|---|
+| `--project <id or name>` | The project of the memory |
+| `--name <memory>` | The memory. It has to be a candidate now, judged as `promote-candidates` judges it (same `--days`); otherwise the command fails and says what it misses |
+| `--file <path.md>` | The Markdown document to change, as a path in the repository. Default: the first anchor of the memory that is a Markdown file on the default branch, else the first of `AGENTS.md`, `CLAUDE.md` and `README.md` there, else a new `AGENTS.md` |
+| `--section <heading>` | The heading the text goes under, without `#`. An existing heading gets the text at the end of its section; otherwise a new `##` section is added at the end of the document. Default: the memory's description up to its first sentence |
+| `--days N` | The quiet period the candidate is judged with, 1 to 90 days. Default 7 |
+| `--json` | Prints the proposal as JSON |
+| `--patch` | Prints only the patch, for `git apply` |
+
+```
+== proposal: AGENTS.md (ready to commit)
+   repository: github.com/acme/shop  [origin/main @ 3f9c2a1e5b07]
+   section:    "Release" (new section)
+   from:       release-steps r3 (project)
+   secret scan: clean
+   pre-commit:  passed (core.hooksPath .githooks)
+
+diff --git a/AGENTS.md b/AGENTS.md
+...
+```
+
+- The text is the memory's body as it is. It is not translated or rewritten: a warning says when the
+  memory is in another language than the document, when it links other memories with `[[name]]`, and
+  when the document is new
+- Two scans run. Agent Fleet's secret scan checks the text and the heading; when it finds something,
+  the text and the patch are withheld. The repository's own pre-commit hook (`core.hooksPath` as the
+  working copy configures it, taken from the default branch or, when the tree has no hook there, from
+  the working copy; else `hooks/` of the repository) runs on the patch in a throwaway clone
+  of the default branch, and its output is shown when it fails. A repository without a hook git
+  would run has nothing to pass. The proposal is ready when both pass
+- The patch applies to the default branch's revision shown (`[origin/main @ …]`). Nothing is
+  written to the memory store or to a working copy, and nothing is fetched. One proposal runs at a
+  time; the hook is stopped after 3 minutes
+- `from:` names the memory and the revision the text was taken from. After the merge, the memory
+  is superseded by the document only while it is still at that revision, so a text that changed
+  while the pull request waited is never hidden

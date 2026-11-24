@@ -8,7 +8,7 @@ source_of_truth: "af-memory --help（ワークスペースの workspace-agent �
 [English](af-memory.md) | 日本語
 
 ワークスペースのターミナルから、Agent Fleet のメモリを扱います。変更の一覧、Claude Code と muse のメモリの取り込み、
-Claude Code への書き戻し、リント、昇格候補の一覧ができます。どれもワークスペースの Agent に頼むので、Console と同じスイッチとシークレットの検査が効きます。
+Claude Code への書き戻し、リント、昇格候補の一覧とリポジトリへの変更案の作成ができます。どれもワークスペースの Agent に頼むので、Console と同じスイッチとシークレットの検査が効きます。
 Console での使いかたは [メモリを取り込む・書き出す](../../user/memory/import-export.ja.md) にあります。
 
 ## 書式
@@ -24,6 +24,7 @@ af-memory export-sources
 af-memory export --project <ID か名前> [--dry-run] [--overwrite <名前>]...
 af-memory lint [--user | --project <ID か名前>] [--json] [--apply]
 af-memory promote-candidates [--project <ID か名前>] [--days N] [--json]
+af-memory promote-proposal --project <ID か名前> --name <メモリ> [--file <path.md>] [--section <見出し>] [--days N] [--json | --patch]
 af-memory --help
 ```
 
@@ -40,6 +41,7 @@ af-memory --help
 | `export` | プロジェクトのメモリを Claude Code 自身のメモリへ書き戻す | `--dry-run` なしなら書く |
 | `lint` | メモリを点検してレポートを出す | `--apply` を付けたときだけ書く |
 | `promote-candidates` | リポジトリの文書へ提案する価値のあるプロジェクトのメモリを一覧する | 書かない |
+| `promote-proposal` | 候補 1 件について、文書・節・文面・走査結果・パッチからなる変更案を作る | 書かない |
 | `--help`（`-h`・`help`） | 使いかたを表示する | 書かない |
 
 ## 終了コード
@@ -234,7 +236,7 @@ af-memory lint [--user | --project <ID か名前>] [--json] [--apply]
 
 ## promote-candidates
 
-十分に確かめられ、リポジトリ自身の文書へ提案する価値があるプロジェクトのメモリを一覧します。一覧するだけで、何も書かず、文面の提案もまだしません。
+十分に確かめられ、リポジトリ自身の文書へ提案する価値があるプロジェクトのメモリを一覧します。一覧するだけで、何も書きません。1 件を変更案にするのは `promote-proposal` です。
 
 ```sh
 af-memory promote-candidates [--project <ID か名前>] [--days N] [--json]
@@ -282,3 +284,45 @@ af-memory promote-candidates [--project <ID か名前>] [--days N] [--json]
 - アーカイブ済み・置き換え済みのメモリと、種類 `state`・`log` のメモリは表示しません
 - リポジトリは `lint` と同じく、`origin` の既定ブランチを ref で読みます。作業コピーは使わず、fetch もしません
 - 読み取りはメモリの使用回数に数えません。終了コードは、コマンドが動いたかどうかです
+
+## promote-proposal
+
+`promote-candidates` の候補 1 件について、リポジトリへの変更案を作ります。Agent Fleet はコミットも
+push もプルリクエストの作成もしません。パッチを当ててプルリクエストを出すのはあなたです（セッションに頼んでも構いません）。
+
+```sh
+af-memory promote-proposal --project <ID か名前> --name <メモリ> [--file <path.md>] [--section <見出し>] [--days N] [--json | --patch]
+```
+
+| オプション | 意味 |
+|---|---|
+| `--project <ID か名前>` | メモリのプロジェクト |
+| `--name <メモリ>` | 対象のメモリ。`promote-candidates` と同じ判定（同じ `--days`）で、今候補でなければ失敗し、足りないものを示します |
+| `--file <path.md>` | 変更する Markdown 文書のリポジトリ内パス。既定: メモリのアンカーのうち既定ブランチにある最初の Markdown ファイル、無ければそこにある `AGENTS.md`・`CLAUDE.md`・`README.md` の最初のもの、どれも無ければ新しい `AGENTS.md` |
+| `--section <見出し>` | 文面を入れる見出し（`#` は付けない）。既にある見出しならその節の末尾に、無ければ文書の末尾に新しい `##` の節を足します。既定: メモリの説明の最初の文 |
+| `--days N` | 候補の判定に使う期間。1〜90 日、既定 7 |
+| `--json` | 変更案を JSON で表示します |
+| `--patch` | `git apply` 用にパッチだけを表示します |
+
+```
+== proposal: AGENTS.md (ready to commit)
+   repository: github.com/acme/shop  [origin/main @ 3f9c2a1e5b07]
+   section:    "Release" (new section)
+   from:       release-steps r3 (project)
+   secret scan: clean
+   pre-commit:  passed (core.hooksPath .githooks)
+
+diff --git a/AGENTS.md b/AGENTS.md
+...
+```
+
+- 文面はメモリの本文そのままです。翻訳も書き直しもしません。メモリが文書と違う言語で書かれているとき、
+  `[[name]]` で他のメモリにリンクしているとき、文書が新規のときは警告が出ます
+- 走査は 2 つです。Agent Fleet の秘密情報の走査が文面と見出しを調べ、何か見つかれば文面とパッチは返しません。
+  リポジトリ自身の pre-commit フック（作業コピーの `core.hooksPath`。既定ブランチの木から取り、木に無ければ作業コピーから。設定が無ければリポジトリの `hooks/`）を、
+  既定ブランチの使い捨てのクローンでパッチに対して実行し、失敗すればその出力を表示します。git が実行するフックが
+  無いリポジトリでは通すものがありません。両方が通れば ready です
+- パッチは表示した既定ブランチのリビジョン（`[origin/main @ …]`）に当たります。メモリのストアにも作業コピーにも
+  何も書かず、fetch もしません。変更案は一度に 1 つだけ作り、フックは 3 分で止めます
+- `from:` は文面を取ったメモリとリビジョンです。マージ後にメモリを文書で置き換えられるのは、メモリがまだその
+  リビジョンにあるときだけです。プルリクエストを待つ間に変わった文面が隠れることはありません
