@@ -605,7 +605,7 @@ func TestForeignProcfsWithOurNumberIsNotOurs(t *testing.T) {
 	if !procfsOurs() || len(groupProcs(4000000)) != 1 {
 		t.Fatal("fixture: our own procfs must count the zombie leader with a running thread")
 	}
-	fakeProc(t, "77 "+me, 4000000, 4000000)
+	fakeProc(t, me+" "+me, 4000000, 4000000) // our number in an ancestor's procfs, and ours below it
 	if procfsOurs() {
 		t.Fatal("a procfs of an ancestor namespace was taken for ours")
 	}
@@ -613,7 +613,43 @@ func TestForeignProcfsWithOurNumberIsNotOurs(t *testing.T) {
 		t.Fatalf("a zombie leader of another namespace counted as a member: %v", got)
 	}
 	f := newSU(t, goodRTK, "", "", "")
-	if runs, _ := f.env.npmRecordStuck([]npmProc{{os.Getpid(), 5}}); runs || exists(f.env.npmStuckPath()) {
+	if runs, _ := f.env.npmRecordStuck([]npmProc{{4000000, 5}}); runs || exists(f.env.npmStuckPath()) {
 		t.Fatal("something was recorded through a foreign procfs")
+	}
+}
+
+// A record past the size bound refuses the lock and stays (the lock-refused path answers
+// read-only); a valid entry anywhere within the bound, past the first MiB too, is matched.
+func TestNPMStuckRecordSizeBound(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	_, p := startSleeper(t)
+	os.MkdirAll(filepath.Dir(f.env.npmStuckPath()), 0o755)
+	line := fmt.Sprintf("%s %d %d\n", procScope(), p.pid, p.start)
+	junk := strings.Repeat("junk line naming nothing\n", (2<<20)/25)
+	f.write(t, f.env.npmStuckPath(), junk+line)
+	if err := f.env.npmStuckCheck(); !errors.Is(err, errNPMStuck) {
+		t.Fatalf("an entry past the first MiB was not matched: %v", err)
+	}
+	big, err := os.Create(f.env.npmStuckPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := big.Truncate(npmStuckMaxBytes + 1); err != nil { // sparse: no disk, all the bytes
+		t.Fatal(err)
+	}
+	big.Close()
+	if err := f.env.npmStuckCheck(); !errors.Is(err, errNPMStuck) {
+		t.Fatalf("an oversized record let the lock through: %v", err)
+	}
+	if !exists(f.env.npmStuckPath()) {
+		t.Fatal("the oversized record was removed")
+	}
+	os.MkdirAll(filepath.Dir(f.local("claude")), 0o755)
+	f.write(t, f.local("claude"), "#!/bin/sh\nexit 1\n")
+	if rc := f.env.NPMVerifyPresentStep(); rc != ExitFailed || !strings.Contains(f.out.String(), "larger than") {
+		t.Fatalf("rc %d, want the read-only pass saying why\n%s", rc, f.out)
+	}
+	if !exists(f.local("claude")) {
+		t.Fatal("the read-only pass removed a copy")
 	}
 }

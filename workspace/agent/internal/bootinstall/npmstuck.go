@@ -68,6 +68,10 @@ func parseStuck(s string) []npmProc {
 	return out
 }
 
+// npmStuckMaxBytes bounds the record: about 100,000 entries, far more processes than one install
+// leaves, and little enough to read under the lock.
+const npmStuckMaxBytes = 8 << 20
+
 // npmReadStuck returns the recorded processes that may belong to this scope. A missing file is
 // none; any other failure (a file that is not a regular one, such as a FIFO an open would block
 // on, included) is returned, and the caller must take it as "may still run".
@@ -85,9 +89,14 @@ func (e Env) npmReadStuck() ([]npmProc, error) {
 	} else if !fi.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s is not a regular file", e.npmStuckPath())
 	}
-	b, err := io.ReadAll(f) // whole: an entry dropped by a cut would let a restore run under it
+	// Read whole, or not at all: an entry dropped by a cut would let a restore run under it, and
+	// a file past any real record (a sparse one, say) must not cost the memory to read it.
+	b, err := io.ReadAll(io.LimitReader(f, npmStuckMaxBytes+1))
 	if err != nil {
 		return nil, err
+	}
+	if len(b) > npmStuckMaxBytes {
+		return nil, fmt.Errorf("%s is larger than %d bytes", e.npmStuckPath(), npmStuckMaxBytes)
 	}
 	scope := procScope()
 	var out []npmProc
