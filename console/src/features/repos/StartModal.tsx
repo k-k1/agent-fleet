@@ -37,6 +37,7 @@ import { deriveRepoName } from "./reponame.ts";
 import { useFoldValue } from "../../lib/useFold.ts";
 import { HubComposer } from "./HubComposer.tsx";
 import { SpaceLaunchForm } from "./LaunchModal.tsx";
+import { spacesOwner, useSpacesStore } from "../spaces/store.ts";
 import type { LaunchAccess, LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import type { SharedDraft } from "./hubDraft.ts";
 
@@ -123,13 +124,24 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
   const [ssmProfiles, setSsmProfiles] = useState<SsmProfile[] | null>(null);
   const [spaceSupport, setSpaceSupport] = useState<SpaceSupport>("checking");
   const [spaceProbe, setSpaceProbe] = useState(0);
+  // A switch of workspace makes the answer for the old one meaningless: ask again.
+  const spacesFrom = spacesOwner();
   useEffect(() => {
     let alive = true;
     setSpaceSupport("checking");
+    const ticket = useSpacesStore.getState().begin();
     api("api/spaces")
       .then((d) => {
         if (!alive) return;
-        if (d && !d.error && Array.isArray(d.spaces)) setSpaceSupport("yes");
+        if (d && !d.error && Array.isArray(d.spaces)) {
+          setSpaceSupport("yes");
+          // The same answer is the place chip's list: the hub asks the Agent once, and "Check
+          // again" refreshes both.
+          // Superseded meanwhile (a switch of workspace clears the store after this request began,
+          // a later refresh started): the list is read again rather than left empty under a
+          // support answer that says "yes".
+          if (!useSpacesStore.getState().adopt(ticket, d)) void useSpacesStore.getState().refresh();
+        }
         // Only "no such route" means an Agent without spaces; anything else may pass. A plain-text
         // 404 / 405 (the Agent's mux) arrives as http_404 / http_405 with no status.
         else if (d?.error && !isTransientErr(d) && (d.error.status === 404 || d.error.status === 405 || d.error.code === "http_404" || d.error.code === "http_405")) setSpaceSupport("no");
@@ -139,7 +151,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
     return () => {
       alive = false;
     };
-  }, [spaceProbe]);
+  }, [spaceProbe, spacesFrom]);
   // The composer's send key launches the space form below it.
   const spaceSubmit = useRef<(() => void) | null>(null);
   useEffect(() => {

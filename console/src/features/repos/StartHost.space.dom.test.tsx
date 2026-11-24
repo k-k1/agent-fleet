@@ -48,6 +48,7 @@ const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("./store.
 const { useUIStateStore } = await import("../../core/store/uiState.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { writeFoldValue } = await import("../../lib/foldStore.ts");
+const { useSpacesStore } = await import("../spaces/store.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -97,6 +98,8 @@ beforeEach(async () => {
   launchKinds = ["claude"];
   useUIStateStore.setState({ state: {} as never });
   useReposStore.setState({ repos: [{ name: "app", path: "/home/dev/repos/app", branch: "main" }] as never, loadState: "ok" });
+  useSpacesStore.getState().clear();
+  useSessionsStore.setState({ sessions: [] });
   apiGet.mockReset();
   apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? { spaces: [] } : []));
   apiPost.mockReset();
@@ -348,5 +351,159 @@ describe("Start hub — the draft's files and the memo it came from", () => {
     await click(head(t("start.sec_space")));
     await click(spaceGo());
     expect(launched).toHaveBeenCalledWith("space-1");
+  });
+});
+
+describe("Start hub — an existing space", () => {
+  const space = (folder: string, name: string, createdAt: string) => ({ folder, name, dir: "/home/dev/spaces/" + folder, createdAt });
+  const withSpaces = (spaces: ReturnType<typeof space>[]) =>
+    apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? { spaces } : []));
+  const chip = () => document.querySelector<HTMLButtonElement>(".start-place-chip--btn")!;
+  const options = () => [...document.querySelectorAll<HTMLButtonElement>(".start-place-opt")];
+  const optionLabels = () => options().map((o) => o.textContent);
+  const nameBox = () => document.querySelector<HTMLInputElement>(".start-place input[type=text]");
+
+  it("offers the spaces by last use, and starts a session in the one picked, by folder alone", async () => {
+    withSpaces([space("old-aaa", "Budget", "2026-09-01T00:00:00Z"), space("new-bbb", "", "2026-11-20T00:00:00Z")]);
+    // Budget's own age is older, but a session started in it yesterday.
+    useSessionsStore.setState({ sessions: [{ name: "s1", kind: "claude", space: "old-aaa", createdAt: "2026-11-23T10:00:00Z" }] as never });
+    await openHub();
+    expect(nameBox()).not.toBeNull(); // a new space is named in place
+    await click(chip());
+    expect(optionLabels()).toEqual([t("start.place_new_space"), "Budget", "new-bbb"]);
+    await click(options()[1]);
+    expect(chip().textContent).toContain("Budget");
+    expect(nameBox()).toBeNull(); // an existing space is not renamed by a launch
+    expect(spaceGo().textContent).toContain(t("start.space_launch_existing"));
+    await typeInto(hubBox(), "続きをお願い");
+    await click(spaceGo());
+    const body = createCalls()[0][2] as Record<string, unknown>;
+    expect(body).toMatchObject({ dir: "", space: { folder: "old-aaa" }, initial_prompt: "続きをお願い" });
+    expect((body.space as Record<string, unknown>).name).toBeUndefined();
+  });
+
+  it("lists five as recent and the rest behind All spaces", async () => {
+    const many = Array.from({ length: 8 }, (_, i) => space("sp-" + i, "Space " + i, `2026-11-0${i + 1}T00:00:00Z`));
+    withSpaces(many);
+    await openHub();
+    await click(chip());
+    expect(options()).toHaveLength(1 + 5); // New space + five recent
+    expect(optionLabels().slice(1)).toEqual(["Space 7", "Space 6", "Space 5", "Space 4", "Space 3"]);
+    await click(document.querySelector<HTMLButtonElement>(".start-place-more")!);
+    expect(optionLabels().slice(6)).toEqual(["Space 2", "Space 1", "Space 0"]);
+    await click(options()[8]); // an older one can be picked too
+    expect(chip().textContent).toContain("Space 0");
+  });
+
+  const spaceAsks = () => apiGet.mock.calls.filter((c) => c[0] === "api/spaces").length;
+
+  it("stops a launch aimed at a space that is gone, keeps the draft, and goes on once another place is picked", async () => {
+    withSpaces([space("gone-aaa", "Gone", "2026-11-01T00:00:00Z")]);
+    await openHub();
+    await click(chip());
+    await click(options()[1]);
+    await typeInto(hubBox(), "続きの作業");
+    await act(async () => useSpacesStore.setState({ spaces: [] }));
+    await settle();
+    // Not silently a new space: the pick stays, marked, and nothing can launch it.
+    expect(chip().textContent).toContain("gone-aaa"); // its name left with the list; the folder stands in
+    expect(chip().className).toContain("start-place-chip--gone");
+    expect(document.body.textContent).toContain(t("start.space_gone"));
+    expect(spaceGo().disabled).toBe(true);
+    await act(async () => {
+      hubBox().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    });
+    await settle();
+    expect(createCalls()).toHaveLength(0);
+    expect(hubBox().value).toBe("続きの作業");
+    await click(chip());
+    await click(options()[0]); // New space, chosen on purpose
+    await click(spaceGo());
+    expect(createCalls()[0][2]).toMatchObject({ space: { name: "" }, initial_prompt: "続きの作業" });
+  });
+
+  it("refuses the same pick right after the Agent says the space is not found, even while the list is still being read", async () => {
+    withSpaces([space("gone-aaa", "Gone", "2026-11-01T00:00:00Z")]);
+    apiPost.mockImplementation(async (...a: unknown[]) =>
+      a[0] === "api/sessions" ? { error: { code: "space_not_found", message: "no such space: gone-aaa" } } : {},
+    );
+    await openHub();
+    await click(chip());
+    await click(options()[1]);
+    await typeInto(hubBox(), "続き");
+    // The re-read that follows the 404 never answers: the refusal cannot wait for it.
+    apiGet.mockImplementation(() => new Promise(() => {}));
+    await click(spaceGo());
+    expect(createCalls()).toHaveLength(1);
+    expect(spaceAsks()).toBe(2); // the hub's one ask, then the re-read after the 404
+    expect(spaceGo().disabled).toBe(true);
+    expect(chip().className).toContain("start-place-chip--gone");
+    await click(spaceGo());
+    await act(async () => {
+      hubBox().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    });
+    await settle();
+    expect(createCalls()).toHaveLength(1); // the retry is not sent
+    expect(hubBox().value).toBe("続き");
+  });
+
+  it("asks the Agent for the spaces once when the hub opens, and \"Check again\" refills the chip's list", async () => {
+    apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? { error: { code: "http_500", message: "x" } } : []));
+    await openHub();
+    expect(spaceAsks()).toBe(1);
+    expect(document.body.textContent).toContain(t("start.space_check_failed"));
+    withSpaces([space("sp-a", "Notes", "2026-11-01T00:00:00Z")]);
+    await click([...document.querySelectorAll<HTMLButtonElement>("button.linklike")].find((b) => b.textContent === t("start.space_check_again"))!);
+    expect(spaceAsks()).toBe(2);
+    await click(chip());
+    expect(optionLabels()).toEqual([t("start.place_new_space"), "Notes"]);
+  });
+
+  it("still gets the list when the probe's answer arrives after something cleared or superseded it", async () => {
+    // First ask (the probe) is held; every later ask answers at once.
+    let answerProbe!: (v: unknown) => void;
+    let asks = 0;
+    apiGet.mockImplementation((path: string) => {
+      if (path !== "api/spaces") return Promise.resolve([]);
+      asks++;
+      return asks === 1 ? new Promise((r) => (answerProbe = r)) : Promise.resolve({ spaces: [space("sp-a", "Notes", "2026-11-01T00:00:00Z")] });
+    });
+    await openHub();
+    // A switch of workspace clears the store after the probe began (App does this).
+    await act(async () => useSpacesStore.getState().clear());
+    await act(async () => answerProbe({ spaces: [space("sp-a", "Notes", "2026-11-01T00:00:00Z")] }));
+    await settle();
+    expect(spaceAsks()).toBe(2); // the probe, then the re-read for the workspace now current
+    await click(chip());
+    expect(optionLabels()).toEqual([t("start.place_new_space"), "Notes"]);
+    expect(document.body.textContent).not.toContain(t("start.space_check_failed"));
+  });
+
+  it("closes the list with Escape alone, and returns the focus to the chip after a pick", async () => {
+    withSpaces([space("sp-a", "Notes", "2026-11-01T00:00:00Z")]);
+    await openHub();
+    await click(chip());
+    expect(options()).toHaveLength(2);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await settle();
+    expect(options()).toHaveLength(0);
+    expect(document.querySelector(".start-hub")).not.toBeNull(); // the hub itself stayed open
+    expect(document.activeElement).toBe(chip());
+    await click(chip());
+    await click(options()[1]);
+    expect(document.activeElement).toBe(chip());
+  });
+
+  it("uploads the draft's files to the existing space's new session like a new one's", async () => {
+    withSpaces([space("sp-a", "Notes", "2026-11-01T00:00:00Z")]);
+    await openHub();
+    await click(chip());
+    await click(options()[1]);
+    const file = new File(["B"], "shot.png", { type: "image/png" });
+    await attachToHub(file);
+    await click(spaceGo());
+    expect(pasteImage.mock.calls[0]).toEqual(["space-1", file]);
   });
 });

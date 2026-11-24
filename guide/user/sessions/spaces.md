@@ -36,7 +36,24 @@ The session opens in the chat view.
 | One that has Managed | Managed, whatever your usual default is. You can switch it under **Details** |
 | Claude | Terminal (CLI), the only way it runs; its pane opens in the chat view, and the terminal is one click away |
 
-Each start from this section makes a new space.
+## Start in a space you used before
+
+Work that goes on over several days stays in one space. Open **Place** and pick the space instead of **New space**:
+
+- **Recent** lists the five spaces you started a session in last. A space with no session yet is ranked by when it was
+  made
+- **All spaces** lists the older ones
+- With a space picked, the name box is gone (a space is named when it is made), and the button reads **Start in this
+  space**. The agent starts in that folder and sees what earlier sessions left there
+
+Without a pick, each start makes a new space.
+
+## Files you attach
+
+For a session in a space, each attached file is also copied into the space's `attachments` folder, under its own name
+(`report.pdf`; a second file of that name becomes `report-2.pdf`). You find the files beside your work, and a later
+session in the same space has them too. The agent is still pointed at the upload's own path in the first prompt.
+If a file cannot be copied into the space, it is not attached, and the launch says which one.
 
 ## What a space keeps
 
@@ -56,6 +73,11 @@ Each start from this section makes a new space.
 The workspace runs an older Agent, which would start the session in home instead. Stop the workspace and start it
 again: it starts from the latest image ([Pick up a new image](../workspace/recreate.md#pick-up-a-new-image)). Until then, start in a
 repository or use **Other → Launch an agent in home**.
+
+### "This space no longer exists"
+
+The space you picked was removed after the list was read. The start is stopped rather than sent to another place, and
+your text and files stay in the box. Pick another place or **New space**.
 
 ### "Could not check whether this workspace can start in a space"
 
