@@ -92,6 +92,8 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 		cmd.WaitDelay = time.Second
 		cmd.Stderr = se
+		so := &tailWriter{max: 16 << 10} // the supervisor's own report; npm's stdout is /dev/null
+		cmd.Stdout = so
 		if err = cmd.Start(); err == nil {
 			if e.afterNPMStart != nil {
 				e.afterNPMStart(cmd.Process)
@@ -100,12 +102,33 @@ func (e Env) npmInstall(specs []string) (stderr string, err error) {
 			// Group kill and wait, as for a direct npm: nothing may write once this returns, and a
 			// supervisor killed alone takes npm (same group) down with it.
 			pgid := cmd.Process.Pid
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
-			if !waitGroupGone(pgid, superviseGrace) && err == nil {
-				err = errors.New("npm's process group did not stop")
+			stuck := parseStuck(so.String())
+			kill, grace := e.npmGroupKill, superviseGrace
+			if kill == nil {
+				kill = func(pgid int) { _ = syscall.Kill(-pgid, syscall.SIGKILL) }
+			}
+			if e.npmGrace > 0 {
+				grace = e.npmGrace
+			}
+			kill(pgid)
+			if !waitGroupGone(pgid, grace) {
+				stuck = append(stuck, groupProcs(pgid)...)
+				if err == nil {
+					err = errors.New("npm's process group did not stop")
+				}
 			}
 			if errors.Is(err, exec.ErrWaitDelay) {
 				err = nil
+			}
+			// What still runs after SIGKILL and the grace may finish a write later: it is recorded
+			// so that neither this start's rollback nor a later start's recovery restores under it.
+			if runs, rerr := e.npmRecordStuck(stuck); runs {
+				switch {
+				case rerr != nil:
+					err = fmt.Errorf("%w, and it could not be recorded in %s: %v (%v)", errNPMStuck, e.npmStuckPath(), rerr, err)
+				default:
+					err = fmt.Errorf("%w (recorded in %s; nothing is restored or installed until it is gone): %v", errNPMStuck, e.npmStuckPath(), err)
+				}
 			}
 			return se.String(), err
 		}
@@ -335,8 +358,17 @@ func NPM(e Env) int {
 	// Decide every pin again (a self-update that held the lock may have moved a CLI that was fine
 	// before), and keep what the earlier plan owed unless the disk now shows it settled.
 	// One `npm ls` for both: a second one that failed must not undo what the first showed settled.
+	// The versions are read only for a CLI they can decide: npmPlan compares one with a ~/.local
+	// copy, npmRecheck one of the earlier plan that is present now. With neither (no local copy
+	// at all), no `npm ls` runs under the lock.
 	var cur map[string]string
-	if e.Repin {
+	if e.Repin && slices.ContainsFunc(npmCLIs, func(c struct{ Name, Pkg string }) bool {
+		if e.Pins[c.Name] == "" {
+			return false
+		}
+		_, err := os.Stat(filepath.Join(e.localBin(), c.Name))
+		return err == nil || slices.Contains(wanted, c.Name) && e.cliPresent(c.Name)
+	}) {
 		cur = e.npmVersions()
 	}
 	if cur == nil {
@@ -386,15 +418,26 @@ func NPM(e Env) int {
 // it, except that it clears an earlier "failed". Exit 0 when all run, 1 when one still does not,
 // 3 when a repair was skipped for lack of space.
 func (e Env) NPMVerify(clis []string, present bool) int {
+	rc, _ := e.npmVerify(clis, present)
+	return rc
+}
+
+// npmVerify is NPMVerify that also says whether it ran with the lock (the full pass, not the
+// read-only one).
+func (e Env) npmVerify(clis []string, present bool) (rc int, locked bool) {
 	e, release, ok := e.lockNPM()
 	if !ok {
 		if e.npmLockErr != nil {
-			return e.npmVerifyReadOnly(clis, present)
+			return e.npmVerifyReadOnly(clis, present), false
 		}
 		e.npmBusy("npm verify")
-		return ExitFailed
+		return ExitFailed, false
 	}
 	defer release()
+	return e.npmVerifyLocked(clis, present), true
+}
+
+func (e Env) npmVerifyLocked(clis []string, present bool) int {
 	var fix, fixCLIs, broken, stuckRestore []string
 	defer func() {
 		if len(stuckRestore) > 0 {
@@ -506,6 +549,12 @@ func (e Env) removeLink(link string) bool {
 // only after an install: a copy broken by an earlier start, or already at its version so that no
 // install ran, is otherwise never looked at again.
 func (e Env) NPMVerifyPresent() int {
+	rc, _ := e.npmVerifyPresent()
+	return rc
+}
+
+// npmVerifyPresent is NPMVerifyPresent that also says whether the pass ran with the lock.
+func (e Env) npmVerifyPresent() (rc int, locked bool) {
 	var list []string
 	_, marked, mok, mbad := e.npmReadMarker()
 	for _, c := range npmCLIs {
@@ -521,9 +570,9 @@ func (e Env) NPMVerifyPresent() int {
 		}
 	}
 	if len(list) == 0 {
-		return ExitOK
+		return ExitOK, false
 	}
-	return e.NPMVerify(list, true)
+	return e.npmVerify(list, true)
 }
 
 // npmVerifyReadOnly is NPMVerify when the lock file cannot be opened: each CLI is probed once and
@@ -543,7 +592,7 @@ func (e Env) npmVerifyReadOnly(clis []string, present bool) int {
 		if _, err := os.Lstat(link); err != nil && usable(filepath.Join(e.bakedBin(), c)) {
 			continue
 		}
-		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s in ~/.local does not run; not repairing it without the lock (cannot open %s: %v)\n", c, e.npmLockPath(), e.npmLockErr)
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s in ~/.local does not run; not repairing it without the lock (%s)\n", c, e.npmLockWhy())
 		if e.lastStatus(c) != statusFailed {
 			e.note(c, statusFailed, ReasonOther) // an earlier failure's reason (no_space) stays the last line
 		}
@@ -561,11 +610,22 @@ func (e Env) npmLockPath() string { return filepath.Join(e.Home, ".local", ".af-
 // again. ok is false when another process holds it: its npm may still be writing, so nothing here
 // may restore, delete or install. The lock is an flock: it is dropped when the last process
 // holding the file description exits, whatever way that happens.
+//
+// A process an earlier install could not stop (errNPMStuck) refuses the lock the same way as a
+// file that cannot be opened, even to a holder that already has it: npmLockErr is set, so the
+// destructive steps refuse and the answers that need no write still come.
 func (e Env) lockNPM() (_ Env, release func(), ok bool) {
 	if e.npmLockFile != nil {
+		if err := e.npmStuckCheck(); err != nil {
+			e.npmLockErr = err
+			return e, func() {}, false
+		}
 		return e, func() {}, true
 	}
 	e.npmLockErr = nil // each attempt reports its own outcome
+	if e.beforeNPMLock != nil {
+		e.beforeNPMLock()
+	}
 	f, busy, err := flockPath(e.npmLockPath())
 	if busy {
 		return e, func() {}, false
@@ -578,8 +638,21 @@ func (e Env) lockNPM() (_ Env, release func(), ok bool) {
 		e.npmLockErr = err
 		return e, func() {}, false
 	}
+	if err := e.npmStuckCheck(); err != nil {
+		f.Close()
+		e.npmLockErr = err
+		return e, func() {}, false
+	}
 	e.npmLockFile = f
 	return e, func() { f.Close() }, true
+}
+
+// npmLockWhy says why npmLockErr refused the lock.
+func (e Env) npmLockWhy() string {
+	if errors.Is(e.npmLockErr, errNPMStuck) {
+		return e.npmLockErr.Error()
+	}
+	return fmt.Sprintf("cannot open %s: %v", e.npmLockPath(), e.npmLockErr)
 }
 
 // flockPath takes an exclusive flock on path without waiting. busy is true only when another
@@ -607,7 +680,7 @@ func flockPath(path string) (f *os.File, busy bool, err error) {
 // npmBusy says why a step did nothing when the lock was not free.
 func (e Env) npmBusy(what string) {
 	if e.npmLockErr != nil {
-		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s skipped (cannot open %s: %v; no destructive step runs without the lock)\n", what, e.npmLockPath(), e.npmLockErr)
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s skipped (%s; no destructive step runs without the lock)\n", what, e.npmLockWhy())
 		return
 	}
 	fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s skipped (another process holds %s; an earlier npm may still be writing)\n", what, e.npmLockPath())
@@ -1018,9 +1091,16 @@ func (e Env) NPMVerifyPresentStep() int {
 			return ExitFailed
 		}
 		// No lock could be opened: recovery refuses itself when a marker is left, and the verify
-		// pass writes only for a copy that does not run, which it refuses too.
+		// pass writes only for a copy that does not run, which it refuses too. Each takes the lock
+		// again itself, so when the verify pass did get it (the failure was transient), the
+		// accepted update's backups are settled now, as on the locked path, rather than at the
+		// next start; recovery takes the lock once more for that, and refuses without it.
 		e.npmRecoverAside(true)
-		return e.NPMVerifyPresent()
+		rc, locked := e.npmVerifyPresent()
+		if locked {
+			e.npmRecoverAside(false)
+		}
+		return rc
 	}
 	defer release()
 	e.npmRecoverAside(true)

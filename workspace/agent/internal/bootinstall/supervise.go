@@ -3,6 +3,7 @@ package bootinstall
 import (
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strconv"
@@ -69,7 +70,28 @@ func supervise(npm string, args []string, grace time.Duration) int {
 	} else {
 		stopped = stopGroup(deadline)
 	}
+	if !stopped {
+		reportStuck(os.Stdout)
+	}
 	return superviseExit(werr, stopped)
+}
+
+// reportStuck names, on w (the caller reads the supervisor's stdout, which npm never gets), each
+// child still there once the grace ran out, as "stuck <pid> <start>". Only this process can tell
+// them apart while they are its unreaped children, and one that left npm's group with setsid is
+// invisible to the caller's group listing; the caller records the ones still running so that no
+// later start writes under them.
+func reportStuck(w io.Writer) {
+	self := os.Getpid()
+	for _, p := range listProcs() {
+		if p.ppid != self {
+			continue
+		}
+		if child, err := isChild(p.pid); err == nil && !child {
+			continue // a /proc of another pid namespace: not a process of ours
+		}
+		fmt.Fprintf(w, "stuck %d %d\n", p.pid, p.start)
+	}
 }
 
 // superviseExit is the supervisor's exit code: npm's own, except that a successful npm whose
@@ -199,11 +221,16 @@ func stopGroup(deadline time.Time) bool {
 // procInfo is one /proc/<pid>/stat.
 type procInfo struct {
 	pid, ppid, pgrp int
-	live            bool // not a zombie
+	start           uint64 // clock ticks after boot: with pid, names one process for good
+	live            bool   // not a zombie
 }
 
 func readStat(pid int) (procInfo, bool) {
-	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	return readStatFile(pid, "/proc/"+strconv.Itoa(pid)+"/stat")
+}
+
+func readStatFile(pid int, path string) (procInfo, bool) {
+	b, err := os.ReadFile(path)
 	if err != nil {
 		return procInfo{}, false
 	}
@@ -212,16 +239,17 @@ func readStat(pid int) (procInfo, bool) {
 	if i < 0 {
 		return procInfo{}, false
 	}
-	f := strings.Fields(s[i+1:]) // state ppid pgrp ...
-	if len(f) < 3 {
+	f := strings.Fields(s[i+1:]) // state ppid pgrp session tty tpgid flags ... starttime (20th)
+	if len(f) < 20 {
 		return procInfo{}, false
 	}
 	ppid, err1 := strconv.Atoi(f[1])
 	pgrp, err2 := strconv.Atoi(f[2])
-	if err1 != nil || err2 != nil {
+	start, err3 := strconv.ParseUint(f[19], 10, 64)
+	if err1 != nil || err2 != nil || err3 != nil {
 		return procInfo{}, false
 	}
-	return procInfo{pid: pid, ppid: ppid, pgrp: pgrp, live: f[0] != "Z" && f[0] != "X"}, true
+	return procInfo{pid: pid, ppid: ppid, pgrp: pgrp, start: start, live: f[0] != "Z" && f[0] != "X"}, true
 }
 
 func listProcs() []procInfo {
@@ -250,6 +278,18 @@ func groupMembers(pgid int) []int {
 	for _, p := range listProcs() {
 		if p.pid != self && p.live && p.pgrp == pgid {
 			out = append(out, p.pid)
+		}
+	}
+	return out
+}
+
+// groupProcs is groupMembers with each member's start time, read from the same stat.
+func groupProcs(pgid int) []npmProc {
+	self := os.Getpid()
+	var out []npmProc
+	for _, p := range listProcs() {
+		if p.pid != self && p.live && p.pgrp == pgid {
+			out = append(out, npmProc{pid: p.pid, start: p.start})
 		}
 	}
 	return out
