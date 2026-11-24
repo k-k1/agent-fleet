@@ -1319,8 +1319,11 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	}
 	o := store.DeliveryObservation{Gen: gen, At: v.readAt, HeldBy: why, HeldSession: who, HeldDetail: treeHeldDetail(tree, why, now), Progress: progress,
 		ProgressAt: store.DeliveryTS(now), LimitKinds: treeLimitKinds(tree), ActMark: v.actMark, ActIncarnation: v.actIncarnation}
-	// The turn the close is based on: the answer read is pinned to its end (readAnswer).
-	o.RootTurnEndAt = tree[0].LastTurnEndAt
+	// The turn the close is based on: the answer read is pinned to its end (readAnswer), for a
+	// kind whose end is told by the kind itself.
+	if memoAnswerPinKinds[tree[0].Kind] {
+		o.RootTurnEndAt = tree[0].LastTurnEndAt
+	}
 	if t := tree[0].QueueTurn; t != nil && t.EndedAt != "" {
 		o.TurnOutcome, o.TurnMs, o.TurnEndedAt = t.Outcome, t.Ms, t.EndedAt
 	}
@@ -2001,6 +2004,14 @@ func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d s
 		before = strconv.Itoa(*reply.FirstLine)
 	}
 }
+
+// memoAnswerPinKinds are the kinds whose lastTurnEndAt is the end the kind itself told (a hook, or
+// the managed driver's turn completion). The Agent reads the others' ends off a poll of their
+// state, and an idle left over from the turn before can be stamped as the end of a turn that has
+// not yet taken its input (workspace/agent/internal/sessionx/turn_end_poll.go, "a stale idle that
+// outlives the window is still stamped"): pinned to it, the read would drop the run's own input
+// and answer. Their answer is read without the pin. A kind not listed is not pinned.
+var memoAnswerPinKinds = map[string]bool{"claude": true, "codex": true, "opencode": true, "muse": true}
 
 // memoAnswerPin is the first instant a delivery's answer read takes as past the run: the end of
 // the root session's turn the close's read saw, plus memoAnswerPinSlack. false when that read saw

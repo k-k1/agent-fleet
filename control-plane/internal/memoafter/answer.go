@@ -53,16 +53,21 @@ func TurnsBefore(turns []Turn, pin time.Time) []Turn {
 }
 
 // PinnedAnswer is LastAnswer of the turns before pin (TurnsBefore), turns being the transcript
-// from some line to its end. An answer counts only once a user turn of the session itself is seen
-// before it: a page can start inside a person's later turn, whose input, stamped after pin, is on
-// the page before, and whose assistant turns may carry no time at all (kiro). found is false until
-// then, so the caller reads back a page; atStart says turns begin at the transcript's first line,
-// where nothing earlier can be such an input.
+// from some line to its end. A page can start inside a person's later turn, whose input, stamped
+// after pin, is on the page before: an answer counts when its own turn is stamped before pin (a
+// later turn's lines are written after it), or else once a user turn of the session itself is
+// seen before it (an answer stamped late, or not at all). found is false until then, so the caller
+// reads back a page; atStart says turns begin at the transcript's first line, where nothing
+// earlier can be such an input. A run that called tools for more lines than the pages read holds
+// no user turn in them: its own answer, stamped before pin, is taken all the same.
 func PinnedAnswer(turns []Turn, pin time.Time, atStart bool) (text string, found bool) {
 	kept := TurnsBefore(turns, pin)
 	text, at, found := lastAnswerAt(kept)
 	if !found || atStart {
 		return text, found
+	}
+	if ts, err := time.Parse(time.RFC3339Nano, kept[at].TS); err == nil && ts.Before(pin) {
+		return text, true
 	}
 	for _, t := range kept[:at] {
 		if t.Role == "user" && !t.Sidechain {

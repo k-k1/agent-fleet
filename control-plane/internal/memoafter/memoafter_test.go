@@ -222,6 +222,10 @@ func TestPinnedAnswer(t *testing.T) {
 		{"the first line", []Turn{said("Done: run")}, true, "Done: run", true},
 		{"only later turns", []Turn{user(time.Minute), said("Done: other")}, true, "", false},
 		{"a subagent's input is no anchor", []Turn{{Role: "user", Sidechain: true, TS: at(-time.Hour)}, said("Done: other"), user(time.Minute)}, false, "", false},
+		{"a long run: no input in the pages, its answer stamped before the pin", []Turn{
+			{Role: "assistant", TS: at(-time.Hour), Parts: []TurnPart{{Kind: "tool"}}},
+			{Role: "assistant", TS: at(-2 * time.Second), Parts: text("Done: long run")}}, false, "Done: long run", true},
+		{"a later turn's answer stamped after the pin", []Turn{{Role: "assistant", TS: at(time.Minute), Parts: text("Done: other")}}, false, "", false},
 		{"the run's error stamped when read", []Turn{user(-time.Hour), said("Done: first"), user(-time.Minute),
 			{Role: "assistant", TS: at(time.Hour), Parts: []TurnPart{{Kind: "error", Text: "refused"}}}}, false, "", true},
 	} {

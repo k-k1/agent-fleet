@@ -925,3 +925,38 @@ func TestMemoAnswerPinKindsAndEnd(t *testing.T) {
 		}
 	})
 }
+
+// Round 3 of the review of #5030: a run that called tools for more lines than the pages read has
+// its answer read from the tail page, and a kind whose turn end is read off a poll is not pinned.
+func TestMemoAnswerPinLongRunAndPolledKinds(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		end := now.Add(-10 * time.Minute).Truncate(time.Second)
+		agent, _, da, _ := e.noPRChain(end.Add(time.Minute))
+		e.setCloseTurnEnd(da.ID, agentSecond(end), 7)
+		calls := 0
+		agent.setAnswer("q-a", func() (int, any) {
+			calls++
+			return http.StatusOK, map[string]any{"name": "q-a", "status": "idle", "firstLine": 5000, "hasMore": true, "messages": []map[string]any{
+				{"role": "assistant", "ts": end.Add(-time.Minute).UTC().Format(time.RFC3339Nano), "parts": []map[string]any{{"kind": "tool", "tool": "Bash"}}},
+				{"role": "assistant", "ts": end.Add(-300 * time.Millisecond).UTC().Format(time.RFC3339Nano), "parts": []map[string]any{{"kind": "text", "text": "Done: long run"}}},
+			}}
+		})
+		e.settleNow(now)
+		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone || calls != 1 {
+			t.Fatalf("long run: kept %q %q in %d reads", got.AnswerHead, got.AnswerClass, calls)
+		}
+	})
+	for _, kind := range []string{"kiro", "agy", "copilot", "cursor"} {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(nil)
+			agent.setRow(d.Session, map[string]any{"kind": kind, "state": "idle", "lastTurnEndAt": agentSecond(time.Now().Add(-time.Minute))})
+			e.settleNow(time.Now())
+			e.settleNow(time.Now())
+			got := e.delivery(d.ID)
+			if _, ok := memoAnswerPin(got); got.State != store.DeliveryClosed || ok || got.CloseTurnEndAt != "" {
+				t.Fatalf("%s: state %s, pin %q", kind, got.State, got.CloseTurnEndAt)
+			}
+		})
+	}
+}
