@@ -942,6 +942,10 @@
             "description": "new（既定・毎回新規セッション）| reuse（同一の長寿命セッションへ毎回送信し文脈を継続）| assistant（アシスタント会話へ1ターン投入）",
             "type": "string"
           },
+          "show_in_sessions": {
+            "description": "この定時実行が起動した、専用ワークツリーを持つ子セッションを、リポジトリツリーとセッション一覧にも出すか（任意。既定 false=スケジュール画面にだけ出す）",
+            "type": "boolean"
+          },
           "silent": {
             "description": "最終回答が [SILENT] だけなら何も届けない（監視向け・任意。失敗は必ず通知）",
             "type": "boolean"
@@ -3146,6 +3150,10 @@
           "session_mode": {
             "description": "new | reuse | assistant（任意）",
             "type": "string"
+          },
+          "show_in_sessions": {
+            "description": "起動した子セッション（専用ワークツリーを持つもの）をセッション画面にも出すか（任意。false=スケジュール画面だけ）",
+            "type": "boolean"
           },
           "silent": {
             "description": "[SILENT] だけの回答を届けない（任意）",

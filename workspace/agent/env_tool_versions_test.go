@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -152,8 +154,31 @@ func TestCollectToolVersions(t *testing.T) {
 		if r.Name != toolSpecs[i].Name {
 			t.Errorf("row %d name = %q, want %q", i, r.Name, toolSpecs[i].Name)
 		}
+		if r.Title != toolSpecs[i].Title || r.URL != toolSpecs[i].URL {
+			t.Errorf("row %s title/url = %q/%q, want %q/%q", r.Name, r.Title, r.URL, toolSpecs[i].Title, toolSpecs[i].URL)
+		}
 		t.Logf("%-8s pin=%-8s eff=%v baked=%v local=%v overridden=%v",
 			r.Name, r.Pin, binStr(r.Effective), binStr(r.Baked), binStr(r.UserLocal), r.Overridden)
+	}
+}
+
+// The Console reads `title` and `url` off the JSON: a renamed tag or a dropped assignment
+// would silently fall back to key-only rows, so pin the serialized keys and omitempty.
+func TestToolReportJSONTitleURL(t *testing.T) {
+	b, err := json.Marshal(toolReport{Name: "gh", Title: "GitHub CLI", URL: "https://github.com/cli/cli"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(b, &m); err != nil {
+		t.Fatal(err)
+	}
+	if m["name"] != "gh" || m["title"] != "GitHub CLI" || m["url"] != "https://github.com/cli/cli" {
+		t.Errorf("wire = %s", b)
+	}
+	b, _ = json.Marshal(toolReport{Name: "gh"})
+	if strings.Contains(string(b), `"title"`) || strings.Contains(string(b), `"url"`) {
+		t.Errorf("empty title/url must be omitted: %s", b)
 	}
 }
 
@@ -389,5 +414,43 @@ func TestConfluenceWrapperVersionSkipsCredentialHelper(t *testing.T) {
 	}
 	if got == nil || got.Version != "2.31.0" {
 		t.Errorf("probe through wrapper = %+v, want 2.31.0", got)
+	}
+}
+
+// guideToolRowRe matches a tool row of the generated guide/ref/workspace-image.md:
+// `| [Name](url) | …`. The link text is the guide's name for the tool.
+var guideToolRowRe = regexp.MustCompile("^\\| \\[([^\\]]+)\\]\\((https?://[^)]+)\\) \\|")
+
+// TestToolSpecsMatchGuide keeps the Toolchains rows' product name and home link in step with
+// the tool's row in the workspace-image guide: the guide's link must equal the spec's URL and
+// the guide's name must start with the spec's Title ("GitHub CLI (`gh`)" starts with
+// "GitHub CLI"). Without it the Console and the guide drift apart silently.
+func TestToolSpecsMatchGuide(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "guide", "ref", "workspace-image.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	guide := map[string]string{} // url → guide name
+	for _, line := range strings.Split(string(raw), "\n") {
+		if m := guideToolRowRe.FindStringSubmatch(line); m != nil {
+			guide[m[2]] = m[1]
+		}
+	}
+	if len(guide) < 20 { // a regexp that matched nothing must not read as green
+		t.Fatalf("parsed only %d guide rows; the row format changed?", len(guide))
+	}
+	for _, spec := range toolSpecs {
+		if spec.Title == "" || spec.URL == "" {
+			t.Errorf("%s: Title and URL are required (add the tool to the guide via scripts/workspace-image/tools.tsv)", spec.Name)
+			continue
+		}
+		name, ok := guide[spec.URL]
+		if !ok {
+			t.Errorf("%s: no guide row links to %s", spec.Name, spec.URL)
+			continue
+		}
+		if !strings.HasPrefix(name, spec.Title) {
+			t.Errorf("%s: guide names it %q, which does not start with Title %q", spec.Name, name, spec.Title)
+		}
 	}
 }

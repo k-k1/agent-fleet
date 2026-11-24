@@ -7,38 +7,48 @@ source_of_truth: "The Console's Start button on the workspace action bar, and th
 
 English | [日本語](start.ja.md)
 
-From **Start** you can launch an agent in a repository or in your home folder, or open a chat or a shell.
+From **Start** you can launch an agent in a space, in a repository or in your home folder, or open a shell.
 A session is one piece of work handed to an agent: its conversation, its working place and its running state.
 
 ## How it works
 
 | What you do | What the agent does |
 |---|---|
-| Choose where to work in Start | Starts in the place you chose (a repository's working copy, or home) |
+| Choose where to work in Start | Starts in the place you chose (a new space, a repository's working copy, or home) |
 | Pick the agent, the model and a first prompt, then launch | Takes the first prompt and starts working |
 | Answer when a reply is needed | Stops at a question, a permission request or a plan, and waits for you |
 
-Sessions are listed in the Sessions view of the left pane under **Repositories**, below their working copy; the ones that belong to no repository
-are under **Other sessions**. Shells and SSM sessions are in the **Terminals** view ([Find your shells and SSM sessions](terminals.md)). You can have as many as you like at once, each with its own conversation and working folder.
+Sessions are listed in the Sessions view of the left pane under **Repositories**, below their working copy; sessions in a
+space are under **Spaces**, and the ones that belong to neither are under **Other sessions**. Shells and SSM sessions are in the **Terminals** view ([Find your shells and SSM sessions](terminals.md)). You can have as many as you like at once, each with its own conversation and working folder.
 
 ## Pick a place in Start
 
-Press **＋ Start** on the workspace action bar to open the **Start** screen.
+Press **＋ Start** on the workspace action bar to open the **Start** screen. It has three sections, and one of them is
+open at a time. Start opens on the section you used last; the very first time, that is **Start in a space**.
 
-![The Start screen. Under "Where do you want to work?" are Chat (assistant), SSM, shell and Launch an agent in home; below them a repository search box, the cloned repositories, "Clone a new repository…" and "Start in a new folder…"](../../assets/sessions-start-en-light.webp)
+![The Start screen with "Start in a space" open: the "What would you like done?" box, the "New space" place with an optional name, the folded Details and a "Start in a new space" button. "Start in a repository" and "Other" are folded below](../../assets/sessions-start-en-light.webp)
 
-| Choice | What happens |
+| Section | What it holds |
 |---|---|
-| Chat (assistant) | Starts a chat that uses no repository, for questions, translation and summaries ([Ask an assistant](../chat/assistant.md)) |
-| SSM — log in to another host | Logs in to EC2 over SSM. Shown only when you have an SSM profile ([Log in to EC2 with SSM](../integrations/aws-ssm.md)) |
+| Start in a space | Starts an agent in a new folder of its own under `~/spaces`, straight from this screen ([Start work in a space](spaces.md)) |
+| Start in a repository | Search for a cloned repository and pick it to go on to **Start working**. Team repositories come first |
+| Other | Launch an agent in home, shell, SSM, Clone a new repository… and Start in a new folder… |
+
+**What would you like done?** is shown in every section, and it is one draft: switching sections keeps the text and the
+attached files. Picking a repository takes them into **Start working**; in **Other**, only **Launch an agent in home**
+uses them. The draft lasts until you close Start.
+
+| Row in Other | What happens |
+|---|---|
+| Launch an agent in home | Runs an agent in home (`~`), for drafts, research and throwaway work. It opens the same Start working dialog as a repository (images and files can be attached), without the worktree and branch choices |
 | shell | Opens a plain shell (bash) right away |
-| Launch an agent in home | Runs an agent in home (`~`), for drafts, research and throwaway work. It opens the same Start work dialog as a repository (images and files can be attached), without the worktree and branch choices |
-| Launch an agent in a repository | Search for a cloned repository and pick it to go on to **Start working** |
+| SSM — log in to another host | Logs in to EC2 over SSM. Shown only when you have an SSM profile ([Log in to EC2 with SSM](../integrations/aws-ssm.md)) |
 | Clone a new repository… | Clone from a connection or a URL; when it finishes you go straight on to Start working |
 | Start in a new folder… | For when there is nothing to clone from yet: creates a folder under `~/repos`, runs `git init` and starts there |
 
 - **Launch** on a repository row in the Sessions view opens the same Start working dialog
 - **Back to Start** at the bottom left of Start working (or the browser's back) takes you one step back
+- A chat with an assistant starts from the **Assistants** view ([Ask an assistant](../chat/assistant.md))
 
 > [!TIP]
 > Start works while the workspace is stopped too. Press **Start** in **Start the workspace and begin**, and the Start
@@ -46,17 +56,19 @@ Press **＋ Start** on the workspace action bar to open the **Start** screen.
 
 ## Launch from Start working
 
-![The "Start working: webshop" dialog. It has Agent, Model and First prompt fields, the folded Location and More sections under them, and a "Start in a worktree" button at the bottom](../../assets/sessions-launch-en-light.webp)
+![The "Start working: webshop" dialog. From the top: the First prompt box, the folded Location section, the folded Details section whose summary names the agent and model, and a "Start in a worktree" button at the bottom](../../assets/sessions-launch-en-light.webp)
 
-1. Under **Agent**, pick the agent to use
-2. For an agent that can run on more than one route, pick the **Model route**: where model calls go and which account
-   is billed. Your default route (⚙ Settings → Agents) is already chosen when it can be used now. A route marked "no
-   credential yet" can be picked once its key or login is added in ⚙ Settings → Model credentials. Only the routes
-   your organisation allows are listed ([Amazon Bedrock route](../../ref/bedrock-route.md))
-3. Pick the **Model**
-4. If you want, write an instruction in **First prompt (optional)**. It is sent once, automatically, as soon as the session is ready. Left empty, the session just opens
-5. **Location** and **More** stay folded with a summary of what they will do. Press **Change** only to change them
-6. Press **Start in a worktree** (**Launch** when you start directly in this copy)
+The dialog asks what, then where, then the details.
+
+1. If you want, write an instruction in **First prompt (optional)**. It is sent once, automatically, as soon as the session is ready. Left empty, the session just opens
+2. **Location** shows where the session will run: a new worktree by default. Press **Change** only to change it
+3. **Details** shows the agent and model, then any setting that is not at its default. Press **Change** to pick
+   another agent, model route or model, or to change the rest ([Details](#details))
+4. Press **Start in a worktree** (**Launch** when you start directly in this copy)
+
+Your last agent and model for the repository are chosen already, so most launches need only the prompt. Details stays
+open next time once you open it. It opens by itself when something there needs you: no agent can be listed, a model
+route has to be chosen, your default route cannot be used, or the Claude login has expired.
 
 When no agent can be listed, the dialog says why in one line: **No model route is available to you. Ask your
 administrator.** when your organisation allows no route, or **You have switched off every agent.** with **Reset my
@@ -73,12 +85,15 @@ The first prompt box also lets you:
 By default each session gets a new worktree (its own working copy) and starts there.
 How to choose the branch, and how to start inside a folder of the repository, is in [Work in parallel with worktrees](worktrees.md).
 
-### More
+### Details
 
 Only the items the chosen agent supports are shown.
 
 | Item | What it decides |
 |---|---|
+| Agent | The agent to use |
+| Model route | For an agent that can run on more than one route: where model calls go and which account is billed. Your default route (⚙ Settings → Agents) is already chosen when it can be used now. A route marked "no credential yet" can be picked once its key or login is added in ⚙ Settings → Model credentials. Only the routes your organisation allows are listed ([Amazon Bedrock route](../../ref/bedrock-route.md)) |
+| Model | Left as the agent's default unless you pick one |
 | Execution method | Managed (recommended) or Terminal (CLI) ([Choose the execution method](#choose-the-execution-method)) |
 | Reasoning effort | Left unset, the model's default applies |
 | Start mode | "Plan" spends the first turn on research and a plan |
@@ -166,6 +181,7 @@ and switch.
 
 ## Related
 
+- [Start work in a space](spaces.md): a place of its own for work that has no repository
 - [Work in parallel with worktrees](worktrees.md): choosing the location and the branch
 - [Start from an issue or a ticket](from-issues.md): starting a session from the issue tracker list
 - [Read a session's state](status.md): the row marks and notifications

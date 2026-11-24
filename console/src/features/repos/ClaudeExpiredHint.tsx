@@ -4,9 +4,15 @@
 import { openAgentsSettings } from "../../lib/authExpiredToast.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
+/** claudeExpiredShows reports whether the note shows for this kind: a dialog that folds the note
+ *  away keeps it in view while this holds. */
+export function claudeExpiredShows(kind: string, expired: boolean): boolean {
+  return kind === "claude" && expired;
+}
+
 export function ClaudeExpiredHint({ kind, expired }: { kind: string; expired: boolean }) {
   const tr = useT();
-  if (kind !== "claude" || !expired) return null;
+  if (!claudeExpiredShows(kind, expired)) return null;
   return (
     <span className="ui-field-hint">
       {tr("start.claude_expired")}

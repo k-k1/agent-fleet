@@ -102,7 +102,7 @@ seeded "action lost an install branch" .github/actions/setup-agent-cli/action.ym
 seeded "matrix names a CLI the action cannot install" .github/workflows/mcp-config-contract.yml 's/agent: \[claude,/agent: [muse, claude,/' "matrix agent 'muse'"
 seeded "drift check lost a source reader" deploy/local/cli-drift-check.sh 's/^    kiro)/    kirox)/' "has no reader for source 'kiro'"
 seeded "pin bump lost a resolver" deploy/local/cli-pin-bump.sh 's/^resolve_cursor()/resolve_cursorx()/' 'cursor: cli-pin-bump.sh has no resolve_cursor()'
-seeded "toolSpecs Pin key renamed" workspace/agent/env_tool_versions.go 's/Name: "claude", Cmd: "claude", Baked: "\/usr\/local\/bin\/claude", Pin: "claude"/Name: "claude", Cmd: "claude", Baked: "\/usr\/local\/bin\/claude", Pin: "claudex"/' 'claude: no toolSpecs row'
+seeded "toolSpecs Pin key renamed" workspace/agent/env_tool_versions.go 's/Name: "claude", Title: "Claude Code", URL: "https:\/\/github.com\/anthropics\/claude-code", Cmd: "claude", Baked: "\/usr\/local\/bin\/claude", Pin: "claude"/Name: "claude", Title: "Claude Code", URL: "https:\/\/github.com\/anthropics\/claude-code", Cmd: "claude", Baked: "\/usr\/local\/bin\/claude", Pin: "claudex"/' 'claude: no toolSpecs row'
 
 echo "== case 3: a new manifest row alone is refused, with what it still needs =="
 t="$(fresh_copy)"
@@ -161,6 +161,8 @@ dispatch '{"muse":"true"}'
 [ "$(cat "$WORK/gh.log")" = "workflow run muse-contract.yml -f version=latest" ] || fail "muse: $(cat "$WORK/gh.log")"
 dispatch '{"cursor":"true","kiro":"true","rtk":"true"}' E2E_CURSOR_AUTH_JSON=x
 [ ! -s "$WORK/gh.log" ] || fail "a manual or contract-less kind was dispatched: $(cat "$WORK/gh.log")"
+dispatch '{"confluence":"true","gh":"true","bkt":"true","jira":"true","gitleaks":"true"}' GH_TOKEN=x
+[ ! -s "$WORK/gh.log" ] || fail "a watch-only image tool was dispatched: $(cat "$WORK/gh.log")"
 dispatch '{"count":"0"}'
 [ ! -s "$WORK/gh.log" ] || fail "nothing changed, yet something was dispatched"
 echo "ok: dispatch"

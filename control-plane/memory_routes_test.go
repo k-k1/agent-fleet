@@ -136,6 +136,11 @@ func TestMemorySnapshotIsAudited(t *testing.T) {
 	if action, target, ok = auditActionTarget(req); !ok || action != "memory.lint_terms.save" || target != "" {
 		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.lint_terms.save with an empty target", action, target, ok)
 	}
+	// The supersede by a document is audited with no target: its project and memory are in the body.
+	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/entries/supersede-document?project=agent-fleet-0123456789ab", nil)
+	if action, target, ok = auditActionTarget(req); !ok || action != "memory.entry.supersede_document" || target != "" {
+		t.Fatalf("auditActionTarget = (%q, %q, ok=%v), want memory.entry.supersede_document with an empty target", action, target, ok)
+	}
 	// A member save is audited by project id only; the memory name never reaches the ledger.
 	req = httptest.NewRequest(http.MethodPost, "/api/agents/memory/entries/member-save?project=agent-fleet-0123456789ab&name=ghp_secretlooking", nil)
 	if action, target, ok = auditActionTarget(req); !ok || action != "memory.entry.save" || target != "agent-fleet-0123456789ab" {

@@ -199,7 +199,7 @@ issue が開くのは次のときだけ:
 | `<kind> CLI: contract failed on <v>` | latest で contract が赤（行と実行は issue の `Red contracts` 欄。`deploy/local/cli-contract-report.sh`） | 直した contract が通ったあとの版上げ PR |
 | `<kind> CLI: contract fails on main` | 版に関係なく `main` で直近 2 回落ちた: ハーネスか secret が壊れている | contract が通りピンが最新になれば自分で閉じる |
 | `<kind> CLI: upstream message fragments gone in <v>` | 新しい版から Agent Fleet が照合する文言が消えた（`Red contracts` に名前が載る）。照合するコードを確かめ、直し、レジストリも更新する | 版上げ PR、または新しい版 |
-| `rtk CLI: bump the pin to <v>` | rtk は取得元はあるが contract が無く `tested` で門番できない。手で上げる（§10.2.1） | 手での版上げ PR |
+| `<tool> CLI: bump the pin to <v>`（`rtk`・`gh`・`bkt`・`jira`・`gitleaks`・`confluence`） | マニフェストの監視専用の行。取得元はあるが contract が無く `tested` で門番できないので、手で上げる（§10.2.1）。contract の dispatch も bump PR も出ない | 手での版上げ PR |
 
 開いた issue は CLI に付いていく: latest が通れば同じ issue が `<kind> CLI: merge the pin bump to <v>`
 に改題され、版上げ PR を名指す。ピンが latest に等しく赤い contract も無いとき、または watcher が

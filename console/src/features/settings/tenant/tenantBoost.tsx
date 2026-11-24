@@ -20,6 +20,28 @@ export interface BoostPolicy {
   monthly_hours: number;
   editable: boolean;
   budget_counted: boolean;
+  // Set only when this month's hours were read (UTC, "2026-11"); members is then the whole
+  // answer, absent meaning nobody ran boosted. Without month no hours are shown at all, so a
+  // count that could not be read never reads as 0.
+  month?: string;
+  members?: BoostUsage[];
+}
+
+/** One member's boosted running hours this month, from the count the budget is enforced on. */
+export interface BoostUsage {
+  user_key: string;
+  email?: string;
+  used_hours: number;
+  spent: boolean;
+  over_hours: number;
+}
+
+/** Hours cut down to one decimal, so 4.99 of a 5-hour budget never reads as the budget reached. A
+ *  sliver above zero is "<0.1" rather than a 0 that reads as none. */
+export function fmtBoostHours(h: number): string {
+  if (h > 0 && h < 0.1) return "<0.1";
+  // The epsilon keeps a float like 6.5 that lands a hair under 65 after the multiply on 6.5.
+  return String(Math.floor(h * 10 + 1e-9) / 10);
 }
 
 /** Every distinct rung memory the deployment declares, ascending. */
@@ -36,17 +58,24 @@ export function TenantBoostView({ slug }: { slug: string }) {
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const [d, sz] = await Promise.all([getTenantBoost(slug), getWorkspaceSizing()]);
-      if (isOk(d)) setView(d);
-      setRungs(declaredRungs({ ...WS_SIZING_FALLBACK, ...(isOk(sz) ? sz : {}) }));
-    } catch {
-      /* transient; the panel keeps its last values */
-    }
+  // Two independent reads: the policy and this month's hours draw as soon as they arrive, and a
+  // sizing read that fails or never answers only leaves the rung chips without their list.
+  const load = useCallback(() => {
+    getTenantBoost(slug)
+      .then((d) => {
+        if (isOk(d)) setView(d);
+      })
+      .catch(() => {
+        /* transient; the panel keeps its last values */
+      });
+    getWorkspaceSizing()
+      .then((sz) => setRungs(declaredRungs({ ...WS_SIZING_FALLBACK, ...(isOk(sz) ? sz : {}) })))
+      .catch(() => {
+        /* the chips keep their last list */
+      });
   }, [slug]);
   useEffect(() => {
-    void load();
+    load();
   }, [load]);
 
   // Absent on a runtime with no rungs: there is nothing to boost between.
@@ -109,11 +138,90 @@ export function TenantBoostView({ slug }: { slug: string }) {
           {!view.budget_counted && <p className="admin-hint">{tr("tenant.boost_uncounted")}</p>}
         </>
       )}
+      {/* Shown with boost off too: hours run earlier this month are still this month's. */}
+      {view.month && (view.enabled || !!view.members?.length) && <BoostUsageList month={view.month} budget={view.monthly_hours} members={view.members ?? []} />}
       {saved && (
         <span className="saved-note">
           <Icon name="check" /> {tr("admin.saved")}
         </span>
       )}
+    </section>
+  );
+}
+
+// BoostUsageList - who ran boosted this month and who went past the budget. A boosted workspace is
+// never stopped at the budget (only new boosts and extensions are refused), so the hours can pass
+// it, and this is where the tenant admin sees by how much (ADR 0139 decision 5).
+function BoostUsageList({ month, budget, members }: { month: string; budget: number; members: BoostUsage[] }) {
+  const tr = useT();
+  const over = members.filter((m) => m.spent).length;
+  return (
+    <div className="boost-usage">
+      <h5>{tr("tenant.boost_usage_title", { month })}</h5>
+      {members.length === 0 ? (
+        <p className="admin-hint">{tr("tenant.boost_usage_none")}</p>
+      ) : (
+        <>
+          {budget > 0 && <p className={over ? "warn-text" : "admin-hint"}>{tr("tenant.boost_usage_over_count", { n: over })}</p>}
+          <ul className="boost-usage-list">
+            {members.map((m) => (
+              <li key={m.user_key}>
+                <span className="boost-usage-who">{m.email || m.user_key}</span>{" "}
+                <span className="boost-usage-hours">{budget > 0 ? tr("tenant.boost_usage_of", { used: fmtBoostHours(m.used_hours), budget }) : tr("tenant.boost_usage_hours", { h: fmtBoostHours(m.used_hours) })}</span>
+                <BoostOverNote u={m} />
+              </li>
+            ))}
+          </ul>
+          {budget > 0 && <p className="admin-hint">{tr("tenant.boost_usage_note")}</p>}
+        </>
+      )}
+    </div>
+  );
+}
+
+function BoostOverNote({ u }: { u: BoostUsage }) {
+  const tr = useT();
+  if (!u.spent) return null;
+  return <span className="warn-text"> {u.over_hours > 0 ? tr("tenant.boost_usage_over", { h: fmtBoostHours(u.over_hours) }) : tr("tenant.boost_usage_spent")}</span>;
+}
+
+// MemberBoostLine - the member detail's line for the same count, directly under the cost card. It is
+// its own card because the cost card is dollars over a chosen period and these are hours in the
+// current month (ADR 0048 decision 2), and because it must show on a deployment with no bill too.
+// It reads the tenant's Boost answer, which carries every member's hours, so there is one count and
+// no second endpoint that could drift from it.
+export function MemberBoostLine({ slug, userKey }: { slug: string; userKey: string }) {
+  const tr = useT();
+  // Kept with the tenant it answers for: the same mounted card can be handed another tenant, and
+  // until that tenant's answer arrives the last one must not be drawn as this member's hours.
+  const [got, setGot] = useState<{ slug: string; view: BoostPolicy } | null>(null);
+  useEffect(() => {
+    let live = true;
+    getTenantBoost(slug)
+      .then((d) => {
+        if (live && isOk(d)) setGot({ slug, view: d });
+      })
+      .catch(() => {
+        /* the line stays absent: no hours rather than a wrong 0 */
+      });
+    return () => {
+      live = false;
+    };
+  }, [slug]);
+  const view = got?.slug === slug ? got.view : null;
+  if (!view?.editable || !view.month) return null;
+  const u = view.members?.find((m) => m.user_key === userKey);
+  if (!view.enabled && !u) return null;
+  const used = fmtBoostHours(u?.used_hours ?? 0);
+  return (
+    <section className="admin-panel member-boost">
+      <h4>{tr("tenant.boost_member_title")}</h4>
+      <p>
+        {view.monthly_hours > 0
+          ? tr("tenant.boost_member_line", { used, budget: view.monthly_hours, month: view.month })
+          : tr("tenant.boost_member_line_nobudget", { used, month: view.month })}
+        {u && <BoostOverNote u={u} />}
+      </p>
     </section>
   );
 }

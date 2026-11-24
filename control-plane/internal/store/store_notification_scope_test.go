@@ -102,6 +102,13 @@ func checkNotificationEventIDScope(t *testing.T, st *SQL) {
 	if _, err := st.db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version=?`, scopeMigrationVersion[st.dialect]); err != nil {
 		t.Fatal(err)
 	}
+	// SQLite rebuilds the table in that migration, so the columns later migrations added to it
+	// are gone and those migrations have to run again too.
+	for _, v := range laterNotificationColumnMigrations[st.dialect] {
+		if _, err := st.db.ExecContext(ctx, `DELETE FROM schema_migrations WHERE version=?`, v); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err := st.Migrate(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -117,3 +124,7 @@ func checkNotificationEventIDScope(t *testing.T, st *SQL) {
 }
 
 var scopeMigrationVersion = map[string]int{"sqlite": 125, "postgres": 110}
+
+// laterNotificationColumnMigrations are the migrations that ADD COLUMN to notification after the
+// scope rebuild, which SQLite's rebuild discards.
+var laterNotificationColumnMigrations = map[string][]int{"sqlite": {165}}

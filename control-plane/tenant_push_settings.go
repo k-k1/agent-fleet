@@ -11,8 +11,6 @@ package main
 import (
 	"encoding/json"
 	"net/http"
-
-	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 type tenantPushSettingsWire struct {
@@ -47,17 +45,9 @@ func (a adminAPI) setTenantPushSettings(w http.ResponseWriter, r *http.Request) 
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", `body must be {"includeText": true|false}`})
 		return
 	}
-	if err := a.mgr.store.PutTenantPushIncludeText(r.Context(), t.ID, *in.IncludeText, ident.ID); err != nil {
+	if err := a.mgr.store.PutTenantPushIncludeText(r.Context(), t.ID, t.Slug, *in.IncludeText, ident.ID); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	detail := "include_text=false"
-	if *in.IncludeText {
-		detail = "include_text=true"
-	}
-	_ = a.mgr.store.InsertAudit(r.Context(), store.AuditLog{
-		ID: store.NewID(), TenantID: t.ID, ActorKind: "user", ActorID: ident.ID,
-		Action: "tenant.push_settings", Target: t.Slug, Detail: detail, At: store.NowTS(),
-	})
 	writeJSON(w, http.StatusOK, tenantPushSettingsWire{Tenant: t.Slug, IncludeText: *in.IncludeText})
 }

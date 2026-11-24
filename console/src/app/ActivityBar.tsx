@@ -14,7 +14,7 @@ import { useWorkItemStore } from "../features/workitems/store.ts";
 import { useSeenStore } from "../features/workitems/seen.ts";
 import { dedupeWorkItems, sortWorkItems } from "../features/workitems/read.ts";
 import { pendingHandoffCount, useHandoffStore } from "../features/sharing/handoffStore.ts";
-import { useSchedulesStore } from "../features/schedules/store.ts";
+import { useSchedulesStore, useShownSchedules } from "../features/schedules/store.ts";
 import { pendingProposals, useMemoryStore, useProposalsFeed } from "../features/memory/store.ts";
 import { memoScope, useMemoStore, useMemoWaitingFeed } from "../features/memo/store.ts";
 import { useWorkspaceStore } from "../core/store/workspace.ts";
@@ -446,13 +446,14 @@ function badgeText(b: RailBadge, tr: ReturnType<typeof useT>, view: RailView): s
 function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, RailBadge>> {
   const wset = useActiveWorkingSet();
   const sessions = useSessionsStore((s) => s.sessions);
-  const waiting = useMemo(() => waitingSessions(sessions, wset), [sessions, wset]);
+  const shownSchedules = useShownSchedules();
+  const waiting = useMemo(() => waitingSessions(sessions, wset, shownSchedules), [sessions, wset, shownSchedules]);
   // Selectors that answer a boolean: the notification list is replaced on every poll, and a
   // subscription to the list itself would re-render the column each time.
   // Where a shell's notice leads depends on where its row is: the Terminal view lists it while the
   // workspace runs, and the Sessions view's history lists every session while it is stopped.
   const terminalsViewLive = useWorkspaceStore((s) => s.state) === "running";
-  const unreadSessions = useNotificationStore((s) => hasUnreadSession(s.items, sessions, wset, !terminalsViewLive));
+  const unreadSessions = useNotificationStore((s) => hasUnreadSession(s.items, sessions, wset, !terminalsViewLive, shownSchedules));
   const reposForTerminals = useReposStore((s) => s.repos);
   const unreadTerminals = useNotificationStore((s) => terminalsViewLive && hasUnreadTerminal(s.items, sessions, reposForTerminals, wset));
   const unreadConversation = useNotificationStore((s) => hasUnreadConversation(s.items, wset));
@@ -487,7 +488,7 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
   const waitingRuns = useMemo(() => waitingRunCount(runs), [runs]);
   const failedAutoRuns = useMemo(() => failedRunKeys(runs), [runs]);
   const repos = useReposStore((s) => s.repos);
-  const waitingScheduled = useMemo(() => waitingScheduledCount(sessions, wset, repos), [sessions, wset, repos]);
+  const waitingScheduled = useMemo(() => waitingScheduledCount(sessions, wset, repos, shownSchedules), [sessions, wset, repos, shownSchedules]);
   const acked = useRailAck((s) => s.acked);
   const ack = useRailAck((s) => s.ack);
 

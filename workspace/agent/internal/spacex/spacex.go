@@ -424,3 +424,113 @@ func HandleCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusCreated, createResponse{Space: sp})
 }
+
+// AttachmentsDir is the folder inside a space that holds the files attached to its sessions'
+// first prompts, so the member sees them next to their own work.
+const AttachmentsDir = "attachments"
+
+// attachmentNameMaxBytes bounds the name a copied attachment keeps. A file name is limited in
+// bytes (255 on the usual file systems), not characters, and a Japanese character takes three;
+// the margin leaves room for the "-2" a name collision adds.
+const attachmentNameMaxBytes = 200
+
+// attachmentName reduces a client-supplied file name to one safe, readable basename: directory
+// parts, control characters and leading dots dropped, a long name cut (at a character boundary,
+// in one pass) so its extension survives. Unlike the agent-facing upload name, Unicode is kept:
+// this is the name the member sees, and a Japanese file name must not collapse to its extension.
+func attachmentName(name string) string {
+	base := name[strings.LastIndexAny(name, `/\`)+1:]
+	var b strings.Builder
+	for _, r := range base {
+		if r < 0x20 || r == 0x7f || r == '/' || r == '\\' {
+			continue
+		}
+		b.WriteRune(r)
+	}
+	s := strings.Trim(strings.TrimLeft(b.String(), "."), " ")
+	if s == "" {
+		return "file"
+	}
+	if len(s) > attachmentNameMaxBytes {
+		ext := filepath.Ext(s)
+		if len(ext) > 32 {
+			ext = ""
+		}
+		cut := attachmentNameMaxBytes - len(ext)
+		for cut > 0 && !utf8.RuneStart(s[cut]) {
+			cut--
+		}
+		s = s[:cut] + ext
+	}
+	return s
+}
+
+// CopyAttachment copies src into the attachments folder of the space in folder (as FolderOf
+// answered it) under name (see attachmentName) and answers the copy's absolute path. A name
+// already taken keeps both files: the copy gets "-2", "-3" ... before its extension, claimed with
+// O_EXCL so two copies at once never share one.
+//
+// Every step runs inside an os.Root opened on the space, so the folder, the marker and the
+// attachments folder are all resolved relative to it and a symlink that points outside the space
+// is refused whenever it was put there, however the check and the write interleave with an agent
+// that is rewriting the space. src is the bytes the caller already holds open: the copy is of
+// those, not of a path opened again.
+func CopyAttachment(folder string, src io.Reader, name string) (string, error) {
+	if !ValidFolder(folder) {
+		return "", errors.New("not a space folder")
+	}
+	top, err := os.OpenRoot(Root())
+	if err != nil {
+		return "", err
+	}
+	defer top.Close()
+	sp, err := top.OpenRoot(folder)
+	if err != nil {
+		return "", err
+	}
+	defer sp.Close()
+	if fi, err := sp.Lstat(MarkerFile); err != nil || !fi.Mode().IsRegular() {
+		return "", errors.New("the space was removed")
+	}
+	fi, err := sp.Lstat(AttachmentsDir)
+	if errors.Is(err, fs.ErrNotExist) {
+		if err = sp.Mkdir(AttachmentsDir, 0o755); err != nil && !errors.Is(err, fs.ErrExist) {
+			return "", err
+		}
+		fi, err = sp.Lstat(AttachmentsDir)
+	}
+	if err != nil {
+		return "", err
+	}
+	if !fi.IsDir() {
+		return "", fmt.Errorf("%s is not a folder", AttachmentsDir)
+	}
+	base := attachmentName(name)
+	ext := filepath.Ext(base)
+	stem := strings.TrimSuffix(base, ext)
+	for n := 1; n < 1000; n++ {
+		cand := base
+		if n > 1 {
+			cand = fmt.Sprintf("%s-%d%s", stem, n, ext)
+		}
+		rel := AttachmentsDir + "/" + cand
+		out, err := sp.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if err != nil {
+			if errors.Is(err, fs.ErrExist) {
+				continue
+			}
+			return "", err
+		}
+		if _, err := io.Copy(out, src); err != nil {
+			out.Close()
+			_ = sp.Remove(rel)
+			return "", err
+		}
+		if err := out.Close(); err != nil {
+			_ = sp.Remove(rel)
+			return "", err
+		}
+		return filepath.Join(Root(), folder, rel), nil
+	}
+	return "", errors.New("could not find a free attachment name")
+}

@@ -34,6 +34,11 @@ type Event struct {
 	DisplayName string         `json:"displayName"`
 	CreatedAt   string         `json:"createdAt"`
 	Payload     map[string]any `json:"payload"`
+	// OriginRoot and OriginChild say who started the session (origin.go). Put fills them from
+	// the session's metadata when the caller left OriginRoot empty; an event from an older Agent
+	// carries neither, and the Control Plane reads that as the member's own, not a child.
+	OriginRoot  string `json:"originRoot,omitempty"`
+	OriginChild bool   `json:"originChild,omitempty"`
 	// NoBridge keeps the event out of the chat bridge: it goes to the notification center only.
 	// For an event whose chat delivery is decided elsewhere (a scheduled run that named its own
 	// targets, #1560). Not persisted: it only steers Put.
@@ -60,6 +65,9 @@ func Put(e Event) error {
 	payload, err := boundPayload(e.Payload)
 	if err != nil {
 		return err
+	}
+	if e.OriginRoot == "" && (e.TargetType == "" || e.TargetType == "session") && e.SessionName != "" {
+		e.OriginRoot, e.OriginChild = OriginOf(e.SessionName)
 	}
 	b, err := json.Marshal(struct {
 		Event

@@ -373,7 +373,16 @@ func memoTidyMoveOne(tx store.MemoTxOps, q store.MemoQueue, m store.Memo, dest s
 		next.State, next.ReleaseHash, next.ReleasedAt, next.ReleasedBy = store.MemoStateHeld, "", "", ""
 	}
 	rec.Hash, rec.ToState = memoContentHash(next), next.State
-	return rec, tx.WriteTidyMemo(next)
+	if err := tx.WriteTidyMemo(next); err != nil {
+		return rec, err
+	}
+	// A move leaves the queue whose order the member's run-next mark was a place in (memoUpdateFor).
+	if m.RunNext {
+		if _, err := tx.SetMemoRunNext(m.ID, false); err != nil {
+			return rec, err
+		}
+	}
+	return rec, nil
 }
 
 // memoTidyItemOf is a message as the validator sees it. A derived message is grouped by the
@@ -533,6 +542,8 @@ func memoTidyUndoCheck(rd store.MemoTidyReader, run store.MemoTidyRun, rec memoT
 		back := m
 		back.Repo, back.Category, back.Position = home.Repo, home.Name, next
 		back.TidyFrom, back.TidyRunID = "", mv.PrevRun
+		// The undo's transaction clears the mark (below); the answer shows the row as it will be.
+		back.RunNext = false
 		// Only a queue keeps a recipe: the row may have moved on into another queue since, and a plain
 		// note carries none.
 		back.Recipe = ""
@@ -617,6 +628,13 @@ func memoTidyUndo(ctx context.Context, st store.MemoQueueStore, membershipID, ru
 		}
 		for _, m := range plan.restore {
 			if err := tx.RestoreMemo(m); err != nil {
+				return err
+			}
+		}
+		// A moved message goes back to another queue's order: a run-next mark set where the run put it
+		// does not follow it home, and the move already cleared any it had there (#5075).
+		for _, mv := range rec.Moves {
+			if _, err := tx.SetMemoRunNext(mv.ID, false); err != nil {
 				return err
 			}
 		}

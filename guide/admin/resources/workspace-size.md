@@ -137,6 +137,8 @@ Open **Tenant settings → Limits & idle**; the **Boost** card is under the defa
 - A boost applies at the member's next start only. A running workspace is never restarted or shrunk by it
 - It is checked again at every start; when it no longer fits (the tenant switched it off, the class changed, the size is above a ceiling), it is not applied and the member's usual size is used
 - The roster card shows **boosted** next to the size a member's next start uses
+- Under the fields, the card lists this month's boosted running hours (UTC) of every member who has any, most first, against the budget. A member at the budget is marked **budget reached**, and one past it **over by** the hours: a workspace already running on a boosted size is not stopped at the budget, so the hours can pass it. The list stays after boost is switched off, for the hours run earlier in the month. Where the hours are not counted it is not shown
+- The member detail shows the same member's hours as a **Boost this month** line under the cloud cost card
 - On a deployment with no machine sizes to boost between, the card says so and there is nothing to set
 
 ## Related

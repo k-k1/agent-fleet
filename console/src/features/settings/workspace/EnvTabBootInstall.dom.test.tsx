@@ -33,13 +33,13 @@ const toolchains = {
 };
 const bin = (v: string) => ({ path: "/home/dev/.local/bin/x", version: v, raw: v });
 const tools = [
-  { name: "claude", pin: "2.1.303", effective: null, baked: null, userLocal: null, overridden: false,
+  { name: "claude", title: "Claude Code", url: "https://github.com/anthropics/claude-code", pin: "2.1.303", effective: null, baked: null, userLocal: null, overridden: false,
     bootInstall: { status: "failed", reason: "no_space" } },
   { name: "codex", pin: "0.163.0", effective: bin("0.150.0"), baked: null, userLocal: bin("0.150.0"), overridden: false,
     bootInstall: { status: "failed", reason: "network" } },
   { name: "copilot", pin: "1.0.98", effective: bin("1.0.98"), baked: null, userLocal: bin("1.0.98"), overridden: false,
     bootInstall: { status: "ok" } },
-  { name: "rtk", pin: "1.2.3", effective: null, baked: null, userLocal: null, overridden: false },
+  { name: "rtk", title: "rtk", pin: "1.2.3", effective: null, baked: null, userLocal: null, overridden: false },
   { name: "agy", pin: "9.9.9", effective: bin("9.0.0"), baked: null, userLocal: bin("9.0.0"), overridden: false,
     bootInstall: { status: "skipped", reason: "no_space" } },
 ];
@@ -75,7 +75,7 @@ async function mount() {
 }
 
 const rowOf = (name: string) =>
-  [...document.querySelectorAll(".tool-ver tbody tr")].find((r) => r.querySelector(".tool-ver-name")?.textContent === name)!;
+  [...document.querySelectorAll(".tool-ver tbody tr")].find((r) => r.querySelector(".tool-ver-cmd")?.textContent === name)!;
 
 describe("EnvTab boot-install outcome", () => {
   it("names the reason where the CLI is missing", async () => {
@@ -98,5 +98,22 @@ describe("EnvTab boot-install outcome", () => {
     await mount();
     expect(rowOf("copilot").textContent).not.toContain("インストール失敗");
     expect(rowOf("rtk").textContent).not.toContain("インストール失敗");
+  });
+});
+
+describe("EnvTab tool names", () => {
+  it("shows the product name as an external link with the key beside it", async () => {
+    await mount();
+    const a = rowOf("claude").querySelector("a.tool-ver-title")!;
+    expect(a.textContent).toBe("Claude Code");
+    expect(a.getAttribute("href")).toBe("https://github.com/anthropics/claude-code");
+    expect(a.getAttribute("target")).toBe("_blank");
+    expect(a.getAttribute("rel")).toBe("noopener noreferrer");
+  });
+  it("shows the name without a link when there is no url, and the key alone for an older Agent", async () => {
+    await mount();
+    expect(rowOf("rtk").querySelector("a")).toBeNull();
+    expect(rowOf("rtk").querySelector(".tool-ver-title")?.textContent).toBe("rtk");
+    expect(rowOf("codex").querySelector(".tool-ver-title")).toBeNull();
   });
 });

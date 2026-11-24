@@ -1,5 +1,5 @@
 import { useState, useSyncExternalStore } from "react";
-import { getFoldScopeRev, readFold, subscribeFoldScope, writeFold } from "./foldStore.ts";
+import { getFoldScopeRev, readFold, readFoldValue, subscribeFoldScope, writeFold, writeFoldValue } from "./foldStore.ts";
 
 // The stored fold flag for `key` (null = never chosen; undefined key = not persisted).
 // Re-reads when the (user, tenant) scope changes under a mounted component (tenant switch,
@@ -15,6 +15,22 @@ export function useFold(key: string | undefined): [boolean | null, (v: boolean) 
   const set = (v: boolean) => {
     setSt((s) => ({ ...s, v }));
     if (key) writeFold(key, v);
+  };
+  return [cur.v, set];
+}
+
+// useFoldValue is useFold for a stored string (null = never chosen), with the same scope rule.
+export function useFoldValue(key: string): [string | null, (v: string) => void] {
+  const rev = useSyncExternalStore(subscribeFoldScope, getFoldScopeRev);
+  const [st, setSt] = useState<{ rev: number; v: string | null }>(() => ({ rev, v: readFoldValue(key) }));
+  let cur = st;
+  if (st.rev !== rev) {
+    cur = { rev, v: readFoldValue(key) };
+    setSt(cur);
+  }
+  const set = (v: string) => {
+    setSt((s) => ({ ...s, v }));
+    writeFoldValue(key, v);
   };
   return [cur.v, set];
 }

@@ -55,6 +55,11 @@ Usage:
                                              on their current revision, with anchors found on the
                                              default branch and no open reasons, unchanged for N
                                              days (1-90, default 7)
+  af-memory promote-proposal --project <id|name> --name <memory> [--file <path.md>]
+                             [--section <heading>] [--days N] [--json | --patch]
+                                             the proposed change for one candidate: document,
+                                             section, text, source memory, scans and a patch
+                                             (nothing is written, committed or pushed)
   af-memory --help
 
 <slug> is a name from import-sources. The import needs "Agent Fleet memory" turned on in
@@ -79,7 +84,18 @@ lesson, procedure or preference about the repository, confirmed by at least two 
 (memory_feedback) on its current revision, whose every stored anchor is found on the default branch
 (origin/HEAD must name it), with no lint finding, no open reasons, and a file unchanged in the
 store's history for N days. The rest of those kinds are listed as held, with what each one misses.
-Nothing is written and nothing is proposed yet.
+Nothing is written.
+
+promote-proposal turns one candidate into a proposed change to the repository: the document (the
+first Markdown anchor, else AGENTS.md, CLAUDE.md or README.md, else a new AGENTS.md; --file
+overrides), the section (from the description unless --section names one; the text goes at the end
+of an existing section or under a new "##" heading), the memory's text as it is, and the memory and
+revision it came from. The text passes AF's secret scan, and the patch is run through the
+repository's own pre-commit hook (core.hooksPath, else hooks/ of the repository) in a throwaway
+clone of the default branch; the hook's output is shown when it fails. Nothing is written to the
+store or the working copy and nothing is pushed: --patch prints only the patch for "git apply", and
+you open the pull request. The text is not translated: a warning says when it is in another
+language than the document.
 
 export is the other direction, one-shot: new and changed AF memories become files in claude's
 memory directory for the project, MEMORY.md is regenerated, and claude's memory is snapshotted
@@ -138,6 +154,8 @@ func Main(c *Client, args []string, out, errw io.Writer) int {
 		err = cmdLint(c, args[1:], out)
 	case "promote-candidates":
 		err = cmdPromoteCandidates(c, args[1:], out)
+	case "promote-proposal":
+		err = cmdPromoteProposal(c, args[1:], out)
 	default:
 		fmt.Fprint(errw, usage)
 		return 2

@@ -41,8 +41,8 @@ fi
 
 # The rows come from the CLI manifest (cli-manifest.sh): name, ARG, release source, locator.
 # The muse row exists for a proprietary CLI because its stable channel endpoint publishes the
-# version anonymously (ADR 0095); rtk is not an agent CLI but is baked and self-updated the same
-# way, so its drift is just as invisible without a row (it has no contract: see the manifest).
+# version anonymously (ADR 0095); rtk and the image tools (gh, gitleaks…) are not agent CLIs, but their drift is just as invisible
+# without a row (they have no contract: see the manifest).
 # shellcheck source=cli-manifest.sh
 . "$(dirname "${BASH_SOURCE[0]}")/cli-manifest.sh"
 manifest_load || exit 2
@@ -52,6 +52,10 @@ for _n in "${M_NAMES[@]}"; do
 done
 
 CURL_RETRY=(--retry 3 --retry-delay 1 --retry-all-errors)
+# Anonymous api.github.com calls share a 60/hour limit per runner address; the watch-only rows
+# (gh, bkt, jira, gitleaks…) multiplied the GitHub calls, so send the job's token when there is one.
+GH_AUTH=()
+[ -z "${GH_TOKEN:-}" ] || GH_AUTH=(-H "Authorization: Bearer $GH_TOKEN")
 
 # A new opencode major changes the server API, the plugin API and the TUI flags at once, so the
 # opencode row reports one as drift but marks it for a manual cut-over (cli-pin-bump.sh never
@@ -109,7 +113,7 @@ for t in "${TARGETS[@]}"; do
     npm)
       latest="$(npm view "$locator" version 2>/dev/null)" ;;
     github)
-      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" \
+      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "${GH_AUTH[@]}" \
         "https://api.github.com/repos/${locator}/releases/latest" 2>/dev/null |
         jq -r '.tag_name // empty | sub("^v";"")' 2>/dev/null)" ;;
     agy)

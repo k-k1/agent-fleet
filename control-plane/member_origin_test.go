@@ -56,6 +56,7 @@ func TestMemberOriginRoutesAreTheMemberWrites(t *testing.T) {
 		"POST /api/agents/memory/entries/project-move",
 		"POST /api/agents/memory/entries/purge",
 		"POST /api/agents/memory/entries/revert",
+		"POST /api/agents/memory/entries/supersede-document",
 		"POST /api/agents/memory/import",
 		"POST /api/agents/memory/import/apply",
 		"POST /api/agents/memory/snapshots",

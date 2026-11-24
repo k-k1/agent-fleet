@@ -27,6 +27,7 @@ import { useSessionUI } from "../sessions/ui.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { refQuery } from "../sessions/refSearch.ts";
 import { useLedgerWhile, useRefIndex } from "../sessions/useRefIndex.ts";
+import { useShownSchedules } from "..//schedules/store.ts";
 import { repoTree, filterRepoTree, countRepoNodes, sessionsInFolder, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
 import { useActiveWorkingSet, repoInSet, autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filter.ts";
@@ -100,11 +101,12 @@ export const ProjectTree = memo(function ProjectTree() {
   // Working sets (docs/log/52): scope to the active set first — a whole project
   // (base + everything nested under it) is in or out by the base's membership.
   const wset = useActiveWorkingSet();
-  const scoped = repoTree(repos, sessions).filter((t) => !wset || repoInSet(wset, t.repo));
+  const shownSchedules = useShownSchedules();
+  const scoped = repoTree(repos, sessions, shownSchedules).filter((t) => !wset || repoInSet(wset, t.repo));
   // Filtering: a working copy is visible when it matches itself or hosts a
   // matching session; an ancestor also stays as the anchor of a matching descendant.
   const visible = (r: (typeof repos)[number]) =>
-    repoMatches(r, nq) || sessionsInFolder(withoutTerminals(withoutUnattended(sessions)), r.name).some((s) => sessionMatches(s, nq, refs));
+    repoMatches(r, nq) || sessionsInFolder(withoutTerminals(withoutUnattended(sessions, shownSchedules)), r.name).some((s) => sessionMatches(s, nq, refs));
   // What stop / delete reach narrows by every session, an auto-run's included, as it always did.
   const reaches = (r: (typeof repos)[number]) =>
     repoMatches(r, nq) || sessionsInFolder(sessions, r.name).some((s) => sessionMatches(s, nq, refs));

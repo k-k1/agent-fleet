@@ -105,6 +105,10 @@ async function click(el: Element): Promise<void> {
 
 beforeEach(() => {
   localStorage.clear();
+  // These suites drive the agent, model and advanced controls, which sit in the Details fold
+  // (ADR 0142 decision 7); start with it open, as a device that left it open does. The fold
+  // itself is tested in LaunchModal.dom.test.tsx ("what -> where -> details").
+  localStorage.setItem("af.launch-open.details", "1");
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
   served = {

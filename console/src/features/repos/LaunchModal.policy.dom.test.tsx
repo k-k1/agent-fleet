@@ -56,12 +56,12 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
 }
 
-async function render(kinds: string[], a: LaunchAccess, extra: { settling?: boolean } = {}): Promise<void> {
+async function render(kinds: string[], a: LaunchAccess, extra: { settling?: boolean; claudeExpired?: boolean } = {}): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <LaunchModal repo="app" branch="main" kinds={kinds} access={a} settling={extra.settling} onClose={() => {}} onLaunch={onLaunch} />
+          <LaunchModal repo="app" branch="main" kinds={kinds} access={a} settling={extra.settling} claudeExpired={extra.claudeExpired} onClose={() => {}} onLaunch={onLaunch} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -89,6 +89,10 @@ const setDefault = (kind: string, route: { route: string; connection?: string } 
 
 beforeEach(() => {
   localStorage.clear();
+  // These suites drive the agent, model and advanced controls, which sit in the Details fold
+  // (ADR 0142 decision 7); start with it open, as a device that left it open does. The fold
+  // itself is tested in LaunchModal.dom.test.tsx ("what -> where -> details").
+  localStorage.setItem("af.launch-open.details", "1");
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
   ssmProfiles = [];
@@ -111,8 +115,8 @@ describe("route step", () => {
     await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"] }]));
     const sel = routeSelect()!;
     expect([...sel.options].map((o) => o.value)).toEqual(["", "anthropic-api", "anthropic-subscription"]);
-    // Not folded away in "More": the route decides who pays, so it sits with the agent and model.
-    expect(sel.closest(".launch-sec")).toBeNull();
+    // The route decides who pays, so it sits with the agent and model, in Details.
+    expect(sel.closest(".launch-sec")?.querySelector(".ui-seg.big")).toBeTruthy();
     // A route the policy forbids (bedrock here) is not named anywhere.
     expect(document.body.textContent).not.toContain("Bedrock");
   });
@@ -249,5 +253,46 @@ describe("policy refusals", () => {
     await click(launchBtn());
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("Choose a model route for this agent");
     expect(refresh).toHaveBeenCalled();
+  });
+});
+
+// ADR 0142 decision 7: the route sits in the Details fold, which opens by itself whenever the route
+// stops the launch, from a device that left it folded.
+describe("Details opens by itself for the route", () => {
+  beforeEach(() => localStorage.removeItem("af.launch-open.details"));
+  const detailsOpen = () =>
+    [...document.querySelectorAll(".launch-sec-head")].find((h) => h.querySelector(".launch-sec-label")?.textContent === "Details")?.getAttribute("aria-expanded");
+
+  it("stays folded when nothing needs the member — negative control", async () => {
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] }]));
+    expect(detailsOpen()).toBe("false");
+  });
+
+  it("opens when a route has to be chosen", async () => {
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api"] }]));
+    expect(detailsOpen()).toBe("true");
+    expect(routeSelect()).toBeTruthy();
+  });
+
+  it("opens when the saved default route cannot be used", async () => {
+    setDefault("claude", { route: "anthropic-api" });
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-subscription"] }]));
+    expect(detailsOpen()).toBe("true");
+    expect(document.body.textContent).toContain("Your default route cannot be used now");
+  });
+
+  it("opens on a policy refusal so its reason is in view", async () => {
+    onLaunch = vi.fn<Launch>(async () => ({ ok: false, policy: "route_required" as const }));
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-subscription"], usableRoutes: ["anthropic-subscription"] }]));
+    expect(detailsOpen()).toBe("false");
+    await click(launchBtn());
+    expect(detailsOpen()).toBe("true");
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Choose a model route for this agent");
+  });
+
+  it("does not open for an expired Claude login when the launch runs on an API key", async () => {
+    setDefault("claude", { route: "anthropic-api" });
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] }]), { claudeExpired: true });
+    expect(detailsOpen()).toBe("false");
   });
 });

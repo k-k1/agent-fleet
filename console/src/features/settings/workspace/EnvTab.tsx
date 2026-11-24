@@ -271,7 +271,18 @@ function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: 
           <tbody>
             {(tv.tools || []).map((t) => (
               <tr key={t.name}>
-                <td className="tool-ver-name">{t.name}</td>
+                <td className="tool-ver-name">
+                  {t.title && t.url ? (
+                    <a className="tool-ver-title" href={t.url} target="_blank" rel="noopener noreferrer">
+                      {t.title}
+                    </a>
+                  ) : (
+                    t.title && <span className="tool-ver-title">{t.title}</span>
+                  )}
+                  {/* The key stays visible beside the product name so a member can match the row to a shell. */}
+                  {t.title && " "}
+                  <code className="tool-ver-cmd">{t.name}</code>
+                </td>
                 <td>
                   {cell(t.effective)}
                   {/* What the start-time install said, so a bare "—" is not read as "this kind is

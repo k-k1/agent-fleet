@@ -91,6 +91,9 @@ export interface Memo {
   route?: string;
   deferCount?: number;
   deferReasons?: MemoDeferEntry[];
+  /** The member's "Run next" mark (#5021): the claim takes this waiting note before the oldest.
+   *  Sent only on a held or pending note no run has taken; absent otherwise. */
+  runNext?: boolean;
 }
 
 /** One hand-back of a note: the session's reason, when, and by which run. */

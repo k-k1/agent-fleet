@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -39,7 +40,12 @@ var bakedUVToolRoot = "/usr/local/share/uv/tools"
 // bakes (for gh the libexec binary rather than the wrapper, for go the tarball's extract
 // directory).
 type toolSpec struct {
-	Name  string   // display name
+	Name string // stable key (the wire's `name`); never shown as the product name
+	// Title and URL are the product name and home page, the same text and link as the tool's
+	// row in guide/ref/workspace-image.md (TestToolSpecsMatchGuide keeps them in step). Product
+	// names are not translated, so they live here rather than in the i18n catalogues.
+	Title string
+	URL   string
 	Cmd   string   // name to resolve with command -v
 	Baked string   // real path of the binary baked into the image
 	Args  []string // arguments that print the version (default --version)
@@ -72,28 +78,28 @@ type toolSpec struct {
 }
 
 var toolSpecs = []toolSpec{
-	{Name: "claude", Cmd: "claude", Baked: "/usr/local/bin/claude", Pin: "claude"},
-	{Name: "opencode", Cmd: "opencode", Baked: "/usr/local/bin/opencode", Pin: "opencode"},
-	{Name: "codex", Cmd: "codex", Baked: "/usr/local/bin/codex", Pin: "codex"},
+	{Name: "claude", Title: "Claude Code", URL: "https://github.com/anthropics/claude-code", Cmd: "claude", Baked: "/usr/local/bin/claude", Pin: "claude"},
+	{Name: "opencode", Title: "opencode", URL: "https://github.com/anomalyco/opencode", Cmd: "opencode", Baked: "/usr/local/bin/opencode", Pin: "opencode"},
+	{Name: "codex", Title: "Codex CLI", URL: "https://github.com/openai/codex", Cmd: "codex", Baked: "/usr/local/bin/codex", Pin: "codex"},
 	// agy's true pin comes from the immutable GCS object the official installer manifest
 	// names (workspace/Dockerfile: AGY_VERSION + AGY_RELEASE_BUILD + sha256 check). On a host
 	// whose RDRAND the kernel has withdrawn, `--version` itself SIGABRTs, so the probe gets
 	// the same mask every other agy spawn does — without it this row reads "(取得失敗)" on a
 	// host where agy in fact runs.
-	{Name: "agy", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy", Env: agy.MaskEnv()},
-	{Name: "copilot", Cmd: "copilot", Baked: "/usr/local/bin/copilot", Pin: "copilot"},
+	{Name: "agy", Title: "Antigravity CLI", URL: "https://antigravity.google/", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy", Env: agy.MaskEnv()},
+	{Name: "copilot", Title: "GitHub Copilot CLI", URL: "https://github.com/github/copilot-cli", Cmd: "copilot", Baked: "/usr/local/bin/copilot", Pin: "copilot"},
 	// cursor (kind="cursor", docs/log/40) is a versioned Node.js tarball bundle, not npm. The
 	// baked tree is /usr/local/share/cursor-agent/versions/<ver>/ and
 	// /usr/local/bin/cursor-agent is a symlink to its wrapper (realpath resolves the version
 	// directory). The version is a date (2026.07.20-8cc9c0b) rather than semver, but
 	// `cursor-agent --version` returns exactly that string.
-	{Name: "cursor", Cmd: "cursor-agent", Baked: "/usr/local/bin/cursor-agent", Pin: "cursor"},
+	{Name: "cursor", Title: "Cursor CLI", URL: "https://cursor.com/", Cmd: "cursor-agent", Baked: "/usr/local/bin/cursor-agent", Pin: "cursor"},
 	// kiro (kind="kiro", docs/log/43) installs on demand into ~/.local by default even where
 	// it is baked (/usr/local, BAKE=1), because at ~855MB it must not be boot-installed for
 	// every user. The effective/baked/user-local trio is displayed like any other CLI (with
 	// nothing installed both effective and baked are null, which surfaces as "not installed").
 	// `kiro-cli --version` prints "kiro-cli 2.14.1".
-	{Name: "kiro", Cmd: "kiro-cli", Baked: "/usr/local/bin/kiro-cli", Pin: "kiro"},
+	{Name: "kiro", Title: "Kiro CLI", URL: "https://kiro.dev/cli/", Cmd: "kiro-cli", Baked: "/usr/local/bin/kiro-cli", Pin: "kiro"},
 	// muse (kind="muse", ADR 0095) is proprietary, so it is never in the distributed image and
 	// Baked is only populated by a self-hosted BAKE_AGENT_CLIS=1 build. Otherwise it installs
 	// on demand into ~/.local/bin (workspace-agent install-muse), so with nothing installed all
@@ -103,40 +109,55 @@ var toolSpecs = []toolSpec{
 	// default extraction would report `1.3.0`, so this row would claim drift on every
 	// correctly pinned install — and the card built on the same comparison would offer a
 	// 299MB "update" that changes nothing.
-	{Name: "muse", Cmd: "muse", Baked: "/usr/local/bin/muse", Pin: "muse", VerRe: muse.ParseVersion},
+	{Name: "muse", Title: "Muse Code", URL: "https://dev.meta.ai/", Cmd: "muse", Baked: "/usr/local/bin/muse", Pin: "muse", VerRe: muse.ParseVersion},
 	// psql is installed on-demand by workspace-agent install-pg-client into ~/.local/bin.
 	// No Pin: versions.json "postgres" is the Zonky server version (e.g. 17.11.0) while
 	// psql reports the Debian client version (17.11); comparing them produces false drift.
-	{Name: "postgres", Cmd: "psql", Baked: ""},
+	{Name: "postgres", Title: "PostgreSQL", URL: "https://www.postgresql.org/", Cmd: "psql", Baked: ""},
 	// mysqld is installed on-demand by workspace-agent install-mysql into ~/.local/share/agent-fleet/mysql/.
 	// No Baked: mysql is not baked into the image (GPL tarball kept out of the distributed image).
 	// Pin key "mysql" holds the pinned tarball version (e.g. 8.4.6).
-	{Name: "mysql", Cmd: "mysqld", Baked: "", Pin: "mysql"},
-	{Name: "rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk", Pin: "rtk"},
-	{Name: "gh", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"},     // /usr/local/bin/gh is the transparent-auth wrapper
-	{Name: "bkt", Cmd: "bkt", Baked: "/usr/local/libexec/bkt", Pin: "bkt"}, // /usr/local/bin/bkt is the transparent-auth wrapper
+	{Name: "mysql", Title: "MySQL Community Server", URL: "https://dev.mysql.com/", Cmd: "mysqld", Baked: "", Pin: "mysql"},
+	{Name: "rtk", Title: "rtk", URL: "https://github.com/rtk-ai/rtk", Cmd: "rtk", Baked: "/usr/local/bin/rtk", Pin: "rtk"},
+	{Name: "gh", Title: "GitHub CLI", URL: "https://github.com/cli/cli", Cmd: "gh", Baked: "/usr/local/libexec/gh", Pin: "gh"},                        // /usr/local/bin/gh is the transparent-auth wrapper
+	{Name: "bkt", Title: "Bitbucket CLI", URL: "https://github.com/avivsinai/bitbucket-cli", Cmd: "bkt", Baked: "/usr/local/libexec/bkt", Pin: "bkt"}, // /usr/local/bin/bkt is the transparent-auth wrapper
 	// /usr/local/bin/jira is the transparent-auth wrapper. `jira version` prints
 	// `(Version="1.7.0", GitCommit=…, GoVersion="go1.24…")`; the first number is the release.
-	{Name: "jira", Cmd: "jira", Baked: "/usr/local/libexec/jira", Args: []string{"version"}, Pin: "jira"},
+	{Name: "jira", Title: "Jira CLI", URL: "https://github.com/ankitpokhrel/jira-cli", Cmd: "jira", Baked: "/usr/local/libexec/jira", Args: []string{"version"}, Pin: "jira"},
 	// /usr/local/bin/confluence is the transparent-auth wrapper over pchuri/confluence-cli (npm);
 	// /usr/local/libexec/confluence links to its bin. `confluence --version` prints the bare number.
-	{Name: "confluence", Cmd: "confluence", Baked: "/usr/local/libexec/confluence", Pin: "confluence"},
-	{Name: "go", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},
-	{Name: "node", Cmd: "node", Baked: "/usr/local/bin/node"},
-	{Name: "python", Cmd: "python3", Baked: "/usr/bin/python3"},
+	{Name: "confluence", Title: "Confluence CLI", URL: "https://github.com/pchuri/confluence-cli", Cmd: "confluence", Baked: "/usr/local/libexec/confluence", Pin: "confluence"},
+	{Name: "go", Title: "Go", URL: "https://go.dev/", Cmd: "go", Baked: "/usr/local/go/bin/go", Args: []string{"version"}, Pin: "go"},
+	{Name: "node", Title: "Node.js", URL: "https://nodejs.org/", Cmd: "node", Baked: "/usr/local/bin/node"},
+	{Name: "python", Title: "Python", URL: "https://www.python.org/", Cmd: "python3", Baked: "/usr/bin/python3"},
 	// AWS / ops MCP servers (docs/log/25). Less prominent than the CLIs, but they drift from
 	// their pins and get home-shadowed under the same conditions (`install-awscli` writes to
 	// ~/.local/bin, and grafana's fallback looks there too); in a lean variant nothing is
 	// baked and the versions.json pin is the only clue left. Without these rows there is no
 	// way to check from the Console that an MCP server is old or missing.
-	{Name: "awscli", Cmd: "aws", Baked: "/usr/local/bin/aws", Pin: "awscli"},
+	{Name: "awscli", Title: "AWS CLI", URL: "https://github.com/aws/aws-cli", Cmd: "aws", Baked: "/usr/local/bin/aws", Pin: "awscli"},
+	// `session-manager-plugin --version` prints the bare four-part number (1.2.835.0); the default
+	// extraction keeps three parts and would read as drift against the pin. The deb links it into /usr/local/bin.
+	{Name: "session-manager-plugin", Title: "Session Manager plugin", URL: "https://github.com/aws/session-manager-plugin", Cmd: "session-manager-plugin", Baked: "/usr/local/bin/session-manager-plugin", Pin: "session_manager_plugin", VerRe: fullDottedVersion},
+	// `gitleaks version` prints the bare number (8.30.1).
+	{Name: "gitleaks", Title: "gitleaks", URL: "https://github.com/gitleaks/gitleaks", Cmd: "gitleaks", Baked: "/usr/local/bin/gitleaks", Args: []string{"version"}, Pin: "gitleaks"},
 	// gcloud is never baked (ADR 0107 decision 4): `install-gcloud` links it into ~/.local/bin.
-	{Name: "gcloud", Cmd: "gcloud", Baked: "", Pin: "gcloud", VerFile: "../VERSION"},
-	{Name: "mcp-grafana", Cmd: "mcp-grafana", Baked: "/usr/local/bin/mcp-grafana", Pin: "mcp_grafana"},
-	{Name: "cloudwatch-mcp", Cmd: "awslabs.cloudwatch-mcp-server", Baked: "/usr/local/bin/awslabs.cloudwatch-mcp-server",
+	{Name: "gcloud", Title: "Google Cloud CLI", URL: "https://cloud.google.com/sdk", Cmd: "gcloud", Baked: "", Pin: "gcloud", VerFile: "../VERSION"},
+	{Name: "mcp-grafana", Title: "mcp-grafana", URL: "https://github.com/grafana/mcp-grafana", Cmd: "mcp-grafana", Baked: "/usr/local/bin/mcp-grafana", Pin: "mcp_grafana"},
+	{Name: "cloudwatch-mcp", Title: "awslabs.cloudwatch-mcp-server", URL: "https://github.com/awslabs/mcp", Cmd: "awslabs.cloudwatch-mcp-server", Baked: "/usr/local/bin/awslabs.cloudwatch-mcp-server",
 		Pin: "cloudwatch_mcp", PyDist: "awslabs-cloudwatch-mcp-server"},
-	{Name: "aws-mcp", Cmd: "mcp-proxy-for-aws", Baked: "/usr/local/bin/mcp-proxy-for-aws",
+	{Name: "aws-mcp", Title: "mcp-proxy-for-aws", URL: "https://github.com/aws/mcp-proxy-for-aws", Cmd: "mcp-proxy-for-aws", Baked: "/usr/local/bin/mcp-proxy-for-aws",
 		Pin: "aws_mcp_proxy", PyDist: "mcp-proxy-for-aws"},
+}
+
+var fullDottedRe = regexp.MustCompile(`[0-9]+(\.[0-9]+)+`)
+
+// fullDottedVersion returns the first dotted number with any number of parts.
+func fullDottedVersion(raw string) string {
+	if m := fullDottedRe.FindString(raw); m != "" {
+		return m
+	}
+	return strings.TrimSpace(raw)
 }
 
 type toolBin struct {
@@ -147,10 +168,12 @@ type toolBin struct {
 
 type toolReport struct {
 	Name      string   `json:"name"`
-	Pin       string   `json:"pin,omitempty"` // ARG pin from the image build
-	Effective *toolBin `json:"effective"`     // what PATH resolves to (null when absent)
-	Baked     *toolBin `json:"baked"`         // the image's binary (null when absent)
-	UserLocal *toolBin `json:"userLocal"`     // the ~/.local/bin override (null when absent)
+	Title     string   `json:"title,omitempty"` // product name for display; Name stays the key
+	URL       string   `json:"url,omitempty"`   // upstream home page
+	Pin       string   `json:"pin,omitempty"`   // ARG pin from the image build
+	Effective *toolBin `json:"effective"`       // what PATH resolves to (null when absent)
+	Baked     *toolBin `json:"baked"`           // the image's binary (null when absent)
+	UserLocal *toolBin `json:"userLocal"`       // the ~/.local/bin override (null when absent)
 	// Overridden: a baked binary exists and the effective one is a different binary under
 	// home (user local hides the baked one). In a lean variant nothing is baked, so ~/.local
 	// IS the pinned binary and this stays false — otherwise every row carried a meaningless
@@ -336,7 +359,7 @@ func collectToolVersions() []toolReport {
 		go func(i int, spec toolSpec) {
 			defer wg.Done()
 			tp := newToolProbe(ctx, spec, home)
-			r := toolReport{Name: spec.Name, Pin: pins[spec.Pin]}
+			r := toolReport{Name: spec.Name, Title: spec.Title, URL: spec.URL, Pin: pins[spec.Pin]}
 			if bi, ok := boot[spec.Name]; ok {
 				r.BootInstall = &bi
 			}

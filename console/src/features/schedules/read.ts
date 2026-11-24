@@ -43,6 +43,9 @@ export interface ScheduleDTO {
   deliver_to?: string[];
   // The silent sentinel: a run whose final answer is exactly [SILENT] delivers nothing.
   silent?: boolean;
+  /** "Also show in the Sessions view": the worktree children this schedule's runs start are listed
+   * in the repository tree and the Sessions list too. Absent / false = the Schedules view only. */
+  show_in_sessions?: boolean;
   // The gate (ADR 0021 addendum 2026-11-10): absent = clock-only. fired_at / last_eval_at /
   // last_verdict are output only; the CP ignores them on a patch.
   gate?: ScheduleGate;
@@ -96,6 +99,9 @@ export interface ScheduleEditable {
   stop_after_run?: boolean;
   deliver_to?: string[];
   silent?: boolean;
+  /** "Also show in the Sessions view": the worktree children this schedule's runs start are listed
+   * in the repository tree and the Sessions list too. Absent / false = the Schedules view only. */
+  show_in_sessions?: boolean;
   // Always the whole gate when present: the CP rebuilds the stored spec from it, so a partial
   // object would silently reset the omitted caps to their defaults. kind "none" removes it.
   gate?: Pick<ScheduleGate, "kind" | "query_id" | "fingerprint" | "max_fires_per_day" | "min_fire_gap_s">;

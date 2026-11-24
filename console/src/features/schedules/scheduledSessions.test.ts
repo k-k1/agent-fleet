@@ -98,3 +98,34 @@ describe("groupRunsBySchedule", () => {
     expect(g.rest.map((r) => r.root.name)).toEqual(["none", "b"]);
   });
 });
+
+describe("waitingScheduledCount with a schedule shown in the Sessions view", () => {
+  const ss = [
+    sess("cron", { origin: "schedule", scheduleId: "s1", state: "question" }),
+    sess("kid", { origin: "session", originSession: "cron", worktree: true, state: "question" }),
+    sess("plain", { origin: "session", originSession: "cron", state: "question" }),
+  ];
+  it("counts a worktree child on the Sessions icon only, and keeps every run listed", () => {
+    expect(waitingScheduledCount(ss)).toBe(3);
+    expect(waitingScheduledCount(ss, null, [], new Set(["s1"]))).toBe(2);
+    expect(buildScheduledRuns(ss)[0].children.map((c) => c.name)).toEqual(["kid", "plain"]);
+  });
+  it("keeps a stopped child that still carries its question on the Schedules icon: the Sessions icon counts only live ones", () => {
+    const stopped = [
+      sess("cron", { origin: "schedule", scheduleId: "s1", state: "working" }),
+      sess("kid", { origin: "session", originSession: "cron", worktree: true, alive: false, carried: "question" }),
+    ];
+    expect(waitingScheduledCount(stopped, null, [], new Set(["s1"]))).toBe(1);
+  });
+  it("keeps a child on the Schedules icon when the working set places it differently on the Sessions side", () => {
+    // Sessions' badge places by folder name (sessionInSet); the set holds the base repo only, so the
+    // custom-named worktree is not counted there and must stay counted here.
+    const set = { id: "w", name: "w", repos: ["app"], convs: [], sessions: [] } as never;
+    const repos = [{ name: "app" }, { name: "review", worktree: true, parent: "app" }] as never;
+    const custom = [
+      sess("cron", { origin: "schedule", scheduleId: "s1", repo: "review", state: "working" }),
+      sess("kid", { origin: "session", originSession: "cron", worktree: true, repo: "review", state: "question" }),
+    ];
+    expect(waitingScheduledCount(custom, set, repos, new Set(["s1"]))).toBe(1);
+  });
+});

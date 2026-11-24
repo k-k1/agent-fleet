@@ -6,12 +6,16 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 )
 
 // PushSubscription is one browser install a member enabled Web Push on (#4750).
 type PushSubscription struct {
 	ID, MembershipID, Endpoint, P256dh, Auth string
 	UserAgent, CreatedAt, LastOKAt           string
+	// ReleaseToken is set by the registration that wrote the row and replaced by every later one. It
+	// is write-only here: reads leave it empty, and only ReleasePushEndpointIfToken compares it.
+	ReleaseToken string
 }
 
 // PushSubscriptionID is the id a subscription is listed and removed by: derived from the
@@ -26,10 +30,16 @@ type PushSubscriptionStore interface {
 	// than max endpoints; it reports whether it stored. Re-registering an endpoint the membership
 	// already holds is not a new device and always succeeds. An endpoint held by another membership
 	// moves to this one.
-	AddPushSubscription(ctx context.Context, sub PushSubscription, max int) (bool, error)
+	AddPushSubscription(ctx context.Context, sub PushSubscription, max int) (stored bool, releaseToken string, err error)
 	ListPushSubscriptions(ctx context.Context, membershipID string) ([]PushSubscription, error)
-	// GetPushSubscription answers the row for endpoint if membershipID still holds it.
+	// GetPushSubscription answers the row for endpoint if membershipID still holds it. A send
+	// falls back to it when the member's status cannot be read, so it must not touch membership.
 	GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error)
+	// GetPushSendTarget is GetPushSubscription with the membership's delivery context (TenantSlug
+	// left empty) read in the same statement, so a send checks the device's owner, the member's
+	// status and the text setting at one point in time. withText false leaves the tenant setting
+	// out of the statement and answers IncludeText false.
+	GetPushSendTarget(ctx context.Context, membershipID, endpoint string, withText bool) (PushSubscription, PushDelivery, bool, error)
 	// DeletePushSubscription reports whether a row of that membership was removed.
 	DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error)
 	// DeletePushSubscriptionByEndpoint drops a subscription the push service says is gone. It is
@@ -39,16 +49,24 @@ type PushSubscriptionStore interface {
 	// ReleasePushEndpoint drops the row for endpoint whoever holds it, but only when the caller
 	// presents the subscription's own keys: the endpoint alone is not proof of owning the browser.
 	ReleasePushEndpoint(ctx context.Context, endpoint, p256dh, auth string) error
+	// ReleasePushEndpointIfToken is ReleasePushEndpoint that also requires token to be the one the
+	// current registration of the row was made with, so a late release sent for an earlier
+	// registration (another member's, on a browser that has since switched) deletes nothing.
+	ReleasePushEndpointIfToken(ctx context.Context, endpoint, p256dh, auth, token string) error
 	TouchPushSubscription(ctx context.Context, membershipID, endpoint, at string) error
-	// GetPushOffKinds returns the notification kinds the member turned off for push (none by default).
-	GetPushOffKinds(ctx context.Context, membershipID string) ([]string, error)
-	PutPushOffKinds(ctx context.Context, membershipID string, kinds []string) error
+	// GetPushPrefs reads the kinds and the origins (pushsrv.PrefOrigins) the member turned off for
+	// push (none by default) in one statement, so a send sees one saved state. A list that cannot
+	// be read counts as none, without touching the other.
+	GetPushPrefs(ctx context.Context, membershipID string) (kinds, origins []string, err error)
+	// PutPushPrefs replaces the kinds, and the origins unless origins is nil (they are then left
+	// as saved), in one statement, and answers what is stored afterwards.
+	PutPushPrefs(ctx context.Context, membershipID string, kinds []string, origins *[]string) (savedKinds, savedOrigins []string, err error)
 	// PushDeliveryContext answers, for one send: whether the membership is still active, whether
 	// its tenant allows a question's text in the push (default false), and the tenant's slug (the
 	// name the Console selects a tenant by). An inactive or unknown membership is the zero value.
 	PushDeliveryContext(ctx context.Context, membershipID string) (PushDelivery, error)
 	GetTenantPushIncludeText(ctx context.Context, tenantID string) (bool, error)
-	PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error
+	PutTenantPushIncludeText(ctx context.Context, tenantID, tenantSlug string, on bool, actorID string) error
 }
 
 // PushSubscribedMembershipStore is kept apart from PushSubscriptionStore because only the
@@ -70,50 +88,61 @@ const pushCols = `SELECT id, membership_id, endpoint, p256dh, auth, user_agent, 
 // UpsertPushSubscription stores sub for its membership with no device cap; an endpoint already
 // held by another membership moves to this one. The API goes through AddPushSubscription.
 func (s *SQL) UpsertPushSubscription(ctx context.Context, p PushSubscription) error {
-	return upsertPushSubscription(ctx, s.db, p)
+	_, err := upsertPushSubscription(ctx, s.db, p)
+	return err
 }
 
 // AddPushSubscription counts and writes in one transaction under the membership's row lock, so
 // two registrations of the same member run one after the other and cannot both pass the count:
 // as separate statements, N concurrent registrations could overshoot the cap by N-1. SQLite serialises through its single connection; on Postgres the row lock
 // does, and the count starts after it, so READ COMMITTED sees every row the other one committed.
-func (s *SQL) AddPushSubscription(ctx context.Context, p PushSubscription, max int) (bool, error) {
+func (s *SQL) AddPushSubscription(ctx context.Context, p PushSubscription, max int) (bool, string, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `UPDATE membership SET id=id WHERE id=?`, p.MembershipID); err != nil {
-		return false, err
+		return false, "", err
 	}
 	// held is checked apart from the count so that a member already past max (rows from before the
 	// cap was atomic) can still refresh a device it holds.
 	var total, held int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN endpoint=? THEN 1 ELSE 0 END), 0)
 		FROM push_subscription WHERE membership_id=?`, p.Endpoint, p.MembershipID).Scan(&total, &held); err != nil {
-		return false, err
+		return false, "", err
 	}
 	if held == 0 && total >= max {
-		return false, nil
+		return false, "", nil
 	}
-	if err := upsertPushSubscription(ctx, tx, p); err != nil {
-		return false, err
+	token, err := upsertPushSubscription(ctx, tx, p)
+	if err != nil {
+		return false, "", err
 	}
-	return true, tx.Commit()
+	return true, token, tx.Commit()
 }
 
-func upsertPushSubscription(ctx context.Context, q sqlExecQuery, p PushSubscription) error {
+// upsertPushSubscription writes the row and answers the release token it ended up with. A
+// re-registration by the same member with the same keys keeps the token the row already has, so a
+// release the Console started with it still applies (and a lost 201 changes nothing); a new row, a
+// different owner, other keys or a row from before the column get p.ReleaseToken.
+func upsertPushSubscription(ctx context.Context, q sqlExecQuery, p PushSubscription) (string, error) {
 	if p.ID == "" {
 		p.ID = PushSubscriptionID(p.Endpoint)
 	}
 	if p.CreatedAt == "" {
 		p.CreatedAt = NowTS()
 	}
-	_, err := q.ExecContext(ctx, `INSERT INTO push_subscription(id, membership_id, endpoint, p256dh, auth, user_agent, created_at)
-		VALUES(?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET membership_id=excluded.membership_id,
-		p256dh=excluded.p256dh, auth=excluded.auth, user_agent=excluded.user_agent`,
-		p.ID, p.MembershipID, p.Endpoint, p.P256dh, p.Auth, p.UserAgent, p.CreatedAt)
-	return err
+	var token string
+	err := q.QueryRowContext(ctx, `INSERT INTO push_subscription(id, membership_id, endpoint, p256dh, auth, user_agent, created_at, release_token)
+		VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(endpoint) DO UPDATE SET
+		release_token = CASE WHEN push_subscription.membership_id=excluded.membership_id AND push_subscription.p256dh=excluded.p256dh
+			AND push_subscription.auth=excluded.auth AND push_subscription.release_token<>''
+			THEN push_subscription.release_token ELSE excluded.release_token END,
+		membership_id=excluded.membership_id, p256dh=excluded.p256dh, auth=excluded.auth, user_agent=excluded.user_agent
+		RETURNING release_token`,
+		p.ID, p.MembershipID, p.Endpoint, p.P256dh, p.Auth, p.UserAgent, p.CreatedAt, p.ReleaseToken).Scan(&token)
+	return token, err
 }
 
 func (s *SQL) ListPushSubscriptions(ctx context.Context, membershipID string) ([]PushSubscription, error) {
@@ -160,6 +189,29 @@ func (s *SQL) GetPushSubscription(ctx context.Context, membershipID, endpoint st
 	return p, err == nil, err
 }
 
+func (s *SQL) GetPushSendTarget(ctx context.Context, membershipID, endpoint string, withText bool) (PushSubscription, PushDelivery, bool, error) {
+	var p PushSubscription
+	var active, inc int64
+	text, join := `0`, ``
+	if withText {
+		text, join = `COALESCE(t.include_text, 0)`, `LEFT JOIN tenant_push_setting t ON t.tenant_id = m.tenant_id`
+	}
+	err := s.db.QueryRowContext(ctx, `SELECT s.id, s.membership_id, s.endpoint, s.p256dh, s.auth, s.user_agent, s.created_at, s.last_ok_at,
+		CASE WHEN m.status='active' THEN 1 ELSE 0 END, `+text+`
+		FROM push_subscription s
+		LEFT JOIN membership m ON m.id = s.membership_id
+		`+join+`
+		WHERE s.membership_id=? AND s.endpoint=?`, membershipID, endpoint).
+		Scan(&p.ID, &p.MembershipID, &p.Endpoint, &p.P256dh, &p.Auth, &p.UserAgent, &p.CreatedAt, &p.LastOKAt, &active, &inc)
+	if err == sql.ErrNoRows {
+		return PushSubscription{}, PushDelivery{}, false, nil
+	}
+	if err != nil {
+		return PushSubscription{}, PushDelivery{}, false, err
+	}
+	return p, PushDelivery{Active: active != 0, IncludeText: inc != 0}, true, nil
+}
+
 func (s *SQL) DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error) {
 	res, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE membership_id=? AND id=?`, membershipID, id)
 	if err != nil {
@@ -181,6 +233,16 @@ func (s *SQL) TouchPushSubscription(ctx context.Context, membershipID, endpoint,
 
 func (s *SQL) ReleasePushEndpoint(ctx context.Context, endpoint, p256dh, auth string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE endpoint=? AND p256dh=? AND auth=?`, endpoint, p256dh, auth)
+	return err
+}
+
+func (s *SQL) ReleasePushEndpointIfToken(ctx context.Context, endpoint, p256dh, auth, token string) error {
+	// An empty token never matches: a row written before the column existed has '' and is released
+	// by the keys-only path, which is what a client without a token calls.
+	if token == "" {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM push_subscription WHERE endpoint=? AND p256dh=? AND auth=? AND release_token=?`, endpoint, p256dh, auth, token)
 	return err
 }
 
@@ -213,6 +275,49 @@ func (s *SQL) PutPushOffKinds(ctx context.Context, membershipID string, kinds []
 	return err
 }
 
+func decodeOffList(raw string) []string {
+	var out []string
+	if json.Unmarshal([]byte(raw), &out) != nil {
+		return nil
+	}
+	return out
+}
+
+func (s *SQL) GetPushPrefs(ctx context.Context, membershipID string) ([]string, []string, error) {
+	var k, o string
+	err := s.db.QueryRowContext(ctx, `SELECT off_kinds, off_origins FROM push_pref WHERE membership_id=?`, membershipID).Scan(&k, &o)
+	if err == sql.ErrNoRows {
+		return nil, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	return decodeOffList(k), decodeOffList(o), nil
+}
+
+func (s *SQL) PutPushPrefs(ctx context.Context, membershipID string, kinds []string, origins *[]string) ([]string, []string, error) {
+	if kinds == nil {
+		kinds = []string{}
+	}
+	kb, _ := json.Marshal(kinds)
+	ob := []byte("[]")
+	set := `off_kinds=excluded.off_kinds, updated_at=excluded.updated_at`
+	if origins != nil {
+		if *origins != nil {
+			ob, _ = json.Marshal(*origins)
+		}
+		set = `off_kinds=excluded.off_kinds, off_origins=excluded.off_origins, updated_at=excluded.updated_at`
+	}
+	var k, o string
+	err := s.db.QueryRowContext(ctx, `INSERT INTO push_pref(membership_id, off_kinds, off_origins, updated_at) VALUES(?,?,?,?)
+		ON CONFLICT(membership_id) DO UPDATE SET `+set+` RETURNING off_kinds, off_origins`,
+		membershipID, string(kb), string(ob), NowTS()).Scan(&k, &o)
+	if err != nil {
+		return nil, nil, err
+	}
+	return decodeOffList(k), decodeOffList(o), nil
+}
+
 func (s *SQL) PushDeliveryContext(ctx context.Context, membershipID string) (PushDelivery, error) {
 	var inc sql.NullInt64
 	var slug string
@@ -238,13 +343,27 @@ func (s *SQL) GetTenantPushIncludeText(ctx context.Context, tenantID string) (bo
 	return v != 0, err
 }
 
-func (s *SQL) PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error {
+// PutTenantPushIncludeText stores the setting and its tenant.push_settings audit row in one
+// transaction: an admin's change to what leaves through the push services must not stand
+// without its audit row.
+func (s *SQL) PutTenantPushIncludeText(ctx context.Context, tenantID, tenantSlug string, on bool, actorID string) error {
 	v := 0
 	if on {
 		v = 1
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tenant_push_setting(tenant_id, include_text, updated_by, updated_at) VALUES(?,?,?,?)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO tenant_push_setting(tenant_id, include_text, updated_by, updated_at) VALUES(?,?,?,?)
 		ON CONFLICT(tenant_id) DO UPDATE SET include_text=excluded.include_text, updated_by=excluded.updated_by, updated_at=excluded.updated_at`,
-		tenantID, v, updatedBy, NowTS())
-	return err
+		tenantID, v, actorID, NowTS()); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_log(id, tenant_id, actor_kind, actor_id, action, target, detail, at) VALUES(?, ?, 'user', ?, 'tenant.push_settings', ?, ?, ?)`,
+		NewID(), tenantID, actorID, tenantSlug, fmt.Sprintf("include_text=%t", on), NowTS()); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

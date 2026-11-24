@@ -427,6 +427,18 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "tenant.boost_current": "Current setting: {size}",
   "tenant.boost_hours": "Monthly budget per member (boosted running hours, 0 = none)",
   "tenant.boost_uncounted": "Running hours are not counted yet, so the budget is saved but not enforced.",
+  "tenant.boost_usage_title": "Boosted running hours in {month} (UTC)",
+  "tenant.boost_usage_none": "Nobody has run on a boosted size this month.",
+  "tenant.boost_usage_over_count": "Members at or over the budget: {n}",
+  "tenant.boost_usage_of": "{used} h of {budget} h",
+  "tenant.boost_usage_hours": "{h} h",
+  "tenant.boost_usage_over": "over by {h} h",
+  "tenant.boost_usage_spent": "budget reached",
+  "tenant.boost_usage_note":
+    "A workspace already running on a boosted size is not stopped at the budget, so the hours can pass it. Once they reach it, the member cannot boost or extend a boost until next month.",
+  "tenant.boost_member_title": "Boost this month",
+  "tenant.boost_member_line": "Boosted running hours: {used} h of {budget} h ({month}, UTC)",
+  "tenant.boost_member_line_nobudget": "Boosted running hours: {used} h ({month}, UTC, no monthly budget)",
   "tenant.boost_unsupported": "This deployment has no machine sizes to boost between.",
 
   "admin.roster_spec": "{n} vCPU / {mem}",

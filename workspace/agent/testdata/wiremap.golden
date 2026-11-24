@@ -180,7 +180,7 @@ internal/sessionx/session_io.go HandleSessionStatus x1 {alive,kind,name,pendingP
 internal/sessionx/session_io.go handleManagedInputPrompt x1 {held,sent} cond{held}
 internal/sessionx/session_marks.go HandleSessionMarks x1 {marks}
 internal/sessionx/session_marks.go HandleSessionMarks x2 {mark}
-internal/sessionx/session_paste.go SavePastedImageTo x1 {name,path}
+internal/sessionx/session_paste.go savePastedImage x1 {name,path,spaceCopy} cond{spaceCopy}
 internal/sessionx/session_planfile.go HandleSessionPlanFile x2 {path,source}
 internal/sessionx/session_skills.go HandleRepoSkills x1 {skills}
 internal/sessionx/session_skills.go HandleSessionSkills x1 {skills}

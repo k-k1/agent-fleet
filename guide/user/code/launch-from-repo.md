@@ -14,14 +14,14 @@ The row's badges also tell you about unpushed changes and changes you have not b
 
 | What you do | What the agent does |
 |---|---|
-| Use the row's "Launch" to choose the agent, model, location and first prompt | Starts work from the first prompt, in a new worktree by default |
+| Use the row's "Launch" to write the first prompt and choose the location, agent and model | Starts work from the first prompt, in a new worktree by default |
 | Keep first prompts you use often as templates | — |
 | Check the row's badges for uncommitted work, unpushed commits and the gap to the parent | — |
 
 ## Launch
 
 1. Press "**Launch**" on the row. The "**Start working**" screen opens
-2. Choose the agent, model, **location** and first prompt
+2. Write the first prompt, then check the **location** and the **Details** (agent, model and the rest). Both stay folded with a summary; press **Change** to change one
 3. Launch
 
 - The location defaults to an isolated "**New worktree**". What each location does, and the base branch and branch name, are in [Work in parallel with worktrees](../sessions/worktrees.md)

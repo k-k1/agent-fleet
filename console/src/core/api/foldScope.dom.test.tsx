@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { clearLocalState, setTenant, setUser } from "./client.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
-import { foldKey, readFold, writeFold } from "../../lib/foldStore.ts";
+import { foldKey, readFold, readFoldValue, writeFold, writeFoldValue } from "../../lib/foldStore.ts";
 
 beforeEach(() => {
   localStorage.clear();
@@ -79,6 +79,19 @@ describe("fold flags survive logout per (user, tenant)", () => {
     setUser("alice");
     setTenant("t1");
     expect(readFold("af-files-home")).toBe(true);
+  });
+
+  it("keeps the Start hub's open section per (user, tenant), across logout", () => {
+    writeFoldValue("af-start-section", "repo");
+    setTenant("t2");
+    expect(readFoldValue("af-start-section")).toBeNull();
+    setTenant("t1");
+    clearLocalState();
+    setUser("alice");
+    setTenant("t1");
+    expect(readFoldValue("af-start-section")).toBe("repo");
+    setUser("bob");
+    expect(readFoldValue("af-start-section")).toBeNull();
   });
 
   it("strips NUL from identity so scopes cannot collide", () => {

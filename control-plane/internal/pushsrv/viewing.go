@@ -12,12 +12,15 @@ const viewTTL = 45 * time.Second
 
 // viewing is the in-memory "which session is on screen where" map. It is per Control Plane
 // process: with several replicas a report only suppresses pushes that this replica sends, and a
-// restart forgets it. Both fail toward sending a push.
+// restart forgets it. Both fail toward sending a push. The zero value is ready to use, so a Service
+// built as a literal (tests, or a later constructor) cannot panic on its first report or delivery.
 type viewing struct {
 	mu        sync.Mutex
 	lastSweep time.Time
 	// byMember: membership id -> device id -> report.
 	byMember map[string]map[string]viewReport
+	// seqs: membership id -> device id -> highest seq seen.
+	seqs map[string]map[string]seqMark
 }
 
 type viewReport struct {
@@ -25,7 +28,20 @@ type viewReport struct {
 	at      time.Time
 }
 
-func newViewing() *viewing { return &viewing{byMember: map[string]map[string]viewReport{}} }
+// seqMark is the highest seq a device has reported. It is kept apart from the on-screen entries so
+// that remembering an order never takes a slot an on-screen device needs, and the reverse.
+type seqMark struct {
+	seq int64
+	at  time.Time
+}
+
+// seqTTL is how long a device's highest seq is remembered. A report only has to be recognised as
+// late while it can still be in flight, and every comparison checks this age itself, so the answer
+// does not depend on when the last sweep ran.
+const seqTTL = 5 * time.Minute
+
+// maxSeqDevices bounds the seq marks one member can have on record; at the bound a new device is not recorded.
+const maxSeqDevices = 64
 
 // maxViewDevices bounds the devices one member can have on record, so a client that sends a new
 // device id every time cannot grow the map or make each report scan an ever longer list.
@@ -35,7 +51,11 @@ const maxViewDevices = 16
 // reclaims a member who stopped reporting.
 const sweepEvery = time.Minute
 
-func (v *viewing) set(member, device, session string, now time.Time) {
+// set records one report. seq is the device's own counter, rising with every report it makes; 0
+// means the Console does not send one (older Console), which keeps the arrival-order behaviour. A
+// report whose seq is below the last one kept for the device is dropped, so a heartbeat that
+// overtakes the clear sent after it cannot bring the suppression back.
+func (v *viewing) set(member, device, session string, seq int64, now time.Time) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	if now.Sub(v.lastSweep) >= sweepEvery {
@@ -50,6 +70,19 @@ func (v *viewing) set(member, device, session string, now time.Time) {
 				delete(v.byMember, m)
 			}
 		}
+		for m, ds := range v.seqs {
+			for d, k := range ds {
+				if now.Sub(k.at) > seqTTL {
+					delete(ds, d)
+				}
+			}
+			if len(ds) == 0 {
+				delete(v.seqs, m)
+			}
+		}
+	}
+	if seq > 0 && !v.acceptSeq(member, device, seq, now) {
+		return
 	}
 	devs := v.byMember[member]
 	if session == "" {
@@ -60,6 +93,9 @@ func (v *viewing) set(member, device, session string, now time.Time) {
 		return
 	}
 	if devs == nil {
+		if v.byMember == nil {
+			v.byMember = map[string]map[string]viewReport{}
+		}
 		devs = map[string]viewReport{}
 		v.byMember[member] = devs
 	}
@@ -85,9 +121,42 @@ func (v *viewing) on(member, session string, now time.Time) bool {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	for _, r := range v.byMember[member] {
-		if r.session == session && now.Sub(r.at) <= viewTTL {
+		if session != "" && r.session == session && now.Sub(r.at) <= viewTTL {
 			return true
 		}
 	}
 	return false
+}
+
+// acceptSeq records seq as the device's highest and reports whether the report is current. Must be
+// called with v.mu held.
+func (v *viewing) acceptSeq(member, device string, seq int64, now time.Time) bool {
+	ds := v.seqs[member]
+	if k, ok := ds[device]; ok && now.Sub(k.at) <= seqTTL {
+		if seq < k.seq {
+			return false
+		}
+	}
+	if ds == nil {
+		if v.seqs == nil {
+			v.seqs = map[string]map[string]seqMark{}
+		}
+		ds = map[string]seqMark{}
+		v.seqs[member] = ds
+	}
+	if _, known := ds[device]; !known && len(ds) >= maxSeqDevices {
+		// Drop only expired marks. When every mark is still live the new device goes unrecorded
+		// (its reports apply in arrival order, as before): evicting a live mark would let a late
+		// report of that device revive a view inside the TTL.
+		for d, k := range ds {
+			if now.Sub(k.at) > seqTTL {
+				delete(ds, d)
+			}
+		}
+		if len(ds) >= maxSeqDevices {
+			return true
+		}
+	}
+	ds[device] = seqMark{seq, now}
+	return true
 }

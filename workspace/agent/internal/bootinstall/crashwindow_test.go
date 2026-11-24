@@ -1023,3 +1023,55 @@ func keepItemWhenLinkRefused(t *testing.T, linkErr error) {
 		t.Fatalf("the marker was not settled: %v", err)
 	}
 }
+
+// An earlier recovery moved the candidate away (its links were all back by then) and failed to
+// put the previous tree back; a manual install of another version then repointed the launcher.
+// The retry finds no candidate token at Dir: it must leave the repointed launcher, and still
+// put back a launcher that points at this update's own target (the tree was deleted by hand).
+func TestCursorRecoverWithoutCandidateLeavesARepointedLauncher(t *testing.T) {
+	setup := func(t *testing.T) (*suFixture, string, string) {
+		f := newSU(t, goodRTK, "", "", "")
+		dir := filepath.Join(f.versions(), "2026.2.0-abc123")
+		old := dir + ".af-old.4242"
+		prev := filepath.Join(f.versions(), "1.0.0", "cursor-agent")
+		f.write(t, prev, "#!/bin/sh\necho 1.0.0\n")
+		f.write(t, filepath.Join(old, "cursor-agent"), "#!/bin/sh\necho 2026.2.0-abc123-slot\n")
+		os.MkdirAll(filepath.Dir(f.local("cursor-agent")), 0o755)
+		yes := true
+		m := cursorMarker{Dir: dir, Old: old, Tree: true, HadTree: &yes, ID: "tok", Links: []cursorLinkState{
+			{Path: f.local("cursor-agent"), Kind: "symlink", Target: []byte(prev)},
+		}}
+		if err := f.env.cursorWriteMarker(m); err != nil {
+			t.Fatal(err)
+		}
+		return f, dir, prev
+	}
+	t.Run("repointed by a manual install", func(t *testing.T) {
+		f, dir, _ := setup(t)
+		manual := filepath.Join(f.versions(), "2026.3.0-def456", "cursor-agent")
+		f.write(t, manual, "#!/bin/sh\necho manual\n")
+		f.link(t, "cursor-agent", manual)
+		if err := f.env.cursorRecover(); err != nil {
+			t.Fatal(err)
+		}
+		if tg, _ := os.Readlink(f.local("cursor-agent")); tg != manual {
+			t.Fatalf("the manual install's launcher was repointed to %q", tg)
+		}
+		if !strings.Contains(f.read(filepath.Join(dir, "cursor-agent")), "slot") {
+			t.Fatal("the previous tree did not go back to its empty place")
+		}
+		if exists(f.env.cursorMarkerPath()) {
+			t.Fatal("the marker stayed")
+		}
+	})
+	t.Run("still pointing at the update's own target", func(t *testing.T) {
+		f, dir, prev := setup(t)
+		f.link(t, "cursor-agent", filepath.Join(dir, "cursor-agent"))
+		if err := f.env.cursorRecover(); err != nil {
+			t.Fatal(err)
+		}
+		if tg, _ := os.Readlink(f.local("cursor-agent")); tg != prev {
+			t.Fatalf("launcher -> %q, want the previous target", tg)
+		}
+	})
+}

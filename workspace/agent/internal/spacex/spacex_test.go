@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"testing"
 	"time"
+	"unicode/utf8"
 )
 
 func withHome(t *testing.T) string {
@@ -381,5 +382,146 @@ func TestHandlers(t *testing.T) {
 	}
 	if list.Root != filepath.Join(home, "spaces") || len(list.Spaces) != 1 || list.Spaces[0].Folder != created.Space.Folder {
 		t.Fatalf("list = %+v", list)
+	}
+}
+
+func TestCopyAttachmentKeepsTheMembersFileName(t *testing.T) {
+	withHome(t)
+	sp, err := Create("Reports")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, want string }{
+		{"売上 2026.xlsx", "売上 2026.xlsx"}, // Unicode and spaces survive: the member reads this name
+		{"../../etc/passwd", "passwd"},   // directory parts never reach the path
+		{`C:\Users\me\notes.txt`, "notes.txt"},
+		{"..", "file"}, // nothing usable
+		{".hidden.md", "hidden.md"},
+	} {
+		got, err := CopyAttachment(sp.Folder, strings.NewReader("quarterly"), c.name)
+		if err != nil {
+			t.Fatalf("%q: %v", c.name, err)
+		}
+		if want := filepath.Join(sp.Dir, AttachmentsDir, c.want); got != want {
+			t.Errorf("%q copied to %q, want %q", c.name, got, want)
+		}
+		if b, err := os.ReadFile(got); err != nil || string(b) != "quarterly" {
+			t.Errorf("%q: copy = %q, %v", c.name, b, err)
+		}
+	}
+}
+
+func TestCopyAttachmentNeverOverwrites(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Reports")
+	first, err := CopyAttachment(sp.Folder, strings.NewReader("new"), "report.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(first, []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	second, err := CopyAttachment(sp.Folder, strings.NewReader("new"), "report.pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	third, _ := CopyAttachment(sp.Folder, strings.NewReader("new"), "report.pdf")
+	if filepath.Base(second) != "report-2.pdf" || filepath.Base(third) != "report-3.pdf" {
+		t.Fatalf("second = %s, third = %s", second, third)
+	}
+	if b, _ := os.ReadFile(first); string(b) != "mine" {
+		t.Fatalf("the first file was overwritten: %q", b)
+	}
+}
+
+func TestCopyAttachmentCutsALongNameKeepingItsExtension(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Reports")
+	got, err := CopyAttachment(sp.Folder, strings.NewReader("x"), strings.Repeat("あ", 300)+".pdf")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := filepath.Base(got)
+	if n := len(base); n > attachmentNameMaxBytes || n < attachmentNameMaxBytes-3 || !strings.HasSuffix(base, ".pdf") || !utf8.ValidString(base) {
+		t.Fatalf("name %q has %d bytes", base, n)
+	}
+}
+
+// A multipart header can carry a file name far longer than any file system accepts; reducing it
+// must not cost more than its length (a cut that re-encodes the rest per character is quadratic).
+func TestAttachmentNameOfAnEnormousNameIsCheapAndStillValid(t *testing.T) {
+	huge := strings.Repeat("あ", 1<<20) + ".tar.gz"
+	start := time.Now()
+	got := attachmentName(huge)
+	if d := time.Since(start); d > 2*time.Second {
+		t.Fatalf("took %v for a %d byte name", d, len(huge))
+	}
+	if len(got) > attachmentNameMaxBytes || !utf8.ValidString(got) || !strings.HasSuffix(got, ".gz") {
+		t.Fatalf("name = %q (%d bytes)", got, len(got))
+	}
+}
+
+// An agent in the space can replace the attachments folder, the marker's folder or the space
+// itself with a link; the copy never writes outside the space.
+func TestCopyAttachmentNeverFollowsALinkOutOfTheSpace(t *testing.T) {
+	withHome(t)
+	outside := t.TempDir()
+	empty := func(label string) {
+		t.Helper()
+		if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+			t.Fatalf("%s: the link target received %d file(s)", label, len(ents))
+		}
+	}
+	t.Run("attachments folder", func(t *testing.T) {
+		sp, _ := Create("A")
+		if err := os.Symlink(outside, filepath.Join(sp.Dir, AttachmentsDir)); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := CopyAttachment(sp.Folder, strings.NewReader("x"), "a.txt"); err == nil {
+			t.Fatalf("copied to %s through a symlinked folder", got)
+		}
+		empty("attachments")
+	})
+	t.Run("the space replaced by a link between check and copy", func(t *testing.T) {
+		sp, _ := Create("B")
+		if err := os.RemoveAll(sp.Dir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, sp.Dir); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := CopyAttachment(sp.Folder, strings.NewReader("x"), "a.txt"); err == nil {
+			t.Fatalf("copied to %s through a symlinked space", got)
+		}
+		empty("space")
+	})
+	t.Run("a link inside the attachments folder", func(t *testing.T) {
+		sp, _ := Create("C")
+		if err := os.Mkdir(filepath.Join(sp.Dir, AttachmentsDir), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(filepath.Join(outside, "target"), filepath.Join(sp.Dir, AttachmentsDir, "a.txt")); err != nil {
+			t.Fatal(err)
+		}
+		got, err := CopyAttachment(sp.Folder, strings.NewReader("x"), "a.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if filepath.Base(got) != "a-2.txt" {
+			t.Fatalf("copied to %s, want a-2.txt next to the link", got)
+		}
+		empty("file link")
+	})
+}
+
+func TestCopyAttachmentRefusesAFolderThatIsNoSpace(t *testing.T) {
+	home := withHome(t)
+	if err := os.MkdirAll(filepath.Join(home, "spaces", "plain"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"plain", "missing", "../x", ""} {
+		if got, err := CopyAttachment(f, strings.NewReader("x"), "a.txt"); err == nil {
+			t.Errorf("%q: copied to %s", f, got)
+		}
 	}
 }

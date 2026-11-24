@@ -18,6 +18,7 @@ source_of_truth: "「在るか・誰が使えるか」はこの表、「どう�
 | 機能 | 誰が | どこ | 詳細 |
 |---|---|---|---|
 | セッションの起動（エージェント・モデル・effort・開始モード）| メンバー | ワークスペース操作バー → Start | [セッションを始める](../user/sessions/start.ja.md) |
+| スペースで始める（リポジトリのない作業のための `~/spaces` の専用フォルダ。「はじめる」からそのまま起動） | メンバー | ワークスペース操作バー → はじめる → スペースで始める | [スペースで作業を始める](../user/sessions/spaces.ja.md) |
 | 新しい git worktree で動かす | メンバー | Start ダイアログ | [worktree で並行して作業する](../user/sessions/worktrees.ja.md) |
 | チャットミラー — 実行中のエージェントを追う・操縦する | メンバー | メイン領域 | [セッションに返事をする](../user/sessions/reply.ja.md) |
 | 質問・プラン・権限確認に答える | メンバー | ミラー | [セッションに返事をする](../user/sessions/reply.ja.md)。どのエージェントが尋ねるかは [agents.md](agents.ja.md) |

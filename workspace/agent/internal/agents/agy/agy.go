@@ -1,8 +1,8 @@
 // Package agy is the vertical package for the Antigravity CLI (agy) kind (docs/log/32
 // Track A). Laid out like the codex package, it keeps the Agent implementation, the launch
 // command assembly, the Connections auth handlers and the rtk block application inside the
-// kind. The execution method can only be Terminal (CLI)/tmux: v1.1.4 has no structured
-// output, so Managed cannot be built (docs/decisions/0008). The host requirements (a usable
+// kind. The execution method is Terminal (CLI)/tmux. A Managed route over agy's stream-json
+// print mode (#2158) is in managed.go and not registered yet. The host requirements (a usable
 // RDRAND, whether the binary is present) are decided by internal/hostcaps, and Status() /
 // BuildLaunch wire that in (the docs/log/32 Track B contract). Where the CPU's RDRAND has
 // been withdrawn by the kernel, hostcaps also hands back the environment overlay that makes

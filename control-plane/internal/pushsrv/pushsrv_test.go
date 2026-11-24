@@ -32,8 +32,12 @@ type memStore struct {
 	releaseErr error
 	getErr     error
 	gets       int
+	joins      int
+	joinErr    error
 	subs       []store.PushSubscription
 	off        map[string][]string
+	offOrigins map[string][]string
+	prefsErr   error
 	inactive   map[string]bool
 	includeTxt bool
 	tenantSlug string
@@ -53,30 +57,79 @@ func (m *memStore) PutPushOffKinds(_ context.Context, mid string, k []string) er
 	m.off[mid] = k
 	return nil
 }
+func (m *memStore) GetPushPrefs(_ context.Context, mid string) ([]string, []string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.prefsErr != nil {
+		return nil, nil, m.prefsErr
+	}
+	return m.off[mid], m.offOrigins[mid], nil
+}
+func (m *memStore) PutPushPrefs(_ context.Context, mid string, k []string, o *[]string) ([]string, []string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.prefsErr != nil {
+		return nil, nil, m.prefsErr
+	}
+	if m.off == nil {
+		m.off = map[string][]string{}
+	}
+	if m.offOrigins == nil {
+		m.offOrigins = map[string][]string{}
+	}
+	m.off[mid] = k
+	if o != nil {
+		m.offOrigins[mid] = *o
+	}
+	return m.off[mid], m.offOrigins[mid], nil
+}
+func (m *memStore) GetPushOffOrigins(_ context.Context, mid string) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.offOrigins[mid], nil
+}
+func (m *memStore) PutPushOffOrigins(_ context.Context, mid string, o []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.offOrigins == nil {
+		m.offOrigins = map[string][]string{}
+	}
+	m.offOrigins[mid] = o
+	return nil
+}
 func (m *memStore) PushDeliveryContext(_ context.Context, mid string) (store.PushDelivery, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return store.PushDelivery{Active: !m.inactive[mid], IncludeText: m.includeTxt, TenantSlug: m.tenantSlug}, nil
 }
 func (m *memStore) GetTenantPushIncludeText(context.Context, string) (bool, error) { return false, nil }
-func (m *memStore) PutTenantPushIncludeText(context.Context, string, bool, string) error {
+func (m *memStore) PutTenantPushIncludeText(context.Context, string, string, bool, string) error {
 	return nil
 }
 
 func (m *memStore) UpsertPushSubscription(_ context.Context, p store.PushSubscription) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	_, err := m.upsertLocked(p)
+	return err
+}
+
+// upsertLocked mirrors the SQL store: the same member with the same keys keeps its release token.
+func (m *memStore) upsertLocked(p store.PushSubscription) (string, error) {
 	p.ID = store.PushSubscriptionID(p.Endpoint)
 	for i, s := range m.subs {
 		if s.Endpoint == p.Endpoint {
+			if s.MembershipID == p.MembershipID && s.P256dh == p.P256dh && s.Auth == p.Auth && s.ReleaseToken != "" {
+				p.ReleaseToken = s.ReleaseToken
+			}
 			m.subs[i] = p
-			return nil
+			return p.ReleaseToken, nil
 		}
 	}
 	m.subs = append(m.subs, p)
-	return nil
+	return p.ReleaseToken, nil
 }
-func (m *memStore) AddPushSubscription(ctx context.Context, p store.PushSubscription, max int) (bool, error) {
+func (m *memStore) AddPushSubscription(ctx context.Context, p store.PushSubscription, max int) (bool, string, error) {
 	m.mu.Lock()
 	total, held := 0, false
 	for _, s := range m.subs {
@@ -85,11 +138,13 @@ func (m *memStore) AddPushSubscription(ctx context.Context, p store.PushSubscrip
 			held = held || s.Endpoint == p.Endpoint
 		}
 	}
-	m.mu.Unlock()
 	if !held && total >= max {
-		return false, nil
+		m.mu.Unlock()
+		return false, "", nil
 	}
-	return true, m.UpsertPushSubscription(ctx, p)
+	defer m.mu.Unlock()
+	tok, err := m.upsertLocked(p)
+	return true, tok, err
 }
 func (m *memStore) GetPushSubscription(_ context.Context, mid, ep string) (store.PushSubscription, bool, error) {
 	m.mu.Lock()
@@ -104,6 +159,30 @@ func (m *memStore) GetPushSubscription(_ context.Context, mid, ep string) (store
 		}
 	}
 	return store.PushSubscription{}, false, nil
+}
+
+// GetPushSendTarget fails withText reads on joinErr (the setting table) and counts the reads
+// without the setting in gets, as the subscription re-read they stand in for.
+func (m *memStore) GetPushSendTarget(_ context.Context, mid, ep string, withText bool) (store.PushSubscription, store.PushDelivery, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if withText {
+		m.joins++
+		if m.joinErr != nil || m.getErr != nil {
+			return store.PushSubscription{}, store.PushDelivery{}, false, errors.Join(m.joinErr, m.getErr)
+		}
+	} else {
+		m.gets++
+		if m.getErr != nil {
+			return store.PushSubscription{}, store.PushDelivery{}, false, m.getErr
+		}
+	}
+	for _, s := range m.subs {
+		if s.MembershipID == mid && s.Endpoint == ep {
+			return s, store.PushDelivery{Active: !m.inactive[mid], IncludeText: withText && m.includeTxt}, true, nil
+		}
+	}
+	return store.PushSubscription{}, store.PushDelivery{}, false, nil
 }
 func (m *memStore) ListPushSubscriptions(_ context.Context, mid string) ([]store.PushSubscription, error) {
 	m.mu.Lock()
@@ -146,6 +225,20 @@ func (m *memStore) ReleasePushEndpoint(ctx context.Context, ep, p256dh, auth str
 	}
 	for i, s := range m.subs {
 		if s.Endpoint == ep && s.P256dh == p256dh && s.Auth == auth {
+			m.subs = append(m.subs[:i], m.subs[i+1:]...)
+			break
+		}
+	}
+	return nil
+}
+func (m *memStore) ReleasePushEndpointIfToken(ctx context.Context, ep, p256dh, auth, token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.releaseErr != nil {
+		return m.releaseErr
+	}
+	for i, s := range m.subs {
+		if s.Endpoint == ep && s.P256dh == p256dh && s.Auth == auth && token != "" && s.ReleaseToken == token {
 			m.subs = append(m.subs[:i], m.subs[i+1:]...)
 			break
 		}
@@ -232,7 +325,7 @@ func newFixtureN(t *testing.T, workers, queueLen int, setup func(*fixture)) *fix
 		check: func(e string) error {
 			return webpush.CheckEndpoint(strings.Replace(e, f.srv.URL, "https://fcm.googleapis.com", 1), webpush.DefaultEndpointHosts)
 		},
-		timeout: 5 * time.Second, slotWait: 2 * time.Second, quit: make(chan struct{}), view: newViewing()}
+		timeout: 5 * time.Second, slotWait: 2 * time.Second, quit: make(chan struct{})}
 	if setup != nil {
 		setup(f)
 	}
@@ -790,14 +883,14 @@ func TestQueuedSendRereadsTheDevice(t *testing.T) {
 	}
 }
 
-// A failed re-read skips the send, as a failed list read does.
+// A failed re-read of the row skips the send, as a failed list read does.
 func TestFailedRereadSkipsTheSend(t *testing.T) {
 	f := newFixture(t)
 	f.subscribe(t, "m1")
 	f.st.getErr = io.ErrUnexpectedEOF
 	f.deliver(note("question"))
-	if f.count() != 0 || f.st.gets != 1 {
-		t.Fatalf("sent %d with %d re-reads; want none sent after one failed re-read", f.count(), f.st.gets)
+	if f.count() != 0 || f.st.gets != 2 {
+		t.Fatalf("sent %d with %d re-reads; want none sent after the status and row reads failed", f.count(), f.st.gets)
 	}
 }
 

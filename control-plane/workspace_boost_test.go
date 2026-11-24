@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -226,10 +228,16 @@ func (e *boostEnv) call(t *testing.T, method, body string) (int, workspaceSizing
 type countingBoost struct {
 	hours   float64
 	counted bool
+	members []memberBoostHours
+	err     error
 }
 
 func (c countingBoost) BoostedRunningHours(context.Context, string, time.Time, time.Time) (float64, bool, error) {
-	return c.hours, c.counted, nil
+	return c.hours, c.counted, c.err
+}
+
+func (c countingBoost) TenantBoostedRunningHours(context.Context, string, time.Time, time.Time) ([]memberBoostHours, bool, error) {
+	return c.members, c.counted, c.err
 }
 
 func TestBoostAPI(t *testing.T) {
@@ -796,13 +804,140 @@ func TestBoostBudgetIsCountedOnlyWithTheSampler(t *testing.T) {
 		}
 		w := httptest.NewRecorder()
 		ten, _ := e.m.store.GetTenant(ctx, e.tenantID)
-		newWorkspaceAPI(e.m, false).writeTenantBoost(w, ctx, ten)
+		newWorkspaceAPI(e.m, false).writeTenantBoost(w, ctx, ten, parseLimits(ten.Limits))
 		if want := fmt.Sprintf(`"budget_counted":%t`, c.counted); !strings.Contains(w.Body.String(), want) {
 			t.Fatalf("interval %v: GET %s, want %s", c.interval, w.Body.String(), want)
 		}
 		b := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident}).Boost.Budget
 		if b.Counted != c.counted || b.Spent != c.counted {
 			t.Fatalf("interval %v: budget %+v", c.interval, b)
+		}
+	}
+}
+
+// TestTenantBoostShowsTheOverrun: the tenant's Boost card reads this month's boosted hours of
+// every member who has any from the same launch records the refusal is decided on, says who is
+// past the budget and by how much, and shows nothing (not a 0) when the hours cannot be told. It
+// goes through the GET and PUT handlers, so the gate and the PUT's own answer are covered too.
+func TestTenantBoostShowsTheOverrun(t *testing.T) {
+	ctx := context.Background()
+	lim := tenantLimits{BoostEnabled: true, BoostMonthlyHours: 5}
+	e := newBoostEnv(t, lim)
+	e.m.boostHours = boostHoursFor(e.m.store, 5*time.Minute)
+	st := e.m.store
+	other, _ := st.UpsertIdentity(ctx, "b@example.com", "b", "")
+	otherMem, _ := st.EnsureMembership(ctx, other.ID, e.tenantID, "member")
+	elsewhere, _ := st.CreateTenant(ctx, "elsewhere", "Elsewhere")
+	outsider, _ := st.EnsureMembership(ctx, other.ID, elsewhere.ID, "member")
+	boss, _ := st.UpsertIdentity(ctx, "boss@example.com", "boss-example-com", "")
+	if _, err := st.EnsureMembership(ctx, boss.ID, e.tenantID, "tenant_admin"); err != nil {
+		t.Fatal(err)
+	}
+	stranger, _ := st.UpsertIdentity(ctx, "boss@elsewhere.example", "boss-elsewhere-example", "")
+	if _, err := st.EnsureMembership(ctx, stranger.ID, elsewhere.ID, "tenant_admin"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.UpsertIdentity(ctx, "root@example.com", "root-example-com", "super_admin"); err != nil {
+		t.Fatal(err)
+	}
+	launch := func(id, membershipID, tenantID string, from, to time.Duration) {
+		t.Helper()
+		if err := st.BeginLaunch(ctx, store.Launch{ID: id, WorkspaceID: "w-" + membershipID, MembershipID: membershipID,
+			TenantID: tenantID, StartedAt: e.now.Add(from).Unix(), Override: store.SizeOverrideBoost}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := st.EndOpenLaunch(ctx, membershipID, e.now.Add(to).Unix()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a: 6.5 hours, past the budget by 1.5 because a running boosted box is never stopped.
+	launch("a1", e.memID, e.tenantID, -20*time.Hour, -13*time.Hour-30*time.Minute)
+	// b: 2 hours, and last month's hours do not count.
+	launch("b0", otherMem.ID, e.tenantID, -40*24*time.Hour, -39*24*time.Hour)
+	launch("b1", otherMem.ID, e.tenantID, -5*time.Hour, -3*time.Hour)
+	// Another tenant's member is never on this tenant's card.
+	launch("x1", outsider.ID, elsewhere.ID, -9*time.Hour, -1*time.Hour)
+
+	api := newWorkspaceAPI(e.m, false)
+	do := func(email, method, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		r := httptest.NewRequest(method, "/api/admin/tenants/acme/boost", strings.NewReader(body))
+		r.Header.Set("X-Forwarded-Email", email)
+		r.SetPathValue("slug", "acme")
+		w := httptest.NewRecorder()
+		if method == http.MethodGet {
+			api.tenantBoost(w, r)
+		} else {
+			api.setTenantBoost(w, r)
+		}
+		return w
+	}
+	decode := func(w *httptest.ResponseRecorder) tenantBoostWire {
+		t.Helper()
+		if w.Code != http.StatusOK {
+			t.Fatalf("%d %s", w.Code, w.Body.String())
+		}
+		var out tenantBoostWire
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	get := func() tenantBoostWire { return decode(do("boss@example.com", http.MethodGet, "")) }
+
+	got := get()
+	want := []tenantBoostUsage{
+		{UserKey: "a", Email: "a@example.com", UsedHours: 6.5, Spent: true, OverHours: 1.5},
+		{UserKey: "b", Email: "b@example.com", UsedHours: 2},
+	}
+	if got.Month != "2026-11" || !reflect.DeepEqual(got.Members, want) {
+		t.Fatalf("month %q members %+v, want 2026-11 %+v", got.Month, got.Members, want)
+	}
+	// The card and the member's own refusal agree.
+	for i, id := range []string{e.memID, otherMem.ID} {
+		if b := e.m.boostBudgetOf(ctx, id, lim); b.UsedHours != want[i].UsedHours || b.Spent != want[i].Spent {
+			t.Fatalf("member %d: budget %+v, card %+v", i, b, want[i])
+		}
+	}
+	// A super_admin sees the tenant it asked for; another tenant's admin sees nothing of it.
+	if g := decode(do("root@example.com", http.MethodGet, "")); !reflect.DeepEqual(g.Members, want) {
+		t.Fatalf("super_admin: %+v", g.Members)
+	}
+	if w := do("boss@elsewhere.example", http.MethodGet, ""); w.Code != http.StatusForbidden || strings.Contains(w.Body.String(), "a@example.com") {
+		t.Fatalf("another tenant's admin: %d %s", w.Code, w.Body.String())
+	}
+
+	// The PUT answers with the budget it just saved: exactly at it is spent, with nothing over.
+	g := decode(do("boss@example.com", http.MethodPut, `{"enabled":true,"monthly_hours":2}`))
+	if g.MonthlyHours != 2 || len(g.Members) != 2 || !g.Members[1].Spent || g.Members[1].OverHours != 0 || g.Members[0].OverHours != 4.5 {
+		t.Fatalf("after the PUT: %+v", g)
+	}
+	// No budget: the hours are shown and nobody is over.
+	g = decode(do("boss@example.com", http.MethodPut, `{"enabled":true,"monthly_hours":0}`))
+	if len(g.Members) != 2 || g.Members[0].Spent || g.Members[0].OverHours != 0 || g.Members[0].UsedHours != 6.5 {
+		t.Fatalf("no budget: %+v", g.Members)
+	}
+	// Switched off, this month's hours are still told.
+	if g := decode(do("boss@example.com", http.MethodPut, `{"enabled":false}`)); len(g.Members) != 2 {
+		t.Fatalf("boost off: %+v", g)
+	}
+
+	// A new month: counted, and nobody has boosted yet.
+	e.now = time.Date(2026, 12, 1, 0, 30, 0, 0, time.UTC)
+	if g := get(); g.Month != "2026-12" || len(g.Members) != 0 {
+		t.Fatalf("a new month: %+v", g)
+	}
+
+	// Hours that cannot be told are not on the wire at all: no key, not an empty one.
+	for name, c := range map[string]boostHoursCounter{
+		"no counter":  nil,
+		"not counted": countingBoost{members: []memberBoostHours{{UserKey: "a", Hours: 9}}},
+		"read error":  countingBoost{counted: true, members: []memberBoostHours{{UserKey: "a", Hours: 9}}, err: errors.New("db down")},
+	} {
+		e.m.boostHours = c
+		w := do("boss@example.com", http.MethodGet, "")
+		if body := w.Body.String(); w.Code != 200 || strings.Contains(body, `"month"`) || strings.Contains(body, `"members"`) {
+			t.Fatalf("%s: %d %s", name, w.Code, body)
 		}
 	}
 }

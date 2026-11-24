@@ -53,40 +53,9 @@ func cmdPromoteCandidates(c *Client, args []string, out io.Writer) error {
 		}
 		days = n
 	}
-	var projects struct {
-		Projects []struct {
-			Project  *project
-			Count    int
-			Withheld int
-		}
-	}
-	if err := c.do("GET", "/agents/memory/entries/projects", nil, &projects); err != nil {
+	ids, err := promoteProjects(c, *proj)
+	if err != nil {
 		return err
-	}
-	var ids, named []string
-	for _, p := range projects.Projects {
-		switch {
-		case p.Project == nil:
-		case *proj != "" && p.Project.ID == *proj:
-			ids = []string{p.Project.ID}
-		case *proj != "" && p.Project.Display == *proj:
-			named = append(named, p.Project.ID)
-		case *proj == "" && (p.Count > 0 || p.Withheld > 0):
-			ids = append(ids, p.Project.ID)
-		}
-		if *proj != "" && len(ids) == 1 {
-			break
-		}
-	}
-	if *proj != "" && len(ids) == 0 {
-		switch len(named) {
-		case 0:
-			return fmt.Errorf("no project %q (the ids and names are in `af-memory export-sources`)", *proj)
-		case 1:
-			ids = named
-		default:
-			return fmt.Errorf("%q names several projects; use the id (see `af-memory export-sources`)", *proj)
-		}
 	}
 	var reports []promoteReport
 	for _, id := range ids {
@@ -149,4 +118,45 @@ func printPromote(out io.Writer, r promoteReport) {
 		}
 		fmt.Fprintf(out, "   held       %s r%d  %s: %s\n", h.Name, h.Revision, h.Kind, strings.Join(parts, "; "))
 	}
+}
+
+// promoteProjects resolves --project (an id, or a name that names one project) to its id; an
+// empty one lists every project that holds memory.
+func promoteProjects(c *Client, proj string) ([]string, error) {
+	var projects struct {
+		Projects []struct {
+			Project  *project
+			Count    int
+			Withheld int
+		}
+	}
+	if err := c.do("GET", "/agents/memory/entries/projects", nil, &projects); err != nil {
+		return nil, err
+	}
+	var ids, named []string
+	for _, p := range projects.Projects {
+		switch {
+		case p.Project == nil:
+		case proj != "" && p.Project.ID == proj:
+			ids = []string{p.Project.ID}
+		case proj != "" && p.Project.Display == proj:
+			named = append(named, p.Project.ID)
+		case proj == "" && (p.Count > 0 || p.Withheld > 0):
+			ids = append(ids, p.Project.ID)
+		}
+		if proj != "" && len(ids) == 1 {
+			break
+		}
+	}
+	if proj != "" && len(ids) == 0 {
+		switch len(named) {
+		case 0:
+			return nil, fmt.Errorf("no project %q (the ids and names are in `af-memory export-sources`)", proj)
+		case 1:
+			ids = named
+		default:
+			return nil, fmt.Errorf("%q names several projects; use the id (see `af-memory export-sources`)", proj)
+		}
+	}
+	return ids, nil
 }

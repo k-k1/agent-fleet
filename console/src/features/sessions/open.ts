@@ -12,6 +12,7 @@ import { agentOf } from "../../agents/registry.ts";
 import { getSettings } from "../../lib/settings.ts";
 import { activeWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useSessionsStore } from "./store.ts";
+import { useSchedulesStore } from "../schedules/store.ts";
 import { railOrder, rotatableSessions, rotateTarget, rotationCurrent } from "./rotate.ts";
 import type { RotateTarget } from "./rotate.ts";
 import type { Session } from "../../types/session.ts";
@@ -102,7 +103,7 @@ export function openSessionFromList(s: Session, split: boolean, running: boolean
  * are no others". */
 export function rotateRunningSession(delta: number): RotateTarget | null {
   const sessions = useSessionsStore.getState().sessions;
-  const order = railOrder(sessions, useReposStore.getState().repos, activeWorkingSet(getSettings()));
+  const order = railOrder(sessions, useReposStore.getState().repos, activeWorkingSet(getSettings()), useSchedulesStore.getState().shownIds);
   const list = rotatableSessions(order);
   const current = rotationCurrent(activePane(useLayoutStore.getState().layout), sessions);
   const target = rotateTarget(list, current, delta, order);

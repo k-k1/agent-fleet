@@ -5,6 +5,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/credbind"
@@ -155,6 +156,13 @@ func init() {
 func (agentImpl) ResolveLaunch(m session.Meta) routes.Launch {
 	keys, pref, acct, custom := credentialView()
 	return resolveModel(m.Model, keys, pref, acct, engineProviderIDs(), custom)
+}
+
+// ResolveDefaultLaunch implements agents.DefaultLaunchResolver: the launch record of a session that
+// names no model, which ResolveLaunch leaves unresolved. Only the running serve's answer for the
+// session's working directory counts (default_model.go), and only for the one case it proves.
+func (agentImpl) ResolveDefaultLaunch(m session.Meta, start time.Time) routes.Launch {
+	return resolveDefaultModelLaunch(m, start)
 }
 
 // ModelLaunch is ResolveLaunch for an opencode run outside any session (the assistant chat and the

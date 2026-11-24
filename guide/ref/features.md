@@ -19,6 +19,7 @@ If a feature ships and does not appear here, it is not done
 | Feature | Who | Where | Details |
 |---|---|---|---|
 | Start a session — agent, model, effort, start mode | member | workspace action bar → Start | [Start a session](../user/sessions/start.md) |
+| Start in a space — a folder of its own under `~/spaces` for work with no repository, launched straight from Start | member | workspace action bar → Start → Start in a space | [Start work in a space](../user/sessions/spaces.md) |
 | Run in a fresh git worktree | member | Start dialog | [Work in parallel with worktrees](../user/sessions/worktrees.md) |
 | Chat mirror — follow and steer a running agent | member | main area | [Reply to a session](../user/sessions/reply.md) |
 | Answer a question, plan, or permission prompt | member | mirror | [Reply to a session](../user/sessions/reply.md); [agents.md](agents.md) for which agents ask |

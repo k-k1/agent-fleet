@@ -237,7 +237,8 @@ describe("RepoRow quick launch that needs a route", () => {
       await Promise.resolve();
     });
     expect(onLaunch).toHaveBeenCalledWith("codex", false);
-    const active = document.querySelector(".ui-seg.big .seg-btn.seg-btn--active");
-    expect(active?.textContent).toContain("Codex");
+    // Details is folded (nothing in it needs attention here), so its summary names the agent.
+    const details = [...document.querySelectorAll(".launch-sec-head")].find((h) => h.querySelector(".launch-sec-label")?.textContent === "詳細");
+    expect(details?.querySelector(".launch-sec-sum")?.textContent).toContain("Codex");
   });
 });

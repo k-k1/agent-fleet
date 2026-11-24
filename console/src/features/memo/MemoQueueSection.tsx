@@ -36,6 +36,7 @@ import {
   memoQueueDeliveries,
   memoRelease,
   memoStopChain,
+  memoSetRunNext,
   memoQueueResume,
 } from "./api.ts";
 import { memoScope, useMemoStore } from "./store.ts";
@@ -418,6 +419,47 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     if (m.state !== "pending" && m.state !== "held") return undefined;
     const cat = cats.find((c) => c.repo === m.repo && c.name === m.category);
     return cat && (queueByCat.get(cat.id) || cat.queue) ? cat : undefined;
+  };
+
+  // Run next / Clear run next (#5021): the mark only decides which eligible waiting note a free
+  // slot takes first, so it is offered on any waiting note no run has taken.
+  const canRunNext = (m: Memo) => !!runOneCat(m) && !m.deliveryId && !m.sentAt;
+  // One write per note at a time: a second press sent before the first answers could land after a
+  // later clear and bring the mark back.
+  const [runNextBusy, setRunNextBusy] = useState<ReadonlySet<string>>(() => new Set());
+  const runNextBusyRef = useRef(new Set<string>());
+  const setRunNextBusyFor = (id: string, on: boolean) => {
+    if (on) runNextBusyRef.current.add(id);
+    else runNextBusyRef.current.delete(id);
+    setRunNextBusy(new Set(runNextBusyRef.current));
+  };
+  const toggleRunNext = async (m: Memo) => {
+    if (runNextBusyRef.current.has(m.id)) return;
+    setRunNextBusyFor(m.id, true);
+    const on = !m.runNext;
+    try {
+      const res = await memoSetRunNext(m.id, on);
+      if (res?.error) {
+        // Both codes mean the list is behind (the note ran, or its category stopped being a queue);
+        // the shared catalogue lines for them speak of sending from the workspace.
+        const gone = res.error.code === "memo_locked" || res.error.code === "memo_in_queue";
+        toast(gone ? t("memo.run_next_not_waiting") : errText(res.error) || t("memo.run_next_failed"), { kind: "warn" });
+      } else {
+        // Show the answer at once: a failed or slow re-read must not leave the old mark on screen,
+        // where the next press would send the same value again. A read already in flight started
+        // before the write, so it is dropped (load's applied check).
+        const now = res.runNext === true;
+        applied.current = seq.current + 1;
+        serRef.current = "";
+        setMemos((list) => list.map((x) => (x.id === m.id ? { ...x, runNext: now } : x)));
+        toast(t(now ? "memo.run_next_done" : "memo.run_next_cleared"), { kind: "success" });
+      }
+    } catch {
+      toast(t("memo.run_next_failed"), { kind: "warn" });
+    } finally {
+      setRunNextBusyFor(m.id, false);
+    }
+    bumpMemos();
   };
 
   const release = async (cardKey: string, items: Memo[]) => {
@@ -1617,6 +1659,28 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   </li>
                 );
               })()}
+              {menuLive && canRunNext(menuLive) && (
+                <li>
+                  <button
+                    type="button"
+                    className="ui-menu-item memo-cat-menu-item memo-menu-runnext"
+                    // Set here: useMenuRoving tags only the items present when the menu opened, and this one can appear later.
+                    role="menuitem"
+                    // aria-disabled, not disabled, as for Run now: the arrow keys skip a native disabled item.
+                    aria-disabled={runNextBusy.has(menuLive.id) ? true : undefined}
+                    onClick={() => {
+                      if (runNextBusy.has(menuLive.id)) return;
+                      runMemoMenu(() => void toggleRunNext(menuLive));
+                    }}
+                  >
+                    <Icon name={runNextBusy.has(menuLive.id) ? "loading" : "arrow-up"} spin={runNextBusy.has(menuLive.id)} />
+                    <span className="memo-cat-menu-txt">
+                      {tr(menuLive.runNext ? "memo.run_next_clear" : "memo.run_next")}
+                      <span className="memo-cat-menu-why">{tr(menuLive.runNext ? "memo.run_next_clear_hint" : "memo.run_next_hint")}</span>
+                    </span>
+                  </button>
+                </li>
+              )}
               {canStartFromMemo(memoMenu.m) && (
                 <li>
                   <button type="button" className="ui-menu-item" onClick={() => {
@@ -2149,11 +2213,18 @@ function MemoRow(props: MemoRowProps) {
   const marks = tidyMarks(m);
   const replaced = isSuperseded(m);
   const isLong = (m.body || "").length > 60 || (m.body || "").includes("\n");
-  const metaNode = (stateWords || originWords || marks.length > 0 || hasRecipe(m)) && (
+  // The Control Plane sends the mark only on a waiting note; a stale list must not show it on one that ran.
+  const runNext = !!m.runNext && (m.state === "pending" || m.state === "held") && !m.deliveryId;
+  const metaNode = (stateWords || originWords || marks.length > 0 || hasRecipe(m) || runNext) && (
     <div className="memo-qmeta">
       {stateWords && (
         <span className={"memo-qstate s-" + m.state} title={tr(stateWords.title)}>
           {tr(stateWords.label)}
+        </span>
+      )}
+      {runNext && (
+        <span className="memo-qorigin memo-qrunnext" title={tr("memo.run_next_badge_title")}>
+          <Icon name="arrow-up" /> {tr("memo.run_next_badge")}
         </span>
       )}
       {originWords && (
