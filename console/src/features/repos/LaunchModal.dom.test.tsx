@@ -49,6 +49,16 @@ const apiMock = vi.fn(async (url: string) => {
   return { branches: served };
 });
 
+// undefined: the real hook; otherwise the Copilot usage reading useUsage answers with (the
+// Free-plan note).
+let usageReading: Record<string, unknown> | null | undefined;
+vi.mock("../../app/wsbar/usageCommon.tsx", async (orig) => {
+  const real = (await orig()) as { useUsage: (...a: unknown[]) => unknown };
+  return {
+    ...real,
+    useUsage: (...a: unknown[]) => (usageReading === undefined ? real.useUsage(...a) : { usage: usageReading, refreshing: false, refresh: () => {} }),
+  };
+});
 vi.mock("../../core/api/client.ts", () => ({
   apiJSON: async () => ({}),
   getTenant: () => "",
@@ -64,6 +74,7 @@ const { LaunchModal } = await import("./LaunchModal.tsx");
 const { useUIStateStore: uiStore } = await import("../../core/store/uiState.ts");
 const { parseKindCatalog, setKindCatalog } = await import("../../agents/kindCatalog.ts");
 const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
+const { t } = await import("../../lib/i18n/index.ts");
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
 import { openAccess } from "../../test/launchAccess.ts";
 
@@ -189,6 +200,7 @@ const launchedWith = (): LaunchOpts => onLaunch.mock.calls[0][0] as LaunchOpts;
 
 beforeEach(() => {
   localStorage.clear();
+  usageReading = undefined;
   // These suites drive the agent, model and advanced controls, which sit in the Details fold
   // (ADR 0142 decision 7); start with it open, as a device that left it open does. The fold
   // itself is tested in LaunchModal.dom.test.tsx ("what -> where -> details").
@@ -270,6 +282,47 @@ describe("LaunchModal what -> where -> details", () => {
     await render([]);
     expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
     expect(document.querySelector('[data-testid="launch-noagents"]')).not.toBeNull();
+  });
+
+  it("opens Details by itself while a model must be picked and none can be (empty lcpp catalog)", async () => {
+    lcppModels = [];
+    await render(["lcpp"]);
+    await settle();
+    expect(byText("Start in a worktree").disabled).toBe(true);
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("keeps Details open over an invalid budget, and folds it again once fixed", async () => {
+    await render(["claude"]);
+    await expand("Details");
+    const input = must(document.querySelector<HTMLInputElement>('input[inputmode="decimal"]'), "budget field");
+    const type = (v: string) =>
+      act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, v);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    await type("abc");
+    await expand("Details"); // asks to fold it
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
+    expect(byText("Start in a worktree").disabled).toBe(true);
+    await type("5");
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("keeps the Copilot Free-plan note in view while Details is folded", async () => {
+    usageReading = { ok: true, authed: true, plan: "Free" };
+    localStorage.setItem("af.repo-model.copilot.app", "claude-sonnet-4.6");
+    await render(["copilot"]);
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+    const note = t("launch.copilot_free_model");
+    expect(document.body.textContent).toContain(note);
+    // Shown once whichever way the fold is.
+    await expand("Details");
+    expect(document.body.textContent!.split(note)).toHaveLength(2);
+    // A paid plan: nothing, folded or not.
+    usageReading = { ok: true, authed: true, plan: "Pro" };
+    await reopen();
+    expect(document.body.textContent).not.toContain(note);
   });
 });
 
@@ -785,6 +838,28 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     expect(launchedWith().routeConnection).toBe("p-marked@us-west-2");
   });
 
+  it("keeps Details open while the Bedrock model id or region would refuse the launch", async () => {
+    localStorage.removeItem("af.launch-open.details");
+    ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
+    await act(async () => setKindCatalog(catalog));
+    await render(["claude"]);
+    await settle();
+    await expand("Details");
+    await choose(must(routeSelect(), "the route picker"), "bedrock");
+    await type(must(modelInput(), "the model id field"), "");
+    await expand("Details"); // asks to fold it
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
+    // A valid id: nothing holds it open any more, so it folds as asked.
+    await type(must(modelInput(), "the model id field"), "eu.anthropic.claude-opus-5-5");
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+    await expand("Details");
+    await type(must(regionInput(), "the region field"), "not a region");
+    await expand("Details"); // asks to fold it
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
+    await type(must(regionInput(), "the region field"), "us-west-2");
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+  });
+
   it("sends no connection for a route that takes none", async () => {
     ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
     await act(async () => setKindCatalog(catalog));
@@ -910,6 +985,20 @@ describe("LaunchModal opencode on the bedrock route (ADR 0128 P2c)", () => {
     await click(byText("Start in a worktree"));
     expect(launchedWith().route).toBe("bedrock");
     expect(launchedWith().driver).toBe("managed");
+  });
+
+  it("keeps Details open until a model the route can run is picked", async () => {
+    localStorage.removeItem("af.launch-open.details");
+    await act(async () => setKindCatalog(catalog));
+    localStorage.setItem("af.repo-model.opencode.app", "opencode/big-pickle");
+    await render(["opencode"]);
+    await settle();
+    await expand("Details");
+    await choose(must(routeSelect(), "the route picker"), "bedrock");
+    await settle();
+    await expand("Details"); // asks to fold it
+    expect(byText("Start in a worktree").disabled).toBe(true);
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
   });
 
   it("offers the route's models only on the route, and needs one to start", async () => {

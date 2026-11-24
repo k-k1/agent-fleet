@@ -1036,7 +1036,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         </div>
 
         {/* Harness → route → model (ADR 0138 D16): the route decides who pays, so it is chosen
-            before the model, in the always-visible tier. */}
+            before the model, next to the agent. */}
         {(routeOptions.length > 0 || routeMissing) && !!kinds.length && (
           <div className="ui-field">
             <span className="ui-field-label">{tr("launch.field.route")}</span>
@@ -1643,22 +1643,35 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     onBedrock ? bedrockModel.trim() : hasModel ? model : "",
     ...advParts,
   ].filter(Boolean);
-  // Something the launch cannot go ahead with, or an expired login it would run on, is never left
-  // behind the fold.
+  // Something the launch cannot go ahead with (everything canLaunch refuses on that lives in here),
+  // or an expired login it would run on, is never left behind the fold.
   const detailsForced =
-    !kinds.length || routeMissing || !!policyErr || savedUnusable || bedrockBlocked || routeModelBlocked || budgetInvalid || claudeLoginGone;
+    !kinds.length ||
+    routeMissing ||
+    !!policyErr ||
+    savedUnusable ||
+    prefsLoading ||
+    modelPending ||
+    bedrockBlocked ||
+    routeModelBlocked ||
+    budgetInvalid ||
+    claudeLoginGone;
+  const detailsShown = detailsOpen || detailsForced;
   const detailsSection = (
     <LaunchSection
       label={tr("start.details")}
       summary={detailsParts.join(" · ")}
       warn={detailsForced}
-      open={detailsOpen || detailsForced}
+      open={detailsShown}
       onToggle={() => toggleSection("details", detailsOpen, setDetailsOpen)}
     >
       {agentBlock}
       {advBody}
     </LaunchSection>
   );
+  // The Free-plan note does not stop the launch, but every turn of that session would fail, so it
+  // stays in view while Details is folded. Inside, it sits under the model picker.
+  const detailsNotes = !detailsShown && <CopilotFreePlanHint kind={kind} model={model} />;
 
   if (space) {
     return (
@@ -1694,6 +1707,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         </div>
         {filesStuck && <span className="ui-field-hint ui-field-hint--warn" role="status">{tr("launch.attach_not_taken")}</span>}
         {detailsSection}
+        {detailsNotes}
         {launchUnknown && unknownNote}
         <div className="start-space-actions">
           <Button variant="primary" icon="play" onClick={submit} disabled={busy || !canLaunch}>
@@ -1711,6 +1725,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         {promptBlock}
         {locationBlock}
         {detailsSection}
+        {detailsNotes}
         {launchUnknown && unknownNote}
       </div>
 

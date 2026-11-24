@@ -98,6 +98,10 @@ afterEach(() => {
 
 describe("prefs loading", () => {
   it("does not launch on an unchosen route while the synced prefs are still loading", async () => {
+    // From a folded Details: the wait opens it so its reason is in view, and it folds again after.
+    localStorage.removeItem("af.launch-open.details");
+    const details = () =>
+      [...document.querySelectorAll(".launch-sec-head")].find((h) => h.querySelector(".launch-sec-label")?.textContent === "Details")?.getAttribute("aria-expanded");
     let release!: (v: unknown) => void;
     prefsGate = new Promise((r) => (release = r));
     const loading = hydrateUIPrefs();
@@ -105,6 +109,7 @@ describe("prefs loading", () => {
     expect(routeSelect()!.value).toBe("");
     expect(launchBtn().disabled).toBe(true);
     expect(document.body.textContent).toContain("Loading your saved settings");
+    expect(details()).toBe("true");
     await act(async () => {
       release({});
       await loading;
@@ -114,5 +119,7 @@ describe("prefs loading", () => {
     // Loaded: the member may launch again, with no route chosen when the kind allows it.
     expect(launchBtn().disabled).toBe(false);
     expect(document.body.textContent).not.toContain("Loading your saved settings");
+    expect(details()).toBe("false");
   });
 });
+
