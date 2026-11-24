@@ -184,16 +184,18 @@ func TestECSEC2GenCurrentIgnoresCancelButNotAPassedDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cctx, cancel := context.WithCancel(ctx)
-	cancel()
-	ran := false
-	if !a.ifGenCurrent(cctx, gen, func() { ran = true }) || !ran {
-		t.Fatal("a cancelled caller with no deadline skipped the write")
-	}
+	// The passed deadline goes first: the lock and lease the other case takes are given back
+	// asynchronously, and this case must meet them free.
 	dctx, dcancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
 	defer dcancel()
-	ran = false
+	ran := false
 	if a.ifGenCurrent(dctx, gen, func() { ran = true }) || ran {
 		t.Fatal("a caller whose deadline had passed still had f run")
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	ran = false
+	if !a.ifGenCurrent(cctx, gen, func() { ran = true }) || !ran {
+		t.Fatal("a cancelled caller with no deadline skipped the write")
 	}
 }

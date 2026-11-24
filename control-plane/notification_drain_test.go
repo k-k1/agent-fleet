@@ -909,10 +909,12 @@ func (s *subReadStore) ListPushSubscriptions(ctx context.Context, m string) ([]s
 }
 
 func (s *subReadStore) ListPushSubscribedMemberships(ctx context.Context) ([]string, error) {
-	if s.batched.Add(1) <= s.failFirst {
-		return nil, context.DeadlineExceeded
+	got, err := s.Store.ListPushSubscribedMemberships(ctx)
+	if s.batched.Add(1) <= s.failFirst && err == nil {
+		// What rows.Err after a partial read gives: real ids alongside the error.
+		return got[:1], context.DeadlineExceeded
 	}
-	return s.Store.ListPushSubscribedMemberships(ctx)
+	return got, err
 }
 
 // A sweep reads the subscriptions once, whatever the number of workspaces.
