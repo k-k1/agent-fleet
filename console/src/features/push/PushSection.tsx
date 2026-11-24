@@ -223,7 +223,7 @@ export function PushSection() {
             <span className="push-origin-name">{tr(row.label)}</span>{" "}
             {([row.self, row.child] as const).map((o) => (
               <label key={o} className="push-origin">
-                <input type="checkbox" role="switch" className="noti-switch" checked={!(prefs?.offOrigins ?? []).includes(o)} onChange={(e) => toggleOrigin(o, e.target.checked)} />{" "}
+                <input type="checkbox" role="switch" className="noti-switch" aria-label={`${tr(row.label)}: ${tr(o === row.self ? "push.origin_self" : "push.origin_children")}`} checked={!(prefs?.offOrigins ?? []).includes(o)} onChange={(e) => toggleOrigin(o, e.target.checked)} />{" "}
                 {tr(o === row.self ? "push.origin_self" : "push.origin_children")}
               </label>
             ))}

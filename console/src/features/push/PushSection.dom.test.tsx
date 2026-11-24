@@ -122,6 +122,12 @@ describe("PushSection", () => {
     const states = rows.map((r) => [...r.querySelectorAll<HTMLInputElement>("input")].map((b) => b.checked));
     expect(states).toEqual([[true, true], [true, false], [true, true]]);
   });
+  it("gives each of the six origin switches a distinct accessible name", async () => {
+    const host = await mount();
+    const names = [...host.querySelectorAll(".push-origin-row input")].map((b) => b.getAttribute("aria-label"));
+    expect(new Set(names).size).toBe(6);
+    expect(names.every((n) => n && n.includes(": "))).toBe(true);
+  });
   it("saves a turned-off origin together with the kinds, and keeps the origins when a kind changes", async () => {
     const host = await mount();
     const inputs = host.querySelectorAll<HTMLInputElement>(".push-origin-row input");
