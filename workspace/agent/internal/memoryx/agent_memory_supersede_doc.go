@@ -17,6 +17,7 @@ import (
 	"errors"
 	"net/http"
 	"os/exec"
+	"regexp"
 	"strings"
 	"time"
 
@@ -27,6 +28,8 @@ import (
 
 const agentMemOpSupersede = "supersede"
 
+var agentMemSHA256Re = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 // agentMemSupersedeDocReq names the memory, the revision the proposal quoted, and the document.
 type agentMemSupersedeDocReq struct {
 	Project  string `json:"project"`
@@ -35,6 +38,9 @@ type agentMemSupersedeDocReq struct {
 	Path     string `json:"path"`
 	Heading  string `json:"heading"`
 	Commit   string `json:"commit"`
+	// BodySHA256 is the proposal's digest of the text it quoted: an edit of the store outside AF
+	// can change a body without a new revision.
+	BodySHA256 string `json:"bodySha256"`
 }
 
 // agentMemSupersedeDocCheck verifies the document target against the repository of the project
@@ -43,8 +49,8 @@ func agentMemSupersedeDocCheck(p *agentMemProject, path, heading, commit string)
 	conflict := func(format string, a ...any) error {
 		return memoryErrf(http.StatusConflict, errCodeMemoryConflict, format, a...)
 	}
-	if p == nil || p.Remote == "" {
-		return agentMemDocTarget{}, conflict("the project has no origin URL to name its repository by")
+	if err := agentMemRemoteCheck(p); err != nil {
+		return agentMemDocTarget{}, err
 	}
 	repo, ref, why := agentMemLintRepoFor(p)
 	if repo == nil {
@@ -58,7 +64,9 @@ func agentMemSupersedeDocCheck(p *agentMemProject, path, heading, commit string)
 	defer cancel()
 	out, err := agentMemLintGit(ctx, lr.gitDir, nil, "rev-parse", "--verify", "-q", "--end-of-options", commit+"^{commit}")
 	full := strings.TrimSpace(string(out))
-	if err != nil || !agentMemCommitIDRe.MatchString(full) {
+	// rev-parse also resolves a branch or tag whose name looks like hex: what it answers must be
+	// the object the member named, not a ref that happens to share the spelling.
+	if err != nil || !agentMemCommitIDRe.MatchString(full) || !strings.HasPrefix(full, commit) {
 		return agentMemDocTarget{}, conflict("commit %s is not in the repository; fetch the default branch first", commit)
 	}
 	if _, err := agentMemLintGit(ctx, lr.gitDir, nil, "merge-base", "--is-ancestor", full, lr.ref); err != nil {
@@ -99,6 +107,7 @@ func agentMemSupersedeDocument(req agentMemSupersedeDocReq, now time.Time) (agen
 	}
 	req.Name, req.Path, req.Heading, req.Commit = strings.TrimSpace(req.Name), strings.TrimSpace(req.Path),
 		strings.TrimSpace(req.Heading), strings.ToLower(strings.TrimSpace(req.Commit))
+	req.BodySHA256 = strings.ToLower(strings.TrimSpace(req.BodySHA256))
 	switch {
 	case agentMemCheckName(req.Name) != nil:
 		return agentMemWriteResult{}, bad("name is not a memory name")
@@ -110,6 +119,8 @@ func agentMemSupersedeDocument(req agentMemSupersedeDocReq, now time.Time) (agen
 		return agentMemWriteResult{}, bad("heading must be one line of at most %d characters, without the leading #", memorypromote.MaxSection)
 	case !agentMemCommitIDRe.MatchString(req.Commit):
 		return agentMemWriteResult{}, bad("commit must be a hex commit id")
+	case !agentMemSHA256Re.MatchString(req.BodySHA256):
+		return agentMemWriteResult{}, bad("bodySha256 must be the digest the proposal quoted")
 	}
 	c, err := agentMemMemberCaller(agentMemScopeProject, req.Project)
 	if err != nil {
@@ -142,6 +153,8 @@ func agentMemSupersedeDocument(req agentMemSupersedeDocReq, now time.Time) (agen
 	case cur.Entry.Revision != req.Revision:
 		return agentMemWriteResult{}, conflict("this memory is at revision %d, not the %d the proposal quoted; propose it again so the newer text is not hidden",
 			cur.Entry.Revision, req.Revision)
+	case agentMemSHA256(cur.Entry.Body) != req.BodySHA256:
+		return agentMemWriteResult{}, conflict("this memory's text is not the one the proposal quoted (edited outside Agent Fleet?); propose it again")
 	}
 
 	stamp := now.UTC().Format(time.RFC3339)
@@ -151,7 +164,9 @@ func agentMemSupersedeDocument(req agentMemSupersedeDocReq, now time.Time) (agen
 	e.Revision++
 	e.AuthorKind, e.AuthorSession, e.Updated = c.Kind, c.Session, stamp
 	data := agentMemRender(e)
-	if f := agentMemScanText("memory", string(data)); len(f) > 0 {
+	// The stored bytes hide the target behind JSON escapes: the decoded values a reader is shown
+	// are scanned too, as agentMemClean will scan them on the next read.
+	if f := append(agentMemScanText("memory", string(data)), agentMemScanText("memory", agentMemPublished(e))...); len(f) > 0 {
 		return agentMemWriteResult{}, &agentMemSecretErr{Findings: f}
 	}
 	repoRel := rel + "/" + req.Name + ".md"

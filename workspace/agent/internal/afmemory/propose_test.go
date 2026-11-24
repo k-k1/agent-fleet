@@ -53,7 +53,7 @@ func proposalAnswer(ready bool, pre string, extra string) string {
 // the source memory and revision, the warning, both scans, and the patch.
 func TestAFMemoryPromoteProposal(t *testing.T) {
 	c, reqs, bodies := proposalAgent(t, proposalAnswer(true, `{"ran":true,"hook":"core.hooksPath .githooks","passed":true,"output":"ok"}`, ""))
-	code, out, errw := run(c, "promote-proposal", "--project", "demo", "--name", "release-steps", "--file", "AGENTS.md", "--section", "Release", "--days", "3")
+	code, out, errw := run(c, "promote-proposal", "--project", "demo", "--name", "release-steps", "--file", "AGENTS.md", "--section", "Release it's", "--days", "3")
 	if code != 0 {
 		t.Fatalf("exit %d: %s", code, errw)
 	}
@@ -66,7 +66,7 @@ func TestAFMemoryPromoteProposal(t *testing.T) {
 		"secret scan: clean",
 		"pre-commit:  passed (core.hooksPath .githooks)",
 		"+## Release",
-		"AF pushes nothing",
+		`AF pushes nothing: apply it with ` + "`" + `af-memory promote-proposal --project demo-0123456789ab --name release-steps --file AGENTS.md --section 'Release it'\''s' --days 3 --patch | git apply` + "`",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in\n%s", want, out)
@@ -76,7 +76,7 @@ func TestAFMemoryPromoteProposal(t *testing.T) {
 		t.Fatalf("bodies %v", *bodies)
 	}
 	b := (*bodies)[0]
-	if b["project"] != "demo-0123456789ab" || b["name"] != "release-steps" || b["file"] != "AGENTS.md" || b["section"] != "Release" || b["days"] != float64(3) {
+	if b["project"] != "demo-0123456789ab" || b["name"] != "release-steps" || b["file"] != "AGENTS.md" || b["section"] != "Release it's" || b["days"] != float64(3) {
 		t.Fatalf("body %v", b)
 	}
 	if (*reqs)[len(*reqs)-1] != "POST /agents/memory/entries/promotion-proposal" {

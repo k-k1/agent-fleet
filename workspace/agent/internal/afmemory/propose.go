@@ -44,12 +44,13 @@ type proposal struct {
 			Rule string `json:"rule"`
 		} `json:"secret"`
 		PreCommit struct {
-			Ran    bool   `json:"ran"`
-			Hook   string `json:"hook"`
-			Passed bool   `json:"passed"`
-			Absent bool   `json:"absent"`
-			Output string `json:"output"`
-			Note   string `json:"note"`
+			Ran     bool   `json:"ran"`
+			Hook    string `json:"hook"`
+			Passed  bool   `json:"passed"`
+			Absent  bool   `json:"absent"`
+			Changed bool   `json:"changed"`
+			Output  string `json:"output"`
+			Note    string `json:"note"`
 		} `json:"preCommit"`
 	} `json:"scans"`
 	Ready bool `json:"ready"`
@@ -115,11 +116,26 @@ func cmdPromoteProposal(c *Client, args []string, out io.Writer) error {
 		enc.SetIndent("", "  ")
 		return enc.Encode(p)
 	}
-	printProposal(out, p)
+	// The command that prints this patch again, with every option that shaped it.
+	again := []string{"af-memory", "promote-proposal", "--project", ids[0], "--name", *name}
+	for _, f := range []struct{ flag, v string }{{"--file", *file}, {"--section", *section}, {"--days", *daysArg}} {
+		if f.v != "" {
+			again = append(again, f.flag, f.v)
+		}
+	}
+	printProposal(out, p, again)
 	return nil
 }
 
-func printProposal(out io.Writer, p proposal) {
+// shellQuote quotes s for a POSIX shell when it needs it.
+func shellQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./=:@") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+func printProposal(out io.Writer, p proposal, again []string) {
 	state := "ready to commit"
 	if !p.Ready {
 		state = "NOT ready: fix what the scans report"
@@ -160,6 +176,9 @@ func printProposal(out io.Writer, p proposal) {
 	default:
 		fmt.Fprintf(out, "   pre-commit:  not run: %s\n", pc.Note)
 	}
+	if pc.Changed {
+		fmt.Fprintln(out, "   pre-commit:  the hook changed the staged change; the patch below is what it left, not checked again")
+	}
 	if pc.Output != "" && !pc.Passed {
 		for _, ln := range strings.Split(strings.TrimRight(pc.Output, "\n"), "\n") {
 			fmt.Fprintf(out, "     | %s\n", ln)
@@ -167,16 +186,12 @@ func printProposal(out io.Writer, p proposal) {
 	}
 	if p.Patch != "" {
 		fmt.Fprintf(out, "\n%s", p.Patch)
-		fmt.Fprintf(out, "\nAF pushes nothing: apply it with `af-memory promote-proposal --project %s --name %s --patch | git apply`"+
-			" (with the same --file and --section), then open the pull request.\n", projectArg(p), sourceName(p))
+		q := make([]string, len(again))
+		for i, a := range again {
+			q[i] = shellQuote(a)
+		}
+		fmt.Fprintf(out, "\nAF pushes nothing: apply it with `%s --patch | git apply`, then open the pull request.\n", strings.Join(q, " "))
 	}
-}
-
-func sourceName(p proposal) string {
-	if len(p.Sources) > 0 {
-		return p.Sources[0].Name
-	}
-	return "<memory>"
 }
 
 func shortCommit(c string) string {
@@ -184,11 +199,4 @@ func shortCommit(c string) string {
 		return c[:12]
 	}
 	return c
-}
-
-func projectArg(p proposal) string {
-	if p.Project != nil && p.Project.ID != "" {
-		return p.Project.ID
-	}
-	return "<project>"
 }

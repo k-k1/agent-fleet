@@ -70,6 +70,10 @@ var memoryRelays = []agentRelay{
 	// only reads.
 	{route: "GET /api/agents/memory/entries/purge-preview"},
 	{route: "POST /api/agents/memory/entries/purge", audit: auditAs("memory.entry.purge", queryShaped("project", auditProjectHint)), sign: signBody},
+	// Superseding a memory by the repository document its promotion was merged into (ADR 0130
+	// decision 11): the member's decision, so signed. The project and memory are in the body, so
+	// the audit row has no target.
+	{route: "POST /api/agents/memory/entries/supersede-document", audit: auditAs("memory.entry.supersede_document", nil), sign: signBody},
 	// Moving the memories of a project whose working copy is gone (#1984), audited under the
 	// source project id.
 	{route: "GET /api/agents/memory/entries/projects"},

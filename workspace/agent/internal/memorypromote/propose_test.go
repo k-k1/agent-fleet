@@ -1,51 +1,91 @@
 package memorypromote
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
 
-func TestHeadingsSkipFencesAndStripClosers(t *testing.T) {
-	doc := "# Title #\n\ntext\n\n```sh\n# not a heading\n```\n\n~~~~\n## nor this\n~~~\n## still fenced\n~~~~\n\n## Real ##\n####### seven\n#nospace\n   ### Indented\n    #### code block\n"
+func headingList(doc string) string {
 	var got []string
 	for _, h := range Headings([]byte(doc)) {
 		got = append(got, strings.Repeat("#", h.Level)+" "+h.Text)
 	}
-	want := "# Title|## Real|### Indented"
-	if strings.Join(got, "|") != want {
-		t.Fatalf("got %q, want %q", strings.Join(got, "|"), want)
+	return strings.Join(got, "|")
+}
+
+// Headings are what CommonMark reads: nothing inside a fence (also one whose would-be closer has
+// text after it), an HTML comment, an indented code block or an unclosed fence; closing # run
+// stripped; a setext heading counts.
+func TestHeadingsFollowCommonMark(t *testing.T) {
+	doc := "# Title #\n\n```sh\n# not a heading\n``` `\n## nor this\n```\n\n<!--\n## in a comment\n-->\n\n" +
+		"## Real ##  \nSetext\n===\n   ### Indented\n    #### code block\n\n```\n## unclosed\n"
+	if got, want := headingList(doc), "# Title|## Real|# Setext|### Indented"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
 	}
-	// A backtick line whose info string has a backtick is not a fence.
-	if hs := Headings([]byte("``` a`b\n# Heading\n")); len(hs) != 1 {
-		t.Fatalf("%+v", hs)
+	if got := headingList("## CRLF\r\nx\r\n"); got != "## CRLF" {
+		t.Fatalf("crlf: %q", got)
 	}
 }
 
 func TestInsertAtTheEndOfTheSectionOrANewOne(t *testing.T) {
 	doc := "# Doc\n\n## Build\n\nRun make.\n\n### Sub\n\ns\n\n\n## Other\n\nx\n"
-	out, ok := Insert([]byte(doc), "Build", "\nNew text.\n\n")
+	out, ok, err := Insert([]byte(doc), "Build", "\nNew text.\n\n")
 	want := "# Doc\n\n## Build\n\nRun make.\n\n### Sub\n\ns\n\nNew text.\n\n## Other\n\nx\n"
-	if !ok || string(out) != want {
-		t.Fatalf("existing section:\n%q\nwant\n%q", out, want)
+	if err != nil || !ok || string(out) != want {
+		t.Fatalf("existing section:\n%q\nwant\n%q (%v)", out, want, err)
 	}
 	// The last section runs to the end of the document.
-	out, ok = Insert([]byte(doc), "Other", "New.")
+	out, ok, _ = Insert([]byte(doc), "Other", "New.")
 	if !ok || string(out) != "# Doc\n\n## Build\n\nRun make.\n\n### Sub\n\ns\n\n\n## Other\n\nx\n\nNew.\n" {
 		t.Fatalf("last section: %q", out)
 	}
 	// An empty section.
-	out, ok = Insert([]byte("## A\n## B\n"), "A", "t")
+	out, ok, _ = Insert([]byte("## A\n## B\n"), "A", "t")
 	if !ok || string(out) != "## A\n\nt\n\n## B\n" {
 		t.Fatalf("empty section: %q", out)
 	}
-	// A heading only inside a fence does not count.
-	out, ok = Insert([]byte("```\n## Build\n```\n"), "Build", "t")
-	if ok || string(out) != "```\n## Build\n```\n\n## Build\n\nt\n" {
-		t.Fatalf("fenced: %q", out)
+	// A heading only inside a closed fence does not count: a new section is added.
+	out, ok, err = Insert([]byte("```\n## Build\n```\n"), "Build", "t")
+	if err != nil || ok || string(out) != "```\n## Build\n```\n\n## Build\n\nt\n" {
+		t.Fatalf("fenced: %q %v", out, err)
 	}
-	// A new section at the end; an empty or missing document gets just the section.
-	if out, ok = Insert(nil, "Release", "t"); ok || string(out) != "## Release\n\nt\n" {
+	// A document that ends inside an unclosed fence would swallow the new section.
+	if _, _, err := Insert([]byte("x\n\n```\ncode\n"), "Build", "t"); !errors.Is(err, ErrNotPlaced) {
+		t.Fatalf("unclosed fence: %v", err)
+	}
+	// A new or empty document gets just the section.
+	if out, ok, _ = Insert(nil, "Release", "t"); ok || string(out) != "## Release\n\nt\n" {
 		t.Fatalf("new file: %q", out)
+	}
+	// Indentation is meaning (an indented code block): only blank lines are trimmed.
+	if out, _, _ = Insert(nil, "R", "\n\n    code line\n    more\n\n"); string(out) != "## R\n\n    code line\n    more\n" {
+		t.Fatalf("indent: %q", out)
+	}
+	// A CRLF document stays CRLF throughout.
+	out, ok, _ = Insert([]byte("## A\r\n\r\nx\r\n\r\n## B\r\n"), "A", "one\ntwo")
+	if !ok || string(out) != "## A\r\n\r\nx\r\n\r\none\r\ntwo\r\n\r\n## B\r\n" {
+		t.Fatalf("crlf: %q", out)
+	}
+}
+
+// A section is accepted only when it reads back as itself, so the heading a proposal returns is
+// the one a supersede finds after the merge.
+func TestSectionRoundTrip(t *testing.T) {
+	for _, s := range []string{"Release", "Use `make`", "リリース手順", "C# notes"} {
+		if !SectionOK(s) {
+			t.Errorf("%q refused", s)
+			continue
+		}
+		out, _, err := Insert([]byte("# Doc\n"), s, "t")
+		if _, found := FindHeading(out, s); err != nil || !found {
+			t.Errorf("%q does not round-trip: %q %v", s, out, err)
+		}
+	}
+	for _, s := range []string{"", "Release #", " pad", "a\nb", "a\rb", strings.Repeat("x", MaxSection+1)} {
+		if SectionOK(s) {
+			t.Errorf("%q accepted", s)
+		}
 	}
 }
 
@@ -56,9 +96,12 @@ func TestDefaultSection(t *testing.T) {
 		{"Build trap — never do X", "n", "Build trap"},
 		{"", "the-name", "the-name"},
 		{"a\tb", "n", "a b"},
+		{"Release #", "n", "Release"},
+		{"###", "the-name", "the-name"},
 		{strings.Repeat("x", 100), "n", strings.Repeat("x", 80)},
 	} {
-		if got := DefaultSection(c.desc, c.name); got != c.want {
+		got := DefaultSection(c.desc, c.name)
+		if got != c.want || !SectionOK(got) {
 			t.Errorf("DefaultSection(%q) = %q, want %q", c.desc, got, c.want)
 		}
 	}

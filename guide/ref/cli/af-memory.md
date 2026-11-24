@@ -321,15 +321,19 @@ diff --git a/AGENTS.md b/AGENTS.md
 - The text is the memory's body as it is. It is not translated or rewritten: a warning says when the
   memory is in another language than the document, when it links other memories with `[[name]]`, and
   when the document is new
-- Two scans run. Agent Fleet's secret scan checks the text and the heading; when it finds something,
-  the text and the patch are withheld. The repository's own pre-commit hook (`core.hooksPath` as the
-  working copy configures it, taken from the default branch or, when the tree has no hook there, from
-  the working copy; else `hooks/` of the repository) runs on the patch in a throwaway clone
-  of the default branch, and its output is shown when it fails. A repository without a hook git
-  would run has nothing to pass. The proposal is ready when both pass
+- Two scans run. Agent Fleet's secret scan checks the text, the heading and the file name; when it
+  finds something, the text and the patch are withheld. Then the repository's own pre-commit hook
+  (the one git would run when you commit in the working copy: `core.hooksPath` as the working copy
+  configures it, else `hooks/` of the repository) runs on the patch in a throwaway clone of the
+  default branch, with no Agent credential and no `GIT_*` variable in its environment; its output is
+  shown when it fails. A repository without a hook git would run has nothing to pass. The proposal
+  is ready when both pass and the hook left the change as it was (a hook that reformats the change
+  makes it not ready, and the patch shown is what the hook left)
 - The patch applies to the default branch's revision shown (`[origin/main @ …]`). Nothing is
   written to the memory store or to a working copy, and nothing is fetched. One proposal runs at a
   time; the hook is stopped after 3 minutes
-- `from:` names the memory and the revision the text was taken from. After the merge, the memory
-  is superseded by the document only while it is still at that revision, so a text that changed
-  while the pull request waited is never hidden
+- `from:` names the memory and the revision the text was taken from (`--json` also gives a digest
+  of the text). After the merge, the memory is superseded by the document only while it still has
+  that revision and that text, so a text that changed while the pull request waited is never hidden
+- A section heading must read back as itself: a trailing `#` closes an ATX heading, so `Release #`
+  is refused. A document that ends inside an unclosed code fence cannot take a new section

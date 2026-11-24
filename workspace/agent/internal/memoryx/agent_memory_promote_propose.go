@@ -10,10 +10,19 @@ package memoryx
 // throwaway clone that shares the repository's objects and is deleted before the answer. The
 // member's working copy, its index and its refs are not touched, nothing is fetched, and the
 // memory store is not written. The member opens the pull request, or asks a session to.
+//
+// What the clone and the hook are given is narrowed on purpose: no GIT_* variable of the Agent
+// (one could point git at another work tree or add configuration), no global or system git
+// configuration for the steps that build the patch (a smudge filter would run, and could reach
+// the network), no Agent credential in the hook's environment, and a TMPDIR inside the throwaway
+// directory so what a hook leaves there goes with it. The hook itself is the repository's code,
+// run as the Agent's user, as `git commit` in the working copy would run it.
 
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -32,15 +41,21 @@ import (
 )
 
 const (
-	// agentMemProposeHookTimeout bounds the repository's pre-commit hook. This repository's hook
-	// builds and runs a Go scanner and gitleaks; a hook that needs longer is reported as timed out.
-	agentMemProposeHookTimeout = 3 * time.Minute
-	// agentMemProposeCloneTimeout bounds the throwaway clone and its checkout (measured: 7 s for
-	// this repository's 137 MB tree).
+	// agentMemProposeCloneTimeout bounds the throwaway clone, its checkout and the diff (measured:
+	// 7 s for this repository's 137 MB tree).
 	agentMemProposeCloneTimeout = 2 * time.Minute
 	// agentMemProposeOutputMax bounds the hook output carried back.
 	agentMemProposeOutputMax = 16 << 10
+	// agentMemProposePatchMax bounds the patch. A memory body is at most agentMemMaxBody; the rest
+	// is the diff's context.
+	agentMemProposePatchMax = 4 << 20
+	// agentMemProposeMaxRequest bounds the request body before it is decoded.
+	agentMemProposeMaxRequest = 64 << 10
 )
+
+// agentMemProposeHookTimeout bounds the repository's pre-commit hook (this repository's hook
+// builds and runs a Go scanner and gitleaks). A variable so a test can shorten it.
+var agentMemProposeHookTimeout = 3 * time.Minute
 
 // agentMemProposeDocs are the documents tried, in order, when no anchor of the memory is a
 // Markdown file: the ones every agent of the repository reads.
@@ -63,10 +78,13 @@ type agentMemProposeReq struct {
 }
 
 // agentMemProposeSource is one memory the proposed text came from, at the revision quoted.
+// BodySHA256 names the exact text: a supersede must quote it back, because an edit of the store
+// outside AF can change a body without a new revision.
 type agentMemProposeSource struct {
 	Name        string `json:"name"`
 	Scope       string `json:"scope"`
 	Revision    int    `json:"revision"`
+	BodySHA256  string `json:"bodySha256"`
 	Description string `json:"description,omitempty"`
 }
 
@@ -78,7 +96,12 @@ type agentMemPreCommit struct {
 	Hook   string `json:"hook,omitempty"`
 	Passed bool   `json:"passed"`
 	// Absent: the repository has no hook git would run on a commit, so there is nothing to pass.
-	Absent bool   `json:"absent,omitempty"`
+	Absent bool `json:"absent,omitempty"`
+	// Changed: the hook left a different staged change than the one it was given (a formatter);
+	// the patch answered is the hook's, and it has not been checked again.
+	Changed bool `json:"changed,omitempty"`
+	// Output is the hook's output when it did not pass, with the throwaway paths removed; it is
+	// withheld when the secret scan flags it.
 	Output string `json:"output,omitempty"`
 	Note   string `json:"note,omitempty"`
 }
@@ -113,19 +136,19 @@ type agentMemProposeWire struct {
 	Warnings []string             `json:"warnings"`
 	Scans    agentMemProposeScans `json:"scans"`
 	// Ready is true when both scans passed (a repository without a pre-commit hook passes that
-	// one). Warnings do not change it.
+	// one) and the hook left the change as it was. Warnings do not change it.
 	Ready bool `json:"ready"`
 }
 
 // agentMemDocPathOK says whether p is a normalised relative path, the form a document target
-// stores (agentMemSupersededProblems applies the same rule to a stored one).
+// stores (agentMemSupersededProblems applies the same rule to a stored one), outside .git.
 func agentMemDocPathOK(p string) bool {
 	if p == "" || strings.HasPrefix(p, "/") || strings.Contains(p, "\\") || strings.HasSuffix(p, "/") ||
 		agentMemDocBadChars.MatchString(p) || utf8.RuneCountInString(p) > agentMemMaxDocField {
 		return false
 	}
 	for _, seg := range strings.Split(p, "/") {
-		if seg == "" || seg == "." || seg == ".." {
+		if seg == "" || seg == "." || seg == ".." || strings.EqualFold(seg, ".git") {
 			return false
 		}
 	}
@@ -137,31 +160,55 @@ func agentMemIsMarkdown(p string) bool {
 	return e == ".md" || e == ".markdown"
 }
 
-// agentMemSectionOK checks a section heading given by the member.
-func agentMemSectionOK(s string) bool {
-	s = strings.TrimSpace(s)
-	return s != "" && !agentMemDocBadChars.MatchString(s) && utf8.RuneCountInString(s) <= memorypromote.MaxSection &&
-		!strings.HasPrefix(s, "#")
+// agentMemSectionOK checks a section heading: one that reads back as itself once written.
+func agentMemSectionOK(s string) bool { return memorypromote.SectionOK(s) }
+
+// agentMemTreeEntry answers the mode and type of path in commit ("" when it does not exist).
+func agentMemTreeEntry(ctx context.Context, gitDir, commit, path string) (mode, typ string, err error) {
+	out, err := agentMemLintGit(ctx, gitDir, nil, "ls-tree", "-z", commit, "--", path)
+	if err != nil {
+		return "", "", err
+	}
+	rec := strings.TrimSuffix(string(out), "\x00")
+	if rec == "" {
+		return "", "", nil
+	}
+	meta, name, _ := strings.Cut(rec, "\t")
+	f := strings.Fields(meta)
+	if name != path || len(f) != 3 {
+		return "", "", fmt.Errorf("unexpected ls-tree record for %s", path)
+	}
+	return f[0], f[1], nil
 }
 
 // agentMemTreeBlob says whether path is a regular file (not a symlink, submodule or directory) in
 // commit, and whether it exists at all.
 func agentMemTreeBlob(ctx context.Context, gitDir, commit, path string) (blob, exists bool, err error) {
-	out, err := agentMemLintGit(ctx, gitDir, nil, "ls-tree", "-z", commit, "--", path)
-	if err != nil {
+	mode, typ, err := agentMemTreeEntry(ctx, gitDir, commit, path)
+	if err != nil || typ == "" {
 		return false, false, err
 	}
-	rec := strings.TrimSuffix(string(out), "\x00")
-	if rec == "" {
-		return false, false, nil
+	return typ == "blob" && (mode == "100644" || mode == "100755"), true, nil
+}
+
+// agentMemTreeParentsOK says whether every directory above path in commit is a real directory
+// or absent: a symlink there would carry a new file outside the tree.
+func agentMemTreeParentsOK(ctx context.Context, gitDir, commit, path string) (bool, error) {
+	segs := strings.Split(path, "/")
+	for i := 1; i < len(segs); i++ {
+		_, typ, err := agentMemTreeEntry(ctx, gitDir, commit, strings.Join(segs[:i], "/"))
+		if err != nil {
+			return false, err
+		}
+		switch typ {
+		case "":
+			return true, nil
+		case "tree":
+		default:
+			return false, nil
+		}
 	}
-	meta, name, _ := strings.Cut(rec, "\t")
-	f := strings.Fields(meta)
-	if name != path || len(f) != 3 {
-		// A directory's ls-tree without -r names the directory itself; anything else is not a file.
-		return false, true, nil
-	}
-	return f[1] == "blob" && (f[0] == "100644" || f[0] == "100755"), true, nil
+	return true, nil
 }
 
 // agentMemProposeFile picks the document: the first anchor that is a Markdown file on the default
@@ -186,54 +233,64 @@ func agentMemProposeFile(ctx context.Context, gitDir, commit string, anchors []s
 	return agentMemProposeDocs[0], nil
 }
 
-// agentMemProposeEnv is the environment of every step in the throwaway clone: nothing that points
-// git at another repository, no prompts, no lazy fetch.
-func agentMemProposeEnv() []string {
+// agentMemProposeEnv is the environment of a step in the throwaway directory: the Agent's, less
+// every GIT_* variable (and, for the hook, the Agent's credentials), with TMPDIR inside tmp.
+// Building the patch also drops the global and system git configuration.
+func agentMemProposeEnv(tmp string, hook bool) []string {
 	var env []string
 	for _, e := range os.Environ() {
 		k, _, _ := strings.Cut(e, "=")
-		switch k {
-		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
-			"GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_PREFIX":
+		switch {
+		case strings.HasPrefix(k, "GIT_"), k == "TMPDIR":
+			continue
+		case hook && (k == "AGENT_TOKEN" || strings.HasPrefix(k, "AF_")):
 			continue
 		}
 		env = append(env, e)
 	}
-	return append(env, "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1", "GIT_OPTIONAL_LOCKS=0")
+	env = append(env, "TMPDIR="+filepath.Join(tmp, "tmp"), "GIT_TERMINAL_PROMPT=0", "GIT_NO_LAZY_FETCH=1",
+		"GIT_OPTIONAL_LOCKS=0", "GIT_NO_REPLACE_OBJECTS=1")
+	if !hook {
+		env = append(env, "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	}
+	return env
 }
 
-// agentMemProposeRun runs one command in its own process group under ctx; on the deadline the
-// whole group is killed, so nothing a hook started outlives the request.
-func agentMemProposeRun(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+// agentMemProposeRun runs one command in its own process group under ctx and answers its stdout
+// and stderr apart. Whatever is left of the group when the command exits, or when ctx ends, is
+// killed, so nothing a hook put in the background outlives the request.
+func agentMemProposeRun(ctx context.Context, dir string, env []string, stdoutMax int, name string, args ...string) (stdout, stderr []byte, err error) {
 	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	cmd.Env = agentMemProposeEnv()
-	var out agentMemCappedBuf
-	cmd.Stdout, cmd.Stderr = &out, &out
+	cmd.Dir, cmd.Env = dir, env
+	o := &agentMemCappedBuf{max: stdoutMax}
+	e := &agentMemCappedBuf{max: agentMemProposeOutputMax}
+	cmd.Stdout, cmd.Stderr = o, e
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
 	select {
-	case err := <-done:
-		if errors.Is(err, exec.ErrWaitDelay) {
-			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		}
-		return out.Bytes(), err
+	case err = <-done:
 	case <-ctx.Done():
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		<-done
-		return out.Bytes(), ctx.Err()
+		err = ctx.Err()
 	}
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	if err == nil && o.cut {
+		err = errors.New("the output is larger than allowed")
+	}
+	return o.Bytes(), e.Bytes(), err
 }
 
-// agentMemCappedBuf keeps the first agentMemProposeOutputMax bytes written to it and drops the
-// rest, so a chatty hook cannot fill the Agent's memory.
+// agentMemCappedBuf keeps the first max bytes written to it and drops the rest, so a chatty
+// command cannot fill the Agent's memory; cut says that something was dropped.
 type agentMemCappedBuf struct {
 	mu  sync.Mutex
+	max int
 	buf bytes.Buffer
 	cut bool
 }
@@ -241,7 +298,7 @@ type agentMemCappedBuf struct {
 func (b *agentMemCappedBuf) Write(p []byte) (int, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if room := agentMemProposeOutputMax - b.buf.Len(); room < len(p) {
+	if room := b.max - b.buf.Len(); room < len(p) {
 		if room > 0 {
 			b.buf.Write(p[:room])
 		}
@@ -255,37 +312,53 @@ func (b *agentMemCappedBuf) Write(p []byte) (int, error) {
 func (b *agentMemCappedBuf) Bytes() []byte {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	out := append([]byte(nil), b.buf.Bytes()...)
-	if b.cut {
-		out = append(out, "\n… (output cut)\n"...)
-	}
-	return out
+	return append([]byte(nil), b.buf.Bytes()...)
 }
 
-// agentMemProposeHooks resolves the directory the repository's hooks are taken from:
-// core.hooksPath as the working copy configures it (a relative one is relative to the top of the
-// tree, so it is resolved in the clone, from the default branch, or in the working copy when the
-// tree has no hook there), else hooks/ of the repository.
-func agentMemProposeHooks(root, gitDir, clone string) (dir, shown string) {
-	v, err := gitx.Run(root, "config", "--type=path", "--get", "core.hooksPath")
-	if err != nil || v == "" {
-		return filepath.Join(gitDir, "hooks"), "hooks/ of the repository"
+// agentMemProposeHooks resolves the directory git takes the pre-commit hook from when the member
+// commits in the working copy: core.hooksPath as the working copy configures it (a relative one
+// is relative to the top of the working tree), else hooks/ of the repository. ok=false when the
+// configuration could not be read.
+func agentMemProposeHooks(root, gitDir string) (dir, shown string, ok bool) {
+	cmd := gitx.Cmd(root, "config", "--type=path", "--get", "core.hooksPath")
+	out, err := cmd.Output()
+	v := strings.TrimSpace(string(out))
+	var ee *exec.ExitError
+	switch {
+	case err == nil && v != "":
+	case errors.As(err, &ee) && ee.ExitCode() == 1, err == nil:
+		// Exit 1 is git config's "not set".
+		return filepath.Join(gitDir, "hooks"), "hooks/ of the repository", true
+	default:
+		return "", "", false
 	}
 	if filepath.IsAbs(v) {
-		return v, "core.hooksPath " + v
+		return v, "core.hooksPath " + v, true
 	}
-	// A hook directory the tree does not carry (one a tool generates, left untracked) is the
-	// working copy's: the one git would run when the member commits.
-	if _, err := os.Stat(filepath.Join(clone, v, "pre-commit")); err != nil {
-		return filepath.Join(root, v), "core.hooksPath " + v + " (from the working copy)"
+	return filepath.Join(root, v), "core.hooksPath " + v, true
+}
+
+// agentMemProposeShowOutput is what the answer carries of a failed hook's output: its stdout and
+// stderr with the throwaway paths taken out, or nothing when the secret scan flags it.
+func agentMemProposeShowOutput(tmp, clone string, stdout, stderr []byte) string {
+	s := strings.TrimRight(string(stdout), "\n")
+	if t := strings.TrimRight(string(stderr), "\n"); t != "" {
+		if s != "" {
+			s += "\n"
+		}
+		s += t
 	}
-	return filepath.Join(clone, v), "core.hooksPath " + v
+	s = strings.ReplaceAll(strings.ReplaceAll(s, clone+"/", ""), tmp, "<tmp>")
+	if len(agentMemScanText("hook output", s)) > 0 {
+		return "(withheld: the secret scan flags something in the hook's output)"
+	}
+	return s
 }
 
 // agentMemProposePatch writes data to file in a throwaway clone at commit, stages it, and answers
 // the staged patch and the pre-commit hook's outcome. The clone shares the repository's objects
 // (--shared) and is removed before returning.
-func agentMemProposePatch(root, gitDir, commit, file string, data []byte) (string, agentMemPreCommit, error) {
+func agentMemProposePatch(ctx context.Context, root, gitDir, commit, file string, data []byte) (string, agentMemPreCommit, error) {
 	var pc agentMemPreCommit
 	tmp, err := os.MkdirTemp("", "af-memory-promote-")
 	if err != nil {
@@ -293,77 +366,149 @@ func agentMemProposePatch(root, gitDir, commit, file string, data []byte) (strin
 	}
 	defer os.RemoveAll(tmp)
 	clone := filepath.Join(tmp, "repo")
-	empty := filepath.Join(tmp, "no-hooks")
-	if err := os.Mkdir(empty, 0o700); err != nil {
-		return "", pc, err
-	}
-	// Until the repository's own hook runs, no hook runs at all: a global core.hooksPath would
-	// otherwise fire post-checkout in the clone.
-	quiet := []string{"-c", "core.hooksPath=" + empty, "-c", "advice.detachedHead=false"}
-	ctx, cancel := context.WithTimeout(context.Background(), agentMemProposeCloneTimeout)
-	defer cancel()
-	step := func(args ...string) error {
-		out, err := agentMemProposeRun(ctx, tmp, "git", append(quiet, args...)...)
-		if err != nil {
-			return fmt.Errorf("git %s: %v: %s", args[0], err, strings.TrimSpace(string(out)))
+	for _, d := range []string{"tmp", "no-hooks"} {
+		if err := os.Mkdir(filepath.Join(tmp, d), 0o700); err != nil {
+			return "", pc, err
 		}
-		return nil
 	}
-	if err := step("clone", "-q", "--shared", "--no-checkout", "--", gitDir, clone); err != nil {
+	env := agentMemProposeEnv(tmp, false)
+	// No hook of any kind runs while the patch is built; the git and work-tree directories are
+	// named on every step.
+	quiet := []string{"-c", "core.hooksPath=" + filepath.Join(tmp, "no-hooks"), "-c", "advice.detachedHead=false"}
+	in := append(append([]string{}, quiet...), "--git-dir="+filepath.Join(clone, ".git"), "--work-tree="+clone)
+	cctx, cancel := context.WithTimeout(ctx, agentMemProposeCloneTimeout)
+	defer cancel()
+	step := func(args ...string) ([]byte, error) {
+		out, errOut, err := agentMemProposeRun(cctx, tmp, env, agentMemProposePatchMax, "git", args...)
+		if err != nil {
+			sub := ""
+			for _, a := range args[len(quiet):] {
+				if !strings.HasPrefix(a, "-") {
+					sub = a
+					break
+				}
+			}
+			return nil, fmt.Errorf("git %s: %v: %s", sub, err, strings.TrimSpace(string(errOut)))
+		}
+		return out, nil
+	}
+	if _, err := step(append(append([]string{}, quiet...), "clone", "-q", "--shared", "--no-checkout", "--", gitDir, clone)...); err != nil {
 		return "", pc, err
 	}
-	if err := step("-C", clone, "checkout", "-q", "--detach", commit); err != nil {
+	if _, err := step(append(in, "checkout", "-q", "--detach", commit)...); err != nil {
 		return "", pc, err
 	}
-	dst := filepath.Join(clone, filepath.FromSlash(file))
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return "", pc, err
-	}
-	if err := os.WriteFile(dst, data, 0o644); err != nil {
-		return "", pc, err
-	}
-	if err := step("-C", clone, "add", "--", file); err != nil {
-		return "", pc, err
-	}
-	patch, err := agentMemProposeRun(ctx, tmp, "git", append(quiet, "-C", clone, "diff", "--cached", "--no-color",
-		"--no-ext-diff", "--no-textconv", "--no-renames")...)
+	// Writes stay inside the clone: os.Root refuses a path that leaves it through a symlink.
+	r, err := os.OpenRoot(clone)
 	if err != nil {
-		return "", pc, fmt.Errorf("git diff: %v", err)
+		return "", pc, err
+	}
+	defer r.Close()
+	if dir := filepath.Dir(filepath.FromSlash(file)); dir != "." {
+		if err := r.MkdirAll(dir, 0o755); err != nil {
+			return "", pc, err
+		}
+	}
+	if err := r.WriteFile(filepath.FromSlash(file), data, 0o644); err != nil {
+		return "", pc, err
+	}
+	if _, err := step(append(in, "add", "--", file)...); err != nil {
+		return "", pc, err
+	}
+	diff := func() (string, error) {
+		out, err := step(append(in, "diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv", "--no-renames",
+			"--binary", "--full-index")...)
+		return string(out), err
+	}
+	patch, err := diff()
+	switch {
+	case err != nil:
+		return "", pc, err
+	case patch == "":
+		return "", pc, errors.New("the change is empty")
 	}
 
-	hooks, shown := agentMemProposeHooks(root, gitDir, clone)
+	hooks, shown, ok := agentMemProposeHooks(root, gitDir)
+	if !ok {
+		pc.Note = "core.hooksPath of the working copy could not be read, so the hook git would run is unknown"
+		return patch, pc, nil
+	}
 	pc.Hook = shown
 	st, err := os.Stat(filepath.Join(hooks, "pre-commit"))
 	switch {
-	case err != nil || !st.Mode().IsRegular():
+	case err != nil && os.IsNotExist(err), err == nil && !st.Mode().IsRegular():
 		pc.Absent, pc.Note = true, "the repository has no pre-commit hook ("+shown+")"
-		return string(patch), pc, nil
+		return patch, pc, nil
+	case err != nil:
+		pc.Note = "the pre-commit hook could not be read: " + err.Error()
+		return patch, pc, nil
 	case st.Mode().Perm()&0o111 == 0:
 		pc.Absent, pc.Note = true, "the pre-commit hook is not executable ("+shown+"), so git would not run it either"
-		return string(patch), pc, nil
+		return patch, pc, nil
 	}
-	hctx, hcancel := context.WithTimeout(context.Background(), agentMemProposeHookTimeout)
+	hctx, hcancel := context.WithTimeout(ctx, agentMemProposeHookTimeout)
 	defer hcancel()
-	out, err := agentMemProposeRun(hctx, clone, "git", "-c", "core.hooksPath="+hooks, "hook", "run", "pre-commit")
+	hargs := append(append([]string{}, quiet...), "--git-dir="+filepath.Join(clone, ".git"), "--work-tree="+clone)
+	hargs[1] = "core.hooksPath=" + hooks
+	stdout, stderr, err := agentMemProposeRun(hctx, clone, agentMemProposeEnv(tmp, true), agentMemProposeOutputMax, "git",
+		append(hargs, "hook", "run", "pre-commit")...)
 	pc.Ran = true
-	pc.Output = strings.ReplaceAll(string(out), clone+"/", "")
 	var ee *exec.ExitError
 	switch {
 	case err == nil:
 		pc.Passed = true
-	case errors.Is(err, context.DeadlineExceeded):
-		pc.Note = fmt.Sprintf("the hook did not finish within %s", agentMemProposeHookTimeout)
+	case hctx.Err() != nil:
+		pc.Note = fmt.Sprintf("the hook did not finish within %s or the request ended", agentMemProposeHookTimeout)
 	case errors.As(err, &ee):
 		pc.Note = fmt.Sprintf("the hook failed (exit %d)", ee.ExitCode())
 	default:
 		pc.Ran = false
 		pc.Note = "the hook could not be run: " + err.Error()
 	}
-	return string(patch), pc, nil
+	if !pc.Passed {
+		pc.Output = agentMemProposeShowOutput(tmp, clone, stdout, stderr)
+	}
+	// What the hook checked must be what is answered: a hook that rewrites the staged change
+	// (a formatter) leaves another patch than the one it was given.
+	if after, err := diff(); err != nil {
+		return "", pc, err
+	} else if after != patch {
+		pc.Changed = true
+		pc.Note = strings.TrimSpace(pc.Note + " the hook changed the staged change; the patch shown is what it left, not checked again")
+		patch = after
+	}
+	return patch, pc, nil
+}
+
+// agentMemSHA256 is the hex digest a proposal quotes for a body.
+func agentMemSHA256(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+// agentMemRemoteCheck reads the working copy's origin now and says whether it is still the
+// repository the project is named by: a clone whose origin was switched to a fork would otherwise
+// be checked as one repository and recorded as another.
+func agentMemRemoteCheck(p *agentMemProject) error {
+	conflict := func(format string, a ...any) error {
+		return memoryErrf(http.StatusConflict, errCodeMemoryConflict, format, a...)
+	}
+	if p == nil || p.Remote == "" {
+		return conflict("the project has no origin URL to name its repository by")
+	}
+	raw, err := gitx.Run(p.Root, "remote", "get-url", "origin")
+	now := agentMemNormalizeRemote(raw)
+	switch {
+	case err != nil || now == "":
+		return conflict("the working copy's origin could not be read")
+	case now != p.Remote:
+		return conflict("the working copy's origin is %q now, not the project's %q", now, p.Remote)
+	}
+	return nil
 }
 
 // agentMemPropose builds the proposed change for one current candidate. It writes nothing.
-func agentMemPropose(req agentMemProposeReq, now time.Time) (agentMemProposeWire, error) {
+func agentMemPropose(ctx context.Context, req agentMemProposeReq, now time.Time) (agentMemProposeWire, error) {
 	var out agentMemProposeWire
 	bad := func(format string, a ...any) error {
 		return memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, format, a...)
@@ -371,16 +516,16 @@ func agentMemPropose(req agentMemProposeReq, now time.Time) (agentMemProposeWire
 	conflict := func(format string, a ...any) error {
 		return memoryErrf(http.StatusConflict, errCodeMemoryConflict, format, a...)
 	}
-	req.Name, req.File, req.Section = strings.TrimSpace(req.Name), strings.TrimSpace(req.File), strings.TrimSpace(req.Section)
+	req.Name, req.File = strings.TrimSpace(req.Name), strings.TrimSpace(req.File)
 	switch {
 	case req.Project == "":
 		return out, bad("project is required")
 	case agentMemCheckName(req.Name) != nil:
 		return out, bad("name is not a memory name")
 	case req.File != "" && (!agentMemDocPathOK(req.File) || !agentMemIsMarkdown(req.File)):
-		return out, bad("file must be a normalised relative path of a Markdown file (.md)")
+		return out, bad("file must be a normalised relative path of a Markdown file (.md), outside .git")
 	case req.Section != "" && !agentMemSectionOK(req.Section):
-		return out, bad("section must be one line of at most %d characters, without the leading #", memorypromote.MaxSection)
+		return out, bad("section must be one line of at most %d characters that reads back as the same heading (no closing #)", memorypromote.MaxSection)
 	case req.Days < 0 || req.Days > agentMemPromoteMaxDays:
 		return out, bad("days is a whole number from 1 to %d", agentMemPromoteMaxDays)
 	}
@@ -424,8 +569,8 @@ func agentMemPropose(req agentMemProposeReq, now time.Time) (agentMemProposeWire
 	if !ok || out.Project == nil {
 		return out, conflict("the repository could not be read")
 	}
-	if out.Project.Remote == "" {
-		return out, conflict("the project has no origin URL to name its repository by")
+	if err := agentMemRemoteCheck(out.Project); err != nil {
+		return out, err
 	}
 	out.Commit = lr.ref
 
@@ -433,8 +578,18 @@ func agentMemPropose(req agentMemProposeReq, now time.Time) (agentMemProposeWire
 	if err != nil {
 		return out, err
 	}
+	rel, err := agentMemScopeDir(agentMemScopeProject, c)
+	if err != nil {
+		return out, err
+	}
+	// The text is read again, with what makes it a candidate: a doubt or a dispute that arrived
+	// after the selection, without a new revision, stops the proposal.
 	agentMemMu.RLock()
 	cur, exists, err := agentMemLoadOne(c, agentMemScopeProject, req.Name)
+	var reports []memorypromote.Confirmation
+	for _, r := range agentMemFeedbackRecords(rel, req.Name) {
+		reports = append(reports, memorypromote.Confirmation{Session: r.Session, Revision: r.Revision, Verdict: r.Verdict})
+	}
 	agentMemMu.RUnlock()
 	switch {
 	case err != nil:
@@ -444,24 +599,33 @@ func agentMemPropose(req agentMemProposeReq, now time.Time) (agentMemProposeWire
 	case cur.Entry.Revision != cand.Revision:
 		// The candidate was judged on another revision; its confirmations do not vouch for this one.
 		return out, conflict("%s moved to revision %d while it was being checked; ask again", req.Name, cur.Entry.Revision)
+	case len(cur.Entry.Reasons) > 0 || memorypromote.Disputed(reports, cur.Entry.Revision) > 0:
+		return out, conflict("%s was doubted while it was being checked; ask again", req.Name)
 	}
 	e := cur.Entry
-	out.Sources = []agentMemProposeSource{{Name: e.Name, Scope: agentMemScopeProject, Revision: e.Revision, Description: e.Description}}
+	out.Sources = []agentMemProposeSource{{Name: e.Name, Scope: agentMemScopeProject, Revision: e.Revision,
+		BodySHA256: agentMemSHA256(e.Body), Description: e.Description}}
 
-	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
+	gctx, cancel := context.WithTimeout(ctx, agentMemLintGitTimeout)
 	defer cancel()
 	file := req.File
 	if file == "" {
-		if file, err = agentMemProposeFile(ctx, lr.gitDir, lr.ref, e.Anchors); err != nil {
+		if file, err = agentMemProposeFile(gctx, lr.gitDir, lr.ref, e.Anchors); err != nil {
 			return out, fmt.Errorf("reading the default branch: %w", err)
 		}
 	}
-	blob, exists, err := agentMemTreeBlob(ctx, lr.gitDir, lr.ref, file)
+	blob, exists, err := agentMemTreeBlob(gctx, lr.gitDir, lr.ref, file)
+	if err != nil {
+		return out, fmt.Errorf("reading the default branch: %w", err)
+	}
+	parentsOK, err := agentMemTreeParentsOK(gctx, lr.gitDir, lr.ref, file)
 	switch {
 	case err != nil:
 		return out, fmt.Errorf("reading the default branch: %w", err)
 	case exists && !blob:
 		return out, bad("%s is not a regular file on %s", file, out.Ref)
+	case !parentsOK:
+		return out, bad("a directory above %s is not a directory on %s (a symlink or a file)", file, out.Ref)
 	}
 	var doc []byte
 	if exists {
@@ -473,11 +637,9 @@ func agentMemPropose(req agentMemProposeReq, now time.Time) (agentMemProposeWire
 	if section == "" {
 		section = memorypromote.DefaultSection(e.Description, e.Name)
 	}
-	text := strings.TrimSpace(e.Body)
+	text := memorypromote.TrimBlankLines(e.Body)
 	out.Target = agentMemProposeTarget{Repo: out.Project.Remote, Path: file, Heading: section}
 	out.FileExists = exists
-	newDoc, existed := memorypromote.Insert(doc, section, text)
-	out.SectionExists = existed
 	out.Warnings = []string{}
 	if !exists {
 		out.Warnings = append(out.Warnings, memorypromote.WarnNewFile)
@@ -489,34 +651,41 @@ func agentMemPropose(req agentMemProposeReq, now time.Time) (agentMemProposeWire
 		out.Warnings = append(out.Warnings, memorypromote.WarnMemoryLinks)
 	}
 
-	out.Scans.Secret = agentMemScanText(file, text+"\n"+section)
+	// Everything the proposal adds to the repository: the text, the heading and the file name.
+	out.Scans.Secret = agentMemScanText(file, strings.Join([]string{text, section, file}, "\n"))
 	if out.Scans.Secret == nil {
 		out.Scans.Secret = []memorySecretFinding{}
 	}
 	if len(out.Scans.Secret) > 0 {
-		// The heading may be what the scan flagged: the answer does not repeat it.
-		out.Target.Heading = ""
-		out.Scans.PreCommit.Note = "not run: the secret scan found something in the text"
+		// The heading or the path may be what the scan flagged: the answer does not repeat them.
+		out.Target.Heading, out.Target.Path = "", ""
+		out.Scans.PreCommit.Note = "not run: the secret scan found something in the proposed change"
 		return out, nil
 	}
-	patch, pc, err := agentMemProposePatch(out.Project.Root, lr.gitDir, lr.ref, file, newDoc)
+	newDoc, existed, err := memorypromote.Insert(doc, section, text)
+	if err != nil {
+		return out, conflict("%s: %v (an unclosed code fence at its end?); name another file or section", file, err)
+	}
+	out.SectionExists = existed
+	patch, pc, err := agentMemProposePatch(ctx, out.Project.Root, lr.gitDir, lr.ref, file, newDoc)
 	if err != nil {
 		return out, fmt.Errorf("building the patch: %w", err)
 	}
 	out.Text, out.Patch, out.Scans.PreCommit = text, patch, pc
-	out.Ready = pc.Passed || pc.Absent
+	out.Ready = (pc.Passed || pc.Absent) && !pc.Changed
 	return out, nil
 }
 
 // HandleAgentMemoryPromoteProposal answers the proposed change for one promotion candidate. It
 // writes nothing to the store or the working copy; it runs the repository's pre-commit hook in a
-// throwaway clone, so it is a POST.
+// throwaway clone, so it is a POST, and it stops with the request.
 func HandleAgentMemoryPromoteProposal(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, agentMemProposeMaxRequest)
 	var req agentMemProposeReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	out, err := agentMemPropose(req, time.Now())
+	out, err := agentMemPropose(r.Context(), req, time.Now())
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return
