@@ -447,17 +447,19 @@ func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtim
 // maxDrainRounds bounds how many times one drain asks again after a response cut by a bound.
 const maxDrainRounds = 8
 
-// drainAgentOutboxOnce reads one response. more is true when a bound cut it, the entries
-// read were stored, the Agent answered the ack with a 2xx, and that ack dropped at least one
-// of the ids acked last round (prevAcked), so asking again can make progress. acked is what
-// this call acked; the caller passes it back as prevAcked.
+// drainAgentOutboxOnce reads one response, stores it and acks it. prevAcked is what the
+// previous round acked (nil on the first round); acked is what this round acked, for the next.
+// more is true when a bound cut the response, the ack was answered with a 2xx, and this read
+// does not show that the previous round's ack moved nothing, so asking again can make
+// progress.
 //
-// Progress is judged by the whole prevAcked set, not the first id: the Agent answers the ack
-// with a 204 even when some deletes failed, so the first id can survive while the rest moved
-// on. When every prevAcked id is read again, the response is still stored and acked once more
-// before the drain stops, as with a first-id stop: an entry new to this response must not be
-// left unstored, and a delete that failed only once gets its second try. Only the inserts of
-// ids stored last round are skipped, because the store already holds those rows.
+// The previous ack moved nothing when this read starts with the same id and still holds every
+// id it acked. The first id alone is not enough: the Agent answers the ack with a 204 even
+// when some deletes failed, so the first entry can stay while the rest moved on. A different
+// first id counts as progress too, since a newer entry listed ahead can hide what was dropped
+// behind the bound. Such a round is still stored and acked before the drain stops: an entry
+// new to it must not be left unstored, and a delete that failed only once gets its second try.
+// Only ids stored the round before skip the insert, because the store already holds them.
 func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string, prevAcked []string) (state string, more bool, acked []string) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
 	if tok := rt.Token(); tok != "" {
@@ -513,9 +515,8 @@ func drainAgentOutboxOnce(ctx context.Context, st store.NotificationStore, rt ru
 	if ackResp.StatusCode/100 != 2 {
 		return "ready", false, nil
 	}
-	// Every id acked last round came back: that ack dropped none of them, so asking again
-	// would only repeat this work.
-	if len(stored) > 0 && len(seen) == len(stored) {
+	// Asking again would most likely read this same response once more.
+	if len(prevAcked) > 0 && acked[0] == prevAcked[0] && len(seen) == len(stored) {
 		return "ready", false, acked
 	}
 	return "ready", more, acked

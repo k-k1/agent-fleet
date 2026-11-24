@@ -772,6 +772,62 @@ func TestDrainAgentOutboxReacksADeleteThatFailedOnce(t *testing.T) {
 	}
 }
 
+// A newer entry listed ahead of the acked ones is progress even when the earlier ack dropped
+// nothing: once the next ack goes through, the drain asks again and reaches the large entry
+// the byte bound held back.
+func TestDrainAgentOutboxReasksWhenTheFirstIdChanges(t *testing.T) {
+	old := maxOutboxBody
+	maxOutboxBody = 1 << 20
+	defer func() { maxOutboxBody = old }()
+	st, mem := drainFixture(t)
+	pad := strings.Repeat("x", 400<<10) // a, b and d do not fit under the bound together
+	type ent struct{ id, pad string }
+	var mu sync.Mutex
+	pending := []ent{{"a", pad}, {"b", pad}, {"d", pad}}
+	var gets, acks int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.URL.Path == "/notifications/ack" {
+			var b struct {
+				IDs []string `json:"ids"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			if acks++; acks > 1 { // the first ack's deletes all fail
+				for _, id := range b.IDs {
+					for i, p := range pending {
+						if p.id == id {
+							pending = append(pending[:i], pending[i+1:]...)
+							break
+						}
+					}
+				}
+			}
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if gets++; gets == 2 {
+			pending = append([]ent{{"c", ""}}, pending...)
+		}
+		list := make([]string, 0, len(pending))
+		for _, p := range pending {
+			list = append(list, `{"id":"`+p.id+`","kind":"question","sessionName":"s","displayName":"`+p.pad+`"}`)
+		}
+		_, _ = w.Write([]byte(`{"notifications":[` + strings.Join(list, ",") + `]}`))
+	}))
+	defer srv.Close()
+	if got := drainAgentOutbox(context.Background(), st, drainFakeRT{state: "running", endpoint: srv.URL}, mem); got != "ready" {
+		t.Fatalf("drain = %q", got)
+	}
+	mu.Lock()
+	left := len(pending)
+	mu.Unlock()
+	rows, _ := st.ListNotifications(context.Background(), mem, "2000-01-01T00:00:00Z", 50)
+	if left != 0 || len(rows) != 4 {
+		t.Fatalf("%d left in the outbox and %d rows stored, want 0 and 4 (a, b, c, d)", left, len(rows))
+	}
+}
+
 // When every acked id comes back alongside an entry not read before (it fits under the byte
 // bound now, or the Agent listed it ahead of a large one), that entry is stored and acked
 // before the drain stops.
