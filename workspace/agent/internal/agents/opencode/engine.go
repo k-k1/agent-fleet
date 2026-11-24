@@ -250,8 +250,8 @@ func engineProviderEntry(e EngineProvider) map[string]any {
 			shown = label
 		}
 		m := map[string]any{"name": shown + " (self-hosted)"}
-		// A `limit` always carries both numbers, measured on opencode 2.2.5 and 2.2.6
-		// (TestContractV2ModelLimits*):
+		// A `limit` always carries both numbers, measured on opencode 2.2.5 and 2.2.6, and unchanged
+		// on 2.3.2 and 2.4.1 (TestContractV2ModelLimits*):
 		//
 		//   - a model with no `limit` gets a 200000 window and a 32000 output cap: compaction waits
 		//     until about 170000 tokens and a turn asks for up to 32000 output, so on a smaller
