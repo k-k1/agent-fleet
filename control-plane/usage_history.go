@@ -186,9 +186,9 @@ func (m *manager) stopRecordedAt(ctx context.Context, ws store.Workspace, rt run
 	return err
 }
 
-// usageStopProbeTimeout bounds the reads noTaskUp makes before a Stop. They are accounting, and
-// the Stop that follows still runs on the caller's own context, so a slow read never costs the
-// Stop its deadline. A variable so a test can shrink it.
+// usageStopProbeTimeout bounds the reads noTaskUp makes before a Stop. They are accounting: when
+// the caller's context has a deadline they get at most half of what is left of it, so the Stop
+// after them always keeps at least half its time. A variable so a test can shrink it.
 var usageStopProbeTimeout = 5 * time.Second
 
 // noTaskUp reports whether rt is about to be stopped with no task up and not running (a launch
@@ -202,7 +202,11 @@ func noTaskUp(ctx context.Context, rt runtime.Runtime) bool {
 	if !ok {
 		return false
 	}
-	pctx, cancel := context.WithTimeout(ctx, usageStopProbeTimeout)
+	budget := usageStopProbeTimeout
+	if dl, ok := ctx.Deadline(); ok {
+		budget = min(budget, time.Until(dl)/2)
+	}
+	pctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	if st := rt.State(pctx); st == "running" || pctx.Err() != nil {
 		return false

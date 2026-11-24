@@ -778,3 +778,32 @@ func TestStopIsNotHeldByTheAccountingRead(t *testing.T) {
 		t.Fatalf("closed at %d, %ds after its start, want the stop", l.StoppedAt, l.StoppedAt-l.StartedAt)
 	}
 }
+
+// When the caller's own deadline is nearer than usageStopProbeTimeout, the read gets at most half
+// of what is left, and the Stop still runs on a live context.
+func TestStopKeepsHalfOfACloseDeadline(t *testing.T) {
+	st, mgr, ws, _, rt := historyFixture(t, "running")
+	if err := st.BeginLaunch(context.Background(), store.Launch{ID: "L", WorkspaceID: ws.ID, MembershipID: ws.MembershipID,
+		TenantID: ws.TenantID, StartedAt: time.Now().Add(-10 * time.Minute).Unix()}); err != nil {
+		t.Fatal(err)
+	}
+	var stopErr error
+	srt := slowStateRT{taskBoxRT: taskBoxRT{boxRT: rt}, stopCtxErr: &stopErr}
+	ctx, cancel := context.WithTimeout(context.Background(), 600*time.Millisecond)
+	defer cancel()
+	if err := mgr.stopRecorded(ctx, ws, srt, false); err != nil {
+		t.Fatal(err)
+	}
+	if *rt.stops != 1 || stopErr != nil {
+		t.Fatalf("stops=%d, stop context err=%v", *rt.stops, stopErr)
+	}
+	// A shorter deadline still leaves the Stop its half.
+	ctx2, cancel2 := context.WithTimeout(context.Background(), 150*time.Millisecond)
+	defer cancel2()
+	if err := mgr.stopRecorded(ctx2, ws, srt, false); err != nil {
+		t.Fatal(err)
+	}
+	if *rt.stops != 2 || stopErr != nil {
+		t.Fatalf("stops=%d, stop context err=%v", *rt.stops, stopErr)
+	}
+}
