@@ -373,3 +373,75 @@ func TestMemoPRSnapshotNoWakeWithoutTheReport(t *testing.T) {
 		}
 	})
 }
+
+// collectPRSnapshots pages its list past the rows of a stopped workspace, however many: they stay
+// unstamped (read at the start), the member is left out of the next pages, and a running
+// workspace's snapshot behind more of them than the tick has pages is read in the tick (issue
+// #4891).
+func TestMemoPRSnapshotListPages(t *testing.T) {
+	saved := memoPRSnapshotsListed
+	memoPRSnapshotsListed = 1
+	t.Cleanup(func() { memoPRSnapshotsListed = saved })
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.prChain("clean", now.Add(-time.Minute))
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
+		stopped := e.otherMemberChains(q, "b", memoPRSnapshotListPages+1, now.Add(-time.Minute), "")
+		views := map[string]*memoMemberView{e.members["b"]: {mirrorOK: true}}
+		e.runner().collectPRSnapshots(context.Background(), views, now)
+		for _, id := range stopped {
+			if got := e.delivery(id); got.PRTriedAt != "" || got.PRState != "" {
+				t.Fatalf("the stopped workspace's snapshot was stamped or read: %+v", got)
+			}
+		}
+		if got := e.delivery(da.ID); got.PRState != store.PRStateMerged {
+			t.Fatalf("the running workspace's snapshot behind them: %+v", got)
+		}
+		if calls := agent.prCallsSoFar(); len(calls) != 1 || calls[0].Session != "q-a" {
+			t.Fatalf("reads %+v, want one of q-a", calls)
+		}
+	})
+}
+
+// More stopped members than the tick has pages, each ahead of a running workspace's snapshot: the
+// pass looks up the members recorded as stopped first and leaves out those its view finds stopped,
+// so the running one is read in the tick. Theirs stay unstamped (read at the start).
+func TestMemoPRSnapshotStoppedMembersLookedUp(t *testing.T) {
+	saved := memoPRSnapshotsListed
+	memoPRSnapshotsListed = 1
+	t.Cleanup(func() { memoPRSnapshotsListed = saved })
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.prChain("clean", now.Add(-time.Minute))
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
+		views, stopped := e.stoppedMembers(q, memoPRSnapshotListPages+1, 2, now.Add(-time.Minute), "")
+		e.runner().collectPRSnapshots(context.Background(), views(), now)
+		if got := e.delivery(da.ID); got.PRState != store.PRStateMerged {
+			t.Fatalf("the running workspace's snapshot behind them: %+v", got)
+		}
+		for _, id := range stopped {
+			if got := e.delivery(id); got.PRTriedAt != "" || got.PRState != "" {
+				t.Fatalf("a stopped workspace's snapshot was stamped or read: %+v", got)
+			}
+		}
+	})
+}
+
+// A member whose session list fails is asked once in the pass however many of its rows the page
+// holds (its failed view is kept), and the member behind it is read.
+func TestMemoPRSnapshotFailedMemberAskedOnce(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		now := time.Now()
+		agent, q, da, _ := e.prChain("clean", now.Add(-time.Minute))
+		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer("merged") })
+		calls := e.downMember()
+		e.otherMemberChains(q, "c", 2, now.Add(-time.Minute), "") // both ahead of a, in one page
+		e.runner().collectPRSnapshots(context.Background(), map[string]*memoMemberView{}, now)
+		if got := e.delivery(da.ID); got.PRState != store.PRStateMerged {
+			t.Fatalf("the member behind: %+v", got)
+		}
+		if n := len(calls); n != 1 {
+			t.Fatalf("the failing member's session list was asked %d times, want once", n)
+		}
+	})
+}

@@ -1,6 +1,12 @@
 package store
 
-import "context"
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"time"
+)
 
 // The last answer of a delivery's root session (ADR 0137, issue #4876): the first line of what the
 // session said last, read from the running Agent after the delivery closed and kept on the
@@ -21,19 +27,23 @@ const AnswerHeadMax = 200
 // MemoAnswerStore is what the dispatcher's answer pass reads and writes, outside any membership
 // lock: no slot and no message is written by it.
 type MemoAnswerStore interface {
-	// ListAnswersDue returns, of every member, the deliveries closed at or after since with a
-	// session and no answer decided, last tried before before (never tried first), at most limit,
-	// in (answer_tried_at, closed_at, id) order and past after when it is given (the last row of
-	// the page before): with waited, those a pending message of the same bucket waits for, else
-	// the others.
-	ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, limit int) ([]MemoDelivery, error)
+	// ListAnswersDue returns, of every member but those in except, the deliveries closed at or
+	// after since with a session and no answer decided, last tried before before (never tried
+	// first), at most limit, in (answer_tried_at, closed_at, id) order and past after when it is
+	// given (the last row of the page before), of member alone when it is not "": with waited,
+	// those a pending message of the same bucket waits for, else the others.
+	ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, except []string, member string, limit int) ([]MemoDelivery, error)
+	// ListAnswerStoppedMembers returns the members with a row ListAnswersDue would list whose
+	// workspace is recorded as stopped, at most limit (memoDueStoppedMembersSQL).
+	ListAnswerStoppedMembers(ctx context.Context, since, before string, waited bool, limit int) ([]string, error)
 	// MarkAnswerTried stamps a delivery whose answer is about to be read.
 	MarkAnswerTried(ctx context.Context, id, at string) error
 	// RecordAnswer keeps a read's answer on a closed delivery that has none and closed at or after
 	// since: written once, so a later turn of the same session (a person taking it over) never
-	// rewrites what the run ended with, and never after the window to read it ended. False means
-	// nothing was written.
-	RecordAnswer(ctx context.Context, id, head, class, since string) (bool, error)
+	// rewrites what the run ended with, and never after the window to read it ended: the close is
+	// at or after since (the caller's clock) and no more than window before the database's clock
+	// when the row is written. False means nothing was written.
+	RecordAnswer(ctx context.Context, id, head, class, since string, window time.Duration) (bool, error)
 }
 
 // memoDeliveryWaitedSQL holds for a delivery row that a pending message of the same bucket as the
@@ -42,20 +52,81 @@ const memoDeliveryWaitedSQL = `EXISTS (SELECT 1 FROM memo p JOIN memo m ON m.mem
 	  WHERE p.membership_id=memo_delivery.membership_id AND p.delivery_id=memo_delivery.id AND p.state='delivered'
 	    AND m.state='pending' AND m.after_ids LIKE '%"' || p.id || '"%')`
 
-func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, limit int) ([]MemoDelivery, error) {
+// memoDeliveryPageSQL narrows a list of deliveries in (tried, closed_at, id) order, tried being the
+// column of the pass's own stamp, to the rows past after (the last row of the page before, when
+// given) and outside the members in except, or to member's rows when it is not "". The except list is how a pass rotates past the
+// members whose rows it leaves unstamped (a stopped workspace): one entry skips all of a member's
+// rows, however many, where a page bound alone would let them fill every page.
+func memoDeliveryPageSQL(tried string, triedOf func(MemoDelivery) string, after *MemoDelivery, except []string, member string) (string, []any) {
+	cond, args := "", []any{}
+	if member != "" {
+		cond, args = ` AND membership_id=?`, append(args, member)
+	}
+	if after != nil {
+		t := triedOf(*after)
+		cond += ` AND (` + tried + `>? OR (` + tried + `=? AND (closed_at>? OR (closed_at=? AND id>?))))`
+		args = append(args, t, t, after.ClosedAt, after.ClosedAt, after.ID)
+	}
+	if len(except) > 0 {
+		cond += ` AND membership_id NOT IN (` + inList(len(except)) + `)`
+		for _, m := range except {
+			args = append(args, m)
+		}
+	}
+	return cond, args
+}
+
+// memoDueStoppedMembersSQL lists, of the deliveries that match cond (its args), the members whose
+// workspace the Control Plane recorded as stopped, at most limit, those with the oldest row first.
+// A pass looks only these up before it lists rows, and leaves out the ones its own view finds
+// stopped: their rows would otherwise come first on every tick (a pass leaves them unstamped), and
+// more such members than the pass has pages would keep a running member's rows from being read.
+// The record only picks whom to look up: one that is stale costs a look-up, and its member's rows
+// are listed as before.
+func memoDueStoppedMembersSQL(tried, cond string, args []any, limit int) (string, []any) {
+	return `SELECT membership_id FROM memo_delivery WHERE ` + cond + `
+		  AND EXISTS (SELECT 1 FROM workspace w WHERE w.membership_id=memo_delivery.membership_id AND w.state='stopped')
+		GROUP BY membership_id ORDER BY MIN(` + tried + `), MIN(closed_at), membership_id LIMIT ?`, append(args, limit)
+}
+
+func scanMembershipIDs(rows *sql.Rows, err error) ([]string, error) {
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// memoAnswersDueSQL is ListAnswersDue's condition and its args.
+func memoAnswersDueSQL(since, before string, waited bool) (string, []any) {
 	cond := memoDeliveryWaitedSQL
 	if !waited {
 		cond = `NOT ` + cond
 	}
-	args := []any{DeliveryClosed, since, before}
-	if after != nil {
-		cond += ` AND (answer_tried_at>? OR (answer_tried_at=? AND (closed_at>? OR (closed_at=? AND id>?))))`
-		args = append(args, after.AnswerTriedAt, after.AnswerTriedAt, after.ClosedAt, after.ClosedAt, after.ID)
-	}
-	args = append(args, limit)
-	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE state=? AND session<>'' AND answer_class=''
-		  AND closed_at>=? AND answer_tried_at<? AND `+cond+`
+	return `state=? AND session<>'' AND answer_class='' AND closed_at>=? AND answer_tried_at<? AND ` + cond,
+		[]any{DeliveryClosed, since, before}
+}
+
+func (s *SQL) ListAnswersDue(ctx context.Context, since, before string, waited bool, after *MemoDelivery, except []string, member string, limit int) ([]MemoDelivery, error) {
+	cond, args := memoAnswersDueSQL(since, before, waited)
+	page, pargs := memoDeliveryPageSQL("answer_tried_at", func(d MemoDelivery) string { return d.AnswerTriedAt }, after, except, member)
+	args = append(append(args, pargs...), limit)
+	return scanMemoDeliveries(s.db.QueryContext(ctx, memoDeliveryCols+` WHERE `+cond+page+`
 		ORDER BY answer_tried_at, closed_at, id LIMIT ?`, args...))
+}
+
+func (s *SQL) ListAnswerStoppedMembers(ctx context.Context, since, before string, waited bool, limit int) ([]string, error) {
+	cond, args := memoAnswersDueSQL(since, before, waited)
+	q, args := memoDueStoppedMembersSQL("answer_tried_at", cond, args, limit)
+	return scanMembershipIDs(s.db.QueryContext(ctx, q, args...))
 }
 
 func (s *SQL) MarkAnswerTried(ctx context.Context, id, at string) error {
@@ -63,7 +134,47 @@ func (s *SQL) MarkAnswerTried(ctx context.Context, id, at string) error {
 	return err
 }
 
-func (s *SQL) RecordAnswer(ctx context.Context, id, head, class, since string) (bool, error) {
-	return affected(s.db.ExecContext(ctx, `UPDATE memo_delivery SET answer_head=?, answer_class=?
-		WHERE id=? AND state=? AND answer_class='' AND closed_at>=?`, head, class, id, DeliveryClosed, since))
+// RecordAnswer judges the window by both clocks: since alone was computed before the statement, so
+// an UPDATE that waited on a row lock past the edge would still keep an answer. The database's
+// clock is read once the row is held: SQLite takes its write lock before it reads 'now', and on
+// Postgres the row is locked before the UPDATE.
+func (s *SQL) RecordAnswer(ctx context.Context, id, head, class, since string, window time.Duration) (bool, error) {
+	q := `UPDATE memo_delivery SET answer_head=?, answer_class=?
+		WHERE id=? AND state=? AND answer_class='' AND closed_at>=? AND closed_at>=` + s.dbDeliveryTSAgo(window)
+	args := []any{head, class, id, DeliveryClosed, since}
+	if s.dialect != "postgres" {
+		return affected(s.db.ExecContext(ctx, q, args...))
+	}
+	// A plain UPDATE that waits on a row only locked (FOR UPDATE, or a write rolled back) goes on
+	// without re-checking its WHERE, with the clock it read before the wait. The row is locked
+	// first, so the UPDATE reads the clock once the row is this transaction's.
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var one int
+	if err := tx.QueryRowContext(ctx, `SELECT 1 FROM memo_delivery WHERE id=? FOR UPDATE`, id).Scan(&one); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	ok, err := affected(tx.ExecContext(ctx, q, args...))
+	if err != nil {
+		return false, err
+	}
+	return ok, tx.Commit()
+}
+
+// dbDeliveryTSAgo is an SQL expression for the database's clock less d, in DeliveryTS's form
+// (microseconds, UTC, Z), so it compares as text with the stamps the Control Plane writes. d is
+// taken in whole seconds.
+func (s *SQL) dbDeliveryTSAgo(d time.Duration) string {
+	secs := int64(d / time.Second)
+	if s.dialect == "postgres" {
+		return fmt.Sprintf(`to_char((clock_timestamp() AT TIME ZONE 'UTC') - interval '%d seconds', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`, secs)
+	}
+	// strftime's %f is seconds with milliseconds: SQLite's clock has no finer grain.
+	return fmt.Sprintf(`(strftime('%%Y-%%m-%%dT%%H:%%M:%%f', 'now', '-%d seconds') || '000Z')`, secs)
 }

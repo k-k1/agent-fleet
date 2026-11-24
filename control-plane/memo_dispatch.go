@@ -1224,12 +1224,12 @@ func memoFireBlock(tx store.MemoWaitOps, q store.MemoQueue, pending store.QueueP
 
 const (
 	// memoPRSnapshotBudget bounds the pass that reads the snapshots, apart from the settle pass's
-	// own budget, and memoPRSnapshotsPerTick how many it reads in a tick. memoPRSnapshotsListed is
-	// how many due ones it looks at: those of a stopped workspace are passed over without a read,
-	// and must not use up the tick's reads.
-	memoPRSnapshotBudget   = 20 * time.Second
-	memoPRSnapshotsPerTick = 20
-	memoPRSnapshotsListed  = 200
+	// own budget, and memoPRSnapshotsPerTick how many it reads in a tick. memoPRSnapshotListPages
+	// is the pages of due ones it looks at: those of a stopped workspace are passed over without a
+	// read, and must not use up the tick's reads.
+	memoPRSnapshotBudget    = 20 * time.Second
+	memoPRSnapshotsPerTick  = 20
+	memoPRSnapshotListPages = 10
 	// memoPRSnapshotEvery is the least time between two reads of one delivery's snapshot.
 	memoPRSnapshotEvery = 10 * time.Minute
 	// memoPRCallWait is the wait for the Agent, above its own 15 s bound on the provider and
@@ -1270,25 +1270,109 @@ type memoPRSnapshotReply struct {
 
 // collectPRSnapshots reads the snapshots that are due: a pending message waits for them, they are
 // not final, and they were not tried in the last 10 minutes. Only a running workspace whose Agent
-// has the endpoint is asked; every other read decides nothing, and the dependent waits.
-func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[string]*memoMemberView, now time.Time) {
-	if ctx.Err() != nil {
-		return
-	}
-	ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, store.DeliveryTS(now.Add(-memoPRSnapshotEvery)), memoPRSnapshotsListed)
-	if err != nil {
-		log.Printf("memo queue: list PR snapshots due: %v", err)
-		return
-	}
+// has the endpoint is asked; every other read decides nothing, and the dependent waits. The list
+// is paged as collectAnswers pages its waited-for one: the members recorded as stopped whose
+// runtime is stopped are left out from the first page, and any other member whose rows are left
+// unstamped from the next pages. The stopped-member look-up runs under memoStoppedLookupBudget
+// before the pass's own budget (memoPRSnapshotBudget) starts; a background poll finds the left-out
+// members that start meanwhile, and their rows are read before the next row.
+func (r *memoQueueRunner) collectPRSnapshots(tick context.Context, views map[string]*memoMemberView, now time.Time) {
+	r.prFailed = map[string]bool{}
+	r.retry = nil
 	read := 0
-	for _, d := range ds {
+	before := store.DeliveryTS(now.Add(-memoPRSnapshotEvery))
+	var after *store.MemoDelivery
+	var except memoExcept
+	lctx, lcancel := context.WithTimeout(tick, memoStoppedLookupBudget)
+	ms, err := r.mgr.store.ListPRSnapshotStoppedMembers(lctx, before, memoPRSnapshotListPages*memoPRSnapshotsListed)
+	if err != nil {
+		log.Printf("memo queue: list PR snapshots due of stopped members: %v", err)
+	}
+	stopped := r.memoLookUpStopped(lctx, ms)
+	lcancel()
+	ctx, cancel := context.WithTimeout(tick, memoPRSnapshotBudget)
+	defer cancel()
+	for _, m := range stopped {
+		except.add(m)
+	}
+	watch := r.watchStarts(ctx, stopped)
+	// started merges the rows of the members the poll saw running into the pages by their order.
+	started := &memoStartedRows{
+		watch:   watch,
+		triedOf: func(d store.MemoDelivery) string { return d.PRTriedAt },
+		fetch: func(m string) []store.MemoDelivery {
+			if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
+				return nil
+			}
+			if v, ok := views[m]; ok && (v == nil || !v.liveOK) {
+				delete(views, m) // the tick's view is of the stopped workspace
+			}
+			ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, before, nil, nil, m, memoPRSnapshotsPerTick-read)
+			if err != nil {
+				log.Printf("memo queue: list PR snapshots due of %s: %v", m, err)
+			}
+			return ds
+		},
+		read: func(ds []store.MemoDelivery) {
+			r.readPRSnapshotsOf(ctx, views, ds, &read, &memoExcept{}, now, nil)
+		},
+	}
+	defer func() {
+		watch.settle(ctx)
+		started.before(nil)
+	}()
+	for p := 0; p < memoPRSnapshotListPages; p++ {
 		if ctx.Err() != nil || read >= memoPRSnapshotsPerTick {
 			return
 		}
+		ds, err := r.mgr.store.ListPRSnapshotsDue(ctx, before, after, except.ids, "", memoPRSnapshotsListed)
+		if err != nil {
+			log.Printf("memo queue: list PR snapshots due: %v", err)
+			return
+		}
+		r.readPRSnapshotsOf(ctx, views, ds, &read, &except, now, started.before)
+		if len(ds) < memoPRSnapshotsListed {
+			return
+		}
+		after = &ds[len(ds)-1]
+	}
+}
+
+// memoPRSnapshotsListed is a page of collectPRSnapshots' list. A variable only so a test can page
+// with a handful of rows.
+var memoPRSnapshotsListed = 200
+
+// prView is the snapshot pass's view of a member. A member this pass resolved itself and could not
+// resolve, or whose session list could not be read, is recorded in prFailed: the failure stays in
+// the tick's views, so the pass asks the member once, and the answer pass resolves it again after
+// its other rows instead of taking the failure for its own.
+func (r *memoQueueRunner) prView(ctx context.Context, views map[string]*memoMemberView, membershipID string) *memoMemberView {
+	_, had := views[membershipID]
+	v := r.view(ctx, views, membershipID)
+	if !had && (v == nil || (!v.liveOK && !v.mirrorOK)) {
+		r.prFailed[membershipID] = true
+	}
+	return v
+}
+
+// readPRSnapshotsOf reads the snapshots of one page of collectPRSnapshots' list,
+// adding to *read the reads made; pre, when set, runs before each row.
+func (r *memoQueueRunner) readPRSnapshotsOf(ctx context.Context, views map[string]*memoMemberView, ds []store.MemoDelivery, read *int, except *memoExcept, now time.Time, pre func(*store.MemoDelivery)) {
+	for _, d := range ds {
+		if pre != nil {
+			pre(&d)
+		}
+		if ctx.Err() != nil || *read >= memoPRSnapshotsPerTick {
+			return
+		}
+		if except.in[d.MembershipID] {
+			continue
+		}
 		// Only a read that is made is stamped: a stamp on a stopped workspace's snapshot would keep
 		// the wake made for it from being read for 10 minutes after the start.
-		v := r.view(ctx, views, d.MembershipID)
+		v := r.prView(ctx, views, d.MembershipID)
 		if v == nil || !v.liveOK || !v.prs {
+			except.add(d.MembershipID)
 			continue
 		}
 		// Stamped before it is tried, as the first-turn pass stamps: the next tick goes on with
@@ -1299,7 +1383,7 @@ func (r *memoQueueRunner) collectPRSnapshots(ctx context.Context, views map[stri
 		if err != nil {
 			log.Printf("memo queue: delivery %s: stamp the PR snapshot tried: %v", d.ID, err)
 		}
-		read++
+		*read++
 		r.readPRSnapshot(ctx, v.res, d)
 	}
 }
