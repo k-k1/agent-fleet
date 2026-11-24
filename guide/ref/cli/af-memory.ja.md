@@ -269,6 +269,7 @@ af-memory promote-candidates [--project <ID か名前>] [--days N] [--json]
 |---|---|
 | `about-member` | タイプが `user` です |
 | `open-reasons` | 「要確認」です |
+| `disputed` | あるセッションが、今のリビジョンを stale か wrong と報告しました。理由がメモリに付いていなくても、新しいリビジョンになるまで保留します |
 | `no-anchors` | 保存されたアンカーがありません |
 | `unverified` | 確かめられないものがあったので、どのメモリも候補になりません。既定ブランチを読めなかったか、その上の検査が失敗した、`origin/HEAD` が設定されていない（既定ブランチが推測にすぎません。`git remote set-head origin --auto` で設定できます）、部分クローンである、廃止した用語の一覧を読めない、のどれかです。どれだったかは `skipped` の行に出ます |
 | `anchor-not-found` | 保存されたアンカーが既定ブランチで見つかりません（そのアンカーを添えます） |

@@ -304,6 +304,44 @@ func TestAgentMemoryPromoteHoldsMetadataPublishedByAPin(t *testing.T) {
 	}
 }
 
+// A wrong report whose reason never reached the memory (the reason's commit failed after the
+// record was written, and a retry is a duplicate) still holds the revision it was made on; a new
+// revision starts clean.
+func TestAgentMemoryPromoteHoldsADisputeWithoutItsReason(t *testing.T) {
+	_, clone, _ := agentMemTestEnv(t)
+	promoteBackdate(t)
+	agentMemLintOrigin(t, clone, map[string]string{"scripts/release.sh": "#!/bin/sh\n"})
+	a, b := agentMemCallerT(t, "claude-main"), agentMemCallerT(t, "codex-wt")
+	promoteSave(t, a, "m", "procedure", "run scripts/release.sh", "scripts/release.sh")
+	promoteConfirm(t, "m", 1, a, b)
+	rel, _ := agentMemScopeDir(agentMemScopeProject, a)
+	if err := agentMemFeedbackAppend(rel, "m", agentMemFeedbackRecord{Session: "third", Revision: 1, Verdict: agentMemVerdictWrong, At: promoteSaved.Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := lifeStored(t, a, agentMemScopeProject, "m"); len(got.Reasons) != 0 {
+		t.Fatalf("fixture: reasons %+v", got.Reasons)
+	}
+	w := promoteGet(t, "project="+a.Project.ID)
+	if len(w.Candidates) != 0 || strings.Join(promoteHeldRules(w, "m"), ";") != memorypromote.RuleDisputed+"=1 session(s) on revision 1" {
+		t.Fatalf("candidates %v, held %v", promoteNames(w), promoteHeldRules(w, "m"))
+	}
+	// The retry the reviewer described: the same session's report is a duplicate and changes nothing.
+	if res, err := agentMemFeedback(agentMemCaller{Session: "third", Kind: "claude", Project: a.Project}, agentMemFeedbackReq{Scope: agentMemScopeProject, Name: "m", Revision: 1, Verdict: agentMemVerdictWrong, Note: "x"}, promoteSaved); err != nil || res.Outcome != "duplicate" {
+		t.Fatalf("retry: %+v %v", res, err)
+	}
+	if w := promoteGet(t, "project="+a.Project.ID); len(w.Candidates) != 0 {
+		t.Fatalf("after the retry: candidates %v", promoteNames(w))
+	}
+	// A corrected text is revision 2; its own confirmations make it a candidate again.
+	if _, err := agentMemSave(a, agentMemSaveReq{Name: "m", Description: "d", Type: "project", Body: "run scripts/release.sh, then tag", Revision: 1}, promoteSaved); err != nil {
+		t.Fatal(err)
+	}
+	promoteConfirm(t, "m", 2, a, b)
+	if w := promoteGet(t, "project="+a.Project.ID); strings.Join(promoteNames(w), ",") != "m" {
+		t.Fatalf("revision 2: held %v", promoteHeldRules(w, "m"))
+	}
+}
+
 // Every way the anchors cannot be checked holds the candidate as unverified and says why: no
 // origin default branch, a default only guessed because origin/HEAD is not set, a retired-term
 // list that cannot be read.

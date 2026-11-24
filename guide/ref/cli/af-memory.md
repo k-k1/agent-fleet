@@ -270,6 +270,7 @@ A memory of those kinds that does not qualify is listed as `held`, with what it 
 |---|---|
 | `about-member` | Its type is `user` |
 | `open-reasons` | It is suspect |
+| `disputed` | A session reported its current revision stale or wrong. It waits for a new revision, even when the reason is not on the memory |
 | `no-anchors` | It has no stored anchors |
 | `unverified` | Something could not be checked, so nothing qualifies: the default branch could not be read or a check over it failed, `origin/HEAD` is not set (the default branch would only be a guess; `git remote set-head origin --auto` sets it), the clone is partial, or the retired-term list cannot be read. The `skipped` lines say which |
 | `anchor-not-found` | A stored anchor was not found on the default branch (the anchor is named) |

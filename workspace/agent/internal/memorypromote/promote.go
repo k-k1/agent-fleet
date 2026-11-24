@@ -29,6 +29,7 @@ const VerdictConfirmed = "confirmed"
 const (
 	RuleAboutMember  = "about-member"     // 0108's type says it is about the member, not the repository
 	RuleOpenReasons  = "open-reasons"     // it is suspect
+	RuleDisputed     = "disputed"         // a session reported the current revision stale or wrong
 	RuleNoAnchors    = "no-anchors"       // nothing ties it to the repository
 	RuleLint         = "lint"             // lint reports something about it (a missing anchor, a retired term, its size)
 	RuleUnverified   = "unverified"       // the default branch or the retired-term list could not be read, so nothing is checked
@@ -130,6 +131,20 @@ func Sessions(reports []Confirmation, rev int) int {
 	return len(seen)
 }
 
+// Disputed counts the distinct sessions that reported exactly revision rev as stale or wrong. The
+// record is kept even when the reason it should have added was never published (the commit
+// failed after the record was written, or the reason was removed outside AF), so it is read
+// directly rather than trusted to show up as an open reason. A new revision starts clean.
+func Disputed(reports []Confirmation, rev int) int {
+	seen := map[string]bool{}
+	for _, r := range reports {
+		if r.Verdict != VerdictConfirmed && r.Revision == rev && r.Session != "" {
+			seen[r.Session] = true
+		}
+	}
+	return len(seen)
+}
+
 // Select applies decision 11's signals to every memory.
 func Select(mems []Memory, opts Options) Result {
 	minSessions := opts.MinSessions
@@ -151,6 +166,9 @@ func Select(mems []Memory, opts Options) Result {
 		}
 		if m.Reasons > 0 {
 			miss = append(miss, Miss{Rule: RuleOpenReasons, Detail: fmt.Sprintf("%d open", m.Reasons)})
+		}
+		if d := Disputed(m.Reports, m.Revision); d > 0 {
+			miss = append(miss, Miss{Rule: RuleDisputed, Detail: fmt.Sprintf("%d session(s) on revision %d", d, m.Revision)})
 		}
 		if len(m.Anchors) == 0 {
 			miss = append(miss, Miss{Rule: RuleNoAnchors})

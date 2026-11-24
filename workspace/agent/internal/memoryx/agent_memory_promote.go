@@ -295,7 +295,8 @@ func agentMemPromoteCandidates(project string, quietDays int, now time.Time) (ag
 		}
 		// The history is read only for a memory every other signal already admits.
 		if unverified == "" && !moved && m.Reasons == 0 && len(m.Anchors) > 0 && len(m.Missing) == 0 &&
-			len(m.Findings) == 0 && m.Type != "user" && memorypromote.Sessions(m.Reports, m.Revision) >= out.MinSessions {
+			len(m.Findings) == 0 && m.Type != "user" && memorypromote.Disputed(m.Reports, m.Revision) == 0 &&
+			memorypromote.Sessions(m.Reports, m.Revision) >= out.MinSessions {
 			// The bytes compared with the history must be the ones judged: a process that edits the
 			// store directly is not held off by the lock, so they are parsed again and must agree.
 			fileRel := rel + "/" + e.Name + ".md"

@@ -74,10 +74,14 @@ func TestSelectEachRuleHoldsOnItsOwn(t *testing.T) {
 		{"same-session-twice", func(m *Memory) { m.Reports[1].Session = "s1" }, RuleConfirmation},
 		// A confirmation of an earlier body does not count for the current one.
 		{"older-revision", func(m *Memory) { m.Reports[1].Revision = 2 }, RuleConfirmation},
-		{"not-a-confirmation", func(m *Memory) { m.Reports[1].Verdict = "stale" }, RuleConfirmation},
+		// A stale report is not a confirmation (on an earlier revision, so it disputes nothing here).
+		{"not-a-confirmation", func(m *Memory) { m.Reports[1].Verdict, m.Reports[1].Revision = "stale", 2 }, RuleConfirmation},
 		{"no-session", func(m *Memory) { m.Reports[1].Session = "" }, RuleConfirmation},
 		{"recent", func(m *Memory) { m.Updated = now.Add(-6 * 24 * time.Hour) }, RuleRecent},
 		{"unknown-time", func(m *Memory) { m.Updated = time.Time{} }, RuleRecent},
+		// A stale or wrong report on the current revision holds it even with no open reason (the
+		// reason's commit may have failed); one on an earlier revision does not.
+		{"disputed", func(m *Memory) { m.Reports = append(m.Reports, Confirmation{"s3", 3, "wrong"}) }, RuleDisputed},
 		{"anchor-not-found", func(m *Memory) { m.Missing = []string{"scripts/release.sh"} }, RuleAnchor},
 		{"moved", func(m *Memory) { m.Also = []Miss{{Rule: RuleMoved}} }, RuleMoved},
 		{"unpublished", func(m *Memory) { m.Also = []Miss{{Rule: RuleUnpublished}} }, RuleUnpublished},
@@ -94,6 +98,14 @@ func TestSelectEachRuleHoldsOnItsOwn(t *testing.T) {
 				t.Fatalf("held = %+v, want only %s", res.Held, tc.want)
 			}
 		})
+	}
+}
+
+func TestSelectIgnoresADisputeOfAnEarlierRevision(t *testing.T) {
+	m := proven("m")
+	m.Reports = append(m.Reports, Confirmation{"s3", 2, "stale"})
+	if r := Select([]Memory{m}, Options{Now: now}); len(r.Candidates) != 1 {
+		t.Fatalf("a report on revision 2 held revision 3: %+v", r)
 	}
 }
 
