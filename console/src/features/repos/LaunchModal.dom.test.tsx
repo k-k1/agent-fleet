@@ -189,6 +189,10 @@ const launchedWith = (): LaunchOpts => onLaunch.mock.calls[0][0] as LaunchOpts;
 
 beforeEach(() => {
   localStorage.clear();
+  // These suites drive the agent, model and advanced controls, which sit in the Details fold
+  // (ADR 0142 decision 7); start with it open, as a device that left it open does. The fold
+  // itself is tested in LaunchModal.dom.test.tsx ("what -> where -> details").
+  localStorage.setItem("af.launch-open.details", "1");
   // The attachment draft lives in IndexedDB (lib/attachDraft). Start every test with a fresh
   // DB and a connection re-opened against it.
   globalThis.indexedDB = new IDBFactory();
@@ -213,6 +217,60 @@ afterEach(() => {
   act(() => root?.unmount());
   root = null;
   host.remove();
+});
+
+// ADR 0142 decision 7: what -> where -> details. The prompt comes first, then the place, then one
+// Details fold holding the agent, model and the rest; nothing that blocks the launch, and no
+// expired login the launch would run on, is ever left behind that fold.
+describe("LaunchModal what -> where -> details", () => {
+  // These tests are about the fold, so they start from a device that never opened it.
+  beforeEach(() => localStorage.removeItem("af.launch-open.details"));
+  const cards = () => document.querySelectorAll(".ui-seg.big .seg-btn");
+  const follows = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
+
+  it("puts the prompt first, then Location, then a folded Details naming the agent and model", async () => {
+    await render(["claude", "codex"]);
+    expect([...document.querySelectorAll(".launch-sec-label")].map((el) => el.textContent)).toEqual(["Location", "Details"]);
+    expect(follows(promptBox(), secHead("Location"))).toBe(true);
+    expect(follows(secHead("Location"), secHead("Details"))).toBe(true);
+    expect(cards()).toHaveLength(0);
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+    expect(summaryOf("Details")).toMatch(/^Claude Code\b/);
+  });
+
+  it("launches the agent the folded summary names, without opening it", async () => {
+    await render(["claude", "codex"]);
+    await click(byText("Start in a worktree"));
+    expect(launchedWith().kind).toBe("claude");
+  });
+
+  it("remembers an opened Details for the next dialog", async () => {
+    await render(["claude", "codex"]);
+    await expand("Details");
+    expect(cards()).toHaveLength(2);
+    expect(localStorage.getItem("af.launch-open.details")).toBe("1");
+    await reopen();
+    expect(cards()).toHaveLength(1);
+    await expand("Details");
+    expect(localStorage.getItem("af.launch-open.details")).toBe(null);
+  });
+
+  it("opens Details by itself while the picked Claude's login has expired", async () => {
+    await render(["claude"], { claudeExpired: true });
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
+    expect(document.body.textContent).toContain("Claude login has expired");
+  });
+
+  it("leaves Details folded for an expired Claude login when another agent is picked", async () => {
+    await render(["codex", "claude"], { claudeExpired: true });
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("opens Details by itself when no agent can be launched", async () => {
+    await render([]);
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector('[data-testid="launch-noagents"]')).not.toBeNull();
+  });
 });
 
 describe("LaunchModal branch mode", () => {
@@ -511,14 +569,12 @@ describe("LaunchModal branch mode", () => {
 describe("LaunchModal driver choice — terminalDriver gate", () => {
   it("offers Managed / Terminal for a kind with no terminalDriver override — negative control", async () => {
     await render(["codex"]);
-    await expand("More");
     expect(byText("Managed (recommended)")).toBeTruthy();
     expect(byText("Terminal (CLI)")).toBeTruthy();
   });
 
   it("offers no driver choice at all for lcpp (terminalDriver: false)", async () => {
     await render(["lcpp"]);
-    await expand("More");
     expect(buttons().find((b) => b.textContent?.includes("Terminal (CLI)"))).toBeUndefined();
     expect(buttons().find((b) => b.textContent?.includes("Managed (recommended)"))).toBeUndefined();
   });
@@ -533,7 +589,6 @@ describe("LaunchModal driver choice — catalog arriving late", () => {
 
   it("offers the choice and defaults an untouched driver to Managed", async () => {
     await render(["claude"]);
-    await expand("More");
     expect(buttons().find((b) => b.textContent?.includes("Managed (recommended)"))).toBeUndefined();
     await act(async () => setKindCatalog(claudeManaged()));
     expect(byText("Managed (recommended)").classList.contains("seg-btn--active")).toBe(true);
@@ -543,7 +598,6 @@ describe("LaunchModal driver choice — catalog arriving late", () => {
   it("leaves a driver the user picked alone", async () => {
     await act(async () => setKindCatalog(claudeManaged()));
     await render(["claude"]);
-    await expand("More");
     await click(byText("Terminal (CLI)"));
     await act(async () => setKindCatalog(parseKindCatalog({ kinds: [{ kind: "claude", managedOnly: false, managedDefault: true, mcpClient: "yes" }, { kind: "x", managedOnly: false, managedDefault: false, mcpClient: "no" }] })));
     expect(byText("Terminal (CLI)").classList.contains("seg-btn--active")).toBe(true);
@@ -611,7 +665,6 @@ describe("LaunchModal model route picker (ADR 0128)", () => {
 
   it("shows no picker without a catalog, or for a kind that declares none", async () => {
     await render(["claude", "codex"]);
-    await expand("More");
     expect(routeSelect()).toBeUndefined();
     await act(async () => setKindCatalog(catalog()));
     expect(routeSelect()).toBeUndefined();
@@ -620,7 +673,6 @@ describe("LaunchModal model route picker (ADR 0128)", () => {
   it("offers the declared routes, sends nothing by default and the id once chosen", async () => {
     await act(async () => setKindCatalog(catalog(["anthropic-api", "anthropic-subscription"])));
     await render(["claude", "codex"]);
-    await expand("More");
     const sel = must(routeSelect(), "the route picker");
     expect(sel.value).toBe("");
     expect([...sel.options].map((o) => o.value)).toEqual(["", "anthropic-api", "anthropic-subscription"]);
@@ -631,7 +683,6 @@ describe("LaunchModal model route picker (ADR 0128)", () => {
   it("sends the chosen route id", async () => {
     await act(async () => setKindCatalog(catalog(["anthropic-api", "anthropic-subscription"])));
     await render(["claude", "codex"]);
-    await expand("More");
     const sel = must(routeSelect(), "the route picker");
     await act(async () => {
       sel.value = "anthropic-api";
@@ -644,7 +695,6 @@ describe("LaunchModal model route picker (ADR 0128)", () => {
   it("drops the choice when the kind changes", async () => {
     await act(async () => setKindCatalog(catalog(["anthropic-api"])));
     await render(["claude", "codex"]);
-    await expand("More");
     const sel = must(routeSelect(), "the route picker");
     await act(async () => {
       sel.value = "anthropic-api";
@@ -688,7 +738,6 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     ssmProfiles = [{ id: "p-plain", label: "Plain", region: "us-east-1" }];
     await act(async () => setKindCatalog(catalog));
     await render(["claude"]);
-    await expand("More");
     await settle();
     const sel = must(routeSelect(), "the route picker");
     expect([...sel.options].map((o) => o.value)).toEqual(["", "anthropic-api", "anthropic-subscription"]);
@@ -701,7 +750,6 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     ];
     await act(async () => setKindCatalog(catalog));
     await render(["claude"]);
-    await expand("More");
     await settle();
     const sel = must(routeSelect(), "the route picker");
     expect([...sel.options].map((o) => o.value)).toContain("bedrock");
@@ -718,7 +766,6 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
     await act(async () => setKindCatalog(catalog));
     await render(["claude"]);
-    await expand("More");
     await settle();
     await choose(must(routeSelect(), "the route picker"), "bedrock");
     await type(must(modelInput(), "the model id field"), "eu.anthropic.claude-opus-5-5");
@@ -742,7 +789,6 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
     await act(async () => setKindCatalog(catalog));
     await render(["claude"]);
-    await expand("More");
     await settle();
     await choose(must(routeSelect(), "the route picker"), "anthropic-api");
     await click(byText("Start in a worktree"));
@@ -756,7 +802,6 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
     await act(async () => setKindCatalog(catalog));
     await render(["claude"]);
-    await expand("More");
     await settle();
     expect(modelInput()).toBeNull();
     await choose(must(routeSelect(), "the route picker"), "bedrock");
@@ -781,7 +826,6 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     localStorage.setItem("af.bedrock-model.p-marked", "anthropic.claude-sonnet-4-5-20250929-v1:0");
     await act(async () => setKindCatalog(catalog));
     await render(["claude"]);
-    await expand("More");
     await settle();
     await choose(must(routeSelect(), "the route picker"), "bedrock");
     expect(must(modelInput(), "the model id field").value).toBe("anthropic.claude-sonnet-4-5-20250929-v1:0");
@@ -835,7 +879,6 @@ describe("LaunchModal opencode on the bedrock route (ADR 0128 P2c)", () => {
     ssmProfiles = [];
     await act(async () => setKindCatalog(catalog));
     await render(["opencode"]);
-    await expand("More");
     await settle();
     expect(routeSelect()).toBeUndefined();
     const plain = await listed();
@@ -850,7 +893,6 @@ describe("LaunchModal opencode on the bedrock route (ADR 0128 P2c)", () => {
       setKindCatalog(parseKindCatalog({ kinds: [{ kind: "opencode", managedOnly: false, managedDefault: true, mcpClient: "yes", routes: ["bedrock"] }] })),
     );
     await render(["opencode"]);
-    await expand("More");
     await settle();
     // No route chosen: the route's models stay out of the menu.
     const plain = await listed();
@@ -873,7 +915,6 @@ describe("LaunchModal opencode on the bedrock route (ADR 0128 P2c)", () => {
   it("offers the route's models only on the route, and needs one to start", async () => {
     await act(async () => setKindCatalog(catalog));
     await render(["opencode"]);
-    await expand("More");
     await settle();
     const before = await listed();
     expect(before.some((t) => t.includes("big-pickle"))).toBe(true);
@@ -934,7 +975,6 @@ describe("tenant launch defaults", () => {
 
   it("leaves a budget the member typed when the late answer arrives (C2)", async () => {
     await render(["claude", "codex"]);
-    await expand("More");
     const input = must(document.querySelector<HTMLInputElement>('input[inputmode="decimal"]'), "budget field");
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "9");
@@ -955,7 +995,6 @@ describe("tenant launch defaults", () => {
 
   it("does not save a default the CP would refuse, and reports a failed save (C6)", async () => {
     await render(["claude"]);
-    await expand("More");
     const save = byText("Use as my default");
     expect(save.disabled).toBe(false);
     patchResult = false;
@@ -965,7 +1004,6 @@ describe("tenant launch defaults", () => {
 
   it("keeps a permission the member set by hand when a late answer changes the agent (C8)", async () => {
     await render(["claude", "cursor"]);
-    await expand("More");
     // The permission selector is only offered for kinds with that choice; set it through the UI.
     const sel = must([...document.querySelectorAll<HTMLSelectElement>("select")].find((e) => [...e.options].some((o) => o.value === "skip")), "permission select");
     await act(async () => {
@@ -991,7 +1029,6 @@ describe("tenant launch defaults", () => {
 
   it("will not save an unparsable budget as unset (C10)", async () => {
     await render(["claude"]);
-    await expand("More");
     const input = must(document.querySelector<HTMLInputElement>('input[inputmode="decimal"]'), "budget field");
     for (const bad of ["abc", "1.234", "100001"]) {
       await act(async () => {
@@ -1005,7 +1042,6 @@ describe("tenant launch defaults", () => {
   it("keeps a budget typed while the kinds list was still resolving (C11)", async () => {
     useUIStateStore.setState({ state: answer("codex") as never });
     await render([]);
-    await expand("More");
     const input = must(document.querySelector<HTMLInputElement>('input[inputmode="decimal"]'), "budget field");
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input, "9");

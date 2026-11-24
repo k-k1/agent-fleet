@@ -340,8 +340,8 @@ const SCENES = [
     width: 1400,
     height: 900,
     layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
-    // Open the hub, then drill into a repo so the agent picker (every CLI, with the
-    // per-agent model choice) is what the shot shows.
+    // Open the hub, then drill into a repo and unfold Details so the agent picker (every CLI,
+    // with the per-agent model choice) is what the shot shows.
     action: `(async () => {
       document.querySelector(".ws-newsession")?.click();
       await new Promise((r) => setTimeout(r, 700));
@@ -349,8 +349,12 @@ const SCENES = [
       await new Promise((r) => setTimeout(r, 500));
       const rows = [...document.querySelectorAll(".start-row")];
       rows.find((el) => el.textContent.includes("webshop"))?.click();
+      await new Promise((r) => setTimeout(r, 1200));
+      const heads = [...document.querySelectorAll(".ui-modal .launch-sec-head")];
+      heads[heads.length - 1]?.click();
     })()`,
     settle: 1400,
+    verify: `document.querySelectorAll(".ui-modal .ui-seg.big .seg-btn").length > 1`,
   },
   {
     // Settings › workspace › Usage: the per-feature / per-agent / per-model token
@@ -1350,8 +1354,8 @@ const SCENES = [
     verify: `!!document.querySelector(".start-space-actions button:not([disabled])")`,
   },
   {
-    // "Start work" for a repository as it opens: agent, model, first prompt, and the folded
-    // Location and Details sections with their summaries.
+    // "Start work" for a repository as it opens: the first prompt, then the folded Location and
+    // Details sections with their summaries (Details names the agent and model).
     name: "sessions-launch",
     guide: true,
     // The hub stays open under the dialog; the action tags the top one.

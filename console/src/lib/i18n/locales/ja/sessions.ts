@@ -703,7 +703,6 @@ export const sessions = {
   // 折りたたみセクション（場所 / 詳細）の見出しと、畳んでいる間に出す要約。要約は
   // 「開かなくても実際に何が起きるか読み取れる」ことが役目なので、既定のままでも
   // 場所は必ず文章で出し、詳細は既定から動いた項目だけを並べる。
-  "launch.field.advanced": "詳細",
   "launch.sec_edit": "変更",
   "launch.sec_done": "閉じる",
   "launch.sum.direct": "このコピーで直接 · {branch}",
@@ -715,7 +714,6 @@ export const sessions = {
   "launch.sum.driver_terminal": "ターミナル（CLI）",
   "launch.sum.effort": "effort {v}",
   "launch.sum.title": "名前「{name}」",
-  "launch.sum.defaults": "既定のまま",
   "launch.sum.permissions_on": "権限確認あり",
 
   // === P2 スタートモーダル（features/repos/StartModal.tsx）===

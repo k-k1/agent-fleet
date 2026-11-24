@@ -693,7 +693,6 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   // Collapsed sections (Location / More) and the summary shown while folded. The
   // summary exists so the launch is readable without expanding: Location always
   // spells out what git will do, More lists only what differs from the defaults.
-  "launch.field.advanced": "More",
   "launch.sec_edit": "Change",
   "launch.sec_done": "Close",
   "launch.sum.direct": "In this copy · {branch}",
@@ -705,7 +704,6 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.sum.driver_terminal": "Terminal (CLI)",
   "launch.sum.effort": "effort {v}",
   "launch.sum.title": "name “{name}”",
-  "launch.sum.defaults": "Defaults",
   "launch.sum.permissions_on": "Approvals on",
 
   // === P2 start modal (features/repos/StartModal.tsx) ===

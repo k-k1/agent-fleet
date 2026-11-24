@@ -4,10 +4,11 @@
 // temp/<slug> in a wip-<slug> folder) or in-place on the current checkout.
 // Port of the old components/LaunchModal.
 //
-// Layout: rather than 11 fields of equal rank, three tiers —
-//   1. what is being decided this time (agent -> model -> first prompt), always visible;
-//   2. location (worktree / branch / base point) and 3. advanced (execution method, effort,
-//      start mode, working directory, session name) as "one summary line + expand".
+// Layout (ADR 0142 decision 7): what -> where -> details, rather than 11 fields of equal rank —
+//   1. what to do (the first prompt and its attachments), always visible;
+//   2. where (worktree / base / branch / working directory) and 3. details (agent, model,
+//      execution method, effort, start mode, permissions, session name) as "one summary line +
+//      expand". The home variant keeps the same order with a fixed note for the place.
 // repoLast remembers the defaults per repository and they are right most of the time, so for
 // the folded tiers being able to CHECK them is enough. The summary must always show the
 // values the launch will actually use, so nothing is ever launched from a setting the fold
@@ -60,7 +61,7 @@ import { SkillButton, SkillList } from "../mirror/parts/SkillList.tsx";
 import { PromptTemplateButton, PromptTemplatePopover } from "./PromptTemplatePicker.tsx";
 import { bitbucketPending, warningText } from "./branchRule.ts";
 import type { BranchItem } from "./branchRule.ts";
-import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
+import { ClaudeExpiredHint, claudeExpiredShows } from "./ClaudeExpiredHint.tsx";
 import { fetchMemoAttachments, stashLaunchDraft } from "../memo/launchStash.ts";
 import type { MemoAttachment } from "../../types/memo.ts";
 import type { SharedDraft } from "./hubDraft.ts";
@@ -481,7 +482,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // SCM view's "work on this branch" always opens the location section — not seeing which
   // branch was picked is unsettling.
   const [placeOpen, setPlaceOpen] = useState(() => !!initialExistingBranch || readLaunchOpen("place"));
-  const [advOpen, setAdvOpen] = useState(() => readLaunchOpen("adv"));
   const [detailsOpen, setDetailsOpen] = useState(() => readLaunchOpen("details"));
   // A new space's display name; "" lets the Agent name the folder alone.
   const [spaceName, setSpaceName] = useState("");
@@ -605,6 +605,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   const chosenRoute = routeOptions.includes(route) && routeUsable(live, route) ? route : "";
   // A kind that cannot launch without a route has none chosen yet.
   const routeMissing = !emptyOk && !chosenRoute;
+  // An API-key or Bedrock launch does not run on the OAuth login, so its expiry is not this launch's problem.
+  const claudeLoginGone = claudeExpiredShows(kind, claudeExpired && chosenRoute !== "anthropic-api" && chosenRoute !== "bedrock");
   const someNoKey = routeOptions.some((r) => !routeUsable(live, r));
   // A kind without route models of its own (claude) runs on bedrock on the one Bedrock id typed
   // beside the region (#3587); one with them (opencode: amazon-bedrock/…) picks one in the model
@@ -649,8 +651,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         : tr("launch.sum.wt_auto", { base: baseName || tr("launch.base_default") });
   // The section is folded by default, so a branch-rule warning inside it is named on the summary.
   const placeWarned = worktree && !existingMode && naming.warnings.length > 0;
-  // Advanced does the opposite and lists only what moved off its default; all-defaults gets a
-  // single word. Always printing 5 items turns the line into another grey band nobody reads.
+  // Details names the agent and model, then only what moved off its default. Always printing
+  // every item turns the line into another grey band nobody reads.
   const hasBudget = agentOf(kind).caps.transcript;
   // "Use as my default": the CP refuses an agent outside its list, a malformed model and a budget over
   // its cap, so those are explained here rather than failing after the press.
@@ -687,13 +689,12 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         : tr("launch.sum.budget_none")
       : "",
   ].filter(Boolean);
-  const advSummary = advParts.length ? advParts.join(" · ") : tr("launch.sum.defaults");
 
   // Initial focus goes to the first-prompt box, but never on a touch device: focus opens the
   // soft keyboard and hides most of the modal (a Console-wide convention keyed off
   // lib/device.ts coarsePointer). The autoFocus attribute is avoided for the same reason — it
-  // makes the browser scroll the target into view, pushing the agent picker stacked above it
-  // off screen. preventScroll keeps the top visible and still lets typing start at once.
+  // makes the browser scroll the target into view, pushing what sits above it off screen.
+  // preventScroll keeps the top visible and still lets typing start at once.
   useEffect(() => {
     if (!coarsePointer()) textRef.current?.focus({ preventScroll: true });
   }, []);
@@ -1131,8 +1132,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           </div>
         )}
 
-        {/* An API-key launch does not run on the OAuth login, so its expiry is not this launch's problem. */}
-        <ClaudeExpiredHint kind={kind} expired={claudeExpired && chosenRoute !== "anthropic-api" && chosenRoute !== "bedrock"} />
+        <ClaudeExpiredHint kind={kind} expired={claudeLoginGone} />
 
         {hasModel && !onBedrock && kinds.length > 0 && (
           <div className="ui-field">
@@ -1156,7 +1156,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   );
   const promptBlock = (
     <>
-        {/* First prompt (optional) — below agent/model. Initial focus is applied by the
+        {/* First prompt (optional), the first thing in the dialog. Initial focus is applied by the
             useEffect above (preventScroll instead of the autoFocus attribute, and never on a
             touch device). */}
         <div className="ui-field launch-prompt-field">
@@ -1635,16 +1635,32 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     </>
   );
 
+  // Details (ADR 0142 decision 7): agent and model are folded in with the rest, in the dialog as
+  // in the space form, so its summary names them first.
+  const detailsParts = [
+    kinds.length ? kindDisplayName(kind) : "",
+    chosenRoute ? tr(("cred.route." + chosenRoute) as never) : "",
+    onBedrock ? bedrockModel.trim() : hasModel ? model : "",
+    ...advParts,
+  ].filter(Boolean);
+  // Something the launch cannot go ahead with, or an expired login it would run on, is never left
+  // behind the fold.
+  const detailsForced =
+    !kinds.length || routeMissing || !!policyErr || savedUnusable || bedrockBlocked || routeModelBlocked || budgetInvalid || claudeLoginGone;
+  const detailsSection = (
+    <LaunchSection
+      label={tr("start.details")}
+      summary={detailsParts.join(" · ")}
+      warn={detailsForced}
+      open={detailsOpen || detailsForced}
+      onToggle={() => toggleSection("details", detailsOpen, setDetailsOpen)}
+    >
+      {agentBlock}
+      {advBody}
+    </LaunchSection>
+  );
+
   if (space) {
-    // Agent and model are folded into Details here, so its summary names them first.
-    const detailsParts = [
-      kinds.length ? kindDisplayName(kind) : "",
-      chosenRoute ? tr(("cred.route." + chosenRoute) as never) : "",
-      onBedrock ? bedrockModel.trim() : hasModel ? model : "",
-      ...advParts,
-    ].filter(Boolean);
-    // Something the launch cannot go ahead with is never left behind the fold.
-    const detailsForced = !kinds.length || routeMissing || !!policyErr || savedUnusable || bedrockBlocked || routeModelBlocked || budgetInvalid;
     return (
       <div className="start-space-form">
         <div className="ui-field">
@@ -1677,16 +1693,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           </span>
         </div>
         {filesStuck && <span className="ui-field-hint ui-field-hint--warn" role="status">{tr("launch.attach_not_taken")}</span>}
-        <LaunchSection
-          label={tr("start.details")}
-          summary={detailsParts.join(" · ")}
-          warn={detailsForced}
-          open={detailsOpen || detailsForced}
-          onToggle={() => toggleSection("details", detailsOpen, setDetailsOpen)}
-        >
-          {agentBlock}
-          {advBody}
-        </LaunchSection>
+        {detailsSection}
         {launchUnknown && unknownNote}
         <div className="start-space-actions">
           <Button variant="primary" icon="play" onClick={submit} disabled={busy || !canLaunch}>
@@ -1699,21 +1706,12 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
 
   return (
     <>
+      {/* What -> where -> details (ADR 0142 decision 7). */}
       <div className="ui-modal-body">
-        {agentBlock}
         {promptBlock}
         {locationBlock}
+        {detailsSection}
         {launchUnknown && unknownNote}
-        {/* Advanced: settings that stay put once decided (execution method, effort, start mode,
-            session name). Only the items that moved off their default reach the summary line. */}
-        <LaunchSection
-          label={tr("launch.field.advanced")}
-          summary={advSummary}
-          open={advOpen}
-          onToggle={() => toggleSection("adv", advOpen, setAdvOpen)}
-        >
-          {advBody}
-        </LaunchSection>
       </div>
 
 

@@ -113,8 +113,14 @@ describe("Start hub — Launch an agent at home", () => {
   it("opens the start-work dialog in its home form: fixed location note, no worktree controls, no repo lookups", async () => {
     await openHome();
     expect(document.body.textContent).toContain(t("launch.title_home"));
-    // The three-tier layout: the fold for advanced settings exists, the location fold does not.
-    expect(document.querySelector(".launch-sec-label")?.textContent).toBe(t("launch.field.advanced"));
+    // What -> where -> details (ADR 0142 decision 7): the prompt, then the fixed home note, then the
+    // one fold, Details. There is no location fold.
+    const folds = [...document.querySelectorAll(".launch-sec-label")];
+    expect(folds.map((el) => el.textContent)).toEqual([t("start.details")]);
+    const prompt = document.querySelector("textarea")!;
+    const place = [...document.querySelectorAll(".ui-field-label")].find((el) => el.textContent === t("launch.field.location"))!;
+    expect(prompt.compareDocumentPosition(place) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(place.compareDocumentPosition(folds[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(document.body.textContent).not.toContain(t("launch.new_worktree"));
     expect(document.body.textContent).not.toContain(t("launch.field.subdir"));
     expect(document.body.textContent).toContain("~");
