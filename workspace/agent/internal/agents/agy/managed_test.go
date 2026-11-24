@@ -23,8 +23,11 @@ import (
 )
 
 const (
-	streamHelperEnv = "AGY_STREAM_TEST_HELPER"
-	streamLogEnv    = "AGY_STREAM_TEST_LOG"
+	streamHelperEnv  = "AGY_STREAM_TEST_HELPER"
+	streamLogEnv     = "AGY_STREAM_TEST_LOG"
+	streamGateEnv    = "AGY_STREAM_TEST_GATE"
+	streamNoReadEnv  = "AGY_STREAM_TEST_NOREAD_FIRST"
+	streamFakePrompt = "hello"
 )
 
 // TestStreamHelperProcess is the fake agy. Under a plain `go test` it does nothing.
@@ -38,7 +41,15 @@ const (
 //	fail          result ERROR with an error text
 //	slow          a partial answer, then waits for SIGINT: result "interrupted", exit 1
 //	crash         exit 3 with no result
-//	result-exit   SUCCESS, then exit 1 at once
+//	result-exit   SUCCESS, then exit 1 300 ms later without reading stdin
+//	gate          SUCCESS once the file named by AGY_STREAM_TEST_GATE exists
+//	slowok        SUCCESS after 500 ms, or "interrupted" and exit 1 on SIGINT
+//	stubborn      never answers and ignores SIGINT
+//	grandchild    starts a process in its group that ignores TERM and INT, logs its pid, SUCCESS
+//
+// A SIGINT between turns exits 1. With AGY_STREAM_TEST_NOREAD_FIRST=1 the first spawn of a
+// test never reads stdin. The log gets "spawn conv=<id> pid=<pid>" per spawn, "turn <content>"
+// per message read and "grand <pid>" per grandchild.
 func TestStreamHelperProcess(t *testing.T) {
 	if os.Getenv(streamHelperEnv) != "1" {
 		return
@@ -54,10 +65,20 @@ func runFakeAgy(argv []string) {
 			conv = argv[i+1]
 		}
 	}
-	if p := os.Getenv(streamLogEnv); p != "" {
-		f, _ := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
-		fmt.Fprintf(f, "spawn conv=%s\n", conv)
-		f.Close()
+	logLine := func(format string, a ...any) {
+		if p := os.Getenv(streamLogEnv); p != "" {
+			f, _ := os.OpenFile(p, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+			fmt.Fprintf(f, format+"\n", a...)
+			f.Close()
+		}
+	}
+	firstSpawn := true
+	if b, err := os.ReadFile(os.Getenv(streamLogEnv)); err == nil && strings.Contains(string(b), "spawn ") {
+		firstSpawn = false
+	}
+	logLine("spawn conv=%s pid=%d", conv, os.Getpid())
+	if firstSpawn && os.Getenv(streamNoReadEnv) == "1" {
+		select {} // never reads stdin; SIGTERM ends it
 	}
 	if conv == "" {
 		conv = fmt.Sprintf("conv-%d", os.Getpid())
@@ -122,6 +143,7 @@ func runFakeAgy(argv []string) {
 			} `json:"message"`
 		}
 		_ = json.Unmarshal([]byte(line), &msg)
+		logLine("turn %s", msg.Message.Content)
 		if first {
 			first = false
 			emit(map[string]any{"event": "init", "conversation_id": conv, "init": map[string]any{"model": "fake"}})
@@ -163,22 +185,56 @@ func runFakeAgy(argv []string) {
 		case "result-exit":
 			answer("bye")
 			result("SUCCESS", "bye", "")
+			time.Sleep(300 * time.Millisecond) // room for the next turn to be committed to it
 			os.Exit(1)
+		case "gate":
+			for {
+				if _, err := os.Stat(os.Getenv(streamGateEnv)); err == nil {
+					break
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			answer("gated")
+			result("SUCCESS", "gated", "")
+		case "slowok":
+			select {
+			case <-sigs:
+				result("ERROR", "", "interrupted")
+				os.Exit(1)
+			case <-time.After(500 * time.Millisecond):
+				answer("slow done")
+				result("SUCCESS", "slow done", "")
+			}
+		case "stubborn":
+			select {}
+		case "grandchild":
+			gc := exec.Command("sh", "-c", `trap "" TERM INT; sleep 60`)
+			if gc.Start() == nil {
+				logLine("grand %d", gc.Process.Pid)
+			}
+			answer("spawned")
+			result("SUCCESS", "spawned", "")
 		}
 	}
 }
 
 // fakeStream is a handle whose child is the fake agy, with its spawns logged.
 type fakeStream struct {
-	h   *streamHandle
-	log string
+	h    *streamHandle
+	log  string
+	gate string
+	// env is added to each spawn's environment.
+	env []string
 }
 
 func newFakeStream(t *testing.T) *fakeStream {
 	t.Helper()
 	dir := t.TempDir()
 	logPath := dir + "/spawns.log"
-	name := "agy-managed-" + strings.ToLower(strings.NewReplacer("/", "-", " ", "-").Replace(t.Name()))
+	f := &fakeStream{log: logPath, gate: dir + "/gate"}
+	// Unique per run: the sid store and the ledger persist under the package's scratch HOME, and
+	// -count=N would otherwise start a test's second run as a resume of its first.
+	name := fmt.Sprintf("agy-managed-%s-%d", strings.ToLower(strings.NewReplacer("/", "-", " ", "-").Replace(t.Name())), time.Now().UnixNano())
 	h := newStreamHandle(name, dir, "slot-"+name, "")
 	h.sids = agents.NewSidStore("agy-managed-test-sid")
 	h.stopGrace = 2 * time.Second
@@ -188,10 +244,12 @@ func newFakeStream(t *testing.T) *fakeStream {
 			args = append(args, "--conversation", conv)
 		}
 		cmd := exec.Command(os.Args[0], args...)
-		cmd.Env = append(os.Environ(), streamHelperEnv+"=1", streamLogEnv+"="+logPath)
+		cmd.Env = append(os.Environ(), streamHelperEnv+"=1", streamLogEnv+"="+logPath, streamGateEnv+"="+f.gate)
+		cmd.Env = append(cmd.Env, f.env...)
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 		return cmd
 	}
+	f.h = h
 	h.Start(session.Meta{Name: name, Kind: session.KindAgy, Dir: dir})
 	t.Cleanup(func() {
 		select {
@@ -200,7 +258,7 @@ func newFakeStream(t *testing.T) *fakeStream {
 			t.Errorf("child did not exit on Detach")
 		}
 	})
-	return &fakeStream{h: h, log: logPath}
+	return f
 }
 
 // spawns is the --conversation each spawn was given, in order ("" for a fresh one).
@@ -208,11 +266,61 @@ func (f *fakeStream) spawns() []string {
 	b, _ := os.ReadFile(f.log)
 	var out []string
 	for _, ln := range strings.Split(strings.TrimSpace(string(b)), "\n") {
-		if ln != "" {
-			out = append(out, strings.TrimPrefix(ln, "spawn conv="))
+		if rest, ok := strings.CutPrefix(ln, "spawn conv="); ok {
+			conv, _, _ := strings.Cut(rest, " pid=")
+			out = append(out, conv)
 		}
 	}
 	return out
+}
+
+// lines is every log line starting with prefix, prefix removed.
+func (f *fakeStream) lines(prefix string) []string {
+	b, _ := os.ReadFile(f.log)
+	var out []string
+	for _, ln := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		if rest, ok := strings.CutPrefix(ln, prefix); ok {
+			out = append(out, rest)
+		}
+	}
+	return out
+}
+
+// waitRead waits until the fake has read the turn content: before that it may still be in its
+// TestMain, where a SIGINT kills it without an answer.
+func (f *fakeStream) waitRead(t *testing.T, content string) {
+	t.Helper()
+	waitFor(t, "the fake to read "+content, func() bool {
+		for _, l := range f.lines("turn ") {
+			if l == content {
+				return true
+			}
+		}
+		return false
+	})
+}
+
+// drainStates is every turn state emitted so far.
+func drainStates(h *streamHandle) []agents.TurnState {
+	var out []agents.TurnState
+	for {
+		select {
+		case e := <-h.Events():
+			out = append(out, e.TurnState)
+		default:
+			return out
+		}
+	}
+}
+
+// pidGone reports that pid has exited (gone, or a zombie its new parent has not reaped yet).
+func pidGone(pid string) bool {
+	b, err := os.ReadFile("/proc/" + pid + "/stat")
+	if err != nil {
+		return true
+	}
+	_, rest, _ := strings.Cut(string(b), ") ")
+	return strings.HasPrefix(rest, "Z")
 }
 
 func send(t *testing.T, h *streamHandle, prompt string) {
@@ -325,42 +433,19 @@ func TestStreamStopRespawnsForTheQueue(t *testing.T) {
 	conv := f.h.LastTurn().ConversationID
 
 	send(t, f.h, "slow")
-	waitFor(t, "the slow turn to run", func() bool {
-		f.h.mu.Lock()
-		defer f.h.mu.Unlock()
-		return f.h.state == agents.TurnRunning && f.h.child != nil && f.h.child.tr.text.Len() > 0
-	})
+	f.waitRead(t, "slow")
 	send(t, f.h, "hello") // waits behind the slow turn
 	res, err := f.h.Interrupt(agents.InterruptOpts{})
 	if err != nil || res.Stop != agents.StopFirst {
 		t.Fatalf("Interrupt = %+v, %v; want a first stop", res, err)
 	}
-	var states []agents.TurnState
-	var mu sync.Mutex
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		for {
-			select {
-			case e := <-f.h.Events():
-				mu.Lock()
-				states = append(states, e.TurnState)
-				mu.Unlock()
-			case <-time.After(3 * time.Second):
-				return
-			}
-		}
-	}()
 	// The queued turn runs on its own after the stop: no new input is needed.
 	waitFor(t, "the queued turn after the stop", func() bool { return len(f.spawns()) == 2 })
 	if st := settled(t, f.h); st != agents.TurnCompleted {
 		t.Fatalf("queued turn = %s, want completed", st)
 	}
-	<-done
-	mu.Lock()
-	defer mu.Unlock()
-	if !containsState(states, agents.TurnCancelled) {
-		t.Fatalf("states after the stop = %v, want the slow turn cancelled", states)
+	if states := drainStates(f.h); !containsState(states, agents.TurnCancelled) {
+		t.Fatalf("states = %v, want the slow turn cancelled", states)
 	}
 	if got := f.spawns(); got[1] != conv {
 		t.Fatalf("respawn conversation = %q, want %q", got[1], conv)
@@ -461,7 +546,7 @@ func TestStreamIdleCloseRespawns(t *testing.T) {
 func TestStreamDetachStopsARunningTurn(t *testing.T) {
 	f := newFakeStream(t)
 	send(t, f.h, "slow")
-	waitFor(t, "the slow turn to run", func() bool { return f.h.TurnState() == agents.TurnRunning })
+	f.waitRead(t, "slow")
 	select {
 	case <-f.h.Detach():
 	case <-time.After(10 * time.Second):
@@ -584,5 +669,449 @@ func TestParseStreamLine(t *testing.T) {
 	}
 	if b := userLine("x"); b[len(b)-1] != '\n' || strings.Count(string(b), "\n") != 1 {
 		t.Fatalf("userLine is not one line: %q", b)
+	}
+}
+
+// gateHook is a test hook that blocks its n-th call until released, and reports when it is
+// reached. Other calls pass straight through.
+type gateHook struct {
+	n       int
+	calls   int
+	mu      sync.Mutex
+	reached chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func newGateHook(n int) *gateHook {
+	return &gateHook{n: n, reached: make(chan struct{}), release: make(chan struct{})}
+}
+
+func (g *gateHook) fn() {
+	g.mu.Lock()
+	g.calls++
+	mine := g.calls == g.n
+	g.mu.Unlock()
+	if mine {
+		close(g.reached)
+		<-g.release
+	}
+}
+
+func (g *gateHook) open() { g.once.Do(func() { close(g.release) }) }
+
+func (g *gateHook) wait(t *testing.T, what string) {
+	t.Helper()
+	select {
+	case <-g.reached:
+	case <-time.After(20 * time.Second):
+		t.Fatalf("timed out waiting for %s", what)
+	}
+}
+
+func TestPermissionDeniedText(t *testing.T) {
+	cases := map[string]bool{
+		"permission check failed: user denied permission to run command. Proceed without performing this action.": true,
+		"Matches user-configured deny rule.":                                                                  true,
+		"permission check failed: Matches user-configured deny rule.":                                         true,
+		"permission check failed. Matches user-configured deny rule. Proceed without performing this action.": true,
+		"open /repo/user denied permission.txt: no such file or directory":                                    false,
+		"open /repo/Matches user-configured deny rule.txt: no such file or directory":                         false,
+		"stat /x/matches user-configured deny rule.: no such file":                                            false,
+		"no such file or directory":                                                                           false,
+		"permission check failed":                                                                             false,
+	}
+	for msg, want := range cases {
+		if got := permissionDeniedText(msg); got != want {
+			t.Errorf("%q: %v, want %v", msg, got, want)
+		}
+	}
+}
+
+// A stop is bound to the child that runs the turn it was aimed at: when that turn answers just
+// as the stop comes, the queued turn after it still goes to a new child, and the late SIGINT
+// does not reach it.
+func TestStreamStopIsBoundToItsChild(t *testing.T) {
+	f := newFakeStream(t)
+	sig := newGateHook(1)
+	f.h.beforeSignal = sig.fn
+	t.Cleanup(sig.open)
+	send(t, f.h, "gate")
+	f.waitRead(t, "gate")
+	send(t, f.h, "slowok")
+	go func() { _, _ = f.h.Interrupt(agents.InterruptOpts{}) }()
+	sig.wait(t, "the stop's signal")
+	// The gated turn answers before the signal goes out.
+	if err := os.WriteFile(f.gate, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, "the gated turn to land", func() bool {
+		lt := f.h.LastTurn()
+		return lt != nil && lt.Response == "gated"
+	})
+	time.Sleep(100 * time.Millisecond) // room for a wrong pump to write slowok to the old child
+	sig.open()
+	if st := settled(t, f.h); st != agents.TurnCompleted {
+		t.Fatalf("queued turn = %s, want completed on a new child", st)
+	}
+	if got := f.h.LastTurn().Response; got != "slow done" {
+		t.Fatalf("queued turn answered %q, want it run to the end", got)
+	}
+	if got := f.spawns(); len(got) != 2 {
+		t.Fatalf("spawns = %q, want the queued turn on a second child", got)
+	}
+}
+
+// A stop that comes after the result is in, before the turn lands, finds nothing to stop: the
+// turn lands on its own answer, and the next input is not taken for the ended turn.
+func TestStreamStopAfterTheResult(t *testing.T) {
+	f := newFakeStream(t)
+	land := newGateHook(1)
+	f.h.beforeLand = land.fn
+	t.Cleanup(land.open)
+	send(t, f.h, "fail")
+	land.wait(t, "the failed turn's result")
+	res, _ := f.h.Interrupt(agents.InterruptOpts{})
+	if st := f.h.TurnState(); st == agents.TurnInterrupting {
+		t.Fatalf("a stop after the result set %s", st)
+	}
+	send(t, f.h, "hello")
+	land.open()
+	if st := settled(t, f.h); st != agents.TurnCompleted {
+		t.Fatalf("next turn = %s, want completed", st)
+	}
+	states := drainStates(f.h)
+	if !containsState(states, agents.TurnFailed) || containsState(states, agents.TurnInterrupting) {
+		t.Fatalf("states = %v (stop %+v), want the failed turn landed as failed and no interrupting", states, res)
+	}
+	if got := f.spawns(); len(got) != 1 {
+		t.Fatalf("spawns = %q, want no signal and no respawn", got)
+	}
+}
+
+// A detach while the first turn's child is being started waits for that child and ends it;
+// the dropped input never reaches it.
+func TestStreamDetachDuringSpawn(t *testing.T) {
+	f := newFakeStream(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	inner := f.h.command
+	f.h.command = func(h *streamHandle, st agents.ThreadSettings, conv string) *exec.Cmd {
+		close(started)
+		<-release
+		return inner(h, st, conv)
+	}
+	send(t, f.h, "hello")
+	<-started
+	detached := f.h.Detach()
+	select {
+	case <-detached:
+		t.Fatal("Detach returned before the child being spawned was ended")
+	case <-time.After(50 * time.Millisecond):
+	}
+	close(release)
+	select {
+	case <-detached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Detach did not end the child being spawned")
+	}
+	if st := settled(t, f.h); st != agents.TurnCancelled {
+		t.Fatalf("detached turn = %s, want cancelled", st)
+	}
+	if got := f.lines("turn "); len(got) != 0 {
+		t.Fatalf("the child read %q after the detach", got)
+	}
+	for _, pid := range f.lines("spawn ") {
+		_, p, _ := strings.Cut(pid, "pid=")
+		if !pidGone(p) {
+			t.Fatalf("child %s is still running", p)
+		}
+	}
+}
+
+// A shutdown while the turn's child is being started ends that child too, and the input stays
+// queued rather than being written to it.
+func TestStreamDownDuringSpawn(t *testing.T) {
+	f := newFakeStream(t)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	inner := f.h.command
+	f.h.command = func(h *streamHandle, st agents.ThreadSettings, conv string) *exec.Cmd {
+		close(started)
+		<-release
+		return inner(h, st, conv)
+	}
+	send(t, f.h, "hello")
+	<-started
+	f.h.Down()()
+	close(release)
+	waitFor(t, "the turn to land", func() bool {
+		f.h.mu.Lock()
+		defer f.h.mu.Unlock()
+		return !f.h.pumping && !f.h.running
+	})
+	if st := f.h.TurnState(); st != agents.TurnUnknown {
+		t.Fatalf("turn cut by the shutdown = %s, want unknown with the input kept", st)
+	}
+	waitFor(t, "the spawned child to end", func() bool {
+		ps := f.lines("spawn ")
+		if len(ps) != 1 {
+			return false
+		}
+		_, p, _ := strings.Cut(ps[0], "pid=")
+		return pidGone(p)
+	})
+	if got := f.lines("turn "); len(got) != 0 {
+		t.Fatalf("the child read %q after the shutdown", got)
+	}
+	f.h.mu.Lock()
+	kept := f.h.q.Len()
+	f.h.mu.Unlock()
+	if kept != 1 {
+		t.Fatalf("queue after the shutdown = %d, want the input kept", kept)
+	}
+}
+
+// A detach between the Commit and the write ends the child; the write fails, and the input is
+// cancelled, not put back for the next Resume.
+func TestStreamDetachAfterCommit(t *testing.T) {
+	f := newFakeStream(t)
+	w := newGateHook(1)
+	f.h.beforeWrite = w.fn
+	t.Cleanup(w.open)
+	send(t, f.h, "hello")
+	w.wait(t, "the write")
+	detached := f.h.Detach()
+	select {
+	case <-detached:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Detach did not end the child")
+	}
+	w.open()
+	if st := settled(t, f.h); st != agents.TurnCancelled {
+		t.Fatalf("detached turn = %s, want cancelled", st)
+	}
+	f.h.mu.Lock()
+	n := f.h.q.Len()
+	f.h.mu.Unlock()
+	if n != 0 {
+		t.Fatalf("queue after the detach = %d, want the input gone", n)
+	}
+	f.h.Start(session.Meta{Name: f.h.name, Kind: session.KindAgy, Dir: f.h.dir})
+	time.Sleep(200 * time.Millisecond)
+	if got := f.lines("turn "); len(got) != 0 {
+		t.Fatalf("a discarded input ran after Resume: %q", got)
+	}
+}
+
+// A stop on a committed turn waits for the write and is delivered when the child has the
+// prompt; the queue then goes on on a new child.
+func TestStreamStopPendingIsDeliveredOnReceipt(t *testing.T) {
+	f := newFakeStream(t)
+	send(t, f.h, "hello")
+	settled(t, f.h)
+	conv := f.h.LastTurn().ConversationID
+	w := newGateHook(1)
+	f.h.beforeWrite = w.fn
+	t.Cleanup(w.open)
+	send(t, f.h, "slow")
+	w.wait(t, "the slow turn's write")
+	send(t, f.h, "hello")
+	if res, _ := f.h.Interrupt(agents.InterruptOpts{}); res.Stop != agents.StopFirst || res.Discard != nil {
+		t.Fatalf("stop on a committed turn = %+v, want a first stop that discards nothing", res)
+	}
+	w.open()
+	waitFor(t, "the queued turn", func() bool { return len(f.spawns()) == 2 })
+	if st := settled(t, f.h); st != agents.TurnCompleted {
+		t.Fatalf("queued turn = %s, want completed", st)
+	}
+	if states := drainStates(f.h); !containsState(states, agents.TurnCancelled) {
+		t.Fatalf("states = %v, want the slow turn cancelled", states)
+	}
+	if got := f.spawns(); got[1] != conv {
+		t.Fatalf("respawn conversation = %q, want %q", got[1], conv)
+	}
+	if got := f.lines("turn "); strings.Join(got, ",") != "hello,slow,hello" {
+		t.Fatalf("turns read = %q", got)
+	}
+}
+
+// A stop pending on a write the child never takes ends the child after stopGrace; the turn is
+// cancelled and the queue goes on.
+func TestStreamStopPendingOnAStuckWrite(t *testing.T) {
+	f := newFakeStream(t)
+	f.env = []string{streamNoReadEnv + "=1"}
+	f.h.stopGrace = 300 * time.Millisecond
+	// Larger than any pipe buffer, so the write blocks on a child that does not read.
+	send(t, f.h, strings.Repeat("x", 4<<20))
+	waitFor(t, "the write to start", func() bool {
+		f.h.mu.Lock()
+		defer f.h.mu.Unlock()
+		return f.h.sending != nil
+	})
+	send(t, f.h, "hello")
+	_, _ = f.h.Interrupt(agents.InterruptOpts{})
+	waitFor(t, "the queued turn", func() bool { return len(f.spawns()) == 2 })
+	if st := settled(t, f.h); st != agents.TurnCompleted {
+		t.Fatalf("queued turn = %s, want completed", st)
+	}
+	if !f.h.Alive() {
+		t.Fatal("a stop on a stuck write took the handle down")
+	}
+	if states := drainStates(f.h); !containsState(states, agents.TurnCancelled) {
+		t.Fatalf("states = %v, want the stuck turn cancelled", states)
+	}
+}
+
+// A second stop inside the episode discards the queue; nothing runs after it.
+func TestStreamSecondStopDiscards(t *testing.T) {
+	f := newFakeStream(t)
+	sig := newGateHook(1)
+	f.h.beforeSignal = sig.fn
+	t.Cleanup(sig.open)
+	send(t, f.h, "slow")
+	f.waitRead(t, "slow")
+	send(t, f.h, "hello")
+	send(t, f.h, "hello again")
+	first := make(chan agents.InterruptResult, 1)
+	go func() {
+		r, _ := f.h.Interrupt(agents.InterruptOpts{})
+		first <- r
+	}()
+	sig.wait(t, "the first stop's signal")
+	res, _ := f.h.Interrupt(agents.InterruptOpts{})
+	sig.open()
+	if r := <-first; r.Stop != agents.StopFirst {
+		t.Fatalf("first stop = %+v", r)
+	}
+	if res.Stop != agents.StopSecond || res.Discard == nil || len(res.Discard.Items) != 2 {
+		t.Fatalf("second stop = %+v, want both queued inputs discarded", res)
+	}
+	if st := settled(t, f.h); st != agents.TurnCancelled {
+		t.Fatalf("slow turn = %s, want cancelled", st)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := f.spawns(); len(got) != 1 {
+		t.Fatalf("spawns = %q, want no respawn after the queue was discarded", got)
+	}
+	if got := f.lines("turn "); strings.Join(got, ",") != "slow" {
+		t.Fatalf("turns read = %q, want slow alone", got)
+	}
+}
+
+// DiscardQueue stops the turn and discards the queue in one go.
+func TestStreamDiscardQueue(t *testing.T) {
+	f := newFakeStream(t)
+	send(t, f.h, "slow")
+	f.waitRead(t, "slow")
+	send(t, f.h, "hello")
+	send(t, f.h, "hello again")
+	res, _ := f.h.Interrupt(agents.InterruptOpts{DiscardQueue: true})
+	if res.Stop != agents.StopDiscard || res.Discard == nil || len(res.Discard.Items) != 2 {
+		t.Fatalf("discard = %+v, want both queued inputs", res)
+	}
+	if st := settled(t, f.h); st != agents.TurnCancelled {
+		t.Fatalf("slow turn = %s, want cancelled", st)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := f.spawns(); len(got) != 1 {
+		t.Fatalf("spawns = %q, want no respawn", got)
+	}
+}
+
+// A stop before the Commit cancels the taken input: no child is started and nothing is sent.
+func TestStreamStopBeforeCommit(t *testing.T) {
+	f := newFakeStream(t)
+	c := newGateHook(1)
+	f.h.beforeCommit = c.fn
+	t.Cleanup(c.open)
+	send(t, f.h, "hello")
+	c.wait(t, "the commit")
+	res, _ := f.h.Interrupt(agents.InterruptOpts{})
+	c.open()
+	if res.Discard == nil || res.Discard.Reason != agents.DiscardFirstStop || len(res.Discard.Items) != 1 {
+		t.Fatalf("stop = %+v, want the taken input kept as a first-stop discard", res)
+	}
+	if st := settled(t, f.h); st != agents.TurnCancelled {
+		t.Fatalf("turn = %s, want cancelled", st)
+	}
+	time.Sleep(300 * time.Millisecond) // a child started anyway would have logged by now
+	if got := f.spawns(); len(got) != 0 {
+		t.Fatalf("spawns = %q, want none", got)
+	}
+}
+
+// A child that ignores the SIGINT is terminated after stopGrace; the turn is cancelled and the
+// handle stays up.
+func TestStreamStubbornChildIsTerminated(t *testing.T) {
+	f := newFakeStream(t)
+	f.h.stopGrace = 300 * time.Millisecond
+	send(t, f.h, "stubborn")
+	f.waitRead(t, "stubborn")
+	_, _ = f.h.Interrupt(agents.InterruptOpts{})
+	if st := settled(t, f.h); st != agents.TurnCancelled {
+		t.Fatalf("turn = %s, want cancelled", st)
+	}
+	if !f.h.Alive() {
+		t.Fatal("the stop took the handle down")
+	}
+	send(t, f.h, "hello")
+	if st := settled(t, f.h); st != agents.TurnCompleted {
+		t.Fatalf("next turn = %s", st)
+	}
+}
+
+// What agy leaves in its process group goes with it, even a process that ignores TERM.
+func TestStreamChildGroupEndsWithIt(t *testing.T) {
+	f := newFakeStream(t)
+	send(t, f.h, "grandchild")
+	settled(t, f.h)
+	gc := f.lines("grand ")
+	if len(gc) != 1 {
+		t.Fatalf("grandchild log = %q", gc)
+	}
+	select {
+	case <-f.h.Detach():
+	case <-time.After(10 * time.Second):
+		t.Fatal("Detach did not end the child")
+	}
+	waitFor(t, "the grandchild to end", func() bool { return pidGone(gc[0]) })
+}
+
+// A child that exits on its own after answering is not handed the next prompt it can no longer
+// read: the prompt goes to a new child once, and the handle stays up.
+func TestStreamPromptToAnExitedChildIsRetried(t *testing.T) {
+	f := newFakeStream(t)
+	// The second turn is committed to the first child while it is still up; its write then
+	// waits until that child has exited.
+	calls := 0
+	f.h.beforeWrite = func() {
+		f.h.mu.Lock()
+		calls++
+		n, c := calls, f.h.sending
+		f.h.mu.Unlock()
+		if n == 2 && c != nil {
+			<-c.exited
+		}
+	}
+	firstAnswered := make(chan struct{})
+	f.h.beforeLand = func() {
+		select {
+		case <-firstAnswered:
+		default:
+			close(firstAnswered)
+		}
+	}
+	send(t, f.h, "result-exit")
+	<-firstAnswered
+	send(t, f.h, "hello")
+	if st := settled(t, f.h); st != agents.TurnCompleted {
+		t.Fatalf("second turn = %s, want completed on a new child", st)
+	}
+	if !f.h.Alive() {
+		t.Fatal("the handle went down")
+	}
+	if got := f.spawns(); len(got) != 2 {
+		t.Fatalf("spawns = %q, want one retry", got)
 	}
 }

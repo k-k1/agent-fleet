@@ -141,10 +141,34 @@ type TurnOutcome struct {
 
 // permissionDeniedText reports a tool error that is a permission refusal rather than an
 // ordinary failure (a missing file, an MCP server that did not answer). The wording is agy
-// 1.3.5's: the soft-deny of a tool outside the allow list, and a configured deny rule.
+// 1.3.5's, matched by its shape rather than by a phrase anywhere in it, because an ordinary
+// error quotes its argument: "open /repo/user denied permission.txt: no such file" is not a
+// refusal.
+//
+//   - the soft-deny of a tool outside the allow list opens with "permission check failed" and
+//     says "user denied permission";
+//   - a configured deny rule says "Matches user-configured deny rule." as a sentence of its own
+//     (only that sentence was recorded, so it is matched where it stands as one: at the start
+//     or after a separator, and at the end or before a space).
 func permissionDeniedText(msg string) bool {
-	m := strings.ToLower(msg)
-	return strings.Contains(m, "user denied permission") || strings.Contains(m, "matches user-configured deny rule")
+	m := strings.ToLower(strings.TrimSpace(msg))
+	if strings.HasPrefix(m, "permission check failed") && strings.Contains(m, "user denied permission") {
+		return true
+	}
+	const rule = "matches user-configured deny rule."
+	for i := 0; ; {
+		j := strings.Index(m[i:], rule)
+		if j < 0 {
+			return false
+		}
+		start, end := i+j, i+j+len(rule)
+		before := start == 0 || strings.ContainsRune(" :;", rune(m[start-1])) || strings.HasSuffix(m[:start], ". ")
+		after := end == len(m) || m[end] == ' '
+		if before && after {
+			return true
+		}
+		i = end
+	}
 }
 
 // turnTracker follows one child's turns. It lives as long as the child: denied_actions is
