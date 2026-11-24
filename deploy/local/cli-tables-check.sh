@@ -72,7 +72,7 @@ fi
 # --- tools.tsv -----------------------------------------------------------------------
 if need_file "$TOOLS"; then
   for n in "${M_NAMES[@]}"; do
-    awk -F'\t' -v a="arg:${M_arg[$n]}" '$8 == a { f = 1 } END { exit !f }' "$TOOLS" ||
+    awk -F'\t' -v a="arg:${M_arg[$n]}" '{ split($8, p, ";") } p[1] == a { f = 1 } END { exit !f }' "$TOOLS" ||
       drift "$n: scripts/workspace-image/tools.tsv has no row with version arg:${M_arg[$n]}"
   done
   while IFS= read -r arg; do
@@ -214,8 +214,8 @@ done
 # --- Go ------------------------------------------------------------------------------
 if need_file "$GOSPECS"; then
   for n in "${M_NAMES[@]}"; do
-    grep -Eq "^[[:space:]]*\\{Name: \"$n\",.*Pin: \"$n\"" "$GOSPECS" ||
-      drift "$n: no toolSpecs row {Name: \"$n\", … Pin: \"$n\"} in workspace/agent/env_tool_versions.go"
+    grep -Eq "^[[:space:]]*(\\{Name: \"[^\"]*\",.*)?Pin: \"$n\"" "$GOSPECS" ||
+      drift "$n: no toolSpecs row with Pin: \"$n\" in workspace/agent/env_tool_versions.go"
   done
 fi
 

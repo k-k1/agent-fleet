@@ -38,10 +38,10 @@ manifest_load() {
     if [ -n "$rest" ] || [ -z "$flags" ]; then
       echo "cli-manifest: $CLI_MANIFEST:$n: want exactly 11 '|' separated fields" >&2; return 1
     fi
-    [[ "$name" =~ ^[a-z][a-z0-9]*$ ]] || { echo "cli-manifest: line $n: bad name '$name'" >&2; return 1; }
+    [[ "$name" =~ ^[a-z][a-z0-9_]*$ ]] || { echo "cli-manifest: line $n: bad name '$name'" >&2; return 1; }
     [[ "$arg" =~ ^[A-Z][A-Z0-9_]*_VERSION$ ]] || { echo "cli-manifest: line $n: bad ARG '$arg'" >&2; return 1; }
     [ -z "${M_arg[$name]+x}" ] || { echo "cli-manifest: line $n: duplicate '$name'" >&2; return 1; }
-    case "$source" in npm|github|agy|cursor|kiro|muse) ;; *) echo "cli-manifest: line $n: bad source '$source'" >&2; return 1 ;; esac
+    case "$source" in npm|github|agy|cursor|kiro|muse|godev|gittags|pypi|gcloud) ;; *) echo "cli-manifest: line $n: bad source '$source'" >&2; return 1 ;; esac
     case "$dispatch" in auto|manual|-) ;; *) echo "cli-manifest: line $n: bad dispatch '$dispatch'" >&2; return 1 ;; esac
     { [ "$dispatch" = - ] && [ "$contract" = - ]; } || { [ "$dispatch" != - ] && [ "$contract" != - ]; } ||
       { echo "cli-manifest: line $n: dispatch and contract must both be set or both '-'" >&2; return 1; }

@@ -20,7 +20,7 @@ var raw string
 type Entry struct {
 	Name       string   // the kind; also the versions.json key
 	Arg        string   // the Dockerfile ARG that pins its version
-	Source     string   // npm | github | agy | cursor | kiro | muse
+	Source     string   // npm | github | agy | cursor | kiro | muse | godev | gittags | pypi | gcloud
 	Locator    string   // package, repo or release endpoint for Source
 	Contract   string   // contract workflow file, "" when none gates the CLI
 	Install    string   // npm | agy | cursor | kiro, "" when the action does not install it

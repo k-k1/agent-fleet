@@ -56,7 +56,7 @@ ALL_KINDS=("${M_NAMES[@]}")
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-valid_kind() { [[ "$1" =~ ^[a-z0-9-]+$ ]] || { echo "invalid kind: $1" >&2; exit 2; }; }
+valid_kind() { [[ "$1" =~ ^[a-z0-9_-]+$ ]] || { echo "invalid kind: $1" >&2; exit 2; }; }
 
 # The title prefix is the key. Only issues the workflows opened count: the repository is
 # public, and anyone can open an issue with the same title.
