@@ -140,7 +140,7 @@ func providedRouteTenantFixture(t *testing.T) (st *store.SQL, mux *http.ServeMux
 func providedRouteTenantFixtureWith(t *testing.T, register bool) (st *store.SQL, mux *http.ServeMux, tn store.Tenant, member string) {
 	t.Helper()
 	ctx := context.Background()
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -407,7 +407,7 @@ func TestProvidedRoutesLogTheSwitch(t *testing.T) {
 	prev, prevGW := activeProvidedRoutes.Load(), activeProvidedRouteGateway.Load()
 	activeProvidedRoutes.Store(nil)
 	t.Cleanup(func() { activeProvidedRoutes.Store(prev); activeProvidedRouteGateway.Store(prevGW) })
-	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
