@@ -15,12 +15,14 @@ import (
 // the listing is empty or holds opencode's own models alone are sampled too (logged, not required:
 // a fast boot can settle before the first poll).
 func TestContractV2PluginListingMarksTheModelListingWhole(t *testing.T) {
+	// Both limits carry a context and an output: a context-only one makes 2.2.5 and older refuse
+	// the whole provider (TestContractV2ModelLimitContextOnly), and this test is about the signal.
 	startV2Serve(t, http.NotFoundHandler(), map[string]any{
-		"ctxonly": limitsModel("ctxonly", map[string]any{"context": 20000}),
-		"valid":   limitsModel("valid", map[string]any{"context": 20000, "output": 2000}),
+		"small": limitsModel("small", map[string]any{"context": 20000, "output": 2000}),
+		"large": limitsModel("large", map[string]any{"context": 200000, "output": 32000}),
 	}, nil)
 	v := opencodeVersion(t)
-	want := []string{"stub/ctxonly", "stub/valid"}
+	want := []string{"stub/small", "stub/large"}
 	read := func() daemonRead {
 		modelsMu.Lock()
 		defer modelsMu.Unlock()
