@@ -3,12 +3,13 @@ import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import {
   PUSH_KINDS,
-  getPushOff,
+  getPushPrefs,
   listPushDevices,
-  putPushOff,
+  putPushPrefs,
   removePushDevice,
   type PushDevice,
   type PushKind,
+  type PushOrigin,
 } from "./pushApi.ts";
 import { usePushKey } from "./usePushKey.ts";
 import { currentSubscription, deviceIdFor, disablePush, dropLocalSubscription, enablePush, pushSupport, subscriptionMatchesKey, thisDeviceId } from "./webPush.ts";
@@ -19,6 +20,13 @@ const KIND_LABEL = {
   "permission-request": "push.kind_permission",
   "answer-ready": "push.kind_answer",
 } as const;
+
+// The three origin rows; each has a switch for the session itself and one for the sessions it starts.
+const ORIGIN_ROWS = [
+  { label: "push.origin_own", self: "own", child: "own-child" },
+  { label: "push.origin_autorun", self: "autorun", child: "autorun-child" },
+  { label: "push.origin_schedule", self: "schedule", child: "schedule-child" },
+] as const satisfies readonly { label: string; self: PushOrigin; child: PushOrigin }[];
 
 // PushSection — Settings › Notifications: push to a phone with the Console closed (#4750). Absent
 // when the deployment has no Web Push (the config probe answers no key). The kind choices and the
@@ -46,14 +54,14 @@ export function PushSection() {
   const [myId, setMyId] = useState("");
   const [loaded, setLoaded] = useState(false);
   // null until the saved choices arrive: a write built from an empty guess would erase them.
-  const [off, setOff] = useState<string[] | null>(null);
+  const [prefs, setPrefs] = useState<{ off: string[]; offOrigins: string[] } | null>(null);
   const [prefsFailed, setPrefsFailed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [perm, setPerm] = useState(() => ("Notification" in window ? Notification.permission : "unsupported"));
 
   const loadPrefs = useCallback(async () => {
     try {
-      setOff(await getPushOff());
+      setPrefs(await getPushPrefs());
       setPrefsFailed(false);
     } catch {
       setPrefsFailed(true);
@@ -133,18 +141,23 @@ export function PushSection() {
     }
   };
 
-  const toggleKind = async (k: PushKind, on: boolean) => {
-    if (off === null) return;
-    const next = on ? off.filter((x) => x !== k) : [...off.filter((x) => x !== k), k];
+  const savePrefs = async (next: { off: string[]; offOrigins: string[] }) => {
     setBusy(true);
     try {
-      await putPushOff(next);
-      setOff(next);
+      await putPushPrefs(next);
+      setPrefs(next);
     } catch (e) {
       fail(e);
     } finally {
       setBusy(false);
     }
+  };
+  const flip = (list: string[], k: string, on: boolean) => (on ? list.filter((x) => x !== k) : [...list.filter((x) => x !== k), k]);
+  const toggleKind = (k: PushKind, on: boolean) => {
+    if (prefs) void savePrefs({ ...prefs, off: flip(prefs.off, k, on) });
+  };
+  const toggleOrigin = (o: PushOrigin, on: boolean) => {
+    if (prefs) void savePrefs({ ...prefs, offOrigins: flip(prefs.offOrigins, o, on) });
   };
 
   const remove = async (d: PushDevice) => {
@@ -194,13 +207,27 @@ export function PushSection() {
           </button>
         </p>
       )}
-      <fieldset className="push-kinds" disabled={busy || off === null}>
+      <fieldset className="push-kinds" disabled={busy || prefs === null}>
         <legend className="muted ds-note">{tr("push.kinds")}</legend>
         {PUSH_KINDS.map((k) => (
           <label key={k} className="push-kind">
-            <input type="checkbox" role="switch" className="noti-switch" checked={!(off ?? []).includes(k)} onChange={(e) => void toggleKind(k, e.target.checked)} />{" "}
+            <input type="checkbox" role="switch" className="noti-switch" checked={!(prefs?.off ?? []).includes(k)} onChange={(e) => void toggleKind(k, e.target.checked)} />{" "}
             {tr(KIND_LABEL[k])}
           </label>
+        ))}
+      </fieldset>
+      <fieldset className="push-origins" disabled={busy || prefs === null}>
+        <legend className="muted ds-note">{tr("push.origins")}</legend>
+        {ORIGIN_ROWS.map((row) => (
+          <div key={row.self} className="push-origin-row">
+            <span className="push-origin-name">{tr(row.label)}</span>{" "}
+            {([row.self, row.child] as const).map((o) => (
+              <label key={o} className="push-origin">
+                <input type="checkbox" role="switch" className="noti-switch" checked={!(prefs?.offOrigins ?? []).includes(o)} onChange={(e) => toggleOrigin(o, e.target.checked)} />{" "}
+                {tr(o === row.self ? "push.origin_self" : "push.origin_children")}
+              </label>
+            ))}
+          </div>
         ))}
       </fieldset>
       <h5 className="ds-title">{tr("push.devices")}</h5>

@@ -96,15 +96,25 @@ export async function removePushDevice(id: string): Promise<void> {
   if (!r.ok && r.status !== 404) throw new Error(String(r.status));
 }
 
-export async function getPushOff(): Promise<string[]> {
+/** The origin switches a member may turn off for push; the CP refuses any other (pushsrv.PrefOrigins). */
+export const PUSH_ORIGINS = ["own", "own-child", "autorun", "autorun-child", "schedule", "schedule-child"] as const;
+export type PushOrigin = (typeof PUSH_ORIGINS)[number];
+
+export interface PushPrefs {
+  off: string[];
+  offOrigins: string[];
+}
+
+export async function getPushPrefs(): Promise<PushPrefs> {
   const r = await raw("api/push/prefs");
   if (!r.ok) throw new Error(String(r.status));
   const j = await r.json();
-  return Array.isArray(j?.off) ? j.off : [];
+  return { off: Array.isArray(j?.off) ? j.off : [], offOrigins: Array.isArray(j?.offOrigins) ? j.offOrigins : [] };
 }
 
-export async function putPushOff(off: string[]): Promise<void> {
-  const r = await rawJSON("api/push/prefs", "PUT", { off });
+/** Both lists are always sent: the CP keeps the saved origins only when the field is absent. */
+export async function putPushPrefs(p: PushPrefs): Promise<void> {
+  const r = await rawJSON("api/push/prefs", "PUT", { off: p.off, offOrigins: p.offOrigins });
   if (!r.ok) throw new Error(String(r.status));
 }
 
