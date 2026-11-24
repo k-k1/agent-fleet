@@ -246,11 +246,14 @@ func TestNPMSupervisorKillsAChildWhoseLeaderThreadExited(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	// The thread reports ready only once the leader is a zombie, so npm exits after that.
 	script := `import ctypes, os, threading, time
+end = time.monotonic() + 10  # bounded: with the leader gone its cmdline is empty, so no cleanup can match it
 def run():
     while open("/proc/%d/stat" % os.getpid()).read().rsplit(")", 1)[1].split()[0] != "Z":
+        if time.monotonic() > end:
+            return
         time.sleep(0.01)
     open(os.environ["SREADY_FILE"], "w").close()
-    time.sleep(10)  # bounded: once the leader is gone its cmdline is empty, so no cleanup can match it
+    time.sleep(max(0, end - time.monotonic()))
 open(os.environ["PID_FILE"], "w").write(str(os.getpid()))
 threading.Thread(target=run).start()
 ctypes.CDLL(None).pthread_exit(None)
@@ -369,5 +372,29 @@ func TestNPMSupervisorFailsWhenItsGraceRunsOut(t *testing.T) {
 		if n.runs(t, f, n.strayPid) {
 			t.Fatal("the straggler outlived the install")
 		}
+	}
+}
+
+// isChild answers yes for this process's own child, a plain no (not an error) for any other
+// process, and leaves the child unreaped.
+func TestIsChildAsksTheKernel(t *testing.T) {
+	cmd := exec.Command("/bin/sleep", "30")
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
+	if child, err := isChild(cmd.Process.Pid); !child || err != nil {
+		t.Fatalf("own child: %v %v", child, err)
+	}
+	if child, err := isChild(os.Getppid()); child || err != nil {
+		t.Fatalf("parent: %v %v", child, err)
+	}
+	_ = cmd.Process.Kill()
+	waitFor(t, "the child never exited", func() bool { p, ok := readStat(cmd.Process.Pid); return ok && !p.live })
+	if child, err := isChild(cmd.Process.Pid); !child || err != nil {
+		t.Fatalf("exited child: %v %v", child, err)
+	}
+	if p, ok := readStat(cmd.Process.Pid); !ok || p.live {
+		t.Fatal("isChild reaped the child")
 	}
 }

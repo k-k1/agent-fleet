@@ -64,7 +64,7 @@ func supervise(npm string, args []string, grace time.Duration) int {
 		var known bool
 		stopped, known = stopChildren(deadline)
 		if !known {
-			stopped = stopGroup(deadline) // waitid refused: the group listing is all that is left
+			stopped = stopGroup(deadline) // waitid refused: the group listing is what is left
 		}
 	} else {
 		stopped = stopGroup(deadline)
@@ -97,7 +97,8 @@ func superviseExit(werr error, stopped bool) int {
 // the pid still names the child that was listed. A grandchild is reached once its parent dies and
 // it is re-parented here. A child whose stat says zombie is signalled too: when only the leader
 // thread of a multi-threaded process has exited, the rest still run, and a kill reaches them all.
-// known is false when waitid itself is refused, so "no child left" cannot be told.
+// known is false when waitid itself is refused, so neither "no child left" nor "this is my child"
+// can be told.
 func stopChildren(deadline time.Time) (stopped, known bool) {
 	self := os.Getpid()
 	for ; ; time.Sleep(20 * time.Millisecond) {
@@ -109,7 +110,11 @@ func stopChildren(deadline time.Time) (stopped, known bool) {
 			return true, true
 		}
 		for _, pid := range childrenOf(self) {
-			if isChild(pid) {
+			child, err := isChild(pid)
+			if err != nil {
+				return false, false
+			}
+			if child {
 				_ = unix.Kill(pid, unix.SIGKILL)
 			}
 		}
@@ -140,15 +145,20 @@ func reapChildren() (none bool, err error) {
 
 // isChild asks the kernel whether pid is a child of this process, without reaping it (WNOWAIT).
 // The /proc listing alone does not prove it: a /proc mounted for another pid namespace numbers
-// processes differently from the kill that follows. When the answer is not a plain yes, the pid
-// is not signalled.
-func isChild(pid int) bool {
+// processes differently from the kill that follows. ECHILD is a plain no; any other error means
+// the question cannot be asked here (a seccomp filter on WNOWAIT), and the caller has to stop the
+// children some other way.
+func isChild(pid int) (bool, error) {
 	var info unix.Siginfo
 	for {
 		err := unix.Waitid(unix.P_PID, pid, &info, unix.WEXITED|unix.WNOHANG|unix.WNOWAIT, nil)
-		if !errors.Is(err, unix.EINTR) {
-			return err == nil
+		switch {
+		case errors.Is(err, unix.EINTR):
+			continue
+		case errors.Is(err, unix.ECHILD):
+			return false, nil
 		}
+		return err == nil, err
 	}
 }
 
