@@ -75,12 +75,13 @@ type Env struct {
 	BakedBin                                                                          string // where the image bakes its CLIs; empty = /usr/local/bin
 	Stdout                                                                            io.Writer
 	Stderr                                                                            io.Writer
-	RunTimeout                                                                        time.Duration // --version probe bound
-	afterNPMLock                                                                      func()        // tests: runs right after NPM takes the lock, before it re-reads its plan
-	afterNPMStart                                                                     func(sup int) // tests: runs once npmInstall's supervisor (pid sup) has started, so a test may close the lock after Cmd.Start read it
-	npmTimeout                                                                        time.Duration // tests: replaces npmInstallTimeout when set
-	npmLockErr                                                                        error         // set by lockNPM when the lock file cannot be opened (not the same as busy)
-	npmLockFile                                                                       *os.File      // held by lockNPM; handed to npm so it outlives this process
+	RunTimeout                                                                        time.Duration   // --version probe bound
+	afterNPMLock                                                                      func()          // tests: runs right after NPM takes the lock, before it re-reads its plan
+	afterNPMStart                                                                     func(sup int)   // tests: runs once npmInstall's supervisor (pid sup) has started, so a test may close the lock after Cmd.Start read it
+	npmCtx                                                                            context.Context // tests: the parent of npmInstall's deadline, so a test can fire it
+	superviseGrace                                                                    string          // tests: the supervisor's grace (a time.Duration string), shorter than superviseGrace
+	npmLockErr                                                                        error           // set by lockNPM when the lock file cannot be opened (not the same as busy)
+	npmLockFile                                                                       *os.File        // held by lockNPM; handed to npm so it outlives this process
 }
 
 // DefaultEnv is the production environment.

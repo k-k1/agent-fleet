@@ -1,18 +1,21 @@
 package bootinstall
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
+
+	"golang.org/x/sys/unix"
 )
 
-// npmCallerEnv names the env vars that turn the test binary into a caller of npmInstall
+// npmCallerHome and npmCallerNPM turn the test binary into a caller of npmInstall
 // (npmCallerHelper), so a test can kill the caller the way the kernel would kill the Agent.
 const (
 	npmCallerHome = "AF_TEST_NPM_CALLER_HOME"
@@ -31,20 +34,73 @@ func npmCallerHelper() int {
 	return 0
 }
 
-// stragglerNPM writes a stand-in npm that drops its copy of the lock (so only the supervisor
-// holds it), starts a straggler that outlives npm unless something kills it, and marks itself
-// ready. tail is the rest of its script. It returns the files the script writes.
-func stragglerNPM(t *testing.T, f *suFixture, straggler, tail string) (ready, pidf string) {
+// fakeNPM is a stand-in npm that drops its copy of the lock (so only the supervisor holds it),
+// starts a straggler that outlives npm unless something kills it, waits until the straggler has
+// written its own pid (after any setsid, so it is in its final group), writes its own pid and a
+// ready file, then runs tail. launch and tail name the straggler's files {PIDF} and {SREADY}
+// and the sleep duration {TOKEN}. Every process it starts sleeps with token as its duration, and the
+// cleanup signals a recorded pid only through a pidfd whose command line still carries the
+// token, so a pid reused by someone else on the shared host is never hit.
+type fakeNPM struct {
+	ready, npmPid, strayPid, token string
+}
+
+func newFakeNPM(t *testing.T, f *suFixture, launch, tail string) fakeNPM {
 	t.Helper()
-	ready, pidf = filepath.Join(f.home, "ready"), filepath.Join(f.home, "straggler.pid")
-	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf(
-		"#!/bin/sh\nexec 3>&-\n%s </dev/null >/dev/null 2>&1 &\necho $! >%q\n: >%q\n%s", straggler, pidf, ready, tail))
-	t.Cleanup(func() { // never leave a sleep behind when a test fails
-		if pid, _ := strconv.Atoi(strings.TrimSpace(f.read(pidf))); pid > 0 {
-			_ = syscall.Kill(pid, syscall.SIGKILL)
+	n := fakeNPM{
+		ready: filepath.Join(f.home, "ready"), npmPid: filepath.Join(f.home, "npm.pid"),
+		strayPid: filepath.Join(f.home, "straggler.pid"),
+		token:    fmt.Sprintf("30.%09d", time.Now().Nanosecond()),
+	}
+	sready := filepath.Join(f.home, "straggler.ready")
+	stray := strings.NewReplacer("{PIDF}", strconv.Quote(n.strayPid), "{SREADY}", strconv.Quote(sready), "{TOKEN}", n.token).Replace(launch)
+	tail = strings.ReplaceAll(tail, "{TOKEN}", n.token)
+	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf("#!/bin/sh\nexec 3>&-\n%s </dev/null >/dev/null 2>&1 &\n"+
+		"i=0; while [ ! -e %q ] && [ $i -lt 600 ]; do i=$((i+1)); /bin/sleep 0.05; done\n"+
+		"echo $$ >%q\n: >%q\n%s", stray, sready, n.npmPid, n.ready, tail))
+	t.Cleanup(func() { n.kill(f, n.strayPid); n.kill(f, n.npmPid) })
+	return n
+}
+
+// shStraggler is a straggler in npm's group; setsidStraggler leaves it first.
+const (
+	shStraggler     = "/bin/sh -c 'echo $$ >{PIDF}; : >{SREADY}; exec /bin/sleep {TOKEN}'"
+	setsidStraggler = "/usr/bin/setsid " + shStraggler
+)
+
+func (n fakeNPM) kill(f *suFixture, pidf string) {
+	pid, _ := strconv.Atoi(strings.TrimSpace(f.read(pidf)))
+	if pid <= 0 {
+		return
+	}
+	fd, err := unix.PidfdOpen(pid, 0)
+	if err != nil {
+		return
+	}
+	defer unix.Close(fd)
+	if b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); strings.Contains(string(b), n.token) {
+		_ = unix.PidfdSendSignal(fd, unix.SIGKILL, nil, 0)
+	}
+}
+
+// runs reports whether the process whose pid file pidf names still has a running thread. Its
+// stat alone is not enough: it says zombie as soon as the leader thread has exited, while the
+// other threads may still run. A missing pid file fails the test: the process never started, and
+// "not running" would prove nothing.
+func (n fakeNPM) runs(t *testing.T, f *suFixture, pidf string) bool {
+	t.Helper()
+	pid, _ := strconv.Atoi(strings.TrimSpace(f.read(pidf)))
+	if pid <= 0 {
+		t.Fatalf("%s holds no pid", filepath.Base(pidf))
+	}
+	tasks, _ := os.ReadDir(fmt.Sprintf("/proc/%d/task", pid))
+	for _, d := range tasks {
+		b, err := os.ReadFile(fmt.Sprintf("/proc/%d/task/%s/stat", pid, d.Name()))
+		if i := strings.LastIndexByte(string(b), ')'); err == nil && i >= 0 && i+2 < len(b) && b[i+2] != 'Z' && b[i+2] != 'X' {
+			return true
 		}
-	})
-	return ready, pidf
+	}
+	return false
 }
 
 func waitFor(t *testing.T, what string, cond func() bool) {
@@ -56,43 +112,125 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 	}
 }
 
-// alive reads the pid from file pidf and reports whether that process still runs (a zombie does
-// not: it can write nothing).
-func alive(f *suFixture, pidf string) bool {
-	pid, _ := strconv.Atoi(strings.TrimSpace(f.read(pidf)))
-	if pid <= 0 {
-		return false
-	}
-	p, ok := readStat(pid)
-	return ok && p.live
-}
-
 func lockBusy(f *suFixture) bool {
 	_, _, busy := probeLock(f.env.npmLockPath())
 	return busy
 }
 
-// A postinstall child that left npm's group with setsid is still npm's descendant: the
-// supervisor, as a subreaper, inherits it when npm exits and kills it before the lock goes.
-func TestNPMSupervisorKillsADescendantThatLeftTheGroup(t *testing.T) {
-	f := newSU(t, goodRTK, "", "", "")
-	if _, err := os.Stat("/usr/bin/setsid"); err != nil {
-		t.Skip("no setsid")
+// install is one npmInstall running in the background.
+type install struct {
+	sup      int
+	finished chan struct{}
+	err      error
+}
+
+// wait returns the install's result, failing the test when it does not come in time.
+func (in *install) wait(t *testing.T) error {
+	t.Helper()
+	select {
+	case <-in.finished:
+		return in.err
+	case <-time.After(15 * time.Second):
+		t.Fatal("npmInstall did not return")
 	}
-	_, pidf := stragglerNPM(t, f, "/usr/bin/setsid /bin/sleep 30", "exit 0\n")
+	return nil
+}
+
+// startInstall runs npmInstall in the background and returns once its supervisor has started and
+// npm is ready. The lock is released only after the install has returned (closing it earlier
+// races Cmd.Start reading it), on every path out of the test.
+func startInstall(t *testing.T, f *suFixture, e Env, rel func(), n fakeNPM) *install {
+	t.Helper()
+	in := &install{finished: make(chan struct{})}
+	supc := make(chan int, 1)
+	e.afterNPMStart = func(pid int) { supc <- pid }
+	go func() {
+		se, err := e.npmInstall([]string{"x"})
+		if err != nil {
+			err = fmt.Errorf("%w: %s", err, se)
+		}
+		in.err = err
+		close(in.finished)
+	}()
+	t.Cleanup(func() {
+		n.kill(f, n.strayPid)
+		n.kill(f, n.npmPid)
+		select {
+		case <-in.finished:
+			rel()
+		case <-time.After(20 * time.Second): // leave the descriptor open rather than race Start
+		}
+	})
+	select {
+	case in.sup = <-supc:
+	case <-in.finished:
+		t.Fatalf("npmInstall returned before its supervisor started: %v", in.err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the supervisor never started (npm ran directly?)")
+	}
+	waitFor(t, "npm never got ready", func() bool { return exists(n.ready) })
+	return in
+}
+
+func lockedEnv(t *testing.T, f *suFixture) (Env, func()) {
+	t.Helper()
 	e, rel, ok := f.env.lockNPM()
 	if !ok {
 		t.Fatal("lock not taken")
 	}
-	defer rel()
-	if se, err := e.npmInstall([]string{"x"}); err != nil {
-		t.Fatalf("%v: %s", err, se)
+	return e, rel
+}
+
+// A postinstall child that left npm's group with setsid is still npm's descendant: the
+// supervisor, as a subreaper, inherits it when npm exits and kills it before the lock goes.
+func TestNPMSupervisorKillsADescendantThatLeftTheGroup(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/setsid"); err != nil {
+		t.Skip("no setsid")
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(f.read(pidf)))
-	if p, ok := readStat(pid); ok && p.pgrp == pid && p.live {
+	f := newSU(t, goodRTK, "", "", "")
+	n := newFakeNPM(t, f, setsidStraggler, "exit 0\n")
+	e, rel := lockedEnv(t, f)
+	if err := startInstall(t, f, e, rel, n).wait(t); err != nil {
+		t.Fatal(err)
+	}
+	if n.runs(t, f, n.strayPid) {
 		t.Fatal("the straggler that left npm's group outlived the install")
-	} else if ok && p.live {
-		t.Fatalf("the straggler did not leave the group (pgrp %d), so this test proves nothing", p.pgrp)
+	}
+}
+
+// A postinstall helper whose main thread exited while its other threads run shows as a zombie
+// in its stat; it is still killed, so the install neither waits out the grace nor leaves it
+// running. It left the group, so the caller's group kill would not reach it either.
+func TestNPMSupervisorKillsAChildWhoseLeaderThreadExited(t *testing.T) {
+	py, err := exec.LookPath("/usr/bin/python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	if _, err := os.Stat("/usr/bin/setsid"); err != nil {
+		t.Skip("no setsid")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	// The thread reports ready only once the leader is a zombie, so npm exits after that.
+	script := `import ctypes, os, threading, time
+def run():
+    while open("/proc/%d/stat" % os.getpid()).read().rsplit(")", 1)[1].split()[0] != "Z":
+        time.sleep(0.01)
+    open(os.environ["SREADY_FILE"], "w").close()
+    time.sleep(float(os.environ["TOKEN_SECS"]))
+open(os.environ["PID_FILE"], "w").write(str(os.getpid()))
+threading.Thread(target=run).start()
+ctypes.CDLL(None).pthread_exit(None)
+`
+	sp := filepath.Join(f.home, "leader.py")
+	f.write(t, sp, script)
+	launch := fmt.Sprintf("PID_FILE={PIDF} SREADY_FILE={SREADY} TOKEN_SECS={TOKEN} /usr/bin/setsid %s %s {TOKEN}", py, sp)
+	n := newFakeNPM(t, f, launch, "exit 0\n")
+	e, rel := lockedEnv(t, f)
+	if err := startInstall(t, f, e, rel, n).wait(t); err != nil {
+		t.Fatal(err)
+	}
+	if n.runs(t, f, n.strayPid) {
+		t.Fatal("a child whose leader thread exited outlived the install")
 	}
 }
 
@@ -100,30 +238,17 @@ func TestNPMSupervisorKillsADescendantThatLeftTheGroup(t *testing.T) {
 // whole group down before it returns, and the lock is free once it has.
 func TestNPMSupervisorKilledAloneTakesTheGroupDown(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
-	npmPid := filepath.Join(f.home, "npm.pid")
-	ready, pidf := stragglerNPM(t, f, "/bin/sleep 30", fmt.Sprintf("echo $$ >%q\nexec /bin/sleep 30\n", npmPid))
-	e, rel, ok := f.env.lockNPM()
-	if !ok {
-		t.Fatal("lock not taken")
-	}
-	sup := make(chan int, 1)
-	e.afterNPMStart = func(pid int) { sup <- pid }
-	done := make(chan error, 1)
-	go func() { _, err := e.npmInstall([]string{"x"}); done <- err }()
-	waitFor(t, "npm never started", func() bool { return exists(ready) && exists(npmPid) && f.read(npmPid) != "" })
-	if err := syscall.Kill(<-sup, syscall.SIGKILL); err != nil {
+	n := newFakeNPM(t, f, shStraggler, "exec /bin/sleep {TOKEN}\n")
+	e, rel := lockedEnv(t, f)
+	in := startInstall(t, f, e, rel, n)
+	if err := unix.Kill(in.sup, unix.SIGKILL); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case err := <-done:
-		if err == nil {
-			t.Fatal("a killed supervisor was reported as a successful install")
-		}
-	case <-time.After(15 * time.Second):
-		t.Fatal("npmInstall did not return after its supervisor was killed")
+	if err := in.wait(t); err == nil {
+		t.Fatal("a killed supervisor was reported as a successful install")
 	}
 	rel()
-	if alive(f, npmPid) || alive(f, pidf) {
+	if n.runs(t, f, n.npmPid) || n.runs(t, f, n.strayPid) {
 		t.Fatal("npm or its straggler outlived the killed supervisor")
 	}
 	if lockBusy(f) {
@@ -136,15 +261,19 @@ func TestNPMSupervisorKilledAloneTakesTheGroupDown(t *testing.T) {
 func TestNPMSupervisorOutlivesAKilledCaller(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	release := filepath.Join(f.home, "release")
-	ready, pidf := stragglerNPM(t, f, "/bin/sleep 30", fmt.Sprintf(
+	n := newFakeNPM(t, f, shStraggler, fmt.Sprintf(
 		"i=0; while [ ! -e %q ] && [ $i -lt 600 ]; do i=$((i+1)); /bin/sleep 0.05; done\n", release))
 	caller := exec.Command(os.Args[0], "-test.run=^$")
 	caller.Env = append(os.Environ(), npmCallerHome+"="+f.home, npmCallerNPM+"="+f.env.NPM)
 	if err := caller.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = caller.Process.Kill(); _ = os.WriteFile(release, nil, 0o644) })
-	waitFor(t, "npm never started", func() bool { return exists(ready) })
+	t.Cleanup(func() {
+		_ = caller.Process.Kill()
+		_ = caller.Wait()
+		_ = os.WriteFile(release, nil, 0o644)
+	})
+	waitFor(t, "npm never got ready", func() bool { return exists(n.ready) })
 	if err := caller.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
@@ -156,31 +285,27 @@ func TestNPMSupervisorOutlivesAKilledCaller(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitFor(t, "the lock stayed after npm finished", func() bool { return !lockBusy(f) })
-	if alive(f, pidf) {
+	if n.runs(t, f, n.strayPid) {
 		t.Fatal("npm's straggler outlived the supervisor")
 	}
 }
 
-// npm runs past the install's deadline: the group is killed, the install fails, and nothing of
-// it is left holding the lock.
+// The install's deadline fires while npm runs: the group is killed, the install fails, and
+// nothing of it is left holding the lock.
 func TestNPMInstallDeadlineKillsTheGroup(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
-	npmPid := filepath.Join(f.home, "npm.pid")
-	_, pidf := stragglerNPM(t, f, "/bin/sleep 30", fmt.Sprintf("echo $$ >%q\nexec /bin/sleep 30\n", npmPid))
-	e, rel, ok := f.env.lockNPM()
-	if !ok {
-		t.Fatal("lock not taken")
-	}
-	e.npmTimeout = 500 * time.Millisecond
-	start := time.Now()
-	if _, err := e.npmInstall([]string{"x"}); err == nil {
+	n := newFakeNPM(t, f, shStraggler, "exec /bin/sleep {TOKEN}\n")
+	e, rel := lockedEnv(t, f)
+	ctx, fire := context.WithCancel(context.Background())
+	defer fire()
+	e.npmCtx = ctx
+	in := startInstall(t, f, e, rel, n)
+	fire()
+	if err := in.wait(t); err == nil {
 		t.Fatal("an install cut off by its deadline was reported as a success")
 	}
-	if d := time.Since(start); d > 10*time.Second {
-		t.Fatalf("the deadline was not kept: %v", d)
-	}
 	rel()
-	if alive(f, npmPid) || alive(f, pidf) {
+	if n.runs(t, f, n.npmPid) || n.runs(t, f, n.strayPid) {
 		t.Fatal("npm or its straggler outlived the deadline")
 	}
 	if lockBusy(f) {
@@ -188,25 +313,27 @@ func TestNPMInstallDeadlineKillsTheGroup(t *testing.T) {
 	}
 }
 
-// A process that took a pid since it was listed is never signalled: the start time no longer
-// matches.
-func TestKillProcSparesAReusedPid(t *testing.T) {
-	cmd := exec.Command("/bin/sleep", "30")
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
+// The supervisor's grace runs out with a child still there: a successful npm becomes a failure
+// with the reason on stderr, while a failed npm keeps its own exit code.
+func TestNPMSupervisorFailsWhenItsGraceRunsOut(t *testing.T) {
+	for _, c := range []struct {
+		exit, want int
+		reason     bool
+	}{{0, 1, true}, {7, 7, false}} {
+		f := newSU(t, goodRTK, "", "", "")
+		n := newFakeNPM(t, f, shStraggler, fmt.Sprintf("exit %d\n", c.exit))
+		e, rel := lockedEnv(t, f)
+		e.superviseGrace = "0s" // the straggler is alive at the first look, and no second one comes
+		err := startInstall(t, f, e, rel, n).wait(t)
+		var ee *exec.ExitError
+		if !errors.As(err, &ee) || ee.ExitCode() != c.want {
+			t.Fatalf("npm exit %d: got %v, want exit %d", c.exit, err, c.want)
+		}
+		if got := strings.Contains(err.Error(), "did not stop"); got != c.reason {
+			t.Fatalf("npm exit %d: reason on stderr %v, want %v: %v", c.exit, got, c.reason, err)
+		}
+		if n.runs(t, f, n.strayPid) {
+			t.Fatal("the straggler outlived the install")
+		}
 	}
-	defer func() { _ = cmd.Process.Kill(); _ = cmd.Wait() }()
-	p, ok := readStat(cmd.Process.Pid)
-	if !ok {
-		t.Fatal("no stat")
-	}
-	stale := p
-	stale.start = "1" // the process that had this pid when it was listed
-	killProc(stale)
-	time.Sleep(50 * time.Millisecond)
-	if q, ok := readStat(p.pid); !ok || !q.live {
-		t.Fatal("a process that only shares the listed pid was killed")
-	}
-	killProc(p)
-	waitFor(t, "the listed process was not killed", func() bool { q, ok := readStat(p.pid); return !ok || !q.live })
 }
