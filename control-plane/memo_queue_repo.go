@@ -1110,15 +1110,12 @@ func memoRepoCheckOf(q store.MemoQueue, c store.MemoCategory) *memoRepoCheckWire
 const (
 	// memoRepoRecheckReads bounds the reads in flight across every member and host.
 	memoRepoRecheckReads = 6
-	// memoRepoRecheckPerHost bounds the reads in flight against one Git host, as the workspaces
-	// name it. Repositories whose host could not be learned share one such bucket.
+	// memoRepoRecheckPerHost bounds the reads in flight against one Git host: the host of the
+	// remote the repository's last answered read named. Repositories without one share one more
+	// such bucket.
 	memoRepoRecheckPerHost = 2
-	// memoRepoRecheckPrepare bounds the members finding their due queues, their workspace and
-	// their repositories' hosts at once.
+	// memoRepoRecheckPrepare bounds the members finding their due queues and workspace at once.
 	memoRepoRecheckPrepare = 4
-	// memoRepoRecheckHostWait bounds learning one member's repositories' hosts. The Agent answers
-	// from the clone's configuration and asks no remote.
-	memoRepoRecheckHostWait = 15 * time.Second
 )
 
 // memoRepoRechecker reads the settings file again for every enabled queue on an interval.
@@ -1139,6 +1136,12 @@ type memoRepoRechecker struct {
 	// hosts holds a semaphore per Git host while anyone holds or waits for it, so the map never
 	// outgrows the hosts in use.
 	hosts map[string]*memoRepoHostSlots
+	// known is each member's repositories' hosts, from their last answered read. Learning a host
+	// this way asks the Agent nothing beyond the read itself. A member with no enabled queue left
+	// is dropped at the next pass.
+	known map[string]map[string]string
+	// prepWaiting counts the members waiting for a prepare slot.
+	prepWaiting int
 }
 
 type memoRepoHostSlots struct {
@@ -1161,6 +1164,7 @@ func (rc *memoRepoRechecker) setup() {
 		rc.prepSlots = make(chan struct{}, rc.prepare)
 		rc.busy = map[string]bool{}
 		rc.hosts = map[string]*memoRepoHostSlots{}
+		rc.known = map[string]map[string]string{}
 	})
 }
 
@@ -1197,10 +1201,23 @@ func (rc *memoRepoRechecker) start(ctx context.Context) {
 	}
 	seen := map[string]bool{}
 	for _, q := range qs {
-		if !q.Enabled || seen[q.MembershipID] {
+		if q.Enabled {
+			seen[q.MembershipID] = true
+		}
+	}
+	rc.mu.Lock()
+	for mid := range rc.known {
+		if !seen[mid] && !rc.busy[mid] {
+			delete(rc.known, mid)
+		}
+	}
+	rc.mu.Unlock()
+	started := map[string]bool{}
+	for _, q := range qs {
+		if !q.Enabled || started[q.MembershipID] {
 			continue
 		}
-		seen[q.MembershipID] = true
+		started[q.MembershipID] = true
 		if ctx.Err() != nil {
 			return
 		}
@@ -1263,71 +1280,84 @@ func (rc *memoRepoRechecker) acquireRead(ctx context.Context, host string) (rele
 	}, true
 }
 
-// memoRepoRemoteHosts maps each repository to its origin's host, from the Agent's
-// GET /repos/{name}/identity: the clone's configuration only, no status and no remote. A
-// repository it did not answer for is left out, and so shares the unknown host's bucket.
-func memoRepoRemoteHosts(ctx context.Context, res *resolved, repos []string) map[string]string {
-	cctx, cancel := context.WithTimeout(ctx, memoRepoRecheckHostWait)
-	defer cancel()
-	out := map[string]string{}
-	for _, repo := range repos {
-		body, err := agentText(cctx, res.rt, http.MethodGet, "/repos/"+url.PathEscape(repo)+"/identity", nil)
-		if err != nil {
-			if cctx.Err() != nil {
-				break
-			}
-			continue
+// memoRepoRemoteHost is the host of a remote as the Agent's settings read names it (host and
+// path only: "scheme://host/path", "host:path", a local path, or a placeholder), lower-cased;
+// "" when it names none.
+func memoRepoRemoteHost(remote string) string {
+	if strings.Contains(remote, "://") {
+		if u, err := url.Parse(remote); err == nil {
+			return strings.ToLower(u.Hostname())
 		}
-		var id struct {
-			Provider struct {
-				Host string `json:"host"`
-			} `json:"provider"`
-		}
-		if json.Unmarshal([]byte(body), &id) == nil && id.Provider.Host != "" {
-			out[repo] = strings.ToLower(id.Provider.Host)
-		}
+		return ""
 	}
-	return out
+	if host, _, ok := strings.Cut(remote, ":"); ok && !strings.ContainsAny(host, "/ ") {
+		if i := strings.LastIndexByte(host, '@'); i >= 0 {
+			host = host[i+1:]
+		}
+		return strings.ToLower(host)
+	}
+	return ""
+}
+
+// hostOf is the repository's host as its last answered read named it, or "" for not known.
+func (rc *memoRepoRechecker) hostOf(membershipID, repo string) string {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	return rc.known[membershipID][repo]
+}
+
+func (rc *memoRepoRechecker) learnHost(membershipID, repo, remote string) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	m := rc.known[membershipID]
+	if m == nil {
+		m = map[string]string{}
+		rc.known[membershipID] = m
+	}
+	if h := memoRepoRemoteHost(remote); h != "" {
+		m[repo] = h
+	} else {
+		delete(m, repo)
+	}
 }
 
 // member reads the member's files once per repository and records the result on each due queue
 // of that repository. A workspace that is not running is left alone: a read never starts one. A
 // queue read less than half an interval ago (by the member, or by an earlier pass) is skipped.
 func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string) {
+	rc.mu.Lock()
+	rc.prepWaiting++
+	rc.mu.Unlock()
+	var got bool
 	select {
 	case rc.prepSlots <- struct{}{}:
+		got = true
 	case <-ctx.Done():
+	}
+	rc.mu.Lock()
+	rc.prepWaiting--
+	rc.mu.Unlock()
+	if !got {
 		return
 	}
 	res, work := rc.prepareMember(ctx, membershipID)
+	<-rc.prepSlots
 	if res == nil {
-		<-rc.prepSlots
 		return
 	}
-	// The tenant's switch is asked again before the Agent is asked anything, before and after
-	// waiting for a read's slots, and before each write: turned off meanwhile, nothing more is
-	// fetched and nothing is recorded. A failed answer counts as off for that step only; the
-	// next step asks again.
+	// The tenant's switch is asked again before each queue, the first read of a repository
+	// included, and before each write: turned off meanwhile, nothing more is fetched and nothing
+	// is recorded. A failed answer skips that queue only, as each queue asks again.
 	on := func() bool {
 		v, err := rc.mgr.store.GetTenantMemoQueues(ctx, res.mv.TenantID)
 		return err == nil && v
 	}
-	var hosts map[string]string
-	if on() {
-		hosts = memoRepoRemoteHosts(ctx, res, work.order)
-	}
-	<-rc.prepSlots
 	for _, repo := range work.order {
-		if !on() {
-			continue
-		}
-		release, ok := rc.acquireRead(ctx, hosts[repo])
+		release, ok := rc.acquireRead(ctx, rc.hostOf(membershipID, repo))
 		if !ok {
 			return
 		}
-		if on() {
-			rc.readRepo(ctx, res, membershipID, repo, work.byRepo[repo], on)
-		}
+		rc.readRepo(ctx, res, membershipID, repo, work.byRepo[repo], on)
 		release()
 	}
 }
@@ -1404,18 +1434,31 @@ func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID str
 	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv}, work
 }
 
-// readRepo reads one repository's file once and records it on each of its due queues.
+// readRepo reads one repository's file once, at the first queue the switch lets through, and
+// records it on each due queue the switch lets through.
 func (rc *memoRepoRechecker) readRepo(ctx context.Context, res *resolved, membershipID, repo string, due []memoRepoDue, on func() bool) {
-	started := rc.now()
-	f, aerr := rc.mgr.agentAutorunFile(ctx, res, repo)
-	if aerr != nil {
-		// The last read stays as it was: an unreachable remote says nothing about the file.
-		log.Printf("memo repo recheck: %s: %s", membershipID, aerr.code)
-		return
-	}
+	var (
+		f       agentAutorunFile
+		started time.Time
+		read    bool
+	)
 	for _, d := range due {
 		if !on() {
 			continue
+		}
+		if !read {
+			started = rc.now()
+			var aerr *apiError
+			if f, aerr = rc.mgr.agentAutorunFile(ctx, res, repo); aerr != nil {
+				// The last read stays as it was: an unreachable remote says nothing about the file.
+				log.Printf("memo repo recheck: %s: %s", membershipID, aerr.code)
+				return
+			}
+			read = true
+			rc.learnHost(membershipID, repo, f.Remote)
+			if !on() {
+				continue
+			}
 		}
 		out := memoRepoSettingsWire{Found: f.Found, Commit: f.Commit}
 		if aerr := rc.mgr.memoRepoEvaluate(ctx, res, d.c, f, d.q, true, &out); aerr != nil {

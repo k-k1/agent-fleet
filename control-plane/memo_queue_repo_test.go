@@ -34,13 +34,8 @@ type fakeAutorunAgent struct {
 	instrCommit string
 	// instrAsked are the instruction reads' queries, "commit path".
 	instrAsked []string
-	// remotes answers GET /repos/{name}/identity: each working copy's origin host by name. That
-	// route is not in paths and does not run onServe; it runs onIdentity, and answers
-	// identityStatus when that is set. identityAsked counts its requests.
-	remotes        map[string]string
-	onIdentity     func()
-	identityStatus int
-	identityAsked  int
+	// remote is the remote the settings read names (file only).
+	remote string
 }
 
 // instruction sets what the fake Agent's instruction route answers for p.
@@ -60,14 +55,11 @@ func (a *fakeAutorunAgent) answer(status int, body string) {
 }
 
 func (a *fakeAutorunAgent) file(content string) {
-	b, _ := json.Marshal(agentAutorunFile{Path: autorunfile.Path, Branch: "main", Commit: testCommit, Found: true, Content: content})
-	a.answer(http.StatusOK, string(b))
-}
-
-func (a *fakeAutorunAgent) hostsAsked() int {
 	a.mu.Lock()
-	defer a.mu.Unlock()
-	return a.identityAsked
+	remote := a.remote
+	a.mu.Unlock()
+	b, _ := json.Marshal(agentAutorunFile{Path: autorunfile.Path, Remote: remote, Branch: "main", Commit: testCommit, Found: true, Content: content})
+	a.answer(http.StatusOK, string(b))
 }
 
 func (a *fakeAutorunAgent) requested() []string {
@@ -90,22 +82,6 @@ func (e *inboxEnv) repoAgent(who, state string) *fakeAutorunAgent {
 	t := e.t
 	a := &fakeAutorunAgent{status: http.StatusOK}
 	a.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if name, ok := strings.CutSuffix(strings.TrimPrefix(r.URL.Path, "/repos/"), "/identity"); ok && r.Method == http.MethodGet {
-			a.mu.Lock()
-			a.identityAsked++
-			hook, status, host := a.onIdentity, a.identityStatus, a.remotes[name]
-			a.mu.Unlock()
-			if hook != nil {
-				hook()
-			}
-			if status != 0 {
-				agentErr(w, status, "x")
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"provider": map[string]any{"host": host}})
-			return
-		}
 		a.mu.Lock()
 		hook := a.onServe
 		a.mu.Unlock()
