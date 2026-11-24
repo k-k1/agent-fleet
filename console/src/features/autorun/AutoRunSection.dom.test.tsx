@@ -79,6 +79,7 @@ beforeEach(() => {
   memoQueueList.mockReset();
   memoQueueList.mockResolvedValue({ tenantEnabled: true, queues: [{ categoryId: "c1", repo: "agent-fleet", category: "issue-rounds" }] });
   memoQueueFire.mockClear();
+  workItemList.mockClear();
   memoQueueDeliveries.mockReset();
   memoQueueDeliveries.mockImplementation(async () => [
     { id: "d1", session: "run-a", state: "open" },
