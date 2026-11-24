@@ -60,6 +60,10 @@ const (
 	pushReaders = 4
 	// pushDropLogEvery is how often the counts of dropped notifications and messages are logged.
 	pushDropLogEvery = 10 * time.Second
+	// pushRereadTimeout bounds run's re-read of the delivery context. It is far below pushSlotWait:
+	// a worker held for the full send timeout on that read would let the sends queued behind it
+	// go stale, where a failed read only costs the question's text.
+	pushRereadTimeout = 2 * time.Second
 	// A question that waits an hour is stale for a phone; the service drops it after that.
 	pushTTL = time.Hour
 )
@@ -81,6 +85,11 @@ type Service struct {
 	// (droppedNotes), a reader (droppedFull) or a send worker (droppedStale), and none of them may
 	// wait on a stalled log sink, which would stop later healthy deliveries behind it.
 	droppedNotes, droppedFull, droppedStale atomic.Int64
+	// contextRereadFailed counts sends whose delivery context could not be re-read in run; they went
+	// out without the question's text. Counted for the ticker for the same reason as the drops.
+	contextRereadFailed atomic.Int64
+	// reread is run's budget for re-reading the delivery context; 0 means pushRereadTimeout.
+	reread time.Duration
 	// dropLogEvery is the ticker's period; 0 runs no ticker (tests call logDrops themselves).
 	dropLogEvery time.Duration
 	view         viewing
@@ -224,6 +233,13 @@ func questionText(payload string) string {
 	return string(r)
 }
 
+func (p *Service) rereadBudget() time.Duration {
+	if p.reread > 0 {
+		return min(p.reread, p.timeout)
+	}
+	return min(pushRereadTimeout, p.timeout)
+}
+
 func (p *Service) logDrops() {
 	if d := p.droppedNotes.Swap(0); d > 0 {
 		log.Printf("web push: delivery queue full; %d notifications dropped", d)
@@ -233,6 +249,9 @@ func (p *Service) logDrops() {
 	}
 	if d := p.droppedStale.Swap(0); d > 0 {
 		log.Printf("web push: %d messages waited over %s in the send queue; dropped", d, p.slotWait)
+	}
+	if d := p.contextRereadFailed.Swap(0); d > 0 {
+		log.Printf("web push: delivery context unreadable before %d sends; sent without the text", d)
 	}
 }
 
@@ -308,9 +327,10 @@ func (p *Service) deliver(ctx context.Context, n store.Notification, done *sync.
 	if includeText && n.Kind == "question" {
 		// The text is optional, the question is not: JSON escaping can make 140 runes several
 		// times longer, so a text that would push the payload past what can be encrypted is dropped.
-		pl.Text = questionText(n.Payload)
-		if withText, _ := json.Marshal(pl); len(withText) <= webpush.MaxPayload {
-			body = withText
+		if pl.Text = questionText(n.Payload); pl.Text != "" {
+			if withText, _ := json.Marshal(pl); len(withText) <= webpush.MaxPayload {
+				body = withText
+			}
 		}
 	}
 	for _, s := range subs {
@@ -344,6 +364,24 @@ func (p *Service) run(j sendJob) {
 		p.droppedStale.Add(1)
 		return
 	}
+	// The membership and the tenant's text setting are read again: a member removed, or text turned
+	// off, during the wait must not still get what deliver built before it. A failed read sends, as
+	// deliver does, but without the text. It runs before the subscription re-read, so the gap between
+	// that re-read and the send stays as short as it was, and on its own short budget, so one slow
+	// read cannot hold a worker long enough to make the sends queued behind it stale.
+	body := j.body
+	dctx, dcancel := context.WithTimeout(context.Background(), p.rereadBudget())
+	dc, err := p.store.PushDeliveryContext(dctx, j.membershipID)
+	dcancel()
+	switch {
+	case err != nil:
+		p.contextRereadFailed.Add(1)
+		body = j.plain
+	case !dc.Active:
+		return
+	case !dc.IncludeText:
+		body = j.plain
+	}
 	// The row is read again just before the send: in the queue it may have moved to another member
 	// (the same browser signed in as someone else) or been removed, and this member's message must
 	// not reach that browser. A failed read skips the send, as a failed list read does. A move that
@@ -357,22 +395,6 @@ func (p *Service) run(j sendJob) {
 	}
 	if !held {
 		return
-	}
-	// The membership and the tenant's text setting are read again too, for the same reason: a member
-	// removed, or text turned off, during the wait must not still get what deliver built before it.
-	// A failed read sends, as deliver does, but without the text.
-	body := j.body
-	dctx, dcancel := context.WithTimeout(context.Background(), p.timeout)
-	dc, err := p.store.PushDeliveryContext(dctx, j.membershipID)
-	dcancel()
-	switch {
-	case err != nil:
-		log.Printf("web push: delivery context before the send: %v", err)
-		body = j.plain
-	case !dc.Active:
-		return
-	case !dc.IncludeText:
-		body = j.plain
 	}
 	sctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
