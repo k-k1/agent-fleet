@@ -63,6 +63,10 @@ type Fields struct {
 	// (ADR 0137, addendum 2026-11-20). It names no id: the relay adds the delivery from the
 	// session's own meta, and the Control Plane decides from its own rows.
 	Continuation bool `json:"continuation,omitempty"`
+	// RunNext marks the message this create adds to run before the waiting ones that are not
+	// marked (#5021). Patch has no field for it: a session never changes the mark on a message
+	// already in the queue.
+	RunNext bool `json:"runNext,omitempty"`
 }
 
 // Reference is the typed pointer {provider, key, url} a queue message may carry. The fields are

@@ -9,9 +9,15 @@ const LIST = { root: "/home/dev/spaces", spaces: [{ folder: "q3-abcdef", name: "
 let spacesAnswer: () => unknown = () => LIST;
 const api = vi.fn(async (url: string): Promise<unknown> => (url.startsWith("api/spaces") ? spacesAnswer() : {}));
 let tenant = "";
+let patchAnswer: (folder: string, body: { name: string }) => unknown = () => ({});
+const apiJSON = vi.fn(async (path: string, method: string, body?: unknown): Promise<unknown> => {
+  const m = /^api\/spaces\/([^/]+)$/.exec(path);
+  return m && method === "PATCH" ? patchAnswer(decodeURIComponent(m[1]), body as { name: string }) : {};
+});
 
 vi.mock("../../core/api/client.ts", () => ({
-  apiJSON: async () => ({}),
+  apiJSON: (path: string, method: string, body?: unknown) => apiJSON(path, method, body),
+  errText: (e: { message?: string } | string) => (typeof e === "string" ? e : (e?.message ?? "error")),
   api: (url: string) => api(url),
   isTransientErr: (d: { error?: { status?: number } }) => (d?.error?.status ?? 0) >= 500,
   getTenant: () => tenant,
@@ -62,6 +68,8 @@ const heads = () => [...host.querySelectorAll(".space-group-name")].map((e) => e
 beforeEach(() => {
   localStorage.clear();
   api.mockClear();
+  apiJSON.mockClear();
+  patchAnswer = () => ({});
   spacesAnswer = () => LIST;
   tenant = "";
   useSpacesStore.getState().clear();
@@ -236,6 +244,205 @@ describe("Spaces section", () => {
       expect(heads()).toEqual(["notes-ghijkl"]);
       await act(async () => useProjectFilter.setState({ q: "shell title" }));
       expect(host.querySelector(".ui-section")).toBeNull();
+    });
+  });
+
+  describe("rename", () => {
+    const open = async () => {
+      useSessionsStore.setState({ sessions: [inSpace("s1", "q3-abcdef")] });
+      await render();
+      const btn = host.querySelector<HTMLButtonElement>(".space-group-rename");
+      expect(btn).not.toBeNull();
+      // A real click focuses the button first; jsdom's click() does not.
+      await act(async () => {
+        btn!.focus();
+        btn!.click();
+      });
+    };
+    const dialog = () => document.querySelector<HTMLElement>(".ui-modal, [role=dialog]");
+    const input = () => document.querySelector<HTMLInputElement>("input[type=text]")!;
+    const type = async (v: string) => {
+      await act(async () => {
+        // React tracks the value setter: go through the prototype's, as a user's typing does.
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(input(), v);
+        input().dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const submit = async () => {
+      await act(async () => {
+        input().form!.requestSubmit();
+      });
+      await flush();
+    };
+
+    it("opens on the space's own name and sends the new one for that folder only", async () => {
+      patchAnswer = (folder, body) => {
+        // The Agent's list names the space the new way from now on.
+        spacesAnswer = () => ({ root: LIST.root, spaces: [{ ...LIST.spaces[0], folder, name: body.name }] });
+        return { space: { ...LIST.spaces[0], folder, name: body.name } };
+      };
+      await open();
+      expect(dialog()).not.toBeNull();
+      expect(input().value).toBe("Q3 report");
+      await type("  Q4 plan  ");
+      await submit();
+      expect(apiJSON).toHaveBeenCalledWith("api/spaces/q3-abcdef", "PATCH", { name: "Q4 plan" });
+      expect(dialog()).toBeNull();
+      expect(heads()).toEqual(["Q4 plan"]);
+    });
+
+    it("sends an empty name as it is, so the folder shows again", async () => {
+      patchAnswer = (folder, body) => {
+        spacesAnswer = () => ({ root: LIST.root, spaces: [{ ...LIST.spaces[0], folder, name: body.name }] });
+        return { space: { ...LIST.spaces[0], folder, name: body.name } };
+      };
+      await open();
+      await type("");
+      await submit();
+      expect(apiJSON).toHaveBeenCalledWith("api/spaces/q3-abcdef", "PATCH", { name: "" });
+      expect(heads()).toEqual(["q3-abcdef"]);
+    });
+
+    it("keeps the dialog and the old name when the Agent refuses", async () => {
+      patchAnswer = () => ({ error: { code: "bad_name", message: "name is too long" } });
+      await open();
+      await type("x");
+      await submit();
+      expect(dialog()).not.toBeNull();
+      expect(input().value).toBe("x");
+      expect(heads()).toEqual(["Q3 report"]);
+    });
+
+    it("keeps the pencil off until the list names the space, so an unknown name is never saved as empty", async () => {
+      let answer: (v: unknown) => void = () => {};
+      spacesAnswer = () => new Promise((r) => (answer = r));
+      useSessionsStore.setState({ sessions: [inSpace("s1", "q3-abcdef")] });
+      await render();
+      const btn = () => host.querySelector<HTMLButtonElement>(".space-group-rename")!;
+      expect(btn().disabled).toBe(true);
+      await act(async () => btn().click());
+      expect(dialog()).toBeNull();
+      await act(async () => answer(LIST));
+      await flush();
+      expect(btn().disabled).toBe(false);
+      await act(async () => btn().click());
+      expect(input().value).toBe("Q3 report");
+    });
+
+    it("closes a dialog left open across a workspace switch, and sends nothing to the new one", async () => {
+      await open();
+      expect(dialog()).not.toBeNull();
+      await type("Renamed");
+      tenant = "other";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+      });
+      await flush();
+      expect(dialog()).toBeNull();
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("drops the answer of a rename that was in flight when the workspace changed", async () => {
+      let answer: (v: unknown) => void = () => {};
+      patchAnswer = () => new Promise((r) => (answer = r));
+      await open();
+      await type("Renamed");
+      const listCalls = spaceCalls();
+      await act(async () => {
+        input().form!.requestSubmit();
+      });
+      tenant = "other";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+        answer({ error: { code: "space_not_found", message: "no such space" } });
+      });
+      await flush();
+      // No refusal about the old workspace's folder is shown in the new one, and its list is not read for it.
+      expect(document.body.textContent).not.toContain("This space no longer exists");
+      expect(document.body.textContent).not.toContain("no such space");
+      expect(spaceCalls() - listCalls).toBeLessThanOrEqual(1);
+    });
+
+    it("counts characters, not UTF-16 units: 100 astral characters fit, 101 do not", async () => {
+      patchAnswer = (folder, body) => ({ space: { ...LIST.spaces[0], folder, name: body.name } });
+      await open();
+      await type("😀".repeat(100));
+      const save = () => [...document.querySelectorAll<HTMLButtonElement>("button[type=submit]")].at(-1)!;
+      expect(save().disabled).toBe(false);
+      await submit();
+      expect(apiJSON).toHaveBeenCalledWith("api/spaces/q3-abcdef", "PATCH", { name: "😀".repeat(100) });
+    });
+
+    it("refuses 101 characters before sending", async () => {
+      await open();
+      await type("a".repeat(101));
+      const save = [...document.querySelectorAll<HTMLButtonElement>("button[type=submit]")].at(-1)!;
+      expect(save.disabled).toBe(true);
+      await submit();
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("words the Agent's refusals in the dialog and returns the focus to the pencil on Escape", async () => {
+      patchAnswer = () => ({ error: { code: "space_not_found", message: "no such space" } });
+      await open();
+      await type("x");
+      await submit();
+      expect(document.body.textContent).toContain("This space no longer exists");
+      await act(async () => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      });
+      expect(dialog()).toBeNull();
+      expect(document.activeElement).toBe(host.querySelector(".space-group-rename"));
+    });
+
+    it("does not bring the dialog back when the first workspace is on screen again", async () => {
+      await open();
+      expect(dialog()).not.toBeNull();
+      tenant = "other";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+      });
+      await flush();
+      expect(dialog()).toBeNull();
+      // Back in the first workspace, whose list is still on its way: nobody pressed the pencil.
+      spacesAnswer = () => new Promise(() => {});
+      tenant = "";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+      });
+      await flush();
+      expect(dialog()).toBeNull();
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("says nothing about a network failure of a request made for another workspace", async () => {
+      let fail: (e: Error) => void = () => {};
+      patchAnswer = () => new Promise((_, rej) => (fail = rej));
+      await open();
+      await type("Renamed");
+      await act(async () => {
+        input().form!.requestSubmit();
+      });
+      tenant = "other";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+        fail(new Error("offline"));
+      });
+      await flush();
+      expect(document.body.textContent).not.toContain("network error");
+      expect(dialog()).toBeNull();
+    });
+
+    it("tells a network failure in this workspace, and shows the Agent's own text under a heading for other failures", async () => {
+      patchAnswer = () => Promise.reject(new Error("offline"));
+      await open();
+      await type("x");
+      await submit();
+      expect(document.body.textContent).toContain("network error");
+      expect(dialog()).not.toBeNull();
+      patchAnswer = () => ({ error: { code: "rename_failed", message: "permission denied" } });
+      await submit();
+      expect(document.body.textContent).toContain("Couldn't rename the space. permission denied");
     });
   });
 });

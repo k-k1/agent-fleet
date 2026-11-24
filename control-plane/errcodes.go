@@ -253,6 +253,7 @@ const (
 	errCodeMemoAfterInvalid        = "memo_after_invalid"
 	errCodeMemoStartAfterInvalid   = "memo_start_after_invalid"
 	errCodeMemoRecipeInvalid       = "memo_recipe_invalid"
+	errCodeMemoRunNextInvalid      = "memo_run_next_invalid"
 	errCodeMemoTidyNotUndoable     = "memo_tidy_not_undoable"
 	errCodeMemoTidyStale           = "memo_tidy_stale"
 	errCodeMemoTidyInvalid         = "memo_tidy_invalid"

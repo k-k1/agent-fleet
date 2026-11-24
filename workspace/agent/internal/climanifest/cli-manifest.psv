@@ -15,25 +15,22 @@
 # cli-update-issues.sh keeps one "bump the pin by hand" issue per tool, and nothing else
 # touches them (no contract dispatch, no bump PR). rtk and the image tools below are such rows.
 #
-# Image pins that are NOT watched yet, and why (a row needs a name that is also its
-# versions.json key, so an underscore key such as mcp_grafana needs the name rule widened,
-# and a source the reader does not have needs a resolver in cli-drift-check.sh):
-#   go                      go.dev/dl JSON, not a GitHub or npm source
-#   awscli                  aws/aws-cli publishes tags only (releases/latest answers 404); needs a tag resolver
+# Image pins that are NOT watched, and why (the rest of the image's pins are rows below):
 #   session-manager-plugin  a four-part vendor build number, not a release tag of a source the reader has
-#   gcloud                  Google's rapid-channel JSON, not a GitHub or npm source
-#   mcp-grafana             GitHub releases, but its versions.json key is `mcp_grafana`
-#   cloudwatch-mcp, aws-mcp PyPI (uv-installed); needs a PyPI resolver (key has an underscore too)
 #   postgres, mysql         vendor download indexes, pinned with per-arch checksums
 #   npm                     held on a deliberate 11.x line (see its ARG comment in workspace/Dockerfile)
 #   chromium                a Debian pin; deploy/local/apt-pin-check.sh already reads it
 #   chromium-cft/-dl, noto-cjk  Chrome-for-Testing and font release tags; no source reader yet
+#
+# A name is also the versions.json key, so it may carry an underscore (mcp_grafana).
 #
 # One CLI per line, `|` separated, `-` for "none". Order is the order the tools print rows in.
 #
 #  1 name         the kind; also the versions.json key, the watcher-state key, LATEST_<NAME>
 #  2 arg          the Dockerfile `ARG` that pins its version
 #  3 source       where "latest" is read: npm | github | agy | cursor | kiro | muse
+#                | godev (go.dev/dl JSON) | gittags (`<repo url> <tag glob>`, for a repo that
+#                publishes tags only) | pypi (the package) | gcloud (the rapid channel's components file)
 #  4 locator      the npm package, GitHub repo or release endpoint for that source
 #  5 contract     the contract workflow (.github/workflows/); `-` = none gates this CLI
 #  6 install      how setup-agent-cli installs it: npm (package = locator) | agy | cursor | kiro
@@ -62,3 +59,9 @@ gh|GH_VERSION|github|cli/cli|-|-|-|-|-|-|-
 bkt|BKT_VERSION|github|avivsinai/bitbucket-cli|-|-|-|-|-|-|-
 jira|JIRA_CLI_VERSION|github|ankitpokhrel/jira-cli|-|-|-|-|-|-|-
 gitleaks|GITLEAKS_VERSION|github|gitleaks/gitleaks|-|-|-|-|-|-|-
+go|GO_VERSION|godev|https://go.dev/dl/?mode=json|-|-|-|-|-|-|-
+awscli|AWSCLI_VERSION|gittags|https://github.com/aws/aws-cli.git 2.*|-|-|-|-|-|-|-
+gcloud|GCLOUD_VERSION|gcloud|https://dl.google.com/dl/cloudsdk/channels/rapid/components-2.json|-|-|-|-|-|-|-
+mcp_grafana|MCP_GRAFANA_VERSION|github|grafana/mcp-grafana|-|-|-|-|-|-|-
+cloudwatch_mcp|CLOUDWATCH_MCP_VERSION|pypi|awslabs.cloudwatch-mcp-server|-|-|-|-|-|-|-
+aws_mcp_proxy|AWS_MCP_PROXY_VERSION|pypi|mcp-proxy-for-aws|-|-|-|-|-|-|-

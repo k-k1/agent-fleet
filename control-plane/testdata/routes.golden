@@ -686,6 +686,7 @@ GET /api/skills/catalog
 GET /api/skills/file
 GET /api/spaces
 POST /api/spaces
+PATCH /api/spaces/{folder}
 GET /api/ssm/hosts
 POST /api/ssm/hosts
 DELETE /api/ssm/hosts/{id}

@@ -42,7 +42,8 @@ fi
 # The rows come from the CLI manifest (cli-manifest.sh): name, ARG, release source, locator.
 # The muse row exists for a proprietary CLI because its stable channel endpoint publishes the
 # version anonymously (ADR 0095); rtk and the image tools (gh, gitleaks…) are not agent CLIs, but their drift is just as invisible
-# without a row (they have no contract: see the manifest).
+# without a row (they have no contract: see the manifest). Their sources: godev (go.dev/dl JSON),
+# gittags (tags only), pypi, gcloud (the rapid channel's components file).
 # shellcheck source=cli-manifest.sh
 . "$(dirname "${BASH_SOURCE[0]}")/cli-manifest.sh"
 manifest_load || exit 2
@@ -115,7 +116,7 @@ for t in "${TARGETS[@]}"; do
     github)
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "${GH_AUTH[@]}" \
         "https://api.github.com/repos/${locator}/releases/latest" 2>/dev/null |
-        jq -r '.tag_name // empty | sub("^v";"")' 2>/dev/null)" ;;
+        jq -r '.tag_name // empty | sub("^v";"")' 2>/dev/null)" || latest="" ;;
     agy)
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
         jq -r '.version // empty' 2>/dev/null)" ;;
@@ -134,6 +135,27 @@ for t in "${TARGETS[@]}"; do
       # compare `1.3.0` against a pin of `1.3.0-R3401.1` and report drift forever.
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
         jq -r '.version // empty' 2>/dev/null)" ;;
+    godev)
+      # go.dev/dl lists releases newest first, stable ones flagged; the pin has no `go` prefix.
+      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
+        jq -r '[.[] | select(.stable)][0].version // empty | sub("^go";"")' 2>/dev/null)" || latest="" ;;
+    gittags)
+      # aws/aws-cli publishes tags, not releases. The locator is `<repo-url> <glob>`; read the
+      # tags with ls-remote (no API limit), drop peeled refs and pre-releases, take the highest.
+      # Fetch first, sort after: no pipe into `head`/`tail` (SIGPIPE under pipefail).
+      # A listing cut short by a failed run is not a listing: it would publish the highest
+      # tag of a subset, so a non-zero exit leaves `latest` empty (an unreadable row).
+      latest=""
+      if body="$(git ls-remote --tags --refs "${locator%% *}" "${locator#* }" 2>/dev/null)"; then
+        latest="$(sed -n 's|.*refs/tags/\(.*\)$|\1|p' <<< "$body" | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V)" || latest=""
+        latest="${latest##*$'\n'}"
+      fi ;;
+    pypi)
+      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "https://pypi.org/pypi/${locator}/json" 2>/dev/null |
+        jq -r '.info.version // empty' 2>/dev/null)" || latest="" ;;
+    gcloud)
+      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
+        jq -r '.version // empty' 2>/dev/null)" || latest="" ;;
     *)
       latest="" ;;
   esac

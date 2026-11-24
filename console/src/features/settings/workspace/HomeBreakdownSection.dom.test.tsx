@@ -191,6 +191,21 @@ describe("HomeBreakdownSection", () => {
     expect(bar.style.width).toBe("24.2%");
   });
 
+  it("lists ~/spaces as its own category, which no cleanup frees", async () => {
+    const withSpaces: HomeUsage = {
+      ...result,
+      categories: [...result.categories, { key: "spaces", bytes: 3 * GiB, files: 40, reclaimable: 0, parts: [{ name: "spaces", bytes: 3 * GiB, path: "~/spaces" }] }],
+    };
+    answers.byPath["api/cleanup/home"] = { running: false, scanned: 0, result: withSpaces };
+    const text = await mount();
+    const row = host!.querySelector('[data-cat="spaces"]');
+    expect(row?.textContent).toContain("スペース（~/spaces）");
+    expect(row?.textContent).toContain("3.0 GB");
+    expect(row?.textContent).toContain("「作り直す」では残り");
+    // Nothing in it counts toward what can be freed: 10 + 2 + 2 GiB, as without it.
+    expect(text).toContain("今ある掃除で約 14 GB 空けられます");
+  });
+
   it("hides itself on an Agent without the endpoint", async () => {
     answers.byPath["api/cleanup/home"] = { error: { code: "http_404", status: 404 } };
     expect(await mount()).toBe("");

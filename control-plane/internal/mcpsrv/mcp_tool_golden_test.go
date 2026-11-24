@@ -54,8 +54,8 @@ func (c goldenCP) MemoList(_ context.Context, _ string) (any, error) {
 	return map[string]any{"ok": true}, nil
 }
 
-func (c goldenCP) MemoCreate(_ context.Context, _ store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef, after []string, startAfter string, recipe MemoRecipe) (any, error) {
-	c.record("MEMO-CREATE", connection, repo, category, kind, body, refPath, ref, after, startAfter, recipe)
+func (c goldenCP) MemoCreate(_ context.Context, _ store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef, after []string, startAfter string, recipe MemoRecipe, runNext bool) (any, error) {
+	c.record("MEMO-CREATE", connection, repo, category, kind, body, refPath, ref, after, startAfter, recipe, runNext)
 	return map[string]any{"ok": true}, nil
 }
 

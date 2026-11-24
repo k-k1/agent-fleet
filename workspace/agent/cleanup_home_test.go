@@ -105,6 +105,9 @@ func buildHome(t *testing.T) string {
 	writeSized(t, filepath.Join(sessionx.CleanupArchiveDir(), "20260101-000000-s.tar.gz"), 13000)
 	writeSized(t, filepath.Join(sessionx.CacheRoot(), "images", "i.png"), 4000)
 	writeSized(t, filepath.Join(home, "notes.txt"), 2000)
+	// A space: the member's own work, with its marker and an attachment.
+	writeSized(t, filepath.Join(home, "spaces", "q3-abc123", ".af-space.json"), 100)
+	writeSized(t, filepath.Join(home, "spaces", "q3-abc123", "attachments", "budget.xlsx"), 25000)
 	// Loose files beside the working copies and the af-work folders are no copy and no folder.
 	writeSized(t, filepath.Join(home, "repos", "stray.txt"), 1000)
 	writeSized(t, filepath.Join(home, ".af-work", "loose-file"), 1000)
@@ -182,6 +185,14 @@ func TestMeasureHomeClassifiesEveryByteOnce(t *testing.T) {
 	if got, want := homeCat(u, homeusage.CatAgent).Bytes,
 		below(paths.AgentDataDir(), sessionx.CleanupArchiveDir())+allocated(t, sessionx.CacheRoot()); got != want {
 		t.Fatalf("agent = %d, want %d", got, want)
+	}
+	// ~/spaces is its own category and nothing in it is reclaimable: no cleanup touches a space.
+	sp := homeCat(u, homeusage.CatSpaces)
+	if want := allocated(t, filepath.Join(home, "spaces")); sp.Bytes != want {
+		t.Fatalf("spaces = %d, want %d (filed under other?)", sp.Bytes, want)
+	}
+	if sp.Reclaimable != 0 || len(sp.Parts) != 1 || sp.Parts[0].Name != "spaces" || sp.Parts[0].Path != "~/spaces" {
+		t.Fatalf("spaces = %+v", sp)
 	}
 	for _, p := range homeCat(u, homeusage.CatSource).Parts {
 		t.Fatalf("source has a part %+v: the copies are listed in Repos", p)

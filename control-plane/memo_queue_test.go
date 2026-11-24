@@ -135,7 +135,8 @@ func (c memoFaceClient) create(body map[string]any) (int, memoDTO) {
 	c.e.t.Helper()
 	if c.name == "mcp" {
 		s := func(k string) string { v, _ := body[k].(string); return v }
-		out, err := cpDeps{c.e.mgr}.MemoCreate(context.Background(), c.mv(), "conn-1", s("repo"), s("category"), s("kind"), s("body"), s("refPath"), mcpRefOf(body["reference"]), mcpAfterOf(body["after"]), s("startAfter"), mcpsrv.MemoRecipe{})
+		runNext, _ := body["runNext"].(bool)
+		out, err := cpDeps{c.e.mgr}.MemoCreate(context.Background(), c.mv(), "conn-1", s("repo"), s("category"), s("kind"), s("body"), s("refPath"), mcpRefOf(body["reference"]), mcpAfterOf(body["after"]), s("startAfter"), mcpsrv.MemoRecipe{}, runNext)
 		if err != nil {
 			return mcpStatus(err), memoDTO{}
 		}
