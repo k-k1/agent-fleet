@@ -53,7 +53,7 @@ var declaredSchemaExempt = map[string]string{
 	"workspace_new":    "0002 が作る過渡的な表。legacyHook が DROP workspace → RENAME workspace_new TO workspace で入れ替える",
 	"notification_new": "0125 rebuilds notification to drop the inline UNIQUE(event_id) (SQLite cannot drop it) and renames notification_new TO notification at its end",
 	"notification":     "the same rebuild: the declared-schema reader sees the DROP TABLE but not the RENAME that brings the table back, so it reads as absent from sqlite",
-	"table notification is missing column(s) [created_at, display_name, event_id, kind, membership_id, payload, seen_at, seq, target_id, target_kind, target_type] in sqlite": "the 0125 rebuild is invisible on paper, so the later ADD COLUMN (0164) leaves sqlite looking like a table of two columns",
+	"table notification is missing column(s) [created_at, display_name, event_id, kind, membership_id, payload, seen_at, seq, target_id, target_kind, target_type] in sqlite": "the 0125 rebuild is invisible on paper, so the later ADD COLUMN (0165) leaves sqlite looking like a table of two columns",
 	"workspace.user_id":       "同上の入れ替えで消える旧列（membership_id に置き換わる）",
 	"workspace.membership_id": "紙の上では workspace_new 側に居るので sqlite の workspace に見えないだけ。入れ替え後は存在する",
 }

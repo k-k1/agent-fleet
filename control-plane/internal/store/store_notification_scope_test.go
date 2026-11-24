@@ -127,4 +127,4 @@ var scopeMigrationVersion = map[string]int{"sqlite": 125, "postgres": 110}
 
 // laterNotificationColumnMigrations are the migrations that ADD COLUMN to notification after the
 // scope rebuild, which SQLite's rebuild discards.
-var laterNotificationColumnMigrations = map[string][]int{"sqlite": {164}}
+var laterNotificationColumnMigrations = map[string][]int{"sqlite": {165}}
