@@ -8,7 +8,7 @@ source_of_truth: "af-memory --help, from the workspace-agent in the workspace"
 English | [日本語](af-memory.ja.md)
 
 Works with Agent Fleet memory from the workspace's terminal: list the changes, import Claude Code's and muse's memory,
-write back to Claude Code, and lint. Every command asks the workspace's Agent, so the same switch and secret scan as in the Console apply.
+write back to Claude Code, lint, and list promotion candidates. Every command asks the workspace's Agent, so the same switch and secret scan as in the Console apply.
 The Console flow is in [Import and export memory](../../user/memory/import-export.md).
 
 ## Synopsis
@@ -23,6 +23,7 @@ af-memory muse-import --scope personal --into-user [--dry-run]
 af-memory export-sources
 af-memory export --project <id or name> [--dry-run] [--overwrite <name>]...
 af-memory lint [--user | --project <id or name>] [--json] [--apply]
+af-memory promote-candidates [--project <id or name>] [--days N] [--json]
 af-memory --help
 ```
 
@@ -38,6 +39,7 @@ af-memory --help
 | `export-sources` | Lists the projects that can be written back to Claude Code | No |
 | `export` | Writes a project's memory back into Claude Code's own memory | Yes, without `--dry-run` |
 | `lint` | Checks the memories and prints a report | Only with `--apply` |
+| `promote-candidates` | Lists the project memories worth proposing to the repository's documents | No |
 | `--help` (`-h`, `help`) | Prints the usage | No |
 
 ## Exit status
@@ -229,3 +231,50 @@ Writes what the report finds into the memories.
 - Each scope prints `applied (…): N marked, N renamed, N moved since the check, N deferred`, and the report after it shows the state after the writes
 - It needs the Agent Fleet memory switch on
 - It is refused while a scheduled run or another `--apply` is running. Run it again once that has finished
+
+## promote-candidates
+
+Lists the project memories that have proven themselves enough to be proposed to the repository's own
+documents. It only lists them: nothing is written and no text is proposed yet.
+
+```sh
+af-memory promote-candidates [--project <id or name>] [--days N] [--json]
+```
+
+| Option | Meaning |
+|---|---|
+| (no project) | Lists every project that holds memory |
+| `--project <id or name>` | Lists one project only |
+| `--days N` | How long the current revision must have stood unchanged, from 1 to 90 days. Default 7 |
+| `--json` | Prints the list as JSON |
+
+A memory is a candidate when all of these hold:
+
+- Its kind is `lesson`, `procedure` or `preference`, and its type is not `user` (it is about the repository, not about you)
+- At least two different sessions confirmed its current revision with `memory_feedback`. A confirmation of an earlier revision does not count
+- It has stored anchors, and lint finds nothing about it on the default branch
+- It has no open reasons
+- Its current revision is at least N days old
+
+```
+== acme-shop: 1 candidate(s), 1 held (confirmed by 2 sessions, unchanged for 7 days)  [origin/main @ 3f9c2a1e5b07]
+   candidate  release-steps r3  procedure, 2 sessions, since 2026-11-01T00:00:00Z
+              anchors: scripts/release.sh
+   held       deploy-notes r1  lesson: confirmations (1 of 2 sessions on revision 1); no-anchors
+```
+
+A memory of those kinds that does not qualify is listed as `held`, with everything it misses:
+
+| Missing | Meaning |
+|---|---|
+| `about-member` | Its type is `user` |
+| `open-reasons` | It is suspect |
+| `no-anchors` | It has no stored anchors |
+| `unverified` | The default branch could not be read, so its anchors are unchecked |
+| `lint` | Lint reports something about it (the finding is named) |
+| `confirmations` | Too few sessions confirmed its current revision |
+| `changed-recently` | Its current revision is younger than N days |
+
+- Archived and superseded memories, and the kinds `state` and `log`, are not listed
+- The repository is read the way `lint` reads it: by ref from `origin`'s default branch, never through a working copy and without a fetch
+- Reading does not count as a use of a memory. The exit status says whether the command worked
