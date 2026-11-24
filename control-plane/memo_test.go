@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -129,7 +128,7 @@ func TestValidateMemoAttachments(t *testing.T) {
 
 func TestSendMemoPromptUsesSemanticTurn(t *testing.T) {
 	const prompt = "まとめたメモ"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srvURL, closeSrv := registerInMemAgent(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/sessions/codex_one/turn" {
 			t.Errorf("path = %q, want semantic /turn", r.URL.Path)
 		}
@@ -146,9 +145,9 @@ func TestSendMemoPromptUsesSemanticTurn(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"sent":"codex_one","op":"start"}`))
 	}))
-	defer srv.Close()
+	defer closeSrv()
 
-	rt := stubRuntime{endpoint: srv.URL, token: "tok"}
+	rt := stubRuntime{endpoint: srvURL, token: "tok"}
 	if aerr := sendMemoPrompt(context.Background(), rt, "codex_one", prompt); aerr != nil {
 		t.Fatalf("sendMemoPrompt: %v", aerr)
 	}
@@ -156,7 +155,7 @@ func TestSendMemoPromptUsesSemanticTurn(t *testing.T) {
 
 func TestSendMemoPromptFallsBackForOldAgent(t *testing.T) {
 	var paths []string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srvURL, closeSrv := registerInMemAgent(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
 		case "/sessions/s1/turn":
@@ -174,9 +173,9 @@ func TestSendMemoPromptFallsBackForOldAgent(t *testing.T) {
 			t.Errorf("unexpected path %q", r.URL.Path)
 		}
 	}))
-	defer srv.Close()
+	defer closeSrv()
 
-	if aerr := sendMemoPrompt(context.Background(), stubRuntime{endpoint: srv.URL}, "s1", "memo"); aerr != nil {
+	if aerr := sendMemoPrompt(context.Background(), stubRuntime{endpoint: srvURL}, "s1", "memo"); aerr != nil {
 		t.Fatalf("sendMemoPrompt: %v", aerr)
 	}
 	if got := strings.Join(paths, ","); got != "/sessions/s1/turn,/sessions/s1/input" {
@@ -186,15 +185,15 @@ func TestSendMemoPromptFallsBackForOldAgent(t *testing.T) {
 
 func TestSendMemoPromptPreservesStructuredAgentError(t *testing.T) {
 	var calls int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srvURL, closeSrv := registerInMemAgent(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte(`{"error":{"code":"question_pending","message":"answer first"}}`))
 	}))
-	defer srv.Close()
+	defer closeSrv()
 
-	aerr := sendMemoPrompt(context.Background(), stubRuntime{endpoint: srv.URL}, "s1", "memo")
+	aerr := sendMemoPrompt(context.Background(), stubRuntime{endpoint: srvURL}, "s1", "memo")
 	if aerr == nil || aerr.status != http.StatusConflict || aerr.code != "question_pending" {
 		t.Fatalf("error = %#v", aerr)
 	}

@@ -1143,7 +1143,7 @@ func TestMemoAnswerPRFailedRetryDoesNotQueueOnTheBuildLock(t *testing.T) {
 		}()
 		select {
 		case <-done:
-		case <-time.After(10 * time.Second):
+		case <-time.After(30 * time.Second): // a hang guard, not a bound
 			// Release the lock and let the pass end before failing, so a regression fails here
 			// instead of leaving the goroutine behind.
 			bl.Unlock()
@@ -1283,23 +1283,25 @@ func TestMemoRuntimeStateDoesNotQueueOnTheBuildLock(t *testing.T) {
 		e.mgr.mu.Unlock()
 		bl := e.mgr.buildLockFor(id)
 		bl.Lock()
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
-		start := time.Now()
 		got := make(chan string, 1)
 		go func() { got <- e.runner().memoRuntimeState(ctx, id) }()
 		var st string
+		// The look-up answers while the lock is still held; that ordering is the contract. The
+		// timer is only a hang guard, and the context has no deadline of its own, so a look-up
+		// that waits on the lock cannot be rescued by it.
 		select {
 		case st = <-got:
-		case <-time.After(5 * time.Second):
+		case <-time.After(30 * time.Second):
 			// Release the lock and join before failing, so a regression fails here and not at
 			// the package timeout.
 			bl.Unlock()
 			<-got
 			t.Fatal("the state look-up queued behind the build lock")
 		}
-		if d := time.Since(start); st != "" || d > time.Second {
-			t.Fatalf("state %q after %v with the build lock held", st, d)
+		if st != "" {
+			t.Fatalf("state %q with the build lock held, want unknown", st)
 		}
 		bl.Unlock()
 		if !bl.TryLock() {

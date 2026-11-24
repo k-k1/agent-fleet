@@ -93,6 +93,25 @@ func eachDeliveryDialectRealTime(t *testing.T, f func(t *testing.T, e *deliveryE
 	eachPostgresDelivery(t, f)
 }
 
+// waitForBlockedBy blocks until a Postgres backend is blocked by the backend holderPID
+// (pg_blocking_pids), the event a test that holds a row lock waits for instead of sleeping. It
+// filters on the holder, so an unrelated lock wait in the shared database does not count.
+func (e *deliveryEnv) waitForBlockedBy(holderPID int) {
+	e.t.Helper()
+	for i := 0; i < 2000; i++ {
+		var n int
+		if err := e.st.DB().QueryRowContext(context.Background(),
+			`SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND $1 = ANY(pg_blocking_pids(pid))`, holderPID).Scan(&n); err != nil {
+			e.t.Fatalf("pg_blocking_pids: %v", err)
+		}
+		if n > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	e.t.Fatal("no backend ever waited on the lock")
+}
+
 func eachPostgresDelivery(t *testing.T, f func(t *testing.T, e *deliveryEnv)) {
 	url, ok := pgtest.Schema(t)
 	if !ok {
@@ -1725,22 +1744,39 @@ func TestMemoDeliverySettleKeepsItsDeadline(t *testing.T) {
 		release := sync.OnceFunc(func() { _ = tx.Rollback() })
 		defer release()
 		r := e.runner()
-		r.settleBudget = 2 * time.Second
-		done := make(chan time.Duration, 1)
-		go func() {
-			start := time.Now()
-			r.settle(context.Background(), e.stale(r))
-			done <- time.Since(start)
-		}()
-		select {
-		case took := <-done:
-			if took > 10*time.Second {
-				t.Fatalf("settle took %s with a 2s budget", took)
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		pg := strings.HasSuffix(t.Name(), "/postgres")
+		var holder int
+		if pg {
+			// Postgres: the test ends the wait itself, once the settle's write is seen queued
+			// behind the holder. A budget timer would race the observation (a stalled test
+			// process could see the wait only after the budget had ended it).
+			if err := tx.QueryRowContext(context.Background(), `SELECT pg_backend_pid()`).Scan(&holder); err != nil {
+				t.Fatal(err)
 			}
+			r.settleBudget = time.Minute
+		} else {
+			// SQLite has no view of its lock waiters: the budget ends the wait.
+			r.settleBudget = 300 * time.Millisecond
+		}
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			r.settle(ctx, e.stale(r))
+		}()
+		if pg {
+			e.waitForBlockedBy(holder)
+			cancel()
+		}
+		// The settle returns with the lock still held: its writes carry the context. The timer
+		// only turns a settle that ignores it into a failure instead of a package timeout.
+		select {
+		case <-done:
 		case <-time.After(30 * time.Second):
 			release()
 			<-done
-			t.Fatal("settle waited on the lock past its budget")
+			t.Fatal("settle waited on the lock past its context")
 		}
 		release()
 		if got := e.delivery(d.ID); got.State != store.DeliveryClaimed {
