@@ -3,12 +3,14 @@ package bootinstall
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 // errNPMStuck: a process of an npm install was still running after SIGKILL and the grace (a
@@ -23,15 +25,21 @@ type npmProc struct {
 	start uint64
 }
 
-// npmStuckPath records the processes behind errNPMStuck, one "<boot id> <pid> <start>" per line.
+// npmStuckPath records the processes behind errNPMStuck, one "<scope> <pid> <start>" per line.
 // It outlives this process on purpose: the next start must not restore under them either.
 func (e Env) npmStuckPath() string { return filepath.Join(e.Home, ".local", ".af-npm-stuck") }
 
-// bootID tells this boot from the next: start times count from boot, so an entry of an earlier
-// boot names nothing.
-func bootID() string {
-	b, _ := os.ReadFile("/proc/sys/kernel/random/boot_id")
-	return strings.TrimSpace(string(b))
+// procScope names where a pid and start time mean one process: this boot (start times count from
+// it) and this pid namespace (a new container numbers its processes afresh). "?" when either
+// cannot be read: such an entry is never taken for another scope's.
+func procScope() string {
+	b, err := os.ReadFile(filepath.Join(procRoot, "sys", "kernel", "random", "boot_id"))
+	ns, nerr := os.Readlink(filepath.Join(procRoot, "self", "ns", "pid"))
+	boot := strings.TrimSpace(string(b))
+	if err != nil || nerr != nil || boot == "" || strings.ContainsAny(ns, " \t\n") {
+		return "?"
+	}
+	return boot + "/" + ns
 }
 
 // procRuns reports whether p is still the same process and has a thread that has not exited. A
@@ -42,26 +50,7 @@ func procRuns(p npmProc) bool {
 	if !ok || st.start != p.start {
 		return false
 	}
-	if st.live {
-		return true
-	}
-	tasks, err := os.ReadDir(fmt.Sprintf("/proc/%d/task", p.pid))
-	if errors.Is(err, fs.ErrNotExist) {
-		return false
-	}
-	if err != nil {
-		return true // cannot tell: assume it still runs
-	}
-	for _, d := range tasks {
-		tid, err := strconv.Atoi(d.Name())
-		if err != nil {
-			continue
-		}
-		if t, ok := readStatFile(tid, fmt.Sprintf("/proc/%d/task/%d/stat", p.pid, tid)); ok && t.live {
-			return true
-		}
-	}
-	return false
+	return st.live || threadsRun(p.pid)
 }
 
 var reStuck = regexp.MustCompile(`(?m)^stuck ([0-9]+) ([0-9]+)$`)
@@ -79,25 +68,40 @@ func parseStuck(s string) []npmProc {
 	return out
 }
 
-// npmReadStuck returns the recorded processes of this boot. A missing file is none; any other
-// read error is returned, and the caller must take it as "may still run".
+// npmReadStuck returns the recorded processes that may belong to this scope. A missing file is
+// none; any other failure (a file that is not a regular one, such as a FIFO an open would block
+// on, included) is returned, and the caller must take it as "may still run".
 func (e Env) npmReadStuck() ([]npmProc, error) {
-	b, err := os.ReadFile(e.npmStuckPath())
+	f, err := os.OpenFile(e.npmStuckPath(), os.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW, 0)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, err
 	}
-	boot := bootID()
+	defer f.Close()
+	if fi, err := f.Stat(); err != nil {
+		return nil, err
+	} else if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", e.npmStuckPath())
+	}
+	b, err := io.ReadAll(io.LimitReader(f, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	scope := procScope()
 	var out []npmProc
 	for _, l := range strings.Split(string(b), "\n") {
-		f := strings.Fields(l)
-		if len(f) != 3 || f[0] != boot {
+		fl := strings.Fields(l)
+		if len(fl) != 3 {
 			continue
 		}
-		pid, err1 := strconv.Atoi(f[1])
-		start, err2 := strconv.ParseUint(f[2], 10, 64)
+		// Only two known, different scopes rule an entry out.
+		if fl[0] != scope && fl[0] != "?" && scope != "?" {
+			continue
+		}
+		pid, err1 := strconv.Atoi(fl[1])
+		start, err2 := strconv.ParseUint(fl[2], 10, 64)
 		if err1 == nil && err2 == nil && pid > 0 {
 			out = append(out, npmProc{pid, start})
 		}
@@ -107,7 +111,13 @@ func (e Env) npmReadStuck() ([]npmProc, error) {
 
 // npmRecordStuck adds the processes of ps that still run to the stuck file, keeping the recorded
 // ones that still run, and reports whether any of ps does. The caller holds the npm lock.
+//
+// A procfs of another pid namespace names other processes: nothing is recorded from it, as
+// before this record existed, rather than a guard that waits for an unrelated process.
 func (e Env) npmRecordStuck(ps []npmProc) (bool, error) {
+	if len(ps) == 0 || !procfsOurs() {
+		return false, nil
+	}
 	var runs []npmProc
 	seen := map[npmProc]bool{}
 	for _, p := range ps {
@@ -126,10 +136,13 @@ func (e Env) npmRecordStuck(ps []npmProc) (bool, error) {
 			runs = append(runs, p)
 		}
 	}
-	boot := bootID()
+	scope := procScope()
 	var b strings.Builder
 	for _, p := range runs {
-		fmt.Fprintf(&b, "%s %d %d\n", boot, p.pid, p.start)
+		fmt.Fprintf(&b, "%s %d %d\n", scope, p.pid, p.start)
+	}
+	if err := os.MkdirAll(filepath.Dir(e.npmStuckPath()), 0o755); err != nil {
+		return true, err
 	}
 	f, err := os.CreateTemp(filepath.Dir(e.npmStuckPath()), ".af-npm-stuck.tmp.")
 	if err != nil {
@@ -159,6 +172,11 @@ func (e Env) npmStuckCheck() error {
 	ps, err := e.npmReadStuck()
 	if err != nil {
 		return fmt.Errorf("%w: cannot read %s: %v", errNPMStuck, e.npmStuckPath(), err)
+	}
+	if len(ps) > 0 && !procfsOurs() {
+		// Nothing here can tell these processes apart (see npmRecordStuck): the guard is off, as
+		// before it existed, rather than waiting on whatever the numbers name in this procfs.
+		return nil
 	}
 	for _, p := range ps {
 		if procRuns(p) {

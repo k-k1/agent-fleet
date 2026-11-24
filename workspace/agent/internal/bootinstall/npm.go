@@ -418,29 +418,19 @@ func NPM(e Env) int {
 // it, except that it clears an earlier "failed". Exit 0 when all run, 1 when one still does not,
 // 3 when a repair was skipped for lack of space.
 func (e Env) NPMVerify(clis []string, present bool) int {
-	rc, _ := e.npmVerify(clis, present)
-	return rc
-}
-
-// npmVerify is NPMVerify that also says whether it ran with the lock (the full pass, not the
-// read-only one).
-func (e Env) npmVerify(clis []string, present bool) (rc int, locked bool) {
 	e, release, ok := e.lockNPM()
 	if !ok {
 		if e.npmLockErr != nil {
-			return e.npmVerifyReadOnly(clis, present), false
+			return e.npmVerifyReadOnly(clis, present)
 		}
 		e.npmBusy("npm verify")
-		return ExitFailed, false
+		return ExitFailed
 	}
 	defer release()
-	return e.npmVerifyLocked(clis, present), true
-}
-
-func (e Env) npmVerifyLocked(clis []string, present bool) int {
 	var fix, fixCLIs, broken, stuckRestore []string
 	defer func() {
-		if len(stuckRestore) > 0 {
+		// Not under a writer the repair could not stop: narrowing the marker deletes backups.
+		if len(stuckRestore) > 0 && e.npmStuckCheck() == nil {
 			e.npmKeepPendingFor(stuckRestore)
 		}
 	}()
@@ -512,8 +502,12 @@ func (e Env) npmVerifyLocked(clis []string, present bool) int {
 			}
 		}
 	}
+	// A repair whose npm left a process running (errNPMStuck) removes nothing it may still write.
+	writerStuck := len(fix) > 0 && e.npmStuckCheck() != nil
 	for _, c := range broken {
-		if e.removeLink(filepath.Join(e.localBin(), c)) {
+		if writerStuck {
+			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s does not run; a process of its repair did not stop, so its ~/.local link is left (retrying next start)\n", c)
+		} else if e.removeLink(filepath.Join(e.localBin(), c)) {
 			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s does not run; removed its ~/.local link (retrying next start)\n", c)
 		} else {
 			fmt.Fprintf(e.Stdout, "[entrypoint] WARN: %s does not run (retrying next start)\n", c)
@@ -549,12 +543,15 @@ func (e Env) removeLink(link string) bool {
 // only after an install: a copy broken by an earlier start, or already at its version so that no
 // install ran, is otherwise never looked at again.
 func (e Env) NPMVerifyPresent() int {
-	rc, _ := e.npmVerifyPresent()
-	return rc
+	list := e.npmPresentList()
+	if len(list) == 0 {
+		return ExitOK
+	}
+	return e.NPMVerify(list, true)
 }
 
-// npmVerifyPresent is NPMVerifyPresent that also says whether the pass ran with the lock.
-func (e Env) npmVerifyPresent() (rc int, locked bool) {
+// npmPresentList is the CLIs NPMVerifyPresent looks at.
+func (e Env) npmPresentList() []string {
 	var list []string
 	_, marked, mok, mbad := e.npmReadMarker()
 	for _, c := range npmCLIs {
@@ -569,10 +566,7 @@ func (e Env) npmVerifyPresent() (rc int, locked bool) {
 			list = append(list, c.Name)
 		}
 	}
-	if len(list) == 0 {
-		return ExitOK, false
-	}
-	return e.npmVerify(list, true)
+	return list
 }
 
 // npmVerifyReadOnly is NPMVerify when the lock file cannot be opened: each CLI is probed once and
@@ -1082,25 +1076,29 @@ func npmDiscardAside(moved []npmAside) bool {
 }
 
 // NPMVerifyPresentStep is the entrypoint's final pass: it recovers what a killed update left but
-// keeps an accepted update's backups, verifies the copies, then settles the backups.
+// keeps an accepted update's backups, verifies the copies, then settles the backups, all under one
+// hold of the lock: a backup is deleted only after the pass that vouches for its new copy, and no
+// other start can leave a backup in between.
 func (e Env) NPMVerifyPresentStep() int {
 	e, release, ok := e.lockNPM()
+	if !ok && e.npmLockErr != nil {
+		e, release, ok = e.lockNPM() // once more: an open that failed may have been transient
+	}
 	if !ok {
 		if e.npmLockErr == nil {
 			e.npmBusy("agent CLI verify")
 			return ExitFailed
 		}
-		// No lock could be opened: recovery refuses itself when a marker is left, and the verify
-		// pass writes only for a copy that does not run, which it refuses too. Each takes the lock
-		// again itself, so when the verify pass did get it (the failure was transient), the
-		// accepted update's backups are settled now, as on the locked path, rather than at the
-		// next start; recovery takes the lock once more for that, and refuses without it.
-		e.npmRecoverAside(true)
-		rc, locked := e.npmVerifyPresent()
-		if locked {
-			e.npmRecoverAside(false)
+		// No usable lock: nothing here takes it again, so nothing is recovered, removed or
+		// settled; each copy is probed once.
+		if _, err := os.Lstat(e.npmMarker()); err == nil {
+			e.npmBusy("recovery of an earlier agent CLI update")
 		}
-		return rc
+		list := e.npmPresentList()
+		if len(list) == 0 {
+			return ExitOK
+		}
+		return e.npmVerifyReadOnly(list, true)
 	}
 	defer release()
 	e.npmRecoverAside(true)

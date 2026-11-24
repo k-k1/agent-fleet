@@ -281,6 +281,13 @@ func (e Env) selfUpdateNPM() {
 	if len(check) > 0 {
 		e.NPMVerify(check, false)
 	}
+	if err := e.npmStuckCheck(); err != nil {
+		// The repair pass left a writer running: the pending marker stays as npmMoveAside wrote
+		// it, so a later start's recovery puts every previous copy back once the writer is gone,
+		// and nothing is deleted or settled under it now.
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: agent CLI update not settled: %v; the previous copies stay as *%s until a later start restores them\n", err, npmBakSuffix)
+		return
+	}
 	switch {
 	case len(stuck) > 0:
 		// A previous copy could not be put back: its backup and the marker stay, so the next

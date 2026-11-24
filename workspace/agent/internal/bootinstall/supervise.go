@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -24,15 +26,19 @@ const superviseGrace = 5 * time.Second
 // MaybeSupervise runs the supervisor and exits when args (os.Args[1:]) ask for it; otherwise it
 // returns. Run calls it first, and the package's TestMain does too, because a test binary is
 // what the re-exec starts there.
-func MaybeSupervise(args []string) { maybeSupervise(args, superviseGrace) }
+func MaybeSupervise(args []string) { maybeSupervise(args, superviseGrace, killPid) }
 
-// maybeSupervise is MaybeSupervise with the grace given. Only the tests' TestMain passes another
-// one; production never reads it from anywhere, so nothing inherited can shorten it.
-func maybeSupervise(args []string, grace time.Duration) {
+// killPid is the supervisor's SIGKILL of one process.
+func killPid(pid int) { _ = unix.Kill(pid, unix.SIGKILL) }
+
+// maybeSupervise is MaybeSupervise with the grace and the kill given. Only the tests' TestMain
+// passes others (a shorter grace, a kill that fails as one into uninterruptible I/O would);
+// production never reads them from anywhere, so nothing inherited can change them.
+func maybeSupervise(args []string, grace time.Duration, kill func(pid int)) {
 	if len(args) < 3 || args[0] != "boot-install" || args[1] != superviseStep {
 		return
 	}
-	os.Exit(supervise(args[2], args[3:], grace))
+	os.Exit(supervise(args[2], args[3:], grace, kill))
 }
 
 // supervise runs npm in its own (the supervisor's) process group, passes the lock on to it, and
@@ -40,7 +46,7 @@ func maybeSupervise(args []string, grace time.Duration) {
 // the last holder of the file description exits, so a postinstall child that does not inherit it
 // still cannot outlive the lock. The caller owns the deadline and kills the whole group
 // (supervisor included), so no signal handling is needed here.
-func supervise(npm string, args []string, grace time.Duration) int {
+func supervise(npm string, args []string, grace time.Duration, kill func(pid int)) int {
 	// The step signals its whole group at the end: it must lead its own, never a caller's.
 	lock := os.NewFile(3, "npm-lock")
 	if lock == nil || syscall.Getpgrp() != os.Getpid() {
@@ -63,12 +69,12 @@ func supervise(npm string, args []string, grace time.Duration) int {
 	stopped := false
 	if reaper {
 		var known bool
-		stopped, known = stopChildren(deadline)
+		stopped, known = stopChildren(deadline, kill)
 		if !known {
-			stopped = stopGroup(deadline) // waitid refused: the group listing is what is left
+			stopped = stopGroup(deadline, kill) // waitid refused: the group listing is what is left
 		}
 	} else {
-		stopped = stopGroup(deadline)
+		stopped = stopGroup(deadline, kill)
 	}
 	if !stopped {
 		reportStuck(os.Stdout)
@@ -121,7 +127,7 @@ func superviseExit(werr error, stopped bool) int {
 // thread of a multi-threaded process has exited, the rest still run, and a kill reaches them all.
 // known is false when waitid itself is refused, so neither "no child left" nor "this is my child"
 // can be told.
-func stopChildren(deadline time.Time) (stopped, known bool) {
+func stopChildren(deadline time.Time, kill func(pid int)) (stopped, known bool) {
 	self := os.Getpid()
 	for ; ; time.Sleep(20 * time.Millisecond) {
 		none, err := reapChildren()
@@ -137,7 +143,7 @@ func stopChildren(deadline time.Time) (stopped, known bool) {
 				return false, false
 			}
 			if child {
-				_ = unix.Kill(pid, unix.SIGKILL)
+				kill(pid)
 			}
 		}
 		if time.Now().After(deadline) {
@@ -199,7 +205,7 @@ func childrenOf(ppid int) []int {
 // whether that happened before deadline. It is the rule without a subreaper: an orphan goes to
 // init and is seen only in a /proc listing, which can miss a child forked while it is read, so
 // the group counts as empty only after three empty listings in a row.
-func stopGroup(deadline time.Time) bool {
+func stopGroup(deadline time.Time, kill func(pid int)) bool {
 	pgid := syscall.Getpgrp()
 	for empty := 0; empty < 3; time.Sleep(20 * time.Millisecond) {
 		m := groupMembers(pgid)
@@ -212,7 +218,7 @@ func stopGroup(deadline time.Time) bool {
 			return false
 		}
 		for _, p := range m {
-			_ = syscall.Kill(p, syscall.SIGKILL)
+			kill(p)
 		}
 	}
 	return true
@@ -225,8 +231,24 @@ type procInfo struct {
 	live            bool   // not a zombie
 }
 
+// procRoot is where procfs is read; tests point it at a fake tree.
+var procRoot = "/proc"
+
+// procPath is a path under procRoot for pid.
+func procPath(pid int, rest ...string) string {
+	return filepath.Join(append([]string{procRoot, strconv.Itoa(pid)}, rest...)...)
+}
+
+// procfsOurs reports whether procRoot numbers processes as this process's pid namespace does,
+// which every kill and waitid here uses. A procfs mounted for another namespace names other
+// processes by the same numbers.
+func procfsOurs() bool {
+	t, err := os.Readlink(filepath.Join(procRoot, "self"))
+	return err == nil && t == strconv.Itoa(os.Getpid())
+}
+
 func readStat(pid int) (procInfo, bool) {
-	return readStatFile(pid, "/proc/"+strconv.Itoa(pid)+"/stat")
+	return readStatFile(pid, procPath(pid, "stat"))
 }
 
 func readStatFile(pid int, path string) (procInfo, bool) {
@@ -253,7 +275,7 @@ func readStatFile(pid int, path string) (procInfo, bool) {
 }
 
 func listProcs() []procInfo {
-	ents, err := os.ReadDir("/proc")
+	ents, err := os.ReadDir(procRoot)
 	if err != nil {
 		return nil
 	}
@@ -270,17 +292,38 @@ func listProcs() []procInfo {
 	return out
 }
 
-// groupMembers lists the live (not zombie) processes of group pgid other than this one. A
-// zombie is a dead process nobody has reaped yet: it writes nothing, so it does not count.
+// groupMembers lists the running processes of group pgid other than this one. A zombie whose
+// threads have all exited writes nothing and does not count; one whose leader thread alone exited
+// still runs.
 func groupMembers(pgid int) []int {
-	self := os.Getpid()
 	var out []int
-	for _, p := range listProcs() {
-		if p.pid != self && p.live && p.pgrp == pgid {
-			out = append(out, p.pid)
-		}
+	for _, p := range groupProcs(pgid) {
+		out = append(out, p.pid)
 	}
 	return out
+}
+
+// threadsRun reports whether a process whose stat says zombie still has a thread that has not
+// exited (its leader thread alone exited). A task list that cannot be read for another reason
+// than the process being gone answers yes: when in doubt, it may still write.
+func threadsRun(pid int) bool {
+	tasks, err := os.ReadDir(procPath(pid, "task"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return false
+	}
+	if err != nil {
+		return true
+	}
+	for _, d := range tasks {
+		tid, err := strconv.Atoi(d.Name())
+		if err != nil {
+			continue
+		}
+		if t, ok := readStatFile(tid, procPath(pid, "task", d.Name(), "stat")); ok && t.live {
+			return true
+		}
+	}
+	return false
 }
 
 // groupProcs is groupMembers with each member's start time, read from the same stat.
@@ -288,7 +331,7 @@ func groupProcs(pgid int) []npmProc {
 	self := os.Getpid()
 	var out []npmProc
 	for _, p := range listProcs() {
-		if p.pid != self && p.live && p.pgrp == pgid {
+		if p.pid != self && p.pgrp == pgid && (p.live || threadsRun(p.pid)) {
 			out = append(out, npmProc{pid: p.pid, start: p.start})
 		}
 	}

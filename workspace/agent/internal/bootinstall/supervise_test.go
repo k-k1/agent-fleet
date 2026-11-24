@@ -26,6 +26,10 @@ const (
 // so a cleanup that runs out of time can be seen without an unkillable process.
 const superviseGraceEnv = "AF_TEST_NPM_SUPERVISE_GRACE"
 
+// superviseNoKillEnv makes a supervisor started from the test binary signal nothing, so a child
+// outlives its grace the way one blocked in uninterruptible I/O would.
+const superviseNoKillEnv = "AF_TEST_NPM_SUPERVISE_NOKILL"
+
 // npmCallerHelper takes the npm lock and runs one supervised install, as NPM does.
 func npmCallerHelper() int {
 	e, _, ok := Env{Home: os.Getenv(npmCallerHome), NPM: os.Getenv(npmCallerNPM)}.lockNPM()

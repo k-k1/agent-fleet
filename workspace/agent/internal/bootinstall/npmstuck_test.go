@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -44,7 +45,7 @@ func TestNPMStuckProcessRefusesTheLockUntilItIsGone(t *testing.T) {
 	if runs, err := held.npmRecordStuck([]npmProc{p, {p.pid, p.start + 1}}); !runs || err != nil {
 		t.Fatalf("record: %v %v", runs, err)
 	}
-	if b := f.read(f.env.npmStuckPath()); strings.Count(b, "\n") != 1 || !strings.HasPrefix(b, bootID()+" ") {
+	if b := f.read(f.env.npmStuckPath()); strings.Count(b, "\n") != 1 || !strings.HasPrefix(b, procScope()+" ") {
 		t.Fatalf("the record names something other than the running process: %q", b)
 	}
 	if _, _, ok := held.lockNPM(); ok {
@@ -82,13 +83,19 @@ func TestNPMStuckRecordNamesOnlyTheSameRunningProcess(t *testing.T) {
 		t.Fatal("a reused pid was recorded")
 	}
 	os.MkdirAll(filepath.Join(f.home, ".local"), 0o755)
-	f.write(t, f.env.npmStuckPath(), fmt.Sprintf("another-boot %d %d\njunk\n%s x 1\n", p.pid, p.start, bootID()))
+	f.write(t, f.env.npmStuckPath(), fmt.Sprintf("another-boot/pid:[1] %d %d\njunk\n%s x 1\n", p.pid, p.start, procScope()))
 	if err := f.env.npmStuckCheck(); err != nil {
 		t.Fatalf("an entry of another boot or junk refused the lock: %v", err)
 	}
 	if exists(f.env.npmStuckPath()) {
 		t.Fatal("a record naming nothing that runs stayed")
 	}
+	// An entry whose scope could not be read when it was written still counts.
+	f.write(t, f.env.npmStuckPath(), fmt.Sprintf("? %d %d\n", p.pid, p.start))
+	if err := f.env.npmStuckCheck(); !errors.Is(err, errNPMStuck) {
+		t.Fatalf("an entry of an unknown scope was dropped: %v", err)
+	}
+	os.Remove(f.env.npmStuckPath())
 	z, zp := startSleeper(t)
 	_ = z.Process.Kill()
 	waitFor(t, "the sleeper never exited", func() bool { st, ok := readStat(zp.pid); return ok && !st.live })
@@ -205,9 +212,9 @@ func TestSelfUpdateNPMLeavesTheBackupsWhileAWriterIsStuck(t *testing.T) {
 	}
 }
 
-// The every-start pass whose first lock attempt fails and whose verify pass then gets the lock
-// settles the accepted update's backups in the same start.
-func TestNPMVerifyPresentSettlesBackupsWhenAnInnerRetryGetsTheLock(t *testing.T) {
+// The every-start pass whose first lock attempt fails and whose retry gets the lock settles the
+// accepted update's backups in the same start, under that one hold.
+func TestNPMVerifyPresentSettlesBackupsWhenItsRetryGetsTheLock(t *testing.T) {
 	f := newSU(t, goodRTK, "", "", "")
 	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
 	f.write(t, tree+npmBakSuffix+"/VERSION", "1.0.0")
@@ -221,7 +228,7 @@ func TestNPMVerifyPresentSettlesBackupsWhenAnInnerRetryGetsTheLock(t *testing.T)
 	tries := 0
 	e := f.env
 	e.beforeNPMLock = func() {
-		if tries++; tries == 3 {
+		if tries++; tries == 2 {
 			os.Remove(lock)
 		}
 	}
@@ -319,5 +326,229 @@ func TestCursorUpdateStoppedRightAfterPublishingMatchesTheMarkerToken(t *testing
 	}
 	if exists(f.env.cursorMarkerPath()) {
 		t.Fatal("the marker stayed after recovery")
+	}
+}
+
+// With no usable lock at either attempt, the every-start pass takes it nowhere else (another
+// start could have left unverified backups by then) and deletes nothing.
+func TestNPMVerifyPresentWithoutTheLockTakesItNowhereElse(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "2.0.0")
+	f.write(t, tree+npmBakSuffix+"/VERSION", "1.0.0")
+	f.write(t, f.env.npmMarker(), "accepted\nclaude\n")
+	if err := os.MkdirAll(f.env.npmLockPath(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tries := 0
+	e := f.env
+	e.beforeNPMLock = func() {
+		if tries++; tries == 3 {
+			os.Remove(e.npmLockPath()) // a later attempt would succeed: none may be made
+		}
+	}
+	if rc := e.NPMVerifyPresentStep(); rc != ExitOK {
+		t.Fatalf("rc %d\n%s", rc, f.out)
+	}
+	if tries != 2 {
+		t.Fatalf("%d lock attempts, want the step's own two", tries)
+	}
+	if !exists(tree + npmBakSuffix) {
+		t.Fatal("a backup was deleted without the lock")
+	}
+}
+
+// stuckNPM writes an npm that, from its install number n on, installs as the shared stub does,
+// then leaves a writer that left its group (setsid) and exits 0; earlier installs and every other
+// command go to the stub alone. With
+// superviseNoKillEnv the supervisor cannot stop that writer, so it reports it.
+func stuckNPM(t *testing.T, f *suFixture, n int) (pidf string) {
+	t.Helper()
+	pidf = filepath.Join(f.home, "writer.pid")
+	token := fmt.Sprintf("30.%09d", time.Now().Nanosecond())
+	stub := filepath.Join(f.npmDir, "npm-stub")
+	if err := os.Rename(filepath.Join(f.npmDir, "npm"), stub); err != nil {
+		t.Fatal(err)
+	}
+	count := filepath.Join(f.npmDir, "installs")
+	f.write(t, filepath.Join(f.npmDir, "npm"), fmt.Sprintf(`#!/bin/sh
+exec 3>&-
+[ "$1" = install ] || exec %[1]q "$@"
+echo x >>%[2]q
+[ "$(wc -l <%[2]q)" -ge %[3]d ] || exec %[1]q "$@"
+%[1]q "$@" || exit 1
+/usr/bin/setsid /bin/sh -c 'echo $$ >%[4]q; exec /bin/sleep %[5]s' </dev/null >/dev/null 2>&1 &
+i=0; while [ ! -s %[4]q ] && [ $i -lt 600 ]; do i=$((i+1)); /bin/sleep 0.05; done
+exit 0
+`, stub, count, n, pidf, token))
+	// The stub finds its files beside itself ($D): keep them there.
+	t.Setenv(superviseNoKillEnv, "1")
+	t.Setenv(superviseGraceEnv, "200ms")
+	n2 := fakeNPM{token: token}
+	t.Cleanup(func() { n2.kill(f, pidf) })
+	return pidf
+}
+
+func needSetsid(t *testing.T) {
+	if _, err := os.Stat("/usr/bin/setsid"); err != nil {
+		t.Skip("no setsid")
+	}
+}
+
+// The supervisor reports a child it could not stop on its stdout, and the real install records it
+// from there: the writer left npm's group, so the caller's own listing never sees it.
+func TestNPMInstallRecordsWhatTheSupervisorReports(t *testing.T) {
+	needSetsid(t)
+	f := newSU(t, goodRTK, "", "", "")
+	pidf := stuckNPM(t, f, 1)
+	e, rel := lockedEnv(t, f)
+	_, err := e.npmInstall([]string{"x"})
+	rel()
+	if !errors.Is(err, errNPMStuck) {
+		t.Fatalf("got %v, want errNPMStuck", err)
+	}
+	pid := strings.TrimSpace(f.read(pidf))
+	if pid == "" || !strings.Contains(f.read(f.env.npmStuckPath()), " "+pid+" ") {
+		t.Fatalf("the reported writer %q is not recorded: %q", pid, f.read(f.env.npmStuckPath()))
+	}
+	if _, _, ok := f.env.lockNPM(); ok {
+		t.Fatal("the lock was granted while the reported writer runs")
+	}
+	fakeNPM{token: tokenOf(t, f, pidf)}.kill(f, pidf)
+	waitFor(t, "the lock stayed refused after the writer was gone", func() bool {
+		_, release, ok := f.env.lockNPM()
+		release()
+		return ok
+	})
+}
+
+// tokenOf reads back the sleep token of the process pidf names.
+func tokenOf(t *testing.T, f *suFixture, pidf string) string {
+	t.Helper()
+	b, _ := os.ReadFile("/proc/" + strings.TrimSpace(f.read(pidf)) + "/cmdline")
+	parts := strings.Split(string(b), "\x00")
+	for _, p := range parts {
+		if strings.HasPrefix(p, "30.") {
+			return p
+		}
+	}
+	t.Fatalf("no token in %q", b)
+	return ""
+}
+
+// A pin repair whose npm placed a link and left a writer does not remove that link.
+func TestNPMVerifyRepairWithAStuckWriterRemovesNothing(t *testing.T) {
+	needSetsid(t)
+	f := newSU(t, goodRTK, "", "", "")
+	stuckNPM(t, f, 1)
+	os.MkdirAll(filepath.Dir(f.local("claude")), 0o755)
+	f.write(t, f.local("claude"), "#!/bin/sh\nexit 1\n") // does not run: the verify repairs it
+	if rc := f.env.NPMVerify([]string{"claude"}, false); rc != ExitFailed {
+		t.Fatalf("rc %d\n%s", rc, f.out)
+	}
+	if !usable(f.local("claude")) {
+		t.Fatalf("the repair's link was removed under a writer it could not stop\n%s", f.out)
+	}
+	if !strings.Contains(f.out.String(), "did not stop") {
+		t.Fatalf("no warning:\n%s", f.out)
+	}
+}
+
+// A self-update whose new copies run but whose pin repair of a CLI without a previous copy leaves
+// a writer settles nothing: the marker stays pending and the backups stay for the recovery.
+func TestSelfUpdateNPMRepairWithAStuckWriterSettlesNothing(t *testing.T) {
+	needSetsid(t)
+	f := newSU(t, goodRTK, "", "", "")
+	tree := f.plantNPMTree(t, "@anthropic-ai/claude-code", "claude", "1.0.0")
+	f.write(t, filepath.Join(f.npmDir, "body.codex"), "#!/bin/sh\nexit 1\n") // the new codex does not run
+	stuckNPM(t, f, 2)                                                        // the update installs; the repair leaves a writer
+	f.env.selfUpdateNPM()
+	if state, _, ok, _ := f.env.npmReadMarker(); !ok || state != "pending" {
+		t.Fatalf("marker %q %v, want it left pending\n%s", state, ok, f.out)
+	}
+	if !exists(tree + npmBakSuffix) {
+		t.Fatalf("the previous copy was deleted under a running writer\n%s", f.out)
+	}
+	if !strings.Contains(f.out.String(), "not settled") {
+		t.Fatalf("no warning:\n%s", f.out)
+	}
+}
+
+// A process whose leader thread exited while another thread runs is still in its group: the
+// caller's listing (the path without the supervisor's report) counts and records it.
+func TestGroupListingCountsAProcessWhoseLeaderThreadExited(t *testing.T) {
+	py, err := exec.LookPath("/usr/bin/python3")
+	if err != nil {
+		t.Skip("no python3")
+	}
+	f := newSU(t, goodRTK, "", "", "")
+	sp := filepath.Join(f.home, "leader.py")
+	f.write(t, sp, `import ctypes, threading, time
+threading.Thread(target=lambda: time.sleep(20)).start()
+ctypes.CDLL(None).pthread_exit(None)
+`)
+	cmd := exec.Command(py, sp)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+	pid := cmd.Process.Pid
+	waitFor(t, "the leader thread never exited", func() bool { st, ok := readStat(pid); return ok && !st.live })
+	got := groupProcs(pid)
+	if len(got) != 1 || got[0].pid != pid || !procRuns(got[0]) {
+		t.Fatalf("group listing %v, want the process whose leader exited", got)
+	}
+	if waitGroupGone(pid, 100*time.Millisecond) {
+		t.Fatal("the group counted as empty while a thread still runs")
+	}
+	if runs, err := f.env.npmRecordStuck(got); !runs || err != nil {
+		t.Fatalf("not recorded: %v %v", runs, err)
+	}
+}
+
+// A procfs of another pid namespace records nothing and holds nothing back: its numbers name
+// other processes.
+func TestNPMStuckIgnoresAForeignProcfs(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	_, p := startSleeper(t)
+	if runs, err := f.env.npmRecordStuck([]npmProc{p}); !runs || err != nil {
+		t.Fatalf("setup: %v %v", runs, err)
+	}
+	fake := t.TempDir()
+	if err := os.Symlink("999999999", filepath.Join(fake, "self")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("/proc", strconv.Itoa(p.pid)), filepath.Join(fake, strconv.Itoa(p.pid))); err != nil {
+		t.Fatal(err)
+	}
+	old := procRoot
+	procRoot = fake
+	t.Cleanup(func() { procRoot = old })
+	if err := f.env.npmStuckCheck(); err != nil {
+		t.Fatalf("a foreign procfs held the lock back: %v", err)
+	}
+	os.Remove(f.env.npmStuckPath())
+	if runs, _ := f.env.npmRecordStuck([]npmProc{p}); runs || exists(f.env.npmStuckPath()) {
+		t.Fatal("a process seen through a foreign procfs was recorded")
+	}
+}
+
+// A FIFO at the record's path neither blocks the lock nor counts as "nothing runs".
+func TestNPMStuckRecordThatIsAFIFORefusesWithoutBlocking(t *testing.T) {
+	f := newSU(t, goodRTK, "", "", "")
+	os.MkdirAll(filepath.Dir(f.env.npmStuckPath()), 0o755)
+	if err := syscall.Mkfifo(f.env.npmStuckPath(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- f.env.npmStuckCheck() }()
+	select {
+	case err := <-done:
+		if !errors.Is(err, errNPMStuck) {
+			t.Fatalf("a FIFO record let the lock through: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		os.WriteFile(f.env.npmStuckPath(), nil, 0o600) // unblock the open before failing
+		t.Fatal("the check blocked on a FIFO")
 	}
 }
