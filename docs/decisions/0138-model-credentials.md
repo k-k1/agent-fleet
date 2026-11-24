@@ -273,18 +273,39 @@ not see muse or cursor at all.
   always reports that provider is **not measured**. Having no credential to fingerprint, they carry the one fixed
   binding `opencode-zen@free` (D5b) wherever their credentials are resolved when the call starts: the launch record
   and the assistant chat's rows.
-- **An opencode launch with no model named does not resolve.** Nothing af reads at launch proves which model it will
-  run:
+- **An opencode launch with no model named is judged unresolved, and recorded from the running serve when it proves
+  one case.** Nothing af reads from files proves which model it will run:
   - opencode falls back from a configured `model` that is unavailable or disabled
     (https://opencode.ai/docs/models/#defaults);
   - an agent's own model, from JSON or Markdown and global or project files, overrides it;
   - the last model used, and opencode's own priority, depend on what the project and opencode's credential store make
     available.
-  - Its record stays `{}`, and an unresolved record is no record. Under a restriction a create follows D11b's order (the
-    member's default route, else `route_required`, which tells the member to name a model or set a default route). A
-    resume or a running session is judged as having none.
-  - Follow-ups: #4227 (an authoritative per-directory answer from opencode) and #4228 (per-call bindings for
-    opencode's session rows).
+  - What a policy judges a launch on (`ResolveLaunch`) therefore stays `{}`: under a restriction a create follows
+    D11b's order (the member's default route, else `route_required`, which tells the member to name a model or set a
+    default route), and a resume of a session with no record is judged as having none (one with a record is judged on it, below). A create is judged before its working
+    directory is known, and a resume must not wait on a probe. Making a restricted create reach the record
+    below is #5035.
+  - The launch RECORD (`agents.DefaultLaunchResolver`, used where the launch is recorded) asks the running
+    `opencode serve` (never starting one) about the directory the session runs in (a session the shared serve runs, never a Terminal, which runs its own opencode in a pane the serve says nothing
+    about; `Meta.CWD`, symlinks resolved;
+    `GET /api/provider`, `/api/model/default` and `/api/plugin` with `location[directory]`, `/api/info` for the serve's
+    pid, all inside the 500 ms launch budget). It records `{opencode-zen, opencode-zen@free}`, resolved as a named
+    free model is, in one case: the directory's providers are the built-in `opencode` provider alone, keyless
+    (`settings.apiKey` is `public`) on opencode.ai's own endpoint, the default model is keyless and costs nothing (every price
+    stated and zero) on that endpoint, the serve stayed the same process while it was read, and af holds no stored
+    key (a key stored after the serve started reaches a Terminal that runs its own opencode, not the serve). The
+    default model alone proves nothing: with an `ANTHROPIC_API_KEY` in the serve's environment the provider list gains
+    `anthropic` while the default stays a free opencode model.
+  - The provider list of a directory is partial until its plugins have loaded (`[]`, then `[opencode]`, then
+    `[opencode, <the project's>]`; measured on 2.4.0), so it is read only after `/api/plugin` lists them, and a plugin
+    that failed leaves the record unresolved. A cold directory settled in 0.3–0.7 s on a loaded host: it can miss the
+    budget, and that launch then records `{}` as before.
+  - A session so recorded is judged on that record afterwards, as one that named a free model is (the sweep keeps it
+    running where the policy allows Zen). What the record cannot cover is a serve replaced between the reads and the
+    start, and a catalog reloaded inside the same serve process (#5037).
+  - Everything else records `{}`: several providers, a key or another endpoint on the opencode provider, a paid, unpriced
+    or missing default, no running serve, an answer for another directory, and the assistant chat (it has no directory).
+  - Follow-ups: #4228 (per-call bindings for opencode's session rows), #5035 (the restricted create) and #5037.
 - **A kind with more than one login mode resolves per mode, at execution.** muse resolves to `muse-login` or
   `meta-api` from its `mechanism` (`muse/auth.go:96-130`, with `META_API_KEY` in the Agent's environment counting as
   `meta-api`, since it overrides the login); codex resolves to `chatgpt-subscription` or `openai-api` from

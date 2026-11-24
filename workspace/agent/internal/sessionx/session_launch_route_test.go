@@ -248,3 +248,77 @@ func plainFingerprint(k string) string {
 	h := sha256.Sum256([]byte(k))
 	return hex.EncodeToString(h[:])[:16]
 }
+
+// defaultResolvingAgent is resolvingAgent that also answers the launch of a session naming no
+// model (agents.DefaultLaunchResolver), counting the asks.
+type defaultResolvingAgent struct {
+	resolvingAgent
+	def     routes.Launch
+	asked   *int
+	started chan<- time.Time // receives the start the resolver was handed
+	hold    time.Duration    // ResolveLaunch sleeps this long first
+}
+
+func (a defaultResolvingAgent) ResolveLaunch(m session.Meta) routes.Launch {
+	time.Sleep(a.hold)
+	return a.resolvingAgent.ResolveLaunch(m)
+}
+
+func (a defaultResolvingAgent) ResolveDefaultLaunch(_ session.Meta, start time.Time) routes.Launch {
+	*a.asked++
+	if a.started != nil {
+		a.started <- start
+	}
+	return a.def
+}
+
+// The record of a launch that names no model may ask the kind's DefaultLaunchResolver; a named
+// model, or a resolver that already answered, never does. Judging a launch against a policy
+// (ResolveLaunch) never does either: it has no working directory yet at a create and must not
+// wait on a probe.
+func TestLaunchRouteOfAsksTheDefaultResolverOnlyForANamelessLaunch(t *testing.T) {
+	isolateAgentState(t)
+	free := routes.Launch{Route: routes.RouteOpencodeZen, Binding: "opencode-zen@free"}
+	asked := 0
+	swapClaude(t, func(base agents.Agent) agents.Agent {
+		return defaultResolvingAgent{resolvingAgent: resolvingAgent{routeAgent: routeAgent{Agent: base}}, def: free, asked: &asked}
+	})
+	if l := launchRouteOf(session.Meta{Kind: session.KindClaude}); l == nil || *l != free || asked != 1 {
+		t.Errorf("no model: recorded %+v after %d asks, want %+v after 1", l, asked, free)
+	}
+	if l := launchRouteOf(session.Meta{Kind: session.KindClaude, Model: "m"}); l == nil || *l != (routes.Launch{}) || asked != 1 {
+		t.Errorf("a named model: recorded %+v after %d asks, want unresolved after 1", l, asked)
+	}
+	swapClaude(t, func(base agents.Agent) agents.Agent {
+		return defaultResolvingAgent{resolvingAgent: resolvingAgent{routeAgent: routeAgent{Agent: base}, launch: routes.Launch{Route: "r"}}, def: free, asked: &asked}
+	})
+	if l := launchRouteOf(session.Meta{Kind: session.KindClaude}); l == nil || *l != (routes.Launch{Route: "r"}) || asked != 1 {
+		t.Errorf("an answered resolver: recorded %+v after %d asks", l, asked)
+	}
+}
+
+// Both resolvers share the one budget: when the first spends it, the default resolver is handed a
+// start that is already past it, and so cannot begin a fresh probe after the caller stopped waiting.
+func TestLaunchRouteOfHandsTheDefaultResolverTheCallersStart(t *testing.T) {
+	isolateAgentState(t)
+	old := launchResolveBudget
+	launchResolveBudget = 50 * time.Millisecond
+	t.Cleanup(func() { launchResolveBudget = old })
+	asked := 0
+	started := make(chan time.Time, 1)
+	swapClaude(t, func(base agents.Agent) agents.Agent {
+		return defaultResolvingAgent{resolvingAgent: resolvingAgent{routeAgent: routeAgent{Agent: base}}, asked: &asked, started: started, hold: 150 * time.Millisecond}
+	})
+	before := time.Now()
+	if l := launchRouteOf(session.Meta{Kind: session.KindClaude}); l == nil || *l != (routes.Launch{}) {
+		t.Fatalf("a spent budget recorded %+v", l)
+	}
+	select {
+	case start := <-started: // the worker finishes after the caller gave up
+		if start.Before(before) || time.Since(start) < 100*time.Millisecond {
+			t.Errorf("start %v is not the moment the caller began (%v)", start, before)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the default resolver was never reached")
+	}
+}

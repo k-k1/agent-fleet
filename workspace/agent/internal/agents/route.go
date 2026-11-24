@@ -2,6 +2,7 @@ package agents
 
 import (
 	"context"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -62,6 +63,18 @@ type CredentialResolver interface {
 	// UsableRoutes are the routes, selectable or fixed, whose credential this Workspace holds
 	// now, for the kind catalog. Cheap: it reads files and cached probes, never the network.
 	UsableRoutes() []string
+}
+
+// DefaultLaunchResolver is an optional capability of a CredentialResolver whose ResolveLaunch
+// cannot tell the route of a session that names no model from what it holds (opencode: the model
+// opencode picks depends on the directory's providers). ResolveDefaultLaunch may ask the
+// running tool, so it is for the launch RECORD only, never for judging a launch against a policy
+// (which has no working directory yet at a create, and must not wait on a probe at a resume). A
+// zero Launch is "cannot tell". start is when the caller began waiting for the record: the probe's
+// budget runs from it, so work done before this call spends the caller's budget instead of
+// granting the probe a fresh one after the caller has stopped waiting.
+type DefaultLaunchResolver interface {
+	ResolveDefaultLaunch(m session.Meta, start time.Time) routes.Launch
 }
 
 // OneRouteResolver marks a CredentialResolver whose launch with no selection runs on exactly the
