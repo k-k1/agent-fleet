@@ -132,7 +132,8 @@ type CP interface {
 	// prerequisites (ids or reference keys of the same queue); on an update nil leaves them and an
 	// empty list clears them. startAfter is the start time (RFC 3339 with an offset); on an update
 	// nil leaves it and "" clears it. recipe is the run recipe (agent, model, effort, route).
-	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef, after []string, startAfter string, recipe MemoRecipe) (any, error)
+	// runNext marks the message the create adds to run next; an update has no such argument.
+	MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *MemoRef, after []string, startAfter string, recipe MemoRecipe, runNext bool) (any, error)
 	MemoUpdate(ctx context.Context, membershipID, id string, repo, category, body, refPath *string, position *int, ref *MemoRef, after *[]string, startAfter *string, recipe MemoRecipe) (any, error)
 	MemoFlush(ctx context.Context, rt runtime.Runtime, membershipID, sessionName string, ids []string) (map[string]any, error)
 	// MemoDelete is delete_memo through the shared core, which refuses a message in a queue.

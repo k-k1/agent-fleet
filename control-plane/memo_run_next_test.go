@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -266,7 +267,7 @@ func TestMemoRunNextFixesTheBatchRecipe(t *testing.T) {
 }
 
 // Only InsertMemo and SetMemoRunNext write the column: an edit writes back neither value it was
-// handed, a send in flight refuses the setter, and the workspace's faces cannot set it.
+// handed, a send in flight refuses the setter, and a session's edit cannot set it.
 func TestMemoRunNextWriteBoundary(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		e.queueWith("app", "impl", nil)
@@ -303,15 +304,13 @@ func TestMemoRunNextWriteBoundary(t *testing.T) {
 		if e.setRunNext(marked.ID, true) || e.memoRow(marked.ID).RunNext {
 			t.Fatal("a message being sent took the mark")
 		}
-		// The workspace's faces have no field for it.
-		rec := e.memoTokenDo("a", "POST", "/internal/memos", map[string]any{"kind": "text", "repo": "app", "category": "impl", "body": "from a session", "runNext": true})
+		// A session's edit has no field for it (a create may mark the message it adds:
+		// TestMemoRunNextOnCreate).
+		rec := e.memoTokenDo("a", "POST", "/internal/memos", textMemo("app", "impl", "from a session"))
 		if rec.Code != http.StatusCreated {
 			t.Fatalf("token create: %d %s", rec.Code, rec.Body.String())
 		}
 		held := decode[memoDTO](t, rec)
-		if e.memoRow(held.ID).RunNext {
-			t.Fatal("a session's create set the mark")
-		}
 		if rec := e.memoTokenDo("a", "PATCH", "/internal/memos/"+held.ID, map[string]any{"body": "edited by a session", "runNext": true}); rec.Code != http.StatusOK {
 			t.Fatalf("token patch: %d %s", rec.Code, rec.Body.String())
 		}
@@ -449,14 +448,7 @@ func TestMemoRunNextRouteRefusals(t *testing.T) {
 		if rec := e.memoTokenDo("a", "POST", "/internal/memos/"+m.ID+"/run-next", map[string]any{"runNext": true}); rec.Code == http.StatusOK || e.memoRow(m.ID).RunNext {
 			t.Fatalf("token face: %d %s", rec.Code, rec.Body.String())
 		}
-		// Neither does a Console create or edit read the field.
-		rec = e.do("a", "POST", "/api/memos", map[string]any{"kind": "text", "repo": "app", "category": "impl", "body": "created marked", "runNext": true})
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
-		}
-		if c := decode[memoDTO](t, rec); c.RunNext || e.memoRow(c.ID).RunNext {
-			t.Fatal("a Console create set the mark")
-		}
+		// Nor does a Console edit read the field.
 		if rec := e.do("a", "PATCH", "/api/memos/"+m.ID, map[string]any{"body": "edited", "runNext": true}); rec.Code != http.StatusOK || e.memoRow(m.ID).RunNext {
 			t.Fatalf("a Console edit set the mark: %d %s", rec.Code, rec.Body.String())
 		}
@@ -627,6 +619,78 @@ func TestMemoRunNextTidyUndoLeavesTheDestinationsMark(t *testing.T) {
 		}
 		if m := e.memoRow(ids[0]); m.Repo == "other" || m.State != store.MemoStatePending || m.RunNext {
 			t.Fatalf("after the undo: %+v, want pending at home without the mark", m)
+		}
+	})
+}
+
+// A create into a queue may mark the message it adds, on every face: the Console, the token face
+// and /mcp. The mark releases nothing, and it marks nothing else: a create answered with a message
+// already waiting (same item, or the same text from inside the workspace) leaves that one as it is,
+// a create outside every queue is refused rather than dropped, and no face's edit sets the mark.
+func TestMemoRunNextOnCreate(t *testing.T) {
+	eachDialect(t, func(t *testing.T, e *inboxEnv) {
+		e.queue(e.category("r", "q"))
+		e.category("r", "notes")
+		for i, c := range faces(e) {
+			marked := textMemo("r", "q", c.name+" marked")
+			marked["runNext"] = true
+			code, d := c.create(marked)
+			if code != http.StatusCreated || !d.RunNext || !e.memoRow(d.ID).RunNext {
+				t.Fatalf("%s: create %d %+v", c.name, code, d)
+			}
+			// The mark is no release: a session's marked message still waits for the member's.
+			wantState := store.MemoStateHeld
+			if c.name == "console" {
+				wantState = store.MemoStatePending
+			}
+			if d.State != wantState || e.memoRow(d.ID).State != wantState {
+				t.Fatalf("%s: a marked create entered as %q, want %q", c.name, d.State, wantState)
+			}
+			if c.name != "console" {
+				// The same text again from inside the workspace answers the marked message, mark and all.
+				again := textMemo("r", "q", c.name+" marked")
+				code, dup := c.create(again)
+				if code != http.StatusOK || !dup.Existing || dup.ID != d.ID || !dup.RunNext || !e.memoRow(d.ID).RunNext {
+					t.Fatalf("%s: same-text create %d %+v", c.name, code, dup)
+				}
+			}
+			if code, d := c.create(textMemo("r", "q", c.name+" plain")); code != http.StatusCreated || d.RunNext || e.memoRow(d.ID).RunNext {
+				t.Fatalf("%s: a create without the field marked it: %d %+v", c.name, code, d)
+			}
+
+			// The same item already waiting: that message comes back unmarked, nothing is added.
+			n := fmt.Sprint(100 + i)
+			code, first := c.create(refMemo("r", "q", "", ghRef(n)))
+			if code != http.StatusCreated {
+				t.Fatalf("%s: reference create %d", c.name, code)
+			}
+			again := refMemo("r", "q", "", ghRef(n))
+			again["runNext"] = true
+			code, dup := c.create(again)
+			if code != http.StatusOK || !dup.Existing || dup.ID != first.ID || dup.RunNext || e.memoRow(first.ID).RunNext {
+				t.Fatalf("%s: duplicate create %d %+v", c.name, code, dup)
+			}
+
+			// A plain note has no queue order to put it in.
+			outside := textMemo("r", "notes", c.name+" outside")
+			outside["runNext"] = true
+			if code, _ := c.create(outside); code < 400 {
+				t.Fatalf("%s: a mark outside every queue answered %d", c.name, code)
+			}
+			if c.name != "mcp" {
+				rec := c.http("POST", "/memos", outside)
+				if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), errCodeMemoRunNextInvalid) {
+					t.Fatalf("%s: outside %d %s", c.name, rec.Code, rec.Body.String())
+				}
+			}
+
+			// An edit with the field leaves the mark where it was, either way.
+			if code, _ := c.update(first.ID, map[string]any{"position": 7, "runNext": true}); code != http.StatusOK || e.memoRow(first.ID).RunNext {
+				t.Fatalf("%s: an edit set the mark: %d", c.name, code)
+			}
+			if code, _ := c.update(d.ID, map[string]any{"position": 8, "runNext": false}); code != http.StatusOK || !e.memoRow(d.ID).RunNext {
+				t.Fatalf("%s: an edit cleared the mark: %d", c.name, code)
+			}
 		}
 	})
 }

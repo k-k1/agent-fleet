@@ -714,6 +714,10 @@
             "description": "Optional, for a note of an auto-run category only: the route the run uses (leave empty unless the model needs one). Left out, the category's own setting is used, field by field. A refused value is an error, never ignored. Approving the note approves this too.",
             "type": "string"
           },
+          "runNext": {
+            "description": "Optional, for a note of an auto-run category only: true puts this note ahead of the waiting notes that are not marked: when a slot frees, the marked notes that can run are taken first, oldest of them first (its prerequisites, its start time and the user's approval, where one is needed, still apply). Use it for a fix that unblocks other queued work. Only the note this call adds is marked; the user changes the mark in the Console.",
+            "type": "boolean"
+          },
           "startAfter": {
             "description": "Optional: the earliest time this note of an auto-run category may be started, as an RFC 3339 time WITH its offset (e.g. 2026-12-04T09:00:00+09:00 for 9:00 in Japan). A time without an offset is refused, and one already past means no constraint. At most 60 days ahead. Before that time the note is not started, even when the user presses Run now. Approving the note approves its start time too.",
             "type": "string"

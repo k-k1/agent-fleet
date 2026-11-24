@@ -155,7 +155,7 @@ func (c testCP) MemoList(context.Context, string) (any, error) {
 	return nil, nil
 }
 
-func (c testCP) MemoCreate(context.Context, store.MembershipView, string, string, string, string, string, string, *MemoRef, []string, string, MemoRecipe) (any, error) {
+func (c testCP) MemoCreate(context.Context, store.MembershipView, string, string, string, string, string, string, *MemoRef, []string, string, MemoRecipe, bool) (any, error) {
 	unwired("MemoCreate")
 	return nil, nil
 }

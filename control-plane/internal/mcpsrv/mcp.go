@@ -853,6 +853,7 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 					"model":      memoRecipeSchema("model", false),
 					"effort":     memoRecipeSchema("effort", false),
 					"route":      memoRecipeSchema("route", false),
+					"runNext":    memoRunNextSchema,
 				},
 				"required": []string{"kind"},
 			},
@@ -881,9 +882,13 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 				if err != nil {
 					return "", err
 				}
+				runNext, err := argMemoRunNext(args)
+				if err != nil {
+					return "", err
+				}
 				dto, err := a.cp.MemoCreate(ctx, res.MV, mcpCallFrom(ctx).patID,
 					argStr(args, "repo"), argStr(args, "category"),
-					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref, afterList, start, recipe)
+					argStr(args, "kind"), argStr(args, "body"), argStr(args, "refPath"), ref, afterList, start, recipe, runNext)
 				if err != nil {
 					return "", err
 				}
@@ -1262,6 +1267,25 @@ func argMemoStartAfter(a map[string]any) (*string, error) {
 		return nil, errors.New("startAfter must be a string: an RFC 3339 time with its offset")
 	}
 	return &s, nil
+}
+
+// memoRunNextSchema is the `runNext` argument of add_memo. update_memo has none: only the member
+// marks or unmarks a message already waiting, from the Console.
+var memoRunNextSchema = map[string]any{"type": "boolean", "description": "Optional, for a note of an auto-run category only: true puts this note ahead of the waiting notes that are not marked: when a slot frees, the marked notes that can run are taken first, oldest of them first (its prerequisites, its start time and the user's approval, where one is needed, still apply). " +
+	"Use it for a fix that unblocks other queued work. Only the note this call adds is marked; the user changes the mark in the Console."}
+
+// argMemoRunNext reads the `runNext` argument: absent or null is false, a boolean is the value,
+// anything else is refused rather than read as false.
+func argMemoRunNext(a map[string]any) (bool, error) {
+	v, ok := a["runNext"]
+	if !ok || v == nil {
+		return false, nil
+	}
+	b, ok := v.(bool)
+	if !ok {
+		return false, errors.New("runNext must be true or false")
+	}
+	return b, nil
 }
 
 // argMemoAfter reads the `after` argument: absent or null is nil (leave it), an array of strings is

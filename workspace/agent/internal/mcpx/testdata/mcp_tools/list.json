@@ -555,6 +555,10 @@
             "description": "自動実行カテゴリ（queue=true）のメモだけ: 実行に使うルート（モデルが要るときだけ）。省略するとカテゴリの設定を項目ごとに使う。拒否された値はエラーになり、解放するとこの指定ごと解放したことになる。",
             "type": "string"
           },
+          "runNext": {
+            "description": "任意。自動実行カテゴリのメモだけ: true にすると、このメモを印の無い待機中のメモより先にする。枠が空くと、実行できる印付きのメモを先に、その中では古い順に取る（前提のメモ・開始時刻・必要な場合の利用者の解放はそのまま）。ほかのキューの仕事を止めている修正に使う。印が付くのはこの呼び出しで追加するメモだけで、印の付け外しは利用者が Console で行う。",
+            "type": "boolean"
+          },
           "startAfter": {
             "description": "自動実行カテゴリのこのメモを始めてよい最も早い時刻。オフセット付きの RFC 3339（例: 日本時間 9:00 なら 2026-12-04T09:00:00+09:00）。オフセットの無い時刻は拒否され、過ぎた時刻は制約なしになる。60 日先まで。その時刻までは「今すぐ実行」でも始まらず、解放するとこの時刻ごと解放したことになる。",
             "type": "string"
@@ -641,6 +645,10 @@
           "route": {
             "description": "Only for a note of an auto-run category (queue=true): the route the run uses (leave out unless the model needs one). Left out, the category's own setting applies, field by field. Pick a heavier recipe only for work that needs it. A value the Control Plane refuses is an error, and releasing the note releases its recipe too.",
             "type": "string"
+          },
+          "runNext": {
+            "description": "Optional, for a note of an auto-run category only: true puts this note ahead of the waiting notes that are not marked: when a slot frees, the marked notes that can run are taken first, oldest of them first (its prerequisites, its start time and your user's approval, where one is needed, still apply). Use it for a fix that unblocks other queued work, not to jump the queue with routine work. Only the note this call adds is marked; your user changes the mark in the Console.",
+            "type": "boolean"
           },
           "startAfter": {
             "description": "The earliest time this note of an auto-run category (queue=true) may be started, as an RFC 3339 time WITH its offset, e.g. 2026-12-04T09:00:00+09:00 for 9:00 in Japan. A time without an offset is refused; one already past means no constraint; at most 60 days ahead. Before that time the note is not started, even when your user presses Run now, and releasing the note releases its start time too. Use it for work that must not begin before some event, instead of writing \"release after <date>\" in the body.",

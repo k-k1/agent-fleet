@@ -122,3 +122,31 @@ func TestEveryArgReadByAToolIsAdvertised(t *testing.T) {
 		t.Fatalf("only %d argument reads found; the scan is not seeing the tools", checked)
 	}
 }
+
+// runNext rides on add_memo only: update_memo refuses it as an unknown argument, so no call through
+// /mcp changes the mark on a message already waiting (issue #5021).
+func TestMemoRunNextArgOnAddMemoOnly(t *testing.T) {
+	if got := unknownArgsError(toolByName(t, "add_memo"), map[string]any{"kind": "text", "runNext": true}); got != "" {
+		t.Fatalf("add_memo refused runNext: %q", got)
+	}
+	if got := unknownArgsError(toolByName(t, "update_memo"), map[string]any{"id": "x", "runNext": true}); got == "" {
+		t.Fatal("update_memo accepted runNext")
+	}
+	for _, c := range []struct {
+		args map[string]any
+		want bool
+		bad  bool
+	}{
+		{map[string]any{}, false, false},
+		{map[string]any{"runNext": nil}, false, false},
+		{map[string]any{"runNext": true}, true, false},
+		{map[string]any{"runNext": false}, false, false},
+		{map[string]any{"runNext": "true"}, false, true},
+		{map[string]any{"runNext": 1.0}, false, true},
+	} {
+		got, err := argMemoRunNext(c.args)
+		if got != c.want || (err != nil) != c.bad {
+			t.Errorf("%v: got %v, %v", c.args, got, err)
+		}
+	}
+}

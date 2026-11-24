@@ -367,3 +367,23 @@ func TestContinuationStampsTheDeliveryFromMetaAndDropsTheModelsOwn(t *testing.T)
 		t.Errorf("a plain create carried queueDelivery %v", got["queueDelivery"])
 	}
 }
+
+// runNext rides on a create to the CP; an update drops it, so a session never changes the mark on
+// a message already waiting (#5021).
+func TestRunNextOnCreateOnly(t *testing.T) {
+	cp := newFakeCP(t)
+	cp.answer("POST /internal/memos", http.StatusCreated, `{"id":"m2"}`)
+	serve(HandleCreate, http.MethodPost, "/memos", `{"from":"kid01","memo":{"kind":"text","body":"x","category":"impl","runNext":true}}`)
+	if got := decode(t, cp.bodies[0]); got["runNext"] != true {
+		t.Fatalf("CP got runNext %v (body %s)", got["runNext"], cp.bodies[0])
+	}
+	serve(HandleCreate, http.MethodPost, "/memos", `{"from":"kid01","memo":{"kind":"text","body":"x"}}`)
+	if strings.Contains(cp.bodies[1], "runNext") {
+		t.Errorf("a create without the mark sent one: %s", cp.bodies[1])
+	}
+	cp.bodies = nil
+	rec := serve(HandleUpdate, http.MethodPatch, "/memos/m2", `{"body":"b","runNext":true}`)
+	if rec.Code != http.StatusOK || len(cp.bodies) != 1 || cp.bodies[0] != `{"body":"b"}` {
+		t.Fatalf("update: %d, CP got %v", rec.Code, cp.bodies)
+	}
+}

@@ -1037,6 +1037,12 @@ func memoStartAfterOutside() *apiError {
 	return &apiError{http.StatusBadRequest, errCodeMemoStartAfterInvalid, "a start time is only for a note of an auto-run category"}
 }
 
+// memoRunNextOutside is the refusal of the run-next mark on a create outside every queue: no claim
+// would read it.
+func memoRunNextOutside() *apiError {
+	return &apiError{http.StatusBadRequest, errCodeMemoRunNextInvalid, "runNext is only for a note of an auto-run category"}
+}
+
 // memoAfterResolve is memoafter.Resolve with its refusal as the API's answer (400 memo_after_invalid).
 // It reads the member's other rows through tx, so call it in the MemoTx that writes the list.
 func memoAfterResolve(tx store.MemoTxOps, self store.Memo, rows []store.Memo, in []string, inQueue bool) (string, *apiError, error) {
