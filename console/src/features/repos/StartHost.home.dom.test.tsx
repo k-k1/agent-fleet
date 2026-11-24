@@ -39,6 +39,7 @@ const { StartHost } = await import("./StartHost.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useLaunchSeed, useLaunchTarget } = await import("./store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
+const { writeFoldValue } = await import("../../lib/foldStore.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -60,7 +61,8 @@ const button = (label: string) => {
   return [...(foot?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.textContent?.trim() === label);
 };
 const homeRow = () => [...document.querySelectorAll<HTMLButtonElement>(".start-row")].find((b) => b.textContent?.includes(t("start.home_title")))!;
-const promptBox = () => document.querySelector<HTMLTextAreaElement>("textarea")!;
+// The hub's own composer stays mounted under the dialog: the dialog's box is the last one.
+const promptBox = () => [...document.querySelectorAll<HTMLTextAreaElement>("textarea")].pop()!;
 const createCalls = () => apiPost.mock.calls.filter((c) => c[0] === "api/sessions");
 
 async function openHome(): Promise<void> {
@@ -77,6 +79,8 @@ async function typePrompt(text: string): Promise<void> {
 }
 
 beforeEach(async () => {
+  localStorage.clear();
+  writeFoldValue("af-start-section", "other"); // the home row is in Other
   claudeExpired = false;
   launchKinds = ["claude"];
   apiGet.mockReset();
@@ -137,7 +141,7 @@ describe("Start hub — Launch an agent at home", () => {
   it("uploads an attached file to the new session (dir '') and weaves its path into the first prompt", async () => {
     await openHome();
     await typePrompt("このスクショを見て");
-    const input = document.querySelector<HTMLInputElement>("input[type=file]")!;
+    const input = [...document.querySelectorAll<HTMLInputElement>("input[type=file]")].pop()!;
     expect(input).toBeTruthy();
     const file = new File(["BYTES"], "shot.png", { type: "image/png" });
     Object.defineProperty(input, "files", { value: [file], configurable: true });

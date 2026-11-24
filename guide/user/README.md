@@ -28,6 +28,7 @@ Each page covers one thing you want to do.
 | Page | What you can do |
 |---|---|
 | [Start a session](sessions/start.md) | Launch a session from Start, choosing the agent, the model and a first prompt |
+| [Start work in a space](sessions/spaces.md) | Give work that has no repository a folder of its own under `~/spaces`, and start it from Start |
 | [Work in parallel with worktrees](sessions/worktrees.md) | Give each session its own working copy and work in parallel in one repository |
 | [Start from an issue or a ticket](sessions/from-issues.md) | Start a session from an issue or a pull request in the issue tracker list |
 | [Read a session's state](sessions/status.md) | Tell from the row marks and notifications which sessions are waiting for you |

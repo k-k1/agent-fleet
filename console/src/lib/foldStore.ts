@@ -4,8 +4,9 @@
 // Lives apart from core/api/client.ts (which feeds it the scope) so components that
 // persist a fold do not import the API client, and tests that mock it keep working.
 
-// `af-files-home` has no name part: its scoped key is `af-files-home\0<user>\0<tenant>\0`.
-export const FOLD_PREFIXES = ["af-proj-", "af-shared-wc-", "af-shared-proj-", "af-section-", "af-files-home"];
+// `af-files-home` and `af-start-section` have no name part: the scoped key is
+// `af-files-home\0<user>\0<tenant>\0`.
+export const FOLD_PREFIXES = ["af-proj-", "af-shared-wc-", "af-shared-proj-", "af-section-", "af-files-home", "af-start-section"];
 
 let user = "";
 let tenant = "";
@@ -85,5 +86,20 @@ export function writeFold(legacy: string, open: boolean): void {
   try {
     localStorage.setItem(foldKey(legacy), open ? "1" : "0");
     localStorage.removeItem(legacy);
+  } catch {}
+}
+
+// readFoldValue / writeFoldValue keep one short string under the same scope, for a fold that
+// is a choice among several rather than open or closed (the Start hub's open section).
+export function readFoldValue(legacy: string): string | null {
+  try {
+    return localStorage.getItem(foldKey(legacy));
+  } catch {
+    return null;
+  }
+}
+export function writeFoldValue(legacy: string, v: string): void {
+  try {
+    localStorage.setItem(foldKey(legacy), v);
   } catch {}
 }

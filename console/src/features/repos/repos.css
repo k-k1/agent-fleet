@@ -1082,12 +1082,78 @@
   color: var(--muted);
   flex: none;
 }
-/* Assistant sub-rows nested under the chat row. */
-.start-row.start-sub {
-  padding-left: 34px;
+/* The hub's accordion (ADR 0142 decision 5): exactly one section open, its body below its head. */
+.start-hub {
+  gap: 8px;
 }
-.start-primary-place {
-  background: color-mix(in srgb, var(--accent) 6%, transparent);
+.start-sec {
+  border: 1px solid var(--border2, var(--border));
+  border-radius: 8px;
+}
+.start-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.start-sec-head:hover {
+  background: var(--btn-h);
+}
+.start-sec--open .start-sec-head {
+  border-radius: 8px 8px 0 0;
+  border-bottom: 1px solid var(--border2, var(--border));
+}
+.start-sec-chev {
+  flex: none;
+  font-size: var(--fs-12);
+  color: var(--muted);
+}
+.start-sec-label {
+  font-size: var(--fs-13);
+  font-weight: 600;
+}
+.start-sec-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 12px 12px;
+}
+.start-space-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.start-place {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.start-place-chip {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: var(--fs-12);
+}
+.start-place input {
+  flex: 1;
+  min-width: 0;
+}
+.start-space-actions {
+  display: flex;
+  justify-content: flex-end;
 }
 .start-repos {
   min-height: 0;

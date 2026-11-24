@@ -20,6 +20,7 @@ import { recordWorkItemLaunch } from "../workitems/launch.ts";
 import { workItemLaunchBranch } from "../workitems/read.ts";
 import { stashStoredDraft } from "../memo/launchStash.ts";
 import { t } from "../../lib/i18n/index.ts";
+import { draftHasContent, useHubDraft } from "./hubDraft.ts";
 
 export function StartHost() {
   const startTick = useSessionsStore((s) => s.startTick);
@@ -43,6 +44,12 @@ export function StartHost() {
   // launch succeeded.
   const seedWorkItem = useLaunchSeed((s) => s.workItem);
   const clearSeed = useLaunchSeed((s) => s.clear);
+  // The hub's one draft (ADR 0142 decision 5). Every opening starts it from the seed, so a memo
+  // being sent or restored is the text the hub opens with.
+  const draft = useHubDraft();
+  // A repository picked in the hub with something in the draft takes the draft into its dialog;
+  // with nothing in it, the dialog shows that repository's own stored draft as before.
+  const [carry, setCarry] = useState(false);
   // Open the hub whenever the global tick changes (skip the mount value).
   const lastTickRef = useRef(startTick);
   useEffect(() => {
@@ -50,8 +57,12 @@ export function StartHost() {
       lastTickRef.current = startTick;
       clearLaunch();
       setHome(false);
+      setCarry(false);
+      const seed = useLaunchSeed.getState();
+      draft.reset({ prompt: seed.prompt, attachments: seed.attachments });
       setShow(true);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- draft.reset is a fresh closure each render
   }, [startTick, clearLaunch]);
 
   const toast = useToast();
@@ -78,6 +89,17 @@ export function StartHost() {
       {show && (
         <StartModal
           kinds={agentKinds}
+          access={ctx.access}
+          claudeExpired={ctx.claudeExpired}
+          settling={ctx.connsSettling}
+          draft={draft}
+          onLaunchSpace={async (o) => {
+            // dir "" with a space: the Agent makes ~/spaces/<folder> and starts the session there.
+            const r = await startWork({ dir: "", repo: "" }, o);
+            // A memo that seeded the draft is done with once its text reached a session.
+            if (r.ok) useLaunchSeed.getState().onLaunched?.(r.name || "");
+            return r;
+          }}
           onClose={() => {
             hubGen.current++;
             setShow(false);
@@ -88,6 +110,7 @@ export function StartHost() {
             // A memo being restored (#3289) outranks the picked repo's stored draft: set that
             // draft aside first, and open nothing when it could not be saved.
             const { memoId, prompt, attachments } = useLaunchSeed.getState();
+            setCarry(draftHasContent(draft));
             if (!memoId) return openLaunch(r);
             if (picking.current) return; // one save at a time; a second click would save it twice
             picking.current = true;
@@ -115,6 +138,7 @@ export function StartHost() {
           claudeExpired={ctx.claudeExpired}
           settling={ctx.connsSettling}
           allowWorktree={false}
+          shared={draft}
           onClose={() => setHome(false)}
           onBack={() => setHome(false)}
           onLaunch={async (o) => {
@@ -122,8 +146,10 @@ export function StartHost() {
             // bookkeeping and adds the new session to the active working set.
             const r = await startWork({ dir: "", repo: "" }, o);
             if (r.ok) {
+              useLaunchSeed.getState().onLaunched?.(r.name || "");
               setHome(false);
               setShow(false); // launched — drop the hub underneath too
+              clearSeed();
             }
             return r;
           }}
@@ -141,8 +167,11 @@ export function StartHost() {
           allowWorktree={!launch.worktree && launch.vcs !== "svn" && !launch.unborn}
           isSvn={launch.vcs === "svn"}
           isUnborn={!!launch.unborn}
-          initialPrompt={seedPrompt || undefined}
-          initialAttachments={seedAttachments.length ? seedAttachments : undefined}
+          // From the hub the seed is already in the hub's draft (and may have been edited or
+          // emptied there), so only a launch opened without the hub reads it.
+          shared={show && carry ? draft : undefined}
+          initialPrompt={!show && seedPrompt ? seedPrompt : undefined}
+          initialAttachments={!show && seedAttachments.length ? seedAttachments : undefined}
           initialTitle={seedTitle || undefined}
           initialNewBranch={seedWorkItem?.branch || undefined}
           workItem={seedWorkItem && !launchExisting ? branchItemOf(seedWorkItem) : undefined}

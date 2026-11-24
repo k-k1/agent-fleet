@@ -14,7 +14,7 @@
 // hid.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { KeyboardEvent, ClipboardEvent, DragEvent, ReactNode } from "react";
+import type { KeyboardEvent, ClipboardEvent, DragEvent, MutableRefObject, ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -63,6 +63,11 @@ import type { BranchItem } from "./branchRule.ts";
 import { ClaudeExpiredHint } from "./ClaudeExpiredHint.tsx";
 import { fetchMemoAttachments, stashLaunchDraft } from "../memo/launchStash.ts";
 import type { MemoAttachment } from "../../types/memo.ts";
+import type { SharedDraft } from "./hubDraft.ts";
+
+// spacex.NameMaxRunes on the Agent, which refuses a longer name (bad_space). maxLength counts
+// UTF-16 units, never fewer than the runes, so a name it lets through is never refused.
+const SPACE_NAME_MAX = 100;
 
 // LaunchOpts: agent + optional first prompt, plus WHERE to run. For a worktree,
 // base is the start point and newBranch the branch to create ("" => the server
@@ -103,6 +108,9 @@ export interface LaunchOpts {
   /** The session's spend budget in USD (#1054). undefined = the user's default, which the Agent
    *  applies; 0 = none. Only for kinds with a transcript to price. */
   spendCapUsd?: number;
+  /** Launch in a space instead of a directory (ADR 0142): `name` for a new one ("" = unnamed),
+   *  `folder` for an existing one. Only the Start hub's space section sends it. */
+  space?: { name?: string; folder?: string };
 }
 
 // LaunchResult: close on ok, else stay open and offer a fix for a name collision.
@@ -194,6 +202,9 @@ interface LaunchModalProps {
    * item flow picks the working copy first (docs/log/80 §80.8), and re-defaulting to
    * "new worktree" here would silently undo that answer. */
   initialWorktree?: boolean;
+  /** The Start hub's draft (ADR 0142 decision 5), edited here in place of this repository's own
+   *  stored draft, so going back to the hub keeps what was written in either. */
+  shared?: SharedDraft;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
 }
 
@@ -251,8 +262,40 @@ export function LaunchModal(props: LaunchModalProps) {
   );
 }
 
-function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, onLaunch, busy, setBusy }: LaunchModalProps & { busy: boolean; setBusy: (v: boolean) => void }) {
+interface FormExtras {
+  busy: boolean;
+  setBusy: (v: boolean) => void;
+  /** The Start hub's space section (ADR 0142 decisions 7 and 8): rendered inside the hub rather
+   *  than as a dialog of its own, with no prompt box (the hub's composer holds the draft), the
+   *  place as a "new space" chip instead of a working copy, and agent and model folded into
+   *  Details with the rest. */
+  space?: boolean;
+  /** The launch cannot run here yet (an Agent that does not support spaces, or not asked yet). */
+  launchBlocked?: boolean;
+  /** Set to this form's launch, guarded like its button, for a composer outside the form. */
+  submitRef?: MutableRefObject<(() => void) | null>;
+}
+
+/** What the Start hub hands to the space form. */
+export interface SpaceLaunchProps extends FormExtras {
+  kinds: string[];
+  access: LaunchAccess;
+  claudeExpired?: boolean;
+  settling?: boolean;
+  shared: SharedDraft;
+  onClose: () => void;
+  onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
+}
+
+/** SpaceLaunchForm is the launch form in its space form, for the Start hub. */
+export function SpaceLaunchForm(props: SpaceLaunchProps) {
+  return <LaunchForm repo="" allowWorktree={false} {...props} space />;
+}
+
+function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, shared, onLaunch, busy, setBusy, space = false, launchBlocked = false, submitRef }: LaunchModalProps & FormExtras) {
   const settings = useSettings();
+  // Neither home nor a space has a working copy: no templates file, skills, subdir or worktree.
+  const repoLess = home || space;
   // Without a confirmed catalogue nothing is offered, whatever the caller listed.
   const kinds = useMemo(() => (access.kinds ? offeredKinds : []), [access.kinds, offeredKinds]);
   const last = readRepoLast(repo);
@@ -297,7 +340,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     if (fresh && !own.has("startMode")) setStartMode(resolveStartMode(k, repo, d.startMode));
     if (!own.has("perm")) setSkipPerm(tenantSkipPerm(uiState, k, settings));
     if (fresh && !own.has("route")) setRoute("");
-    if (!own.has("driver")) setDriverPick(tenantDriver(uiState, k));
+    if (!own.has("driver")) setDriverPick(space ? null : tenantDriver(uiState, k));
     if (!own.has("budget")) setBudget(tenantBudget(uiState, k, settings));
   };
   // The member picked kind k: that is their choice, and what depended on the old kind starts over.
@@ -349,7 +392,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // null = untouched: the driver follows the kind's default, which can change under an open dialog
   // when the kind catalog lands after it. Only a click on the toggle pins a value.
   useKindCatalogVersion();
-  const [driverPick, setDriverPick] = useState<string | null>(() => tenantDriver(uiState, initialKind));
+  // A space launches managed wherever the harness has a managed driver (ADR 0142 decision 8), so
+  // the tenant's and the member's driver default is not applied there; Details can still change it.
+  const [driverPick, setDriverPick] = useState<string | null>(() => (space ? null : tenantDriver(uiState, initialKind)));
   // A managed-only kind has no Terminal choice, whatever a default or the catalog said earlier.
   const driver = agentOf(kind).managedDriver && agentOf(kind).terminalDriver === false ? "managed" : (driverPick ?? (agentOf(kind).managedDriver ? "managed" : ""));
   // The CP's answer, or the kinds list, can arrive after the dialog opened: fill in only what the
@@ -375,7 +420,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // The first prompt is written back to localStorage per repository (launchDraft). It survives
   // closing the dialog and is dropped only once a launch succeeded. initialPrompt (the seed
   // from a handoff, a memo send or a work item) outranks the draft.
-  const [prompt, setPrompt, clearPromptDraft] = useLaunchPrompt(repo, initialPrompt);
+  const ownPrompt = useLaunchPrompt(repo, initialPrompt);
+  // The hub's draft replaces this repository's own one when the hub carried it here. The stored
+  // one is left as it is, and comes back the next time this dialog opens without the hub's.
+  const [prompt, setPrompt, clearPromptDraft] = shared ? [shared.prompt, shared.setPrompt, () => shared.setPrompt("")] : ownPrompt;
   // The initial value is not necessarily typed by a person (handoff proposal, work item,
   // member handoff), and maxLength only constrains typing, so an injected value is clamped to
   // the create API's rule here — otherwise it stays editable yet the launch alone fails with
@@ -389,14 +437,15 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // (shell/ssm) make attaching a no-op. Persisted per repo like the prompt above
   // (lib/attachDraft): closing the dialog to go look at a branch and coming back must not
   // cost the screenshot that was pasted in.
-  const attach = useAttachDraft(launchAttachKey(repo));
+  const ownAttach = useAttachDraft(launchAttachKey(repo));
+  const attach = shared ? shared.attach : ownAttach;
   const images = attach.items;
   const textRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null); // hidden + picker (the phone path)
   // WHERE: default to an isolated worktree — a branch switch can't corrupt other
   // sessions when each task has its own dir. From a worktree row (allowWorktree
   // false) there's no worktree choice: launch in place.
-  const [worktree, setWorktree] = useState(home ? false : (initialWorktree ?? allowWorktree));
+  const [worktree, setWorktree] = useState(repoLess ? false : (initialWorktree ?? allowWorktree));
   // Working directory: "" = the working copy root (the usual case). Seeded from what
   // this repo was last launched in, since a monorepo user keeps returning to the same
   // package — the field shows the value, so a remembered folder is never silent.
@@ -427,6 +476,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // branch was picked is unsettling.
   const [placeOpen, setPlaceOpen] = useState(() => !!initialExistingBranch || readLaunchOpen("place"));
   const [advOpen, setAdvOpen] = useState(() => readLaunchOpen("adv"));
+  const [detailsOpen, setDetailsOpen] = useState(() => readLaunchOpen("details"));
+  // A new space's display name; "" lets the Agent name the folder alone.
+  const [spaceName, setSpaceName] = useState("");
   const toggleSection = (key: LaunchSectionKey, open: boolean, set: (v: boolean) => void) => {
     set(!open);
     writeLaunchOpen(key, !open);
@@ -454,9 +506,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // The repository's template sources, fetched once; history and personal templates are ui-prefs.
   const [srvGroups, setSrvGroups] = useState<PromptTemplateGroup[]>([]);
   useEffect(() => {
-    // A home launch has no repository to read a template file from; the user's own templates
-    // and nothing else are offered.
-    if (home) return;
+    // A home or space launch has no repository to read a template file from; the user's own
+    // templates and nothing else are offered.
+    if (repoLess) return;
     let alive = true;
     repoPromptTemplates(repo)
       .then((d) => alive && setSrvGroups(d.groups || []))
@@ -464,7 +516,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     return () => {
       alive = false;
     };
-  }, [repo, home]);
+  }, [repo, repoLess]);
 
   const hasModel = agentOf(kind).caps.model;
   const driverManaged = driver === "managed";
@@ -635,8 +687,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
 
   // Switching to an agent without attachment support drops any staged files (they'd have
   // nowhere to go) — including the persisted draft. Runs only on that transition.
+  // The hub's draft is not this form's to drop: its files stay staged and are not sent.
   useEffect(() => {
-    if (!canPasteImage) attach.clear();
+    if (!canPasteImage && !shared) attach.clear();
   }, [canPasteImage]);
 
   // Stage File(s) as pending attachments (raw File + a preview URL for images). Actual upload
@@ -688,7 +741,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // Launch and save wait for it (seedLoading): either one before the files arrived would go
   // out without them, and a launch would then delete the memo that still had them.
   const [seedMissing, setSeedMissing] = useState(0);
-  const [seedLoading, setSeedLoading] = useState(() => !!initialAttachments?.length && canPasteImage);
+  const [seedOwnLoading, setSeedLoading] = useState(() => !!initialAttachments?.length && canPasteImage);
+  const seedLoading = seedOwnLoading || !!shared?.loading;
   useEffect(() => {
     if (!initialAttachments?.length || !canPasteImage) return;
     let alive = true;
@@ -809,7 +863,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     setHistIdx: () => {},
     inputRef: textRef,
     // No working copy to read skills from, so a home launch offers none (and no slash list).
-    composerLocked: busy || home,
+    composerLocked: busy || repoLess,
   });
 
   // start fires the launch. `resolveCollision` is the conflict panel's re-run: the
@@ -837,11 +891,12 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       title: title.trim(),
       images: canPasteImage ? images.flatMap((x) => (x.file ? [x.file] : [])) : [],
       worktree,
-      subdir: home ? "" : subdir,
+      subdir: repoLess ? "" : subdir,
       base: worktree ? wtBase : "",
       newBranch: worktree && !useExisting ? newBranch : "",
       useExisting,
       spendCapUsd: hasBudget && budget.trim() && !budgetInvalid ? budgetCap : undefined,
+      space: space ? { name: spaceName.trim() } : undefined,
     });
     if (r?.ok) {
       if (onBedrock && bedrockPick) rememberBedrockModel(bedrockPick.id, bedrockModel.trim());
@@ -857,6 +912,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     // The policy refused it: what the dialog offers may be out of date, so ask the Agent again.
     if (r?.policy) {
       setPolicyErr(r.policy);
+      // In a space the route picker that explains it is folded into Details.
+      if (space) setDetailsOpen(true);
       void access.refresh?.();
     }
     setConflict(r?.conflict ?? null);
@@ -874,7 +931,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked && !prefsLoading;
+  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked && !prefsLoading && !launchBlocked;
+  useEffect(() => {
+    if (submitRef) submitRef.current = () => canLaunch && submit();
+  });
 
   // Follow the shared composer send-key setting: Ctrl/⌘+Enter (default), or
   // Enter with Shift+Enter reserved for a newline.
@@ -889,9 +949,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     }
   };
 
-  return (
+  // The blocks of the form, laid out below for a dialog or for the hub's space section.
+  const agentBlock = (
     <>
-      <div className="ui-modal-body">
         <div className="ui-field">
           <span className="ui-field-label">{tr("launch.field.agent")}</span>
           {/* Empty means one of several very different things: still checking; nothing the
@@ -1055,6 +1115,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           </div>
         )}
 
+    </>
+  );
+  const promptBlock = (
+    <>
         {/* First prompt (optional) — below agent/model. Initial focus is applied by the
             useEffect above (preventScroll instead of the autoFocus attribute, and never on a
             touch device). */}
@@ -1116,7 +1180,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                 <span className="launch-stash-label">{tr("launch.stash_to_memo")}</span>
               </button>
               <PromptTemplateButton btnRef={tmplBtnRef} open={tmplOpen} disabled={busy} onToggle={() => setTmplOpen((o) => !o)} />
-              {skillPicker.canSkills && !home && (
+              {skillPicker.canSkills && !repoLess && (
                 <SkillButton
                   btnRef={skillPicker.btnRef}
                   open={skillPicker.listVisible}
@@ -1145,9 +1209,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               {tr(stash === "done" ? "launch.stash_done" : stash === "too_large" ? "launch.stash_too_large" : "launch.stash_failed")}
             </div>
           )}
-          {seedMissing > 0 && (
+          {seedMissing + (shared?.missing ?? 0) > 0 && (
             <div className="launch-stash-note launch-stash-note--warn" role="status">
-              {tr("launch.memo_attach_missing", { count: seedMissing })}
+              {tr("launch.memo_attach_missing", { count: seedMissing + (shared?.missing ?? 0) })}
             </div>
           )}
           <AttachChips attachments={images} pasting={seedLoading} onRemove={removeFile} onOpen={setZoom} />
@@ -1177,6 +1241,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           </span>
         </div>
 
+    </>
+  );
+  const locationBlock = (
+    <>
         {/* Location: an isolated worktree (the default) or directly in this copy. A worktree
             row has no choice (it launches inside that worktree), so it is a one-line note
             rather than a collapsible section. */}
@@ -1391,14 +1459,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         </LaunchSection>
         )}
 
-        {/* Advanced: settings that stay put once decided (execution method, effort, start mode,
-            session name). Only the items that moved off their default reach the summary line. */}
-        <LaunchSection
-          label={tr("launch.field.advanced")}
-          summary={advSummary}
-          open={advOpen}
-          onToggle={() => toggleSection("adv", advOpen, setAdvOpen)}
-        >
+    </>
+  );
+  const advBody = (
+    <>
           {/* Driver (docs/log/27 P2/P3): shown only for kinds that support managed. The default
               is managed (shared runtime, paneless, low memory). CLI (TUI) is an explicit memory
               trade-off (one TUI process per session) for people who need terminal access.
@@ -1530,8 +1594,73 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             )}
             <span className="ui-field-hint">{ownProblem ? tr(("launch.own_default_no_" + ownProblem) as never) : tr("launch.own_default_hint")}</span>
           </div>
+    </>
+  );
+
+  if (space) {
+    // Agent and model are folded into Details here, so its summary names them first.
+    const detailsParts = [kinds.length ? kindDisplayName(kind) : "", hasModel && !onBedrock ? model : "", ...advParts].filter(Boolean);
+    // Something the launch cannot go ahead with is never left behind the fold.
+    const detailsForced = !kinds.length || routeMissing || !!policyErr || savedUnusable || bedrockBlocked || routeModelBlocked || budgetInvalid;
+    return (
+      <div className="start-space-form">
+        <div className="ui-field">
+          <span className="ui-field-label">{tr("start.place")}</span>
+          <div className="start-place">
+            <span className="start-place-chip">
+              <Icon name="new-folder" /> {tr("start.place_new_space")}
+            </span>
+            <input
+              value={spaceName}
+              maxLength={SPACE_NAME_MAX}
+              readOnly={busy}
+              aria-label={tr("start.space_name_label")}
+              placeholder={tr("start.space_name_ph")}
+              onChange={(e) => setSpaceName(e.target.value)}
+            />
+          </div>
+          <span className="ui-field-hint">
+            <Trans k="start.space_note" components={[<code />]} />
+          </span>
+        </div>
+        {!canPasteImage && images.length > 0 && <span className="ui-field-hint ui-field-hint--warn">{tr("launch.attach_not_sent")}</span>}
+        <LaunchSection
+          label={tr("start.details")}
+          summary={detailsParts.join(" · ")}
+          warn={detailsForced}
+          open={detailsOpen || detailsForced}
+          onToggle={() => toggleSection("details", detailsOpen, setDetailsOpen)}
+        >
+          {agentBlock}
+          {advBody}
+        </LaunchSection>
+        <div className="start-space-actions">
+          <Button variant="primary" icon="play" onClick={submit} disabled={busy || !canLaunch}>
+            {busy ? tr("launch.launching") : tr("start.space_launch")}
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="ui-modal-body">
+        {agentBlock}
+        {promptBlock}
+        {locationBlock}
+        {/* Advanced: settings that stay put once decided (execution method, effort, start mode,
+            session name). Only the items that moved off their default reach the summary line. */}
+        <LaunchSection
+          label={tr("launch.field.advanced")}
+          summary={advSummary}
+          open={advOpen}
+          onToggle={() => toggleSection("adv", advOpen, setAdvOpen)}
+        >
+          {advBody}
         </LaunchSection>
       </div>
+
 
       <footer className="ui-modal-foot">
         {onBack && (

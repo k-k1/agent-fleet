@@ -2,6 +2,7 @@
 // created is handed straight on to the launch. Without the link to onPickRepo, all the user
 // gets is a working copy and they have to go hunting for the launch button in the left pane —
 // the same gap that the clone flow's "start from here" was added to close.
+import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -14,7 +15,9 @@ vi.mock("./clone.ts", () => ({
   svnCheckout: vi.fn(),
   initRepo: (...a: unknown[]) => initRepo(...a),
 }));
-vi.mock("../chat/api.ts", () => ({ assistantList: vi.fn(async () => ({ assistants: [] })) }));
+vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTerminal: vi.fn() }));
+// A fine pointer, so the composer takes the focus as it does on a desktop.
+vi.mock("../../lib/device.ts", async (orig) => ({ ...(await orig<object>()), coarsePointer: () => false }));
 // api has to answer differently per path, so it funnels through one replaceable mock (an empty
 // array by default).
 const apiGet = vi.fn(async (_path: string): Promise<unknown> => []);
@@ -28,6 +31,8 @@ vi.mock("../../core/api/client.ts", () => ({
   errText: (e: { message?: string }) => e?.message || "",
   errDetail: (e: { message?: string }) => e?.message || "",
   pasteImage: vi.fn(),
+  repoPromptTemplates: vi.fn(async () => ({ groups: [] })),
+  repoSkills: vi.fn(async () => ({ skills: [] })),
 }));
 
 const { StartModal } = await import("./StartModal.tsx");
@@ -35,11 +40,22 @@ const { useReposStore } = await import("./store.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useUIStateStore } = await import("../../core/store/uiState.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
+const { useHubDraft } = await import("./hubDraft.ts");
+const { writeFoldValue } = await import("../../lib/foldStore.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
 const onPickRepo = vi.fn();
 const onPickHome = vi.fn();
+const onLaunchSpace = vi.fn(async (..._a: unknown[]) => ({ ok: true, name: "s-1" }));
+const onClose = vi.fn();
+const access = { kinds: { get: (k: string) => ({ kind: k }), has: () => true } as never, noRoute: false, allOff: false, refresh: () => {} };
+
+// The draft is the host's (StartHost); a stand-in host owns it the same way.
+function Host({ kinds }: { kinds: string[] }) {
+  const draft = useHubDraft();
+  return <StartModal kinds={kinds} access={access} draft={draft} onLaunchSpace={onLaunchSpace} onClose={onClose} onPickRepo={onPickRepo} onPickHome={onPickHome} />;
+}
 
 const rows = () => [...document.querySelectorAll<HTMLButtonElement>(".start-row")];
 const rowFor = (label: string) => rows().find((b) => b.textContent?.includes(label))!;
@@ -67,7 +83,7 @@ async function mount(kinds: string[] = ["claude"]): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
-        <StartModal kinds={kinds} onClose={() => {}} onPickRepo={onPickRepo} onPickHome={onPickHome} />
+        <Host kinds={kinds} />
       </ToastProvider>,
     );
   });
@@ -80,6 +96,11 @@ function unmount(): void {
 }
 
 beforeEach(async () => {
+  localStorage.clear();
+  // Most rows live in Other; the tests about the sections and the repositories open their own.
+  writeFoldValue("af-start-section", "other");
+  onLaunchSpace.mockClear();
+  onClose.mockReset();
   initRepo.mockReset();
   cloneRepo.mockReset();
   onPickRepo.mockReset();
@@ -219,7 +240,7 @@ describe("StartModal — Launch an agent at home", () => {
   it("hands the pick to the host instead of rendering a form of its own", async () => {
     await click(rowFor(t("start.home_title")));
     expect(onPickHome).toHaveBeenCalledTimes(1);
-    expect(document.querySelector("textarea")).toBeNull();
+    expect(document.querySelector(".ui-seg.big")).toBeNull(); // no agent picker of its own
   });
 });
 
@@ -232,6 +253,7 @@ describe("StartModal — uncloned team repositories", () => {
 
   async function remount(): Promise<void> {
     unmount();
+    writeFoldValue("af-start-section", "repo");
     await mount();
   }
 
@@ -301,5 +323,87 @@ describe("StartModal — uncloned team repositories", () => {
     expect(cloneRepo).toHaveBeenCalledTimes(1);
     await click(rowFor("acme/docs")); // released again after the failed clone
     expect(cloneRepo).toHaveBeenCalledTimes(2);
+  });
+});
+
+// The hub is an accordion (ADR 0142 decision 5): one section open, remembered per user and
+// tenant, space the very first time; one draft is shown in every section.
+describe("StartModal — sections and the shared draft", () => {
+  const heads = () => [...document.querySelectorAll<HTMLButtonElement>(".start-sec-head")];
+  const head = (label: string) => heads().find((b) => b.textContent?.includes(label))!;
+  const openHeads = () => heads().filter((b) => b.getAttribute("aria-expanded") === "true").map((b) => b.textContent);
+  const box = () => document.querySelector<HTMLTextAreaElement>("#start-draft-text")!;
+  async function typeBox(value: string): Promise<void> {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(box(), value);
+      box().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  }
+  async function fresh(spaces: unknown = { spaces: [] }): Promise<void> {
+    unmount();
+    localStorage.clear();
+    apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? spaces : []));
+    await mount();
+    await act(async () => {});
+  }
+
+  it("opens Start in a space the first time, then the section last opened", async () => {
+    await fresh();
+    expect(openHeads()).toEqual([t("start.sec_space")]);
+    await click(head(t("start.sec_repo")));
+    expect(openHeads()).toEqual([t("start.sec_repo")]);
+    unmount();
+    await mount();
+    expect(openHeads()).toEqual([t("start.sec_repo")]);
+  });
+
+  it("keeps the text across sections and focuses the open section's box", async () => {
+    await fresh();
+    await typeBox("議事録をまとめて");
+    await click(head(t("start.sec_other")));
+    expect(box().value).toBe("議事録をまとめて");
+    expect(document.activeElement).toBe(box());
+    expect(document.body.textContent).toContain(t("start.draft_note_other"));
+    await click(head(t("start.sec_repo")));
+    expect(box().value).toBe("議事録をまとめて");
+  });
+
+  it("offers no Chat (assistant) row", async () => {
+    const titles = rows().map((b) => b.querySelector(".start-row-title")?.textContent);
+    expect(titles).toEqual([t("start.home_title"), "shell", t("start.clone_title"), t("start.newdir_title")]);
+  });
+
+  it("launches a new space with the draft and the name typed, straight from the hub", async () => {
+    await fresh();
+    await typeBox("見積もりの比較表を作って");
+    await type(document.querySelector<HTMLInputElement>(`input[aria-label="${t("start.space_name_label")}"]`)!, "見積もり");
+    const go = [...document.querySelectorAll<HTMLButtonElement>(".start-space-actions button")][0];
+    expect(go.disabled).toBe(false);
+    await click(go);
+    expect(onLaunchSpace).toHaveBeenCalledTimes(1);
+    const o = onLaunchSpace.mock.calls[0][0] as Record<string, unknown>;
+    expect(o).toMatchObject({ kind: "claude", prompt: "見積もりの比較表を作って", worktree: false, subdir: "", space: { name: "見積もり" } });
+    expect(onClose).toHaveBeenCalled();
+  });
+
+  it("refuses the space launch on an Agent without spaces, and says so", async () => {
+    await fresh({ error: { code: "not_found", status: 404 } });
+    expect(document.body.textContent).toContain(t("start.space_unsupported"));
+    const go = [...document.querySelectorAll<HTMLButtonElement>(".start-space-actions button")][0];
+    expect(go.disabled).toBe(true);
+    // The send key is refused the same way: an older Agent would start the session in home.
+    await act(async () => {
+      box().dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true }));
+    });
+    expect(onLaunchSpace).not.toHaveBeenCalled();
+  });
+
+  it("offers a second check when the first could not be answered", async () => {
+    await fresh({ error: { code: "http_502", status: 502 } });
+    expect(document.body.textContent).toContain(t("start.space_check_failed"));
+    apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? { spaces: [] } : []));
+    await click([...document.querySelectorAll<HTMLButtonElement>(".linklike")].find((b) => b.textContent === t("start.space_check_again"))!);
+    expect(document.body.textContent).not.toContain(t("start.space_check_failed"));
+    expect([...document.querySelectorAll<HTMLButtonElement>(".start-space-actions button")][0].disabled).toBe(false);
   });
 });

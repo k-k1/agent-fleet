@@ -53,7 +53,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo }, { kind, driver, model, effort, route, routeConnection, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd }, take) => {
+  return async ({ dir, repo }, { kind, driver, model, effort, route, routeConnection, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd, space }, take) => {
     const hasModel = agentOf(kind).caps.model;
     // With attachments the first prompt's text cannot be fixed until the session exists,
     // because the saved paths have to be woven into it and the upload target IS that
@@ -82,6 +82,9 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     // copy the launch lands in — including a worktree it creates in this same call —
     // and rejects a path that isn't there, so no client-side existence check.
     if (subdir) body.subdir = subdir;
+    // A space (ADR 0142) names the directory in place of dir, which stays "": the Agent makes or
+    // looks up ~/spaces/<folder> and refuses the field together with dir or a worktree.
+    if (space) body.space = space;
     // Let the Agent deliver the first prompt (deliverInitialPrompt; driver.Send when
     // managed). It waits for the CLI to draw its composer, re-presses Enter once the paste
     // window has closed, and verifies delivery — and above all it runs even when nobody is
