@@ -1856,8 +1856,8 @@ function MemoRepoHead({ repo, label, onAdd }: { repo: string; label: string; onA
   const tr = useT();
   const ref = usePublishedHeight<HTMLDivElement>("--memo-repo-head-h");
   return (
-    <div className="memo-repo-head" ref={ref}>
-      <Icon name="repo" className="memo-repo-ic" />
+    <div className="lp-group-head memo-repo-head" ref={ref}>
+      <Icon name="repo" className="lp-group-head-ic" />
       <span className="memo-repo-name">{label}</span>
       <button
         type="button"

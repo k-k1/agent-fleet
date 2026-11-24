@@ -334,6 +334,16 @@ describe("MemoryRailSection layout (#4675)", () => {
     }
   });
 
+  it("renders a group head with the shared band class, an icon per scope kind and the count", async () => {
+    const user = groupHead("user");
+    expect(user.classList.contains("lp-group-head")).toBe(true);
+    expect(user.querySelector(".codicon-globe")).not.toBeNull();
+    expect(user.querySelector(".memrail-group-count")?.textContent).toBe("2");
+    const proj = groupHead("project:" + project.id);
+    expect(proj.querySelector(".codicon-repo")).not.toBeNull();
+    expect(proj.querySelector(".memrail-group-count")?.textContent).toBe("1");
+  });
+
   it("folds a scope group, shows its count, and keeps the fold per device", async () => {
     expect(groupHead("user").querySelector(".memrail-group-count")?.textContent).toBe("2");
     expect(groupHead("user").getAttribute("aria-expanded")).toBe("true");
