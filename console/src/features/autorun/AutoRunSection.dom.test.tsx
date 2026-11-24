@@ -14,6 +14,8 @@ const memoQueueDeliveries = vi.fn(async (_id: string, _openToo?: boolean): Promi
   { id: "d1", session: "run-a", state: "open" },
   { id: "d0", session: "run-old", state: "closed", sentAt: "2026-11-01T00:00:00Z", closedAt: "2026-11-01T00:45:00Z" },
 ]);
+const workItemList = vi.fn(async (): Promise<unknown> => ({ items: [], queries: [], sessions: [] }));
+vi.mock("../workitems/api.ts", () => ({ workItemList: () => workItemList(), workItemRefresh: () => workItemList() }));
 const memoQueueFire = vi.fn(async (_id: string): Promise<unknown> => ({ id: "d9" }));
 vi.mock("../memo/api.ts", () => ({
   memoQueueList: () => memoQueueList(),
@@ -725,21 +727,27 @@ describe("AutoRunSection", () => {
       expect(host.textContent).not.toContain("No auto-run runs yet.");
     });
 
-    it("finds a run and a reviewer by a reference only the work-item ledger knows, once the ledger loads", async () => {
+    it("loads the work-item ledger for a reference query and finds the run and its reviewer by it", async () => {
       const { useWorkItemStore } = await import("../workitems/store.ts");
       useWorkItemStore.setState({ payload: null, loaded: false });
+      // ensureWorkItems throttles retries by the wall clock; an earlier test's reference query used it up.
+      const realNow = Date.now();
+      const nowSpy = vi.spyOn(Date, "now").mockReturnValue(realNow + 3_600_000);
+      const ref = (itemKey: string, sessionName: string) => ({ id: itemKey, provider: "jira", itemKey, sessionName, repo: "", branch: "", createdAt: "" });
+      workItemList.mockResolvedValue({ items: [], queries: [], sessions: [ref("PROJ-77", "rev-a"), ref("PROJ-88", "run-a")] });
       await mount();
+      expect(workItemList).not.toHaveBeenCalled();
       await type("PROJ-77");
-      expect(runs()).toEqual([]);
+      expect(workItemList).toHaveBeenCalled();
       await act(async () => {
-        useWorkItemStore.setState({
-          loaded: true,
-          payload: { sessions: [{ id: "1", provider: "jira", itemKey: "PROJ-77", sessionName: "rev-a", repo: "", branch: "", createdAt: "" }] } as never,
-        });
+        await Promise.resolve();
       });
-      expect(runs()).toEqual(["run-a"]);
-      await type("PROJ-78");
+      expect(runs()).toEqual(["run-a"]); // via the reviewer's reference
+      await type("PROJ-88");
+      expect(runs()).toEqual(["run-a"]); // via the root's reference
+      await type("PROJ-99");
       expect(runs()).toEqual([]);
+      nowSpy.mockRestore();
       useWorkItemStore.setState({ payload: null, loaded: false });
     });
 
