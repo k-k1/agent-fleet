@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 
 type Fn = (e: any) => void;
 
-function loadSw(lang = "en", wins: any[] = []) {
+function loadSw(lang = "en", wins: any[] = [], scope = "https://console.test/") {
   const src = readFileSync(resolve(__dirname, "../public/sw.js"), "utf8");
   const listeners: Record<string, Fn> = {};
   const shown: { title: string; opts: any }[] = [];
@@ -14,7 +14,7 @@ function loadSw(lang = "en", wins: any[] = []) {
   const self = {
     location: { origin: "https://console.test" },
     navigator: { language: lang },
-    registration: { scope: "https://console.test/", showNotification: async (title: string, opts: any) => void shown.push({ title, opts }) },
+    registration: { scope, showNotification: async (title: string, opts: any) => void shown.push({ title, opts }) },
     skipWaiting() {},
     clients: { claim() {}, matchAll: async () => wins, openWindow: async (u: string) => void opened.push(u) },
     addEventListener: (n: string, f: Fn) => (listeners[n] = f),
@@ -68,6 +68,12 @@ describe("push handler", () => {
     await push(sw, { v: 1, kind: "question", session: "s1", name: "S" });
     expect(sw.shown[0].opts.icon).toBe("https://console.test/brand/icon-192.png");
     expect(sw.shown[0].opts.badge).toBe("https://console.test/brand/badge-96.png");
+  });
+  it("resolves icon and badge under a path-prefixed scope", async () => {
+    const sw = loadSw("en", [], "https://console.test/prefix/");
+    await push(sw, { v: 1, kind: "question", session: "s1", name: "S" });
+    expect(sw.shown[0].opts.icon).toBe("https://console.test/prefix/brand/icon-192.png");
+    expect(sw.shown[0].opts.badge).toBe("https://console.test/prefix/brand/badge-96.png");
   });
   it("ships the badge as a 96 px PNG with an alpha channel", () => {
     const png = readFileSync(resolve(__dirname, "../public/brand/badge-96.png"));
