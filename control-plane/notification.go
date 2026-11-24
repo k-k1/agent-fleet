@@ -294,6 +294,10 @@ type agentNotification struct {
 	// Raw, not a map: any JSON value decodes, so a payload of the wrong type no longer fails the
 	// entry, and boundedPayload sees the bytes before anything is expanded.
 	Payload json.RawMessage `json:"payload"`
+	// OriginRoot / OriginChild: who started the session (own, autorun, schedule; and whether
+	// another session did). An older Agent sends neither: it reads as own, not a child.
+	OriginRoot  string `json:"originRoot"`
+	OriginChild bool   `json:"originChild"`
 }
 
 func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
@@ -324,7 +328,8 @@ func agentNotificationRow(in agentNotification, membershipID string) store.Notif
 	}
 	n := store.Notification{EventID: agentEventIDPrefix + in.ID, MembershipID: membershipID, Kind: in.Kind,
 		TargetType: targetType, TargetID: targetID, TargetKind: targetKind,
-		DisplayName: in.DisplayName, Payload: boundedPayload(in.Payload), CreatedAt: in.CreatedAt}
+		DisplayName: in.DisplayName, Payload: boundedPayload(in.Payload), CreatedAt: in.CreatedAt,
+		OriginRoot: normalizeOriginRoot(in.OriginRoot), OriginChild: in.OriginChild}
 	if n.CreatedAt == "" {
 		n.CreatedAt = store.NowTS()
 	}
@@ -735,4 +740,14 @@ func (a notificationAPI) recordBoardObservations(ctx context.Context, mv store.M
 	if _, err := a.limits.RecordLimitObservations(ctx, mv.MembershipID, kind, epoch, since, now.UTC().Format(time.RFC3339), obs); err != nil {
 		log.Printf("limit board: browser observation %s/%s: %v", mv.MembershipID, kind, err)
 	}
+}
+
+// normalizeOriginRoot keeps the three roots the push preferences know and reads anything else
+// (empty from an older Agent, a value a newer one adds) as the member's own.
+func normalizeOriginRoot(r string) string {
+	switch r {
+	case "autorun", "schedule":
+		return r
+	}
+	return "own"
 }

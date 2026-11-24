@@ -342,6 +342,28 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, slug, a, b string) {
 	if off, _ := st.GetPushOffKinds(ctx, b); len(off) != 0 {
 		t.Fatalf("one member's opt-out leaked to another: %v", off)
 	}
+	if o, err := st.GetPushOffOrigins(ctx, a); err != nil || len(o) != 0 {
+		t.Fatalf("default origins=%v err=%v", o, err)
+	}
+	if err := st.PutPushOffOrigins(ctx, a, []string{"autorun-child"}); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := st.GetPushOffOrigins(ctx, a); len(o) != 1 || o[0] != "autorun-child" {
+		t.Fatalf("origins=%v", o)
+	}
+	// Saving one list leaves the other alone.
+	if off, _ := st.GetPushOffKinds(ctx, a); len(off) != 2 {
+		t.Fatalf("saving origins changed the kinds: %v", off)
+	}
+	if err := st.PutPushOffKinds(ctx, a, nil); err != nil {
+		t.Fatal(err)
+	}
+	if o, _ := st.GetPushOffOrigins(ctx, a); len(o) != 1 {
+		t.Fatalf("saving kinds changed the origins: %v", o)
+	}
+	if err := st.PutPushOffKinds(ctx, a, []string{"answer-ready", "question"}); err != nil {
+		t.Fatal(err)
+	}
 	dc, err := st.PushDeliveryContext(ctx, a)
 	if err != nil || !dc.Active || dc.IncludeText {
 		t.Fatalf("default context=%+v err=%v", dc, err)

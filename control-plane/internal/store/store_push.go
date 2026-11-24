@@ -50,6 +50,10 @@ type PushSubscriptionStore interface {
 	// GetPushOffKinds returns the notification kinds the member turned off for push (none by default).
 	GetPushOffKinds(ctx context.Context, membershipID string) ([]string, error)
 	PutPushOffKinds(ctx context.Context, membershipID string, kinds []string) error
+	// GetPushOffOrigins returns the origins (pushsrv.PrefOrigins) the member turned off for push
+	// (none by default); PutPushOffOrigins replaces them and leaves the kinds as they are.
+	GetPushOffOrigins(ctx context.Context, membershipID string) ([]string, error)
+	PutPushOffOrigins(ctx context.Context, membershipID string, origins []string) error
 	// PushDeliveryContext answers, for one send: whether the membership is still active, whether
 	// its tenant allows a question's text in the push (default false), and the tenant's slug (the
 	// name the Console selects a tenant by). An inactive or unknown membership is the zero value.
@@ -239,6 +243,33 @@ func (s *SQL) PutPushOffKinds(ctx context.Context, membershipID string, kinds []
 	b, _ := json.Marshal(kinds)
 	_, err := s.db.ExecContext(ctx, `INSERT INTO push_pref(membership_id, off_kinds, updated_at) VALUES(?,?,?)
 		ON CONFLICT(membership_id) DO UPDATE SET off_kinds=excluded.off_kinds, updated_at=excluded.updated_at`,
+		membershipID, string(b), NowTS())
+	return err
+}
+
+func (s *SQL) GetPushOffOrigins(ctx context.Context, membershipID string) ([]string, error) {
+	var raw string
+	err := s.db.QueryRowContext(ctx, `SELECT off_origins FROM push_pref WHERE membership_id=?`, membershipID).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	if json.Unmarshal([]byte(raw), &out) != nil {
+		return nil, nil
+	}
+	return out, nil
+}
+
+func (s *SQL) PutPushOffOrigins(ctx context.Context, membershipID string, origins []string) error {
+	if origins == nil {
+		origins = []string{}
+	}
+	b, _ := json.Marshal(origins)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO push_pref(membership_id, off_origins, updated_at) VALUES(?,?,?)
+		ON CONFLICT(membership_id) DO UPDATE SET off_origins=excluded.off_origins, updated_at=excluded.updated_at`,
 		membershipID, string(b), NowTS())
 	return err
 }
