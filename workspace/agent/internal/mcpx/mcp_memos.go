@@ -70,6 +70,7 @@ func memoTools() []toolSpec {
 							"model":      memoRecipeSchemaJA("model", false),
 							"effort":     memoRecipeSchemaJA("effort", false),
 							"route":      memoRecipeSchemaJA("route", false),
+							"runNext":    memoRunNextSchemaJA,
 						},
 						"required": []string{"kind"},
 					},
@@ -112,6 +113,7 @@ func memoTools() []toolSpec {
 							"model":      memoRecipeSchema("model", false),
 							"effort":     memoRecipeSchema("effort", false),
 							"route":      memoRecipeSchema("route", false),
+							"runNext":    memoRunNextSchema,
 							"continuation": map[string]any{"type": "boolean", "description": "Only for a session a queue started: true when this note is the next part of the queued message you were given, for the same work item (give the same reference, repo and category). " +
 								"If your user's release of that message allows continuations, it runs without another release, up to the queue's limit. Otherwise it waits for a release like any note"},
 						},
@@ -145,6 +147,9 @@ func memoTools() []toolSpec {
 				out, err := agentDoTimeout(http.MethodPost, "/memos", body, memoAgentTimeout)
 				if err != nil {
 					return mcpToolErr(req.ID, memoRelayErr(err))
+				}
+				if msg := memoRunNextProblem(p.Args, out); msg != "" {
+					return mcpToolErr(req.ID, msg+" The Control Plane answered: "+out)
 				}
 				return memoWriteResult(req.ID, p.Args, out)
 			}),
@@ -360,6 +365,14 @@ func memoAfterSchemaJA(update bool) map[string]any {
 	return map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": desc}
 }
 
+// memoRunNextSchema is the runNext argument of the session's add_memo. update_memo has none: the
+// mark on a message already waiting is the member's, set and cleared in the Console (#5021).
+var memoRunNextSchema = map[string]any{"type": "boolean", "description": "Optional, for a note of an auto-run category only: true puts this note ahead of the waiting notes that are not marked, so it is the next one started when a slot frees (its prerequisites, start time and the release your user gives still apply). " +
+	"Use it for a fix that unblocks other queued work, not to jump the queue with routine work. Only the note this call adds is marked; your user changes the mark in the Console."}
+
+// memoRunNextSchemaJA is memoRunNextSchema for the operator assistant's Japanese tool texts.
+var memoRunNextSchemaJA = map[string]any{"type": "boolean", "description": "任意。自動実行カテゴリのメモだけ: true にすると、このメモを印の無い待機中のメモより先にし、枠が空いたら次に実行する（前提のメモ・開始時刻・利用者の解放はそのまま）。ほかのキューの仕事を止めている修正に使う。印が付くのはこの呼び出しで追加するメモだけで、印の付け外しは利用者が Console で行う。"}
+
 // memoStartAfterSchema is the startAfter argument of the session's add_memo and update_memo.
 func memoStartAfterSchema(update bool) map[string]any {
 	desc := "The earliest time this note of an auto-run category (queue=true) may be started, as an RFC 3339 time " +
@@ -508,6 +521,32 @@ func memoStartAfterProblem(args json.RawMessage, answer string, now time.Time) s
 	}
 	return "The note was saved, but its start time (startAfter) was NOT kept: this Control Plane does not support " +
 		"it yet, so nothing makes the note wait for that time. Do not report it as stored; tell your user."
+}
+
+// memoRunNextProblem says why a create that asked for the run-next mark answered a note without it,
+// "" when it carries the mark or none was asked. A create's answer is a waiting note, which always
+// shows its mark, so a missing one is a Control Plane that dropped the field or a note already there.
+func memoRunNextProblem(args json.RawMessage, answer string) string {
+	var in struct {
+		RunNext bool `json:"runNext"`
+	}
+	if json.Unmarshal(args, &in) != nil || !in.RunNext {
+		return ""
+	}
+	var out struct {
+		RunNext  bool `json:"runNext"`
+		Existing bool `json:"existing"`
+	}
+	if json.Unmarshal([]byte(answer), &out) != nil || out.RunNext {
+		return ""
+	}
+	if out.Existing {
+		return "Nothing was added: the queue already holds a waiting note for the same item, and it was returned " +
+			"unchanged, so it is NOT marked to run next. Do not report it as marked; tell your user, who can mark it " +
+			"in the Console."
+	}
+	return "The note was saved, but it was NOT marked to run next: this Control Plane does not support it yet. " +
+		"Do not report it as marked; tell your user, who can mark it in the Console."
 }
 
 // memoRefSent reports whether the call's reference is one to be kept: any non-empty field counts,

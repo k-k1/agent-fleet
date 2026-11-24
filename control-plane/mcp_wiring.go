@@ -178,11 +178,11 @@ func (d cpDeps) MemoList(ctx context.Context, membershipID string) (any, error) 
 
 // The memo methods below are the /mcp face: memoFaceMCP is fixed here, and the producer is
 // the connection id mcpsrv reads from the authenticated principal.
-func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *mcpsrv.MemoRef, after []string, startAfter string, recipe mcpsrv.MemoRecipe) (any, error) {
+func (d cpDeps) MemoCreate(ctx context.Context, mv store.MembershipView, connection, repo, category, kind, body, refPath string, ref *mcpsrv.MemoRef, after []string, startAfter string, recipe mcpsrv.MemoRecipe, runNext bool) (any, error) {
 	dto, _, aerr := memoCreateVia(ctx, d.m.store, mv, memoDTO{
 		Repo: repo, Category: category, Kind: kind, Body: body, RefPath: refPath, Reference: memoRefFromMCP(ref), After: after,
 		StartAfter: startAfter, AgentKind: derefStr(recipe.AgentKind), Model: derefStr(recipe.Model),
-		Effort: derefStr(recipe.Effort), Route: derefStr(recipe.Route),
+		Effort: derefStr(recipe.Effort), Route: derefStr(recipe.Route), RunNext: runNext,
 	}, memoVia{face: memoFaceMCP, producer: connection})
 	if aerr != nil {
 		return nil, errors.New(aerr.message)

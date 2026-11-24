@@ -117,10 +117,12 @@ type memoDTO struct {
 	// Existing is set on the answer of a create into a queue that found the same reference
 	// already waiting there: the message returned is that one, and nothing was added.
 	Existing bool `json:"existing,omitempty"`
-	// RunNext is the member's "Run next" mark on a waiting message (setRunNext, memo_queue.go): the claim
-	// takes it before the oldest. Set only by POST /api/memos/{id}/run-next; validateMemo and
-	// memoPatch never read it, so no create or edit sets it. A move to another category clears it
-	// (memoUpdateFor, memoTidyMoveOne), and so does a session's edit of the content.
+	// RunNext is the "Run next" mark on a waiting message (setRunNext, memo_queue.go): the claim
+	// takes it before the oldest. A create into a queue may set it on the message it creates, on
+	// every face (memoCreateVia); a create answered with a message already waiting leaves that one
+	// as it is. On an existing message only the member's POST /api/memos/{id}/run-next sets or
+	// clears it: memoPatch has no field for it, so no edit does. A move to another category clears
+	// it (memoUpdateFor, memoTidyMoveOne), and so does a session's edit of the content.
 	RunNext bool `json:"runNext,omitempty"`
 	// The tidy fields of ADR 0137 section 8, written by the CP. DerivedFrom is the source ids of a
 	// message a tidy run made (Provenance is then "curator" and SourceProvenance the provenance of
@@ -399,6 +401,9 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		if !inQ && m.StartAfter != "" {
 			return memoTxFail(memoStartAfterOutside())
 		}
+		if !inQ && in.RunNext {
+			return memoTxFail(memoRunNextOutside())
+		}
 		if m.Recipe != "" {
 			if !inQ {
 				return memoTxFail(memoRecipeOutside())
@@ -459,6 +464,9 @@ func memoCreateVia(ctx context.Context, st store.MemoStore, mv store.MembershipV
 		if m, aerr = memoQueueMove(m, m, false, inQ, accept, via); aerr != nil {
 			return memoTxFail(aerr)
 		}
+		// The mark rides on the new row only. The token face may set it too: it puts this message
+		// ahead of the others, never one already waiting (the duplicate answers above return first).
+		m.RunNext = inQ && in.RunNext
 		if inQ && via.continuation && m.State == store.MemoStateHeld {
 			// Last, so that the place it takes in the chain is given back by a failure below.
 			v, err := memoContinue(tx, mv.MembershipID, m, via, q, now)

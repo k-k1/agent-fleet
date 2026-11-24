@@ -313,7 +313,7 @@ It is all or nothing, and it is refused once a result has been used. The history
 1. Choose "**Run now**" in the **⋯** menu of the category's header in the Memo queue view, or choose "**Run now**" in the "**...**" menu of the category in the Auto-run view
 2. "Started the run." appears. The session starts at the next check, about a minute later. A stopped workspace takes longer, because it is started first
 
-- A run takes the oldest memos waiting to run, as many as "Memos per session". One press is one run
+- A run takes the oldest memos waiting to run, as many as "Memos per session", after any marked "Run next" (see [Put a memo first](#put-a-memo-first)). One press is one run
 - It is enabled by what the queue list checks, which is whether a press can start something: at least one memo waiting to run whose "Waits for" memos are all done, and a free place (under "Sessions at the same time", and under the limit across all your categories). Otherwise it is greyed out, and its tooltip says why: no memo is waiting, every waiting memo waits for another memo or for its time, or the places are taken. The Control Plane still decides when you press, so a refusal can still appear (an empty instruction, your session limit, or an organisation that has not allowed auto-run are not checked beforehand)
 - It works with "Run by itself" off, while paused, outside the time window, and when the day's runs are used up
 - A stopped workspace is started
@@ -326,6 +326,17 @@ To start one particular memo instead of the oldest ones, open the memo's menu (t
 - It is greyed out, with the reason under it, when the memo is held for your approval, when it waits for other memos to finish ("Waits for"), when its start time or a hand-back's time has not come, or when the category has no free place
 - It is offered only for waiting or held memos of an auto-run category
 - The Control Plane still decides when you press. A memo that cannot run is refused, never replaced by another one
+
+### Put a memo first
+
+Memos run oldest first, so a memo added later waits behind every memo added before it, even when it is the fix the others need. To have one run before them, open the memo's menu (the **⋯** on its row, or right-click) and choose "**Run next**". The row shows a "**Run next**" badge. "**Clear run next**" in the same menu puts it back in its place.
+
+- When a place frees, the next run takes the memos marked "Run next" first (the oldest of them first), then the others oldest first. Dragging a memo up the list does not change when it runs
+- The mark only decides the order. A marked memo still waits for your approval, for the memos it waits for ("Waits for") and for its start time, and while it cannot run it holds no place: the memos behind it run as usual. "Run by itself", the time window, the day's runs and "Sessions at the same time" all still apply. To start a memo right away instead, use [Run one memo now](#run-one-memo-now)
+- When a run takes several memos, the marked ones come first and the oldest fill the rest. A marked memo that names its own agent, model or effort decides the recipe of that run, so memos with another recipe wait
+- It is offered only for memos waiting in an auto-run category (waiting to run, or waiting for your approval). Once a run takes the memo, the mark has done its job
+- A session can mark a memo it adds: `add_memo` with `runNext: true` (the Console API's create takes `runNext` too). Only the memo it adds is marked: if the category already holds a waiting memo for the same work item, that memo is returned as it is. A memo outside every auto-run category cannot carry the mark. Neither `update_memo` nor an edit changes the mark on a memo already waiting: setting and clearing it is yours, in the Console
+- The mark goes away when the memo moves to another category (by an edit, a merge of categories, a tidy or its undo), and when a session changes the memo's text. Renaming the category, or your own edit in place, keeps it
 
 ### See the runs
 

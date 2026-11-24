@@ -145,12 +145,12 @@ func TestMemoRecipeOverMCP(t *testing.T) {
 		s := func(v string) *string { return &v }
 		d := cpDeps{e.mgr}
 		out, err := d.MemoCreate(context.Background(), store.MembershipView{MembershipID: e.members["a"]}, "conn-1", "app", "impl", "text", "hello", "", nil, nil, "",
-			mcpsrv.MemoRecipe{Effort: s("high")})
+			mcpsrv.MemoRecipe{Effort: s("high")}, false)
 		if err != nil || out.(memoDTO).Effort != "high" || out.(memoDTO).State != store.MemoStateHeld {
 			t.Fatalf("create: %v %+v", err, out)
 		}
 		if _, err := d.MemoCreate(context.Background(), store.MembershipView{MembershipID: e.members["a"]}, "conn-1", "app", "impl", "text", "hello2", "", nil, nil, "",
-			mcpsrv.MemoRecipe{AgentKind: s("nope")}); err == nil {
+			mcpsrv.MemoRecipe{AgentKind: s("nope")}, false); err == nil {
 			t.Fatal("a bad agent was accepted")
 		}
 		id := out.(memoDTO).ID

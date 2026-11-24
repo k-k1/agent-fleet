@@ -418,7 +418,10 @@ Memos you accumulate and send to a session in one go (the tables are
   (`memo.run_next`, #5021) first, then the oldest; the mark changes no eligibility. `POST /api/memos/{id}/run-next`
   `{"runNext": true|false}` (Console only, not on the token face or `/mcp`) sets or clears it on a `held` or `pending`
   message of a queue that no delivery has claimed (`409 memo_locked` otherwise, `409 memo_in_queue` for a plain note) and
-  answers the message; the memo DTO carries `runNext` only on such a message (not while a send is in flight). A move to
+  answers the message; the memo DTO carries `runNext` only on such a message (not while a send is in flight). A create
+  on any face (`/api/memos`, `/internal/memos`, `add_memo` on `/mcp` and the Agent's relay) may set `runNext` on the
+  message it creates, into a queue only (`400 memo_run_next_invalid` otherwise); a create answered `existing` leaves that
+  message unmarked, and no edit reads the field (`update_memo` on `/mcp` refuses it). A move to
   another queue clears it (an edit from any face, a category merge, a tidy move and its undo; a rename keeps it), and so
   does a token-face or `/mcp` edit of the content. The quota is checked again in the move to `sending`, under the membership lock,
   so two sends of one member cannot both pass it. The send runs on the scheduler's

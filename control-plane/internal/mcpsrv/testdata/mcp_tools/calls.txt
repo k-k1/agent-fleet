@@ -2,7 +2,7 @@
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: add_memo"}}
 ## read add_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: add_memo"}}
-## read add_memo full {"after":[],"agentKind":"v","body":"v","category":"v","effort":"v","kind":"v","model":"v","refPath":"v","reference":{},"repo":"v","route":"v","startAfter":"v"}
+## read add_memo full {"after":[],"agentKind":"v","body":"v","category":"v","effort":"v","kind":"v","model":"v","refPath":"v","reference":{},"repo":"v","route":"v","runNext":true,"startAfter":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: add_memo"}}
 ## read add_memo kind= {"kind":""}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: add_memo"}}
@@ -301,54 +301,54 @@
 ## read update_memo full {"after":[],"agentKind":"v","body":"v","category":"v","effort":"v","id":"v","model":"v","position":2,"refPath":"v","reference":{},"repo":"v","route":"v","startAfter":"v"}
 <- {"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown or unauthorized tool: update_memo"}}
 ## write add_memo absent
--> MEMO-CREATE ["pat1","","","","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for add_memo","type":"text"}],"isError":true,"resultType":"complete"}}
-## write add_memo full {"after":[],"agentKind":"v","body":"v","category":"v","effort":"v","kind":"v","model":"v","refPath":"v","reference":{},"repo":"v","route":"v","startAfter":"v"}
--> MEMO-CREATE ["pat1","v","v","v","v","v",{"Provider":"","Key":"","URL":""},[],"v",{"AgentKind":"v","Model":"v","Effort":"v","Route":"v"}]
+## write add_memo full {"after":[],"agentKind":"v","body":"v","category":"v","effort":"v","kind":"v","model":"v","refPath":"v","reference":{},"repo":"v","route":"v","runNext":true,"startAfter":"v"}
+-> MEMO-CREATE ["pat1","v","v","v","v","v",{"Provider":"","Key":"","URL":""},[],"v",{"AgentKind":"v","Model":"v","Effort":"v","Route":"v"},true]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind= {"kind":""}
--> MEMO-CREATE ["pat1","","","","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=claude {"kind":"claude"}
--> MEMO-CREATE ["pat1","","","claude","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","claude","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=codex {"kind":"codex"}
--> MEMO-CREATE ["pat1","","","codex","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","codex","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=opencode {"kind":"opencode"}
--> MEMO-CREATE ["pat1","","","opencode","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","opencode","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=agy {"kind":"agy"}
--> MEMO-CREATE ["pat1","","","agy","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","agy","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=copilot {"kind":"copilot"}
--> MEMO-CREATE ["pat1","","","copilot","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","copilot","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=cursor {"kind":"cursor"}
--> MEMO-CREATE ["pat1","","","cursor","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","cursor","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=kiro {"kind":"kiro"}
--> MEMO-CREATE ["pat1","","","kiro","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","kiro","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=lcpp {"kind":"lcpp"}
--> MEMO-CREATE ["pat1","","","lcpp","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","lcpp","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=muse {"kind":"muse"}
--> MEMO-CREATE ["pat1","","","muse","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","muse","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=shell {"kind":"shell"}
--> MEMO-CREATE ["pat1","","","shell","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","shell","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=ssm {"kind":"ssm"}
--> MEMO-CREATE ["pat1","","","ssm","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","ssm","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=Codex {"kind":"Codex"}
--> MEMO-CREATE ["pat1","","","Codex","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","Codex","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write add_memo kind=nope {"kind":"nope"}
--> MEMO-CREATE ["pat1","","","nope","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","nope","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## write archive_session absent
 -> AGENT ["POST","/sessions//archive",""]
@@ -670,54 +670,54 @@
 -> MEMO-UPDATE ["v","v","v","v","v",2,{"Provider":"","Key":"","URL":""},[],"v",{"AgentKind":"v","Model":"v","Effort":"v","Route":"v"}]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo absent
--> MEMO-CREATE ["pat1","","","","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo unknown {"zz_unknown":1}
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"unknown argument \"zz_unknown\" for add_memo","type":"text"}],"isError":true,"resultType":"complete"}}
-## admin:dangerous add_memo full {"after":[],"agentKind":"v","body":"v","category":"v","effort":"v","kind":"v","model":"v","refPath":"v","reference":{},"repo":"v","route":"v","startAfter":"v"}
--> MEMO-CREATE ["pat1","v","v","v","v","v",{"Provider":"","Key":"","URL":""},[],"v",{"AgentKind":"v","Model":"v","Effort":"v","Route":"v"}]
+## admin:dangerous add_memo full {"after":[],"agentKind":"v","body":"v","category":"v","effort":"v","kind":"v","model":"v","refPath":"v","reference":{},"repo":"v","route":"v","runNext":true,"startAfter":"v"}
+-> MEMO-CREATE ["pat1","v","v","v","v","v",{"Provider":"","Key":"","URL":""},[],"v",{"AgentKind":"v","Model":"v","Effort":"v","Route":"v"},true]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind= {"kind":""}
--> MEMO-CREATE ["pat1","","","","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=claude {"kind":"claude"}
--> MEMO-CREATE ["pat1","","","claude","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","claude","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=codex {"kind":"codex"}
--> MEMO-CREATE ["pat1","","","codex","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","codex","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=opencode {"kind":"opencode"}
--> MEMO-CREATE ["pat1","","","opencode","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","opencode","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=agy {"kind":"agy"}
--> MEMO-CREATE ["pat1","","","agy","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","agy","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=copilot {"kind":"copilot"}
--> MEMO-CREATE ["pat1","","","copilot","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","copilot","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=cursor {"kind":"cursor"}
--> MEMO-CREATE ["pat1","","","cursor","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","cursor","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=kiro {"kind":"kiro"}
--> MEMO-CREATE ["pat1","","","kiro","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","kiro","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=lcpp {"kind":"lcpp"}
--> MEMO-CREATE ["pat1","","","lcpp","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","lcpp","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=muse {"kind":"muse"}
--> MEMO-CREATE ["pat1","","","muse","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","muse","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=shell {"kind":"shell"}
--> MEMO-CREATE ["pat1","","","shell","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","shell","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=ssm {"kind":"ssm"}
--> MEMO-CREATE ["pat1","","","ssm","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","ssm","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=Codex {"kind":"Codex"}
--> MEMO-CREATE ["pat1","","","Codex","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","Codex","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous add_memo kind=nope {"kind":"nope"}
--> MEMO-CREATE ["pat1","","","nope","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null}]
+-> MEMO-CREATE ["pat1","","","nope","","",null,null,"",{"AgentKind":null,"Model":null,"Effort":null,"Route":null},false]
 <- {"jsonrpc":"2.0","id":1,"result":{"content":[{"text":"{\"ok\":true}","type":"text"}],"resultType":"complete"}}
 ## admin:dangerous archive_session absent
 -> AGENT ["POST","/sessions//archive",""]
