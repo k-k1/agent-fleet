@@ -96,7 +96,8 @@ has to be added so that the sources say enough.
   it is the newest observation of that PR. A newer inbox observation (checks or mergeable) retires it,
   and it stays retired even if that observation is green, until a newer Agent observation supplies a
   fresh verdict, because the inbox row has no review decision and the Console must not recompute
-  `ready`. Without a verdict the PR is not `ready`, so it reads In review meanwhile.
+  `ready`. Without a valid verdict the PR does not meet the Ready to merge condition, and the card is judged
+  from the top of the table on its other facts.
 
 ### 2. A lane is a pure function of a card's facts. First match wins.
 
