@@ -7,6 +7,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/pgtest"
 )
@@ -31,6 +32,62 @@ func TestPushSubscriptionsPostgres(t *testing.T) {
 	}
 	defer st.Close()
 	checkPushSubscriptions(t, st)
+}
+
+// A send falls back to GetPushSubscription when the member's status cannot be read, so the row
+// read must not wait on the membership table. With membership locked ACCESS EXCLUSIVE in another
+// transaction (as DDL would hold it; a row lock does not block a plain SELECT), the read with the
+// status runs out its deadline while the row alone answers.
+func TestPushRowReadIgnoresMembershipLockPostgres(t *testing.T) {
+	url, ok := pgtest.Schema(t)
+	if !ok {
+		t.Skip("set AF_TEST_DATABASE_URL to run against Postgres")
+	}
+	st, err := OpenPostgres(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	ctx := context.Background()
+	if err := st.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tn, err := st.EnsureDefaultTenant(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, err := st.UpsertIdentity(ctx, "a@example.com", "a@example.com", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := st.EnsureMembership(ctx, id.ID, tn.ID, "member")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const ep = "https://fcm.googleapis.com/fcm/send/locked"
+	if err := st.UpsertPushSubscription(ctx, PushSubscription{MembershipID: m.ID, Endpoint: ep, P256dh: "k", Auth: "a"}); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.ExecContext(ctx, `LOCK TABLE membership IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatal(err)
+	}
+	sctx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	_, _, _, err = st.GetPushSendTarget(sctx, m.ID, ep, false)
+	cancel()
+	if err == nil {
+		t.Fatal("the read with the status did not wait on the locked membership table")
+	}
+	rctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	got, held, err := st.GetPushSubscription(rctx, m.ID, ep)
+	if err != nil || !held || got.Endpoint != ep {
+		t.Fatalf("row read under the membership lock: %+v %v %v", got, held, err)
+	}
 }
 
 func checkPushSubscriptions(t *testing.T, st *SQL) {

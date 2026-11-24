@@ -443,8 +443,9 @@ func TestFailedJoinedReadStillChecksTheMember(t *testing.T) {
 }
 
 // stallMember makes every send-time read that joins the status of a member in stalled hang until
-// its deadline, as a lock on that member's membership row would; the device row alone still
-// answers at once.
+// its deadline, as an ACCESS EXCLUSIVE lock on the membership table would (a row lock does not
+// block these reads); the device row alone still answers at once. The store test
+// TestPushRowReadIgnoresMembershipLockPostgres shows the real SQL behaves this way.
 type stallMember struct {
 	*memStore
 	stalled map[string]bool
@@ -497,5 +498,31 @@ func TestStalledMemberReadSendsOnTheRow(t *testing.T) {
 	}
 	if got := f.svc.statusFailed.Load(); got != 2 {
 		t.Fatalf("failed status reads: %d, want 2 (m1's devices only)", got)
+	}
+}
+
+// stallAll makes every send-time read hang until its deadline, as a stall on the device table
+// would.
+type stallAll struct{ *memStore }
+
+func (stallAll) GetPushSendTarget(ctx context.Context, _, _ string, _ bool) (store.PushSubscription, store.PushDelivery, bool, error) {
+	<-ctx.Done()
+	return store.PushSubscription{}, store.PushDelivery{}, false, ctx.Err()
+}
+func (stallAll) GetPushSubscription(ctx context.Context, _, _ string) (store.PushSubscription, bool, error) {
+	<-ctx.Done()
+	return store.PushSubscription{}, false, ctx.Err()
+}
+
+// The send-time reads share one budget of timeout, as main's single re-read had: the short reads
+// with the setting and the status come out of it, not on top of it, so a stall on every table
+// holds the worker no longer before its send than it did on main.
+func TestSendTimeReadsShareTheReadBudget(t *testing.T) {
+	p := &Service{store: stallAll{&memStore{}}, timeout: time.Second,
+		joinBudget: 400 * time.Millisecond, statusBudget: 400 * time.Millisecond}
+	start := time.Now()
+	_, _, _, err := p.sendTarget(sendJob{membershipID: "m1", sub: store.PushSubscription{Endpoint: "https://x.invalid/p"}})
+	if took := time.Since(start); err == nil || took > 1400*time.Millisecond {
+		t.Fatalf("reads took %s (err %v); want a failure within the 1s budget", took, err)
 	}
 }

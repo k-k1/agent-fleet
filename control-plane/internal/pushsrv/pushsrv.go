@@ -401,31 +401,36 @@ func (p *Service) run(j sendJob) {
 // per worker rather than one per queued send, which would make the sends behind them stale.
 //
 // The member's status is read on every send, also on a short budget, and never skipped because
-// another send's read failed: a member removed during the wait must not be sent to. Only when this
-// send's own status read fails is the device row read alone, and a row this member still holds is
-// sent to without the text, as it was before the status joined the read; a lock confined to the
-// membership table must not silence every push. A member the read answered as inactive is never
-// sent to.
+// another send's read failed. Only when this send's own status read fails is the device row read
+// alone, and a row this member still holds is sent to without the text, as main's worker did; a
+// lock on the membership table (DDL's ACCESS EXCLUSIVE; a row lock does not block these reads)
+// must not silence every push. So a member the read answered as inactive is never sent to, but
+// while their status cannot be read, each queued send to a device they still hold (a deactivated
+// membership keeps its rows) can go out without the text.
+//
+// All of these reads share one budget of timeout, the one main's single re-read had, so a stall on
+// every table holds the worker no longer before its send than it did there. The cost is that a row
+// read which needed nearly all of it on main can now run out after the short reads took their part.
 func (p *Service) sendTarget(j sendJob) (store.PushSubscription, store.PushDelivery, bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+	defer cancel()
 	if time.Now().UnixNano() >= p.joinOffUntil.Load() {
-		ctx, cancel := context.WithTimeout(context.Background(), min(orDefault(p.joinBudget, pushJoinBudget), p.timeout))
-		cur, dc, held, err := p.store.GetPushSendTarget(ctx, j.membershipID, j.sub.Endpoint, true)
-		cancel()
+		jctx, jcancel := context.WithTimeout(ctx, orDefault(p.joinBudget, pushJoinBudget))
+		cur, dc, held, err := p.store.GetPushSendTarget(jctx, j.membershipID, j.sub.Endpoint, true)
+		jcancel()
 		if err == nil {
 			return cur, dc, held, nil
 		}
 		p.joinFailed.Add(1)
 		p.joinOffUntil.Store(time.Now().Add(orDefault(p.joinOffFor, pushJoinOffFor)).UnixNano())
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), min(orDefault(p.statusBudget, pushStatusBudget), p.timeout))
-	cur, dc, held, err := p.store.GetPushSendTarget(ctx, j.membershipID, j.sub.Endpoint, false)
-	cancel()
+	sctx, scancel := context.WithTimeout(ctx, orDefault(p.statusBudget, pushStatusBudget))
+	cur, dc, held, err := p.store.GetPushSendTarget(sctx, j.membershipID, j.sub.Endpoint, false)
+	scancel()
 	if err == nil {
 		return cur, dc, held, nil
 	}
 	p.statusFailed.Add(1)
-	ctx, cancel = context.WithTimeout(context.Background(), p.timeout)
-	defer cancel()
 	cur, held, rerr := p.store.GetPushSubscription(ctx, j.membershipID, j.sub.Endpoint)
 	if rerr != nil {
 		return store.PushSubscription{}, store.PushDelivery{}, false, errors.Join(err, rerr)
