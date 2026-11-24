@@ -14,7 +14,7 @@ vi.mock("../../../core/api/client.ts", () => ({
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
-import { TenantBoostView, declaredRungs } from "./tenantBoost.tsx";
+import { MemberBoostLine, TenantBoostView, declaredRungs, fmtBoostHours } from "./tenantBoost.tsx";
 
 const SIZING = {
   slot_classes: [
@@ -103,5 +103,108 @@ describe("TenantBoostView", () => {
   it("hides the bounds while boost is off", async () => {
     const h = await mount(policy({ enabled: false }));
     expect(h.querySelectorAll("button.chip").length).toBe(0);
+  });
+});
+
+const usage = [
+  { user_key: "a", email: "a@example.com", used_hours: 6.5, spent: true, over_hours: 1.5 },
+  { user_key: "b", email: "b@example.com", used_hours: 5, spent: true, over_hours: 0 },
+  { user_key: "c", used_hours: 2, spent: false, over_hours: 0 },
+];
+
+describe("TenantBoostView - this month's hours", () => {
+  const rows = (h: HTMLElement) => [...h.querySelectorAll(".boost-usage-list li")].map((li) => li.textContent);
+
+  it("lists each member's hours against the budget and who went past it", async () => {
+    const h = await mount(policy({ monthly_hours: 5, budget_counted: true, month: "2026-11", members: usage }));
+    expect(h.querySelector(".boost-usage h5")?.textContent).toBe("2026-11 のブースト稼働時間（UTC）");
+    expect(rows(h)).toEqual(["a@example.com 6.5 時間 / 枠 5 時間 1.5 時間超過", "b@example.com 5 時間 / 枠 5 時間 枠に到達", "c 2 時間 / 枠 5 時間"]);
+    const count = [...h.querySelectorAll(".boost-usage p")].find((p) => p.textContent?.includes("枠に達した"));
+    expect(count?.textContent).toBe("枠に達した・超えたメンバー: 2 人");
+    expect(count?.className).toBe("warn-text");
+  });
+
+  it("shows plain hours and no over-budget count with no budget", async () => {
+    const plain = usage.map((u) => ({ ...u, spent: false, over_hours: 0 }));
+    const h = await mount(policy({ monthly_hours: 0, budget_counted: true, month: "2026-11", members: plain }));
+    expect(rows(h)).toEqual(["a@example.com 6.5 時間", "b@example.com 5 時間", "c 2 時間"]);
+    expect(h.textContent).not.toContain("枠に達した");
+  });
+
+  it("says nobody boosted when the count is read and empty", async () => {
+    const h = await mount(policy({ budget_counted: true, month: "2026-11" }));
+    expect(h.querySelector(".boost-usage")?.textContent).toContain("今月ブーストしたサイズで稼働したメンバーはいません");
+  });
+
+  it("shows no hours at all when they were not read", async () => {
+    const h = await mount(policy({ budget_counted: true, members: usage }));
+    expect(h.querySelector(".boost-usage")).toBeNull();
+  });
+
+  it("still shows this month's hours after boost is switched off, but not an empty list", async () => {
+    let h = await mount(policy({ enabled: false, budget_counted: true, month: "2026-11", members: usage }));
+    expect(rows(h)).toHaveLength(3);
+    act(() => root?.unmount());
+    host?.remove();
+    h = await mount(policy({ enabled: false, budget_counted: true, month: "2026-11" }));
+    expect(h.querySelector(".boost-usage")).toBeNull();
+  });
+});
+
+describe("fmtBoostHours", () => {
+  it("rounds to one decimal and never shows a sliver as 0", () => {
+    expect(fmtBoostHours(0)).toBe("0");
+    expect(fmtBoostHours(0.01)).toBe("<0.1");
+    expect(fmtBoostHours(1.26)).toBe("1.3");
+    expect(fmtBoostHours(40)).toBe("40");
+  });
+});
+
+describe("MemberBoostLine", () => {
+  async function mountLine(view: unknown, userKey: string) {
+    api.mockImplementation(() => Promise.resolve(view));
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<MemberBoostLine slug="acme" userKey={userKey} />);
+    });
+    return host;
+  }
+
+  it("shows the member's hours against the budget, with the overrun", async () => {
+    const h = await mountLine(policy({ monthly_hours: 5, budget_counted: true, month: "2026-11", members: usage }), "a");
+    expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/boost");
+    expect(h.querySelector(".member-boost p")?.textContent).toBe("ブーストでの稼働: 6.5 時間 / 枠 5 時間（2026-11、UTC） 1.5 時間超過");
+  });
+
+  it("reads 0 for a member with no boosted hours when the count was read", async () => {
+    const h = await mountLine(policy({ monthly_hours: 5, budget_counted: true, month: "2026-11", members: usage }), "zz");
+    expect(h.querySelector(".member-boost p")?.textContent).toBe("ブーストでの稼働: 0 時間 / 枠 5 時間（2026-11、UTC）");
+  });
+
+  it("says there is no budget when none is set", async () => {
+    const h = await mountLine(policy({ monthly_hours: 0, budget_counted: true, month: "2026-11", members: [{ ...usage[2] }] }), "c");
+    expect(h.querySelector(".member-boost p")?.textContent).toBe("ブーストでの稼働: 2 時間（2026-11、UTC、月間の枠なし）");
+  });
+
+  it.each([
+    ["the hours were not read", policy({ budget_counted: true, members: usage })],
+    ["the runtime has no sizes", policy({ editable: false, month: "2026-11", members: usage })],
+    ["boost is off and the member has no hours", policy({ enabled: false, month: "2026-11", members: usage })],
+  ])("is absent when %s", async (_why, view) => {
+    const h = await mountLine(view, "zz");
+    expect(h.textContent).toBe("");
+  });
+
+  it("is absent when the read fails", async () => {
+    api.mockImplementation(() => Promise.reject(new Error("down")));
+    host = document.createElement("div");
+    document.body.append(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<MemberBoostLine slug="acme" userKey="a" />);
+    });
+    expect(host.textContent).toBe("");
   });
 });

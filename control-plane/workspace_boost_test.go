@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -226,10 +228,16 @@ func (e *boostEnv) call(t *testing.T, method, body string) (int, workspaceSizing
 type countingBoost struct {
 	hours   float64
 	counted bool
+	members []memberBoostHours
+	err     error
 }
 
 func (c countingBoost) BoostedRunningHours(context.Context, string, time.Time, time.Time) (float64, bool, error) {
-	return c.hours, c.counted, nil
+	return c.hours, c.counted, c.err
+}
+
+func (c countingBoost) TenantBoostedRunningHours(context.Context, string, time.Time, time.Time) ([]memberBoostHours, bool, error) {
+	return c.members, c.counted, c.err
 }
 
 func TestBoostAPI(t *testing.T) {
@@ -803,6 +811,92 @@ func TestBoostBudgetIsCountedOnlyWithTheSampler(t *testing.T) {
 		b := e.m.sizingFor(ctx, &resolved{ws: e.ws(), ident: e.ident}).Boost.Budget
 		if b.Counted != c.counted || b.Spent != c.counted {
 			t.Fatalf("interval %v: budget %+v", c.interval, b)
+		}
+	}
+}
+
+// TestTenantBoostShowsTheOverrun: the tenant's Boost card reads this month's boosted hours of
+// every member who has any from the same launch records the refusal is decided on, says who is
+// past the budget and by how much, and shows nothing (not a 0) when the hours cannot be told.
+func TestTenantBoostShowsTheOverrun(t *testing.T) {
+	ctx := context.Background()
+	lim := tenantLimits{BoostEnabled: true, BoostMonthlyHours: 5}
+	e := newBoostEnv(t, lim)
+	e.m.boostHours = boostHoursFor(e.m.store, 5*time.Minute)
+	other, _ := e.m.store.UpsertIdentity(ctx, "b@example.com", "b", "")
+	otherMem, _ := e.m.store.EnsureMembership(ctx, other.ID, e.tenantID, "member")
+	elsewhere, _ := e.m.store.CreateTenant(ctx, "elsewhere", "Elsewhere")
+	outsider, _ := e.m.store.EnsureMembership(ctx, other.ID, elsewhere.ID, "member")
+	launch := func(id, membershipID, tenantID string, from, to time.Duration) {
+		t.Helper()
+		if err := e.m.store.BeginLaunch(ctx, store.Launch{ID: id, WorkspaceID: "w-" + membershipID, MembershipID: membershipID,
+			TenantID: tenantID, StartedAt: e.now.Add(from).Unix(), Override: store.SizeOverrideBoost}); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := e.m.store.EndOpenLaunch(ctx, membershipID, e.now.Add(to).Unix()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// a: 6.5 hours, past the budget by 1.5 because a running boosted box is never stopped.
+	launch("a1", e.memID, e.tenantID, -20*time.Hour, -13*time.Hour-30*time.Minute)
+	// b: 2 hours, and last month's hours do not count.
+	launch("b0", otherMem.ID, e.tenantID, -40*24*time.Hour, -39*24*time.Hour)
+	launch("b1", otherMem.ID, e.tenantID, -5*time.Hour, -3*time.Hour)
+	// Another tenant's member is never on this tenant's card.
+	launch("x1", outsider.ID, elsewhere.ID, -9*time.Hour, -1*time.Hour)
+
+	get := func() tenantBoostWire {
+		t.Helper()
+		w := httptest.NewRecorder()
+		ten, _ := e.m.store.GetTenant(ctx, e.tenantID)
+		newWorkspaceAPI(e.m, false).writeTenantBoost(w, ctx, ten)
+		var out tenantBoostWire
+		if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	got := get()
+	want := []tenantBoostUsage{
+		{UserKey: "a", Email: "a@example.com", UsedHours: 6.5, Spent: true, OverHours: 1.5},
+		{UserKey: "b", Email: "b@example.com", UsedHours: 2},
+	}
+	if got.Month != "2026-11" || !reflect.DeepEqual(got.Members, want) {
+		t.Fatalf("month %q members %+v, want 2026-11 %+v", got.Month, got.Members, want)
+	}
+	// The card and the member's own refusal agree.
+	for i, id := range []string{e.memID, otherMem.ID} {
+		if b := e.m.boostBudgetOf(ctx, id, lim); b.UsedHours != want[i].UsedHours || b.Spent != want[i].Spent {
+			t.Fatalf("member %d: budget %+v, card %+v", i, b, want[i])
+		}
+	}
+
+	// Exactly at the budget is spent, with nothing over.
+	e.setLimits(t, tenantLimits{BoostEnabled: true, BoostMonthlyHours: 2})
+	if m := get().Members; !m[1].Spent || m[1].OverHours != 0 {
+		t.Fatalf("at the budget: %+v", m[1])
+	}
+	// No budget: the hours are shown and nobody is over.
+	e.setLimits(t, tenantLimits{BoostEnabled: true})
+	if m := get().Members; len(m) != 2 || m[0].Spent || m[0].OverHours != 0 || m[0].UsedHours != 6.5 {
+		t.Fatalf("no budget: %+v", m)
+	}
+
+	// A new month: counted, and nobody has boosted yet.
+	e.now = time.Date(2026, 12, 1, 0, 30, 0, 0, time.UTC)
+	if g := get(); g.Month != "2026-12" || len(g.Members) != 0 {
+		t.Fatalf("a new month: %+v", g)
+	}
+
+	// Hours that cannot be told are not shown at all.
+	for name, c := range map[string]boostHoursCounter{
+		"no counter":  nil,
+		"not counted": countingBoost{members: []memberBoostHours{{UserKey: "a", Hours: 9}}},
+		"read error":  countingBoost{counted: true, members: []memberBoostHours{{UserKey: "a", Hours: 9}}, err: errors.New("db down")},
+	} {
+		e.m.boostHours = c
+		if g := get(); g.Month != "" || g.Members != nil {
+			t.Fatalf("%s: %+v", name, g)
 		}
 	}
 }

@@ -429,5 +429,11 @@ The tenant-wide `GET /api/admin/usage/history?tenant=` is shown too (#4493): und
 - **Only with the usage sampler.** The sampler is what moves an open launch's last sighting. With
   `AF_USAGE_SAMPLE_INTERVAL=0` (or under a second, which the sampler treats as off) no counter is wired, and
   the budget reads as not counted, as before.
-- At the budget a new boost and an extension are both refused (`boost_budget_spent`). Showing the overrun to the
-  tenant admin and on the cost line is the next part of #4417.
+- At the budget a new boost and an extension are both refused (`boost_budget_spent`).
+- **The overrun is shown from the same count.** `GET /api/admin/tenants/{slug}/boost` carries `month` and
+  `members`: every member of the tenant with boosted hours this month, most first, with `spent` (the comparison
+  the refusal uses) and `over_hours`. The tenant is the membership's, not the launch row's. `month` is set only
+  when the hours were read, so an unread count shows nothing rather than a 0. The Boost card lists them, and the
+  member detail shows the member's own line under the cloud cost card, as its own card: those are dollars over
+  a chosen period, these are hours in the current month (ADR 0048 decision 2). The detail reads the tenant's
+  answer instead of a second endpoint, so the two screens cannot disagree.

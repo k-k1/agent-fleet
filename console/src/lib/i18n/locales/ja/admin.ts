@@ -425,6 +425,18 @@ export const admin = {
   "tenant.boost_current": "現在の設定: {size}",
   "tenant.boost_hours": "メンバーごとの月間の枠（ブーストして実際に稼働した時間、0 = 枠なし）",
   "tenant.boost_uncounted": "稼働時間はまだ集計されないため、枠は保存されますが強制されません。",
+  "tenant.boost_usage_title": "{month} のブースト稼働時間（UTC）",
+  "tenant.boost_usage_none": "今月ブーストしたサイズで稼働したメンバーはいません。",
+  "tenant.boost_usage_over_count": "枠に達した・超えたメンバー: {n} 人",
+  "tenant.boost_usage_of": "{used} 時間 / 枠 {budget} 時間",
+  "tenant.boost_usage_hours": "{h} 時間",
+  "tenant.boost_usage_over": "{h} 時間超過",
+  "tenant.boost_usage_spent": "枠に到達",
+  "tenant.boost_usage_note":
+    "ブーストしたサイズで稼働中のワークスペースは枠に達しても止まらないため、枠を超えることがあります。枠に達したメンバーは、翌月までブーストも延長もできません。",
+  "tenant.boost_member_title": "今月のブースト",
+  "tenant.boost_member_line": "ブーストでの稼働: {used} 時間 / 枠 {budget} 時間（{month}、UTC）",
+  "tenant.boost_member_line_nobudget": "ブーストでの稼働: {used} 時間（{month}、UTC、月間の枠なし）",
   "tenant.boost_unsupported": "この配備にはブーストで切り替えられるマシンサイズがありません。",
 
   "admin.roster_spec": "{n} vCPU / {mem}",

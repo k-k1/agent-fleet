@@ -38,6 +38,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { kindClasses, kindIcon, kindLabel } from "../../../lib/sessionkind.ts";
 import { MemberCostPanel } from "../../cost/CloudCostView.tsx";
 import { MemberUptimePanel } from "../../usage/UptimeHeatmap.tsx";
+import { MemberBoostLine } from "./tenantBoost.tsx";
 import { tCount, useT } from "../../../lib/i18n/index.ts";
 import { fmtDateTime, relTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { useNow } from "../../../lib/useNow.ts";
@@ -792,6 +793,11 @@ export function MemberView({
           tiles above are measured every 4 seconds, this is billing roughly 24 hours behind,
           and they are read differently. */}
       <MemberCostPanel slug={slug} userKey={key} />
+
+      {/* This month's boosted running hours against the tenant's budget (ADR 0139 decision 5),
+          next to the cost they drive. Absent where there is no boost or the hours are not
+          counted. */}
+      <MemberBoostLine slug={slug} userKey={key} />
 
       {/* Directly below cost: the same period's uptime broken down by hour (docs/log/83). Side
           by side, the reason one day is expensive can be read on the spot — a band running all
