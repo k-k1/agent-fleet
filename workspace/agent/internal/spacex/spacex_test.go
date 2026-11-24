@@ -992,3 +992,82 @@ func TestRenameHandlerMapsConflictAndFailure(t *testing.T) {
 		t.Fatalf("too big: %d %s", rec.Code, rec.Body)
 	}
 }
+
+// Only the name is the rename's: any other field of a readable marker survives it.
+func TestRenameKeepsTheMarkersOtherFields(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	orig := `{"name":"Draft","createdAt":"2021-02-03T04:05:06Z","owner":"someone","tags":["a","b"],"n":1}`
+	if err := os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := Rename(sp.Folder, "New name")
+	if err != nil || got.CreatedAt != "2021-02-03T04:05:06Z" {
+		t.Fatalf("Rename = %+v, %v", got, err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(markerText(t, sp)), &fields); err != nil {
+		t.Fatal(err)
+	}
+	for k, want := range map[string]string{"name": `"New name"`, "createdAt": `"2021-02-03T04:05:06Z"`, "owner": `"someone"`, "tags": `["a","b"]`, "n": `1`} {
+		if string(fields[k]) != want {
+			t.Fatalf("field %q = %s, want %s (marker %s)", k, fields[k], want, markerText(t, sp))
+		}
+	}
+}
+
+// A writer that rewrites the marker in place with a body of the same length and puts the times
+// back changes neither the inode, the size nor the modification time: only the content shows it.
+func TestRenameSeesAContentChangeThatKeepsSizeAndTimes(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	marker := filepath.Join(sp.Dir, MarkerFile)
+	orig := `{"name":"Draft","createdAt":"2021-02-03T04:05:06Z"}`
+	if err := os.WriteFile(marker, []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fi, _ := os.Stat(marker)
+	theirs := `{"name":"Draft","createdAt":"2022-02-03T04:05:06Z"}`
+	if len(theirs) != len(orig) {
+		t.Fatal("test bodies differ in length")
+	}
+	prev := beforePublish
+	beforePublish = func() {
+		_ = os.WriteFile(marker, []byte(theirs), 0o644)
+		_ = os.Chtimes(marker, fi.ModTime(), fi.ModTime())
+	}
+	t.Cleanup(func() { beforePublish = prev })
+	if _, err := Rename(sp.Folder, "x"); err != ErrChanged {
+		t.Fatalf("Rename = %v", err)
+	}
+	if got := markerText(t, sp); got != theirs {
+		t.Fatalf("the rewrite was overwritten: %q", got)
+	}
+}
+
+// What is opened must be the file that was looked at: a regular file with another identity (a
+// link followed inside the space after the Lstat) is refused before it is read.
+func TestReadMarkerBytesRefusesAnotherFile(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	other := filepath.Join(sp.Dir, "other.json")
+	if err := os.WriteFile(other, []byte(`{"name":"elsewhere"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	otherFi, err := os.Lstat(other)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(sp.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer root.Close()
+	if _, _, err := readMarkerBytes(root, otherFi); err != ErrChanged {
+		t.Fatalf("readMarkerBytes with another file's identity = %v", err)
+	}
+	markFi, _ := os.Lstat(filepath.Join(sp.Dir, MarkerFile))
+	if b, _, err := readMarkerBytes(root, markFi); err != nil || !strings.Contains(string(b), "Draft") {
+		t.Fatalf("readMarkerBytes = %q, %v", b, err)
+	}
+}

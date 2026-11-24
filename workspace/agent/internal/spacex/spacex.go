@@ -6,6 +6,7 @@
 package spacex
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -460,12 +461,19 @@ func Rename(folder, name string) (Space, error) {
 	if !markFi.Mode().IsRegular() {
 		return Space{}, ErrNotFound
 	}
-	m, err := readMarkerIn(sp, markFi)
+	fields, raw, err := readMarkerIn(sp, markFi)
 	if err != nil {
 		return Space{}, err
 	}
-	m.Name = name
-	b, err := json.Marshal(m)
+	// Every other field of the marker is kept as it is: only the name is the rename's.
+	nameJSON, err := json.Marshal(name)
+	if err != nil {
+		return Space{}, err
+	}
+	fields["name"] = nameJSON
+	var createdAt string
+	_ = json.Unmarshal(fields["createdAt"], &createdAt)
+	b, err := json.Marshal(fields)
 	if err != nil {
 		return Space{}, err
 	}
@@ -474,7 +482,7 @@ func Rename(folder, name string) (Space, error) {
 		return Space{}, err
 	}
 	beforePublish()
-	if err := checkUnchanged(top, sp, folder, topFi, dirFi, markFi); err != nil {
+	if err := checkUnchanged(top, sp, folder, topFi, dirFi, markFi, raw); err != nil {
 		_ = sp.Remove(tmp)
 		return Space{}, err
 	}
@@ -482,14 +490,14 @@ func Rename(folder, name string) (Space, error) {
 		_ = sp.Remove(tmp)
 		return Space{}, err
 	}
-	return Space{Folder: folder, Name: name, Dir: filepath.Join(Root(), folder), CreatedAt: m.CreatedAt}, nil
+	return Space{Folder: folder, Name: name, Dir: filepath.Join(Root(), folder), CreatedAt: createdAt}, nil
 }
 
 // checkUnchanged says whether ~/spaces, folder under it and the marker in sp are still the
-// directories and the file Rename started from, and the marker still holds what was read: a
-// writer that rewrites it in place keeps its inode, so its size and modification time are
-// compared too.
-func checkUnchanged(top, sp *os.Root, folder string, topFi, dirFi, markFi os.FileInfo) error {
+// directories and the file Rename started from, and the marker still holds the bytes that were
+// read (raw): a writer that rewrites it in place keeps its inode, and one that restores times
+// keeps its size and modification time too, so only the content tells.
+func checkUnchanged(top, sp *os.Root, folder string, topFi, dirFi, markFi os.FileInfo, raw []byte) error {
 	// ~/spaces itself may have been moved or replaced: top still names the old directory.
 	if now, err := os.Stat(Root()); err != nil {
 		return notExistIsNotFound(err)
@@ -507,7 +515,14 @@ func checkUnchanged(top, sp *os.Root, folder string, topFi, dirFi, markFi os.Fil
 	if err != nil {
 		return notExistIsNotFound(err)
 	}
-	if !os.SameFile(markFi, mark) || mark.Size() != markFi.Size() || !mark.ModTime().Equal(markFi.ModTime()) {
+	if !os.SameFile(markFi, mark) {
+		return ErrChanged
+	}
+	again, _, err := readMarkerBytes(sp, markFi)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(raw, again) {
 		return ErrChanged
 	}
 	return nil
@@ -522,44 +537,53 @@ func notExistIsNotFound(err error) error {
 	return err
 }
 
-// readMarkerIn reads sp's MarkerFile the way readMarker reads one by path: opened without
+// readMarkerBytes reads sp's MarkerFile the way readMarker reads one by path: opened without
 // following a link and without blocking, and read only when the opened file is the regular file
 // want describes (Root.OpenFile re-resolves a link inside the space when O_NOFOLLOW is refused,
 // so the identity of what was opened is checked, not assumed), at most markerMaxBytes. A missing
-// file or one that is no regular file is ErrNotFound; a read that fails is that error; a marker
-// over the limit cannot be told from a valid one, so it is left alone (ErrMarkerTooBig). Only one
-// that was read whole and does not parse gives an empty marker, which a rename repairs.
-func readMarkerIn(sp *os.Root, want os.FileInfo) (marker, error) {
+// file or one that is no regular file is ErrNotFound, a different one ErrChanged, a read that
+// fails is that error, and a marker over the limit cannot be told from a valid one, so it is
+// left alone (ErrMarkerTooBig).
+func readMarkerBytes(sp *os.Root, want os.FileInfo) ([]byte, os.FileInfo, error) {
 	f, err := sp.OpenFile(MarkerFile, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) {
-			return marker{}, ErrNotFound
+			return nil, nil, ErrNotFound
 		}
-		return marker{}, notExistIsNotFound(err)
+		return nil, nil, notExistIsNotFound(err)
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil {
-		return marker{}, err
+		return nil, nil, err
 	}
 	if !fi.Mode().IsRegular() {
-		return marker{}, ErrNotFound
+		return nil, nil, ErrNotFound
 	}
 	if !os.SameFile(want, fi) {
-		return marker{}, ErrChanged
+		return nil, nil, ErrChanged
 	}
 	b, err := io.ReadAll(io.LimitReader(f, markerMaxBytes+1))
 	if err != nil {
-		return marker{}, err
+		return nil, nil, err
 	}
 	if len(b) > markerMaxBytes {
-		return marker{}, ErrMarkerTooBig
+		return nil, nil, ErrMarkerTooBig
 	}
-	var m marker
-	if json.Unmarshal(b, &m) != nil {
-		m = marker{}
+	return b, fi, nil
+}
+
+// readMarkerIn answers the marker's fields as raw JSON values and the bytes they came from. One
+// that was read whole and is no JSON object gives no fields, which a rename repairs.
+func readMarkerIn(sp *os.Root, want os.FileInfo) (fields map[string]json.RawMessage, raw []byte, err error) {
+	raw, _, err = readMarkerBytes(sp, want)
+	if err != nil {
+		return nil, nil, err
 	}
-	return m, nil
+	if json.Unmarshal(raw, &fields) != nil || fields == nil {
+		fields = map[string]json.RawMessage{}
+	}
+	return fields, raw, nil
 }
 
 // writeTempIn writes data to a new file in sp (created exclusively, so nothing is overwritten)
