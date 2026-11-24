@@ -175,12 +175,12 @@ func TestMemoRecipeBatchingAndDelivery(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		q := e.queueWith("app", "impl", map[string]any{"batch": 5, "maxActive": 3, "model": "claude-x", "effort": "high"})
 		a := e.pending("app", "impl", "a")
-		time.Sleep(1100 * time.Millisecond)
+		e.ageMemos(2 * time.Second)
 		b := decode[memoDTO](t, e.recipeMemo("app", "impl", "b", map[string]any{"effort": "low"}))
-		time.Sleep(1100 * time.Millisecond)
+		e.ageMemos(2 * time.Second)
 		c := e.pending("app", "impl", "c")
 		// Spelling the category's own value out is the same effective recipe.
-		time.Sleep(1100 * time.Millisecond)
+		e.ageMemos(2 * time.Second)
 		d := decode[memoDTO](t, e.recipeMemo("app", "impl", "d", map[string]any{"effort": "high"}))
 		agent := e.useQueueAgent("")
 
@@ -215,7 +215,7 @@ func TestMemoRecipeOtherAgent(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		q := e.queueWith("app", "impl", map[string]any{"batch": 5, "maxActive": 3, "model": "claude-x", "effort": "high"})
 		x := decode[memoDTO](t, e.recipeMemo("app", "impl", "x", map[string]any{"agentKind": "codex"}))
-		time.Sleep(1100 * time.Millisecond)
+		e.ageMemos(2 * time.Second)
 		y := e.pending("app", "impl", "y")
 		agent := e.useQueueAgent("")
 		d1 := e.fired(q)
@@ -417,7 +417,7 @@ func TestMemoRecipeBatchSplitByASettingsChangeIsNotSent(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		q := e.queueWith("app", "impl", map[string]any{"batch": 5, "effort": "high"})
 		a := e.pending("app", "impl", "a")
-		time.Sleep(1100 * time.Millisecond)
+		e.ageMemos(2 * time.Second)
 		b := decode[memoDTO](t, e.recipeMemo("app", "impl", "b", map[string]any{"effort": "high"}))
 		agent := e.useQueueAgent("")
 		d := e.fired(q)
@@ -443,7 +443,7 @@ func TestMemoRecipeOtherRecipeIsSkippedBeforeItsTextIsChecked(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		q := e.queueWith("app", "impl", map[string]any{"batch": 5, "maxActive": 3})
 		a := e.pending("app", "impl", "a")
-		time.Sleep(1100 * time.Millisecond)
+		e.ageMemos(2 * time.Second)
 		b := decode[memoDTO](t, e.recipeMemo("app", "impl", "b", map[string]any{"effort": "low"}))
 		big := strings.Repeat("x", memoDeliveryItemBodyMax+1)
 		row := e.memoRow(b.ID)
@@ -451,7 +451,7 @@ func TestMemoRecipeOtherRecipeIsSkippedBeforeItsTextIsChecked(t *testing.T) {
 		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET body=?, release_body=?, release_hash=? WHERE id=?`, big, big, memoContentHash(row), b.ID); err != nil {
 			t.Fatal(err)
 		}
-		time.Sleep(1100 * time.Millisecond)
+		e.ageMemos(2 * time.Second)
 		c := e.pending("app", "impl", "c")
 		d := e.fired(q)
 		if !sameIDs(d.MessageIDs, a.ID, c.ID) {
@@ -600,7 +600,7 @@ func TestMemoRecipeExplicitIsKeptAndRouteIsNotInherited(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		q := e.queueWith("app", "impl", map[string]any{"batch": 5, "maxActive": 3, "effort": "high", "route": "anthropic-subscription"})
 		x := decode[memoDTO](t, e.recipeMemo("app", "impl", "x", map[string]any{"agentKind": "codex"}))
-		time.Sleep(1100 * time.Millisecond)
+		e.ageMemos(2 * time.Second)
 		y := e.pending("app", "impl", "y")
 		agent := e.useQueueAgent("")
 		d1, d2 := e.fired(q), e.fired(q)

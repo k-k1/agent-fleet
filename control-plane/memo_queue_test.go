@@ -914,7 +914,8 @@ func TestMemoQueueCreateBounds(t *testing.T) {
 // hookAgent answers a memo send and runs onTurn while it holds the request, which is the
 // window between the flush's check and its answer. status is the answer's status (0 = 200).
 type hookAgent struct {
-	srv     *httptest.Server
+	url     string // an in-memory Agent (registerInMemAgent)
+	close   func()
 	mu      sync.Mutex
 	onTurn  func()
 	status  int
@@ -925,7 +926,7 @@ type hookAgent struct {
 func (e *inboxEnv) useHookAgent() *hookAgent {
 	e.t.Helper()
 	h := &hookAgent{}
-	h.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	h.url, h.close = registerInMemAgent(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		h.mu.Lock()
@@ -945,10 +946,10 @@ func (e *inboxEnv) useHookAgent() *hookAgent {
 		}
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
-	e.t.Cleanup(h.srv.Close)
+	e.t.Cleanup(h.close)
 	e.workspaceFor("a", newCapturingAgent(e.t))
 	c := e.mgr.rts[e.members["a"]]
-	c.rt = stubRuntime{endpoint: h.srv.URL, token: "tok"}
+	c.rt = stubRuntime{endpoint: h.url, token: "tok"}
 	e.mgr.rts[e.members["a"]] = c
 	return h
 }
@@ -1076,7 +1077,7 @@ func TestMemoFlushKeepSendsWithoutStamping(t *testing.T) {
 		// An unknown outcome (the Agent is unreachable, not a structured refusal) with keep leaves a
 		// pending message pending under its release.
 		_, q2 := console.create(textMemo("r", "q", "kept, outcome unknown"))
-		h.srv.Close()
+		h.close()
 		ur := e.do("a", "POST", "/api/memos/flush", map[string]any{"sessionName": "s1", "ids": []string{q2.ID}, "keep": true})
 		if !strings.Contains(ur.Body.String(), "flush_failed") {
 			t.Fatalf("want an unknown outcome (flush_failed), got %d %s", ur.Code, ur.Body.String())

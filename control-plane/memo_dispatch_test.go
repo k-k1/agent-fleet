@@ -535,7 +535,7 @@ func TestMemoDispatchTwoProcessesNeverExceedSlots(t *testing.T) {
 func TestMemoDispatchOldestFirstAcrossQueues(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 		_, qa := e.autoQueue("app", "second", nil, 1)
-		time.Sleep(1100 * time.Millisecond)
+		e.ageMemos(2 * time.Second)
 		e.autoQueue("app", "first", nil, 1)
 		sends, _ := e.runner().dispatch(context.Background(), time.Now(), 1)
 		if len(sends) != 1 || sends[0].QueueID != qa {

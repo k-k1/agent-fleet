@@ -19,7 +19,8 @@ const testCommit = "c0ffeec0ffeec0ffeec0ffeec0ffeec0ffeec0ff"
 // fakeAutorunAgent answers GET /repos/{name}/autorun-file the way the Agent does.
 type fakeAutorunAgent struct {
 	mu     sync.Mutex
-	srv    *httptest.Server
+	url    string // an in-memory Agent (registerInMemAgent)
+	close  func()
 	status int
 	body   string
 	paths  []string
@@ -83,7 +84,7 @@ func repoEnv(t *testing.T, state string) (*inboxEnv, *fakeAutorunAgent) {
 func (e *inboxEnv) repoAgent(who, state string) *fakeAutorunAgent {
 	t := e.t
 	a := &fakeAutorunAgent{status: http.StatusOK}
-	a.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	a.url, a.close = registerInMemAgent(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
 		hook, instrHook := a.onServe, a.onInstr
 		a.mu.Unlock()
@@ -128,14 +129,14 @@ func (e *inboxEnv) repoAgent(who, state string) *fakeAutorunAgent {
 		w.WriteHeader(a.status)
 		_, _ = w.Write([]byte(a.body))
 	}))
-	t.Cleanup(a.srv.Close)
+	t.Cleanup(a.close)
 	ws := store.Workspace{ID: "ws-" + who, TenantID: e.t1.ID, MembershipID: e.members[who], ContainerName: who,
 		Network: "n", DataDir: "/d", AgentPort: "1", AgentToken: "tok", State: "running", CreatedAt: store.NowTS()}
 	if err := e.st.CreateWorkspace(context.Background(), ws); err != nil {
 		t.Fatal(err)
 	}
 	e.mgr.mu.Lock()
-	e.mgr.rts[e.members[who]] = cachedRT{rt: stubRuntime{endpoint: a.srv.URL, token: "tok", state: state}, ws: ws}
+	e.mgr.rts[e.members[who]] = cachedRT{rt: stubRuntime{endpoint: a.url, token: "tok", state: state}, ws: ws}
 	e.mgr.mu.Unlock()
 	return a
 }

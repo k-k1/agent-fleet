@@ -93,6 +93,28 @@ func eachDeliveryDialectRealTime(t *testing.T, f func(t *testing.T, e *deliveryE
 	eachPostgresDelivery(t, f)
 }
 
+// waitForLockWaiter blocks until a Postgres backend is waiting on a lock (pg_stat_activity), the
+// event a test that holds a row lock waits for instead of sleeping. It does nothing on SQLite,
+// which has no view of its lock waiters.
+func (e *deliveryEnv) waitForLockWaiter() {
+	e.t.Helper()
+	if !strings.HasSuffix(e.t.Name(), "/postgres") {
+		return
+	}
+	for i := 0; i < 2000; i++ {
+		var n int
+		if err := e.st.DB().QueryRowContext(context.Background(),
+			`SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'`).Scan(&n); err != nil {
+			e.t.Fatalf("pg_stat_activity: %v", err)
+		}
+		if n > 0 {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	e.t.Fatal("no backend ever waited on the lock")
+}
+
 func eachPostgresDelivery(t *testing.T, f func(t *testing.T, e *deliveryEnv)) {
 	url, ok := pgtest.Schema(t)
 	if !ok {
@@ -1702,18 +1724,20 @@ func TestMemoDeliverySettleKeepsItsDeadline(t *testing.T) {
 		release := sync.OnceFunc(func() { _ = tx.Rollback() })
 		defer release()
 		r := e.runner()
-		r.settleBudget = 2 * time.Second
-		done := make(chan time.Duration, 1)
+		r.settleBudget = 300 * time.Millisecond
+		done := make(chan struct{})
 		go func() {
-			start := time.Now()
+			defer close(done)
 			r.settle(context.Background(), e.stale(r))
-			done <- time.Since(start)
 		}()
+		// On Postgres, see the settle's write queue on the lock before anything else is judged: a
+		// settle that never reached the lock would pass the checks below for the wrong reason.
+		e.waitForLockWaiter()
+		// The settle's own budget ends it, with the lock still held: that is the contract, so the
+		// test waits on the event and not on a wall-clock bound. The guard only turns a settle
+		// that ignores its budget into a failure instead of a package timeout.
 		select {
-		case took := <-done:
-			if took > 10*time.Second {
-				t.Fatalf("settle took %s with a 2s budget", took)
-			}
+		case <-done:
 		case <-time.After(30 * time.Second):
 			release()
 			<-done

@@ -294,7 +294,7 @@ func TestMemoRepoRecheckLeavesTheRuntimeCacheAlone(t *testing.T) {
 	e.mgr.mu.Lock()
 	delete(e.mgr.rts, e.members["a"])
 	e.mgr.mu.Unlock()
-	live := &stubRuntime{endpoint: a.srv.URL, token: "tok", state: "stopped"}
+	live := &stubRuntime{endpoint: a.url, token: "tok", state: "stopped"}
 	e.mgr.rtFactory = stubFactory{rt: live}
 	rc := &memoRepoRechecker{mgr: e.mgr, every: time.Hour, now: time.Now}
 

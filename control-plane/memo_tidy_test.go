@@ -125,7 +125,8 @@ func TestMemoTidyApplyAndUndoRoundTrip(t *testing.T) {
 		e.queue(unlisted)
 		e.tidyQueue(q, listed)
 		a := e.tidyRow("r", "q", "first", "member", "", "", store.MemoStatePending)
-		time.Sleep(1100 * time.Millisecond)
+		e.ageMemos(2 * time.Second)
+		a = e.memoRow(a.ID) // the helper moved its stamps
 		b := e.tidyRow("r", "q", "second", "member", "", "", store.MemoStatePending)
 		c := e.tidyRow("r", "q", "one two", "member", "", "", store.MemoStatePending)
 		d := e.tidyRow("r", "q", "to listed", "member", "", "", store.MemoStatePending)
