@@ -15,6 +15,8 @@ let subHangs = false;
 let idHangs = false;
 let firstListGate: Promise<void> | null = null; // holds the first list read only, which then answers with no devices
 let listCalls = 0;
+const row = (id: string) => ({ id, userAgent: "Mozilla/5.0 (iPhone) Safari/605", createdAt: "2026-11-22T00:00:00Z", lastOkAt: "" });
+let rows = [row("d1")];
 let listGate: Promise<void> | null = null;
 const puts: string[][] = [];
 vi.mock("./pushApi.ts", async (orig) => ({
@@ -25,12 +27,24 @@ vi.mock("./pushApi.ts", async (orig) => ({
     puts.push(o);
     return Promise.resolve();
   },
-  listPushDevices: () => (listCalls++ === 0 && firstListGate ? firstListGate.then(() => []) : listHangs ? new Promise<never>(() => {}) : listGate ? listGate : Promise.resolve()).then(() => [{ id: "d1", userAgent: "Mozilla/5.0 (iPhone) Safari/605", createdAt: "2026-11-22T00:00:00Z", lastOkAt: "" }]),
+  listPushDevices: async () => {
+    if (listCalls++ === 0 && firstListGate) {
+      await firstListGate;
+      return []; // the late first read: it must never be what the screen ends up showing
+    }
+    if (listHangs) return new Promise<never>(() => {});
+    await (listGate ?? Promise.resolve());
+    return rows;
+  },
   removePushDevice: vi.fn(() => Promise.resolve()),
 }));
 vi.mock("./webPush.ts", () => ({
   pushSupport: () => "ok",
-  currentSubscription: () => (subHangs ? new Promise(() => {}) : Promise.resolve(sub)),
+  // Read when the gate opens, like the list: a read that was started earlier sees the browser as it is then.
+  currentSubscription: async () => {
+    await (listGate ?? Promise.resolve());
+    return subHangs ? new Promise(() => {}) : sub;
+  },
   subscriptionMatchesKey: (_s: unknown, k: string) => (matchKey !== null ? k === matchKey : matches),
   deviceIdFor: () => (idHangs ? new Promise<never>(() => {}) : idGate ? idGate : Promise.resolve()).then(() => myId),
   thisDeviceId: () => "",
@@ -69,6 +83,7 @@ beforeEach(() => {
   idHangs = false;
   firstListGate = null;
   listCalls = 0;
+  rows = [row("d1")];
   listGate = null;
   puts.length = 0;
 });
@@ -175,6 +190,34 @@ describe("PushSection", () => {
     expect(pushApi.removePushDevice).toHaveBeenCalledWith("d1");
     expect(webPush.dropLocalSubscription).toHaveBeenCalledWith("https://push.example/x");
     expect(webPush.disablePush).not.toHaveBeenCalled();
+  });
+  it("removing a device ends the subscription it was shown with, even when a newer read replaced it meanwhile", async () => {
+    sub = { endpoint: "https://push.example/A" };
+    const host = await mount();
+    let release!: () => void;
+    listGate = new Promise<void>((r) => (release = r));
+    const sw = host.querySelector<HTMLInputElement>("label input[role=switch]")!;
+    await act(async () => void sw.click()); // off: its reload (the read) is now waiting on the gate
+    await flush();
+    let answerDelete!: () => void;
+    vi.mocked(pushApi.removePushDevice).mockImplementationOnce(() => new Promise<void>((r) => (answerDelete = r)));
+    const btn = host.querySelector<HTMLButtonElement>(".push-devices button")!; // device A's row
+    await act(async () => void btn.click());
+    // The key swap finished meanwhile: this browser now holds B, and the newer read shows only B.
+    sub = { endpoint: "https://push.example/B" };
+    myId = "d2";
+    rows = [row("d2")];
+    await act(async () => {
+      release();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(host.querySelector(".push-devices")?.textContent).toContain(t("push.this_badge"));
+    await act(async () => {
+      answerDelete();
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(webPush.dropLocalSubscription).toHaveBeenCalledWith("https://push.example/A");
+    expect(webPush.dropLocalSubscription).not.toHaveBeenCalledWith("https://push.example/B");
   });
   it("leaves the switch usable, and off, when the device list never answers", async () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
