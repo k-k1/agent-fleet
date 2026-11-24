@@ -2,6 +2,7 @@ package pushsrv
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -344,4 +345,67 @@ func TestServiceLiteralHasUsableViewing(t *testing.T) {
 	other := note("question")
 	other.TargetID = "s2"
 	p.deliver(context.Background(), other, nil)
+}
+
+// When the send-time joined read fails, the device is still sent to, without the text, after its
+// row alone was read; once the read is skipped for joinOffFor, it is tried again.
+func TestFailedJoinedReadSendsWithoutText(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, func(f *fixture) { f.svc.joinOffFor = 200 * time.Millisecond })
+	f.st.includeTxt = true
+	d := f.subscribe(t, "m1")
+	n := note("question")
+	n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
+	f.st.joinErr = io.ErrUnexpectedEOF
+	f.deliver(n)
+	if f.count() != 1 || f.svc.joinFailed.Load() != 1 {
+		t.Fatalf("%d sent, %d failed joins; want 1 and 1", f.count(), f.svc.joinFailed.Load())
+	}
+	if got := d.open(t, f.bodies[0]); strings.Contains(got, `"text"`) || !strings.Contains(got, `"kind":"question"`) {
+		t.Fatalf("fallback send: %s", got)
+	}
+	f.st.mu.Lock()
+	f.st.joinErr = nil
+	f.st.mu.Unlock()
+	time.Sleep(300 * time.Millisecond)
+	f.deliver(n)
+	if got := d.open(t, f.bodies[1]); !strings.Contains(got, `"text":"Deploy to prod?"`) {
+		t.Fatalf("the joined read was not tried again after joinOffFor: %s", got)
+	}
+}
+
+// stallJoin makes the send-time joined read hang until its deadline, as a lock on the setting
+// table would, while the row alone still reads at once.
+type stallJoin struct{ *memStore }
+
+func (s stallJoin) GetPushSendTarget(ctx context.Context, _, _ string) (store.PushSubscription, store.PushDelivery, bool, error) {
+	<-ctx.Done()
+	return store.PushSubscription{}, store.PushDelivery{}, false, ctx.Err()
+}
+
+// A joined read that stalls costs one short wait, not one per queued send: with more sends queued
+// than budgets fit in the queue wait, every one is still sent, without the text.
+func TestStalledJoinedReadDoesNotStaleTheQueue(t *testing.T) {
+	f := newFixtureN(t, 1, pushQueueLen, func(f *fixture) {
+		f.svc.slotWait, f.svc.timeout, f.svc.joinBudget = time.Second, 5*time.Second, 100*time.Millisecond
+	})
+	f.st.includeTxt = true
+	var devs []device
+	for i := 0; i < 15; i++ {
+		devs = append(devs, f.subscribe(t, "m1"))
+	}
+	f.svc.store = stallJoin{f.st}
+	n := note("question")
+	n.Payload = `{"questions":[{"question":"Deploy to prod?"}]}`
+	f.deliver(n)
+	if f.count() != len(devs) || f.svc.droppedStale.Load() != 0 {
+		t.Fatalf("%d sent, %d stale; want %d and 0", f.count(), f.svc.droppedStale.Load(), len(devs))
+	}
+	for i, d := range devs {
+		if got := d.open(t, f.bodies[i]); strings.Contains(got, `"text"`) {
+			t.Fatalf("send %d kept the text: %s", i, got)
+		}
+	}
+	if got := f.svc.joinFailed.Load(); got != 1 {
+		t.Fatalf("joined reads that waited out their budget: %d, want 1", got)
+	}
 }

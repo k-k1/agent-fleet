@@ -29,11 +29,12 @@ type PushSubscriptionStore interface {
 	// moves to this one.
 	AddPushSubscription(ctx context.Context, sub PushSubscription, max int) (bool, error)
 	ListPushSubscriptions(ctx context.Context, membershipID string) ([]PushSubscription, error)
-	// GetPushSubscription answers the row for endpoint if membershipID still holds it, with the
-	// membership's delivery context (TenantSlug left empty) read in the same statement, so a send
-	// checks the device's owner, the member's status and the text setting at one point in time.
-	// When only the joined part fails, the row alone is answered as active with no text.
-	GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, PushDelivery, bool, error)
+	// GetPushSubscription answers the row for endpoint if membershipID still holds it.
+	GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error)
+	// GetPushSendTarget is GetPushSubscription with the membership's delivery context (TenantSlug
+	// left empty) read in the same statement, so a send checks the device's owner, the member's
+	// status and the text setting at one point in time.
+	GetPushSendTarget(ctx context.Context, membershipID, endpoint string) (PushSubscription, PushDelivery, bool, error)
 	// DeletePushSubscription reports whether a row of that membership was removed.
 	DeletePushSubscription(ctx context.Context, membershipID, id string) (bool, error)
 	// DeletePushSubscriptionByEndpoint drops a subscription the push service says is gone. It is
@@ -129,7 +130,17 @@ func (s *SQL) ListPushSubscriptions(ctx context.Context, membershipID string) ([
 	return out, rows.Err()
 }
 
-func (s *SQL) GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, PushDelivery, bool, error) {
+func (s *SQL) GetPushSubscription(ctx context.Context, membershipID, endpoint string) (PushSubscription, bool, error) {
+	var p PushSubscription
+	err := s.db.QueryRowContext(ctx, pushCols+` WHERE membership_id=? AND endpoint=?`, membershipID, endpoint).
+		Scan(&p.ID, &p.MembershipID, &p.Endpoint, &p.P256dh, &p.Auth, &p.UserAgent, &p.CreatedAt, &p.LastOKAt)
+	if err == sql.ErrNoRows {
+		return PushSubscription{}, false, nil
+	}
+	return p, err == nil, err
+}
+
+func (s *SQL) GetPushSendTarget(ctx context.Context, membershipID, endpoint string) (PushSubscription, PushDelivery, bool, error) {
 	var p PushSubscription
 	var active, inc int64
 	err := s.db.QueryRowContext(ctx, `SELECT s.id, s.membership_id, s.endpoint, s.p256dh, s.auth, s.user_agent, s.created_at, s.last_ok_at,
@@ -143,21 +154,7 @@ func (s *SQL) GetPushSubscription(ctx context.Context, membershipID, endpoint st
 		return PushSubscription{}, PushDelivery{}, false, nil
 	}
 	if err != nil {
-		if ctx.Err() != nil {
-			return PushSubscription{}, PushDelivery{}, false, err
-		}
-		// The joined tables failed, not the deadline: read the row alone, so a membership or setting
-		// read that fails costs the question's text but not the push, as a failed context read in
-		// deliver does. The member then counts as active, the doubt that resolves to "send".
-		err = s.db.QueryRowContext(ctx, pushCols+` WHERE membership_id=? AND endpoint=?`, membershipID, endpoint).
-			Scan(&p.ID, &p.MembershipID, &p.Endpoint, &p.P256dh, &p.Auth, &p.UserAgent, &p.CreatedAt, &p.LastOKAt)
-		if err == sql.ErrNoRows {
-			return PushSubscription{}, PushDelivery{}, false, nil
-		}
-		if err != nil {
-			return PushSubscription{}, PushDelivery{}, false, err
-		}
-		return p, PushDelivery{Active: true}, true, nil
+		return PushSubscription{}, PushDelivery{}, false, err
 	}
 	return p, PushDelivery{Active: active != 0, IncludeText: inc != 0}, true, nil
 }

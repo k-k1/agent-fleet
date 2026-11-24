@@ -60,6 +60,10 @@ const (
 	pushReaders = 4
 	// pushDropLogEvery is how often the counts of dropped notifications and messages are logged.
 	pushDropLogEvery = 10 * time.Second
+	// pushJoinBudget bounds sendTarget's joined read, well below pushSlotWait, and pushJoinOffFor is
+	// how long sendTarget reads the row alone after that read failed.
+	pushJoinBudget = 2 * time.Second
+	pushJoinOffFor = 30 * time.Second
 	// A question that waits an hour is stale for a phone; the service drops it after that.
 	pushTTL = time.Hour
 )
@@ -81,6 +85,12 @@ type Service struct {
 	// (droppedNotes), a reader (droppedFull) or a send worker (droppedStale), and none of them may
 	// wait on a stalled log sink, which would stop later healthy deliveries behind it.
 	droppedNotes, droppedFull, droppedStale atomic.Int64
+	// joinFailed counts failed joined reads in sendTarget (those sends went out without the text).
+	joinFailed atomic.Int64
+	// joinOffUntil (unix nanoseconds) is when sendTarget tries the joined read again after a failure.
+	joinOffUntil atomic.Int64
+	// joinBudget and joinOffFor override pushJoinBudget and pushJoinOffFor when set (tests).
+	joinBudget, joinOffFor time.Duration
 	// dropLogEvery is the ticker's period; 0 runs no ticker (tests call logDrops themselves).
 	dropLogEvery time.Duration
 	view         viewing
@@ -234,6 +244,9 @@ func (p *Service) logDrops() {
 	if d := p.droppedStale.Swap(0); d > 0 {
 		log.Printf("web push: %d messages waited over %s in the send queue; dropped", d, p.slotWait)
 	}
+	if d := p.joinFailed.Swap(0); d > 0 {
+		log.Printf("web push: %d send-time reads of the member's status and text setting failed; sent without the text", d)
+	}
 }
 
 // onNotification runs on the inserting caller, so it only queues the delivery and never blocks,
@@ -345,17 +358,12 @@ func (p *Service) run(j sendJob) {
 		p.droppedStale.Add(1)
 		return
 	}
-	// The row is read again just before the send, with the member's status and the tenant's text
-	// setting in the same statement. In the queue the device may have moved to another member (the
-	// same browser signed in as someone else) or been removed, the member may have been removed, or
-	// text turned off, and none of that may still get what deliver built before it. One statement
-	// keeps it to the one read main already made per send, so a slow read cannot hold a worker longer
-	// than it did, and checks all of it at one point in time. A failed read skips the send, as a
-	// failed list read does. A change that commits after this read can still reach the one message
-	// being sent.
-	rctx, rcancel := context.WithTimeout(context.Background(), p.timeout)
-	cur, dc, held, err := p.store.GetPushSubscription(rctx, j.membershipID, j.sub.Endpoint)
-	rcancel()
+	// The row is read again just before the send: in the queue the device may have moved to another
+	// member (the same browser signed in as someone else) or been removed, the member may have been
+	// removed, or text turned off, and none of that may still get what deliver built before it. A
+	// failed read skips the send, as a failed list read does. A change that commits after this read
+	// can still reach the one message being sent.
+	cur, dc, held, err := p.sendTarget(j)
 	if err != nil {
 		log.Printf("web push: re-read %s before the send: %v", j.sub.ID, err)
 		return
@@ -370,6 +378,37 @@ func (p *Service) run(j sendJob) {
 	sctx, cancel := context.WithTimeout(context.Background(), p.timeout)
 	defer cancel()
 	p.send(sctx, j.membershipID, cur, body)
+}
+
+// sendTarget reads the device's row with the member's status and the tenant's text setting in one
+// statement, so all three are checked at one point in time. That statement reaches tables main's
+// worker never read, so it runs on a short budget of its own, and when it fails the row is read
+// alone and answered as active with no text: what deliver does with a failed context read. A
+// failure also skips the joined read for joinOffFor, so a stall on those tables costs one short
+// wait per worker rather than one per queued send, which would make the sends behind them stale.
+func (p *Service) sendTarget(j sendJob) (store.PushSubscription, store.PushDelivery, bool, error) {
+	if time.Now().UnixNano() >= p.joinOffUntil.Load() {
+		ctx, cancel := context.WithTimeout(context.Background(), min(orDefault(p.joinBudget, pushJoinBudget), p.timeout))
+		cur, dc, held, err := p.store.GetPushSendTarget(ctx, j.membershipID, j.sub.Endpoint)
+		cancel()
+		if err == nil {
+			return cur, dc, held, nil
+		}
+		p.joinFailed.Add(1)
+		p.joinOffUntil.Store(time.Now().Add(orDefault(p.joinOffFor, pushJoinOffFor)).UnixNano())
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), p.timeout)
+	defer cancel()
+	cur, held, err := p.store.GetPushSubscription(ctx, j.membershipID, j.sub.Endpoint)
+	return cur, store.PushDelivery{Active: true}, held, err
+}
+
+// orDefault is d, or def when d is zero (a Service literal leaves the tuning fields zero).
+func orDefault(d, def time.Duration) time.Duration {
+	if d > 0 {
+		return d
+	}
+	return def
 }
 
 func (p *Service) send(ctx context.Context, membershipID string, s store.PushSubscription, body []byte) {

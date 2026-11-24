@@ -168,14 +168,17 @@ func checkPushCap(t *testing.T, st *SQL, a, b string) {
 	if _, err := st.DeletePushSubscription(ctx, a, PushSubscriptionID(ep(99))); err != nil {
 		t.Fatal(err)
 	}
-	if got, dc, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || !ok || got.Endpoint != ep(0) || got.MembershipID != a || !dc.Active {
-		t.Fatalf("get: %+v %+v %v %v", got, dc, ok, err)
+	if got, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || !ok || got.Endpoint != ep(0) || got.MembershipID != a {
+		t.Fatalf("get: %+v %v %v", got, ok, err)
 	}
 	// Moving one of a's endpoints to b frees a slot for a and is itself under b's cap.
 	if !add(b, ep(0)) {
 		t.Fatal("b could not take over an endpoint")
 	}
-	if _, _, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || ok {
+	if _, ok, err := st.GetPushSubscription(ctx, a, ep(0)); err != nil || ok {
+		t.Fatalf("a still holds the moved endpoint: %v %v", ok, err)
+	}
+	if _, _, ok, err := st.GetPushSendTarget(ctx, a, ep(0)); err != nil || ok {
 		t.Fatalf("a still holds the moved endpoint: %v %v", ok, err)
 	}
 	if !add(a, ep(max)) {
@@ -321,7 +324,7 @@ func checkPushPrefs(t *testing.T, st *SQL, tenantID, slug, a, b string) {
 	}
 	get := func() PushDelivery {
 		t.Helper()
-		got, dc, ok, err := st.GetPushSubscription(ctx, a, sub.Endpoint)
+		got, dc, ok, err := st.GetPushSendTarget(ctx, a, sub.Endpoint)
 		if err != nil || !ok || got.Endpoint != sub.Endpoint {
 			t.Fatalf("get: %+v %v %v", got, ok, err)
 		}
@@ -397,52 +400,6 @@ func TestPutTenantPushIncludeTextIsAudited(t *testing.T) {
 		}
 		if on, err := st.GetTenantPushIncludeText(ctx, tn.ID); err != nil || !on {
 			t.Fatalf("a change without its audit row stayed applied: on=%v err=%v", on, err)
-		}
-	})
-}
-
-// A send-time read whose joined tables fail still answers the device's current owner and keys,
-// without the text: the setting table failing alone must not cost the push, and a device that
-// moved to another member must still read as not held.
-func TestGetPushSubscriptionSurvivesAnUnreadableSetting(t *testing.T) {
-	dialects(t, func(t *testing.T, st *SQL, pg bool) {
-		ctx := context.Background()
-		tn, err := st.EnsureDefaultTenant(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		var mems []string
-		for _, e := range []string{"a@example.com", "b@example.com"} {
-			id, err := st.UpsertIdentity(ctx, e, e, "")
-			if err != nil {
-				t.Fatal(err)
-			}
-			m, err := st.EnsureMembership(ctx, id.ID, tn.ID, "member")
-			if err != nil {
-				t.Fatal(err)
-			}
-			mems = append(mems, m.ID)
-		}
-		a, b := mems[0], mems[1]
-		kept := PushSubscription{MembershipID: a, Endpoint: "https://fcm.googleapis.com/fcm/send/kept", P256dh: "k1", Auth: "a1"}
-		moved := PushSubscription{MembershipID: b, Endpoint: "https://fcm.googleapis.com/fcm/send/moved", P256dh: "k2", Auth: "a2"}
-		for _, sub := range []PushSubscription{kept, moved} {
-			if err := st.UpsertPushSubscription(ctx, sub); err != nil {
-				t.Fatal(err)
-			}
-		}
-		if err := st.PutTenantPushIncludeText(ctx, tn.ID, tn.Slug, true, "admin"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.db.ExecContext(ctx, `DROP TABLE tenant_push_setting`); err != nil {
-			t.Fatal(err)
-		}
-		got, dc, ok, err := st.GetPushSubscription(ctx, a, kept.Endpoint)
-		if err != nil || !ok || got.P256dh != "k1" || !dc.Active || dc.IncludeText {
-			t.Fatalf("unreadable setting: %+v %+v held=%v err=%v; want held, active, no text", got, dc, ok, err)
-		}
-		if _, _, ok, err := st.GetPushSubscription(ctx, a, moved.Endpoint); err != nil || ok {
-			t.Fatalf("another member's device read as held: %v %v", ok, err)
 		}
 	})
 }
