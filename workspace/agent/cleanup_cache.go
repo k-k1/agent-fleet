@@ -237,6 +237,11 @@ func measureCleanupUsage(now time.Time) *cleanupUsage {
 	tents, _ := os.ReadDir(cleanupStoreDir())
 	for _, e := range tents {
 		if e.IsDir() {
+			// A deleted space's folder (space_delete.go): the bytes a purge gives back.
+			if strings.HasSuffix(e.Name(), ".space") {
+				b, _ := walkSize(filepath.Join(cleanupStoreDir(), e.Name()), &budget)
+				u.Trash.Bytes += b
+			}
 			continue
 		}
 		if info, err := e.Info(); err == nil {

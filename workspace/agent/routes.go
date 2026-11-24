@@ -424,10 +424,12 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /repos/init", gitx.HandleInitRepo)
 	// Spaces (ADR 0142): folders under ~/spaces where agents run without a repository. A create
 	// names an existing space or asks for a new one through POST /sessions' "space" field; this
-	// lists them, makes an empty one and renames one's display name (never its folder).
+	// lists them, makes an empty one, renames one's display name (never its folder) and deletes one
+	// through the trash with its sessions.
 	mux.HandleFunc("GET /spaces", spacex.HandleList)
 	mux.HandleFunc("POST /spaces", spacex.HandleCreate)
 	mux.HandleFunc("PATCH /spaces/{folder}", spacex.HandleRename)
+	mux.HandleFunc("DELETE /spaces/{folder}", handleDeleteSpace)
 	// Repository import jobs (docs/log/78). clone / svn checkout answer 202 and move here;
 	// progress and outcome are observed through this list. DELETE aborts a running job and
 	// marks a finished one as read.

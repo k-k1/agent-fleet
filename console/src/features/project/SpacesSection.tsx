@@ -19,6 +19,7 @@ import { useRailRoving } from "./useRailRoving.ts";
 import { useUnreadSessions } from "../notifications/unread.ts";
 import { spaceLabel, spacesOwner } from "../spaces/store.ts";
 import { SpaceRenameModal } from "../spaces/SpaceRenameModal.tsx";
+import { SpaceDeleteModal } from "../spaces/SpaceDeleteModal.tsx";
 import { useSpaceNames } from "../spaces/useSpaceNames.ts";
 import { TerminalChip } from "../terminals/TerminalChip.tsx";
 import { useTerminalView } from "../terminals/useTerminalView.ts";
@@ -38,11 +39,14 @@ export const SpacesSection = memo(function SpacesSection() {
   // another workspace is not shown (it would send its folder to this one), so a tenant or member
   // switch closes it.
   const [renaming, setRenaming] = useState<{ folder: string; owner: string } | null>(null);
+  // The same for the delete dialog.
+  const [deleting, setDeleting] = useState<{ folder: string; owner: string } | null>(null);
   const owner = spacesOwner();
   // The state of a dialog is dropped, not just hidden, when the workspace changes: coming back to
   // the first workspace must not bring a form back that nobody pressed the pencil for.
   useEffect(() => {
     setRenaming((cur) => (cur && cur.owner !== owner ? null : cur));
+    setDeleting((cur) => (cur && cur.owner !== owner ? null : cur));
   }, [owner]);
   // A space session is repo-less, so a working set holds it by direct assignment only. The
   // search box matches a session's own text or the name its space is shown under.
@@ -116,6 +120,21 @@ export const SpacesSection = memo(function SpacesSection() {
                 >
                   <Icon name="edit" />
                 </button>
+                <button
+                  type="button"
+                  className="space-group-rename space-group-delete"
+                  // Same reason as the pencil: the dialog names the space from the list.
+                  disabled={!spaces.some((x) => x.folder === g.folder)}
+                  title={tr("pj.space_delete")}
+                  aria-label={tr("pj.space_delete_aria", { name: g.label })}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setDeleting({ folder: g.folder, owner });
+                  }}
+                  onKeyDown={(e) => e.stopPropagation()}
+                >
+                  <Icon name="trash" />
+                </button>
               </div>
             </div>
             {g.sessions.length > 0 && (
@@ -142,6 +161,14 @@ export const SpacesSection = memo(function SpacesSection() {
           owner={renaming.owner}
           // Only this dialog's own close: a late one must not take down a newer dialog.
           onClose={() => setRenaming((cur) => (cur === renaming ? null : cur))}
+        />
+      )}
+      {deleting !== null && deleting.owner === owner && (
+        <SpaceDeleteModal
+          folder={deleting.folder}
+          label={spaceLabel(deleting.folder, spaces)}
+          owner={deleting.owner}
+          onClose={() => setDeleting((cur) => (cur === deleting ? null : cur))}
         />
       )}
     </Section>

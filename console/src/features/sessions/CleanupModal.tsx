@@ -45,7 +45,9 @@ interface CleanupArchive {
   branches?: { repo: string; name: string }[];
   /** A deleted worktree's tombstone (reason "delete_worktree"). */
   worktree?: { name: string; path: string; branch?: string; snapshot?: string };
-  /** Size of the archive's tarball (what purging it reclaims). */
+  /** A deleted space (reason "delete_space"); its folder waits in the trash. */
+  space?: { folder: string; name?: string; path: string; shelved?: string[] };
+  /** Size of the archive's tarball and, for a deleted space, of its folder (what purging it reclaims). */
   bytes?: number;
 }
 
@@ -304,7 +306,7 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const purge = async (id: string) => {
     const ok = await askConfirm({
       title: tr("clean.purge_title"),
-      body: tr("clean.purge_body"),
+      body: archives?.find((a) => a.id === id)?.space ? tr("clean.purge_space_body") : tr("clean.purge_body"),
       confirmLabel: tr("clean.purge_do"),
       danger: true,
     });
@@ -338,7 +340,9 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
   const purgeOld = async () => {
     const ok = await askConfirm({
       title: tr("clean.purge_old_title", { days: PURGE_OLDER_DAYS }),
-      body: tr("clean.purge_old_body", { count: oldArchives.length, size: humanSize(oldBytes) }),
+      // Always said: the list this was drawn from can be older than the Agent's cut-off, and a
+      // deleted space's folder goes with its entry, as the single purge says.
+      body: tr("clean.purge_old_body", { count: oldArchives.length, size: humanSize(oldBytes) }) + " " + tr("clean.purge_old_space"),
       confirmLabel: tr("clean.purge_do"),
       danger: true,
     });
@@ -713,8 +717,11 @@ export function CleanupModal({ onClose, onChanged }: CleanupModalProps) {
                           ? tr("clean.archive_reason_delete_branch")
                           : a.reason === "delete_worktree"
                             ? tr("clean.archive_reason_delete_worktree", { name: a.worktree?.name || "" })
-                            : tr("clean.archive_reason_delete_session")}
+                            : a.reason === "delete_space"
+                              ? tr("clean.archive_reason_delete_space", { name: a.space?.name || a.space?.folder || "" })
+                              : tr("clean.archive_reason_delete_session")}
                         {a.worktree?.snapshot ? " · " + tr("clean.archive_worktree_snapshot") : ""}
+                        {a.space && a.bytes ? " · " + humanSize(a.bytes) : ""}
                         {a.sessions && a.sessions.length > 0
                           ? " · " + tr("clean.archive_sessions_n", { count: a.sessions.length })
                           : ""}

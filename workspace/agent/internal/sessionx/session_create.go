@@ -484,6 +484,12 @@ func (c *createRun) resolveWorkingCopy() bool {
 				httpx.WriteErr(c.w, http.StatusNotFound, "space_not_found", "no such space: "+sp.Folder)
 				return false
 			}
+			// A delete of the space has decided and is moving it away: a session started now would
+			// run in a folder that is gone (the same refusal as a lock on it).
+			if gitx.UnderDeletion(existing.Dir) {
+				httpx.WriteErr(c.w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(), "this space is being deleted")
+				return false
+			}
 			c.req.Dir = existing.Dir
 		} else {
 			made, err := spacex.Create(sp.Name)

@@ -132,3 +132,27 @@ func TestPasteToASpaceSessionRollsTheCopyBackWhenPublishingFails(t *testing.T) {
 		}
 	}
 }
+
+// The space a session ran in can be gone (Clean, or a folder removed by hand; deleting a space
+// through the trash shelves its sessions, so they are not pasted to). The upload is then stored
+// as for any session and answers 201 with no space copy: the prompt names the stored path, which
+// is all the agent needs, and there is no folder left to copy into. Pinned so a change to refuse
+// it, or to recreate the folder, is a decision and not an accident (#5085).
+func TestPasteToASessionWhoseSpaceIsGoneIsAnOrdinaryUpload(t *testing.T) {
+	isolateAgentState(t)
+	sp, err := spacex.Create("Research")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "in-space", Kind: session.KindClaude, Dir: sp.Dir, CreatedAt: "2026-10-29T10:00:00+09:00"})
+	if err := os.RemoveAll(sp.Dir); err != nil {
+		t.Fatal(err)
+	}
+	rec := pasteTo(t, "in-space", "a.txt", "x")
+	if rec.Code != http.StatusCreated || strings.Contains(rec.Body.String(), "spaceCopy") {
+		t.Fatalf("paste: %d %s", rec.Code, rec.Body)
+	}
+	if _, err := os.Stat(sp.Dir); err == nil {
+		t.Fatal("the paste recreated the removed space")
+	}
+}

@@ -68,6 +68,9 @@ type cleanupManifest struct {
 	Sessions []cleanupArchivedSession `json:"sessions,omitempty"`
 	Branches []cleanupArchivedBranch  `json:"branches,omitempty"`
 	Worktree *gitx.WorktreeTombstone  `json:"worktree,omitempty"`
+	// Space records a deleted space (space_delete.go); its folder waits in the trash directory
+	// as <id>.space.
+	Space *spaceTombstone `json:"space,omitempty"`
 	// Bytes is the size of the archive's tarball, filled in by listCleanupArchives for the
 	// trash tab (what a purge reclaims). Never written into the archive itself.
 	Bytes int64 `json:"bytes,omitempty"`
@@ -157,8 +160,20 @@ func tarAdd(tw *tar.Writer, name string, b []byte) error {
 	return err
 }
 
-// listCleanupArchives returns stored manifests, newest first (id is time-sortable).
-func listCleanupArchives() []cleanupManifest {
+// listCleanupArchives returns stored manifests, newest first (id is time-sortable). Bytes is the
+// tarball's size only: measuring a deleted space's folder walks it, which callers that only read
+// manifests must not pay for.
+func listCleanupArchives() []cleanupManifest { return listArchives(nil) }
+
+// listCleanupArchivesSized is listCleanupArchives with each deleted space's folder counted into
+// Bytes (what a purge gives back), the whole list sharing one walk budget so a trash full of
+// large spaces is bounded as a whole.
+func listCleanupArchivesSized() []cleanupManifest {
+	budget := cleanupUsageMaxEntries
+	return listArchives(&budget)
+}
+
+func listArchives(budget *int) []cleanupManifest {
 	entries, _ := os.ReadDir(cleanupStoreDir())
 	var out []cleanupManifest
 	for _, e := range entries {
@@ -170,9 +185,15 @@ func listCleanupArchives() []cleanupManifest {
 			continue
 		}
 		var m cleanupManifest
-		if json.Unmarshal(b, &m) == nil && m.ID != "" {
+		// The file name is the id: a sidecar that says another one is not trusted, or a purge by
+		// age could be steered at a different entry's folder.
+		if json.Unmarshal(b, &m) == nil && m.ID != "" && m.ID+".json" == e.Name() {
 			if info, err := os.Stat(filepath.Join(cleanupStoreDir(), m.ID+".tar.gz")); err == nil {
 				m.Bytes = info.Size()
+			}
+			if m.Space != nil && budget != nil {
+				b, _ := walkSize(spaceTrashDir(m.ID), budget)
+				m.Bytes += b
 			}
 			out = append(out, m)
 		}
@@ -322,6 +343,12 @@ func purgeCleanupArchive(id string) (cleanupManifest, error) {
 	}
 	if b, err := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json")); err == nil {
 		_ = json.Unmarshal(b, &man)
+	}
+	// A deleted space's folder goes first, whatever the manifest says (it may be unreadable): with
+	// the archive gone nothing could name the folder again, and it would stay for ever. A removal
+	// that stops part way leaves the archive, so the purge can be pressed again.
+	if err := os.RemoveAll(spaceTrashDir(id)); err != nil {
+		return man, err
 	}
 	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
 	if err := os.Remove(filepath.Join(cleanupStoreDir(), id+".tar.gz")); err != nil {
@@ -540,6 +567,14 @@ func restoreCleanupArchive(id string) (map[string]any, error) {
 			return nil, err
 		}
 		restored["worktree"] = m.Worktree.Name
+	}
+	if m.Space != nil {
+		// The id the request named, which was checked to be a bare file name; a manifest that
+		// says another id is not used to build a path.
+		if err := restoreDeletedSpace(id, *m.Space); err != nil {
+			return nil, err
+		}
+		restored["space"] = m.Space.Folder
 	}
 	return restored, nil
 }

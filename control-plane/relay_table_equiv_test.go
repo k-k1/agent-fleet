@@ -414,6 +414,8 @@ var auditedAfterTheFreeze = map[string]bool{
 	"POST /api/spaces": true,
 	// ADR 0142 decision 3: renaming a space's display name.
 	"PATCH /api/spaces/{folder}": true,
+	// ADR 0142 decision 2: deleting a space through the trash.
+	"DELETE /api/spaces/{folder}": true,
 }
 
 // auditAddedSinceTheFreeze are routes that existed at the freeze and that the frozen switch
