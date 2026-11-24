@@ -30,15 +30,15 @@ describe("adopting a request somebody else made", () => {
     const t = useSpacesStore.getState().begin();
     tenant = "t2";
     useSpacesStore.getState().clear();
-    useSpacesStore.getState().adopt(t, list("old-tenant-space"));
+    expect(useSpacesStore.getState().adopt(t, list("old-tenant-space"))).toBe(false);
     expect(folders()).toEqual([]);
   });
 
   it("does not let an older answer overwrite a newer one, whatever the order they arrive in", () => {
     const first = useSpacesStore.getState().begin();
     const second = useSpacesStore.getState().begin();
-    useSpacesStore.getState().adopt(second, list("new"));
-    useSpacesStore.getState().adopt(first, list("old"));
+    expect(useSpacesStore.getState().adopt(second, list("new"))).toBe(true);
+    expect(useSpacesStore.getState().adopt(first, list("old"))).toBe(false);
     expect(folders()).toEqual(["new"]);
   });
 

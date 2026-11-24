@@ -459,6 +459,26 @@ describe("Start hub — an existing space", () => {
     expect(optionLabels()).toEqual([t("start.place_new_space"), "Notes"]);
   });
 
+  it("still gets the list when the probe's answer arrives after something cleared or superseded it", async () => {
+    // First ask (the probe) is held; every later ask answers at once.
+    let answerProbe!: (v: unknown) => void;
+    let asks = 0;
+    apiGet.mockImplementation((path: string) => {
+      if (path !== "api/spaces") return Promise.resolve([]);
+      asks++;
+      return asks === 1 ? new Promise((r) => (answerProbe = r)) : Promise.resolve({ spaces: [space("sp-a", "Notes", "2026-11-01T00:00:00Z")] });
+    });
+    await openHub();
+    // A switch of workspace clears the store after the probe began (App does this).
+    await act(async () => useSpacesStore.getState().clear());
+    await act(async () => answerProbe({ spaces: [space("sp-a", "Notes", "2026-11-01T00:00:00Z")] }));
+    await settle();
+    expect(spaceAsks()).toBe(2); // the probe, then the re-read for the workspace now current
+    await click(chip());
+    expect(optionLabels()).toEqual([t("start.place_new_space"), "Notes"]);
+    expect(document.body.textContent).not.toContain(t("start.space_check_failed"));
+  });
+
   it("closes the list with Escape alone, and returns the focus to the chip after a pick", async () => {
     withSpaces([space("sp-a", "Notes", "2026-11-01T00:00:00Z")]);
     await openHub();

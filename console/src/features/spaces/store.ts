@@ -27,9 +27,10 @@ interface SpacesStore {
   /** Start a GET /api/spaces somebody else makes (the hub's support probe), so one opening of the
    *  hub asks once: the ticket records whose request it is and supersedes the ones before it. */
   begin(): SpacesTicket;
-  /** Take that request's answer. Ignored unless it is a list and nothing newer has started or
-   *  cleared the store since (another workspace, a later refresh). */
-  adopt(ticket: SpacesTicket, d: unknown): void;
+  /** Take that request's answer. Ignored (false) unless it is a list and nothing newer has started
+   *  or cleared the store since (another workspace, a later refresh): the caller then reads the
+   *  list again for the workspace it is in now rather than go without one. */
+  adopt(ticket: SpacesTicket, d: unknown): boolean;
   /** Forget the list, for a tenant switch: the spaces belong to the previous workspace. */
   clear(): void;
 }
@@ -77,11 +78,11 @@ export const useSpacesStore = create<SpacesStore>((set) => ({
     return { owner: spacesOwner(), gen: ++generation };
   },
   adopt(ticket, d) {
-    if (ticket.gen !== generation || ticket.owner !== spacesOwner()) return;
-    
+    if (ticket.gen !== generation || ticket.owner !== spacesOwner()) return false;
     const list = d as { spaces?: unknown; error?: unknown } | null | undefined;
-    if (!list || list.error || !Array.isArray(list.spaces)) return;
+    if (!list || list.error || !Array.isArray(list.spaces)) return false;
     set({ spaces: list.spaces as Space[], owner: ticket.owner, failures: 0, failOwner: "" });
+    return true;
   },
   clear() {
     generation++;

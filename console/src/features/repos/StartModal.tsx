@@ -137,7 +137,10 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
           setSpaceSupport("yes");
           // The same answer is the place chip's list: the hub asks the Agent once, and "Check
           // again" refreshes both.
-          useSpacesStore.getState().adopt(ticket, d);
+          // Superseded meanwhile (a switch of workspace clears the store after this request began,
+          // a later refresh started): the list is read again rather than left empty under a
+          // support answer that says "yes".
+          if (!useSpacesStore.getState().adopt(ticket, d)) void useSpacesStore.getState().refresh();
         }
         // Only "no such route" means an Agent without spaces; anything else may pass. A plain-text
         // 404 / 405 (the Agent's mux) arrives as http_404 / http_405 with no status.
