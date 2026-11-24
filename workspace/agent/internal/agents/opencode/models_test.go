@@ -109,6 +109,33 @@ func TestModelsFallsBackWithoutDaemon(t *testing.T) {
 	}
 }
 
+// From opencode 2.4.0 a serve whose instance is still activating answers GET /api/model with 200
+// and an empty list (measured: about 3 s on 2.4.0 and 2.4.1), where 2.3.x held the request. That
+// answer is not "this account has no models": the picker falls back to the CLI, and the empty read
+// is not cached, so the next refresh asks the daemon again.
+func TestModelsFallsBackOnAnActivatingDaemon(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"location":{"directory":"/w"},"data":[]}`))
+	}))
+	defer srv.Close()
+	orig := oauthProbe
+	oauthProbe = func() (string, bool) { return srv.URL, true }
+	defer func() { oauthProbe = orig }()
+	dir := t.TempDir()
+	script := "#!/bin/sh\necho opencode/tidepool-alpha-free\n"
+	if err := os.WriteFile(filepath.Join(dir, "opencode"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	InvalidateModels()
+	defer InvalidateModels()
+
+	if got := Models(); !reflect.DeepEqual(got, []string{"opencode/tidepool-alpha-free"}) {
+		t.Fatalf("Models with an activating daemon = %v, want the CLI's list", got)
+	}
+}
+
 // An id dropped from the catalog keeps its name on record: if the launch guard cannot tell
 // a typo from a retired model, the user doubts a correct id and keeps re-entering it.
 // Measured: opencode-go/ox-alpha-free was published on 2026-08-21, went deprecated within a
