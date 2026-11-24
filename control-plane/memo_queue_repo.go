@@ -1137,8 +1137,8 @@ type memoRepoRechecker struct {
 	// outgrows the hosts in use.
 	hosts map[string]*memoRepoHostSlots
 	// known is each member's repositories' hosts, from their last answered read. Learning a host
-	// this way asks the Agent nothing beyond the read itself. A member with no enabled queue left
-	// is dropped at the next pass.
+	// this way asks the Agent nothing beyond the read itself. A repository with no enabled queue
+	// left is dropped at the member's next pass, and a member with none at the next pass.
 	known map[string]map[string]string
 	// prepWaiting counts the members waiting for a prepare slot.
 	prepWaiting int
@@ -1306,6 +1306,17 @@ func (rc *memoRepoRechecker) hostOf(membershipID, repo string) string {
 	return rc.known[membershipID][repo]
 }
 
+// keepHosts forgets the member's repositories other than repos.
+func (rc *memoRepoRechecker) keepHosts(membershipID string, repos map[string]bool) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	for repo := range rc.known[membershipID] {
+		if !repos[repo] {
+			delete(rc.known[membershipID], repo)
+		}
+	}
+}
+
 func (rc *memoRepoRechecker) learnHost(membershipID, repo, remote string) {
 	rc.mu.Lock()
 	defer rc.mu.Unlock()
@@ -1352,14 +1363,34 @@ func (rc *memoRepoRechecker) member(ctx context.Context, membershipID string) {
 		v, err := rc.mgr.store.GetTenantMemoQueues(ctx, res.mv.TenantID)
 		return err == nil && v
 	}
-	for _, repo := range work.order {
-		release, ok := rc.acquireRead(ctx, rc.hostOf(membershipID, repo))
+	// The queues go in their own order, as the serial loop took them, each under its host's slot:
+	// a repository's file is fetched once, at its first queue the switch lets through, and the
+	// later queues of that repository reuse it, so a slow queue holds back only those after it.
+	reads := map[string]*memoRepoRead{}
+	for _, d := range work {
+		r := reads[d.c.Repo]
+		if r == nil {
+			r = &memoRepoRead{}
+			reads[d.c.Repo] = r
+		}
+		if r.failed {
+			continue
+		}
+		release, ok := rc.acquireRead(ctx, rc.hostOf(membershipID, d.c.Repo))
 		if !ok {
 			return
 		}
-		rc.readRepo(ctx, res, membershipID, repo, work.byRepo[repo], on)
+		rc.readQueue(ctx, res, membershipID, d, r, on)
 		release()
 	}
+}
+
+// memoRepoRead is one repository's file as a pass read it.
+type memoRepoRead struct {
+	f       agentAutorunFile
+	started time.Time
+	read    bool
+	failed  bool
 }
 
 // memoRepoDue is a queue due for a read, with its category.
@@ -1368,43 +1399,44 @@ type memoRepoDue struct {
 	c store.MemoCategory
 }
 
-// memoRepoWork is a member's due queues by repository, in the order the queues came.
-type memoRepoWork struct {
-	order  []string
-	byRepo map[string][]memoRepoDue
-}
-
 // prepareMember finds the member's due queues and running workspace; a nil resolved means there
 // is nothing to read. The queues are listed here, after start marked the member busy, and not
 // taken from start's list: that list can predate the record an earlier pass of this member
 // wrote just before it ended, and would make a queue read moments ago look due.
-func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID string) (*resolved, memoRepoWork) {
-	work := memoRepoWork{byRepo: map[string][]memoRepoDue{}}
+func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID string) (*resolved, []memoRepoDue) {
 	qs, err := rc.mgr.store.ListMemoQueues(ctx, membershipID)
 	if err != nil {
 		log.Printf("memo repo recheck: %s: list queues: %v", membershipID, err)
-		return nil, work
+		return nil, nil
 	}
 	now := rc.now()
+	var work []memoRepoDue
+	repos := map[string]bool{}
+	complete := true
 	for _, q := range qs {
 		if !q.Enabled {
 			continue
 		}
 		c, ok, err := rc.mgr.store.GetCategory(ctx, q.CategoryID)
+		if err != nil {
+			complete = false
+		}
 		if err != nil || !ok || c.Repo == "" || c.MembershipID != membershipID {
 			continue
 		}
+		repos[c.Repo] = true
 		if at, err := time.Parse(time.RFC3339, q.RepoCheck.At); err == nil && q.RepoCheck.Basis == memoRepoBasis(c, q) &&
 			now.Sub(at) < rc.every/2 {
 			continue
 		}
-		if _, ok := work.byRepo[c.Repo]; !ok {
-			work.order = append(work.order, c.Repo)
-		}
-		work.byRepo[c.Repo] = append(work.byRepo[c.Repo], memoRepoDue{q, c})
+		work = append(work, memoRepoDue{q, c})
 	}
-	if len(work.order) == 0 {
-		return nil, work
+	// A category that could not be read may still be one, so nothing is forgotten on that pass.
+	if complete {
+		rc.keepHosts(membershipID, repos)
+	}
+	if len(work) == 0 {
+		return nil, nil
 	}
 	// The workspace row is read, never built: resolving it for a start would create a missing one,
 	// make a stopped one's keys and publish a runtime in the cache. A read needs the Agent's
@@ -1412,15 +1444,15 @@ func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID str
 	// column, which a failed state write or an adopted container can leave at stopped.
 	ws, ok, err := rc.mgr.store.GetWorkspaceByMembership(ctx, membershipID)
 	if err != nil || !ok {
-		return nil, work
+		return nil, nil
 	}
 	identityID, ok, err := rc.mgr.store.IdentityIDForMembership(ctx, membershipID)
 	if err != nil || !ok {
-		return nil, work
+		return nil, nil
 	}
 	ident, mv, aerr := rc.mgr.activeMembership(ctx, identityID, membershipID)
 	if aerr != nil {
-		return nil, work
+		return nil, nil
 	}
 	var rt runtime.Runtime
 	if c, ok := rc.mgr.cachedRTFor(membershipID); ok && c.ws.ID == ws.ID {
@@ -1429,44 +1461,38 @@ func (rc *memoRepoRechecker) prepareMember(ctx context.Context, membershipID str
 		rt = rc.mgr.runtimeFor(ws, noSecretKeys)
 	}
 	if rt == nil || rt.Endpoint() == "" || rt.State(ctx) != "running" {
-		return nil, work
+		return nil, nil
 	}
 	return &resolved{rt: rt, ws: ws, ident: ident, mv: mv}, work
 }
 
-// readRepo reads one repository's file once, at the first queue the switch lets through, and
-// records it on each due queue the switch lets through.
-func (rc *memoRepoRechecker) readRepo(ctx context.Context, res *resolved, membershipID, repo string, due []memoRepoDue, on func() bool) {
-	var (
-		f       agentAutorunFile
-		started time.Time
-		read    bool
-	)
-	for _, d := range due {
-		if !on() {
-			continue
-		}
-		if !read {
-			started = rc.now()
-			var aerr *apiError
-			if f, aerr = rc.mgr.agentAutorunFile(ctx, res, repo); aerr != nil {
-				// The last read stays as it was: an unreachable remote says nothing about the file.
-				log.Printf("memo repo recheck: %s: %s", membershipID, aerr.code)
-				return
-			}
-			read = true
-			rc.learnHost(membershipID, repo, f.Remote)
-			if !on() {
-				continue
-			}
-		}
-		out := memoRepoSettingsWire{Found: f.Found, Commit: f.Commit}
-		if aerr := rc.mgr.memoRepoEvaluate(ctx, res, d.c, f, d.q, true, &out); aerr != nil {
+// readQueue reads the queue's repository's file into r unless it has it, and records it on the
+// queue, each step only while the switch is on.
+func (rc *memoRepoRechecker) readQueue(ctx context.Context, res *resolved, membershipID string, d memoRepoDue, r *memoRepoRead, on func() bool) {
+	if !on() {
+		return
+	}
+	if !r.read {
+		r.started = rc.now()
+		f, aerr := rc.mgr.agentAutorunFile(ctx, res, d.c.Repo)
+		if aerr != nil {
+			// The last read stays as it was: an unreachable remote says nothing about the file.
 			log.Printf("memo repo recheck: %s: %s", membershipID, aerr.code)
-			continue
+			r.failed = true
+			return
 		}
-		if err := rc.mgr.memoRepoRecord(ctx, membershipID, memoRepoCheckFrom(d.c, d.q, &out, started), d.c.ID); err != nil {
-			log.Printf("memo repo recheck: %s: record: %v", membershipID, err)
+		r.f, r.read = f, true
+		rc.learnHost(membershipID, d.c.Repo, f.Remote)
+		if !on() {
+			return
 		}
+	}
+	out := memoRepoSettingsWire{Found: r.f.Found, Commit: r.f.Commit}
+	if aerr := rc.mgr.memoRepoEvaluate(ctx, res, d.c, r.f, d.q, true, &out); aerr != nil {
+		log.Printf("memo repo recheck: %s: %s", membershipID, aerr.code)
+		return
+	}
+	if err := rc.mgr.memoRepoRecord(ctx, membershipID, memoRepoCheckFrom(d.c, d.q, &out, r.started), d.c.ID); err != nil {
+		log.Printf("memo repo recheck: %s: record: %v", membershipID, err)
 	}
 }

@@ -36,6 +36,8 @@ type fakeAutorunAgent struct {
 	instrAsked []string
 	// remote is the remote the settings read names (file only).
 	remote string
+	// onInstr runs before each instruction read, outside the lock, after onServe.
+	onInstr func()
 }
 
 // instruction sets what the fake Agent's instruction route answers for p.
@@ -83,10 +85,13 @@ func (e *inboxEnv) repoAgent(who, state string) *fakeAutorunAgent {
 	a := &fakeAutorunAgent{status: http.StatusOK}
 	a.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a.mu.Lock()
-		hook := a.onServe
+		hook, instrHook := a.onServe, a.onInstr
 		a.mu.Unlock()
 		if hook != nil {
 			hook()
+		}
+		if instrHook != nil && strings.HasSuffix(r.URL.Path, "/autorun-file/instruction") {
+			instrHook()
 		}
 		a.mu.Lock()
 		defer a.mu.Unlock()

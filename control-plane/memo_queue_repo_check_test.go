@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -560,41 +561,51 @@ func TestMemoRepoRecheckSlowMemberHoldsNoOne(t *testing.T) {
 
 // A member waiting for its host holds no shared slot: with two shared slots and one per host, a
 // read on host h, a second member waiting for h, and a read on host g all go at once. The second
-// member is read once h is free.
+// member is read once h is free. Repositories no read has named a host for yet share one bucket,
+// whatever their names.
 func TestMemoRepoRecheckHostWaitHoldsNoSharedSlot(t *testing.T) {
-	e, first := repoEnv(t, "")
-	putRounds(e)
-	first.file(roundsDiffers)
-	hook, started, release := holder(t)
-	first.onServe = hook
-	rc := e.rechecker(2, 1, 0, map[string]string{"a/app": "https://h.example/o/app"})
-	ctx := context.Background()
-	rc.start(ctx)
-	recv(t, started, "the first read")
+	for _, tc := range []struct {
+		name, first, second, bucket string
+	}{
+		{"known host", "https://h.example/o/app", "H.example:o/lib.git", "h.example"},
+		{"no host yet", "", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e, first := repoEnv(t, "")
+			putRounds(e)
+			first.file(roundsDiffers)
+			hook, started, release := holder(t)
+			first.onServe = hook
+			rc := e.rechecker(2, 1, 0, map[string]string{"a/app": tc.first})
+			ctx := context.Background()
+			rc.start(ctx)
+			recv(t, started, "the first read")
 
-	second := e.repoAgent("b", "")
-	second.file(roundsDiffers)
-	lib := e.memberQueue("b", "lib", "rounds")
-	e.learn(rc, map[string]string{"b/lib": "H.example:o/lib.git"})
-	rc.start(ctx)
-	waitFor(t, "the second member to wait for h", func() bool { return rc.hostUsers("h.example") == 2 })
+			second := e.repoAgent("b", "")
+			second.file(roundsDiffers)
+			lib := e.memberQueue("b", "lib", "rounds")
+			e.learn(rc, map[string]string{"b/lib": tc.second})
+			rc.start(ctx)
+			waitFor(t, "the second member to wait for the first one's bucket", func() bool { return rc.hostUsers(tc.bucket) == 2 })
 
-	other := e.repoAgent("c", "")
-	other.file(roundsDiffers)
-	doc := e.memberQueue("c", "doc", "rounds")
-	e.learn(rc, map[string]string{"c/doc": "ssh://g.example:2222/o/doc"})
-	rc.start(ctx)
-	waitFor(t, "the other host's read", func() bool { return e.memberRepoCheck("c", doc).State == memoRepoCheckDiffers })
-	if got := second.requested(); len(got) != 0 {
-		t.Fatalf("read while h's one slot was taken: %v", got)
+			other := e.repoAgent("c", "")
+			other.file(roundsDiffers)
+			doc := e.memberQueue("c", "doc", "rounds")
+			e.learn(rc, map[string]string{"c/doc": "ssh://g.example:2222/o/doc"})
+			rc.start(ctx)
+			waitFor(t, "the other host's read", func() bool { return e.memberRepoCheck("c", doc).State == memoRepoCheckDiffers })
+			if got := second.requested(); len(got) != 0 {
+				t.Fatalf("read while the bucket's one slot was taken: %v", got)
+			}
+
+			release()
+			rc.wg.Wait()
+			if got := second.requested(); len(got) != 1 || e.memberRepoCheck("b", lib).State != memoRepoCheckDiffers {
+				t.Fatalf("not read once the bucket was free: %v", got)
+			}
+			rc.assertIdle(t)
+		})
 	}
-
-	release()
-	rc.wg.Wait()
-	if got := second.requested(); len(got) != 1 || e.memberRepoCheck("b", lib).State != memoRepoCheckDiffers {
-		t.Fatalf("not read once h was free: %v", got)
-	}
-	rc.assertIdle(t)
 }
 
 // acquireRead holds a host to its own bound and every host to the shared one, and forgets a host
@@ -694,22 +705,32 @@ func TestMemoRepoRecheckPrepareEndsBeforeReads(t *testing.T) {
 	rc.assertIdle(t)
 }
 
-// A read teaches the pass its repository's host, from the remote it names, and a member with no
-// enabled queue left is forgotten.
+// A read teaches the pass its repository's host, from the remote it names. A repository with no
+// enabled queue left is forgotten, and so is a member with none.
 func TestMemoRepoRecheckLearnsTheHost(t *testing.T) {
 	e, a := repoEnv(t, "")
-	id := putRounds(e)
-	a.remote = "GIT.example:o/app.git"
+	app := putRounds(e)
+	lib := e.memberQueue("a", "lib", "rounds")
+	a.remote = "GIT.example:o/x.git"
 	a.file(roundsDiffers)
 	rc := e.rechecker(0, 0, 0, nil)
+	mid := e.members["a"]
 	rc.tick(context.Background())
-	if h := rc.hostOf(e.members["a"], "app"); h != "git.example" {
-		t.Fatalf("host %q", h)
+	if h, g := rc.hostOf(mid, "app"), rc.hostOf(mid, "lib"); h != "git.example" || g != "git.example" {
+		t.Fatalf("hosts %q %q", h, g)
 	}
-	put := map[string]any{"instruction": "old", "spendCapUsd": 60, "maxActive": 2, "enabled": false}
-	if rec := e.do("a", "PUT", "/api/memo-queues/"+id, put); rec.Code != http.StatusOK {
-		t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+	off := func(id string) {
+		put := map[string]any{"instruction": "old", "spendCapUsd": 60, "maxActive": 2, "enabled": false}
+		if rec := e.do("a", "PUT", "/api/memo-queues/"+id, put); rec.Code != http.StatusOK {
+			t.Fatalf("put: %d %s", rec.Code, rec.Body.String())
+		}
 	}
+	off(lib)
+	rc.tick(context.Background())
+	if h, g := rc.hostOf(mid, "app"), rc.hostOf(mid, "lib"); h != "git.example" || g != "" {
+		t.Fatalf("after lib's queue went off: %q %q", h, g)
+	}
+	off(app)
 	rc.tick(context.Background())
 	rc.mu.Lock()
 	n := len(rc.known)
@@ -904,4 +925,54 @@ func TestMemoRepoRecheckDecidesFromFreshQueues(t *testing.T) {
 	if got := a.requested(); len(got) != 1 {
 		t.Fatalf("a queue read moments ago was read again: %v", got)
 	}
+}
+
+// The queues are read in their own order, as the serial loop took them: a later queue of a
+// repository already read does not hold back an earlier queue of another one. With A (app), B
+// (lib), C (app) and C's instruction file hanging, B is kept by then.
+func TestMemoRepoRecheckKeepsTheQueueOrder(t *testing.T) {
+	e, a := repoEnv(t, "")
+	qa := putRounds(e)
+	qb := e.memberQueue("a", "lib", "rounds")
+	qc := e.memberQueue("a", "app", "other")
+	for i, id := range []string{qa, qb, qc} {
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo_queue SET created_at=? WHERE category_id=?`,
+			fmt.Sprintf("2026-01-01T00:00:0%dZ", i+1), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	a.file("version: 1\ncategories:\n  rounds:\n    max_active: 3\n  other:\n    instruction_file: o.md\n")
+	a.instruction("o.md", "new")
+	hook, started, release := holder(t)
+	a.onInstr = hook
+	rc := e.rechecker(0, 0, 0, nil)
+	rc.start(context.Background())
+	recv(t, started, "C's instruction read")
+	if e.memberRepoCheck("a", qa).State == "" || e.memberRepoCheck("a", qb).State == "" {
+		t.Fatalf("A %+v, B %+v while C waits", e.memberRepoCheck("a", qa), e.memberRepoCheck("a", qb))
+	}
+	release()
+	rc.wg.Wait()
+	if e.memberRepoCheck("a", qc).State == "" {
+		t.Fatal("C not kept")
+	}
+	if got := a.requested(); len(got) != 3 {
+		// app, lib, and C's instruction: app is read once for A and C.
+		t.Fatalf("Agent calls %v", got)
+	}
+	rc.assertIdle(t)
+}
+
+// A repository whose read failed is not read again for its next queue in the same pass.
+func TestMemoRepoRecheckFailedReadOnce(t *testing.T) {
+	e, a := repoEnv(t, "")
+	putRounds(e)
+	e.memberQueue("a", "app", "other")
+	a.answer(http.StatusBadGateway, `{"error":{"code":"fetch_failed","message":"x"}}`)
+	rc := e.rechecker(0, 0, 0, nil)
+	rc.tick(context.Background())
+	if got := a.requested(); len(got) != 1 {
+		t.Fatalf("Agent calls %v", got)
+	}
+	rc.assertIdle(t)
 }
