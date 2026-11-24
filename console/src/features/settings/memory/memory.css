@@ -517,6 +517,36 @@
   font-family: var(--font-mono, monospace);
 }
 
+/* Document-target repairs and promotion proposals: a small inline form under a list row, and the
+   proposal's text, patch and hook output, scrollable rather than stretching the panel. */
+.mem-doc-repoint,
+.mem-promo-merged {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: flex-end;
+  margin: 6px 0 10px;
+}
+.mem-doc-repoint label,
+.mem-promo-merged label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.mem-promo-proposal {
+  margin: 6px 0 12px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--border, var(--bg-2));
+}
+.mem-promo-pre {
+  max-height: 320px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono, monospace);
+  font-size: 0.9em;
+}
+
 /* Memory suggestions (the consolidator's proposals): the change list's layout, with a status badge
    in the same family as the other badges. */
 .mem-badge.cs-pending {

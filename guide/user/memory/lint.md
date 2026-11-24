@@ -36,6 +36,7 @@ The report only checks: it writes nothing, no memory changes, and reading is not
 | ADR numbers with no record | A number such as `ADR 0123` with no record |
 | Retired terms | A word from your Retired terms list |
 | Bodies over 4,096 bytes | More than other sessions see in recall |
+| Bodies a document they anchor already says | Most of the text is already in a document the memory names (a Markdown or text file on the default branch): a candidate to supersede by that document. Advice only, never written as a reason |
 
 - The repository is read from `origin`'s default branch, not from a working copy. It does not fetch, so a stale clone gives a stale answer. The report says which ref and commit it read
 - A project without git, a project whose working copy is gone, and user memory get the link, term and size checks only
@@ -78,6 +79,40 @@ When a memory it read turned out stale or wrong, an agent reports it with `memor
 - A report on an older revision is only kept as an observation
 - One report per session per revision counts
 - Reports and reasons are material for [memory tidy-up](tidy-up.md)
+
+## Memories superseded by a document
+
+A memory you promoted into the repository's documents (see below) is superseded by that document: agents no longer see it, and it points at the file, the heading and the merge commit instead. The lint report of the project keeps checking that target, under **Document targets**.
+
+| Shown | Meaning |
+|---|---|
+| the file moved to … in … | A git rename on the default branch moved the file |
+| the file is gone | The file is not on the default branch, and no rename explains it |
+| the heading is gone | The file is there, the heading is not |
+| the merge was reverted by … | A commit on the default branch reverts the merge (a revert of that revert brings it back) |
+| its merge commit is not on the default branch | The history was rewritten, or the commit was never fetched |
+| names another repository than this project's | The target cannot be checked from this project |
+
+Repair each one yourself; nothing changes until you choose:
+
+- **Point at …** (a rename only): re-points the target at the new path, keeping the heading
+- **Re-point…**: give a path, a heading and a commit on the default branch that holds them (the report's commit is filled in). It is checked as the supersede was
+- **Bring the memory back**: undoes the supersede. The memory is back in agents' view with the text it kept
+
+Each repair quotes the revision the report showed, so a memory that changed since is refused; press **Run again** and repair it from the new report. Each is one change in [Changes](changes.md) and can be reverted there. The body never comes back by itself.
+
+## Promote memories to project documents
+
+A memory that several sessions confirmed is worth putting into the repository's own documents, where every member and every agent reads it.
+
+1. Open **⚙ Settings → Agent memory → Import & export**
+2. Under Maintenance, press **Start** on **Promote to project documents**, and pick the project
+3. The candidates are listed with how many sessions confirmed them. **Not yet** lists the others with what they miss
+4. **Propose** builds the change: the document and section, the text, and a patch. The secret scan and the repository's own pre-commit hook run on it in a throwaway clone; it is ready when both pass
+5. Copy the patch and open the pull request yourself, or ask a session to. Agent Fleet never commits, pushes or opens one
+6. Once it is merged, propose the memory again if you closed the page, enter the merge commit under **After the merge**, and press **Supersede by the document**
+
+The supersede is refused when the memory changed after the proposal: propose it again, so an old text never hides a newer one. From a terminal, `af-memory promote-candidates` and `af-memory promote-proposal` do steps 3 and 4.
 
 ## When it goes wrong
 

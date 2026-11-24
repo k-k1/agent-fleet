@@ -216,10 +216,12 @@ af-memory lint [--user | --project <id or name>] [--json] [--apply]
 | `missing-adr` | An ADR number with no record |
 | `retired-term` | A retired term |
 | `oversize` | A body over 4,096 bytes |
+| `restates-document` | Most of the body is already in a document it anchors (advice, never a reason) |
 
 - Without `--apply` nothing is written, and reading does not count as a use of a memory
 - The repository is read by ref from `origin`'s default branch, never through a working copy. Nothing is fetched, so a stale clone gives a stale answer. In a partial clone (`git clone --filter`) the symbol check is skipped unless the default branch's files are all present (a checkout of it fetches them)
 - Proposed retired terms may be listed. Whether one goes on your list is decided in the Console
+- A project whose memories are superseded by a repository document also gets `document targets: N checked, N to repair`, one line per target that moved (`doc-renamed`, with the new path and commit), went (`doc-missing`), lost its heading (`doc-heading`), was reverted (`doc-reverted`, with the reverting commit), is off the default branch (`doc-unreachable`) or names another repository (`doc-other-repository`). They are repaired in the Console
 - The exit status says whether the command worked. It is 0 even when there are findings
 
 ### Write the findings

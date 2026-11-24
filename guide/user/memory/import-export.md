@@ -34,6 +34,7 @@ Open **⚙ Settings → Agent memory → Import & export**. It does not work whi
 | Export | Write back to Claude Code | [Copy Agent Fleet memory into Claude Code](#write-back-to-claude-code) |
 | Maintenance | Move memories of a project that no longer exists | [Move the memories of a project whose folder changed](#move-memories-of-a-project-that-no-longer-exists) |
 | Maintenance | Memory lint report | Find memories that went stale (a read-only report) |
+| Maintenance | Promote to project documents | [Propose a proven memory for the repository's documents](lint.md#promote-memories-to-project-documents) |
 
 Press **"Start"** on a card and its steps replace the cards. Every one follows the same flow.
 

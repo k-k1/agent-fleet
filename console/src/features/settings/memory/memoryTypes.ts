@@ -508,6 +508,94 @@ export interface LintReport {
     skipped?: string[];
     proposals?: LintProposal[];
   };
+  /** The targets of memories superseded by a repository document; absent when there are none. */
+  documents?: LintDocReport;
+}
+
+/** A document target as stored in superseded_by (ADR 0130 decision 11). */
+export interface DocTarget {
+  repo: string;
+  path: string;
+  heading?: string;
+  commit: string;
+}
+
+/** What is wrong with a document target, the first that holds. */
+export type DocProblem = "other-repository" | "unreachable" | "reverted" | "renamed" | "missing" | "heading";
+
+export interface LintDocFinding {
+  memory: string;
+  /** The memory's revision, which a repair quotes back. */
+  revision: number;
+  target: DocTarget;
+  problem: DocProblem;
+  /** Where a renamed file is now, and whether the target's heading is in it. */
+  path?: string;
+  headingFound?: boolean;
+  /** The renaming or reverting commit. */
+  commit?: string;
+}
+
+export interface LintDocReport {
+  checked: number;
+  findings: LintDocFinding[];
+}
+
+// Promotion to the project's documents (ADR 0130 decision 11; workspace/agent/internal/memoryx
+// agent_memory_promote*.go).
+export interface PromoteCandidate {
+  name: string;
+  revision: number;
+  kind: string;
+  sessions: number;
+  anchors: string[];
+  updated: string;
+}
+
+export interface PromoteHeld {
+  name: string;
+  revision: number;
+  kind: string;
+  missing: { rule: string; detail?: string }[];
+}
+
+export interface PromoteCandidates {
+  project?: MemoryChangeProject;
+  ref?: string;
+  commit?: string;
+  minSessions: number;
+  quietDays: number;
+  withheld?: number;
+  skipped?: string[];
+  candidates: PromoteCandidate[];
+  held: PromoteHeld[];
+}
+
+export interface PromoteProposal {
+  project?: MemoryChangeProject;
+  ref: string;
+  commit: string;
+  target: { repo: string; path: string; heading: string };
+  fileExists: boolean;
+  sectionExists: boolean;
+  sources: { name: string; scope: string; revision: number; bodySha256: string; description?: string }[];
+  /** Left out when the secret scan found something. */
+  text?: string;
+  patch?: string;
+  warnings: string[];
+  scans: {
+    secret: SecretFinding[];
+    preCommit: {
+      ran: boolean;
+      hook?: string;
+      passed: boolean;
+      absent?: boolean;
+      changed?: boolean;
+      output?: string;
+      note?: string;
+    };
+  };
+  ready: boolean;
 }
 
 // The memory consolidator's wire (ADR 0130 decisions 6 and 7; workspace/agent/internal/memconsol).

@@ -1,8 +1,9 @@
 // LintPanel — the read-only lint report over AF memory (ADR 0130 decision 5, step 1). One scope
 // at a time: the Agent checks each body for links to no memory, paths / symbols / ADR numbers
 // missing from the project's default branch (read by ref, no working copy touched), retired
-// terms and bodies over 4,096 bytes, and reports. Nothing is written to any memory. The only
-// thing the member edits here is the retired-term list, which is a setting of the report.
+// terms, bodies over 4,096 bytes and bodies an anchored document already says, and reports.
+// Nothing is written to any memory by the report. The member edits the retired-term list here,
+// and repairs a document target the report flags (memoryLintDocs.tsx), one explicit choice each.
 
 import { useEffect, useState } from "react";
 import { errDetail, errText, isTransientErr } from "../../../core/api/client.ts";
@@ -15,6 +16,7 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
 import type { LintReport, ProjectRow } from "./memoryTypes.ts";
+import { DocTargets } from "./memoryLintDocs.tsx";
 
 const CHECK_LABEL: Record<string, MsgKey> = {
   "broken-link": "mem.lint_check_broken-link",
@@ -23,6 +25,7 @@ const CHECK_LABEL: Record<string, MsgKey> = {
   "missing-adr": "mem.lint_check_missing-adr",
   "retired-term": "mem.lint_check_retired-term",
   oversize: "mem.lint_check_oversize",
+  "restates-document": "mem.lint_check_restates-document",
 };
 const CHECK_ORDER = Object.keys(CHECK_LABEL);
 const USER = "user";
@@ -184,7 +187,9 @@ export function LintPanel({
               {tr("mem.lint_skipped", { what: s })}
             </p>
           ))}
-          {grouped.length === 0 && report.report.checked > 0 && (
+          {grouped.length === 0 && report.report.checked > 0 && !report.documents?.findings.length &&
+            // A target left unjudged (too large, too many reverts) is not "nothing to report".
+            !report.report.skipped?.some((s) => s.startsWith("document target")) && (
             <p className="muted">{tr("mem.lint_clean")}</p>
           )}
           {grouped.map((g) => (
@@ -211,6 +216,14 @@ export function LintPanel({
             </details>
           ))}
         </div>
+      )}
+      {report?.documents && scope !== USER && (
+        <DocTargets
+          docs={report.documents}
+          project={scope}
+          head={report.commit ?? ""}
+          onRepaired={() => setAgain((n) => n + 1)}
+        />
       )}
       {(report?.report.proposals?.length ?? 0) > 0 && (
         <div className="mem-lint-proposals">
