@@ -385,6 +385,10 @@ var ErrNotFound = errors.New("no such space")
 // was being written: nothing was changed, and asking again reads the new state.
 var ErrChanged = errors.New("the space changed while it was being renamed")
 
+// ErrMarkerTooBig is what Rename answers for a marker larger than any name needs: it cannot be
+// told from a valid one, so it is not overwritten.
+var ErrMarkerTooBig = errors.New("the space's marker file is too big to be rewritten")
+
 // renameMu serialises the renames this Agent makes, so two of them never interleave their
 // read-modify-write of one marker.
 var renameMu sync.Mutex
@@ -418,11 +422,22 @@ func Rename(folder, name string) (Space, error) {
 	}
 	renameMu.Lock()
 	defer renameMu.Unlock()
+	// Go opens a Root without O_DIRECTORY or O_NONBLOCK, so a FIFO in the place of ~/spaces would
+	// block here (with renameMu held): refuse anything that is no directory first.
+	if fi, err := os.Stat(Root()); err != nil {
+		return Space{}, notExistIsNotFound(err)
+	} else if !fi.IsDir() {
+		return Space{}, ErrNotFound
+	}
 	top, err := os.OpenRoot(Root())
 	if err != nil {
 		return Space{}, notExistIsNotFound(err)
 	}
 	defer top.Close()
+	topFi, err := top.Stat(".")
+	if err != nil {
+		return Space{}, err
+	}
 	dirFi, err := top.Lstat(folder)
 	if err != nil {
 		return Space{}, notExistIsNotFound(err)
@@ -445,7 +460,7 @@ func Rename(folder, name string) (Space, error) {
 	if !markFi.Mode().IsRegular() {
 		return Space{}, ErrNotFound
 	}
-	m, err := readMarkerIn(sp)
+	m, err := readMarkerIn(sp, markFi)
 	if err != nil {
 		return Space{}, err
 	}
@@ -459,7 +474,7 @@ func Rename(folder, name string) (Space, error) {
 		return Space{}, err
 	}
 	beforePublish()
-	if err := checkUnchanged(top, sp, folder, dirFi, markFi); err != nil {
+	if err := checkUnchanged(top, sp, folder, topFi, dirFi, markFi); err != nil {
 		_ = sp.Remove(tmp)
 		return Space{}, err
 	}
@@ -470,9 +485,17 @@ func Rename(folder, name string) (Space, error) {
 	return Space{Folder: folder, Name: name, Dir: filepath.Join(Root(), folder), CreatedAt: m.CreatedAt}, nil
 }
 
-// checkUnchanged says whether folder under top and the marker in sp are still the directory and
-// the file Rename started from.
-func checkUnchanged(top, sp *os.Root, folder string, dirFi, markFi os.FileInfo) error {
+// checkUnchanged says whether ~/spaces, folder under it and the marker in sp are still the
+// directories and the file Rename started from, and the marker still holds what was read: a
+// writer that rewrites it in place keeps its inode, so its size and modification time are
+// compared too.
+func checkUnchanged(top, sp *os.Root, folder string, topFi, dirFi, markFi os.FileInfo) error {
+	// ~/spaces itself may have been moved or replaced: top still names the old directory.
+	if now, err := os.Stat(Root()); err != nil {
+		return notExistIsNotFound(err)
+	} else if !os.SameFile(topFi, now) {
+		return ErrChanged
+	}
 	cur, err := top.Lstat(folder)
 	if err != nil {
 		return notExistIsNotFound(err)
@@ -484,7 +507,7 @@ func checkUnchanged(top, sp *os.Root, folder string, dirFi, markFi os.FileInfo) 
 	if err != nil {
 		return notExistIsNotFound(err)
 	}
-	if !os.SameFile(markFi, mark) {
+	if !os.SameFile(markFi, mark) || mark.Size() != markFi.Size() || !mark.ModTime().Equal(markFi.ModTime()) {
 		return ErrChanged
 	}
 	return nil
@@ -500,11 +523,13 @@ func notExistIsNotFound(err error) error {
 }
 
 // readMarkerIn reads sp's MarkerFile the way readMarker reads one by path: opened without
-// following a link and without blocking, and read only when the opened file is a regular one,
-// at most markerMaxBytes. A missing file or one that is no regular file is ErrNotFound; a read
-// that fails is that error; one that was read and does not parse (or is too big) gives an empty
-// marker, which a rename repairs.
-func readMarkerIn(sp *os.Root) (marker, error) {
+// following a link and without blocking, and read only when the opened file is the regular file
+// want describes (Root.OpenFile re-resolves a link inside the space when O_NOFOLLOW is refused,
+// so the identity of what was opened is checked, not assumed), at most markerMaxBytes. A missing
+// file or one that is no regular file is ErrNotFound; a read that fails is that error; a marker
+// over the limit cannot be told from a valid one, so it is left alone (ErrMarkerTooBig). Only one
+// that was read whole and does not parse gives an empty marker, which a rename repairs.
+func readMarkerIn(sp *os.Root, want os.FileInfo) (marker, error) {
 	f, err := sp.OpenFile(MarkerFile, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ELOOP) {
@@ -520,12 +545,18 @@ func readMarkerIn(sp *os.Root) (marker, error) {
 	if !fi.Mode().IsRegular() {
 		return marker{}, ErrNotFound
 	}
+	if !os.SameFile(want, fi) {
+		return marker{}, ErrChanged
+	}
 	b, err := io.ReadAll(io.LimitReader(f, markerMaxBytes+1))
 	if err != nil {
 		return marker{}, err
 	}
+	if len(b) > markerMaxBytes {
+		return marker{}, ErrMarkerTooBig
+	}
 	var m marker
-	if len(b) > markerMaxBytes || json.Unmarshal(b, &m) != nil {
+	if json.Unmarshal(b, &m) != nil {
 		m = marker{}
 	}
 	return m, nil

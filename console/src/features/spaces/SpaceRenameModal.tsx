@@ -8,7 +8,7 @@ import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
-import { renameSpace } from "./store.ts";
+import { renameSpace, spacesOwner } from "./store.ts";
 import type { Space } from "./store.ts";
 
 /** Mirrors spacex.NameMaxRunes on the Agent. */
@@ -54,12 +54,15 @@ export function SpaceRenameModal({
       if (res?.error) {
         const err = res.error as Parameters<typeof errText>[0];
         const key = err && typeof err === "object" && err.code ? RENAME_ERRORS[err.code] : undefined;
-        toast(key ? tr(key) : errText(err));
+        // Anything else (rename_failed: the Agent could not read or write the marker) keeps the
+        // Agent's own text as the detail, under a heading in the member's language.
+        toast(key ? tr(key) : tr("pj.space_rename_error", { detail: errText(err) }));
         return;
       }
       onClose();
     } catch {
-      toast(tr("pj.space_rename_failed"));
+      // A failure of a request made for another workspace says nothing about this one.
+      if (spacesOwner() === owner) toast(tr("pj.space_rename_failed"));
     } finally {
       setSaving(false);
     }

@@ -218,6 +218,7 @@ export const repos = {
   "pj.space_rename_label": "名前",
   "pj.space_rename_hint": "変わるのはここに表示する名前だけです。フォルダ ~/spaces/{folder} とその中のファイル、中のセッションはそのままです。空にするとフォルダ名を表示します。",
   "pj.space_rename_failed": "スペースの名前を変えられませんでした（通信エラー）",
+  "pj.space_rename_error": "スペースの名前を変えられませんでした。{detail}",
   "pj.space_rename_too_long": "{max} 文字までにしてください。",
   "pj.space_rename_bad_name": "その名前は使えません。長すぎるか、制御文字が含まれています。",
   "pj.space_rename_gone": "このスペースはもうありません。",

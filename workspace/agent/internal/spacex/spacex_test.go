@@ -876,3 +876,119 @@ func TestRenameHandlerNeedsAName(t *testing.T) {
 		t.Fatalf("a refused rename changed the marker: %q", after)
 	}
 }
+
+// Go opens a directory root without O_DIRECTORY or O_NONBLOCK, so a FIFO where ~/spaces should
+// be would hang a rename (holding renameMu) unless it is refused first.
+func TestRenameWhereSpacesIsAFIFO(t *testing.T) {
+	withHome(t)
+	if err := syscall.Mkfifo(Root(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { _, err := Rename("any-abcdef", "x"); done <- err }()
+	select {
+	case err := <-done:
+		if err != ErrNotFound {
+			t.Fatalf("Rename = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Rename hangs on a FIFO in the place of ~/spaces")
+	}
+}
+
+func TestRenameAgainstChangesToTheMarkerAndTheRoot(t *testing.T) {
+	setHook := func(t *testing.T, f func()) {
+		prev := beforePublish
+		beforePublish = f
+		t.Cleanup(func() { beforePublish = prev })
+	}
+	t.Run("spaces moved away", func(t *testing.T) {
+		home := withHome(t)
+		sp, _ := Create("Draft")
+		before := markerText(t, sp)
+		old := filepath.Join(home, "spaces-old")
+		setHook(t, func() { _ = os.Rename(Root(), old) })
+		if _, err := Rename(sp.Folder, "x"); err != ErrNotFound {
+			t.Fatalf("Rename = %v", err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(old, sp.Folder, MarkerFile)); string(b) != before {
+			t.Fatalf("the moved tree's marker was written: %q", b)
+		}
+	})
+	t.Run("spaces replaced", func(t *testing.T) {
+		home := withHome(t)
+		sp, _ := Create("Draft")
+		before := markerText(t, sp)
+		old := filepath.Join(home, "spaces-old")
+		setHook(t, func() {
+			_ = os.Rename(Root(), old)
+			_ = os.MkdirAll(Root(), 0o755)
+		})
+		if _, err := Rename(sp.Folder, "x"); err != ErrChanged {
+			t.Fatalf("Rename = %v", err)
+		}
+		if b, _ := os.ReadFile(filepath.Join(old, sp.Folder, MarkerFile)); string(b) != before {
+			t.Fatalf("the moved tree's marker was written: %q", b)
+		}
+	})
+	t.Run("marker rewritten in place", func(t *testing.T) {
+		withHome(t)
+		sp, _ := Create("Draft")
+		theirs := `{"name":"someone else","createdAt":"2019-05-05T00:00:00Z","extra":"a longer marker"}`
+		setHook(t, func() {
+			// The same inode, as an editor or an agent that saves over the file does.
+			_ = os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte(theirs), 0o644)
+		})
+		if _, err := Rename(sp.Folder, "x"); err != ErrChanged {
+			t.Fatalf("Rename = %v", err)
+		}
+		if got := markerText(t, sp); got != theirs {
+			t.Fatalf("the in-place update was overwritten: %q", got)
+		}
+	})
+}
+
+// A marker over the size limit cannot be told from a valid one: it stays as it is, with its
+// creation time, rather than being "repaired".
+func TestRenameLeavesAnOversizedMarkerAlone(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	big := `{"name":"Draft","createdAt":"2021-02-03T04:05:06Z"}` + strings.Repeat(" ", markerMaxBytes)
+	if err := os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Rename(sp.Folder, "x"); err != ErrMarkerTooBig {
+		t.Fatalf("Rename = %v", err)
+	}
+	if got := markerText(t, sp); got != big {
+		t.Fatalf("the marker was rewritten (%d bytes)", len(got))
+	}
+}
+
+func TestRenameHandlerMapsConflictAndFailure(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	call := func() *httptest.ResponseRecorder {
+		mux := http.NewServeMux()
+		mux.HandleFunc("PATCH /spaces/{folder}", HandleRename)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPatch, "/spaces/"+sp.Folder, strings.NewReader(`{"name":"x"}`)))
+		return rec
+	}
+	prev := beforePublish
+	t.Cleanup(func() { beforePublish = prev })
+	beforePublish = func() {
+		_ = os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte(`{"name":"theirs-with-more-bytes"}`), 0o644)
+	}
+	if rec := call(); rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "space_changed") {
+		t.Fatalf("changed: %d %s", rec.Code, rec.Body)
+	}
+	beforePublish = prev
+	big := strings.Repeat(" ", markerMaxBytes+1)
+	if err := os.WriteFile(filepath.Join(sp.Dir, MarkerFile), []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if rec := call(); rec.Code != http.StatusInternalServerError || !strings.Contains(rec.Body.String(), "rename_failed") {
+		t.Fatalf("too big: %d %s", rec.Code, rec.Body)
+	}
+}

@@ -3,7 +3,7 @@
 // Other sessions. Which sessions belong here is the Agent's answer (Session.space, decided by
 // the directory's root), never the folder name, so a space that shares a repository's name
 // stays out of the repository tree.
-import { memo, useId, useState } from "react";
+import { memo, useEffect, useId, useState } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -38,6 +38,11 @@ export const SpacesSection = memo(function SpacesSection() {
   // switch closes it.
   const [renaming, setRenaming] = useState<{ folder: string; owner: string } | null>(null);
   const owner = spacesOwner();
+  // The state of a dialog is dropped, not just hidden, when the workspace changes: coming back to
+  // the first workspace must not bring a form back that nobody pressed the pencil for.
+  useEffect(() => {
+    setRenaming((cur) => (cur && cur.owner !== owner ? null : cur));
+  }, [owner]);
   // A space session is repo-less, so a working set holds it by direct assignment only. The
   // search box matches a session's own text or the name its space is shown under.
   const wset = useActiveWorkingSet();
@@ -134,7 +139,8 @@ export const SpacesSection = memo(function SpacesSection() {
         <SpaceRenameModal
           space={{ folder: renaming.folder, name: spaces.find((x) => x.folder === renaming.folder)?.name ?? "" }}
           owner={renaming.owner}
-          onClose={() => setRenaming(null)}
+          // Only this dialog's own close: a late one must not take down a newer dialog.
+          onClose={() => setRenaming((cur) => (cur === renaming ? null : cur))}
         />
       )}
     </Section>

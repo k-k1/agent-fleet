@@ -394,5 +394,55 @@ describe("Spaces section", () => {
       expect(dialog()).toBeNull();
       expect(document.activeElement).toBe(host.querySelector(".space-group-rename"));
     });
+
+    it("does not bring the dialog back when the first workspace is on screen again", async () => {
+      await open();
+      expect(dialog()).not.toBeNull();
+      tenant = "other";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+      });
+      await flush();
+      expect(dialog()).toBeNull();
+      // Back in the first workspace, whose list is still on its way: nobody pressed the pencil.
+      spacesAnswer = () => new Promise(() => {});
+      tenant = "";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+      });
+      await flush();
+      expect(dialog()).toBeNull();
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
+    it("says nothing about a network failure of a request made for another workspace", async () => {
+      let fail: (e: Error) => void = () => {};
+      patchAnswer = () => new Promise((_, rej) => (fail = rej));
+      await open();
+      await type("Renamed");
+      await act(async () => {
+        input().form!.requestSubmit();
+      });
+      tenant = "other";
+      await act(async () => {
+        useSpacesStore.getState().clear();
+        fail(new Error("offline"));
+      });
+      await flush();
+      expect(document.body.textContent).not.toContain("network error");
+      expect(dialog()).toBeNull();
+    });
+
+    it("tells a network failure in this workspace, and shows the Agent's own text under a heading for other failures", async () => {
+      patchAnswer = () => Promise.reject(new Error("offline"));
+      await open();
+      await type("x");
+      await submit();
+      expect(document.body.textContent).toContain("network error");
+      expect(dialog()).not.toBeNull();
+      patchAnswer = () => ({ error: { code: "rename_failed", message: "permission denied" } });
+      await submit();
+      expect(document.body.textContent).toContain("Couldn't rename the space. permission denied");
+    });
   });
 });

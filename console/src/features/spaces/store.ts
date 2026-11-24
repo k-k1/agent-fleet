@@ -113,7 +113,14 @@ export type RenameResult = { error?: unknown; stale?: boolean } | null;
  *  way and a space another tab removed drops out. */
 export async function renameSpace(folder: string, name: string, owner: string): Promise<RenameResult> {
   if (spacesOwner() !== owner) return { stale: true };
-  const d = await apiJSON(`api/spaces/${encodeURIComponent(folder)}`, "PATCH", { name });
+  let d;
+  try {
+    d = await apiJSON(`api/spaces/${encodeURIComponent(folder)}`, "PATCH", { name });
+  } catch (e) {
+    // A network failure of a request made for another workspace is no news here either.
+    if (spacesOwner() !== owner) return { stale: true };
+    throw e;
+  }
   // The answer to a request made in a workspace that is no longer the one on screen says
   // nothing about this one: no toast, no list.
   if (spacesOwner() !== owner) return { stale: true };

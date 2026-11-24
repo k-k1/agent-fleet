@@ -220,6 +220,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "pj.space_rename_label": "Name",
   "pj.space_rename_hint": "Only the name shown here changes. The folder ~/spaces/{folder} and its files stay where they are, and so do the sessions in it. Leave it empty to show the folder name.",
   "pj.space_rename_failed": "Couldn't rename the space (network error)",
+  "pj.space_rename_error": "Couldn't rename the space. {detail}",
   "pj.space_rename_too_long": "Use at most {max} characters.",
   "pj.space_rename_bad_name": "That name can't be used: it is too long or has control characters.",
   "pj.space_rename_gone": "This space no longer exists.",

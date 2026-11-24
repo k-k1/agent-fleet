@@ -422,8 +422,9 @@
   outline: 2px solid var(--accent);
   outline-offset: 1px;
 }
-/* Touch: no hover, so keep the button visible and tappable. */
-@media (hover: none) {
+/* Touch: no hover, so keep the button visible and tappable. A touch screen beside a mouse (the
+   primary input is the mouse) counts too. */
+@media (hover: none), (any-pointer: coarse) {
   .space-group-rename {
     opacity: 1;
     padding: 3px 6px;
