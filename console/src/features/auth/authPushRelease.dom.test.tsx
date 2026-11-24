@@ -21,7 +21,29 @@ vi.mock("../../core/auth/authExpired.ts", () => ({
   relogin: () => order.push("relogin"),
 }));
 
+vi.mock("../../core/auth/providerRequired.ts", () => ({
+  subscribeProviderRequired: (f: (r: unknown) => void) => {
+    f({ tenant: "acme", provider: "okta" });
+    return () => {};
+  },
+  clearProviderRequired: () => {},
+  reloginForTenant: () => order.push("relogin-tenant"),
+}));
+// location.assign cannot be spied on in jsdom; its argument is built by rel() on the line that
+// navigates, so rel("oauth2/logout") is the last thing observable before the page goes.
+vi.mock("../../core/api/client.ts", async (orig) => ({
+  ...(await orig<typeof import("../../core/api/client.ts")>()),
+  rel: (p: string) => {
+    if (p === "oauth2/logout") order.push("navigate");
+    return p;
+  },
+  clearLocalState: () => {},
+}));
+
+import { t } from "../../lib/i18n/index.ts";
 import { AuthExpiredModal } from "./AuthExpiredModal.tsx";
+import { ProviderRequiredModal } from "./ProviderRequiredModal.tsx";
+import { NotProvisioned } from "./NotProvisioned.tsx";
 
 let root: Root | null = null;
 afterEach(() => {
@@ -56,6 +78,37 @@ describe("re-login after the session expired", () => {
     open();
     await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
     expect(order).toEqual(["release", "relogin"]);
+    gate = Promise.resolve();
+  });
+});
+
+const settle = () => act(async () => void (await new Promise((r) => setTimeout(r, 0))));
+const clickText = async (label: string) => {
+  const btn = [...document.querySelectorAll("button")].find((b) => b.textContent?.includes(label))!;
+  await act(async () => void btn.click());
+  await settle();
+};
+
+describe.each([
+  ["a tenant that needs another sign-in method", <ProviderRequiredModal />, "auth.provider_required_signin", "relogin-tenant"],
+  ["an account that is on no roster", <NotProvisioned />, "notprov.switch_account", "navigate"],
+])("leaving for %s", (_name, ui, labelKey, after) => {
+  it("releases the push subscription before heading away", async () => {
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    act(() => root!.render(ui));
+    await clickText(t(labelKey as never));
+    expect(order).toEqual(["release", after]);
+  });
+  it("does not head away until the release has finished", async () => {
+    let open!: () => void;
+    gate = new Promise<void>((r) => (open = r));
+    root = createRoot(document.body.appendChild(document.createElement("div")));
+    act(() => root!.render(ui));
+    await clickText(t(labelKey as never));
+    expect(order).toEqual(["release"]);
+    open();
+    await settle();
+    expect(order).toEqual(["release", after]);
     gate = Promise.resolve();
   });
 });

@@ -50,6 +50,10 @@ import (
 // serveStartTimeout bounds the wait for a spawned daemon to answer its probe.
 var serveStartTimeout = 20 * time.Second
 
+// serveBeforeView runs between the connection gate and the policy reading a spawn builds its pin
+// from. A seam for tests of a policy that moves in that gap; nil in production.
+var serveBeforeView func()
+
 const serveAddrEnv = "AF_OPENCODE_SERVE_ADDR"
 
 // sharedServeEnv is set in the environment of a daemon af started for shared Terminal sessions.
@@ -338,8 +342,13 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	}
 	// Past this point a new process starts, i.e. new memory is paid for. Do not pay
 	// while unconnected. (An adopt is memory already paid for, so it passed above.)
-	if !allowUnauthed && !Connected() {
-		return "", 0, ErrNotConnected
+	viaCustom := false
+	if !allowUnauthed {
+		ok, via := serveGate()
+		if !ok {
+			return "", 0, ErrNotConnected
+		}
+		viaCustom = via
 	}
 	host, port, err := splitServeAddr(addr)
 	if err != nil {
@@ -391,7 +400,19 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		"OPENCODE_SERVER_USERNAME="+serveUser, "OPENCODE_SERVER_PASSWORD="+password)
 	// Under a restriction the serve runs isolated (policy_isolation.go): no config file may
 	// override its provider pin, and it gets only the keys and providers the policy allows.
+	if serveBeforeView != nil {
+		serveBeforeView()
+	}
 	view := readView() // one reading: the file check, the pin and the generation agree on the connection
+	// The gate above judged the connection on its own reading. A workspace that got through on the
+	// approved custom endpoint alone is connected only on "own" and while the policy that pins it
+	// is held, so the view this spawn builds its pin from has to say the same: a restriction lifted
+	// or the route switched (to "off" above all) since would otherwise start the serve anyway. Nothing else is read again, so a start the
+	// ordinary conditions allowed does not gain a new way to fail. (A policy moving after the view
+	// is caught by the generation comparison below.)
+	if viaCustom && (!view.restricted || view.pref != UsageOwn || allowedCustom(view.p, view.engines, view.custom) == nil) {
+		return "", 0, ErrNotConnected
+	}
 	if err := policyConfigErrFrom(globalConfigFiles(), view); err != nil {
 		return "", 0, err
 	}

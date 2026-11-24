@@ -203,7 +203,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # When comparing versions, read the same index on both sides (docs/decisions/0068 decision 3):
 # the security and main suites point at different versions, so reading one side from each
 # invents a version gap that does not exist. The pin here is always the security suite's version.
-ARG CHROMIUM_VERSION=156.0.8078.79-1~deb13u1
+ARG CHROMIUM_VERSION=156.0.8078.108-1~deb13u1
 # BAKE_OPTIONAL_TOOLS=0 (the native lean rootfs) bakes neither chromium nor the CJK fonts and
 # leaves them to the on-demand download (install-chromium, pinned by CHROMIUM_DL_VERSION), but
 # the runtime libraries that download needs, plus fontconfig/DejaVu, are installed here
@@ -431,7 +431,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # Without a pin the unchanged RUN line hits the layer cache and a rebuild keeps the old
 # version; changing the ARG is what reliably busts the cache.
 ARG CLAUDE_CODE_VERSION=2.1.330
-ARG OPENCODE_VERSION=2.3.2
+ARG OPENCODE_VERSION=2.4.1
 ARG CODEX_VERSION=0.171.0
 ARG COPILOT_VERSION=1.0.114
 # opencode is the npm package @opencode/cli (it also installs an `opencode2` bin). Only opencode 2

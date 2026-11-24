@@ -52,7 +52,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 |---|---|---|---|
 | [Claude Code (`claude`)](https://github.com/anthropics/claude-code) | Anthropic のコーディングエージェント | `2.1.330` | [提供元の規約](https://www.anthropic.com/legal/commercial-terms) |
 | [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI のコーディングエージェント | `0.171.0` | [Apache-2.0](https://github.com/openai/codex/blob/rust-v0.171.0/LICENSE) |
-| [opencode](https://github.com/anomalyco/opencode) | 多くのモデル提供元で動く、オープンソースのコーディングエージェント | `2.3.2` | [MIT](https://github.com/anomalyco/opencode/blob/v2.3.2/LICENSE) |
+| [opencode](https://github.com/anomalyco/opencode) | 多くのモデル提供元で動く、オープンソースのコーディングエージェント | `2.4.1` | [MIT](https://github.com/anomalyco/opencode/blob/v2.4.1/LICENSE) |
 | [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub のコーディングエージェント | `1.0.114` | [提供元の規約](https://github.com/github/copilot-cli/blob/v1.0.114/LICENSE.md) |
 | [Antigravity CLI (`agy`)](https://antigravity.google/) | Google のコーディングエージェント | `1.5.15` | [提供元の規約](https://antigravity.google/terms) |
 | [Cursor CLI (`cursor-agent`)](https://cursor.com/) | Cursor のコーディングエージェント | `2026.10.22-27dcf5f` | [提供元の規約](https://cursor.com/terms-of-service) |
@@ -106,7 +106,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
-| [Chromium](https://www.chromium.org/) | エージェントがスクリーンショットやページの確認に使うヘッドレスブラウザ | `156.0.8078.79` | [BSD-3-Clause](https://github.com/chromium/chromium/blob/156.0.8078.79/LICENSE) |
+| [Chromium](https://www.chromium.org/) | エージェントがスクリーンショットやページの確認に使うヘッドレスブラウザ | `156.0.8078.108` | [BSD-3-Clause](https://github.com/chromium/chromium/blob/156.0.8078.108/LICENSE) |
 | [Noto Sans CJK](https://github.com/notofonts/noto-cjk) | 日本語・中国語・韓国語のページを表示するフォント | Debian 13 (trixie) のパッケージ | [OFL-1.1](https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE) |
 
 ## ライセンス

@@ -3,7 +3,9 @@ package opencode
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"log"
+	"net/http"
 	"os"
 	"os/exec"
 	"strings"
@@ -44,9 +46,17 @@ func Models() []string {
 	// same store offered 86（docs/log/54）. So an OAuth-only user would get a free-tier-only
 	// launch picker while their managed sessions could use the full catalog. The daemon
 	// is started with the same injected env, so its list also covers the API-key case.
-	if ids := modelsFromDaemon(); len(ids) > 0 {
-		modelsList = ids
+	read := modelsFromDaemon()
+	daemonUp := read.up
+	if len(read.ids) > 0 {
+		modelsList = read.ids
+		// A listing taken before the serve settled lacks the configured providers and the
+		// Console login's models (daemonSettled). It is still the best answer now, but it is
+		// not cached, so the next read asks again.
 		modelsAt = time.Now()
+		if !read.settled {
+			modelsAt = time.Time{}
+		}
 		modelsEnvKey = envKey
 		return modelsList
 	}
@@ -79,7 +89,14 @@ func Models() []string {
 	// documents ("price unknown ⇒ free"). Dropping current free models from the free menu is
 	// the visible half; the other half is Catalog's rescue then replacing the whole menu.
 	freeIDs, retiredIDs = nil, nil
+	// A daemon that is up but listed nothing is usually a serve still booting (from 2.4.0 its
+	// instance answers 200 with an empty list for about 3 s), and this CLI list is only its
+	// stand-in: it lacks every model a Console login brings. Caching it would hide those for a
+	// minute after the daemon is ready, so it is kept for stale-if-error but not as fresh.
 	modelsAt = time.Now()
+	if daemonUp {
+		modelsAt = time.Time{}
+	}
 	modelsEnvKey = envKey
 	return modelsList
 }
@@ -136,17 +153,30 @@ func isFreeModel(id string) bool {
 	return freeIDs[id]
 }
 
+// daemonRead is one catalog read from a running serve.
+type daemonRead struct {
+	ids []string
+	// up says whether a daemon was there at all: a CLI list read while one was up is only its
+	// stand-in and is not cached.
+	up bool
+	// settled says whether the listing was taken after the serve finished loading its plugins
+	// (daemonSettled); a listing from before may be partial.
+	settled bool
+}
+
 // modelsFromDaemon reads the catalog from a serve that is ALREADY running (starting one
-// for a picker refresh would be a surprise). Returns nil when there is no daemon, so the
-// caller falls back to the CLI. Called with modelsMu held (it refreshes freeIDs).
-var modelsFromDaemon = func() []string {
+// for a picker refresh would be a surprise). nil ids mean there is no daemon or it could not
+// answer, so the caller falls back to the CLI. Called with modelsMu held (it refreshes freeIDs).
+var modelsFromDaemon = func() daemonRead {
 	addr, up := oauthProbe()
 	if !up {
-		return nil
+		return daemonRead{}
 	}
+	// Asked before the listing, so a settled answer vouches for the listing read after it.
+	settled := daemonSettled(addr)
 	var env envelope[[]daemonModel]
 	if err := daemonJSON("GET", addr, "/api/model", nil, &env); err != nil {
-		return nil
+		return daemonRead{up: true}
 	}
 	ids := filterDaemonModels(env.Data)
 	// Refresh the zero-cost set from the same read, so the free-tier verdict and the list come
@@ -167,7 +197,42 @@ var modelsFromDaemon = func() []string {
 	}
 	// caller (Models) already holds modelsMu - do not lock twice
 	freeIDs, retiredIDs = free, retired
-	return ids
+	return daemonRead{ids: ids, up: true, settled: settled}
+}
+
+// daemonSettled reports whether the serve has finished loading its plugins, which is when its
+// model listing becomes whole. From 2.4.0 GET /api/model answers while the serve boots, and
+// its documentation says the snapshot "may precede initial plugin settlement": measured on
+// 2.4.1, it lists nothing, then opencode's own models alone for 0.3-1 s, then the configured
+// providers. GET /api/plugin answers 503 or an empty list over that whole window and lists
+// every plugin from the step the configured providers appear (measured over 10 boots, the
+// plugins read first: never a listed plugin with the configured provider missing). 2.3.x holds
+// both requests until the serve has settled.
+//
+// When in doubt this answers false, which costs one more HTTP read on the next refresh. A 404
+// is the exception: a serve without the endpoint gives no signal, and treating it as unsettled
+// would stop caching for good.
+func daemonSettled(addr string) bool {
+	req, err := http.NewRequest("GET", addr+"/api/plugin", nil)
+	if err != nil {
+		return false
+	}
+	res, err := oauthClient.Do(req)
+	if err != nil {
+		return false
+	}
+	defer res.Body.Close()
+	if res.StatusCode == http.StatusNotFound {
+		return true
+	}
+	if res.StatusCode != http.StatusOK {
+		return false
+	}
+	var env envelope[[]json.RawMessage]
+	if json.NewDecoder(res.Body).Decode(&env) != nil {
+		return false
+	}
+	return len(env.Data) > 0
 }
 
 // freeCost mirrors opencode's own rule: paid as soon as one input price is above zero.

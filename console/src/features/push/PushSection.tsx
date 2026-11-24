@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import {
@@ -11,7 +11,7 @@ import {
   type PushKind,
 } from "./pushApi.ts";
 import { usePushKey } from "./usePushKey.ts";
-import { currentSubscription, disablePush, enablePush, pushSupport, subscriptionMatchesKey, thisDeviceId } from "./webPush.ts";
+import { currentSubscription, deviceIdFor, disablePush, dropLocalSubscription, enablePush, pushSupport, subscriptionMatchesKey, thisDeviceId } from "./webPush.ts";
 
 const KIND_LABEL = {
   question: "push.kind_question",
@@ -23,6 +23,15 @@ const KIND_LABEL = {
 // PushSection — Settings › Notifications: push to a phone with the Console closed (#4750). Absent
 // when the deployment has no Web Push (the config probe answers no key). The kind choices and the
 // device list are the member's server-side state, so they follow the member to every device.
+const READ_TIMEOUT_MS = 10_000;
+const ID_TIMEOUT_MS = 2_000;
+/** Settings reads that never answer must not hold the switch for good. */
+function withTimeout<T>(p: Promise<T>, ms = READ_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const limit = new Promise<never>((_, rej) => (timer = setTimeout(() => rej(new Error("timeout")), ms)));
+  return Promise.race([p, limit]).finally(() => clearTimeout(timer));
+}
+
 export function PushSection() {
   const tr = useT();
   const toast = useToast();
@@ -32,6 +41,10 @@ export function PushSection() {
   // A subscription made with a key the CP no longer uses: shown as off with a hint, re-enabling replaces it.
   const [stale, setStale] = useState(false);
   const [devices, setDevices] = useState<PushDevice[]>([]);
+  // The CP row id of this browser's subscription ("" without one), and whether the first read of
+  // the list has finished: until then "on" cannot be told from "off", so the switch is held.
+  const [myId, setMyId] = useState("");
+  const [loaded, setLoaded] = useState(false);
   // null until the saved choices arrive: a write built from an empty guess would erase them.
   const [off, setOff] = useState<string[] | null>(null);
   const [prefsFailed, setPrefsFailed] = useState(false);
@@ -47,22 +60,41 @@ export function PushSection() {
     }
   }, []);
 
+  // Only the newest read is shown: one that outlived its limit must not overwrite a later one.
+  const readSeq = useRef(0);
+  // This device's row id and the endpoint it was shown with, as one snapshot: "remove" takes both
+  // before its first await, so a later read cannot give it a different pair.
+  const me = useRef({ id: "", endpoint: "" });
   const loadDevices = useCallback(async (k: string) => {
+    const mine = ++readSeq.current;
     try {
-      const [d, sub] = await Promise.all([listPushDevices(), currentSubscription()]);
-      setDevices(d);
+      // Only fetching is under the limit, so that nothing applies after it has passed.
+      const [d, sub] = await withTimeout(Promise.all([listPushDevices(), currentSubscription()]));
       const matches = !!sub && subscriptionMatchesKey(sub, k);
+      // This browser's row id is published together with the list: a "remove" pressed in between
+      // would otherwise not know which row is this device's own. A derivation that does not answer
+      // falls back to the stored id rather than holding the list back.
+      const id = sub ? await withTimeout(deviceIdFor(sub), ID_TIMEOUT_MS).catch(() => thisDeviceId()) : "";
+      if (mine !== readSeq.current) return;
+      me.current = { id, endpoint: sub?.endpoint ?? "" };
+      setDevices(d);
+      setMyId(id);
       setStale(!!sub && !matches);
-      // This browser counts as enabled only while its key is current and the CP also knows it.
-      const id = thisDeviceId();
+      // This browser counts as enabled only while its key is current and the CP lists its row.
+      // With no way to tell the row (no stored id and no SubtleCrypto) the subscription alone decides.
       setHere(matches && (!id || d.some((x) => x.id === id)));
     } catch {
-      /* transient; keep the last view */
+      /* transient (a failed or unanswered read leaves the switch off and usable); keep the last view */
+    } finally {
+      setLoaded(true);
     }
   }, []);
 
+  // The key an enable on this screen actually subscribed with: the CP may have rotated it since the
+  // screen loaded, and comparing the new subscription with the old key would read "stale".
+  const usedKey = useRef<string | null>(null);
   const reload = useCallback(() => {
-    if (key) void loadDevices(key);
+    if (key) void loadDevices(usedKey.current ?? key);
   }, [key, loadDevices]);
 
   useEffect(() => {
@@ -77,9 +109,15 @@ export function PushSection() {
 
   const toggleHere = async (on: boolean) => {
     setBusy(true);
+    let leaving = false;
     try {
       if (on) {
-        const res = await enablePush(key);
+        const res = await enablePush(usedKey.current ?? key, (k) => (usedKey.current = k));
+        // Signed out meanwhile: the page is leaving and nothing here is worth a toast or a read.
+        if (res === "cancelled") {
+          leaving = true;
+          return;
+        }
         if ("Notification" in window) setPerm(Notification.permission);
         if (res === "denied") toast(tr("push.denied"));
         else if (res === "unsupported") toast(tr("push.unsupported"));
@@ -91,7 +129,7 @@ export function PushSection() {
       fail(e);
     } finally {
       setBusy(false);
-      void reload();
+      if (!leaving) void reload();
     }
   };
 
@@ -110,11 +148,12 @@ export function PushSection() {
   };
 
   const remove = async (d: PushDevice) => {
+    const self = me.current;
     setBusy(true);
     try {
       await removePushDevice(d.id);
       // Removing this very device also ends the browser's own subscription.
-      if (d.id === thisDeviceId()) await disablePush().catch(() => {});
+      if (self.id && d.id === self.id) await dropLocalSubscription(self.endpoint).catch(() => {});
     } catch (e) {
       fail(e);
     } finally {
@@ -124,7 +163,6 @@ export function PushSection() {
   };
 
   const supported = pushSupport() === "ok";
-  const myId = thisDeviceId();
   return (
     <section className="ds-group" data-testid="push-section">
       <h4 className="ds-title">{tr("push.title")}</h4>
@@ -139,7 +177,7 @@ export function PushSection() {
               role="switch"
               className="noti-switch"
               checked={here}
-              disabled={busy || perm === "denied"}
+              disabled={busy || !loaded || perm === "denied"}
               onChange={(e) => void toggleHere(e.target.checked)}
             />{" "}
             {tr("push.this_device")}

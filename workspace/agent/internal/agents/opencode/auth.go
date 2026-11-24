@@ -136,6 +136,23 @@ func connected(s *secrets.Data, oa oauthState) bool {
 	return UsagePref() == UsageFree || len(s.Opencode) > 0 || oa.connected
 }
 
+// servable is connected plus the one case only the shared serve can honour: on "own", the stored
+// custom connection while the held policy approves it. The serve is started with that policy's pin,
+// which hands it the endpoint and enables nothing else; every other way of running opencode (the
+// assistant's headless runs, a Terminal launch) carries no such pin and keeps asking connected, so
+// a policy lifted after an availability answer was cached cannot send them anywhere new.
+func servable(s *secrets.Data, oa oauthState) bool {
+	return connected(s, oa) || (UsagePref() == UsageOwn && !Serve().Disabled() && hasApprovedCustom(s))
+}
+
+// hasApprovedCustom reports whether the stored custom connection is one the held policy approves:
+// the only case in which the shared serve is given it (the pin). Unrestricted, nothing pins the
+// provider, so a stored connection alone is not.
+func hasApprovedCustom(s *secrets.Data) bool {
+	p, restricted := policyRestriction()
+	return restricted && allowedCustom(p, engineProviderIDs(), s.CustomAPI) != nil
+}
+
 // hasDirectProviderKey reports whether any stored key belongs to a provider other than
 // opencode.ai itself (ANTHROPIC_API_KEY and the like — the user's own bill).
 func hasDirectProviderKey(s *secrets.Data) bool {
@@ -163,6 +180,24 @@ func Connected() bool {
 	return connected(s, oauthStatus())
 }
 
+// serveGate is the gate for starting the shared serve: Connected, or the approved custom endpoint
+// on "own" (servable). viaCustom is set when only the custom endpoint got it through: the spawn
+// then has to find the same approval in the policy view its pin is built from.
+func serveGate() (ok, viaCustom bool) {
+	s, err := secrets.Load()
+	if err != nil {
+		s = &secrets.Data{}
+	}
+	oa := oauthStatus()
+	if connected(s, oa) {
+		return true, false
+	}
+	if servable(s, oa) {
+		return true, true
+	}
+	return false, false
+}
+
 // Status reports which provider env vars are configured (names only,
 // never the keys) for the Console Connections panel (GET /connections), plus the
 // state of the second, independent path: the opencode Console account (OAuth device
@@ -177,9 +212,11 @@ func Status(s *secrets.Data) map[string]any {
 	oa := oauthStatus()
 	usage := UsagePref()
 	m := map[string]any{
-		// connected is what decides whether this kind can be launched, for both
-		// registry.ts and headlessAgentAvailable — the same formula Connected uses.
-		"connected":      connected(s, oa),
+		// connected is what decides whether this kind can be launched (registry.ts): the formula
+		// Connected uses, plus the approved custom endpoint on "own" (servable), which only a
+		// Managed session on the shared serve can use, so not while the serve is disabled.
+		// headlessAgentAvailable asks Connected.
+		"connected":      servable(s, oa),
 		"envs":           names,
 		"usage":          usage,
 		"supported":      Available(), // no binary (old image) means not even the free tier can launch
