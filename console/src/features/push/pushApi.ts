@@ -112,9 +112,9 @@ export async function getPushPrefs(): Promise<PushPrefs> {
   return { off: Array.isArray(j?.off) ? j.off : [], offOrigins: Array.isArray(j?.offOrigins) ? j.offOrigins : [] };
 }
 
-/** Both lists are always sent: the CP keeps the saved origins only when the field is absent. */
-export async function putPushPrefs(p: PushPrefs): Promise<void> {
-  const r = await rawJSON("api/push/prefs", "PUT", { off: p.off, offOrigins: p.offOrigins });
+/** `offOrigins` is left out when only kinds change: the CP then keeps the saved origins, so a stale screen cannot undo them. */
+export async function putPushPrefs(p: { off: string[]; offOrigins?: string[] }): Promise<void> {
+  const r = await rawJSON("api/push/prefs", "PUT", p.offOrigins ? { off: p.off, offOrigins: p.offOrigins } : { off: p.off });
   if (!r.ok) throw new Error(String(r.status));
 }
 
