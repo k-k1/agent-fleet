@@ -64,11 +64,15 @@ func TestScheduleShowInSessionsOnTokenFace(t *testing.T) {
 	if ar := approveCurrent(api, mv, d.ID); ar.Code != http.StatusOK {
 		t.Fatalf("approve %d %s", ar.Code, ar.Body.String())
 	}
+	// A fixed far-future next_run: a recomputed one would be now+3600s, whatever second it runs in.
+	if err := api.store.SetScheduleEnabled(ctx, d.ID, mv.MembershipID, true, "2099-01-01T00:00:00Z", store.NowTS()); err != nil {
+		t.Fatal(err)
+	}
 	before, _, _ := api.store.GetSchedule(ctx, d.ID)
 
 	rr := doTokenJSON(api.update, mv, "PATCH", `{"show_in_sessions":true}`, d.ID)
 	after, ok, err := api.store.GetSchedule(ctx, d.ID)
-	if rr.Code != http.StatusOK || !ok || err != nil || !after.ShowInSessions || after.ApprovalPending || after.NextRun != before.NextRun {
+	if rr.Code != http.StatusOK || !ok || err != nil || !after.ShowInSessions || after.ApprovalPending || after.NextRun != before.NextRun || after.NextRun != "2099-01-01T00:00:00Z" {
 		t.Fatalf("display-only patch: code=%d %s stored=%+v err=%v", rr.Code, rr.Body.String(), after, err)
 	}
 
