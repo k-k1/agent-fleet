@@ -328,7 +328,7 @@ diff --git a/AGENTS.md b/AGENTS.md
   default branch, with no Agent credential and no `GIT_*` variable in its environment; its output is
   shown when it fails. A repository without a hook git would run has nothing to pass. The proposal
   is ready when both pass and the hook left the change as it was (a hook that reformats the change
-  makes it not ready, and the patch shown is what the hook left)
+  makes it not ready; the patch shown is still the one given to the hook, not what it left)
 - The patch applies to the default branch's revision shown (`[origin/main @ …]`). Nothing is
   written to the memory store or to a working copy, and nothing is fetched. One proposal runs at a
   time; the hook is stopped after 3 minutes
@@ -336,4 +336,6 @@ diff --git a/AGENTS.md b/AGENTS.md
   of the text). After the merge, the memory is superseded by the document only while it still has
   that revision and that text, so a text that changed while the pull request waited is never hidden
 - A section heading must read back as itself: a trailing `#` closes an ATX heading, so `Release #`
-  is refused. A document that ends inside an unclosed code fence cannot take a new section
+  is refused. Only a top-level heading is a target (not one inside a list or a quote). The text has
+  to stand as its own blocks in the section: an unclosed code fence before it or in it, a heading in
+  it at the section's level or higher, or a heading without text in the document refuses the proposal

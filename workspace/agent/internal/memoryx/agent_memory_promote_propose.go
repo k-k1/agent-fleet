@@ -336,8 +336,10 @@ func agentMemProposeHooks(ctx context.Context, root, tmp string) (hook, shown st
 	if err != nil || hook == "" {
 		return "", "", false
 	}
+	// Concatenated, not joined: filepath.Join would fold "link/.." before the kernel follows the
+	// link, and git's path is the kernel's.
 	if !filepath.IsAbs(hook) {
-		hook = filepath.Join(root, hook)
+		hook = strings.TrimSuffix(root, "/") + "/" + hook
 	}
 	v, _, err := agentMemProposeRun(ctx, root, env, agentMemProposeOutputMax, "git", "config", "--get", "core.hooksPath")
 	var ee *exec.ExitError
@@ -480,7 +482,8 @@ func agentMemProposePatch(ctx context.Context, root, gitDir, commit, file string
 	}
 	pc.Hook = shown
 	home, _ := os.UserHomeDir()
-	paths := map[string]string{"clone": clone, "tmp": tmp, "hooks": filepath.Dir(hook), "root": root, "home": home}
+	hooksDir := strings.TrimSuffix(hook, "/pre-commit")
+	paths := map[string]string{"clone": clone, "tmp": tmp, "hooks": hooksDir, "root": root, "home": home}
 	st, err := os.Stat(hook)
 	switch {
 	case err != nil && (errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR)), err == nil && !st.Mode().IsRegular():
@@ -497,7 +500,7 @@ func agentMemProposePatch(ctx context.Context, root, gitDir, commit, file string
 	hctx, hcancel := context.WithTimeout(ctx, agentMemProposeHookTimeout)
 	defer hcancel()
 	hargs := append(append([]string{}, quiet...), "--git-dir="+filepath.Join(clone, ".git"), "--work-tree="+clone)
-	hargs[1] = "core.hooksPath=" + filepath.Dir(hook)
+	hargs[1] = "core.hooksPath=" + hooksDir
 	stdout, stderr, err := agentMemProposeRun(hctx, clone, agentMemProposeEnv(tmp, true), agentMemProposeOutputMax, "git",
 		append(hargs, "hook", "run", "pre-commit")...)
 	pc.Ran = true
@@ -542,15 +545,18 @@ func agentMemSHA256(s string) string {
 // agentMemRemoteCheck reads the working copy's origin now and says whether it is still the
 // repository the project is named by: a clone whose origin was switched to a fork would otherwise
 // be checked as one repository and recorded as another.
-func agentMemRemoteCheck(p *agentMemProject) error {
+func agentMemRemoteCheck(ctx context.Context, p *agentMemProject) error {
 	conflict := func(format string, a ...any) error {
 		return memoryErrf(http.StatusConflict, errCodeMemoryConflict, format, a...)
 	}
 	if p == nil || p.Remote == "" {
 		return conflict("the project has no origin URL to name its repository by")
 	}
-	raw, err := gitx.Run(p.Root, "remote", "get-url", "origin")
-	now := agentMemNormalizeRemote(raw)
+	rctx, cancel := context.WithTimeout(ctx, agentMemLintGitTimeout)
+	defer cancel()
+	cmd := gitx.CmdContext(rctx, p.Root, "remote", "get-url", "origin")
+	raw, err := cmd.Output()
+	now := agentMemNormalizeRemote(string(raw))
 	switch {
 	case err != nil || now == "":
 		return conflict("the working copy's origin could not be read")
@@ -625,7 +631,7 @@ func agentMemPropose(ctx context.Context, req agentMemProposeReq, now time.Time)
 	if !ok || out.Project == nil {
 		return out, conflict("the repository could not be read")
 	}
-	if err := agentMemRemoteCheck(out.Project); err != nil {
+	if err := agentMemRemoteCheck(ctx, out.Project); err != nil {
 		return out, err
 	}
 	out.Commit = lr.ref
@@ -657,9 +663,9 @@ func agentMemPropose(ctx context.Context, req agentMemProposeReq, now time.Time)
 		return out, conflict("%s moved to revision %d while it was being checked; ask again", req.Name, cur.Entry.Revision)
 	case len(cur.Entry.Reasons) > 0 || memorypromote.Disputed(reports, cur.Entry.Revision) > 0:
 		return out, conflict("%s was doubted while it was being checked; ask again", req.Name)
-	case judged[req.Name].Body != cur.Entry.Body || judged[req.Name].Revision != cur.Entry.Revision:
-		// The text proposed must be the text that was judged: an edit of the store outside AF
-		// changes a body without a new revision.
+	case judged[req.Name].Revision != cur.Entry.Revision || !agentMemPromoteSameText(judged[req.Name], cur.Entry):
+		// The text proposed, and the anchors that pick its document, must be the ones that were
+		// judged: an edit of the store outside AF changes them without a new revision.
 		return out, conflict("%s changed while it was being checked; ask again", req.Name)
 	}
 	e := cur.Entry
@@ -689,7 +695,7 @@ func agentMemPropose(ctx context.Context, req agentMemProposeReq, now time.Time)
 	}
 	var doc []byte
 	if exists {
-		if doc, err = lr.ReadFile(file); err != nil {
+		if doc, err = agentMemLintGit(gctx, lr.gitDir, nil, "cat-file", "blob", lr.ref+":"+file); err != nil {
 			return out, fmt.Errorf("reading %s: %w", file, err)
 		}
 	}

@@ -129,3 +129,12 @@ func TestAFMemoryPromoteProposalUsage(t *testing.T) {
 		t.Fatalf("unknown project: %d %s", code, errw)
 	}
 }
+
+// A hook that changed the staged change: the report says the patch is the one given to the hook.
+func TestAFMemoryPromoteProposalChangedByTheHook(t *testing.T) {
+	c, _, _ := proposalAgent(t, proposalAnswer(false, `{"ran":true,"hook":"core.hooksPath .githooks","passed":true,"changed":true}`, ""))
+	code, out, _ := run(c, "promote-proposal", "--project", "demo", "--name", "release-steps")
+	if code != 0 || !strings.Contains(out, "NOT ready") || !strings.Contains(out, "the patch below is the one given to it, not what it left") {
+		t.Fatalf("%d\n%s", code, out)
+	}
+}

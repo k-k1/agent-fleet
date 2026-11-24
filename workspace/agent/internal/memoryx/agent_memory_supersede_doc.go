@@ -15,6 +15,7 @@ package memoryx
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"regexp"
@@ -45,11 +46,11 @@ type agentMemSupersedeDocReq struct {
 
 // agentMemSupersedeDocCheck verifies the document target against the repository of the project
 // and answers it with the merge commit's full id. Read-only, outside the store lock.
-func agentMemSupersedeDocCheck(p *agentMemProject, path, heading, commit string) (agentMemDocTarget, error) {
+func agentMemSupersedeDocCheck(ctx context.Context, p *agentMemProject, path, heading, commit string) (agentMemDocTarget, error) {
 	conflict := func(format string, a ...any) error {
 		return memoryErrf(http.StatusConflict, errCodeMemoryConflict, format, a...)
 	}
-	if err := agentMemRemoteCheck(p); err != nil {
+	if err := agentMemRemoteCheck(ctx, p); err != nil {
 		return agentMemDocTarget{}, err
 	}
 	repo, ref, why := agentMemLintRepoFor(p)
@@ -60,7 +61,7 @@ func agentMemSupersedeDocCheck(p *agentMemProject, path, heading, commit string)
 	if !agentMemPromoteDefaultKnown(repo, ref) {
 		return agentMemDocTarget{}, conflict("origin/HEAD does not name the default branch, so %s is only a guess (`git remote set-head origin --auto` sets it)", ref)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), agentMemLintGitTimeout)
+	ctx, cancel := context.WithTimeout(ctx, agentMemLintGitTimeout)
 	defer cancel()
 	full, err := agentMemResolveCommit(ctx, lr.gitDir, commit)
 	if err != nil {
@@ -101,10 +102,10 @@ func agentMemSupersedeDocCheck(p *agentMemProject, path, heading, commit string)
 // namespace only: rev-parse would also take a branch or tag spelled like hex, and prefer it. ""
 // when no commit, or more than one, has that prefix.
 func agentMemResolveCommit(ctx context.Context, gitDir, prefix string) (string, error) {
+	// Nothing with the prefix is exit 0 and no output; an error is a failure to read.
 	out, err := agentMemLintGit(ctx, gitDir, nil, "rev-parse", "--disambiguate="+prefix)
 	if err != nil {
-		// rev-parse exits non-zero when nothing has the prefix.
-		return "", nil
+		return "", fmt.Errorf("reading the repository: %w", err)
 	}
 	ids := strings.Fields(string(out))
 	if len(ids) == 0 {
@@ -127,7 +128,7 @@ func agentMemResolveCommit(ctx context.Context, gitDir, prefix string) (string, 
 }
 
 // agentMemSupersedeDocument sets superseded_by to a document on one project memory.
-func agentMemSupersedeDocument(req agentMemSupersedeDocReq, now time.Time) (agentMemWriteResult, error) {
+func agentMemSupersedeDocument(ctx context.Context, req agentMemSupersedeDocReq, now time.Time) (agentMemWriteResult, error) {
 	bad := func(format string, a ...any) error {
 		return memoryErrf(http.StatusBadRequest, errCodeMemoryBadRequest, format, a...)
 	}
@@ -155,7 +156,7 @@ func agentMemSupersedeDocument(req agentMemSupersedeDocReq, now time.Time) (agen
 	if err != nil {
 		return agentMemWriteResult{}, err
 	}
-	target, err := agentMemSupersedeDocCheck(c.Project, req.Path, req.Heading, req.Commit)
+	target, err := agentMemSupersedeDocCheck(ctx, c.Project, req.Path, req.Heading, req.Commit)
 	if err != nil {
 		return agentMemWriteResult{}, err
 	}
@@ -218,7 +219,7 @@ func HandleAgentMemorySupersedeDocument(w http.ResponseWriter, r *http.Request) 
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	res, err := agentMemSupersedeDocument(req, time.Now())
+	res, err := agentMemSupersedeDocument(r.Context(), req, time.Now())
 	if err != nil {
 		agentMemWriteErr(w, err)
 		return

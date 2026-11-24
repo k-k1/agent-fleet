@@ -71,6 +71,35 @@ func TestInsertAtTheEndOfTheSectionOrANewOne(t *testing.T) {
 	if _, _, err := Insert([]byte("## A\n\nx\n\n## B\n"), "A", "- one\n- two"); err != nil {
 		t.Fatalf("list text: %v", err)
 	}
+	// The same paragraph already further down does not confuse the placement.
+	out, ok, err = Insert([]byte("## Build\n\nx\n\n## Notes\n\nSame.\n"), "Build", "Same.")
+	if err != nil || !ok || string(out) != "## Build\n\nx\n\nSame.\n\n## Notes\n\nSame.\n" {
+		t.Fatalf("repeated paragraph: %q %v", out, err)
+	}
+	// A deeper heading in the text stays in the section; one of the section's level would end it.
+	if _, _, err := Insert([]byte("## Build\n\nx\n\n## Other\n"), "Build", "### Checks\n\nrun them"); err != nil {
+		t.Fatalf("subheading: %v", err)
+	}
+	if _, _, err := Insert([]byte("## Build\n\nx\n\n## Other\n"), "Build", "## Checks\n\nrun them"); !errors.Is(err, ErrNotPlaced) {
+		t.Fatalf("same-level heading in the text: %v", err)
+	}
+	if _, _, err := Insert(nil, "New", "## Checks"); !errors.Is(err, ErrNotPlaced) {
+		t.Fatalf("level-2 heading under a new section: %v", err)
+	}
+	// Blocks the parse gives no position still count: a thematic break, an empty fence.
+	for _, body := range []string{"***\n\nafter the rule", "```\n```", "text\n\n***"} {
+		if _, _, err := Insert([]byte("## A\n\nx\n\n## B\n"), "A", body); err != nil {
+			t.Errorf("%q: %v", body, err)
+		}
+	}
+	// A heading without text cannot be placed by line: refused rather than guessed.
+	if _, _, err := Insert([]byte("## A\n\nx\n\n##\n\ny\n"), "A", "t"); !errors.Is(err, ErrNotPlaced) {
+		t.Fatalf("empty heading: %v", err)
+	}
+	// A heading only inside a block quote is not a target.
+	if _, found := FindHeading([]byte("> ## Quote\n"), "Quote"); found {
+		t.Fatal("a quoted heading is a target")
+	}
 	// A new or empty document gets just the section.
 	if out, ok, _ = Insert(nil, "Release", "t"); ok || string(out) != "## Release\n\nt\n" {
 		t.Fatalf("new file: %q", out)

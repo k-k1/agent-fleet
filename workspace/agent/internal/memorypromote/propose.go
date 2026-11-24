@@ -7,6 +7,7 @@ package memorypromote
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode"
@@ -70,49 +71,52 @@ func (l lineIndex) line(off int) int {
 	return lo
 }
 
-// block is one top-level block of a document: its kind and the line it starts on.
+// block is one top-level block of a document: what it is (its kind, and for a heading its level
+// and text) and, for a heading, the line it starts on (-1 for a heading without text, which the
+// parse gives no position).
 type block struct {
+	key     string
 	heading *Heading
-	start   int
 }
 
-// topBlocks parses doc and lists its top-level blocks that have a position, in order. A heading
-// inside a list or a block quote is not a top-level block, so it is never a target: text inserted
-// "after" it by line would land outside the container.
+// topBlocks parses doc and lists its top-level blocks in order. A heading inside a list or a block
+// quote is not a top-level block, so it is never a target: text inserted after it by line would
+// land outside the container.
 func topBlocks(doc []byte) []block {
 	root := goldmark.New().Parser().Parse(text.NewReader(doc))
 	idx := newLineIndex(doc)
 	var out []block
 	for n := root.FirstChild(); n != nil; n = n.NextSibling() {
-		first := n
-		for first != nil && first.Type() != ast.TypeBlock || first != nil && first.Lines().Len() == 0 && first.FirstChild() != nil {
-			// A container (list, block quote) starts where its first leaf block does.
-			first = first.FirstChild()
-		}
-		if first == nil || first.Lines().Len() == 0 {
-			continue
-		}
-		start := idx.line(first.Lines().At(0).Start)
-		if n.Kind() == ast.KindFencedCodeBlock {
-			start-- // the opening fence is the line before the first content line
-		}
-		bl := block{start: start}
+		bl := block{key: n.Kind().String()}
 		if h, ok := n.(*ast.Heading); ok {
 			var b strings.Builder
 			for i := 0; i < h.Lines().Len(); i++ {
 				seg := h.Lines().At(i)
 				b.Write(seg.Value(doc))
 			}
-			bl.heading = &Heading{Level: h.Level, Text: strings.TrimSpace(b.String()), Line: start}
+			line := -1
+			if h.Lines().Len() > 0 {
+				line = idx.line(h.Lines().At(0).Start)
+			}
+			bl.heading = &Heading{Level: h.Level, Text: strings.TrimSpace(b.String()), Line: line}
+			bl.key = fmt.Sprintf("heading %d %q", h.Level, bl.heading.Text)
 		}
 		out = append(out, bl)
 	}
 	return out
 }
 
+func blockKeys(doc string) []string {
+	var keys []string
+	for _, b := range topBlocks([]byte(doc)) {
+		keys = append(keys, b.key)
+	}
+	return keys
+}
+
 // Headings lists the top-level headings of doc as CommonMark reads them: a line that only looks
 // like a heading inside a code block, an HTML block, a comment, a list or a block quote is not
-// one. An empty heading (a bare "##") has no position in the parse and is not listed.
+// one. A heading without text (a bare "##") is listed with Line -1.
 func Headings(doc []byte) []Heading {
 	var out []Heading
 	for _, b := range topBlocks(doc) {
@@ -126,6 +130,9 @@ func Headings(doc []byte) []Heading {
 // FindHeading returns the first heading whose text is section, compared after trimming.
 func FindHeading(doc []byte, section string) (Heading, bool) {
 	section = strings.TrimSpace(section)
+	if section == "" {
+		return Heading{}, false
+	}
 	for _, h := range Headings(doc) {
 		if h.Text == section {
 			return h, true
@@ -147,14 +154,19 @@ func SectionOK(section string) bool {
 }
 
 // ErrNotPlaced is returned by Insert when the text would not stand as its own blocks in the
-// section: an unclosed code fence before it would swallow it, or one in it would swallow the
-// headings after it.
-var ErrNotPlaced = errors.New("the section would not be a heading of the document")
+// section: an unclosed code fence before it would swallow it, one in it would swallow what
+// follows, a heading in it would end the section, or the document has a heading without text
+// whose place cannot be told.
+var ErrNotPlaced = errors.New("the text would not stand as its own blocks in the section")
 
 // Insert returns doc with text added to the section named section: at the end of that section
 // when the heading exists (before the next heading of the same or a higher level), otherwise
 // under a new level-2 heading at the end of the document. Only blank lines around text are
 // removed; its indentation is kept. A document whose every line ends in CRLF gets CRLF lines.
+//
+// The result is checked on its parse, not on lines: its top-level blocks must be exactly those of
+// the part before the insertion, then those of the text, then those of the part after, so nothing
+// merges across the seams; and a heading in the text must be deeper than the section's.
 func Insert(doc []byte, section, body string) (out []byte, existed bool, err error) {
 	section = strings.TrimSpace(section)
 	crlf := bytes.Contains(doc, []byte("\r\n")) && bytes.Count(doc, []byte("\r\n")) == bytes.Count(doc, []byte("\n"))
@@ -162,19 +174,31 @@ func Insert(doc []byte, section, body string) (out []byte, existed bool, err err
 	if crlf {
 		src = bytes.ReplaceAll(doc, []byte("\r\n"), []byte("\n"))
 	}
-	body = TrimBlankLines(strings.ReplaceAll(body, "\r\n", "\n")) + "\n"
-	var res string
+	body = TrimBlankLines(strings.ReplaceAll(body, "\r\n", "\n"))
+	heads := Headings(src)
+	for _, h := range heads {
+		if h.Line < 0 {
+			return nil, false, ErrNotPlaced
+		}
+	}
+	var prefix, suffix string
+	level := 2
 	h, ok := FindHeading(src, section)
 	if !ok {
-		s := strings.TrimRight(string(src), "\n")
-		if s != "" {
-			s += "\n\n"
+		prefix = strings.TrimRight(string(src), "\n")
+		if prefix != "" {
+			prefix += "\n\n"
 		}
-		res = s + "## " + section + "\n\n" + body
+		prefix += "## " + section
+		// The new heading must stand as a heading: not inside an unclosed fence at the end.
+		if keys := blockKeys(prefix); len(keys) == 0 || keys[len(keys)-1] != fmt.Sprintf("heading 2 %q", section) {
+			return nil, false, ErrNotPlaced
+		}
 	} else {
+		level = h.Level
 		lines := strings.Split(string(src), "\n")
 		end := len(lines)
-		for _, n := range Headings(src) {
+		for _, n := range heads {
 			if n.Line > h.Line && n.Level <= h.Level {
 				end = n.Line
 				break
@@ -185,23 +209,40 @@ func Insert(doc []byte, section, body string) (out []byte, existed bool, err err
 		for last > h.Line+1 && strings.TrimSpace(lines[last-1]) == "" {
 			last--
 		}
-		var b strings.Builder
-		b.WriteString(strings.Join(lines[:last], "\n"))
-		b.WriteString("\n\n")
-		b.WriteString(body)
+		prefix = strings.Join(lines[:last], "\n")
 		if end < len(lines) {
-			b.WriteString("\n")
-			b.WriteString(strings.Join(lines[end:], "\n"))
+			suffix = strings.Join(lines[end:], "\n")
 		}
-		res = b.String()
+		// The cut itself must not change the document: it falls between top-level blocks.
+		if !sameKeys(blockKeys(string(src)), blockKeys(prefix), blockKeys(suffix)) {
+			return nil, ok, ErrNotPlaced
+		}
 	}
-	if !placed(src, []byte(res), section, ok, bodyLine(res, body)) {
+	res := prefix + "\n\n" + body + "\n"
+	if suffix != "" {
+		res += "\n" + suffix
+	}
+	if !sameKeys(blockKeys(res), blockKeys(prefix), blockKeys(body), blockKeys(suffix)) {
 		return nil, ok, ErrNotPlaced
+	}
+	for _, b := range topBlocks([]byte(body)) {
+		if b.heading != nil && b.heading.Level <= level {
+			return nil, ok, ErrNotPlaced
+		}
 	}
 	if crlf {
 		res = strings.ReplaceAll(res, "\n", "\r\n")
 	}
 	return []byte(res), ok, nil
+}
+
+// sameKeys says whether got is the parts' keys one after the other.
+func sameKeys(got []string, parts ...[]string) bool {
+	var want []string
+	for _, p := range parts {
+		want = append(want, p...)
+	}
+	return strings.Join(got, "\x00") == strings.Join(want, "\x00")
 }
 
 // TrimBlankLines removes the blank lines before and after s, and trailing whitespace at its end;
@@ -280,55 +321,3 @@ var memoryLink = regexp.MustCompile(`\[\[[^\[\]\n]+\]\]`)
 
 // HasMemoryLinks says whether text links a memory with [[name]].
 func HasMemoryLinks(text string) bool { return memoryLink.MatchString(text) }
-
-// bodyLine is the line the inserted body starts on in res: the body is followed by what came
-// after the section, so its last occurrence before that is the one inserted.
-func bodyLine(res, body string) int {
-	i := strings.LastIndex(res, "\n"+strings.TrimRight(body, "\n")+"\n")
-	if i < 0 {
-		return -1
-	}
-	return strings.Count(res[:i+1], "\n")
-}
-
-// placed checks an insertion on the parsed result: the headings are the old ones (plus the new
-// section) in the same order, the section is one of them, and a top-level block starts exactly on
-// the body's first line, after the section's heading and before the next heading of its level.
-func placed(old, res []byte, section string, existed bool, line int) bool {
-	if line < 0 {
-		return false
-	}
-	before, after := Headings(old), Headings(res)
-	if !existed {
-		before = append(before, Heading{Level: 2, Text: section})
-	}
-	if len(before) != len(after) {
-		return false
-	}
-	at := -1
-	for i := range before {
-		if before[i].Text != after[i].Text || before[i].Level != after[i].Level {
-			return false
-		}
-		if after[i].Text == section && at < 0 {
-			at = i
-		}
-	}
-	if at < 0 || after[at].Line >= line {
-		return false
-	}
-	for _, n := range after[at+1:] {
-		if n.Level <= after[at].Level {
-			if n.Line <= line {
-				return false
-			}
-			break
-		}
-	}
-	for _, b := range topBlocks(res) {
-		if b.start == line {
-			return true
-		}
-	}
-	return false
-}

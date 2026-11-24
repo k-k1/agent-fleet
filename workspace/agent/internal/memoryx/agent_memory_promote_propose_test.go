@@ -549,7 +549,7 @@ func TestAgentMemoryPromoteNeedsTheRepositoryIdentity(t *testing.T) {
 		Path: "AGENTS.md", Heading: "Build", Commit: strings.Repeat("a", 40)}); code != http.StatusNotFound && code != http.StatusBadRequest {
 		t.Fatalf("unknown project: %d %s", code, out)
 	}
-	if _, err := agentMemSupersedeDocCheck(&agentMemProject{ID: p.ID, Root: p.Root, VCS: p.VCS}, "AGENTS.md", "Build", "abcdef1"); err == nil ||
+	if _, err := agentMemSupersedeDocCheck(context.Background(), &agentMemProject{ID: p.ID, Root: p.Root, VCS: p.VCS}, "AGENTS.md", "Build", "abcdef1"); err == nil ||
 		!strings.Contains(err.Error(), "no origin URL") {
 		t.Fatalf("no remote: %v", err)
 	}
@@ -889,6 +889,27 @@ func TestAgentMemoryPromoteProposalResolvesTheHookAsGitDoes(t *testing.T) {
 		}
 	}
 
+	// "link/../hooks": the kernel follows the link before "..", so the hooks are those beside the
+	// link's target, not a "hooks" beside the link. Lexical cleaning would pick the wrong one.
+	real := filepath.Join(t.TempDir(), "real")
+	for _, d := range []string{filepath.Join(real, "sub"), filepath.Join(real, "hooks")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(real, "hooks", "pre-commit"), []byte("#!/bin/sh\necho through-the-link >> \"$PROMOTE_MARK\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(real, "sub"), filepath.Join(clone, "tool-link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := agentMemGit(clone, "config", "core.hooksPath", "tool-link/../hooks"); err != nil {
+		t.Fatal(err)
+	}
+	if pc := propose(); !pc.Ran || !pc.Passed || promoteMark(t) != "through-the-link\n" {
+		t.Fatalf("link/..: %+v", pc)
+	}
+
 	abs := filepath.Join(t.TempDir(), "abs-hooks")
 	if err := os.MkdirAll(abs, 0o755); err != nil {
 		t.Fatal(err)
@@ -929,6 +950,13 @@ func TestAgentMemoryPromoteProposalLimitsAreSeparate(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
+	// The checks after the selection take the request's context too.
+	if err := agentMemRemoteCheck(ctx, a.Project); err == nil {
+		t.Fatal("the origin check ran for an ended request")
+	}
+	if _, err := agentMemSupersedeDocCheck(ctx, a.Project, "AGENTS.md", "Build", strings.Repeat("a", 40)); err == nil {
+		t.Fatal("the supersede's checks ran for an ended request")
+	}
 	if _, err := agentMemPropose(ctx, agentMemProposeReq{Project: a.Project.ID, Name: "release-steps"}, time.Now()); !errors.Is(err, context.Canceled) {
 		t.Fatalf("an ended request: %v", err)
 	}

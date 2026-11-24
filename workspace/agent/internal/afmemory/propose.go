@@ -178,7 +178,7 @@ func printProposal(out io.Writer, p proposal, again []string) {
 		fmt.Fprintf(out, "   pre-commit:  not run: %s\n", pc.Note)
 	}
 	if pc.Changed {
-		fmt.Fprintln(out, "   pre-commit:  the hook changed the staged change; the patch below is what it left, not checked again")
+		fmt.Fprintln(out, "   pre-commit:  the hook changed the staged change (it reformats?); the patch below is the one given to it, not what it left")
 	}
 	if pc.Output != "" && !pc.Passed {
 		for _, ln := range strings.Split(strings.TrimRight(pc.Output, "\n"), "\n") {
