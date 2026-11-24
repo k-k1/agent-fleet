@@ -34,6 +34,13 @@ type fakeDirServe struct {
 	asked       []string // directories asked about
 }
 
+// askedDirs is a copy of the directories asked about, safe to read while the handler runs.
+func (f *fakeDirServe) askedDirs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.asked...)
+}
+
 func (f *fakeDirServe) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		dir := r.URL.Query().Get("location[directory]")
@@ -89,12 +96,12 @@ const (
 	opencodeAcme  = `[{"id":"opencode","settings":{"apiKey":"public","baseURL":"` + officialURL + `"}},{"id":"acme","settings":{"apiKey":"k"}}]`
 	opencodeKeyed = `[{"id":"opencode","settings":{"apiKey":"sk-real","baseURL":"` + officialURL + `"}}]`
 	opencodeMoved = `[{"id":"opencode","settings":{"apiKey":"public","baseURL":"https://proxy.example/v1"}}]`
-	freeDefault   = `{"id":"big-pickle","providerID":"opencode","status":"active","enabled":true,"settings":{"baseURL":"` + officialURL + `"},"cost":[{"input":0,"output":0,"cache":{"read":0,"write":0}}]}`
+	freeDefault   = `{"id":"big-pickle","providerID":"opencode","status":"active","enabled":true,"settings":{"apiKey":"public","baseURL":"` + officialURL + `"},"cost":[{"input":0,"output":0,"cache":{"read":0,"write":0}}]}`
 	activePlugins = `[{"id":"opencode.wellknown","state":{"status":"active"}}]`
 )
 
 func defaultWith(cost, extra string) string {
-	return `{"id":"m","providerID":"opencode","settings":{"baseURL":"` + officialURL + `"},` + extra + `"cost":` + cost + `}`
+	return `{"id":"m","providerID":"opencode","settings":{"apiKey":"public","baseURL":"` + officialURL + `"},` + extra + `"cost":` + cost + `}`
 }
 
 // serveWith points the Agent at a fake serve; the launch reads its address like any caller.
@@ -134,6 +141,9 @@ func realTemp(t *testing.T) string {
 
 func resolveDefault(m session.Meta) routes.Launch {
 	m.Name, m.Kind = "s", session.KindOpencode
+	if m.Driver == "" {
+		m.Driver = session.DriverManaged
+	}
 	return (agentImpl{}).ResolveDefaultLaunch(m)
 }
 
@@ -151,7 +161,16 @@ func TestDefaultModelLaunchFromServe(t *testing.T) {
 		{"several providers", &fakeDirServe{providers: opencodeAcme, def: freeDefault}, routes.Launch{}},
 		{"a key reached the opencode provider", &fakeDirServe{providers: opencodeKeyed, def: freeDefault}, routes.Launch{}},
 		{"the opencode provider's baseURL is overridden", &fakeDirServe{providers: opencodeMoved, def: freeDefault}, routes.Launch{}},
-		{"the default model's baseURL is overridden", &fakeDirServe{providers: onlyOpencode, def: `{"id":"m","providerID":"opencode","settings":{"baseURL":"https://proxy.example/v1"},"cost":[{"input":0,"output":0}]}`}, routes.Launch{}},
+		{"the default model's baseURL is overridden", &fakeDirServe{providers: onlyOpencode, def: `{"id":"m","providerID":"opencode","settings":{"apiKey":"public","baseURL":"https://proxy.example/v1"},"cost":[{"input":0,"output":0}]}`}, routes.Launch{}},
+		{"the default model carries its own key", &fakeDirServe{providers: onlyOpencode, def: `{"id":"m","providerID":"opencode","settings":{"apiKey":"sk-model","baseURL":"` + officialURL + `"},"cost":[{"input":0,"output":0}]}`}, routes.Launch{}},
+		{"the default model states no key", &fakeDirServe{providers: onlyOpencode, def: `{"id":"m","providerID":"opencode","settings":{"baseURL":"` + officialURL + `"},"cost":[{"input":0,"output":0}]}`}, routes.Launch{}},
+		{"a cache entry with no write price", &fakeDirServe{providers: onlyOpencode, def: defaultWith(`[{"input":0,"output":0,"cache":{"read":0}}]`, "")}, routes.Launch{}},
+		{"a cache entry with no read price", &fakeDirServe{providers: onlyOpencode, def: defaultWith(`[{"input":0,"output":0,"cache":{"write":0}}]`, "")}, routes.Launch{}},
+		{"an empty cache entry", &fakeDirServe{providers: onlyOpencode, def: defaultWith(`[{"input":0,"output":0,"cache":{}}]`, "")}, routes.Launch{}},
+		{"a paid cache write", &fakeDirServe{providers: onlyOpencode, def: defaultWith(`[{"input":0,"output":0,"cache":{"read":0,"write":2}}]`, "")}, routes.Launch{}},
+		{"a version that is not a number", &fakeDirServe{providers: onlyOpencode, def: freeDefault, infoBody: `{"version":"unknown","pid":7}`}, routes.Launch{}},
+		{"a version with a padded major", &fakeDirServe{providers: onlyOpencode, def: freeDefault, infoBody: `{"version":"02.4.0","pid":7}`}, routes.Launch{}},
+		{"no pid", &fakeDirServe{providers: onlyOpencode, def: freeDefault, infoBody: `{"version":"2.4.0"}`}, routes.Launch{}},
 		{"no default model", &fakeDirServe{providers: onlyOpencode, def: `null`}, routes.Launch{}},
 		{"a paid default", &fakeDirServe{providers: onlyOpencode, def: defaultWith(`[{"input":5,"output":25}]`, "")}, routes.Launch{}},
 		{"a default paid for output only", &fakeDirServe{providers: onlyOpencode, def: defaultWith(`[{"input":0,"output":25}]`, "")}, routes.Launch{}},
@@ -269,15 +288,15 @@ func TestDefaultModelLaunchAsksAboutTheRunningDirectory(t *testing.T) {
 			serveWith(t, f)
 			got := resolveDefault(tc.m)
 			if tc.want == "" {
-				if got != (routes.Launch{}) || len(f.asked) != 0 {
-					t.Errorf("resolved %+v after asking %v, want nothing asked", got, f.asked)
+				if got != (routes.Launch{}) || len(f.askedDirs()) != 0 {
+					t.Errorf("resolved %+v after asking %v, want nothing asked", got, f.askedDirs())
 				}
 				return
 			}
 			if got != freeLaunch {
 				t.Errorf("resolved %+v, want %+v", got, freeLaunch)
 			}
-			for _, a := range f.asked {
+			for _, a := range f.askedDirs() {
 				if a != tc.want {
 					t.Errorf("asked about %q, want %q", a, tc.want)
 				}
@@ -351,8 +370,8 @@ func TestDefaultModelLaunchIsNotWhatAPolicyJudges(t *testing.T) {
 	if got := ModelLaunch(""); got != (routes.Launch{}) {
 		t.Errorf("the chat resolved: %+v", got)
 	}
-	if len(f.asked) != 0 {
-		t.Errorf("the serve was asked: %v", f.asked)
+	if len(f.askedDirs()) != 0 {
+		t.Errorf("the serve was asked: %v", f.askedDirs())
 	}
 }
 
@@ -365,5 +384,37 @@ func TestKeylessDefaultModelDirect(t *testing.T) {
 	got, err := keylessDefaultModel(ctx, srv.URL, realTemp(t))
 	if err != nil || got != "opencode/big-pickle" {
 		t.Fatalf("keylessDefaultModel = %q, %v", got, err)
+	}
+}
+
+// Only a session the shared serve runs is recorded: a Terminal runs its own opencode, in a pane
+// whose environment the serve's provider list says nothing about, and the serve is never asked.
+func TestDefaultModelLaunchTerminalIsNotRecorded(t *testing.T) {
+	freeView(t)
+	f := &fakeDirServe{providers: onlyOpencode, def: freeDefault}
+	serveWith(t, f)
+	dir := realTemp(t)
+	if got := resolveDefault(session.Meta{Dir: dir, Driver: session.DriverTUI}); got != (routes.Launch{}) || len(f.askedDirs()) != 0 {
+		t.Errorf("a Terminal session resolved %+v after asking %v", got, f.askedDirs())
+	}
+	if got := resolveDefault(session.Meta{Dir: dir, Driver: session.DriverManaged}); got != freeLaunch {
+		t.Errorf("the same directory on the managed control: %+v, want %+v", got, freeLaunch)
+	}
+}
+
+// The budget runs from the moment the caller began: when the file system before the first request
+// has already spent it, no request is sent.
+func TestDefaultModelLaunchSpentBudgetSendsNothing(t *testing.T) {
+	f := &fakeDirServe{providers: onlyOpencode, def: freeDefault}
+	serveWith(t, f)
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1) }))
+	defer srv.Close()
+	t.Setenv(serveAddrEnv, srv.URL)
+	if got := launchDefaultModelOf(realTemp(t), time.Now().Add(-time.Second)); got != "" {
+		t.Errorf("a spent budget resolved %q", got)
+	}
+	if requests.Load() != 0 {
+		t.Errorf("%d requests after the budget was spent", requests.Load())
 	}
 }

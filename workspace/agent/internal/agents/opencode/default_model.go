@@ -42,6 +42,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -65,13 +66,15 @@ const keylessAPIKey = "public"
 var errNotFreeOnly = errors.New("the directory is not proven to offer opencode.ai's free models alone")
 
 // launchDefaultModelOf is the model opencode runs for a session in dir that names none, but only
-// when the running serve proves it; "" otherwise. A seam for tests.
-var launchDefaultModelOf = func(dir string) string {
+// when the running serve proves it; "" otherwise. The budget runs from start, the moment the
+// caller began, so a slow file system before the first request spends the budget instead of
+// starting a fresh one after the caller has stopped waiting. A seam for tests.
+var launchDefaultModelOf = func(dir string, start time.Time) string {
 	real, ok := realDir(dir)
 	if !ok {
 		return ""
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), defaultModelBudget)
+	ctx, cancel := context.WithDeadline(context.Background(), start.Add(defaultModelBudget))
 	defer cancel()
 	// Never starts a daemon for a launch record: a daemon that is not there is an error.
 	model, err := keylessDefaultModel(ctx, serveAddr(), real)
@@ -113,6 +116,7 @@ type defaultModelEntry struct {
 	Status     string `json:"status"`
 	Enabled    *bool  `json:"enabled"`
 	Settings   struct {
+		APIKey  string `json:"apiKey"`
 		BaseURL string `json:"baseURL"`
 	} `json:"settings"`
 	Cost []struct {
@@ -126,7 +130,7 @@ type defaultModelEntry struct {
 }
 
 // freeOfCharge is true only when the model lists at least one price tier and every tier states a
-// zero input and output price (and a zero cache price where it states one).
+// zero input and output price, and a zero cache read and write price where it has a cache entry.
 func (m *defaultModelEntry) freeOfCharge() bool {
 	if len(m.Cost) == 0 {
 		return false
@@ -135,7 +139,7 @@ func (m *defaultModelEntry) freeOfCharge() bool {
 		if t.Input == nil || t.Output == nil || *t.Input != 0 || *t.Output != 0 {
 			return false
 		}
-		if t.Cache != nil && (t.Cache.Read != nil && *t.Cache.Read != 0 || t.Cache.Write != nil && *t.Cache.Write != 0) {
+		if t.Cache != nil && (t.Cache.Read == nil || t.Cache.Write == nil || *t.Cache.Read != 0 || *t.Cache.Write != 0) {
 			return false
 		}
 	}
@@ -191,7 +195,8 @@ func keylessDefaultModel(ctx context.Context, addr, dir string) (string, error) 
 	}
 	m := def.Data
 	if m == nil || m.ID == "" || m.ProviderID != "opencode" || m.Status == "deprecated" ||
-		(m.Enabled != nil && !*m.Enabled) || !opencodeAIBaseURL(m.Settings.BaseURL) || !m.freeOfCharge() {
+		(m.Enabled != nil && !*m.Enabled) || m.Settings.APIKey != keylessAPIKey || !opencodeAIBaseURL(m.Settings.BaseURL) ||
+		!m.freeOfCharge() {
 		return "", fmt.Errorf("%w: its default model is not a free opencode model", errNotFreeOnly)
 	}
 	return m.ProviderID + "/" + m.ID, nil
@@ -216,10 +221,17 @@ func serveGeneration(ctx context.Context, addr string) (int, error) {
 	if res.StatusCode >= 300 || json.NewDecoder(res.Body).Decode(&info) != nil || info.PID <= 0 {
 		return 0, fmt.Errorf("%s is not a running opencode serve", addr)
 	}
-	if major, _, _ := strings.Cut(info.Version, "."); major == "" || major == "0" || major == "1" {
-		return 0, fmt.Errorf("opencode serve %s is not a v2 daemon", info.Version)
+	if !v2Version(info.Version) {
+		return 0, fmt.Errorf("opencode serve %q is not a v2 daemon", info.Version)
 	}
 	return info.PID, nil
+}
+
+// v2Version is healthyV2's rule: a numeric major of 2 or later.
+func v2Version(v string) bool {
+	major, _, _ := strings.Cut(v, ".")
+	n, err := strconv.Atoi(major)
+	return err == nil && n >= 2 && major == strconv.Itoa(n)
 }
 
 // waitDirectorySettled returns once dir's instance has loaded its plugins, all of them. Until then
@@ -280,16 +292,24 @@ func getLocated[T any](ctx context.Context, addr, path, dir string, out *located
 // models, else nothing. The directory is the one the session runs in (Meta.CWD), resolved the way
 // the OS opens it. The model is resolved the way a named one is, so the account and the billing
 // choice still apply; anything but the free route is dropped, since the serve proved only that
-// the provider is keyless. af holding any stored key is also dropped: the launch's environment
+// the provider is keyless. A Terminal is also dropped (it does not run on the serve), and so is
+// af holding any stored key: the launch's environment
 // carries it, and the serve may have started before it was stored.
 func resolveDefaultModelLaunch(m session.Meta) routes.Launch {
+	start := time.Now()
+	// Only a session the shared serve runs. A Terminal runs its own opencode in a tmux pane whose
+	// environment (a key the pane inherited, the standalone setting, a fall back from a failed
+	// Ensure) the serve's provider list says nothing about.
+	if m.DriverKind() != session.DriverManaged {
+		return routes.Launch{}
+	}
 	keys, pref, acct, custom := credentialView()
 	for _, v := range keys {
 		if v != "" {
 			return routes.Launch{}
 		}
 	}
-	model := launchDefaultModelOf(m.CWD())
+	model := launchDefaultModelOf(m.CWD(), start)
 	if model == "" {
 		return routes.Launch{}
 	}
