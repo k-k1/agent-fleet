@@ -173,3 +173,27 @@ func TestECSEC2GenCurrentKeepsTheCallersDeadline(t *testing.T) {
 		t.Fatal("positive control: ifGenCurrent did not run once the lease was free")
 	}
 }
+
+// With the lease free, a cancelled caller still has its diagnosis recorded (the wait is
+// detached from cancellation), but a caller whose deadline has already passed does not.
+func TestECSEC2GenCurrentIgnoresCancelButNotAPassedDeadline(t *testing.T) {
+	ctx := context.Background()
+	h, a, _, _ := twoReplicas(t)
+	homeOnSlot(h)
+	gen, err := a.startGenNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cctx, cancel := context.WithCancel(ctx)
+	cancel()
+	ran := false
+	if !a.ifGenCurrent(cctx, gen, func() { ran = true }) || !ran {
+		t.Fatal("a cancelled caller with no deadline skipped the write")
+	}
+	dctx, dcancel := context.WithDeadline(ctx, time.Now().Add(-time.Second))
+	defer dcancel()
+	ran = false
+	if a.ifGenCurrent(dctx, gen, func() { ran = true }) || ran {
+		t.Fatal("a caller whose deadline had passed still had f run")
+	}
+}

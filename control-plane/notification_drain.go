@@ -33,12 +33,6 @@ type notificationDrainer struct {
 	// nextPrune is when the next prune may run: an hour after a success, a minute after a
 	// failure, so one lock wait at start-up does not skip the first prune for an hour.
 	nextPrune time.Time
-	// idleMu guards idleChecked: when each workspace the database has as not running was last
-	// found not running by the runtime. Such a workspace is asked again only after
-	// notificationIdleRecheck, so stopped workspaces do not cost a runtime call (on ecs-ec2 a
-	// DescribeVolumes) on every tick.
-	idleMu      sync.Mutex
-	idleChecked map[string]time.Time
 }
 
 func (d *notificationDrainer) drainTO() time.Duration {
@@ -81,11 +75,6 @@ const notificationPruneEvery = time.Hour
 
 const notificationPruneRetry = time.Minute
 
-// How long a workspace the database has as not running goes unasked after the runtime last
-// agreed. Every start path ends in SetWorkspaceState("running"), so the column is right but for
-// a failed write; this bounds how long such a workspace waits for its drain.
-const notificationIdleRecheck = 5 * time.Minute
-
 func (d *notificationDrainer) run(ctx context.Context) {
 	t := time.NewTicker(d.interval)
 	defer t.Stop()
@@ -117,51 +106,35 @@ func (d *notificationDrainer) sweep(ctx context.Context) {
 		pcancel()
 	}
 	// A member with no subscribed device has nobody to push to; leaving the outbox alone keeps
-	// the load off every other workspace. One read answers it for the whole sweep.
+	// the load off every other workspace. One read answers it for the whole sweep; when it
+	// fails the sweep is skipped like a failed tenant list, and the next tick asks again.
 	sctx, scancel := context.WithTimeout(ctx, d.queryTO())
 	subbed, err := d.store.ListPushSubscribedMemberships(sctx)
 	scancel()
-	if err != nil {
-		return
-	}
-	if len(subbed) == 0 {
-		d.forgetIdle(nil)
+	if err != nil || len(subbed) == 0 {
 		return
 	}
 	subscribed := make(map[string]bool, len(subbed))
 	for _, m := range subbed {
 		subscribed[m] = true
 	}
-	// listed is nil when some list could not be read: a missing list says nothing about the
-	// workspaces in it, so their idle marks stay.
-	listed := map[string]bool{}
 	sem := make(chan struct{}, notificationDrainParallel)
 	var wg sync.WaitGroup
-	defer func() {
-		wg.Wait()
-		if listed != nil {
-			d.forgetIdle(listed)
-		}
-	}()
 	for _, tn := range tenants {
 		wctx, wcancel := context.WithTimeout(ctx, d.queryTO())
 		wss, err := d.store.ListWorkspaces(wctx, tn.ID)
 		wcancel()
 		if err != nil {
-			listed = nil
 			continue
 		}
 		for _, ws := range wss {
-			if listed != nil {
-				listed[ws.ID] = true
-			}
-			if !subscribed[ws.MembershipID] || !d.dueForLiveCheck(ws, time.Now()) {
+			if !subscribed[ws.MembershipID] {
 				continue
 			}
 			select {
 			case sem <- struct{}{}:
 			case <-ctx.Done():
-				listed = nil
+				wg.Wait()
 				return
 			}
 			wg.Add(1)
@@ -176,65 +149,19 @@ func (d *notificationDrainer) sweep(ctx context.Context) {
 				rt := d.runtimeOf(ws)
 				dctx, cancel := context.WithTimeout(ctx, d.drainTO())
 				defer cancel()
-				d.noteLive(ws, d.drainWorkspace(dctx, rt, ws.MembershipID) == "stopped", time.Now())
+				d.drainWorkspace(dctx, rt, ws.MembershipID)
 			}(ws)
 		}
 	}
-}
-
-// dueForLiveCheck reports whether the sweep asks ws's runtime this tick. A workspace the
-// database has as running always is; any other is asked again only once
-// notificationIdleRecheck has passed since the runtime last said it was not running.
-func (d *notificationDrainer) dueForLiveCheck(ws store.Workspace, now time.Time) bool {
-	d.idleMu.Lock()
-	defer d.idleMu.Unlock()
-	if ws.State == "running" {
-		// A mark from before this start must not hold the workspace back after its next stop.
-		delete(d.idleChecked, ws.ID)
-		return true
-	}
-	at, ok := d.idleChecked[ws.ID]
-	return !ok || now.Sub(at) >= notificationIdleRecheck
-}
-
-// noteLive records what the runtime answered for a workspace the database has as not
-// running. Only a plain "stopped" holds it back. "starting" is a start in flight, and "none"
-// is also what a failed or timed-out lookup answers, so either is asked again next tick, as is
-// a workspace whose state write was lost and that answers "running".
-func (d *notificationDrainer) noteLive(ws store.Workspace, stopped bool, now time.Time) {
-	if ws.State == "running" {
-		return
-	}
-	d.idleMu.Lock()
-	defer d.idleMu.Unlock()
-	if !stopped {
-		delete(d.idleChecked, ws.ID)
-		return
-	}
-	if d.idleChecked == nil {
-		d.idleChecked = map[string]time.Time{}
-	}
-	d.idleChecked[ws.ID] = now
-}
-
-// forgetIdle drops the marks of workspaces no longer listed, so the map does not grow with
-// deleted ones. A nil listed drops every mark.
-func (d *notificationDrainer) forgetIdle(listed map[string]bool) {
-	d.idleMu.Lock()
-	defer d.idleMu.Unlock()
-	for id := range d.idleChecked {
-		if !listed[id] {
-			delete(d.idleChecked, id)
-		}
-	}
+	wg.Wait()
 }
 
 // drainWorkspace drains one workspace's outbox, only while it is running: asking a stopped
 // workspace would start nothing but a failed connection, and the outbox was already drained
-// before the stop. A workspace that is not running answers its runtime state word.
+// before the stop.
 func (d *notificationDrainer) drainWorkspace(ctx context.Context, rt runtime.Runtime, membershipID string) string {
-	if st := rt.State(ctx); st != "running" {
-		return st
+	if rt.State(ctx) != "running" {
+		return "stopped"
 	}
 	return drainAgentOutbox(ctx, d.store, rt, membershipID)
 }

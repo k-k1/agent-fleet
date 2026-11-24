@@ -896,38 +896,11 @@ func TestDrainAgentOutboxStoresANewEntryInAStalledFetch(t *testing.T) {
 	}
 }
 
-// countRT counts State calls; its state can change between sweeps.
-type countRT struct {
-	runtime.Runtime
-	mu       sync.Mutex
-	state    string
-	endpoint string
-	asks     int
-}
-
-func (c *countRT) State(context.Context) string {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.asks++
-	return c.state
-}
-func (c *countRT) Endpoint() string { return c.endpoint }
-func (c *countRT) Token() string    { return "tok" }
-func (c *countRT) set(state string) {
-	c.mu.Lock()
-	c.state = state
-	c.mu.Unlock()
-}
-func (c *countRT) count() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.asks
-}
-
 // subReadStore counts the subscription reads of a sweep.
 type subReadStore struct {
 	store.Store
 	perMember, batched atomic.Int32
+	failFirst          int32 // this many batched reads fail
 }
 
 func (s *subReadStore) ListPushSubscriptions(ctx context.Context, m string) ([]store.PushSubscription, error) {
@@ -936,7 +909,9 @@ func (s *subReadStore) ListPushSubscriptions(ctx context.Context, m string) ([]s
 }
 
 func (s *subReadStore) ListPushSubscribedMemberships(ctx context.Context) ([]string, error) {
-	s.batched.Add(1)
+	if s.batched.Add(1) <= s.failFirst {
+		return nil, context.DeadlineExceeded
+	}
 	return s.Store.ListPushSubscribedMemberships(ctx)
 }
 
@@ -964,75 +939,27 @@ func TestNotificationDrainerReadsSubscriptionsOncePerSweep(t *testing.T) {
 	}
 }
 
-// A workspace the database has as stopped is asked once, then not again until the recheck
-// interval has passed while the runtime keeps saying stopped. A "running" or "starting" answer
-// (a lost state write, a start in flight) keeps it asked every tick, and a running row always is.
-func TestNotificationDrainerRechecksStoppedRowsSparingly(t *testing.T) {
-	ctx := context.Background()
-	st := newDrainStore(t)
-	wss := seedSubscribed(t, st, 2)
-	if err := st.SetWorkspaceState(ctx, wss[0].ID, "stopped"); err != nil {
-		t.Fatal(err)
-	}
-	var gets atomic.Int32
+// A failed subscription read skips that sweep only: the next one drains as usual.
+func TestNotificationDrainerFailedSubscriptionReadSkipsOneSweep(t *testing.T) {
+	sql := newDrainStore(t)
+	seedSubscribed(t, sql, 2)
+	st := &subReadStore{Store: sql, failFirst: 1}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/notifications" {
-			gets.Add(1)
-		}
 		_, _ = w.Write([]byte(`{"notifications":[]}`))
 	}))
 	defer srv.Close()
-	idle := &countRT{state: "stopped", endpoint: srv.URL}
-	live := &countRT{state: "running", endpoint: srv.URL}
+	var asked atomic.Int32
 	d := &notificationDrainer{store: st, interval: time.Hour,
-		runtimeOf: func(ws store.Workspace) runtime.Runtime {
-			if ws.ID == wss[0].ID {
-				return idle
-			}
-			return live
+		runtimeOf: func(store.Workspace) runtime.Runtime {
+			asked.Add(1)
+			return drainFakeRT{state: "running", endpoint: srv.URL}
 		}}
-	for i := 0; i < 3; i++ {
-		d.sweep(ctx)
+	d.sweep(context.Background())
+	if asked.Load() != 0 {
+		t.Fatalf("%d workspaces drained after a failed subscription read, want 0", asked.Load())
 	}
-	if idle.count() != 1 || live.count() != 3 {
-		t.Fatalf("State asked %d times for the stopped row and %d for the running one; want 1 and 3", idle.count(), live.count())
-	}
-	// Past the recheck interval the stopped row is asked again.
-	d.idleMu.Lock()
-	d.idleChecked[wss[0].ID] = time.Now().Add(-notificationIdleRecheck)
-	d.idleMu.Unlock()
-	d.sweep(ctx)
-	if idle.count() != 2 {
-		t.Fatalf("State asked %d times for the stopped row after the recheck interval, want 2", idle.count())
-	}
-	// A stopped row whose runtime answers running (its state write was lost) is drained and
-	// asked every tick from then on; so is one that answers starting.
-	for _, state := range []string{"running", "starting"} {
-		d.idleMu.Lock()
-		d.idleChecked[wss[0].ID] = time.Now().Add(-notificationIdleRecheck)
-		d.idleMu.Unlock()
-		idle.set(state)
-		before, beforeGets := idle.count(), gets.Load()
-		d.sweep(ctx)
-		d.sweep(ctx)
-		if got := idle.count() - before; got != 2 {
-			t.Fatalf("runtime %s: State asked %d times over two sweeps, want 2", state, got)
-		}
-		if state == "running" && gets.Load()-beforeGets != 4 {
-			t.Fatalf("runtime running: %d outbox reads over two sweeps, want 4 (both workspaces, twice)", gets.Load()-beforeGets)
-		}
-	}
-	// A deleted workspace's mark is dropped by the next sweep.
-	idle.set("stopped")
-	d.sweep(ctx)
-	if err := st.DeleteWorkspace(ctx, wss[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	d.sweep(ctx)
-	d.idleMu.Lock()
-	n := len(d.idleChecked)
-	d.idleMu.Unlock()
-	if n != 0 {
-		t.Fatalf("%d idle marks left after the workspace was deleted", n)
+	d.sweep(context.Background())
+	if asked.Load() != 2 {
+		t.Fatalf("%d workspaces drained by the next sweep, want 2", asked.Load())
 	}
 }
