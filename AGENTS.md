@@ -149,7 +149,7 @@ it once, in the background, with `go test -p 2 -timeout 150m .` and poll the out
 The memo queue's answer / delivery / PR-snapshot tests (`go test -run 'TestMemoAnswer|TestMemoDelivery|TestMemoPRSnapshot'`,
 SQLite) run on virtual time: `eachDeliveryDialect` runs the SQLite side in a `testing/synctest` bubble and
 the fake Agent is an in-memory `http.RoundTripper` (`memo_inmem_agent_test.go`). Measured with
-`go test -json`: 85.5 s before, 27.6 s after (#5124 part 1). A test that waits on a `sync.Mutex` or a
+`go test -json`: 85.5 s before, 27-29 s after (#5124 part 1). A test that waits on a `sync.Mutex` or a
 database lock is not durably blocked, so the clock would never move: it uses `eachDeliveryDialectRealTime`.
 
 Postgres-backed tests skip themselves unless `AF_TEST_DATABASE_URL` is set; in a Workspace,

@@ -50,7 +50,20 @@ func init() {
 // those, because a bubble cannot end while one of them is still blocked.
 type inMemAgent struct {
 	h       http.Handler
+	mu      sync.Mutex // serialises accepting a call with closing the Agent
+	closed  bool
 	running sync.WaitGroup
+}
+
+// begin registers one handler call; false once the Agent is closed.
+func (a *inMemAgent) begin() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.closed {
+		return false
+	}
+	a.running.Add(1)
+	return true
 }
 
 // registerInMemAgent returns the base URL of a fresh in-memory Agent served by h and a function
@@ -60,6 +73,9 @@ func registerInMemAgent(h http.Handler) (string, func()) {
 	a := &inMemAgent{h: h}
 	inMemAgents.Store(host, a)
 	return "http://" + host, func() {
+		a.mu.Lock()
+		a.closed = true
+		a.mu.Unlock()
 		a.running.Wait()
 		inMemAgents.Delete(host)
 	}
@@ -74,6 +90,10 @@ func (t inMemTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
 	}
 	a := v.(*inMemAgent)
+	// A real Transport refuses a request whose context is already done before it sends anything.
+	if err := req.Context().Err(); err != nil {
+		return nil, err
+	}
 	// A real server reads the body on its own goroutine and hands the request a context that ends
 	// with the connection; mirror that so a handler that blocks does not outlive its caller.
 	var body []byte
@@ -90,7 +110,9 @@ func (t inMemTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	sreq.RemoteAddr = "127.0.0.1:1"
 	rec := &inMemWriter{header: http.Header{}}
 	done := make(chan struct{})
-	a.running.Add(1)
+	if !a.begin() {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+	}
 	go func() {
 		defer a.running.Done()
 		defer close(done)
@@ -100,6 +122,11 @@ func (t inMemTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	case <-done:
 	case <-req.Context().Done():
 		return nil, req.Context().Err()
+	}
+	// Both channels can be ready: a handler that gave up on the context wrote no answer, and the
+	// caller must see the cancellation, not a synthesised 200.
+	if err := req.Context().Err(); err != nil {
+		return nil, err
 	}
 	rec.mu.Lock()
 	defer rec.mu.Unlock()

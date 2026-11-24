@@ -1034,7 +1034,7 @@ func waitUntil(t *testing.T, cond func() bool) {
 // The answer pass's second resolution of a PR-failed member never queues on the workspace build
 // lock: with it held, the pass and the retry return in time.
 func TestMemoAnswerPRFailedRetryDoesNotQueueOnTheBuildLock(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+	eachDeliveryDialectRealTime(t, func(t *testing.T, e *deliveryEnv) {
 		now := time.Now()
 		agent, q, da, _ := e.noPRChain(now.Add(-time.Minute))
 		agent.setPRs(true, func(memoPRSnapshotRequest) (int, any) { return http.StatusOK, prAnswer() })
@@ -1065,6 +1065,11 @@ func TestMemoAnswerPRFailedRetryDoesNotQueueOnTheBuildLock(t *testing.T) {
 		select {
 		case <-done:
 		case <-time.After(10 * time.Second):
+			// Release the lock and let the pass end before failing, so a regression fails here
+			// instead of leaving the goroutine behind.
+			bl.Unlock()
+			<-done
+			bl.Lock()
 			t.Fatal("the pass queued behind the build lock")
 		}
 		if got := e.delivery(da.ID); got.AnswerClass != store.AnswerDone {
@@ -1190,7 +1195,7 @@ func TestMemoAnswerStartingMemberIsNotStamped(t *testing.T) {
 // The state look-up never queues behind a workspace build: with the build lock held it answers
 // unknown at once, and no caller is left waiting on the lock.
 func TestMemoRuntimeStateDoesNotQueueOnTheBuildLock(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+	eachDeliveryDialectRealTime(t, func(t *testing.T, e *deliveryEnv) {
 		e.noPRChain(time.Now().Add(-time.Minute))
 		e.queueAgentFor("c", "stopped")
 		id := e.members["c"]
@@ -1415,7 +1420,7 @@ func TestMemoAnswerWindowAfterALockWait(t *testing.T) {
 // that says the close is inside the window does not keep an answer the database's clock puts past
 // it (an UPDATE that waited on a lock past the edge), and an answer just inside it is kept.
 func TestMemoAnswerWindowByTheDatabaseClock(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+	eachDeliveryDialectRealTime(t, func(t *testing.T, e *deliveryEnv) {
 		_, _, da, _ := e.noPRChain(time.Now().Add(-time.Minute))
 		ctx := context.Background()
 		closeAt := func(at time.Time) {

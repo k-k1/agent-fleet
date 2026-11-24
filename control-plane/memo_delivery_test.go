@@ -1687,7 +1687,7 @@ func TestMemoDeliveryRefusalWithoutHeadersSettlesAtOnce(t *testing.T) {
 // The settle pass keeps its deadline in its writes: a membership lock another Control Plane
 // holds does not hold the tick, and the schedules behind it, past the budget.
 func TestMemoDeliverySettleKeepsItsDeadline(t *testing.T) {
-	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+	eachDeliveryDialectRealTime(t, func(t *testing.T, e *deliveryEnv) {
 		q := e.queueWith("app", "impl", nil)
 		e.pending("app", "impl", "one")
 		e.useQueueAgent("")
