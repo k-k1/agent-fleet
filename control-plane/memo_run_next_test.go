@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -204,6 +205,117 @@ func TestMemoRunNextStore(t *testing.T) {
 		}
 		if won || e.memoRow(other.ID).RunNext {
 			t.Fatal("another member set the mark")
+		}
+	})
+}
+
+// A marked message the Agent would refuse does not stop an older message that would be claimed
+// without the mark: it is refused at its own place in the oldest-first order, as without the mark.
+func TestMemoRunNextUnsendableDoesNotBlock(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"maxActive": 2})
+		good := e.pending("app", "impl", "good")
+		big := e.pending("app", "impl", strings.Repeat("x", memoDeliveryItemBodyMax+1))
+		e.setRunNext(big.ID, true)
+		if d := e.fired(q); !sameIDs(d.MessageIDs, good.ID) {
+			t.Fatalf("fired %v, want %s past the unsendable marked message", d.MessageIDs, good.ID)
+		}
+		// Alone, it is refused with the reason, as it is without the mark.
+		rec := e.fire(q)
+		if rec.Code != http.StatusConflict || deliveryErrCode(t, rec) != errCodeMemoQueueItemInvalid || !strings.Contains(rec.Body.String(), big.ID) {
+			t.Fatalf("fire of the unsendable message: %d %s", rec.Code, rec.Body.String())
+		}
+		if row := e.memoRow(big.ID); row.State != store.MemoStatePending || row.DeliveryID != "" || !row.RunNext {
+			t.Fatalf("the refused message %+v", row)
+		}
+		// The dispatcher takes the good message past it too.
+		_, q2 := e.autoQueue("app", "auto", map[string]any{"maxActive": 1}, 0)
+		good2 := e.pending("app", "auto", "good")
+		big2 := e.pending("app", "auto", strings.Repeat("y", memoDeliveryItemBodyMax+1))
+		e.setRunNext(big2.ID, true)
+		sends, _ := e.runner().dispatch(context.Background(), time.Now(), 4)
+		var got []string
+		for _, d := range sends {
+			if d.QueueID == q2 {
+				got = append(got, d.MessageIDs...)
+			}
+		}
+		if !sameIDs(got, good2.ID) {
+			t.Fatalf("dispatched %v, want %s", got, good2.ID)
+		}
+	})
+}
+
+// A marked message fixes the batch's recipe: the batch holds the marked message and the oldest
+// messages of its recipe, and an older message of another recipe waits.
+func TestMemoRunNextFixesTheBatchRecipe(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		q := e.queueWith("app", "impl", map[string]any{"batch": 5})
+		a := e.pending("app", "impl", "a, the category's recipe")
+		b1 := decode[memoDTO](t, e.recipeMemo("app", "impl", "b1", map[string]any{"agentKind": "codex"}))
+		b2 := decode[memoDTO](t, e.recipeMemo("app", "impl", "b2", map[string]any{"agentKind": "codex"}))
+		e.setRunNext(b2.ID, true)
+		if d := e.fired(q); !sameIDs(d.MessageIDs, b2.ID, b1.ID) {
+			t.Fatalf("batch %v, want %v", d.MessageIDs, []string{b2.ID, b1.ID})
+		}
+		if row := e.memoRow(a.ID); row.State != store.MemoStatePending || row.DeliveryID != "" {
+			t.Fatalf("a %+v", row)
+		}
+	})
+}
+
+// Only InsertMemo and SetMemoRunNext write the column: an edit writes back neither value it was
+// handed, a send in flight refuses the setter, and the workspace's faces cannot set it.
+func TestMemoRunNextWriteBoundary(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		e.queueWith("app", "impl", nil)
+		tx := func(f func(store.MemoTxOps) error) {
+			t.Helper()
+			if err := e.st.MemoTx(context.Background(), e.members["a"], f); err != nil {
+				t.Fatal(err)
+			}
+		}
+		marked := e.pending("app", "impl", "inserted marked")
+		row := e.memoRow(marked.ID)
+		row.ID, row.RunNext, row.CreatedAt = store.NewID(), true, store.NowTS()
+		tx(func(tx store.MemoTxOps) error { return tx.InsertMemo(row) })
+		if got := e.memoRow(row.ID); !got.RunNext {
+			t.Fatalf("InsertMemo dropped the mark: %+v", got)
+		}
+		// An edit handed the opposite value writes neither.
+		up := e.memoRow(row.ID)
+		up.RunNext, up.Body = false, "edited"
+		tx(func(tx store.MemoTxOps) error { return tx.WriteMemo(up) })
+		if got := e.memoRow(row.ID); !got.RunNext || got.Body != "edited" {
+			t.Fatalf("an edit cleared the mark: %+v", got)
+		}
+		plain := e.memoRow(marked.ID)
+		plain.RunNext = true
+		tx(func(tx store.MemoTxOps) error { return tx.WriteMemo(plain) })
+		if got := e.memoRow(marked.ID); got.RunNext {
+			t.Fatalf("an edit set the mark: %+v", got)
+		}
+		// A pending message in a send in flight is not waiting.
+		if _, err := e.st.DB().ExecContext(context.Background(), `UPDATE memo SET send_token='t', send_started_at=? WHERE id=?`, store.NowTS(), marked.ID); err != nil {
+			t.Fatal(err)
+		}
+		if e.setRunNext(marked.ID, true) || e.memoRow(marked.ID).RunNext {
+			t.Fatal("a message being sent took the mark")
+		}
+		// The workspace's faces have no field for it.
+		rec := e.memoTokenDo("a", "POST", "/internal/memos", map[string]any{"kind": "text", "repo": "app", "category": "impl", "body": "from a session", "runNext": true})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("token create: %d %s", rec.Code, rec.Body.String())
+		}
+		held := decode[memoDTO](t, rec)
+		if e.memoRow(held.ID).RunNext {
+			t.Fatal("a session's create set the mark")
+		}
+		if rec := e.memoTokenDo("a", "PATCH", "/internal/memos/"+held.ID, map[string]any{"body": "edited by a session", "runNext": true}); rec.Code != http.StatusOK {
+			t.Fatalf("token patch: %d %s", rec.Code, rec.Body.String())
+		}
+		if e.memoRow(held.ID).RunNext {
+			t.Fatal("a session's edit set the mark")
 		}
 	})
 }
