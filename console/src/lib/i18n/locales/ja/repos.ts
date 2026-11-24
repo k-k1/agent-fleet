@@ -232,6 +232,8 @@ export const repos = {
   "pj.space_delete_running": "次のセッションが実行中のため、まだ削除できません。先に停止してください：{names}",
   "pj.space_delete_locked": "次のセッションは削除ロックがかかっています。先にロックを外してください：{names}",
   "pj.space_delete_changed": "このダイアログを開いている間に、スペースのセッションが変わりました。",
+  "pj.space_delete_no_dir": "このスペースの場所を読み取れないため、中のセッションを漏れなく一覧できません。",
+  "pj.space_delete_reload": "読み直す",
   "pj.space_delete_review": "最新の一覧を表示",
   "pj.space_delete_do": "ごみ箱へ移す",
   "pj.space_deleted": "スペース「{name}」をごみ箱へ移しました。",

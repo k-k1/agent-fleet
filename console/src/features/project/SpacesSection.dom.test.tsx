@@ -548,6 +548,26 @@ describe("Spaces section", () => {
       expect(confirmBtn().disabled).toBe(false);
     });
 
+    it("offers no press while the space's location is unknown, in either order", async () => {
+      // The list names the space but not where it is: a subfolder session could be missed.
+      spacesAnswer = () => ({ root: LIST.root, spaces: [{ folder: "q3-abcdef", name: "Q3 report" }] });
+      await open([{ ...inSpace("a1", "q3-abcdef"), alive: false }]);
+      expect(confirmBtn().disabled).toBe(true);
+      expect(dialog()!.textContent).toContain("Couldn't read where this space is");
+      // Reading it again brings the location, and the press.
+      spacesAnswer = () => LIST;
+      const reload = [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === "Read it again")!;
+      await act(async () => reload.click());
+      await flush();
+      expect(confirmBtn().disabled).toBe(false);
+      // And the location lost after the dialog opened blocks it again rather than accepting a short list.
+      await act(async () => {
+        useSpacesStore.setState({ spaces: [{ folder: "q3-abcdef", name: "Q3 report", dir: "" }] });
+      });
+      expect(confirmBtn().disabled).toBe(true);
+      expect(apiJSON).not.toHaveBeenCalled();
+    });
+
     it("keeps the dialog and words the Agent's refusal in the space's own terms", async () => {
       deleteAnswer = () => ({ error: { code: "space_sessions_running", message: "1 session(s) are running in this space" } });
       await open([{ ...inSpace("a1", "q3-abcdef"), alive: false }]);

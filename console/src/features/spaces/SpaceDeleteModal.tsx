@@ -77,7 +77,11 @@ export function SpaceDeleteModal({
   const locked = mine.filter((s) => s.locked);
   const shells = reviewed.filter((s) => isTerminalSession(s)).length;
   const ai = reviewed.length - shells;
-  const blocked = alive.length > 0 || locked.length > 0 || changed;
+  // Without the space's location a session started in a subfolder cannot be told from one that is
+  // elsewhere, so the list read above may be short of what the Agent will settle: no press, and a
+  // way to ask again, until the list names it.
+  const noDir = !dir;
+  const blocked = alive.length > 0 || locked.length > 0 || changed || noDir;
   const [busy, setBusy] = useState(false);
 
   const listed = (list: typeof mine) =>
@@ -127,7 +131,15 @@ export function SpaceDeleteModal({
         {reviewed.length > 0 && (
           <p>{tr("pj.space_delete_sessions", { ai, shells })}</p>
         )}
-        {changed && (
+        {noDir && (
+          <p role="alert" className="ui-field-hint">
+            {tr("pj.space_delete_no_dir")}{" "}
+            <Button variant="ghost" small onClick={() => void useSpacesStore.getState().refresh()}>
+              {tr("pj.space_delete_reload")}
+            </Button>
+          </p>
+        )}
+        {changed && !noDir && (
           <p role="alert" className="ui-field-hint">
             {tr("pj.space_delete_changed")}{" "}
             <Button variant="ghost" small onClick={() => setReviewed(current)}>

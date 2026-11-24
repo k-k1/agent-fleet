@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -70,11 +71,21 @@ var newSpaceArchiveID = func(now time.Time, folder string) string {
 	if len(slug) > 17 {
 		slug = slug[:17]
 	}
-	var raw [4]byte
+	var raw [8]byte
 	if _, err := rand.Read(raw[:]); err != nil {
 		panic(err) // crypto/rand does not fail on Linux; an id must never repeat silently
 	}
 	return newCleanupID(now, slug+"-"+hex.EncodeToString(raw[:]))
+}
+
+// entryIDFree reports whether no file of a trash entry with this id exists.
+func entryIDFree(id string) bool {
+	for _, p := range []string{id + ".json", id + ".tar.gz", id + ".space", id + ".restoring"} {
+		if _, err := os.Lstat(filepath.Join(cleanupStoreDir(), p)); !errors.Is(err, fs.ErrNotExist) {
+			return false
+		}
+	}
+	return true
 }
 
 // sidecarReadable reports whether the listing's file for id exists and parses to id.
@@ -162,7 +173,7 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 
 	now := nowUTC()
 	man := cleanupManifest{
-		ID: newSpaceArchiveID(now, folder), At: now.Format(time.RFC3339),
+		At:     now.Format(time.RFC3339),
 		Reason: "delete_space",
 		Space:  &spaceTombstone{Folder: folder, Name: sp.Name, Path: dir, Shelved: shelved},
 	}
@@ -171,6 +182,18 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 	// trash (which would leave the files with nothing to name them).
 	var moveErr error
 	sessionx.WithCleanupLock(func() {
+		// An id none of whose files exists yet, checked under the lock every writer of this
+		// directory takes: whatever is found under it afterwards is this attempt's own, and a
+		// clean-up of a failed attempt removes nothing that was there before.
+		for attempt := 0; man.ID == "" && attempt < 4; attempt++ {
+			if id := newSpaceArchiveID(now, folder); entryIDFree(id) {
+				man.ID = id
+			}
+		}
+		if man.ID == "" {
+			moveErr = errors.New("could not find a free trash id, so the space was left as it is")
+			return
+		}
 		if err := writeCleanupArchive(&man, nil); err != nil {
 			moveErr = fmt.Errorf("could not record the space in the trash, so it was left as it is: %w", err)
 			return
@@ -181,13 +204,6 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 		if !sidecarReadable(man.ID) {
 			removeOwnEntry(man.ID)
 			moveErr = errors.New("could not list the space in the trash, so it was left as it is")
-			return
-		}
-		// A folder already waiting under this id belongs to another entry whose tarball is gone:
-		// never moved over, and never removed by this attempt's clean-up.
-		if _, err := os.Lstat(spaceTrashDir(man.ID)); err == nil {
-			removeOwnEntry(man.ID)
-			moveErr = errors.New("the trash already holds a folder under this entry's id, so the space was left as it is")
 			return
 		}
 		if spaceAfterManifest != nil {

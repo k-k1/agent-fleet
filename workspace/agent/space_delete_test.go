@@ -407,6 +407,11 @@ func TestDeleteSpaceRefusesWhenTheEntryCannotBeListed(t *testing.T) {
 			if _, err := os.Lstat(filepath.Join(cleanupStoreDir(), id+".tar.gz")); !os.IsNotExist(err) {
 				t.Fatalf("the refused delete left its tarball: %v", err)
 			}
+			// What was there before is still there: the delete wrote and removed nothing of its own
+			// under a taken id.
+			if _, err := os.Lstat(filepath.Join(cleanupStoreDir(), id+".json")); err != nil {
+				t.Fatalf("the refused delete removed the file that was in its way: %v", err)
+			}
 		})
 	}
 }
@@ -492,6 +497,52 @@ func TestRestoreAndPurgeOfOneSpaceEntryAreSerialised(t *testing.T) {
 	do(t, e.srv, "DELETE", "/cleanup/archives/"+out.Archive, nil, http.StatusOK, nil)
 	if code := httpStatus(t, e.srv, "POST", "/cleanup/archives/"+out.Archive+"/restore", nil); code < 400 {
 		t.Fatalf("restore after the purge = %d, want a refusal", code)
+	}
+	if _, err := os.Lstat(sp.Dir); !os.IsNotExist(err) {
+		t.Fatalf("a purged space came back: %v", err)
+	}
+}
+
+// A sidecar already on disk under the drawn id is another entry's, writable or not: the delete
+// refuses before writing and leaves both it and the space as they were.
+func TestDeleteSpaceLeavesAnExistingSidecarAlone(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Taken")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+	id := "20261124-120000-space-taken-dddddddd"
+	pinSpaceID(t, id)
+	const theirs = `{"id":"20261124-120000-space-taken-dddddddd","reason":"delete_session"}`
+	if err := os.MkdirAll(cleanupStoreDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cleanupStoreDir(), id+".json"), []byte(theirs), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got := errCodeOf(t, e.srv, "DELETE", "/spaces/"+sp.Folder, http.StatusInternalServerError); got != errCodeSpaceTrashFailed {
+		t.Errorf("code = %q, want %q", got, errCodeSpaceTrashFailed)
+	}
+	if b, _ := os.ReadFile(filepath.Join(cleanupStoreDir(), id+".json")); string(b) != theirs {
+		t.Fatalf("the existing sidecar was changed: %q", b)
+	}
+	if b, _ := os.ReadFile(filepath.Join(sp.Dir, "f.md")); string(b) != "x" {
+		t.Fatal("the space was moved")
+	}
+}
+
+// A purge that wins after a restore read its manifest and before it takes the lock again: the
+// restore is refused and the folder stays purged.
+func TestRestoreLosesToAPurgeThatWonAfterItReadTheEntry(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Late")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+	var out struct{ Archive string }
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+	restoreAfterStage = func() {
+		do(t, e.srv, "DELETE", "/cleanup/archives/"+out.Archive, nil, http.StatusOK, nil)
+	}
+	t.Cleanup(func() { restoreAfterStage = nil })
+	if code := httpStatus(t, e.srv, "POST", "/cleanup/archives/"+out.Archive+"/restore", nil); code < 400 {
+		t.Fatalf("restore after a purge that won = %d, want a refusal", code)
 	}
 	if _, err := os.Lstat(sp.Dir); !os.IsNotExist(err) {
 		t.Fatalf("a purged space came back: %v", err)
