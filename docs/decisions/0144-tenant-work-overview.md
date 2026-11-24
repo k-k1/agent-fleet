@@ -90,10 +90,16 @@ A session with no driving link has no row. The overview groups rows by item, by 
 ### 2. An item is identified by provider, site and folded key, and an unknown site never merges.
 
 - **Site** for GitHub and Bitbucket is the provider's cloud host, which the provider fixes. For Jira it
-  is the site of the *publisher's own Jira connection*, recorded by the Agent on the link when it creates
-  it. The Agent writes no such field today (fact 4), so until it does (part 4) every Jira site is
-  *unknown*. **A link's URL is not a source of the site**: it is optional, absent on the launch item, and
-  not verified against the key.
+  is the site of the *publisher's own Jira connection*, recorded by the Agent on the link. The Agent
+  writes no such field today (fact 4), so until it does (part 4) every Jira site is *unknown*.
+  **A link's URL is not a source of the site**: it is optional, absent on the launch item, and not
+  verified against the key.
+- **The Agent records a site only where the item and the site are fixed together:** a launch from an
+  inbox row, and a link made from an item the Agent has just read through its connection. A key typed by
+  hand, a key inferred from a branch or a pull request title (`session_inferred_links.go:63`) and every
+  link that already exists stay *unknown*, and a later change of the member's Jira connection never
+  re-labels them. Otherwise a member who switches from site A to site B and types A's `PROJ-12` would
+  publish it as B's.
 - Two rows are the same item only when provider, folded key and a *known* site are equal. A row whose
   site is unknown is its own group, merged with no other row (not even another unknown one), and never
   dropped. The Console says "site unknown" on it. A wrong merge reads as "two members are on one ticket"
@@ -101,8 +107,10 @@ A session with no driving link has no row. The overview groups rows by item, by 
 - So in parts 1 to 3 the overview shows Jira rows per member and per project, and gives no cross-member
   grouping or hint for Jira. GitHub and Bitbucket have both. Part 4 adds one additive field to the
   Agent's link, `site`, taken from the Agent's own Jira connection and never from a URL.
-- Consent (decision 5) does not use the site: it covers the publisher's own tickets, whichever site they
-  are on.
+- **Display groups use the same identity.** By ticket: (provider, known site, folded key). By
+  repository: `provider` plus `owner/repo` for GitHub and Bitbucket; for Jira, the known site plus the
+  project key. A Jira row with an unknown site is grouped by its publisher and project key and never
+  across publishers, in either view.
 
 ### 3. The source is the session mirror. No new pull, no new push path.
 
@@ -126,7 +134,14 @@ A session with no driving link has no row. The overview groups rows by item, by 
   (`store.Workspace.State`) is not running, every row of it projects as `stopped` whatever activity the
   last read saw, and `observed_at` stays the last read, never moved by the stop. A session that was
   `working` in the last mirror before its workspace stopped therefore reads `stopped`. A workspace that
-  was deleted has no rows. Part 1 checks that the recorded state is current at stop, and tests this case.
+  was deleted has no rows. The recorded state is what the CP writes at start and stop
+  (`workspace_handlers.go:735`, `:744`, `:787`; the stop path drops a failed database update, and a
+  start can record `running` while the runtime is still `starting`), so it is not a guarantee. Two rules
+  keep that from showing an old `working`: an activity is shown only while the row is `current`
+  (decision 8), and a row older than 60 minutes shows `unknown`. Across a quick stop and restart, a row
+  can show the last observed activity for up to 60 minutes, with its `observedAt` at the `state`
+  level. That is a known limit, not a claim of liveness. Part 1 tests a stop with a `working` last
+  mirror, and a restart before the first new read.
 
 ### 4. What a member publishes, field by field. Nothing else.
 
@@ -135,10 +150,18 @@ A session with no driving link has no row. The overview groups rows by item, by 
 | member | the membership | already visible in the tenant roster |
 | provider, key, site | the link (decision 2) | a key is published only for a namespace the member allowed (decision 5); a Jira site is unknown until part 4 |
 | role | the link | one of the three driving roles |
-| `activity` | the mirror column | `working` (working, compacting), `waiting` (question, plan, permission, blocked, auth), `idle` (idle, limited, spend_limit), `unknown`; `stopped` when the session is not alive or its workspace is not running (decision 3); only at the *state* level |
+| `activity` | the mirror column | `working` (working, compacting), `waiting` (question, plan, permission, blocked, auth), `idle` (idle, limited, spend_limit), `unknown` (also for any row that is not `current`); `stopped` when the session is not alive or its workspace is not running (decision 3); only at the *state* level |
 | `observedAt` | the row's `observed_at` | only at the *state* level (decision 5) |
 | `current` | derived: `observed_at` within 60 minutes | at the *tickets* level this is the only time-shaped field |
 | PR number and state | a PR link's key and `state` | P3, after #5052 gives the state an observation time |
+
+**A key is validated on the CP before anything else.** The CP accepts a row only for a known provider
+and a key that matches that provider's whole shape (`owner/repo#N` for GitHub and Bitbucket, a project
+key and number for Jira, the shapes of `links.go:95-98`). The mirror does not guarantee this
+(`store_session_links.go:37`) and the launch key is only trimmed and clipped (`cleanWorkItemRef`,
+`session_handlers.go:693`). A bare number, a key with free text after it, or an unknown provider is
+never published and never matches a namespace, so text that follows an allowed repository name cannot
+travel as a key.
 
 Never published, whatever the level:
 
@@ -156,18 +179,25 @@ Never published, whatever the level:
 This is ADR 0111 decision 6's rule set applied to a new payload. A limit-board audience does not imply it,
 as decision 12 says for edit-overlap.
 
-- **Hidden until chosen.** Without a publication row, a member has no row in anyone's overview.
+- **Hidden until chosen.** Without a publication row, a member has no row in any *other* member's
+  overview (their own are decision 6's).
 - **Audience:** the tenant, or named members. One setting per tenant membership (addendum 3); what is
   published to one tenant never reaches another.
 - **Level:** `tickets` (who is on which item, with `current` only) or `state` (adds `activity` and
   `observedAt`). The default on opt-in is `tickets`. A time stamp on a row is a working-hours signal,
   which is why it is a level and not a given. Issue #3136 asks for `observedAt` on every row; `tickets`
-  departs from that on purpose. It is not time-free: a row stays `current` while the workspace answers,
-  and a viewer who watches it lose `current` learns, to within their polling interval, when the
-  workspace stopped answering. The preview says so ("viewers can see when your workspace stops").
-  Open question 7.
-- **Consent per namespace.** A namespace is `owner/repo` on GitHub and Bitbucket (per provider), and the
-  project key on Jira. A key is published only when its namespace is on the member's list. When the
+  departs from that on purpose. It is not time-free: a row stays `current` while the CP's reads of the
+  workspace succeed, and a viewer who watches it lose `current` learns, to within their polling interval,
+  roughly when the last successful read began. That is not the moment the workspace stopped, and a
+  transient failure of the read has the same effect. The preview says so ("viewers can tell roughly when
+  your workspace was last seen"). Open question 7.
+- **Consent per namespace.** A namespace is `owner/repo` on GitHub and Bitbucket (per provider), and for
+  Jira the project key *together with the site*. While a Jira site is unknown (parts 1 to 3) the unit
+  is the project key alone, which is then the project of the member's one connection. **When part 4
+  starts recording sites, no existing Jira consent carries over:** each is shown again as a (site,
+  project) pair, and nothing is published until the member confirms it. Otherwise a member who switches
+  from site A to site B would publish B's `SEC-9` on the consent given for A's `SEC`. A key is published
+  only when its namespace is on the member's list. When the
   member opts in, the Console lists the namespaces their sessions link to now, with a plain preview of
   what a viewer would see (the same function as decision 6, run for a chosen viewer), and the member
   ticks the ones to publish. A namespace that appears later is not published until the member has
@@ -185,18 +215,21 @@ as decision 12 says for edit-overlap.
   board (addendum 4). **Admins get no wider view**: an admin is a viewer like any other, and admin pages
   (docs/67, docs/83) do not gain a "who runs what" column. This answers the issue's first question, and
   the answer stays the one ADR 0111 gave.
-- **Order of precedence,** first match wins, for a read by viewer V of member M's rows:
+- **Order of precedence,** for a read by viewer V of member M's rows:
   1. the tenant switch is off: the empty view, for everyone, V's own rows included;
-  2. V is M: all of M's rows, every namespace, hidden sessions included, at the `state` level;
-  3. M has no publication, or V is not in M's audience: the empty view;
-  4. otherwise a row is shown only if its namespace is allowed, its session is not hidden, and it is
-     within the horizon (decision 8).
+  2. every row, whoever the viewer, is dropped when it has no `observed_at` or is past the horizon
+     (decision 8), and when its key fails the validation above;
+  3. V is M: all the remaining rows, every namespace, hidden sessions included, at the `state` level;
+  4. M has no publication, or V is not in M's audience: the empty view;
+  5. otherwise a row is shown only if its namespace is allowed and its session is not hidden.
 - **Withdrawing consent takes effect on the next read, for rows and for everything derived from them.**
-  Hiding a session, removing a namespace, removing a viewer and unpublishing each make the rows, the
-  groups and the hint (decision 9) disappear from the viewer's next response, because those are computed
-  from the projected rows. Unpublishing deletes the publication, its namespaces, its viewers and its
-  hidden flags. Publishing again starts from nothing and shows the preview afresh. The server enforces all
-  of this; part 2's settings screen only edits the same records.
+  Hiding a session, removing a namespace, removing a viewer and unpublishing each take their rows out,
+  and the groups and the hint (decision 9) are then *recomputed from the rows that remain*. Two members
+  becoming one removes the hint; three becoming two keeps it; the last row leaving removes the group.
+  Unpublishing deletes the publication, its namespaces, its viewers and its hidden flags. Publishing
+  again starts from nothing and shows the preview afresh. The server enforces all of this; the
+  settings screen only edits the same records, and **the publication write routes ship with that
+  screen (part 2)**, so nobody can publish before a preview exists.
 
 ### 6. One function reduces a member's rows for a viewer, and the Console never receives the rest.
 
@@ -222,9 +255,11 @@ as decision 12 says for edit-overlap.
 - **No history.** The projection reads the mirror as it is. There is no log of who was on which item, and
   no "last week" view (decision 10).
 - **Bounded, after the projection.** One request returns at most 500 rows. The cap counts only rows the
-  viewer may see (after the audience, namespace, hidden and horizon rules of decision 5), keeps them in a
-  fixed order (`observed_at` descending, then member, session and key), and sets `truncated: true` only
-  when visible rows were cut. Groups and the hint are computed from the returned rows. A hidden or
+  viewer may see (after the rules of decision 5), keeps them in a fixed order, and sets `truncated: true`
+  only when visible rows were cut. **The order uses no time the level does not publish:** at `tickets`
+  it is (member, session, key); at `state`, where `observedAt` is shown anyway, it may be `observed_at`
+  descending first. A re-observation alone therefore never changes which keys a `tickets` viewer gets.
+  Groups and the hint are computed from the returned rows. A hidden or
   expired row therefore cannot push a visible one out or flip `truncated`. The mirror caps a session at
   51 links (`SessionLinksFromJSON`), and a tenant has 2 to 30 members, so the cap is a guard, not a limit
   a team reaches.
@@ -244,9 +279,9 @@ the anonymous form on the next one.
   began, not when the session last did something. A stopped workspace keeps its last-read time, and its
   rows read `stopped`.
 - **Stale after 60 minutes** (the limit board's threshold, addendum 6). A stale row stays listed and is
-  marked, as "last seen N min ago" at the `state` level and "not current" at the `tickets` level. **A
-  stale row does not count toward the hint** (decision 9): two members linked on one ticket, one of them
-  seen an hour ago, is not "two members on one ticket".
+  marked, as "last seen N min ago" at the `state` level and "not current" at the `tickets` level, and its
+  activity reads `unknown` (decision 3). **A stale row does not count toward the hint** (decision 9): two
+  members linked on one ticket, one of them seen an hour ago, is not "two members on one ticket".
 - **A horizon of 7 days on the age of the observation.** A row whose `observed_at` is older is not
   projected at all. Otherwise a workspace that stopped a month ago would leave its members on tickets
   forever. This is not a judgement that someone stopped working: a running workspace keeps refreshing,
@@ -259,14 +294,16 @@ the anonymous form on the next one.
 
 ### 9. Three views, one hint, and no claim of absence.
 
-- **By ticket** ("who is on PROJ-123"), **by member**, **by repository** (the namespace of decision 5).
+- **By ticket** ("who is on PROJ-123"), **by member**, **by repository**, grouped by the display keys of
+  decision 2 (not by the consent namespace alone, which has no site while Jira sites are unknown).
 - **"Two members on one ticket"** is shown when at least two *different members'* current (not stale)
   driving rows for the same item (decision 2, known site) are in the returned rows. It is derived from the
   rows the viewer may see and from nothing else, so it never reveals a session the viewer's audience
   does not cover. Two sessions of one member (a parent and its child, ADR 0073) are not a hint, and
   neither are two Jira rows whose site is unknown.
-- **The overview never says "nobody else is on this".** Unpublished members, hidden sessions, stale rows,
-  watchers, and sessions that never recorded a link are all missing from it, and an empty group reads
+- **The overview never says "nobody else is on this".** Unpublished members, hidden sessions, rows past
+  the 7-day horizon, watchers, and sessions that never recorded a link are all missing from it, and an
+  empty group reads
   "nobody *shown* here". It is named a hint, never a lock or a conflict (decision 12's "never says no
   overlap").
 - **No ranking, no count of tickets per person, no time-per-ticket.** Ranking members is what ADR 0111
@@ -308,22 +345,32 @@ would be a working-hours log, and it would need its own consent and its own ADR.
 Each part leaves `main` releasable alone, with the new behaviour unreachable or hidden.
 
 1. **Part 1, backend.** The `activity` and `observed_at` columns and their writers; the publication,
-   namespace, viewer and hidden-session tables and the server-side enforcement of decision 5; the
-   `overviewEntry` function; the REST read and the publication routes behind the tenant switch. No
-   Console shows anything yet, and nobody has published, so a read returns the caller's own rows and
-   nothing of anyone else's. The tests in "Acceptance" below.
-2. **Part 2, the member's side.** Settings: opt-in, audience, level, the namespace list with the preview,
-   the per-session hide. It edits the records part 1 already enforces.
+   namespace, viewer and hidden-session tables; the `overviewEntry` function with the server-side
+   enforcement of decisions 4 to 6 and 8; the REST **read** behind the tenant switch. It ships **no
+   write route for a publication**, so nobody can publish before part 2's preview exists; the tests
+   seed the tables directly. No Console shows anything, and a read returns the caller's own rows and
+   nothing of anyone else's.
+2. **Part 2, the member's side.** The publication write routes and the settings: opt-in, audience, level,
+   the namespace list with the preview, the per-session hide. Question 2 is about when the hide's *screen*
+   comes; the server's enforcement of it is in part 1.
 3. **Part 3, the viewing side.** The three views, the hint, the title join of decision 6. PR chips wait
    for #5052 (the facts and their observation time) and #5053 (held PRs observed), so a merged PR does
    not read as open.
-4. **Part 4, Jira site.** The additive `site` field on the Agent's link, from its own Jira connection,
-   mirrored into `session_work_link`. Only then do Jira rows group across members and join titles.
+4. **Part 4, Jira site.** The additive `site` field on the Agent's link, recorded only where item and
+   site are fixed together (decision 2), mirrored into `session_work_link`; Jira consents re-confirmed as
+   (site, project) pairs (decision 5). Only then do Jira rows group across members and join titles.
 
-### Acceptance (part 1)
+### Acceptance
 
-- A hidden member, a never-published member, an outside-the-audience viewer, a tenant switch off and an
-  empty namespace list return byte-identical answers.
+Part 1 (server):
+
+- Byte-identical answers for one fixed viewer V who has the same own rows in each case: a member who is
+  hidden, one who never published, one whose audience excludes V, and one with an empty namespace list.
+  The tenant switch off is compared separately: it answers the empty view to everyone, V's own rows
+  included.
+- A row with no `observed_at`, a row past 7 days, or a key that fails decision 4's validation (a bare
+  number, free text after an allowed repository, an unknown provider) is absent for every viewer,
+  the owner included.
 - A sentinel in each of title, URL, session name, label, directory, branch, kind and `carried` of a
   seeded session never appears in any projection, at either level (a golden, the way the limit board's
   tests do it).
@@ -331,21 +378,26 @@ Each part leaves `main` releasable alone, with the new behaviour unreachable or 
 - The precedence of decision 5, one case each: the tenant switch off (empty for everyone, the owner
   included); the owner with no publication (own rows, every namespace, hidden sessions too); another
   viewer of the same member (empty); an audience member (allowed namespaces, no hidden session).
-- With a visible row seeded, each of these removes the row, its group and the hint from the viewer's
-  *next* response: hiding the session, removing its namespace, removing the viewer, unpublishing. After
-  unpublishing and publishing again, nothing is shown until consent is given anew.
+- With visible rows seeded, hiding a session, removing its namespace, removing the viewer and
+  unpublishing each take the withdrawn rows out of the viewer's *next* response, and the groups and the
+  hint are recomputed from what remains: two members becoming one removes the hint, three becoming two
+  keeps it, the last row leaving removes the group. After unpublishing and publishing again, nothing is
+  shown until consent is given anew.
 - A removed viewer, a left member and a deleted workspace stop appearing on the next read.
-- Jira rows with the same key are never merged while the site is unknown, including the usual
-  launch-item row and a second unknown row with the same key, and a row is never dropped for it; two
-  GitHub rows with the same key from two members are one group.
-- The Console's title join does not attach a title to a Jira row with an unknown site, nor to one whose
-  site differs from the viewer's connection.
+- Jira rows with the same key are never merged while the site is unknown, in the by-ticket and the
+  by-repository views alike, including the usual launch-item row and a second unknown row with the same
+  key from another member, and a row is never dropped for it; two GitHub rows with the same key from two
+  members are one group.
 - `observed_at` is the read's start, not the insert time: a write delayed in the database does not make
-  a row look newer. A row with an empty `observed_at` is not projected.
-- A row past 60 minutes is marked and does not count toward the hint; past 7 days it is gone. A workspace
-  that stopped while its last mirror said `working` projects as `stopped` with its old `observedAt`.
+  a row look newer.
+- A row past 60 minutes is marked, reads `unknown` and does not count toward the hint; past 7 days it is
+  gone. A workspace that stopped while its last mirror said `working` projects as `stopped` with its
+  old `observedAt`; after a restart and before the first new read, the row shows no activity once it is
+  past 60 minutes.
 - The cap is applied after the projection: adding hidden, unallowed or expired rows to a tenant that has
-  500 visible ones changes neither the returned rows, nor `truncated`, nor the hint.
+  500 visible ones changes neither the returned rows, nor `truncated`, nor the hint. With 501 visible
+  rows at `tickets`, refreshing one workspace's `observed_at` without changing any `current` changes
+  neither the returned keys nor the hint.
 - At `tickets` the response carries no `activity` and no `observedAt`; at `state` it carries no waiting
   reason, limit value, session name or title.
 - A session the viewer has no share on carries no session reference; sharing it adds one on the next read
@@ -354,6 +406,13 @@ Each part leaves `main` releasable alone, with the new behaviour unreachable or 
   viewer's projection.
 - An admin who is not in an audience gets the empty view.
 
+Part 3 (Console): the title join attaches no title to a Jira row with an unknown site, nor to one whose
+site differs from the viewer's connection.
+
+Part 4 (Agent and mirror): the site is recorded for a launch from an inbox row and for a link made from
+an item just read, and for no other link; the same key on two sites stays two items; a switch of the
+member's Jira connection re-labels no existing link and publishes nothing under an old consent.
+
 ## Open questions
 
 These are the owner's, collected on #5057. Each has a recommendation above.
@@ -361,8 +420,9 @@ These are the owner's, collected on #5057. Each has a recommendation above.
 1. **Namespace consent: per namespace, or publish all and exclude** (decision 5)? Recommended: per
    namespace. The alternative is simpler to set up and leaks a new private repository's name until the
    member notices.
-2. **Is the per-session hide part 1 or later?** Recommended: part 2, with the settings screen. Without it
-   a member who must hide one ticket has to take its whole namespace off.
+2. **When does the per-session hide get its screen?** The server enforces it from part 1. Recommended:
+   the screen comes with part 2's settings. Without it a member who must hide one ticket has to take its
+   whole namespace off.
 3. **The numbers** (decision 8): 60 minutes to stale, 7 days to the horizon. Recommended: ship them and
    look at a real tenant after part 3.
 4. **Where the view lives.** Recommended: a *Team* view beside the limit board's home, not inside the
@@ -371,9 +431,13 @@ These are the owner's, collected on #5057. Each has a recommendation above.
 6. **Is the publisher's consent enough to show a key to a viewer who may have no tracker access** (decision
    5)? The CP cannot check that access. Recommended: yes, with the plain preview saying so, because the
    audience is the member's own choice and a namespace is allowed one by one.
-7. **The `tickets` level's time signal** (decision 5): a viewer can see when a workspace stops answering.
+7. **The `tickets` level's time signal** (decision 5): a viewer can tell roughly when the CP's last
+   successful read of the workspace began (not when it stopped; a transient failure looks the same).
    Recommended: accept it and say so in the preview. The alternative is to drop `current` at `tickets`,
-   which leaves a row that may be a month old with no mark.
+   which leaves a row of up to 7 days old with no mark.
+8. **Jira consent across sites** (decision 5). When part 4 records the Jira site, existing Jira consents
+   do not carry over: each is shown again as a (site, project) pair. Recommended: re-confirm. The
+   alternative carries an old consent to whatever site the member uses now.
 
 ## Alternatives set aside
 
