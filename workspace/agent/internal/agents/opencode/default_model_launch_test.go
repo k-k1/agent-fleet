@@ -125,6 +125,15 @@ func freeView(t *testing.T) {
 	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
 		return nil, UsageZen, oauthState{known: true}, nil
 	}
+	storedKeysAre(t, nil, true)
+}
+
+// storedKeysAre makes the record's own read of the credential store answer keys, ok.
+func storedKeysAre(t *testing.T, keys map[string]string, ok bool) {
+	t.Helper()
+	old := defaultModelStoredKeys
+	t.Cleanup(func() { defaultModelStoredKeys = old })
+	defaultModelStoredKeys = func(context.Context) (map[string]string, bool) { return keys, ok }
 }
 
 var freeLaunch = routes.Launch{Route: routes.RouteOpencodeZen, Binding: FreeBinding}
@@ -144,7 +153,7 @@ func resolveDefault(m session.Meta) routes.Launch {
 	if m.Driver == "" {
 		m.Driver = session.DriverManaged
 	}
-	return (agentImpl{}).ResolveDefaultLaunch(m)
+	return (agentImpl{}).ResolveDefaultLaunch(m, time.Now())
 }
 
 // The acceptance of #4227: a directory with only opencode.ai's free models records the keyless
@@ -351,6 +360,8 @@ func TestDefaultModelLaunchKeepsAfsOwnView(t *testing.T) {
 			want = freeLaunch
 		}
 		credentialView = v
+		keys, _, _, _ := v()
+		storedKeysAre(t, keys, true)
 		if got := resolveDefault(session.Meta{Dir: realTemp(t)}); got != want {
 			t.Errorf("%s: resolved %+v, want %+v", name, got, want)
 		}
@@ -411,10 +422,33 @@ func TestDefaultModelLaunchSpentBudgetSendsNothing(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests.Add(1) }))
 	defer srv.Close()
 	t.Setenv(serveAddrEnv, srv.URL)
-	if got := launchDefaultModelOf(realTemp(t), time.Now().Add(-time.Second)); got != "" {
-		t.Errorf("a spent budget resolved %q", got)
+	m := session.Meta{Name: "s", Kind: session.KindOpencode, Driver: session.DriverManaged, Dir: realTemp(t)}
+	freeView(t)
+	if got := (agentImpl{}).ResolveDefaultLaunch(m, time.Now().Add(-time.Second)); got != (routes.Launch{}) {
+		t.Errorf("a spent budget resolved %+v", got)
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	if got := launchDefaultModelOf(ctx, realTemp(t)); got != "" {
+		t.Errorf("a spent context resolved %q", got)
 	}
 	if requests.Load() != 0 {
 		t.Errorf("%d requests after the budget was spent", requests.Load())
+	}
+}
+
+// A credential store that could not be read is not "no stored key": the record claims af holds
+// none, so it is not made. A store that was read and is empty is the free case.
+func TestDefaultModelLaunchNeedsTheStoreRead(t *testing.T) {
+	freeView(t)
+	serveWith(t, &fakeDirServe{providers: onlyOpencode, def: freeDefault})
+	dir := realTemp(t)
+	storedKeysAre(t, nil, false)
+	if got := resolveDefault(session.Meta{Dir: dir}); got != (routes.Launch{}) {
+		t.Errorf("an unreadable store: %+v", got)
+	}
+	storedKeysAre(t, map[string]string{}, true)
+	if got := resolveDefault(session.Meta{Dir: dir}); got != freeLaunch {
+		t.Errorf("an empty store that was read: %+v, want %+v", got, freeLaunch)
 	}
 }

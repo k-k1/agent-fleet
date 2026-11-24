@@ -253,12 +253,22 @@ func plainFingerprint(k string) string {
 // model (agents.DefaultLaunchResolver), counting the asks.
 type defaultResolvingAgent struct {
 	resolvingAgent
-	def   routes.Launch
-	asked *int
+	def     routes.Launch
+	asked   *int
+	started chan<- time.Time // receives the start the resolver was handed
+	hold    time.Duration    // ResolveLaunch sleeps this long first
 }
 
-func (a defaultResolvingAgent) ResolveDefaultLaunch(session.Meta) routes.Launch {
+func (a defaultResolvingAgent) ResolveLaunch(m session.Meta) routes.Launch {
+	time.Sleep(a.hold)
+	return a.resolvingAgent.ResolveLaunch(m)
+}
+
+func (a defaultResolvingAgent) ResolveDefaultLaunch(_ session.Meta, start time.Time) routes.Launch {
 	*a.asked++
+	if a.started != nil {
+		a.started <- start
+	}
 	return a.def
 }
 
@@ -284,5 +294,31 @@ func TestLaunchRouteOfAsksTheDefaultResolverOnlyForANamelessLaunch(t *testing.T)
 	})
 	if l := launchRouteOf(session.Meta{Kind: session.KindClaude}); l == nil || *l != (routes.Launch{Route: "r"}) || asked != 1 {
 		t.Errorf("an answered resolver: recorded %+v after %d asks", l, asked)
+	}
+}
+
+// Both resolvers share the one budget: when the first spends it, the default resolver is handed a
+// start that is already past it, and so cannot begin a fresh probe after the caller stopped waiting.
+func TestLaunchRouteOfHandsTheDefaultResolverTheCallersStart(t *testing.T) {
+	isolateAgentState(t)
+	old := launchResolveBudget
+	launchResolveBudget = 50 * time.Millisecond
+	t.Cleanup(func() { launchResolveBudget = old })
+	asked := 0
+	started := make(chan time.Time, 1)
+	swapClaude(t, func(base agents.Agent) agents.Agent {
+		return defaultResolvingAgent{resolvingAgent: resolvingAgent{routeAgent: routeAgent{Agent: base}}, asked: &asked, started: started, hold: 150 * time.Millisecond}
+	})
+	before := time.Now()
+	if l := launchRouteOf(session.Meta{Kind: session.KindClaude}); l == nil || *l != (routes.Launch{}) {
+		t.Fatalf("a spent budget recorded %+v", l)
+	}
+	select {
+	case start := <-started: // the worker finishes after the caller gave up
+		if start.Before(before) || time.Since(start) < 100*time.Millisecond {
+			t.Errorf("start %v is not the moment the caller began (%v)", start, before)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the default resolver was never reached")
 	}
 }

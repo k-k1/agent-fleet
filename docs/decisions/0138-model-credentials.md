@@ -282,7 +282,7 @@ not see muse or cursor at all.
     available.
   - What a policy judges a launch on (`ResolveLaunch`) therefore stays `{}`: under a restriction a create follows
     D11b's order (the member's default route, else `route_required`, which tells the member to name a model or set a
-    default route), and a resume is judged on a launch with no record. A create is judged before its working
+    default route), and a resume of a session with no record is judged as having none (one with a record is judged on it, below). A create is judged before its working
     directory is known, and a resume must not wait on a probe. Making a restricted create reach the record
     below is #5035.
   - The launch RECORD (`agents.DefaultLaunchResolver`, used where the launch is recorded) asks the running

@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -62,20 +63,28 @@ const settlePoll = 20 * time.Millisecond
 // it (the free models; measured).
 const keylessAPIKey = "public"
 
+// defaultModelStoredKeys is the stored provider keys, and whether the store was read at all. A seam
+// for tests.
+var defaultModelStoredKeys = func(ctx context.Context) (map[string]string, bool) {
+	s, err := secrets.LoadContext(ctx)
+	if err != nil || s == nil {
+		return nil, false
+	}
+	return s.Opencode, true
+}
+
 // errNotFreeOnly is why a directory is not proven to offer opencode.ai's free models alone.
 var errNotFreeOnly = errors.New("the directory is not proven to offer opencode.ai's free models alone")
 
 // launchDefaultModelOf is the model opencode runs for a session in dir that names none, but only
-// when the running serve proves it; "" otherwise. The budget runs from start, the moment the
-// caller began, so a slow file system before the first request spends the budget instead of
-// starting a fresh one after the caller has stopped waiting. A seam for tests.
-var launchDefaultModelOf = func(dir string, start time.Time) string {
+// when the running serve proves it; "" otherwise. A slow file system before the first request
+// spends ctx's budget instead of starting a fresh one after the caller has stopped waiting.
+// A seam for tests.
+var launchDefaultModelOf = func(ctx context.Context, dir string) string {
 	real, ok := realDir(dir)
 	if !ok {
 		return ""
 	}
-	ctx, cancel := context.WithDeadline(context.Background(), start.Add(defaultModelBudget))
-	defer cancel()
 	// Never starts a daemon for a launch record: a daemon that is not there is an error.
 	model, err := keylessDefaultModel(ctx, serveAddr(), real)
 	if err != nil {
@@ -295,21 +304,28 @@ func getLocated[T any](ctx context.Context, addr, path, dir string, out *located
 // the provider is keyless. A Terminal is also dropped (it does not run on the serve), and so is
 // af holding any stored key: the launch's environment
 // carries it, and the serve may have started before it was stored.
-func resolveDefaultModelLaunch(m session.Meta) routes.Launch {
-	start := time.Now()
+func resolveDefaultModelLaunch(m session.Meta, start time.Time) routes.Launch {
+	ctx, cancel := context.WithDeadline(context.Background(), start.Add(defaultModelBudget))
+	defer cancel()
 	// Only a session the shared serve runs. A Terminal runs its own opencode in a tmux pane whose
 	// environment (a key the pane inherited, the standalone setting, a fall back from a failed
 	// Ensure) the serve's provider list says nothing about.
 	if m.DriverKind() != session.DriverManaged {
 		return routes.Launch{}
 	}
-	keys, pref, acct, custom := credentialView()
+	// The store is read here, under the budget, and a read that failed is not "no key": the
+	// record claims af holds none.
+	keys, ok := defaultModelStoredKeys(ctx)
+	if !ok {
+		return routes.Launch{}
+	}
 	for _, v := range keys {
 		if v != "" {
 			return routes.Launch{}
 		}
 	}
-	model := launchDefaultModelOf(m.CWD(), start)
+	_, pref, acct, custom := credentialView()
+	model := launchDefaultModelOf(ctx, m.CWD())
 	if model == "" {
 		return routes.Launch{}
 	}

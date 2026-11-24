@@ -38,6 +38,7 @@ func TestContractDefaultModel(t *testing.T) {
 		"PATH=" + os.Getenv("PATH"), "HOME=" + home,
 		"XDG_CONFIG_HOME=" + filepath.Join(home, ".config"), "XDG_DATA_HOME=" + filepath.Join(home, ".local", "share"),
 		"XDG_STATE_HOME=" + filepath.Join(home, ".local", "state"), "XDG_CACHE_HOME=" + filepath.Join(home, ".cache"),
+		"OPENCODE_DISABLE_AUTOUPDATE=true", // CI pins the binary; the child must not replace it
 		"OPENCODE_SERVER_USERNAME=" + serveUser, "OPENCODE_SERVER_PASSWORD=" + password,
 	}
 	cmd.Dir = home
