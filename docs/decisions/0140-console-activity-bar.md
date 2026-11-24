@@ -182,3 +182,12 @@ level under, finished runs folded. A session carries no schedule id, so they are
 rather than under each schedule; the Schedules icon gets a waiting count for them (they no longer
 count in the Sessions badge). The memo run history links to a run's row in the Auto-run view.
 Follow-ups: #4646.
+
+Note (2026-11-24, #5070): each schedule gets a setting, "Also show in the Sessions view", off by
+default. When it is on, the sessions that a run of that schedule started and that have their own
+worktree are treated as the member's own: they are listed in the repository tree under their working
+copy and in the Sessions list, their worktree is an ordinary tree row, the filter finds them, and they
+count in the Sessions badge instead of the Schedules one. The run's root session and children without
+a worktree stay in the Schedules view only, and every run keeps its place there. A root without a
+schedule id, or whose schedule is gone, keeps the rule above. This amends the rule above for those
+sessions only; the decision itself stands.
