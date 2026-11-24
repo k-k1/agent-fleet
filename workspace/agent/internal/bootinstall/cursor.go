@@ -1224,11 +1224,19 @@ func (e Env) cursorRecover() error {
 	}
 	var errs []error
 	foreign := false
+	// noCandidate: the tree step left no candidate at Dir. Either the update stopped before it
+	// published one, so it changed no link yet, or an earlier recovery moved it away, which it
+	// does only once every link is back. Either way a link that differs from its recorded state
+	// was changed by someone else since (a manual install of another version, made between two
+	// failed attempts), and only a link that still points at this update's own target is put back.
+	noCandidate := false
 	if m.Tree {
 		if _, derr := os.Lstat(m.Dir); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
 			// Not knowing what is at Dir must not read as "empty" or "ours": retry at the next start.
 			return fmt.Errorf("cursor: cannot look at %s: %v", m.Dir, derr)
-		} else if derr == nil {
+		} else if derr != nil {
+			noCandidate = true
+		} else {
 			owner, oerr := m.dirOwner(m.Dir)
 			if oerr != nil {
 				return fmt.Errorf("cursor: cannot read the update token in %s: %v", m.Dir, oerr)
@@ -1242,6 +1250,35 @@ func (e Env) cursorRecover() error {
 			}
 		}
 	}
+	// restoreKeep puts a regular file this update moved aside back, only to an empty place: never
+	// over what a manual installer put there meanwhile.
+	restoreKeep := func(l cursorLinkState) {
+		_, kerr := os.Lstat(l.Keep)
+		_, perr := os.Lstat(l.Path)
+		switch {
+		case kerr != nil && !errors.Is(kerr, fs.ErrNotExist):
+			errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Keep, kerr))
+		case perr != nil && !errors.Is(perr, fs.ErrNotExist):
+			errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Path, perr))
+		case kerr == nil && perr != nil:
+			kept, err := restoreNoReplace(l.Keep, l.Path)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("cursor: the previous %s is left at %s: %v", l.Path, l.Keep, err))
+			} else if kept {
+				fmt.Fprintf(e.Stderr, "cursor: the previous %s could not be put back and stays at %s\n", l.Path, l.Keep)
+			}
+		}
+	}
+	ownTarget := filepath.Join(m.Dir, cursorTool)
+	// pointsAtOurs: the link is still the one this update published (an unreadable link is an
+	// error, and is left for the retry).
+	pointsAtOurs := func(p string) bool {
+		cur, rerr := os.Readlink(p)
+		if rerr != nil && !errors.Is(rerr, fs.ErrNotExist) && !errors.Is(rerr, syscall.EINVAL) {
+			errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", p, rerr))
+		}
+		return rerr == nil && cur == ownTarget
+	}
 	// Links first, the tree last: the candidate keeps its token until every link is back, so a
 	// retry after a failed link still knows the tree at Dir is ours.
 	for _, l := range m.Links {
@@ -1249,24 +1286,20 @@ func (e Env) cursorRecover() error {
 			// The manual install owns Dir and the links it made; only a regular file this
 			// update moved aside is ours, and it goes back only to an empty place.
 			if l.Kind == "file" {
-				_, kerr := os.Lstat(l.Keep)
-				_, perr := os.Lstat(l.Path)
-				switch {
-				case kerr != nil && !errors.Is(kerr, fs.ErrNotExist):
-					errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Keep, kerr))
-				case perr != nil && !errors.Is(perr, fs.ErrNotExist):
-					errs = append(errs, fmt.Errorf("cursor: cannot look at %s: %v", l.Path, perr))
-				case kerr == nil && perr != nil:
-					// Never overwrite what a manual installer put there meanwhile.
-					kept, err := restoreNoReplace(l.Keep, l.Path)
-					if err != nil {
-						errs = append(errs, fmt.Errorf("cursor: the previous %s is left at %s: %v", l.Path, l.Keep, err))
-					} else if kept {
-						fmt.Fprintf(e.Stderr, "cursor: the previous %s could not be put back and stays at %s\n", l.Path, l.Keep)
-					}
-				}
+				restoreKeep(l)
 			}
 			continue
+		}
+		if noCandidate && l.Kind != "none" {
+			if !pointsAtOurs(l.Path) {
+				if l.Kind == "file" {
+					restoreKeep(l)
+				} else if cur, rerr := os.Readlink(l.Path); rerr == nil && cur != string(l.Target) {
+					fmt.Fprintf(e.Stderr, "cursor: %s was repointed after the interrupted update; leaving it\n", l.Path)
+				}
+				continue
+			}
+			// Still this update's own link: back to what it was, as below.
 		}
 		switch l.Kind {
 		case "symlink":

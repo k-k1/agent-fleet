@@ -77,9 +77,12 @@ type Env struct {
 	Stderr                                                                            io.Writer
 	RunTimeout                                                                        time.Duration     // --version probe bound
 	afterNPMLock                                                                      func()            // tests: runs right after NPM takes the lock, before it re-reads its plan
+	beforeNPMLock                                                                     func()            // tests: runs before each attempt of lockNPM to take the lock
 	afterNPMStart                                                                     func(*os.Process) // tests: runs once npmInstall's supervisor has started, so a test may close the lock after Cmd.Start read it
 	npmCtx                                                                            context.Context   // tests: the parent of npmInstall's deadline, so a test can fire it
-	npmLockErr                                                                        error             // set by lockNPM when the lock file cannot be opened (not the same as busy)
+	npmGroupKill                                                                      func(pgid int)    // tests: replaces the SIGKILL npmInstall sends npm's group, so a member can outlive it
+	npmGrace                                                                          time.Duration     // tests: shortens npmInstall's wait for npm's group to empty
+	npmLockErr                                                                        error             // set by lockNPM when the lock cannot be used: the file cannot be opened, or errNPMStuck (not the same as busy)
 	npmLockFile                                                                       *os.File          // held by lockNPM; handed to npm so it outlives this process
 }
 

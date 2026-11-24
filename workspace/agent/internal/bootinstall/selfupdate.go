@@ -208,7 +208,17 @@ func (e Env) selfUpdateNPM() {
 	}
 	var stuck []npmAside // entries whose previous copy could not be put back
 	verify := names      // the CLIs the pin-repairing verify pass may look at
-	if stderr, err := e.npmInstall(specs); err != nil {
+	if stderr, err := e.npmInstall(specs); errors.Is(err, errNPMStuck) {
+		// A process of the install may still finish a write into the trees: nothing is put back
+		// under it. The pending marker stays, and the recovery of a start that finds the process
+		// gone puts the previous copies back.
+		fmt.Fprint(e.Stderr, stderr)
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: agent CLI update failed: %v; the previous copies stay as *%s until a later start restores them\n", err, npmBakSuffix)
+		for _, c := range names {
+			e.note(c, statusFailed, ReasonOther)
+		}
+		return
+	} else if err != nil {
 		fmt.Fprint(e.Stderr, stderr)
 		stuck = e.npmRestoreAsideFailed(moved) // only the entries that really stayed behind
 		moved = nil
@@ -270,6 +280,13 @@ func (e Env) selfUpdateNPM() {
 	}
 	if len(check) > 0 {
 		e.NPMVerify(check, false)
+	}
+	if err := e.npmStuckCheck(); err != nil {
+		// The repair pass left a writer running: the pending marker stays as npmMoveAside wrote
+		// it, so a later start's recovery puts every previous copy back once the writer is gone,
+		// and nothing is deleted or settled under it now.
+		fmt.Fprintf(e.Stdout, "[entrypoint] WARN: agent CLI update not settled: %v; the previous copies stay as *%s until a later start restores them\n", err, npmBakSuffix)
+		return
 	}
 	switch {
 	case len(stuck) > 0:
