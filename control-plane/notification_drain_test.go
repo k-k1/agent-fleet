@@ -91,15 +91,34 @@ func TestNotificationDrainerDrainWorkspace(t *testing.T) {
 	if announced.Load() != 1 {
 		t.Fatalf("duplicate was announced again: %d", announced.Load())
 	}
+}
 
-	if d.hasSubscription(ctx, mem.ID) {
-		t.Fatal("no subscription yet")
+// ListPushSubscribedMemberships names each subscribed membership once, however many devices it
+// holds, and none without a device.
+func TestListPushSubscribedMemberships(t *testing.T) {
+	ctx := context.Background()
+	st := newDrainStore(t)
+	tn, _ := st.EnsureDefaultTenant(ctx)
+	var mems []string
+	for _, e := range []string{"a@example.com", "b@example.com"} {
+		id, _ := st.UpsertIdentity(ctx, e, e, "")
+		m, err := st.EnsureMembership(ctx, id.ID, tn.ID, "member")
+		if err != nil {
+			t.Fatal(err)
+		}
+		mems = append(mems, m.ID)
 	}
-	if err := st.UpsertPushSubscription(ctx, store.PushSubscription{MembershipID: mem.ID, Endpoint: "https://fcm.googleapis.com/fcm/send/x", P256dh: "k", Auth: "a"}); err != nil {
-		t.Fatal(err)
+	if got, err := st.ListPushSubscribedMemberships(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("no subscriptions yet: %v, %v", got, err)
 	}
-	if !d.hasSubscription(ctx, mem.ID) {
-		t.Fatal("subscription not seen")
+	for _, ep := range []string{"x", "y"} {
+		if err := st.UpsertPushSubscription(ctx, store.PushSubscription{MembershipID: mems[0], Endpoint: "https://fcm.googleapis.com/fcm/send/" + ep, P256dh: "k", Auth: "a"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := st.ListPushSubscribedMemberships(ctx)
+	if err != nil || len(got) != 1 || got[0] != mems[0] {
+		t.Fatalf("subscribed memberships = %v, %v; want only %s once", got, err, mems[0])
 	}
 }
 
@@ -874,5 +893,75 @@ func TestDrainAgentOutboxStoresANewEntryInAStalledFetch(t *testing.T) {
 	rows, _ := st.ListNotifications(context.Background(), mem, "2000-01-01T00:00:00Z", 50)
 	if len(rows) != 3 {
 		t.Fatalf("stored %d rows, want a, b and c", len(rows))
+	}
+}
+
+// subReadStore counts the subscription reads of a sweep.
+type subReadStore struct {
+	store.Store
+	perMember, batched atomic.Int32
+	failFirst          int32 // this many batched reads fail
+}
+
+func (s *subReadStore) ListPushSubscriptions(ctx context.Context, m string) ([]store.PushSubscription, error) {
+	s.perMember.Add(1)
+	return s.Store.ListPushSubscriptions(ctx, m)
+}
+
+func (s *subReadStore) ListPushSubscribedMemberships(ctx context.Context) ([]string, error) {
+	got, err := s.Store.ListPushSubscribedMemberships(ctx)
+	if s.batched.Add(1) <= s.failFirst && err == nil {
+		// What rows.Err after a partial read gives: real ids alongside the error.
+		return got[:1], context.DeadlineExceeded
+	}
+	return got, err
+}
+
+// A sweep reads the subscriptions once, whatever the number of workspaces.
+func TestNotificationDrainerReadsSubscriptionsOncePerSweep(t *testing.T) {
+	sql := newDrainStore(t)
+	seedSubscribed(t, sql, 5)
+	st := &subReadStore{Store: sql}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"notifications":[]}`))
+	}))
+	defer srv.Close()
+	var asked atomic.Int32
+	d := &notificationDrainer{store: st, interval: time.Hour,
+		runtimeOf: func(store.Workspace) runtime.Runtime {
+			asked.Add(1)
+			return drainFakeRT{state: "running", endpoint: srv.URL}
+		}}
+	d.sweep(context.Background())
+	if st.batched.Load() != 1 || st.perMember.Load() != 0 {
+		t.Fatalf("subscription reads: %d batched, %d per member; want 1 and 0", st.batched.Load(), st.perMember.Load())
+	}
+	if asked.Load() != 5 {
+		t.Fatalf("%d workspaces drained, want all 5", asked.Load())
+	}
+}
+
+// A failed subscription read skips that sweep only: the next one drains as usual.
+func TestNotificationDrainerFailedSubscriptionReadSkipsOneSweep(t *testing.T) {
+	sql := newDrainStore(t)
+	seedSubscribed(t, sql, 2)
+	st := &subReadStore{Store: sql, failFirst: 1}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"notifications":[]}`))
+	}))
+	defer srv.Close()
+	var asked atomic.Int32
+	d := &notificationDrainer{store: st, interval: time.Hour,
+		runtimeOf: func(store.Workspace) runtime.Runtime {
+			asked.Add(1)
+			return drainFakeRT{state: "running", endpoint: srv.URL}
+		}}
+	d.sweep(context.Background())
+	if asked.Load() != 0 {
+		t.Fatalf("%d workspaces drained after a failed subscription read, want 0", asked.Load())
+	}
+	d.sweep(context.Background())
+	if asked.Load() != 2 {
+		t.Fatalf("%d workspaces drained by the next sweep, want 2", asked.Load())
 	}
 }

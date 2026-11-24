@@ -51,6 +51,14 @@ type PushSubscriptionStore interface {
 	PutTenantPushIncludeText(ctx context.Context, tenantID string, on bool, updatedBy string) error
 }
 
+// PushSubscribedMembershipStore is kept apart from PushSubscriptionStore because only the
+// notification drain needs it, not the push sender that takes the narrower interface.
+type PushSubscribedMembershipStore interface {
+	// ListPushSubscribedMemberships answers every membership holding at least one subscription,
+	// in one read: a sweep over all workspaces asks this once instead of once per workspace.
+	ListPushSubscribedMemberships(ctx context.Context) ([]string, error)
+}
+
 // PushDelivery is what one push send needs to know about the receiving membership.
 type PushDelivery struct {
 	Active, IncludeText bool
@@ -121,6 +129,23 @@ func (s *SQL) ListPushSubscriptions(ctx context.Context, membershipID string) ([
 			return nil, err
 		}
 		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQL) ListPushSubscribedMemberships(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT membership_id FROM push_subscription`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
 	}
 	return out, rows.Err()
 }
