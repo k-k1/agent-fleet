@@ -152,6 +152,46 @@ describe.each([
     expect(detailsSection().querySelector(".ui-seg.big, .run-model, select")).toBeNull();
   });
 
+  it("names what the folded Details holds, and follows each choice", async () => {
+    await mount(["claude", "codex"]);
+    const head = () => detailsSection().querySelector<HTMLElement>(".launch-sec-head")!;
+    // The summary is shown only while the section is folded.
+    const sum = () => detailsSection().querySelector(".launch-sec-sum")?.textContent || "";
+    const folded = async () => {
+      await click(head());
+      const text = sum();
+      await click(head());
+      return text;
+    };
+    const selectWith = (value: string) =>
+      [...detailsSection().querySelectorAll<HTMLSelectElement>("select")].find((e) => [...e.options].some((o) => o.value === value))!;
+    const choose = async (sel: HTMLSelectElement, value: string) => {
+      await act(async () => {
+        sel.value = value;
+        sel.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    expect(sum()).toBe("effort default · Normal start · Approvals skipped");
+    await click(head());
+    await choose(selectWith("ask"), "ask");
+    expect(await folded()).toContain("Approvals on");
+    expect(await folded()).not.toContain("skipped");
+    await choose(selectWith("plan"), "plan");
+    expect(await folded()).toContain("Plan mode");
+    expect(await folded()).not.toContain("Normal start");
+    const effort = selectWith("high");
+    await choose(effort, "high");
+    const effortLabel = effort.selectedOptions[0]!.textContent;
+    expect(await folded()).toContain("effort " + effortLabel);
+    // The agent's own choices: codex offers no approval choice, so the summary does not claim one.
+    await click([...strip().querySelectorAll(".run-chip--agent")][0]!);
+    await click([...strip().querySelectorAll(".ui-seg.big .seg-btn")].find((b) => b.textContent === "Codex")!);
+    expect(await folded()).not.toContain("Approvals");
+    expect(await folded()).not.toContain("Claude Code");
+    // A budget is named only once set.
+    expect(await folded()).not.toContain("budget");
+  });
+
   it("keeps exactly one active model button across aliases and registered models", async () => {
     rememberRecentModel("claude", "claude-opus-4-1");
     await mount(["claude"]);

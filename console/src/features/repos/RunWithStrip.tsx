@@ -280,7 +280,11 @@ function ClaudeModelRow({ kind, model, onChange, filter }: RunModelRowProps) {
           </option>
         ))}
       </select>
-      {byId.has(model) && <ModelInfoLine kind={kind} model={model} />}
+      {byId.has(model) && (
+        <div className="run-model-info">
+          <ModelInfoLine kind={kind} model={model} />
+        </div>
+      )}
     </div>
   );
 }

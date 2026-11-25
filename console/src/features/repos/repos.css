@@ -710,9 +710,9 @@
   min-width: 0;
   font-size: var(--fs-12);
   color: var(--dialog-muted, var(--muted));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wraps: the folded summary is the only place a choice (approvals, effort, ...) can be read
+     without opening the section, so a narrow dialog must not cut it off. */
+  overflow-wrap: anywhere;
 }
 /* A state that cannot be launched as-is, e.g. "existing branch, none selected". */
 .launch-sec-sum.launch-sec-sum--warn {
@@ -1884,7 +1884,7 @@ button.start-place-chip--gone {
   flex-direction: column;
   gap: 6px;
   margin-top: 6px;
-  padding: 8px;
+  padding: 6px;
   border: 1px solid var(--border, #3a3a3a);
   border-radius: 8px;
 }
@@ -1893,6 +1893,25 @@ button.start-place-chip--gone {
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+/* Line 1 fills the dialog: the agent chip keeps its content width, the route chip (the longest
+   text) takes the rest. The combo chip (narrow widths) fills the line the same way. */
+.run-strip-line1 {
+  flex-wrap: nowrap;
+}
+.run-chip--route,
+.run-chip--combo {
+  flex: 1 1 0;
+  min-width: 0;
+  justify-content: space-between;
+}
+.run-chip--agent {
+  flex: none;
+}
+.run-chip--route .run-chip-chev,
+.run-chip--combo .run-chip-chev {
+  margin-left: auto;
+  flex: none;
 }
 .run-chip {
   display: inline-flex;
@@ -1934,6 +1953,31 @@ button.start-place-chip--gone {
   gap: 8px;
   min-width: 0;
 }
+.run-strip-line2 > .run-model {
+  flex: 1 1 100%;
+}
+.run-model--catalog > * {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.run-model--claude .run-model-seg {
+  flex: 1 1 0;
+  min-width: 0;
+}
+/* Normal-height buttons that share the row by their label length; a long registered id ellipsizes
+   (its full id is the tooltip). */
+.run-model--claude .run-model-seg .seg-btn {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 30px;
+  padding: 4px 10px;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.run-model--claude > .run-model-info {
+  flex-basis: 100%;
+}
 .run-model-divider {
   align-self: stretch;
   width: 1px;
@@ -1971,6 +2015,10 @@ button.start-place-chip--gone {
   }
   .run-chip--combo {
     display: inline-flex;
+  }
+  .run-model-narrow {
+    flex: 1 1 0;
+    min-width: 0;
   }
   .run-model--claude .run-model-seg,
   .run-model--claude .run-model-more {
