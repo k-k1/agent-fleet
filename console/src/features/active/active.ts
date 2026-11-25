@@ -141,6 +141,25 @@ interface GroupId {
   hint: string;
 }
 
+/** The known working copy a "<parent>@<slug>" folder without a row of its own was made from, or
+ *  "" when it cannot be shown to belong to one. A name alone proves nothing (a clone may be
+ *  called "app@notes"), so when the session records its dir, that dir must sit beside the
+ *  parent's own; when it records none, the name is all there is. */
+function knownParent(s: Session, folder: string, byFolder: Map<string, Repo>): string {
+  for (let at = folder.lastIndexOf("@"); at > 0; at = folder.lastIndexOf("@", at - 1)) {
+    const parent = folder.slice(0, at);
+    const row = byFolder.get(parent);
+    if (!row) continue;
+    const dir = (s.dir || "").replace(/\/+$/, "");
+    if (dir && row.path) {
+      const parentOf = (p: string) => p.slice(0, p.lastIndexOf("/"));
+      if (dir !== parentOf(row.path.replace(/\/+$/, "")) + "/" + folder) return "";
+    }
+    return parent;
+  }
+  return "";
+}
+
 // The space's name is looked up here rather than through the spaces store's helper: that
 // module reaches the api client, and this file has to stay loadable without a browser.
 function groupId(s: Session, byFolder: Map<string, Repo>, spaces: Space[], reposKnown: boolean): GroupId {
@@ -149,16 +168,19 @@ function groupId(s: Session, byFolder: Map<string, Repo>, spaces: Space[], repos
   // A folder the working-copy list does not know is "other", as it is in the tree: a heading
   // made of a folder that no longer exists would name a place nobody can go to.
   if (folder && byFolder.has(folder)) return { ...repoGroupId(folder, byFolder), kind: "repo" };
-  // A worktree folder is "<base>@<slug>". The list can lag behind a session that just started
-  // in a new worktree (or behind a tab that was hidden), so the base repository stands in for
-  // the missing row: the session stays under its repository's heading instead of "Other".
-  const at = folder.indexOf("@");
-  const base = at > 0 ? folder.slice(0, at) : "";
-  if (base && byFolder.has(base)) return { ...repoGroupId(base, byFolder), kind: "repo" };
+  // A worktree folder is "<parent>@<slug>", and the parent can itself contain "@" (a worktree
+  // made from a worktree), so the longest known prefix wins. The list can lag behind a session
+  // that just started in a new worktree (or behind a tab that was hidden): the parent stands in
+  // for the missing row, and the session stays under its repository's heading, not "Other".
+  const parent = knownParent(s, folder, byFolder);
+  if (parent) return { ...repoGroupId(parent, byFolder), kind: "repo" };
   // No list at all (the first load failed or has not answered): nothing can be called "other"
   // yet, so the folder's base names the heading; it moves to the repository's own key once the
   // list arrives.
-  if (!reposKnown && folder) return { key: "c:" + (base || folder), kind: "repo", label: base || folder, hint: base || folder };
+  if (!reposKnown && folder) {
+    const base = folder.includes("@") ? folder.slice(0, folder.lastIndexOf("@")) : folder;
+    return { key: "c:" + base, kind: "repo", label: base, hint: base };
+  }
   return { key: OTHER_GROUP, kind: "other", label: "", hint: "" };
 }
 

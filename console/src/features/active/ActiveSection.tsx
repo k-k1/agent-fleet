@@ -40,7 +40,7 @@ export const ActiveSection = memo(function ActiveSection() {
   const sessions = useSessionsStore((s) => s.sessions);
   const repos = useReposStore((s) => s.repos);
   // An empty list that never loaded is "unknown", not "no repositories".
-  const reposLoaded = useReposStore((s) => s.loadState === "ok" || s.repos.length > 0);
+  const reposLoaded = useReposStore((s) => s.loaded);
   // The names the Sessions view's Spaces section keeps asked for (useSpaceNames); until its
   // answer arrives the folders stand in.
   const owner = spacesOwner();

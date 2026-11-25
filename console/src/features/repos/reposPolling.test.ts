@@ -95,6 +95,31 @@ describe("startReposPolling and the idle pause", () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 
+  it("makes up a tick skipped while the tab was hidden, once, on the next show", () => {
+    stop = startReposPolling();
+    setHidden(true);
+    refresh.mockClear();
+    vi.advanceTimersByTime(120_000);
+    expect(refresh).not.toHaveBeenCalled();
+    setHidden(false);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    setHidden(true);
+    setHidden(false);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not read twice when a pause and a hidden tick are both owed", () => {
+    stop = startReposPolling();
+    setPaused(true);
+    (document as { hidden: boolean }).hidden = true;
+    setPaused(false);
+    setHidden(true);
+    vi.advanceTimersByTime(60_000);
+    refresh.mockClear();
+    setHidden(false);
+    expect(refresh).toHaveBeenCalledTimes(1);
+  });
+
   it("stops listening for pause edges after cleanup", () => {
     stop = startReposPolling();
     stop();

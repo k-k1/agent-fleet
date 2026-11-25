@@ -69,6 +69,9 @@ export type ReposLoadState = "loading" | "ok" | "unreachable" | "failed";
 interface ReposStore {
   repos: Repo[];
   loadState: ReposLoadState;
+  /** True once any list was committed, even an empty one; only clear() resets it. loadState
+   * cannot say this: a later failed read moves it to "unreachable" while the list stays. */
+  loaded: boolean;
   /** Loads GET /api/repos. Only a 2xx result whose `repos` is an array replaces the list; every
    * other outcome leaves `repos` untouched and records loadState "unreachable", because "could
    * not read the list" is not "there are no repos" — committing it is what used to drop the
@@ -95,6 +98,7 @@ let generation = 0;
 export const useReposStore = create<ReposStore>((set) => ({
   repos: [],
   loadState: "loading",
+  loaded: false,
   async refresh() {
     const tenant = getTenant();
     const mine = ++generation;
@@ -119,7 +123,7 @@ export const useReposStore = create<ReposStore>((set) => ({
       set({ loadState: "failed" });
       return true;
     }
-    set({ repos: d.repos as Repo[], loadState: "ok" });
+    set({ repos: d.repos as Repo[], loadState: "ok", loaded: true });
     return true;
   },
   setLocked(name, locked) {
@@ -127,7 +131,7 @@ export const useReposStore = create<ReposStore>((set) => ({
   },
   clear: () => {
     generation++;
-    set({ repos: [], loadState: "loading" });
+    set({ repos: [], loadState: "loading", loaded: false });
   },
 }));
 
