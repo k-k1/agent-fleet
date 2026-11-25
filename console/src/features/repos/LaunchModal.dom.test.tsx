@@ -314,6 +314,9 @@ describe("LaunchModal what -> where -> details", () => {
     await settle();
     expect(byText("Start in a worktree").disabled).toBe(false);
     expect(byText("Start in a worktree").textContent).toContain("local-7b");
+    // One real model is not "an empty catalog".
+    expect(strip().textContent).not.toContain("catalog is empty");
+    expect(strip().textContent).not.toContain("Only the default model");
   });
 
   it("keeps Details open over an invalid budget, and folds it again once fixed", async () => {

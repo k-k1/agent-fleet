@@ -39,6 +39,17 @@ export function tenantModel(st: MemberUIState, kind: string, s: Settings): strin
   return source === kind && (memberSet || !modelChosen(s, kind)) ? m : undefined;
 }
 
+/** Every layer's model for `kind`, member's first, then the team's: when the merged answer is not
+ *  offered any more, the next layer is still a candidate. */
+export function tenantModelLayers(st: MemberUIState, kind: string, s: Settings): string[] {
+  const out: string[] = [];
+  const memberAgent = st.launch?.agent || st.defaults?.agent;
+  if (st.launch?.model && memberAgent === kind) out.push(st.launch.model);
+  if (st.defaults?.launch?.model && st.defaults.agent === kind && !modelChosen(s, kind)) out.push(st.defaults.launch.model);
+  const m = tenantModel(st, kind, s);
+  return m && !out.includes(m) ? [m, ...out] : out;
+}
+
 /** "managed" / "" (Terminal) for a kind that offers both, or null = follow the kind's own default. */
 export function tenantDriver(st: MemberUIState, kind: string): string | null {
   const a = agentOf(kind);

@@ -29,6 +29,7 @@ vi.mock("../../core/api/client.ts", () => ({
 const { LaunchModal, SpaceLaunchForm } = await import("./LaunchModal.tsx");
 const { resetAttachDraftDB, useAttachDraft } = await import("../../lib/attachDraft.ts");
 const { setSettings, cancelPrefsTimersForTest } = await import("../../lib/settings.ts");
+const { resumePrefsTimersForTest } = await import("../../lib/settings/sync.ts");
 const { readRecentModels, rememberRecentModel } = await import("../../lib/recentModels.ts");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -103,6 +104,18 @@ const click = async (el: Element) => {
   });
   await settle();
 };
+// setSettings arms a debounced save, which would make the dialog's re-read wait for it: drop it.
+const settleSaves = () => {
+  cancelPrefsTimersForTest();
+  resumePrefsTimersForTest();
+};
+// Ctrl/⌘+Enter in the prompt box, the default send key.
+const sendKey = async () => {
+  await act(async () => {
+    document.querySelector("textarea")!.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, bubbles: true, cancelable: true }));
+  });
+  await settle();
+};
 const primary = () => document.querySelector<HTMLButtonElement>("button.ui-btn-primary")!;
 const detailsSection = () => [...document.querySelectorAll(".launch-sec")].find((s) => s.querySelector(".launch-sec-label")?.textContent === "Details")!;
 
@@ -111,6 +124,8 @@ beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
   setSettings({ claudeCustomModels: REGISTERED });
+  cancelPrefsTimersForTest(); // no debounced save of this file's own setup may defer the dialog's re-read
+  resumePrefsTimersForTest();
   serverPrefs = {};
   onLaunch = vi.fn<Launch>(async () => ({ ok: true }));
   host = document.createElement("div");
@@ -261,15 +276,20 @@ describe("a model another device registered", () => {
   it("is kept until the synced list answers, then shown active and sent", async () => {
     localStorage.setItem("af.repo-model.app", "claude-opus-4-9");
     cancelPrefsTimersForTest();
-    onPrefsAnswer = () => setSettings({ claudeCustomModels: [...REGISTERED, "claude-opus-4-9"] });
+    onPrefsAnswer = () => {
+      setSettings({ claudeCustomModels: [...REGISTERED, "claude-opus-4-9"] });
+      settleSaves();
+    };
     let release!: () => void;
     prefsGate = new Promise<void>((r) => (release = r));
     try {
       await renderDialog(["claude"]);
       await settle();
-      // Still waiting: the unverified choice has not been replaced, and nothing launches on it.
+      // Still waiting: the unverified choice has not been replaced, and nothing launches on it —
+      // not by the button, and not by the send key either.
       expect(primary().disabled).toBe(true);
       await click(primary());
+      await sendKey();
       expect(onLaunch).not.toHaveBeenCalled();
       expect(strip().querySelector(".run-strip-why")).not.toBeNull();
       expect(strip().querySelector(".run-strip-notice")).toBeNull();
@@ -278,7 +298,8 @@ describe("a model another device registered", () => {
       await settle();
       expect(active().map((b) => b.title)).toEqual(["claude-opus-4-9"]);
       expect(strip().querySelector(".run-strip-notice")).toBeNull();
-      await click(primary());
+      await sendKey();
+      expect(onLaunch).toHaveBeenCalledTimes(1);
       expect(onLaunch.mock.calls[0][0].model).toBe("claude-opus-4-9");
     } finally {
       prefsGate = null;
@@ -290,7 +311,10 @@ describe("a model another device registered", () => {
 describe("the registered models are read again when the agent becomes Claude", () => {
   it("picks up a model registered elsewhere after switching from another agent", async () => {
     localStorage.setItem("af.repo-model.app", "claude-opus-4-9");
-    onPrefsAnswer = () => setSettings({ claudeCustomModels: [...REGISTERED, "claude-opus-4-9"] });
+    onPrefsAnswer = () => {
+      setSettings({ claudeCustomModels: [...REGISTERED, "claude-opus-4-9"] });
+      settleSaves();
+    };
     try {
       await renderDialog(["codex", "claude"]);
       const before = prefsReads;
@@ -304,11 +328,64 @@ describe("the registered models are read again when the agent becomes Claude", (
   });
 });
 
+describe("each switch to Claude is its own read", () => {
+  it("does not let the first read vouch for a later selection", async () => {
+    localStorage.setItem("af.repo-model.app", "claude-opus-4-9");
+    await renderDialog(["claude", "codex"]);
+    const tile = (name: string) => [...strip().querySelectorAll<HTMLButtonElement>(".ui-seg.big .seg-btn")].find((b) => b.textContent?.includes(name))!;
+    await click(tile("Codex"));
+    // The model is registered elsewhere by the time of the second read, which is slow.
+    let release!: () => void;
+    prefsGate = new Promise<void>((r) => (release = r));
+    onPrefsAnswer = () => {
+      setSettings({ claudeCustomModels: [...REGISTERED, "claude-opus-4-9"] });
+      settleSaves();
+    };
+    settleSaves();
+    try {
+      await click(tile("Claude"));
+      await settle();
+      expect(strip().querySelector(".run-strip-notice")).toBeNull();
+      expect(primary().disabled).toBe(true);
+      await act(async () => release());
+      prefsGate = null;
+      await settle();
+      expect(active().map((b) => b.title)).toEqual(["claude-opus-4-9"]);
+    } finally {
+      prefsGate = null;
+      onPrefsAnswer = null;
+    }
+  });
+});
+
+describe("a member default that is no longer registered", () => {
+  it("falls to the team's default before the built-in one", async () => {
+    localStorage.setItem("af.repo-model.app", "removed-model");
+    const { useUIStateStore } = await import("../../core/store/uiState.ts");
+    useUIStateStore.setState({
+      state: {
+        launch: { agent: "claude", model: "claude-opus-4-9" },
+        defaults: { agent: "claude", launch: { model: "haiku" } },
+        effective: { launch: { agent: "claude", model: "claude-opus-4-9" } },
+      } as never,
+    });
+    try {
+      await renderDialog(["claude"]);
+      expect(active().map((b) => b.title)).toEqual(["haiku"]);
+      await click(primary());
+      expect(onLaunch.mock.calls[0][0].model).toBe("haiku");
+    } finally {
+      useUIStateStore.setState({ state: {} });
+    }
+  });
+});
+
 describe("a dropped remembered model falls back along the usual defaults", () => {
   it("uses the member's Settings default, not the first alias", async () => {
     localStorage.setItem("af.repo-model.app", "removed-model");
     const { getSettings } = await import("../../lib/settings.ts");
     setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, model: "haiku" } } });
+    settleSaves();
     await renderDialog(["claude"]);
     expect(active().map((b) => b.title)).toEqual(["haiku"]);
     await click(primary());
@@ -324,6 +401,7 @@ describe("a default that is no longer registered either", () => {
     const { getSettings } = await import("../../lib/settings.ts");
     useUIStateStore.setState({ state: { launch: { agent: "claude", model: "claude-opus-4-9" } } as never });
     setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, model: "haiku" } } });
+    settleSaves();
     try {
       await renderDialog(["claude"]);
       expect(active().map((b) => b.title)).toEqual(["haiku"]);

@@ -32,9 +32,10 @@ import { OwnSettingsLine } from "../settings/credentials/MemberLines.tsx";
 import { policyRefusalKey, type PolicyRefusal } from "./launchPolicy.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
-import { DEFAULT_MODEL, agentLaunchDefault, hydrateUIPrefs, useSettings, useUIPrefsLoading } from "../../lib/settings.ts";
+import { DEFAULT_MODEL, agentLaunchDefault, useSettings, useUIPrefsLoading } from "../../lib/settings.ts";
+import { refreshUIPrefsChecked } from "../../lib/settings/sync.ts";
 import { useEffectiveDefaults, useUIStateStore } from "../../core/store/uiState.ts";
-import { defaultKind, ownLaunch, ownLaunchProblem, tenantBudget, tenantDriver, tenantModel, tenantSkipPerm } from "./tenantLaunchDefaults.ts";
+import { defaultKind, ownLaunch, ownLaunchProblem, tenantBudget, tenantDriver, tenantModel, tenantModelLayers, tenantSkipPerm } from "./tenantLaunchDefaults.ts";
 import { parseCap } from "../sessions/spendBudget.ts";
 import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions, useModelCatalogSettled, useModelOptions } from "../../lib/agentModels.ts";
 import { EffortPicker } from "../../ui/ModelPicker.tsx";
@@ -644,18 +645,33 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // the agent becomes one with a registered-model row. A failed read counts as answered: the
   // launch must not wait for a server that cannot be reached, and the list in hand is all there is.
   const fixedTier = hasModel && !agentOf(kind).caps.liveModels;
-  const [prefsReread, setPrefsReread] = useState(false);
+  // Each time the agent becomes one of those starts a new read (`epoch`), and an answer only counts
+  // for its own epoch: a read that finished for an earlier selection never vouches for this one.
+  const [epoch, setEpoch] = useState(0);
+  const [wasFixed, setWasFixed] = useState(fixedTier);
+  if (fixedTier !== wasFixed) {
+    setWasFixed(fixedTier);
+    if (fixedTier) setEpoch((e) => e + 1);
+  }
+  const [rereadEpoch, setRereadEpoch] = useState(-1);
+  const prefsReread = rereadEpoch === epoch;
   useEffect(() => {
     if (!fixedTier) return;
     let alive = true;
-    setPrefsReread(false);
-    void hydrateUIPrefs()
-      .catch(() => false)
-      .finally(() => alive && setPrefsReread(true));
+    void (async () => {
+      // A pending save skips the read (it could return the value from before that save): wait for
+      // it, a few times, then go on with what is in hand.
+      for (let i = 0; i < 8 && alive; i++) {
+        const r = await refreshUIPrefsChecked().catch(() => false);
+        if (r !== null) break;
+        await new Promise((res) => setTimeout(res, 400));
+      }
+      if (alive) setRereadEpoch(epoch);
+    })();
     return () => {
       alive = false;
     };
-  }, [fixedTier]);
+  }, [epoch, fixedTier]);
   // Pending until the profiles are in AND the route state has taken the default (the render between
   // the two would otherwise see a Bedrock id with no Bedrock route).
   const bedrockDefaultPending =
@@ -672,7 +688,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     // is the unusable one; then the member's / team's default, the Settings default, the agent's
     // own, and last the first choice.
     const offered = (id: string | undefined): id is string => !!id && modelOptions.some(([v]) => v === id);
-    const next = [tenantModel(uiState, kind, settings), agentLaunchDefault(settings, kind).model, DEFAULT_MODEL].find(offered) ?? modelOptions[0]?.[0] ?? "";
+    const next = [...tenantModelLayers(uiState, kind, settings), agentLaunchDefault(settings, kind).model, DEFAULT_MODEL].find(offered) ?? modelOptions[0]?.[0] ?? "";
     setModelNotice(model);
     setModel(next);
     setEffort("");
