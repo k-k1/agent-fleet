@@ -238,16 +238,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* Rail form only: the line wraps when the fixed parts (ordinals, state icons) alone do not
-   fit, as the old badge row did, instead of clipping the right-hand icons. The branch name
-   has a zero flex-basis so it never causes a wrap itself; it takes what is left and
-   ellipsizes. */
-.ovw-card--rail .ovw-where {
-  flex-wrap: wrap;
-}
-.ovw-card--rail .ovw-where .ovw-wt {
+/* Everything that may shrink (project, branch, chips) is ONE flex child with a zero basis, so
+   the line wraps only when the fixed parts (ordinals, state icons) alone do not fit: wrapping
+   is decided on pre-shrink widths, and a long chip must not push the icons to a second line. */
+.ovw-where-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   flex: 1 1 0;
   min-width: 0;
+}
+.ovw-card--rail .ovw-where {
+  flex-wrap: wrap;
 }
 .ovw-waited.ovw-waited--on {
   color: var(--warn);

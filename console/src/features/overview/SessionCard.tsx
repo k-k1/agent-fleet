@@ -271,6 +271,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             ))}
           </span>
         )}
+        <span className="ovw-where-main">
         {!rail && <span className="ovw-project">{project || folder || tr("pj.other_sessions")}</span>}
         {wt && (
           <span className="ovw-wt" title={branch || wt}>
@@ -294,6 +295,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             <Icon name="warning" /> {s.currentBranch}
           </span>
         )}
+        </span>
         {/* The state icons only SOME cards have (lock / keep-awake / stop-armed / budget /
             shared) share this line, right-aligned, so a card never spends a row on badges
             alone. The pane ordinals lead the line (rail form only: ADR 0078 decision 10). */}

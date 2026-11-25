@@ -133,7 +133,8 @@ describe("SessionCard", () => {
     const kids = [...where.children];
     expect(kids[0].classList.contains("sess-ords")).toBe(true);
     expect(kids[0].querySelectorAll(".rail-ord").length).toBe(2);
-    expect(kids.findIndex((k) => k.classList.contains("ovw-wt"))).toBeGreaterThan(0);
+    expect(kids[1].classList.contains("ovw-where-main")).toBe(true);
+    expect(kids[1].querySelector(".ovw-wt")).not.toBeNull();
     expect(kids[kids.length - 1].classList.contains("ovw-icons")).toBe(true);
     expect(where.querySelector(".ovw-icons .sess-lock")).not.toBeNull();
     // Clicking an ordinal focuses that pane and does not open the session.
