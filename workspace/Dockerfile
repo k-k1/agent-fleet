@@ -462,10 +462,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # OPENSSL_ia32cap mask the Agent applies to every spawn (0008, decision of 2026-09-07), so
 # only a non-x86 build host skips the --version check (an arm64 cross-build cannot always
 # run the binary).
-ARG AGY_VERSION=1.5.16
-ARG AGY_RELEASE_BUILD=5250855658717184
-ARG AGY_SHA256_X64=9bdab234d06bad1a61be2321072652eb06be78baff1acbfae47331da5a090abc
-ARG AGY_SHA256_ARM64=7ddeec790084e550af18adb04a5b6c5fdf2db3e1026854f49901a04cb4265c7e
+ARG AGY_VERSION=1.5.17
+ARG AGY_RELEASE_BUILD=4823843970351104
+ARG AGY_SHA256_X64=6304b4f592ae97e59231cfb1b365ee29c155750c9a881f0cc8efe5f5281077cf
+ARG AGY_SHA256_ARM64=d6d2b88493e6e02854da478b215cd1dd98fd8cf985b6be37829dacadea4ffc07
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
