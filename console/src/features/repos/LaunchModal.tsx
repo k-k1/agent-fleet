@@ -1058,6 +1058,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       : "";
   const narrowLabel = useNarrowLaunchLabel();
   const runWith = kinds.length ? [kindDisplayName(kind), modelShown].filter(Boolean).join(" · ") : "";
+  // The tooltip always carries the full sentence, whichever label the button shows.
+  const fullLabel = runWith
+    ? tr(space ? (spaceFolder ? "start.space_launch_existing_with" : "start.space_launch_with") : worktree ? "launch.start_worktree_with" : "launch.start_with", { what: runWith })
+    : undefined;
   const [policyErr, setPolicyErr] = useState<PolicyRefusal | null>(null);
   const [launchUnknown, setLaunchUnknown] = useState(false);
   // Files the picked agent cannot take: launching would drop them from the draft unsent, so the
@@ -1813,7 +1817,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         {detailsNotes}
         {launchUnknown && unknownNote}
         <div className="start-space-actions">
-          <Button variant="primary" className="launch-go" icon="play" title={runWith || undefined} onClick={submit} disabled={busy || !canLaunch}>
+          <Button variant="primary" className="launch-go" icon="play" title={fullLabel} onClick={submit} disabled={busy || !canLaunch}>
             {busy
               ? tr("launch.launching")
               : runWith
@@ -1846,7 +1850,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         <Button variant="ghost" onClick={onClose} disabled={busy}>
           {tr("common.cancel")}
         </Button>
-        <Button variant="primary" className="launch-go" title={runWith || undefined} onClick={submit} disabled={busy || !canLaunch}>
+        <Button variant="primary" className="launch-go" title={fullLabel} onClick={submit} disabled={busy || !canLaunch}>
           {busy && stash !== "busy"
             ? tr("launch.launching")
             : runWith

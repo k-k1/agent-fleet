@@ -67,7 +67,7 @@ async function renderDialog(kinds: string[]): Promise<void> {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <LaunchModal repo="app" branch="main" kinds={kinds} access={access} onClose={() => {}} onLaunch={onLaunch} />
+          <LaunchModal repo="app" branch="main" initialWorktree kinds={kinds} access={access} onClose={() => {}} onLaunch={onLaunch} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -150,10 +150,12 @@ describe.each([
         const text = goButton().textContent!;
         expect(text).toContain(agent);
         expect(text).toMatch(/Sonnet/);
-        expect(text).not.toContain("…");
+        expect(text).toBe(lang === "en" ? "Start · Claude Code · Sonnet" : "Claude Code · Sonnet を始める");
         // The short form drops the place words; the tooltip keeps the whole sentence.
         expect(text).not.toMatch(/worktree|スペース|space/);
         expect(goButton().title).toContain(agent);
+        // The tooltip keeps the words the short label dropped.
+        if (_n !== "the home variant") expect(goButton().title).toMatch(/worktree|スペース|space/);
       });
     });
   });
