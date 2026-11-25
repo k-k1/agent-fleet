@@ -163,8 +163,8 @@ describe("the tidy setting", () => {
     const box = must(labelled(t("memo.q_tidy")).querySelector<HTMLInputElement>("input[type=checkbox]"), "tidy switch");
     expect(box.checked).toBe(false);
     // The trust claim: a program in the workspace could put words you did not write into a note that runs.
-    expect(labelled(t("memo.q_tidy")).textContent).toMatch(/偽って作る|fake the model/);
-    expect(labelled(t("memo.q_tidy")).textContent).toMatch(/信頼できるワークスペース|workspace you trust/);
+    expect(labelled(t("memo.q_tidy")).closest(".ui-field")!.textContent).toMatch(/偽って作る|fake the model/);
+    expect(labelled(t("memo.q_tidy")).closest(".ui-field")!.textContent).toMatch(/信頼できるワークスペース|workspace you trust/);
     expect(dialog().querySelector(".memo-q-tidy-dest")).toBeNull();
     await click(box);
     const dest = must(dialog().querySelector(".memo-q-tidy-dest"), "destinations");

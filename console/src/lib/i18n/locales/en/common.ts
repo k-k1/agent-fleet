@@ -62,6 +62,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
 
   // --- common ---
   "common.close": "Close",
+  "common.field_info": "Show explanation",
 
   // --- common (load/start) ---
   "common.loading": "Loading…",

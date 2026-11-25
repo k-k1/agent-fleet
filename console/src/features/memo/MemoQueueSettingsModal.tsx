@@ -28,6 +28,7 @@ import type { MemoQueue } from "../../types/memo.ts";
 import { memoQueueDelete, memoQueuePut } from "./api.ts";
 import { readQueue } from "./queues.ts";
 import { queueScope, useQueueSettingsCache } from "./queueSettingsCache.ts";
+import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { MemoRepoSettingsCard } from "./MemoRepoSettingsCard.tsx";
 import {
   QUEUE_BATCH_MAX,
@@ -244,9 +245,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
         )}
 
         <div className="ui-field">
-          <label className="ui-field-label" htmlFor="memo-q-instruction">
-            {tr("memo.q_instruction")}
-          </label>
+          <FieldLabel htmlFor="memo-q-instruction" info={tr("memo.q_instruction_hint", { max: QUEUE_INSTRUCTION_MAX_BYTES >> 10 })}>{tr("memo.q_instruction")}</FieldLabel>
           <textarea {...NO_AUTOFILL}
             id="memo-q-instruction"
             value={draft.instruction}
@@ -256,7 +255,6 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             onChange={(e) => set("instruction", e.target.value)}
             spellCheck={false}
           />
-          <div className="ui-field-hint">{tr("memo.q_instruction_hint", { max: QUEUE_INSTRUCTION_MAX_BYTES >> 10 })}</div>
           {fieldErr("instruction")}
         </div>
 
@@ -311,9 +309,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
 
         <div className="ui-field-row">
           <div className="ui-field memo-q-narrow">
-            <label className="ui-field-label" htmlFor="memo-q-budget">
-              {tr("memo.q_budget")}
-            </label>
+            <FieldLabel htmlFor="memo-q-budget" info={tr("memo.q_budget_hint")}>{tr("memo.q_budget")}</FieldLabel>
             <input {...NO_AUTOFILL}
               id="memo-q-budget"
               type="text"
@@ -322,7 +318,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
               disabled={blocked}
               onChange={(e) => set("spendCapUsd", e.target.value)}
             />
-            {fieldErr("spendCapUsd") ?? <div className="ui-field-hint">{tr("memo.q_budget_hint")}</div>}
+            {fieldErr("spendCapUsd")}
           </div>
           <div className="ui-field memo-q-narrow">
             <label className="ui-field-label" htmlFor="memo-q-max-active">
@@ -359,25 +355,20 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
           <span>{tr("memo.q_worktree")}</span>
         </label>
 
-        <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-          <input
-            type="checkbox"
-            checked={draft.acceptOwnSessions}
-            disabled={blocked}
-            onChange={(e) => set("acceptOwnSessions", e.target.checked)}
-          />
-          <span>
-            {tr("memo.q_accept_own")}
-            <span className="ui-field-hint" style={{ display: "block" }}>
-              {tr("memo.q_accept_own_hint")}
-            </span>
-          </span>
-        </label>
+        <div className="ui-field">
+          <FieldLabel plain className="ui-field-check" info={tr("memo.q_accept_own_hint")}>
+            <input
+              type="checkbox"
+              checked={draft.acceptOwnSessions}
+              disabled={blocked}
+              onChange={(e) => set("acceptOwnSessions", e.target.checked)}
+            />
+            <span>{tr("memo.q_accept_own")}</span>
+          </FieldLabel>
+        </div>
 
         <div className="ui-field memo-q-narrow">
-          <label className="ui-field-label" htmlFor="memo-q-continuation">
-            {tr("memo.q_continuation")}
-          </label>
+          <FieldLabel htmlFor="memo-q-continuation" info={tr("memo.q_continuation_hint")}>{tr("memo.q_continuation")}</FieldLabel>
           <input {...NO_AUTOFILL}
             id="memo-q-continuation"
             type="text"
@@ -387,25 +378,22 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             onChange={(e) => set("continuationMax", e.target.value)}
           />
           {fieldErr("continuationMax")}
-          <span className="ui-field-hint" style={{ display: "block" }}>
-            {tr("memo.q_continuation_hint")}
-          </span>
         </div>
 
-        <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-          <input type="checkbox" checked={draft.tidy} disabled={blocked} onChange={(e) => set("tidy", e.target.checked)} />
-          <span>
-            {tr("memo.q_tidy")}
-            <span className="ui-field-hint" style={{ display: "block" }}>
-              {tr("memo.q_tidy_hint")}
-            </span>
-          </span>
-        </label>
+        <div className="ui-field">
+          <FieldLabel plain className="ui-field-check" info={tr("memo.q_tidy_hint")}>
+            <input type="checkbox" checked={draft.tidy} disabled={blocked} onChange={(e) => set("tidy", e.target.checked)} />
+            <span>{tr("memo.q_tidy")}</span>
+          </FieldLabel>
+        </div>
 
         {draft.tidy && (
           <fieldset className="ui-field memo-q-tidy-dest" disabled={blocked}>
-            <legend className="ui-field-label">{tr("memo.q_tidy_dest")}</legend>
-            <div className="ui-field-hint">{tr("memo.q_tidy_dest_hint")}</div>
+            <legend>
+              <FieldLabel as="span" info={tr("memo.q_tidy_dest_hint")}>
+                {tr("memo.q_tidy_dest")}
+              </FieldLabel>
+            </legend>
             {destinations.length === 0 ? (
               <div className="ui-field-hint">{tr("memo.q_tidy_dest_none")}</div>
             ) : (
@@ -443,9 +431,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
           {draft.runMode === "window" && (
             <div className="ui-field-row">
               <div className="ui-field">
-                <label className="ui-field-label" htmlFor="memo-q-open-cron">
-                  {tr("memo.q_open_cron")}
-                </label>
+                <FieldLabel htmlFor="memo-q-open-cron" info={tr("sched.spec_hint_cron")}>{tr("memo.q_open_cron")}</FieldLabel>
                 <input {...NO_AUTOFILL}
                   id="memo-q-open-cron"
                   type="text"
@@ -454,7 +440,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
                   onChange={(e) => set("openCron", e.target.value)}
                   spellCheck={false}
                 />
-                {fieldErr("openCron") ?? <div className="ui-field-hint">{tr("sched.spec_hint_cron")}</div>}
+                {fieldErr("openCron")}
               </div>
               <div className="ui-field memo-q-narrow">
                 <label className="ui-field-label" htmlFor="memo-q-open-minutes">
@@ -470,11 +456,9 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
                 {fieldErr("openMinutes")}
               </div>
               <div className="ui-field">
-                <label className="ui-field-label" htmlFor="memo-q-tz">
-                  {tr("sched.f_tz")}
-                </label>
+                <FieldLabel htmlFor="memo-q-tz" info={tr("memo.q_tz_hint")}>{tr("sched.f_tz")}</FieldLabel>
                 <input {...NO_AUTOFILL} id="memo-q-tz" type="text" value={draft.tz} placeholder="UTC" onChange={(e) => set("tz", e.target.value)} spellCheck={false} />
-                {fieldErr("tz") ?? <div className="ui-field-hint">{tr("memo.q_tz_hint")}</div>}
+                {fieldErr("tz")}
               </div>
             </div>
           )}
@@ -497,9 +481,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
 
         <div className="ui-field-row">
           <div className="ui-field memo-q-narrow">
-            <label className="ui-field-label" htmlFor="memo-q-fires">
-              {tr("memo.q_fires")}
-            </label>
+            <FieldLabel htmlFor="memo-q-fires" info={tr("memo.q_fires_hint")}>{tr("memo.q_fires")}</FieldLabel>
             <input {...NO_AUTOFILL}
               id="memo-q-fires"
               type="text"
@@ -508,12 +490,10 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
               disabled={blocked}
               onChange={(e) => set("maxFiresPerDay", e.target.value)}
             />
-            {fieldErr("maxFiresPerDay") ?? <div className="ui-field-hint">{tr("memo.q_fires_hint")}</div>}
+            {fieldErr("maxFiresPerDay")}
           </div>
           <div className="ui-field memo-q-narrow">
-            <label className="ui-field-label" htmlFor="memo-q-task-hours">
-              {tr("memo.q_task_hours")}
-            </label>
+            <FieldLabel htmlFor="memo-q-task-hours" info={tr("memo.q_task_hours_hint")}>{tr("memo.q_task_hours")}</FieldLabel>
             <input {...NO_AUTOFILL}
               id="memo-q-task-hours"
               type="text"
@@ -522,17 +502,16 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
               disabled={blocked}
               onChange={(e) => set("maxTaskHours", e.target.value)}
             />
-            {fieldErr("maxTaskHours") ?? <div className="ui-field-hint">{tr("memo.q_task_hours_hint")}</div>}
+            {fieldErr("maxTaskHours")}
           </div>
         </div>
 
-        <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-          <input type="checkbox" checked={draft.enabled} disabled={blocked} onChange={(e) => set("enabled", e.target.checked)} />
-          <span>
-            {tr("memo.q_enabled")}
-            <span className="ui-field-hint"> — {tr("memo.q_enabled_hint")}</span>
-          </span>
-        </label>
+        <div className="ui-field">
+          <FieldLabel plain className="ui-field-check" info={tr("memo.q_enabled_hint")}>
+            <input type="checkbox" checked={draft.enabled} disabled={blocked} onChange={(e) => set("enabled", e.target.checked)} />
+            <span>{tr("memo.q_enabled")}</span>
+          </FieldLabel>
+        </div>
       </div>
 
       <footer className="ui-modal-foot">

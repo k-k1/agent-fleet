@@ -1449,3 +1449,45 @@
   flex: none;
   font-size: 12px;
 }
+
+/* ---- FieldLabel ⓘ (ui/FieldLabel.tsx) ---- */
+.ui-field-labelrow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.ui-field-info {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted2);
+  cursor: pointer;
+  border-radius: 50%;
+}
+.ui-field-info:hover,
+.ui-field-info[aria-expanded="true"] {
+  color: var(--fg);
+}
+.ui-field-info:focus-visible {
+  outline: 2px solid var(--accent, currentColor);
+  outline-offset: 1px;
+}
+.ui-modal .ui-field-info {
+  color: var(--dialog-muted);
+}
+/* A checkbox + its text inside FieldLabel `plain`: the ⓘ sits after the text, not inside the click target. */
+.ui-field-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.ui-field-label-trailing {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}

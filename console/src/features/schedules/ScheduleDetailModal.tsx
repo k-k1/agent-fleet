@@ -37,6 +37,7 @@ import { useSettings } from "../../lib/settings.ts";
 import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
 import { choiceKey, routeChoices } from "../settings/agents/routeChoices.ts";
 import { useModelRouteProfiles } from "../repos/bedrockProfiles.ts";
+import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { workItemList } from "../workitems/api.ts";
 import { readWorkItems, type WorkItemQuery } from "../workitems/read.ts";
 
@@ -287,11 +288,8 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
             </select>
           </div>
           <div className="ui-field">
-            <label className="ui-field-label" htmlFor="sched-spec">
-              {tr("sched.f_spec")}
-            </label>
+            <FieldLabel htmlFor="sched-spec" info={specHint}>{tr("sched.f_spec")}</FieldLabel>
             <input {...NO_AUTOFILL} id="sched-spec" type="text" value={spec} onChange={(e) => setSpec(e.target.value)} spellCheck={false} />
-            <div className="ui-field-hint">{specHint}</div>
           </div>
         </div>
 
@@ -347,9 +345,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
 
         {s.session_mode !== "assistant" && (choices.length > 0 || storedHidden) && (
           <div className="ui-field">
-            <label className="ui-field-label" htmlFor="sched-route">
-              {tr("sched.f_route")}
-            </label>
+            <FieldLabel htmlFor="sched-route" info={tr("sched.route_hint")}>{tr("sched.f_route")}</FieldLabel>
             <select id="sched-route" value={routeKey} onChange={(e) => setRouteKey(e.target.value)}>
               <option value="">{defaultLabel ? tr("sched.route_default_saved", { route: defaultLabel }) : tr("sched.route_none")}</option>
               {storedHidden && <option value={storedKey}>{tr("sched.route_unavailable")}</option>}
@@ -359,27 +355,29 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
                 </option>
               ))}
             </select>
-            <span className="ui-field-hint">{tr("sched.route_hint")}</span>
           </div>
         )}
 
         {/* Completion-report opt-in (default off). Hidden for session_mode=assistant —
             there the fire itself lands in the conversation, so a report is meaningless. */}
         {s.session_mode !== "assistant" && (
-          <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-            <input type="checkbox" checked={report} onChange={(e) => setReport(e.target.checked)} />
-            <span>
-              {tr("sched.f_report")}
-              <span className="ui-field-hint"> — {tr("sched.f_report_hint")}</span>
-            </span>
-          </label>
+          <div className="ui-field">
+            <FieldLabel plain className="ui-field-check" info={tr("sched.f_report_hint")}>
+              <input type="checkbox" checked={report} onChange={(e) => setReport(e.target.checked)} />
+              <span>{tr("sched.f_report")}</span>
+            </FieldLabel>
+          </div>
         )}
 
         {/* Delivery targets (#1560): where the report goes. Only while reporting is on; an
             empty choice is refused by canSave rather than saved as "report to nobody". */}
         {s.session_mode !== "assistant" && report && (
           <fieldset className="ui-field sched-targets">
-            <legend className="ui-field-label">{tr("sched.f_deliver_to")}</legend>
+            <legend>
+              <FieldLabel as="span" info={tr("sched.f_deliver_to_hint")}>
+                {tr("sched.f_deliver_to")}
+              </FieldLabel>
+            </legend>
             <div className="sched-target-list">
               {DELIVERY_TARGETS.map((target) => (
                 <label key={target} className="sched-target">
@@ -392,45 +390,42 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
                 </label>
               ))}
             </div>
-            <div className="ui-field-hint">{targetsOk ? tr("sched.f_deliver_to_hint") : tr("sched.f_deliver_to_empty")}</div>
+            {!targetsOk && <div className="ui-field-hint">{tr("sched.f_deliver_to_empty")}</div>}
           </fieldset>
         )}
 
         {/* The silent sentinel (#1560), independent of the report: even with reporting off it
             keeps a [SILENT] answer out of the notifications and marks the run as silent. */}
         {s.session_mode !== "assistant" && (
-          <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-            <input type="checkbox" checked={silent} onChange={(e) => setSilent(e.target.checked)} />
-            <span>
-              {tr("sched.f_silent")}
-              <span className="ui-field-hint"> — {tr("sched.f_silent_hint")}</span>
-            </span>
-          </label>
+          <div className="ui-field">
+            <FieldLabel plain className="ui-field-check" info={tr("sched.f_silent_hint")}>
+              <input type="checkbox" checked={silent} onChange={(e) => setSilent(e.target.checked)} />
+              <span>{tr("sched.f_silent")}</span>
+            </FieldLabel>
+          </div>
         )}
 
         {/* Stop-after-run opt-in (docs/log/85), default off. Hidden for
             session_mode=assistant for the same reason as the report above: that mode drives a
             conversation and holds no session to stop. */}
         {s.session_mode !== "assistant" && (
-          <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-            <input type="checkbox" checked={stopAfterRun} onChange={(e) => setStopAfterRun(e.target.checked)} />
-            <span>
-              {tr("sched.f_stop_after_run")}
-              <span className="ui-field-hint"> — {tr("sched.f_stop_after_run_hint")}</span>
-            </span>
-          </label>
+          <div className="ui-field">
+            <FieldLabel plain className="ui-field-check" info={tr("sched.f_stop_after_run_hint")}>
+              <input type="checkbox" checked={stopAfterRun} onChange={(e) => setStopAfterRun(e.target.checked)} />
+              <span>{tr("sched.f_stop_after_run")}</span>
+            </FieldLabel>
+          </div>
         )}
 
         {/* "Also show in the Sessions view", default off. Not offered for session_mode=assistant:
             it holds no sessions with a worktree of their own for the flag to surface. */}
         {s.session_mode !== "assistant" && (
-          <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-            <input type="checkbox" checked={showInSessions} onChange={(e) => setShowInSessions(e.target.checked)} />
-            <span>
-              {tr("sched.f_show_in_sessions")}
-              <span className="ui-field-hint"> — {tr("sched.f_show_in_sessions_hint")}</span>
-            </span>
-          </label>
+          <div className="ui-field">
+            <FieldLabel plain className="ui-field-check" info={tr("sched.f_show_in_sessions_hint")}>
+              <input type="checkbox" checked={showInSessions} onChange={(e) => setShowInSessions(e.target.checked)} />
+              <span>{tr("sched.f_show_in_sessions")}</span>
+            </FieldLabel>
+          </div>
         )}
 
         <div className="ui-field">
@@ -449,7 +444,11 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
 
         {showGate && (
           <fieldset className="ui-field sched-gate">
-            <legend className="ui-field-label">{tr("sched.gate_title")}</legend>
+            <legend>
+              <FieldLabel as="span" info={tr("sched.gate_hint")}>
+                {tr("sched.gate_title")}
+              </FieldLabel>
+            </legend>
             {gateKnown ? (
               <>
                 <label className="sched-target">
@@ -460,7 +459,6 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
                   />
                   <span>{tr("sched.gate_enable")}</span>
                 </label>
-                <div className="ui-field-hint">{tr("sched.gate_hint")}</div>
                 {gateErr === "fit" && <div className="ui-field-hint" data-invalid>{tr("sched.gate_unfit")}</div>}
                 {gateForm.on && (
                   <>
@@ -491,9 +489,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
                       {gateErr === "query" && <div className="ui-field-hint" data-invalid>{tr("sched.gate_query_pick")}</div>}
                     </div>
                     <div className="ui-field">
-                      <label className="ui-field-label" htmlFor="sched-gate-fp">
-                        {tr("sched.gate_fingerprint")}
-                      </label>
+                      <FieldLabel htmlFor="sched-gate-fp" info={tr("sched.gate_fp_hint")}>{tr("sched.gate_fingerprint")}</FieldLabel>
                       <select
                         id="sched-gate-fp"
                         value={gateForm.fingerprint}
@@ -502,7 +498,6 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
                         <option value="keys">{tr("sched.gate_fp_keys")}</option>
                         <option value="keys+updated">{tr("sched.gate_fp_updated")}</option>
                       </select>
-                      <div className="ui-field-hint">{tr("sched.gate_fp_hint")}</div>
                     </div>
                     <div className="ui-field-row">
                       <div className="ui-field sched-narrow">

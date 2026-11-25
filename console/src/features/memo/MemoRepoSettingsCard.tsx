@@ -7,6 +7,7 @@
 // memo_queue_repo_stale when the file or the settings moved since. Reading the file needs the
 // workspace (it fetches origin), so the check runs when the member asks for it, never on open;
 // until then the card shows the queue's last read, which the Control Plane keeps.
+import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useId, useRef, useState } from "react";
 import { Button } from "../../ui/Button.tsx";
@@ -175,18 +176,25 @@ export function MemoRepoSettingsCard({ categoryId, categoryName, hasQueue, lastC
 
   return (
     <section className="ui-field memo-reposet" aria-label={tr("memo.repo_title")}>
-      <div className="memo-reposet-head">
-        <span className="ui-field-label memo-reposet-title">{tr("memo.repo_title")}</span>
-        <Button small type="button" disabled={check.kind === "loading" || approving} onClick={() => void load()}>
-          {check.kind === "idle" ? tr("memo.repo_check") : tr("memo.repo_recheck")}
-        </Button>
-        {hasQueue && (
-          <Button small variant="ghost" type="button" disabled={exporting} onClick={() => void doExport()}>
-            {tr("memo.repo_export")}
-          </Button>
-        )}
-      </div>
-      <div className="ui-field-hint">{tr("memo.repo_hint", { path: ".agent-fleet/autorun.yaml" })}</div>
+      <FieldLabel
+        as="span"
+        rowClassName="memo-reposet-head"
+        info={tr("memo.repo_hint", { path: ".agent-fleet/autorun.yaml" })}
+        trailing={
+          <>
+            <Button small type="button" disabled={check.kind === "loading" || approving} onClick={() => void load()}>
+              {check.kind === "idle" ? tr("memo.repo_check") : tr("memo.repo_recheck")}
+            </Button>
+            {hasQueue && (
+              <Button small variant="ghost" type="button" disabled={exporting} onClick={() => void doExport()}>
+                {tr("memo.repo_export")}
+              </Button>
+            )}
+          </>
+        }
+      >
+        {tr("memo.repo_title")}
+      </FieldLabel>
       {check.kind === "idle" && (lastCheck?.state === "differs" || lastCheck?.state === "invalid") && (
         <div className="ui-field-hint memo-reposet-last" role="status">
           {lastCheck.state === "differs"

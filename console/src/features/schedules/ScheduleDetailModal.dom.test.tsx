@@ -155,7 +155,7 @@ describe("ScheduleDetailModal delivery", () => {
     await act(async () => {
       targetBox("Slack").click();
     });
-    const silent = Array.from(document.querySelectorAll("label")).find((l) => l.textContent?.includes("[SILENT]"));
+    const silent = Array.from(document.querySelectorAll("label")).find((l) => l.textContent?.includes(t("sched.f_silent")));
     await act(async () => {
       (silent!.querySelector("input") as HTMLInputElement).click();
     });
