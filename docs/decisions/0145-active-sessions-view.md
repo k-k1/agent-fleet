@@ -32,8 +32,10 @@ nor the Console has it.
 2. **It lists what is going on, not what exists.** Running sessions; stopped sessions that still
    need the member (stopped on an unanswered exchange, or holding a handoff nobody took); and
    every descendant of a listed session, so a family is never drawn with holes. Shells, SSM
-   logins, unattended runs and shared sessions stay in their own views. The working set narrows
-   the view as it narrows the others.
+   logins, unattended runs and shared sessions stay in their own views; the worktree sessions of
+   a schedule set to show in the Sessions view are listed here as they are there. The working
+   set narrows the view as it narrows the Sessions tree: a session goes by its working copy.
+   A corrupted lineage cycle is opened at one member, so a family always has a card to open.
 3. **Groups are the tree's three sections in the tree's order:** repositories, spaces, other. A
    repository is identified by its remote, as in the overview, so the base clone and every
    worktree share one heading and the branch level is gone. A group exists only while it holds a
@@ -41,7 +43,7 @@ nor the Console has it.
    waiting.
 4. **Families fold, and start folded.** Inside a group families are ordered and folded by the
    overview's functions (`orderByFamily`, `foldFamilies`): the family that holds a waiting
-   session comes first. What is stored is the parents the member opened, per device, so a parent
+   session comes first. What is stored is the parents the member opened, per browser, member and tenant, so a parent
    that gains its first child starts folded without anything having been recorded. A folded
    parent says how many rows it hides and, separately, how many of them wait for an answer.
 5. **The card is the overview's card in a rail form,** not a second component: one column at the
@@ -51,7 +53,8 @@ nor the Console has it.
    in the focused pane, as a row of the Sessions view does.
 6. **A waiting session is counted on one icon.** The two views list the same waiting sessions.
    While the Active icon is in the bar it carries the count; when it is turned off the Sessions
-   icon does, as before. The unread dot stays on Sessions, the only view that lists every
+   icon does, as before; so does it while the workspace is not running, when Active lists
+   nothing. Only running sessions are counted. The unread dot stays on Sessions, the only view that lists every
    session a notice can be about.
 7. **Reveals are unchanged.** The existing reveal signals name a working copy, not a session, and
    a working copy's row is in the tree.
