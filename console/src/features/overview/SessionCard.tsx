@@ -117,8 +117,8 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
   const awake = remainingShort(s.keepAwakeUntil);
   const budgetStopped = !s.alive && !!s.spendCapHitAt;
   const ords = rail ? opens : [];
-  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || budgetStopped || isShared || ords.length);
-  const where = !rail || !!wt || !!repo?.integration || !!s.branchDrift;
+  const hasIcons = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || budgetStopped || isShared);
+  const where = !rail || !!wt || !!repo?.integration || !!s.branchDrift || hasIcons || ords.length > 0;
 
   // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
   // the screen. Without it, `beside` decides.
@@ -246,6 +246,31 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
       </header>
       {where && (
       <div className="ovw-where" title={s.dir || ""}>
+        {ords.length > 0 && (
+          <span className="sess-ords">
+            {ords.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                className={"rail-ord " + ordClass(o.ordinal)}
+                title={tr("common.focus_pane", { ordinal: o.ordinal })}
+                aria-label={tr("common.focus_pane", { ordinal: o.ordinal })}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActive(o.id);
+                }}
+                onAuxClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                }}
+                onMouseEnter={() => setHover({ session: s.name, paneId: o.id })}
+                onMouseLeave={() => setHover({ session: s.name })}
+              >
+                {o.ordinal}
+              </button>
+            ))}
+          </span>
+        )}
         {!rail && <span className="ovw-project">{project || folder || tr("pj.other_sessions")}</span>}
         {wt && (
           <span className="ovw-wt" title={branch || wt}>
@@ -269,16 +294,11 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             <Icon name="warning" /> {s.currentBranch}
           </span>
         )}
-      </div>
-      )}
-      {/* The badge row carries only what SOME cards have (lock / keep-awake / stop-armed /
-          shared). With the state chip moved into the head it is empty on an ordinary card, and
-          an empty flex row would still spend the card's row gap. Pane ordinals are deliberately
-          NOT here (ADR 0078 decision 10): which pane holds a session is the rail's job, and on a
-          grid the numbers were noise. `opens` still marks the card as open and drives the
-          cross-highlight. The rail form is in the rail, so it does carry them. */}
-      {badges && (
-      <div className="ovw-row">
+        {/* The state icons only SOME cards have (lock / keep-awake / stop-armed / budget /
+            shared) share this line, right-aligned, so a card never spends a row on badges
+            alone. The pane ordinals lead the line (rail form only: ADR 0078 decision 10). */}
+        {hasIcons && (
+          <span className="ovw-icons">
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
         {remainingShort(s.keepAwakeUntil) && (
           <Icon name="debug-pause" className="sess-awake" title={tr("srow.keep_awake_badge", { left: remainingShort(s.keepAwakeUntil) })} />
@@ -286,29 +306,6 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         {s.alive && s.stopAfterTurnAt && <Icon name="debug-stop" className="sess-stoparm" title={tr("srow.stop_after_turn_badge")} />}
         {budgetStopped && <Icon name="pulse" className="sess-budget" title={tr("srow.budget_paused_hint")} />}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
-        {ords.length > 0 && (
-          <span className="sess-ords ovw-ords">
-            {ords.map((o) => (
-              <button
-                key={o.id}
-                type="button"
-                className={"rail-ord " + ordClass(o.ordinal)}
-                title={tr("common.focus_pane", { ordinal: o.ordinal })}
-                aria-label={tr("common.focus_pane", { ordinal: o.ordinal })}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setActive(o.id);
-                }}
-                onAuxClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
-                }}
-                onMouseEnter={() => setHover({ session: s.name, paneId: o.id })}
-                onMouseLeave={() => setHover({ session: s.name })}
-              >
-                {o.ordinal}
-              </button>
-            ))}
           </span>
         )}
       </div>

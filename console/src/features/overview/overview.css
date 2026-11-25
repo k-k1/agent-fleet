@@ -206,12 +206,6 @@
 .ovw-wt .codicon {
   font-size: var(--fs-11);
 }
-.ovw-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 /* The state chip sits in the head, right of the title and left of the ⋯ (ADR 0078 decision
    10). It never shrinks: the title ellipsizes first, because "which session" is recoverable
    from the row below while a half-drawn state is not. */
@@ -374,6 +368,13 @@
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 60%, transparent);
 }
-.ovw-ords {
+.ovw-icons {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
   margin-left: auto;
+}
+.ovw-where .sess-ords {
+  flex: none;
 }
