@@ -8,9 +8,10 @@ import { createRoot, type Root } from "react-dom/client";
 const LIST = { root: "/home/dev/spaces", spaces: [{ folder: "q3-abcdef", name: "Q3 report", dir: "/home/dev/spaces/q3-abcdef" }] };
 let spacesAnswer: () => unknown = () => LIST;
 const HOSTS = [{ id: "h1", alias: "bastion", profileId: "p1", instanceId: "i-0abc" }];
+let profilesAnswer: unknown;
 const PROFILES = [{ id: "p1", label: "Dev", accountId: "111111111111" }];
 const api = vi.fn(async (url: string): Promise<unknown> =>
-  url.startsWith("api/spaces") ? spacesAnswer() : url === "api/ssm/hosts" ? HOSTS : url === "api/ssm/profiles" ? PROFILES : {},
+  url.startsWith("api/spaces") ? spacesAnswer() : url === "api/ssm/hosts" ? HOSTS : url === "api/ssm/profiles" ? profilesAnswer : {},
 );
 vi.mock("../../core/api/client.ts", () => ({
   apiJSON: (...a: unknown[]) => apiJSON(...a),
@@ -54,6 +55,7 @@ beforeEach(() => {
   startWork.mockClear();
   onClose.mockClear();
   spacesAnswer = () => LIST;
+  profilesAnswer = PROFILES;
   setSettings({ workingSets: [], workingSetActive: "" });
   useSpacesStore.getState().clear();
   useReposStore.setState({ repos: [{ name: "app" }, { name: "app@wip-x", worktree: true, parent: "app", branch: "feat/x" }] });
@@ -119,6 +121,22 @@ describe("NewShellModal", () => {
     await flush();
     expect(apiJSON).toHaveBeenCalledWith("api/sessions", "POST", expect.objectContaining({ kind: "ssm", ssm_host_id: "h1" }));
     expect(document.querySelector(".start-row")).toBeNull();
+  });
+
+  it("says no SSM profile is set up, without the host picker, and says when a filter matches nothing", async () => {
+    profilesAnswer = [];
+    useReposStore.setState({ repos: Array.from({ length: 12 }, (_, i) => ({ name: `proj${i}` })) });
+    await mount();
+    expect(document.querySelector(".ssm-card")).toBeNull();
+    expect(document.body.textContent).toContain("No SSM profile is set up.");
+    await act(async () => document.querySelector<HTMLButtonElement>(".term-new-fold")!.click());
+    const filter = document.querySelector<HTMLInputElement>('input[type="search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(filter, "zzz");
+      filter.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(document.body.textContent).toContain("No matching repositories or spaces.");
+    expect(document.querySelector<HTMLButtonElement>(".term-new-fold")!.disabled).toBe(true);
   });
 
   it("adds a space's shell to the active working set, as a repo-less session", async () => {

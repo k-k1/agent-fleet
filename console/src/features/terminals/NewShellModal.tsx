@@ -16,6 +16,7 @@ import { useReposStore } from "../repos/store.ts";
 import { SsmStage } from "../repos/SsmStage.tsx";
 import type { SsmProfile } from "../repos/SsmStage.tsx";
 import { SsmLoginModal } from "../sessions/SsmLoginModal.tsx";
+import { useSettingsUI } from "../settings/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionTerminal } from "../sessions/open.ts";
 import { useStartWork } from "../repos/useStartWork.ts";
@@ -141,22 +142,32 @@ export function NewShellModal({ onClose }: { onClose: () => void }) {
           {places.length > 0 && (
             <>
               {places.length > PLACES_FOLD_MAX && (
-                <button type="button" className="term-new-fold" aria-expanded={!folded} onClick={() => setUnfolded(!unfolded)}>
+                <button type="button" className="term-new-fold" aria-expanded={!folded} disabled={!!q} onClick={() => setUnfolded(!unfolded)}>
                   <Icon name={folded ? "chevron-right" : "chevron-down"} />
                   {tr("terms.places", { n: places.length })}
                 </button>
               )}
               {!folded && places.length > PLACES_FILTER_MIN && (
-                <input {...NO_AUTOFILL} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr("terms.places_filter_ph")} aria-label={tr("terms.places_filter_ph")} />
+                <div className="ui-field">
+                  <input {...NO_AUTOFILL} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr("terms.places_filter_ph")} aria-label={tr("terms.places_filter_ph")} />
+                </div>
               )}
-              {!folded && <div className="start-list">{shown.map((p) => row(p.key, p.icon, p.title, p.desc, p.place, p.shellTitle))}</div>}
+              {!folded && shown.length > 0 && <div className="start-list">{shown.map((p) => row(p.key, p.icon, p.title, p.desc, p.place, p.shellTitle))}</div>}
+              {!folded && shown.length === 0 && <span className="ui-field-hint">{tr("terms.places_none")}</span>}
             </>
           )}
         </section>
         <section className="term-new-sec">
           <h3 className="term-sub-head">{tr("terms.ssm")}</h3>
-          {ssmProfiles != null && ssmProfiles.length === 0 ? (
-            <span className="ui-field-hint">{tr("terms.ssm_none")}</span>
+          {ssmProfiles === null ? (
+            <p className="sm-muted">{tr("chat.ph_loading")}</p>
+          ) : ssmProfiles.length === 0 ? (
+            <span className="ui-field-hint">
+              {tr("terms.ssm_none")}{" "}
+              <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("ssm")}>
+                {tr("start.settings_ssm")}
+              </button>
+            </span>
           ) : (
             <SsmStage busy={busy} setBusy={setBusy} ssmProfiles={ssmProfiles} onStarted={setSsmLogin} layout="inline" onClose={onClose} />
           )}
