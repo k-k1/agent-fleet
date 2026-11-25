@@ -710,9 +710,9 @@
   min-width: 0;
   font-size: var(--fs-12);
   color: var(--dialog-muted, var(--muted));
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Wraps: the folded summary is the only place a choice (approvals, effort, ...) can be read
+     without opening the section, so a narrow dialog must not cut it off. */
+  overflow-wrap: anywhere;
 }
 /* A state that cannot be launched as-is, e.g. "existing branch, none selected". */
 .launch-sec-sum.launch-sec-sum--warn {
@@ -1955,6 +1955,10 @@ button.start-place-chip--gone {
 }
 .run-strip-line2 > .run-model {
   flex: 1 1 100%;
+}
+.run-model--catalog > .model-picker-dynamic {
+  flex: 1 1 100%;
+  min-width: 0;
 }
 .run-model--claude .run-model-seg {
   flex: 1 1 0;
