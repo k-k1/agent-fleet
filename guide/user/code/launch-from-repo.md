@@ -22,10 +22,10 @@ The row's badges also tell you about unpushed changes and changes you have not b
 
 1. Press "**Launch**" on the row. The "**Start working**" screen opens
 2. Write the first prompt, then check the agent, route and model in the strip under it. The agent and route are chips; the model is one row of buttons (aliases, then your recent models, then **+N**)
-3. Check the **location** and the **Details** (effort, start mode, permissions and the rest). Both stay folded with a summary; press **Change** to change one
+3. Check the **location** and the **Details** (effort, start mode, permissions and the rest). Each shows a summary; press **Change** to open it. They stay open or folded as you last left them, and Details opens by itself when the budget is not a valid amount
 4. Press the launch button, which names what will run (for example **Start in a worktree with Claude Code · Opus**)
 
-- A route other than the default is shown in an accent colour. [Run with](../sessions/start.md#run-with) explains the strip
+- A route other than the plain default (including one you saved as your default in Settings) is shown in an accent colour. [Run with](../sessions/start.md#run-with) explains the strip
 - The location defaults to an isolated "**New worktree**". What each location does, and the base branch and branch name, are in [Work in parallel with worktrees](../sessions/worktrees.md)
 - The **▾** next to "Launch" lets you pick a kind (an agent or a shell) and launch at once without the screen. No prompt is passed
 - In the **▾** list, Ctrl+click or middle-click launches into a new pane

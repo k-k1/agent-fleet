@@ -67,7 +67,7 @@ The dialog asks what, then with what, then where, then the details.
 5. Press the launch button. It names what will run, for example **Start in a worktree with Claude Code · Opus**
    (**Start with Claude Code · Opus** when you start directly in this copy)
 
-Your last agent for the repository and your last model for that agent are chosen already, so most launches need only the
+The last agent you used in the repository, and the last model you used with that agent in that repository, are chosen already, so most launches need only the
 prompt. Details stays open next time once you open it. It opens by itself only when something there stops the launch, such as a budget that is not a valid amount. A problem with the
 agent, route or model is explained in the strip instead.
 
@@ -89,10 +89,10 @@ change rarely, and the one you change with almost every prompt.
 | Part | What it does |
 |---|---|
 | Agent chip (icon and name) | Opens the agent tiles. Picking another agent swaps the model row to that agent's models |
-| Route chip (**Route: default**) | Shown for an agent that can run on more than one route. Opens the route choices with their explanation. A route other than the default (an API key, Bedrock, a route your organisation provides) is shown in an accent colour, because the billed account changes. Your default route (⚙ Settings → Agents) is already chosen when it can be used now. A route marked "no credential yet" can be picked once its key or login is added in ⚙ Settings → Model credentials. Only the routes your organisation allows are listed ([Amazon Bedrock route](../../ref/bedrock-route.md)) |
-| Model row | One single-choice row: the agent's aliases (Fable, Opus, Sonnet and Haiku for Claude Code; the agent's own set for the others), a divider, then the up to 3 registered models you launched with most recently for this agent, and **+N** for the rest. Exactly one button is active. Picking from **+N** puts that model in the row. The common `claude-` prefix is dropped from labels; the tooltip has the full id |
+| Route chip (**Route: default**) | Shown for an agent that can run on more than one route. Opens the route choices with their explanation. A route other than the default (an API key, Bedrock, a route your organisation provides) is shown in an accent colour, because the billed account changes. This includes a route you saved as your default in ⚙ Settings → Agents: the accent marks a route other than the plain default, not a change you made in this dialog. Your default route (⚙ Settings → Agents) is already chosen when it can be used now. A route marked "no credential yet" can be picked once its key or login is added in ⚙ Settings → Model credentials. Only the routes your organisation allows are listed ([Amazon Bedrock route](../../ref/bedrock-route.md)) |
+| Model row | For Claude Code and the other agents with a fixed model list: one single-choice row of the agent's aliases (Fable, Opus, Sonnet and Haiku for Claude Code), a divider, then the up to 3 registered models you launched with most recently for this agent, and **+N** for the rest. Exactly one button is active. Picking from **+N** puts that model in the row. The common `claude-` prefix is dropped from labels; the tooltip has the full id. An agent whose models come from a live catalogue (Codex and OpenCode, for example) shows a searchable model picker instead, with no recent models. On a Bedrock route that takes a Bedrock model id, the row is replaced by a Bedrock model field |
 
-- The agent, then the route, then the model narrow from left to right. When the agent or route changes and the chosen model cannot be used there, the model goes back to the agent's default and the strip says so
+- The agent, then the route, then the model narrow from left to right. When the agent or route changes and the chosen model cannot be used there, it is dropped and the strip says so. The model goes back to the agent's default, except on a route that needs a model of its own (OpenCode on Bedrock, for example): the launch cannot start until you pick one
 - When the launch needs a route choice (no usable default route, a route model to pick, a Bedrock region or model), it cannot start until you make it, and the route chip says why
 - The recent models are kept in your browser for each agent, not for each repository, so the row does not start empty in every repository. The route is not remembered: it is the default each time
 - On a narrow screen, line 1 becomes one chip (agent and route) and line 2 becomes one model button
