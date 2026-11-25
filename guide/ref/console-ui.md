@@ -317,6 +317,10 @@ A pane's header carries these buttons ([Split the screen into panes](../user/sta
 - In the tabbed layout, right-clicking a session's tab, or the tab of an image studio bound to a session, opens the same menu as the left-pane row. Other tabs, and any tab while the workspace is stopped, get the browser's own menu
 - A card in the sessions overview opens the same menu from right-click, the card's `⋯` or the menu key ([See every running session](../user/fleet/overview.md#act-from-a-card))
 
+## Field help (the ⓘ mark)
+
+In forms and dialogs, a static explanation of a field sits behind an **ⓘ** next to its label: hover over it, or focus it with the keyboard, to read it. Text written under a field is kept for the state of the moment, such as a warning or a notice that the value is locked.
+
 ## Related
 
 - [Find your way around the screen](../user/start/console-tour.md)
