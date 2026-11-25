@@ -27,6 +27,7 @@ vi.mock("../../../core/api/client.ts", () => ({
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
+import { admin as ja } from "../../../lib/i18n/locales/ja/admin.ts";
 import { TenantScopeBody, tenantScopeGroups } from "./tenantScope.tsx";
 
 const TENANT = { slug: "sales", name: "営業部", users: 0, running: 0 };
@@ -178,6 +179,8 @@ describe("model access section", () => {
   });
 });
 
+const JA = ja as Record<string, string>;
+
 describe("limits form field explanations (docs/CONVENTIONS.md §13)", () => {
   // Each moved explanation must hang off its own field, and the field keeps its label.
   const PAIRS: [id: string, hintKey: string][] = [
@@ -198,13 +201,13 @@ describe("limits form field explanations (docs/CONVENTIONS.md §13)", () => {
       const btn = row.querySelector<HTMLButtonElement>("button.ui-field-info")!;
       const panel = document.getElementById(btn.getAttribute("aria-controls")!)!;
       expect(panel.hidden).toBe(true);
-      expect(panel.textContent!.trim()).not.toBe("");
-      // Clicking the label text focuses the input and leaves the panel closed.
+      // The panel holds this field's own explanation, not another field's.
+      expect(panel.textContent).toContain(JA[hintKey].slice(0, 20));
+      // Clicking the label text (it targets the input, so it is not the ⓘ) leaves the panel closed.
       await act(async () => input.labels![0].click());
       expect(panel.hidden).toBe(true);
       await act(async () => btn.click());
       expect(panel.hidden).toBe(false);
-      expect(hintKey).toBeTruthy();
     }
   });
 
@@ -215,7 +218,9 @@ describe("limits form field explanations (docs/CONVENTIONS.md §13)", () => {
         (p) => !p.closest("[hidden]") && (p.textContent || "").includes(needle),
       );
     // PAT cap: lowering it signs older tokens out at once. Terminal log: output may hold secrets.
-    expect(visible("AF_PAT_MAX_DAYS")).toBe(true);
+    expect(visible(JA["admin.pat_max_days_hint"].slice(0, 20))).toBe(true);
+    expect(visible(JA["admin.pat_max_days_hint"].slice(-12))).toBe(true);
+    expect(visible(JA["admin.term_log_hint"].slice(0, 20))).toBe(true);
     expect(visible("機密")).toBe(true);
   });
 });
