@@ -557,7 +557,7 @@ export const sessions = {
   "launch.own_default_no_budget": "保存できる予算は $0 から $10000 までです。",
   "launch.sum.budget": "予算 {v}",
   "launch.sum.budget_none": "予算なし",
-  "launch.title_ph": "任意。空欄なら自動で決まります",
+  "launch.title_ph": "任意",
   "launch.field.model": "モデル",
   "launch.field.effort": "推論の強さ",
   "launch.field.effort_hint": "未指定のときはモデルの既定値になります。",
@@ -587,7 +587,8 @@ export const sessions = {
   "launch.subdir_hint": "エージェントをこのフォルダで起動します。空ならリポジトリ直下になります。",
   "launch.subdir_wt_hint": "新しい worktree 内の同じ相対パスで起動します。空なら worktree 直下になります。",
   "launch.first_prompt": "最初のプロンプト（任意）",
-  "launch.first_prompt_ph": "起動後にこのプロンプトを送信します。空なら送信せず開くだけ。",
+  "launch.first_prompt_ph": "任意",
+  "launch.first_prompt_empty": "起動後にこのプロンプトを送信します。空なら送信せず開くだけ。",
   "launch.launching": "起動中…",
   "launch.launch": "起動",
 

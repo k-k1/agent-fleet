@@ -20,6 +20,7 @@ import type { KeyboardEvent, ClipboardEvent, DragEvent, MutableRefObject, ReactN
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
+import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { Trans } from "../../lib/i18n/Trans.tsx";
 import { MEMBER_DEFAULT_AGENTS, agentOf, nonPlanModeLabel } from "../../agents/registry.ts";
@@ -1099,7 +1100,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           problem: routeProblem,
           panel: (
             <div className="ui-field">
-              <span className="ui-field-label">{tr("launch.field.route")}</span>
+              <FieldLabel as="span" info={tr("launch.route_hint")}>{tr("launch.field.route")}</FieldLabel>
               <select
                 value={chosenRoute}
                 aria-invalid={routeMissing || undefined}
@@ -1128,7 +1129,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                   );
                 })}
               </select>
-              <span className="ui-field-hint">{tr("launch.route_hint")}</span>
               {someNoKey && (
                 <span className="ui-field-hint launch-route-nokey">
                   {tr("launch.route_no_key_hint")}{" "}
@@ -1157,7 +1157,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       )}
       {chosenRoute === "bedrock" && bedrockPick && (
         <div className="ui-field">
-          <span className="ui-field-label">{tr("launch.field.bedrock_profile")}</span>
+          <FieldLabel as="span" info={tr("launch.bedrock_hint")}>{tr("launch.field.bedrock_profile")}</FieldLabel>
           <select value={bedrockPick.id} onChange={(e) => setBedrockProfile(e.target.value)}>
             {modelRouteProfiles!.map((p) => (
               <option key={p.id} value={p.id}>
@@ -1173,12 +1173,12 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             aria-invalid={!regionOk(bedrockRegion) || undefined}
             onChange={(e) => setBedrockRegion(e.target.value)}
           />
-          <span className="ui-field-hint">{!regionOk(bedrockRegion) ? tr("launch.bedrock_region_invalid") : tr("launch.bedrock_hint")}</span>
+          {!regionOk(bedrockRegion) && <span className="ui-field-hint ui-field-hint--warn" role="alert">{tr("launch.bedrock_region_invalid")}</span>}
         </div>
       )}
       {onBedrock && (
         <div className="ui-field">
-          <span className="ui-field-label">{tr("launch.field.bedrock_model")}</span>
+          <FieldLabel as="span" info={tr("launch.bedrock_model_hint")}>{tr("launch.field.bedrock_model")}</FieldLabel>
           <input
             type="text"
             value={bedrockModel}
@@ -1193,7 +1193,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               setBedrockModels((m) => ({ ...m, [bedrockPick!.id]: v }));
             }}
           />
-          <span className="ui-field-hint">{bedrockModelBad && bedrockModel.trim() !== "" ? tr("launch.bedrock_model_invalid") : tr("launch.bedrock_model_hint")}</span>
+          {bedrockModelBad && bedrockModel.trim() !== "" && <span className="ui-field-hint ui-field-hint--warn" role="alert">{tr("launch.bedrock_model_invalid")}</span>}
         </div>
       )}
       {modelPending && !!kinds.length && !(catalogSettled && !(modelOptions ?? []).some(([v]) => v)) && (
@@ -1263,8 +1263,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               onMore={skillPicker.unfold}
             />
           )}
-          <span className="ui-field-label launch-prompt-label">
-            <span>{tr("launch.first_prompt")}</span>
+          <FieldLabel
+            as="span"
+            rowClassName="launch-prompt-label"
+            info={tr("launch.first_prompt_empty") + " " + tr("launch.first_prompt_note") + (canPasteImage ? " " + tr("launch.attach_note") : "")}
+            trailing={
             <span className="launch-prompt-tools">
               {/* + attach: the paste-less path. Mobile keyboards can't paste images into
                   a <textarea {...NO_AUTOFILL}>, so a phone can only attach through this picker. Any file
@@ -1314,7 +1317,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                 />
               )}
             </span>
-          </span>
+            }
+          >
+            {tr("launch.first_prompt")}
+          </FieldLabel>
           {/* In the flow, between the label row and the box: the dialog body scrolls, and an
               absolutely placed panel this tall was cut off at its bottom edge. */}
           {tmplOpen && (
@@ -1360,10 +1366,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             placeholder={tr("launch.first_prompt_ph")}
           />
           {!space && agentBlock}
-          <span className="ui-field-hint">
-            {tr("launch.first_prompt_note")}
-            {canPasteImage && " " + tr("launch.attach_note")}
-          </span>
           {filesStuck && <span className="ui-field-hint ui-field-hint--warn" role="status">{tr("launch.attach_not_taken")}</span>}
         </div>
 
@@ -1398,9 +1400,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             {/* Working directory: narrow the launch to a folder under the repository (the
                 default is its root). */}
             <div className="ui-field">
-              <span className="ui-field-label">{tr("launch.field.subdir")}</span>
+              <FieldLabel as="span" info={tr("launch.subdir_hint")}>{tr("launch.field.subdir")}</FieldLabel>
               <SubdirPicker repo={repo} value={subdir} onChange={setSubdir} />
-              <span className="ui-field-hint">{tr("launch.subdir_hint")}</span>
             </div>
           </>
         ) : (
@@ -1426,11 +1427,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                 default is its root). For a worktree launch it is the same relative path inside
                 the newly created worktree. */}
             <div className="ui-field">
-              <span className="ui-field-label">{tr("launch.field.subdir")}</span>
+              <FieldLabel as="span" info={worktree ? tr("launch.subdir_wt_hint") : tr("launch.subdir_hint")}>{tr("launch.field.subdir")}</FieldLabel>
               <SubdirPicker repo={repo} value={subdir} onChange={setSubdir} />
-              <span className="ui-field-hint">
-                {worktree ? tr("launch.subdir_wt_hint") : tr("launch.subdir_hint")}
-              </span>
             </div>
             {worktree && (
               <>
@@ -1465,7 +1463,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                 {branchMode === "new" ? (
                   <>
                     <label className="ui-field">
-                      <span className="ui-field-label">{tr("launch.base_branch")}</span>
+                      <FieldLabel as="span" info={tr("launch.base_origin_note")}>{tr("launch.base_branch")}</FieldLabel>
                       <input {...NO_AUTOFILL}
                         value={base}
                         onChange={(e) => {
@@ -1475,9 +1473,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                         placeholder={branch || tr("launch.base_default")}
                       />
                       {/* The base point is aligned to origin's tip (the Agent's
-                          fastForwardNewWorktreeToOrigin). Spelled out here so the base is never
-                          seen to move silently. */}
-                      <span className="ui-field-hint">{tr("launch.base_origin_note")}</span>
+                          fastForwardNewWorktreeToOrigin); the note behind ⓘ says so. */}
                       {/* A base the rules picked says which rule, so develop is never a surprise. */}
                       {naming.baseSource && (
                         <span className="ui-field-hint launch-base-source">
@@ -1632,17 +1628,16 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             <div className="ui-field-row">
               {hasEffort && (
                 <div className="ui-field">
-                  <span className="ui-field-label">{tr("launch.field.effort")}</span>
+                  <FieldLabel as="span" info={tr("launch.field.effort_hint")}>{tr("launch.field.effort")}</FieldLabel>
                   <EffortPicker kind={kind} model={model} effort={effort} onChange={(v) => {
                     mark("effort");
                     setEffort(v);
                   }} />
-                  <span className="ui-field-hint">{tr("launch.field.effort_hint")}</span>
                 </div>
               )}
               {hasStartMode && (
                 <div className="ui-field">
-                  <span className="ui-field-label">{tr("launch.field.start_mode")}</span>
+                  <FieldLabel as="span" info={tr("launch.plan_hint")}>{tr("launch.field.start_mode")}</FieldLabel>
                   <select value={startMode} onChange={(e) => {
                     mark("startMode");
                     setStartMode(e.target.value === "plan" ? "plan" : "normal");
@@ -1650,12 +1645,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                     <option value="normal">{nonPlanModeLabel(kind, skipPermEffective) || tr("launch.mode_normal")}</option>
                     <option value="plan">Plan</option>
                   </select>
-                  <span className="ui-field-hint">{tr("launch.plan_hint")}</span>
                 </div>
               )}
               {hasPermChoice && (
                 <div className="ui-field">
-                  <span className="ui-field-label">{tr("launch.field.permissions")}</span>
+                  <FieldLabel as="span" info={tr("launch.perm_hint")}>{tr("launch.field.permissions")}</FieldLabel>
                   <select
                     value={skipPermEffective ? "skip" : "ask"}
                     onChange={(e) => {
@@ -1666,7 +1660,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                     <option value="skip">{tr("launch.perm_skip")}</option>
                     <option value="ask">{tr("launch.perm_ask")}</option>
                   </select>
-                  <span className="ui-field-hint">{tr("launch.perm_hint")}</span>
                 </div>
               )}
             </div>
@@ -1683,7 +1676,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           </div>
           {hasBudget && (
             <div className="ui-field">
-              <span className="ui-field-label">{tr("launch.field.budget")}</span>
+              <FieldLabel as="span" info={tr("launch.budget_hint")}>{tr("launch.field.budget")}</FieldLabel>
               <input {...NO_AUTOFILL}
                 value={budget}
                 inputMode="decimal"
@@ -1698,27 +1691,39 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                     : tr("launch.budget_ph_none")
                 }
               />
-              <span className="ui-field-hint">
-                {budgetInvalid ? tr("sess.budget_invalid") : tr("launch.budget_hint")}
-              </span>
+              {budgetInvalid && (
+                <span className="ui-field-hint ui-field-hint--warn" role="alert">
+                  {tr("sess.budget_invalid")}
+                </span>
+              )}
             </div>
           )}
           <div className="ui-field launch-own-default">
-            <Button variant="ghost" disabled={ownBusy || !!ownProblem} onClick={() => void saveOwn(ownBlock)}>
-              {tr("launch.own_default_save")}
-            </Button>
-            {ownDefault && (
-              <Button variant="ghost" disabled={ownBusy} onClick={() => void saveOwn(ownLaunch({}))}>
-                {tr("launch.own_default_clear")}
+            <FieldLabel
+              as="span"
+              plain
+              info={tr("launch.own_default_hint")}
+              trailing={
+                <>
+                  {ownDefault && (
+                    <Button variant="ghost" disabled={ownBusy} onClick={() => void saveOwn(ownLaunch({}))}>
+                      {tr("launch.own_default_clear")}
+                    </Button>
+                  )}
+                  {ownState === "saved" && <span className="saved-note">{tr("launch.own_default_saved")}</span>}
+                </>
+              }
+            >
+              <Button variant="ghost" disabled={ownBusy || !!ownProblem} onClick={() => void saveOwn(ownBlock)}>
+                {tr("launch.own_default_save")}
               </Button>
-            )}
-            {ownState === "saved" && <span className="saved-note">{tr("launch.own_default_saved")}</span>}
+            </FieldLabel>
             {ownState === "failed" && (
               <span className="ui-field-hint ui-field-hint--warn" role="alert">
                 {tr("launch.own_default_failed")}
               </span>
             )}
-            <span className="ui-field-hint">{ownProblem ? tr(("launch.own_default_no_" + ownProblem) as never) : tr("launch.own_default_hint")}</span>
+            {ownProblem && <span className="ui-field-hint ui-field-hint--warn">{tr(("launch.own_default_no_" + ownProblem) as never)}</span>}
           </div>
     </>
   );
@@ -1751,7 +1756,18 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       <div className="start-space-form">
         {agentBlock}
         <div className="ui-field">
-          <span className="ui-field-label">{tr("start.place")}</span>
+          <FieldLabel
+            as="span"
+            info={
+              spaceFolder ? (
+                <Trans k="start.space_note_existing" vars={{ folder: spaceFolder }} components={[<code />]} />
+              ) : (
+                <Trans k="start.space_note" components={[<code />]} />
+              )
+            }
+          >
+            {tr("start.place")}
+          </FieldLabel>
           <div className="start-place">
             <SpacePlacePicker folder={spaceFolder} onChange={setSpaceFolder} disabled={busy} gone={spaceGone} />
             {!spaceFolder && (
@@ -1771,13 +1787,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
               {tr("start.space_gone")}
             </span>
           )}
-          <span className="ui-field-hint">
-            {spaceFolder ? (
-              <Trans k="start.space_note_existing" vars={{ folder: spaceFolder }} components={[<code />]} />
-            ) : (
-              <Trans k="start.space_note" components={[<code />]} />
-            )}
-          </span>
         </div>
         {filesStuck && <span className="ui-field-hint ui-field-hint--warn" role="status">{tr("launch.attach_not_taken")}</span>}
         {detailsSection}
