@@ -61,7 +61,7 @@ is redrawn from the messages the chat bridge posts.
   (switched on by the operator) a question or a finished answer reaches your phone or
   computer even while the Console is closed, and you can switch pushes off per origin
   (auto-run, schedules).
-- **One memory for every agent kind**: Agent Fleet memory is shared by all of them, and a
+- **One memory for every agent kind**: Agent Fleet memory (opt-in) is shared by all of them, and a
   Memory view lists, edits and pins what the agents have learned.
 - **One yardstick for spend**: token use is broken down by feature, agent and model, and
   calls that report no tokens are counted as unmeasured rather than free.
