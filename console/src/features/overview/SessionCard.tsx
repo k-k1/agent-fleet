@@ -117,8 +117,8 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
   const awake = remainingShort(s.keepAwakeUntil);
   const budgetStopped = !s.alive && !!s.spendCapHitAt;
   const ords = rail ? opens : [];
-  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || budgetStopped || isShared || ords.length);
-  const where = !rail || !!wt || !!repo?.integration || !!s.branchDrift;
+  const hasIcons = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || budgetStopped || isShared);
+  const where = !rail || !!wt || !!repo?.integration || !!s.branchDrift || hasIcons || ords.length > 0;
 
   // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
   // the screen. Without it, `beside` decides.
@@ -246,46 +246,6 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
       </header>
       {where && (
       <div className="ovw-where" title={s.dir || ""}>
-        {!rail && <span className="ovw-project">{project || folder || tr("pj.other_sessions")}</span>}
-        {wt && (
-          <span className="ovw-wt" title={branch || wt}>
-            <Icon name="git-branch" />
-            {wt}
-          </span>
-        )}
-        {/* Right of the branch: how this worktree stands against the working copy it was cut
-            from — the same chip and the same wording as the rail's repo row (parentSync.ts),
-            because "親+2・FF可" must not mean two things in one Console. */}
-        {repo?.integration && (
-          <span
-            className={"ui-badge repo-chip integration repo-chip--" + repo.integration.relation}
-            title={parentSyncTitle(repo.integration)}
-          >
-            {parentSyncLabel(repo.integration)}
-          </span>
-        )}
-        {s.branchDrift && (
-          <span className="sess-drift" title={tr("srow.branch_switched", { from: s.branch ?? "", to: s.currentBranch ?? "" })}>
-            <Icon name="warning" /> {s.currentBranch}
-          </span>
-        )}
-      </div>
-      )}
-      {/* The badge row carries only what SOME cards have (lock / keep-awake / stop-armed /
-          shared). With the state chip moved into the head it is empty on an ordinary card, and
-          an empty flex row would still spend the card's row gap. Pane ordinals are deliberately
-          NOT here (ADR 0078 decision 10): which pane holds a session is the rail's job, and on a
-          grid the numbers were noise. `opens` still marks the card as open and drives the
-          cross-highlight. The rail form is in the rail, so it does carry them. */}
-      {badges && (
-      <div className="ovw-row">
-        {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
-        {remainingShort(s.keepAwakeUntil) && (
-          <Icon name="debug-pause" className="sess-awake" title={tr("srow.keep_awake_badge", { left: remainingShort(s.keepAwakeUntil) })} />
-        )}
-        {s.alive && s.stopAfterTurnAt && <Icon name="debug-stop" className="sess-stoparm" title={tr("srow.stop_after_turn_badge")} />}
-        {budgetStopped && <Icon name="pulse" className="sess-budget" title={tr("srow.budget_paused_hint")} />}
-        {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
         {ords.length > 0 && (
           <span className="sess-ords ovw-ords">
             {ords.map((o) => (
@@ -309,6 +269,45 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
                 {o.ordinal}
               </button>
             ))}
+          </span>
+        )}
+        <span className="ovw-where-main">
+        {!rail && <span className="ovw-project">{project || folder || tr("pj.other_sessions")}</span>}
+        {wt && (
+          <span className="ovw-wt" title={branch || wt}>
+            <Icon name="git-branch" />
+            {wt}
+          </span>
+        )}
+        {/* Right of the branch: how this worktree stands against the working copy it was cut
+            from — the same chip and the same wording as the rail's repo row (parentSync.ts),
+            because "親+2・FF可" must not mean two things in one Console. */}
+        {repo?.integration && (
+          <span
+            className={"ui-badge repo-chip integration repo-chip--" + repo.integration.relation}
+            title={parentSyncTitle(repo.integration)}
+          >
+            {parentSyncLabel(repo.integration)}
+          </span>
+        )}
+        {s.branchDrift && (
+          <span className="sess-drift ovw-drift" title={tr("srow.branch_switched", { from: s.branch ?? "", to: s.currentBranch ?? "" })}>
+            <Icon name="warning" /> {s.currentBranch}
+          </span>
+        )}
+        </span>
+        {/* The state icons only SOME cards have (lock / keep-awake / stop-armed / budget /
+            shared) share this line, right-aligned, so a card never spends a row on badges
+            alone. The pane ordinals lead the line (rail form only: ADR 0078 decision 10). */}
+        {hasIcons && (
+          <span className="ovw-icons">
+        {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
+        {remainingShort(s.keepAwakeUntil) && (
+          <Icon name="debug-pause" className="sess-awake" title={tr("srow.keep_awake_badge", { left: remainingShort(s.keepAwakeUntil) })} />
+        )}
+        {s.alive && s.stopAfterTurnAt && <Icon name="debug-stop" className="sess-stoparm" title={tr("srow.stop_after_turn_badge")} />}
+        {budgetStopped && <Icon name="pulse" className="sess-budget" title={tr("srow.budget_paused_hint")} />}
+        {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
           </span>
         )}
       </div>

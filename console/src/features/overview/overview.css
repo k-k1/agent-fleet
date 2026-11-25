@@ -206,12 +206,6 @@
 .ovw-wt .codicon {
   font-size: var(--fs-11);
 }
-.ovw-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 /* The state chip sits in the head, right of the title and left of the ⋯ (ADR 0078 decision
    10). It never shrinks: the title ellipsizes first, because "which session" is recoverable
    from the row below while a half-drawn state is not. */
@@ -235,9 +229,29 @@
     padding: 1px 4px;
   }
 }
-/* Parent-diff chip: the rail's own chip; `flex: none` keeps it whole in a card's caption line. */
-.ovw-where .repo-chip {
-  flex: none;
+/* Parent-diff chip and drift chip: the rail's own chip, allowed to shrink and ellipsize so a
+   long one cannot push the fixed ordinals / state icons out of the card. */
+.ovw-where .repo-chip,
+.ovw-where .ovw-drift {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Everything that may shrink (project, branch, chips) is ONE flex child with a zero basis, so
+   the line wraps only when the fixed parts (ordinals, state icons) alone do not fit: wrapping
+   is decided on pre-shrink widths, and a long chip must not push the icons to a second line. */
+.ovw-where-main {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 0;
+  min-width: 0;
+  /* Clip, so the chips' own padding and the gaps can never paint over the icons. */
+  overflow: hidden;
+}
+.ovw-card--rail .ovw-where {
+  flex-wrap: wrap;
 }
 .ovw-waited.ovw-waited--on {
   color: var(--warn);
@@ -374,6 +388,13 @@
   color: var(--warn);
   border-color: color-mix(in srgb, var(--warn) 60%, transparent);
 }
-.ovw-ords {
+.ovw-icons {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 6px;
   margin-left: auto;
+}
+.ovw-where .ovw-ords {
+  flex: none;
 }

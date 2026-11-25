@@ -17,6 +17,7 @@ vi.mock("../sessions/open.ts", () => ({
 
 const { SessionCard } = await import("./SessionCard.tsx");
 const { useReposStore } = await import("../repos/store.ts");
+const { useLayoutStore } = await import("../../layout/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { PaneHoverProvider } = await import("../../lib/panehover.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
@@ -27,13 +28,13 @@ let root: Root | null = null;
 let host: HTMLDivElement;
 const actions = {} as SessionActions;
 
-const render = async (over: Partial<Session>, beside = true, waitingAt = 0): Promise<void> => {
+const render = async (over: Partial<Session>, beside = true, waitingAt = 0, opens: { ordinal: number; id: string }[] = [], rail = false): Promise<void> => {
   const s: Session = { name: "s1", kind: "claude", alive: true, state: "working", title: "決済の修正", ...over };
   await act(async () => {
     root!.render(
       <ToastProvider>
         <PaneHoverProvider>
-          <SessionCard s={s} opens={[]} beside={beside} running waitingAt={waitingAt} actions={actions} />
+          <SessionCard s={s} opens={opens} rail={rail} beside={beside} running waitingAt={waitingAt} actions={actions} />
         </PaneHoverProvider>
       </ToastProvider>,
     );
@@ -119,6 +120,54 @@ describe("SessionCard", () => {
     await render({});
     expect(host.querySelector(".ovw-head .session-state")).not.toBeNull();
     // Nothing else to badge on a plain card, so the badge row is not rendered at all.
+    expect(host.querySelector(".ovw-row")).toBeNull();
+  });
+
+  it("puts the pane ordinals at the left end of the branch line, with the state icons at its right, and no badge row", async () => {
+    const setActive = vi.fn();
+    useLayoutStore.setState({ setActive } as never);
+    useReposStore.setState({ repos: [{ name: "app@wip-x", worktree: true, parent: "app", branch: "temp/x" }] });
+    await render({ repo: "app@wip-x", locked: true }, true, 0, [{ ordinal: 1, id: "p1" }, { ordinal: 2, id: "p2" }], true);
+    const where = host.querySelector(".ovw-where")!;
+    expect(host.querySelector(".ovw-row")).toBeNull();
+    const kids = [...where.children];
+    expect(kids[0].classList.contains("sess-ords")).toBe(true);
+    expect(kids[0].querySelectorAll(".rail-ord").length).toBe(2);
+    expect(kids[1].classList.contains("ovw-where-main")).toBe(true);
+    expect(kids[1].querySelector(".ovw-wt")).not.toBeNull();
+    expect(kids[kids.length - 1].classList.contains("ovw-icons")).toBe(true);
+    expect(where.querySelector(".ovw-icons .sess-lock")).not.toBeNull();
+    // Clicking an ordinal focuses that pane and does not open the session.
+    const ord = where.querySelectorAll<HTMLElement>(".rail-ord")[1];
+    expect(ord.getAttribute("aria-label")).toBe(t("common.focus_pane", { ordinal: 2 }));
+    await act(async () => ord.click());
+    expect(setActive).toHaveBeenCalledWith("p2");
+    expect(openSessionFromList).not.toHaveBeenCalled();
+  });
+
+  it("draws the rail's where line for ordinals alone or icons alone, and not at all when it would be empty", async () => {
+    await render({}, true, 0, [{ ordinal: 1, id: "p1" }], true);
+    expect(host.querySelector(".ovw-where .sess-ords .rail-ord")).not.toBeNull();
+    await render({ locked: true }, true, 0, [], true);
+    expect(host.querySelector(".ovw-where .ovw-icons .sess-lock")).not.toBeNull();
+    await render({}, true, 0, [], true);
+    expect(host.querySelector(".ovw-where")).toBeNull();
+  });
+
+  it("keeps Enter / Space on an ordinal from reaching the card", async () => {
+    await render({}, true, 0, [{ ordinal: 1, id: "p1" }], true);
+    const ord = host.querySelector<HTMLElement>(".rail-ord")!;
+    for (const key of ["Enter", " "]) {
+      await act(async () => {
+        ord.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+    }
+    expect(openSessionFromList).not.toHaveBeenCalled();
+  });
+
+  it("draws the state icons on the where line of a grid card too", async () => {
+    await render({ locked: true });
+    expect(host.querySelector(".ovw-where .ovw-icons .sess-lock")).not.toBeNull();
     expect(host.querySelector(".ovw-row")).toBeNull();
   });
 
