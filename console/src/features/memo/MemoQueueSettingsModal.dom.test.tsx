@@ -95,6 +95,27 @@ describe("MemoQueueSettingsModal field explanations", () => {
   });
 });
 
+describe("MemoQueueSettingsModal spacing guard", () => {
+  // `.memo-q-narrow` sets `flex: 0 0 9em`, which is a width only inside a row. As a direct child of
+  // the column-flex form it became a 9em-tall box: the blank band under the follow-up limit.
+  it("renders no empty hint and keeps every narrow field inside a row", async () => {
+    await render();
+    const radio = (i: number) => document.querySelectorAll<HTMLInputElement>('input[name="memo-q-when"]')[i];
+    // The window and threshold run modes add fields that "always" does not render.
+    await act(async () => radio(2).click());
+    expect(document.getElementById("memo-q-open-after")!.closest(".ui-field")!.classList.contains("memo-q-narrow")).toBe(false);
+    await act(async () => radio(1).click());
+    expect(document.getElementById("memo-q-open-minutes")).not.toBeNull();
+    const empty = [...document.querySelectorAll(".ui-field-hint")].filter((h) => !h.textContent?.trim());
+    expect(empty.length).toBe(0);
+    const narrow = [...document.querySelectorAll(".memo-q-narrow")];
+    expect(narrow.length).toBeGreaterThan(0);
+    for (const n of narrow) expect(n.parentElement!.classList.contains("ui-field-row")).toBe(true);
+    // The follow-up limit stands alone: capped on the input, not by a narrow field.
+    expect(document.getElementById("memo-q-continuation")!.closest(".ui-field")!.classList.contains("memo-q-narrow")).toBe(false);
+  });
+});
+
 describe("MemoQueueSettingsModal accept-from-own-sessions switch", () => {
   it("is off by default, carries the warning text, and goes into the PUT body when turned on", async () => {
     liveKinds = [{ kind: "claude", usableRoutes: ["anthropic-api"] }];

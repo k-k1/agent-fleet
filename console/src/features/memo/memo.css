@@ -1149,8 +1149,14 @@
   align-items: center;
   justify-content: space-between;
 }
+/* A width, not a flex-basis: a basis becomes a height under a column-flex parent. */
 .memo-q-modal .memo-q-narrow {
-  flex: 0 0 9em;
+  flex: none;
+  width: 9em;
+}
+/* A short numeric input in a field of its own: cap the input, not the field, so the label keeps one line. */
+.memo-q-modal .memo-q-short {
+  max-width: 9em;
 }
 .memo-q-notice {
   color: var(--warn, var(--accent));
