@@ -30,14 +30,16 @@ import { useTenantStore } from "../../core/store/tenant.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { OwnSettingsLine } from "../settings/credentials/MemberLines.tsx";
 import { policyRefusalKey, type PolicyRefusal } from "./launchPolicy.ts";
-import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
+import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
 import { agentLaunchDefault, useSettings, useUIPrefsLoading } from "../../lib/settings.ts";
 import { useEffectiveDefaults, useUIStateStore } from "../../core/store/uiState.ts";
 import { defaultKind, ownLaunch, ownLaunchProblem, tenantBudget, tenantDriver, tenantModel, tenantSkipPerm } from "./tenantLaunchDefaults.ts";
 import { parseCap } from "../sessions/spendBudget.ts";
-import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions } from "../../lib/agentModels.ts";
-import { EffortPicker, ModelPicker } from "../../ui/ModelPicker.tsx";
+import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions, useModelOptions } from "../../lib/agentModels.ts";
+import { EffortPicker } from "../../ui/ModelPicker.tsx";
+import { RunModelRow, RunWithStrip, shortModelLabel } from "./RunWithStrip.tsx";
+import { rememberRecentModel } from "../../lib/recentModels.ts";
 import { CopilotFreePlanHint } from "./CopilotFreePlanHint.tsx";
 import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
 import type { LaunchSectionKey } from "./launchPrefs.ts";
@@ -533,6 +535,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   }, [repo, repoLess]);
 
   const hasModel = agentOf(kind).caps.model;
+  const modelOptions = useModelOptions(kind);
   const driverManaged = driver === "managed";
   const hasEffort = agentOf(kind).caps.effort && (driverManaged || agentOf(kind).caps.tuiEffort);
   // planMode is the cap for the chat plan toggle — cursor/copilot/kiro have planMode:false but
@@ -621,8 +624,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // launch until one of its own is picked: the Agent would refuse the kind's default.
   const modelFilter = useMemo(() => routeModelFilter(kind, chosenRoute), [kind, chosenRoute]);
   const routeModelBlocked = !!modelFilter && !!chosenRoute && !modelFilter(model);
+  // Set when the model was dropped because the route cannot run it; shown under the strip.
+  const [modelNotice, setModelNotice] = useState("");
   useEffect(() => {
     if (modelFilter && model && !modelFilter(model)) {
+      setModelNotice(model);
       setModel("");
       setEffort("");
     }
@@ -927,6 +933,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     });
     if (r?.ok) {
       if (onBedrock && bedrockPick) rememberBedrockModel(bedrockPick.id, bedrockModel.trim());
+      else if (hasModel) rememberRecentModel(kind, model);
       // A successful launch means this text and its attachments reached the new session in
       // full, and this is the only place the draft may be discarded: coming back from a failure
       // (a name collision, say) keeps both the typed text and the attachments.
@@ -941,8 +948,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     // The policy refused it: what the dialog offers may be out of date, so ask the Agent again.
     if (r?.policy) {
       setPolicyErr(r.policy);
-      // In a space the route picker that explains it is folded into Details.
-      if (space) setDetailsOpen(true);
       void access.refresh?.();
     }
     setConflict(r?.conflict ?? null);
@@ -955,6 +960,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     if (r?.conflict === "in_use") setBranches(null);
   };
   const submit = () => void start(false);
+  // The launch button names what it will run with: "Start with Claude Code · Opus".
+  const modelShown = onBedrock ? "" : hasModel && model ? shortModelLabel(modelOptions?.find(([v]) => v === model)?.[1] ?? model) : "";
+  const runWith = kinds.length ? [kindDisplayName(kind), modelShown].filter(Boolean).join(" · ") : "";
   const [policyErr, setPolicyErr] = useState<PolicyRefusal | null>(null);
   const [launchUnknown, setLaunchUnknown] = useState(false);
   // Files the picked agent cannot take: launching would drop them from the draft unsent, so the
@@ -989,170 +997,156 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     </div>
   );
   // The blocks of the form, laid out below for a dialog or for the hub's space section.
-  const agentBlock = (
-    <>
-        <div className="ui-field">
-          <span className="ui-field-label">{tr("launch.field.agent")}</span>
-          {/* Empty means one of several very different things: still checking; nothing the
-              policy allows (sent to an administrator, naming nothing hidden, ADR 0138 D10a);
-              everything switched off by the member (offered the reset instead); or nothing
-              signed in. Say which — a bare empty picker reads as a broken modal. */}
-          {!kinds.length &&
-            (!settling && access.kinds && access.allOff ? (
-              <OwnSettingsLine hidden line="launch.all_off_line" onReset={() => access.refresh?.()} />
-            ) : (
-              <div className="muted launch-noagents" data-testid="launch-noagents">
-                {tr(
-                  settling
-                    ? "launch.agents_checking"
-                    : !access.kinds
-                      ? "launch.policy.policy_unconfirmed"
-                      : access.noRoute
-                        ? "launch.no_route_line"
-                        : "launch.agents_none",
-                )}
-              </div>
-            ))}
-          {/* Wrapping grid (ui.css .ui-seg.big): with horizontal scrolling the fourth card
-              onward was cut off, hiding the fact that there are 7 kinds. The sub-label was a
-              restatement of the card name ("launch <kind>") and carried nothing, so it moved
-              into title and saved a line. */}
-          <div className="ui-seg big">
-            {kinds.map((k) => {
-              const a = agentOf(k);
-              return (
-                <button
-                  key={k}
-                  type="button"
-                  title={tr(a.launchHintKey)}
-                  className={"seg-btn " + kindColorClasses(a.cssClass, "seg-btn") + (kind === k ? " seg-btn--active" : "")}
-                  onClick={() => pickKindByHand(k)}
-                >
-                  <Icon name={a.icon} className="seg-ic" />
-                  {kindDisplayName(k)}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Harness → route → model (ADR 0138 D16): the route decides who pays, so it is chosen
-            before the model, next to the agent. */}
-        {(routeOptions.length > 0 || routeMissing) && !!kinds.length && (
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.route")}</span>
-            <select
-              value={chosenRoute}
-              aria-invalid={routeMissing || undefined}
-              onChange={(e) => {
-                mark("route");
-                setRoute(e.target.value);
-                setPolicyErr(null);
-              }}
-            >
-              {emptyOk ? (
-                <option value="">{tr("launch.route_default")}</option>
-              ) : (
-                <option value="" disabled>
-                  {tr("launch.route_choose")}
-                </option>
-              )}
-              {routeOptions.map((r) => {
-                const held = routeUsable(live, r);
-                return (
-                  <option key={r} value={r} disabled={!held}>
-                    {tr(("cred.route." + r) as never)}
-                    {held ? "" : ` — ${tr("launch.route_no_key")}`}
+  // The "run with" strip (ADR 0142 decision 7, dated note): agent and route on line 1, the model on
+  // line 2, so what a launch will run with stands under the prompt rather than inside Details.
+  // Everything that stops a launch for one of these choices is explained here, never behind a fold.
+  const routeProblem = prefsLoading || savedUnusable || routeMissing;
+  const routeLabel = chosenRoute ? tr(("cred.route." + chosenRoute) as never) : emptyOk ? tr("launch.route_default_short") : tr("launch.route_choose");
+  const routeStrip =
+    (routeOptions.length > 0 || routeMissing) && !!kinds.length
+      ? {
+          label: routeLabel,
+          custom: !!chosenRoute,
+          problem: routeProblem,
+          panel: (
+            <div className="ui-field">
+              <span className="ui-field-label">{tr("launch.field.route")}</span>
+              <select
+                value={chosenRoute}
+                aria-invalid={routeMissing || undefined}
+                onChange={(e) => {
+                  mark("route");
+                  setRoute(e.target.value);
+                  setPolicyErr(null);
+                }}
+              >
+                {emptyOk ? (
+                  <option value="">{tr("launch.route_default")}</option>
+                ) : (
+                  <option value="" disabled>
+                    {tr("launch.route_choose")}
                   </option>
-                );
-              })}
-            </select>
-            <span className={"ui-field-hint" + (savedUnusable || routeMissing ? " ui-field-hint--warn" : "")}>
-              {tr(prefsLoading ? "launch.route_loading" : savedUnusable ? "launch.route_default_unusable" : routeMissing ? "launch.route_required_hint" : "launch.route_hint")}
-            </span>
-            {someNoKey && (
-              <span className="ui-field-hint launch-route-nokey">
-                {tr("launch.route_no_key_hint")}{" "}
-                <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("credentials")}>
-                  {tr("agents.runs_on_link")}
-                </button>
-              </span>
-            )}
-          </div>
-        )}
-        {policyErr && (
-          <div className="ui-field-hint ui-field-hint--warn launch-policy-err" role="alert">
-            {tr(policyRefusalKey(policyErr))}
-          </div>
-        )}
-
-        {chosenRoute === "bedrock" && bedrockPick && (
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.bedrock_profile")}</span>
-            <select value={bedrockPick.id} onChange={(e) => setBedrockProfile(e.target.value)}>
-              {modelRouteProfiles!.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.region ? `${p.label} (${p.region})` : p.label}
-                </option>
-              ))}
-            </select>
-            <input {...NO_AUTOFILL}
-              type="text"
-              value={bedrockRegion}
-              placeholder={bedrockPick.region || tr("launch.bedrock_region_placeholder")}
-              aria-label={tr("launch.field.bedrock_region")}
-              aria-invalid={!regionOk(bedrockRegion) || undefined}
-              onChange={(e) => setBedrockRegion(e.target.value)}
-            />
-            <span className="ui-field-hint">
-              {!regionOk(bedrockRegion) ? tr("launch.bedrock_region_invalid") : tr("launch.bedrock_hint")}
-            </span>
-          </div>
-        )}
-
-        {onBedrock && (
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.bedrock_model")}</span>
-            <input
-              type="text"
-              value={bedrockModel}
-              placeholder="us.anthropic.claude-opus-4-6-v1" // model-id-lint:allow an example of the id form; it chooses no model
-              aria-label={tr("launch.field.bedrock_model")}
-              aria-invalid={(bedrockModelBad && bedrockModel.trim() !== "") || undefined}
-              spellCheck={false}
-              autoCapitalize="off"
-              autoComplete="off"
-              onChange={(e) => {
-                const v = e.target.value;
-                setBedrockModels((m) => ({ ...m, [bedrockPick!.id]: v }));
-              }}
-            />
-            <span className="ui-field-hint">
-              {bedrockModelBad && bedrockModel.trim() !== "" ? tr("launch.bedrock_model_invalid") : tr("launch.bedrock_model_hint")}
-            </span>
-          </div>
-        )}
-
-        <ClaudeExpiredHint kind={kind} expired={claudeLoginGone} />
-
-        {hasModel && !onBedrock && kinds.length > 0 && (
-          <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.model")}</span>
-            <ModelPicker
-              kind={kind}
-              model={model}
-              filter={modelFilter}
-              onChange={(next) => {
-                mark("model");
-                setModel(next);
-                setEffort("");
-              }}
-            />
-            {routeModelBlocked && <span className="ui-field-hint">{tr("launch.bedrock_model_needed")}</span>}
-          </div>
-        )}
-
+                )}
+                {routeOptions.map((r) => {
+                  const held = routeUsable(live, r);
+                  return (
+                    <option key={r} value={r} disabled={!held}>
+                      {tr(("cred.route." + r) as never)}
+                      {held ? "" : ` — ${tr("launch.route_no_key")}`}
+                    </option>
+                  );
+                })}
+              </select>
+              <span className="ui-field-hint">{tr("launch.route_hint")}</span>
+              {someNoKey && (
+                <span className="ui-field-hint launch-route-nokey">
+                  {tr("launch.route_no_key_hint")}{" "}
+                  <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("credentials")}>
+                    {tr("agents.runs_on_link")}
+                  </button>
+                </span>
+              )}
+            </div>
+          ),
+        }
+      : null;
+  const noAgentsNote = !settling && access.kinds && access.allOff ? (
+    <OwnSettingsLine hidden line="launch.all_off_line" onReset={() => access.refresh?.()} />
+  ) : (
+    <div className="muted launch-noagents" data-testid="launch-noagents">
+      {tr(settling ? "launch.agents_checking" : !access.kinds ? "launch.policy.policy_unconfirmed" : access.noRoute ? "launch.no_route_line" : "launch.agents_none")}
+    </div>
+  );
+  const stripBelow = (
+    <>
+      {routeProblem && !!kinds.length && (
+        <span className="ui-field-hint ui-field-hint--warn run-strip-why" role="status">
+          {tr(prefsLoading ? "launch.route_loading" : savedUnusable ? "launch.route_default_unusable" : "launch.route_required_hint")}
+        </span>
+      )}
+      {policyErr && (
+        <div className="ui-field-hint ui-field-hint--warn launch-policy-err" role="alert">
+          {tr(policyRefusalKey(policyErr))}
+        </div>
+      )}
+      {chosenRoute === "bedrock" && bedrockPick && (
+        <div className="ui-field">
+          <span className="ui-field-label">{tr("launch.field.bedrock_profile")}</span>
+          <select value={bedrockPick.id} onChange={(e) => setBedrockProfile(e.target.value)}>
+            {modelRouteProfiles!.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.region ? `${p.label} (${p.region})` : p.label}
+              </option>
+            ))}
+          </select>
+          <input {...NO_AUTOFILL}
+            type="text"
+            value={bedrockRegion}
+            placeholder={bedrockPick.region || tr("launch.bedrock_region_placeholder")}
+            aria-label={tr("launch.field.bedrock_region")}
+            aria-invalid={!regionOk(bedrockRegion) || undefined}
+            onChange={(e) => setBedrockRegion(e.target.value)}
+          />
+          <span className="ui-field-hint">{!regionOk(bedrockRegion) ? tr("launch.bedrock_region_invalid") : tr("launch.bedrock_hint")}</span>
+        </div>
+      )}
+      {onBedrock && (
+        <div className="ui-field">
+          <span className="ui-field-label">{tr("launch.field.bedrock_model")}</span>
+          <input
+            type="text"
+            value={bedrockModel}
+            placeholder="us.anthropic.claude-opus-4-6-v1" // model-id-lint:allow an example of the id form; it chooses no model
+            aria-label={tr("launch.field.bedrock_model")}
+            aria-invalid={(bedrockModelBad && bedrockModel.trim() !== "") || undefined}
+            spellCheck={false}
+            autoCapitalize="off"
+            autoComplete="off"
+            onChange={(e) => {
+              const v = e.target.value;
+              setBedrockModels((m) => ({ ...m, [bedrockPick!.id]: v }));
+            }}
+          />
+          <span className="ui-field-hint">{bedrockModelBad && bedrockModel.trim() !== "" ? tr("launch.bedrock_model_invalid") : tr("launch.bedrock_model_hint")}</span>
+        </div>
+      )}
+      {routeModelBlocked && <span className="ui-field-hint ui-field-hint--warn">{tr("launch.bedrock_model_needed")}</span>}
+      {modelNotice && (
+        <span className="ui-field-hint run-strip-notice" role="status">
+          {tr("launch.strip.model_fallback", { model: modelNotice })}
+        </span>
+      )}
+      <ClaudeExpiredHint kind={kind} expired={claudeLoginGone} />
     </>
+  );
+  const agentBlock = (
+    <RunWithStrip
+      kinds={kinds}
+      kind={kind}
+      onPickKind={(k) => {
+        pickKindByHand(k);
+        setModelNotice("");
+      }}
+      noAgents={noAgentsNote}
+      route={routeStrip}
+      below={stripBelow}
+      disabled={busy}
+      model={
+        hasModel && !onBedrock && kinds.length > 0 ? (
+          <RunModelRow
+            kind={kind}
+            model={model}
+            filter={modelFilter}
+            onChange={(next) => {
+              mark("model");
+              setModel(next);
+              setEffort("");
+              setModelNotice("");
+            }}
+          />
+        ) : null
+      }
+    />
   );
   const promptBlock = (
     <>
@@ -1272,6 +1266,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             rows={4}
             placeholder={tr("launch.first_prompt_ph")}
           />
+          {!space && agentBlock}
           <span className="ui-field-hint">
             {tr("launch.first_prompt_note")}
             {canPasteImage && " " + tr("launch.attach_note")}
@@ -1635,27 +1630,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     </>
   );
 
-  // Details (ADR 0142 decision 7): agent and model are folded in with the rest, in the dialog as
-  // in the space form, so its summary names them first.
-  const detailsParts = [
-    kinds.length ? kindDisplayName(kind) : "",
-    chosenRoute ? tr(("cred.route." + chosenRoute) as never) : "",
-    onBedrock ? bedrockModel.trim() : hasModel ? model : "",
-    ...advParts,
-  ].filter(Boolean);
-  // Something the launch cannot go ahead with (everything canLaunch refuses on that lives in here),
-  // or an expired login it would run on, is never left behind the fold.
-  const detailsForced =
-    !kinds.length ||
-    routeMissing ||
-    !!policyErr ||
-    savedUnusable ||
-    prefsLoading ||
-    modelPending ||
-    bedrockBlocked ||
-    routeModelBlocked ||
-    budgetInvalid ||
-    claudeLoginGone;
+  // Details (ADR 0142 decision 7): what is left after the strip took agent, route and model.
+  const detailsParts = advParts;
+  // Only an invalid budget is left in here that stops the launch (agent, route and model, with
+  // everything that can block on them, are in the strip): never leave it behind the fold.
+  const detailsForced = budgetInvalid;
   const detailsShown = detailsOpen || detailsForced;
   const detailsSection = (
     <LaunchSection
@@ -1665,7 +1644,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       open={detailsShown}
       onToggle={() => toggleSection("details", detailsOpen, setDetailsOpen)}
     >
-      {agentBlock}
       {advBody}
     </LaunchSection>
   );
@@ -1678,6 +1656,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   if (space) {
     return (
       <div className="start-space-form">
+        {agentBlock}
         <div className="ui-field">
           <span className="ui-field-label">{tr("start.place")}</span>
           <div className="start-place">
@@ -1713,7 +1692,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         {launchUnknown && unknownNote}
         <div className="start-space-actions">
           <Button variant="primary" icon="play" onClick={submit} disabled={busy || !canLaunch}>
-            {busy ? tr("launch.launching") : tr(spaceFolder ? "start.space_launch_existing" : "start.space_launch")}
+            {busy
+              ? tr("launch.launching")
+              : runWith
+                ? tr(spaceFolder ? "start.space_launch_existing_with" : "start.space_launch_with", { what: runWith })
+                : tr(spaceFolder ? "start.space_launch_existing" : "start.space_launch")}
           </Button>
         </div>
       </div>
@@ -1742,7 +1725,13 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           {tr("common.cancel")}
         </Button>
         <Button variant="primary" onClick={submit} disabled={busy || !canLaunch}>
-          {busy && stash !== "busy" ? tr("launch.launching") : worktree ? tr("launch.start_worktree") : tr("launch.launch")}
+          {busy && stash !== "busy"
+            ? tr("launch.launching")
+            : runWith
+              ? tr(worktree ? "launch.start_worktree_with" : "launch.start_with", { what: runWith })
+              : worktree
+                ? tr("launch.start_worktree")
+                : tr("launch.launch")}
         </Button>
       </footer>
       {gitflowOpen && <GitflowInitModal repo={repo} onClose={() => setGitflowOpen(false)} onSaved={naming.resolveAgain} />}

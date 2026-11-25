@@ -98,7 +98,7 @@ afterEach(() => {
 
 describe("prefs loading", () => {
   it("does not launch on an unchosen route while the synced prefs are still loading", async () => {
-    // From a folded Details: the wait opens it so its reason is in view, and it folds again after.
+    // From a folded Details: the strip says why, and Details stays folded throughout.
     localStorage.removeItem("af.launch-open.details");
     const details = () =>
       [...document.querySelectorAll(".launch-sec-head")].find((h) => h.querySelector(".launch-sec-label")?.textContent === "Details")?.getAttribute("aria-expanded");
@@ -109,7 +109,8 @@ describe("prefs loading", () => {
     expect(routeSelect()!.value).toBe("");
     expect(launchBtn().disabled).toBe(true);
     expect(document.body.textContent).toContain("Loading your saved settings");
-    expect(details()).toBe("true");
+    expect(details()).toBe("false");
+    expect(document.querySelector('[data-testid="run-strip"]')!.textContent).toContain("Loading your saved settings");
     await act(async () => {
       release({});
       await loading;

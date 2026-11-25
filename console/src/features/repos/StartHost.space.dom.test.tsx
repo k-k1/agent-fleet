@@ -282,7 +282,7 @@ describe("Start hub — the draft's files and the memo it came from", () => {
     const foot = () => document.querySelectorAll(".ui-modal-foot")[document.querySelectorAll(".ui-modal-foot").length - 1];
     await click([...foot().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.includes(t("start.create_and_continue")))!);
     expect(lastBox().value).not.toBe("メモの本文"); // the dialog shows its own draft, not the memo
-    await click([...foot().querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === t("launch.launch"))!);
+    await click(foot().querySelector<HTMLButtonElement>("button.ui-btn-primary")!);
     expect(createCalls()).toHaveLength(1);
     expect(createCalls()[0][2]).not.toHaveProperty("inbox_memo_id"); // no provenance for a memo it never got
     expect(launched).not.toHaveBeenCalled();
@@ -298,7 +298,7 @@ describe("Start hub — the draft's files and the memo it came from", () => {
     await openHub("repo");
     await click([...document.querySelectorAll<HTMLButtonElement>(".start-row")].find((b) => b.textContent?.includes("app"))!);
     const foots = document.querySelectorAll(".ui-modal-foot");
-    await click([...foots[foots.length - 1].querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent?.trim() === t("launch.start_worktree"))!);
+    await click(foots[foots.length - 1].querySelector<HTMLButtonElement>("button.ui-btn-primary")!);
     expect(createCalls()).toHaveLength(1);
     expect(launched).not.toHaveBeenCalled();
   });

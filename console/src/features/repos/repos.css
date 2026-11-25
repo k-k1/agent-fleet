@@ -1876,3 +1876,107 @@ button.start-place-chip--gone {
 .ui-modal .start-row-chev {
   color: var(--dialog-muted);
 }
+
+/* The "run with" strip (RunWithStrip.tsx): attached under the first prompt, like a chat composer's
+   toolbar. Line 1 = agent + route chips, line 2 = the model row. */
+.run-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 8px;
+}
+.run-strip-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.run-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+.run-chip[aria-expanded="true"] {
+  background: var(--hover, rgba(127, 127, 127, 0.15));
+}
+/* A route other than the default changes the billed account, so it is the one thing accented. */
+.run-chip--accent {
+  border-color: var(--accent, #d97706);
+  color: var(--accent, #d97706);
+}
+.run-chip--warn {
+  border-color: var(--warn, #dc2626);
+  color: var(--warn, #dc2626);
+}
+.run-chip--combo {
+  display: none;
+}
+.run-strip-panel {
+  padding-top: 4px;
+}
+.run-strip-panel[hidden] {
+  display: none;
+}
+.run-model {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.run-model-divider {
+  align-self: stretch;
+  width: 1px;
+  margin: 2px 4px;
+  background: var(--border, #3a3a3a);
+}
+.run-model-more {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  cursor: pointer;
+}
+.run-model-more select {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.run-model-more-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border: 1px solid var(--border, #3a3a3a);
+  border-radius: 6px;
+}
+.run-model-narrow {
+  display: none;
+}
+/* Narrow widths: line 1 folds to one chip, line 2 to one select. */
+@media (max-width: 520px) {
+  .run-chip--agent,
+  .run-chip--route {
+    display: none;
+  }
+  .run-chip--combo {
+    display: inline-flex;
+  }
+  .run-model--claude .run-model-seg,
+  .run-model--claude .run-model-more {
+    display: none;
+  }
+  .run-model-narrow {
+    display: inline-block;
+  }
+}

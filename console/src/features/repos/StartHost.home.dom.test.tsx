@@ -60,6 +60,12 @@ const button = (label: string) => {
   const foot = foots[foots.length - 1];
   return [...(foot?.querySelectorAll<HTMLButtonElement>("button") ?? [])].find((b) => b.textContent?.trim() === label);
 };
+// The launch button names what it runs with ("Start with Claude Code · Opus"), so it is found by
+// being the primary one rather than by its text.
+const launchButton = () => {
+  const foots = document.querySelectorAll(".ui-modal-foot");
+  return foots[foots.length - 1]?.querySelector<HTMLButtonElement>("button.ui-btn-primary") ?? undefined;
+};
 const homeRow = () => [...document.querySelectorAll<HTMLButtonElement>(".start-row")].find((b) => b.textContent?.includes(t("start.home_title")))!;
 // The hub's own composer stays mounted under the dialog: the dialog's box is the last one.
 const promptBox = () => [...document.querySelectorAll<HTMLTextAreaElement>("textarea")].pop()!;
@@ -132,7 +138,7 @@ describe("Start hub — Launch an agent at home", () => {
   it("launches in the home directory with no worktree and nothing untouched sent", async () => {
     await openHome();
     await typePrompt("調べもの");
-    await click(button(t("launch.launch"))!);
+    await click(launchButton()!);
     const calls = createCalls();
     expect(calls).toHaveLength(1);
     const body = calls[0][2] as Record<string, unknown>;
@@ -155,7 +161,7 @@ describe("Start hub — Launch an agent at home", () => {
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await settle();
-    await click(button(t("launch.launch"))!);
+    await click(launchButton()!);
 
     expect(createCalls()).toHaveLength(1);
     const body = createCalls()[0][2] as Record<string, unknown>;
@@ -179,7 +185,7 @@ describe("Start hub — Launch an agent at home", () => {
     launchKinds = ["lcpp"];
     apiGet.mockImplementation(async (path: string) => (path.includes("agents/lcpp/models") ? { models: [] } : []));
     await openHome();
-    expect(button(t("launch.launch"))!.disabled).toBe(true);
+    expect(launchButton()!.disabled).toBe(true);
   });
 
   it("shows the expired-Claude notice without gating the launch", async () => {
@@ -187,6 +193,6 @@ describe("Start hub — Launch an agent at home", () => {
     await openHome();
     const link = document.querySelector(".ui-field-hint .linklike");
     expect(link?.textContent).toBe(t("mirror.error_auth_action"));
-    expect(button(t("launch.launch"))!.disabled).toBe(false);
+    expect(launchButton()!.disabled).toBe(false);
   });
 });

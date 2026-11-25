@@ -235,65 +235,68 @@ afterEach(() => {
   host.remove();
 });
 
-// ADR 0142 decision 7: what -> where -> details. The prompt comes first, then the place, then one
-// Details fold holding the agent, model and the rest; nothing that blocks the launch, and no
-// expired login the launch would run on, is ever left behind that fold.
+// ADR 0142 decision 7: what -> where -> details. The prompt comes first with the run-with strip
+// (agent, route, model) under it, then the place, then one Details fold holding the rest; nothing
+// that blocks the launch, and no expired login the launch would run on, is ever left behind a fold.
 describe("LaunchModal what -> where -> details", () => {
   // These tests are about the fold, so they start from a device that never opened it.
   beforeEach(() => localStorage.removeItem("af.launch-open.details"));
-  const cards = () => document.querySelectorAll(".ui-seg.big .seg-btn");
+  const strip = () => must(document.querySelector<HTMLElement>('[data-testid="run-strip"]'), "run-with strip");
   const follows = (a: Node, b: Node) => !!(a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING);
 
-  it("puts the prompt first, then Location, then a folded Details naming the agent and model", async () => {
+  it("puts the prompt first, the run-with strip under it, then Location, then a folded Details without agent or model", async () => {
     await render(["claude", "codex"]);
     expect([...document.querySelectorAll(".launch-sec-label")].map((el) => el.textContent)).toEqual(["Location", "Details"]);
-    expect(follows(promptBox(), secHead("Location"))).toBe(true);
+    expect(follows(promptBox(), strip())).toBe(true);
+    expect(follows(strip(), secHead("Location"))).toBe(true);
     expect(follows(secHead("Location"), secHead("Details"))).toBe(true);
-    expect(cards()).toHaveLength(0);
     expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
-    expect(summaryOf("Details")).toMatch(/^Claude Code\b/);
+    // The strip names the agent; Details no longer lists agent, route or model.
+    expect(strip().textContent).toContain("Claude Code");
+    expect(summaryOf("Details")).not.toMatch(/Claude Code/);
+    expect(strip().contains(document.querySelector(".ui-seg.big"))).toBe(true);
+    expect(secHead("Details").closest("section")!.querySelector(".ui-seg.big")).toBeNull();
   });
 
-  it("launches the agent the folded summary names, without opening it", async () => {
+  it("launches the agent the strip names, without opening anything", async () => {
     await render(["claude", "codex"]);
-    await click(byText("Start in a worktree"));
+    await click(byText("Start in a worktree with Claude Code"));
     expect(launchedWith().kind).toBe("claude");
   });
 
   it("remembers an opened Details for the next dialog", async () => {
     await render(["claude", "codex"]);
     await expand("Details");
-    expect(cards()).toHaveLength(2);
     expect(localStorage.getItem("af.launch-open.details")).toBe("1");
     await reopen();
-    expect(cards()).toHaveLength(1);
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
     await expand("Details");
     expect(localStorage.getItem("af.launch-open.details")).toBe(null);
   });
 
-  it("opens Details by itself while the picked Claude's login has expired", async () => {
+  it("says an expired Claude login under the strip, with Details still folded", async () => {
     await render(["claude"], { claudeExpired: true });
-    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
-    expect(document.body.textContent).toContain("Claude login has expired");
-  });
-
-  it("leaves Details folded for an expired Claude login when another agent is picked", async () => {
-    await render(["codex", "claude"], { claudeExpired: true });
     expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+    expect(strip().textContent).toContain("Claude login has expired");
   });
 
-  it("opens Details by itself when no agent can be launched", async () => {
+  it("leaves the expired-login note out when another agent is picked", async () => {
+    await render(["codex", "claude"], { claudeExpired: true });
+    expect(document.body.textContent).not.toContain("Claude login has expired");
+  });
+
+  it("explains in the strip, not in Details, when no agent can be launched", async () => {
     await render([]);
-    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
-    expect(document.querySelector('[data-testid="launch-noagents"]')).not.toBeNull();
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+    expect(strip().querySelector('[data-testid="launch-noagents"]')).not.toBeNull();
   });
 
-  it("opens Details by itself while a model must be picked and none can be (empty lcpp catalog)", async () => {
+  it("keeps the launch disabled while a model must be picked and none can be (empty lcpp catalog)", async () => {
     lcppModels = [];
     await render(["lcpp"]);
     await settle();
     expect(byText("Start in a worktree").disabled).toBe(true);
-    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
   });
 
   it("keeps Details open over an invalid budget, and folds it again once fixed", async () => {
@@ -336,7 +339,6 @@ describe("LaunchModal what -> where -> details", () => {
     await render(["copilot"]);
     await settle();
     const note = t("launch.copilot_free_model");
-    expect(summaryOf("Details")).toContain("claude-sonnet-4.6");
     expect(document.body.textContent).not.toContain(note);
     await expand("Details");
     expect(document.body.textContent).not.toContain(note);
@@ -855,25 +857,22 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     expect(launchedWith().routeConnection).toBe("p-marked@us-west-2");
   });
 
-  it("keeps Details open while the Bedrock model id or region would refuse the launch", async () => {
+  it("keeps the launch refused, with the fields in the strip, while the Bedrock model id or region would refuse it", async () => {
     localStorage.removeItem("af.launch-open.details");
     ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
     await act(async () => setKindCatalog(catalog));
     await render(["claude"]);
     await settle();
-    await expand("Details");
     await choose(must(routeSelect(), "the route picker"), "bedrock");
     await type(must(modelInput(), "the model id field"), "");
-    await expand("Details"); // asks to fold it
-    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
-    // A valid id: nothing holds it open any more, so it folds as asked.
-    await type(must(modelInput(), "the model id field"), "eu.anthropic.claude-opus-5-5");
+    expect(byText("Start in a worktree").disabled).toBe(true);
     expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
-    await expand("Details");
+    await type(must(modelInput(), "the model id field"), "eu.anthropic.claude-opus-5-5");
+    expect(byText("Start in a worktree").disabled).toBe(false);
     await type(must(regionInput(), "the region field"), "not a region");
-    await expand("Details"); // asks to fold it
-    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
+    expect(byText("Start in a worktree").disabled).toBe(true);
     await type(must(regionInput(), "the region field"), "us-west-2");
+    expect(byText("Start in a worktree").disabled).toBe(false);
     expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -1004,18 +1003,19 @@ describe("LaunchModal opencode on the bedrock route (ADR 0128 P2c)", () => {
     expect(launchedWith().driver).toBe("managed");
   });
 
-  it("keeps Details open until a model the route can run is picked", async () => {
+  it("refuses the launch, naming why in the strip, until a model the route can run is picked", async () => {
     localStorage.removeItem("af.launch-open.details");
     await act(async () => setKindCatalog(catalog));
     localStorage.setItem("af.repo-model.opencode.app", "opencode/big-pickle");
     await render(["opencode"]);
     await settle();
-    await expand("Details");
     await choose(must(routeSelect(), "the route picker"), "bedrock");
     await settle();
-    await expand("Details"); // asks to fold it
     expect(byText("Start in a worktree").disabled).toBe(true);
-    expect(secHead("Details").getAttribute("aria-expanded")).toBe("true");
+    expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+    expect(must(document.querySelector('[data-testid="run-strip"]'), "strip").textContent).toContain("Pick an Amazon Bedrock model");
+    // The model the route cannot run is dropped with a short notice naming it.
+    expect(document.querySelector(".run-strip-notice")?.textContent).toContain("opencode/big-pickle");
   });
 
   it("offers the route's models only on the route, and needs one to start", async () => {
