@@ -549,6 +549,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.own_default_no_budget": "A saved budget must be between $0 and $10000.",
   "launch.sum.budget": "budget {v}",
   "launch.sum.budget_none": "no budget",
+  "launch.title_empty": "Leave empty to choose automatically.",
   "launch.title_ph": "Optional",
   "launch.field.model": "Model",
   "launch.field.effort": "Reasoning effort",

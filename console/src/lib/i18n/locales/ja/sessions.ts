@@ -557,6 +557,7 @@ export const sessions = {
   "launch.own_default_no_budget": "保存できる予算は $0 から $10000 までです。",
   "launch.sum.budget": "予算 {v}",
   "launch.sum.budget_none": "予算なし",
+  "launch.title_empty": "空欄なら自動で決まります。",
   "launch.title_ph": "任意",
   "launch.field.model": "モデル",
   "launch.field.effort": "推論の強さ",

@@ -1462,9 +1462,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                 </div>
                 {branchMode === "new" ? (
                   <>
-                    <label className="ui-field">
-                      <FieldLabel as="span" info={tr("launch.base_origin_note")}>{tr("launch.base_branch")}</FieldLabel>
+                    <div className="ui-field">
+                      <FieldLabel htmlFor="launch-base-branch" info={tr("launch.base_origin_note")}>{tr("launch.base_branch")}</FieldLabel>
                       <input {...NO_AUTOFILL}
+                        id="launch-base-branch"
                         value={base}
                         onChange={(e) => {
                           naming.touchBase();
@@ -1480,7 +1481,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                           {tr("launch.base_source")} <code>{naming.baseSource}</code>
                         </span>
                       )}
-                    </label>
+                    </div>
                     <label className="ui-field">
                       <span className="ui-field-label">{tr("launch.branch_name")}</span>
                       <input {...NO_AUTOFILL}
@@ -1666,7 +1667,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           )}
 
           <div className="ui-field">
-            <span className="ui-field-label">{tr("launch.field.title")}</span>
+            <FieldLabel as="span" info={tr("launch.title_empty")}>{tr("launch.field.title")}</FieldLabel>
             <input {...NO_AUTOFILL}
               value={title}
               maxLength={SESSION_TITLE_MAX}

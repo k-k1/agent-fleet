@@ -71,8 +71,8 @@ const STATIC_KEYS = ["launch.first_prompt_note", "launch.first_prompt_empty", "l
 
 // The ⓘ texts each form must carry (the others depend on the agent, the working copy or the branch mode).
 const EXPECTED: Record<string, string[]> = {
-  dialog: ["launch.first_prompt_note", "launch.perm_hint", "launch.plan_hint", "launch.budget_hint", "launch.own_default_hint"],
-  "space form": ["launch.perm_hint", "launch.plan_hint", "launch.own_default_hint", "start.space_note"],
+  dialog: ["launch.first_prompt_note", "launch.first_prompt_empty", "launch.title_empty", "launch.subdir_wt_hint", "launch.base_origin_note", "launch.perm_hint", "launch.plan_hint", "launch.budget_hint", "launch.own_default_hint"],
+  "space form": ["launch.title_empty", "launch.perm_hint", "launch.plan_hint", "launch.own_default_hint", "start.space_note"],
 };
 
 const panels = () => [...document.querySelectorAll<HTMLElement>(".ui-field-info-panel")];
@@ -114,15 +114,24 @@ describe("launch forms: static explanations behind ⓘ", () => {
     });
   }
 
-  it("dialog: the budget and own-default state notices stay inline", async () => {
+  it("dialog: an invalid budget and an unsavable default stay inline, the base label names its input", async () => {
     await mount(<LaunchModal repo="app" branch="main" kinds={["claude"]} access={access} onClose={() => {}} onLaunch={async () => ({ ok: true })} />);
+    for (const h of document.querySelectorAll<HTMLButtonElement>('.launch-sec-head[aria-expanded="false"]')) await act(async () => h.click());
+    await settle();
+    // The ⓘ must not capture the label: clicking "Base branch" has to reach the input, which carries its name.
+    const base = document.getElementById("launch-base-branch") as HTMLInputElement | null;
+    expect(base, "base branch input").toBeTruthy();
+    const label = document.querySelector<HTMLLabelElement>('label[for="launch-base-branch"]')!;
+    expect(label.control).toBe(base);
     const budget = [...document.querySelectorAll<HTMLInputElement>("input")].find((i) => i.getAttribute("inputmode") === "decimal");
-    if (!budget) return; // the budget field is shown only where the user may set one
+    expect(budget, "budget input").toBeTruthy();
+    expect(inline(en["sess.budget_invalid"])).toHaveLength(0);
     await act(async () => {
       const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
       set.call(budget, "abc");
-      budget.dispatchEvent(new Event("input", { bubbles: true }));
+      budget!.dispatchEvent(new Event("input", { bubbles: true }));
     });
     expect(inline(en["sess.budget_invalid"]).length).toBeGreaterThan(0);
+    expect(inline(en["launch.own_default_no_budget"]).length).toBeGreaterThan(0);
   });
 });
