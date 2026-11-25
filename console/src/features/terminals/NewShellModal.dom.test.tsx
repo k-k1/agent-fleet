@@ -1,4 +1,4 @@
-// "Start a shell" from the Terminal view's header (ADR 0142 decision 10): each place sends the
+// "Start a terminal" from the Terminal view's header (ADR 0142 decision 10): each place sends the
 // `dir` the Agent resolves against home, the left pane stays where it is, and a failure to load the
 // spaces or to create is said and recoverable.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -7,14 +7,20 @@ import { createRoot, type Root } from "react-dom/client";
 
 const LIST = { root: "/home/dev/spaces", spaces: [{ folder: "q3-abcdef", name: "Q3 report", dir: "/home/dev/spaces/q3-abcdef" }] };
 let spacesAnswer: () => unknown = () => LIST;
-const api = vi.fn(async (url: string): Promise<unknown> => (url.startsWith("api/spaces") ? spacesAnswer() : {}));
+const HOSTS = [{ id: "h1", alias: "bastion", profileId: "p1", instanceId: "i-0abc" }];
+let profilesAnswer: unknown;
+const PROFILES = [{ id: "p1", label: "Dev", accountId: "111111111111" }];
+const api = vi.fn(async (url: string): Promise<unknown> =>
+  url.startsWith("api/spaces") ? spacesAnswer() : url === "api/ssm/hosts" ? HOSTS : url === "api/ssm/profiles" ? profilesAnswer : {},
+);
 vi.mock("../../core/api/client.ts", () => ({
-  apiJSON: async () => ({}),
+  apiJSON: (...a: unknown[]) => apiJSON(...a),
   api: (url: string) => api(url),
   isTransientErr: (d: { error?: { status?: number } }) => (d?.error?.status ?? 0) >= 500,
   getTenant: () => "",
   getUser: () => "",
 }));
+const apiJSON = vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ name: "ssm1" }));
 const startWork = vi.fn(async (..._a: unknown[]): Promise<{ ok: boolean; name?: string }> => ({ ok: true, name: "s1" }));
 vi.mock("../repos/useStartWork.ts", () => ({ useStartWork: () => startWork }));
 
@@ -49,6 +55,7 @@ beforeEach(() => {
   startWork.mockClear();
   onClose.mockClear();
   spacesAnswer = () => LIST;
+  profilesAnswer = PROFILES;
   setSettings({ workingSets: [], workingSetActive: "" });
   useSpacesStore.getState().clear();
   useReposStore.setState({ repos: [{ name: "app" }, { name: "app@wip-x", worktree: true, parent: "app", branch: "feat/x" }] });
@@ -75,13 +82,61 @@ describe("NewShellModal", () => {
       expect(startWork.mock.calls[0][0]).toEqual({ dir, repo: "" });
       expect(startWork.mock.calls[0][1]).toMatchObject({ kind: "shell", worktree: false, subdir: "" });
     }
-    // A worktree starts in its own folder.
-    startWork.mockClear();
-    const wt = rows().find((b) => b.textContent?.includes("feat/x") || b.textContent?.includes("wip-x"))!;
-    await act(async () => wt.click());
-    expect(startWork.mock.calls[0][0]).toEqual({ dir: "repos/app@wip-x", repo: "" });
     expect(onClose).toHaveBeenCalled();
     expect(useLeftRail.getState()).toMatchObject({ open: true, view: "sessions" });
+  });
+
+  it("lists no worktree rows", async () => {
+    await mount();
+    // Home, the base clone and the one space; the worktree of "app" adds no row (its label is "app" too).
+    expect(rows().map((b) => b.querySelector(".start-row-title")?.textContent)).toEqual(["Home", "app", "Q3 report"]);
+  });
+
+  it("folds a long list of places, filters it, and keeps every row reachable inside a scrolling body", async () => {
+    useReposStore.setState({ repos: Array.from({ length: 30 }, (_, i) => ({ name: `proj${String(i).padStart(2, "0")}` })) });
+    await mount();
+    expect(rows().some((b) => b.textContent?.includes("proj29"))).toBe(false);
+    const fold = document.querySelector<HTMLButtonElement>(".term-new-fold")!;
+    expect(fold.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => fold.click());
+    const last = rowFor("proj29");
+    expect(last).toBeTruthy();
+    // The rows live in the modal body, which is the scroll container; the sections do not shrink.
+    expect(last.closest(".ui-modal-body")).not.toBeNull();
+    expect(last.closest(".term-new-sec")).not.toBeNull();
+    const filter = document.querySelector<HTMLInputElement>('input[type="search"]')!;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      set.call(filter, "proj07");
+      filter.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(rows().filter((b) => b.textContent?.includes("proj")).map((b) => b.textContent)).toEqual([expect.stringContaining("proj07")]);
+  });
+
+  it("lists the Start hub's SSM hosts and starts through the same create, then shows the login", async () => {
+    await mount();
+    const card = [...document.querySelectorAll<HTMLButtonElement>(".ssm-card")].find((b) => b.textContent?.includes("bastion"))!;
+    expect(card).toBeTruthy();
+    await act(async () => card.click());
+    await flush();
+    expect(apiJSON).toHaveBeenCalledWith("api/sessions", "POST", expect.objectContaining({ kind: "ssm", ssm_host_id: "h1" }));
+    expect(document.querySelector(".start-row")).toBeNull();
+  });
+
+  it("says no SSM profile is set up, without the host picker, and says when a filter matches nothing", async () => {
+    profilesAnswer = [];
+    useReposStore.setState({ repos: Array.from({ length: 12 }, (_, i) => ({ name: `proj${i}` })) });
+    await mount();
+    expect(document.querySelector(".ssm-card")).toBeNull();
+    expect(document.body.textContent).toContain("No SSM profile is set up.");
+    await act(async () => document.querySelector<HTMLButtonElement>(".term-new-fold")!.click());
+    const filter = document.querySelector<HTMLInputElement>('input[type="search"]')!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(filter, "zzz");
+      filter.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(document.body.textContent).toContain("No matching repositories or spaces.");
+    expect(document.querySelector<HTMLButtonElement>(".term-new-fold")!.disabled).toBe(true);
   });
 
   it("adds a space's shell to the active working set, as a repo-less session", async () => {

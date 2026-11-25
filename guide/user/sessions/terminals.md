@@ -16,7 +16,7 @@ so a shell never sits among the conversations.
 |---|---|
 | Press **Terminals** on the activity bar | The left pane lists your shells under the place each was opened in, and your SSM sessions under the machine each logs in to |
 | Press the number on a repository or space row in Sessions | The left pane switches to Terminals and brings that place's shells into view |
-| Press **+** at the top of the view | Starts a shell in home, a repository or a space |
+| Press **+** at the top of the view | Opens **Start a terminal**: a shell in home, a repository's base clone or a space, or an SSM session on a registered machine. Worktrees are not listed here; use **Open shell here** on their row |
 | Press the SSM icon at the top of the view | Opens the Start screen on the SSM host list |
 
 Opening a shell opens it in the main area. It does not change what the left pane shows.
