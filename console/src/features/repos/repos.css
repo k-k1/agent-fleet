@@ -1956,7 +1956,7 @@ button.start-place-chip--gone {
 .run-strip-line2 > .run-model {
   flex: 1 1 100%;
 }
-.run-model--catalog > .model-picker-dynamic {
+.run-model--catalog > * {
   flex: 1 1 100%;
   min-width: 0;
 }
@@ -1975,8 +1975,7 @@ button.start-place-chip--gone {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.run-model--claude > .run-model-info,
-.run-model--claude > .model-info-line {
+.run-model--claude > .run-model-info {
   flex-basis: 100%;
 }
 .run-model-divider {
