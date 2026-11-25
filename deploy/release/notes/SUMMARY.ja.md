@@ -33,7 +33,7 @@
 - **[console]** 起動のフォーム・ダイアログ・テナントの設定で、欄の説明を ⓘ へ ([#5147](https://github.com/k-k1/agent-fleet/issues/5147), [#5148](https://github.com/k-k1/agent-fleet/issues/5148))
 - **[ツールチェーン]** 製品名と配布元へのリンク、gitleaks と Session Manager プラグインの行 ([#5072](https://github.com/k-k1/agent-fleet/issues/5072), [#5068](https://github.com/k-k1/agent-fleet/issues/5068))
 - **[メモ]** 最後の回答をより遡って読み、止まっているメンバーで滞らない ([#4891](https://github.com/k-k1/agent-fleet/issues/4891))
-- **[ワークスペース]** OpenCode 2.4 に対応、Chromium・Go・AWS CLI・gcloud・bkt・Confluence CLI・MCP サーバーを更新 ([#4982](https://github.com/k-k1/agent-fleet/issues/4982), [#5180](https://github.com/k-k1/agent-fleet/issues/5180), [#5181](https://github.com/k-k1/agent-fleet/issues/5181))
+- **[ワークスペース]** OpenCode 2.4 に対応、ツールを更新: Chromium 156.0.8078.108 / Go 1.26.11 / AWS CLI 2.42.3 / gcloud 594.0.1 / bkt 0.41.0 / Confluence CLI 2.31.3 / mcp-grafana 2.4.0 / CloudWatch MCP 0.3.2 / AWS MCP Proxy 2.0.0 ([#4982](https://github.com/k-k1/agent-fleet/issues/4982), [#5180](https://github.com/k-k1/agent-fleet/issues/5180), [#5181](https://github.com/k-k1/agent-fleet/issues/5181))
 
 **Fixed**
 

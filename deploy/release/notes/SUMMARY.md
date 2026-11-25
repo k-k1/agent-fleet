@@ -34,7 +34,7 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 - **[console]** Static field explanations behind an ⓘ in launch forms, dialogs and tenant settings ([#5147](https://github.com/k-k1/agent-fleet/issues/5147), [#5148](https://github.com/k-k1/agent-fleet/issues/5148))
 - **[toolchains]** Product names with upstream links; gitleaks and Session Manager plugin rows ([#5072](https://github.com/k-k1/agent-fleet/issues/5072), [#5068](https://github.com/k-k1/agent-fleet/issues/5068))
 - **[memos]** Last-answer read reaches further back and does not stall on stopped members ([#4891](https://github.com/k-k1/agent-fleet/issues/4891))
-- **[workspace]** OpenCode 2.4 supported; Chromium, Go, AWS CLI, gcloud, bkt, Confluence CLI and MCP servers updated ([#4982](https://github.com/k-k1/agent-fleet/issues/4982), [#5180](https://github.com/k-k1/agent-fleet/issues/5180), [#5181](https://github.com/k-k1/agent-fleet/issues/5181))
+- **[workspace]** OpenCode 2.4 supported; tools updated: Chromium 156.0.8078.108, Go 1.26.11, AWS CLI 2.42.3, gcloud 594.0.1, bkt 0.41.0, Confluence CLI 2.31.3, mcp-grafana 2.4.0, CloudWatch MCP 0.3.2, AWS MCP Proxy 2.0.0 ([#4982](https://github.com/k-k1/agent-fleet/issues/4982), [#5180](https://github.com/k-k1/agent-fleet/issues/5180), [#5181](https://github.com/k-k1/agent-fleet/issues/5181))
 
 **Fixed**
 
