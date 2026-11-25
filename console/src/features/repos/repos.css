@@ -1266,6 +1266,25 @@ button.start-place-chip--gone {
   margin-right: auto;
 }
 
+/* Narrow dialogs: stack the footer with the primary last and full width (DOM order = visual
+   order, so Tab follows what is on screen), so the launch button (which
+   names agent and model) keeps its width instead of collapsing beside Back and Cancel. Same
+   breakpoint as the short label (NARROW_LAUNCH_QUERY in LaunchModal.tsx). */
+@media (max-width: 520px) {
+  footer.launch-foot {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  footer.launch-foot .launch-back {
+    margin-right: 0;
+  }
+  footer.launch-foot .ui-btn.launch-go {
+    max-width: none;
+    justify-content: center;
+    text-align: center;
+  }
+}
+
 /* The "start now" bridge on the clone-finished toast (Ph3). */
 .clone-done-toast {
   display: inline-flex;

@@ -177,3 +177,53 @@ describe("launch button style", () => {
     expect(rule).toMatch(/white-space:\s*normal/);
   });
 });
+
+// The body of the "@media (max-width: 520px)" block that holds the launch-foot rules, by brace
+// matching, as { selector: declarations }; plus whatever of .launch-foot sits outside any media block.
+function narrowFootRules(css: string): { inMedia: Record<string, string>; outside: string } {
+  const head = "@media (max-width: 520px) {";
+  let from = 0;
+  const inMedia: Record<string, string> = {};
+  let outside = css;
+  for (;;) {
+    const at = css.indexOf(head, from);
+    if (at < 0) break;
+    let depth = 1;
+    let i = at + head.length;
+    while (depth > 0 && i < css.length) depth += css[i] === "{" ? 1 : css[i] === "}" ? -1 : 0, i++;
+    const body = css.slice(at + head.length, i - 1);
+    if (body.includes("launch-foot")) {
+      for (const m of body.matchAll(/([^{}]+)\{([^}]*)\}/g)) inMedia[m[1].trim().replace(/\s+/g, " ")] = m[2];
+      outside = css.slice(0, at) + css.slice(i);
+    }
+    from = i;
+  }
+  return { inMedia, outside };
+}
+
+describe("launch dialog footer at narrow widths", () => {
+  it("stacks in a column inside the narrow media block only, with a full-width primary", () => {
+    const { inMedia, outside } = narrowFootRules(readFileSync("src/features/repos/repos.css", "utf8"));
+    expect(Object.keys(inMedia).sort()).toEqual([
+      "footer.launch-foot",
+      "footer.launch-foot .launch-back",
+      "footer.launch-foot .ui-btn.launch-go",
+    ]);
+    const foot = inMedia["footer.launch-foot"];
+    expect(foot).toMatch(/flex-direction:\s*column;/);
+    expect(foot).toMatch(/align-items:\s*stretch/);
+    expect(inMedia["footer.launch-foot .launch-back"]).toMatch(/margin-right:\s*0/);
+    expect(inMedia["footer.launch-foot .ui-btn.launch-go"]).toMatch(/max-width:\s*none/);
+    // Nothing of it leaks to wide viewports, and no reordering that would split Tab from the screen.
+    expect(outside).not.toMatch(/launch-foot/);
+    expect(foot).not.toMatch(/reverse|order:/);
+  });
+  it.each([360, 420])("the dialog's footer carries launch-foot at %i px, primary last in DOM (= Tab = visual) order", async (w) => {
+    setWidth(w);
+    await renderDialog(["claude"]);
+    const foot = document.querySelector<HTMLElement>("footer.ui-modal-foot")!;
+    expect(foot.classList.contains("launch-foot")).toBe(true);
+    const btns = [...foot.querySelectorAll("button")];
+    expect(btns[btns.length - 1].classList.contains("launch-go")).toBe(true);
+  });
+});
