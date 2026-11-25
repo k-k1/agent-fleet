@@ -137,14 +137,20 @@ describe("SkillsTab", () => {
   it("lists every entry with the reason it would not run", async () => {
     await mount();
     expect(api).toHaveBeenCalledWith("api/skills/catalog");
-    const groups = Array.from(document.querySelectorAll(".skills-group h4")).map((h) => h.firstChild?.textContent?.trim());
+    const groups = Array.from(document.querySelectorAll(".skills-group-title")).map((h) => h.textContent?.trim());
     expect(groups).toEqual([t("skills.scope_user"), t("skills.scope_fleet"), t("skills.scope_cli")]);
     const cmd = rowNamed("handoff", "command");
     expect(cmd.classList.contains("skills-shadowed")).toBe(true);
     expect(cmd.textContent).toContain(t("skills.shadowed"));
     expect(rowNamed("handoff").classList.contains("skills-shadowed")).toBe(false);
     expect(rowNamed("quiet").textContent).toContain(t("skills.not_invocable"));
-    expect(document.body.textContent).toContain(t("skills.fleet_hint"));
+    // The Fleet group's explanation sits behind its ⓘ: in the DOM for aria-describedby, hidden until opened.
+    const fleetHint = Array.from(document.querySelectorAll(".ui-field-info-panel")).find((p) => p.textContent === t("skills.fleet_hint"));
+    expect(fleetHint).toBeTruthy();
+    expect((fleetHint as HTMLElement).hidden).toBe(true);
+    const fleetBtn = document.querySelector(".skills-group .ui-field-info") as HTMLButtonElement;
+    act(() => fleetBtn.click());
+    expect((fleetHint as HTMLElement).hidden).toBe(false);
     // A missing root stays listed, dimmed and labelled, so the member sees where to create it.
     const missing = document.querySelector(".skills-roots .skills-missing");
     expect(missing?.textContent).toContain(C + "/commands");

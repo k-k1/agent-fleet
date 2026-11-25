@@ -91,4 +91,19 @@ describe("AssistantModal backend picker", () => {
     await render({ agent: "claude", name: "A" } as never);
     expect(saveBtn().disabled).toBe(false);
   });
+
+describe("AssistantModal field explanations", () => {
+  it("puts the static explanations behind ⓘ and keeps the per-option tool help inline", async () => {
+    await render();
+    const t = (await import("../../lib/i18n/index.ts")).t;
+    const panels = [...document.querySelectorAll<HTMLElement>(".ui-field-info-panel")];
+    for (const k of ["asst.desc_hint", "asst.voice_hint", "asst.persona_hint", "asst.mcp_hint", "asst.knowledge_hint"] as const) {
+      const p = panels.find((x) => x.textContent === t(k));
+      expect(p, k).toBeTruthy();
+      expect(p!.hidden, k).toBe(true);
+    }
+    // The selected tool grant's meaning is the option's own help: it stays visible.
+    expect([...document.querySelectorAll(".ui-field-hint:not(.ui-field-info-panel)")].some((e) => e.textContent === t("asst.tool_none_help"))).toBe(true);
+  });
+});
 });

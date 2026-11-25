@@ -8,6 +8,7 @@
 // The verdict is built by the Agent and relayed unchanged by the CP. This surface only
 // displays it and blocks sending; that it does NOT recompute the condition client-side is
 // itself what is under test.
+import { t } from "../../lib/i18n/index.ts";
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -229,5 +230,14 @@ describe("HandoffOfferModal", () => {
     expect(labels.some((t) => t.includes("共有"))).toBe(true);
     // No leftover loading indicator: it would read as being stuck.
     expect(document.body.textContent || "").not.toContain("読み込み中");
+  });
+
+  it("keeps the frozen-prompt note behind the prompt's ⓘ, closed until pressed", async () => {
+    await render({ members: MEMBERS, context: { vcs: "git", branch: "main", headSha: "abcdef1234", remote: "https://x/y.git", ahead: 0 } });
+    const panel = Array.from(document.querySelectorAll<HTMLElement>(".ui-field-info-panel")).find((p) => p.textContent === t("handoff.frozen_hint"));
+    expect(panel?.hidden).toBe(true);
+    expect(document.querySelector(".ui-field > p.ui-field-hint")).toBeNull();
+    act(() => document.querySelector<HTMLButtonElement>(".ui-field-info")!.click());
+    expect(panel?.hidden).toBe(false);
   });
 });

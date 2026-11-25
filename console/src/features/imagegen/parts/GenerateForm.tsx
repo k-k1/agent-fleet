@@ -11,6 +11,7 @@
 //      the ADR rejects by name). Quality prefixes and trigger words are chips that append
 //      when pressed; the administrator's negative is a chip that cannot be removed and is
 //      never merged into the textarea, so what is in the box is what the person wrote.
+import { FieldLabel } from "../../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
 import type { KeyboardEvent as RKeyboardEvent, ReactNode } from "react";
@@ -292,9 +293,12 @@ export function GenerateForm({
             onChange={(size) => patch({ size })}
           />
         )}
-        <label className="igen-field">
-          <span className="igen-label">{tr("imggen.jobs")}</span>
+        <div className="igen-field">
+          <FieldLabel htmlFor="igen-jobs" plain className="igen-label" info={tr("imggen.jobs_hint")}>
+            {tr("imggen.jobs")}
+          </FieldLabel>
           <input
+            id="igen-jobs"
             className="ds-input"
             type="number"
             min={1}
@@ -302,8 +306,7 @@ export function GenerateForm({
             value={draft.jobs}
             onChange={(e) => patch({ jobs: Math.max(1, Math.min(MAX_JOBS, Number(e.target.value) || 1)) })}
           />
-          <span className="igen-hint">{tr("imggen.jobs_hint")}</span>
-        </label>
+        </div>
       </div>
 
       {/* Drawn only when the family has LoRAs to offer: an empty section saying "none" was a

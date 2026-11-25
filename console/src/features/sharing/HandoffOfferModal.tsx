@@ -10,6 +10,7 @@
 // and it would drift from the server's check at send time (docs/log/77 §77.5). The same holds
 // for "push, then send" (#2072): the CP asks the Agent to push and then for a fresh verdict;
 // this surface only asks for it.
+import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
@@ -313,18 +314,20 @@ export function HandoffOfferModal({
                 <span className="ui-field-label">{tr("handoff.offer_title_label")}</span>
                 <input {...NO_AUTOFILL} value={title} maxLength={SESSION_TITLE_MAX} onChange={(e) => setTitle(e.target.value)} />
               </label>
-              <label className="ui-field">
-                <span className="ui-field-label">{tr("handoff.offer_prompt_label")}</span>
+              {/* The prompt is frozen once sent (ADR 0057 decision 7). Say so: silently
+                  having no effect is the worst outcome. */}
+              <div className="ui-field">
+                <FieldLabel htmlFor="handoff-offer-prompt" info={tr("handoff.frozen_hint")}>
+                  {tr("handoff.offer_prompt_label")}
+                </FieldLabel>
                 <textarea {...NO_AUTOFILL}
+                  id="handoff-offer-prompt"
                   className="handoff-prompt-edit"
                   value={prompt}
                   spellCheck={false}
                   onChange={(e) => setPrompt(e.target.value)}
                 />
-              </label>
-              {/* The prompt is frozen once sent (ADR 0057 decision 7). Say so: silently
-                  having no effect is the worst outcome. */}
-              <p className="ui-field-hint">{tr("handoff.frozen_hint")}</p>
+              </div>
             </>
           )}
         </div>
