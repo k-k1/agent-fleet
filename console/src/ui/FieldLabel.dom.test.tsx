@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { act, type ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { Modal } from "./Modal.tsx";
 import { FieldLabel } from "./FieldLabel.tsx";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -43,6 +44,27 @@ describe("FieldLabel", () => {
       input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     expect(panel.hidden).toBe(true);
+  });
+
+  it("closes only the panel on the first Escape, the modal on the second", async () => {
+    let closed = 0;
+    await render(
+      <Modal title="t" onClose={() => closed++}>
+        <FieldLabel htmlFor="x" info="i">
+          Name
+        </FieldLabel>
+        <input id="x" />
+      </Modal>,
+    );
+    const btn = document.querySelector<HTMLButtonElement>(".ui-field-info")!;
+    await act(async () => btn.click());
+    document.querySelector<HTMLInputElement>("#x")!.focus();
+    const esc = () => act(async () => void document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+    await esc();
+    expect(closed).toBe(0);
+    expect(btn.getAttribute("aria-expanded")).toBe("false");
+    await esc();
+    expect(closed).toBe(1);
   });
 
   it("gives each label its own panel id", async () => {
