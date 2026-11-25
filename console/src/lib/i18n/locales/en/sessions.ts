@@ -691,6 +691,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.stash_failed": "Could not save to a memo. Your prompt is still here.",
   "launch.stash_too_large": "An attachment is too large to save to a memo. Your prompt is still here.",
   "launch.memo_attach_missing": "{count} of the memo's attachments could not be loaded.",
+  "launch.start_short": "Start · {what}",
   "launch.start_with": "Start with {what}",
   "launch.start_worktree_with": "Start in a worktree with {what}",
   "start.space_launch_with": "Start in a new space with {what}",
