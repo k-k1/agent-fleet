@@ -21,7 +21,7 @@ The row's badges also tell you about unpushed changes and changes you have not b
 ## Launch
 
 1. Press "**Launch**" on the row. The "**Start working**" screen opens
-2. Write the first prompt, then check the agent, route and model in the strip under it. The agent and route are chips; the model is one row of buttons (aliases, then your recent models, then **+N**) for agents with a fixed model list, and a searchable picker or a Bedrock model field for the others ([Run with](../sessions/start.md#run-with))
+2. Write the first prompt, then check the agent, route and model in the strip under it. The agent and route are chips; the model is one row of buttons (aliases, then your recent models, then **+N**) for an agent with a fixed model list on an ordinary route; an agent with a live model catalogue shows a searchable picker, and a route that takes a Bedrock model id (Claude Code on Bedrock, for example) shows a Bedrock model field ([Run with](../sessions/start.md#run-with))
 3. Check the **location** and the **Details** (effort, start mode, permissions and the rest). Each shows a summary; press **Change** to open it. They stay open or folded as you last left them, and Details opens by itself when the budget is not a valid amount
 4. Press the launch button, which names what will run (for example **Start in a worktree with Claude Code · Opus**)
 
