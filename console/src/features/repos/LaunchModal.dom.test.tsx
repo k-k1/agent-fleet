@@ -302,7 +302,10 @@ describe("LaunchModal what -> where -> details", () => {
     expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
     // lcpp has no default model: the button must not read as launching on one, and the strip says a pick is needed.
     expect(byText("Start in a worktree").textContent).not.toContain("default model");
-    expect(strip().textContent).toContain("no default model");
+    // One explanation, not two: the picker says the catalog is empty; the strip adds nothing contradictory.
+    expect(strip().textContent).toContain("catalog is empty");
+    expect(strip().textContent).not.toContain("Only the default model");
+    expect(strip().textContent).not.toContain("pick one to launch");
   });
 
   it("names the model on the button once the catalog delivers one", async () => {
@@ -311,7 +314,6 @@ describe("LaunchModal what -> where -> details", () => {
     await settle();
     expect(byText("Start in a worktree").disabled).toBe(false);
     expect(byText("Start in a worktree").textContent).toContain("local-7b");
-    expect(strip().textContent).not.toContain("no default model");
   });
 
   it("keeps Details open over an invalid budget, and folds it again once fixed", async () => {
@@ -836,6 +838,10 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     try {
       await render(["claude"]);
       await settle();
+      // The profiles have not answered: the Bedrock default is not yet the route, so nothing launches.
+      expect(byText("Start in a worktree").disabled).toBe(true);
+      await click(byText("Start in a worktree"));
+      expect(onLaunch).not.toHaveBeenCalled();
       await act(async () => release(undefined));
       ssmGate = null;
       await settle();

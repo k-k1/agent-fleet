@@ -402,6 +402,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   // not say why. It must stay true for EVERY reason that produces it — not signed in, signed
   // in but unable to reach the provider, a plan that only offers the default (Copilot Free is
   // Auto-only, where empty is correct). It must not name a cause.
+  "ui.model_none_concrete": "This agent has no default model and its catalog is empty: check that it is running and has a model.",
   "ui.model_default_only": "Only the default model is available (check this agent's connection and plan).",
   // The two the Agent can name. Both are this workspace's own settings, so sending the user
   // to check the connection or the plan would point at something that was never wrong.

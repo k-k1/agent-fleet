@@ -7,7 +7,7 @@
 import { useEffect, useMemo } from "react";
 import { useT } from "../lib/i18n/index.ts";
 import { Icon } from "./Icon.tsx";
-import { useModelOptions, useHiddenModel, useModelCatalogSettled, modelCatalogReason, useModelInfos, modelIsRetiring } from "../lib/agentModels.ts";
+import { useModelOptions, useHiddenModel, useModelCatalogSettled, modelCatalogReason, useModelInfos, modelIsRetiring, requiresConcreteModel } from "../lib/agentModels.ts";
 import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
 import { ModelCombo } from "./ModelCombo.tsx";
@@ -80,7 +80,9 @@ export function ModelPicker({ kind, model, onChange, filter }: ModelPickerProps)
           ? "ui.model_none_route"
           : reason === "unreachable"
             ? "ui.model_unreachable"
-            : "ui.model_default_only";
+            : requiresConcreteModel(kind)
+              ? "ui.model_none_concrete"
+              : "ui.model_default_only";
     return (
       <div className="model-picker-dynamic">
         <ModelCombo kind={kind} options={dynamicOptions ?? []} value={model} onChange={onChange} />

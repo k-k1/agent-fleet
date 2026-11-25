@@ -32,11 +32,11 @@ import { OwnSettingsLine } from "../settings/credentials/MemberLines.tsx";
 import { policyRefusalKey, type PolicyRefusal } from "./launchPolicy.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
-import { agentLaunchDefault, refreshUIPrefs, useSettings, useUIPrefsLoading } from "../../lib/settings.ts";
+import { DEFAULT_MODEL, agentLaunchDefault, hydrateUIPrefs, useSettings, useUIPrefsLoading } from "../../lib/settings.ts";
 import { useEffectiveDefaults, useUIStateStore } from "../../core/store/uiState.ts";
 import { defaultKind, ownLaunch, ownLaunchProblem, tenantBudget, tenantDriver, tenantModel, tenantSkipPerm } from "./tenantLaunchDefaults.ts";
 import { parseCap } from "../sessions/spendBudget.ts";
-import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions, useModelOptions } from "../../lib/agentModels.ts";
+import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions, useModelCatalogSettled, useModelOptions } from "../../lib/agentModels.ts";
 import { EffortPicker } from "../../ui/ModelPicker.tsx";
 import { RunModelRow, RunWithStrip, isTierAlias, shortModelLabel } from "./RunWithStrip.tsx";
 import { rememberRecentModel } from "../../lib/recentModels.ts";
@@ -536,6 +536,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
 
   const hasModel = agentOf(kind).caps.model;
   const modelOptions = useModelOptions(kind);
+  const catalogSettled = useModelCatalogSettled(kind);
   const driverManaged = driver === "managed";
   const hasEffort = agentOf(kind).caps.effort && (driverManaged || agentOf(kind).caps.tuiEffort);
   // planMode is the cap for the chat plan toggle — cursor/copilot/kiro have planMode:false but
@@ -639,14 +640,22 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // the answer depends on has settled — the synced registered models (a model another device just
   // registered is still valid) and a saved Bedrock default's profiles (its id is not a tier
   // candidate). A live catalog is not checked here: its picker keeps a stored id in the list.
+  // The re-read is a full pull (hydrate merges around an unsaved local edit), asked again whenever
+  // the agent becomes one with a registered-model row. A failed read counts as answered: the
+  // launch must not wait for a server that cannot be reached, and the list in hand is all there is.
+  const fixedTier = hasModel && !agentOf(kind).caps.liveModels;
   const [prefsReread, setPrefsReread] = useState(false);
   useEffect(() => {
+    if (!fixedTier) return;
     let alive = true;
-    void refreshUIPrefs().finally(() => alive && setPrefsReread(true));
+    setPrefsReread(false);
+    void hydrateUIPrefs()
+      .catch(() => false)
+      .finally(() => alive && setPrefsReread(true));
     return () => {
       alive = false;
     };
-  }, []);
+  }, [fixedTier]);
   // Pending until the profiles are in AND the route state has taken the default (the render between
   // the two would otherwise see a Bedrock id with no Bedrock route).
   const bedrockDefaultPending =
@@ -654,17 +663,21 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     allowedRoutes.includes("bedrock") &&
     !dirty.current.has("route") &&
     (modelRouteProfiles === null || (!savedUnusable && route !== "bedrock"));
+  const modelUnoffered = fixedTier && !onBedrock && !!model && !!modelOptions && !modelOptions.some(([v]) => v === model);
+  // Nothing may launch on a choice that is still waiting to be verified.
+  const choiceSettling = (modelUnoffered && !prefsReread) || bedrockDefaultPending;
   useEffect(() => {
-    if (!hasModel || agentOf(kind).caps.liveModels || onBedrock || !modelOptions || !model || !prefsReread || bedrockDefaultPending) return;
-    if (modelOptions.some(([v]) => v === model)) return;
-    // The usual chain without this repository's own (unusable) entry: member / team default, then
-    // the agent's own.
-    const next = resolveModel(kind, "", modelDefault(kind, agentLaunchDefault(settings, kind).model));
+    if (!modelUnoffered || !modelOptions || !prefsReread || bedrockDefaultPending) return;
+    // The usual chain, each step checked against what is offered now: this repository's own entry
+    // is the unusable one; then the member's / team's default, the Settings default, the agent's
+    // own, and last the first choice.
+    const offered = (id: string | undefined): id is string => !!id && modelOptions.some(([v]) => v === id);
+    const next = [tenantModel(uiState, kind, settings), agentLaunchDefault(settings, kind).model, DEFAULT_MODEL].find(offered) ?? modelOptions[0]?.[0] ?? "";
     setModelNotice(model);
-    setModel(modelOptions.some(([v]) => v === next) ? next : (modelOptions[0]?.[0] ?? ""));
+    setModel(next);
     setEffort("");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-checked when the offered list or the model changes
-  }, [kind, model, modelOptions, onBedrock, hasModel, prefsReread, bedrockDefaultPending]);
+  }, [kind, model, modelOptions, modelUnoffered, prefsReread, bedrockDefaultPending]);
   const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
   // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
@@ -926,7 +939,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // Existing-branch mode arrives here already resolved, with a branch picked from the list.
   const start = async (resolveCollision: boolean) => {
     // Checked here, not only on the button: the send key and the collision retry come in this way.
-    if (busy || seedLoading || filesStuck || launchBlocked || spaceGone) return;
+    // The same gate as the button: the send key and the collision retry come in this way too.
+    if (busy || seedLoading || filesStuck || launchBlocked || spaceGone || !canLaunch) return;
     setBusy(true);
     setConflict(null);
     setPolicyErr(null);
@@ -1015,7 +1029,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // A kind that requires a concrete model (lcpp) with none resolved yet — the catalog is
   // still loading, or came back empty — must not launch with an empty model (docs/log/109).
   const modelPending = hasModel && requiresConcreteModel(kind) && !model;
-  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked && !prefsLoading && !launchBlocked && !filesStuck && !spaceGone;
+  const canLaunch = !!kinds.length && !!access.kinds && !routeMissing && (!existingMode || !!existingBranch) && !modelPending && !budgetInvalid && !seedLoading && !bedrockBlocked && !routeModelBlocked && !prefsLoading && !choiceSettling && !launchBlocked && !filesStuck && !spaceGone;
   useEffect(() => {
     if (submitRef) submitRef.current = () => canLaunch && submit();
   });
@@ -1042,10 +1056,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // The "run with" strip (ADR 0142 decision 7, dated note): agent and route on line 1, the model on
   // line 2, so what a launch will run with stands under the prompt rather than inside Details.
   // Everything that stops a launch for one of these choices is explained here, never behind a fold.
-  const routeProblem = prefsLoading || savedUnusable || routeMissing || bedrockBlocked || routeModelBlocked;
+  const routeProblem = prefsLoading || choiceSettling || savedUnusable || routeMissing || bedrockBlocked || routeModelBlocked;
   // What the route chip says is wrong, most basic first (the launch is blocked on each of these).
   const routeWhy = tr(
-    prefsLoading
+    prefsLoading || choiceSettling
       ? "launch.route_loading"
       : savedUnusable
         ? "launch.route_default_unusable"
@@ -1163,7 +1177,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           <span className="ui-field-hint">{bedrockModelBad && bedrockModel.trim() !== "" ? tr("launch.bedrock_model_invalid") : tr("launch.bedrock_model_hint")}</span>
         </div>
       )}
-      {modelPending && !!kinds.length && (
+      {modelPending && !!kinds.length && !(catalogSettled && !(modelOptions ?? []).some(([v]) => v)) && (
         <span className="ui-field-hint ui-field-hint--warn run-strip-why" role="status">
           {tr("launch.strip.model_required")}
         </span>

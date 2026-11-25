@@ -19,7 +19,7 @@ vi.mock("../../core/api/client.ts", () => ({
   getTenant: () => "",
   getUser: () => "",
   api: async (url: string) =>
-    url.includes("api/env/ui-prefs") ? (prefsReads++, prefsGate ? prefsGate.then(() => (onPrefsAnswer?.(), serverPrefs)) : serverPrefs) : url.includes("api/ssm/profiles") ? [] : url.includes("api/me/ui-state") ? {} : { branches: [] },
+    url.includes("api/env/ui-prefs") ? (prefsReads++, Promise.resolve(prefsGate).then(() => (onPrefsAnswer?.(), serverPrefs))) : url.includes("api/ssm/profiles") ? [] : url.includes("api/me/ui-state") ? {} : { branches: [] },
   repoPromptTemplates: async () => ({ groups: [] }),
   errText: (e: { message?: string }) => e?.message ?? "",
   errDetail: (e: { message?: string }) => e?.message ?? "",
@@ -40,7 +40,7 @@ let root: Root | null = null;
 let host: HTMLDivElement;
 let onLaunch: Mock<Launch>;
 
-const REGISTERED = ["claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5", "my-model"];
+const REGISTERED = ["claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5", "claude-opus-4-1"];
 const liveKinds = new Map<string, unknown>([
   ["claude", { kind: "claude", routes: ["anthropic-subscription"], usableRoutes: ["anthropic-subscription"] }],
   ["codex", { kind: "codex", routes: ["chatgpt-subscription"], usableRoutes: ["chatgpt-subscription"] }],
@@ -138,9 +138,9 @@ describe.each([
   });
 
   it("keeps exactly one active model button across aliases and registered models", async () => {
-    rememberRecentModel("claude", "my-model");
+    rememberRecentModel("claude", "claude-opus-4-1");
     await mount(["claude"]);
-    const mine = rowButtons().find((b) => b.title === "my-model")!;
+    const mine = rowButtons().find((b) => b.title === "claude-opus-4-1")!;
     await click(mine);
     expect(active()).toEqual([mine]);
     await click(rowButtons().find((b) => b.textContent === "Sonnet")!);
@@ -150,7 +150,7 @@ describe.each([
   it("lists at most 3 recent registered models with the common prefix dropped, and +N for the rest", async () => {
     for (const m of ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7", "claude-opus-4-8"]) rememberRecentModel("claude", m);
     await mount(["claude"]);
-    const registered = rowButtons().filter((b) => b.title.startsWith("claude-") || b.title === "my-model").filter((b) => !["Fable", "Opus", "Sonnet", "Haiku"].includes(b.textContent!));
+    const registered = rowButtons().filter((b) => b.title.startsWith("claude-") || b.title === "claude-opus-4-1").filter((b) => !["Fable", "Opus", "Sonnet", "Haiku"].includes(b.textContent!));
     expect(registered.map((b) => b.textContent)).toEqual(["opus-4-8", "opus-4-7", "sonnet-4-6"]);
     expect(registered[0].title).toBe("claude-opus-4-8");
     expect(modelRow().querySelector(".run-model-more-label")!.textContent).toContain("+2");
@@ -162,14 +162,14 @@ describe.each([
     await mount(["claude"]);
     const sel = moreSelect()!;
     await act(async () => {
-      sel.value = "my-model";
+      sel.value = "claude-opus-4-1";
       sel.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await settle();
-    expect(active().map((b) => b.title)).toEqual(["my-model"]);
+    expect(active().map((b) => b.title)).toEqual(["claude-opus-4-1"]);
     const ids = rowButtons().map((b) => b.title).filter((id) => REGISTERED.includes(id));
     expect(ids).toHaveLength(3);
-    expect(ids[0]).toBe("my-model");
+    expect(ids[0]).toBe("claude-opus-4-1");
   });
 
   it("names the agent and the model on the launch button", async () => {
@@ -216,12 +216,12 @@ describe("recents are written by a launch", () => {
     for (const m of ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"]) rememberRecentModel("claude", m);
     await renderDialog(["claude"]);
     await act(async () => {
-      moreSelect()!.value = "my-model";
+      moreSelect()!.value = "claude-opus-4-1";
       moreSelect()!.dispatchEvent(new Event("change", { bubbles: true }));
     });
     await click(primary());
     expect(onLaunch).toHaveBeenCalledTimes(1);
-    expect(readRecentModels("claude")).toEqual(["my-model", "claude-opus-4-7", "claude-sonnet-4-6"]);
+    expect(readRecentModels("claude")).toEqual(["claude-opus-4-1", "claude-opus-4-7", "claude-sonnet-4-6"]);
   });
 
   it("does not record a failed launch", async () => {
@@ -267,7 +267,11 @@ describe("a model another device registered", () => {
     try {
       await renderDialog(["claude"]);
       await settle();
-      // Still waiting: the unverified choice has not been replaced.
+      // Still waiting: the unverified choice has not been replaced, and nothing launches on it.
+      expect(primary().disabled).toBe(true);
+      await click(primary());
+      expect(onLaunch).not.toHaveBeenCalled();
+      expect(strip().querySelector(".run-strip-why")).not.toBeNull();
       expect(strip().querySelector(".run-strip-notice")).toBeNull();
       await act(async () => release());
       prefsGate = null;
@@ -283,6 +287,23 @@ describe("a model another device registered", () => {
   });
 });
 
+describe("the registered models are read again when the agent becomes Claude", () => {
+  it("picks up a model registered elsewhere after switching from another agent", async () => {
+    localStorage.setItem("af.repo-model.app", "claude-opus-4-9");
+    onPrefsAnswer = () => setSettings({ claudeCustomModels: [...REGISTERED, "claude-opus-4-9"] });
+    try {
+      await renderDialog(["codex", "claude"]);
+      const before = prefsReads;
+      await click([...strip().querySelectorAll<HTMLButtonElement>(".ui-seg.big .seg-btn")].find((b) => b.textContent?.includes("Claude"))!);
+      await settle();
+      expect(prefsReads).toBeGreaterThan(before);
+      expect(active().map((b) => b.title)).toEqual(["claude-opus-4-9"]);
+    } finally {
+      onPrefsAnswer = null;
+    }
+  });
+});
+
 describe("a dropped remembered model falls back along the usual defaults", () => {
   it("uses the member's Settings default, not the first alias", async () => {
     localStorage.setItem("af.repo-model.app", "removed-model");
@@ -293,6 +314,25 @@ describe("a dropped remembered model falls back along the usual defaults", () =>
     await click(primary());
     expect(onLaunch.mock.calls[0][0].model).toBe("haiku");
     setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, model: "" } } });
+  });
+});
+
+describe("a default that is no longer registered either", () => {
+  it("steps down to the next default that is offered, not the first button", async () => {
+    localStorage.setItem("af.repo-model.app", "removed-model");
+    const { useUIStateStore } = await import("../../core/store/uiState.ts");
+    const { getSettings } = await import("../../lib/settings.ts");
+    useUIStateStore.setState({ state: { launch: { agent: "claude", model: "claude-opus-4-9" } } as never });
+    setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, model: "haiku" } } });
+    try {
+      await renderDialog(["claude"]);
+      expect(active().map((b) => b.title)).toEqual(["haiku"]);
+      await click(primary());
+      expect(onLaunch.mock.calls[0][0].model).toBe("haiku");
+    } finally {
+      useUIStateStore.setState({ state: {} });
+      setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, model: "" } } });
+    }
   });
 });
 
