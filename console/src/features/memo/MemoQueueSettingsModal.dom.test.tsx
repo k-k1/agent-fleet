@@ -103,7 +103,10 @@ describe("MemoQueueSettingsModal accept-from-own-sessions switch", () => {
     const box = acceptBox();
     expect(box).not.toBeNull();
     expect(box!.checked).toBe(false);
-    expect(box!.closest(".ui-field")!.textContent).toMatch(/なりすま|pass itself off/);
+    // The spoofing risk is a warning: shown at once, not behind ⓘ.
+    const warn = box!.closest(".ui-field")!.querySelector<HTMLElement>(".ui-field-hint--warn")!;
+    expect(warn.hidden).toBe(false);
+    expect(warn.textContent).toMatch(/なりすま|pass itself off/);
     const save = async () => {
       await act(async () => {
         document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));

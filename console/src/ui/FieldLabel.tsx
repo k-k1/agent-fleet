@@ -8,6 +8,7 @@
 // The button is a real <button>, so Tab reaches it and Enter / Space toggles it; Escape
 // closes an open panel without closing the surrounding modal.
 import { useId, useState } from "react";
+import { useEscLayer } from "../lib/escLayer.ts";
 import type { ReactNode } from "react";
 import { useT } from "../lib/i18n/index.ts";
 
@@ -33,6 +34,9 @@ export function FieldLabel({ children, htmlFor, info, className, plain, as, trai
   const tr = useT();
   const [open, setOpen] = useState(false);
   const panelId = useId();
+  // An open panel is the topmost Escape layer wherever focus has moved, so the first Escape
+  // closes it and only the next one reaches the surrounding modal.
+  useEscLayer(() => setOpen(false), open);
   const Tag = as ?? "label";
   const cls = [plain ? "" : "ui-field-label", className ?? ""].filter(Boolean).join(" ") || undefined;
   if (info == null || info === false) {
@@ -56,12 +60,6 @@ export function FieldLabel({ children, htmlFor, info, className, plain, as, trai
           aria-describedby={panelId}
           aria-label={tr("common.field_info")}
           onClick={() => setOpen((v) => !v)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape" && open) {
-              e.stopPropagation();
-              setOpen(false);
-            }
-          }}
         >
           <span aria-hidden="true">ⓘ</span>
         </button>

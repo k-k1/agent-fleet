@@ -36,10 +36,24 @@ describe("FieldLabel", () => {
     await act(async () => btn.click());
     expect(panel.hidden).toBe(false);
     expect(btn.getAttribute("aria-expanded")).toBe("true");
+    // Escape closes it even after focus has moved elsewhere, and the layer below sees none.
+    const input = host.querySelector("input")!;
+    input.focus();
     await act(async () => {
-      btn.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
     });
     expect(panel.hidden).toBe(true);
+  });
+
+  it("gives each label its own panel id", async () => {
+    await render(
+      <div>
+        <FieldLabel info="a">A</FieldLabel>
+        <FieldLabel info="b">B</FieldLabel>
+      </div>,
+    );
+    const ids = [...host.querySelectorAll("button")].map((b) => b.getAttribute("aria-describedby"));
+    expect(new Set(ids).size).toBe(2);
   });
 
   it("is a plain label with no button without info", async () => {

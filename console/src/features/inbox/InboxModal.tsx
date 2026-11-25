@@ -13,7 +13,7 @@
 // so taking it over, declining and giving back behave exactly as there.
 import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -330,6 +330,7 @@ function LaunchRow({ item }: { item: InboxItem }) {
   const toast = useToast();
   const repos = useReposStore((s) => s.repos);
   const [repoName, setRepoName] = useState(() => repos[0]?.name || "");
+  const repoId = useId();
   const launch = () => {
     const repo = repos.find((r) => r.name === repoName);
     if (!repo?.path) {
@@ -343,10 +344,10 @@ function LaunchRow({ item }: { item: InboxItem }) {
   return (
     <div className="inbox-launch">
       <div className="ui-field">
-        <FieldLabel htmlFor="inbox-launch-repo" info={tr("inbox.launch_hint")}>
+        <FieldLabel htmlFor={repoId} info={tr("inbox.launch_hint")}>
           {tr("inbox.launch_repo")}
         </FieldLabel>
-        <select id="inbox-launch-repo" value={repoName} onChange={(e) => setRepoName(e.target.value)}>
+        <select id={repoId} value={repoName} onChange={(e) => setRepoName(e.target.value)}>
           {repos.map((r) => (
             <option key={r.name} value={r.name}>
               {r.name}

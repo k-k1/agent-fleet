@@ -365,6 +365,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             />
             <span>{tr("memo.q_accept_own")}</span>
           </FieldLabel>
+          <div className="ui-field-hint ui-field-hint--warn">{tr("memo.q_accept_own_warn")}</div>
         </div>
 
         <div className="ui-field memo-q-narrow">
@@ -385,6 +386,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             <input type="checkbox" checked={draft.tidy} disabled={blocked} onChange={(e) => set("tidy", e.target.checked)} />
             <span>{tr("memo.q_tidy")}</span>
           </FieldLabel>
+          <div className="ui-field-hint ui-field-hint--warn">{tr("memo.q_tidy_warn")}</div>
         </div>
 
         {draft.tidy && (
