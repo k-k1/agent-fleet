@@ -205,15 +205,15 @@ describe("launch dialog footer at narrow widths", () => {
   it("stacks in a column inside the narrow media block only, with a full-width primary", () => {
     const { inMedia, outside } = narrowFootRules(readFileSync("src/features/repos/repos.css", "utf8"));
     expect(Object.keys(inMedia).sort()).toEqual([
-      ".ui-modal-foot.launch-foot",
-      ".ui-modal-foot.launch-foot .launch-back",
-      ".ui-modal-foot.launch-foot .ui-btn.launch-go",
+      "footer.launch-foot",
+      "footer.launch-foot .launch-back",
+      "footer.launch-foot .ui-btn.launch-go",
     ]);
-    const foot = inMedia[".ui-modal-foot.launch-foot"];
+    const foot = inMedia["footer.launch-foot"];
     expect(foot).toMatch(/flex-direction:\s*column;/);
     expect(foot).toMatch(/align-items:\s*stretch/);
-    expect(inMedia[".ui-modal-foot.launch-foot .launch-back"]).toMatch(/margin-right:\s*0/);
-    expect(inMedia[".ui-modal-foot.launch-foot .ui-btn.launch-go"]).toMatch(/max-width:\s*none/);
+    expect(inMedia["footer.launch-foot .launch-back"]).toMatch(/margin-right:\s*0/);
+    expect(inMedia["footer.launch-foot .ui-btn.launch-go"]).toMatch(/max-width:\s*none/);
     // Nothing of it leaks to wide viewports, and no reordering that would split Tab from the screen.
     expect(outside).not.toMatch(/launch-foot/);
     expect(foot).not.toMatch(/reverse|order:/);
