@@ -123,4 +123,3 @@ describe("prefs loading", () => {
     expect(details()).toBe("false");
   });
 });
-

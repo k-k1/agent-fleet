@@ -4,7 +4,7 @@
 // its choices), line 2 the model (changed with almost every prompt) as ONE single-choice row.
 // The panels stay mounted while closed (`hidden`): the choices keep their DOM identity, and the
 // narrow layout can show them from the one combined chip.
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
@@ -16,7 +16,6 @@ import { modelIsRetiring, useModelInfos, useModelOptions } from "../../lib/agent
 import type { ModelOption } from "../../lib/agentModels.ts";
 import { RECENT_MODELS_MAX, readRecentModels } from "../../lib/recentModels.ts";
 import { useEscLayer } from "../../lib/escLayer.ts";
-import { refreshUIPrefs } from "../../lib/settings.ts";
 
 const CLAUDE_ALIASES = ["fable", "opus", "sonnet", "haiku"];
 
@@ -42,10 +41,10 @@ export interface RunWithStripProps {
     custom: boolean;
     /** The launch cannot start until something about the route is fixed; `why` says what. */
     problem: boolean;
-    /** The reason shown under the strip while `problem` holds; the chips point at it. */
-    why: ReactNode;
     panel: ReactNode;
   };
+  /** The reason a route-caused block shows under the strip, also for an agent with no route chip. */
+  why: ReactNode;
   /** Under line 2: what blocks or explains the launch (route reasons, Bedrock fields, notices). */
   below: ReactNode;
   /** Line 2; null when the agent has no model choice. */
@@ -53,7 +52,7 @@ export interface RunWithStripProps {
   disabled?: boolean;
 }
 
-export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, model, disabled }: RunWithStripProps) {
+export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, why, below, model, disabled }: RunWithStripProps) {
   const tr = useT();
   const ids = useId();
   const agentPanelId = ids + "-agent";
@@ -65,6 +64,9 @@ export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, 
   const [routeOpen, setRouteOpen] = useState(false);
   const agentChip = useRef<HTMLButtonElement>(null);
   const comboChip = useRef<HTMLButtonElement>(null);
+  // An open route panel that no longer exists (the agent changed to one with no route to choose)
+  // counts as closed: chips and Esc report only what is on screen.
+  const routeShown = routeOpen && !!route;
   const closeAll = () => {
     setAgentOpen(false);
     setRouteOpen(false);
@@ -78,7 +80,7 @@ export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, 
   useEscLayer(() => {
     closeAll();
     refocus();
-  }, agentOpen || routeOpen);
+  }, agentOpen || routeShown);
   // Picking an agent is the end of that choice; the route and model rows then follow it.
   const pick = (k: string) => {
     onPickKind(k);
@@ -87,7 +89,7 @@ export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, 
   };
   const a = agentOf(kind);
   const routeText = route ? tr("launch.strip.route", { v: route.label }) : "";
-  const describedBy = route?.problem ? whyId : undefined;
+  const describedBy = why ? whyId : undefined;
   return (
     <div className="run-strip" data-testid="run-strip">
       <div className="run-strip-line run-strip-line1">
@@ -111,7 +113,7 @@ export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, 
               <button
                 type="button"
                 className={"run-chip run-chip--route" + (route.custom ? " run-chip--accent" : "") + (route.problem ? " run-chip--warn" : "")}
-                aria-expanded={routeOpen}
+                aria-expanded={routeShown}
                 aria-controls={routePanelId}
                 aria-describedby={describedBy}
                 data-custom={route.custom || undefined}
@@ -127,12 +129,12 @@ export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, 
               ref={comboChip}
               type="button"
               className={"run-chip run-chip--combo" + (route?.custom ? " run-chip--accent" : "") + (route?.problem ? " run-chip--warn" : "")}
-              aria-expanded={agentOpen || routeOpen}
+              aria-expanded={agentOpen || routeShown}
               aria-controls={route ? agentPanelId + " " + routePanelId : agentPanelId}
               aria-describedby={describedBy}
               disabled={disabled}
               onClick={() => {
-                const next = !(agentOpen || routeOpen);
+                const next = !(agentOpen || routeShown);
                 setAgentOpen(next);
                 setRouteOpen(next && !!route);
               }}
@@ -172,9 +174,9 @@ export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, 
           {route.panel}
         </div>
       )}
-      {route?.problem && (
+      {why && (
         <span id={whyId} className="ui-field-hint ui-field-hint--warn run-strip-why" role="status">
-          {route.why}
+          {why}
         </span>
       )}
       {model && <div className="run-strip-line run-strip-line2">{model}</div>}
@@ -213,11 +215,6 @@ function ClaudeModelRow({ kind, model, onChange, filter }: RunModelRowProps) {
   const options = useMemo(() => (fetched && filter ? fetched.filter(([v]) => filter(v)) : fetched), [fetched, filter]);
   const registered = useMemo(() => (options ?? []).filter(([v]) => !CLAUDE_ALIASES.includes(v)), [options]);
   const infos = useModelInfos(kind, registered.length > 0);
-  // A tab left in the foreground may predate a model another device registered: ask again when the
-  // row opens, as the picker this row replaces did.
-  useEffect(() => {
-    void refreshUIPrefs();
-  }, []);
   // The recent list is read once per mount, so a launch made in another
   // dialog cannot reorder the row under the cursor.
   const [recent] = useState(() => readRecentModels(kind));

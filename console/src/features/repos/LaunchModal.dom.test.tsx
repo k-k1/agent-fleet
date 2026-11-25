@@ -27,6 +27,8 @@ let tree: Record<string, string[]> = {};
 let lcppModels: { id: string; label: string }[] = [];
 // The member's Settings AWS profiles (GET api/ssm/profiles), for the bedrock route's picker.
 let ssmProfiles: unknown[] = [];
+// When set, GET api/ssm/profiles waits on it (the Bedrock default's profiles arrive late).
+let ssmGate: Promise<unknown> | null = null;
 // opencode's launch model catalog (GET /agents/opencode/models).
 let opencodeModels: { id: string; label: string }[] = [];
 // Whether PATCH api/me/ui-state (the member's own default) succeeds.
@@ -34,6 +36,7 @@ let patchResult = true;
 const apiMock = vi.fn(async (url: string) => {
   if (url.includes("api/me/ui-state")) return patchResult ? {} : { error: { message: "offline" } };
   if (url.includes("api/ssm/profiles")) {
+    if (ssmGate) await ssmGate;
     return ssmProfiles;
   }
   if (url.includes("agents/opencode/models")) {
@@ -297,6 +300,18 @@ describe("LaunchModal what -> where -> details", () => {
     await settle();
     expect(byText("Start in a worktree").disabled).toBe(true);
     expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
+    // lcpp has no default model: the button must not read as launching on one, and the strip says a pick is needed.
+    expect(byText("Start in a worktree").textContent).not.toContain("default model");
+    expect(strip().textContent).toContain("no default model");
+  });
+
+  it("names the model on the button once the catalog delivers one", async () => {
+    lcppModels = [{ id: "local-7b", label: "local-7b" }];
+    await render(["lcpp"]);
+    await settle();
+    expect(byText("Start in a worktree").disabled).toBe(false);
+    expect(byText("Start in a worktree").textContent).toContain("local-7b");
+    expect(strip().textContent).not.toContain("no default model");
   });
 
   it("keeps Details open over an invalid budget, and folds it again once fixed", async () => {
@@ -804,6 +819,35 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
   afterEach(() => {
     ssmProfiles = [];
     act(() => setKindCatalog(null));
+  });
+
+  it("keeps the remembered effort and Bedrock id while the saved Bedrock default's profiles are still loading", async () => {
+    ssmProfiles = [{ id: "p-marked", label: "Bedrock invoke", region: "eu-west-1", modelRoute: true }];
+    await act(async () => setKindCatalog(catalog));
+    const { setSettings, getSettings } = await import("../../lib/settings.ts");
+    const { rememberBedrockModel } = await import("./bedrockProfiles.ts");
+    setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, route: { route: "bedrock", connection: "p-marked@" } } } });
+    rememberBedrockModel("p-marked", "eu.anthropic.claude-opus-5-5");
+    // What the previous Bedrock launch wrote for this repository.
+    localStorage.setItem("af.repo-model.app", "eu.anthropic.claude-opus-5-5");
+    localStorage.setItem("af.repo-effort.claude.app", "high");
+    let release!: (v: unknown) => void;
+    ssmGate = new Promise((r) => (release = r));
+    try {
+      await render(["claude"]);
+      await settle();
+      await act(async () => release(undefined));
+      ssmGate = null;
+      await settle();
+      expect(modelInput()?.value).toBe("eu.anthropic.claude-opus-5-5");
+      await click(byText("Start in a worktree"));
+      expect(launchedWith().route).toBe("bedrock");
+      expect(launchedWith().model).toBe("eu.anthropic.claude-opus-5-5");
+      expect(launchedWith().effort).toBe("high");
+    } finally {
+      ssmGate = null;
+      setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, route: undefined } } });
+    }
   });
 
   it("is not offered without a marked profile", async () => {

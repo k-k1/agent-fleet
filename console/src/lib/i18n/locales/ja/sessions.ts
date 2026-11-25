@@ -708,6 +708,7 @@ export const sessions = {
   "launch.strip.agent_aria": "エージェント: {v}",
   "launch.strip.model_more": "ほかのモデル {n} 件",
   "launch.strip.model_fallback": "{model} はこのエージェントまたは経路では使えないため外しました。",
+  "launch.strip.model_required": "このエージェントには既定のモデルがありません。起動するにはモデルを選んでください。",
   "launch.strip.model_default": "既定のモデル",
   "launch.start_worktree": "worktree で始める",
   // 折りたたみセクション（場所 / 詳細）の見出しと、畳んでいる間に出す要約。要約は

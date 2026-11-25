@@ -11,12 +11,15 @@ import { createRoot, type Root } from "react-dom/client";
 // What the server's synced ui-prefs say when the strip asks again (another device's edits).
 let serverPrefs: unknown = {};
 let prefsReads = 0;
+let prefsGate: Promise<unknown> | null = null;
+// Runs when a gated read answers: what the sync would have applied from the server copy.
+let onPrefsAnswer: (() => void) | null = null;
 vi.mock("../../core/api/client.ts", () => ({
   apiJSON: async () => ({}),
   getTenant: () => "",
   getUser: () => "",
   api: async (url: string) =>
-    url.includes("api/env/ui-prefs") ? (prefsReads++, serverPrefs) : url.includes("api/ssm/profiles") ? [] : url.includes("api/me/ui-state") ? {} : { branches: [] },
+    url.includes("api/env/ui-prefs") ? (prefsReads++, prefsGate ? prefsGate.then(() => (onPrefsAnswer?.(), serverPrefs)) : serverPrefs) : url.includes("api/ssm/profiles") ? [] : url.includes("api/me/ui-state") ? {} : { branches: [] },
   repoPromptTemplates: async () => ({ groups: [] }),
   errText: (e: { message?: string }) => e?.message ?? "",
   errDetail: (e: { message?: string }) => e?.message ?? "",
@@ -38,14 +41,11 @@ let host: HTMLDivElement;
 let onLaunch: Mock<Launch>;
 
 const REGISTERED = ["claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5", "my-model"];
-const access: LaunchAccess = {
-  kinds: new Map([
-    ["claude", { kind: "claude", routes: ["anthropic-subscription"], usableRoutes: ["anthropic-subscription"] }],
-    ["codex", { kind: "codex", routes: ["chatgpt-subscription"], usableRoutes: ["chatgpt-subscription"] }],
-  ]) as LaunchAccess["kinds"],
-  noRoute: false,
-  allOff: false,
-};
+const liveKinds = new Map<string, unknown>([
+  ["claude", { kind: "claude", routes: ["anthropic-subscription"], usableRoutes: ["anthropic-subscription"] }],
+  ["codex", { kind: "codex", routes: ["chatgpt-subscription"], usableRoutes: ["chatgpt-subscription"] }],
+]);
+const access: LaunchAccess = { kinds: liveKinds as LaunchAccess["kinds"], noRoute: false, allOff: false };
 
 async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
@@ -257,6 +257,45 @@ describe("registered models of another device", () => {
   });
 });
 
+describe("a model another device registered", () => {
+  it("is kept until the synced list answers, then shown active and sent", async () => {
+    localStorage.setItem("af.repo-model.app", "claude-opus-4-9");
+    cancelPrefsTimersForTest();
+    onPrefsAnswer = () => setSettings({ claudeCustomModels: [...REGISTERED, "claude-opus-4-9"] });
+    let release!: () => void;
+    prefsGate = new Promise<void>((r) => (release = r));
+    try {
+      await renderDialog(["claude"]);
+      await settle();
+      // Still waiting: the unverified choice has not been replaced.
+      expect(strip().querySelector(".run-strip-notice")).toBeNull();
+      await act(async () => release());
+      prefsGate = null;
+      await settle();
+      expect(active().map((b) => b.title)).toEqual(["claude-opus-4-9"]);
+      expect(strip().querySelector(".run-strip-notice")).toBeNull();
+      await click(primary());
+      expect(onLaunch.mock.calls[0][0].model).toBe("claude-opus-4-9");
+    } finally {
+      prefsGate = null;
+      onPrefsAnswer = null;
+    }
+  });
+});
+
+describe("a dropped remembered model falls back along the usual defaults", () => {
+  it("uses the member's Settings default, not the first alias", async () => {
+    localStorage.setItem("af.repo-model.app", "removed-model");
+    const { getSettings } = await import("../../lib/settings.ts");
+    setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, model: "haiku" } } });
+    await renderDialog(["claude"]);
+    expect(active().map((b) => b.title)).toEqual(["haiku"]);
+    await click(primary());
+    expect(onLaunch.mock.calls[0][0].model).toBe("haiku");
+    setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, model: "" } } });
+  });
+});
+
 describe("recents ignore tier aliases", () => {
   it("keeps three registered models when a launch uses an alias", async () => {
     for (const m of ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"]) rememberRecentModel("claude", m);
@@ -317,5 +356,23 @@ describe("a manual model dropped by an agent switch", () => {
     await click(rowButtons().find((b) => b.textContent === "Sonnet")!);
     await click(strip().querySelectorAll<HTMLButtonElement>(".ui-seg.big .seg-btn")[1]);
     expect(strip().querySelector(".run-strip-notice")!.textContent).toContain("sonnet");
+  });
+});
+
+describe("a route panel that vanished with the agent", () => {
+  it("leaves the combined chip closed and consistent", async () => {
+    liveKinds.set("codex", { kind: "codex", routes: [], usableRoutes: [] } as never);
+    try {
+      await renderDialog(["claude", "codex"]);
+      const combo = strip().querySelector<HTMLButtonElement>(".run-chip--combo")!;
+      await click(combo);
+      expect(combo.getAttribute("aria-expanded")).toBe("true");
+      await click(strip().querySelectorAll<HTMLButtonElement>(".ui-seg.big .seg-btn")[1]); // codex: nothing to choose
+      expect(strip().querySelector(".run-chip--route")).toBeNull();
+      expect(combo.getAttribute("aria-expanded")).toBe("false");
+      expect([...strip().querySelectorAll<HTMLElement>(".run-strip-panel")].every((p) => p.hidden)).toBe(true);
+    } finally {
+      liveKinds.set("codex", { kind: "codex", routes: ["chatgpt-subscription"], usableRoutes: ["chatgpt-subscription"] } as never);
+    }
   });
 });

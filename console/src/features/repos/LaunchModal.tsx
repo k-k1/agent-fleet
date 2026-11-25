@@ -32,7 +32,7 @@ import { OwnSettingsLine } from "../settings/credentials/MemberLines.tsx";
 import { policyRefusalKey, type PolicyRefusal } from "./launchPolicy.ts";
 import { kindDisplayName } from "../../lib/sessionkind.ts";
 import { readRepoLast, resolveEffort, resolveModel, resolveStartMode, resolveSubdir } from "../../lib/repoLast.ts";
-import { agentLaunchDefault, useSettings, useUIPrefsLoading } from "../../lib/settings.ts";
+import { agentLaunchDefault, refreshUIPrefs, useSettings, useUIPrefsLoading } from "../../lib/settings.ts";
 import { useEffectiveDefaults, useUIStateStore } from "../../core/store/uiState.ts";
 import { defaultKind, ownLaunch, ownLaunchProblem, tenantBudget, tenantDriver, tenantModel, tenantSkipPerm } from "./tenantLaunchDefaults.ts";
 import { parseCap } from "../sessions/spendBudget.ts";
@@ -635,17 +635,36 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   }, [modelFilter, model]);
   // A remembered model can be missing from what the picker offers now (removed on another device,
   // or the id a Bedrock launch typed in this repository). Resolve it to the agent's default instead
-  // of leaving a selection no button shows; the strip says what was dropped. A live catalog is not
-  // checked here: its picker keeps a stored id in the list on purpose (ModelPicker).
+  // of leaving a selection no button shows; the strip says what was dropped. Held back until what
+  // the answer depends on has settled — the synced registered models (a model another device just
+  // registered is still valid) and a saved Bedrock default's profiles (its id is not a tier
+  // candidate). A live catalog is not checked here: its picker keeps a stored id in the list.
+  const [prefsReread, setPrefsReread] = useState(false);
   useEffect(() => {
-    if (!hasModel || agentOf(kind).caps.liveModels || onBedrock || !modelOptions || !model) return;
+    let alive = true;
+    void refreshUIPrefs().finally(() => alive && setPrefsReread(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
+  // Pending until the profiles are in AND the route state has taken the default (the render between
+  // the two would otherwise see a Bedrock id with no Bedrock route).
+  const bedrockDefaultPending =
+    savedRoute?.route === "bedrock" &&
+    allowedRoutes.includes("bedrock") &&
+    !dirty.current.has("route") &&
+    (modelRouteProfiles === null || (!savedUnusable && route !== "bedrock"));
+  useEffect(() => {
+    if (!hasModel || agentOf(kind).caps.liveModels || onBedrock || !modelOptions || !model || !prefsReread || bedrockDefaultPending) return;
     if (modelOptions.some(([v]) => v === model)) return;
-    const d = agentLaunchDefault(settings, kind).model;
+    // The usual chain without this repository's own (unusable) entry: member / team default, then
+    // the agent's own.
+    const next = resolveModel(kind, "", modelDefault(kind, agentLaunchDefault(settings, kind).model));
     setModelNotice(model);
-    setModel(modelOptions.some(([v]) => v === d) ? d : (modelOptions[0]?.[0] ?? ""));
+    setModel(modelOptions.some(([v]) => v === next) ? next : (modelOptions[0]?.[0] ?? ""));
     setEffort("");
     // eslint-disable-next-line react-hooks/exhaustive-deps -- re-checked when the offered list or the model changes
-  }, [kind, model, modelOptions, onBedrock, hasModel]);
+  }, [kind, model, modelOptions, onBedrock, hasModel, prefsReread, bedrockDefaultPending]);
   const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
   // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
@@ -981,7 +1000,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     : hasModel
       ? model
         ? shortModelLabel(modelOptions?.find(([v]) => v === model)?.[1] ?? model)
-        : tr("launch.strip.model_default")
+        : requiresConcreteModel(kind)
+          ? ""
+          : tr("launch.strip.model_default")
       : "";
   const runWith = kinds.length ? [kindDisplayName(kind), modelShown].filter(Boolean).join(" · ") : "";
   const [policyErr, setPolicyErr] = useState<PolicyRefusal | null>(null);
@@ -1043,7 +1064,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           label: routeLabel,
           custom: !!chosenRoute,
           problem: routeProblem,
-          why: routeWhy,
           panel: (
             <div className="ui-field">
               <span className="ui-field-label">{tr("launch.field.route")}</span>
@@ -1143,6 +1163,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           <span className="ui-field-hint">{bedrockModelBad && bedrockModel.trim() !== "" ? tr("launch.bedrock_model_invalid") : tr("launch.bedrock_model_hint")}</span>
         </div>
       )}
+      {modelPending && !!kinds.length && (
+        <span className="ui-field-hint ui-field-hint--warn run-strip-why" role="status">
+          {tr("launch.strip.model_required")}
+        </span>
+      )}
       {modelNotice && (
         <span className="ui-field-hint run-strip-notice" role="status">
           {tr("launch.strip.model_fallback", { model: modelNotice })}
@@ -1163,6 +1188,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       }}
       noAgents={noAgentsNote}
       route={routeStrip}
+      why={routeProblem && !!kinds.length ? routeWhy : null}
       below={stripBelow}
       disabled={busy}
       model={

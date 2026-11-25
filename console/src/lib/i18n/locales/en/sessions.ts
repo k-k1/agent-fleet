@@ -698,6 +698,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.strip.agent_aria": "Agent: {v}",
   "launch.strip.model_more": "{n} more models",
   "launch.strip.model_fallback": "{model} is not available for this agent or route and was dropped.",
+  "launch.strip.model_required": "This agent has no default model: pick one to launch.",
   "launch.strip.model_default": "default model",
   "launch.start_worktree": "Start in a worktree",
   // Collapsed sections (Location / More) and the summary shown while folded. The
