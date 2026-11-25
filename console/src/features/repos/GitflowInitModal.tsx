@@ -10,6 +10,7 @@
 // overwrite what it never showed. It never switches a branch; the only one it creates is a
 // local branch tracking an origin-only production or development branch, which gitflow-avh
 // needs (ADR 0103 decision 9's amendment).
+import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { useEffect, useId, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -193,10 +194,13 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
             ))}
             <div className="gitflow-prefixes">
               {PREFIX_FIELDS.map((f) => (
-                <label key={f} className="ui-field">
-                  <span className="ui-field-label">{tr(`gitflow.field.${f}`)}</span>
+                <div key={f} className="ui-field">
+                  <FieldLabel htmlFor={`${listId}-${f}`} info={f === "bugfix" ? tr("gitflow.bugfix_hint") : undefined}>
+                    {tr(`gitflow.field.${f}`)}
+                  </FieldLabel>
                   <input
                     type="text"
+                    id={`${listId}-${f}`}
                     name={f}
                     value={v[f]}
                     onChange={(e) => set(f)(e.target.value)}
@@ -205,10 +209,9 @@ export function GitflowInitModal({ repo, onClose, onSaved }: GitflowInitModalPro
                     placeholder={f === "bugfix" || f === "versiontag" ? tr("gitflow.optional") : undefined}
                     aria-invalid={err?.field === f || undefined}
                   />
-                </label>
+                </div>
               ))}
             </div>
-            <p className="ui-field-hint">{tr("gitflow.bugfix_hint")}</p>
             {changes.length > 0 && (
               <div className="gitflow-changes" role="status">
                 <span className="ui-field-hint ui-field-hint--warn">{tr("gitflow.overwrites")}</span>

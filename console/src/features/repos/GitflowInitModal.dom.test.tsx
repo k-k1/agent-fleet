@@ -213,4 +213,13 @@ describe("GitflowInitModal", () => {
     expect(text()).toContain(t("gitflow.unavailable"));
     expect(submit().disabled).toBe(true);
   });
+
+  it("puts the bugfix-prefix explanation behind its ⓘ and keeps the shared-config warning inline", async () => {
+    await render([FRESH]);
+    const panel = Array.from(document.querySelectorAll<HTMLElement>(".ui-field-info-panel")).find((p) => p.textContent === t("gitflow.bugfix_hint"));
+    expect(panel?.hidden).toBe(true);
+    expect(document.querySelector(".gitflow-modal .ui-modal-body > p.ui-field-hint--warn")?.textContent).toBe(t("gitflow.shared"));
+    act(() => panel!.previousElementSibling!.querySelector<HTMLButtonElement>(".ui-field-info")!.click());
+    expect(panel?.hidden).toBe(false);
+  });
 });

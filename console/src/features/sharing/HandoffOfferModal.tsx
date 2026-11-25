@@ -323,7 +323,8 @@ export function HandoffOfferModal({
                 />
               </label>
               {/* The prompt is frozen once sent (ADR 0057 decision 7). Say so: silently
-                  having no effect is the worst outcome. */}
+                  having no effect is the worst outcome. A consequence warning, so it stays
+                  inline (CONVENTIONS §13). */}
               <p className="ui-field-hint">{tr("handoff.frozen_hint")}</p>
             </>
           )}

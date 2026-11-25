@@ -8,6 +8,7 @@
 //  2. **Trigger chips follow the LoRA selection** (decision 7). They are derived from what is
 //     ticked, so unticking a LoRA takes away the words it brought and nothing else — the
 //     failure being guarded is a stored chip list that outlives its LoRA.
+import { t } from "../../lib/i18n/index.ts";
 import { afterEach, describe, expect, it } from "vitest";
 import { useState } from "react";
 import { act } from "react";
@@ -572,5 +573,30 @@ describe("ADR 0081 決定 9: inpaint のマスク", () => {
     expect(pickers.length, "two pickers, not one doing double duty").toBe(2);
     const shown = pickers.map((p) => [...p.querySelectorAll("li span[title]")].map((s) => s.getAttribute("title")));
     expect(shown).toEqual([["photo.png"], ["m.png"]]);
+  });
+
+  it("the jobs explanation sits behind the field's ⓘ", async () => {
+    await render(SDXL);
+    const panel = [...host.querySelectorAll<HTMLElement>(".ui-field-info-panel")].find((p) => p.textContent === t("imggen.jobs_hint"));
+    expect(panel?.hidden).toBe(true);
+    expect(host.querySelector(".igen-hint")?.textContent).not.toContain(t("imggen.jobs_hint"));
+    act(() => (panel!.previousElementSibling!.querySelector(".ui-field-info") as HTMLButtonElement).click());
+    expect(panel?.hidden).toBe(false);
+  });
+
+  it("gives each rendered form its own jobs-field id, so a label focuses its own input", async () => {
+    await render(SDXL);
+    const second = document.createElement("div");
+    document.body.appendChild(second);
+    const root2 = createRoot(second);
+    await act(async () => {
+      root2.render(<Harness model={SDXL} />);
+    });
+    const labels = [...document.querySelectorAll<HTMLLabelElement>("label.igen-label")].filter((l) => l.textContent === t("imggen.jobs"));
+    expect(labels).toHaveLength(2);
+    expect(labels[0].htmlFor).not.toBe(labels[1].htmlFor);
+    for (const l of labels) expect(document.getElementById(l.htmlFor)?.tagName).toBe("INPUT");
+    expect(labels[1].control).toBe(second.querySelector(`#${CSS.escape(labels[1].htmlFor)}`));
+    await act(async () => root2.unmount());
   });
 });

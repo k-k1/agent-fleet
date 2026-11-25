@@ -1,3 +1,4 @@
+import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
@@ -147,8 +148,9 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">{tr("asst.desc_label")}</div>
-          <div className="ui-field-hint">{tr("asst.desc_hint")}</div>
+          <FieldLabel as="span" info={tr("asst.desc_hint")}>
+            {tr("asst.desc_label")}
+          </FieldLabel>
           <label className="ui-field">
             <textarea {...NO_AUTOFILL}
               className="assistant-persona"
@@ -206,8 +208,9 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">{tr("asst.voice_label")}</div>
-          <div className="ui-field-hint">{tr("asst.voice_hint")}</div>
+          <FieldLabel as="span" info={tr("asst.voice_hint")}>
+            {tr("asst.voice_label")}
+          </FieldLabel>
           <label className="ui-field">
             <select value={voice} onChange={(e) => setVoice(e.target.value)}>
               {voiceChoices.map(([v, label]) => (
@@ -220,8 +223,9 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">{tr("asst.persona_label")}</div>
-          <div className="ui-field-hint">{tr("asst.persona_hint")}</div>
+          <FieldLabel as="span" info={tr("asst.persona_hint")}>
+            {tr("asst.persona_label")}
+          </FieldLabel>
           <label className="ui-field">
             <textarea {...NO_AUTOFILL}
               className="assistant-persona"
@@ -251,8 +255,9 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">{tr("asst.mcp_label")}</div>
-          <div className="ui-field-hint">{tr("asst.mcp_hint")}</div>
+          <FieldLabel as="span" info={tr("asst.mcp_hint")}>
+            {tr("asst.mcp_label")}
+          </FieldLabel>
           {mcp !== null && mcp.length === 0 && <div className="ui-field-hint">{tr("asst.mcp_empty")}</div>}
           {mcp?.map((s) => {
             // A definition scoped away from this backend, or still missing a value it
@@ -278,8 +283,9 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
         </div>
 
         <div className="ui-field">
-          <div className="ui-field-label">{tr("asst.knowledge_label")}</div>
-          <div className="ui-field-hint">{tr("asst.knowledge_hint")}</div>
+          <FieldLabel as="span" info={tr("asst.knowledge_hint")}>
+            {tr("asst.knowledge_label")}
+          </FieldLabel>
           <label className="ui-field">
             <textarea {...NO_AUTOFILL}
               className="assistant-knowledge"
