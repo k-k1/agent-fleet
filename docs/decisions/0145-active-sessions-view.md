@@ -36,6 +36,14 @@ nor the Console has it.
    a schedule set to show in the Sessions view are listed here as they are there. The working
    set narrows the view as it narrows the Sessions tree: a session goes by its working copy.
    A corrupted lineage cycle is opened at one member, so a family always has a card to open.
+   > **Note (2026-11-25, #5165).** Unattended runs are now listed, in two groups at the end, after
+   > the three sections: Auto-run (running memo-queue runs) and Schedules (running schedule runs),
+   > each with everything the run started, as families. Both start folded, so what is stored for
+   > them is the groups the member opened. Each exists only while it holds a listed session.
+   > A schedule's worktree sessions that the Sessions view shows stay under their repository and
+   > are not listed twice. Their waiting sessions are not counted on the Active or Sessions icon
+   > (decision 6 is unchanged for them); the heading's own count is the only signal. The Auto-run
+   > and Schedules views stay as they are.
 3. **Groups are the tree's three sections in the tree's order:** repositories, spaces, other. A
    repository is identified by its remote, as in the overview, so the base clone and every
    worktree share one heading and the branch level is gone. A group exists only while it holds a
