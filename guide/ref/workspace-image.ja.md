@@ -38,13 +38,13 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
 | [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub をコマンドラインから使う。Git ホスティングの接続でサインイン済み | `2.105.0` | [MIT](https://github.com/cli/cli/blob/v2.105.0/LICENSE) |
-| [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket のプルリクエストとパイプラインを扱う。Git ホスティングの接続でサインイン済み | `0.37.0` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.37.0/LICENSE) |
+| [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket のプルリクエストとパイプラインを扱う。Git ホスティングの接続でサインイン済み | `0.40.4` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.40.4/LICENSE) |
 | [Jira CLI (`jira`)](https://github.com/ankitpokhrel/jira-cli) | Jira の課題を扱う。課題管理の接続でサインイン済み | `1.7.0` | [MIT](https://github.com/ankitpokhrel/jira-cli/blob/v1.7.0/LICENSE) |
-| [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence のページを扱う。Jira と同じ Atlassian 接続でサインイン済み | `2.31.2` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.2/LICENSE) |
+| [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence のページを扱う。Jira と同じ Atlassian 接続でサインイン済み | `2.31.3` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.3/LICENSE) |
 | [Apache Subversion (`svn`)](https://subversion.apache.org/) | Subversion のリポジトリを、接続の認証情報で扱う | Debian 13 (trixie) のパッケージ | [Apache-2.0](https://github.com/apache/subversion/blob/trunk/LICENSE) |
-| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS をコマンドラインから使う。`af-aws-exec` を通して実行する | `2.36.46` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.36.46/LICENSE.txt) |
+| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS をコマンドラインから使う。`af-aws-exec` を通して実行する | `2.42.2` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.42.2/LICENSE.txt) |
 | [Session Manager plugin](https://github.com/aws/session-manager-plugin) | AWS CLI から SSM のセッションを開く | `1.2.835.0` | [Apache-2.0](https://github.com/aws/session-manager-plugin/blob/1.2.835.0/LICENSE) |
-| [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk) | Google Cloud をコマンドラインから使う。`af-gcloud-exec` を通して実行する | `587.0.0` | [Apache-2.0](https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-587.0.0-linux-x86_64.tar.gz) |
+| [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk) | Google Cloud をコマンドラインから使う。`af-gcloud-exec` を通して実行する | `594.0.1` | [Apache-2.0](https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-594.0.1-linux-x86_64.tar.gz) |
 
 ## エージェントの CLI
 
@@ -82,7 +82,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
 | [Node.js](https://nodejs.org/) | JavaScript のランタイム | [選択式](../user/workspace/toolchains.ja.md)。イメージの既定は `22` | [MIT](https://github.com/nodejs/node/blob/main/LICENSE) |
-| [Go](https://go.dev/) | Go のツールチェーン | [選択式](../user/workspace/toolchains.ja.md)。イメージの既定は `1.26.10` | [BSD-3-Clause](https://github.com/golang/go/blob/go1.26.10/LICENSE) |
+| [Go](https://go.dev/) | Go のツールチェーン | [選択式](../user/workspace/toolchains.ja.md)。イメージの既定は `1.26.11` | [BSD-3-Clause](https://github.com/golang/go/blob/go1.26.11/LICENSE) |
 | [Java (Eclipse Temurin)](https://adoptium.net/) | Eclipse Adoptium の Java 開発キット | [選択式](../user/workspace/toolchains.ja.md) | [GPL-2.0-only WITH Classpath-exception-2.0](https://adoptium.net/docs/faq/) |
 | [Java (Amazon Corretto)](https://aws.amazon.com/corretto/) | Amazon の Java 開発キット | [選択式](../user/workspace/toolchains.ja.md) | [GPL-2.0-only WITH Classpath-exception-2.0](https://github.com/corretto/corretto-21/blob/develop/LICENSE) |
 | [Python](https://www.python.org/) | Python。pip と venv 付き | Debian 13 (trixie) のパッケージ | [PSF-2.0](https://github.com/python/cpython/blob/main/LICENSE) |
@@ -98,9 +98,9 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
-| [mcp-grafana](https://github.com/grafana/mcp-grafana) | Grafana 連携で使う、Grafana の MCP サーバー | `2.2.0` | [Apache-2.0](https://github.com/grafana/mcp-grafana/blob/v2.2.0/LICENSE) |
-| [awslabs.cloudwatch-mcp-server](https://github.com/awslabs/mcp) | CloudWatch 連携で使う、Amazon CloudWatch の MCP サーバー | `0.2.1` | [Apache-2.0](https://pypi.org/project/awslabs.cloudwatch-mcp-server/0.2.1/) |
-| [mcp-proxy-for-aws](https://github.com/aws/mcp-proxy-for-aws) | AWS のリモート MCP サーバーに SigV4 署名でつなぐ | `1.7.0` | [Apache-2.0](https://github.com/aws/mcp-proxy-for-aws/blob/v1.7.0/LICENSE) |
+| [mcp-grafana](https://github.com/grafana/mcp-grafana) | Grafana 連携で使う、Grafana の MCP サーバー | `2.4.0` | [Apache-2.0](https://github.com/grafana/mcp-grafana/blob/v2.4.0/LICENSE) |
+| [awslabs.cloudwatch-mcp-server](https://github.com/awslabs/mcp) | CloudWatch 連携で使う、Amazon CloudWatch の MCP サーバー | `0.3.2` | [Apache-2.0](https://pypi.org/project/awslabs.cloudwatch-mcp-server/0.3.2/) |
+| [mcp-proxy-for-aws](https://github.com/aws/mcp-proxy-for-aws) | AWS のリモート MCP サーバーに SigV4 署名でつなぐ | `2.0.0` | [Apache-2.0](https://github.com/aws/mcp-proxy-for-aws/blob/v2.0.0/LICENSE) |
 
 ## ブラウザ
 

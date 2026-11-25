@@ -40,13 +40,13 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 | Tool | What it is for | Version | Licence |
 |---|---|---|---|
 | [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub from the command line, signed in with your Git hosting connection | `2.105.0` | [MIT](https://github.com/cli/cli/blob/v2.105.0/LICENSE) |
-| [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket pull requests and pipelines, signed in with your Git hosting connection | `0.37.0` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.37.0/LICENSE) |
+| [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket pull requests and pipelines, signed in with your Git hosting connection | `0.40.4` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.40.4/LICENSE) |
 | [Jira CLI (`jira`)](https://github.com/ankitpokhrel/jira-cli) | Jira issues, signed in with your issue tracker connection | `1.7.0` | [MIT](https://github.com/ankitpokhrel/jira-cli/blob/v1.7.0/LICENSE) |
-| [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence pages, signed in with the same Atlassian connection as Jira | `2.31.2` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.2/LICENSE) |
+| [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence pages, signed in with the same Atlassian connection as Jira | `2.31.3` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.3/LICENSE) |
 | [Apache Subversion (`svn`)](https://subversion.apache.org/) | Subversion repositories, with the credentials of your connection | Debian 13 (trixie) package | [Apache-2.0](https://github.com/apache/subversion/blob/trunk/LICENSE) |
-| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS from the command line; run it through `af-aws-exec` | `2.36.46` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.36.46/LICENSE.txt) |
+| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS from the command line; run it through `af-aws-exec` | `2.42.2` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.42.2/LICENSE.txt) |
 | [Session Manager plugin](https://github.com/aws/session-manager-plugin) | Opens SSM sessions for the AWS CLI | `1.2.835.0` | [Apache-2.0](https://github.com/aws/session-manager-plugin/blob/1.2.835.0/LICENSE) |
-| [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk) | Google Cloud from the command line; run it through `af-gcloud-exec` | `587.0.0` | [Apache-2.0](https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-587.0.0-linux-x86_64.tar.gz) |
+| [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk) | Google Cloud from the command line; run it through `af-gcloud-exec` | `594.0.1` | [Apache-2.0](https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-594.0.1-linux-x86_64.tar.gz) |
 
 ## Agent CLIs
 
@@ -84,7 +84,7 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 | Tool | What it is for | Version | Licence |
 |---|---|---|---|
 | [Node.js](https://nodejs.org/) | JavaScript runtime | [Selectable](../user/workspace/toolchains.md); image default `22` | [MIT](https://github.com/nodejs/node/blob/main/LICENSE) |
-| [Go](https://go.dev/) | Go toolchain | [Selectable](../user/workspace/toolchains.md); image default `1.26.10` | [BSD-3-Clause](https://github.com/golang/go/blob/go1.26.10/LICENSE) |
+| [Go](https://go.dev/) | Go toolchain | [Selectable](../user/workspace/toolchains.md); image default `1.26.11` | [BSD-3-Clause](https://github.com/golang/go/blob/go1.26.11/LICENSE) |
 | [Java (Eclipse Temurin)](https://adoptium.net/) | Java Development Kit from Eclipse Adoptium | [Selectable](../user/workspace/toolchains.md) | [GPL-2.0-only WITH Classpath-exception-2.0](https://adoptium.net/docs/faq/) |
 | [Java (Amazon Corretto)](https://aws.amazon.com/corretto/) | Java Development Kit from Amazon | [Selectable](../user/workspace/toolchains.md) | [GPL-2.0-only WITH Classpath-exception-2.0](https://github.com/corretto/corretto-21/blob/develop/LICENSE) |
 | [Python](https://www.python.org/) | Python, with pip and venv | Debian 13 (trixie) package | [PSF-2.0](https://github.com/python/cpython/blob/main/LICENSE) |
@@ -100,9 +100,9 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 
 | Tool | What it is for | Version | Licence |
 |---|---|---|---|
-| [mcp-grafana](https://github.com/grafana/mcp-grafana) | Grafana, for the Grafana integration | `2.2.0` | [Apache-2.0](https://github.com/grafana/mcp-grafana/blob/v2.2.0/LICENSE) |
-| [awslabs.cloudwatch-mcp-server](https://github.com/awslabs/mcp) | Amazon CloudWatch, for the CloudWatch integration | `0.2.1` | [Apache-2.0](https://pypi.org/project/awslabs.cloudwatch-mcp-server/0.2.1/) |
-| [mcp-proxy-for-aws](https://github.com/aws/mcp-proxy-for-aws) | Connects to AWS's remote MCP servers with SigV4 signing | `1.7.0` | [Apache-2.0](https://github.com/aws/mcp-proxy-for-aws/blob/v1.7.0/LICENSE) |
+| [mcp-grafana](https://github.com/grafana/mcp-grafana) | Grafana, for the Grafana integration | `2.4.0` | [Apache-2.0](https://github.com/grafana/mcp-grafana/blob/v2.4.0/LICENSE) |
+| [awslabs.cloudwatch-mcp-server](https://github.com/awslabs/mcp) | Amazon CloudWatch, for the CloudWatch integration | `0.3.2` | [Apache-2.0](https://pypi.org/project/awslabs.cloudwatch-mcp-server/0.3.2/) |
+| [mcp-proxy-for-aws](https://github.com/aws/mcp-proxy-for-aws) | Connects to AWS's remote MCP servers with SigV4 signing | `2.0.0` | [Apache-2.0](https://github.com/aws/mcp-proxy-for-aws/blob/v2.0.0/LICENSE) |
 
 ## Browser
 

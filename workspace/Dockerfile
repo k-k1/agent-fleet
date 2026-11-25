@@ -5,7 +5,7 @@
 # the home volume. See docs/11-phase1-plan.md / docs/09-portability.md.
 
 # Pins shared by the build stages below; the runtime stage redeclares them (no value) to inherit.
-ARG GO_VERSION=1.26.10
+ARG GO_VERSION=1.26.11
 ARG JIRA_CLI_VERSION=1.7.0
 ARG JIRA_CLI_COMMIT=79067e2422df10e59f310bd6fd4979f43a1df0e7
 
@@ -133,7 +133,7 @@ ARG BAKE_OPTIONAL_TOOLS=1
 # stored URL + service-account token and -disable-write -disable-admin). Works
 # against self-hosted / Grafana Cloud / Amazon Managed Grafana. Bump
 # MCP_GRAFANA_VERSION to upgrade (ARG pin busts the cache; same idiom as GH_VERSION).
-ARG MCP_GRAFANA_VERSION=2.2.0
+ARG MCP_GRAFANA_VERSION=2.4.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) mgarch=x86_64 ;; arm64) mgarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -154,9 +154,9 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # declares `mcp[cli]>=1.23.0` with no upper bound, so a build now resolves mcp 2.0.0, loses
 # `mcp.server.fastmcp` and dies at runtime with ModuleNotFoundError (measured). 0.1.8 caps
 # it at `<2.0.0` and stays on 1.x; 0.2.0 and later require `>=2.0.0,<3.0.0` and are ported
-# to the mcp 2.x API (measured on bump: 0.2.1 resolves to system python 3.13 + mcp 2.2.0 and
+# to the mcp 2.x API (measured on bump: 0.3.2 resolves to system python 3.13 + mcp 2.3.0 and
 # the import below passes). Verify a pin by what it resolves to, not just its version.
-ARG CLOUDWATCH_MCP_VERSION=0.2.1
+ARG CLOUDWATCH_MCP_VERSION=0.3.2
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
@@ -175,7 +175,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # python3.13, so the day the interpreter's version moves the link does not break: it
 # silently starts the new python, which cannot see the site-packages, and `test -x` still
 # passes (docs/decisions/0068 decision 4). The import name was checked on a real install.
-ARG AWS_MCP_PROXY_VERSION=1.7.0
+ARG AWS_MCP_PROXY_VERSION=2.0.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
@@ -266,7 +266,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # Versions are pinned by ARG through versioned URLs (docs/log/35 §35.9-7(c)); bump the ARGs
 # below and rebuild.
-ARG AWSCLI_VERSION=2.36.46
+ARG AWSCLI_VERSION=2.42.2
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -305,7 +305,7 @@ RUN set -eux; \
 # The real binary goes to /usr/local/libexec/bkt and /usr/local/bin/bkt is the transparent-auth
 # wrapper (bkt-auth-wrapper.sh, COPY'd with the other wrappers below). The tarball must match the
 # release's own checksums.txt, or the build fails. Bump BKT_VERSION to upgrade (docs/build/08 §8.3).
-ARG BKT_VERSION=0.37.0
+ARG BKT_VERSION=0.40.4
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) bktarch=x86_64 ;; arm64) bktarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
@@ -355,7 +355,7 @@ RUN /usr/local/libexec/jira version
 # ships an npm-shrinkwrap.json that pins its dependency tree. /usr/local/libexec/confluence links
 # to its bin and /usr/local/bin/confluence is the transparent-auth wrapper
 # (confluence-auth-wrapper.sh). Bump CONFLUENCE_CLI_VERSION to upgrade (docs/build/08 §8.4.3).
-ARG CONFLUENCE_CLI_VERSION=2.31.2
+ARG CONFLUENCE_CLI_VERSION=2.31.3
 RUN set -eux; \
     npm install -g --prefix /usr/local/lib/confluence-cli "confluence-cli@${CONFLUENCE_CLI_VERSION}"; \
     install -d /usr/local/libexec; \
@@ -673,9 +673,9 @@ RUN mkdir -p /scratch && chown 1000:1000 /scratch
 # the current release, so a bump downloads both archives
 # (dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-<ver>-linux-{x86_64,arm}.tar.gz)
 # and records `sha256sum` of each here.
-ARG GCLOUD_VERSION=587.0.0
-ARG GCLOUD_SHA256_X64=57df2448d259c654796a3703af8e5b53a02d439715b2034d6bb811efc2d6dd7b
-ARG GCLOUD_SHA256_ARM64=8349b151da42f07136294da0908624fe8ea16fea200cb2f4412ad081a86e890c
+ARG GCLOUD_VERSION=594.0.1
+ARG GCLOUD_SHA256_X64=8fc798fd0638428551f80277a568112d08afcf9cafd967d1cf39ae0918df2a1d
+ARG GCLOUD_SHA256_ARM64=ab9d36381e5e1de6efb4969ffa71d5c9b4765b7d4a534542dcb0360c062fbbe6
 RUN set -eux; mkdir -p /usr/local/share/agent-fleet; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in \
