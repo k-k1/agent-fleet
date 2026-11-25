@@ -273,6 +273,24 @@ describe("ui-prefs: a save that does not land is shown", () => {
     expect(s.prefsSyncState()).toBe("synced");
   });
 
+  // The launch dialog's re-read must not race a save of this tab: it skips (null) while one is
+  // pending, so a GET answered from before the PUT cannot put the old value back.
+  it("refreshUIPrefsChecked skips while a save is pending and reads once it has landed", async () => {
+    apiMock.mockResolvedValueOnce({});
+    const s = await freshSettings({});
+    const sync = await import("./settings/sync.ts");
+    await s.hydrateUIPrefs();
+    s.setSetting("chatSize", 17); // arms the debounced save
+    apiMock.mockClear();
+    expect(await sync.refreshUIPrefsChecked()).toBeNull();
+    expect(apiMock).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000); // the PUT lands
+    apiMock.mockResolvedValueOnce({ chatSize: 17, iconSet: "seti" });
+    expect(await sync.refreshUIPrefsChecked()).toBe(true);
+    expect(s.getSettings().chatSize).toBe(17);
+    expect(s.getSettings().iconSet).toBe("seti");
+  });
+
   // Review of #1023, round 2: agentLaunchDefaults is merged apart from the loop, and took the
   // server's map over an unsaved local edit.
   it("keeps an unsaved launch-defaults edit over the server copy on refresh", async () => {

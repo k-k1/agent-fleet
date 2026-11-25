@@ -7,7 +7,7 @@
 import { useEffect, useMemo } from "react";
 import { useT } from "../lib/i18n/index.ts";
 import { Icon } from "./Icon.tsx";
-import { useModelOptions, useHiddenModel, useModelCatalogSettled, modelCatalogReason, useModelInfos, modelIsRetiring } from "../lib/agentModels.ts";
+import { useModelOptions, useHiddenModel, useModelCatalogSettled, modelCatalogReason, useModelInfos, modelIsRetiring, requiresConcreteModel } from "../lib/agentModels.ts";
 import { useEffortOptions } from "../lib/agentModels.ts";
 import type { ModelOption } from "../lib/agentModels.ts";
 import { ModelCombo } from "./ModelCombo.tsx";
@@ -64,7 +64,8 @@ export function ModelPicker({ kind, model, onChange, filter }: ModelPickerProps)
     // the account really has nothing. Saying "loading" for that moment is the difference
     // between a picker worth waiting for and one that looks broken; it is also what keeps the
     // note below from flashing on every open (useModelCatalogSettled).
-    const onlyDefault = settled && (dynamicOptions?.length ?? 0) <= 1;
+    // A kind with no default model has no empty entry, so one real model is not "only the default".
+    const onlyDefault = settled && (requiresConcreteModel(kind) ? !(dynamicOptions ?? []).some(([v]) => v) : (dynamicOptions?.length ?? 0) <= 1);
     // What emptied it. "hidden" / "route" are what the Agent reported (agent_models.go's
     // emptyReason) and are facts about this workspace's own settings; "unreachable" is this
     // side's own — the request never landed, which is the ordinary state for the first
@@ -80,7 +81,9 @@ export function ModelPicker({ kind, model, onChange, filter }: ModelPickerProps)
           ? "ui.model_none_route"
           : reason === "unreachable"
             ? "ui.model_unreachable"
-            : "ui.model_default_only";
+            : requiresConcreteModel(kind)
+              ? "ui.model_none_concrete"
+              : "ui.model_default_only";
     return (
       <div className="model-picker-dynamic">
         <ModelCombo kind={kind} options={dynamicOptions ?? []} value={model} onChange={onChange} />

@@ -689,6 +689,17 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.stash_failed": "Could not save to a memo. Your prompt is still here.",
   "launch.stash_too_large": "An attachment is too large to save to a memo. Your prompt is still here.",
   "launch.memo_attach_missing": "{count} of the memo's attachments could not be loaded.",
+  "launch.start_with": "Start with {what}",
+  "launch.start_worktree_with": "Start in a worktree with {what}",
+  "start.space_launch_with": "Start in a new space with {what}",
+  "start.space_launch_existing_with": "Start in this space with {what}",
+  "launch.strip.route": "Route: {v}",
+  "launch.route_default_short": "default",
+  "launch.strip.agent_aria": "Agent: {v}",
+  "launch.strip.model_more": "{n} more models",
+  "launch.strip.model_fallback": "{model} is not available for this agent or route and was dropped.",
+  "launch.strip.model_required": "This agent has no default model: pick one to launch.",
+  "launch.strip.model_default": "default model",
   "launch.start_worktree": "Start in a worktree",
   // Collapsed sections (Location / More) and the summary shown while folded. The
   // summary exists so the launch is readable without expanding: Location always

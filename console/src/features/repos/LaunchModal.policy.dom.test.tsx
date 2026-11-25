@@ -115,8 +115,9 @@ describe("route step", () => {
     await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"] }]));
     const sel = routeSelect()!;
     expect([...sel.options].map((o) => o.value)).toEqual(["", "anthropic-api", "anthropic-subscription"]);
-    // The route decides who pays, so it sits with the agent and model, in Details.
-    expect(sel.closest(".launch-sec")?.querySelector(".ui-seg.big")).toBeTruthy();
+    // The route decides who pays, so it sits with the agent and model, in the run-with strip.
+    expect(sel.closest('[data-testid="run-strip"]')?.querySelector(".ui-seg.big")).toBeTruthy();
+    expect(sel.closest(".launch-sec")).toBeNull();
     // A route the policy forbids (bedrock here) is not named anywhere.
     expect(document.body.textContent).not.toContain("Bedrock");
   });
@@ -256,43 +257,58 @@ describe("policy refusals", () => {
   });
 });
 
-// ADR 0142 decision 7: the route sits in the Details fold, which opens by itself whenever the route
-// stops the launch, from a device that left it folded.
-describe("Details opens by itself for the route", () => {
+// ADR 0142 decision 7 (strip note): the route sits on the run-with strip, and what stops the launch
+// is said there; Details stays folded for route reasons.
+describe("the strip explains the route", () => {
   beforeEach(() => localStorage.removeItem("af.launch-open.details"));
   const detailsOpen = () =>
     [...document.querySelectorAll(".launch-sec-head")].find((h) => h.querySelector(".launch-sec-label")?.textContent === "Details")?.getAttribute("aria-expanded");
+  const strip = () => document.querySelector('[data-testid="run-strip"]')!;
+  const routeChip = () => strip().querySelector<HTMLElement>(".run-chip--route");
 
-  it("stays folded when nothing needs the member — negative control", async () => {
+  it("stays quiet when nothing needs the member — negative control", async () => {
     await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] }]));
     expect(detailsOpen()).toBe("false");
+    expect(strip().querySelector(".run-strip-why")).toBeNull();
+    expect(routeChip()!.className).not.toContain("run-chip--warn");
+    expect(routeChip()!.className).not.toContain("run-chip--accent");
   });
 
-  it("opens when a route has to be chosen", async () => {
+  it("says a route has to be chosen on the chip, and disables the launch", async () => {
     await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api"] }]));
-    expect(detailsOpen()).toBe("true");
+    expect(detailsOpen()).toBe("false");
+    expect(routeChip()!.className).toContain("run-chip--warn");
+    expect(strip().querySelector(".run-strip-why")).toBeTruthy();
+    expect((launchBtn() as HTMLButtonElement).disabled).toBe(true);
     expect(routeSelect()).toBeTruthy();
   });
 
-  it("opens when the saved default route cannot be used", async () => {
+  it("says the saved default route cannot be used", async () => {
     setDefault("claude", { route: "anthropic-api" });
     await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-subscription"] }]));
-    expect(detailsOpen()).toBe("true");
-    expect(document.body.textContent).toContain("Your default route cannot be used now");
+    expect(detailsOpen()).toBe("false");
+    expect(strip().textContent).toContain("Your default route cannot be used now");
   });
 
-  it("opens on a policy refusal so its reason is in view", async () => {
+  it("accents a route other than the default, because the billed account changes", async () => {
+    setDefault("claude", { route: "anthropic-api" });
+    await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] }]));
+    expect(routeChip()!.className).toContain("run-chip--accent");
+    expect(routeChip()!.textContent).toContain("Anthropic API");
+  });
+
+  it("shows a policy refusal's reason under the strip, Details staying folded", async () => {
     onLaunch = vi.fn<Launch>(async () => ({ ok: false, policy: "route_required" as const }));
     await render(["claude"], access([{ kind: "claude", routes: ["anthropic-subscription"], usableRoutes: ["anthropic-subscription"] }]));
     expect(detailsOpen()).toBe("false");
     await click(launchBtn());
-    expect(detailsOpen()).toBe("true");
-    expect(document.querySelector('[role="alert"]')?.textContent).toContain("Choose a model route for this agent");
+    expect(detailsOpen()).toBe("false");
+    expect(strip().querySelector('[role="alert"]')?.textContent).toContain("Choose a model route for this agent");
   });
 
-  it("does not open for an expired Claude login when the launch runs on an API key", async () => {
+  it("does not warn about an expired Claude login when the launch runs on an API key", async () => {
     setDefault("claude", { route: "anthropic-api" });
     await render(["claude"], access([{ kind: "claude", routes: ["anthropic-api", "anthropic-subscription"], usableRoutes: ["anthropic-api", "anthropic-subscription"] }]), { claudeExpired: true });
-    expect(detailsOpen()).toBe("false");
+    expect(document.body.textContent).not.toContain("Claude login has expired");
   });
 });

@@ -85,6 +85,11 @@ Five facts in the code shape the answer:
    dialog (`LaunchModal`) stays for the repository section, the repository rows, source control,
    work items and handoffs, reordered as *what → where (working copy, base, branch, subdirectory) →
    details*. The home variant ("Start working: Home") stays for *Other → Launch an agent in home*.
+
+   *Note (2026-11-25, #5146):* the agent, the model route and the model leave Details again and sit in a
+   two-line "run with" strip directly under the first prompt, in the dialog and in the hub's space form.
+   The order is prompt and strip → where → details. The route leaves Details as well; the launch button
+   names the agent and model. The layers above are otherwise unchanged.
 8. **Driver defaults.** A harness with a managed driver launches managed in a space. Claude has only
    the TUI, so it launches in the TUI, and its pane opens in the chat view (`pane.content.chat`,
    the existing chat / terminal toggle). The terminal stays one click away.

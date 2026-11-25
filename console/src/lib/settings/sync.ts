@@ -373,6 +373,15 @@ export async function refreshUIPrefs(): Promise<void> {
   await hydrateUIPrefs();
 }
 
+/** refreshUIPrefs that says whether it read: true/false = a read ran (and succeeded or not), null =
+ *  skipped because a save is pending or in flight (reading then could hand back the value from
+ *  before that save). A caller that needs the answer asks again later. */
+export async function refreshUIPrefsChecked(): Promise<boolean | null> {
+  if (saveTimer || saveInFlight) return null;
+  hydrateAttempt = 0;
+  return hydrateUIPrefs();
+}
+
 // "Has no content" — null/undefined, empty string, empty array, empty object. Numbers and
 // booleans are out of scope: 0 and false are chosen values, not lost ones.
 export function isEmptyPref(v: unknown): boolean {
