@@ -1371,7 +1371,7 @@ const SCENES = [
     verify: `document.querySelectorAll("[data-active-group]").length >= 2`,
   },
   {
-    // The Terminal view's "Start a terminal" dialog: Home, the folded repositories and spaces, SSM.
+    // The Terminal view's "Start a terminal" dialog: Home, the repositories and the space (five places, at PLACES_FOLD_MAX so not folded), SSM.
     name: "terminals-new",
     guide: true,
     stubEnv: { SHOT_ACTIVE_GUIDE: "1" },
