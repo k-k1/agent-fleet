@@ -25,15 +25,15 @@ import { observedWaitingAt } from "../sessions/waiting.ts";
 import { useShownSchedules } from "../schedules/store.ts";
 import { spacesFor, spacesOwner, useSpacesStore } from "../spaces/store.ts";
 import { SessionCard } from "../overview/SessionCard.tsx";
-import { activeGroups } from "./active.ts";
+import { activeGroups, isUnattendedKind } from "./active.ts";
 import type { ActiveGroup } from "./active.ts";
-import { useActiveExpanded, useActiveFoldedGroups } from "./store.ts";
+import { useActiveExpanded, useActiveFoldedGroups, useActiveOpenedGroups } from "./store.ts";
 import "../overview/overview.css";
 
 // Deeper generations stop indenting: at the pane's width a fourth step would leave the title no room.
 const MAX_INDENT = 3;
 
-const GROUP_ICON: Record<ActiveGroup["kind"], string> = { repo: "repo", space: "folder", other: "terminal-tmux" };
+const GROUP_ICON: Record<ActiveGroup["kind"], string> = { repo: "repo", space: "folder", other: "terminal-tmux", autorun: "play", schedule: "calendar" };
 
 export const ActiveSection = memo(function ActiveSection() {
   const tr = useT();
@@ -54,7 +54,12 @@ export const ActiveSection = memo(function ActiveSection() {
   const actions = useSessionActions();
   const [expanded, toggle] = useActiveExpanded();
   const [foldedGroups, toggleGroup] = useActiveFoldedGroups();
+  const [openedGroups, toggleOpened] = useActiveOpenedGroups();
   const foldedSet = useMemo(() => new Set(foldedGroups), [foldedGroups]);
+  const openedSet = useMemo(() => new Set(openedGroups), [openedGroups]);
+  // Ordinary groups start open and store the folded ones; the unattended two start folded and store the opened ones.
+  const isFolded = (g: ActiveGroup) => (isUnattendedKind(g.kind) ? !openedSet.has(g.key) : foldedSet.has(g.key));
+  const groupName = (g: ActiveGroup) => (g.kind === "other" ? tr("pj.other_sessions") : g.kind === "autorun" ? tr("memo.autorun") : g.kind === "schedule" ? tr("sched.title") : g.label);
   // Headings are sorted with the locale's collation, so the order is the locale's too.
   const locale = useLocale();
 
@@ -64,7 +69,9 @@ export const ActiveSection = memo(function ActiveSection() {
     // `locale` is not named in the body: compareText reads it.
     [sessions, repos, spaces, wset, expandedSet, shownSchedules, locale],
   );
-  const alive = groups.reduce((n, g) => n + g.alive, 0);
+  // The unattended groups are left out of the section's count: it says how many sessions of
+  // the member's own are running, and a queue's runs would bury it.
+  const alive = groups.reduce((n, g) => n + (isUnattendedKind(g.kind) ? 0 : g.alive), 0);
 
   // "Waiting since", composed as the overview composes it. Shown, never ordered by.
   const notifications = useNotificationStore((st) => st.items);
@@ -81,12 +88,12 @@ export const ActiveSection = memo(function ActiveSection() {
             <section className="act-group" key={g.key} data-active-group={g.key}>
               <h3 className="ovw-gtitle act-gtitle" title={g.hint || undefined}>
                 {/* The heading is a disclosure button: Enter / Space fold it, and a screen reader says which way it is. */}
-                <button type="button" className="act-gfold" aria-expanded={!foldedSet.has(g.key)}
-                  aria-label={[g.kind === "other" ? tr("pj.other_sessions") : g.label, tr("ovw.group_count", { alive: g.alive, n: g.total }), g.waiting > 0 ? tCount("active.group_waiting_hint", g.waiting) : ""].filter(Boolean).join(", ")}
-                  onClick={() => toggleGroup(g.key)}>
-                  <Icon name={foldedSet.has(g.key) ? "chevron-right" : "chevron-down"} />
+                <button type="button" className="act-gfold" aria-expanded={!isFolded(g)}
+                  aria-label={[groupName(g), tr("ovw.group_count", { alive: g.alive, n: g.total }), g.waiting > 0 ? tCount("active.group_waiting_hint", g.waiting) : ""].filter(Boolean).join(", ")}
+                  onClick={() => (isUnattendedKind(g.kind) ? toggleOpened(g.key) : toggleGroup(g.key))}>
+                  <Icon name={isFolded(g) ? "chevron-right" : "chevron-down"} />
                   <Icon name={GROUP_ICON[g.kind]} />
-                  <span className="ovw-gname">{g.kind === "other" ? tr("pj.other_sessions") : g.label}</span>
+                  <span className="ovw-gname">{groupName(g)}</span>
                   <span className="ovw-gcount">{tr("ovw.group_count", { alive: g.alive, n: g.total })}</span>
                   {g.waiting > 0 && (
                     <span className="act-gwait" title={tCount("active.group_waiting_hint", g.waiting)}>
@@ -96,7 +103,7 @@ export const ActiveSection = memo(function ActiveSection() {
                   )}
                 </button>
               </h3>
-              {!foldedSet.has(g.key) && (
+              {!isFolded(g) && (
               <div className="act-cards" role="list">
                 {g.sessions.map((s) => {
                   const fold = g.fold.get(s.name);

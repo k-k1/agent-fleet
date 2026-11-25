@@ -23,9 +23,11 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { ActiveSection } = await import("./ActiveSection.tsx");
-const { ACTIVE_EXPANDED_KEY, ACTIVE_EXPANDED_MAX, ACTIVE_GROUPS_FOLDED_KEY } = await import("./store.ts");
+const { ACTIVE_EXPANDED_KEY, ACTIVE_EXPANDED_MAX, ACTIVE_GROUPS_FOLDED_KEY, ACTIVE_GROUPS_OPENED_KEY } = await import("./store.ts");
 const { readFoldValue, setFoldScope, writeFoldValue } = await import("../../lib/foldStore.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
+const { waitingSessions, sessionBadges } = await import("../../app/activity/badges.ts");
+const { useSchedulesStore } = await import("../schedules/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
@@ -234,6 +236,71 @@ describe("ActiveSection", () => {
       await render([sess("home"), sess("sp", { space: "q3-abcdef" })]);
       expect(headBtn("o:").getAttribute("aria-expanded")).toBe("false");
       expect(headBtn("s:q3-abcdef").getAttribute("aria-expanded")).toBe("true");
+    });
+  });
+
+  describe("unattended groups", () => {
+    const headBtn = (key: string) => host.querySelector<HTMLButtonElement>(`[data-active-group="${key}"] .act-gfold`)!;
+    const list = [
+      sess("home"),
+      sess("run", { origin: "queue", state: "question" }),
+      sess("rev", { origin: "session", originSession: "run" }),
+      sess("tick", { origin: "schedule", scheduleId: "sc1" }),
+      sess("idle-run", { origin: "queue", alive: false }),
+    ];
+
+    it("come last, start folded with their counts, and open on the heading, remembered per tenant", async () => {
+      await render(list);
+      expect(heads()).toEqual(["Other sessions", "Auto-run", "Schedules"]);
+      expect(cards()).toEqual(["home"]);
+      expect(headBtn("u:autorun").getAttribute("aria-expanded")).toBe("false");
+      expect(headBtn("u:autorun").querySelector(".ovw-gcount")?.textContent).toBe("2 running / 2 total");
+      expect(headBtn("u:autorun").querySelector(".act-gwait")?.textContent).toBe("1");
+      await act(async () => headBtn("u:autorun").click());
+      // The run is a family: its reviewer is folded under it.
+      expect(cards()).toEqual(["home", "run"]);
+      expect(JSON.parse(readFoldValue(ACTIVE_GROUPS_OPENED_KEY) || "[]")).toEqual(["u:autorun"]);
+      expect(JSON.parse(readFoldValue(ACTIVE_GROUPS_FOLDED_KEY) || "[]")).toEqual([]);
+      await act(async () => setFoldScope({ tenant: "t2" }));
+      expect(headBtn("u:autorun").getAttribute("aria-expanded")).toBe("false");
+      await act(async () => setFoldScope({ tenant: "t1" }));
+      expect(headBtn("u:autorun").getAttribute("aria-expanded")).toBe("true");
+    });
+
+    it("Schedules folds, opens and is stored like Auto-run, and a shown schedule worktree child is listed once", async () => {
+      useReposStore.setState({ repos: [{ name: "app", remote: "github.com", remotePath: "acme/app" }, { name: "app@wip-x", remote: "github.com", remotePath: "acme/app", worktree: true, parent: "app" }] });
+      useSchedulesStore.setState({ shownIds: new Set(["sc1"]) });
+      await render([
+        sess("tick", { origin: "schedule", scheduleId: "sc1" }),
+        sess("wt", { origin: "session", originSession: "tick", worktree: true, repo: "app@wip-x" }),
+        sess("run", { origin: "queue" }),
+      ]);
+      expect(headBtn("u:schedule").getAttribute("aria-expanded")).toBe("false");
+      expect(headBtn("u:schedule").querySelector(".ovw-gname")?.textContent).toBe("Schedules");
+      // The worktree child sits under its repository, once; the folded group lists only the run itself.
+      expect(cards()).toEqual(["wt"]);
+      await act(async () => headBtn("u:autorun").click());
+      await act(async () => headBtn("u:schedule").click());
+      expect(cards().sort()).toEqual(["run", "tick", "wt"]);
+      expect(JSON.parse(readFoldValue(ACTIVE_GROUPS_OPENED_KEY) || "[]")).toEqual(["u:autorun", "u:schedule"]);
+    });
+
+    it("leaves their waiting sessions out of the rail icon's count", async () => {
+      await render([sess("run", { origin: "queue", state: "question" }), sess("mine", { state: "question" })]);
+      const waiting = waitingSessions(useSessionsStore.getState().sessions);
+      expect(waiting).toBe(1);
+      expect(sessionBadges(waiting, false, true).active).toEqual({ tone: "waiting", count: 1 });
+      expect(host.querySelector('[data-active-group="u:autorun"] .act-gwait')?.textContent).toBe("1");
+    });
+
+    it("appear only while an unattended run is running", async () => {
+      await render([sess("home"), sess("idle-run", { origin: "queue", alive: false })]);
+      expect(heads()).toEqual(["Other sessions"]);
+    });
+
+    it("do not count on the section total", async () => {
+      await render(list);
+      expect(host.querySelector(".ui-section-count")?.textContent).toBe("1");
     });
   });
 });

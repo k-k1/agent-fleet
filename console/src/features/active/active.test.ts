@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { activeGroups, activeScope, cycleCuts, needsMember, OTHER_GROUP } from "./active.ts";
+import { activeGroups, activeScope, unattendedScope, cycleCuts, needsMember, OTHER_GROUP } from "./active.ts";
+import { waitingSessions } from "../../app/activity/badges.ts";
 import type { Repo } from "../repos/store.ts";
 import type { Space } from "../spaces/store.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
@@ -189,5 +190,44 @@ describe("activeGroups", () => {
       s("c", { repo: "app", originSession: "p", state: "question" }),
     ];
     expect(names(activeGroups(list, repos, spaces, null)[0].sessions)).toEqual(["p", "calm"]);
+  });
+});
+
+describe("unattended groups", () => {
+  const list = [
+    s("a", { repo: "app" }),
+    s("run", { origin: "queue" }),
+    s("kid", { origin: "session", originSession: "run", alive: false }),
+    s("tick", { origin: "schedule", scheduleId: "sc1" }),
+    s("wt", { origin: "session", originSession: "tick", worktree: true, repo: "app@wip-x" }),
+    s("old", { origin: "queue", alive: false }),
+  ];
+  const repos = [repo("app", { remote: "github.com", remotePath: "acme/app" }), repo("app@wip-x", { remote: "github.com", remotePath: "acme/app", worktree: true, parent: "app" })];
+
+  it("lists running runs with every descendant, and not a run that has stopped", () => {
+    expect(names(unattendedScope(list, null, undefined, repos))).toEqual(["run", "kid", "tick", "wt"]);
+  });
+
+  it("follow the three sections, one group per kind", () => {
+    const g = activeGroups(list, repos, [], null);
+    expect(g.map((x) => x.kind)).toEqual(["repo", "autorun", "schedule"]);
+    expect(g.map((x) => x.key).slice(1)).toEqual(["u:autorun", "u:schedule"]);
+    expect(g[1].total).toBe(2);
+    expect(g[1].alive).toBe(1);
+  });
+
+  it("does not list a schedule's worktree child twice when its schedule shows in Sessions", () => {
+    const shown = new Set(["sc1"]);
+    const g = activeGroups(list, repos, [], null, new Set(), shown);
+    const all = g.flatMap((x) => x.sessions.map((y) => y.name));
+    expect(all.filter((n) => n === "wt")).toHaveLength(1);
+    expect(g.find((x) => x.kind === "repo")!.sessions.map((y) => y.name)).toContain("wt");
+  });
+
+  it("counts their waiting sessions in the heading but not on the rail icon", () => {
+    const w = [s("run", { origin: "queue", state: "question" }), s("mine", { state: "question" })];
+    const g = activeGroups(w, [], [], null);
+    expect(g.find((x) => x.kind === "autorun")!.waiting).toBe(1);
+    expect(waitingSessions(w)).toBe(1);
   });
 });

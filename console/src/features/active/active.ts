@@ -6,10 +6,13 @@
 //
 //   SCOPE  … running sessions; stopped ones that still need the member (stopped on an
 //            unanswered exchange, or holding a handoff nobody took); and every descendant of
-//            a listed session, stopped or not, so a family is never shown with holes. Shells,
-//            SSM logins and unattended runs are their own views' rows.
+//            a listed session, stopped or not, so a family is never shown with holes. Shells and
+//            SSM logins are the Terminal view's; unattended runs are listed in the trailing groups
+//            (unattendedScope).
 //   GROUP  … the tree's three sections in the tree's order: repositories (by remote, as the
-//            sessions overview groups them), spaces, other.
+//            sessions overview groups them), spaces, other. Two groups follow them: the RUNNING
+//            unattended runs, one group for auto-run and one for schedules, as families like the
+//            others (decision 2 note). They are not in the scope above: see unattendedScope.
 //   FOLD   … a parent hides its descendants until the member opens it. The stored value is
 //            the OPENED parents, not the folded ones: a parent that gains its first child
 //            must start folded without anybody having recorded it.
@@ -17,7 +20,7 @@ import { childrenIndex, descendantNames } from "../sessions/family.ts";
 import { isWaiting } from "../sessions/waiting.ts";
 import { foldFamilies, orderByFamily, repoGroupId } from "../overview/overview.ts";
 import type { FoldInfo } from "../overview/overview.ts";
-import { sessionFolder, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
+import { sessionAutoKind, sessionFolder, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
 import { sessionInWorkingSet } from "../../lib/workingSets.ts";
 import { compareText } from "../../lib/intl.ts";
 import type { Space } from "../spaces/store.ts";
@@ -25,14 +28,21 @@ import type { Repo } from "../repos/store.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
 import type { Session } from "../../types/session.ts";
 
-export type ActiveGroupKind = "repo" | "space" | "other";
+export type ActiveGroupKind = "repo" | "space" | "other" | "autorun" | "schedule";
+
+/** The two groups of unattended runs: folded until the member opens them, and their waiting
+ *  sessions are not counted on the rail icon (waitingSessions leaves unattended runs out). */
+export const isUnattendedKind = (k: ActiveGroupKind): boolean => k === "autorun" || k === "schedule";
+
+export const AUTORUN_GROUP = "u:autorun";
+export const SCHEDULE_GROUP = "u:schedule";
 
 /** One heading of the view. */
 export interface ActiveGroup {
   /** Identity and React key. Never empty: "o:" is the trailing "other" group. */
   key: string;
   kind: ActiveGroupKind;
-  /** Heading text. "" for the "other" group — the view localizes that one. */
+  /** Heading text. "" for the "other" group and the two unattended ones — the view localizes those. */
   label: string;
   /** Tooltip: what the group was formed on (the remote, the base folder, the space folder). */
   hint: string;
@@ -75,6 +85,21 @@ export function activeScope(sessions: Session[], set: WorkingSet | null, shown?:
   // Descendants are walked through every session, the ones outside the set included, and the
   // set is applied to the result: a generation the set leaves out must not cut off the ones
   // below it that the set holds.
+  for (const n of descendantNames([...keep], mine)) keep.add(n);
+  return mine.filter((s) => keep.has(s.name) && inSet(s));
+}
+
+/** The running unattended sessions and every descendant of one, for the two trailing groups. A
+ *  stopped run whose child still runs is not listed itself, as activeScope does not list a
+ *  stopped parent: the child is then a root of its group. Nothing stopped is listed for the
+ *  member's attention. What `shown` hands back to the member's own views
+ *  is not unattended (sessionAutoKind answers "") and is listed in its repository, never twice. */
+export function unattendedScope(sessions: Session[], set: WorkingSet | null, shown?: ReadonlySet<string>, repos: Repo[] = []): Session[] {
+  const byFolder = new Map(repos.map((r) => [r.name, r]));
+  const inSet = (s: Session) => !set || sessionInWorkingSet(set, s, byFolder);
+  const byName = new Map(sessions.map((s) => [s.name, s] as const));
+  const mine = withoutTerminals(sessions).filter((s) => sessionAutoKind(s, byName, shown) !== "");
+  const keep = new Set(mine.filter((s) => s.alive && inSet(s)).map((s) => s.name));
   for (const n of descendantNames([...keep], mine)) keep.add(n);
   return mine.filter((s) => keep.has(s.name) && inSet(s));
 }
@@ -127,7 +152,7 @@ function groupId(s: Session, byFolder: Map<string, Repo>, spaces: Space[]): Grou
   return { key: OTHER_GROUP, kind: "other", label: "", hint: "" };
 }
 
-const KIND_ORDER: Record<ActiveGroupKind, number> = { repo: 0, space: 1, other: 2 };
+const KIND_ORDER: Record<ActiveGroupKind, number> = { repo: 0, space: 1, other: 2, autorun: 3, schedule: 4 };
 
 /** The view, grouped. `expanded` holds the parents the member opened; set=null means no
  *  working set narrows the view. */
@@ -143,6 +168,15 @@ export function activeGroups(
   const members = new Map<string, { id: GroupId; sessions: Session[] }>();
   for (const s of activeScope(sessions, set, shown, repos)) {
     const id = groupId(s, byFolder, spaces);
+    const g = members.get(id.key) || { id, sessions: [] };
+    g.sessions.push(s);
+    members.set(id.key, g);
+  }
+  const allByName = new Map(sessions.map((s) => [s.name, s] as const));
+  for (const s of unattendedScope(sessions, set, shown, repos)) {
+    const auto = sessionAutoKind(s, allByName, shown);
+    if (!auto) continue;
+    const id: GroupId = { key: auto === "autorun" ? AUTORUN_GROUP : SCHEDULE_GROUP, kind: auto === "autorun" ? "autorun" : "schedule", label: "", hint: "" };
     const g = members.get(id.key) || { id, sessions: [] };
     g.sessions.push(s);
     members.set(id.key, g);
