@@ -96,7 +96,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   // "Also show in the Sessions view" only surfaces the worktree children a run starts, which only
   // session_mode=new does (reuse drives one existing session). A stored true on another mode is
   // kept, never rewritten: the box stays enabled so it can be unticked, but not re-ticked.
-  const showFits = !s.session_mode || s.session_mode === "new";
+  const showFits = s.session_mode !== "reuse" && s.session_mode !== "wake";
   const showLocked = !showFits && !s.show_in_sessions;
   const showGate = gateKnown ? gateFits || !!s.gate : !!s.gate;
   const [queries, setQueries] = useState<WorkItemQuery[] | null>(null);
