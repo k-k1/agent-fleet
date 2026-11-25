@@ -1,0 +1,152 @@
+// What the Active view of the left pane lists, in which group and in what order (ADR 0145) —
+// pure functions only (no store, no clock), so the node vitest project pins them.
+//
+// The Sessions view answers "where": every working copy, running or not. This one answers
+// "what is going on now", so a group exists only while it holds a listed session.
+//
+//   SCOPE  … running sessions; stopped ones that still need the member (stopped on an
+//            unanswered exchange, or holding a handoff nobody took); and every descendant of
+//            a listed session, stopped or not, so a family is never shown with holes. Shells,
+//            SSM logins and unattended runs are their own views' rows.
+//   GROUP  … the tree's three sections in the tree's order: repositories (by remote, as the
+//            sessions overview groups them), spaces, other.
+//   FOLD   … a parent hides its descendants until the member opens it. The stored value is
+//            the OPENED parents, not the folded ones: a parent that gains its first child
+//            must start folded without anybody having recorded it.
+import { childrenIndex, descendantNames } from "../sessions/family.ts";
+import { isWaiting } from "../sessions/waiting.ts";
+import { foldFamilies, orderByFamily, repoGroupId } from "../overview/overview.ts";
+import type { FoldInfo } from "../overview/overview.ts";
+import { sessionFolder, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
+import { sessionInSet } from "../../lib/workingSets.ts";
+import { compareText } from "../../lib/intl.ts";
+import type { Space } from "../spaces/store.ts";
+import type { Repo } from "../repos/store.ts";
+import type { WorkingSet } from "../../lib/workingSets.ts";
+import type { Session } from "../../types/session.ts";
+
+export type ActiveGroupKind = "repo" | "space" | "other";
+
+/** One heading of the view. */
+export interface ActiveGroup {
+  /** Identity and React key. Never empty: "o:" is the trailing "other" group. */
+  key: string;
+  kind: ActiveGroupKind;
+  /** Heading text. "" for the "other" group — the view localizes that one. */
+  label: string;
+  /** Tooltip: what the group was formed on (the remote, the base folder, the space folder). */
+  hint: string;
+  /** Cards in order, after the fold has taken its rows out. */
+  sessions: Session[];
+  /** Running sessions in the group, counted before the fold: folding a family must not read
+   *  as sessions having ended. */
+  alive: number;
+  /** Every session the group lists, also counted before the fold. */
+  total: number;
+  /** What each card's fold control says. Only names still in `sessions` have an entry. */
+  fold: Map<string, FoldInfo>;
+  /** Per folded parent, how many of the rows it hides wait for the member's answer. A fold
+   *  that kept this to itself would hide the one row the view exists to surface. */
+  hiddenWaiting: Map<string, number>;
+  /** How deep each card sits under its family's root (0 = a root). One column cannot show
+   *  lineage by position alone, so the view indents by this. */
+  depth: Map<string, number>;
+}
+
+export const OTHER_GROUP = "o:";
+
+/** A stopped session the member still owes something: it stopped on an unanswered exchange,
+ *  or it proposed a handoff that has not been taken. */
+export const needsMember = (s: Session): boolean => !s.alive && (!!s.carried || !!s.handoffPending);
+
+/** The sessions the view lists. `shown` is the schedules whose runs the member's own views
+ *  list (withoutUnattended). */
+export function activeScope(sessions: Session[], set: WorkingSet | null, shown?: ReadonlySet<string>): Session[] {
+  // Unattended is decided against the whole list: a run's child is unattended through a
+  // parent the working set may have filtered out.
+  const mine = withoutTerminals(withoutUnattended(sessions, shown)).filter((s) => !set || sessionInSet(set, s));
+  const keep = new Set(mine.filter((s) => s.alive || needsMember(s)).map((s) => s.name));
+  for (const n of descendantNames([...keep], mine)) keep.add(n);
+  return mine.filter((s) => keep.has(s.name));
+}
+
+interface GroupId {
+  key: string;
+  kind: ActiveGroupKind;
+  label: string;
+  hint: string;
+}
+
+// The space's name is looked up here rather than through the spaces store's helper: that
+// module reaches the api client, and this file has to stay loadable without a browser.
+function groupId(s: Session, byFolder: Map<string, Repo>, spaces: Space[]): GroupId {
+  if (s.space) return { key: "s:" + s.space, kind: "space", label: spaces.find((x) => x.folder === s.space)?.name || s.space, hint: s.space };
+  const folder = sessionFolder(s);
+  // A folder the working-copy list does not know is "other", as it is in the tree: a heading
+  // made of a folder that no longer exists would name a place nobody can go to.
+  if (folder && byFolder.has(folder)) return { ...repoGroupId(folder, byFolder), kind: "repo" };
+  return { key: OTHER_GROUP, kind: "other", label: "", hint: "" };
+}
+
+const KIND_ORDER: Record<ActiveGroupKind, number> = { repo: 0, space: 1, other: 2 };
+
+/** The view, grouped. `expanded` holds the parents the member opened; set=null means no
+ *  working set narrows the view. */
+export function activeGroups(
+  sessions: Session[],
+  repos: Repo[],
+  spaces: Space[],
+  set: WorkingSet | null,
+  expanded: ReadonlySet<string> = new Set(),
+  shown?: ReadonlySet<string>,
+): ActiveGroup[] {
+  const byFolder = new Map(repos.map((r) => [r.name, r]));
+  const members = new Map<string, { id: GroupId; sessions: Session[] }>();
+  for (const s of activeScope(sessions, set, shown)) {
+    const id = groupId(s, byFolder, spaces);
+    const g = members.get(id.key) || { id, sessions: [] };
+    g.sessions.push(s);
+    members.set(id.key, g);
+  }
+  const out: ActiveGroup[] = [];
+  for (const { id, sessions: list } of members.values()) {
+    const ordered = orderByFamily(list);
+    // A parent is a parent only inside its group, as in the overview: a child started in
+    // another repository is a root under its own heading.
+    const { childrenOf } = childrenIndex(ordered);
+    const collapsed = new Set([...childrenOf.keys()].filter((name) => !expanded.has(name)));
+    const folded = foldFamilies(ordered, collapsed);
+    const hiddenWaiting = new Map<string, number>();
+    for (const s of folded.sessions) {
+      if (!folded.fold.get(s.name)?.hidden) continue;
+      const below = descendantNames([s.name], ordered);
+      const n = ordered.filter((x) => below.has(x.name) && isWaiting(x)).length;
+      if (n > 0) hiddenWaiting.set(s.name, n);
+    }
+    const byName = new Map(ordered.map((s) => [s.name, s] as const));
+    const depth = new Map<string, number>();
+    for (const s of folded.sessions) {
+      // `guard` is the corrupted-originSession cycle again (family.ts).
+      const guard = new Set<string>([s.name]);
+      let d = 0;
+      for (let p = s.originSession; p && byName.has(p) && !guard.has(p); p = byName.get(p)?.originSession) {
+        guard.add(p);
+        d++;
+      }
+      depth.set(s.name, d);
+    }
+    out.push({
+      ...id,
+      sessions: folded.sessions,
+      alive: ordered.filter((s) => !!s.alive).length,
+      total: ordered.length,
+      fold: folded.fold,
+      hiddenWaiting,
+      depth,
+    });
+  }
+  // Headings in name order inside each kind, stable while sessions come and go: a list that
+  // is watched must not reorder its sections every time something starts.
+  out.sort((a, b) => KIND_ORDER[a.kind] - KIND_ORDER[b.kind] || compareText(a.label, b.label) || compareText(a.key, b.key));
+  return out;
+}

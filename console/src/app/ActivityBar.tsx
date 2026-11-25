@@ -29,7 +29,7 @@ import { hintSuffix } from "../features/keys/keyHint.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
-import { hasUnreadConversation, hasUnreadSession, hasUnreadTerminal, pendingNews, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
+import { hasUnreadConversation, hasUnreadSession, hasUnreadTerminal, pendingNews, sessionBadges, useRailAck, waitingSessions, workItemNewsKeys } from "./activity/badges.ts";
 import type { RailBadge } from "./activity/badges.ts";
 import { useAutoRunFeed, useScopedAutoRuns } from "../features/autorun/store.ts";
 import { waitingScheduledCount } from "../features/schedules/scheduledSessions.ts";
@@ -54,6 +54,7 @@ interface ViewDef {
 
 const VIEWS: ViewDef[] = [
   { id: "sessions", icon: "repo", mark: "sparkle", label: "rail.view.sessions" },
+  { id: "active", icon: "pulse", mark: "sparkle", label: "rail.view.active" },
   { id: "shared", icon: "broadcast", mark: "sparkle", label: "share.shared_sessions" },
   { id: "terminals", icon: "terminal", label: "rail.view.terminals" },
   { id: "assistant", icon: "comment-discussion", label: "asst.section_title" },
@@ -83,7 +84,6 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
   const pickView = useLeftRail((s) => s.pickView);
   const showView = useLeftRail((s) => s.showView);
   const imagegenAvailable = useImagegenAvailable();
-  const badges = useRailBadges(shown ? view : null);
 
   // Phone only (a tablet's docked column keeps taps), and only while the drawer is out.
   const barRef = useRef<HTMLDivElement>(null);
@@ -101,6 +101,10 @@ export const ActivityBar = memo(function ActivityBar({ view, shown, foldable, sc
     );
     return usable.filter((v) => ids.includes(v.id));
   }, [usable, off, onScreen]);
+  const badges = useRailBadges(
+    onScreen,
+    views.some((v) => v.id === "active"),
+  );
   // The list has not been read from the server yet, or is being read again (a tenant switch): a
   // change now would be built on the previous copy, recorded against the new owner, and win over
   // what the read brings, so the next save would drop ids another browser stored.
@@ -443,7 +447,7 @@ function badgeText(b: RailBadge, tr: ReturnType<typeof useT>, view: RailView): s
 
 // The badge of each view. `onScreen` is the view somebody is looking at (null while the pane
 // is folded away): its news is acknowledged as it arrives, so it never shows a news badge.
-function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, RailBadge>> {
+function useRailBadges(onScreen: RailView | null, activeShown: boolean): Partial<Record<RailView, RailBadge>> {
   const wset = useActiveWorkingSet();
   const sessions = useSessionsStore((s) => s.sessions);
   const shownSchedules = useShownSchedules();
@@ -508,9 +512,7 @@ function useRailBadges(onScreen: RailView | null): Partial<Record<RailView, Rail
     if (onScreen === "autorun" && autoRunsLoaded && failedAutoRuns.length > 0) ack("autorun", failedAutoRuns, [...(acked.autorun ?? []), ...failedAutoRuns]);
   }, [onScreen, workItemKeys, workItemsLoaded, failedRuns, allFailedRuns, failedAutoRuns, autoRunsLoaded, acked.autorun, ack]);
 
-  const out: Partial<Record<RailView, RailBadge>> = {};
-  if (waiting > 0) out.sessions = { tone: "waiting", count: waiting };
-  else if (unreadSessions) out.sessions = { tone: "unread" };
+  const out: Partial<Record<RailView, RailBadge>> = { ...sessionBadges(waiting, unreadSessions, activeShown) };
   if (unreadTerminals) out.terminals = { tone: "unread" };
   if (unreadConversation) out.assistant = { tone: "unread" };
   const news = onScreen === "workitems" ? 0 : pendingNews(workItemKeys, acked.workitems).length;

@@ -20,7 +20,9 @@ import { Icon } from "../../ui/Icon.tsx";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
 import { kindClasses, kindIcon, kindLabel } from "../../lib/sessionkind.ts";
-import { useT } from "../../lib/i18n/index.ts";
+import { tCount, useT } from "../../lib/i18n/index.ts";
+import { useLayoutStore } from "../../layout/store.ts";
+import { ordClass } from "../../layout/badges.ts";
 import { relTime } from "../../lib/intl.ts";
 import { stateClass, displayName, stateInfo, exitLabel, remainingShort } from "../../lib/sessionview.ts";
 import { sessionFolder, lineageColorOf, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
@@ -56,14 +58,24 @@ interface SessionCardProps {
   /** Present only when the control does something — a card with no children in this group
    *  gets none, rather than a "+" that folds nothing. */
   onFold?: () => void;
+  /** The card in the left pane's Active view (ADR 0145) rather than in the grid: one column at
+   *  the rail's width, under a heading that already names the project. It drops what the
+   *  heading says and what only a wide card has room for, and it carries the pane numbers,
+   *  because in the rail they are how a session is found among the panes. */
+  rail?: boolean;
+  /** Rail only: this session is the one in the focused pane. */
+  selected?: boolean;
+  /** How many of the rows this card's fold hides wait for the member's answer (0 = none). */
+  hiddenWaiting?: number;
 }
 
 // Where the menu was asked for: at the pointer (right-click / Menu key) or under the ⋯.
 type MenuAt = { x: number; y: number } | "button" | null;
 
-export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions, fold, onFold }: SessionCardProps) {
+export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions, fold, onFold, rail = false, selected = false, hiddenWaiting = 0 }: SessionCardProps) {
   const tr = useT();
   const { hover, setHover } = usePaneHover();
+  const setActive = useLayoutStore((l) => l.setActive);
   const [menuAt, setMenuAt] = useState<MenuAt>(null);
   const menuWrapRef = useRef<HTMLSpanElement>(null);
   const menuBtnRef = useRef<HTMLButtonElement>(null);
@@ -92,8 +104,9 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
   // card and its chat can never disagree about how full it is.
   const used = s.context ? s.context.read + s.context.create + s.context.fresh : 0;
   const ctx = s.context && used > 0 ? s.context : null;
-  const spends = s.tokenSpends;
-  const started = relTime(s.createdAt);
+  // The spend trend needs a wide card; at the rail's width the gauge alone is what fits.
+  const spends = rail ? undefined : s.tokenSpends;
+  const started = rail ? "" : relTime(s.createdAt);
   // How long this has been waiting for a person — the number the card is watched for. While it
   // is still waiting the clock runs on the wait itself; once answered, the same instant reads
   // as "how long it has been working since you replied". Nothing is shown when neither ledger
@@ -103,7 +116,9 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
   const waitingNow = isWaiting(s);
   const awake = remainingShort(s.keepAwakeUntil);
   const budgetStopped = !s.alive && !!s.spendCapHitAt;
-  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || budgetStopped || isShared);
+  const ords = rail ? opens : [];
+  const badges = !!(s.locked || awake || (s.alive && s.stopAfterTurnAt) || budgetStopped || isShared || ords.length);
+  const where = !rail || !!wt || !!repo?.integration || !!s.branchDrift;
 
   // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
   // the screen. Without it, `beside` decides.
@@ -135,7 +150,9 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         (hl ? " ovw-card-hover" : "") +
         (s.alive ? "" : " ovw-card--stopped") +
         (inert ? " ovw-card--dead" : "") +
-        (lineage ? " ovw-card-lineage" : "")
+        (lineage ? " ovw-card-lineage" : "") +
+        (rail ? " ovw-card--rail" : "") +
+        (selected ? " ovw-card--selected" : "")
       }
       style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
       role="button"
@@ -188,6 +205,12 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
             {tr("ovw.hidden_children", { n: fold.hidden })}
           </span>
         )}
+        {!!fold?.hidden && hiddenWaiting > 0 && (
+          <span className="ovw-hidden ovw-hidden--waiting" title={tCount("active.hidden_waiting_hint", hiddenWaiting)}>
+            <Icon name="question" />
+            {hiddenWaiting}
+          </span>
+        )}
         {/* The state reads from the top-right corner, where the eye lands first on a grid of
             cards, and the row below is left for what only some cards carry. The label is its
             own element so a narrow card can fold the CALM states back to their icon and give
@@ -217,8 +240,9 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           </button>
         </span>
       </header>
+      {where && (
       <div className="ovw-where" title={s.dir || ""}>
-        <span className="ovw-project">{project || folder || tr("pj.other_sessions")}</span>
+        {!rail && <span className="ovw-project">{project || folder || tr("pj.other_sessions")}</span>}
         {wt && (
           <span className="ovw-wt" title={branch || wt}>
             <Icon name="git-branch" />
@@ -242,12 +266,13 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           </span>
         )}
       </div>
+      )}
       {/* The badge row carries only what SOME cards have (lock / keep-awake / stop-armed /
           shared). With the state chip moved into the head it is empty on an ordinary card, and
           an empty flex row would still spend the card's row gap. Pane ordinals are deliberately
           NOT here (ADR 0078 decision 10): which pane holds a session is the rail's job, and on a
           grid the numbers were noise. `opens` still marks the card as open and drives the
-          cross-highlight. */}
+          cross-highlight. The rail form is in the rail, so it does carry them. */}
       {badges && (
       <div className="ovw-row">
         {s.locked && <Icon name="lock" className="sess-lock" title={tr("srow.locked_badge")} />}
@@ -257,6 +282,29 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         {s.alive && s.stopAfterTurnAt && <Icon name="debug-stop" className="sess-stoparm" title={tr("srow.stop_after_turn_badge")} />}
         {budgetStopped && <Icon name="pulse" className="sess-budget" title={tr("srow.budget_paused_hint")} />}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
+        {ords.length > 0 && (
+          <span className="sess-ords ovw-ords">
+            {ords.map((o) => (
+              <button
+                key={o.id}
+                type="button"
+                className={"rail-ord " + ordClass(o.ordinal)}
+                title={tr("common.focus_pane", { ordinal: o.ordinal })}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActive(o.id);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                }}
+                onMouseEnter={() => setHover({ session: s.name, paneId: o.id })}
+                onMouseLeave={() => setHover({ session: s.name })}
+              >
+                {o.ordinal}
+              </button>
+            ))}
+          </span>
+        )}
       </div>
       )}
       {/* The context gauge and the token-spend trend, the mirror's own strip (ADR 0078

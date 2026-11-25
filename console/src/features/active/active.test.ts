@@ -1,0 +1,134 @@
+import { describe, expect, it } from "vitest";
+import { activeGroups, activeScope, needsMember, OTHER_GROUP } from "./active.ts";
+import type { Repo } from "../repos/store.ts";
+import type { Space } from "../spaces/store.ts";
+import type { WorkingSet } from "../../lib/workingSets.ts";
+import type { Session } from "../../types/session.ts";
+
+const s = (name: string, over: Partial<Session> = {}): Session => ({ name, kind: "claude", alive: true, state: "idle", ...over });
+const repo = (name: string, over: Partial<Repo> = {}): Repo => ({ name, ...over });
+const set = (over: Partial<WorkingSet>): WorkingSet => ({ id: "w1", name: "A", repos: [], convs: [], sessions: [], schedules: [], ...over });
+const names = (list: Session[]): string[] => list.map((x) => x.name);
+
+describe("activeScope", () => {
+  it("lists running sessions and leaves an ordinary stopped one out", () => {
+    expect(names(activeScope([s("a"), s("b", { alive: false })], null))).toEqual(["a"]);
+  });
+
+  it("keeps a stopped session that still needs the member", () => {
+    const list = [s("q", { alive: false, carried: "question" }), s("h", { alive: false, handoffPending: true }), s("x", { alive: false })];
+    expect(names(activeScope(list, null))).toEqual(["q", "h"]);
+    expect(needsMember(s("live", { carried: "question" }))).toBe(false);
+  });
+
+  it("keeps every descendant of a listed session, stopped ones included, at any depth", () => {
+    const list = [
+      s("p"),
+      s("c1", { alive: false, originSession: "p" }),
+      s("g1", { alive: false, originSession: "c1" }),
+      s("orphan", { alive: false, originSession: "gone" }),
+    ];
+    expect(names(activeScope(list, null))).toEqual(["p", "c1", "g1"]);
+  });
+
+  it("leaves shells and SSM logins to the Terminal view", () => {
+    expect(names(activeScope([s("a"), s("sh", { kind: "shell" }), s("m", { kind: "ssm" })], null))).toEqual(["a"]);
+  });
+
+  it("leaves unattended runs, and what they started, to their own views", () => {
+    const list = [s("a"), s("run", { origin: "queue" }), s("kid", { origin: "session", originSession: "run" })];
+    expect(names(activeScope(list, null))).toEqual(["a"]);
+  });
+
+  it("is narrowed by the working set", () => {
+    const list = [s("a", { repo: "proj" }), s("b", { repo: "other" })];
+    expect(names(activeScope(list, set({ repos: ["proj"] })))).toEqual(["a"]);
+  });
+});
+
+describe("activeGroups", () => {
+  const repos = [
+    repo("zeta", { remote: "github.com", remotePath: "acme/zeta" }),
+    repo("app", { remote: "github.com", remotePath: "acme/app" }),
+    repo("app@wip-x", { remote: "github.com", remotePath: "acme/app", worktree: true, parent: "app" }),
+  ];
+  const spaces: Space[] = [{ folder: "s1", name: "Research", dir: "/home/dev/spaces/s1" }];
+
+  it("orders repositories, then spaces, then other, and draws no empty group", () => {
+    const list = [
+      s("home"),
+      s("sp", { space: "s1" }),
+      s("z", { repo: "zeta" }),
+      s("a", { repo: "app" }),
+      s("w", { repo: "app@wip-x" }),
+      s("gone", { repo: "removed" }),
+    ];
+    const groups = activeGroups(list, repos, spaces, null);
+    expect(groups.map((g) => [g.kind, g.label])).toEqual([
+      ["repo", "app"],
+      ["repo", "zeta"],
+      ["space", "Research"],
+      ["other", ""],
+    ]);
+    expect(names(groups[0].sessions).sort()).toEqual(["a", "w"]);
+    expect(groups[3].key).toBe(OTHER_GROUP);
+    expect(names(groups[3].sessions).sort()).toEqual(["gone", "home"]);
+  });
+
+  it("names a space by its folder until the list knows it", () => {
+    expect(activeGroups([s("sp", { space: "s9" })], [], spaces, null)[0].label).toBe("s9");
+  });
+
+  it("folds a parent's descendants until the member opens it, and counts before the fold", () => {
+    const list = [s("p", { repo: "app" }), s("c1", { repo: "app", originSession: "p" }), s("c2", { repo: "app", alive: false, originSession: "p" })];
+    const folded = activeGroups(list, repos, spaces, null)[0];
+    expect(names(folded.sessions)).toEqual(["p"]);
+    expect(folded.fold.get("p")).toEqual({ hasChildren: true, hidden: 2 });
+    expect([folded.alive, folded.total]).toEqual([2, 3]);
+    const open = activeGroups(list, repos, spaces, null, new Set(["p"]))[0];
+    expect(names(open.sessions)).toEqual(["p", "c1", "c2"]);
+    expect(open.fold.get("p")).toEqual({ hasChildren: true, hidden: 0 });
+  });
+
+  it("an opened parent still leaves its child's own children folded", () => {
+    const list = [s("p", { repo: "app" }), s("c", { repo: "app", originSession: "p" }), s("g", { repo: "app", originSession: "c" })];
+    const g = activeGroups(list, repos, spaces, null, new Set(["p"]))[0];
+    expect(names(g.sessions)).toEqual(["p", "c"]);
+    expect(g.fold.get("c")?.hidden).toBe(1);
+    expect([g.depth.get("p"), g.depth.get("c")]).toEqual([0, 1]);
+  });
+
+  it("says how many of the rows a fold hides are waiting for an answer", () => {
+    const list = [
+      s("p", { repo: "app" }),
+      s("c1", { repo: "app", originSession: "p", state: "question" }),
+      s("g1", { repo: "app", originSession: "c1", state: "permission" }),
+      s("c2", { repo: "app", originSession: "p" }),
+      // A stopped session's carried question is not a wait: answering it moves nothing now.
+      s("c3", { repo: "app", originSession: "p", alive: false, carried: "question" }),
+    ];
+    const folded = activeGroups(list, repos, spaces, null)[0];
+    expect(folded.hiddenWaiting.get("p")).toBe(2);
+    const open = activeGroups(list, repos, spaces, null, new Set(["p"]))[0];
+    expect(open.hiddenWaiting.has("p")).toBe(false);
+    expect(open.hiddenWaiting.get("c1")).toBe(1);
+  });
+
+  it("a child in another repository is a root under its own heading", () => {
+    const list = [s("p", { repo: "app" }), s("c", { repo: "zeta", originSession: "p" })];
+    const groups = activeGroups(list, repos, spaces, null);
+    expect(groups.map((g) => names(g.sessions))).toEqual([["p"], ["c"]]);
+    expect(groups[0].fold.get("p")?.hasChildren).toBe(false);
+    // Its parent is under another heading, so here it is a root.
+    expect(groups[1].depth.get("c")).toBe(0);
+  });
+
+  it("puts the family that waits for an answer first inside its group", () => {
+    const list = [
+      s("calm", { repo: "app", createdAt: "2026-11-02T00:00:00Z" }),
+      s("p", { repo: "app", createdAt: "2026-11-01T00:00:00Z" }),
+      s("c", { repo: "app", originSession: "p", state: "question" }),
+    ];
+    expect(names(activeGroups(list, repos, spaces, null)[0].sessions)).toEqual(["p", "calm"]);
+  });
+});

@@ -74,7 +74,7 @@ describe("opening the menu", () => {
     await rightClick(btn("memo"));
     expect(menu()).not.toBeNull();
     const rows = [...menu()!.querySelectorAll<HTMLElement>("[data-menu-view]")].map((r) => r.dataset.menuView);
-    expect(rows).toEqual(["sessions", "shared", "terminals", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"]);
+    expect(rows).toEqual(["sessions", "active", "shared", "terminals", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"]);
     expect(row("memo").getAttribute("aria-checked")).toBe("true");
     expect(row("memo").getAttribute("role")).toBe("menuitemcheckbox");
   });
@@ -155,7 +155,7 @@ describe("turning icons off", () => {
 
   it("cannot turn off the last icon", async () => {
     // Every icon but the one on screen is off.
-    const others = ["shared", "terminals", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"];
+    const others = ["active", "shared", "terminals", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"];
     setSettings({ railViewsOff: others });
     useLeftRail.setState({ view: "sessions" });
     await mount();
@@ -186,7 +186,7 @@ describe("turning icons off", () => {
 
 describe("the vertical swipe follows the shown icons only", () => {
   it("steps over an icon that is off", async () => {
-    setSettings({ railViewsOff: ["shared", "terminals"] });
+    setSettings({ railViewsOff: ["active", "shared", "terminals"] });
     useLeftRail.setState({ view: "sessions" });
     await mount();
     const next = BAR_SWIPE_UP_IS_NEXT ? -1 : 1;
@@ -239,13 +239,24 @@ describe("a hidden view that waits on the member", () => {
     useLeftRail.setState({ view: "files" });
     await mount();
     expect(host!.querySelector("[data-hidden-waiting]")).toBeNull();
-    expect(btn("sessions").querySelector(".actbar-badge")?.textContent).toBe("1");
+    // The Active icon carries the count while it is in the bar; the Sessions icon does not repeat it.
+    expect(btn("active").querySelector(".actbar-badge")?.textContent).toBe("1");
+    expect(btn("sessions").querySelector(".actbar-badge")).toBeNull();
   });
 
-  it("has the dot for a session stopped on an answer when the Sessions icon is off", async () => {
+  it("has no dot while the Active icon is shown, even with the Sessions icon off", async () => {
     useSessionsStore.setState({ sessions: [waitingSession] });
     useLeftRail.setState({ view: "files" });
     setSettings({ railViewsOff: ["sessions"] });
+    await mount();
+    expect(host!.querySelector("[data-hidden-waiting]")).toBeNull();
+    expect(btn("active").querySelector(".actbar-badge")?.textContent).toBe("1");
+  });
+
+  it("has the dot for a session stopped on an answer when the Sessions and Active icons are off", async () => {
+    useSessionsStore.setState({ sessions: [waitingSession] });
+    useLeftRail.setState({ view: "files" });
+    setSettings({ railViewsOff: ["sessions", "active"] });
     await mount();
     expect(host!.querySelector("[data-hidden-waiting]")?.getAttribute("data-hidden-waiting")).toBe("sessions");
   });
@@ -255,7 +266,7 @@ describe("keyboard focus over the icons", () => {
   const key = (el: Element, k: string) => act(async () => void el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true })));
 
   it("moves focus over the shown view icons only, in both directions, skipping hidden icons and launchers", async () => {
-    setSettings({ railViewsOff: ["shared", "terminals"] });
+    setSettings({ railViewsOff: ["active", "shared", "terminals"] });
     await mount();
     btn("sessions").focus();
     await key(btn("sessions"), "ArrowDown");
@@ -283,7 +294,7 @@ describe("the left pane folded away", () => {
   });
 
   it("still keeps the last icon, saying so, and does not turn it off", async () => {
-    setSettings({ railViewsOff: ["shared", "terminals", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"] });
+    setSettings({ railViewsOff: ["active", "shared", "terminals", "assistant", "workitems", "memo", "autorun", "memory", "schedules", "files"] });
     await mount({ shown: false });
     expect(icons()).toEqual(["sessions"]);
     await rightClick(bar());
@@ -349,7 +360,7 @@ describe("focus after the menu closes", () => {
   it("lands on the view on screen when the dot it was opened from went away", async () => {
     useSessionsStore.setState({ sessions: [{ name: "w", state: "question", alive: true, kind: "claude" } as unknown as Session] });
     useLeftRail.setState({ view: "files" });
-    setSettings({ railViewsOff: ["sessions"] });
+    setSettings({ railViewsOff: ["sessions", "active"] });
     await mount();
     const dot = host!.querySelector<HTMLButtonElement>("[data-hidden-waiting]")!;
     dot.focus();
@@ -459,7 +470,7 @@ describe("re-measuring the bar when the dot appears", () => {
     await act(async () => root!.render(<Shell />));
     expect(el.hasAttribute("data-fits")).toBe(true);
     useLeftRail.setState({ view: "files" });
-    setSettings({ railViewsOff: ["sessions"] });
+    setSettings({ railViewsOff: ["sessions", "active"] });
     await act(async () => void useSessionsStore.setState({ sessions: [{ name: "w", state: "question", alive: true, kind: "claude" } as unknown as Session] }));
     expect(el.querySelector("[data-hidden-waiting]")).not.toBeNull();
     expect(el.hasAttribute("data-fits")).toBe(false);
@@ -475,7 +486,7 @@ describe("several hidden views waiting at once", () => {
     useSessionsStore.setState({ sessions: [{ name: "w", state: "question", alive: true, kind: "claude" } as unknown as Session] });
     useHandoffStore.setState({ received: [offer("a"), offer("b")] });
     useLeftRail.setState({ view: "files" });
-    setSettings({ railViewsOff: ["sessions", "shared"] });
+    setSettings({ railViewsOff: ["sessions", "active", "shared"] });
     await mount();
     expect(host!.querySelectorAll("[data-hidden-waiting]")).toHaveLength(1);
     expect(host!.querySelector("[data-hidden-waiting]")!.getAttribute("data-hidden-waiting")).toBe("sessions shared");

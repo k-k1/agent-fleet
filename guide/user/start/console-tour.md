@@ -51,6 +51,7 @@ The icons in the upper group choose the view the left pane shows. Hover over an 
 | Icon | What the left pane shows |
 |---|---|
 | Sessions | The cloned repositories with the sessions running under them, then **Other sessions** (agents running in home). Shells and SSM sessions are not listed here; they are in **Terminals**. Runs that memo auto-run started are not listed here either; they are in **Auto-run** |
+| Active | The sessions that are running or still need you, as cards under their repository or space. Child sessions fold under their parent ([In the left pane: the Active view](../fleet/overview.md#in-the-left-pane-the-active-view)) |
 | Shared sessions | The conversations other members shared with you, and handoffs waiting for your decision (a number on the icon) |
 | Terminals | Every shell, under the place it was opened in (home, a repository, a space), and every SSM session, under the machine it logs in to. The header starts a shell or an SSM session and tidies the stopped ones ([Find your shells and SSM sessions](../sessions/terminals.md)) |
 | Assistants | The list of chats that use no repository, and **+** |

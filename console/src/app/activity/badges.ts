@@ -42,6 +42,18 @@ export function waitingSessions(sessions: Session[], set: WorkingSet | null = nu
   return withoutUnattended(sessions, shown).filter((s) => s.alive && WAITING.has(String(s.state || "")) && (!set || sessionInSet(set, s))).length;
 }
 
+/** Where the session badges go. The Sessions and the Active view list the same waiting
+ * sessions (ADR 0145), and one session counted on two icons reads as two. While the Active
+ * icon is in the bar it carries the count, being the view that is about what needs the member
+ * now; otherwise the Sessions icon does, as before. The unread dot is the Sessions view's
+ * either way: only that view lists every session a notice can be about. */
+export function sessionBadges(waiting: number, unread: boolean, activeShown: boolean): Partial<Record<"sessions" | "active", RailBadge>> {
+  const out: Partial<Record<"sessions" | "active", RailBadge>> = {};
+  if (waiting > 0) out[activeShown ? "active" : "sessions"] = { tone: "waiting", count: waiting };
+  if (unread && !out.sessions) out.sessions = { tone: "unread" };
+  return out;
+}
+
 /** Is there an unseen notification on a session the Sessions view lists? Under a working set
  * a session the list does not know cannot be placed in it, so it does not count. */
 export function hasUnreadSession(items: FleetNotification[], sessions: Session[], set: WorkingSet | null, withTerminals = false, shown?: ReadonlySet<string>): boolean {

@@ -19,6 +19,7 @@ import { RailView as RailViewPane } from "./RailView.tsx";
 import { SharedSessionsSection } from "../features/sharing/SharedSessionsSection.tsx";
 import { useRailAck } from "./activity/badges.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
+import { setSettings } from "../lib/settings.ts";
 import type { RailView } from "../core/store/leftRail.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { useNotificationStore } from "../features/notifications/store.ts";
@@ -68,6 +69,7 @@ const workItems = (updatedAt: string) => ({
 
 beforeEach(() => {
   localStorage.clear();
+  setSettings({ railViewsOff: [] });
   useLeftRail.setState({ open: true, view: "sessions", swipeOverlay: false });
   useSessionsStore.setState({ sessions: [] });
   useNotificationStore.setState({ items: [] });
@@ -110,10 +112,10 @@ const badge = (view: RailView) => btn(view).querySelector<HTMLElement>(".actbar-
 describe("ActivityBar shared view", () => {
   const offer = (id: string, status: string) => ({ id, status }) as unknown as HandoffOffer;
 
-  it("places the shared icon right after Sessions", async () => {
+  it("places the shared icon right after Sessions and Active", async () => {
     await mount();
     const ids = [...host!.querySelectorAll<HTMLElement>(".actbar-btn[data-rail-view]")].map((b) => b.dataset.railView);
-    expect(ids.slice(0, 2)).toEqual(["sessions", "shared"]);
+    expect(ids.slice(0, 3)).toEqual(["sessions", "active", "shared"]);
   });
 
   it("badges it with the handoffs waiting for a decision, and with nothing else", async () => {
@@ -302,6 +304,16 @@ describe("ActivityBar views", () => {
 
 describe("ActivityBar badges", () => {
   it("counts sessions waiting for an answer, even while their view is on screen", async () => {
+    useSessionsStore.setState({ sessions: [sess("a", "question"), sess("b", "plan"), sess("c", "working")] });
+    await mount();
+    // One count, on the Active icon (ADR 0145): the Sessions view lists the same two sessions.
+    expect(badge("active")?.dataset.badge).toBe("waiting");
+    expect(badge("active")?.textContent).toBe("2");
+    expect(badge("sessions")).toBeNull();
+  });
+
+  it("counts them on the Sessions icon when the Active icon is off", async () => {
+    setSettings({ railViewsOff: ["active"] });
     useSessionsStore.setState({ sessions: [sess("a", "question"), sess("b", "plan"), sess("c", "working")] });
     await mount();
     expect(badge("sessions")?.dataset.badge).toBe("waiting");
@@ -501,7 +513,7 @@ describe("ActivityBar sparkle mark", () => {
   it("is carried by the views that list agents at work, and by no other", async () => {
     await mount();
     const withMark = [...host!.querySelectorAll<HTMLElement>(".actbar-btn[data-rail-view]")].filter((b) => b.querySelector(".actbar-mark"));
-    expect(withMark.map((b) => b.dataset.railView)).toEqual(["sessions", "shared", "autorun", "schedules"]);
+    expect(withMark.map((b) => b.dataset.railView)).toEqual(["sessions", "active", "shared", "autorun", "schedules"]);
     for (const b of withMark) expect(b.querySelector(".actbar-mark.codicon-sparkle")).not.toBeNull();
   });
 });

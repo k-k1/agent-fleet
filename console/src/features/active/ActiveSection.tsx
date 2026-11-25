@@ -1,0 +1,101 @@
+// ActiveSection — the Active view of the left pane (ADR 0145): the sessions that are running,
+// or that still need the member, as cards under the repository or space they work in.
+//
+// It reads the stores the Sessions view already keeps fresh and owns one piece of state, the
+// parents the member opened (store.ts). The grouping, the scope and the fold are active.ts;
+// the card is the sessions overview's, in its rail form, so a state or a gauge never reads
+// differently here than in the overview pane.
+import { memo, useMemo } from "react";
+import type { CSSProperties } from "react";
+import { Section } from "../../ui/Section.tsx";
+import { Icon } from "../../ui/Icon.tsx";
+import { useT } from "../../lib/i18n/index.ts";
+import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
+import { useReposStore } from "../repos/store.ts";
+import { useRepoRailContext } from "../repos/useRepoRail.ts";
+import { useSessionsStore } from "../sessions/store.ts";
+import { useSessionActions } from "../sessions/useSessionActions.tsx";
+import { useNotificationStore } from "../notifications/store.ts";
+import { waitingAtFromNotifications } from "../sessions/order.ts";
+import { observedWaitingAt } from "../sessions/waiting.ts";
+import { useShownSchedules } from "../schedules/store.ts";
+import { useSpaceNames } from "../spaces/useSpaceNames.ts";
+import { SessionCard } from "../overview/SessionCard.tsx";
+import { activeGroups } from "./active.ts";
+import type { ActiveGroup } from "./active.ts";
+import { useActiveFold } from "./store.ts";
+import "../overview/overview.css";
+
+// Deeper generations stop indenting: at the pane's width a fourth step would leave the title no room.
+const MAX_INDENT = 3;
+
+const GROUP_ICON: Record<ActiveGroup["kind"], string> = { repo: "repo", space: "folder", other: "terminal-tmux" };
+
+export const ActiveSection = memo(function ActiveSection() {
+  const tr = useT();
+  const sessions = useSessionsStore((s) => s.sessions);
+  const repos = useReposStore((s) => s.repos);
+  const spaces = useSpaceNames(sessions);
+  const wset = useActiveWorkingSet();
+  const shownSchedules = useShownSchedules();
+  const ctx = useRepoRailContext();
+  const actions = useSessionActions();
+  const expanded = useActiveFold((s) => s.expanded);
+  const toggle = useActiveFold((s) => s.toggle);
+
+  const expandedSet = useMemo(() => new Set(expanded), [expanded]);
+  const groups = useMemo(
+    () => activeGroups(sessions, repos, spaces, wset, expandedSet, shownSchedules),
+    [sessions, repos, spaces, wset, expandedSet, shownSchedules],
+  );
+  const alive = groups.reduce((n, g) => n + g.alive, 0);
+  const known = useMemo(() => new Set(sessions.map((s) => s.name)), [sessions]);
+
+  // "Waiting since", composed as the overview composes it. Shown, never ordered by.
+  const notifications = useNotificationStore((st) => st.items);
+  const fromNotifications = useMemo(() => waitingAtFromNotifications(notifications), [notifications]);
+  const waitingAt = (name: string) => Math.max(fromNotifications[name] || 0, observedWaitingAt(name));
+
+  return (
+    <Section id="active" title={tr("rail.view.active")} icon="pulse" count={alive}>
+      {groups.length === 0 ? (
+        <div className="section-empty">{wset ? tr("active.empty_in_set", { set: wset.name }) : tr("active.empty")}</div>
+      ) : (
+        <div className="act-list">
+          {groups.map((g) => (
+            <section className="act-group" key={g.key} data-active-group={g.key}>
+              <h3 className="ovw-gtitle act-gtitle" title={g.hint || undefined}>
+                <Icon name={GROUP_ICON[g.kind]} />
+                <span className="ovw-gname">{g.kind === "other" ? tr("pj.other_sessions") : g.label}</span>
+                <span className="ovw-gcount">{tr("ovw.group_count", { alive: g.alive, n: g.total })}</span>
+              </h3>
+              <div className="act-cards" role="list">
+                {g.sessions.map((s) => {
+                  const fold = g.fold.get(s.name);
+                  return (
+                    // The wrapper carries the indent: the card's own inline style is the lineage colour.
+                    <div key={s.name} className="act-item" role="listitem" style={{ "--act-depth": Math.min(g.depth.get(s.name) || 0, MAX_INDENT) } as CSSProperties}>
+                    <SessionCard
+                      s={s}
+                      rail
+                      selected={ctx.activeSession === s.name}
+                      opens={(ctx.multiPane && ctx.sPanes?.get(s.name)) || []}
+                      beside={false}
+                      running={ctx.running}
+                      waitingAt={waitingAt(s.name)}
+                      actions={actions}
+                      fold={fold}
+                      hiddenWaiting={g.hiddenWaiting.get(s.name)}
+                      onFold={fold?.hasChildren ? () => toggle(s.name, known) : undefined}
+                    />
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+        </div>
+      )}
+    </Section>
+  );
+});
