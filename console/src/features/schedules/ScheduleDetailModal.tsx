@@ -93,6 +93,11 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   const [gateForm, setGateForm] = useState(() => gateFormOf(s.gate));
   const gateKnown = !s.gate || s.gate.kind === "work_items" || s.gate.kind === "none";
   const gateFits = s.session_mode === "new" && specKind !== "once";
+  // "Also show in the Sessions view" only surfaces the worktree children a run starts, which only
+  // session_mode=new does (reuse drives one existing session). A stored true on another mode is
+  // kept, never rewritten: the box stays enabled so it can be unticked, but not re-ticked.
+  const showFits = !s.session_mode || s.session_mode === "new";
+  const showLocked = !showFits && !s.show_in_sessions;
   const showGate = gateKnown ? gateFits || !!s.gate : !!s.gate;
   const [queries, setQueries] = useState<WorkItemQuery[] | null>(null);
   const [queriesFailed, setQueriesFailed] = useState(false);
@@ -421,8 +426,13 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
             it holds no sessions with a worktree of their own for the flag to surface. */}
         {s.session_mode !== "assistant" && (
           <div className="ui-field">
-            <FieldLabel plain className="ui-field-check" info={tr("sched.f_show_in_sessions_hint")}>
-              <input type="checkbox" checked={showInSessions} onChange={(e) => setShowInSessions(e.target.checked)} />
+            <FieldLabel plain className="ui-field-check" info={showFits ? tr("sched.f_show_in_sessions_hint") : tr("sched.f_show_in_sessions_unfit")}>
+              <input
+                type="checkbox"
+                checked={showInSessions}
+                disabled={showLocked}
+                onChange={(e) => setShowInSessions(showFits ? e.target.checked : false)}
+              />
               <span>{tr("sched.f_show_in_sessions")}</span>
             </FieldLabel>
           </div>

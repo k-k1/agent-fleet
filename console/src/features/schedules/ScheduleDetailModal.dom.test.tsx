@@ -217,6 +217,33 @@ describe("ScheduleDetailModal delivery", () => {
     expect(update).toHaveBeenCalledWith("sch_1", { spec_label: "renamed" });
   });
 
+  it("disables the Sessions-view setting on a reuse schedule and says why", async () => {
+    await renderWith({ session_mode: "reuse" });
+    expect(showBox()!.checked).toBe(false);
+    expect(showBox()!.disabled).toBe(true);
+  });
+
+  it("enables the Sessions-view setting on a new-session schedule", async () => {
+    await renderWith({ session_mode: "new" });
+    expect(showBox()!.disabled).toBe(false);
+  });
+
+  it("keeps a stored Sessions-view true on a reuse schedule out of an unrelated save, and lets it be cleared", async () => {
+    await renderWith({ session_mode: "reuse", show_in_sessions: true });
+    expect(showBox()!.checked).toBe(true);
+    expect(showBox()!.disabled).toBe(false);
+    const label = document.querySelector("#sched-label") as HTMLInputElement;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      set.call(label, "renamed");
+      label.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      saveButton().click();
+    });
+    expect(update).toHaveBeenCalledWith("sch_1", { spec_label: "renamed" });
+  });
+
   it("offers no Sessions-view setting for an assistant-mode schedule", async () => {
     await renderWith({ session_mode: "assistant" });
     expect(showBox()).toBeUndefined();
