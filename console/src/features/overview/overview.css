@@ -229,16 +229,25 @@
     padding: 1px 4px;
   }
 }
-/* Parent-diff chip: the rail's own chip; `flex: none` keeps it whole in a card's caption line. */
+/* Parent-diff chip and drift chip: the rail's own chip, allowed to shrink and ellipsize so a
+   long one cannot push the fixed ordinals / state icons out of the card. */
 .ovw-where .repo-chip,
 .ovw-where .sess-drift {
-  /* Shrinkable (after the branch name, which is already at zero): ordinals and state icons
-     are fixed, so on a narrow rail the chip ellipsizes instead of pushing the icons out of
-     the card. */
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* Rail form only: the line wraps when the fixed parts (ordinals, state icons) alone do not
+   fit, as the old badge row did, instead of clipping the right-hand icons. The branch name
+   has a zero flex-basis so it never causes a wrap itself; it takes what is left and
+   ellipsizes. */
+.ovw-card--rail .ovw-where {
+  flex-wrap: wrap;
+}
+.ovw-card--rail .ovw-where .ovw-wt {
+  flex: 1 1 0;
+  min-width: 0;
 }
 .ovw-waited.ovw-waited--on {
   color: var(--warn);
