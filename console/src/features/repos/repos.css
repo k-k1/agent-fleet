@@ -1980,3 +1980,17 @@ button.start-place-chip--gone {
     display: inline-block;
   }
 }
+
+/* The launch button names agent and model, so a long registered id must not push the footer's
+   other buttons out: it shrinks and ellipsizes (the full text is its tooltip). */
+.launch-go {
+  min-width: 0;
+  max-width: min(100%, 26em);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.run-model-more:focus-within .run-model-more-label {
+  outline: 2px solid var(--accent, #3b82f6);
+  outline-offset: 1px;
+}

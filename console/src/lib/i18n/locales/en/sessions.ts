@@ -697,7 +697,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.route_default_short": "default",
   "launch.strip.agent_aria": "Agent: {v}",
   "launch.strip.model_more": "{n} more models",
-  "launch.strip.model_fallback": "{model} cannot run on this route, so the agent's default model is selected.",
+  "launch.strip.model_fallback": "{model} is not available for this agent or route and was dropped.",
+  "launch.strip.model_default": "default model",
   "launch.start_worktree": "Start in a worktree",
   // Collapsed sections (Location / More) and the summary shown while folded. The
   // summary exists so the launch is readable without expanding: Location always

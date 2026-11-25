@@ -4,7 +4,7 @@
 // its choices), line 2 the model (changed with almost every prompt) as ONE single-choice row.
 // The panels stay mounted while closed (`hidden`): the choices keep their DOM identity, and the
 // narrow layout can show them from the one combined chip.
-import { useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
@@ -15,15 +15,18 @@ import { ModelInfoLine } from "../../ui/ModelInfoLine.tsx";
 import { modelIsRetiring, useModelInfos, useModelOptions } from "../../lib/agentModels.ts";
 import type { ModelOption } from "../../lib/agentModels.ts";
 import { RECENT_MODELS_MAX, readRecentModels } from "../../lib/recentModels.ts";
+import { useEscLayer } from "../../lib/escLayer.ts";
+import { refreshUIPrefs } from "../../lib/settings.ts";
 
 const CLAUDE_ALIASES = ["fable", "opus", "sonnet", "haiku"];
+
+/** A tier alias is not a registered model: only registered ids are remembered as recents. */
+export const isTierAlias = (id: string): boolean => CLAUDE_ALIASES.includes(id);
 
 /** The label a model button shows: the common `claude-` prefix dropped; the full id is the tooltip. */
 export function shortModelLabel(label: string): string {
   return label.replace(/^claude-/, "");
 }
-
-type Panel = "agent" | "route" | "both" | null;
 
 export interface RunWithStripProps {
   kinds: string[];
@@ -37,8 +40,10 @@ export interface RunWithStripProps {
     label: string;
     /** A route other than the default: the billed account changes, so the chip is accented. */
     custom: boolean;
-    /** The launch cannot start until a route is chosen. */
+    /** The launch cannot start until something about the route is fixed; `why` says what. */
     problem: boolean;
+    /** The reason shown under the strip while `problem` holds; the chips point at it. */
+    why: ReactNode;
     panel: ReactNode;
   };
   /** Under line 2: what blocks or explains the launch (route reasons, Bedrock fields, notices). */
@@ -50,27 +55,53 @@ export interface RunWithStripProps {
 
 export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, model, disabled }: RunWithStripProps) {
   const tr = useT();
-  const [open, setOpen] = useState<Panel>(null);
-  const toggle = (p: Exclude<Panel, null>) => setOpen((o) => (o === p ? null : p));
+  const ids = useId();
+  const agentPanelId = ids + "-agent";
+  const routePanelId = ids + "-route";
+  const whyId = ids + "-why";
+  // Which panels are open. The narrow layout's combined chip opens both; the open state is kept
+  // per panel, so every chip reports what is on screen whichever layout the width currently shows.
+  const [agentOpen, setAgentOpen] = useState(false);
+  const [routeOpen, setRouteOpen] = useState(false);
+  const agentChip = useRef<HTMLButtonElement>(null);
+  const comboChip = useRef<HTMLButtonElement>(null);
+  const closeAll = () => {
+    setAgentOpen(false);
+    setRouteOpen(false);
+  };
+  // Back to a trigger that is on screen: the wide chip, or the combined one when CSS hides it.
+  const refocus = () => {
+    agentChip.current?.focus();
+    if (document.activeElement !== agentChip.current) comboChip.current?.focus();
+  };
+  // Esc peels the panels before the dialog (the layered stack the Modal also joins).
+  useEscLayer(() => {
+    closeAll();
+    refocus();
+  }, agentOpen || routeOpen);
   // Picking an agent is the end of that choice; the route and model rows then follow it.
   const pick = (k: string) => {
     onPickKind(k);
-    setOpen(null);
+    setAgentOpen(false);
+    refocus();
   };
   const a = agentOf(kind);
   const routeText = route ? tr("launch.strip.route", { v: route.label }) : "";
+  const describedBy = route?.problem ? whyId : undefined;
   return (
     <div className="run-strip" data-testid="run-strip">
       <div className="run-strip-line run-strip-line1">
         {kinds.length > 0 && (
           <>
             <button
+              ref={agentChip}
               type="button"
               className={"run-chip run-chip--agent " + kindColorClasses(a.cssClass, "seg-btn")}
-              aria-expanded={open === "agent"}
+              aria-expanded={agentOpen}
+              aria-controls={agentPanelId}
               aria-label={tr("launch.strip.agent_aria", { v: kindDisplayName(kind) })}
               disabled={disabled}
-              onClick={() => toggle("agent")}
+              onClick={() => setAgentOpen((o) => !o)}
             >
               <Icon name={a.icon} className="seg-ic" />
               {kindDisplayName(kind)}
@@ -80,22 +111,31 @@ export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, 
               <button
                 type="button"
                 className={"run-chip run-chip--route" + (route.custom ? " run-chip--accent" : "") + (route.problem ? " run-chip--warn" : "")}
-                aria-expanded={open === "route"}
+                aria-expanded={routeOpen}
+                aria-controls={routePanelId}
+                aria-describedby={describedBy}
                 data-custom={route.custom || undefined}
                 disabled={disabled}
-                onClick={() => toggle("route")}
+                onClick={() => setRouteOpen((o) => !o)}
               >
                 {routeText}
                 <Icon name="chevron-down" className="run-chip-chev" />
               </button>
             )}
-            {/* Narrow widths (ui.css): the two chips above fold into this one. */}
+            {/* Narrow widths (repos.css): the two chips above fold into this one. */}
             <button
+              ref={comboChip}
               type="button"
               className={"run-chip run-chip--combo" + (route?.custom ? " run-chip--accent" : "") + (route?.problem ? " run-chip--warn" : "")}
-              aria-expanded={open === "both"}
+              aria-expanded={agentOpen || routeOpen}
+              aria-controls={route ? agentPanelId + " " + routePanelId : agentPanelId}
+              aria-describedby={describedBy}
               disabled={disabled}
-              onClick={() => toggle("both")}
+              onClick={() => {
+                const next = !(agentOpen || routeOpen);
+                setAgentOpen(next);
+                setRouteOpen(next && !!route);
+              }}
             >
               <Icon name={a.icon} className="seg-ic" />
               {kindDisplayName(kind)}
@@ -106,7 +146,7 @@ export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, 
         )}
       </div>
       {!kinds.length && noAgents}
-      <div className="run-strip-panel" hidden={open !== "agent" && open !== "both"}>
+      <div id={agentPanelId} className="run-strip-panel" hidden={!agentOpen}>
         {/* Wrapping grid (ui.css .ui-seg.big): every installed agent stays visible. */}
         <div className="ui-seg big">
           {kinds.map((k) => {
@@ -116,6 +156,7 @@ export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, 
                 key={k}
                 type="button"
                 title={tr(ak.launchHintKey)}
+                aria-pressed={kind === k}
                 className={"seg-btn " + kindColorClasses(ak.cssClass, "seg-btn") + (kind === k ? " seg-btn--active" : "")}
                 onClick={() => pick(k)}
               >
@@ -127,9 +168,14 @@ export function RunWithStrip({ kinds, kind, onPickKind, noAgents, route, below, 
         </div>
       </div>
       {route && (
-        <div className="run-strip-panel" hidden={open !== "route" && open !== "both"}>
+        <div id={routePanelId} className="run-strip-panel" hidden={!routeOpen}>
           {route.panel}
         </div>
+      )}
+      {route?.problem && (
+        <span id={whyId} className="ui-field-hint ui-field-hint--warn run-strip-why" role="status">
+          {route.why}
+        </span>
       )}
       {model && <div className="run-strip-line run-strip-line2">{model}</div>}
       {below}
@@ -167,6 +213,11 @@ function ClaudeModelRow({ kind, model, onChange, filter }: RunModelRowProps) {
   const options = useMemo(() => (fetched && filter ? fetched.filter(([v]) => filter(v)) : fetched), [fetched, filter]);
   const registered = useMemo(() => (options ?? []).filter(([v]) => !CLAUDE_ALIASES.includes(v)), [options]);
   const infos = useModelInfos(kind, registered.length > 0);
+  // A tab left in the foreground may predate a model another device registered: ask again when the
+  // row opens, as the picker this row replaces did.
+  useEffect(() => {
+    void refreshUIPrefs();
+  }, []);
   // The recent list is read once per mount, so a launch made in another
   // dialog cannot reorder the row under the cursor.
   const [recent] = useState(() => readRecentModels(kind));
@@ -228,10 +279,9 @@ function ClaudeModelRow({ kind, model, onChange, filter }: RunModelRowProps) {
       >
         {(options as ModelOption[]).map(([v, text]) => (
           <option key={v} value={v}>
-            {shortModelLabel(text)}
+            {label(v, text)}
           </option>
         ))}
-        {!options.some(([v]) => v === model) && model && <option value={model}>{shortModelLabel(model)}</option>}
       </select>
       {byId.has(model) && <ModelInfoLine kind={kind} model={model} />}
     </div>

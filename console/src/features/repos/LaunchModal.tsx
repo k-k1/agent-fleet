@@ -38,7 +38,7 @@ import { defaultKind, ownLaunch, ownLaunchProblem, tenantBudget, tenantDriver, t
 import { parseCap } from "../sessions/spendBudget.ts";
 import { requiresConcreteModel, useAutoConcreteModel, useEffortOptions, useModelOptions } from "../../lib/agentModels.ts";
 import { EffortPicker } from "../../ui/ModelPicker.tsx";
-import { RunModelRow, RunWithStrip, shortModelLabel } from "./RunWithStrip.tsx";
+import { RunModelRow, RunWithStrip, isTierAlias, shortModelLabel } from "./RunWithStrip.tsx";
 import { rememberRecentModel } from "../../lib/recentModels.ts";
 import { CopilotFreePlanHint } from "./CopilotFreePlanHint.tsx";
 import { readLaunchOpen, writeLaunchOpen } from "./launchPrefs.ts";
@@ -633,6 +633,19 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       setEffort("");
     }
   }, [modelFilter, model]);
+  // A remembered model can be missing from what the picker offers now (removed on another device,
+  // or the id a Bedrock launch typed in this repository). Resolve it to the agent's default instead
+  // of leaving a selection no button shows; the strip says what was dropped. A live catalog is not
+  // checked here: its picker keeps a stored id in the list on purpose (ModelPicker).
+  useEffect(() => {
+    if (!hasModel || agentOf(kind).caps.liveModels || onBedrock || !modelOptions || !model) return;
+    if (modelOptions.some(([v]) => v === model)) return;
+    const d = agentLaunchDefault(settings, kind).model;
+    setModelNotice(model);
+    setModel(modelOptions.some(([v]) => v === d) ? d : (modelOptions[0]?.[0] ?? ""));
+    setEffort("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-checked when the offered list or the model changes
+  }, [kind, model, modelOptions, onBedrock, hasModel]);
   const skipPermEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
   const effortOptions = useEffortOptions(kind, model);
   // lcpp has no CLI-picked own default (requiresConcreteModel — docs/log/109): once the live
@@ -933,7 +946,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     });
     if (r?.ok) {
       if (onBedrock && bedrockPick) rememberBedrockModel(bedrockPick.id, bedrockModel.trim());
-      else if (hasModel) rememberRecentModel(kind, model);
+      // Only a registered full id of an agent whose row shows recents: a tier alias would push the
+      // registered ones out of the three slots, and a live catalog never reads the list.
+      else if (hasModel && !agentOf(kind).caps.liveModels && !isTierAlias(model)) rememberRecentModel(kind, model);
       // A successful launch means this text and its attachments reached the new session in
       // full, and this is the only place the draft may be discarded: coming back from a failure
       // (a name collision, say) keeps both the typed text and the attachments.
@@ -961,7 +976,13 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   };
   const submit = () => void start(false);
   // The launch button names what it will run with: "Start with Claude Code · Opus".
-  const modelShown = onBedrock ? "" : hasModel && model ? shortModelLabel(modelOptions?.find(([v]) => v === model)?.[1] ?? model) : "";
+  const modelShown = onBedrock
+    ? bedrockModel.trim()
+    : hasModel
+      ? model
+        ? shortModelLabel(modelOptions?.find(([v]) => v === model)?.[1] ?? model)
+        : tr("launch.strip.model_default")
+      : "";
   const runWith = kinds.length ? [kindDisplayName(kind), modelShown].filter(Boolean).join(" · ") : "";
   const [policyErr, setPolicyErr] = useState<PolicyRefusal | null>(null);
   const [launchUnknown, setLaunchUnknown] = useState(false);
@@ -1000,7 +1021,21 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // The "run with" strip (ADR 0142 decision 7, dated note): agent and route on line 1, the model on
   // line 2, so what a launch will run with stands under the prompt rather than inside Details.
   // Everything that stops a launch for one of these choices is explained here, never behind a fold.
-  const routeProblem = prefsLoading || savedUnusable || routeMissing;
+  const routeProblem = prefsLoading || savedUnusable || routeMissing || bedrockBlocked || routeModelBlocked;
+  // What the route chip says is wrong, most basic first (the launch is blocked on each of these).
+  const routeWhy = tr(
+    prefsLoading
+      ? "launch.route_loading"
+      : savedUnusable
+        ? "launch.route_default_unusable"
+        : routeMissing
+          ? "launch.route_required_hint"
+          : chosenRoute === "bedrock" && !regionOk(bedrockRegion)
+            ? "launch.bedrock_region_invalid"
+            : bedrockModelBad
+              ? "launch.bedrock_model_invalid"
+              : "launch.bedrock_model_needed",
+  );
   const routeLabel = chosenRoute ? tr(("cred.route." + chosenRoute) as never) : emptyOk ? tr("launch.route_default_short") : tr("launch.route_choose");
   const routeStrip =
     (routeOptions.length > 0 || routeMissing) && !!kinds.length
@@ -1008,6 +1043,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           label: routeLabel,
           custom: !!chosenRoute,
           problem: routeProblem,
+          why: routeWhy,
           panel: (
             <div className="ui-field">
               <span className="ui-field-label">{tr("launch.field.route")}</span>
@@ -1018,6 +1054,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                   mark("route");
                   setRoute(e.target.value);
                   setPolicyErr(null);
+                  // What was dropped for the old route no longer applies; a new drop sets it again.
+                  setModelNotice("");
                 }}
               >
                 {emptyOk ? (
@@ -1059,11 +1097,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   );
   const stripBelow = (
     <>
-      {routeProblem && !!kinds.length && (
-        <span className="ui-field-hint ui-field-hint--warn run-strip-why" role="status">
-          {tr(prefsLoading ? "launch.route_loading" : savedUnusable ? "launch.route_default_unusable" : "launch.route_required_hint")}
-        </span>
-      )}
       {policyErr && (
         <div className="ui-field-hint ui-field-hint--warn launch-policy-err" role="alert">
           {tr(policyRefusalKey(policyErr))}
@@ -1110,7 +1143,6 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           <span className="ui-field-hint">{bedrockModelBad && bedrockModel.trim() !== "" ? tr("launch.bedrock_model_invalid") : tr("launch.bedrock_model_hint")}</span>
         </div>
       )}
-      {routeModelBlocked && <span className="ui-field-hint ui-field-hint--warn">{tr("launch.bedrock_model_needed")}</span>}
       {modelNotice && (
         <span className="ui-field-hint run-strip-notice" role="status">
           {tr("launch.strip.model_fallback", { model: modelNotice })}
@@ -1124,8 +1156,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       kinds={kinds}
       kind={kind}
       onPickKind={(k) => {
+        // A model picked by hand belongs to the agent it was picked for; say it was dropped.
+        const dropped = k !== kind && dirty.current.has("model") ? model : "";
         pickKindByHand(k);
-        setModelNotice("");
+        setModelNotice(dropped);
       }}
       noAgents={noAgentsNote}
       route={routeStrip}
@@ -1691,7 +1725,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         {detailsNotes}
         {launchUnknown && unknownNote}
         <div className="start-space-actions">
-          <Button variant="primary" icon="play" onClick={submit} disabled={busy || !canLaunch}>
+          <Button variant="primary" className="launch-go" icon="play" title={runWith || undefined} onClick={submit} disabled={busy || !canLaunch}>
             {busy
               ? tr("launch.launching")
               : runWith
@@ -1724,7 +1758,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         <Button variant="ghost" onClick={onClose} disabled={busy}>
           {tr("common.cancel")}
         </Button>
-        <Button variant="primary" onClick={submit} disabled={busy || !canLaunch}>
+        <Button variant="primary" className="launch-go" title={runWith || undefined} onClick={submit} disabled={busy || !canLaunch}>
           {busy && stash !== "busy"
             ? tr("launch.launching")
             : runWith

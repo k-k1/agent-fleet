@@ -866,6 +866,10 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     await choose(must(routeSelect(), "the route picker"), "bedrock");
     await type(must(modelInput(), "the model id field"), "");
     expect(byText("Start in a worktree").disabled).toBe(true);
+    // The route chip carries the reason: warned, and described by the line that says what to fix.
+    const chip = must(document.querySelector<HTMLElement>(".run-chip--route"), "route chip");
+    expect(chip.className).toContain("run-chip--warn");
+    expect(document.getElementById(chip.getAttribute("aria-describedby")!)?.textContent).toMatch(/Bedrock|model/i);
     expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
     await type(must(modelInput(), "the model id field"), "eu.anthropic.claude-opus-5-5");
     expect(byText("Start in a worktree").disabled).toBe(false);
@@ -873,6 +877,8 @@ describe("LaunchModal bedrock route (ADR 0128 P2b)", () => {
     expect(byText("Start in a worktree").disabled).toBe(true);
     await type(must(regionInput(), "the region field"), "us-west-2");
     expect(byText("Start in a worktree").disabled).toBe(false);
+    expect(chip.className).not.toContain("run-chip--warn");
+    expect(chip.getAttribute("aria-describedby")).toBeNull();
     expect(secHead("Details").getAttribute("aria-expanded")).toBe("false");
   });
 

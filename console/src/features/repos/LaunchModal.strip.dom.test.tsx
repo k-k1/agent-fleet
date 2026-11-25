@@ -8,11 +8,15 @@ import type { Mock } from "vitest";
 import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
+// What the server's synced ui-prefs say when the strip asks again (another device's edits).
+let serverPrefs: unknown = {};
+let prefsReads = 0;
 vi.mock("../../core/api/client.ts", () => ({
   apiJSON: async () => ({}),
   getTenant: () => "",
   getUser: () => "",
-  api: async (url: string) => (url.includes("api/ssm/profiles") ? [] : url.includes("api/me/ui-state") ? {} : { branches: [] }),
+  api: async (url: string) =>
+    url.includes("api/env/ui-prefs") ? (prefsReads++, serverPrefs) : url.includes("api/ssm/profiles") ? [] : url.includes("api/me/ui-state") ? {} : { branches: [] },
   repoPromptTemplates: async () => ({ groups: [] }),
   errText: (e: { message?: string }) => e?.message ?? "",
   errDetail: (e: { message?: string }) => e?.message ?? "",
@@ -21,7 +25,7 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { LaunchModal, SpaceLaunchForm } = await import("./LaunchModal.tsx");
 const { resetAttachDraftDB, useAttachDraft } = await import("../../lib/attachDraft.ts");
-const { setSettings } = await import("../../lib/settings.ts");
+const { setSettings, cancelPrefsTimersForTest } = await import("../../lib/settings.ts");
 const { readRecentModels, rememberRecentModel } = await import("../../lib/recentModels.ts");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -107,6 +111,7 @@ beforeEach(() => {
   globalThis.indexedDB = new IDBFactory();
   resetAttachDraftDB();
   setSettings({ claudeCustomModels: REGISTERED });
+  serverPrefs = {};
   onLaunch = vi.fn<Launch>(async () => ({ ok: true }));
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -225,5 +230,92 @@ describe("recents are written by a launch", () => {
     await click(primary());
     expect(onLaunch).toHaveBeenCalledTimes(1);
     expect(readRecentModels("claude")).toEqual([]);
+  });
+});
+
+describe("remembered model that is no longer offered", () => {
+  it("resolves to the default with a notice, the same value on every layout and in the POST", async () => {
+    localStorage.setItem("af.repo-model.app", "removed-on-another-device");
+    await renderDialog(["claude"]);
+    expect(active()).toHaveLength(1);
+    expect(modelRow().querySelector<HTMLSelectElement>(".run-model-narrow")!.value).toBe(active()[0].title);
+    expect(primary().textContent).not.toContain("removed-on-another-device");
+    expect(strip().querySelector(".run-strip-notice")!.textContent).toContain("removed-on-another-device");
+    await click(primary());
+    expect(onLaunch.mock.calls[0][0].model).toBe(active()[0].title);
+  });
+});
+
+describe("registered models of another device", () => {
+  it("asks the server for the synced prefs again when the row opens", async () => {
+    cancelPrefsTimersForTest(); // the beforeEach's own setSettings left a debounced save that would defer the re-read
+    await Promise.resolve();
+    const before = prefsReads;
+    await renderDialog(["claude"]);
+    await settle();
+    expect(prefsReads).toBeGreaterThan(before);
+  });
+});
+
+describe("recents ignore tier aliases", () => {
+  it("keeps three registered models when a launch uses an alias", async () => {
+    for (const m of ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-7"]) rememberRecentModel("claude", m);
+    await renderDialog(["claude"]);
+    await click(rowButtons().find((b) => b.textContent === "Opus")!);
+    await click(primary());
+    expect(onLaunch).toHaveBeenCalledTimes(1);
+    expect(readRecentModels("claude")).toEqual(["claude-opus-4-7", "claude-sonnet-4-6", "claude-haiku-4-5"]);
+  });
+});
+
+describe("launch button names what it runs with", () => {
+  it("says the default for an agent whose model is left to the CLI", async () => {
+    await renderDialog(["codex"]);
+    expect(primary().textContent).toContain("Codex · default model");
+  });
+  it("keeps a long registered id in the title and ellipsizes through the launch-go class", async () => {
+    setSettings({ claudeCustomModels: [...REGISTERED, "claude-a-very-long-registered-model-id-20260101"] });
+    await renderDialog(["claude"]);
+    const sel = moreSelect()!;
+    await act(async () => {
+      sel.value = "claude-a-very-long-registered-model-id-20260101";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(primary().className).toContain("launch-go");
+    expect(primary().title).toContain("a-very-long-registered-model-id-20260101");
+  });
+});
+
+describe("panels and chips agree", () => {
+  const chips = () => [...strip().querySelectorAll<HTMLButtonElement>(".run-chip")];
+  it("reports every chip as expanded when the combined chip opened the panels, and closes on Escape", async () => {
+    await renderDialog(["claude", "codex"]);
+    const combo = strip().querySelector<HTMLButtonElement>(".run-chip--combo")!;
+    await click(combo);
+    expect(chips().every((c) => c.getAttribute("aria-expanded") === "true" || c.classList.contains("run-chip--route"))).toBe(true);
+    expect(strip().querySelector<HTMLElement>(".run-chip--agent")!.getAttribute("aria-expanded")).toBe("true");
+    expect([...strip().querySelectorAll<HTMLElement>(".run-strip-panel")].every((p) => p.hidden === false)).toBe(true);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(chips().every((c) => c.getAttribute("aria-expanded") === "false")).toBe(true);
+    expect([...strip().querySelectorAll<HTMLElement>(".run-strip-panel")].every((p) => p.hidden)).toBe(true);
+  });
+
+  it("returns the focus to the agent chip after a pick", async () => {
+    await renderDialog(["claude", "codex"]);
+    const chip = strip().querySelector<HTMLButtonElement>(".run-chip--agent")!;
+    await click(chip);
+    await click(strip().querySelectorAll<HTMLButtonElement>(".ui-seg.big .seg-btn")[1]);
+    expect(document.activeElement).toBe(chip);
+  });
+});
+
+describe("a manual model dropped by an agent switch", () => {
+  it("is named in the notice, and a later manual pick clears it", async () => {
+    await renderDialog(["claude", "codex"]);
+    await click(rowButtons().find((b) => b.textContent === "Sonnet")!);
+    await click(strip().querySelectorAll<HTMLButtonElement>(".ui-seg.big .seg-btn")[1]);
+    expect(strip().querySelector(".run-strip-notice")!.textContent).toContain("sonnet");
   });
 });
