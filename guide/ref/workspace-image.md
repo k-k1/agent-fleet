@@ -40,11 +40,11 @@ The tools a workspace comes with, the version the image fixes, and each tool's l
 | Tool | What it is for | Version | Licence |
 |---|---|---|---|
 | [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub from the command line, signed in with your Git hosting connection | `2.105.0` | [MIT](https://github.com/cli/cli/blob/v2.105.0/LICENSE) |
-| [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket pull requests and pipelines, signed in with your Git hosting connection | `0.40.4` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.40.4/LICENSE) |
+| [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket pull requests and pipelines, signed in with your Git hosting connection | `0.41.0` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.41.0/LICENSE) |
 | [Jira CLI (`jira`)](https://github.com/ankitpokhrel/jira-cli) | Jira issues, signed in with your issue tracker connection | `1.7.0` | [MIT](https://github.com/ankitpokhrel/jira-cli/blob/v1.7.0/LICENSE) |
 | [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence pages, signed in with the same Atlassian connection as Jira | `2.31.3` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.3/LICENSE) |
 | [Apache Subversion (`svn`)](https://subversion.apache.org/) | Subversion repositories, with the credentials of your connection | Debian 13 (trixie) package | [Apache-2.0](https://github.com/apache/subversion/blob/trunk/LICENSE) |
-| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS from the command line; run it through `af-aws-exec` | `2.42.2` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.42.2/LICENSE.txt) |
+| [AWS CLI (`aws`)](https://github.com/aws/aws-cli) | AWS from the command line; run it through `af-aws-exec` | `2.42.3` | [Apache-2.0](https://github.com/aws/aws-cli/blob/2.42.3/LICENSE.txt) |
 | [Session Manager plugin](https://github.com/aws/session-manager-plugin) | Opens SSM sessions for the AWS CLI | `1.2.835.0` | [Apache-2.0](https://github.com/aws/session-manager-plugin/blob/1.2.835.0/LICENSE) |
 | [Google Cloud CLI (`gcloud`)](https://cloud.google.com/sdk) | Google Cloud from the command line; run it through `af-gcloud-exec` | `594.0.1` | [Apache-2.0](https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-cli-594.0.1-linux-x86_64.tar.gz) |
 

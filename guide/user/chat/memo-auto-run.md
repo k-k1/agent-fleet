@@ -342,6 +342,8 @@ Memos run oldest first, so a memo added later waits behind every memo added befo
 
 The "**Auto-run**" view of the left pane (the icon right after "Memo queue") lists the runs of every auto-run category, one row per run and not one per working copy. Its head shows the title and the number of runs that are running or waiting for you, with "**Clear finished runs**" and a refresh button.
 
+A filter box at the top of the view narrows the runs. It matches, case-insensitively, a run's category, its work item (title, key, or `#N` / `PROJ-12`), and its own session and the sessions it started, such as reviewers (name, slug, branch, worktree folder). A run stays listed when one of its children matches; categories with no match are hidden, and the "**Ended N**" fold is open while you filter. **Esc** or the × button clears the filter, and **Enter** moves to the first row. With no match the view says "No runs match the filter."
+
 The view follows the [working set](../fleet/working-sets.md) you picked: a category is listed when its repository is in the set. A category without a repository, and runs that no category names, are listed under every set.
 
 A run is listed under the category whose delivery started it, also after that delivery has left the newest 50 of the category's history: the session records its category when it starts. "**Other runs**" holds the runs whose category cannot be told: the category no longer exists (its auto-run settings were deleted), or neither the delivery nor the session names one (the session was started before sessions recorded it, or you used Recreate on the run's session).

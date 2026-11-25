@@ -78,6 +78,10 @@ home volume after a confirmation.
 
 Hover over a cell to see the path and the command's output.
 
+Each row shows the product's name, linked to its upstream project, so you can tell which tool a row is. The list includes gitleaks and session-manager-plugin.
+
+gcloud is not in the image: it is installed on demand (`workspace-agent install-gcloud`). An installed gcloud keeps its version when the image's pin moves to a newer one. Its row then shows the new pin in the warning colour until you reinstall it with the same command.
+
 - **install failed: …**: a tool that could not be installed when the workspace started. The next start tries again
 - **upgrade skipped: home disk full, old version in use**: there was not enough space, so the start-time update was skipped. The installed version keeps working
 
