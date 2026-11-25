@@ -16,6 +16,7 @@
 // The preview is read without the Agent's gate and can be stale by the time the user confirms;
 // the move checks everything again, so a refusal it answers is shown as the result, not guessed
 // at here.
+import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -369,8 +370,7 @@ function MoveForm({
 
       {(preview.queued?.length ?? 0) > 0 && (
         <div className="ui-field move-queued">
-          <span className="ui-field-label">{tr("move.queued_label", { n: preview.queued!.length })}</span>
-          <div className="ui-field-hint">{tr("move.queued_hint")}</div>
+          <FieldLabel as="span" info={tr("move.queued_hint")}>{tr("move.queued_label", { n: preview.queued!.length })}</FieldLabel>
           <ul className="move-list">
             {preview.queued!.map((q, i) => (
               <li key={i}>{q.text}</li>
@@ -380,8 +380,7 @@ function MoveForm({
       )}
       {(preview.peers?.length ?? 0) > 0 && (
         <div className="ui-field move-peers">
-          <span className="ui-field-label">{tr("move.peers_label", { n: preview.peers!.length })}</span>
-          <div className="ui-field-hint">{tr("move.peers_hint")}</div>
+          <FieldLabel as="span" info={tr("move.peers_hint")}>{tr("move.peers_label", { n: preview.peers!.length })}</FieldLabel>
           <ul className="move-list">
             {preview.peers!.map((p, i) => (
               <li key={i}>
@@ -394,13 +393,12 @@ function MoveForm({
       )}
       {(children.length > 0 || (preview.proposals?.length ?? 0) > 0) && (
         <div className="ui-field move-children">
-          <span className="ui-field-label">{tr("move.children_label")}</span>
+          <FieldLabel as="span" info={tr("move.children_hint")}>{tr("move.children_label")}</FieldLabel>
           {warnings.includes("children_running") && (
             <div className="ui-field-hint ui-field-hint--warn move-warn-children">
               <Icon name="warning" /> {tr("move.warn.children_running")}
             </div>
           )}
-          <div className="ui-field-hint">{tr("move.children_hint")}</div>
           <ul className="move-list">
             {children.map((c) => (
               <li key={c.name}>

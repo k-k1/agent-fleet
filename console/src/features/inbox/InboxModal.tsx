@@ -11,8 +11,9 @@
 // are not inbox items: they come from the handoff store (GET /api/session-handoff-offers/received)
 // and expanding one renders the same HandoffOfferRow the shared view and the handoff dialog use,
 // so taking it over, declining and giving back behave exactly as there.
+import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -329,6 +330,7 @@ function LaunchRow({ item }: { item: InboxItem }) {
   const toast = useToast();
   const repos = useReposStore((s) => s.repos);
   const [repoName, setRepoName] = useState(() => repos[0]?.name || "");
+  const repoId = useId();
   const launch = () => {
     const repo = repos.find((r) => r.name === repoName);
     if (!repo?.path) {
@@ -341,18 +343,19 @@ function LaunchRow({ item }: { item: InboxItem }) {
   };
   return (
     <div className="inbox-launch">
-      <label className="ui-field">
-        <span className="ui-field-label">{tr("inbox.launch_repo")}</span>
-        <select value={repoName} onChange={(e) => setRepoName(e.target.value)}>
+      <div className="ui-field">
+        <FieldLabel htmlFor={repoId} info={tr("inbox.launch_hint")}>
+          {tr("inbox.launch_repo")}
+        </FieldLabel>
+        <select id={repoId} value={repoName} onChange={(e) => setRepoName(e.target.value)}>
           {repos.map((r) => (
             <option key={r.name} value={r.name}>
               {r.name}
             </option>
           ))}
         </select>
-      </label>
+      </div>
       {repos.length === 0 && <p className="ui-field-hint inbox-warn">{tr("inbox.launch_no_repo")}</p>}
-      <p className="ui-field-hint">{tr("inbox.launch_hint")}</p>
       <Button variant="primary" disabled={!repoName} onClick={launch}>
         <Icon name="run" /> {tr("inbox.launch")}
       </Button>
@@ -488,20 +491,21 @@ function Compose({ onSent }: { onSent: () => void }) {
         <span className="ui-field-label">{tr("inbox.compose_to")}</span>
         <MemberPicker chosen={to} onChange={setTo} max={INBOX_MAX_RECIPIENTS} />
       </div>
-      <label className="ui-field">
-        <span className="ui-field-label">{tr("inbox.compose_body")}</span>
-        <textarea {...NO_AUTOFILL} rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
+      <div className="ui-field">
+        <FieldLabel htmlFor="inbox-compose-body" info={tr("inbox.compose_agents_note")}>
+          {tr("inbox.compose_body")}
+        </FieldLabel>
+        <textarea {...NO_AUTOFILL} id="inbox-compose-body" rows={6} value={body} onChange={(e) => setBody(e.target.value)} />
         <span className={"ui-field-hint" + (bytes > INBOX_BODY_MAX_BYTES ? " inbox-warn" : "")}>
           {tr("inbox.compose_bytes", { n: String(bytes), max: String(INBOX_BODY_MAX_BYTES) })}
         </span>
-      </label>
+      </div>
       <label className="inbox-check">
         <input type="checkbox" checked={!!recipe} onChange={(e) => setRecipe(e.target.checked ? emptyRecipe() : null)} />
         <span>{tr("inbox.attach_recipe")}</span>
       </label>
       {recipe && <RecipeEditor value={recipe} onChange={setRecipe} />}
       <SessionAttachEditor value={sessions} recipients={to} onChange={setSessions} />
-      <p className="ui-field-hint">{tr("inbox.compose_agents_note")}</p>
       {err && (
         <p className="ui-field-hint inbox-warn" role="alert">
           {err}
@@ -569,11 +573,12 @@ function SettingsPane() {
           <MemberPicker chosen={s.allowed} onChange={(allowed) => setS({ ...s, allowed })} />
         </div>
       )}
-      <label className="inbox-check">
-        <input type="checkbox" checked={s.dnd} onChange={(e) => setS({ ...s, dnd: e.target.checked })} />
-        <span>{tr("inbox.settings_dnd")}</span>
-      </label>
-      <p className="ui-field-hint">{tr("inbox.settings_handoff_note")}</p>
+      <div className="ui-field">
+        <FieldLabel plain className="inbox-check" info={tr("inbox.settings_handoff_note")}>
+          <input type="checkbox" checked={s.dnd} onChange={(e) => setS({ ...s, dnd: e.target.checked })} />
+          <span>{tr("inbox.settings_dnd")}</span>
+        </FieldLabel>
+      </div>
       <div className="inbox-actions">
         <Button variant="primary" onClick={() => void save()}>
           {tr("inbox.settings_save")}

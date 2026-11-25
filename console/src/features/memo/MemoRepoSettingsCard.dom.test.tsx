@@ -92,7 +92,7 @@ async function render(props: { hasQueue?: boolean; blocked?: boolean; dirty?: bo
   await flush();
 }
 
-const buttons = () => [...host.querySelectorAll<HTMLButtonElement>("button")];
+const buttons = () => [...host.querySelectorAll<HTMLButtonElement>("button:not(.ui-field-info)")];
 const click = async (el: HTMLElement) => {
   await act(async () => el.click());
   await flush();

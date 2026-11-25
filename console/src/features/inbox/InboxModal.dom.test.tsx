@@ -87,6 +87,32 @@ describe("ItemCard", () => {
     expect(byText("辞退する") ?? byText("Decline")).toBeTruthy();
   });
 
+  it("binds each expanded row's repo label to its own select", async () => {
+    const mine = { ...base, state: "claimed" as const, canClaim: false, delivery: "read" as const, assignedToMe: true, assignee: { userKey: "me", email: "me@example.com", removed: false } };
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    await act(async () => {
+      root = createRoot(host!);
+      root.render(
+        <ToastProvider>
+          <ul>
+            <ItemCard item={{ ...mine, id: "i1" }} />
+            <ItemCard item={{ ...mine, id: "i2" }} />
+          </ul>
+        </ToastProvider>,
+      );
+    });
+    for (const h of document.querySelectorAll<HTMLButtonElement>(".inbox-card-head")) {
+      await act(async () => h.click());
+    }
+    const rows = [...document.querySelectorAll(".inbox-launch")];
+    expect(rows.length).toBe(2);
+    for (const r of rows) {
+      const label = r.querySelector<HTMLLabelElement>("label")!;
+      expect(label.control).toBe(r.querySelector("select"));
+    }
+  });
+
   it("shows no claim button on a request somebody else took", async () => {
     await render({ ...base, state: "claimed", canClaim: false, delivery: "read", assignee: { userKey: "c", email: "c@example.com", removed: false } });
     await act(async () => {

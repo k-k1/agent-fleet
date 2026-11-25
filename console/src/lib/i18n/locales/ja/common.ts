@@ -60,6 +60,7 @@ export const common = {
 
   // --- 共通 ---
   "common.close": "閉じる",
+  "common.field_info": "説明を表示",
 
   // --- 共通（ロード/起動）---
   "common.loading": "読み込み中…",

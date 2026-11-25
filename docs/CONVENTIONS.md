@@ -446,3 +446,19 @@ A page that moves, or a section that moves out of a page, gets a row in `guide/_
 `python3 scripts/docs-check.py --only redirects`. It lists every link, policy note, topic note, Go string, Console
 string and runbook that still uses the old path, with the new path to put there. Fix them in the same change. Frozen
 records (`docs/decisions/`, `docs/log/`, published release notes) keep the old path.
+
+## 13. Field explanations in Console forms
+
+A form field's label and its control are all that is inline by default. Under the field:
+
+- **Static explanation** (true whatever the value or state: what the field means, units,
+  `0 = no limit`, a format) goes behind an ⓘ next to the label, using the shared
+  `console/src/ui/FieldLabel.tsx`. The ⓘ is a real button (keyboard reachable, toggles on
+  Enter / Space, Escape closes) and the text is wired with `aria-describedby`. Do not
+  hand-roll a `ui-field-hint` under a label for this.
+- **State notices stay inline**: anything that reports the current state or the reason
+  something is blocked or invalid (a validation error, "no repositories", "turned off by the
+  administrator", a warning) is shown next to the field, not behind ⓘ.
+- **An option's meaning** (radio / segmented options) stays on the option.
+- Placeholders are short examples, not sentences.
+- Warnings are never hidden behind ⓘ, even in administrator-facing settings.

@@ -160,10 +160,10 @@ describe("settings form", () => {
     const { memo: ja } = await import("../../lib/i18n/locales/ja/memo.ts");
     expect(en["memo.q_accept_own_hint"]).toMatch(/started yourself start without your approval/);
     expect(en["memo.q_accept_own_hint"]).toMatch(/auto-run, a schedule or another session started still wait for your approval/);
-    expect(en["memo.q_accept_own_hint"]).toMatch(/pass itself off as a session you started/);
+    expect(en["memo.q_accept_own_warn"]).toMatch(/pass itself off as a session you started/);
     expect(ja["memo.q_accept_own_hint"]).toMatch(/承認を待たずに実行待ちになります/);
     expect(ja["memo.q_accept_own_hint"]).toMatch(/自動実行・スケジュール・ほかのセッションが起動したセッションのメモは、これまでどおり承認を待ちます/);
-    expect(ja["memo.q_accept_own_hint"]).toMatch(/なりすまして/);
+    expect(ja["memo.q_accept_own_warn"]).toMatch(/なりすまして/);
   });
   it("needs an instruction only to turn it on", () => {
     expect(draftErrors({ ...draftOf(undefined) })).toEqual({});

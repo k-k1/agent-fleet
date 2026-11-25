@@ -80,6 +80,21 @@ describe("MemoQueueSettingsModal agent picker", () => {
   });
 });
 
+describe("MemoQueueSettingsModal field explanations", () => {
+  it("keeps the static explanation behind ⓘ and the validation error inline", async () => {
+    await render();
+    const budget = document.getElementById("memo-q-budget") as HTMLInputElement;
+    const info = budget.closest(".ui-field")!.querySelector<HTMLButtonElement>(".ui-field-info")!;
+    const panel = document.getElementById(info.getAttribute("aria-describedby")!)!;
+    expect(panel.textContent).toMatch(/0/);
+    expect(panel.hidden).toBe(true);
+    await act(async () => info.click());
+    expect(panel.hidden).toBe(false);
+    // No hint line sits under the field while the form is valid.
+    expect(budget.closest(".ui-field")!.querySelectorAll(".ui-field-hint:not(.ui-field-info-panel)").length).toBe(0);
+  });
+});
+
 describe("MemoQueueSettingsModal accept-from-own-sessions switch", () => {
   it("is off by default, carries the warning text, and goes into the PUT body when turned on", async () => {
     liveKinds = [{ kind: "claude", usableRoutes: ["anthropic-api"] }];
@@ -88,7 +103,10 @@ describe("MemoQueueSettingsModal accept-from-own-sessions switch", () => {
     const box = acceptBox();
     expect(box).not.toBeNull();
     expect(box!.checked).toBe(false);
-    expect(box!.closest("label")!.textContent).toMatch(/なりすま|pass itself off/);
+    // The spoofing risk is a warning: shown at once, not behind ⓘ.
+    const warn = box!.closest(".ui-field")!.querySelector<HTMLElement>(".ui-field-hint--warn")!;
+    expect(warn.hidden).toBe(false);
+    expect(warn.textContent).toMatch(/なりすま|pass itself off/);
     const save = async () => {
       await act(async () => {
         document.querySelector("form")!.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
@@ -117,7 +135,7 @@ describe("MemoQueueSettingsModal repository settings card", () => {
     await flush();
   };
   const checkFile = async () => {
-    await act(async () => document.querySelector<HTMLButtonElement>(".memo-reposet-head button")!.click());
+    await act(async () => document.querySelector<HTMLButtonElement>(".memo-reposet-head button:not(.ui-field-info)")!.click());
     await flush();
   };
   const approveBtn = () => document.querySelector<HTMLButtonElement>(".memo-reposet-card .ui-btn-primary")!;
