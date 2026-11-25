@@ -266,7 +266,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # Versions are pinned by ARG through versioned URLs (docs/log/35 §35.9-7(c)); bump the ARGs
 # below and rebuild.
-ARG AWSCLI_VERSION=2.42.2
+ARG AWSCLI_VERSION=2.42.3
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -305,7 +305,7 @@ RUN set -eux; \
 # The real binary goes to /usr/local/libexec/bkt and /usr/local/bin/bkt is the transparent-auth
 # wrapper (bkt-auth-wrapper.sh, COPY'd with the other wrappers below). The tarball must match the
 # release's own checksums.txt, or the build fails. Bump BKT_VERSION to upgrade (docs/build/08 §8.3).
-ARG BKT_VERSION=0.40.4
+ARG BKT_VERSION=0.41.0
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) bktarch=x86_64 ;; arm64) bktarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \
