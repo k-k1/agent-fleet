@@ -13,6 +13,40 @@ From 0.24.0, a line that came from a GitHub issue ends with its number, linked t
 <https://github.com/k-k1/agent-fleet/issues>, where bugs and requests are tracked.
 
 ---
+## [0.50.0](0.50.0.md) — 2026-11-25
+
+**CLI pins** — Claude Code 2.1.332 / OpenCode 2.4.1 / Codex 0.172.0 / Copilot 1.0.115 / Antigravity 1.5.17
+
+**New / Improved**
+
+- **[spaces]** Spaces: start in a new or existing folder under `~/spaces`; Spaces section in Sessions; rename; delete through the trash with their sessions; attachments copied in ([#4963](https://github.com/k-k1/agent-fleet/issues/4963), [#4965](https://github.com/k-k1/agent-fleet/issues/4965))
+- **[sessions]** Start screen in three sections (space / repository / other) with one shared draft; "Start working" asks what, then where, then Details ([#4963](https://github.com/k-k1/agent-fleet/issues/4963))
+- **[terminals]** Terminals view: shells by place, SSM sessions by host, "Start a terminal" ([#4966](https://github.com/k-k1/agent-fleet/issues/4966), [#5169](https://github.com/k-k1/agent-fleet/issues/5169))
+- **[sessions]** Active view: running and waiting sessions as cards by repository and space; families fold; auto-run and schedule groups start folded ([#5154](https://github.com/k-k1/agent-fleet/issues/5154), [#5165](https://github.com/k-k1/agent-fleet/issues/5165))
+- **[console]** Activity-bar menu turns each view's icon on or off, synced; amber dot for a hidden view that waits ([#4964](https://github.com/k-k1/agent-fleet/issues/4964))
+- **[sessions]** Run-with strip: agent, route and model under the first prompt, recent models, launch button names what it starts ([#5146](https://github.com/k-k1/agent-fleet/issues/5146))
+- **[memos]** "Run next" mark on a waiting memo; `add_memo` can set it ([#5021](https://github.com/k-k1/agent-fleet/issues/5021))
+- **[schedules]** "Also show in the Sessions view": a schedule's worktree sessions listed as yours ([#5070](https://github.com/k-k1/agent-fleet/issues/5070))
+- **[notifications]** Web Push off switches per origin (auto-run, schedule, sessions they start); title names the origin ([#5081](https://github.com/k-k1/agent-fleet/issues/5081))
+- **[memory]** Promote to project documents: candidates, proposed change, retire after merge; lint checks document targets ([#3498](https://github.com/k-k1/agent-fleet/issues/3498))
+- **[boost]** Monthly boost budget enforced; boosted hours per member on the Boost card and member detail ([#4417](https://github.com/k-k1/agent-fleet/issues/4417))
+- **[memos]** Auto-run view filter box ([#5115](https://github.com/k-k1/agent-fleet/issues/5115))
+- **[console]** Static field explanations behind an ⓘ in launch forms, dialogs and tenant settings ([#5147](https://github.com/k-k1/agent-fleet/issues/5147), [#5148](https://github.com/k-k1/agent-fleet/issues/5148))
+- **[toolchains]** Product names with upstream links; gitleaks and Session Manager plugin rows ([#5072](https://github.com/k-k1/agent-fleet/issues/5072), [#5068](https://github.com/k-k1/agent-fleet/issues/5068))
+- **[memos]** Last-answer read reaches further back and does not stall on stopped members ([#4891](https://github.com/k-k1/agent-fleet/issues/4891))
+- **[workspace]** OpenCode 2.4 supported; tools updated: Chromium 156.0.8078.108, Go 1.26.11, AWS CLI 2.42.3, gcloud 594.0.1, bkt 0.41.0, Confluence CLI 2.31.3, mcp-grafana 2.4.0, CloudWatch MCP 0.3.2, AWS MCP Proxy 2.0.0 ([#4982](https://github.com/k-k1/agent-fleet/issues/4982), [#5180](https://github.com/k-k1/agent-fleet/issues/5180), [#5181](https://github.com/k-k1/agent-fleet/issues/5181))
+
+**Fixed**
+
+- **[custom-api]** Managed session could not start with the custom endpoint as the only provider ([#4789](https://github.com/k-k1/agent-fleet/issues/4789))
+- **[memos]** Refused save lost the draft; retried send resent batches; image pasted before a delete lost its file; pointed memo scrolled away ([#4939](https://github.com/k-k1/agent-fleet/issues/4939), [#4830](https://github.com/k-k1/agent-fleet/issues/4830), [#4827](https://github.com/k-k1/agent-fleet/issues/4827), [#4943](https://github.com/k-k1/agent-fleet/issues/4943))
+- **[schedules]** "Review & approve" after a refusal reopened the old copy; "Finished" fold reopened ([#4856](https://github.com/k-k1/agent-fleet/issues/4856), [#4762](https://github.com/k-k1/agent-fleet/issues/4762))
+- **[notifications]** Web Push tap opened the wrong tenant; device switch state after sign-out / re-registration; pushes held after leaving a session ([#4870](https://github.com/k-k1/agent-fleet/issues/4870), [#4841](https://github.com/k-k1/agent-fleet/issues/4841), [#4866](https://github.com/k-k1/agent-fleet/issues/4866))
+- **[notifications]** One oversized or malformed notification held back the rest ([#4862](https://github.com/k-k1/agent-fleet/issues/4862), [#4863](https://github.com/k-k1/agent-fleet/issues/4863))
+- **[security]** Text glued after a masked token stayed in clear; some short `ghs_` tokens missed ([#4945](https://github.com/k-k1/agent-fleet/issues/4945), [#4948](https://github.com/k-k1/agent-fleet/issues/4948))
+- **[console]** Memory "Run now" could write to another tenant; removed member reappeared; browser autofill in free-text fields ([#4925](https://github.com/k-k1/agent-fleet/issues/4925), [#4903](https://github.com/k-k1/agent-fleet/issues/4903), [#5123](https://github.com/k-k1/agent-fleet/issues/5123))
+- **[ecs]** Teardown without `--purge-secrets` deleted CP secrets under an `/af-ws/` SsmPrefix ([#4894](https://github.com/k-k1/agent-fleet/issues/4894))
+
 ## [0.49.0](0.49.0.md) — 2026-11-23
 
 **CLI pins** — Antigravity 1.5.15 / gitleaks 8.30.1 (new)

@@ -12,6 +12,40 @@
 <https://github.com/k-k1/agent-fleet/issues>（不具合と要望の管理先）へリンクしています。
 
 ---
+## [0.50.0](0.50.0.ja.md) — 2026-11-25
+
+**CLI ピン** — Claude Code 2.1.332 / OpenCode 2.4.1 / Codex 0.172.0 / Copilot 1.0.115 / Antigravity 1.5.17
+
+**New / Improved**
+
+- **[スペース]** スペース: `~/spaces` の下の新しい・既存のフォルダで始める、セッションのビューの欄、名前の変更、セッションごとごみ箱へ削除、添付を写す ([#4963](https://github.com/k-k1/agent-fleet/issues/4963), [#4965](https://github.com/k-k1/agent-fleet/issues/4965))
+- **[セッション]** 「はじめる」画面を 3 つの欄（スペース・リポジトリ・その他）に、下書きは共通。「作業を始める」は何を→場所→詳細の順 ([#4963](https://github.com/k-k1/agent-fleet/issues/4963))
+- **[ターミナル]** ターミナルのビュー: シェルは場所ごと、SSM はホストごと、「ターミナルを開始」 ([#4966](https://github.com/k-k1/agent-fleet/issues/4966), [#5169](https://github.com/k-k1/agent-fleet/issues/5169))
+- **[セッション]** 稼働中のビュー: 動いている・待っているセッションをリポジトリとスペースごとにカードで、子のセッションは親の下に折りたたみ、自動実行とスケジュールのグループは折りたたんで始まる ([#5154](https://github.com/k-k1/agent-fleet/issues/5154), [#5165](https://github.com/k-k1/agent-fleet/issues/5165))
+- **[console]** アクティビティバーのメニューでビューごとにアイコンを出す・隠す（同期）、隠したビューが待つと琥珀色の点 ([#4964](https://github.com/k-k1/agent-fleet/issues/4964))
+- **[セッション]** 実行する設定の帯: 最初のプロンプトの下でエージェント・経路・モデル、最近のモデル、起動ボタンに何を始めるか ([#5146](https://github.com/k-k1/agent-fleet/issues/5146))
+- **[メモ]** 待っているメモに「次に実行」の印、`add_memo` でも付けられる ([#5021](https://github.com/k-k1/agent-fleet/issues/5021))
+- **[スケジュール]** 「セッション一覧にも表示」: スケジュールのワークツリーのセッションをあなたのものとして並べる ([#5070](https://github.com/k-k1/agent-fleet/issues/5070))
+- **[通知]** Web Push を発生元（自動実行・スケジュール・それらが起動したセッション）ごとに止める、タイトルに発生元 ([#5081](https://github.com/k-k1/agent-fleet/issues/5081))
+- **[メモリ]** プロジェクトの文書へ昇格: 候補、変更の提案、マージ後にメモリを退かせる、lint が文書の行き先を確かめる ([#3498](https://github.com/k-k1/agent-fleet/issues/3498))
+- **[ブースト]** 月ごとのブーストの予算が効く、ブーストのカードとメンバーの詳細にメンバーごとの時間 ([#4417](https://github.com/k-k1/agent-fleet/issues/4417))
+- **[メモ]** 自動実行のビューに絞り込み欄 ([#5115](https://github.com/k-k1/agent-fleet/issues/5115))
+- **[console]** 起動のフォーム・ダイアログ・テナントの設定で、欄の説明を ⓘ へ ([#5147](https://github.com/k-k1/agent-fleet/issues/5147), [#5148](https://github.com/k-k1/agent-fleet/issues/5148))
+- **[ツールチェーン]** 製品名と配布元へのリンク、gitleaks と Session Manager プラグインの行 ([#5072](https://github.com/k-k1/agent-fleet/issues/5072), [#5068](https://github.com/k-k1/agent-fleet/issues/5068))
+- **[メモ]** 最後の回答をより遡って読み、止まっているメンバーで滞らない ([#4891](https://github.com/k-k1/agent-fleet/issues/4891))
+- **[ワークスペース]** OpenCode 2.4 に対応、ツールを更新: Chromium 156.0.8078.108 / Go 1.26.11 / AWS CLI 2.42.3 / gcloud 594.0.1 / bkt 0.41.0 / Confluence CLI 2.31.3 / mcp-grafana 2.4.0 / CloudWatch MCP 0.3.2 / AWS MCP Proxy 2.0.0 ([#4982](https://github.com/k-k1/agent-fleet/issues/4982), [#5180](https://github.com/k-k1/agent-fleet/issues/5180), [#5181](https://github.com/k-k1/agent-fleet/issues/5181))
+
+**Fixed**
+
+- **[カスタム API]** カスタムのエンドポイントだけのとき、マネージドのセッションが始まらない ([#4789](https://github.com/k-k1/agent-fleet/issues/4789))
+- **[メモ]** 保存を断られると下書きが失われる、送信のやり直しで再送、削除直前に貼った画像が消える、指しているメモがずれる ([#4939](https://github.com/k-k1/agent-fleet/issues/4939), [#4830](https://github.com/k-k1/agent-fleet/issues/4830), [#4827](https://github.com/k-k1/agent-fleet/issues/4827), [#4943](https://github.com/k-k1/agent-fleet/issues/4943))
+- **[スケジュール]** 断られた後の「確認して承認」が古い内容を開く、「終了」の折りたたみが開き直る ([#4856](https://github.com/k-k1/agent-fleet/issues/4856), [#4762](https://github.com/k-k1/agent-fleet/issues/4762))
+- **[通知]** Web Push のタップが別のテナントで開く、サインアウト・登録し直し後のスイッチの状態、セッションを離れてもプッシュが止まったまま ([#4870](https://github.com/k-k1/agent-fleet/issues/4870), [#4841](https://github.com/k-k1/agent-fleet/issues/4841), [#4866](https://github.com/k-k1/agent-fleet/issues/4866))
+- **[通知]** 大きすぎる・壊れた通知 1 件が後の通知を止める ([#4862](https://github.com/k-k1/agent-fleet/issues/4862), [#4863](https://github.com/k-k1/agent-fleet/issues/4863))
+- **[セキュリティ]** 伏せたトークンの直後の文字が伏せられない、短い `ghs_` トークンの一部を見逃す ([#4945](https://github.com/k-k1/agent-fleet/issues/4945), [#4948](https://github.com/k-k1/agent-fleet/issues/4948))
+- **[console]** メモリの「今すぐ実行」が別のテナントへ書く、外したメンバーが戻って見える、自由入力欄のブラウザの自動入力 ([#4925](https://github.com/k-k1/agent-fleet/issues/4925), [#4903](https://github.com/k-k1/agent-fleet/issues/4903), [#5123](https://github.com/k-k1/agent-fleet/issues/5123))
+- **[ecs]** `--purge-secrets` なしの撤去が `/af-ws/` の下の SsmPrefix の CP の秘密情報を消す ([#4894](https://github.com/k-k1/agent-fleet/issues/4894))
+
 ## [0.49.0](0.49.0.ja.md) — 2026-11-23
 
 **CLI ピン** — Antigravity 1.5.15 / gitleaks 8.30.1（新規）
