@@ -34,6 +34,7 @@ If a feature ships and does not appear here, it is not done
 | Resume a stopped session | member | left pane → the session | [Stop and resume a session](../user/sessions/stop-resume.md) |
 | Home — what waits for you, where you left off, at a glance, and the first-run setup | member | the empty main area, activity bar → Home, or leader `g h` | [Find your way around the screen](../user/start/console-tour.md#home) |
 | Sessions overview — every running session as a card | member | activity bar → Sessions overview, or leader `g s` | [See every running session](../user/fleet/overview.md) |
+| Active view — running sessions as cards in the left pane, by repository and space, child sessions folded | member | activity bar → Active | [See every running session](../user/fleet/overview.md#in-the-left-pane-the-active-view) |
 | Fleet graph — one lane per session, time left to right | member | sessions overview → Graph, or leader `g f` | [See how sessions relate over time](../user/fleet/graph.md) |
 | Stop every session under a working copy | member | repository / worktree right-click → Stop the sessions below | [Stop and resume a session](../user/sessions/stop-resume.md#stop-every-session-in-one-working-copy) |
 | Hand a conversation to a new session | member | session ⋯ menu | [Hand off to another session or agent](../user/sessions/handoff.md#choose-a-way) |

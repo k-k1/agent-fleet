@@ -303,3 +303,51 @@
   border-radius: 999px;
   white-space: nowrap;
 }
+
+/* The card in the left pane's Active view (ADR 0145): one column at the rail's width. The
+   rules live here, next to the card they vary, because a second file redefining .ovw-*
+   would be a second place to keep in step. */
+.act-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 4px 8px 10px;
+}
+.act-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+/* Below the section's own sticky header, not under it. */
+.act-gtitle {
+  top: var(--sec-head-h, 34px);
+  background: var(--leftpane-bg);
+}
+/* A child sits in from its parent: in one column the order alone does not say whose it is. */
+.act-item {
+  min-width: 0;
+  margin-left: calc(var(--act-depth, 0) * 12px);
+}
+.ovw-card.ovw-card--rail {
+  gap: 4px;
+  padding: 7px 9px;
+}
+/* The session in the focused pane, as the rail's row marks it. The ring is drawn outside
+   the border so a waiting card keeps its own frame colour and still reads as selected. */
+.ovw-card.ovw-card--selected {
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.ovw-card.ovw-card--selected:not(.ovw-card--question) {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+.ovw-hidden.ovw-hidden--waiting {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 60%, transparent);
+}
+.ovw-ords {
+  margin-left: auto;
+}

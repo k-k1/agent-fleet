@@ -58,7 +58,7 @@ export interface FoldInfo {
 /** The bucket for a session that runs in no working copy (a shell in home). Sorts last. */
 export const NO_REPO_GROUP = "";
 
-interface GroupId {
+export interface GroupId {
   key: string;
   label: string;
   hint: string;
@@ -68,7 +68,7 @@ interface GroupId {
  *  two clones of one repository are two folders, a linked worktree is a third, and the user
  *  renames all of them. Falls back to the BASE folder (a worktree's parent) so a local-only
  *  repo or an SVN copy still groups its worktrees together. */
-function repoGroupId(folder: string, byFolder: Map<string, Repo>): GroupId {
+export function repoGroupId(folder: string, byFolder: Map<string, Repo>): GroupId {
   const repo = byFolder.get(folder);
   // A linked worktree carries its own origin, but fall back to the parent's when it has
   // none (a worktree of a local-only repo), which is also the folder we group by then.

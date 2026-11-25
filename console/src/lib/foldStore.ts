@@ -4,9 +4,9 @@
 // Lives apart from core/api/client.ts (which feeds it the scope) so components that
 // persist a fold do not import the API client, and tests that mock it keep working.
 
-// `af-files-home` and `af-start-section` have no name part: the scoped key is
-// `af-files-home\0<user>\0<tenant>\0`.
-export const FOLD_PREFIXES = ["af-proj-", "af-shared-wc-", "af-shared-proj-", "af-section-", "af-files-home", "af-start-section"];
+// `af-files-home`, `af-start-section` and `af-active-expanded` have no name part: the scoped
+// key is `af-files-home\0<user>\0<tenant>\0`.
+export const FOLD_PREFIXES = ["af-proj-", "af-shared-wc-", "af-shared-proj-", "af-section-", "af-files-home", "af-start-section", "af-active-expanded"];
 
 let user = "";
 let tenant = "";

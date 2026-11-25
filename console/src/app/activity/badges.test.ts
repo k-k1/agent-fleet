@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasUnreadConversation, hasUnreadSession, hasUnreadTerminal, mergeAcked, pendingNews, waitingSessions, workItemNewsKeys } from "./badges.ts";
+import { hasUnreadConversation, hasUnreadSession, hasUnreadTerminal, mergeAcked, pendingNews, sessionBadges, waitingSessions, workItemNewsKeys } from "./badges.ts";
 import { approvalCount } from "../../features/memo/queues.ts";
 import type { Memo } from "../../types/memo.ts";
 import type { FleetNotification } from "../../features/notifications/store.ts";
@@ -154,5 +154,31 @@ describe("auto-run sessions are the Auto-run view's, not the Sessions view's", (
   it("does not show an unread dot for a run's session", () => {
     expect(hasUnreadSession([note("run"), note("rev")], [run, rev, own], null)).toBe(false);
     expect(hasUnreadSession([note("run"), note("own")], [run, rev, own], null)).toBe(true);
+  });
+});
+
+describe("waitingSessions under a working set", () => {
+  it("counts a waiting session in a worktree by the worktree's parent, as the views list it", () => {
+    const list = [{ name: "n", state: "question", alive: true, kind: "claude", repo: "nightly" } as unknown as Session];
+    const w = { id: "w", name: "A", repos: ["app"], convs: [], sessions: [], schedules: [] } as WorkingSet;
+    expect(waitingSessions(list, w, undefined, [{ name: "app" }, { name: "nightly", worktree: true, parent: "app" }])).toBe(1);
+    expect(waitingSessions(list, w)).toBe(0);
+  });
+});
+
+describe("sessionBadges", () => {
+  it("counts a waiting session on one icon only: the Active one while it is in the bar", () => {
+    expect(sessionBadges(2, false, true)).toEqual({ active: { tone: "waiting", count: 2 } });
+    expect(sessionBadges(2, false, false)).toEqual({ sessions: { tone: "waiting", count: 2 } });
+  });
+
+  it("keeps the unread dot on the Sessions icon, under the count when both land there", () => {
+    expect(sessionBadges(0, true, true)).toEqual({ sessions: { tone: "unread" } });
+    expect(sessionBadges(1, true, true)).toEqual({ active: { tone: "waiting", count: 1 }, sessions: { tone: "unread" } });
+    expect(sessionBadges(1, true, false)).toEqual({ sessions: { tone: "waiting", count: 1 } });
+  });
+
+  it("says nothing when nothing waits and nothing is unread", () => {
+    expect(sessionBadges(0, false, true)).toEqual({});
   });
 });

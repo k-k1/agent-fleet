@@ -56,6 +56,7 @@ import { MOBILE_QUERY, coarsePointer, useIsMobile } from "../lib/device.ts";
 import { PaneHost } from "../features/panes/PaneHost.tsx";
 import { ActivityBar } from "./ActivityBar.tsx";
 import { RailView } from "./RailView.tsx";
+import { ActiveSection } from "../features/active/ActiveSection.tsx";
 import { MemoryRailSection } from "../features/memory/MemoryRailSection.tsx";
 import { wireRailReveals } from "./activity/reveals.ts";
 import { AssistantSection } from "../features/chat/AssistantSection.tsx";
@@ -638,6 +639,13 @@ export function App() {
                   <StoppedSessionsSection />
                 </>
               )}
+            </RailView>
+            {/* What is running now (ADR 0145). It reads only what the Sessions view already
+                loads, so it mounts with the shell: nothing to defer. */}
+            <RailView id="active" active={railView} shown={railShown} scoped>
+              <SoloSection>
+                {workspaceRunning ? <ActiveSection /> : <StoppedRailSection id="active" title={tr("rail.view.active")} icon="pulse" />}
+              </SoloSection>
             </RailView>
             {/* Shells and SSM logins (ADR 0142 decision 10). Mounted on first show: it reads the
                 registered SSM hosts, which a member who never opens the view has no use for. A

@@ -21,7 +21,7 @@ import type { SeenMap } from "../../features/workitems/seen.ts";
 import { seenId, unreadOf } from "../../features/workitems/seen.ts";
 import type { FleetNotification } from "../../features/notifications/store.ts";
 import { opensConversation, unreadSessionNames } from "../../features/notifications/read.ts";
-import { convInSet, sessionInSet } from "../../lib/workingSets.ts";
+import { convInSet, sessionInSet, sessionInWorkingSet } from "../../lib/workingSets.ts";
 import { withoutTerminals, withoutUnattended } from "../../lib/project.ts";
 import { visibleTerminals } from "../../features/terminals/visible.ts";
 import type { Repo } from "../../features/repos/store.ts";
@@ -38,8 +38,25 @@ export const isWaitingSession = (s: Session): boolean => s.alive === true && WAI
 
 /** Running sessions stopped on an answer only the member can give. The usage-limit and
  * login states are left out: they are not answered in the session's pane. */
-export function waitingSessions(sessions: Session[], set: WorkingSet | null = null, shown?: ReadonlySet<string>): number {
-  return withoutUnattended(sessions, shown).filter((s) => s.alive && WAITING.has(String(s.state || "")) && (!set || sessionInSet(set, s))).length;
+export function waitingSessions(sessions: Session[], set: WorkingSet | null = null, shown?: ReadonlySet<string>, repos: Repo[] = []): number {
+  // Placed in the set as the views place the row (sessionInWorkingSet), or a waiting session in
+  // a worktree with a folder name of its own is listed and not counted.
+  const byFolder = new Map(repos.map((r) => [r.name, r]));
+  return withoutUnattended(sessions, shown).filter((s) => s.alive && WAITING.has(String(s.state || "")) && (!set || sessionInWorkingSet(set, s, byFolder))).length;
+}
+
+/** Where the session badges go. The Sessions and the Active view list the same waiting
+ * sessions (ADR 0145), and one session counted on two icons reads as two. While the Active
+ * icon is in the bar it carries the count, being the view that is about what needs the member
+ * now; otherwise the Sessions icon does, as before. `activeShown` is false while the workspace
+ * is not running too: the Active view lists nothing then, and the stopped Sessions view is
+ * where the rows are. The unread dot is the Sessions view's
+ * either way: only that view lists every session a notice can be about. */
+export function sessionBadges(waiting: number, unread: boolean, activeShown: boolean): Partial<Record<"sessions" | "active", RailBadge>> {
+  const out: Partial<Record<"sessions" | "active", RailBadge>> = {};
+  if (waiting > 0) out[activeShown ? "active" : "sessions"] = { tone: "waiting", count: waiting };
+  if (unread && !out.sessions) out.sessions = { tone: "unread" };
+  return out;
 }
 
 /** Is there an unseen notification on a session the Sessions view lists? Under a working set
