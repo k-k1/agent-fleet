@@ -718,6 +718,10 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "launch.sum.effort": "effort {v}",
   "launch.sum.title": "name “{name}”",
   "launch.sum.permissions_on": "Approvals on",
+  "launch.sum.effort_default": "default",
+  "launch.sum.start_plan": "Plan mode",
+  "launch.sum.start_normal": "Normal start",
+  "launch.sum.permissions_skip": "Approvals skipped",
 
   // === P2 start modal (features/repos/StartModal.tsx) ===
   "start.aws_search_failed": "AWS search failed: {msg}",

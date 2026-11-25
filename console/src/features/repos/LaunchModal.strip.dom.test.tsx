@@ -152,6 +152,17 @@ describe.each([
     expect(detailsSection().querySelector(".ui-seg.big, .run-model, select")).toBeNull();
   });
 
+  it("names what the folded Details holds, so the fold is never blank", async () => {
+    await mount(["claude"]);
+    const sum = detailsSection().querySelector(".launch-sec-sum")!.textContent || "";
+    expect(sum).toContain("effort");
+    expect(sum).toContain("Normal start");
+    expect(sum).toContain("Approvals");
+    expect(sum).not.toContain("Claude Code");
+    // A budget is named only once set.
+    expect(sum).not.toContain("budget");
+  });
+
   it("keeps exactly one active model button across aliases and registered models", async () => {
     rememberRecentModel("claude", "claude-opus-4-1");
     await mount(["claude"]);

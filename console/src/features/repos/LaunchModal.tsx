@@ -723,8 +723,8 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
         : tr("launch.sum.wt_auto", { base: baseName || tr("launch.base_default") });
   // The section is folded by default, so a branch-rule warning inside it is named on the summary.
   const placeWarned = worktree && !existingMode && naming.warnings.length > 0;
-  // Details names the agent and model, then only what moved off its default. Always printing
-  // every item turns the line into another grey band nobody reads.
+  // Details names every choice it holds (agent and model live in the strip), so the folded row is
+  // never blank; the budget and the name appear only once set.
   const hasBudget = agentOf(kind).caps.transcript;
   // "Use as my default": the CP refuses an agent outside its list, a malformed model and a budget over
   // its cap, so those are explained here rather than failing after the press.
@@ -751,9 +751,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   });
   const advParts = [
     agentOf(kind).managedDriver ? tr(driverManaged ? "launch.sum.driver_managed" : "launch.sum.driver_terminal") : "",
-    hasEffort && effort ? tr("launch.sum.effort", { v: effortOptions.find(([v]) => v === effort)?.[1] || effort }) : "",
-    hasStartMode && startMode === "plan" ? "Plan" : "",
-    hasPermChoice && !skipPermEffective ? tr("launch.sum.permissions_on") : "",
+    hasEffort
+      ? tr("launch.sum.effort", { v: effort ? effortOptions.find(([v]) => v === effort)?.[1] || effort : tr("launch.sum.effort_default") })
+      : "",
+    hasStartMode ? tr(startMode === "plan" ? "launch.sum.start_plan" : "launch.sum.start_normal") : "",
+    hasPermChoice ? tr(skipPermEffective ? "launch.sum.permissions_skip" : "launch.sum.permissions_on") : "",
     title.trim() ? tr("launch.sum.title", { name: title.trim() }) : "",
     hasBudget && budget.trim() && !budgetInvalid
       ? budgetCap > 0

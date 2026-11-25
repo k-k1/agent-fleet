@@ -728,6 +728,10 @@ export const sessions = {
   "launch.sum.effort": "effort {v}",
   "launch.sum.title": "名前「{name}」",
   "launch.sum.permissions_on": "権限確認あり",
+  "launch.sum.effort_default": "既定",
+  "launch.sum.start_plan": "プランモード",
+  "launch.sum.start_normal": "通常開始",
+  "launch.sum.permissions_skip": "権限確認なし",
 
   // === P2 スタートモーダル（features/repos/StartModal.tsx）===
   "start.aws_search_failed": "AWS の検索に失敗: {msg}",
