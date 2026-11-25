@@ -80,7 +80,12 @@ const field = (label: string) =>
     `field "${label}"`,
   );
 const nameField = () => field("Branch name (optional)");
-const baseField = () => field("Base branch");
+// The base label is a real <label for>: the ⓘ sits beside the input, not inside a wrapping label.
+const baseField = () =>
+  must(
+    [...document.querySelectorAll<HTMLLabelElement>("label.ui-field-label")].find((l) => l.textContent === "Base branch")?.control as HTMLInputElement | null | undefined,
+    'field "Base branch"',
+  );
 const warnings = () => [...document.querySelectorAll(".launch-branch-warns li")].map((l) => l.textContent?.trim());
 
 async function settle(): Promise<void> {
