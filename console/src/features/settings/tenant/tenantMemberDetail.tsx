@@ -769,11 +769,11 @@ export function MemberView({
                 form read as a pile. It is still saved by the one request below. */}
             <div className="le-head">{tr("admin.session_limit_group")}</div>
             <div className="admin-fgrid">
-              <label className="admin-fld">
-                <FieldLabel as="span" plain className="af-cap" info={tr("admin.max_sessions_hint")}>{tr("admin.max_sessions_label")}</FieldLabel>
-                <input type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} />
+              <div className="admin-fld">
+                <FieldLabel htmlFor="md-max-sessions" plain className="af-cap" info={tr("admin.max_sessions_hint")}>{tr("admin.max_sessions_label")}</FieldLabel>
+                <input id="md-max-sessions" type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} />
                 <span className="af-unit">{tr("admin.max_sessions_zero")}</span>
-              </label>
+              </div>
             </div>
             <div className="le-actions">
               <button className="primary" onClick={saveLimit}>{tr("common.save")}</button>

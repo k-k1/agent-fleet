@@ -220,15 +220,15 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
         {/* GitHub uses the device flow and has no secret. Omit the field entirely rather than
             greying it out: never show a field whose contents nobody can guess. */}
         {app.needs_secret && (
-          <label className="admin-fld wide">
-            <FieldLabel as="span" plain className="af-cap" info={tr("tenant.git_oauth_secret_unit")}>{tr("tenant.git_oauth_client_secret")}</FieldLabel>
-            <input
+          <div className="admin-fld wide">
+            <FieldLabel htmlFor={`oauth-secret-${app.provider}`} plain className="af-cap" info={tr("tenant.git_oauth_secret_unit")}>{tr("tenant.git_oauth_client_secret")}</FieldLabel>
+            <input id={`oauth-secret-${app.provider}`}
               type="password"
               placeholder={app.has_secret ? tr("tenant.git_oauth_secret_kept") : ""}
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
             />
-          </label>
+          </div>
         )}
       </div>
       {/* The callback is what gets pasted into the provider's registration screen; withhold it
@@ -405,15 +405,15 @@ function GitHubOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuth
               <span className="af-cap">{tr("tenant.git_oauth_client_id")}</span>
               <input {...NO_AUTOFILL} type="text" value={clientID} onChange={(e) => setClientID(e.target.value)} />
             </label>
-            <label className="admin-fld wide">
-              <FieldLabel as="span" plain className="af-cap" info={tr("tenant.gh_install_url_unit")}>{tr("tenant.gh_install_url")}</FieldLabel>
-              <input {...NO_AUTOFILL}
+            <div className="admin-fld wide">
+              <FieldLabel htmlFor={`oauth-install-url-${app.provider}`} plain className="af-cap" info={tr("tenant.gh_install_url_unit")}>{tr("tenant.gh_install_url")}</FieldLabel>
+              <input id={`oauth-install-url-${app.provider}`} {...NO_AUTOFILL}
                 type="text"
                 placeholder="https://github.com/apps/…"
                 value={installURL}
                 onChange={(e) => setInstallURL(e.target.value)}
               />
-            </label>
+            </div>
           </div>
           {current === "custom" && app.client_id && clientID.trim() === app.client_id && (
             <p className="admin-hint">

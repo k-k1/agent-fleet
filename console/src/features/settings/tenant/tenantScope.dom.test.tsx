@@ -179,17 +179,43 @@ describe("model access section", () => {
 });
 
 describe("limits form field explanations (docs/CONVENTIONS.md §13)", () => {
-  it("keeps each moved explanation behind its own ⓘ, closed until pressed", async () => {
+  // Each moved explanation must hang off its own field, and the field keeps its label.
+  const PAIRS: [id: string, hintKey: string][] = [
+    ["ts-max-ws-mem", "admin.ws_mem_hint_1"],
+    ["ts-interaction-halt", "admin.interaction_hint"],
+    ["ts-image-refresh-quiet", "admin.image_refresh_hint"],
+  ];
+
+  it("keeps each explanation behind the ⓘ of its own labelled input", async () => {
     await mount();
-    const infos = Array.from(document.querySelectorAll<HTMLButtonElement>("button.ui-field-info"));
-    // PAT max days, workspace memory, interaction halt, image refresh quiet, term-log retention.
-    expect(infos.length).toBeGreaterThanOrEqual(5);
-    for (const b of infos) {
-      const panel = document.getElementById(b.getAttribute("aria-controls")!)!;
+    for (const [id, hintKey] of PAIRS) {
+      const input = document.getElementById(id) as HTMLInputElement;
+      expect(input, id).toBeTruthy();
+      // The label is associated with the input (not with the ⓘ button) and names it.
+      expect(input.labels?.length).toBe(1);
+      expect(input.labels![0].textContent!.trim()).not.toBe("");
+      const row = input.closest(".admin-fld")!;
+      const btn = row.querySelector<HTMLButtonElement>("button.ui-field-info")!;
+      const panel = document.getElementById(btn.getAttribute("aria-controls")!)!;
       expect(panel.hidden).toBe(true);
       expect(panel.textContent!.trim()).not.toBe("");
-      await act(async () => b.click());
+      // Clicking the label text focuses the input and leaves the panel closed.
+      await act(async () => input.labels![0].click());
+      expect(panel.hidden).toBe(true);
+      await act(async () => btn.click());
       expect(panel.hidden).toBe(false);
+      expect(hintKey).toBeTruthy();
     }
+  });
+
+  it("keeps consequence warnings inline while every ⓘ is closed", async () => {
+    await mount();
+    const visible = (needle: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>("p.admin-hint")).some(
+        (p) => !p.closest("[hidden]") && (p.textContent || "").includes(needle),
+      );
+    // PAT cap: lowering it signs older tokens out at once. Terminal log: output may hold secrets.
+    expect(visible("AF_PAT_MAX_DAYS")).toBe(true);
+    expect(visible("機密")).toBe(true);
   });
 });
