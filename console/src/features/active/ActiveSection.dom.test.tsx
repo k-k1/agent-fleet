@@ -205,6 +205,16 @@ describe("ActiveSection", () => {
       expect(storedFolded()).toEqual([]);
     });
 
+    it("counts a waiting child on the heading although its family is folded", async () => {
+      await render([sess("p", { repo: "app" }), sess("c", { repo: "app", originSession: "p", state: "question" })]);
+      // The family starts folded: the waiting child has no card.
+      expect(cards()).toEqual(["p"]);
+      await act(async () => host.querySelector<HTMLButtonElement>(".act-gfold")!.click());
+      const btn = host.querySelector(".act-gfold")!;
+      expect(btn.querySelector(".act-gwait")?.textContent).toBe("1");
+      expect(btn.getAttribute("aria-label")).toContain("1 session in this group is waiting");
+    });
+
     it("folds the Other group and a space too, and remembers each per tenant", async () => {
       await render([sess("home"), sess("sp", { space: "q3-abcdef" })]);
       await act(async () => headBtn("o:").click());
