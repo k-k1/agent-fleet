@@ -4,7 +4,6 @@
 // here lets a model change a note: the Control Plane applies what the member approved, re-checks
 // every rule, and records one run that can be undone. Notes that are not in an auto-run category
 // keep the in-place tidy (MemoTidyModal).
-import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
@@ -221,9 +220,8 @@ export function MemoTidyOpsModal({ memos, category, categories, allMemos, onDone
             )}
             {review.leftOut.length > 0 && (
               <div className="memo-tidy-leftout">
-                <FieldLabel as="span" plain info={tr("memo.tidyop_out_hint")}>
-                  <strong>{tr("memo.tidyop_out_title")}</strong>
-                </FieldLabel>
+                <strong>{tr("memo.tidyop_out_title")}</strong>
+                <div className="ui-field-hint">{tr("memo.tidyop_out_hint")}</div>
                 {review.leftOut.map((l, i) => (
                   <div key={i} className="memo-tidy-row" data-left-out={l.why}>
                     <div className="memo-tidy-diff">

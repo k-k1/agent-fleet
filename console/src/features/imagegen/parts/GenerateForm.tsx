@@ -13,7 +13,7 @@
 //      never merged into the textarea, so what is in the box is what the person wrote.
 import { FieldLabel } from "../../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import type { KeyboardEvent as RKeyboardEvent, ReactNode } from "react";
 import { useT } from "../../../lib/i18n/index.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -90,6 +90,7 @@ export function GenerateForm({
   onPaintMask,
 }: Props) {
   const tr = useT();
+  const jobsId = useId();
   const card = familyFacts(model);
   // A locked key shows its padlock beside the field's name; the switches themselves live in one
   // group inside the folded details, so an unlocked field carries no icon at all.
@@ -294,11 +295,11 @@ export function GenerateForm({
           />
         )}
         <div className="igen-field">
-          <FieldLabel htmlFor="igen-jobs" plain className="igen-label" info={tr("imggen.jobs_hint")}>
+          <FieldLabel htmlFor={jobsId} plain className="igen-label" info={tr("imggen.jobs_hint")}>
             {tr("imggen.jobs")}
           </FieldLabel>
           <input
-            id="igen-jobs"
+            id={jobsId}
             className="ds-input"
             type="number"
             min={1}

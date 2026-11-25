@@ -101,6 +101,11 @@ describe("AssistantModal field explanations", () => {
       const p = panels.find((x) => x.textContent === t(k));
       expect(p, k).toBeTruthy();
       expect(p!.hidden, k).toBe(true);
+      // Its ⓘ is the button that controls this very panel, and pressing it opens it.
+      const btn = document.querySelector<HTMLButtonElement>(`button.ui-field-info[aria-controls="${p!.id}"]`);
+      expect(btn, k).toBeTruthy();
+      act(() => btn!.click());
+      expect(p!.hidden, k).toBe(false);
     }
     // The selected tool grant's meaning is the option's own help: it stays visible.
     expect([...document.querySelectorAll(".ui-field-hint:not(.ui-field-info-panel)")].some((e) => e.textContent === t("asst.tool_none_help"))).toBe(true);

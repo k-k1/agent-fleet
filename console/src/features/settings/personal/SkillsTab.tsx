@@ -7,7 +7,6 @@
 // The view keeps what the session's skill picker drops on purpose: entries another root
 // shadows, `user-invocable: false` ones and Agent Fleet's own `af-*` skills, because "why is my
 // skill not used" is exactly what someone opens this screen to answer.
-import { FieldLabel } from "../../../ui/FieldLabel.tsx";
 import { useCallback, useState, type MouseEvent } from "react";
 import { errText, isTransientErr } from "../../../core/api/client.ts";
 import { getSkillFile, getSkillsCatalog } from "./personalApi.ts";
@@ -206,16 +205,9 @@ function KindPanel({
         return (
           <section key={scope} className="skills-group">
             <h4 className="ds-title">
-              <FieldLabel
-                as="span"
-                plain
-                className="skills-group-title"
-                info={scope === "fleet" ? tr("skills.fleet_hint") : undefined}
-                trailing={<span className="skills-count">{list.length}</span>}
-              >
-                {tr(`skills.scope_${scope}`)}
-              </FieldLabel>
+              {tr(`skills.scope_${scope}`)} <span className="skills-count">{list.length}</span>
             </h4>
+            {scope === "fleet" && <p className="ds-hint">{tr("skills.fleet_hint")}</p>}
             <ul className="skills-list">
               {list.map((s) => {
                 const key = s.path || s.name;

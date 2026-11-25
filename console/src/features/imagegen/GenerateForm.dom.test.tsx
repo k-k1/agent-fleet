@@ -583,4 +583,20 @@ describe("ADR 0081 決定 9: inpaint のマスク", () => {
     act(() => (panel!.previousElementSibling!.querySelector(".ui-field-info") as HTMLButtonElement).click());
     expect(panel?.hidden).toBe(false);
   });
+
+  it("gives each rendered form its own jobs-field id, so a label focuses its own input", async () => {
+    await render(SDXL);
+    const second = document.createElement("div");
+    document.body.appendChild(second);
+    const root2 = createRoot(second);
+    await act(async () => {
+      root2.render(<Harness model={SDXL} />);
+    });
+    const labels = [...document.querySelectorAll<HTMLLabelElement>("label.igen-label")].filter((l) => l.textContent === t("imggen.jobs"));
+    expect(labels).toHaveLength(2);
+    expect(labels[0].htmlFor).not.toBe(labels[1].htmlFor);
+    for (const l of labels) expect(document.getElementById(l.htmlFor)?.tagName).toBe("INPUT");
+    expect(labels[1].control).toBe(second.querySelector(`#${CSS.escape(labels[1].htmlFor)}`));
+    await act(async () => root2.unmount());
+  });
 });
