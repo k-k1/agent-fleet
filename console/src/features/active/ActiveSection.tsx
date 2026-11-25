@@ -10,7 +10,7 @@ import { memo, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { useLocale, useT } from "../../lib/i18n/index.ts";
+import { tCount, useLocale, useT } from "../../lib/i18n/index.ts";
 import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useReposStore } from "../repos/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
@@ -27,7 +27,7 @@ import { spacesFor, spacesOwner, useSpacesStore } from "../spaces/store.ts";
 import { SessionCard } from "../overview/SessionCard.tsx";
 import { activeGroups } from "./active.ts";
 import type { ActiveGroup } from "./active.ts";
-import { useActiveExpanded } from "./store.ts";
+import { useActiveExpanded, useActiveFoldedGroups } from "./store.ts";
 import "../overview/overview.css";
 
 // Deeper generations stop indenting: at the pane's width a fourth step would leave the title no room.
@@ -53,6 +53,8 @@ export const ActiveSection = memo(function ActiveSection() {
   const activeSession = activePane(layout)?.session ?? null;
   const actions = useSessionActions();
   const [expanded, toggle] = useActiveExpanded();
+  const [foldedGroups, toggleGroup] = useActiveFoldedGroups();
+  const foldedSet = useMemo(() => new Set(foldedGroups), [foldedGroups]);
   // Headings are sorted with the locale's collation, so the order is the locale's too.
   const locale = useLocale();
 
@@ -78,11 +80,21 @@ export const ActiveSection = memo(function ActiveSection() {
           {groups.map((g) => (
             <section className="act-group" key={g.key} data-active-group={g.key}>
               <h3 className="ovw-gtitle act-gtitle" title={g.hint || undefined}>
-                <Icon name={GROUP_ICON[g.kind]} />
-                <span className="ovw-gname">{g.kind === "other" ? tr("pj.other_sessions") : g.label}</span>
-                <span className="ovw-gcount">{tr("ovw.group_count", { alive: g.alive, n: g.total })}</span>
+                {/* The heading is a disclosure button: Enter / Space fold it, and a screen reader says which way it is. */}
+                <button type="button" className="act-gfold" aria-expanded={!foldedSet.has(g.key)} onClick={() => toggleGroup(g.key)}>
+                  <Icon name={foldedSet.has(g.key) ? "chevron-right" : "chevron-down"} />
+                  <Icon name={GROUP_ICON[g.kind]} />
+                  <span className="ovw-gname">{g.kind === "other" ? tr("pj.other_sessions") : g.label}</span>
+                  <span className="ovw-gcount">{tr("ovw.group_count", { alive: g.alive, n: g.total })}</span>
+                  {g.waiting > 0 && (
+                    <span className="act-gwait" title={tCount("active.group_waiting_hint", g.waiting)}>
+                      <Icon name="question" />
+                      {g.waiting}
+                    </span>
+                  )}
+                </button>
               </h3>
-              <div className="act-cards" role="list">
+              <div className="act-cards" role="list" hidden={foldedSet.has(g.key)}>
                 {g.sessions.map((s) => {
                   const fold = g.fold.get(s.name);
                   return (

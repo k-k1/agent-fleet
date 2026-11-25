@@ -23,7 +23,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { ActiveSection } = await import("./ActiveSection.tsx");
-const { ACTIVE_EXPANDED_KEY, ACTIVE_EXPANDED_MAX } = await import("./store.ts");
+const { ACTIVE_EXPANDED_KEY, ACTIVE_EXPANDED_MAX, ACTIVE_GROUPS_FOLDED_KEY } = await import("./store.ts");
 const { readFoldValue, setFoldScope, writeFoldValue } = await import("../../lib/foldStore.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -177,5 +177,51 @@ describe("ActiveSection", () => {
     // Control: the same middle click on the card itself does open it.
     await act(async () => void host.querySelector(".ovw-card")!.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 })));
     expect(JSON.stringify(useLayoutStore.getState().layout)).not.toBe(before);
+  });
+
+  describe("group headings", () => {
+    const two = () => [sess("a", { repo: "app" }), sess("w", { repo: "app", state: "question" }), sess("sp", { space: "q3-abcdef" })];
+    const headBtn = (key: string) => host.querySelector<HTMLButtonElement>(`[data-active-group="${key}"] .act-gfold`)!;
+    const storedFolded = () => JSON.parse(readFoldValue(ACTIVE_GROUPS_FOLDED_KEY) || "[]") as string[];
+
+    it("starts open, folds on the heading button, and keeps the counts on the folded heading", async () => {
+      await render(two());
+      const btn = host.querySelector<HTMLButtonElement>(".act-gfold")!;
+      expect(btn.getAttribute("aria-expanded")).toBe("true");
+      expect(cards()).toEqual(["w", "a", "sp"]);
+      const key0 = btn.closest("[data-active-group]")!.getAttribute("data-active-group")!;
+      await act(async () => btn.click());
+      expect(host.querySelector<HTMLButtonElement>(".act-gfold")!.getAttribute("aria-expanded")).toBe("false");
+      // The folded group's cards are out of the way, the other group is untouched.
+      const visible = [...host.querySelectorAll<HTMLElement>(".act-cards:not([hidden]) .ovw-card")].map((e) => (e.getAttribute("title") || "").split("ID: ")[1]);
+      expect(visible).toEqual(["sp"]);
+      const head = host.querySelector(`[data-active-group="${key0}"] .act-gtitle`)!;
+      expect(head.textContent).toContain("2 running / 2 total");
+      expect(head.querySelector(".act-gwait")?.textContent).toBe("1");
+      expect(storedFolded()).toEqual([key0]);
+      await act(async () => host.querySelector<HTMLButtonElement>(".act-gfold")!.click());
+      expect(storedFolded()).toEqual([]);
+    });
+
+    it("folds the Other group and a space too, and remembers each per tenant", async () => {
+      await render([sess("home"), sess("sp", { space: "q3-abcdef" })]);
+      await act(async () => headBtn("o:").click());
+      await act(async () => headBtn("s:q3-abcdef").click());
+      expect(storedFolded().sort()).toEqual(["o:", "s:q3-abcdef"]);
+      await act(async () => setFoldScope({ tenant: "t2" }));
+      expect(headBtn("o:").getAttribute("aria-expanded")).toBe("true");
+      expect(storedFolded()).toEqual([]);
+      await act(async () => setFoldScope({ tenant: "t1" }));
+      expect(headBtn("o:").getAttribute("aria-expanded")).toBe("false");
+      expect(headBtn("s:q3-abcdef").getAttribute("aria-expanded")).toBe("false");
+    });
+
+    it("a group that appears later starts open", async () => {
+      await render([sess("home")]);
+      await act(async () => headBtn("o:").click());
+      await render([sess("home"), sess("sp", { space: "q3-abcdef" })]);
+      expect(headBtn("o:").getAttribute("aria-expanded")).toBe("false");
+      expect(headBtn("s:q3-abcdef").getAttribute("aria-expanded")).toBe("true");
+    });
   });
 });

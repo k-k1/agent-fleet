@@ -46,6 +46,10 @@ nor the Console has it.
    session comes first. What is stored is the parents the member opened, per browser, member and tenant, so a parent
    that gains its first child starts folded without anything having been recorded. A folded
    parent says how many rows it hides and, separately, how many of them wait for an answer.
+   > **Note (2026-11-25, #5165).** The group headings fold as well. What is stored is the groups the
+   > member folded, per browser, member and tenant (the rule of every other view, 0096), so a group
+   > that appears for the first time starts open. A folded heading keeps its counts: running / total,
+   > and how many of its sessions wait for an answer. The heading is a disclosure button.
 5. **The card is the overview's card in a rail form,** not a second component: one column at the
    pane's width, without the repository line (the heading says it), the spend trend and the start
    time. It carries the pane numbers, which the grid's card leaves out, because in the left pane

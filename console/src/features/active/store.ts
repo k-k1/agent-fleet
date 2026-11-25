@@ -21,6 +21,20 @@ const parse = (raw: string | null): string[] => {
  *  name is not reused, so a stale entry opens nothing; the cap alone bounds the list. */
 export const ACTIVE_EXPANDED_MAX = 200;
 
+/** The groups the member folded. Stored as FOLDED (the rule of every other view, ADR 0096),
+ *  so a group that appears for the first time starts open. */
+export const ACTIVE_GROUPS_FOLDED_KEY = "af-active-groups-folded";
+
+/** The folded group headings, and the toggle. A group key is a remote, a space folder or
+ *  "o:", never a session name, so the list is bounded by the groups a member has and a
+ *  stale key opens nothing. */
+export function useActiveFoldedGroups(): [string[], (key: string) => void] {
+  const [raw, setRaw] = useFoldValue(ACTIVE_GROUPS_FOLDED_KEY);
+  const folded = useMemo(() => parse(raw), [raw]);
+  const toggle = (key: string) => setRaw(JSON.stringify(folded.includes(key) ? folded.filter((k) => k !== key) : [...folded, key]));
+  return [folded, toggle];
+}
+
 /** The opened parents, and the toggle. */
 export function useActiveExpanded(): [string[], (name: string) => void] {
   const [raw, setRaw] = useFoldValue(ACTIVE_EXPANDED_KEY);

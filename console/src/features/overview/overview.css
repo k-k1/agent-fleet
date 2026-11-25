@@ -323,6 +323,32 @@
   top: var(--sec-head-h, 34px);
   background: var(--leftpane-bg);
 }
+/* The heading's own button: the whole heading is the hit area, and it looks like the heading it replaces. */
+.act-gfold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.act-gfold:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.act-gwait {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+  color: var(--warn);
+}
 /* A child sits in from its parent: in one column the order alone does not say whose it is. */
 .act-item {
   min-width: 0;

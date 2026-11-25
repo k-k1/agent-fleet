@@ -43,6 +43,9 @@ export interface ActiveGroup {
   alive: number;
   /** Every session the group lists, also counted before the fold. */
   total: number;
+  /** Sessions in the group that wait for the member's answer, counted before the fold: a
+   *  folded heading must still say that something under it needs an answer. */
+  waiting: number;
   /** What each card's fold control says. Only names still in `sessions` have an entry. */
   fold: Map<string, FoldInfo>;
   /** Per folded parent, how many of the rows it hides wait for the member's answer. A fold
@@ -183,6 +186,7 @@ export function activeGroups(
       sessions: folded.sessions.map((s) => real.get(s.name) ?? s),
       alive: ordered.filter((s) => !!s.alive).length,
       total: ordered.length,
+      waiting: ordered.filter((s) => isWaiting(s)).length,
       fold: folded.fold,
       hiddenWaiting,
       depth,
