@@ -9,6 +9,7 @@
 // Permission is the server's. Both the limits PUT and "approve and enable" for a sign-in
 // method are fixed at withSuperAdmin / super_admin (ADR0043 decision 19 / decision 30); what
 // is switched here is presentation only.
+import { FieldLabel } from "../../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
@@ -293,14 +294,14 @@ export function TenantLimits({
               <span className="af-suffix">MB</span>
             </span>
           </label>
-          <label className="admin-fld">
-            <span className="af-cap">{tr("admin.max_ws_mem")}</span>
+          <div className="admin-fld">
+            <FieldLabel htmlFor="ts-max-ws-mem" plain className="af-cap" info={<>{tr("admin.ws_mem_hint_1")}<code>WS_MEMORY</code>{tr("admin.ws_mem_hint_2")}<code>AF_MAX_WORKSPACE_MEM</code>{tr("admin.ws_mem_hint_3")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.ws_mem_hint_4")}</>}>{tr("admin.max_ws_mem")}</FieldLabel>
             <span className="af-inputwrap">
-              <input type="number" min="0" step="256" value={maxWsMemMb} onChange={(e) => setMaxWsMemMb(e.target.value)} />
+              <input id="ts-max-ws-mem" type="number" min="0" step="256" value={maxWsMemMb} onChange={(e) => setMaxWsMemMb(e.target.value)} />
               <span className="af-suffix">MB</span>
             </span>
             <span className="af-unit">{+maxWsMemMb > 0 ? tr("admin.per_container", { hint: fmtGbHint(+maxWsMemMb) }) : tr("admin.zero_no_tenant_cap")}</span>
-          </label>
+          </div>
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.pat_max_days")}</span>
             <span className="af-inputwrap">
@@ -311,9 +312,6 @@ export function TenantLimits({
           </label>
         </div>
         <p className="admin-hint">{tr("admin.pat_max_days_hint")}</p>
-        <p className="admin-hint">
-          {tr("admin.ws_mem_hint_1")}<code>WS_MEMORY</code>{tr("admin.ws_mem_hint_2")}<code>AF_MAX_WORKSPACE_MEM</code>{tr("admin.ws_mem_hint_3")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.ws_mem_hint_4")}
-        </p>
       </div>
 
       <div className="admin-fgroup">
@@ -323,10 +321,10 @@ export function TenantLimits({
             <span className="af-cap">{tr("admin.session_halt")}</span>
             <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.idle_ph_30m")} value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
           </label>
-          <label className="admin-fld">
-            <span className="af-cap">{tr("admin.interaction_halt")}</span>
-            <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.interaction_ph")} value={interIdle} onChange={(e) => setInterIdle(e.target.value)} />
-          </label>
+          <div className="admin-fld">
+            <FieldLabel htmlFor="ts-interaction-halt" plain className="af-cap" info={tr("admin.interaction_hint")}>{tr("admin.interaction_halt")}</FieldLabel>
+            <input id="ts-interaction-halt" {...NO_AUTOFILL} type="text" placeholder={tr("admin.interaction_ph")} value={interIdle} onChange={(e) => setInterIdle(e.target.value)} />
+          </div>
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.background_hold")}</span>
             <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.background_hold_ph")} value={bgHold} onChange={(e) => setBgHold(e.target.value)} />
@@ -335,16 +333,14 @@ export function TenantLimits({
             <span className="af-cap">{tr("admin.ws_stop")}</span>
             <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.idle_ph_60m")} value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
           </label>
-          <label className="admin-fld">
-            <span className="af-cap">{tr("admin.image_refresh_quiet")}</span>
-            <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.image_refresh_quiet_ph")} value={refreshQuiet} onChange={(e) => setRefreshQuiet(e.target.value)} />
-          </label>
+          <div className="admin-fld">
+            <FieldLabel htmlFor="ts-image-refresh-quiet" plain className="af-cap" info={tr("admin.image_refresh_hint")}>{tr("admin.image_refresh_quiet")}</FieldLabel>
+            <input id="ts-image-refresh-quiet" {...NO_AUTOFILL} type="text" placeholder={tr("admin.image_refresh_quiet_ph")} value={refreshQuiet} onChange={(e) => setRefreshQuiet(e.target.value)} />
+          </div>
         </div>
         <p className="admin-hint">
           {tr("admin.idle_hint_1")}<code>30m</code> / <code>2h</code> / <code>90s</code>{tr("admin.idle_hint_2")}<code>0</code>{tr("admin.idle_hint_3")}
         </p>
-        <p className="admin-hint">{tr("admin.interaction_hint")}</p>
-        <p className="admin-hint">{tr("admin.image_refresh_hint")}</p>
       </div>
 
       {/* Only the EC2 slot pool has somewhere cheaper to put a home; on the other
@@ -369,12 +365,11 @@ export function TenantLimits({
         <div className="admin-fgroup">
           <h4>{tr("admin.backup_title")}<span className="af-note">{tr("admin.empty_deploy_default")}</span></h4>
           <div className="admin-fgrid">
-            <label className="admin-fld">
-              <span className="af-cap">{tr("admin.backup_every")}</span>
-              <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.backup_ph")} value={homeBackup} onChange={(e) => setHomeBackup(e.target.value)} />
-            </label>
+            <div className="admin-fld">
+              <FieldLabel htmlFor="ts-backup-every" plain className="af-cap" info={tr("admin.backup_hint")}>{tr("admin.backup_every")}</FieldLabel>
+              <input id="ts-backup-every" {...NO_AUTOFILL} type="text" placeholder={tr("admin.backup_ph")} value={homeBackup} onChange={(e) => setHomeBackup(e.target.value)} />
+            </div>
           </div>
-          <p className="admin-hint">{tr("admin.backup_hint")}</p>
           <p className="admin-hint">{tr("admin.backup_warn")}</p>
         </div>
       )}

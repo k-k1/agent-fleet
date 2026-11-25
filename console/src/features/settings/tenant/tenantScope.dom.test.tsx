@@ -27,6 +27,7 @@ vi.mock("../../../core/api/client.ts", () => ({
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
 
+import { admin as ja } from "../../../lib/i18n/locales/ja/admin.ts";
 import { TenantScopeBody, tenantScopeGroups } from "./tenantScope.tsx";
 
 const TENANT = { slug: "sales", name: "営業部", users: 0, running: 0 };
@@ -175,5 +176,50 @@ describe("model access section", () => {
     });
     expect(api).toHaveBeenCalledWith("api/admin/tenants/sales/route-policy");
     expect(document.querySelector(".model-access [role=alert]")?.textContent).toBe("nope");
+  });
+});
+
+const JA = ja as Record<string, string>;
+
+describe("limits form field explanations (docs/CONVENTIONS.md §13)", () => {
+  // Each moved explanation must hang off its own field, and the field keeps its label.
+  const PAIRS: [id: string, hintKey: string][] = [
+    ["ts-max-ws-mem", "admin.ws_mem_hint_1"],
+    ["ts-interaction-halt", "admin.interaction_hint"],
+    ["ts-image-refresh-quiet", "admin.image_refresh_hint"],
+  ];
+
+  it("keeps each explanation behind the ⓘ of its own labelled input", async () => {
+    await mount();
+    for (const [id, hintKey] of PAIRS) {
+      const input = document.getElementById(id) as HTMLInputElement;
+      expect(input, id).toBeTruthy();
+      // The label is associated with the input (not with the ⓘ button) and names it.
+      expect(input.labels?.length).toBe(1);
+      expect(input.labels![0].textContent!.trim()).not.toBe("");
+      const row = input.closest(".admin-fld")!;
+      const btn = row.querySelector<HTMLButtonElement>("button.ui-field-info")!;
+      const panel = document.getElementById(btn.getAttribute("aria-controls")!)!;
+      expect(panel.hidden).toBe(true);
+      // The panel holds this field's own explanation, not another field's.
+      expect(panel.textContent).toContain(JA[hintKey].slice(0, 20));
+      // Clicking the label text (it targets the input, so it is not the ⓘ) leaves the panel closed.
+      await act(async () => input.labels![0].click());
+      expect(panel.hidden).toBe(true);
+      await act(async () => btn.click());
+      expect(panel.hidden).toBe(false);
+    }
+  });
+
+  it("keeps consequence warnings inline while every ⓘ is closed", async () => {
+    await mount();
+    const visible = (needle: string) =>
+      Array.from(document.querySelectorAll<HTMLElement>("p.admin-hint")).some(
+        (p) => !p.closest("[hidden]") && (p.textContent || "").includes(needle),
+      );
+    // PAT cap: lowering it signs older tokens out at once. Terminal log: output may hold secrets.
+    expect(visible(JA["admin.pat_max_days_hint"])).toBe(true);
+    expect(visible(JA["admin.term_log_hint"])).toBe(true);
+    expect(visible("機密")).toBe(true);
   });
 });

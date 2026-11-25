@@ -150,7 +150,7 @@ describe("member limit editing", () => {
         const c = ZERO_COPY[loc];
         await mount();
         await openEditor();
-        const field = Array.from(document.querySelectorAll(".limit-edit label.admin-fld")).find((l) =>
+        const field = Array.from(document.querySelectorAll(".limit-edit .admin-fld")).find((l) =>
           (l.textContent || "").includes(c.label),
         )!;
         expect(field.querySelector(".af-unit")!.textContent).toBe(c.unit);
