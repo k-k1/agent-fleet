@@ -115,6 +115,25 @@ A session that waits for an upstream release (a fixed dependency, a new CLI vers
 - A repository your GitHub connection cannot read (a private one without access) is refused when the agent asks. A repository that is deleted or that you lose access to later ends the watch with a notice saying so
 - Reads use your own GitHub connection, are conditional (an unchanged list costs no request quota), about every 5 minutes, and count in the same limits as pull request watches. A public repository needs no extra permission
 
+### Waiting for a hosted service to recover (status pages)
+
+When GitHub or an Atlassian cloud service has an outage, an agent can wait for the recovery instead of setting timers and reading the status page by hand (`watch` with `source: status`). It reads the service's public status page (Statuspage API), so no credentials are needed. This is for the hosted services only: Bitbucket Data Center and self-hosted Jira have no public status page.
+
+`ref` is `<service>[:<component>,…]`. The services are `github`, `bitbucket`, `jira` (Jira Software) and `confluence`. Without components the whole page is meant; names are matched without regard to case, and a name the page does not list is refused with the list it has.
+
+| Type | Fires when |
+|---|---|
+| `status.recovered` | every named component (or every component of the page) is `operational` and no open incident names them (whole page: no open incident at all) |
+| `status.degraded` | a named component is not `operational` |
+| `status.incident.resolved` | an incident that names a watched component (any, for the whole page) was resolved after the watch was made |
+
+- **A condition that already holds fires at once**, so `status.recovered` on a healthy page returns immediately and `status.degraded` on an ongoing outage too. Incidents resolved before the watch was made are history and never fire
+- **Gentle reads.** A page is read about every 3 minutes at most, and every watch on the same page shares that read. `incidents.json` is read only for a watch that asks for `status.incident.resolved`
+- **Quoted data.** The notice says how many watched components are not operational; component names, incident titles and incident statuses arrive as quoted data
+- A degraded watch tells again when the set or state of the broken components changes; a recovery after a new outage is told again
+- A component that disappears from the page ends the watch with a notice
+- **Egress allowlist.** Where outbound access is restricted, allow HTTPS to the hosts of the services you watch: `www.githubstatus.com` (GitHub), `bitbucket.status.atlassian.com`, `jira-software.status.atlassian.com`, `confluence.status.atlassian.com`
+
 ### Send the notices to the parent
 
 A child started by another session can have the notices go to its parent (`notify: parent`), so the session handing out the work hears about its children's pull requests.

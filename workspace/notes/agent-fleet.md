@@ -179,6 +179,12 @@ work you could simply do.
     `w/r:pipelines[/<custom name>][@branch]` for the next run (same 10-minute window); it goes to
     `source: bitbucket_pipelines`. The workflow name / branch and failed jobs / steps arrive as
     quoted data. A run deleted or lost mid-watch ends the watch with a notice.
+  - **Status pages** (`source: status`): `ref` `<service>[:<component>,…]` with service `github`,
+    `bitbucket`, `jira` or `confluence` (hosted services only). `status.recovered` / `status.degraded` /
+    `status.incident.resolved`; a condition that holds now fires at once, except that only incidents resolved
+    after the `watch` call fire. Incident titles and statuses and component names arrive as quoted data.
+    Hosts for egress allowlists: `www.githubstatus.com`, `bitbucket.status.atlassian.com`,
+    `jira-software.status.atlassian.com`, `confluence.status.atlassian.com`.
   - **GitHub releases and tags**: `github.release.published` / `github.tag.created`. `ref`
     `o/r:releases[+pre][@pattern]` or `o/r:tags[@pattern]` (a `https://github.com/o/r/releases`
     URL works); it goes to `source: github_releases` / `github_tags` by itself. Only a release
