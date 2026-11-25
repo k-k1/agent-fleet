@@ -218,9 +218,8 @@ describe("limits form field explanations (docs/CONVENTIONS.md §13)", () => {
         (p) => !p.closest("[hidden]") && (p.textContent || "").includes(needle),
       );
     // PAT cap: lowering it signs older tokens out at once. Terminal log: output may hold secrets.
-    expect(visible(JA["admin.pat_max_days_hint"].slice(0, 20))).toBe(true);
-    expect(visible(JA["admin.pat_max_days_hint"].slice(-12))).toBe(true);
-    expect(visible(JA["admin.term_log_hint"].slice(0, 20))).toBe(true);
+    expect(visible(JA["admin.pat_max_days_hint"])).toBe(true);
+    expect(visible(JA["admin.term_log_hint"])).toBe(true);
     expect(visible("機密")).toBe(true);
   });
 });
