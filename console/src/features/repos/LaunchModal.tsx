@@ -659,11 +659,14 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     if (!fixedTier) return;
     let alive = true;
     void (async () => {
-      // A pending save skips the read (it could return the value from before that save): wait for
-      // it, a few times, then go on with what is in hand.
+      // A pending save skips the read (it could return the value from before that save), and an
+      // overtaken or failed one confirms nothing: wait and ask again a few times, then go on with
+      // what is in hand.
       for (let i = 0; i < 8 && alive; i++) {
+        // true = read; null = skipped for a pending save; false = failed or overtaken by another
+        // read (the window's own on focus). Only a read that landed confirms the list.
         const r = await refreshUIPrefsChecked().catch(() => false);
-        if (r !== null) break;
+        if (r === true) break;
         await new Promise((res) => setTimeout(res, 400));
       }
       if (alive) setRereadEpoch(epoch);

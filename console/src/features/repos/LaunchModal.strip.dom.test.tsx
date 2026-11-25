@@ -358,6 +358,83 @@ describe("each switch to Claude is its own read", () => {
   });
 });
 
+describe("a Settings default that is no longer registered", () => {
+  it("does not hide the team's default", async () => {
+    localStorage.setItem("af.repo-model.app", "removed-model");
+    const { getSettings } = await import("../../lib/settings.ts");
+    const { useUIStateStore } = await import("../../core/store/uiState.ts");
+    setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, model: "claude-opus-4-9" } } });
+    settleSaves();
+    useUIStateStore.setState({ state: { defaults: { agent: "claude", launch: { model: "haiku" } } } as never });
+    try {
+      await renderDialog(["claude"]);
+      expect(active().map((b) => b.title)).toEqual(["haiku"]);
+      await click(primary());
+      expect(onLaunch.mock.calls[0][0].model).toBe("haiku");
+    } finally {
+      useUIStateStore.setState({ state: {} });
+      setSettings({ agentLaunchDefaults: { ...getSettings().agentLaunchDefaults, claude: { ...getSettings().agentLaunchDefaults.claude, model: "" } } });
+    }
+  });
+});
+
+describe("a read that did not land", () => {
+  it("asks again instead of treating a failed or overtaken read as confirmation", async () => {
+    localStorage.setItem("af.repo-model.app", "claude-opus-4-9");
+    serverPrefs = { error: { code: "http_502" } };
+    const reads = () => prefsReads;
+    const before = reads();
+    onPrefsAnswer = () => {
+      // The second answer is the good one and carries the model.
+      serverPrefs = {};
+      setSettings({ claudeCustomModels: [...REGISTERED, "claude-opus-4-9"] });
+      settleSaves();
+    };
+    try {
+      await renderDialog(["claude"]);
+      await act(async () => void (await new Promise((r) => setTimeout(r, 900))));
+      await settle();
+      expect(reads() - before).toBeGreaterThanOrEqual(2);
+      expect(active().map((b) => b.title)).toEqual(["claude-opus-4-9"]);
+      expect(strip().querySelector(".run-strip-notice")).toBeNull();
+    } finally {
+      onPrefsAnswer = null;
+      serverPrefs = {};
+    }
+  });
+});
+
+describe("a save pending when the row opens", () => {
+  it("waits without reading or launching, then reads after the save and sends the model it found", async () => {
+    localStorage.setItem("af.repo-model.app", "claude-opus-4-9");
+    await renderDialog(["claude", "codex"]); // the first read lands: the prefs are loaded, saves can be armed
+    const tile = (name: string) => [...strip().querySelectorAll<HTMLButtonElement>(".ui-seg.big .seg-btn")].find((b) => b.textContent?.includes(name))!;
+    await click(tile("Codex"));
+    setSettings({ claudeCustomModels: REGISTERED.slice(0, 4) }); // arms the debounced save
+    onPrefsAnswer = () => {
+      setSettings({ claudeCustomModels: [...REGISTERED, "claude-opus-4-9"] });
+      settleSaves();
+    };
+    const before = prefsReads;
+    try {
+      await click(tile("Claude"));
+      await settle();
+      expect(prefsReads).toBe(before); // the save is pending: no read
+      expect(primary().disabled).toBe(true);
+      await sendKey();
+      expect(onLaunch).not.toHaveBeenCalled();
+      await act(async () => void (await new Promise((r) => setTimeout(r, 1800)))); // the save lands, the retry reads
+      await settle();
+      expect(prefsReads).toBeGreaterThan(before);
+      expect(active().map((b) => b.title)).toEqual(["claude-opus-4-9"]);
+      await sendKey();
+      expect(onLaunch.mock.calls[0][0].model).toBe("claude-opus-4-9");
+    } finally {
+      onPrefsAnswer = null;
+    }
+  });
+});
+
 describe("a member default that is no longer registered", () => {
   it("falls to the team's default before the built-in one", async () => {
     localStorage.setItem("af.repo-model.app", "removed-model");
