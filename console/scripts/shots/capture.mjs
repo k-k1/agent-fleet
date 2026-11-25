@@ -1354,6 +1354,46 @@ const SCENES = [
     verify: `!!document.querySelector(".start-space-actions button:not([disabled])")`,
   },
   {
+    // The Active view of the left pane (ADR 0145): running and waiting sessions as cards under
+    // their repository, space or "Other sessions", with the unattended Auto-run group folded.
+    name: "active-view",
+    guide: true,
+    stubEnv: { SHOT_ACTIVE_GUIDE: "1" },
+    view: "active",
+    clip: ".rail-view[data-rail-view='active'] .ui-section",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => { await new Promise((r) => setTimeout(r, 1500)); })()`,
+    settle: 1500,
+    verify: `document.querySelectorAll("[data-active-group]").length >= 2`,
+  },
+  {
+    // The Terminal view's "Start a terminal" dialog: Home, the folded repositories and spaces, SSM.
+    name: "terminals-new",
+    guide: true,
+    stubEnv: { SHOT_ACTIVE_GUIDE: "1" },
+    view: "terminals",
+    clip: ".ui-modal",
+    pad: 0,
+    sections: FOCUS_TREE,
+    width: 1400,
+    height: 1100,
+    layout: { cols: [col("c0", [mirrorOf("sk4rq2f")])], colRatios: [1], activeId: "p0" },
+    action: `(async () => {
+      const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+      await wait(1500);
+      for (let i = 0; i < 10 && !document.querySelector(".term-new"); i++) {
+        document.querySelector(".rail-view[data-rail-view='terminals'] button[aria-label]:not([disabled])")?.click();
+        await wait(800);
+      }
+    })()`,
+    settle: 1500,
+    verify: `!!document.querySelector(".term-new")`,
+  },
+  {
     // "Start work" for a repository as it opens: the first prompt, then the folded Location and
     // Details sections with their summaries (Details names the agent and model).
     name: "sessions-launch",

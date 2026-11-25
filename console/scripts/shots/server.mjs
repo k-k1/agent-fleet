@@ -111,7 +111,9 @@ const exact = {
             ? []
             : FLEET_LANES
             ? fx.sessionsBig(LOCALE, FLEET_LANES)
-            : process.env.SHOT_SESSIONS_GUIDE
+            : process.env.SHOT_ACTIVE_GUIDE
+              ? fx.sessionsActiveGuide(LOCALE)
+              : process.env.SHOT_SESSIONS_GUIDE
               ? fx.sessionsBudgetStopped(LOCALE)
               : fx.sessions(LOCALE),
         },
@@ -123,7 +125,7 @@ const exact = {
   "/api/cleanup/archives": () => ({ archives: fx.cleanupArchives(LOCALE) }),
   "/api/repos": () => ({ repos: fx.repos(LOCALE) }),
   // The Start hub asks it to tell whether the Agent can start in a space (ADR 0142).
-  "/api/spaces": () => ({ spaces: [] }),
+  "/api/spaces": () => ({ spaces: process.env.SHOT_ACTIVE_GUIDE ? fx.spacesActiveGuide(LOCALE) : [] }),
   // The live kind catalogue (GET /agents/kinds): the launch screens list only what it allows (ADR
   // 0138 D10a) and launch nothing without a confirmed answer. SHOTS_ROUTE_POLICY picks a state:
   // unset = nothing restricted; "keyonly" = claude on an Anthropic key alone; "none" = the policy

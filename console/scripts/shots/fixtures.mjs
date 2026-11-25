@@ -162,6 +162,47 @@ export function sessions(locale) {
   ];
 }
 
+// The Active view's guide shot (SHOT_ACTIVE_GUIDE): the default sessions plus a session in a
+// space and two runs of an auto-run queue, so the view shows a repository, a space, other
+// sessions and the Auto-run group (folded until opened).
+export function sessionsActiveGuide(locale) {
+  return [
+    ...sessions(locale),
+    {
+      name: "ss7nq3d",
+      kind: "claude",
+      driver: "tui",
+      title: L(locale, "旅行プランのメモ", "Trip planning notes"),
+      repo: "",
+      dir: "~/spaces/trip-notes",
+      path: "/home/dev/spaces/trip-notes",
+      space: "trip-notes",
+      state: "working",
+      alive: true,
+      model: "claude-opus-5-5",
+      createdAt: ago(12),
+    },
+    {
+      name: "sq4mt9c",
+      kind: "claude",
+      driver: "managed",
+      title: L(locale, "依存パッケージの更新", "Dependency updates"),
+      repo: "webshop",
+      dir: "~/repos/webshop",
+      path: "/home/dev/repos/webshop",
+      state: "working",
+      alive: true,
+      model: "claude-sonnet-5-5",
+      origin: "queue",
+      createdAt: ago(9),
+    },
+  ];
+}
+
+export function spacesActiveGuide(locale) {
+  return [{ folder: "trip-notes", name: L(locale, "旅行プラン", "Trip planning"), dir: "~/spaces/trip-notes", createdAt: ago(300) }];
+}
+
 // The sessions guide's budget page (SHOT_SESSIONS_GUIDE): the stopped opencode session was
 // stopped by a $5.00 budget it went past, so its menu offers "raise budget & resume".
 export function sessionsBudgetStopped(locale) {

@@ -26,7 +26,7 @@ space are under **Spaces**, and the ones that belong to neither are under **Othe
 Press **＋ Start** on the workspace action bar to open the **Start** screen. It has three sections, and one of them is
 open at a time. Start opens on the section you used last; the very first time, that is **Start in a space**.
 
-![The Start screen with "Start in a space" open: the "What would you like done?" box, the "New space" place with an optional name, the folded Details and a "Start in a new space" button. "Start in a repository" and "Other" are folded below](../../assets/sessions-start-en-light.webp)
+![The Start screen with "Start in a space" open: the "What would you like done?" box, the agent, route and model strip under the box, the "New space" place with an optional name, the folded Details and a "Start in a new space with Claude Code · Sonnet" button. "Start in a repository" and "Other" are folded below](../../assets/sessions-start-en-light.webp)
 
 | Section | What it holds |
 |---|---|
