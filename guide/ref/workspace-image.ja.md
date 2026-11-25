@@ -54,7 +54,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 | [Codex CLI (`codex`)](https://github.com/openai/codex) | OpenAI のコーディングエージェント | `0.172.0` | [Apache-2.0](https://github.com/openai/codex/blob/rust-v0.172.0/LICENSE) |
 | [opencode](https://github.com/anomalyco/opencode) | 多くのモデル提供元で動く、オープンソースのコーディングエージェント | `2.4.1` | [MIT](https://github.com/anomalyco/opencode/blob/v2.4.1/LICENSE) |
 | [GitHub Copilot CLI (`copilot`)](https://github.com/github/copilot-cli) | GitHub のコーディングエージェント | `1.0.115` | [提供元の規約](https://github.com/github/copilot-cli/blob/v1.0.115/LICENSE.md) |
-| [Antigravity CLI (`agy`)](https://antigravity.google/) | Google のコーディングエージェント | `1.5.16` | [提供元の規約](https://antigravity.google/terms) |
+| [Antigravity CLI (`agy`)](https://antigravity.google/) | Google のコーディングエージェント | `1.5.17` | [提供元の規約](https://antigravity.google/terms) |
 | [Cursor CLI (`cursor-agent`)](https://cursor.com/) | Cursor のコーディングエージェント | `2026.10.22-27dcf5f` | [提供元の規約](https://cursor.com/terms-of-service) |
 | [Kiro CLI (`kiro-cli`)](https://kiro.dev/cli/) | AWS の Kiro のコーディングエージェント | `3.3.0` | [提供元の規約](https://kiro.dev/license/) |
 | [Muse Code (`muse`)](https://dev.meta.ai/) | Meta のコーディングエージェント | `1.4.25-R9361.1` | [提供元の規約](https://dev.meta.ai/legal) |
