@@ -193,11 +193,13 @@ describe("ActiveSection", () => {
       await act(async () => btn.click());
       expect(host.querySelector<HTMLButtonElement>(".act-gfold")!.getAttribute("aria-expanded")).toBe("false");
       // The folded group's cards are out of the way, the other group is untouched.
-      const visible = [...host.querySelectorAll<HTMLElement>(".act-cards:not([hidden]) .ovw-card")].map((e) => (e.getAttribute("title") || "").split("ID: ")[1]);
+      const visible = [...host.querySelectorAll<HTMLElement>(".ovw-card")].map((e) => (e.getAttribute("title") || "").split("ID: ")[1]);
       expect(visible).toEqual(["sp"]);
       const head = host.querySelector(`[data-active-group="${key0}"] .act-gtitle`)!;
       expect(head.textContent).toContain("2 running / 2 total");
       expect(head.querySelector(".act-gwait")?.textContent).toBe("1");
+      // The button's own name says what the bare number is.
+      expect(head.querySelector(".act-gfold")!.getAttribute("aria-label")).toBe("app, 2 running / 2 total, 1 session in this group is waiting for your answer");
       expect(storedFolded()).toEqual([key0]);
       await act(async () => host.querySelector<HTMLButtonElement>(".act-gfold")!.click());
       expect(storedFolded()).toEqual([]);

@@ -81,7 +81,9 @@ export const ActiveSection = memo(function ActiveSection() {
             <section className="act-group" key={g.key} data-active-group={g.key}>
               <h3 className="ovw-gtitle act-gtitle" title={g.hint || undefined}>
                 {/* The heading is a disclosure button: Enter / Space fold it, and a screen reader says which way it is. */}
-                <button type="button" className="act-gfold" aria-expanded={!foldedSet.has(g.key)} onClick={() => toggleGroup(g.key)}>
+                <button type="button" className="act-gfold" aria-expanded={!foldedSet.has(g.key)}
+                  aria-label={[g.kind === "other" ? tr("pj.other_sessions") : g.label, tr("ovw.group_count", { alive: g.alive, n: g.total }), g.waiting > 0 ? tCount("active.group_waiting_hint", g.waiting) : ""].filter(Boolean).join(", ")}
+                  onClick={() => toggleGroup(g.key)}>
                   <Icon name={foldedSet.has(g.key) ? "chevron-right" : "chevron-down"} />
                   <Icon name={GROUP_ICON[g.kind]} />
                   <span className="ovw-gname">{g.kind === "other" ? tr("pj.other_sessions") : g.label}</span>
@@ -94,7 +96,8 @@ export const ActiveSection = memo(function ActiveSection() {
                   )}
                 </button>
               </h3>
-              <div className="act-cards" role="list" hidden={foldedSet.has(g.key)}>
+              {!foldedSet.has(g.key) && (
+              <div className="act-cards" role="list">
                 {g.sessions.map((s) => {
                   const fold = g.fold.get(s.name);
                   return (
@@ -117,6 +120,7 @@ export const ActiveSection = memo(function ActiveSection() {
                   );
                 })}
               </div>
+              )}
             </section>
           ))}
         </div>

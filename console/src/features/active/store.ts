@@ -25,13 +25,17 @@ export const ACTIVE_EXPANDED_MAX = 200;
  *  so a group that appears for the first time starts open. */
 export const ACTIVE_GROUPS_FOLDED_KEY = "af-active-groups-folded";
 
+/** Bound on the stored list: keys of groups that no longer exist are never pruned (the list on
+ *  screen can be the previous tenant's for a moment), so the cap alone bounds it. */
+export const ACTIVE_GROUPS_FOLDED_MAX = 200;
+
 /** The folded group headings, and the toggle. A group key is a remote, a space folder or
  *  "o:", never a session name, so the list is bounded by the groups a member has and a
  *  stale key opens nothing. */
 export function useActiveFoldedGroups(): [string[], (key: string) => void] {
   const [raw, setRaw] = useFoldValue(ACTIVE_GROUPS_FOLDED_KEY);
   const folded = useMemo(() => parse(raw), [raw]);
-  const toggle = (key: string) => setRaw(JSON.stringify(folded.includes(key) ? folded.filter((k) => k !== key) : [...folded, key]));
+  const toggle = (key: string) => setRaw(JSON.stringify((folded.includes(key) ? folded.filter((k) => k !== key) : [...folded, key]).slice(-ACTIVE_GROUPS_FOLDED_MAX)));
   return [folded, toggle];
 }
 
