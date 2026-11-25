@@ -15,15 +15,19 @@ const parse = (raw: string | null): string[] => {
   }
 };
 
-/** The opened parents, and the toggle. `known` is every session name of this workspace right
- *  now: names that are gone are dropped on the way, so the stored list never outgrows the
- *  sessions. */
-export function useActiveExpanded(): [string[], (name: string, known: ReadonlySet<string>) => void] {
+/** How many opened parents are remembered. Names of sessions that are gone are never
+ *  looked for: the session list on screen can still be the previous tenant's for a moment
+ *  after a switch, and a list pruned against it would lose this tenant's choices. A session
+ *  name is not reused, so a stale entry opens nothing; the cap alone bounds the list. */
+export const ACTIVE_EXPANDED_MAX = 200;
+
+/** The opened parents, and the toggle. */
+export function useActiveExpanded(): [string[], (name: string) => void] {
   const [raw, setRaw] = useFoldValue(ACTIVE_EXPANDED_KEY);
   const expanded = useMemo(() => parse(raw), [raw]);
-  const toggle = (name: string, known: ReadonlySet<string>) => {
-    const cur = expanded.filter((n) => known.has(n));
-    setRaw(JSON.stringify(cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name]));
+  const toggle = (name: string) => {
+    const next = expanded.includes(name) ? expanded.filter((n) => n !== name) : [...expanded, name];
+    setRaw(JSON.stringify(next.slice(-ACTIVE_EXPANDED_MAX)));
   };
   return [expanded, toggle];
 }

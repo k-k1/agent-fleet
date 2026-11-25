@@ -24,6 +24,7 @@ import { openSessionsOverview } from "../features/overview/open.ts";
 import { openImagegen } from "../features/imagegen/open.ts";
 import { useImagegenAvailable } from "../features/imagegen/available.ts";
 import { useReposStore } from "../features/repos/store.ts";
+import type { Repo } from "../features/repos/store.ts";
 import { openGeneratedGallery } from "../features/gallery/open.ts";
 import { hintSuffix } from "../features/keys/keyHint.ts";
 import { Icon } from "../ui/Icon.tsx";
@@ -445,6 +446,8 @@ function badgeText(b: RailBadge, tr: ReturnType<typeof useT>, view: RailView): s
   }
 }
 
+const NO_REPOS: Repo[] = [];
+
 // The badge of each view. `onScreen` is the view somebody is looking at (null while the pane
 // is folded away): its news is acknowledged as it arrives, so it never shows a news badge.
 function useRailBadges(onScreen: RailView | null, activeShown: boolean): Partial<Record<RailView, RailBadge>> {
@@ -452,12 +455,16 @@ function useRailBadges(onScreen: RailView | null, activeShown: boolean): Partial
   const sessions = useSessionsStore((s) => s.sessions);
   const shownSchedules = useShownSchedules();
   const reposForTerminals = useReposStore((s) => s.repos);
-  const waiting = useMemo(() => waitingSessions(sessions, wset, shownSchedules, reposForTerminals), [sessions, wset, shownSchedules, reposForTerminals]);
+  const terminalsViewLive = useWorkspaceStore((s) => s.state) === "running";
+  // While the workspace is stopped the count leads to the stopped history, which places a row
+  // by its folder name alone (it has no working-copy list). Counting by the working copy then
+  // would count a session the history does not list.
+  const reposForCount = terminalsViewLive ? reposForTerminals : NO_REPOS;
+  const waiting = useMemo(() => waitingSessions(sessions, wset, shownSchedules, reposForCount), [sessions, wset, shownSchedules, reposForCount]);
   // Selectors that answer a boolean: the notification list is replaced on every poll, and a
   // subscription to the list itself would re-render the column each time.
   // Where a shell's notice leads depends on where its row is: the Terminal view lists it while the
   // workspace runs, and the Sessions view's history lists every session while it is stopped.
-  const terminalsViewLive = useWorkspaceStore((s) => s.state) === "running";
   const unreadSessions = useNotificationStore((s) => hasUnreadSession(s.items, sessions, wset, !terminalsViewLive, shownSchedules));
   const unreadTerminals = useNotificationStore((s) => terminalsViewLive && hasUnreadTerminal(s.items, sessions, reposForTerminals, wset));
   const unreadConversation = useNotificationStore((s) => hasUnreadConversation(s.items, wset));

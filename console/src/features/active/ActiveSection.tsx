@@ -63,7 +63,6 @@ export const ActiveSection = memo(function ActiveSection() {
     [sessions, repos, spaces, wset, expandedSet, shownSchedules, locale],
   );
   const alive = groups.reduce((n, g) => n + g.alive, 0);
-  const known = useMemo(() => new Set(sessions.map((s) => s.name)), [sessions]);
 
   // "Waiting since", composed as the overview composes it. Shown, never ordered by.
   const notifications = useNotificationStore((st) => st.items);
@@ -100,7 +99,7 @@ export const ActiveSection = memo(function ActiveSection() {
                       actions={actions}
                       fold={fold}
                       hiddenWaiting={g.hiddenWaiting.get(s.name)}
-                      onFold={fold?.hasChildren ? () => toggle(s.name, known) : undefined}
+                      onFold={fold?.hasChildren ? () => toggle(s.name) : undefined}
                     />
                     </div>
                   );

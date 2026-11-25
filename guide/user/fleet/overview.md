@@ -77,13 +77,13 @@ On a phone, open the left pane with **≡** to reach the activity bar.
 ## In the left pane: the Active view
 
 **Active** in the activity bar shows the same cards in the left pane, without using a pane of the main area.
-It lists what is going on now, so the many repositories and branches with nothing running do not appear.
+It lists what is going on now and the few stopped sessions that belong with it, so the many repositories and branches with nothing running do not appear.
 
 | What you see | What it means |
 |---|---|
 | Headings | Repositories first, then spaces, then "Other sessions". A heading appears only while it has a session to list |
-| Cards | Running sessions, and stopped sessions that still need you: stopped with an unanswered question, plan or permission, or holding a handoff nobody took. The child sessions of a listed session are listed under it too, stopped ones included. Any other stopped session is in **Sessions** |
-| A parent's card | Starts with its child sessions folded. "+N" is how many it hides; the number with the question mark is how many of those are running and wait for your answer. The arrow at the left opens and folds them, and this browser remembers which you opened |
+| Cards | Running sessions, and stopped sessions that still need you: stopped with an unanswered question, plan or permission, or holding a handoff nobody took. The child sessions of a listed session are listed too, stopped ones included: under their parent when the parent is under the same heading, on their own under another heading when they work in another repository or space. Any other stopped session is in **Sessions** |
+| A parent's card | Starts with the child sessions under the same heading folded. "+N" is how many it hides; the number with the question mark is how many of those are running and wait for your answer. The arrow at the left opens and folds them, and this browser remembers which you opened |
 | Pane numbers | The panes that show the session, while the screen is split. Click a number to go to that pane |
 
 - A click opens the session in the pane you are in. **Ctrl (⌘)-click** or **middle-click** opens it in another pane

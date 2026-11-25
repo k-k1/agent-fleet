@@ -32,6 +32,7 @@ import { useTenantStore } from "../core/store/tenant.ts";
 import { useSchedulesStore } from "../features/schedules/store.ts";
 import { useLayoutStore } from "../layout/store.ts";
 import { useWorkspaceStore } from "../core/store/workspace.ts";
+import { useReposStore } from "../features/repos/store.ts";
 import { useHandoffStore } from "../features/sharing/handoffStore.ts";
 import type { HandoffOffer } from "../features/sharing/handoffStore.ts";
 import { useMemoStore } from "../features/memo/store.ts";
@@ -69,7 +70,9 @@ const workItems = (updatedAt: string) => ({
 
 beforeEach(() => {
   localStorage.clear();
-  setSettings({ railViewsOff: [] });
+  setSettings({ railViewsOff: [], workingSets: [], workingSetActive: "" });
+  useReposStore.setState({ repos: [] });
+  useWorkspaceStore.setState({ state: "stopped" });
   useLeftRail.setState({ open: true, view: "sessions", swipeOverlay: false });
   useSessionsStore.setState({ sessions: [] });
   useNotificationStore.setState({ items: [] });
@@ -316,6 +319,20 @@ describe("ActivityBar badges", () => {
     await act(async () => useWorkspaceStore.setState({ state: "stopped" }));
     expect(badge("active")).toBeNull();
     expect(badge("sessions")?.textContent).toBe("2");
+  });
+
+  it("while stopped, counts only what the stopped history lists: a worktree by its folder name", async () => {
+    // A worktree whose folder does not carry its parent's name. Running, the views place it by
+    // its working copy; stopped, the history has no working-copy list and goes by the folder.
+    setSettings({ workingSets: [{ id: "w", name: "A", repos: ["app"], convs: [], sessions: [], schedules: [] }], workingSetActive: "w" });
+    useReposStore.setState({ repos: [{ name: "app" }, { name: "nightly", worktree: true, parent: "app" }] });
+    useSessionsStore.setState({ sessions: [{ ...sess("n", "question"), repo: "nightly" } as Session] });
+    useWorkspaceStore.setState({ state: "running" });
+    await mount();
+    expect(badge("active")?.textContent).toBe("1");
+    await act(async () => useWorkspaceStore.setState({ state: "stopped" }));
+    expect(badge("active")).toBeNull();
+    expect(badge("sessions")).toBeNull();
   });
 
   it("counts them on the Sessions icon when the Active icon is off", async () => {

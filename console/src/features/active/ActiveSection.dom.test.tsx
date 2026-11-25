@@ -23,7 +23,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { ActiveSection } = await import("./ActiveSection.tsx");
-const { ACTIVE_EXPANDED_KEY } = await import("./store.ts");
+const { ACTIVE_EXPANDED_KEY, ACTIVE_EXPANDED_MAX } = await import("./store.ts");
 const { readFoldValue, setFoldScope, writeFoldValue } = await import("../../lib/foldStore.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -126,23 +126,41 @@ describe("ActiveSection", () => {
     expect(cards()).toEqual(["p"]);
   });
 
-  it("forgets an opened parent that no longer exists when the fold is next changed", async () => {
-    writeFoldValue(ACTIVE_EXPANDED_KEY, JSON.stringify(["gone"]));
+  it("keeps the other opened parents when a fold changes, and bounds the list", async () => {
+    writeFoldValue(ACTIVE_EXPANDED_KEY, JSON.stringify(["elsewhere"]));
     await render([sess("p", { repo: "app" }), sess("c1", { repo: "app", originSession: "p" })]);
     await act(async () => host.querySelector<HTMLButtonElement>(".ovw-fold")!.click());
-    expect(JSON.parse(readFoldValue(ACTIVE_EXPANDED_KEY) || "[]")).toEqual(["p"]);
+    expect(JSON.parse(readFoldValue(ACTIVE_EXPANDED_KEY) || "[]")).toEqual(["elsewhere", "p"]);
+    await act(async () => host.querySelector<HTMLButtonElement>(".ovw-fold")!.click());
+    writeFoldValue(ACTIVE_EXPANDED_KEY, JSON.stringify(Array.from({ length: ACTIVE_EXPANDED_MAX }, (_, i) => "old" + i)));
+    await act(async () => setFoldScope({ tenant: "t9" }));
+    await act(async () => setFoldScope({ tenant: "t1" }));
+    await act(async () => host.querySelector<HTMLButtonElement>(".ovw-fold")!.click());
+    const kept = JSON.parse(readFoldValue(ACTIVE_EXPANDED_KEY) || "[]") as string[];
+    expect(kept).toHaveLength(ACTIVE_EXPANDED_MAX);
+    expect([kept[0], kept[kept.length - 1]]).toEqual(["old1", "p"]);
   });
 
-  it("keeps the opened parents of each tenant apart", async () => {
+  it("keeps the opened parents of each tenant apart, even while the previous tenant's list is still on screen", async () => {
     const family = [sess("p", { repo: "app" }), sess("c1", { repo: "app", originSession: "p" })];
+    const stored = () => JSON.parse(readFoldValue(ACTIVE_EXPANDED_KEY) || "[]") as string[];
     await render(family);
     await act(async () => host.querySelector<HTMLButtonElement>(".ovw-fold")!.click());
     expect(cards()).toEqual(["p", "c1"]);
-    // Another tenant: its own sessions, nothing opened, and changing a fold there prunes only there.
+    // The other tenant already has a parent open.
     await act(async () => setFoldScope({ tenant: "t2" }));
-    await render([sess("q", { repo: "app" }), sess("d1", { repo: "app", originSession: "q" })]);
-    expect(cards()).toEqual(["q"]);
+    writeFoldValue(ACTIVE_EXPANDED_KEY, JSON.stringify(["q"]));
+    await act(async () => setFoldScope({ tenant: "t1" }));
+    // The switch: the scope changes at once, the session list a moment later. Until then the
+    // previous tenant's rows are on screen, and a fold pressed on one must not cost this
+    // tenant what it had open.
+    await act(async () => setFoldScope({ tenant: "t2" }));
+    expect(cards()).toEqual(["p"]);
     await act(async () => host.querySelector<HTMLButtonElement>(".ovw-fold")!.click());
+    expect(stored()).toEqual(["q", "p"]);
+    await act(async () => host.querySelector<HTMLButtonElement>(".ovw-fold")!.click());
+    expect(stored()).toEqual(["q"]);
+    await render([sess("q", { repo: "app" }), sess("d1", { repo: "app", originSession: "q" })]);
     expect(cards()).toEqual(["q", "d1"]);
     await act(async () => setFoldScope({ tenant: "t1" }));
     await render(family);
