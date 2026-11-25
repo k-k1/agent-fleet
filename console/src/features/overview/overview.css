@@ -247,6 +247,8 @@
   gap: 6px;
   flex: 1 1 0;
   min-width: 0;
+  /* Clip, so the chips' own padding and the gaps can never paint over the icons. */
+  overflow: hidden;
 }
 .ovw-card--rail .ovw-where {
   flex-wrap: wrap;
