@@ -1841,7 +1841,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       </div>
 
 
-      <footer className="ui-modal-foot">
+      <footer className="ui-modal-foot launch-foot">
         {onBack && (
           <Button variant="ghost" className="launch-back" icon="arrow-left" onClick={onBack} disabled={busy}>
             {tr("launch.back_to_hub")}

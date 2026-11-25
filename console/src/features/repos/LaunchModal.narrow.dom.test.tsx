@@ -177,3 +177,23 @@ describe("launch button style", () => {
     expect(rule).toMatch(/white-space:\s*normal/);
   });
 });
+
+describe("launch dialog footer at narrow widths", () => {
+  it("is the stacked footer variant, and the stacking rule is a column with a full-width primary", () => {
+    const css = readFileSync("src/features/repos/repos.css", "utf8");
+    const block = /@media \(max-width: 520px\) \{\s*\.ui-modal-foot\.launch-foot \{([^}]*)\}[\s\S]*?\.launch-back \{([^}]*)\}[\s\S]*?\.launch-go \{([^}]*)\}/.exec(css);
+    expect(block).not.toBeNull();
+    expect(block![1]).toMatch(/flex-direction:\s*column-reverse/);
+    expect(block![1]).toMatch(/align-items:\s*stretch/);
+    expect(block![2]).toMatch(/margin-right:\s*0/);
+    expect(block![3]).toMatch(/max-width:\s*none/);
+  });
+  it.each([360, 420])("the dialog's footer carries the launch-foot class at %i px, primary last in DOM order", async (w) => {
+    setWidth(w);
+    await renderDialog(["claude"]);
+    const foot = document.querySelector<HTMLElement>("footer.ui-modal-foot")!;
+    expect(foot.classList.contains("launch-foot")).toBe(true);
+    const btns = [...foot.querySelectorAll("button")];
+    expect(btns[btns.length - 1].classList.contains("launch-go")).toBe(true);
+  });
+});
