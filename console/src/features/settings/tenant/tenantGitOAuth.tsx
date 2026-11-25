@@ -14,6 +14,7 @@
 //
 // client_secret is write-only. A stored value is never returned, so saving with the field
 // empty means "leave unchanged" (the server keeps the same contract).
+import { FieldLabel } from "../../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useCallback, useEffect, useState } from "react";
 import { errText, raw } from "../../../core/api/client.ts";
@@ -220,14 +221,13 @@ function GitOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuthApp
             greying it out: never show a field whose contents nobody can guess. */}
         {app.needs_secret && (
           <label className="admin-fld wide">
-            <span className="af-cap">{tr("tenant.git_oauth_client_secret")}</span>
+            <FieldLabel as="span" plain className="af-cap" info={tr("tenant.git_oauth_secret_unit")}>{tr("tenant.git_oauth_client_secret")}</FieldLabel>
             <input
               type="password"
               placeholder={app.has_secret ? tr("tenant.git_oauth_secret_kept") : ""}
               value={secret}
               onChange={(e) => setSecret(e.target.value)}
             />
-            <span className="af-unit">{tr("tenant.git_oauth_secret_unit")}</span>
           </label>
         )}
       </div>
@@ -406,14 +406,13 @@ function GitHubOAuthCard({ slug, app, onChanged }: { slug: string; app: GitOAuth
               <input {...NO_AUTOFILL} type="text" value={clientID} onChange={(e) => setClientID(e.target.value)} />
             </label>
             <label className="admin-fld wide">
-              <span className="af-cap">{tr("tenant.gh_install_url")}</span>
+              <FieldLabel as="span" plain className="af-cap" info={tr("tenant.gh_install_url_unit")}>{tr("tenant.gh_install_url")}</FieldLabel>
               <input {...NO_AUTOFILL}
                 type="text"
                 placeholder="https://github.com/apps/…"
                 value={installURL}
                 onChange={(e) => setInstallURL(e.target.value)}
               />
-              <span className="af-unit">{tr("tenant.gh_install_url_unit")}</span>
             </label>
           </div>
           {current === "custom" && app.client_id && clientID.trim() === app.client_id && (

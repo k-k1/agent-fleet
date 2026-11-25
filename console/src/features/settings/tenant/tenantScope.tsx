@@ -9,6 +9,7 @@
 // Permission is the server's. Both the limits PUT and "approve and enable" for a sign-in
 // method are fixed at withSuperAdmin / super_admin (ADR0043 decision 19 / decision 30); what
 // is switched here is presentation only.
+import { FieldLabel } from "../../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../../ui/noAutofill.ts";
 import { useEffect, useState } from "react";
 import { errText } from "../../../core/api/client.ts";
@@ -294,7 +295,7 @@ export function TenantLimits({
             </span>
           </label>
           <label className="admin-fld">
-            <span className="af-cap">{tr("admin.max_ws_mem")}</span>
+            <FieldLabel as="span" plain className="af-cap" info={<>{tr("admin.ws_mem_hint_1")}<code>WS_MEMORY</code>{tr("admin.ws_mem_hint_2")}<code>AF_MAX_WORKSPACE_MEM</code>{tr("admin.ws_mem_hint_3")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.ws_mem_hint_4")}</>}>{tr("admin.max_ws_mem")}</FieldLabel>
             <span className="af-inputwrap">
               <input type="number" min="0" step="256" value={maxWsMemMb} onChange={(e) => setMaxWsMemMb(e.target.value)} />
               <span className="af-suffix">MB</span>
@@ -302,7 +303,7 @@ export function TenantLimits({
             <span className="af-unit">{+maxWsMemMb > 0 ? tr("admin.per_container", { hint: fmtGbHint(+maxWsMemMb) }) : tr("admin.zero_no_tenant_cap")}</span>
           </label>
           <label className="admin-fld">
-            <span className="af-cap">{tr("admin.pat_max_days")}</span>
+            <FieldLabel as="span" plain className="af-cap" info={tr("admin.pat_max_days_hint")}>{tr("admin.pat_max_days")}</FieldLabel>
             <span className="af-inputwrap">
               <input type="number" min="0" max="3650" value={patMaxDays} onChange={(e) => setPatMaxDays(e.target.value)} />
               <span className="af-suffix">{tr("admin.pat_max_days_unit")}</span>
@@ -310,10 +311,6 @@ export function TenantLimits({
             <span className="af-unit">{+patMaxDays > 0 ? tr("admin.pat_max_days_set") : tr("admin.zero_no_tenant_cap")}</span>
           </label>
         </div>
-        <p className="admin-hint">{tr("admin.pat_max_days_hint")}</p>
-        <p className="admin-hint">
-          {tr("admin.ws_mem_hint_1")}<code>WS_MEMORY</code>{tr("admin.ws_mem_hint_2")}<code>AF_MAX_WORKSPACE_MEM</code>{tr("admin.ws_mem_hint_3")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.ws_mem_hint_4")}
-        </p>
       </div>
 
       <div className="admin-fgroup">
@@ -324,7 +321,7 @@ export function TenantLimits({
             <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.idle_ph_30m")} value={sessIdle} onChange={(e) => setSessIdle(e.target.value)} />
           </label>
           <label className="admin-fld">
-            <span className="af-cap">{tr("admin.interaction_halt")}</span>
+            <FieldLabel as="span" plain className="af-cap" info={tr("admin.interaction_hint")}>{tr("admin.interaction_halt")}</FieldLabel>
             <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.interaction_ph")} value={interIdle} onChange={(e) => setInterIdle(e.target.value)} />
           </label>
           <label className="admin-fld">
@@ -336,15 +333,13 @@ export function TenantLimits({
             <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.idle_ph_60m")} value={wsIdle} onChange={(e) => setWsIdle(e.target.value)} />
           </label>
           <label className="admin-fld">
-            <span className="af-cap">{tr("admin.image_refresh_quiet")}</span>
+            <FieldLabel as="span" plain className="af-cap" info={tr("admin.image_refresh_hint")}>{tr("admin.image_refresh_quiet")}</FieldLabel>
             <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.image_refresh_quiet_ph")} value={refreshQuiet} onChange={(e) => setRefreshQuiet(e.target.value)} />
           </label>
         </div>
         <p className="admin-hint">
           {tr("admin.idle_hint_1")}<code>30m</code> / <code>2h</code> / <code>90s</code>{tr("admin.idle_hint_2")}<code>0</code>{tr("admin.idle_hint_3")}
         </p>
-        <p className="admin-hint">{tr("admin.interaction_hint")}</p>
-        <p className="admin-hint">{tr("admin.image_refresh_hint")}</p>
       </div>
 
       {/* Only the EC2 slot pool has somewhere cheaper to put a home; on the other
@@ -354,11 +349,10 @@ export function TenantLimits({
           <h4>{tr("admin.hibernate_title")}<span className="af-note">{tr("admin.empty_deploy_default")}</span></h4>
           <div className="admin-fgrid">
             <label className="admin-fld">
-              <span className="af-cap">{tr("admin.hibernate_after")}</span>
+              <FieldLabel as="span" plain className="af-cap" info={tr("admin.hibernate_hint")}>{tr("admin.hibernate_after")}</FieldLabel>
               <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.hibernate_ph")} value={homeHib} onChange={(e) => setHomeHib(e.target.value)} />
             </label>
           </div>
-          <p className="admin-hint">{tr("admin.hibernate_hint")}</p>
           <p className="admin-hint">{tr("admin.hibernate_warn")}</p>
         </div>
       )}
@@ -370,11 +364,10 @@ export function TenantLimits({
           <h4>{tr("admin.backup_title")}<span className="af-note">{tr("admin.empty_deploy_default")}</span></h4>
           <div className="admin-fgrid">
             <label className="admin-fld">
-              <span className="af-cap">{tr("admin.backup_every")}</span>
+              <FieldLabel as="span" plain className="af-cap" info={tr("admin.backup_hint")}>{tr("admin.backup_every")}</FieldLabel>
               <input {...NO_AUTOFILL} type="text" placeholder={tr("admin.backup_ph")} value={homeBackup} onChange={(e) => setHomeBackup(e.target.value)} />
             </label>
           </div>
-          <p className="admin-hint">{tr("admin.backup_hint")}</p>
           <p className="admin-hint">{tr("admin.backup_warn")}</p>
         </div>
       )}
@@ -382,7 +375,7 @@ export function TenantLimits({
       <div className="admin-fgroup">
         <h4>{tr("admin.term_log_title")}</h4>
         <label className="admin-fld">
-          <span className="af-cap">{tr("admin.retention")}</span>
+          <FieldLabel as="span" plain className="af-cap" info={tr("admin.term_log_hint")}>{tr("admin.retention")}</FieldLabel>
           <select value={termRetention} onChange={(e) => setTermRetention(Number(e.target.value))}>
             <option value={0}>{tr("admin.retention_off")}</option>
             <option value={1}>{tr("admin.days_1")}</option>
@@ -390,7 +383,6 @@ export function TenantLimits({
             <option value={30}>{tr("admin.days_30")}</option>
           </select>
         </label>
-        <p className="admin-hint">{tr("admin.term_log_hint")}</p>
       </div>
 
       <div className="admin-fgroup">

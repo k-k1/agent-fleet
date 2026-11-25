@@ -177,3 +177,19 @@ describe("model access section", () => {
     expect(document.querySelector(".model-access [role=alert]")?.textContent).toBe("nope");
   });
 });
+
+describe("limits form field explanations (docs/CONVENTIONS.md §13)", () => {
+  it("keeps each moved explanation behind its own ⓘ, closed until pressed", async () => {
+    await mount();
+    const infos = Array.from(document.querySelectorAll<HTMLButtonElement>("button.ui-field-info"));
+    // PAT max days, workspace memory, interaction halt, image refresh quiet, term-log retention.
+    expect(infos.length).toBeGreaterThanOrEqual(5);
+    for (const b of infos) {
+      const panel = document.getElementById(b.getAttribute("aria-controls")!)!;
+      expect(panel.hidden).toBe(true);
+      expect(panel.textContent!.trim()).not.toBe("");
+      await act(async () => b.click());
+      expect(panel.hidden).toBe(false);
+    }
+  });
+});
