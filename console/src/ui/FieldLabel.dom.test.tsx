@@ -50,10 +50,12 @@ describe("FieldLabel", () => {
     let closed = 0;
     await render(
       <Modal title="t" onClose={() => closed++}>
-        <FieldLabel htmlFor="x" info="i">
-          Name
-        </FieldLabel>
-        <input id="x" />
+        <div className="ui-modal-body">
+          <FieldLabel htmlFor="x" info="i">
+            Name
+          </FieldLabel>
+          <input id="x" />
+        </div>
       </Modal>,
     );
     const btn = document.querySelector<HTMLButtonElement>(".ui-field-info")!;
