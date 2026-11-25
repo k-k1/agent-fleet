@@ -21,6 +21,8 @@ so a shell never sits among the conversations.
 
 Opening a shell opens it in the main area. It does not change what the left pane shows.
 
+![The "Start a terminal" dialog: a Shell part with Home, the repositories and the space Trip planning, and an SSM part that says no host is registered yet and links to Settings, with a profile picker and a Search AWS box for the online instances](../../assets/terminals-new-en-light.webp)
+
 ## Shells: grouped by place
 
 | Group | Holds |

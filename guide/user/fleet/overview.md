@@ -79,6 +79,8 @@ On a phone, open the left pane with **≡** to reach the activity bar.
 **Active** in the activity bar shows the same cards in the left pane, without using a pane of the main area.
 It lists what is going on now and the few stopped sessions that belong with it, so a repository appears only while it has a session to list.
 
+![The Active view in the left pane: cards under the headings payments-api, platform-infra, webshop, the space Trip planning and Other sessions, with a folded Auto-run heading at the bottom. A card shows the title, the state, and for the open session the branch and the context gauge](../../assets/active-view-en-light.webp)
+
 | What you see | What it means |
 |---|---|
 | Headings | Repositories first, then spaces, then "Other sessions", and last **Auto-run** and **Schedules** (below). A heading appears only while it has a session to list. Every heading folds; press it to fold or open, and this browser remembers which you folded. A folded heading shows how many sessions are running out of the total, and how many of them wait for your answer |
