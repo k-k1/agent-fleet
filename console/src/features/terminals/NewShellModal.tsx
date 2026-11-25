@@ -1,14 +1,23 @@
-// NewShellModal — "start a shell" from the Terminal view's header (ADR 0142 decision 10): home, a
-// repository or a space. A shell has nothing to configure, so picking the place starts it; the
-// pane opens without the left pane changing (ADR 0140 decision 5).
+// NewShellModal — "Start a terminal" from the Terminal view's header (ADR 0142 decision 10): a shell
+// at home, in a repository's base clone or in a space, or an SSM session. A shell has nothing to
+// configure, so picking the place starts it; the pane opens without the left pane changing (ADR 0140
+// decision 5). Worktrees are not listed: "Open shell here" on the tree row starts one there. The SSM
+// section is the Start hub's SSM stage (SsmStage), so both list the same hosts and log in the same way.
 import { useEffect, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { orderedRepos, workingCopyLabel, worktreeTag } from "../../lib/project.ts";
+import { orderedRepos, workingCopyLabel } from "../../lib/project.ts";
 import type { ShellPlace } from "../../lib/project.ts";
 import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
+import { api } from "../../core/api/client.ts";
+import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useReposStore } from "../repos/store.ts";
+import { SsmStage } from "../repos/SsmStage.tsx";
+import type { SsmProfile } from "../repos/SsmStage.tsx";
+import { SsmLoginModal } from "../sessions/SsmLoginModal.tsx";
+import { useSessionsStore } from "../sessions/store.ts";
+import { openSessionTerminal } from "../sessions/open.ts";
 import { useStartWork } from "../repos/useStartWork.ts";
 import { failuresFor, spaceLabel, spacesFor, spacesOwner, useSpacesStore } from "../spaces/store.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -16,6 +25,10 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 // Where each place starts, as the `dir` of the create: relative to home, as "Open shell here" sends it.
 export const shellDirOf = (p: ShellPlace): string =>
   p.kind === "home" ? "" : p.kind === "repo" ? `repos/${p.folder}` : `spaces/${p.folder}`;
+
+// More places than this are folded behind a header; more than PLACES_FILTER_MIN get a filter box.
+const PLACES_FOLD_MAX = 5;
+const PLACES_FILTER_MIN = 8;
 
 export function NewShellModal({ onClose }: { onClose: () => void }) {
   const tr = useT();
@@ -26,6 +39,21 @@ export function NewShellModal({ onClose }: { onClose: () => void }) {
   const toast = useToast();
   const failures = useSpacesStore((s) => failuresFor(s, owner));
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [unfolded, setUnfolded] = useState(false);
+  const [ssmProfiles, setSsmProfiles] = useState<SsmProfile[] | null>(null);
+  // The created SSM session while its SSO handshake runs (the hub's flow).
+  const [ssmLogin, setSsmLogin] = useState<string | null>(null);
+  const refreshSessions = useSessionsStore((s) => s.refresh);
+  useEffect(() => {
+    let alive = true;
+    api("api/ssm/profiles")
+      .then((rows) => alive && setSsmProfiles(Array.isArray(rows) ? rows : []))
+      .catch(() => alive && setSsmProfiles([]));
+    return () => {
+      alive = false;
+    };
+  }, []);
   // Every space, not only the ones a session names: the list is asked for when the dialog opens.
   useEffect(() => {
     void useSpacesStore.getState().refresh();
@@ -61,6 +89,33 @@ export function NewShellModal({ onClose }: { onClose: () => void }) {
     </button>
   );
 
+  // Base clones only: a worktree's shell is started from its own tree row.
+  const places = [
+    ...orderedRepos(repos)
+      .filter((r) => !r.worktree)
+      .map((r) => ({ key: `repo:${r.name}`, icon: "repo", title: workingCopyLabel(r.name, r).project, desc: "", haystack: `${r.name} ${workingCopyLabel(r.name, r).project}`, place: { kind: "repo", folder: r.name } as ShellPlace, shellTitle: tr("proj.shell_title", { name: r.name }) })),
+    ...spaces.map((sp) => ({ key: `space:${sp.folder}`, icon: "folder", title: spaceLabel(sp.folder, spaces), desc: tr("pj.space_folder_hint", { folder: sp.folder }), haystack: `${sp.folder} ${spaceLabel(sp.folder, spaces)}`, place: { kind: "space", folder: sp.folder } as ShellPlace, shellTitle: tr("proj.shell_title", { name: sp.folder }) })),
+  ];
+  const q = query.trim().toLocaleLowerCase();
+  const shown = q ? places.filter((p) => p.haystack.toLocaleLowerCase().includes(q)) : places;
+  // A few places read at a glance; more are folded, and a filter box appears once the list is long.
+  const folded = places.length > PLACES_FOLD_MAX && !unfolded && !q;
+
+  // The SSO handshake takes over the dialog, as it does in the Start hub.
+  if (ssmLogin != null) {
+    return (
+      <SsmLoginModal
+        name={ssmLogin}
+        onReady={(n) => {
+          void refreshSessions();
+          openSessionTerminal(n);
+          onClose();
+        }}
+        onCancel={onClose}
+      />
+    );
+  }
+
   return (
     <Modal
       title={
@@ -71,14 +126,10 @@ export function NewShellModal({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       lockClose={busy}
     >
-      <div className="ui-modal-body">
-        <div className="start-list">
-          {row("home", "home", tr("terms.home"), tr("terms.home_desc"), { kind: "home" }, "")}
-          {orderedRepos(repos).map((r) => {
-            const { project } = workingCopyLabel(r.name, r);
-            const tag = r.worktree ? worktreeTag(r.name, r) : "";
-            return row(`repo:${r.name}`, "repo", project, tag, { kind: "repo", folder: r.name }, tr("proj.shell_title", { name: r.name }));
-          })}
+      <div className="ui-modal-body term-new">
+        <section className="term-new-sec">
+          <h3 className="term-sub-head">{tr("terms.shell")}</h3>
+          <div className="start-list">{row("home", "home", tr("terms.home"), tr("terms.home_desc"), { kind: "home" }, "")}</div>
           {failures > 0 && (
             <div className="start-row-desc term-spaces-failed" role="status">
               {tr("terms.spaces_failed")}{" "}
@@ -87,10 +138,29 @@ export function NewShellModal({ onClose }: { onClose: () => void }) {
               </button>
             </div>
           )}
-          {spaces.map((sp) =>
-            row(`space:${sp.folder}`, "folder", spaceLabel(sp.folder, spaces), tr("pj.space_folder_hint", { folder: sp.folder }), { kind: "space", folder: sp.folder }, tr("proj.shell_title", { name: sp.folder })),
+          {places.length > 0 && (
+            <>
+              {places.length > PLACES_FOLD_MAX && (
+                <button type="button" className="term-new-fold" aria-expanded={!folded} onClick={() => setUnfolded(!unfolded)}>
+                  <Icon name={folded ? "chevron-right" : "chevron-down"} />
+                  {tr("terms.places", { n: places.length })}
+                </button>
+              )}
+              {!folded && places.length > PLACES_FILTER_MIN && (
+                <input {...NO_AUTOFILL} type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={tr("terms.places_filter_ph")} aria-label={tr("terms.places_filter_ph")} />
+              )}
+              {!folded && <div className="start-list">{shown.map((p) => row(p.key, p.icon, p.title, p.desc, p.place, p.shellTitle))}</div>}
+            </>
           )}
-        </div>
+        </section>
+        <section className="term-new-sec">
+          <h3 className="term-sub-head">{tr("terms.ssm")}</h3>
+          {ssmProfiles != null && ssmProfiles.length === 0 ? (
+            <span className="ui-field-hint">{tr("terms.ssm_none")}</span>
+          ) : (
+            <SsmStage busy={busy} setBusy={setBusy} ssmProfiles={ssmProfiles} onStarted={setSsmLogin} layout="inline" onClose={onClose} />
+          )}
+        </section>
       </div>
     </Modal>
   );

@@ -69,3 +69,31 @@
   color: var(--muted);
   font-size: 12px;
 }
+
+/* "Start a terminal": the dialog body scrolls (.ui-modal-body), so its sections must not shrink
+   to fit it — a shrunken .start-list (overflow: hidden) clips its rows instead of scrolling. */
+.term-new-sec {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.term-new-sec .term-sub-head {
+  margin: 0;
+  padding: 0;
+}
+.term-new-fold {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px;
+  background: none;
+  border: 0;
+  color: var(--fg);
+  font: inherit;
+  cursor: pointer;
+}
+.term-new-fold:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
