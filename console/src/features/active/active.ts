@@ -6,8 +6,9 @@
 //
 //   SCOPE  … running sessions; stopped ones that still need the member (stopped on an
 //            unanswered exchange, or holding a handoff nobody took); and every descendant of
-//            a listed session, stopped or not, so a family is never shown with holes. Shells,
-//            SSM logins and unattended runs are their own views' rows.
+//            a listed session, stopped or not, so a family is never shown with holes. Shells and
+//            SSM logins are the Terminal view's; unattended runs are listed in the trailing groups
+//            (unattendedScope).
 //   GROUP  … the tree's three sections in the tree's order: repositories (by remote, as the
 //            sessions overview groups them), spaces, other. Two groups follow them: the RUNNING
 //            unattended runs, one group for auto-run and one for schedules, as families like the
@@ -88,9 +89,10 @@ export function activeScope(sessions: Session[], set: WorkingSet | null, shown?:
   return mine.filter((s) => keep.has(s.name) && inSet(s));
 }
 
-/** The running unattended runs and everything they started, for the two trailing groups. A
- *  run that is not running is the Auto-run / Schedules views' business alone, so nothing here
- *  needs the member's attention to be listed. What `shown` hands back to the member's own views
+/** The running unattended sessions and every descendant of one, for the two trailing groups. A
+ *  stopped run whose child still runs is not listed itself, as activeScope does not list a
+ *  stopped parent: the child is then a root of its group. Nothing stopped is listed for the
+ *  member's attention. What `shown` hands back to the member's own views
  *  is not unattended (sessionAutoKind answers "") and is listed in its repository, never twice. */
 export function unattendedScope(sessions: Session[], set: WorkingSet | null, shown?: ReadonlySet<string>, repos: Repo[] = []): Session[] {
   const byFolder = new Map(repos.map((r) => [r.name, r]));
