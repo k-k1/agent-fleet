@@ -1149,7 +1149,8 @@
   align-items: center;
   justify-content: space-between;
 }
-.memo-q-modal .memo-q-narrow {
+/* Row children only: as a direct child of a column-flex field the basis would be a height. */
+.memo-q-modal .ui-field-row > .memo-q-narrow {
   flex: 0 0 9em;
 }
 /* A short numeric input in a field of its own: cap the input, not the field, so the label keeps one line. */

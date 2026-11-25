@@ -466,12 +466,13 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
             </div>
           )}
           {draft.runMode === "threshold" && (
-            <div className="ui-field memo-q-narrow">
+            <div className="ui-field">
               <label className="ui-field-label" htmlFor="memo-q-open-after">
                 {tr("memo.q_open_after")}
               </label>
               <input {...NO_AUTOFILL}
                 id="memo-q-open-after"
+                className="memo-q-short"
                 type="text"
                 inputMode="numeric"
                 value={draft.openAfter}

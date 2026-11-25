@@ -100,6 +100,12 @@ describe("MemoQueueSettingsModal spacing guard", () => {
   // the column-flex form it became a 9em-tall box: the blank band under the follow-up limit.
   it("renders no empty hint and keeps every narrow field inside a row", async () => {
     await render();
+    const radio = (i: number) => document.querySelectorAll<HTMLInputElement>('input[name="memo-q-when"]')[i];
+    // The window and threshold run modes add fields that "always" does not render.
+    await act(async () => radio(2).click());
+    expect(document.getElementById("memo-q-open-after")!.closest(".ui-field")!.classList.contains("memo-q-narrow")).toBe(false);
+    await act(async () => radio(1).click());
+    expect(document.getElementById("memo-q-open-minutes")).not.toBeNull();
     const empty = [...document.querySelectorAll(".ui-field-hint")].filter((h) => !h.textContent?.trim());
     expect(empty.length).toBe(0);
     const narrow = [...document.querySelectorAll(".memo-q-narrow")];
