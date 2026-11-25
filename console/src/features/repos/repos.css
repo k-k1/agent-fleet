@@ -712,7 +712,7 @@
   color: var(--dialog-muted, var(--muted));
   /* Wraps: the folded summary is the only place a choice (approvals, effort, ...) can be read
      without opening the section, so a narrow dialog must not cut it off. */
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 /* A state that cannot be launched as-is, e.g. "existing branch, none selected". */
 .launch-sec-sum.launch-sec-sum--warn {
@@ -909,7 +909,7 @@
   font-size: 11.5px;
   line-height: 1.3;
   color: var(--tmpl-sub);
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 .launch-tmpl-note {
   padding: 8px;
@@ -937,7 +937,7 @@
   max-height: 260px;
   overflow: auto;
   white-space: pre-wrap;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   font: inherit;
   font-size: var(--fs-12);
   color: var(--fg);
@@ -1528,7 +1528,7 @@ button.start-place-chip--gone {
    it comes from the working copy, so it is a fact to read rather than a field to fill. */
 .svn-auth-url {
   display: block;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   font-size: var(--fs-12);
   padding: 4px 6px;
   border-radius: 4px;
@@ -1851,7 +1851,7 @@ button.start-place-chip--gone {
 }
 .gitflow-cmd,
 .gitflow-changes code {
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
 }
 .gitflow-cmd {
   display: block;
@@ -2036,7 +2036,7 @@ button.start-place-chip--gone {
   min-width: 0;
   max-width: min(100%, 26em);
   white-space: normal;
-  overflow-wrap: break-word;
+  overflow-wrap: anywhere;
   text-align: left;
 }
 .run-model-more:focus-within .run-model-more-label {
