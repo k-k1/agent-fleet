@@ -368,10 +368,11 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
           <div className="ui-field-hint ui-field-hint--warn">{tr("memo.q_accept_own_warn")}</div>
         </div>
 
-        <div className="ui-field memo-q-narrow">
+        <div className="ui-field">
           <FieldLabel htmlFor="memo-q-continuation" info={tr("memo.q_continuation_hint")}>{tr("memo.q_continuation")}</FieldLabel>
           <input {...NO_AUTOFILL}
             id="memo-q-continuation"
+            className="memo-q-short"
             type="text"
             inputMode="numeric"
             value={draft.continuationMax}

@@ -1152,6 +1152,10 @@
 .memo-q-modal .memo-q-narrow {
   flex: 0 0 9em;
 }
+/* A short numeric input in a field of its own: cap the input, not the field, so the label keeps one line. */
+.memo-q-modal .memo-q-short {
+  max-width: 9em;
+}
 .memo-q-notice {
   color: var(--warn, var(--accent));
 }
