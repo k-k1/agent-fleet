@@ -49,10 +49,16 @@ Main features:
   next to agent sessions. **Subversion works too**: check out over URL + basic
   auth (subtree and multiple-path checkouts, optional per-server trust for
   self-signed certificates, automatic working-copy lock recovery).
+- **Spaces, Active and Terminals views**: "Start in a space" runs work that belongs to
+  no repository in a folder of its own under `~/spaces`, from a Start screen that asks
+  what first, then where; the agent, route and model are picked in one strip under the
+  first prompt. An Active view lists what is running now and what waits for you, with
+  auto-run and schedule runs in their own folded groups, and a Terminals view lists
+  shells by place and SSM sessions by host.
 - **Project-centric console**: file browser, commit graph and diffs, session
   state badges (working / awaiting input), a memo queue with image attachments
   whose categories can run their memos as sessions (auto-run), a notification center with optional Web Push to
-  phones and computers (switched on by the operator), English/Japanese UI, keyboard-first operation
+  phones and computers (switched on by the operator, with per-origin switches for auto-run and schedule sessions), English/Japanese UI, keyboard-first operation
   (command palette / leader key), and optional text-to-speech for replies
   (VOICEVOX / Zundamon, AWS Polly).
 - **Work items**: Jira issues, GitHub issues and pull requests, and Bitbucket
@@ -120,7 +126,8 @@ Main features:
   (distributed by the operator) and per-user instructions are delivered to every
   agent kind in each CLI's own idiom. **Agent Fleet memory** (opt-in) is one
   memory every agent kind reads and writes, per project, so what one agent learns
-  survives a switch of kind or a handoff. The memory an agent accumulates by
+  survives a switch of kind or a handoff. A Memory view lists, edits and pins the
+  memories of the project on screen. The memory an agent accumulates by
   itself (Claude's auto-memory, Codex's memories) is snapshotted and can be
   rolled back to any point.
 - **Operable**: backup/restore scripts, forward-only DB migrations for
@@ -145,6 +152,8 @@ share any AI-provider credentials.
 | **See where the tokens went**: token use by feature, agent and model, over 24h / 7d / 30d. Calls that report no tokens are counted separately, never as zero. | **A real terminal, too**: every session (agent or plain shell) can be attached as a live PTY. |
 | ![Sessions overview: one card per running session, grouped by repository, with the state chip, model and context usage on each](docs/img/overview-en.webp) | ![Fleet graph: one lane per session on a time axis, children under their parent, arrows for what passed between sessions, and each lane's state chip](docs/img/fleetgraph-en.webp) |
 | **Every running session at a glance**: one card per session, grouped by repository and family. The ones waiting on you are coloured so they stand out. | **The fleet over time**: one lane per session, children under their parent, and arrows for what passed between them. Pan and zoom through the day. |
+| ![Start screen: three sections, Start in a space (open), Start in a repository and Other; a prompt box, a strip with the agent, route and model, and a button naming what it starts](docs/img/start-en.webp) | ![Active view: sessions running now and waiting for you, as cards grouped by repository and space, with a folded Auto-run group](docs/img/active-en.webp) |
+| **Start in a space or a repository**: one first prompt, then where, with the agent, route and model chosen in a single strip. | **What is running, and what waits for you**: cards grouped by repository and space; auto-run and schedule runs sit in their own folded groups. |
 
 <sub>Screenshots use a demo dataset; the same views in Japanese are in
 [README.ja.md](README.ja.md).</sub>
