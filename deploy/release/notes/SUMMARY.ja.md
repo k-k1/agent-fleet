@@ -14,7 +14,7 @@
 ---
 ## [0.50.0](0.50.0.ja.md) — 2026-11-25
 
-**CLI ピン** — Claude Code 2.1.332 / OpenCode 2.4.1 / Codex 0.172.0 / Copilot 1.0.115 / Antigravity 1.5.16
+**CLI ピン** — Claude Code 2.1.332 / OpenCode 2.4.1 / Codex 0.172.0 / Copilot 1.0.115 / Antigravity 1.5.17
 
 **New / Improved**
 
