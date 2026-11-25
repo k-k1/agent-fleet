@@ -35,7 +35,7 @@ const repo = (name: string): Repo => ({ name });
 describe("repos store refresh", () => {
   beforeEach(() => {
     fetchMock.mockReset();
-    useReposStore.setState({ repos: [], loadState: "loading" });
+    useReposStore.setState({ repos: [], loadState: "loading", loaded: false });
   });
 
   it("commits the list and reports terminal on a real response", async () => {
@@ -90,6 +90,17 @@ describe("repos store refresh", () => {
     fetchMock.mockResolvedValue(json({ repos: null }));
     await useReposStore.getState().refresh();
     expect(useReposStore.getState().repos).toEqual([repo("agent-fleet")]);
+  });
+
+  it("remembers a loaded (even empty) list across a later failed read, until clear()", async () => {
+    fetchMock.mockResolvedValue(json({ repos: [] }));
+    await useReposStore.getState().refresh();
+    fetchMock.mockResolvedValue(agentUnreachable());
+    await useReposStore.getState().refresh();
+    expect(useReposStore.getState().loadState).toBe("unreachable");
+    expect(useReposStore.getState().loaded).toBe(true);
+    useReposStore.getState().clear();
+    expect(useReposStore.getState().loaded).toBe(false);
   });
 
   it("records ok after a failed load once a real list lands", async () => {

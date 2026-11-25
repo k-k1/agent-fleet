@@ -69,6 +69,9 @@ export type ReposLoadState = "loading" | "ok" | "unreachable" | "failed";
 interface ReposStore {
   repos: Repo[];
   loadState: ReposLoadState;
+  /** True once any list was committed, even an empty one; only clear() resets it. loadState
+   * cannot say this: a later failed read moves it to "unreachable" while the list stays. */
+  loaded: boolean;
   /** Loads GET /api/repos. Only a 2xx result whose `repos` is an array replaces the list; every
    * other outcome leaves `repos` untouched and records loadState "unreachable", because "could
    * not read the list" is not "there are no repos" — committing it is what used to drop the
@@ -95,6 +98,7 @@ let generation = 0;
 export const useReposStore = create<ReposStore>((set) => ({
   repos: [],
   loadState: "loading",
+  loaded: false,
   async refresh() {
     const tenant = getTenant();
     const mine = ++generation;
@@ -119,7 +123,7 @@ export const useReposStore = create<ReposStore>((set) => ({
       set({ loadState: "failed" });
       return true;
     }
-    set({ repos: d.repos as Repo[], loadState: "ok" });
+    set({ repos: d.repos as Repo[], loadState: "ok", loaded: true });
     return true;
   },
   setLocked(name, locked) {
@@ -127,7 +131,7 @@ export const useReposStore = create<ReposStore>((set) => ({
   },
   clear: () => {
     generation++;
-    set({ repos: [], loadState: "loading" });
+    set({ repos: [], loadState: "loading", loaded: false });
   },
 }));
 
@@ -266,7 +270,12 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
  * ~/.gitconfig), so an unattended window would otherwise keep that cost for as long as it
  * stays open. */
 export function startReposPolling(): () => void {
+  // A tick skipped because the tab is hidden is owed on the next show: a session started in a
+  // new worktree meanwhile would otherwise have no row in the list until the next tick, and
+  // the Active view files it under "Other sessions" for that long.
+  let missedHidden = false;
   const load = () => {
+    if (document.hidden) missedHidden = true;
     if (document.hidden || pushPaused() || !wsRunning(useWorkspaceStore.getState().state)) return;
     void useReposStore.getState().refresh();
   };
@@ -285,8 +294,9 @@ export function startReposPolling(): () => void {
     wasPaused = now;
   });
   const onVis = () => {
-    if (document.hidden || !owed) return;
+    if (document.hidden || !(owed || missedHidden)) return;
     owed = false;
+    missedHidden = false;
     load();
   };
   document.addEventListener("visibilitychange", onVis);

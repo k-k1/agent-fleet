@@ -98,6 +98,43 @@ describe("activeGroups", () => {
     expect(names(groups[3].sessions).sort()).toEqual(["gone", "home"]);
   });
 
+  it("files a worktree whose own row is missing under its base repository", () => {
+    const list = [s("late", { repo: "app@wip-late" })];
+    const groups = activeGroups(list, repos, spaces, null);
+    expect(groups.map((g) => [g.kind, g.label])).toEqual([["repo", "app"]]);
+    // Same heading key as the base's own sessions, so the two share one group.
+    const both = activeGroups([...list, s("a", { repo: "app" })], repos, spaces, null);
+    expect(both).toHaveLength(1);
+    expect(names(both[0].sessions).sort()).toEqual(["a", "late"]);
+  });
+
+  it("resolves the longest known parent when names contain @", () => {
+    const nested = [repo("app", { remote: "github.com", remotePath: "acme/app" }), repo("app@team", { remote: "github.com", remotePath: "acme/team", worktree: true, parent: "app" })];
+    const groups = activeGroups([s("n", { repo: "app@team@wip-x" })], nested, spaces, null);
+    expect(groups.map((g) => g.label)).toEqual(["team"]);
+  });
+
+  it("leaves a lookalike folder outside the repos directory in Other", () => {
+    const placed = [repo("app", { path: "/home/dev/repos/app", remote: "github.com", remotePath: "acme/app" })];
+    const list = [s("odd", { repo: "app@notes", dir: "/tmp/app@notes" }), s("ok", { repo: "app@wip-y", dir: "/home/dev/repos/app@wip-y" })];
+    const groups = activeGroups(list, placed, spaces, null);
+    expect(groups.map((g) => g.kind)).toEqual(["repo", "other"]);
+    expect(names(groups[1].sessions)).toEqual(["odd"]);
+  });
+
+  it("does not move repository sessions to Other while no list has loaded", () => {
+    const list = [s("late", { repo: "app@wip-late" }), s("a", { repo: "app" }), s("home")];
+    const groups = activeGroups(list, [], spaces, null, new Set(), undefined, false);
+    expect(groups.map((g) => [g.kind, g.label])).toEqual([["repo", "app"], ["other", ""]]);
+    expect(names(groups[1].sessions)).toEqual(["home"]);
+  });
+
+  it("keeps a folder that belongs to no known repository in Other once the list is known", () => {
+    const groups = activeGroups([s("x", { repo: "ghost@wip-1" }), s("y", { repo: "removed" })], repos, spaces, null);
+    expect(groups.map((g) => g.kind)).toEqual(["other"]);
+    expect(activeGroups([s("y", { repo: "removed" })], [], spaces, null, new Set(), undefined, true)[0].kind).toBe("other");
+  });
+
   it("names a space by its folder until the list knows it", () => {
     expect(activeGroups([s("sp", { space: "s9" })], [], spaces, null)[0].label).toBe("s9");
   });
