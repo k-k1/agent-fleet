@@ -143,12 +143,22 @@ interface GroupId {
 
 // The space's name is looked up here rather than through the spaces store's helper: that
 // module reaches the api client, and this file has to stay loadable without a browser.
-function groupId(s: Session, byFolder: Map<string, Repo>, spaces: Space[]): GroupId {
+function groupId(s: Session, byFolder: Map<string, Repo>, spaces: Space[], reposKnown: boolean): GroupId {
   if (s.space) return { key: "s:" + s.space, kind: "space", label: spaces.find((x) => x.folder === s.space)?.name || s.space, hint: s.space };
   const folder = sessionFolder(s);
   // A folder the working-copy list does not know is "other", as it is in the tree: a heading
   // made of a folder that no longer exists would name a place nobody can go to.
   if (folder && byFolder.has(folder)) return { ...repoGroupId(folder, byFolder), kind: "repo" };
+  // A worktree folder is "<base>@<slug>". The list can lag behind a session that just started
+  // in a new worktree (or behind a tab that was hidden), so the base repository stands in for
+  // the missing row: the session stays under its repository's heading instead of "Other".
+  const at = folder.indexOf("@");
+  const base = at > 0 ? folder.slice(0, at) : "";
+  if (base && byFolder.has(base)) return { ...repoGroupId(base, byFolder), kind: "repo" };
+  // No list at all (the first load failed or has not answered): nothing can be called "other"
+  // yet, so the folder's base names the heading; it moves to the repository's own key once the
+  // list arrives.
+  if (!reposKnown && folder) return { key: "c:" + (base || folder), kind: "repo", label: base || folder, hint: base || folder };
   return { key: OTHER_GROUP, kind: "other", label: "", hint: "" };
 }
 
@@ -163,11 +173,12 @@ export function activeGroups(
   set: WorkingSet | null,
   expanded: ReadonlySet<string> = new Set(),
   shown?: ReadonlySet<string>,
+  reposKnown = repos.length > 0,
 ): ActiveGroup[] {
   const byFolder = new Map(repos.map((r) => [r.name, r]));
   const members = new Map<string, { id: GroupId; sessions: Session[] }>();
   for (const s of activeScope(sessions, set, shown, repos)) {
-    const id = groupId(s, byFolder, spaces);
+    const id = groupId(s, byFolder, spaces, reposKnown);
     const g = members.get(id.key) || { id, sessions: [] };
     g.sessions.push(s);
     members.set(id.key, g);

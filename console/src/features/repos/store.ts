@@ -266,7 +266,12 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
  * ~/.gitconfig), so an unattended window would otherwise keep that cost for as long as it
  * stays open. */
 export function startReposPolling(): () => void {
+  // A tick skipped because the tab is hidden is owed on the next show: a session started in a
+  // new worktree meanwhile would otherwise have no row in the list until the next tick, and
+  // the Active view files it under "Other sessions" for that long.
+  let missedHidden = false;
   const load = () => {
+    if (document.hidden) missedHidden = true;
     if (document.hidden || pushPaused() || !wsRunning(useWorkspaceStore.getState().state)) return;
     void useReposStore.getState().refresh();
   };
@@ -285,8 +290,9 @@ export function startReposPolling(): () => void {
     wasPaused = now;
   });
   const onVis = () => {
-    if (document.hidden || !owed) return;
+    if (document.hidden || !(owed || missedHidden)) return;
     owed = false;
+    missedHidden = false;
     load();
   };
   document.addEventListener("visibilitychange", onVis);

@@ -39,6 +39,8 @@ export const ActiveSection = memo(function ActiveSection() {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const repos = useReposStore((s) => s.repos);
+  // An empty list that never loaded is "unknown", not "no repositories".
+  const reposLoaded = useReposStore((s) => s.loadState === "ok" || s.repos.length > 0);
   // The names the Sessions view's Spaces section keeps asked for (useSpaceNames); until its
   // answer arrives the folders stand in.
   const owner = spacesOwner();
@@ -65,9 +67,9 @@ export const ActiveSection = memo(function ActiveSection() {
 
   const expandedSet = useMemo(() => new Set(expanded), [expanded]);
   const groups = useMemo(
-    () => activeGroups(sessions, repos, spaces, wset, expandedSet, shownSchedules),
+    () => activeGroups(sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded),
     // `locale` is not named in the body: compareText reads it.
-    [sessions, repos, spaces, wset, expandedSet, shownSchedules, locale],
+    [sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded, locale],
   );
   // The unattended groups are left out of the section's count: it says how many sessions of
   // the member's own are running, and a queue's runs would bury it.
