@@ -3,6 +3,13 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.50.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.50.0) — 2026-11-25
+
+リポジトリに属さない作業に専用のフォルダを持たせるスペースが加わり、作り直した「はじめる」画面から
+始められます。シェルと SSM セッションにはターミナルのビューができました。いま動いているものを
+並べる稼働中のビューが加わり、起動ダイアログでは最初のプロンプトの下の帯でエージェント・経路・
+モデルを選べます。Web Push は発生元ごとに止められます。
+
 ## [0.49.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.49.0) — 2026-11-23
 
 Console を閉じていても、セッションからの知らせが Web Push でスマートフォンやパソコンに届くように

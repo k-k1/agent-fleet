@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.50.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.50.0) — 2026-11-25
+
+Spaces give work that belongs to no repository a folder of its own, started from a reorganised
+Start screen, and shells and SSM sessions get a Terminals view. A new Active view lists what is going
+on now, the launch dialog picks agent, route and model in one strip under the first prompt, and
+Web Push can be switched off per origin.
+
 ## [0.49.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.49.0) — 2026-11-23
 
 Sessions can reach your phone or computer with Web Push while the Console is closed. Memo auto-run
