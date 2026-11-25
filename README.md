@@ -42,13 +42,27 @@ is redrawn from the messages the chat bridge posts.
 - **Many sessions at once**: sessions of different agent kinds run side by side, each in its
   own worktree. One list shows which are working and which wait on a question, a plan or a
   permission prompt.
+- **Work outside a repository, too**: "Start in a space" gives work that belongs to no
+  repository a folder of its own under `~/spaces`, from a Start screen that asks what
+  first, then where. The agent, route and model are picked in one strip under the first
+  prompt.
+- **See what needs you**: an Active view lists what is running now and what waits for
+  you, grouped by repository and space with child sessions folded under their parent,
+  and a Terminals view lists shells by place and SSM sessions by host.
 - **Sessions that start sessions**: a session can hand a review to another agent kind and
   get one report back. The fleet graph draws who started whom and what passed between
   them.
 - **Unattended work**: scheduled runs wake a stopped workspace, and a turn cut short by a
-  usage limit resumes when the limit lifts.
+  usage limit resumes when the limit lifts. A schedule a session writes waits for your
+  approval, and memo queues can run their messages as sessions (auto-run), each with its
+  own agent, model and start time.
 - **From anywhere**: each session has a Discord / Slack thread where you reply to steer and
-  answer with buttons, and the Console works in a phone's browser.
+  answer with buttons, and the Console works in a phone's browser. With Web Push
+  (switched on by the operator) a question or a finished answer reaches your phone or
+  computer even while the Console is closed, and you can switch pushes off per origin
+  (auto-run, schedules).
+- **One memory for every agent kind**: Agent Fleet memory is shared by all of them, and a
+  Memory view lists, edits and pins what the agents have learned.
 - **One yardstick for spend**: token use is broken down by feature, agent and model, and
   calls that report no tokens are counted as unmeasured rather than free.
 
@@ -78,6 +92,8 @@ How the two halves fit together: [Detecting upstream CLI breakage](docs/build/10
 | **See where the tokens went**: token use by feature, agent and model, over 24h / 7d / 30d. Calls that report no tokens are counted separately, never as zero. | **A real terminal, too**: every session (agent or plain shell) can be attached as a live PTY. |
 | ![Sessions overview: one card per running session, grouped by repository, with the state chip, model and context usage on each](docs/img/overview-en.webp) | ![Fleet graph: one lane per session on a time axis, children under their parent, arrows for what passed between sessions, and each lane's state chip](docs/img/fleetgraph-en.webp) |
 | **Every running session at a glance**: one card per session, grouped by repository and family. The ones waiting on you are coloured so they stand out. | **The fleet over time**: one lane per session, children under their parent, and arrows for what passed between them. Pan and zoom through the day. |
+| ![Start screen: three sections, Start in a space (open), Start in a repository and Other; a prompt box, a strip with the agent, route and model, and a button naming what it starts](docs/img/start-en.webp) | ![Active view: sessions running now and waiting for you, as cards grouped by repository and space, with a folded Auto-run group](docs/img/active-en.webp) |
+| **Start in a space or a repository**: one first prompt, then where, with the agent, route and model chosen in a single strip. | **What is running, and what waits for you**: cards grouped by repository and space; auto-run and schedule runs sit in their own folded groups. |
 
 The UI is English or Japanese, switched per user in ⚙ Settings, and every view above also
 exists in Japanese (`docs/img/*-ja.webp`, e.g. [the console](docs/img/console-ja.webp)).
