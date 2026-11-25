@@ -701,6 +701,7 @@ export const sessions = {
   "launch.stash_failed": "メモに保存できませんでした。入力内容はそのまま残っています。",
   "launch.stash_too_large": "添付ファイルが大きすぎてメモに保存できませんでした。入力内容はそのまま残っています。",
   "launch.memo_attach_missing": "メモの添付のうち {count} 件を読み込めませんでした。",
+  "launch.start_short": "{what} を始める",
   "launch.start_with": "{what} で始める",
   "launch.start_worktree_with": "worktree で {what} を始める",
   "start.space_launch_with": "新しいスペースで {what} を始める",

@@ -304,6 +304,22 @@ export function SpaceLaunchForm(props: SpaceLaunchProps) {
   return <LaunchForm repo="" allowWorktree={false} {...props} space />;
 }
 
+// Same breakpoint as the run-with strip's fold (repos.css). Below it the launch button drops its
+// fixed words ("in a new space", "in a worktree") so the agent and model it names keep the room;
+// the full sentence stays in the tooltip. The place is still shown by the form above the button.
+const NARROW_LAUNCH_QUERY = "(max-width: 520px)";
+function useNarrowLaunchLabel(): boolean {
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia(NARROW_LAUNCH_QUERY).matches);
+  useEffect(() => {
+    const mq = window.matchMedia(NARROW_LAUNCH_QUERY);
+    const on = () => setNarrow(mq.matches);
+    on();
+    mq.addEventListener("change", on);
+    return () => mq.removeEventListener("change", on);
+  }, []);
+  return narrow;
+}
+
 function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, shared, onLaunch, busy, setBusy, space = false, launchBlocked = false, submitRef }: LaunchModalProps & FormExtras) {
   const settings = useSettings();
   // Neither home nor a space has a working copy: no templates file, skills, subdir or worktree.
@@ -1040,6 +1056,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           ? ""
           : tr("launch.strip.model_default")
       : "";
+  const narrowLabel = useNarrowLaunchLabel();
   const runWith = kinds.length ? [kindDisplayName(kind), modelShown].filter(Boolean).join(" · ") : "";
   const [policyErr, setPolicyErr] = useState<PolicyRefusal | null>(null);
   const [launchUnknown, setLaunchUnknown] = useState(false);
@@ -1800,7 +1817,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             {busy
               ? tr("launch.launching")
               : runWith
-                ? tr(spaceFolder ? "start.space_launch_existing_with" : "start.space_launch_with", { what: runWith })
+                ? tr(narrowLabel ? "launch.start_short" : spaceFolder ? "start.space_launch_existing_with" : "start.space_launch_with", { what: runWith })
                 : tr(spaceFolder ? "start.space_launch_existing" : "start.space_launch")}
           </Button>
         </div>
@@ -1833,7 +1850,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           {busy && stash !== "busy"
             ? tr("launch.launching")
             : runWith
-              ? tr(worktree ? "launch.start_worktree_with" : "launch.start_with", { what: runWith })
+              ? tr(narrowLabel ? "launch.start_short" : worktree ? "launch.start_worktree_with" : "launch.start_with", { what: runWith })
               : worktree
                 ? tr("launch.start_worktree")
                 : tr("launch.launch")}
