@@ -338,7 +338,10 @@ describe("ActivityBar badges", () => {
   it("counts them on the Sessions icon when the Active icon is off", async () => {
     setSettings({ railViewsOff: ["active"] });
     useSessionsStore.setState({ sessions: [sess("a", "question"), sess("b", "plan"), sess("c", "working")] });
+    // Running, so that it is the hidden icon and not the stopped workspace that sends the count here.
+    useWorkspaceStore.setState({ state: "running" });
     await mount();
+    expect(host!.querySelector('.actbar-btn[data-rail-view="active"]')).toBeNull();
     expect(badge("sessions")?.dataset.badge).toBe("waiting");
     expect(badge("sessions")?.textContent).toBe("2");
   });

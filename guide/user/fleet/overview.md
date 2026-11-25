@@ -77,7 +77,7 @@ On a phone, open the left pane with **≡** to reach the activity bar.
 ## In the left pane: the Active view
 
 **Active** in the activity bar shows the same cards in the left pane, without using a pane of the main area.
-It lists what is going on now and the few stopped sessions that belong with it, so the many repositories and branches with nothing running do not appear.
+It lists what is going on now and the few stopped sessions that belong with it, so a repository appears only while it has a session to list.
 
 | What you see | What it means |
 |---|---|
