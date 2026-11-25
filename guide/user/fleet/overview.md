@@ -82,14 +82,14 @@ It lists what is going on now, so the many repositories and branches with nothin
 | What you see | What it means |
 |---|---|
 | Headings | Repositories first, then spaces, then "Other sessions". A heading appears only while it has a session to list |
-| Cards | Running sessions, and stopped sessions that still need you: stopped with an unanswered question, plan or permission, or holding a handoff nobody took. Other stopped sessions are in **Sessions** |
-| A parent's card | Starts with its child sessions folded. "+N" is how many it hides; the number with the question mark is how many of those wait for your answer. The arrow at the left opens and folds them, and this browser remembers which you opened |
+| Cards | Running sessions, and stopped sessions that still need you: stopped with an unanswered question, plan or permission, or holding a handoff nobody took. The child sessions of a listed session are listed under it too, stopped ones included. Any other stopped session is in **Sessions** |
+| A parent's card | Starts with its child sessions folded. "+N" is how many it hides; the number with the question mark is how many of those are running and wait for your answer. The arrow at the left opens and folds them, and this browser remembers which you opened |
 | Pane numbers | The panes that show the session, while the screen is split. Click a number to go to that pane |
 
 - A click opens the session in the pane you are in. **Ctrl (⌘)-click** or **middle-click** opens it in another pane
 - The card leaves out the project name (the heading has it), the token graph and the start time. The menu is the same
-- The number on the **Active** icon is how many sessions wait for your answer. While that icon is shown, the **Sessions** icon does not repeat the number
-- Shells and SSM sessions are in **Terminals**, runs of memo auto-run in **Auto-run**, scheduled runs in **Schedules**
+- The number on the **Active** icon is how many running sessions wait for your answer; a stopped session with an unanswered question is not counted. While that icon is shown, the **Sessions** icon does not repeat the number. Turn the **Active** icon off and the number is on **Sessions** again
+- Shells and SSM sessions are in **Terminals**, runs of memo auto-run in **Auto-run**, scheduled runs in **Schedules**. The exception is a schedule set to **Also show in the Sessions view**: the worktree sessions its runs start are listed here as well
 - A working set narrows this view like the others
 - While the workspace is stopped, the view has nothing to list
 

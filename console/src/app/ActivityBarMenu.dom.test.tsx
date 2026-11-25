@@ -13,6 +13,7 @@ vi.mock("../core/api/client.ts", async (importOriginal) => ({
 
 import { ActivityBar } from "./ActivityBar.tsx";
 import { useLeftRail } from "../core/store/leftRail.ts";
+import { useWorkspaceStore } from "../core/store/workspace.ts";
 import type { RailView } from "../core/store/leftRail.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { useNotificationStore } from "../features/notifications/store.ts";
@@ -37,6 +38,7 @@ beforeEach(() => {
   localStorage.clear();
   setSettings({ railViewsOff: [] });
   useLeftRail.setState({ open: true, view: "sessions", swipeOverlay: false });
+  useWorkspaceStore.setState({ state: "stopped" });
   useSessionsStore.setState({ sessions: [] });
   useNotificationStore.setState({ items: [] });
   useHandoffStore.setState({ owned: [], received: [], receivedAt: 0 });
@@ -235,6 +237,7 @@ describe("a hidden view that waits on the member", () => {
   });
 
   it("does not repeat the badge on a view whose icon is shown", async () => {
+    useWorkspaceStore.setState({ state: "running" });
     useSessionsStore.setState({ sessions: [waitingSession] });
     useLeftRail.setState({ view: "files" });
     await mount();
@@ -245,6 +248,7 @@ describe("a hidden view that waits on the member", () => {
   });
 
   it("has no dot while the Active icon is shown, even with the Sessions icon off", async () => {
+    useWorkspaceStore.setState({ state: "running" });
     useSessionsStore.setState({ sessions: [waitingSession] });
     useLeftRail.setState({ view: "files" });
     setSettings({ railViewsOff: ["sessions"] });

@@ -451,14 +451,14 @@ function useRailBadges(onScreen: RailView | null, activeShown: boolean): Partial
   const wset = useActiveWorkingSet();
   const sessions = useSessionsStore((s) => s.sessions);
   const shownSchedules = useShownSchedules();
-  const waiting = useMemo(() => waitingSessions(sessions, wset, shownSchedules), [sessions, wset, shownSchedules]);
+  const reposForTerminals = useReposStore((s) => s.repos);
+  const waiting = useMemo(() => waitingSessions(sessions, wset, shownSchedules, reposForTerminals), [sessions, wset, shownSchedules, reposForTerminals]);
   // Selectors that answer a boolean: the notification list is replaced on every poll, and a
   // subscription to the list itself would re-render the column each time.
   // Where a shell's notice leads depends on where its row is: the Terminal view lists it while the
   // workspace runs, and the Sessions view's history lists every session while it is stopped.
   const terminalsViewLive = useWorkspaceStore((s) => s.state) === "running";
   const unreadSessions = useNotificationStore((s) => hasUnreadSession(s.items, sessions, wset, !terminalsViewLive, shownSchedules));
-  const reposForTerminals = useReposStore((s) => s.repos);
   const unreadTerminals = useNotificationStore((s) => terminalsViewLive && hasUnreadTerminal(s.items, sessions, reposForTerminals, wset));
   const unreadConversation = useNotificationStore((s) => hasUnreadConversation(s.items, wset));
   const payload = useWorkItemStore((s) => s.payload);
@@ -512,7 +512,7 @@ function useRailBadges(onScreen: RailView | null, activeShown: boolean): Partial
     if (onScreen === "autorun" && autoRunsLoaded && failedAutoRuns.length > 0) ack("autorun", failedAutoRuns, [...(acked.autorun ?? []), ...failedAutoRuns]);
   }, [onScreen, workItemKeys, workItemsLoaded, failedRuns, allFailedRuns, failedAutoRuns, autoRunsLoaded, acked.autorun, ack]);
 
-  const out: Partial<Record<RailView, RailBadge>> = { ...sessionBadges(waiting, unreadSessions, activeShown) };
+  const out: Partial<Record<RailView, RailBadge>> = { ...sessionBadges(waiting, unreadSessions, activeShown && terminalsViewLive) };
   if (unreadTerminals) out.terminals = { tone: "unread" };
   if (unreadConversation) out.assistant = { tone: "unread" };
   const news = onScreen === "workitems" ? 0 : pendingNews(workItemKeys, acked.workitems).length;

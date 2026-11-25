@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeGroups, activeScope, needsMember, OTHER_GROUP } from "./active.ts";
+import { activeGroups, activeScope, cycleCuts, needsMember, OTHER_GROUP } from "./active.ts";
 import type { Repo } from "../repos/store.ts";
 import type { Space } from "../spaces/store.ts";
 import type { WorkingSet } from "../../lib/workingSets.ts";
@@ -43,6 +43,28 @@ describe("activeScope", () => {
   it("is narrowed by the working set", () => {
     const list = [s("a", { repo: "proj" }), s("b", { repo: "other" })];
     expect(names(activeScope(list, set({ repos: ["proj"] })))).toEqual(["a"]);
+  });
+
+  it("keeps a descendant the set holds when the generation between is outside the set", () => {
+    const list = [
+      s("a", { repo: "app" }),
+      s("b", { repo: "other", alive: false, originSession: "a" }),
+      s("c", { repo: "app", alive: false, originSession: "b" }),
+    ];
+    expect(names(activeScope(list, set({ repos: ["app"] })))).toEqual(["a", "c"]);
+  });
+
+  it("does not list the stopped child of a running session the set leaves out", () => {
+    const list = [s("a", { repo: "other" }), s("c", { repo: "app", alive: false, originSession: "a" })];
+    expect(names(activeScope(list, set({ repos: ["app"] })))).toEqual([]);
+  });
+
+  it("places a worktree in the set by its parent, whatever its folder is called", () => {
+    const repos = [repo("app"), repo("nightly", { worktree: true, parent: "app" })];
+    const list = [s("n", { repo: "nightly" })];
+    expect(names(activeScope(list, set({ repos: ["app"] }), undefined, repos))).toEqual(["n"]);
+    // Without the working-copy list only the folder name is left to go by.
+    expect(names(activeScope(list, set({ repos: ["app"] })))).toEqual([]);
   });
 });
 
@@ -121,6 +143,43 @@ describe("activeGroups", () => {
     expect(groups[0].fold.get("p")?.hasChildren).toBe(false);
     // Its parent is under another heading, so here it is a root.
     expect(groups[1].depth.get("c")).toBe(0);
+  });
+
+  describe("a corrupted originSession cycle", () => {
+    const cycle = [s("a", { repo: "app", originSession: "b", state: "question" }), s("b", { repo: "app", originSession: "a" })];
+
+    it("is cut at one member, the same one whatever the order of the list", () => {
+      expect([...cycleCuts(cycle)]).toEqual(["a"]);
+      expect([...cycleCuts([...cycle].reverse())]).toEqual(["a"]);
+      expect(cycleCuts([s("p"), s("c", { originSession: "p" }), s("self", { originSession: "self" })]).size).toBe(0);
+    });
+
+    it("still shows a card to open the family from", () => {
+      const g = activeGroups(cycle, repos, spaces, null)[0];
+      expect(names(g.sessions)).toEqual(["a"]);
+      expect(g.total).toBe(2);
+      expect(g.fold.get("a")).toEqual({ hasChildren: true, hidden: 1 });
+      // The one waiting is the card on screen, not the row it hides.
+      expect(g.hiddenWaiting.has("a")).toBe(false);
+      // The card handed out is the member's own session, link and all.
+      expect(g.sessions[0]).toBe(cycle[0]);
+    });
+
+    it("opens into a parent and a child, and opening the child changes nothing", () => {
+      for (const opened of [["a"], ["a", "b"]]) {
+        const g = activeGroups(cycle, repos, spaces, null, new Set(opened))[0];
+        expect(names(g.sessions)).toEqual(["a", "b"]);
+        expect([g.depth.get("a"), g.depth.get("b")]).toEqual([0, 1]);
+      }
+      // Opening only the member that is not the root leaves the family folded.
+      expect(names(activeGroups(cycle, repos, spaces, null, new Set(["b"]))[0].sessions)).toEqual(["a"]);
+    });
+
+    it("a session that names itself as its parent is a root", () => {
+      const g = activeGroups([s("self", { repo: "app", originSession: "self" })], repos, spaces, null)[0];
+      expect(g.depth.get("self")).toBe(0);
+      expect(g.fold.get("self")?.hasChildren).toBe(false);
+    });
   });
 
   it("puts the family that waits for an answer first inside its group", () => {

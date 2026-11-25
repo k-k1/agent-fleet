@@ -18,7 +18,7 @@ import { isWaiting } from "../sessions/waiting.ts";
 import { foldFamilies, orderByFamily, repoGroupId } from "../overview/overview.ts";
 import type { FoldInfo } from "../overview/overview.ts";
 import { sessionFolder, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
-import { sessionInSet } from "../../lib/workingSets.ts";
+import { sessionInWorkingSet } from "../../lib/workingSets.ts";
 import { compareText } from "../../lib/intl.ts";
 import type { Space } from "../spaces/store.ts";
 import type { Repo } from "../repos/store.ts";
@@ -60,14 +60,50 @@ export const OTHER_GROUP = "o:";
 export const needsMember = (s: Session): boolean => !s.alive && (!!s.carried || !!s.handoffPending);
 
 /** The sessions the view lists. `shown` is the schedules whose runs the member's own views
- *  list (withoutUnattended). */
-export function activeScope(sessions: Session[], set: WorkingSet | null, shown?: ReadonlySet<string>): Session[] {
+ *  list (withoutUnattended); `repos` places a session in the working set the way the tree
+ *  does (sessionInWorkingSet). */
+export function activeScope(sessions: Session[], set: WorkingSet | null, shown?: ReadonlySet<string>, repos: Repo[] = []): Session[] {
+  const byFolder = new Map(repos.map((r) => [r.name, r]));
+  const inSet = (s: Session) => !set || sessionInWorkingSet(set, s, byFolder);
   // Unattended is decided against the whole list: a run's child is unattended through a
   // parent the working set may have filtered out.
-  const mine = withoutTerminals(withoutUnattended(sessions, shown)).filter((s) => !set || sessionInSet(set, s));
-  const keep = new Set(mine.filter((s) => s.alive || needsMember(s)).map((s) => s.name));
+  const mine = withoutTerminals(withoutUnattended(sessions, shown));
+  const keep = new Set(mine.filter((s) => (s.alive || needsMember(s)) && inSet(s)).map((s) => s.name));
+  // Descendants are walked through every session, the ones outside the set included, and the
+  // set is applied to the result: a generation the set leaves out must not cut off the ones
+  // below it that the set holds.
   for (const n of descendantNames([...keep], mine)) keep.add(n);
-  return mine.filter((s) => keep.has(s.name));
+  return mine.filter((s) => keep.has(s.name) && inSet(s));
+}
+
+/** The members whose parent link is cut so that the group's lineage is a forest. A corrupted
+ *  originSession cycle has no root: left alone, every member is a folded child of another and
+ *  the whole family is off screen with nothing to open. One link per cycle is cut, at the
+ *  member with the smallest name, so the choice does not move between polls. */
+export function cycleCuts(sessions: Session[]): Set<string> {
+  const byName = new Map(sessions.map((s) => [s.name, s] as const));
+  const parentOf = (name: string): string | undefined => {
+    const p = byName.get(name)?.originSession;
+    return p && p !== name && byName.has(p) ? p : undefined;
+  };
+  const cuts = new Set<string>();
+  const done = new Set<string>();
+  for (const s of sessions) {
+    const path: string[] = [];
+    const at = new Map<string, number>();
+    let cur: string | undefined = s.name;
+    while (cur !== undefined && !done.has(cur) && !at.has(cur)) {
+      at.set(cur, path.length);
+      path.push(cur);
+      cur = parentOf(cur);
+    }
+    if (cur !== undefined && at.has(cur)) {
+      const cycle = path.slice(at.get(cur));
+      cuts.add(cycle.reduce((a, b) => (b < a ? b : a)));
+    }
+    for (const n of path) done.add(n);
+  }
+  return cuts;
 }
 
 interface GroupId {
@@ -102,7 +138,7 @@ export function activeGroups(
 ): ActiveGroup[] {
   const byFolder = new Map(repos.map((r) => [r.name, r]));
   const members = new Map<string, { id: GroupId; sessions: Session[] }>();
-  for (const s of activeScope(sessions, set, shown)) {
+  for (const s of activeScope(sessions, set, shown, repos)) {
     const id = groupId(s, byFolder, spaces);
     const g = members.get(id.key) || { id, sessions: [] };
     g.sessions.push(s);
@@ -110,7 +146,12 @@ export function activeGroups(
   }
   const out: ActiveGroup[] = [];
   for (const { id, sessions: list } of members.values()) {
-    const ordered = orderByFamily(list);
+    // Everything below reads lineage from these copies, in which a cycle has been opened, and
+    // hands the member's own objects back: order, fold, the waiting count and the depth must
+    // all see the same forest.
+    const cuts = cycleCuts(list);
+    const real = new Map(list.map((s) => [s.name, s] as const));
+    const ordered = orderByFamily(cuts.size ? list.map((s) => (cuts.has(s.name) ? { ...s, originSession: undefined } : s)) : list);
     // A parent is a parent only inside its group, as in the overview: a child started in
     // another repository is a root under its own heading.
     const { childrenOf } = childrenIndex(ordered);
@@ -126,18 +167,20 @@ export function activeGroups(
     const byName = new Map(ordered.map((s) => [s.name, s] as const));
     const depth = new Map<string, number>();
     for (const s of folded.sessions) {
-      // `guard` is the corrupted-originSession cycle again (family.ts).
-      const guard = new Set<string>([s.name]);
+      // The cycles are cut, and a self-reference is no parent; the bound is for a list that
+      // changes shape in some way nobody thought of.
       let d = 0;
-      for (let p = s.originSession; p && byName.has(p) && !guard.has(p); p = byName.get(p)?.originSession) {
-        guard.add(p);
-        d++;
+      for (let cur = s; d < ordered.length; d++) {
+        const p = cur.originSession;
+        const parent = p && p !== cur.name ? byName.get(p) : undefined;
+        if (!parent) break;
+        cur = parent;
       }
       depth.set(s.name, d);
     }
     out.push({
       ...id,
-      sessions: folded.sessions,
+      sessions: folded.sessions.map((s) => real.get(s.name) ?? s),
       alive: ordered.filter((s) => !!s.alive).length,
       total: ordered.length,
       fold: folded.fold,

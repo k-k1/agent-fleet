@@ -332,8 +332,11 @@
   gap: 4px;
   padding: 7px 9px;
 }
-/* The session in the focused pane, as the rail's row marks it. A waiting card keeps its
-   own frame colour: that it waits matters more than that it is selected. */
+/* The session in the focused pane, as the rail's row marks it. The ring is drawn outside
+   the border so a waiting card keeps its own frame colour and still reads as selected. */
+.ovw-card.ovw-card--selected {
+  box-shadow: 0 0 0 1px var(--accent);
+}
 .ovw-card.ovw-card--selected:not(.ovw-card--question) {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 7%, var(--panel));

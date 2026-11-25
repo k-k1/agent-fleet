@@ -158,6 +158,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
       role="button"
       tabIndex={0}
       aria-disabled={inert || undefined}
+      aria-current={selected || undefined}
       title={
         displayName(s) +
         "\n" +
@@ -192,6 +193,9 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
               e.stopPropagation();
               onFold();
             }}
+            // A middle click on the card opens the session in another pane; on this button it
+            // must do nothing.
+            onAuxClick={(e) => e.stopPropagation()}
           >
             <Icon name={fold?.hidden ? "chevron-right" : "chevron-down"} />
           </button>
@@ -290,10 +294,12 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
                 type="button"
                 className={"rail-ord " + ordClass(o.ordinal)}
                 title={tr("common.focus_pane", { ordinal: o.ordinal })}
+                aria-label={tr("common.focus_pane", { ordinal: o.ordinal })}
                 onClick={(e) => {
                   e.stopPropagation();
                   setActive(o.id);
                 }}
+                onAuxClick={(e) => e.stopPropagation()}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" || e.key === " ") e.stopPropagation();
                 }}

@@ -109,6 +109,22 @@ export function sessionInSet(set: WorkingSet, s: Session): boolean {
   return !!folder && set.repos.includes(folderBase(folder));
 }
 
+/** Is a session in the set, judged the way the Sessions tree places its row: a session in a
+ * working copy the list knows goes by that copy (repoInSet), so a worktree whose folder is not
+ * named `<base>@…` still follows its parent. The folder-name guess (sessionInSet) is only for
+ * a folder the list does not know (the list not loaded yet, or a copy that is gone). A direct
+ * assignment always counts. */
+export function sessionInWorkingSet(
+  set: WorkingSet,
+  s: Session,
+  byFolder: ReadonlyMap<string, Pick<Repo, "name" | "worktree" | "parent">>,
+): boolean {
+  if (set.sessions.includes(s.name)) return true;
+  const folder = sessionFolder(s);
+  const repo = folder ? byFolder.get(folder) : undefined;
+  return repo ? repoInSet(set, repo) : sessionInSet(set, s);
+}
+
 export function convInSet(set: WorkingSet, convId: string): boolean {
   return set.convs.includes(convId);
 }

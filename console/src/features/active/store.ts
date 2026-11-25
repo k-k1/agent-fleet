@@ -1,33 +1,29 @@
-// Which parents the member opened in the Active view (ADR 0145). Device-local, like a
-// section's fold: it is a detail of how this screen is arranged, not a setting.
-import { create } from "zustand";
+// Which parents the member opened in the Active view (ADR 0145). Kept like the left pane's
+// other folds (foldStore): per browser, and per signed-in member and tenant, because a session
+// name means nothing in another workspace.
+import { useMemo } from "react";
+import { useFoldValue } from "../../lib/useFold.ts";
 
-const KEY = "af-active-expanded";
+export const ACTIVE_EXPANDED_KEY = "af-active-expanded";
 
-function read(): string[] {
+const parse = (raw: string | null): string[] => {
   try {
-    const v: unknown = JSON.parse(localStorage.getItem(KEY) || "[]");
+    const v: unknown = JSON.parse(raw || "[]");
     return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
   } catch {
     return [];
   }
-}
+};
 
-interface ActiveFoldStore {
-  expanded: string[];
-  /** Open or fold `name`. `known` is every session name there is right now: names that are
-   *  gone are dropped on the way, so the stored list never outgrows the sessions. */
-  toggle(name: string, known: ReadonlySet<string>): void;
+/** The opened parents, and the toggle. `known` is every session name of this workspace right
+ *  now: names that are gone are dropped on the way, so the stored list never outgrows the
+ *  sessions. */
+export function useActiveExpanded(): [string[], (name: string, known: ReadonlySet<string>) => void] {
+  const [raw, setRaw] = useFoldValue(ACTIVE_EXPANDED_KEY);
+  const expanded = useMemo(() => parse(raw), [raw]);
+  const toggle = (name: string, known: ReadonlySet<string>) => {
+    const cur = expanded.filter((n) => known.has(n));
+    setRaw(JSON.stringify(cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name]));
+  };
+  return [expanded, toggle];
 }
-
-export const useActiveFold = create<ActiveFoldStore>((set, get) => ({
-  expanded: read(),
-  toggle: (name, known) => {
-    const cur = get().expanded.filter((n) => known.has(n));
-    const expanded = cur.includes(name) ? cur.filter((n) => n !== name) : [...cur, name];
-    try {
-      localStorage.setItem(KEY, JSON.stringify(expanded));
-    } catch {}
-    set({ expanded });
-  },
-}));

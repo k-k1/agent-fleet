@@ -1,29 +1,33 @@
 // ActiveSection — the Active view of the left pane (ADR 0145): the sessions that are running,
 // or that still need the member, as cards under the repository or space they work in.
 //
-// It reads the stores the Sessions view already keeps fresh and owns one piece of state, the
-// parents the member opened (store.ts). The grouping, the scope and the fold are active.ts;
+// It reads the stores the Sessions view already keeps fresh and asks for nothing itself: the
+// view is mounted whether or not anyone opens it, so a request made here would be paid by
+// every member. The one piece of state it owns is the parents the member opened (store.ts). The grouping, the scope and the fold are active.ts;
 // the card is the sessions overview's, in its rail form, so a state or a gauge never reads
 // differently here than in the overview pane.
 import { memo, useMemo } from "react";
 import type { CSSProperties } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
-import { useT } from "../../lib/i18n/index.ts";
+import { useLocale, useT } from "../../lib/i18n/index.ts";
 import { useActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useReposStore } from "../repos/store.ts";
-import { useRepoRailContext } from "../repos/useRepoRail.ts";
+import { useWorkspaceStore } from "../../core/store/workspace.ts";
+import { useLayoutStore } from "../../layout/store.ts";
+import { activePane } from "../../layout/ops.ts";
+import { paneCount, sessionPanes } from "../../layout/badges.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
 import { useNotificationStore } from "../notifications/store.ts";
 import { waitingAtFromNotifications } from "../sessions/order.ts";
 import { observedWaitingAt } from "../sessions/waiting.ts";
 import { useShownSchedules } from "../schedules/store.ts";
-import { useSpaceNames } from "../spaces/useSpaceNames.ts";
+import { spacesFor, spacesOwner, useSpacesStore } from "../spaces/store.ts";
 import { SessionCard } from "../overview/SessionCard.tsx";
 import { activeGroups } from "./active.ts";
 import type { ActiveGroup } from "./active.ts";
-import { useActiveFold } from "./store.ts";
+import { useActiveExpanded } from "./store.ts";
 import "../overview/overview.css";
 
 // Deeper generations stop indenting: at the pane's width a fourth step would leave the title no room.
@@ -35,18 +39,28 @@ export const ActiveSection = memo(function ActiveSection() {
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const repos = useReposStore((s) => s.repos);
-  const spaces = useSpaceNames(sessions);
+  // The names the Sessions view's Spaces section keeps asked for (useSpaceNames); until its
+  // answer arrives the folders stand in.
+  const owner = spacesOwner();
+  const spaces = useSpacesStore((s) => spacesFor(s, owner));
   const wset = useActiveWorkingSet();
   const shownSchedules = useShownSchedules();
-  const ctx = useRepoRailContext();
+  // Derived from the layout here rather than through useRepoRailContext, which also reads
+  // the connections and the launch catalogue: a card launches nothing.
+  const running = useWorkspaceStore((s) => s.state) === "running";
+  const layout = useLayoutStore((s) => s.layout);
+  const sPanes = useMemo(() => (paneCount(layout) > 1 ? sessionPanes(layout) : null), [layout]);
+  const activeSession = activePane(layout)?.session ?? null;
   const actions = useSessionActions();
-  const expanded = useActiveFold((s) => s.expanded);
-  const toggle = useActiveFold((s) => s.toggle);
+  const [expanded, toggle] = useActiveExpanded();
+  // Headings are sorted with the locale's collation, so the order is the locale's too.
+  const locale = useLocale();
 
   const expandedSet = useMemo(() => new Set(expanded), [expanded]);
   const groups = useMemo(
     () => activeGroups(sessions, repos, spaces, wset, expandedSet, shownSchedules),
-    [sessions, repos, spaces, wset, expandedSet, shownSchedules],
+    // `locale` is not named in the body: compareText reads it.
+    [sessions, repos, spaces, wset, expandedSet, shownSchedules, locale],
   );
   const alive = groups.reduce((n, g) => n + g.alive, 0);
   const known = useMemo(() => new Set(sessions.map((s) => s.name)), [sessions]);
@@ -78,10 +92,10 @@ export const ActiveSection = memo(function ActiveSection() {
                     <SessionCard
                       s={s}
                       rail
-                      selected={ctx.activeSession === s.name}
-                      opens={(ctx.multiPane && ctx.sPanes?.get(s.name)) || []}
+                      selected={activeSession === s.name}
+                      opens={sPanes?.get(s.name) || []}
                       beside={false}
-                      running={ctx.running}
+                      running={running}
                       waitingAt={waitingAt(s.name)}
                       actions={actions}
                       fold={fold}

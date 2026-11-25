@@ -157,6 +157,15 @@ describe("auto-run sessions are the Auto-run view's, not the Sessions view's", (
   });
 });
 
+describe("waitingSessions under a working set", () => {
+  it("counts a waiting session in a worktree by the worktree's parent, as the views list it", () => {
+    const list = [{ name: "n", state: "question", alive: true, kind: "claude", repo: "nightly" } as unknown as Session];
+    const w = { id: "w", name: "A", repos: ["app"], convs: [], sessions: [], schedules: [] } as WorkingSet;
+    expect(waitingSessions(list, w, undefined, [{ name: "app" }, { name: "nightly", worktree: true, parent: "app" }])).toBe(1);
+    expect(waitingSessions(list, w)).toBe(0);
+  });
+});
+
 describe("sessionBadges", () => {
   it("counts a waiting session on one icon only: the Active one while it is in the bar", () => {
     expect(sessionBadges(2, false, true)).toEqual({ active: { tone: "waiting", count: 2 } });

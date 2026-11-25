@@ -305,11 +305,17 @@ describe("ActivityBar views", () => {
 describe("ActivityBar badges", () => {
   it("counts sessions waiting for an answer, even while their view is on screen", async () => {
     useSessionsStore.setState({ sessions: [sess("a", "question"), sess("b", "plan"), sess("c", "working")] });
+    useWorkspaceStore.setState({ state: "running" });
     await mount();
     // One count, on the Active icon (ADR 0145): the Sessions view lists the same two sessions.
     expect(badge("active")?.dataset.badge).toBe("waiting");
     expect(badge("active")?.textContent).toBe("2");
     expect(badge("sessions")).toBeNull();
+    // The workspace stops before the session list catches up: the Active view has nothing to
+    // list then, so the count goes where the stopped view's rows are.
+    await act(async () => useWorkspaceStore.setState({ state: "stopped" }));
+    expect(badge("active")).toBeNull();
+    expect(badge("sessions")?.textContent).toBe("2");
   });
 
   it("counts them on the Sessions icon when the Active icon is off", async () => {
