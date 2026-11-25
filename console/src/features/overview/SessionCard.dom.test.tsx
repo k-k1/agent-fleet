@@ -144,6 +144,26 @@ describe("SessionCard", () => {
     expect(openSessionFromList).not.toHaveBeenCalled();
   });
 
+  it("draws the rail's where line for ordinals alone or icons alone, and not at all when it would be empty", async () => {
+    await render({}, true, 0, [{ ordinal: 1, id: "p1" }], true);
+    expect(host.querySelector(".ovw-where .sess-ords .rail-ord")).not.toBeNull();
+    await render({ locked: true }, true, 0, [], true);
+    expect(host.querySelector(".ovw-where .ovw-icons .sess-lock")).not.toBeNull();
+    await render({}, true, 0, [], true);
+    expect(host.querySelector(".ovw-where")).toBeNull();
+  });
+
+  it("keeps Enter / Space on an ordinal from reaching the card", async () => {
+    await render({}, true, 0, [{ ordinal: 1, id: "p1" }], true);
+    const ord = host.querySelector<HTMLElement>(".rail-ord")!;
+    for (const key of ["Enter", " "]) {
+      await act(async () => {
+        ord.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }));
+      });
+    }
+    expect(openSessionFromList).not.toHaveBeenCalled();
+  });
+
   it("draws the state icons on the where line of a grid card too", async () => {
     await render({ locked: true });
     expect(host.querySelector(".ovw-where .ovw-icons .sess-lock")).not.toBeNull();

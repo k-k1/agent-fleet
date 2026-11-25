@@ -230,8 +230,15 @@
   }
 }
 /* Parent-diff chip: the rail's own chip; `flex: none` keeps it whole in a card's caption line. */
-.ovw-where .repo-chip {
-  flex: none;
+.ovw-where .repo-chip,
+.ovw-where .sess-drift {
+  /* Shrinkable (after the branch name, which is already at zero): ordinals and state icons
+     are fixed, so on a narrow rail the chip ellipsizes instead of pushing the icons out of
+     the card. */
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ovw-waited.ovw-waited--on {
   color: var(--warn);
