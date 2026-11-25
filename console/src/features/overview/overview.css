@@ -232,7 +232,7 @@
 /* Parent-diff chip and drift chip: the rail's own chip, allowed to shrink and ellipsize so a
    long one cannot push the fixed ordinals / state icons out of the card. */
 .ovw-where .repo-chip,
-.ovw-where .sess-drift {
+.ovw-where .ovw-drift {
   flex: 0 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -395,6 +395,6 @@
   gap: 6px;
   margin-left: auto;
 }
-.ovw-where .sess-ords {
+.ovw-where .ovw-ords {
   flex: none;
 }

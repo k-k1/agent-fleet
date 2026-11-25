@@ -247,7 +247,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
       {where && (
       <div className="ovw-where" title={s.dir || ""}>
         {ords.length > 0 && (
-          <span className="sess-ords">
+          <span className="sess-ords ovw-ords">
             {ords.map((o) => (
               <button
                 key={o.id}
@@ -291,7 +291,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           </span>
         )}
         {s.branchDrift && (
-          <span className="sess-drift" title={tr("srow.branch_switched", { from: s.branch ?? "", to: s.currentBranch ?? "" })}>
+          <span className="sess-drift ovw-drift" title={tr("srow.branch_switched", { from: s.branch ?? "", to: s.currentBranch ?? "" })}>
             <Icon name="warning" /> {s.currentBranch}
           </span>
         )}
