@@ -71,8 +71,8 @@ const STATIC_KEYS = ["launch.first_prompt_note", "launch.first_prompt_empty", "l
 
 // The ⓘ texts each form must carry (the others depend on the agent, the working copy or the branch mode).
 const EXPECTED: Record<string, string[]> = {
-  dialog: ["launch.first_prompt_note", "launch.first_prompt_empty", "launch.title_empty", "launch.subdir_wt_hint", "launch.base_origin_note", "launch.perm_hint", "launch.plan_hint", "launch.budget_hint", "launch.own_default_hint"],
-  "space form": ["launch.title_empty", "launch.perm_hint", "launch.plan_hint", "launch.own_default_hint", "start.space_note"],
+  dialog: ["launch.first_prompt_note", "launch.first_prompt_empty", "launch.attach_note", "launch.field.effort_hint", "launch.title_empty", "launch.subdir_wt_hint", "launch.base_origin_note", "launch.perm_hint", "launch.plan_hint", "launch.budget_hint", "launch.own_default_hint"],
+  "space form": ["launch.field.effort_hint", "launch.title_empty", "launch.perm_hint", "launch.plan_hint", "launch.own_default_hint", "start.space_note"],
 };
 
 const panels = () => [...document.querySelectorAll<HTMLElement>(".ui-field-info-panel")];
