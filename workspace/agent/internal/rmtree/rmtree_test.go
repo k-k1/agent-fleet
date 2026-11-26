@@ -19,6 +19,9 @@ func mustWrite(t *testing.T, p string) {
 // lockDir takes owner write away from dir, the way a module cache leaves its directories.
 func lockDir(t *testing.T, dir string, mode os.FileMode) {
 	t.Helper()
+	// Registered before the chmod, so a failing test still lets t.TempDir's own cleanup remove
+	// the tree: cleanups run last-in first-out, which opens the innermost directory first.
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
 	if err := os.Chmod(dir, mode); err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +76,6 @@ func TestRemoveAllDoesNotFollowSymlinks(t *testing.T) {
 	outside := filepath.Join(t.TempDir(), "outside")
 	mustWrite(t, filepath.Join(outside, "keep.txt"))
 	lockDir(t, outside, 0o555)
-	defer os.Chmod(outside, 0o755)
 
 	root := filepath.Join(t.TempDir(), "trashed")
 	mustWrite(t, filepath.Join(root, "ro", "f"))
@@ -111,5 +113,37 @@ func TestRemoveAllMissingAndPlain(t *testing.T) {
 	}
 	if _, err := os.Lstat(root); !os.IsNotExist(err) {
 		t.Fatalf("still there: %v", err)
+	}
+}
+
+// A directory on another device (a mount) is neither opened up nor emptied: the removal fails as
+// it did before, instead of deleting what lives behind the mount.
+func TestRemoveAllStopsAtAMountPoint(t *testing.T) {
+	skipIfRoot(t)
+	root := filepath.Join(t.TempDir(), "trashed")
+	mustWrite(t, filepath.Join(root, "ro", "mounted", "ro2", "data.txt"))
+	mustWrite(t, filepath.Join(root, "ro", "plain.txt"))
+	mounted := filepath.Join(root, "ro", "mounted")
+	lockDir(t, filepath.Join(root, "ro", "mounted", "ro2"), 0o555)
+	lockDir(t, mounted, 0o555)
+	lockDir(t, filepath.Join(root, "ro"), 0o555)
+
+	prev := devOf
+	devOf = func(fi os.FileInfo) uint64 {
+		if fi.Name() == "mounted" {
+			return 42
+		}
+		return prev(fi)
+	}
+	t.Cleanup(func() { devOf = prev })
+
+	if err := RemoveAll(root); err == nil {
+		t.Fatal("RemoveAll went through a mount point")
+	}
+	if fi, err := os.Stat(mounted); err != nil || fi.Mode().Perm() != 0o555 {
+		t.Fatalf("the mount point was changed: %v %v", fi, err)
+	}
+	if _, err := os.Stat(filepath.Join(mounted, "ro2", "data.txt")); err != nil {
+		t.Fatalf("what lives behind the mount was removed: %v", err)
 	}
 }

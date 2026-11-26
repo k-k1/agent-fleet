@@ -3,6 +3,7 @@ package gitx
 import (
 	"fmt"
 	"log"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -85,11 +86,11 @@ func removeWorktree(parent, dir string) (out string, err error) {
 	fireDeleteHook("git-remove", dir)
 	out, err = Combined(parent, "worktree", "remove", "--force", dir)
 	l.RUnlock()
-	if err != nil && strings.Contains(out, "ermission denied") {
+	if err != nil && strings.Contains(out, "ermission denied") && !worktreeLocked(parent, dir) {
 		// git cannot unlink inside a directory the owner cannot write to (Go's module cache),
-		// and its refusal leaves the folder behind. The lock and the dirty check were settled
-		// before this call, and a failure for any other reason (a locked worktree) is not
-		// retried here: only the permission case may be finished by hand.
+		// and its refusal leaves the folder behind. The dirty check was settled before this
+		// call. A locked worktree is excluded by asking git, not by the message: the lock
+		// reason is free text and can contain anything, and a lock must keep standing.
 		if rerr := rmtree.RemoveAll(dir); rerr == nil {
 			err = nil
 		}
@@ -108,4 +109,25 @@ func pruneWorktrees(parent string) {
 	defer l.Unlock()
 	fireDeleteHook("prune", parent)
 	_ = Cmd(parent, "worktree", "prune").Run()
+}
+
+// worktreeLocked reports whether git lists the worktree at dir as locked. When it cannot be
+// read, the answer is true: the caller then leaves the removal to git's own refusal.
+func worktreeLocked(parent, dir string) bool {
+	out, err := Combined(parent, "worktree", "list", "--porcelain")
+	if err != nil {
+		return true
+	}
+	want := filepath.Clean(dir)
+	inEntry := false
+	for _, line := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
+			p := strings.TrimPrefix(line, "worktree ")
+			inEntry = p == want || markKey(p) == markKey(want)
+		case inEntry && (line == "locked" || strings.HasPrefix(line, "locked ")):
+			return true
+		}
+	}
+	return false
 }
