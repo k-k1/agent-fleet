@@ -50,7 +50,13 @@ func MoveOut(folder, dest string) error {
 	if _, err := os.Lstat(dest); err == nil {
 		return fmt.Errorf("%s already exists", dest)
 	}
-	return os.Rename(dir, dest)
+	if err := os.Rename(dir, dest); err != nil {
+		return err
+	}
+	// The folder has left ~/spaces: a folder made there later under the same name by hand is not
+	// this space, and must not get a marker written into it.
+	forget(folder)
+	return nil
 }
 
 // MoveIn puts a folder MoveOut moved back at Root/folder. It refuses (ErrExists) when anything,
@@ -75,5 +81,10 @@ func MoveIn(src, folder string) error {
 	if _, err := os.Lstat(dir); err == nil {
 		return ErrExists
 	}
-	return os.Rename(src, dir)
+	if err := os.Rename(src, dir); err != nil {
+		return err
+	}
+	m, _ := readMarker(dir)
+	remember(folder, recordEntry{Name: m.Name, CreatedAt: m.CreatedAt})
+	return nil
 }

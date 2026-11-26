@@ -21,6 +21,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/pathguard"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // Read-only file browser for the Console explorer (docs/17 P3-5 stage 2). Rooted at
@@ -208,6 +209,13 @@ func fsWriteRefused(full, rel string, allowRoot bool) bool {
 
 // writeRefusedMsg is the 403 the Console already renders for a refused mutation.
 const writeRefusedMsg = "this path is protected and cannot be changed"
+
+// spaceProtectedCode / spaceProtectedMsg refuse deleting or renaming ~/spaces, a space's folder or
+// its marker (spacex.Protected). The Console words the code (err.space_protected).
+const (
+	spaceProtectedCode = "space_protected"
+	spaceProtectedMsg  = "this is a space's folder or its marker file; delete the space from Spaces in the Console instead"
+)
 
 // SafeBrowsePath resolves a query path to an absolute file the browser may serve, plus a
 // display path. Two forms are accepted:
@@ -509,6 +517,11 @@ func HandleTree(w http.ResponseWriter, r *http.Request) {
 		if IsDenied(childRel) || IsDenied(denyRel) {
 			continue
 		}
+		// A space's marker is the Agent's, not the member's: shown, it invites the delete that
+		// would drop the space.
+		if e.Name() == spacex.MarkerFile && spacex.Protected(filepath.Join(full, e.Name())) {
+			continue
+		}
 		fe := fsEntry{Name: e.Name(), Type: "file"}
 		if e.IsDir() {
 			fe.Type = "dir"
@@ -738,6 +751,10 @@ func HandleRename(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusForbidden, "denied", writeRefusedMsg)
 		return
 	}
+	if spacex.Protected(srcFull) {
+		httpx.WriteErr(w, http.StatusForbidden, spaceProtectedCode, spaceProtectedMsg)
+		return
+	}
 	if _, err := os.Stat(srcFull); err != nil {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such path: "+srcRel)
 		return
@@ -763,6 +780,10 @@ func HandleDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	if fsWriteRefused(full, rel, false) {
 		httpx.WriteErr(w, http.StatusForbidden, "denied", writeRefusedMsg)
+		return
+	}
+	if spacex.Protected(full) {
+		httpx.WriteErr(w, http.StatusForbidden, spaceProtectedCode, spaceProtectedMsg)
 		return
 	}
 	if _, err := os.Stat(full); err != nil {

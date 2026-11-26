@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as RMouseEvent, DragEvent as RDragEvent, KeyboardEvent as RKeyboardEvent } from "react";
 import { api, uploadFiles, fsMkdir, fsNewFile, fsRename, fsDelete, fsSearch, isTransientErr } from "../../core/api/client.ts";
+import { fsErrMsg } from "./fsErrMsg.ts";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { useOnShow, useShownValue, useViewShown } from "../../lib/viewShown.ts";
 import FileIcon, { DirIcon } from "../../ui/FileIcon.tsx";
@@ -1075,7 +1076,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     const to = joinPath(parent, name.trim());
     const started = tenantRef.current;
     const res = await fsRename(row.path, to);
-    if (res.error) return toast(t("proj.rename_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
+    if (res.error) return toast(t("proj.rename_failed", { msg: fsErrMsg(res.error) }));
     if (!(await refreshDir(parent, started))) return;
     setSelected(to);
   };
@@ -1089,7 +1090,7 @@ export function ProjectFiles({ root, markRepos, searchable, groupByRepo, seconda
     });
     if (!ok || tenantRef.current !== started) return; // the path names the previous tenant's file
     const res = await fsDelete(row.path);
-    if (res.error) return toast(t("proj.delete_failed", { msg: (res.error as { message?: string }).message || String(res.error) }));
+    if (res.error) return toast(t("proj.delete_failed", { msg: fsErrMsg(res.error) }));
     if (!(await refreshDir(parentOf(row.path), started))) return;
     setSelected(parentOf(row.path) || null);
   };

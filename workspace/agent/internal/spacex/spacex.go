@@ -56,6 +56,18 @@ type Space struct {
 type marker struct {
 	Name      string `json:"name"`
 	CreatedAt string `json:"createdAt,omitempty"`
+	// Note tells whoever opens the file (an agent tidying dotfiles, the member) what it is for.
+	// Nothing reads it back.
+	Note string `json:"note,omitempty"`
+}
+
+// markerNote is the Note every marker the Agent writes carries.
+const markerNote = "Agent Fleet: this file makes this folder a space. Do not delete, move or rename it, " +
+	"or the folder: delete the space from the Console (Sessions > Spaces) instead."
+
+// newMarker is the marker the Agent writes for a space.
+func newMarker(name, createdAt string) marker {
+	return marker{Name: name, CreatedAt: createdAt, Note: markerNote}
 }
 
 // Root is ~/spaces. Recreate keeps it (it is outside ~/repos); Clean deletes it with the rest of
@@ -107,7 +119,7 @@ func FolderOf(dir string) string {
 	if parent != Root() && parent != realRoot() {
 		return ""
 	}
-	if !ValidFolder(f) || !markerPresent(filepath.Join(parent, f)) {
+	if !ValidFolder(f) || (!markerPresent(filepath.Join(parent, f)) && !repairMarker(f)) {
 		return ""
 	}
 	return f
@@ -259,7 +271,7 @@ func Create(name string) (Space, error) {
 			}
 			return Space{}, err
 		}
-		m := marker{Name: name, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		m := newMarker(name, time.Now().UTC().Format(time.RFC3339))
 		if err := writeMarker(dir, m); err != nil {
 			// writeMarker leaves nothing behind, so the folder Mkdir made is empty and unmarked:
 			// no Lookup can have handed it out. os.Remove, not RemoveAll, so a folder something
@@ -267,6 +279,7 @@ func Create(name string) (Space, error) {
 			_ = os.Remove(dir)
 			return Space{}, err
 		}
+		remember(folder, recordEntry{Name: m.Name, CreatedAt: m.CreatedAt})
 		return Space{Folder: folder, Name: m.Name, Dir: dir, CreatedAt: m.CreatedAt}, nil
 	}
 	return Space{}, errors.New("could not find a free space folder name")
@@ -333,15 +346,15 @@ func readMarker(dir string) (marker, bool) {
 
 // Lookup answers the space in folder, and false when there is none: no such folder, a symlink
 // in its place (List skips those too, so both agree on what a space is), or no marker. It
-// decides with the same test as FolderOf (markerPresent), so a session row, the list and a
-// create naming the folder never disagree; a marker that cannot be read or parsed only loses
-// the name.
+// decides with the same test as FolderOf (markerPresent, after repairMarker for a recorded
+// space whose marker is missing), so a session row, the list and a create naming the folder
+// never disagree; a marker that cannot be read or parsed only loses the name.
 func Lookup(folder string) (Space, bool) {
 	if !ValidFolder(folder) {
 		return Space{}, false
 	}
 	dir := filepath.Join(Root(), folder)
-	if !markerPresent(dir) {
+	if !markerPresent(dir) && !repairMarker(folder) {
 		return Space{}, false
 	}
 	m, _ := readMarker(dir)
@@ -377,6 +390,7 @@ func List() ([]Space, error) {
 		}
 		return out[i].Folder < out[j].Folder
 	})
+	rememberListed(out)
 	return out, nil
 }
 
@@ -422,6 +436,11 @@ var beforePublish = func() {}
 func Rename(folder, name string) (Space, error) {
 	if !ValidFolder(folder) {
 		return Space{}, ErrNotFound
+	}
+	// A recorded space whose marker went missing is renamed like any other. Done before the locks:
+	// the repair takes lifeMu itself.
+	if !markerPresent(filepath.Join(Root(), folder)) {
+		repairMarker(folder)
 	}
 	renameMu.Lock()
 	defer renameMu.Unlock()
@@ -525,6 +544,7 @@ func Rename(folder, name string) (Space, error) {
 		_ = sp.Remove(tmp)
 		return Space{}, err
 	}
+	remember(folder, recordEntry{Name: name, CreatedAt: createdAt})
 	return Space{Folder: folder, Name: name, Dir: filepath.Join(Root(), folder), CreatedAt: createdAt}, nil
 }
 
