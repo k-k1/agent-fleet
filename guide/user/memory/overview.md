@@ -21,7 +21,7 @@ How it differs from instruction files and the agent's own memory is in [Choose w
 | Make agents forget a memory you do not want | A forgotten memory disappears from every agent's view |
 | Check the [changes](changes.md) and revert bad ones | Reports a memory that was stale or wrong with `memory_feedback` |
 
-- Memory has one scope per project plus a "user-wide" scope that every project receives. A worktree shares its repository's memory
+- Memory has one scope per project plus a "user-wide" scope that every project receives. A worktree shares its repository's memory. All of your spaces share one project scope called **Spaces**
 - What one agent learned survives a switch of agent kind, a handoff, and a child session of another kind
 - An agent's save is shared at once, **without your approval**. A save that looks like it holds a secret is refused
 
