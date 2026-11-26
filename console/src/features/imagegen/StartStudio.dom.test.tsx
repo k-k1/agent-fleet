@@ -7,12 +7,15 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 let personaFails = false;
+let spacesAnswer: unknown = { spaces: [] };
+let sessionRows: unknown[] = [];
 const posts: { path: string; body: Record<string, unknown> }[] = [];
 const puts: { path: string; body: Record<string, unknown> }[] = [];
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...(await orig<typeof import("../../core/api/client.ts")>()),
   getTenant: () => "t1",
   api: async (path: string) => {
+    if (path === "api/spaces") return spacesAnswer;
     if (path === "api/imagegen/status")
       return {
         providers: [
@@ -44,13 +47,14 @@ vi.mock("../repos/SubdirPicker.tsx", () => ({ SubdirPicker: () => <span /> }));
 const toast = vi.fn();
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 vi.mock("../sessions/store.ts", () => ({
-  useSessionsStore: (sel: (s: { refresh: () => Promise<void> }) => unknown) => sel({ refresh: async () => {} }),
+  useSessionsStore: (sel: (s: { refresh: () => Promise<void>; sessions: unknown[] }) => unknown) => sel({ refresh: async () => {}, sessions: sessionRows }),
 }));
 const opened: unknown[] = [];
 vi.mock("./open.ts", () => ({ openImagegen: (o: unknown) => opened.push(o) }));
 
 const { StartStudioModal } = await import("./parts/StartStudioModal.tsx");
 const { useReposStore } = await import("../repos/store.ts");
+const { useSpacesStore } = await import("../spaces/store.ts");
 const { attachLastKey } = await import("./attachPlan.ts");
 import { setLocale } from "../../lib/i18n/index.ts";
 import type { Repo } from "../repos/store.ts";
@@ -106,6 +110,9 @@ beforeEach(() => {
   puts.length = 0;
   opened.length = 0;
   toast.mockClear();
+  spacesAnswer = { spaces: [] };
+  sessionRows = [];
+  useSpacesStore.getState().clear();
   useReposStore.setState({ repos: [BASE, WT] });
 });
 
@@ -251,5 +258,110 @@ describe("start a studio from a working-copy row", () => {
     expect(labels).toContain("画像モデル");
     expect(labels).toContain("エージェントのモデル");
     expect(labels).not.toContain("モデル");
+  });
+});
+
+// A space as the place (#5232): the same `space` field the Start hub sends, in place of a
+// directory, so a member with no working copy can still start a studio.
+describe("start a studio in a space", () => {
+  const placeSelect = () => [...document.querySelectorAll<HTMLSelectElement>(".igen-attach select")].find((el) => [...el.options].some((o) => o.text.includes("ホーム")))!;
+  const goBtn = () => document.querySelector<HTMLButtonElement>(".ui-modal-foot .ui-btn-primary")!;
+  async function renderOpen(): Promise<void> {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const { AttachAgentModal } = await import("./parts/AttachAgentModal.tsx");
+    const { attachAgent } = await import("./attach.ts");
+    await act(async () =>
+      root.render(<AttachAgentModal onClose={() => {}} onAttach={async (o) => (await attachAgent({ studioId: null, draft: () => ({}), opts: o })).session !== undefined} />),
+    );
+    await settle();
+  }
+  async function choose(label: string) {
+    const sel = placeSelect();
+    const opt = [...sel.options].find((o) => o.text.includes(label))!;
+    await act(async () => {
+      sel.value = opt.value;
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+
+  it("a member without working copies starts in a new space by default, and nothing names a directory", async () => {
+    useReposStore.setState({ repos: [] });
+    const attached: Record<string, unknown>[] = [];
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    const { AttachAgentModal } = await import("./parts/AttachAgentModal.tsx");
+    const { attachAgent } = await import("./attach.ts");
+    await act(async () =>
+      root.render(
+        <AttachAgentModal
+          onClose={() => {}}
+          onAttach={async (o) => {
+            attached.push(o as never);
+            return (await attachAgent({ studioId: null, draft: () => ({}), opts: o })).session !== undefined;
+          }}
+        />,
+      ),
+    );
+    await settle();
+    expect(placeSelect().selectedOptions[0].text).toBe("新しいスペース");
+    await pickImage("sdxl");
+    await click(goBtn());
+    await settle();
+    expect(attached[0]).toMatchObject({ dir: "", space: { folder: "" }, worktree: false, subdir: "" });
+    const s = sessionPost()!;
+    expect(s).toMatchObject({ dir: "", space: { name: "" }, studio: "st9" });
+    for (const k of ["worktree", "branch", "new_branch", "subdir"]) expect(s).not.toHaveProperty(k);
+    expect(studioPost()).toMatchObject({ title: "新しいスペース · Claude Code" });
+    expect(JSON.parse(localStorage.getItem(attachLastKey("t1")) || "null")).toMatchObject({ repo: "", space: true });
+  });
+
+  it("starts in an existing space by its folder and titles the studio with its name", async () => {
+    spacesAnswer = { spaces: [{ folder: "s-abc", name: "調べもの", dir: "/home/dev/spaces/s-abc", createdAt: "2026-11-01T00:00:00Z" }] };
+    await renderOpen();
+    await choose("調べもの");
+    await pickImage("sdxl");
+    await click(goBtn());
+    await settle();
+    const s = sessionPost()!;
+    expect(s).toMatchObject({ dir: "", space: { folder: "s-abc" } });
+    expect(s).not.toHaveProperty("worktree");
+    expect(studioPost()).toMatchObject({ title: "調べもの · Claude Code" });
+  });
+
+  it("does not start in a space an agent is already running in", async () => {
+    spacesAnswer = { spaces: [{ folder: "s-abc", name: "調べもの", dir: "/home/dev/spaces/s-abc" }] };
+    sessionRows = [{ name: "s1", kind: "claude", space: "s-abc", alive: true }];
+    await renderOpen();
+    await choose("調べもの");
+    await pickImage("sdxl");
+    expect(goBtn().disabled).toBe(true);
+    expect(document.body.textContent).toContain("すでにエージェントが動いて");
+    await choose("新しいスペース");
+    expect(goBtn().disabled).toBe(false);
+  });
+
+  it("offers no space when the Agent has none, and a member without working copies starts at home", async () => {
+    spacesAnswer = { error: { code: "http_404" } };
+    useReposStore.setState({ repos: [] });
+    await renderOpen();
+    expect([...placeSelect().options].some((o) => o.text.includes("スペース"))).toBe(false);
+    expect(placeSelect().selectedOptions[0].text).toContain("ホーム");
+    await pickImage("sdxl");
+    await click(goBtn());
+    await settle();
+    expect(sessionPost()).toMatchObject({ dir: "" });
+    expect(sessionPost()).not.toHaveProperty("space");
+  });
+
+  it("holds the start until the Agent has said it supports spaces", async () => {
+    spacesAnswer = { error: { code: "boom" } };
+    useReposStore.setState({ repos: [] });
+    await renderOpen();
+    await pickImage("sdxl");
+    expect(goBtn().disabled).toBe(true);
+    expect(document.body.textContent).toContain("もう一度確かめる");
   });
 });

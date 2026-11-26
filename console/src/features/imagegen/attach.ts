@@ -84,6 +84,9 @@ export async function attachAgent(p: {
   if (o.effort) body.effort = o.effort;
   if (typeof o.skipPermissions === "boolean") body.skip_permissions = o.skipPermissions;
   if (o.subdir) body.subdir = o.subdir;
+  // A space names the directory in place of dir (which stays ""), as in the Start hub's launch: the
+  // Agent makes or looks up ~/spaces/<folder>, and refuses the field together with dir or a worktree.
+  if (o.space) body.space = o.space.folder ? { folder: o.space.folder } : { name: "" };
   if (o.worktree) {
     body.worktree = true;
     if (o.base) body.branch = o.base;

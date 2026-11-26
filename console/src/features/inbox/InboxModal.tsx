@@ -13,7 +13,7 @@
 // so taking it over, declining and giving back behave exactly as there.
 import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
-import { useEffect, useId, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useId, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -323,22 +323,42 @@ export function ItemCard({ item }: { item: InboxItem }) {
   );
 }
 
-/** The assignee's launch: pick a working copy, then the ordinary launch dialog opens with
- *  the request as its prompt. The CP checks the claim again before the session exists. */
+/** The place value that stands for "a space" in the launch picker; no working copy has this name. */
+const SPACE_PLACE = "\u0000space";
+
+// Loaded on first use: the space form carries the whole launch dialog, which the inbox has no
+// other reason to bring in.
+const SpaceLaunchModal = lazy(() => import("../repos/SpaceLaunchModal.tsx").then((m) => ({ default: m.SpaceLaunchModal })));
+
+/** The assignee's launch: pick a working copy or a space, then the ordinary launch dialog (or the
+ *  space form) opens with the request as its prompt. The CP checks the claim again before the
+ *  session exists. A member without working copies starts in a space: that is the default then. */
 function LaunchRow({ item }: { item: InboxItem }) {
   const tr = useT();
   const toast = useToast();
   const repos = useReposStore((s) => s.repos);
-  const [repoName, setRepoName] = useState(() => repos[0]?.name || "");
+  // Empty = not chosen yet: the first working copy, or a space when there is none.
+  const [pick, setPick] = useState("");
+  const [spaceOpen, setSpaceOpen] = useState(false);
   const repoId = useId();
+  const place = pick || (repos[0]?.name ?? SPACE_PLACE);
+  const inSpace = place === SPACE_PLACE;
+  const seed = () => {
+    useLaunchSeed.getState().set(item.body, "");
+    useLaunchSeed.getState().setInboxItem(item.id);
+  };
   const launch = () => {
-    const repo = repos.find((r) => r.name === repoName);
+    if (inSpace) {
+      seed();
+      setSpaceOpen(true);
+      return;
+    }
+    const repo = repos.find((r) => r.name === place);
     if (!repo?.path) {
       toast(tr("inbox.launch_no_repo"));
       return;
     }
-    useLaunchSeed.getState().set(item.body, "");
-    useLaunchSeed.getState().setInboxItem(item.id);
+    seed();
     useLaunchTarget.getState().open({ ...repo });
   };
   return (
@@ -347,18 +367,31 @@ function LaunchRow({ item }: { item: InboxItem }) {
         <FieldLabel htmlFor={repoId} info={tr("inbox.launch_hint")}>
           {tr("inbox.launch_repo")}
         </FieldLabel>
-        <select id={repoId} value={repoName} onChange={(e) => setRepoName(e.target.value)}>
+        <select id={repoId} value={place} onChange={(e) => setPick(e.target.value)}>
           {repos.map((r) => (
             <option key={r.name} value={r.name}>
               {r.name}
             </option>
           ))}
+          <option value={SPACE_PLACE}>{tr("inbox.launch_space")}</option>
         </select>
       </div>
-      {repos.length === 0 && <p className="ui-field-hint inbox-warn">{tr("inbox.launch_no_repo")}</p>}
-      <Button variant="primary" disabled={!repoName} onClick={launch}>
+      <Button variant="primary" onClick={launch}>
         <Icon name="run" /> {tr("inbox.launch")}
       </Button>
+      {spaceOpen && (
+        <Suspense fallback={null}>
+          <SpaceLaunchModal
+            prompt={item.body}
+            // The seed names this request for useStartWork; it is dropped whichever way the dialog
+            // ends, so an unrelated launch never goes through the request route.
+            onClose={() => {
+              setSpaceOpen(false);
+              useLaunchSeed.getState().clear();
+            }}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
