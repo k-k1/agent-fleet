@@ -30,9 +30,8 @@ func gitDeps() gitx.Deps {
 		RepoLocked:     sessionx.RepoLocked,
 		LockedRepoDirs: sessionx.LockedRepoDirs,
 
-		LiveSessionsInDir:   sessionx.LiveSessionsInDir,
-		LockedSessionsInDir: sessionx.LockedSessionsInDir,
-		ManagedAlive:        sessionx.ManagedAlive,
+		LiveSessionsInDir: sessionx.LiveSessionsInDir,
+		ManagedAlive:      sessionx.ManagedAlive,
 
 		ShelveSession: sessionx.ArchiveSession,
 		TrashSession:  trashStoppedSession,
@@ -65,6 +64,7 @@ func gitDeps() gitx.Deps {
 		ErrCodeLocked:                errCodeLocked,
 		ErrCodeLockedSessions:        errCodeLockedSessions,
 		ErrCodeSessionsTrashFailed:   errCodeSessionsTrashFailed,
+		ErrCodeSessionsUnobservable:  errCodeSessionsUnobservable,
 		ErrCodeWorktreeArchiveFailed: errCodeWorktreeArchiveFailed,
 		ErrCodeWorktreeNestedRepo:    errCodeWorktreeNestedRepo,
 		ErrCodeIndexLockStale:        errCodeIndexLockStale,

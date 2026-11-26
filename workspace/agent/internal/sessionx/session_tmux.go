@@ -7,14 +7,13 @@ package sessionx
 import (
 	"fmt"
 	"log"
-	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/afdb"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetgraph"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/lifegate"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -255,18 +254,17 @@ func LiveSessionsInDir(dir string) []string {
 // unexported maps, so a test cannot otherwise stand up a running Managed session.
 var managedAlive = ManagedAlive
 
-// sessionsInDir is the pure core of LiveSessionsInDir (tmux/fs kept out so it is
-// testable): from metas + the liveness test, the display names of running, non-archived
-// sessions whose cwd equals dir or sits strictly beneath it. The trailing
-// PathSeparator on the prefix test is load-bearing — it keeps "/r/foo" from matching
-// a sibling "/r/foobar".
+// sessionsInDir is the core of LiveSessionsInDir (tmux kept out so it is testable): from metas +
+// the liveness test, the display names of running, non-archived sessions that may run in dir, by
+// the rule a delete's guards refuse on (gitx.SessionMayRunIn).
 func sessionsInDir(metas []session.Meta, alive func(session.Meta) bool, dir string) []string {
+	in := gitx.MayRunIn(dir)
 	var names []string
 	for _, m := range metas {
 		if m.Archived || !alive(m) {
 			continue
 		}
-		if dirWithin(m.Dir, dir) {
+		if in(m) {
 			names = append(names, session.Display(m))
 		}
 	}
@@ -274,28 +272,14 @@ func sessionsInDir(metas []session.Meta, alive func(session.Meta) bool, dir stri
 	return names
 }
 
-// dirWithin reports whether d is dir or sits beneath it, comparing canonical paths: Meta.Dir
-// keeps the spelling the launch request used, so a session started through a symlink or a `..`
-// path (a shared-working-copy child can be) would otherwise be missed by the delete / checkout
-// guards the moment the session that launched it through the canonical spelling stops.
-func dirWithin(d, dir string) bool {
-	if d == dir || strings.HasPrefix(d, dir+string(os.PathSeparator)) {
-		return true
-	}
-	if d == "" || dir == "" {
-		return false
-	}
-	cd, cdir := workingCopyKey(d), workingCopyKey(dir)
-	return cd == cdir || strings.HasPrefix(cd, cdir+string(os.PathSeparator))
-}
-
 // LastActivityInDir is the newest moment any session whose cwd is dir or beneath it (stopped
 // and archived ones included) was created or stopped; zero when there is none. A running
 // session is judged by LiveSessionsInDir, not by this.
 func LastActivityInDir(metas []session.Meta, dir string) time.Time {
+	in := gitx.MayRunIn(dir)
 	var newest time.Time
 	for _, m := range metas {
-		if !dirWithin(m.Dir, dir) {
+		if !in(m) {
 			continue
 		}
 		for _, s := range []string{m.CreatedAt, m.StoppedAt} {
@@ -308,17 +292,18 @@ func LastActivityInDir(metas []session.Meta, dir string) time.Time {
 }
 
 // LockedSessionsInDir returns the display names of DELETE-LOCKED sessions (docs/log/45)
-// whose cwd is dir or sits beneath it — running or not, archived included. Removing
+// that may run in dir (gitx.SessionMayRunIn) — running or not, archived included. Removing
 // the working copy would strand them (their dir vanishes, resume is gone), which is
 // exactly what the lock exists to prevent, so a working-copy delete refuses while any
-// of these live there. Pure, for the same reason as sessionsInDir.
+// of these live there (gitx.DirSessions.Locked); the cleanup list counts them here.
 func LockedSessionsInDir(metas []session.Meta, dir string) []string {
+	in := gitx.MayRunIn(dir)
 	var names []string
 	for _, m := range metas {
 		if !m.Locked {
 			continue
 		}
-		if dirWithin(m.Dir, dir) {
+		if in(m) {
 			names = append(names, session.Display(m))
 		}
 	}

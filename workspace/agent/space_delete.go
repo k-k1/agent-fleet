@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -39,10 +40,16 @@ const (
 	errCodeSpaceSessionsRunning     = "space_sessions_running"
 	errCodeSpaceLockedSessions      = "space_locked_sessions"
 	errCodeSpaceSessionsTrashFailed = "space_sessions_trash_failed"
-	errCodeSpaceTrashFailed         = "space_trash_failed"
-	errCodeSpaceTrashFS             = "space_trash_other_filesystem"
-	errCodeSpaceRestoreExists       = "space_restore_exists"
-	errCodeSpaceRestoreMissing      = "space_restore_missing"
+	// The delete could not tell which sessions live in the space (a meta it cannot read, tmux not
+	// answering), and removed nothing.
+	errCodeSpaceSessionsUnobservable = "space_sessions_unobservable"
+	// The space holds sessions the delete request's expect list did not name; the answer lists them
+	// under "sessions".
+	errCodeSpaceSessionsChanged = "space_sessions_changed"
+	errCodeSpaceTrashFailed     = "space_trash_failed"
+	errCodeSpaceTrashFS         = "space_trash_other_filesystem"
+	errCodeSpaceRestoreExists   = "space_restore_exists"
+	errCodeSpaceRestoreMissing  = "space_restore_missing"
 )
 
 // spaceTombstone is what a deleted space's trash entry records. The folder itself sits in the
@@ -160,19 +167,40 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 	}
 	defer end()
 
+	// The sessions this delete settles, read once with the mark held (gitx.SessionLivesIn): the
+	// shells it trashes, the AI sessions the entry records and the ones shelved after the move.
+	settle, err := gitx.SessionsToSettleUnder(dir)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusServiceUnavailable, errCodeSpaceSessionsUnobservable,
+			"could not tell which sessions live in this space, so it was left as it is: "+err.Error())
+		return
+	}
+	// A client that showed the member the sessions it would settle (expect) is held to that list:
+	// one the Agent finds in the space and the client did not name (a path through a link the
+	// Console cannot resolve) is not settled unseen. The answer names them, so the dialog can show
+	// them and ask again.
+	if r.URL.Query().Has("expect") {
+		if extra := unexpectedSessions(settle, r.URL.Query().Get("expect")); len(extra) > 0 {
+			var body spaceSessionsChanged
+			body.Error.Code = errCodeSpaceSessionsChanged
+			body.Error.Message = fmt.Sprintf("the space holds session(s) the request did not list (%s); review them and try again", strings.Join(extra, ", "))
+			body.Error.Sessions = extra
+			httpx.WriteJSON(w, http.StatusConflict, body)
+			return
+		}
+	}
 	// Shell / ssm sessions first: the trash can fail (a full disk), and removing the folder first
 	// would leave them listed with no folder.
+	if name, err := gitx.TrashShellsBeforeRemoval(dir, settle); err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceSessionsTrashFailed,
+			fmt.Sprintf("could not move session %s to the trash, so the space was left as it is: %v", name, err))
+		return
+	}
 	var shelved []string
-	for _, m := range gitx.SessionsToSettleUnder(dir) {
-		if m.Kind == session.KindShell || m.Kind == session.KindSSM {
-			if err := trashStoppedSession(m); err != nil {
-				httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceSessionsTrashFailed,
-					fmt.Sprintf("could not move session %s to the trash, so the space was left as it is: %v", m.Name, err))
-				return
-			}
-			continue
+	for _, m := range settle {
+		if m.Kind != session.KindShell && m.Kind != session.KindSSM {
+			shelved = append(shelved, m.Name)
 		}
-		shelved = append(shelved, m.Name)
 	}
 
 	now := nowUTC()
@@ -231,32 +259,64 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("could not move the space to the trash, so it was left as it is: %v", moveErr))
 		return
 	}
-	gitx.ShelveSessionsUnder(dir)
+	gitx.ShelveSessionsUnder(dir, settle, r.URL.Query().Has("expect"))
 	invalidateCleanupUsage()
 	httpx.WriteJSON(w, http.StatusOK, deleteSpaceResponse{Deleted: folder, Archive: man.ID})
+}
+
+// spaceSessionsChanged is the 409 space_sessions_changed body: the usual error, and the names of
+// the sessions the request's expect list left out.
+type spaceSessionsChanged struct {
+	Error struct {
+		Code     string   `json:"code"`
+		Message  string   `json:"message"`
+		Sessions []string `json:"sessions"`
+	} `json:"error"`
+}
+
+// unexpectedSessions is the names in settle that expect (comma-separated session names) leaves out,
+// sorted.
+func unexpectedSessions(settle []session.Meta, expect string) []string {
+	named := map[string]bool{}
+	for _, n := range strings.Split(expect, ",") {
+		named[strings.TrimSpace(n)] = true
+	}
+	var out []string
+	for _, m := range settle {
+		if !named[m.Name] {
+			out = append(out, m.Name)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // decideDeleteSpace is the part of a delete that runs inside the gate. It returns the function
 // that clears the "being deleted" mark, or nil after answering the refusal itself.
 func decideDeleteSpace(w http.ResponseWriter, folder, dir string) (end func()) {
 	// The running sessions are read outside the launch gate, the mark is taken inside it, and a
-	// session started in between is seen either way (gitx.MarkAgainstLaunches).
+	// session started in between is seen either way (gitx.MarkAgainstLaunches). One read decides
+	// the guards and the names the mark records.
 	var release func()
 	for reread := 0; release == nil; reread++ {
 		epoch := gitx.LaunchEpoch()
-		if running := sessionx.LiveSessionsInDir(dir); len(running) > 0 {
+		sessions, err := gitx.ReadDirSessions(dir)
+		if err != nil {
+			httpx.WriteErr(w, http.StatusServiceUnavailable, errCodeSpaceSessionsUnobservable,
+				"could not tell which sessions live in this space, so it was left as it is: "+err.Error())
+			return nil
+		}
+		if running := sessions.Running(); len(running) > 0 {
 			httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
 				fmt.Sprintf("%d session(s) are running in this space (%s); stop them first", len(running), strings.Join(running, ", ")))
 			return nil
 		}
-		if locked := sessionx.LockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
+		if locked := sessions.Locked(); len(locked) > 0 {
 			httpx.WriteErr(w, http.StatusForbidden, errCodeSpaceLockedSessions,
 				fmt.Sprintf("%d locked session(s) live in this space (%s); unlock them first", len(locked), strings.Join(locked, ", ")))
 			return nil
 		}
-		// Read outside the launch gate: it reads every meta and resolves their paths.
-		names := gitx.SessionNamesUnder(dir)
-		end, out, why := gitx.MarkAgainstLaunches(dir, "", epoch, names)
+		end, out, why := gitx.MarkAgainstLaunches(dir, "", epoch, sessions.Names())
 		switch {
 		case out == gitx.MarkReread && reread < gitx.MaxLaunchRereads:
 			continue
@@ -338,7 +398,9 @@ func restoreDeletedSpace(id string, t spaceTombstone) error {
 		return err
 	}
 	for _, name := range t.Shelved {
-		if m, ok := session.ReadMeta(name); ok && m.Archived && underDir(filepath.Clean(m.Dir), filepath.Clean(t.Path)) {
+		// Still living in the folder (gitx.SessionLivesIn, the rule the delete shelved it by): one
+		// moved elsewhere since stays on the shelf.
+		if m, ok := session.ReadMeta(name); ok && m.Archived && gitx.SessionLivesIn(m, filepath.Clean(t.Path)) {
 			sessionx.RestoreSession(name)
 		}
 	}

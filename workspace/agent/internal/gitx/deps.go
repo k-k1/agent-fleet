@@ -63,18 +63,18 @@ type Deps struct {
 	//
 	// "Is anyone still using this worktree?" Here too an unwired field turns into "nobody
 	// is using it", which deletes the worktree of a running session.
-	LiveSessionsInDir   func(dir string) []string
-	LockedSessionsInDir func(metas []session.Meta, dir string) []string
-	ManagedAlive        func(m session.Meta) bool
+	LiveSessionsInDir func(dir string) []string
+	ManagedAlive      func(m session.Meta) bool
 
 	// --- What happens to the sessions of a deleted working copy (ADR 0101 decision 4) ---
 	//
 	// ShelveSession moves a stopped AI session to the shelf (sessionx.ArchiveSession);
 	// TrashSession moves a stopped shell / ssm to the trash (main's trashSession, which archives
-	// before it removes anything and returns an error if it could not). A no-op for either would
+	// before it removes anything and returns an error if it could not; with belongs set it leaves a
+	// session that no longer belongs, wrapping ErrSessionLeftFolder). A no-op for either would
 	// quietly leave rows pointing at a folder that is gone.
 	ShelveSession func(m session.Meta)
-	TrashSession  func(m session.Meta) error
+	TrashSession  func(m session.Meta, belongs func(session.Meta) bool) error
 
 	// WithDeletionGate runs fn inside the gate the lock endpoints also take, so a working-copy
 	// delete and a lock on it (or on a session in it) never interleave (ADR 0101). A plain
@@ -131,6 +131,9 @@ type Deps struct {
 	ErrCodeLocked                string
 	ErrCodeLockedSessions        string
 	ErrCodeSessionsTrashFailed   string
+	// ErrCodeSessionsUnobservable answers a delete that cannot tell which sessions live in the
+	// folder (ReadDirSessions), with nothing removed.
+	ErrCodeSessionsUnobservable  string
 	ErrCodeWorktreeArchiveFailed string
 	ErrCodeWorktreeNestedRepo    string
 	ErrCodeIndexLockStale        string
@@ -178,6 +181,7 @@ func Configure(d Deps) {
 	errCodeLocked = d.ErrCodeLocked
 	errCodeLockedSessions = d.ErrCodeLockedSessions
 	errCodeSessionsTrashFailed = d.ErrCodeSessionsTrashFailed
+	errCodeSessionsUnobservable = d.ErrCodeSessionsUnobservable
 	errCodeWorktreeArchiveFailed = d.ErrCodeWorktreeArchiveFailed
 	errCodeWorktreeNestedRepo = d.ErrCodeWorktreeNestedRepo
 	errCodeIndexLockStale = d.ErrCodeIndexLockStale
@@ -213,6 +217,7 @@ var (
 	errCodeLocked                string
 	errCodeLockedSessions        string
 	errCodeSessionsTrashFailed   string
+	errCodeSessionsUnobservable  string
 	errCodeWorktreeArchiveFailed string
 	errCodeWorktreeNestedRepo    string
 	errCodeIndexLockStale        string
@@ -228,15 +233,13 @@ func lockedRepoDirs() map[string]bool { return deps.LockedRepoDirs() }
 
 func liveSessionsInDir(dir string) []string { return deps.LiveSessionsInDir(dir) }
 
-func lockedSessionsInDir(metas []session.Meta, dir string) []string {
-	return deps.LockedSessionsInDir(metas, dir)
-}
-
 func managedAlive(m session.Meta) bool { return deps.ManagedAlive(m) }
 
 func shelveSession(m session.Meta) { deps.ShelveSession(m) }
 
-func trashSession(m session.Meta) error { return deps.TrashSession(m) }
+func trashSession(m session.Meta, belongs func(session.Meta) bool) error {
+	return deps.TrashSession(m, belongs)
+}
 
 func withDeletionGate(fn func()) { deps.WithDeletionGate(fn) }
 

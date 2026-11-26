@@ -23,6 +23,8 @@ const DELETE_ERRORS = {
   space_sessions_running: "pj.space_delete_running_error",
   space_locked_sessions: "pj.space_delete_locked_error",
   space_sessions_trash_failed: "pj.space_delete_sessions_trash_failed",
+  space_sessions_unobservable: "pj.space_delete_unobservable",
+  space_sessions_changed: "pj.space_delete_changed_agent",
   space_trash_failed: "pj.space_delete_trash_failed",
   space_trash_other_filesystem: "pj.space_delete_other_fs",
   delete_in_progress: "pj.space_delete_in_progress",
@@ -50,7 +52,13 @@ export function SpaceDeleteModal({
     (s) => s.spaces.find((x) => x.folder === folder)?.dir ?? "",
   );
   const all = useSessionsStore((s) => s.sessions);
-  const inSpace = (s: Session) => sessionInSpace(s, folder, dir);
+  // Sessions the Agent found in the space that the Console's own rule did not (a path through a
+  // link it cannot resolve): named by a space_sessions_changed refusal, and shown from then on.
+  const [extra, setExtra] = useState<ReadonlySet<string>>(() => new Set());
+  // A named session may have no row yet (made since the last poll): the press waits for the list
+  // to be read again, so it is shown, or known gone, before the next request.
+  const [relisting, setRelisting] = useState(false);
+  const inSpace = (s: Session) => extra.has(s.name) || sessionInSpace(s, folder, dir);
   const current = all.filter(inSpace);
   // What the member read: frozen, so a press never lands on a set they did not see. When the
   // sessions in the space change while the dialog is open (a shell opened elsewhere, one removed)
@@ -80,7 +88,7 @@ export function SpaceDeleteModal({
   // elsewhere, so the list read above may be short of what the Agent will settle: no press, and a
   // way to ask again, until the list names it.
   const noDir = !dir;
-  const blocked = alive.length > 0 || locked.length > 0 || changed || noDir;
+  const blocked = alive.length > 0 || locked.length > 0 || changed || noDir || relisting;
   const [busy, setBusy] = useState(false);
 
   const listed = (list: typeof mine) =>
@@ -90,7 +98,11 @@ export function SpaceDeleteModal({
     if (busy || blocked) return;
     setBusy(true);
     try {
-      const res = await deleteSpace(folder, owner);
+      const res = await deleteSpace(
+        folder,
+        owner,
+        reviewed.map((s) => s.name),
+      );
       if (res?.stale) {
         onClose();
         return;
@@ -102,8 +114,25 @@ export function SpaceDeleteModal({
             ? (err.code as keyof typeof DELETE_ERRORS)
             : undefined;
         const key = code ? DELETE_ERRORS[code] : undefined;
+        if (code === "space_sessions_changed") {
+          const named = (err as { sessions?: unknown }).sessions;
+          if (Array.isArray(named)) {
+            setExtra((prev) => new Set([...prev, ...named.filter((n): n is string => typeof n === "string")]));
+          }
+          setRelisting(true);
+          void useSessionsStore
+            .getState()
+            .refresh()
+            .finally(() => setRelisting(false));
+        }
+        // What could not be observed (which record, what tmux said) is the only clue when it does
+        // not pass on its own, so it is shown after the wording.
+        const detail =
+          code === "space_sessions_unobservable" && typeof err === "object" && err?.message
+            ? " " + err.message
+            : "";
         toast(
-          key ? tr(key) : tr("pj.space_delete_error", { detail: errText(err) }),
+          key ? tr(key) + detail : tr("pj.space_delete_error", { detail: errText(err) }),
         );
         return;
       }

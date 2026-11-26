@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -47,7 +46,7 @@ func recordDeletedWorktree(t gitx.WorktreeTombstone) (func(), error) {
 // latestTombstone is the newest trash entry recording a delete of the worktree at dir, or nil.
 func latestTombstone(dir string) *gitx.WorktreeTombstone {
 	for _, m := range listCleanupArchives() { // newest first
-		if m.Worktree != nil && filepath.Clean(m.Worktree.Path) == dir {
+		if m.Worktree != nil && (filepath.Clean(m.Worktree.Path) == dir || gitx.IsReposEntryPath(m.Worktree.Path, filepath.Base(dir))) {
 			t := *m.Worktree
 			return &t
 		}
@@ -62,13 +61,22 @@ type restoreConflict struct{ code, msg string }
 
 func (e *restoreConflict) Error() string { return e.msg }
 
+// worktreeRestoreChecked is a test seam between a restore's check of the tombstone's path and the
+// steps that use it. Nil in production.
+var worktreeRestoreChecked func()
+
 // restoreDeletedWorktree puts a deleted worktree back from its tombstone, then takes the
 // sessions its delete shelved off the shelf. A folder already back (recreated since) is left
 // as it is, and only the sessions are restored.
 func restoreDeletedWorktree(t gitx.WorktreeTombstone) error {
-	dir, ok := gitx.ResolveRepoDir(t.Name)
-	if !ok || dir != filepath.Clean(t.Path) {
+	if _, ok := gitx.ResolveRepoDir(t.Name); !ok || !gitx.IsReposEntryPath(t.Path, t.Name) {
 		return fmt.Errorf("the worktree %s was not under the repositories folder", t.Name)
+	}
+	// The path checked just now is the one every step uses: a tombstone a delete through a link
+	// wrote holds the physical path, and resolving ~/repos again later could name another disk.
+	dir := filepath.Clean(t.Path)
+	if worktreeRestoreChecked != nil {
+		worktreeRestoreChecked()
 	}
 	var err error
 	sessionx.WithDeletionGate(func() { err = recreateFromTombstone(dir, t) })
@@ -76,8 +84,9 @@ func restoreDeletedWorktree(t gitx.WorktreeTombstone) error {
 		return err
 	}
 	for _, name := range t.Shelved {
-		// At or under the folder: the delete shelves sessions started in a subfolder too.
-		if m, ok := session.ReadMeta(name); ok && m.Archived && underDir(filepath.Clean(m.Dir), dir) {
+		// Still living in the folder (gitx.SessionLivesIn, the rule the delete shelved it by): one
+		// moved elsewhere since stays on the shelf.
+		if m, ok := session.ReadMeta(name); ok && m.Archived && gitx.SessionLivesIn(m, dir) {
 			sessionx.RestoreSession(name)
 		}
 	}
@@ -115,8 +124,4 @@ func recreateFromTombstone(dir string, t gitx.WorktreeTombstone) error {
 		return &restoreConflict{errCodeRecreateFailed, "the working copy is back but its creator record could not be written: " + err.Error()}
 	}
 	return nil
-}
-
-func underDir(p, dir string) bool {
-	return p == dir || strings.HasPrefix(p, dir+string(os.PathSeparator))
 }

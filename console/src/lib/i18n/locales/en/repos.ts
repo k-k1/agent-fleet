@@ -244,6 +244,8 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "pj.space_delete_gone": "This space no longer exists.",
   "pj.space_delete_running_error": "Sessions are running in this space. Stop them first.",
   "pj.space_delete_locked_error": "Sessions in this space are locked against deletion. Unlock them first.",
+  "pj.space_delete_changed_agent": "The Agent found more sessions in this space than this dialog showed (reached through a link). Review the list and delete again.",
+  "pj.space_delete_unobservable": "Couldn't tell which sessions are in this space (a session record could not be read, or tmux did not answer), so the space was not deleted. Try again in a moment; if it keeps happening, repair what the Agent names:",
   "pj.space_delete_sessions_trash_failed": "Couldn't move this space's shell / SSM sessions to the trash, so the space was not deleted (check the free disk space).",
   "pj.space_delete_trash_failed": "Couldn't move the space to the trash, so it was not deleted (check the free disk space).",
   "pj.space_delete_other_fs": "The trash is on another file system than ~/spaces, so the space can't be moved to it. Nothing was deleted.",

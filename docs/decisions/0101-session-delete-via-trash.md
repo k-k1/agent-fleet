@@ -128,6 +128,37 @@ folder must still exist, and the session a launch starts or derives from is judg
 read of it, so a start never revives a session a delete settled meanwhile. The Managed runtime's own reconcile
 after a runtime death does not reserve.
 
+*Amended 2026-11-27 (#5122 part 2): one rule for which sessions live in the folder, and reads that
+cannot fail silently.* The guards, the names the mark records, the shell sessions trashed, the tombstone's shelf
+list, the shelving and the restore matched `Meta.Dir` by string prefix at some steps and by real path at others,
+so a session started through another spelling of the folder, or at home with its `Subdir` in it, could be
+refused by one step and missed by the next. What a delete settles, and what a restore takes off the shelf, is now
+`gitx.SessionLivesIn`: `Meta.Dir`, or `Dir` joined with the stored `Subdir`, lies in the folder as spelt or by
+every folder the kernel passes through, the comparison a launch's reservation is judged by. What a delete or a
+checkout refuses on (running or locked sessions, the mark's names) is `gitx.SessionMayRunIn`, that rule or the
+lexical clean of the same paths: a session started through a link re-pointed since still runs where its process
+entered. An entry that is itself a link is removed as the link alone, and only the sessions spelt through it are
+settled; a link to a linked worktree is the exception, since `git worktree remove` takes the worktree it points
+at: the link is resolved once, first, to the worktree's physical path, which must be an entry of the
+repositories folder (a restore accepts the entry under either spelling of that folder, and runs on the path it
+accepted), and the whole delete
+(guards, mark, tombstone, sessions, the remove) runs on it, so neither the link nor `~/repos` re-pointed
+meanwhile sends a step elsewhere; one that git cannot classify again inside the gate is refused rather than
+removed as a plain folder.
+The settle set is read once with the mark held, after the worktree's status and tombstone are prepared. A shell
+is trashed only while it still lives in the folder, asked when the trash reads it and again right before its
+meta is removed. After the removal the decided sessions are settled as their meta is now and only while they
+still live in the folder (a dangling link is still followed); beyond them only a session whose `Meta.Dir` is
+spelt inside the folder is taken, as before, and none at all when the client sent the list it showed. A read fails, and the delete answers 503 (`sessions_unobservable`,
+`space_sessions_unobservable`) with nothing changed, when a meta file cannot be read or tmux cannot say what
+runs. tmux's "no server running", a socket that does not exist, or no tmux binary reads as "nothing runs" only
+when no `tmux: server` process serves that socket either (the socket derived as tmux does: `-L`, `-S`, an
+inherited `$TMUX`, `TMUX_TMPDIR` resolved). When that read fails after the removal, the decided sessions are
+settled all the same (the mark keeps every launch out). The space delete dialog sends the sessions it showed
+(`expect`): the Agent settles none beyond them and answers 409 `space_sessions_changed` naming the others,
+which the dialog reads the list again for and shows; its own count follows the rule as far as it can without
+resolving links.
+
 A session whose working folder is gone can still be read, on the shelf or in the list, but not resumed
 ("Folder missing").
 

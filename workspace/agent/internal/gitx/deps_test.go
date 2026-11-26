@@ -80,15 +80,14 @@ func testDeps() Deps {
 		},
 
 		// --- the 15 not reached in the measurement ---
-		AbsPath:             func(s string) string { unreached("AbsPath"); return s },
-		RepoLocked:          func(string) bool { unreached("RepoLocked"); return false },
-		LockedRepoDirs:      func() map[string]bool { unreached("LockedRepoDirs"); return nil },
-		LiveSessionsInDir:   func(string) []string { unreached("LiveSessionsInDir"); return nil },
-		LockedSessionsInDir: func([]session.Meta, string) []string { unreached("LockedSessionsInDir"); return nil },
-		ManagedAlive:        func(session.Meta) bool { unreached("ManagedAlive"); return false },
-		ShelveSession:       func(session.Meta) { unreached("ShelveSession") },
-		TrashSession:        func(session.Meta) error { unreached("TrashSession"); return nil },
-		WithDeletionGate:    func(fn func()) { fn() },
+		AbsPath:           func(s string) string { unreached("AbsPath"); return s },
+		RepoLocked:        func(string) bool { unreached("RepoLocked"); return false },
+		LockedRepoDirs:    func() map[string]bool { unreached("LockedRepoDirs"); return nil },
+		LiveSessionsInDir: func(string) []string { unreached("LiveSessionsInDir"); return nil },
+		ManagedAlive:      func(session.Meta) bool { unreached("ManagedAlive"); return false },
+		ShelveSession:     func(session.Meta) { unreached("ShelveSession") },
+		TrashSession:      func(session.Meta, func(session.Meta) bool) error { unreached("TrashSession"); return nil },
+		WithDeletionGate:  func(fn func()) { fn() },
 		RecordDeletedWorktree: func(WorktreeTombstone) (func(), error) {
 			unreached("RecordDeletedWorktree")
 			return func() {}, nil
@@ -118,6 +117,7 @@ func testDeps() Deps {
 		ErrCodeLocked:                "gitx-test-locked",
 		ErrCodeLockedSessions:        "gitx-test-locked_sessions",
 		ErrCodeSessionsTrashFailed:   "gitx-test-sessions_trash_failed",
+		ErrCodeSessionsUnobservable:  "gitx-test-sessions_unobservable",
 		ErrCodeWorktreeArchiveFailed: "gitx-test-worktree_archive_failed",
 		ErrCodeWorktreeNestedRepo:    "gitx-test-worktree_nested_repo",
 		ErrCodeIndexLockStale:        "gitx-test-git_index_lock_stale",

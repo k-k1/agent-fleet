@@ -127,7 +127,6 @@ func gitxStubDeps() gitx.Deps {
 	d.RepoLocked = RepoLocked
 	d.LockedRepoDirs = LockedRepoDirs
 	d.LiveSessionsInDir = LiveSessionsInDir
-	d.LockedSessionsInDir = LockedSessionsInDir
 	d.ShelveSession = ArchiveSession
 	d.WithDeletionGate = WithDeletionGate
 	d.ManagedAlive = ManagedAlive

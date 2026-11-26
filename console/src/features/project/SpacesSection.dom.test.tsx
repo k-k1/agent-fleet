@@ -486,7 +486,8 @@ describe("Spaces section", () => {
       spacesAnswer = () => ({ root: LIST.root, spaces: [] });
       await press();
       expect(apiJSON).toHaveBeenCalledTimes(1);
-      expect(apiJSON).toHaveBeenCalledWith("api/spaces/q3-abcdef", "DELETE", undefined);
+      // The names it showed go with it, so the Agent settles nothing beyond them.
+      expect(apiJSON).toHaveBeenCalledWith(`api/spaces/q3-abcdef?expect=${encodeURIComponent("a1,sh1")}`, "DELETE", undefined);
       expect(dialog()).toBeNull();
       expect(useSpacesStore.getState().spaces).toEqual([]);
       expect(document.body.textContent).toContain("Moved the space \"Q3 report\" to the trash.");

@@ -74,6 +74,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.git_index_lock_stale":
     "A stale git lock file (index.lock) is left in this working copy, and no git was found running there.",
   "err.session_resumed": "The session was resumed while it was being moved to the trash, so it was not deleted.",
+  "err.sessions_unobservable":
+    "Couldn't tell which sessions are in this working copy (a session record could not be read, or tmux did not answer), so the working copy was not deleted. Try again in a moment.",
   "err.sessions_trash_failed":
     "Couldn't move this working copy's shell/ssm sessions to the trash, so the working copy was not deleted (check the free disk space).",
   "err.branch_unmerged":

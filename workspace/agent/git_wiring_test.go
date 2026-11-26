@@ -46,9 +46,8 @@ func TestGitWiringIsLive(t *testing.T) {
 		"RepoLocked":     func(t *testing.T) { sameGitFunc(t, w.RepoLocked, sessionx.RepoLocked) },
 		"LockedRepoDirs": func(t *testing.T) { sameGitFunc(t, w.LockedRepoDirs, sessionx.LockedRepoDirs) },
 
-		"LiveSessionsInDir":   func(t *testing.T) { sameGitFunc(t, w.LiveSessionsInDir, sessionx.LiveSessionsInDir) },
-		"LockedSessionsInDir": func(t *testing.T) { sameGitFunc(t, w.LockedSessionsInDir, sessionx.LockedSessionsInDir) },
-		"ManagedAlive":        func(t *testing.T) { sameGitFunc(t, w.ManagedAlive, sessionx.ManagedAlive) },
+		"LiveSessionsInDir": func(t *testing.T) { sameGitFunc(t, w.LiveSessionsInDir, sessionx.LiveSessionsInDir) },
+		"ManagedAlive":      func(t *testing.T) { sameGitFunc(t, w.ManagedAlive, sessionx.ManagedAlive) },
 
 		"ShelveSession": func(t *testing.T) { sameGitFunc(t, w.ShelveSession, sessionx.ArchiveSession) },
 		"TrashSession":  func(t *testing.T) { sameGitFunc(t, w.TrashSession, trashStoppedSession) },
@@ -113,6 +112,7 @@ func TestGitWiringIsLive(t *testing.T) {
 		"ErrCodeLocked":                func(t *testing.T) { sameGitCode(t, w.ErrCodeLocked, errCodeLocked) },
 		"ErrCodeLockedSessions":        func(t *testing.T) { sameGitCode(t, w.ErrCodeLockedSessions, errCodeLockedSessions) },
 		"ErrCodeSessionsTrashFailed":   func(t *testing.T) { sameGitCode(t, w.ErrCodeSessionsTrashFailed, errCodeSessionsTrashFailed) },
+		"ErrCodeSessionsUnobservable":  func(t *testing.T) { sameGitCode(t, w.ErrCodeSessionsUnobservable, errCodeSessionsUnobservable) },
 		"ErrCodeWorktreeArchiveFailed": func(t *testing.T) { sameGitCode(t, w.ErrCodeWorktreeArchiveFailed, errCodeWorktreeArchiveFailed) },
 		"ErrCodeWorktreeNestedRepo":    func(t *testing.T) { sameGitCode(t, w.ErrCodeWorktreeNestedRepo, errCodeWorktreeNestedRepo) },
 		"ErrCodeIndexLockStale":        func(t *testing.T) { sameGitCode(t, w.ErrCodeIndexLockStale, errCodeIndexLockStale) },

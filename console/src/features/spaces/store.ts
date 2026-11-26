@@ -139,11 +139,14 @@ export async function renameSpace(folder: string, name: string, owner: string): 
  *  the dialog was opened in, under the same rule as renameSpace: nothing is sent to another
  *  workspace, and an answer that arrives after a switch says nothing about this one. Null once the
  *  Agent has moved it; the space leaves the list at once and the list is read again. */
-export async function deleteSpace(folder: string, owner: string): Promise<RenameResult> {
+/** `expect` is the names of the sessions the member was shown: the Agent settles none it finds in the
+ *  space beyond them, and answers 409 space_sessions_changed naming the others instead. */
+export async function deleteSpace(folder: string, owner: string, expect?: string[]): Promise<RenameResult> {
   if (spacesOwner() !== owner) return { stale: true };
+  const query = expect ? `?expect=${encodeURIComponent(expect.join(","))}` : "";
   let d;
   try {
-    d = await apiJSON(`api/spaces/${encodeURIComponent(folder)}`, "DELETE");
+    d = await apiJSON(`api/spaces/${encodeURIComponent(folder)}${query}`, "DELETE");
   } catch (e) {
     if (spacesOwner() !== owner) return { stale: true };
     throw e;

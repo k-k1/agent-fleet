@@ -72,6 +72,8 @@ export const errors = {
   "err.git_index_lock_stale":
     "古い git のロックファイル（index.lock）が残っているため実行できませんでした。動いている git は見つかりませんでした。",
   "err.session_resumed": "ごみ箱へ移している間にセッションが再開されたため、削除しませんでした。",
+  "err.sessions_unobservable":
+    "作業コピーにどのセッションがあるかを確かめられなかった（セッションの記録を読めない、または tmux が応答しない）ため、作業コピーは削除していません。少し待ってからもう一度試してください。",
   "err.sessions_trash_failed":
     "作業コピーの shell/ssm セッションをごみ箱へ移せなかったため、作業コピーは削除していません（ディスクの空きを確認してください）。",
   "err.branch_unmerged":
