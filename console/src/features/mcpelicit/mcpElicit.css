@@ -1,0 +1,80 @@
+/* A tool call an MCP server holds until a person confirms it (ADR 0146): it reads as a warning. */
+.mcp-elicit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 60%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warn) 8%, var(--bg));
+  font-size: 13px;
+  max-width: 100%;
+  min-width: 0;
+}
+.mcp-elicit-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.mcp-elicit-name {
+  overflow-wrap: anywhere;
+}
+.mcp-elicit-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.mcp-elicit-sub {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: normal;
+}
+/* The server's own text: shown as written, never rendered as markup. */
+.mcp-elicit-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow: auto;
+}
+.mcp-elicit-args {
+  margin: 0;
+  padding: 6px 8px;
+  max-height: 200px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.mcp-elicit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.mcp-elicit-field legend {
+  padding: 0;
+  margin-bottom: 2px;
+  font-weight: 600;
+}
+.mcp-elicit-field label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  overflow-wrap: anywhere;
+}
+.mcp-elicit-actions {
+  display: flex;
+  gap: 8px;
+}
+.mcp-elicit-mirror {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 16px;
+}

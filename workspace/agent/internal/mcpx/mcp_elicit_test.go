@@ -62,7 +62,7 @@ func TestElicitationsGetListsTheHeldCalls(t *testing.T) {
 
 	pendingElicitations = func() []mcpreg.PendingElicitation {
 		return []mcpreg.PendingElicitation{{ID: "e1", ServerID: "mcp-x", ServerName: "gmail", Tool: "send_mail", Session: "fix-mail",
-			Arguments: json.RawMessage(`{"to":"a@example.com"}`), Inputs: []mcpreg.ElicitInput{{Key: "k", Fields: []mcpreg.ElicitField{}}}}}
+			Arguments: json.RawMessage(`{"to":"a@example.com","to":"b@example.com","n":1.0}`), Inputs: []mcpreg.ElicitInput{{Key: "k", Fields: []mcpreg.ElicitField{}}}}}
 	}
 	w = httptest.NewRecorder()
 	HandleElicitationsGet(w, httptest.NewRequest(http.MethodGet, "/mcp-elicitations", nil))
@@ -74,8 +74,8 @@ func TestElicitationsGetListsTheHeldCalls(t *testing.T) {
 	}
 	e := out.Elicitations[0]
 	if e["id"] != "e1" || e["serverId"] != "mcp-x" || e["tool"] != "send_mail" || e["session"] != "fix-mail" ||
-		!reflect.DeepEqual(e["arguments"], map[string]any{"to": "a@example.com"}) {
-		t.Fatalf("listed %v", e)
+		e["arguments"] != `{"to":"a@example.com","to":"b@example.com","n":1.0}` {
+		t.Fatalf("listed %v: the arguments go out as their exact text", e)
 	}
 }
 

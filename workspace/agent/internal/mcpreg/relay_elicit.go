@@ -1310,6 +1310,7 @@ func holdForAnswer(ctx context.Context, out *elicitOut, def ServerDef, call elic
 		return nil, false
 	}
 	defer elicitations.remove(p.ID)
+	noticeHeld(p.PendingElicitation)
 	if out.acceptsSSE {
 		out.startStream(nil)
 	}

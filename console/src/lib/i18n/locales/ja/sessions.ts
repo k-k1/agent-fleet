@@ -1081,6 +1081,16 @@ export const sessions = {
   "awsconfirm.open_failed": "このセッションは開けませんでした",
   "awsconfirm.deny": "拒否",
   "awsconfirm.answer_failed": "依頼に答えられませんでした（{code}）",
+  "mcpelicit.title": "このセッションが <1/> の <0/> を実行しようとしています。確認が必要です",
+  "mcpelicit.title_session": "セッション <0>{session}</0> が <2/> の <1/> を実行しようとしています。確認が必要です",
+  "mcpelicit.title_unattributed": "エージェントが <1/> の <0/> を実行しようとしています。確認が必要です",
+  "mcpelicit.arguments": "サーバーが実行する内容:",
+  "mcpelicit.optional": "（任意）",
+  "mcpelicit.no_choice": "選ばない",
+  "mcpelicit.deadline": "{time} までに答えがなければ自動で断ります",
+  "mcpelicit.send": "回答を送る",
+  "mcpelicit.decline": "断る",
+  "mcpelicit.answer_failed": "確認に答えられませんでした: {reason}",
 
   // === Launch dialog under the credential policy (ADR 0138 D10a, D11b) ===
   "launch.no_route_line": "使えるモデルの経路がありません。管理者に問い合わせてください。",

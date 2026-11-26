@@ -36,14 +36,28 @@ var (
 
 // elicitationsWire is the GET /mcp-elicitations response.
 type elicitationsWire struct {
-	Elicitations []mcpreg.PendingElicitation `json:"elicitations"`
+	Elicitations []pendingElicitationWire `json:"elicitations"`
+}
+
+// pendingElicitationWire is one held call as the Console reads it. The arguments go out as their
+// exact text, not as JSON the browser parses: a parse would merge a member written twice, round a
+// large number or respell 1.0, and the card would then show something other than what the server
+// runs.
+type pendingElicitationWire struct {
+	mcpreg.PendingElicitation
+	Arguments string `json:"arguments,omitempty"` // shadows PendingElicitation.Arguments
 }
 
 // HandleElicitationsGet (GET /mcp-elicitations) lists the held calls, oldest first.
 func HandleElicitationsGet(w http.ResponseWriter, r *http.Request) {
 	// The arguments can be a mail's text: no cache keeps them.
 	w.Header().Set("Cache-Control", "no-store")
-	httpx.WriteJSON(w, http.StatusOK, elicitationsWire{Elicitations: pendingElicitations()})
+	held := pendingElicitations()
+	out := elicitationsWire{Elicitations: make([]pendingElicitationWire, len(held))}
+	for i, p := range held {
+		out.Elicitations[i] = pendingElicitationWire{PendingElicitation: p, Arguments: string(p.Arguments)}
+	}
+	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 // elicitAnswerReq is the member's answer to the held call id: action "accept" with a choice per

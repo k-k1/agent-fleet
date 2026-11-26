@@ -42,6 +42,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "aws-login-required": "noti.kind_aws_login_required",
   "aws-sso-expiring": "noti.kind_aws_sso_expiring",
   "aws-use-confirm": "noti.kind_aws_use_confirm",
+  "mcp-elicitation": "noti.kind_mcp_elicitation",
   "gcp-login-required": "noti.kind_gcp_login_required",
   "terminal-notification": "noti.kind_terminal_notification",
   "pr-ready": "noti.kind_pr_ready",
@@ -376,6 +377,14 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
   if (n.kind === "aws-use-confirm") {
     // Fixed text: the profile and the session come from the Agent's list, never the payload.
     return { title: t("notif.aws_confirm.title"), body: t("notif.aws_confirm.body"), speech: t("notif.aws_confirm.speech") };
+  }
+  if (n.kind === "mcp-elicitation") {
+    // Fixed text: the server, the tool and the session come from the Agent's list, never the payload.
+    return {
+      title: t("notif.mcp_elicitation.title"),
+      body: t("notif.mcp_elicitation.body"),
+      speech: t("notif.mcp_elicitation.speech"),
+    };
   }
   if (n.kind === "aws-sso-expiring") {
     // Fixed text for the same reason: the profile, account and role come from the Agent's list.
