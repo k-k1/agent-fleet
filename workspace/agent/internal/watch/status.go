@@ -2,7 +2,10 @@ package watch
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -62,11 +65,16 @@ const (
 	statusPageTTL = 2 * time.Minute
 	// statusFailTTL keeps a failed read for a short while, so six subjects of one dead page cost one
 	// timeout and not six.
-	statusFailTTL     = 30 * time.Second
+	statusFailTTL  = 30 * time.Second
+	statusSeenKeep = 7 * 24 * time.Hour
+	statusSeenMax  = 200
+	// statusResFresh is how long after the last read of incidents.json a new subscriber still
+	// trusts the cursor's floor and Seen.
+	statusResFresh    = 10 * time.Minute
 	statusMaxBody     = 4 << 20
 	statusMaxComps    = 8
-	statusDataMax     = 200
-	statusMaxDataItem = 10
+	statusDataMax     = 100
+	statusMaxDataItem = 5 // what one notice shows safely under the renderer's 2 KiB cut
 )
 
 // StatusHosts maps each service to the host of its status page. Documented in the guide, because
@@ -81,9 +89,10 @@ var StatusHosts = map[string]string{
 var statusAliases = map[string]string{"jira-software": "jira", "githubstatus": "github"}
 
 var (
-	statusRefRE  = regexp.MustCompile(`^([A-Za-z-]{1,20})(?::(.*))?$`)
-	statusSubjRE = regexp.MustCompile(`^status:([a-z]{1,20})(?:/c/([A-Za-z0-9]{1,40}(?:-[A-Za-z0-9]{1,40})*))?$`)
-	statusIDRE   = regexp.MustCompile(`^[A-Za-z0-9]{1,40}$`)
+	statusRefRE   = regexp.MustCompile(`^([A-Za-z-]{1,20})(?::(.*))?$`)
+	statusSubjRE  = regexp.MustCompile(`^status:([a-z]{1,20})(?:/c/([A-Za-z0-9]{1,40}(?:-[A-Za-z0-9]{1,40})*))?$`)
+	statusIDRE    = regexp.MustCompile(`^[A-Za-z0-9]{1,40}$`)
+	statusStateRE = regexp.MustCompile(`^[a-z_]{1,40}$`)
 )
 
 const statusRefHelp = "give <service>[:<component>,…] with service github, bitbucket, jira or confluence, e.g. github:Actions,API Requests or bitbucket"
@@ -230,6 +239,10 @@ func (s *Status) base(service string) string {
 func (s *Status) fetch(ctx context.Context, service, path string, valid func([]byte) error) (pageRead, error) {
 	url := s.base(service) + path
 	for {
+		// A cancelled caller starts no new traffic.
+		if err := ctx.Err(); err != nil {
+			return pageRead{}, err
+		}
 		s.mu.Lock()
 		if e, ok := s.pages[url]; ok {
 			age := s.now().Sub(e.at)
@@ -258,20 +271,31 @@ func (s *Status) fetch(ctx context.Context, service, path string, valid func([]b
 		s.inflight[url] = ch
 		s.mu.Unlock()
 
-		b, date, err := s.read(context.WithoutCancel(ctx), service, url, valid)
-
-		s.mu.Lock()
-		if s.pages == nil {
-			s.pages = map[string]pageEntry{}
+		// The shared read runs on its own goroutine and its own deadline (the client's timeout), so
+		// the caller that started it can leave on its context like any waiter.
+		go func() {
+			b, date, err := s.read(context.WithoutCancel(ctx), service, url, valid)
+			s.mu.Lock()
+			if s.pages == nil {
+				s.pages = map[string]pageEntry{}
+			}
+			s.pages[url] = pageEntry{at: s.now(), body: b, date: date, err: err}
+			delete(s.inflight, url)
+			s.mu.Unlock()
+			close(ch)
+		}()
+		select {
+		case <-ch:
+			s.mu.Lock()
+			e := s.pages[url]
+			s.mu.Unlock()
+			if e.err != nil {
+				return pageRead{}, e.err
+			}
+			return pageRead{body: e.body, date: e.date, fresh: true}, nil
+		case <-ctx.Done():
+			return pageRead{}, ctx.Err()
 		}
-		s.pages[url] = pageEntry{at: s.now(), body: b, date: date, err: err}
-		delete(s.inflight, url)
-		s.mu.Unlock()
-		close(ch)
-		if err != nil {
-			return pageRead{}, err
-		}
-		return pageRead{body: b, date: date, fresh: true}, nil
 	}
 }
 
@@ -316,6 +340,12 @@ func validSummary(b []byte) error {
 	}
 	if sum.Components == nil || sum.Incidents == nil {
 		return fmt.Errorf("incomplete answer")
+	}
+	// A row that cannot be told apart or read is a damaged snapshot, not a component that left.
+	for _, c := range sum.Components {
+		if !statusIDRE.MatchString(c.ID) || !statusStateRE.MatchString(c.Status) {
+			return fmt.Errorf("incomplete answer")
+		}
 	}
 	return nil
 }
@@ -394,12 +424,15 @@ func (s *Status) SeedCursor(cursor, seed json.RawMessage) json.RawMessage {
 	if len(cursor) > 0 {
 		_ = json.Unmarshal(cursor, &c)
 	}
-	if c.FloorMs > 0 {
+	// While incidents.json is being read for this subject, Seen covers everything told, so the
+	// first floor stays. Otherwise nobody tracked resolutions since then and the new
+	// subscriber's own moment is the boundary: an incident resolved while nobody watched is history.
+	if c.FloorMs > 0 && c.ResAt > 0 && s.now().UnixMilli()-c.ResAt < statusResFresh.Milliseconds() {
 		return cursor
 	}
 	var sd statusCursor
 	_ = json.Unmarshal(seed, &sd)
-	c.FloorMs = sd.FloorMs
+	c.FloorMs, c.ResAt, c.Seen = sd.FloorMs, 0, nil
 	out, _ := json.Marshal(c)
 	return out
 }
@@ -429,13 +462,23 @@ func wantsStatus(want []string, typ string) bool {
 // level events: a level that comes back after it went away is a new version, and a level that
 // merely stays is the same one, whatever the page's timestamps do. Seen holds the resolved
 // incidents already reported (pruned to the ones the provider still lists).
+// statusSeen is a resolved incident already reported, kept for statusSeenKeep from its
+// resolution so a listing that drops it for one read does not make it new again.
+type statusSeen struct {
+	ID string `json:"id"`
+	Ms int64  `json:"ms"`
+}
+
 type statusCursor struct {
-	FloorMs int64    `json:"floor_ms,omitempty"`
-	Seen    []string `json:"seen,omitempty"`
-	RecGen  int      `json:"rec_gen,omitempty"`
-	RecHold bool     `json:"rec_hold,omitempty"`
-	DegGen  int      `json:"deg_gen,omitempty"`
-	DegSig  string   `json:"deg_sig,omitempty"`
+	FloorMs int64 `json:"floor_ms,omitempty"`
+	// ResAt is when incidents.json was last read for this subject: Seen is only a trustworthy
+	// record of what was told while someone keeps reading it.
+	ResAt   int64        `json:"res_at,omitempty"`
+	Seen    []statusSeen `json:"seen,omitempty"`
+	RecGen  int          `json:"rec_gen,omitempty"`
+	RecHold bool         `json:"rec_hold,omitempty"`
+	DegGen  int          `json:"deg_gen,omitempty"`
+	DegSig  string       `json:"deg_sig,omitempty"`
 }
 
 func (s *Status) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error) {
@@ -472,13 +515,20 @@ func (s *Status) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 		if err != nil {
 			firstErr = err
 		} else {
-			answered++
 			watched, err := selectComponents(sum.Components, ids)
-			if err != nil {
+			var gone *ErrGone
+			switch {
+			case errors.As(err, &gone):
 				return nil, raw, Hint{}, err
+			case err != nil:
+				firstErr = err
+			case wantRec || wantDeg:
+				// The summary only counts as an answer when it was asked for events; for a
+				// resolved-only watch it is the existence check, and the events come from the list.
+				answered++
+				open := openIncidents(sum.Incidents)
+				evs = append(evs, statusLevelEvents(service, subject, watched, open, len(ids) == 0, at, &cur, wantRec, wantDeg)...)
 			}
-			open := openIncidents(sum.Incidents)
-			evs = append(evs, statusLevelEvents(service, subject, watched, open, len(ids) == 0, at, &cur, wantRec, wantDeg)...)
 		}
 	}
 	if wantRes {
@@ -604,7 +654,11 @@ func statusLevelEvents(service string, subject SubjectID, watched []spComponent,
 	}
 	var evs []Event
 	if wantDeg {
-		joined := strings.Join(sig, ";")
+		joined := ""
+		if len(sig) > 0 {
+			sum := sha256.Sum256([]byte(strings.Join(sig, ";")))
+			joined = hex.EncodeToString(sum[:8])
+		}
 		if joined != "" && joined != cur.DegSig {
 			cur.DegGen++
 		}
@@ -642,14 +696,16 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 		inc spIncident
 		ms  int64
 	}
+	seen := map[string]bool{}
+	for _, e := range cur.Seen {
+		seen[e.ID] = true
+	}
 	var cands []cand
-	listed := map[string]bool{}
 	for _, inc := range list {
 		if !statusIDRE.MatchString(inc.ID) {
 			continue // one broken entry must not hide the others
 		}
-		listed[inc.ID] = true
-		if !isResolvedStatus(inc.Status) || slices.Contains(cur.Seen, inc.ID) {
+		if !isResolvedStatus(inc.Status) || seen[inc.ID] {
 			continue
 		}
 		t, err := time.Parse(time.RFC3339, inc.ResolvedAt)
@@ -670,17 +726,17 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 		}
 		cands = append(cands, cand{inc, t.UnixMilli()})
 	}
-	// Seen keeps only what the provider still lists, plus what is reported now.
-	var seen []string
-	for _, id := range cur.Seen {
-		if listed[id] {
-			seen = append(seen, id)
+	cur.ResAt = at.UnixMilli()
+	// Told incidents are remembered by their resolution time, whether or not the provider keeps
+	// listing them.
+	cutoff := at.Add(-statusSeenKeep).UnixMilli()
+	var keep []statusSeen
+	for _, e := range cur.Seen {
+		if e.Ms >= cutoff {
+			keep = append(keep, e)
 		}
 	}
-	for _, c := range cands {
-		seen = append(seen, c.inc.ID)
-	}
-	cur.Seen = seen
+	cur.Seen = keep
 	if len(cands) == 0 {
 		return nil
 	}
@@ -690,16 +746,26 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 		}
 		return cands[i].inc.ID > cands[j].inc.ID
 	})
+	// A notice carries a few details (the renderer cuts at 2 KiB). The ones that do not fit are
+	// not marked as told: the next read reports them, so none is lost to the cut.
+	total := len(cands)
+	if len(cands) > statusMaxDataItem {
+		cands = cands[:statusMaxDataItem]
+	}
 	var data []DataItem
-	for i, c := range cands {
-		if i >= statusMaxDataItem {
-			break
-		}
+	for _, c := range cands {
 		data = append(data, DataItem{Text: CleanText(fmt.Sprintf("Incident: %s (status: %s)", c.inc.Name, c.inc.Status), statusDataMax), URL: SafeURL(c.inc.Shortlink)})
+		cur.Seen = append(cur.Seen, statusSeen{ID: c.inc.ID, Ms: c.ms})
+	}
+	if len(cur.Seen) > statusSeenMax {
+		cur.Seen = cur.Seen[len(cur.Seen)-statusSeenMax:]
 	}
 	summary := fmt.Sprintf("%s status: an incident was resolved.", service)
-	if len(cands) > 1 {
+	if total > 1 {
 		summary = fmt.Sprintf("%s status: %d incidents were resolved.", service, len(cands))
+		if total > len(cands) {
+			summary = fmt.Sprintf("%s status: %d incidents were resolved (%d more follow).", service, len(cands), total-len(cands))
+		}
 	}
 	return &Event{Source: StatusKind, Subject: subject, Type: EventStatusIncidentResolved, Version: cands[0].inc.ID, At: at, Summary: summary, Data: data}
 }

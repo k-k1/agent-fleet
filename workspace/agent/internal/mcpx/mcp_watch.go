@@ -109,7 +109,7 @@ func watchSchema() map[string]any {
 		"inputSchema": map[string]any{
 			"type": "object", "additionalProperties": false,
 			"properties": map[string]any{
-				"ref":              map[string]any{"type": "string", "description": "owner/repo#45, #45 in your own repository, or the PR's URL; a session name for source fleet; a workflow run URL, o/r:run/<id>, o/r:<file>.yml[@branch] for GitHub Actions; o/r:releases[+pre][@pattern] or o/r:tags[@pattern] for GitHub releases and tags; a pipeline run URL, w/r:run/<n>, w/r:pipelines[/<name>][@branch] with source bitbucket for Bitbucket Pipelines; for source ext.<name>, whatever that server takes"},
+				"ref":              map[string]any{"type": "string", "description": "owner/repo#45, #45 in your own repository, or the PR's URL; a session name for source fleet; a workflow run URL, o/r:run/<id>, o/r:<file>.yml[@branch] for GitHub Actions; o/r:releases[+pre][@pattern] or o/r:tags[@pattern] for GitHub releases and tags; <service>[:<component>,…] (github, bitbucket, jira, confluence) for source status; a pipeline run URL, w/r:run/<n>, w/r:pipelines[/<name>][@branch] with source bitbucket for Bitbucket Pipelines; for source ext.<name>, whatever that server takes"},
 				"types":            map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "event types to be told about (not needed for source time)"},
 				"wake":             map[string]any{"type": "boolean", "description": "source time only: start the stopped Workspace when the timer is due"},
 				"until":            map[string]any{"type": "string", "enum": []string{"first", "deadline"}},
