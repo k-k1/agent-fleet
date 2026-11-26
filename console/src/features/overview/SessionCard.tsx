@@ -122,6 +122,9 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
 
   // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
   // the screen. Without it, `beside` decides.
+  // Every ⋯ action is a request to the Agent, which is not there while the workspace is stopped:
+  // the card then only opens the history, as the stopped Sessions list does (readOnly).
+  const menuAvailable = running;
   const openIt = (newPane: boolean) => {
     if (inert) return;
     openSessionFromList(s, newPane || beside, running);
@@ -131,12 +134,13 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       openIt(e.ctrlKey || e.metaKey);
-    } else if (isContextMenuKey(e)) {
+    } else if (isContextMenuKey(e) && menuAvailable) {
       e.preventDefault();
       setMenuAt(menuAnchor(e.currentTarget));
     }
   };
   const onContextMenu = (e: MouseEvent<HTMLElement>) => {
+    if (!menuAvailable) return;
     e.preventDefault();
     setMenuAt({ x: e.clientX, y: e.clientY });
   };
@@ -224,7 +228,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           {" "}
           <span className="ovw-lbl">{st.text}</span>
         </span>
-        <span className="ovw-menu-wrap" ref={menuWrapRef}>
+        {menuAvailable && <span className="ovw-menu-wrap" ref={menuWrapRef}>
           <button
             type="button"
             className="ui-btn ui-btn-ghost ui-iconbtn ovw-menu-btn"
@@ -242,7 +246,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           >
             <Icon name="ellipsis" />
           </button>
-        </span>
+        </span>}
       </header>
       {where && (
       <div className="ovw-where" title={s.dir || ""}>
@@ -372,7 +376,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         }}
         onContextMenu={(e) => e.stopPropagation()}
       >
-      <SessionMenu
+      {menuAvailable && <SessionMenu
         s={s}
         actions={actions}
         running={running}
@@ -387,7 +391,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         }}
         keepOpenRefs={[menuWrapRef]}
         onClose={() => setMenuAt(null)}
-      />
+      />}
       </span>
     </article>
   );

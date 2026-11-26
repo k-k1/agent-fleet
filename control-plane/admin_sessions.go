@@ -99,7 +99,7 @@ func adminSessionRowOf(tenant, userKey, email, wsState string, s sessionWire) ad
 func mirroredAdminSession(r0 store.SessionRow) sessionWire {
 	return sessionWire{
 		Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
-		Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false, Resumable: true,
+		Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, StoppedAt: r0.StoppedAt, Alive: false, Resumable: true,
 		Origin: r0.Origin, OriginSession: r0.OriginSession, ScheduleID: r0.ScheduleID, QueueCategoryID: r0.QueueCategoryID,
 	}
 }

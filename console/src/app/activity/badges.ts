@@ -49,8 +49,8 @@ export function waitingSessions(sessions: Session[], set: WorkingSet | null = nu
  * sessions (ADR 0145), and one session counted on two icons reads as two. While the Active
  * icon is in the bar it carries the count, being the view that is about what needs the member
  * now; otherwise the Sessions icon does, as before. `activeShown` is false while the workspace
- * is not running too: the Active view lists nothing then, and the stopped Sessions view is
- * where the rows are. The unread dot is the Sessions view's
+ * is not running too: the stopped Sessions view stays where the count and the rows are, though
+ * the Active view lists recent stops from the mirror then. The unread dot is the Sessions view's
  * either way: only that view lists every session a notice can be about. */
 export function sessionBadges(waiting: number, unread: boolean, activeShown: boolean): Partial<Record<"sessions" | "active", RailBadge>> {
   const out: Partial<Record<"sessions" | "active", RailBadge>> = {};

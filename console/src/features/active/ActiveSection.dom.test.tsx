@@ -31,6 +31,7 @@ const { useSchedulesStore } = await import("../schedules/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { useSessionsStore } = await import("../sessions/store.ts");
+const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useReposStore } = await import("../repos/store.ts");
 const { spacesOwner, useSpacesStore } = await import("../spaces/store.ts");
 const { setSettings } = await import("../../lib/settings.ts");
@@ -104,7 +105,44 @@ describe("ActiveSection", () => {
       sess("older", { repo: "app", alive: false }),
     ]);
     expect(cards()).toEqual(["a", "recent"]);
-    expect(host.querySelector(".act-older")?.textContent).toBe("2 more sessions stopped over 24 hours ago");
+    expect(host.querySelector(".act-older")?.textContent).toBe("2 more stopped sessions not shown (older than 24 hours, or no stop time)");
+  });
+
+  it("moves the window with the clock when the list itself does not change", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    try {
+      vi.setSystemTime(new Date("2026-11-26T12:00:00Z"));
+      const list = [
+        sess("a", { repo: "app" }),
+        sess("fading", { repo: "app", alive: false, stoppedAt: "2026-11-25T12:10:00Z" }),
+      ];
+      await render(list);
+      expect(cards()).toEqual(["a", "fading"]);
+      expect(host.querySelector(".act-older")).toBeNull();
+      // Twenty minutes later the very same list has left the window.
+      await act(async () => {
+        vi.setSystemTime(new Date("2026-11-26T12:20:00Z"));
+        vi.advanceTimersByTime(60_000);
+      });
+      expect(cards()).toEqual(["a"]);
+      expect(host.querySelector(".act-older")?.textContent).toContain("1 more stopped session");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("offers no menu on a card while the workspace is stopped, and offers it when it runs", async () => {
+    const list = [sess("a", { repo: "app" }), sess("recent", { repo: "app", alive: false, stoppedAt: new Date().toISOString() })];
+    useWorkspaceStore.setState({ state: "stopped" });
+    await render(list);
+    expect(host.querySelector(".ovw-menu-btn")).toBeNull();
+    const card = host.querySelector<HTMLElement>(".ovw-card")!;
+    const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    card.dispatchEvent(ev);
+    expect(ev.defaultPrevented).toBe(false);
+    useWorkspaceStore.setState({ state: "running" });
+    await flush();
+    expect(host.querySelector(".ovw-menu-btn")).not.toBeNull();
   });
 
   it("asks the server for nothing", async () => {

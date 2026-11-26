@@ -22,8 +22,14 @@ import { compareText } from "./intl.ts";
 //
 // A space (ADR 0142) is no working copy, even when its folder shares a repository's
 // name: the Agent marks it by the directory's root (`space`), and the name never decides.
+/** The space folder a session runs in. The live list says it in `space`; the stopped-workspace
+ *  mirror leaves `space` out on purpose and carries `place` instead, so both are read. */
+export function sessionSpace(s: Session): string {
+  return s.space || (s.place?.kind === "space" ? s.place.id || "" : "");
+}
+
 export function sessionFolder(s: Session): string {
-  if (s.space) return "";
+  if (sessionSpace(s)) return "";
   if (s.repo) return s.repo;
   const dir = s.dir || "";
   return dir ? dir.split("/").filter(Boolean).pop() || "" : "";

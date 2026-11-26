@@ -21,7 +21,7 @@ import { childrenIndex, descendantNames } from "../sessions/family.ts";
 import { isWaiting } from "../sessions/waiting.ts";
 import { foldFamilies, orderByFamily, repoGroupId } from "../overview/overview.ts";
 import type { FoldInfo } from "../overview/overview.ts";
-import { sessionAutoKind, sessionFolder, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
+import { sessionAutoKind, sessionFolder, sessionSpace, withoutTerminals, withoutUnattended } from "../../lib/project.ts";
 import { sessionInWorkingSet } from "../../lib/workingSets.ts";
 import { compareText } from "../../lib/intl.ts";
 import type { Space } from "../spaces/store.ts";
@@ -76,14 +76,18 @@ export const OTHER_GROUP = "o:";
  *  decision 8). Fixed, not a setting. */
 export const RECENT_STOP_MS = 24 * 60 * 60 * 1000;
 
+/** How far ahead of the browser's clock a stop may be and still count: the Workspace's clock is
+ *  not the browser's, but a stamp further ahead than this is not a stop that just happened. */
+export const STOP_SKEW_MS = 60 * 60 * 1000;
+
 /** Stopped within RECENT_STOP_MS of `now`. A session with no `stoppedAt` (an older Agent, or one
  *  stopped before the Agent stamped it) is never recent: the instant is unknown, and listing it
  *  would make every old stopped session look like it stopped just now. The instant is on the
- *  Workspace's clock and `now` on the browser's, so one in the future counts as recent. */
+ *  Workspace's clock and `now` on the browser's, so a small lead (STOP_SKEW_MS) counts as recent and a larger one as unknown. */
 export function stoppedRecently(s: Session, now: number): boolean {
   if (s.alive || !s.stoppedAt) return false;
   const at = Date.parse(s.stoppedAt);
-  return Number.isFinite(at) && now - at <= RECENT_STOP_MS;
+  return Number.isFinite(at) && at - now <= STOP_SKEW_MS && now - at <= RECENT_STOP_MS;
 }
 
 /** A stopped session the member still owes something: it stopped on an unanswered exchange,
@@ -191,7 +195,8 @@ function knownParent(s: Session, folder: string, byFolder: Map<string, Repo>): s
 // The space's name is looked up here rather than through the spaces store's helper: that
 // module reaches the api client, and this file has to stay loadable without a browser.
 function groupId(s: Session, byFolder: Map<string, Repo>, spaces: Space[], reposKnown: boolean): GroupId {
-  if (s.space) return { key: "s:" + s.space, kind: "space", label: spaces.find((x) => x.folder === s.space)?.name || s.space, hint: s.space };
+  const space = sessionSpace(s);
+  if (space) return { key: "s:" + space, kind: "space", label: spaces.find((x) => x.folder === space)?.name || space, hint: space };
   const folder = sessionFolder(s);
   // A folder the working-copy list does not know is "other", as it is in the tree: a heading
   // made of a folder that no longer exists would name a place nobody can go to.

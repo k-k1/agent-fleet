@@ -65,8 +65,8 @@ nor the Console has it.
    in the focused pane, as a row of the Sessions view does.
 6. **A waiting session is counted on one icon.** The two views list the same waiting sessions.
    While the Active icon is in the bar it carries the count; when it is turned off the Sessions
-   icon does, as before; so does it while the workspace is not running, when Active lists
-   nothing. Only running sessions are counted. The unread dot stays on Sessions, the only view that lists every
+   icon does, as before; so does it while the workspace is not running (decision 8 lists recent
+   stops then, but the badge rule is only about where the count goes). Only running sessions are counted. The unread dot stays on Sessions, the only view that lists every
    session a notice can be about.
 7. **Reveals are unchanged.** The existing reveal signals name a working copy, not a session, and
    a working copy's row is in the tree.
@@ -74,8 +74,9 @@ nor the Console has it.
    that left the window are counted in one line at the foot of their group. This needs
    `stoppedAt` on the session DTO, the Control Plane's relay and the Console type (#5155). For a
    stopped workspace the view is drawn from the Control Plane's mirror (the `session.stopped_at`
-   column) instead of the placeholder. A session with no `stoppedAt` (an older Agent, or one
-   stopped before the Agent stamped it) is not recent: it is counted in the foot line, never listed.
+   column) instead of the placeholder. A missing `stoppedAt` (an older Agent, or a stop the Agent
+   did not stamp) is never the reason a row is listed as recent: such a row is counted in the foot
+   line, unless it is listed for another reason (it needs the member, or descends from a listed session).
    The icon badge rule of decision 6 is unchanged: while the workspace is stopped the Sessions icon
    still carries the count.
 

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"strings"
+	"time"
 )
 
 // SessionRow mirrors one Agent session into the CP DB so the session list can be
@@ -49,6 +50,17 @@ type SessionPlace struct {
 	Kind   string `json:"kind"`
 	ID     string `json:"id,omitempty"`
 	Parent string `json:"parent,omitempty"`
+}
+
+// stoppedAtColumn is the value to store in session.stopped_at: the Agent's RFC3339 stop time, or ""
+// for anything else. The Agent is the writer, but the row is replaced wholesale: one value the
+// column refuses (a NUL byte in Postgres TEXT) would roll back the whole swap and leave every
+// session on the previous mirror, so a value that is not a time is dropped instead.
+func stoppedAtColumn(v string) string {
+	if _, err := time.Parse(time.RFC3339, v); err != nil {
+		return ""
+	}
+	return v
 }
 
 // placeColumn encodes p for session.place: NULL for no place.
@@ -118,7 +130,7 @@ func (s *SQL) ReplaceSessions(ctx context.Context, workspaceID string, rows []Se
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO session(workspace_id, name, kind, dir, repo, label, created_at, state, last_seen, carried, studio, origin, origin_session, schedule_id, queue_category_id, place, stopped_at)
 			 VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession), dropNUL(r.ScheduleID), dropNUL(r.QueueCategoryID), placeColumn(r.Place), r.StoppedAt); err != nil {
+			workspaceID, r.Name, r.Kind, r.Dir, r.Repo, r.Label, r.CreatedAt, r.State, NowTS(), r.Carried, r.Studio, dropNUL(r.Origin), dropNUL(r.OriginSession), dropNUL(r.ScheduleID), dropNUL(r.QueueCategoryID), placeColumn(r.Place), stoppedAtColumn(r.StoppedAt)); err != nil {
 			return err
 		}
 		if err := insertSessionLinks(ctx, tx, workspaceID, r.Name, r.Links); err != nil {

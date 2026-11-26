@@ -290,6 +290,26 @@ describe("recently stopped sessions (#5155)", () => {
     expect(stoppedRecently(list[1], now)).toBe(false);
   });
 
+  it("treats a stop far ahead of the browser's clock as unknown", () => {
+    expect(stoppedRecently(s("far", { alive: false, stoppedAt: new Date(now + 3 * 24 * H).toISOString() }), now)).toBe(false);
+  });
+
+  it("groups a mirrored space session by its place, which the stopped list sends instead of `space`", () => {
+    const repos = [repo("app", { remote: "github.com", remotePath: "acme/app" })];
+    const spaces = [{ folder: "app", name: "App space", dir: "/h/spaces/app" }] as Space[];
+    const list = [
+      s("inspace", { dir: "/h/spaces/app", repo: "app", alive: false, stoppedAt: ago(H), place: { kind: "space", id: "app" } }),
+      s("inrepo", { dir: "/h/repos/app", repo: "app", alive: false, stoppedAt: ago(H), place: { kind: "repo", id: "app" } }),
+    ];
+    const groups = activeGroups(list, repos, spaces, null, new Set(), undefined, true, now);
+    expect(groups.map((g) => [g.kind, g.label, names(g.sessions)])).toEqual([["repo", "app", ["inrepo"]], ["space", "App space", ["inspace"]]]);
+  });
+
+  it("keeps a mirrored space session out of a working set that holds the same-named repository", () => {
+    const list = [s("inspace", { dir: "/h/spaces/app", repo: "app", alive: false, stoppedAt: ago(H), place: { kind: "space", id: "app" } })];
+    expect(names(activeScope(list, set({ repos: ["app"] }), undefined, [], now))).toEqual([]);
+  });
+
   it("never reads a live session's stoppedAt", () => {
     expect(stoppedRecently(s("live", { stoppedAt: ago(H) }), now)).toBe(false);
   });

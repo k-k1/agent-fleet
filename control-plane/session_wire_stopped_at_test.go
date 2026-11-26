@@ -79,3 +79,42 @@ func TestSessionsPayloadKeepsStoppedAtThroughTheMirror(t *testing.T) {
 	stopped := payload("stopped")
 	check("stopped", stopped, nil) // a live row's stamp is not mirrored
 }
+
+// A stop time that is not an RFC3339 instant (a NUL byte included, which Postgres TEXT refuses and
+// which would roll back the whole mirror swap) is dropped; the valid rows are still stored.
+func TestMirrorDropsAStoppedAtThatIsNotATime(t *testing.T) {
+	ctx := context.Background()
+	st, err := openMigratedSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	tenant, _ := st.EnsureDefaultTenant(ctx)
+	ident, _ := st.UpsertIdentity(ctx, "owner@example.com", "owner", "")
+	member, _ := st.EnsureMembership(ctx, ident.ID, tenant.ID, "member")
+	ws := store.Workspace{ID: "ws-stopped-at2", TenantID: tenant.ID, MembershipID: member.ID,
+		ContainerName: "owner", Network: "test", DataDir: "/data/owner", AgentPort: "1", AgentToken: "tok",
+		State: "stopped", CreatedAt: store.NowTS()}
+	if err := st.CreateWorkspace(ctx, ws); err != nil {
+		t.Fatal(err)
+	}
+	rows := sessionRows([]sessionWire{
+		{Name: "good", Kind: "claude", StoppedAt: "2026-11-26T10:00:00Z"},
+		{Name: "nul", Kind: "claude", StoppedAt: "2026-11-26T10:00:00Z\x00"},
+		{Name: "junk", Kind: "claude", StoppedAt: "yesterday"},
+	})
+	if err := st.ReplaceSessions(ctx, ws.ID, rows); err != nil {
+		t.Fatal(err)
+	}
+	got, err := st.ListSessions(ctx, ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	by := map[string]string{}
+	for _, r := range got {
+		by[r.Name] = r.StoppedAt
+	}
+	if len(by) != 3 || by["good"] != "2026-11-26T10:00:00Z" || by["nul"] != "" || by["junk"] != "" {
+		t.Errorf("stored stopped_at = %v, want only good kept", by)
+	}
+}

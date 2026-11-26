@@ -20,7 +20,7 @@ import { wireKeys } from "../features/keys/dispatcher.ts";
 import { useLeftRail } from "../core/store/leftRail.ts";
 import { wireTerminalReconcile } from "../terminal/service.ts";
 import { wireAttentionBeacon } from "../lib/attention.ts";
-import { disposeAllBrowsers, resetBrowserRuntime, wireBrowserReconcile } from "../features/browser/service.ts";
+import { disposeAllBrowsers, wireBrowserReconcile } from "../features/browser/service.ts";
 import {
   disposeAllBrowserAttachments,
   wireBrowserAttachmentReconcile,
@@ -45,7 +45,6 @@ import { usePushViewing } from "../features/push/usePushViewing.ts";
 import { useSessionNotifications } from "../features/sessions/useSessionNotifications.ts";
 import { useReposStore, startReposPolling } from "../features/repos/store.ts";
 import { startRepoJobsPolling, useRepoJobsStore } from "../features/repos/jobs.ts";
-import { useFilesStore } from "../features/files/store.ts";
 import { wireFilesSessionRefresh } from "../features/files/sessionRefresh.ts";
 import { useChatStore, startChatPolling } from "../features/chat/store.ts";
 import { publishBrowserTimeZone } from "../lib/browserTimeZone.ts";
@@ -103,34 +102,8 @@ import { toast } from "../ui/toast.ts";
 import { t } from "../lib/i18n/index.ts";
 import { DirtyGuardHost } from "../features/editor/DirtyGuardHost.tsx";
 import { browserAttachmentIdFromPath } from "../layout/browserAttachmentAction.ts";
+import { wireWorkspaceRefresh } from "./workspaceRefresh.ts";
 import { openBrowserAttachment } from "../features/browser/attachmentAction.ts";
-
-// Refresh FILES (and repos/sessions/chat list on start) whenever the workspace
-// actually flips running↔stopped — including external changes the 4s sync catches
-// (admin stop, OOM, restart). Keyed on the transition, and on the RUNNING edge (not
-// the "starting…" click), so trees load once the agent is really up. Transient "…"
-// states — and the server-reported "starting" (ECS cold pull) — are unsettled and
-// ignored, so the refresh fires exactly once on the starting→running flip.
-// Returns the unsubscribe (StrictMode-safe).
-function wireWorkspaceRefresh(): () => void {
-  const settle = (s: string) => (s === "running" ? "running" : s === "none" || s === "stopped" ? "stopped" : "");
-  let prevRaw = useWorkspaceStore.getState().state;
-  return useWorkspaceStore.subscribe((s) => {
-    const from = settle(prevRaw);
-    const to = settle(s.state);
-    prevRaw = s.state;
-    if (to === "" || to === from) return;
-    resetBrowserRuntime(to === "running");
-    useFilesStore.getState().bump();
-    if (to === "running") {
-      void useReposStore.getState().refresh();
-      void useSessionsStore.getState().refresh();
-      // Chat conversations are proxied into the workspace agent, so the list fails
-      // while it's still starting — re-fetch once it's really up.
-      useChatStore.getState().bumpList();
-    }
-  });
-}
 
 // Phone horizontal swipe: move to the running session one row below (right) or above (left)
 // in the left rail. The whole screen changes, so a short toast reports where it landed (which
