@@ -161,3 +161,11 @@ func holdsSocket(fdDir, want string) bool {
 	}
 	return false
 }
+
+// LoopbackPeerPID is the pid of the one process holding the client end of a loopback TCP
+// connection (local is the server's end, remote the client's), read as tcpPeer reads it. For a
+// label only: the pid is not pinned against reuse the way a token decision pins it.
+func LoopbackPeerPID(local, remote *net.TCPAddr) (int, bool) {
+	id, ok := tcpPeer("/proc", local, remote)
+	return id.pid, ok
+}

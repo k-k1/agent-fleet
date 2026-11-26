@@ -43,6 +43,11 @@ type relayAudit func(r *http.Request) (action, target string, ok bool)
 // An answer it cannot read, or one larger than the proxy buffers, counts as no.
 type relayOutcome func(body []byte) bool
 
+// relayAnswerAudit takes an audit's target and detail from the Agent's 2xx answer, for a change
+// whose URL does not say what it was about. It reads only fields the Agent puts there for the
+// audit, and keeps each only in its expected shape.
+type relayAnswerAudit func(body []byte) (target, detail string)
+
 // agentRelay is one CP route forwarded to the Workspace Agent with /api stripped.
 type agentRelay struct {
 	route string     // "METHOD /api/path", exactly as registered and as in testdata/routes.golden
@@ -50,8 +55,11 @@ type agentRelay struct {
 	// auditIf, when set, holds the audit until the Agent's 2xx answer says the call changed
 	// something: a sign-in step is polled until it is done, and a pending answer is a 200 too.
 	auditIf relayOutcome
-	sign    relaySigning // the method and path must be literal: signing looks the request path up
-	wrapped bool         // registered by hand in routes.go; the row only declares audit and signing
+	// auditAnswer, when set, holds the audit until the Agent's 2xx answer and replaces the row's
+	// target and detail with what it reads there.
+	auditAnswer relayAnswerAudit
+	sign        relaySigning // the method and path must be literal: signing looks the request path up
+	wrapped     bool         // registered by hand in routes.go; the row only declares audit and signing
 }
 
 // relayTables is every relay table. A table missing here is neither registered nor consulted.
@@ -124,6 +132,15 @@ func auditGated(r *http.Request) relayOutcome {
 		return nil
 	}
 	return rl.auditIf
+}
+
+// auditFromAnswer is r's relayAnswerAudit, nil when its row has none.
+func auditFromAnswer(r *http.Request) relayAnswerAudit {
+	rl, found := relayFor(r)
+	if !found {
+		return nil
+	}
+	return rl.auditAnswer
 }
 
 // signedRelayRoutes are the routes signed as the member's, and the hashed subset of them, keyed
@@ -206,6 +223,48 @@ func pathShaped(key string, re *regexp.Regexp) func(*http.Request) string {
 // body carries env and header values, which are never read).
 func auditMCPServer(verb string) relayAudit {
 	return auditAs("mcp.server."+verb, pathShaped("id", mcpServerIDRe))
+}
+
+var (
+	// mcpToolNameRe is an MCP tool name (the specification's 1-128 characters of letters,
+	// digits, '_', '-', '.', and '/' some servers use as a namespace).
+	mcpToolNameRe = regexp.MustCompile(`^[A-Za-z0-9_./-]{1,128}$`)
+	// auditSessionNameRe is the Agent's session slug (session.ValidName).
+	auditSessionNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]{1,40}$`)
+)
+
+// elicitationAnswered reads the Agent's answer to a held MCP call's confirmation: the target is
+// "<server id> <tool>", the detail the member's choice ("accept" or "decline") and the session
+// the call came from. Never the call's arguments or the choices themselves: the Agent does not
+// return them. A field out of shape is left out, never recorded as given.
+func elicitationAnswered(body []byte) (target, detail string) {
+	var out struct {
+		ServerID string `json:"serverId"`
+		Tool     string `json:"tool"`
+		Session  string `json:"session"`
+		Action   string `json:"action"`
+	}
+	_ = json.Unmarshal(body, &out)
+	server, tool := "", ""
+	if mcpServerIDRe.MatchString(out.ServerID) {
+		server = out.ServerID
+	}
+	if mcpToolNameRe.MatchString(out.Tool) {
+		tool = out.Tool
+	}
+	if server != "" || tool != "" {
+		target = strings.TrimSpace(server + " " + tool)
+	}
+	switch out.Action {
+	case "accept", "decline":
+		detail = out.Action
+	default:
+		detail = "unknown"
+	}
+	if auditSessionNameRe.MatchString(out.Session) {
+		detail += " session=" + out.Session
+	}
+	return target, detail
 }
 
 // storedSignin reads a sign-in step's answer: the Agent says {"stored": true} only for the call

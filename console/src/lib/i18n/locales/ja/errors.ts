@@ -238,6 +238,8 @@ export const errors = {
   "err.mcp_oauth_scopes_tenant_only": "独自のスコープは、テナント配布のサーバーにだけ設定できます",
   "err.mcp_elicitation_unknown": "サーバーの確認への答え方が不明です",
   "err.mcp_elicitation_oauth_only": "サーバーの確認に Agent Fleet が答えられるのは、OAuth でサインインするサーバーだけです",
+  "err.mcp_elicitation_gone": "この確認はもう待っていません（回答済み・時間切れ、またはエージェントが呼び出しをやめました）",
+  "err.mcp_elicitation_answer": "回答がサーバーの選択肢と合いません",
   "err.mcp_header_secret_reenter": "ヘッダーの値を入力し直してください。サーバー URL が別のホストを指しているため、保存済みの値は引き継がれません",
   "err.mcp_oauth_secret_reenter": "クライアントシークレットを入力し直してください。issuer かクライアント ID が変わったか、シークレットが保存されていません",
   "err.mcp_oauth_user_secret": "OAuth のサーバーでは、メンバーにヘッダの値を入力させられません。「認証の値は各メンバーが入力する」を外すか、別の認証を選んでください",

@@ -213,6 +213,7 @@ func serve() {
 	} else {
 		defer stopRelay()
 		mcpreg.OnGrantChange = mcpx.MaterializeAll
+		mcpreg.CallerPID = routegw.LoopbackPeerPID
 	}
 	// Write the MCP registry into each CLI's own config (docs/log/48 P3) so the servers a
 	// user registered are live from container start — including for a CLI they launch

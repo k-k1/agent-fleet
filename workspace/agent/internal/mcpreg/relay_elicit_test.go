@@ -400,7 +400,7 @@ func TestElicitRelayHoldsAndRetriesWithThePersonsChoice(t *testing.T) {
 		t.Fatalf("the call was retried before anyone answered (%d)", up.count())
 	}
 
-	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+	if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 		t.Fatal(err)
 	}
 	res := waitCall(t, ch)
@@ -472,7 +472,7 @@ func TestElicitRelayEchoesRequestStateOnlyWhenSent(t *testing.T) {
 			ch := e.startCall(elicitCallBody, sseHeaders)
 			if tc.pending {
 				p := waitPending(t, 1)[0]
-				if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"k": {}}}); err != nil {
+				if _, err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"k": {}}}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -519,7 +519,7 @@ func TestElicitRelayDeclineAndTimeLimitSendDecline(t *testing.T) {
 			p := waitPending(t, 1)[0]
 			if tc.answer {
 				// A decline carries no choice, whatever the Console sent along.
-				if err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true, Choices: allowOnce.Choices}); err != nil {
+				if _, err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true, Choices: allowOnce.Choices}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -549,7 +549,7 @@ func TestElicitAnswerAfterTheDeadlineOrTheCLIIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	time.Sleep(40 * time.Millisecond) // past the deadline, before the relay's timer took it
-	if err := AnswerElicitation(late.ID, ok); !errors.Is(err, ErrElicitationNotFound) {
+	if _, err := AnswerElicitation(late.ID, ok); !errors.Is(err, ErrElicitationNotFound) {
 		t.Fatalf("an answer after the deadline: %v", err)
 	}
 
@@ -557,7 +557,7 @@ func TestElicitAnswerAfterTheDeadlineOrTheCLIIsRefused(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	left, _ := elicitations.add(ctx, ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
 	cancel() // the CLI went away, before the relay removed the entry
-	if err := AnswerElicitation(left.ID, ok); !errors.Is(err, ErrElicitationNotFound) {
+	if _, err := AnswerElicitation(left.ID, ok); !errors.Is(err, ErrElicitationNotFound) {
 		t.Fatalf("an answer after the CLI left: %v", err)
 	}
 }
@@ -580,7 +580,7 @@ func TestElicitRelayDropsTheQuestionWhenTheCLILeaves(t *testing.T) {
 	p := waitPending(t, 1)[0]
 	resp.Body.Close() // the CLI gives up (a tool-call timeout)
 	waitPending(t, 0)
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true}); !errors.Is(err, ErrElicitationNotFound) {
+	if _, err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true}); !errors.Is(err, ErrElicitationNotFound) {
 		t.Fatalf("answer after the CLI left: %v", err)
 	}
 	if up.count() != 1 {
@@ -610,7 +610,7 @@ func TestElicitRelaySendsGrowingProgressWhileHeld(t *testing.T) {
 	ch := e.startCall(elicitCallBody, sseHeaders)
 	p := waitPending(t, 1)[0]
 	time.Sleep(100 * time.Millisecond)
-	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+	if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 		t.Fatal(err)
 	}
 	msgs := sseMessages(t, waitCall(t, ch).body)
@@ -647,7 +647,7 @@ func TestElicitRelaySendsCommentsWithoutAToken(t *testing.T) {
 	ch := e.startCall(strings.Replace(elicitCallBody, `,"progressToken":3`, "", 1), sseHeaders)
 	p := waitPending(t, 1)[0]
 	time.Sleep(60 * time.Millisecond)
-	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+	if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 		t.Fatal(err)
 	}
 	res := waitCall(t, ch)
@@ -665,7 +665,7 @@ func TestElicitRelayAnswersJSONToACLIWithoutStreams(t *testing.T) {
 	ch := e.startCall(elicitCallBody, map[string]string{"Accept": "application/json", "Content-Type": "application/json"})
 	p := waitPending(t, 1)[0]
 	time.Sleep(60 * time.Millisecond) // keepalive ticks must not write into a JSON answer
-	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+	if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 		t.Fatal(err)
 	}
 	res := waitCall(t, ch)
@@ -714,7 +714,7 @@ func TestElicitRelayPassesAStreamAndHoldsItsInputRequiredEvent(t *testing.T) {
 			flagElicitation(t, ElicitationRelay)
 			ch := e.startCall(elicitCallBody, sseHeaders)
 			p := waitPending(t, 1)[0]
-			if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+			if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 				t.Fatal(err)
 			}
 			res := waitCall(t, ch)
@@ -818,7 +818,7 @@ func TestElicitRelayStopsAServerThatKeepsAsking(t *testing.T) {
 	ch := e.startCall(elicitCallBody, sseHeaders)
 	for i := 0; i < elicitMaxRounds; i++ {
 		p := waitPending(t, 1)[0]
-		if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+		if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -908,7 +908,7 @@ func TestElicitRelayRetryFailures(t *testing.T) {
 			flagElicitation(t, ElicitationRelay)
 			ch := e.startCall(elicitCallBody, sseHeaders)
 			p := waitPending(t, 1)[0]
-			if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+			if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 				t.Fatal(err)
 			}
 			tc.check(t, e, waitCall(t, ch))
@@ -929,7 +929,7 @@ func TestElicitRelayDoesNotRetryAServerSwitchedOffMeanwhile(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+	if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 		t.Fatal(err)
 	}
 	res := waitCall(t, ch)
@@ -982,18 +982,18 @@ func TestAnswerElicitationChecksTheChoices(t *testing.T) {
 		{"a": {"c": "ALLOW_ONCE", "o": "y"}, "b": {}},
 	}
 	for _, c := range bad {
-		if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: c}); !errors.Is(err, ErrElicitationAnswer) {
+		if _, err := AnswerElicitation(p.ID, ElicitAnswer{Choices: c}); !errors.Is(err, ErrElicitationAnswer) {
 			t.Errorf("%v: %v", c, err)
 		}
 	}
 	// An empty string the server offered is a real choice.
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"a": {"c": ""}, "b": {}}}); err != nil {
+	if _, err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"a": {"c": ""}, "b": {}}}); err != nil {
 		t.Fatal(err)
 	}
 	if got := <-p.answer; !reflect.DeepEqual(got.Choices, map[string]map[string]string{"a": {"c": ""}, "b": {}}) {
 		t.Fatalf("delivered %+v", got)
 	}
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true}); !errors.Is(err, ErrElicitationNotFound) {
+	if _, err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true}); !errors.Is(err, ErrElicitationNotFound) {
 		t.Fatalf("second answer: %v", err)
 	}
 }
@@ -1007,7 +1007,7 @@ func TestElicitTimeLimitYieldsToAnAnswerThatWon(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"a": {"c": "ALLOW_ONCE"}}}); err != nil {
+	if _, err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"a": {"c": "ALLOW_ONCE"}}}); err != nil {
 		t.Fatal(err)
 	}
 	if elicitations.take(p.ID) {
@@ -1121,7 +1121,7 @@ func TestElicitRelayRefusesMessagesForAnotherRequest(t *testing.T) {
 			flagElicitation(t, ElicitationRelay)
 			ch := e.startCall(elicitCallBody, sseHeaders)
 			p := waitPending(t, 1)[0]
-			if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+			if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 				t.Fatal(err)
 			}
 			res := waitCall(t, ch)
@@ -1190,7 +1190,7 @@ func TestElicitRelayDoesNotRetryOnAnotherSignIn(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+	if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 		t.Fatal(err)
 	}
 	res := waitCall(t, ch)
@@ -1353,7 +1353,7 @@ func TestElicitRelayDoesNotRetryOnASignInOfTheSameSecond(t *testing.T) {
 		ch := e.startCall(elicitCallBody, sseHeaders)
 		p := waitPending(t, 1)[0]
 		signInAgain(t)
-		if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+		if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 			t.Fatal(err)
 		}
 		if res := waitCall(t, ch); up.count() != 1 || lastMessage(t, res.body)["error"] == nil {
@@ -1375,7 +1375,7 @@ func TestElicitRelayDoesNotRetryOnASignInOfTheSameSecond(t *testing.T) {
 		flagElicitation(t, ElicitationRelay)
 		ch := e.startCall(elicitCallBody, sseHeaders)
 		p := waitPending(t, 1)[0]
-		if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+		if _, err := AnswerElicitation(p.ID, allowOnce); err != nil {
 			t.Fatal(err)
 		}
 		if res := waitCall(t, ch); up.count() != 2 || lastMessage(t, res.body)["error"] == nil {

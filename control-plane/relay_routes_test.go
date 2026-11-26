@@ -91,6 +91,7 @@ type relayProbe struct {
 	resolved bool   // a workspace runtime was built while the route ran
 	hits     []agentHit
 	audits   []string // audit actions written while the route ran
+	rows     []store.AuditLog
 }
 
 // relayed reports whether the CP forwarded the request as it came: same method, and the path
@@ -254,14 +255,14 @@ func probeRelaysWith(t *testing.T, only func(route string) bool, answers map[str
 	}
 	var built atomic.Int64
 	mgr.rtFactory = countingRuntimeFactory{endpoint: agent.URL, built: &built}
-	auditRows := func() map[string]string {
+	auditRows := func() map[string]store.AuditLog {
 		rows, err := mgr.store.ListAuditByTenant(ctx, mv.TenantID, 100000)
 		if err != nil {
 			t.Fatalf("list audit: %v", err)
 		}
-		out := make(map[string]string, len(rows))
+		out := make(map[string]store.AuditLog, len(rows))
 		for _, r := range rows {
-			out[r.ID] = r.Action
+			out[r.ID] = r
 		}
 		return out
 	}
@@ -300,9 +301,10 @@ func probeRelaysWith(t *testing.T, only func(route string) bool, answers map[str
 		p.hits = append([]agentHit(nil), hits...)
 		mu.Unlock()
 		p.resolved = built.Load() > 0
-		for id, action := range auditRows() {
+		for id, row := range auditRows() {
 			if _, seen := before[id]; !seen {
-				p.audits = append(p.audits, action)
+				p.audits = append(p.audits, row.Action)
+				p.rows = append(p.rows, row)
 			}
 		}
 		out = append(out, p)

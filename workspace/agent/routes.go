@@ -760,6 +760,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /mcp-servers/{id}/oauth", mcpx.HandleOAuthStatus)
 	mux.HandleFunc("DELETE /mcp-servers/{id}/oauth", mcpx.HandleOAuthDisconnect)
 	mux.HandleFunc("PUT /mcp-servers/{id}/oauth/client", mcpx.HandleOAuthClient)
+	// Calls the relay holds for a person's confirmation (ADR 0146 decision 6). The answer takes
+	// the member-origin mark (an agent must not confirm its own call), so its path is literal and
+	// the call's id is in the body.
+	mux.HandleFunc("GET /mcp-elicitations", mcpx.HandleElicitationsGet)
+	mux.Handle("POST /mcp-elicitations/answer", memberorigin.Require(mcpx.ElicitAnswerMaxRequest, http.HandlerFunc(mcpx.HandleElicitationAnswer)))
 
 	// Connections — per-user provider credentials (git tokens; Claude in Stage 3).
 	mux.HandleFunc("GET /connections", handleConnectionsGet)

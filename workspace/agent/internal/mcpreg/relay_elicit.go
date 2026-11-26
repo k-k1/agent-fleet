@@ -87,6 +87,8 @@ type elicitCall struct {
 	// progressToken is the CLI's own token, nil when it sent none.
 	progressToken json.RawMessage
 	body          []byte
+	// session is the session the call is attributed to (callerSession), "" when none.
+	session string
 }
 
 type flaggedVerdict int
@@ -470,6 +472,10 @@ type elicitOut struct {
 	token        json.RawMessage
 	lastProgress float64
 	sentProgress bool
+	// session is the call's attribution, read once at its first hold: the CLI's socket is the
+	// same for every round.
+	session    string
+	attributed bool
 }
 
 // startStream sends the CLI an event stream's headers, taking the server's (minus what the relay
@@ -1211,6 +1217,10 @@ func cut(s string, n int) string {
 // holdForAnswer files the call for a person and waits for the answer, the time limit, or the
 // CLI going away. ok=false means the call is over (the CLI left, or was told why not).
 func holdForAnswer(ctx context.Context, out *elicitOut, def ServerDef, call elicitCall, ir inputRequired) (json.RawMessage, bool) {
+	if !out.attributed {
+		out.session, out.attributed = callerSession(out.r), true
+	}
+	call.session = out.session
 	p, err := elicitations.add(ctx, def, call, ir)
 	if err != nil {
 		out.result(errorResult(err.Error()))
@@ -1291,6 +1301,9 @@ type PendingElicitation struct {
 	ServerName  string `json:"server"`
 	ServerLabel string `json:"serverLabel,omitempty"`
 	Tool        string `json:"tool"`
+	// Session is the session whose process made the call, "" when it cannot be told
+	// (callerSession). It says where to show the call, never whether it may be answered.
+	Session string `json:"session,omitempty"`
 	// Arguments are the call's arguments exactly as the server will run them.
 	Arguments json.RawMessage `json:"arguments,omitempty"`
 	Inputs    []ElicitInput   `json:"inputs"`
@@ -1353,7 +1366,7 @@ func (s *elicitStore) add(ctx context.Context, def ServerDef, call elicitCall, i
 	p := &pendingElicit{
 		PendingElicitation: PendingElicitation{
 			ID: hex.EncodeToString(b[:]), ServerID: def.ID, ServerName: def.Name, ServerLabel: def.Label, Tool: call.tool,
-			Arguments: call.params["arguments"], Inputs: ir.inputs, CreatedAt: now, Deadline: now.Add(elicitWait),
+			Session: call.session, Arguments: call.params["arguments"], Inputs: ir.inputs, CreatedAt: now, Deadline: now.Add(elicitWait),
 		},
 		gone:   ctx.Done(),
 		answer: make(chan ElicitAnswer, 1),
@@ -1395,19 +1408,19 @@ func PendingElicitations() []PendingElicitation {
 // AnswerElicitation hands a person's answer to the held call. An accept must answer every input,
 // choose one of the server's options for every required field, and name nothing else. A call
 // takes one answer, and none once its deadline has passed or its CLI has gone: both are checked
-// last, at the moment the answer is handed over.
-func AnswerElicitation(id string, a ElicitAnswer) error {
+// last, at the moment the answer is handed over. It returns the call answered, for the audit.
+func AnswerElicitation(id string, a ElicitAnswer) (PendingElicitation, error) {
 	s := elicitations
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.pending[id]
 	if !ok {
-		return ErrElicitationNotFound
+		return PendingElicitation{}, ErrElicitationNotFound
 	}
 	if !a.Decline {
 		clean, err := checkChoices(p.Inputs, a.Choices)
 		if err != nil {
-			return err
+			return PendingElicitation{}, err
 		}
 		a.Choices = clean
 	} else {
@@ -1415,15 +1428,15 @@ func AnswerElicitation(id string, a ElicitAnswer) error {
 	}
 	select {
 	case <-p.gone:
-		return ErrElicitationNotFound
+		return PendingElicitation{}, ErrElicitationNotFound
 	default:
 	}
 	if !time.Now().Before(p.Deadline) {
-		return ErrElicitationNotFound
+		return PendingElicitation{}, ErrElicitationNotFound
 	}
 	delete(s.pending, id)
 	p.answer <- a
-	return nil
+	return p.PendingElicitation.clone(), nil
 }
 
 func checkChoices(inputs []ElicitInput, choices map[string]map[string]string) (map[string]map[string]string, error) {

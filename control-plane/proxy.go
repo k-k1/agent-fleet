@@ -173,7 +173,8 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	var fsPutOutcome string
 	// One error envelope decides the audit: a file write that may have landed.
 	storedGate := auditGated(r)
-	if (r.Method == http.MethodPut && r.URL.Path == "/api/fs/file") || storedGate != nil {
+	answerAudit := auditFromAnswer(r)
+	if (r.Method == http.MethodPut && r.URL.Path == "/api/fs/file") || storedGate != nil || answerAudit != nil {
 		// These errors are deliberately small JSON envelopes. Read only a bounded
 		// prefix before the audit decision so the outcome cannot be lost,
 		// while still forwarding an unexpectedly larger upstream response.
@@ -200,7 +201,13 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 		((resp.StatusCode >= 200 && resp.StatusCode < 300) ||
 			(resp.StatusCode == http.StatusInternalServerError && fsPutOutcome == errCodeFSWriteStateUnknown)) {
 		detail := ""
-		if fsPutOutcome == errCodeFSWriteStateUnknown {
+		if answerAudit != nil {
+			// The 2xx is the change; an answer too large to read still records it, unnamed.
+			target, detail = "", "unknown"
+			if len(bufferedResponse) <= 64<<10 {
+				target, detail = answerAudit(bufferedResponse)
+			}
+		} else if fsPutOutcome == errCodeFSWriteStateUnknown {
 			detail = "write_state_unknown"
 		} else if strings.HasPrefix(action, "gcp.login.") {
 			// ADR 0107 decision 3: the audit says the call came through the relay; the

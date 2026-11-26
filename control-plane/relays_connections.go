@@ -31,6 +31,11 @@ var connectionRelays = []agentRelay{
 	{route: "PUT /api/mcp-servers/{id}/secrets", audit: auditMCPServer("secrets")},
 	{route: "GET /api/mcp-servers/{id}/oauth"},
 	{route: "PUT /api/mcp-servers/{id}/oauth/client", audit: auditMCPServer("oauth_client")},
+	// Calls the MCP relay holds for the member's confirmation (ADR 0146 decision 6). The answer is
+	// signed (an agent must not confirm its own call), so its path is literal and the held call's
+	// id travels in the body; it is audited from the Agent's answer, which names the call.
+	{route: "GET /api/mcp-elicitations"},
+	{route: "POST /api/mcp-elicitations/answer", audit: auditAs("mcp.elicitation", nil), auditAnswer: elicitationAnswered, sign: signBody},
 	{route: "GET /api/connections"},
 	// Stored credentials the credential policy forbids (ADR 0138 D14a): a count and a token, and
 	// the member's confirmed removal, which the Agent admits only with the member-origin mark.

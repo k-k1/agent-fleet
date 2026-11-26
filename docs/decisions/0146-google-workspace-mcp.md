@@ -205,5 +205,13 @@ install and a wrapper in `af-gcloud-exec`'s shape when MCP is in use and someone
     arrives (progress resets it: 660 s passed with it); codex at 300 s, progress or not; opencode
     passed 330 s with and without progress. The relay therefore streams progress while a call is
     held, and declines after 10 minutes.
+- **Answering a held call (#5174 part 2).** The Console reads `GET /api/mcp-elicitations` and answers
+  with `POST /api/mcp-elicitations/answer`, the call's id in the body. The answer carries the
+  member-origin mark (ADR 0113), so a session's own `AGENT_TOKEN` cannot confirm its call; signed
+  relay paths are literal, which is why the id is not in the path. The audit row's target is the
+  server id and the tool, its detail the choice and the session. A held call is attributed to the
+  session named by `AF_SESSION_NAME` in the environment of the process holding the CLI's socket. That
+  name only says where the card is shown: any session can set it, and it never decides an answer.
+  Calls from the shared codex and opencode daemons stay unattributed.
 - **Not verified:** whether Google accepts or ignores RFC 8707 `resource`; the setup guide's line
   that the Developer Preview Program is required, which may predate GA.
