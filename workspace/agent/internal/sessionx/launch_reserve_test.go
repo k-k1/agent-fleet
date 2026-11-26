@@ -570,3 +570,31 @@ func TestCarriedAnswerJudgesTheMetaItReadFirst(t *testing.T) {
 		t.Fatalf("answer = %d %s resumed=%v, want 409 %s and no launch", rec.Code, rec.Body, resumed, gitx.ErrCodeDeleteInProgress())
 	}
 }
+
+// A Managed input to a stopped session whose meta was removed after the request read it (the
+// session was deleted meanwhile) never reaches the driver.
+func TestManagedInputToASessionDeletedMeanwhileIsRefused(t *testing.T) {
+	home := writebackEnv(t)
+	dir := filepath.Join(home, "app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Name: "mgone01", Dir: dir, Kind: session.KindCodex, Driver: session.DriverManaged,
+		StoppedAt: "2026-09-25T10:00:00+09:00"}
+	session.WriteMeta(m)
+	read, ok := session.ReadMeta(m.Name)
+	if !ok {
+		t.Fatal("meta not written")
+	}
+	if err := os.Remove(session.MetaPath(m.Name)); err != nil {
+		t.Fatal(err)
+	}
+	resumed := false
+	useLockingDriver(t, session.KindCodex, &lockingDriver{onResume: func() { resumed = true }})
+	d, _ := driverOf(read)
+	_, err := resumeManaged(d, read)
+	wantDeleteRefusal(t, "managed input", err)
+	if resumed {
+		t.Fatal("a session deleted after the request read it reached the driver")
+	}
+}
