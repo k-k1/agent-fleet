@@ -33,6 +33,20 @@ type defaultPerCallAgent struct {
 	onProbe func()
 	// hang, when set, blocks HoldsDefaultLaunch until it is closed.
 	hang chan struct{}
+	// alive and dropped are the Managed runtime of a slot: whether a handle is live, and the
+	// slots whose handle was dropped.
+	alive   bool
+	dropped *[]string
+}
+
+func (a defaultPerCallAgent) ManagedRuntime() agents.ManagedRuntimeOps {
+	return agents.ManagedRuntimeOps{Alive: func(string) bool { return a.alive }, Busy: func(string) bool { return false },
+		InFlight: func(string) bool { return false }, RemoveLedger: func(string) {},
+		Drop: func(n string) {
+			if a.dropped != nil {
+				*a.dropped = append(*a.dropped, n)
+			}
+		}}
 }
 
 func (a defaultPerCallAgent) ResolveDefaultLaunch(m session.Meta, _ time.Time) routes.Launch {
@@ -174,9 +188,10 @@ func useLaunchProbe(t *testing.T) *session.Meta {
 	return &got
 }
 
-// The create endpoint under a restriction that allows Zen: a folder the serve proves free reaches
-// the launch with the free record; an unproven one stays route_required and, even with a worktree
-// made for it, leaves nothing behind; a Terminal launch and a policy without Zen stay refused.
+// The create endpoint under a restriction that allows Zen: a directory the serve proves free
+// reaches the launch with the free record; an unproven one stays route_required; a create that would
+// make its directory first (worktree, clone, new space) is refused without asking the serve and
+// without making anything; a Terminal launch and a policy without Zen stay refused.
 func TestRestrictedDefaultModelCreate(t *testing.T) {
 	p := newCreateProbe(t)
 	usePolicy(t, zenOnly)
@@ -221,12 +236,12 @@ func TestRestrictedDefaultModelCreate(t *testing.T) {
 		if (len(*dirs) > asked) != tc.probe {
 			t.Errorf("%s: probed=%v, want %v", name, len(*dirs) > asked, tc.probe)
 		}
-		want := routes.CodePolicyRequired
+		want, wantStatus := routes.CodePolicyRequired, http.StatusConflict
 		if tc.def.Route == routes.RouteOpenAIAPI {
-			want = routes.CodePolicyForbidden
+			want, wantStatus = routes.CodePolicyForbidden, http.StatusForbidden
 		}
-		if routeCode(t, rec.Body.String()) != want {
-			t.Errorf("%s: %d code %s, want %s", name, rec.Code, routeCode(t, rec.Body.String()), want)
+		if rec.Code != wantStatus || routeCode(t, rec.Body.String()) != want {
+			t.Errorf("%s: %d code %s, want %d %s", name, rec.Code, routeCode(t, rec.Body.String()), wantStatus, want)
 		}
 		if d := before.diff(p.sideEffects()); d != "" || refs != gitRefs(t, p.repo) || spaces != dirNames(filepath.Join(p.home, "spaces")) {
 			t.Errorf("%s: a refused create left %s (refs changed: %v)", name, d, refs != gitRefs(t, p.repo))
@@ -272,20 +287,43 @@ func swapDefaultAgent(t *testing.T, a defaultPerCallAgent) {
 	t.Cleanup(agentreg.SwapForTest(session.KindOpencode, a))
 }
 
-// A policy that arrives while the serve is being asked is the one the answer is judged on, and the
-// recreate it refuses has stopped nothing.
+// A policy that arrives while the serve is being asked, or a confirmation that goes stale in the
+// meantime, is the one the answer is judged on, and the recreate it refuses has dropped neither the
+// old slot's live Managed handle nor archived it.
 func TestRecreateJudgesTheProbeOnTheCurrentPolicy(t *testing.T) {
-	usePolicy(t, zenOnly)
-	home := writebackEnv(t)
-	swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &[]string{}, holds: true, onProbe: func() {
-		usePolicy(t, routepolicy.Policy{Revision: 9, Restricted: true, Allowed: []string{routes.RouteOpenAIAPI}})
-	}})
-	useLaunchProbe(t)
-	session.WriteMeta(session.Meta{Name: "dfrec3", Dir: home, Kind: session.KindOpencode, Driver: session.DriverManaged})
-	rec := callHandler(HandleRecreateSession, http.MethodPost, "dfrec3", "")
-	cur, _ := session.ReadMeta("dfrec3")
-	if rec.Code != http.StatusForbidden || cur.Archived || routeCode(t, rec.Body.String()) != routes.CodePolicyForbidden {
-		t.Errorf("recreate = %d archived=%v %s, want policy_forbidden before the slot is archived", rec.Code, cur.Archived, rec.Body)
+	stale := func(t *testing.T) {
+		s := routepolicy.Open(filepath.Join(t.TempDir(), "rp.json"), "")
+		if _, err := s.Seed(zenOnly, time.Now().Add(-time.Hour).Unix()); err != nil {
+			t.Fatal(err)
+		}
+		routePolicyStore = func() *routepolicy.Store { return s }
+	}
+	for name, tc := range map[string]struct {
+		change func(*testing.T)
+		status int
+		code   string
+	}{
+		"Zen dropped": {func(t *testing.T) {
+			usePolicy(t, routepolicy.Policy{Revision: 9, Restricted: true, Allowed: []string{routes.RouteOpenAIAPI}})
+		}, http.StatusForbidden, routes.CodePolicyForbidden},
+		"confirmation went stale": {stale, http.StatusServiceUnavailable, routes.CodePolicyUnconfirmed},
+	} {
+		t.Run(name, func(t *testing.T) {
+			usePolicy(t, zenOnly)
+			prev := routePolicyStore
+			t.Cleanup(func() { routePolicyStore = prev })
+			home := writebackEnv(t)
+			var dropped []string
+			swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &[]string{}, holds: true, alive: true, dropped: &dropped,
+				onProbe: func() { tc.change(t) }})
+			useLaunchProbe(t)
+			session.WriteMeta(session.Meta{Name: "dfrec3", Dir: home, Kind: session.KindOpencode, Driver: session.DriverManaged})
+			rec := callHandler(HandleRecreateSession, http.MethodPost, "dfrec3", "")
+			cur, _ := session.ReadMeta("dfrec3")
+			if rec.Code != tc.status || routeCode(t, rec.Body.String()) != tc.code || cur.Archived || len(dropped) != 0 {
+				t.Errorf("recreate = %d %s archived=%v dropped=%v, want %d %s with the old slot untouched", rec.Code, rec.Body, cur.Archived, dropped, tc.status, tc.code)
+			}
+		})
 	}
 }
 
@@ -304,37 +342,46 @@ func TestDeferredDefaultRefusalReadsThePolicyAgainAfterTheProbe(t *testing.T) {
 }
 
 // A holder that never returns refuses the start within the launch budget instead of holding the
-// Managed input gate, and a proven record starts through the real Managed resume with no probe.
+// Managed input gate, and a proven record starts through the real Managed resume, stopped or live,
+// with no probe.
 func TestManagedResumeOfTheDefaultRecord(t *testing.T) {
 	isolateAgentState(t)
 	usePolicy(t, zenOnly)
 	prevStart := KindStartRefusal
 	KindStartRefusal = nil
 	t.Cleanup(func() { KindStartRefusal = prevStart })
-	dirs := []string{}
-	rec := freeLaunch
-	m := session.Meta{Name: "dfres1", Kind: session.KindOpencode, Driver: session.DriverManaged, Dir: t.TempDir(), LaunchRoute: &rec}
-	var got session.Meta
-	d := launchProbeDriver{got: &got}
-
-	swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &dirs, holds: true})
-	_, err := resumeManagedAs(d, m, true, false)
-	if got.Name != m.Name || len(dirs) != 0 {
-		t.Errorf("the proven record: reached the driver=%v after %d probes (%v)", got.Name == m.Name, len(dirs), err)
-	}
-
 	old := launchResolveBudget
 	launchResolveBudget = 100 * time.Millisecond
 	t.Cleanup(func() { launchResolveBudget = old })
-	hang := make(chan struct{})
-	t.Cleanup(func() { close(hang) })
-	swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &dirs, holds: true, hang: hang})
-	got = session.Meta{}
-	begin := time.Now()
-	_, err = resumeManagedAs(d, m, true, false)
-	var sre *StartRefusalError
-	if !errors.As(err, &sre) || got.Name != "" || time.Since(begin) > 5*time.Second {
-		t.Errorf("a hung holder: err=%v reached the driver=%v after %v, want a refusal within the budget", err, got.Name != "", time.Since(begin))
+	rec := freeLaunch
+	m := session.Meta{Name: "dfres1", Kind: session.KindOpencode, Driver: session.DriverManaged, Dir: t.TempDir(), LaunchRoute: &rec}
+	for _, alive := range []bool{false, true} {
+		dirs := []string{}
+		var got session.Meta
+		d := launchProbeDriver{got: &got}
+		swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &dirs, holds: true, alive: alive})
+		_, err := resumeManagedAs(d, m, true, false)
+		if got.Name != m.Name || len(dirs) != 0 {
+			t.Errorf("alive=%v, a held record: reached the driver=%v after %d probes (%v)", alive, got.Name == m.Name, len(dirs), err)
+		}
+		got = session.Meta{}
+		swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &dirs, holds: false, alive: alive})
+		_, err = resumeManagedAs(d, m, true, false)
+		var sre *StartRefusalError
+		if !errors.As(err, &sre) || got.Name != "" || len(dirs) != 0 {
+			t.Errorf("alive=%v, a record the kind no longer holds: err=%v reached the driver=%v", alive, err, got.Name != "")
+		}
+		// The hold is released by a timer too, so a lost bound fails here instead of hanging the run.
+		hang := make(chan struct{})
+		release := time.AfterFunc(3*time.Second, func() { close(hang) })
+		swapDefaultAgent(t, defaultPerCallAgent{def: &freeLaunch, dirs: &dirs, holds: true, alive: alive, hang: hang})
+		got = session.Meta{}
+		begin := time.Now()
+		_, err = resumeManagedAs(d, m, true, false)
+		release.Stop()
+		if !errors.As(err, &sre) || got.Name != "" || time.Since(begin) > 2*time.Second {
+			t.Errorf("alive=%v, a hung holder: err=%v reached the driver=%v after %v, want a refusal within the budget", alive, err, got.Name != "", time.Since(begin))
+		}
 	}
 }
 
