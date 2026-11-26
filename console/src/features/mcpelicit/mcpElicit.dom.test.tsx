@@ -25,6 +25,7 @@ vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => (m: string) => to
 const { MirrorElicitCards, McpElicitCard } = await import("./McpElicitCard.tsx");
 const { useMcpElicitStore } = await import("./store.ts");
 const { t } = await import("../../lib/i18n/index.ts");
+const { useTenantStore } = await import("../../core/store/tenant.ts");
 
 const held = {
   id: "e1",
@@ -69,6 +70,7 @@ beforeEach(async () => {
   toasts.length = 0;
   answerReply = { ok: true };
   listed = [held];
+  useTenantStore.setState({ resolved: true });
   useMcpElicitStore.getState().reset();
   await useMcpElicitStore.getState().refresh();
   host = document.createElement("div");
@@ -113,13 +115,21 @@ describe("the MCP confirmation card", () => {
     await render("s1");
     expect(host.textContent).toContain("send_mail");
     const { setUser } = await import("../../core/api/client.ts");
-    const { useTenantStore } = await import("../../core/store/tenant.ts");
     await act(async () => {
       setUser("someone-else");
       useTenantStore.setState((s) => ({ identityRev: s.identityRev + 1 }));
     });
     expect(host.textContent).toBe("");
     await act(async () => setUser(""));
+  });
+  // Before the tenant store has settled the tenant (a retried whoami can settle the member
+  // first), the tenant is the saved one, not necessarily the one asked for.
+  it("shows nothing while the tenant is not settled", async () => {
+    await act(async () => useTenantStore.setState({ resolved: false }));
+    await render("s1");
+    expect(host.textContent).toBe("");
+    await act(async () => useTenantStore.setState({ resolved: true }));
+    expect(host.textContent).toContain("send_mail");
   });
   // An Agent from before this change sends the arguments as JSON, which the card cannot show
   // exactly: it can only decline.

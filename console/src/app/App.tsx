@@ -425,9 +425,9 @@ export function App() {
       const confirm = useAwsConfirmStore.getState();
       confirm.reset();
       void confirm.refresh();
-      const elicit = useMcpElicitStore.getState();
-      elicit.reset();
-      void elicit.refresh();
+      // Only dropped here: McpElicitHost reads the list again for the new tenant, once the
+      // tenant store has settled it.
+      useMcpElicitStore.getState().reset();
       profilesReloadRef.current = true; // the retrying load below asks for the profiles
     }
     prefsSyncedTenantRef.current = tenant;
@@ -507,10 +507,10 @@ export function App() {
     if (!booted || identityRev === identityRevDoneRef.current) return;
     identityRevDoneRef.current = identityRev;
     void resyncAccumulatedForIdentitySwitch();
-    // The held MCP calls belong to the member who could answer them.
-    const elicit = useMcpElicitStore.getState();
-    elicit.reset();
-    void elicit.refresh();
+    // The held MCP calls belong to the member who could answer them. Only dropped here: a
+    // member settled by a retried whoami can come before the tenant is (McpElicitHost reads the
+    // list again once both are).
+    useMcpElicitStore.getState().reset();
     // The member's UI state is keyed by (user, tenant): a whoami that resolves late moves that key
     // without a tenant change, and the answer the boot load got under the old key was dropped.
     void useUIStateStore.getState().load();

@@ -53,6 +53,7 @@ const { useNotificationStore } = await import("../notifications/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { MirrorElicitCards } = await import("./McpElicitCard.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
+const { useTenantStore } = await import("../../core/store/tenant.ts");
 
 // Stands in for a mirror on screen, which registers itself as MirrorView does.
 function Mirror({ session }: { session: string }) {
@@ -71,6 +72,7 @@ beforeEach(() => {
   state.held = true;
   state.posts = [];
   state.gate = Promise.resolve();
+  useTenantStore.setState({ resolved: true });
   useMcpElicitStore.setState({ items: [], answering: {} });
   useAwsConfirmStore.setState({ requests: [], answering: {}, mirrors: {} });
   host = document.createElement("div");

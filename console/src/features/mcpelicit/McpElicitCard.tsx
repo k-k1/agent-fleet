@@ -28,15 +28,17 @@ export function toChoices(e: McpElicitation, chosen: Chosen): McpElicitChoices {
 
 const NO_CALLS: McpElicitation[] = [];
 
-/** useHeld is the list as the member signed in now may see it: nothing while it was read for
- *  another tenant or member. It re-renders on a switch of either, before anything resets the
- *  list, so a card never shows one member's call to another. */
+/** useHeld is the list as the member signed in now may see it: nothing while the tenant is not
+ *  settled yet, or while the list was read for another tenant or member. It re-renders on a
+ *  switch of either, before anything resets the list, so a card never shows one member's call
+ *  to another. */
 export function useHeld(): McpElicitation[] {
   useTenantStore((s) => s.tenant);
   useTenantStore((s) => s.identityRev);
+  const resolved = useTenantStore((s) => s.resolved);
   const items = useMcpElicitStore((s) => s.items);
   const owner = useMcpElicitStore((s) => s.owner);
-  return owner === ownerKey() ? items : NO_CALLS;
+  return resolved && owner === ownerKey() ? items : NO_CALLS;
 }
 
 const TICK_MS = 5000;
