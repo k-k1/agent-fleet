@@ -643,10 +643,25 @@ func (a scheduleAPI) pause(w http.ResponseWriter, r *http.Request, mv store.Memb
 	a.writeOne(w, r, id, mv)
 }
 
+// limitResumeTokenRefusal keeps the token face from firing or re-arming a usage-limit resume. The
+// booking is exempt from the approval hold only for its one timed fire; run-now, or a resume after
+// a spent fire, would let a session deliver the fixed nudge as often as it likes.
+func (a scheduleAPI) limitResumeTokenRefusal(r *http.Request, sch store.Schedule) *apiError {
+	if a.holdTokenWrites && viaScheduleToken(r) && schedlimit.IsShape(sch) {
+		return &apiError{http.StatusConflict, "limit_resume_fixed",
+			"a usage-limit resume fires once at its time; book a new one instead of running or resuming it"}
+	}
+	return nil
+}
+
 func (a scheduleAPI) resume(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
 	id := r.PathValue("id")
 	sch, aerr := a.getOwned(r, id, mv)
 	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if aerr := a.limitResumeTokenRefusal(r, sch); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -681,6 +696,10 @@ func (a scheduleAPI) runNow(w http.ResponseWriter, r *http.Request, mv store.Mem
 	id := r.PathValue("id")
 	sch, aerr := a.getOwned(r, id, mv)
 	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	if aerr := a.limitResumeTokenRefusal(r, sch); aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}

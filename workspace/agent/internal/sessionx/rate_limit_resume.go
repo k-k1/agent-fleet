@@ -756,7 +756,19 @@ func createRateLimitSchedule(m session.Meta, at time.Time) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	out, err := mcpx.CPScheduleDo(http.MethodPost, "/internal/schedules/limit-resume", body)
+	out, err := scheduleDo(http.MethodPost, "/internal/schedules/limit-resume", body)
+	var cpErr *mcpx.CPScheduleError
+	if errors.As(err, &cpErr) && (cpErr.Status == http.StatusNotFound || cpErr.Status == http.StatusMethodNotAllowed) {
+		// A CP from before the route existed (or one rolled back to it): the answer says the route is
+		// absent, so nothing was created. Book the old way, which that CP holds for approval as it
+		// always did, rather than losing the booking. Any other failure may have been accepted and is
+		// left to the caller's retry, so it cannot create a second row here.
+		legacy, lerr := legacyRateLimitScheduleBody(m, at)
+		if lerr != nil {
+			return "", lerr
+		}
+		out, err = scheduleDo(http.MethodPost, "/internal/schedules", legacy)
+	}
 	if err != nil {
 		return "", err
 	}
@@ -771,6 +783,28 @@ func createRateLimitSchedule(m session.Meta, at time.Time) (string, error) {
 		log.Printf("rate-limit: %s", wire.Warning)
 	}
 	return wire.ID, nil
+}
+
+// scheduleDo is the CP call, replaceable in tests.
+var scheduleDo = mcpx.CPScheduleDo
+
+// legacyRateLimitScheduleBody is the generic booking an Agent sent before the dedicated route: every
+// policy field spelled out. A CP that has the route never sees it; one that lacks it holds it.
+func legacyRateLimitScheduleBody(m session.Meta, at time.Time) ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"spec_kind":             "once",
+		"spec":                  at.UTC().Format(time.RFC3339),
+		"spec_label":            rateLimitScheduleLabel(m.Name),
+		"tz":                    scheduleTZName(),
+		"session_mode":          "reuse",
+		"reuse_target":          m.Name,
+		"missing_target_policy": "fail",
+		"overlap_policy":        "skip",
+		"wake_policy":           "wake",
+		"agent_kind":            NormalizeKind(m.Kind),
+		"prompt":                rateLimitResumePrompt(),
+		"report":                false,
+	})
 }
 
 // rateLimitScheduleBody is the request itself, kept apart from the call so a test can read
@@ -826,7 +860,16 @@ func rateLimitResumePrompt() string {
 	return rateLimitResumePromptFor(uiprefs.Locale())
 }
 
+// rateLimitResumeNotice opens every resume prompt: the notice line every automatic input carries, so
+// the session can tell the nudge from its user typing. It says the text brings no instruction.
+const rateLimitResumeNotice = "[agent-fleet:notice kind=limit-resume reply=none] "
+
 func rateLimitResumePromptFor(locale string) string {
+	return rateLimitResumeNotice + rateLimitResumeBodyFor(locale)
+}
+
+// rateLimitResumeBodyFor is the wording alone, as builds before the notice line booked it.
+func rateLimitResumeBodyFor(locale string) string {
 	if locale == "en" {
 		return "The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
 			"If the limit refused the latest request before you started it and you have done none of it yet, " +
@@ -845,6 +888,8 @@ func rateLimitResumePromptFor(locale string) string {
 // from booking time, so a resume that spans an upgrade still arrives in the old words and must
 // still count as one - otherwise its "resumed" notice is silently dropped.
 var legacyRateLimitResumePrompts = []string{
+	rateLimitResumeBodyFor("en"),
+	rateLimitResumeBodyFor("ja"),
 	"The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
 		"This is an automatic resume — there is no new instruction. " +
 		"If you cannot tell where it stopped, say so instead of starting something new.",

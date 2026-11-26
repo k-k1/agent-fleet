@@ -144,6 +144,7 @@ func TestRemovedMemberIsRefusedOnEveryWorkspaceRoute(t *testing.T) {
 		{"GET", "/internal/memo-queues/c1/deliveries"},
 		{"GET", "/internal/schedules"},
 		{"POST", "/internal/schedules"},
+		{"POST", "/internal/schedules/limit-resume"},
 		{"PATCH", "/internal/schedules/s1"},
 		{"DELETE", "/internal/schedules/s1"},
 		{"POST", "/internal/schedules/s1/pause"},

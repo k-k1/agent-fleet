@@ -125,6 +125,12 @@ type ScheduleStore interface {
 	// ListApprovalPendingSchedules returns every held schedule of every membership. It exists for
 	// the one-off release of held usage-limit resumes (#5212), which has no member in scope.
 	ListApprovalPendingSchedules(ctx context.Context) ([]Schedule, error)
+	// DeleteHeldSchedule deletes a schedule only while it is still the held version the caller read:
+	// same membership, approval_pending still set, same generation. false means something changed it.
+	DeleteHeldSchedule(ctx context.Context, id, membershipID string, generation int) (bool, error)
+	// OneOffDone / MarkOneOffDone record that a start-time pass named name has finished on this database.
+	OneOffDone(ctx context.Context, name string) (bool, error)
+	MarkOneOffDone(ctx context.Context, name, doneAt string) error
 	// ListDueSchedules returns enabled schedules whose next_run is non-empty and at
 	// or before nowRFC (an RFC3339 UTC cutoff; RFC3339 sorts chronologically).
 	ListDueSchedules(ctx context.Context, nowRFC string) ([]Schedule, error)
@@ -373,6 +379,28 @@ func (s *SQL) ApproveSchedule(ctx context.Context, id, membershipID string, gene
 	}
 	n, err := res.RowsAffected()
 	return n > 0, err
+}
+
+func (s *SQL) DeleteHeldSchedule(ctx context.Context, id, membershipID string, generation int) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM schedule WHERE id=? AND membership_id=? AND approval_pending=1 AND generation=?`,
+		id, membershipID, generation)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
+func (s *SQL) OneOffDone(ctx context.Context, name string) (bool, error) {
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM cp_oneoff WHERE name=?`, name).Scan(&n)
+	return n > 0, err
+}
+
+func (s *SQL) MarkOneOffDone(ctx context.Context, name, doneAt string) error {
+	_, err := s.db.ExecContext(ctx, `INSERT INTO cp_oneoff (name, done_at) VALUES (?, ?) ON CONFLICT (name) DO NOTHING`, name, doneAt)
+	return err
 }
 
 func (s *SQL) DeleteSchedule(ctx context.Context, id, membershipID string) error {

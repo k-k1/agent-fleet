@@ -25,9 +25,23 @@ const MaxAhead = 8 * 24 * time.Hour
 
 // Prompts are the fixed nudges. They are copies of the Agent's wording
 // (workspace/agent/internal/sessionx/rate_limit_resume.go): the Agent recognises its own resume by
-// the exact text, and a test there reads this file to keep the two in step. Index 0/1 are the
-// current ja/en wording; the rest are what older Agents booked, which only the release matcher accepts.
+// the exact text, and a test there reads this file to keep the two in step. Index 0 and 1 are the
+// current ja and en wording, which opens with the notice line so the session can tell the nudge
+// from its user typing (the line carries no instruction). The rest are what earlier builds
+// booked, with no notice line; only the release matcher accepts them.
 var Prompts = [...]string{
+	"[agent-fleet:notice kind=limit-resume reply=none] " +
+		"利用上限がリセットされました。上限で中断した作業を、止まったところから続けてください。" +
+		"直前の依頼が着手前に上限で断られ、まだ何も実行していない場合は、その依頼を最初から実行してください" +
+		"（途中まで実行していた場合は、その続きから再開してください）。" +
+		"これは自動再開なので新しい指示はありません。" +
+		"それ以外でどこで止まったか分からない場合は、新しい作業を始めずにその旨を伝えてください。",
+	"[agent-fleet:notice kind=limit-resume reply=none] " +
+		"The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
+		"If the limit refused the latest request before you started it and you have done none of it yet, " +
+		"carry it out from the beginning; if you had done part of it, continue from there instead. " +
+		"This is an automatic resume — there is no new instruction. " +
+		"Otherwise, if you cannot tell where it stopped, say so instead of starting something new.",
 	"利用上限がリセットされました。上限で中断した作業を、止まったところから続けてください。" +
 		"直前の依頼が着手前に上限で断られ、まだ何も実行していない場合は、その依頼を最初から実行してください" +
 		"（途中まで実行していた場合は、その続きから再開してください）。" +
@@ -46,9 +60,8 @@ var Prompts = [...]string{
 		"どこで止まったか分からない場合は、新しい作業を始めずにその旨を伝えてください。",
 }
 
-// HeldCutoff bounds the one-off release below: only rows created before it match. A row the token
-// writes after this build is held for good, so the pass is safe to run on every start.
-const HeldCutoff = "2026-11-26T00:30:00Z"
+// currentPrompts is how many leading entries of Prompts a new booking may use.
+const currentPrompts = 2
 
 // PromptFor is the fixed prompt for a locale; anything but "en" is Japanese, as the Agent's is.
 func PromptFor(locale string) string {
@@ -83,28 +96,52 @@ func IsShape(s store.Schedule) bool {
 		s.Model == "" && s.Route == "" && s.RouteConnection == "" && (s.DeliverTo == "" || s.DeliverTo == "operator")
 }
 
-// ReleaseHeld is the one-off for rows #4631 held before this exemption existed: a
-// matching row created before HeldCutoff is approved when its time is still ahead and
-// deleted when it is past (a past once-schedule cannot be approved and would only linger as a
-// "do not approve" card). Rows of any other shape, and anything newer, are left held.
+// oneOffName is the marker under which the release pass is recorded as done.
+const oneOffName = "limit-resume-release-5212"
+
+// legacyBooking reports whether a held row is what an earlier Agent's generic POST left behind:
+// the fixed shape, an Agent-written label for that very session, never shown in sessions, never
+// fired or adopted a session, and a time inside the window counted from its creation. A row a
+// member renamed, or anything else that cannot be shown to have that origin, stays held.
+func legacyBooking(s store.Schedule) bool {
+	if !IsShape(s) || s.ShowInSessions || s.ReuseSession != "" || s.LastRun != "" || s.LastStatus != "" {
+		return false
+	}
+	if s.SpecLabel != Label("ja", s.ReuseTarget) && s.SpecLabel != Label("en", s.ReuseTarget) {
+		return false
+	}
+	created, cerr := time.Parse(time.RFC3339, s.CreatedAt)
+	at, aerr := time.Parse(time.RFC3339, s.Spec)
+	return cerr == nil && aerr == nil && !at.After(created.Add(MaxAhead))
+}
+
+// ReleaseHeld is the one-off for rows #4631 held before the exemption existed, run once per
+// database (a marker row records it, so a held row written afterwards is never swept in). A row
+// matching legacyBooking is approved when its time is still ahead and deleted when it is past (a
+// past once-schedule cannot be approved and would only linger as a "do not approve" card). Both
+// writes are conditional on the version read, so an edit or approval made meanwhile — an older CP
+// may still be serving during a rolling update — leaves the row alone. Everything else stays held.
 func ReleaseHeld(ctx context.Context, st store.ScheduleStore, now time.Time) (released, removed int, err error) {
+	if done, derr := st.OneOffDone(ctx, oneOffName); derr != nil || done {
+		return 0, 0, derr
+	}
 	rows, err := st.ListApprovalPendingSchedules(ctx)
 	if err != nil {
 		return 0, 0, err
 	}
 	for _, s := range rows {
-		if !IsShape(s) || s.CreatedAt == "" || s.CreatedAt >= HeldCutoff {
+		if !legacyBooking(s) {
 			continue
 		}
-		at, perr := time.Parse(time.RFC3339, s.Spec)
-		if perr != nil {
-			continue
-		}
+		at, _ := time.Parse(time.RFC3339, s.Spec)
 		if !at.After(now) {
-			if derr := st.DeleteSchedule(ctx, s.ID, s.MembershipID); derr != nil {
+			ok, derr := st.DeleteHeldSchedule(ctx, s.ID, s.MembershipID, s.Generation)
+			if derr != nil {
 				return released, removed, derr
 			}
-			removed++
+			if ok {
+				removed++
+			}
 			continue
 		}
 		next := ""
@@ -118,6 +155,9 @@ func ReleaseHeld(ctx context.Context, st store.ScheduleStore, now time.Time) (re
 		if ok {
 			released++
 		}
+	}
+	if err := st.MarkOneOffDone(ctx, oneOffName, store.NowTS()); err != nil {
+		return released, removed, err
 	}
 	if released+removed > 0 {
 		log.Printf("schedules: released %d and removed %d held usage-limit resume(s) (#5212)", released, removed)

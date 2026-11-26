@@ -143,6 +143,9 @@ work you could simply do.
 - **`work_item`** (`{provider: github|jira|bitbucket, key: owner/repo#45 | PROJ-12, title?, type?}`)
   names the ticket the child works on, so its row and the item show the link and `type` picks the
   branch prefix. Omitted, the child watches the items you were started for or work on.
+- **`[agent-fleet:notice kind=limit-resume reply=none]`** opens the automatic "carry on" a session gets when its usage
+  limit resets (the Agent's booking, built by the Control Plane so a session cannot change the text). It is not your user typing and it
+  carries **no new instruction**: continue the work the limit cut off, from where it stopped, or say you cannot tell where. Send nothing back.
 - **`link_work_item`** links *your own* session to an issue, ticket or PR you were not launched for
   (`role`: working default / reviewing / watching; `remove: true` unlinks). `branch_name` with an
   item and your branch's PR are linked for you.

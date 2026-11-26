@@ -1,9 +1,10 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,56 +103,94 @@ func TestIsLimitResumeShapeRejectsAnyDifference(t *testing.T) {
 	}
 }
 
-// The one-off release approves matching future rows, removes matching past rows, and leaves every
-// other held row — and any newer one — alone.
+// legacyHeld is a row as an earlier Agent's generic POST left it: Agent-written label, fixed shape,
+// held, never fired.
+func legacyHeld(mv store.MembershipView, id string, spec time.Time, mut func(*store.Schedule)) store.Schedule {
+	s := store.Schedule{ID: id, MembershipID: mv.MembershipID, TenantID: mv.TenantID, SpecKind: "once",
+		Spec: spec.UTC().Format(time.RFC3339), TZ: "UTC", SessionMode: "reuse", ReuseTarget: "s",
+		SpecLabel:           schedlimit.Label("ja", "s"),
+		MissingTargetPolicy: "fail", OverlapPolicy: "skip", WakePolicy: "wake", AgentKind: "claude",
+		Prompt: schedlimit.Prompts[2], Enabled: true, ApprovalPending: true,
+		NextRun: spec.UTC().Format(time.RFC3339), CreatedAt: time.Now().UTC().Add(-time.Hour).Format(time.RFC3339), UpdatedAt: "x"}
+	if mut != nil {
+		mut(&s)
+	}
+	return s
+}
+
+// The one-off release approves legacy rows still ahead, removes legacy rows already past, and
+// leaves every other held row alone — a renamed row, another prompt or shape, a time beyond the
+// window, a row that has run — and then never runs again.
 func TestReleaseHeldLimitResumes(t *testing.T) {
 	api, ctx, mv := newSchedAPITest(t)
 	now := time.Now().UTC()
-	mk := func(id string, mut func(*store.Schedule)) {
-		s := store.Schedule{ID: id, MembershipID: mv.MembershipID, TenantID: mv.TenantID, SpecKind: "once",
-			Spec: now.Add(time.Hour).Format(time.RFC3339), TZ: "UTC", SessionMode: "reuse", ReuseTarget: "s",
-			MissingTargetPolicy: "fail", OverlapPolicy: "skip", WakePolicy: "wake", AgentKind: "claude",
-			Prompt: schedlimit.Prompts[0], Enabled: true, ApprovalPending: true,
-			NextRun: now.Add(time.Hour).Format(time.RFC3339), CreatedAt: "2026-11-25T00:00:00Z", UpdatedAt: "2026-11-25T00:00:00Z"}
-		if mut != nil {
-			mut(&s)
-		}
-		if err := api.store.CreateSchedule(ctx, s); err != nil {
+	mk := func(id string, spec time.Time, mut func(*store.Schedule)) {
+		if err := api.store.CreateSchedule(ctx, legacyHeld(mv, id, spec, mut)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	mk("future", nil)
-	mk("past", func(s *store.Schedule) { s.Spec = now.Add(-time.Hour).Format(time.RFC3339); s.NextRun = s.Spec })
-	mk("other-prompt", func(s *store.Schedule) { s.Prompt = "do something else" })
-	mk("other-mode", func(s *store.Schedule) { s.SessionMode = "new" })
-	mk("newer", func(s *store.Schedule) { s.CreatedAt = schedlimit.HeldCutoff })
-	mk("past-other", func(s *store.Schedule) {
-		s.Spec = now.Add(-time.Hour).Format(time.RFC3339)
-		s.Prompt = "other"
-	})
+	future, past := now.Add(time.Hour), now.Add(-time.Hour)
+	mk("future", future, nil)
+	mk("future-en", future, func(s *store.Schedule) { s.SpecLabel = schedlimit.Label("en", "s"); s.Prompt = schedlimit.Prompts[3] })
+	mk("past", past, nil)
+	mk("edge", now.Add(-time.Hour).Add(schedlimit.MaxAhead), nil) // created an hour ago: exactly the window
+	mk("renamed", future, func(s *store.Schedule) { s.SpecLabel = "my nightly nudge" })
+	mk("past-renamed", past, func(s *store.Schedule) { s.SpecLabel = "my nightly nudge" })
+	mk("other-prompt", future, func(s *store.Schedule) { s.Prompt = "do something else" })
+	mk("other-mode", future, func(s *store.Schedule) { s.SessionMode = "new" })
+	mk("beyond-window", now.Add(schedlimit.MaxAhead+48*time.Hour), nil)
+	mk("shown", future, func(s *store.Schedule) { s.ShowInSessions = true })
+	mk("ran", past, func(s *store.Schedule) { s.LastRun = "2026-11-01T00:00:00Z"; s.LastStatus = "ok" })
+	mk("adopted", future, func(s *store.Schedule) { s.ReuseSession = "other-session" })
 
-	rel, rem, err := schedlimit.ReleaseHeld(context.Background(), api.store, now)
-	if err != nil || rel != 1 || rem != 1 {
+	rel, rem, err := schedlimit.ReleaseHeld(ctx, api.store, now)
+	if err != nil || rel != 3 || rem != 1 {
 		t.Fatalf("released %d removed %d err %v", rel, rem, err)
 	}
-	pending := func(id string) (bool, bool) {
+	state := func(id string) (bool, bool) {
 		s, ok, _ := api.store.GetSchedule(ctx, id)
 		return ok, s.ApprovalPending
 	}
-	if ok, p := pending("future"); !ok || p {
-		t.Errorf("future: ok=%v pending=%v", ok, p)
+	for _, id := range []string{"future", "future-en", "edge"} {
+		if ok, p := state(id); !ok || p {
+			t.Errorf("%s: ok=%v pending=%v, want released", id, ok, p)
+		}
 	}
-	if ok, _ := pending("past"); ok {
+	if ok, _ := state("past"); ok {
 		t.Error("past row kept")
 	}
-	for _, id := range []string{"other-prompt", "other-mode", "newer", "past-other"} {
-		if ok, p := pending(id); !ok || !p {
+	for _, id := range []string{"renamed", "past-renamed", "other-prompt", "other-mode", "beyond-window", "shown", "ran", "adopted"} {
+		if ok, p := state(id); !ok || !p {
 			t.Errorf("%s: ok=%v pending=%v, want kept and held", id, ok, p)
 		}
 	}
-	// Idempotent.
+	// Once only: a held row of the same shape written afterwards is not swept in.
+	mk("later", future, nil)
 	if rel, rem, _ = schedlimit.ReleaseHeld(ctx, api.store, now); rel+rem != 0 {
 		t.Errorf("second pass changed %d/%d", rel, rem)
+	}
+	if ok, p := state("later"); !ok || !p {
+		t.Errorf("later: ok=%v pending=%v, want held", ok, p)
+	}
+}
+
+// A delete or approval that lost the race to an edit made after the read leaves the row alone.
+func TestHeldDeleteIsConditionalOnTheVersionRead(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	if err := api.store.CreateSchedule(ctx, legacyHeld(mv, "r", time.Now().Add(-time.Hour), nil)); err != nil {
+		t.Fatal(err)
+	}
+	seen, _, _ := api.store.GetSchedule(ctx, "r")
+	edited := seen
+	edited.Prompt = "edited by the member"
+	if err := api.store.UpdateSchedule(ctx, edited); err != nil {
+		t.Fatal(err)
+	}
+	if ok, err := api.store.DeleteHeldSchedule(ctx, "r", mv.MembershipID, seen.Generation); err != nil || ok {
+		t.Fatalf("stale delete: ok=%v err=%v", ok, err)
+	}
+	if _, ok, _ := api.store.GetSchedule(ctx, "r"); !ok {
+		t.Fatal("the edited row was deleted")
 	}
 }
 
@@ -172,5 +211,97 @@ func TestLimitResumeDeleteAndRebookNeedNoApproval(t *testing.T) {
 	}
 	if ids := dueIDs(t, api, ctx); len(ids) != 1 || ids[0] != d2.ID {
 		t.Fatalf("due = %v", ids)
+	}
+}
+
+// Each new booking opens with the notice line, the locale picks the wording, and the pick is not
+// reversed: a pair of identical or swapped prompts would still be "a prompt that starts with it".
+func TestLimitResumePromptsCarryTheNotice(t *testing.T) {
+	const notice = "[agent-fleet:notice kind=limit-resume reply=none] "
+	en, ja := schedlimit.PromptFor("en"), schedlimit.PromptFor("ja")
+	if !strings.HasPrefix(en, notice+"The usage limit has reset.") || !strings.HasPrefix(ja, notice+"利用上限がリセットされました。") {
+		t.Fatalf("en=%q ja=%q", en, ja)
+	}
+	if schedlimit.PromptFor("") != ja || schedlimit.PromptFor("fr") != ja {
+		t.Fatal("an unknown locale is not Japanese")
+	}
+	api, ctx, mv := newSchedAPITest(t)
+	for loc, want := range map[string]string{"en": en, "ja": ja} {
+		b, _ := json.Marshal(map[string]any{"session": "s1", "resume_at": time.Now().Add(time.Hour).UTC().Format(time.RFC3339), "locale": loc})
+		rec := doTokenJSON(api.createLimitResume, mv, "POST", string(b), "")
+		var d scheduleDTO
+		_ = json.Unmarshal(rec.Body.Bytes(), &d)
+		got, _, _ := api.store.GetSchedule(ctx, d.ID)
+		if got.Prompt != want {
+			t.Errorf("%s: stored prompt %q", loc, got.Prompt)
+		}
+	}
+}
+
+// The token face cannot fire or re-arm a booking, and an edit that changes what it does puts it
+// back on hold, whether the row came from the new route or from the release of an old one.
+func TestLimitResumeRowsAreFixedOnTheTokenFace(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	rec := doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(time.Now().Add(time.Hour)), "")
+	var d scheduleDTO
+	_ = json.Unmarshal(rec.Body.Bytes(), &d)
+	if err := api.store.CreateSchedule(ctx, legacyHeld(mv, "legacy", time.Now().Add(time.Hour), func(s *store.Schedule) { s.ApprovalPending = false })); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{d.ID, "legacy"} {
+		if r := doTokenJSON(api.runNow, mv, "POST", "", id); r.Code != http.StatusConflict {
+			t.Errorf("%s run-now on the token face: %d", id, r.Code)
+		}
+		if r := doTokenJSON(api.resume, mv, "POST", "", id); r.Code != http.StatusConflict {
+			t.Errorf("%s resume on the token face: %d", id, r.Code)
+		}
+		for name, patch := range map[string]string{
+			"time":   `{"spec":"` + time.Now().Add(2*time.Hour).UTC().Format(time.RFC3339) + `"}`,
+			"target": `{"reuse_target":"other"}`,
+			"prompt": `{"prompt":"something else"}`,
+		} {
+			r := doTokenJSON(api.update, mv, "PATCH", patch, id)
+			if r.Code != http.StatusOK {
+				t.Fatalf("%s %s: %d %s", id, name, r.Code, r.Body.String())
+			}
+			got, _, _ := api.store.GetSchedule(ctx, id)
+			if !got.ApprovalPending {
+				t.Errorf("%s: a token edit of the %s did not put it back on hold", id, name)
+			}
+			got.ApprovalPending = false // un-hold for the next edit
+			got.Prompt, got.ReuseTarget = schedlimit.Prompts[1], "s"
+			_ = api.store.UpdateSchedule(ctx, got)
+		}
+	}
+	// The Console face (the member) can still run it.
+	if r := doJSON(api.runNow, mv, "POST", "", d.ID); r.Code == http.StatusConflict {
+		t.Errorf("the member's run-now was refused: %s", r.Body.String())
+	}
+}
+
+// Through the real mux: a valid token books, a wrong one is refused, and the booking is not held.
+func TestLimitResumeRouteThroughTheMux(t *testing.T) {
+	e := newInboxEnv(t)
+	tok := mintScheduleToken(scheduleSignKey(e.mgr.tokenSigningRoot()), e.members["a"])
+	call := func(auth string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest("POST", "/internal/schedules/limit-resume", strings.NewReader(limitResumeBody(time.Now().Add(time.Hour))))
+		if auth != "" {
+			req.Header.Set("Authorization", "Bearer "+auth)
+		}
+		rec := httptest.NewRecorder()
+		e.mux.ServeHTTP(rec, req)
+		return rec
+	}
+	for name, auth := range map[string]string{"none": "", "garbage": "afs_nope.nope", "other credential": "x." + tok} {
+		if rec := call(auth); rec.Code != http.StatusUnauthorized {
+			t.Errorf("%s: %d, want 401", name, rec.Code)
+		}
+	}
+	rec := call(tok)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("valid token: %d %s", rec.Code, rec.Body.String())
+	}
+	if d := decode[scheduleDTO](t, rec); d.ApprovalPending || !d.Enabled {
+		t.Fatalf("held or disabled: %+v", d)
 	}
 }
