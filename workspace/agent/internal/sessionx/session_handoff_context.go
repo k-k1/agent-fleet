@@ -167,5 +167,18 @@ func HandleSessionHandoffContext(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "no_working_copy", "session has no working copy")
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, buildHandoffContext(m.Dir))
+	c := buildHandoffContext(m.Dir)
+	c.Repo = handoffRepo(m)
+	httpx.WriteJSON(w, http.StatusOK, c)
+}
+
+// handoffRepo is the repo a session's handoff context names: by the place stored at create, so
+// it agrees with the session's own record even after the directory changed (a space's marker
+// removed); a meta from before places were stored is classified from its directory now.
+func handoffRepo(m session.Meta) string {
+	p := m.Place
+	if p == nil {
+		p = PlaceOf(m.Dir)
+	}
+	return repoName(p, m.Dir)
 }

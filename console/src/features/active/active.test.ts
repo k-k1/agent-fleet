@@ -153,6 +153,28 @@ describe("activeGroups", () => {
     ]);
   });
 
+  it("trusts a stored place over the folder name while the working-copy list lags (#5219)", () => {
+    const lagging = [repo("app", { remote: "github.com", remotePath: "acme/app" })];
+    const list = [
+      // a clone of its own whose folder happens to read like a worktree of app
+      s("clone", { repo: "app@notes", place: { kind: "repo", id: "app@notes" } }),
+      // a real worktree of app under a name of its own
+      s("qa", { repo: "qa-copy", place: { kind: "worktree", id: "qa-copy", parent: "app" } }),
+      // a row without a place is still guessed from its name
+      s("legacy", { repo: "app@wip-1" }),
+    ];
+    const groups = activeGroups(list, lagging, spaces, null);
+    expect(groups.map((g) => [g.kind, g.label, names(g.sessions).sort()])).toEqual([
+      ["repo", "app", ["legacy", "qa"]],
+      ["other", "", ["clone"]],
+    ]);
+    const unknown = activeGroups(list, [], spaces, null, new Set(), undefined, false);
+    expect(unknown.map((g) => [g.key, names(g.sessions).sort()])).toEqual([
+      ["c:app", ["legacy", "qa"]],
+      ["c:app@notes", ["clone"]],
+    ]);
+  });
+
   it("names a space by its folder until the list knows it", () => {
     expect(activeGroups([s("sp", { space: "s9" })], [], spaces, null)[0].label).toBe("s9");
   });

@@ -41,8 +41,9 @@ type cleanupCandidate struct {
 	// Repo is the working-copy FOLDER basename under ~/repos ("agent-fleet@wip-sw32vcm"
 	// for a worktree, "agent-fleet" for the clone). Every type carries it — it is what
 	// the Console groups the list by (repo → working copy), so a session candidate has to
-	// name its working copy just like the worktree and branch candidates do. "" for an
-	// orphan pane (no meta ⇒ no known dir).
+	// name its working copy just like the worktree and branch candidates do. A space or home
+	// session names its directory's folder instead (session.FolderLabel). "" for an orphan
+	// pane (no meta ⇒ no known dir).
 	Repo      string `json:"repo,omitempty"`
 	Branch    string `json:"branch,omitempty"`
 	Relation  string `json:"relation,omitempty"` // worktree vs parent: same|contained|unmerged|diverged
@@ -207,7 +208,7 @@ func HandleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, cleanupCandidate{
 			Type: "session", Action: action, ID: m.Name, Display: session.Display(m),
-			Kind: m.Kind, Path: m.Dir, Repo: m.Repo, Safety: safety,
+			Kind: m.Kind, Path: m.Dir, Repo: session.FolderLabel(m), Safety: safety,
 			ReasonKey: reasonKey, Reason: cleanupReasonText(reasonKey),
 		})
 	}

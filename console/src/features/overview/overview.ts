@@ -176,7 +176,10 @@ export function overviewGroups(
   const scoped = sessions.filter((s) => (showStopped || !!s.alive) && (!set || sessionInSet(set, s)));
   const groups = new Map<string, OverviewGroup>();
   for (const s of scoped) {
-    const folder = sessionFolder(s);
+    const own = sessionFolder(s);
+    // A worktree the list has not caught up with groups under the parent its stored place names.
+    const parent = s.place?.kind === "worktree" ? s.place.parent || "" : "";
+    const folder = own && !byFolder.has(own) && parent ? parent : own;
     const id: GroupId = folder ? repoGroupId(folder, byFolder) : { key: NO_REPO_GROUP, label: "", hint: "" };
     const g = groups.get(id.key) || { ...id, sessions: [], alive: 0, total: 0, fold: new Map<string, FoldInfo>() };
     g.sessions.push(s);

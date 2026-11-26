@@ -60,6 +60,13 @@ describe("overviewGroups", () => {
     ]);
   });
 
+  it("groups a worktree the list has not caught up with under the parent its place names (#5219)", () => {
+    const repos = [repo("app", { remote: "github.com", remotePath: "acme/app" })];
+    const list = [s("a", { repo: "app" }), s("qa", { repo: "qa-copy", place: { kind: "worktree", id: "qa-copy", parent: "app" } })];
+    const groups = overviewGroups(list, repos, null, false);
+    expect(groups.map((g) => [g.label, g.sessions.map((x) => x.name).sort()])).toEqual([["app", ["a", "qa"]]]);
+  });
+
   it("counts the running cards per heading", () => {
     const list = [s("a"), s("b", { alive: false })];
     const groups = overviewGroups(list, [], null, true);

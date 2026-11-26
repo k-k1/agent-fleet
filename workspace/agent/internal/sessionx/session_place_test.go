@@ -78,8 +78,21 @@ func TestPlaceOf(t *testing.T) {
 	}
 	// GET /repos lists any folder name, spaces included, so the place does too.
 	gitInit(t, filepath.Join(repos, "team app"))
-	// A symlink entry under ~/repos is skipped by GET /repos and is no repository here either.
+	// A symlink entry under ~/repos is skipped by GET /repos, so it is filed under its target,
+	// and so is a link elsewhere; a link to a directory that is no place stays other.
 	if err := os.Symlink(filepath.Join(repos, "foo"), filepath.Join(repos, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(home, "links"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(repos, "foo@wt"), filepath.Join(home, "links", "foo@wt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(spacex.Root(), "foo"), filepath.Join(home, "links", "space")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "elsewhere"), filepath.Join(home, "links", "plain")); err != nil {
 		t.Fatal(err)
 	}
 	// ~/repos/hop/../foo runs in ~/elsewhere/foo, wherever Clean would fold it lexically.
@@ -145,8 +158,11 @@ func TestPlaceOf(t *testing.T) {
 		{filepath.Join(repos, "foo") + "/.", session.Place{Kind: session.PlaceRepo, ID: "foo"}},
 		{filepath.Join(repos, "foo", "sub") + "/..", session.Place{Kind: session.PlaceRepo, ID: "foo"}},
 		{filepath.Join(repos, "team app"), session.Place{Kind: session.PlaceRepo, ID: "team app"}},
-		{filepath.Join(repos, "alias"), session.Place{Kind: session.PlaceOther}},
-		{filepath.Join(repos, "alias") + "/", session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(repos, "alias"), session.Place{Kind: session.PlaceRepo, ID: "foo"}},
+		{filepath.Join(repos, "alias") + "/", session.Place{Kind: session.PlaceRepo, ID: "foo"}},
+		{filepath.Join(home, "links", "foo@wt"), session.Place{Kind: session.PlaceWorktree, ID: "foo@wt", Parent: "foo"}},
+		{filepath.Join(home, "links", "space"), session.Place{Kind: session.PlaceSpace, ID: "foo"}},
+		{filepath.Join(home, "links", "plain"), session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "hop") + "/../foo", session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(repos, "hop") + "/../foo/.", session.Place{Kind: session.PlaceOther}},
 		{filepath.Join(home, "elsewhere", "back") + "/../team app", session.Place{Kind: session.PlaceRepo, ID: "team app"}},
@@ -392,5 +408,57 @@ func TestHandoffContextNamesNoRepositoryForASpace(t *testing.T) {
 	}
 	if got := buildHandoffContext(other).Repo; got != "app" {
 		t.Errorf("other directory handoff context repo = %q, want its base name", got)
+	}
+
+	// GET handoff-context goes by the place the session stored, not by what the directory
+	// looks like now: with the space's marker gone the session is still the space's.
+	session.WriteMeta(session.Meta{Name: "plhoff", Kind: session.KindShell, Dir: spaceDir, Place: &session.Place{Kind: session.PlaceSpace, ID: "app"}})
+	if err := os.Remove(filepath.Join(spaceDir, spacex.MarkerFile)); err != nil {
+		t.Fatal(err)
+	}
+	rec := callHandler(HandleSessionHandoffContext, http.MethodGet, "plhoff", "")
+	var c handoffContext
+	if err := json.Unmarshal(rec.Body.Bytes(), &c); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("GET handoff-context: %d %v: %s", rec.Code, err, rec.Body)
+	}
+	if c.Repo != "" {
+		t.Errorf("handoff context of a space session whose marker is gone names repo %q", c.Repo)
+	}
+}
+
+// A shared space or home session keeps the folder name the recipient's heading and an inbox
+// attachment show, although its meta records no Repo.
+func TestCatalogNamesASpaceSessionByItsFolder(t *testing.T) {
+	isolateAgentState(t)
+	spaceDir := placeSpace(t, "notes")
+	if got := catalogEntry(session.Meta{Name: "plcat", Kind: session.KindShell, Dir: spaceDir}, false).Repo; got != "notes" {
+		t.Errorf("space catalog repo = %q", got)
+	}
+	if got := catalogEntry(session.Meta{Name: "plcat", Kind: session.KindShell, Dir: spaceDir, Repo: "app"}, false).Repo; got != "app" {
+		t.Errorf("catalog repo with Repo set = %q", got)
+	}
+}
+
+// The cleanup dialog groups a stopped space session under its folder although its meta records
+// no Repo, so same-titled rows of two spaces stay apart.
+func TestCleanupGroupsASpaceSessionByItsFolder(t *testing.T) {
+	isolateAgentState(t)
+	for _, f := range []string{"one", "two"} {
+		session.WriteMeta(session.Meta{Name: "plcl" + f, Kind: session.KindShell, Dir: placeSpace(t, f), Title: "same", Place: &session.Place{Kind: session.PlaceSpace, ID: f}})
+	}
+	rec := httptest.NewRecorder()
+	HandleSessionsCleanup(rec, httptest.NewRequest(http.MethodGet, "/sessions/cleanup", nil))
+	var body struct {
+		Candidates []cleanupCandidate `json:"candidates"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("GET /sessions/cleanup: %d %v: %s", rec.Code, err, rec.Body)
+	}
+	got := map[string]string{}
+	for _, c := range body.Candidates {
+		got[c.ID] = c.Repo
+	}
+	if got["plclone"] != "one" || got["plcltwo"] != "two" {
+		t.Errorf("cleanup repo by session = %v", got)
 	}
 }

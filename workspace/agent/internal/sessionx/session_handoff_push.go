@@ -301,5 +301,6 @@ func HandleSessionHandoffPush(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, perr.status, perr.code, perr.message)
 		return
 	}
+	res.Context.Repo = handoffRepo(m)
 	httpx.WriteJSON(w, http.StatusOK, res)
 }

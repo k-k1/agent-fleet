@@ -370,7 +370,7 @@ func HandleSessionCatalog(w http.ResponseWriter, r *http.Request) {
 // (with the rate-limit reinterpretation) is the one field the catalog needs from it; a stopped
 // one, most of a long history, is read from its meta alone.
 func catalogEntry(m session.Meta, alive bool) session.CatalogEntry {
-	e := session.CatalogEntry{Name: m.Name, Kind: m.Kind, Dir: m.Dir, Repo: m.Repo,
+	e := session.CatalogEntry{Name: m.Name, Kind: m.Kind, Dir: m.Dir, Repo: session.FolderLabel(m),
 		WorkingCopyID: gitx.WorkingCopyID(m.Dir), Title: m.Title, Label: m.Label,
 		CreatedAt: m.CreatedAt, Alive: alive, Archived: m.Archived}
 	if alive {

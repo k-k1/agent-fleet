@@ -18,6 +18,10 @@ import type { usePlanActions } from "./usePlanActions.ts";
 const q = encodeURIComponent;
 
 /** useTranscriptCaps builds what the mirror's transcript may do (TranscriptCaps), memoized. */
+/** The working copy a session's ticket links resolve against: none for a session in a space or
+ *  home, whatever its row's `repo` says. The pending cards read the same. */
+export const ticketRepoOf = (meta: Session | null | undefined): string | null => (meta && sessionRepo(meta)) || null;
+
 export function useTranscriptCaps({
   session,
   sessionMeta,
@@ -91,8 +95,7 @@ export function useTranscriptCaps({
   // Memoized because every turn holds this object: a fresh one per render would re-render the
   // whole conversation on every keystroke in the composer, whatever TranscriptTurn does. So what
   // a block READS while rendering is a dependency here, and what it CALLS goes through actsRef.
-  // The working copy ticket links resolve against: none for a session in a space or home.
-  const metaRepo = (sessionMeta && sessionRepo(sessionMeta)) || null;
+  const metaRepo = ticketRepoOf(sessionMeta);
   const caps: TranscriptCaps = useMemo(
     (): TranscriptCaps => ({
       agentName,

@@ -1,5 +1,5 @@
 import type { Session } from "../../../types/session.ts";
-import { sessionRepo } from "../../../lib/project.ts";
+import { ticketRepoOf } from "./useTranscriptCaps.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { toastSendFailure } from "../../../lib/authExpiredToast.tsx";
 import type { useToast } from "../../../ui/ToastProvider.tsx";
@@ -54,8 +54,7 @@ export function MirrorPendingCards({
   // A kind answered only by id (opencode) gets no Cancel on a card without one: the Terminal Cancel
   // is an Escape, a key into a modal whose keys are unmeasured (registry questionByIdOnly).
   const keysAllowed = !agentOf(sessionMeta?.kind).caps.questionByIdOnly;
-  // The working copy ticket links resolve against: none for a session in a space or home.
-  const metaRepo = (sessionMeta && sessionRepo(sessionMeta)) || null;
+  const metaRepo = ticketRepoOf(sessionMeta);
   return (
     <>
       {carried && (

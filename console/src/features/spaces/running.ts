@@ -21,3 +21,10 @@ export function busySpaces(sessions: Session[]): Set<string> {
   for (const s of sessions) if (runningAgent(s)) out.add(sessionSpace(s));
   return out;
 }
+
+/** Whether s belongs to the space `folder` whose directory is `dir` ("" when unknown): its stored
+ *  place (or, on an older row, the Agent's `space`) names it, or it runs at or under the
+ *  directory, which the Agent settles too when the space is deleted. */
+export function sessionInSpace(s: Session, folder: string, dir: string): boolean {
+  return sessionSpace(s) === folder || (!!dir && !!s.dir && (s.dir === dir || s.dir.startsWith(dir + "/")));
+}

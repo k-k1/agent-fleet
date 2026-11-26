@@ -31,6 +31,7 @@ import { sessionPanes, ordClass } from "../../layout/badges.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { baseName, langFor } from "../../lib/filemeta.ts";
 import type { Session } from "../../types/session.ts";
+import { sessionRepo } from "../../lib/project.ts";
 import type { Assistant } from "../../types/assistant.ts";
 
 // Remember the session the user last sent to, so it's re-selected next time (if it is
@@ -97,7 +98,8 @@ export function SendSelectionModal({
     !!s.alive && agentOf(s.kind).caps.chat && (!s.state || s.state === "idle");
   // Rank alive sessions: same repo first, then waiting for input. Used for both the default
   // selection and the option order.
-  const rank = (s: Session) => (fileRepo && s.repo === fileRepo ? 2 : 0) + (isWaiting(s) ? 1 : 0);
+  const sameRepo = (s: Session) => !!fileRepo && sessionRepo(s) === fileRepo;
+  const rank = (s: Session) => (sameRepo(s) ? 2 : 0) + (isWaiting(s) ? 1 : 0);
   const sortedSessions = useMemo(
     () => sessions.slice().sort((a, b) => rank(b) - rank(a)),
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -248,7 +250,7 @@ export function SendSelectionModal({
                   {sortedSessions.map((s) => (
                     <option key={s.name} value={`session:${s.name}`}>
                       {displayName(s)}（{s.name}{tr("sx.sep")}{stateInfo(s).text}
-                      {fileRepo && s.repo === fileRepo ? tr("send.same_repo") : ""}）
+                      {sameRepo(s) ? tr("send.same_repo") : ""}）
                     </option>
                   ))}
                 </optgroup>
