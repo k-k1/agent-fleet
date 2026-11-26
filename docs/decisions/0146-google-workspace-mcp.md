@@ -196,5 +196,14 @@ install and a wrapper in `af-gcloud-exec`'s shape when MCP is in use and someone
     `registration_endpoint`, and no CIMD.
   - An unauthenticated `tools/list` with `Mcp-Method` answers 200. Without `Mcp-Method` it answers
     `-32020` "Header mismatch".
+- **Measured on 2026-11-26 (#5174),** against a loopback Streamable HTTP server, each CLI run
+  non-interactively:
+  - claude 2.1.332 and opencode 2.4.1 speak 2026-07-28 and declare `elicitation: {form, url}`. Each
+    answered `input_required` by itself, at once, with `action: "cancel"`; nobody was asked. codex
+    0.172.0 speaks 2025-06-18 only and fails the call ("Unexpected response type").
+  - Tool-call limits over HTTP: claude ends the call at 60 s unless `notifications/progress`
+    arrives (progress resets it: 660 s passed with it); codex at 300 s, progress or not; opencode
+    passed 330 s with and without progress. The relay therefore streams progress while a call is
+    held, and declines after 10 minutes.
 - **Not verified:** whether Google accepts or ignores RFC 8707 `resource`; the setup guide's line
   that the Developer Preview Program is required, which may predate GA.

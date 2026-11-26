@@ -238,6 +238,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.mcp_oauth_client_tenant_only": "Only a tenant-distributed server carries a client registered by the tenant.",
   "err.mcp_oauth_scopes_invalid": "Scopes belong only to an OAuth server, each one a single scope without spaces, commas or quotes, and together short enough to fit in 1024 bytes with offline_access added.",
   "err.mcp_oauth_scopes_tenant_only": "Only a tenant-distributed server carries scopes of its own.",
+  "err.mcp_elicitation_unknown": "That way of answering the server's confirmations is not known.",
+  "err.mcp_elicitation_oauth_only": "Agent Fleet can answer a server's confirmations only for a server signed in to with OAuth.",
   "err.mcp_header_secret_reenter": "Enter the header values again: the server URL points at a different host, so the stored values are not carried over.",
   "err.mcp_oauth_secret_reenter": "Enter the client secret again: the issuer or client ID changed, or no secret is stored.",
   "err.mcp_oauth_user_secret": "An OAuth server asks members for no header values. Turn off \"Each member enters the credential\", or choose another authentication.",
