@@ -92,6 +92,16 @@ export function routelessModel(kind: string, model: string): string {
   return !ok || ok(model) ? model : "";
 }
 
+/** The model a quick launch sends. With a route named, `model` as it is. With none, a remembered
+ *  route-only model cannot be sent, and dropping it would leave the launch with no model and no
+ *  route, which a restricted policy refuses: "dialog" opens the launch dialog instead, where a
+ *  model can be chosen. */
+export function quickLaunchModel(kind: string, model: string, hasRoute: boolean): { model: string } | "dialog" {
+  if (hasRoute) return { model };
+  const sent = routelessModel(kind, model);
+  return model && !sent ? "dialog" : { model: sent };
+}
+
 // The system inference profile scopes Claude Code passes through; the Agent's list
 // (routes.BedrockScopes) is the same.
 const BEDROCK_SCOPES = ["us", "eu", "apac", "jp", "au", "us-gov", "global"];

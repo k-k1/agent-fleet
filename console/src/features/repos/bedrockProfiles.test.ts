@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 // The module's hook fetches through the API client, which reads the browser's storage on load.
 vi.mock("../../core/api/client.ts", () => ({ apiJSON: async () => ({}), api: vi.fn() }));
-const { bedrockConnection, bedrockModelOk, markedProfiles, regionOk, routeModelFilter, routeSelectionBody, routelessModel } = await import("./bedrockProfiles.ts");
+const { bedrockConnection, bedrockModelOk, markedProfiles, regionOk, routeModelFilter, routeSelectionBody, routelessModel, quickLaunchModel } = await import("./bedrockProfiles.ts");
 
 describe("bedrockProfiles", () => {
   it("keeps only marked, well-formed profiles", () => {
@@ -88,5 +88,17 @@ describe("routelessModel", () => {
     expect(routelessModel("opencode", "")).toBe("");
     // A kind with no route-only models is untouched.
     expect(routelessModel("codex", "gpt-6-sol")).toBe("gpt-6-sol");
+  });
+});
+
+describe("quickLaunchModel", () => {
+  it("opens the dialog when a remembered route-only model cannot be sent without a route", () => {
+    const bedrock = "amazon-bedrock/anthropic.claude-sonnet-4-6";
+    expect(quickLaunchModel("opencode", bedrock, false)).toBe("dialog");
+    // With a route named the model goes as it is; any other model, and no model, launch.
+    expect(quickLaunchModel("opencode", bedrock, true)).toEqual({ model: bedrock });
+    expect(quickLaunchModel("opencode", "opencode/big-pickle", false)).toEqual({ model: "opencode/big-pickle" });
+    expect(quickLaunchModel("opencode", "", false)).toEqual({ model: "" });
+    expect(quickLaunchModel("codex", "gpt-6-sol", false)).toEqual({ model: "gpt-6-sol" });
   });
 });
