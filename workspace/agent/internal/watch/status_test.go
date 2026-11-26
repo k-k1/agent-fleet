@@ -324,29 +324,30 @@ func TestStatusFloorIsTheSubscribersMoment(t *testing.T) {
 	_ = f
 }
 
-func TestStatusLaterSubscriberGetsNoHistory(t *testing.T) {
+func TestStatusLaterSubscriberKeepsEarlierOnesAndGetsNoHistory(t *testing.T) {
 	s, f := newStatusFake(t)
-	res, _ := s.Resolve(context.Background(), "github:Actions", "")
-	// Monday: a recovered-only watch; incidents.json is never read, so nothing tracks resolutions.
-	cur := s.SeedCursor(nil, res.Seed)
-	_, cur = poll(t, s, res.Subject, cur, EventStatusRecovered)
-	// Tuesday an incident resolves; Wednesday another session watches resolutions of the same subject.
+	// A watches resolutions of Actions from the start.
+	resA, _ := s.Resolve(context.Background(), "github:Actions", "")
+	cur := s.SeedCursor(nil, resA.Seed)
+	if resA.Told != nil {
+		t.Fatalf("nothing resolved yet, Told = %v", resA.Told)
+	}
+	// An incident resolves before A's first poll, and B joins the same subject (recovered only).
 	f.incidents = map[string]any{"incidents": []any{inc("tue", "Tue", "resolved", "2026-11-26T03:30:00Z", "aaa1")}}
 	s.Now = func() time.Time { return time.Date(2026, 11, 26, 5, 0, 0, 0, time.UTC) }
 	f.date.Store("Thu, 26 Nov 2026 05:00:00 GMT")
 	s.pages = nil
-	res2, _ := s.Resolve(context.Background(), "github:Actions", "")
-	cur = s.SeedCursor(cur, res2.Seed)
-	if evs, _ := poll(t, s, res2.Subject, cur, EventStatusIncidentResolved); len(evs) != 0 {
-		t.Fatalf("history reached a later subscriber: %+v", evs)
+	resB, _ := s.Resolve(context.Background(), "github:Actions", "")
+	if got := s.SeedCursor(cur, resB.Seed); string(got) != string(cur) {
+		t.Fatalf("a later subscriber moved the floor: %s", got)
 	}
-	// While resolutions are tracked, a second subscriber keeps the first floor and Seen covers the rest.
-	_, cur = poll(t, s, res2.Subject, cur, EventStatusIncidentResolved)
-	var c1 statusCursor
-	_ = json.Unmarshal(cur, &c1)
-	s.Now = func() time.Time { return time.Date(2026, 11, 26, 5, 1, 0, 0, time.UTC) }
-	if got := s.SeedCursor(cur, res2.Seed); string(got) != string(cur) {
-		t.Fatalf("tracked cursor was reseeded: %s", got)
+	// A is told; B's own Told holds that same version, so the engine drops it for B only.
+	evs, _ := poll(t, s, resA.Subject, cur, EventStatusIncidentResolved)
+	if len(evs) != 1 || evs[0].Version != "tue" {
+		t.Fatalf("the earlier subscriber lost its resolution: %+v", evs)
+	}
+	if resB.Told[EventStatusIncidentResolved] != "tue" {
+		t.Fatalf("history was not marked told for the later subscriber: %v", resB.Told)
 	}
 }
 
@@ -413,6 +414,39 @@ func TestStatusManyResolvedFitTheNoticeAndNoneIsLost(t *testing.T) {
 	}
 }
 
+func TestStatusNoticeBudgetCountsLongURLsAndMultibyteTitles(t *testing.T) {
+	s, f := newStatusFake(t)
+	res, _ := s.Resolve(context.Background(), "github", "")
+	cur := s.SeedCursor(nil, res.Seed)
+	var l []any
+	for i := 0; i < 5; i++ {
+		x := inc(fmt.Sprintf("i%d", i), fmt.Sprintf("障害%d ", i)+strings.Repeat("あ", 120), "resolved", fmt.Sprintf("2026-11-26T03:%02d:00Z", 10+i))
+		x["shortlink"] = "https://stspg.io/" + strings.Repeat("a", 470)
+		l = append(l, x)
+	}
+	f.incidents = map[string]any{"incidents": l}
+	told := map[string]bool{}
+	for round := 0; round < 6; round++ {
+		s.pages = nil
+		s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 30+round*3, 0, 0, time.UTC) }
+		var evs []Event
+		evs, cur = poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
+		if len(evs) == 0 {
+			break
+		}
+		text := Notice(Subscription{ID: "w1", Until: UntilDeadline}, evs[0])
+		for _, d := range evs[0].Data {
+			if !strings.Contains(text, strconv.Quote(CleanText(d.Text, noticeTextMax))) {
+				t.Fatalf("an incident marked told is not in the rendered notice:\n%s", text)
+			}
+			told[d.Text] = true
+		}
+	}
+	if len(told) != 5 {
+		t.Fatalf("%d of 5 incidents were ever shown", len(told))
+	}
+}
+
 func TestStatusBrokenRowsAreNotBelieved(t *testing.T) {
 	s, f := newStatusFake(t)
 	res, _ := s.Resolve(context.Background(), "github", "")
@@ -464,7 +498,7 @@ func TestStatusStarterCancelsLikeAnyWaiter(t *testing.T) {
 	if err != nil || res.Subject == "" {
 		t.Fatalf("%v", err)
 	}
-	if f.hits.Load() != 1 {
+	if f.hits.Load() != 2 { // the cancelled starter's summary, shared, and the incident list
 		t.Fatalf("%d requests", f.hits.Load())
 	}
 	f.delay.Store(0)

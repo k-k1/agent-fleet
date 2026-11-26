@@ -38,10 +38,7 @@ func Notice(sub Subscription, ev Event) string {
 				fmt.Fprintf(&b, "\n- … %d more", len(ev.Data)-i)
 				break
 			}
-			line := "\n- " + strconv.Quote(CleanText(d.Text, noticeTextMax))
-			if u := SafeURL(d.URL); u != "" {
-				line += " " + u
-			}
+			line := dataLine(d)
 			if used+len(line) > noticeDataMax {
 				b.WriteString("\n- …")
 				break
@@ -91,4 +88,14 @@ func SafeURL(u string) string {
 		return ""
 	}
 	return p.String()
+}
+
+// dataLine is how the renderer writes one Data item. A source that must not mark more items as told
+// than a notice shows measures its items with it.
+func dataLine(d DataItem) string {
+	line := "\n- " + strconv.Quote(CleanText(d.Text, noticeTextMax))
+	if u := SafeURL(d.URL); u != "" {
+		line += " " + u
+	}
+	return line
 }

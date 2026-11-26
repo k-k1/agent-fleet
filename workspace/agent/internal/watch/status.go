@@ -74,7 +74,7 @@ const (
 	statusMaxBody     = 4 << 20
 	statusMaxComps    = 8
 	statusDataMax     = 100
-	statusMaxDataItem = 5 // what one notice shows safely under the renderer's 2 KiB cut
+	statusMaxDataItem = 5
 )
 
 // StatusHosts maps each service to the host of its status page. Documented in the guide, because
@@ -413,7 +413,19 @@ func (s *Status) Resolve(ctx context.Context, ref, _ string) (Resolved, error) {
 		return Resolved{}, &ErrRefused{"that reference is too long"}
 	}
 	seed, _ := json.Marshal(statusCursor{FloorMs: floor})
-	return Resolved{Subject: SubjectID(subj), URL: SafeURL("https://" + StatusHosts[r.service]), Seed: seed}, nil
+	res := Resolved{Subject: SubjectID(subj), URL: SafeURL("https://" + StatusHosts[r.service]), Seed: seed}
+	// What is already resolved is history for this subscription: the newest listed resolution that
+	// the watch would count is told, so the engine suppresses it for this subscription only. The
+	// shared cursor cannot do this per subscriber. A list that cannot be read now leaves it out;
+	// that watch then may be told one old resolution, never miss a new one.
+	if pr, err := s.fetch(ctx, r.service, "/api/v2/incidents.json", validIncidents); err == nil {
+		var list spIncidents
+		_ = json.Unmarshal(pr.body, &list)
+		if id := newestResolvedID(list.Incidents, ids); id != "" {
+			res.Told = map[string]string{EventStatusIncidentResolved: id}
+		}
+	}
+	return res, nil
 }
 
 // SeedCursor keeps the floor of the first subscription of a subject: the cursor is shared, and a
@@ -424,17 +436,49 @@ func (s *Status) SeedCursor(cursor, seed json.RawMessage) json.RawMessage {
 	if len(cursor) > 0 {
 		_ = json.Unmarshal(cursor, &c)
 	}
-	// While incidents.json is being read for this subject, Seen covers everything told, so the
-	// first floor stays. Otherwise nobody tracked resolutions since then and the new
-	// subscriber's own moment is the boundary: an incident resolved while nobody watched is history.
-	if c.FloorMs > 0 && c.ResAt > 0 && s.now().UnixMilli()-c.ResAt < statusResFresh.Milliseconds() {
+	// The first floor stays whatever later subscribers do: moving it up would erase a resolution
+	// that an earlier subscription has not been told yet. A later subscriber is kept from history
+	// by its own Told (see Resolve), not by the shared cursor.
+	if c.FloorMs > 0 {
 		return cursor
 	}
 	var sd statusCursor
 	_ = json.Unmarshal(seed, &sd)
-	c.FloorMs, c.ResAt, c.Seen = sd.FloorMs, 0, nil
+	c.FloorMs = sd.FloorMs
 	out, _ := json.Marshal(c)
 	return out
+}
+
+// newestResolvedID is the id of the newest resolved incident that names a watched component (any,
+// for the whole page), "" when there is none.
+func newestResolvedID(list []spIncident, ids []string) string {
+	var best string
+	var bestMs int64
+	for _, inc := range list {
+		if !statusIDRE.MatchString(inc.ID) || !isResolvedStatus(inc.Status) {
+			continue
+		}
+		t, err := time.Parse(time.RFC3339, inc.ResolvedAt)
+		if err != nil {
+			continue
+		}
+		if len(ids) > 0 {
+			hit := false
+			for _, ic := range inc.Components {
+				if slices.Contains(ids, ic.ID) {
+					hit = true
+					break
+				}
+			}
+			if !hit {
+				continue
+			}
+		}
+		if ms := t.UnixMilli(); best == "" || ms > bestMs || ms == bestMs && inc.ID > best {
+			best, bestMs = inc.ID, ms
+		}
+	}
+	return best
 }
 
 func findComponent(list []spComponent, name string) (spComponent, bool) {
@@ -470,10 +514,7 @@ type statusSeen struct {
 }
 
 type statusCursor struct {
-	FloorMs int64 `json:"floor_ms,omitempty"`
-	// ResAt is when incidents.json was last read for this subject: Seen is only a trustworthy
-	// record of what was told while someone keeps reading it.
-	ResAt   int64        `json:"res_at,omitempty"`
+	FloorMs int64        `json:"floor_ms,omitempty"`
 	Seen    []statusSeen `json:"seen,omitempty"`
 	RecGen  int          `json:"rec_gen,omitempty"`
 	RecHold bool         `json:"rec_hold,omitempty"`
@@ -709,7 +750,7 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 			continue
 		}
 		t, err := time.Parse(time.RFC3339, inc.ResolvedAt)
-		if err != nil || t.UnixMilli() <= cur.FloorMs {
+		if err != nil || t.UnixMilli() <= max(cur.FloorMs, at.Add(-statusSeenKeep).UnixMilli()) {
 			continue
 		}
 		if len(ids) > 0 {
@@ -726,7 +767,6 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 		}
 		cands = append(cands, cand{inc, t.UnixMilli()})
 	}
-	cur.ResAt = at.UnixMilli()
 	// Told incidents are remembered by their resolution time, whether or not the provider keeps
 	// listing them.
 	cutoff := at.Add(-statusSeenKeep).UnixMilli()
@@ -749,22 +789,28 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 	// A notice carries a few details (the renderer cuts at 2 KiB). The ones that do not fit are
 	// not marked as told: the next read reports them, so none is lost to the cut.
 	total := len(cands)
-	if len(cands) > statusMaxDataItem {
-		cands = cands[:statusMaxDataItem]
-	}
 	var data []DataItem
+	used, shown := 0, 0
 	for _, c := range cands {
-		data = append(data, DataItem{Text: CleanText(fmt.Sprintf("Incident: %s (status: %s)", c.inc.Name, c.inc.Status), statusDataMax), URL: SafeURL(c.inc.Shortlink)})
+		d := DataItem{Text: CleanText(fmt.Sprintf("Incident: %s (status: %s)", c.inc.Name, c.inc.Status), statusDataMax), URL: SafeURL(c.inc.Shortlink)}
+		n := len(dataLine(d))
+		if shown > 0 && (shown >= noticeItemsMax || used+n > noticeDataMax) {
+			break
+		}
+		used += n
+		shown++
+		data = append(data, d)
 		cur.Seen = append(cur.Seen, statusSeen{ID: c.inc.ID, Ms: c.ms})
 	}
+	cands = cands[:shown]
 	if len(cur.Seen) > statusSeenMax {
 		cur.Seen = cur.Seen[len(cur.Seen)-statusSeenMax:]
 	}
 	summary := fmt.Sprintf("%s status: an incident was resolved.", service)
 	if total > 1 {
-		summary = fmt.Sprintf("%s status: %d incidents were resolved.", service, len(cands))
+		summary = fmt.Sprintf("%s status: %d incidents were resolved.", service, total)
 		if total > len(cands) {
-			summary = fmt.Sprintf("%s status: %d incidents were resolved (%d more follow).", service, len(cands), total-len(cands))
+			summary = fmt.Sprintf("%s status: %d incidents were resolved (%d more not shown).", service, total, total-len(cands))
 		}
 	}
 	return &Event{Source: StatusKind, Subject: subject, Type: EventStatusIncidentResolved, Version: cands[0].inc.ID, At: at, Summary: summary, Data: data}
