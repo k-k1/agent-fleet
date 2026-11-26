@@ -2,13 +2,12 @@ package watch
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -23,10 +22,11 @@ import (
 // Ref: "<service>[:<component>[,<component>…]]" with service one of github, bitbucket, jira,
 // confluence. Without components the whole page is meant. Subject:
 //
-//	status:<service>/after/<floor unix>[/c/<component id>-<component id>…]
+//	status:<service>[/c/<component id>-<component id>…]
 //
 // The component IDs, not the names, are in the subject: they are header-token safe and short. The
-// floor is the page's own clock when the watch was made; it only matters for incident.resolved.
+// subject carries no time, so the same call made again is the same watch; the floor of
+// incident.resolved lives in the cursor (Resolved.Seed).
 //
 // The three types follow the engine's level rule (a source reports what holds now):
 //
@@ -34,11 +34,11 @@ import (
 //	                          one of them (whole page: no open incident at all)
 //	status.degraded           a watched component is not operational
 //	status.incident.resolved  an incident that names a watched component was resolved after the
-//	                          watch was made; history is never told, because the summary lists
-//	                          open incidents only and an old resolved one is not "news"
+//	                          watch was made; history is never told, because an old resolved
+//	                          incident is not "news"
 //
-// One page is read at most once per statusPageTTL whatever the number of watches on it: reads go
-// through pageCache, keyed by URL. Incident titles and statuses and component names are third-party
+// One URL is read at most once per statusPageTTL whatever the number of watches on it, and callers
+// that ask at the same time share one request (fetch). Incident titles and statuses and component names are third-party
 // text and only ever appear in Data (rule 6.5).
 
 // Event types of the status source.
@@ -59,7 +59,10 @@ const (
 	// statusPageTTL is how long one answer is shared between subjects of the same page. It is
 	// shorter than statusPollAfter, so each poll cycle sees a fresh page, and longer than the
 	// spread of the subjects of one cycle, so they share it.
-	statusPageTTL     = 2 * time.Minute
+	statusPageTTL = 2 * time.Minute
+	// statusFailTTL keeps a failed read for a short while, so six subjects of one dead page cost one
+	// timeout and not six.
+	statusFailTTL     = 30 * time.Second
 	statusMaxBody     = 4 << 20
 	statusMaxComps    = 8
 	statusDataMax     = 200
@@ -79,7 +82,7 @@ var statusAliases = map[string]string{"jira-software": "jira", "githubstatus": "
 
 var (
 	statusRefRE  = regexp.MustCompile(`^([A-Za-z-]{1,20})(?::(.*))?$`)
-	statusSubjRE = regexp.MustCompile(`^status:([a-z]{1,20})/after/([0-9]{1,12})(?:/c/([A-Za-z0-9]{1,40}(?:-[A-Za-z0-9]{1,40})*))?$`)
+	statusSubjRE = regexp.MustCompile(`^status:([a-z]{1,20})(?:/c/([A-Za-z0-9]{1,40}(?:-[A-Za-z0-9]{1,40})*))?$`)
 	statusIDRE   = regexp.MustCompile(`^[A-Za-z0-9]{1,40}$`)
 )
 
@@ -168,6 +171,15 @@ type pageEntry struct {
 	at   time.Time
 	body []byte
 	date int64
+	err  error
+}
+
+// pageRead is one answer of fetch. Fresh is true when this call (or a call that ran at the same
+// time) went to the network, so Date is the provider's clock now and not a cache's age ago.
+type pageRead struct {
+	body  []byte
+	date  int64
+	fresh bool
 }
 
 // Status is the status-page source. Base maps a service to a base URL for tests; Now is
@@ -177,8 +189,9 @@ type Status struct {
 	Base   map[string]string
 	Now    func() time.Time
 
-	mu    sync.Mutex
-	pages map[string]pageEntry
+	mu       sync.Mutex
+	pages    map[string]pageEntry
+	inflight map[string]chan struct{}
 }
 
 // NewStatus returns the status source.
@@ -208,59 +221,124 @@ func (s *Status) base(service string) string {
 	return "https://" + StatusHosts[service]
 }
 
-// fetch returns the body of one API path, shared for statusPageTTL. The lock is held across the
-// read on purpose: subjects of one page that are due together then make one request, not one each.
-// A failed read is not cached.
-func (s *Status) fetch(ctx context.Context, service, path string) (body []byte, date int64, status int, err error) {
+// fetch returns the body of one API path, shared per URL: a fresh answer, or a recent failure, is
+// reused for statusPageTTL / statusFailTTL, and subjects that ask for one URL at the same time wait
+// for one request. A slow page therefore holds up only the callers of that URL, and a caller whose
+// context ends stops waiting. The read itself is detached from the first caller's context, so one
+// cancelled caller cannot fail the others. A body is cached only after valid accepted it, so a
+// truncated or empty 200 is neither believed nor remembered.
+func (s *Status) fetch(ctx context.Context, service, path string, valid func([]byte) error) (pageRead, error) {
 	url := s.base(service) + path
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if e, ok := s.pages[url]; ok && s.now().Sub(e.at) < statusPageTTL {
-		return e.body, e.date, http.StatusOK, nil
+	for {
+		s.mu.Lock()
+		if e, ok := s.pages[url]; ok {
+			age := s.now().Sub(e.at)
+			if e.err == nil && age < statusPageTTL {
+				s.mu.Unlock()
+				return pageRead{body: e.body, date: e.date}, nil
+			}
+			if e.err != nil && age < statusFailTTL {
+				s.mu.Unlock()
+				return pageRead{}, e.err
+			}
+		}
+		if ch, ok := s.inflight[url]; ok {
+			s.mu.Unlock()
+			select {
+			case <-ch:
+				continue
+			case <-ctx.Done():
+				return pageRead{}, ctx.Err()
+			}
+		}
+		ch := make(chan struct{})
+		if s.inflight == nil {
+			s.inflight = map[string]chan struct{}{}
+		}
+		s.inflight[url] = ch
+		s.mu.Unlock()
+
+		b, date, err := s.read(context.WithoutCancel(ctx), service, url, valid)
+
+		s.mu.Lock()
+		if s.pages == nil {
+			s.pages = map[string]pageEntry{}
+		}
+		s.pages[url] = pageEntry{at: s.now(), body: b, date: date, err: err}
+		delete(s.inflight, url)
+		s.mu.Unlock()
+		close(ch)
+		if err != nil {
+			return pageRead{}, err
+		}
+		return pageRead{body: b, date: date, fresh: true}, nil
 	}
+}
+
+func (s *Status) read(ctx context.Context, service, url string, valid func([]byte) error) ([]byte, int64, error) {
+	host := StatusHosts[service]
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, err
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "agent-fleet")
 	resp, err := s.Client.Do(req)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("status page %s unreachable: %w", StatusHosts[service], err)
+		return nil, 0, fmt.Errorf("status page %s unreachable", host)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
-		return nil, 0, resp.StatusCode, nil
+		return nil, 0, fmt.Errorf("status page %s answered %d", host, resp.StatusCode)
 	}
-	b, err := io.ReadAll(io.LimitReader(resp.Body, statusMaxBody))
+	b, err := io.ReadAll(io.LimitReader(resp.Body, statusMaxBody+1))
 	if err != nil {
-		return nil, 0, 0, err
+		return nil, 0, fmt.Errorf("status page %s: read failed", host)
+	}
+	if len(b) > statusMaxBody {
+		return nil, 0, fmt.Errorf("status page %s: answer too large", host)
+	}
+	if err := valid(b); err != nil {
+		return nil, 0, fmt.Errorf("status page %s: %v", host, err)
 	}
 	var d int64
 	if t, err := http.ParseTime(resp.Header.Get("Date")); err == nil {
 		d = t.Unix()
 	}
-	if s.pages == nil {
-		s.pages = map[string]pageEntry{}
-	}
-	s.pages[url] = pageEntry{at: s.now(), body: b, date: d}
-	return b, d, http.StatusOK, nil
+	return b, d, nil
 }
 
-func (s *Status) summary(ctx context.Context, service string) (spSummary, int64, error) {
-	b, date, status, err := s.fetch(ctx, service, "/api/v2/summary.json")
-	if err != nil {
-		return spSummary{}, 0, err
-	}
-	if status != http.StatusOK {
-		return spSummary{}, 0, fmt.Errorf("status page %s answered %d", StatusHosts[service], status)
-	}
+func validSummary(b []byte) error {
 	var sum spSummary
 	if err := json.Unmarshal(b, &sum); err != nil {
-		return spSummary{}, 0, fmt.Errorf("status page %s: unreadable answer", StatusHosts[service])
+		return fmt.Errorf("unreadable answer")
 	}
-	return sum, date, nil
+	if sum.Components == nil || sum.Incidents == nil {
+		return fmt.Errorf("incomplete answer")
+	}
+	return nil
+}
+
+func validIncidents(b []byte) error {
+	var l spIncidents
+	if err := json.Unmarshal(b, &l); err != nil {
+		return fmt.Errorf("unreadable answer")
+	}
+	if l.Incidents == nil {
+		return fmt.Errorf("incomplete answer")
+	}
+	return nil
+}
+
+func (s *Status) summary(ctx context.Context, service string) (spSummary, pageRead, error) {
+	pr, err := s.fetch(ctx, service, "/api/v2/summary.json", validSummary)
+	if err != nil {
+		return spSummary{}, pageRead{}, err
+	}
+	var sum spSummary
+	_ = json.Unmarshal(pr.body, &sum)
+	return sum, pr, nil
 }
 
 func (s *Status) Resolve(ctx context.Context, ref, _ string) (Resolved, error) {
@@ -268,21 +346,28 @@ func (s *Status) Resolve(ctx context.Context, ref, _ string) (Resolved, error) {
 	if err != nil {
 		return Resolved{}, err
 	}
-	sum, date, err := s.summary(ctx, r.service)
+	sum, pr, err := s.summary(ctx, r.service)
 	if err != nil {
 		return Resolved{}, err
 	}
-	if date == 0 {
-		date = s.now().Unix()
+	// The floor for incident.resolved is the subscriber's own moment. The provider's Date is used
+	// only for a read that really happened now: a cached answer's Date is up to statusPageTTL old
+	// and would make an incident resolved just before the watch count as new. Without a Date the
+	// Agent's clock stands in (a skewed clock moves the boundary by the skew, nothing else).
+	floor := s.now().UnixMilli()
+	if pr.fresh && pr.date > 0 {
+		floor = pr.date * 1000
 	}
 	var ids []string
 	for _, name := range r.comps {
 		c, ok := findComponent(sum.Components, name)
 		if !ok {
-			return Resolved{}, &ErrRefused{fmt.Sprintf("%s has no component %s; it lists %s", r.service, quoteShort(name), componentNames(sum.Components))}
+			// Fixed text on purpose: the page's own component names are third-party text and a
+			// refusal reaches the model unquoted.
+			return Resolved{}, &ErrRefused{fmt.Sprintf("the %s status page has no component named %s; use a component name exactly as the status page shows it", r.service, quoteShort(name))}
 		}
 		if c.Group {
-			return Resolved{}, &ErrRefused{fmt.Sprintf("%s is a group of components; name the components inside it", quoteShort(c.Name))}
+			return Resolved{}, &ErrRefused{fmt.Sprintf("%s is a group of components; name a component inside it", quoteShort(name))}
 		}
 		if !statusIDRE.MatchString(c.ID) {
 			return Resolved{}, &ErrRefused{"that component cannot be watched"}
@@ -290,14 +375,33 @@ func (s *Status) Resolve(ctx context.Context, ref, _ string) (Resolved, error) {
 		ids = append(ids, c.ID)
 	}
 	sort.Strings(ids)
-	subj := fmt.Sprintf("status:%s/after/%d", r.service, date)
+	subj := "status:" + r.service
 	if len(ids) > 0 {
-		subj += "/c/" + strings.Join(ids, "-")
+		subj += "/c/" + strings.Join(slices.Compact(ids), "-")
 	}
 	if !TokenOK(subj) {
 		return Resolved{}, &ErrRefused{"that reference is too long"}
 	}
-	return Resolved{Subject: SubjectID(subj), URL: SafeURL("https://" + StatusHosts[r.service])}, nil
+	seed, _ := json.Marshal(statusCursor{FloorMs: floor})
+	return Resolved{Subject: SubjectID(subj), URL: SafeURL("https://" + StatusHosts[r.service]), Seed: seed}, nil
+}
+
+// SeedCursor keeps the floor of the first subscription of a subject: the cursor is shared, and a
+// later subscriber must not move the boundary up past an incident the first one is waiting for.
+// Incidents already told are in Seen, so a later subscriber does not get history either.
+func (s *Status) SeedCursor(cursor, seed json.RawMessage) json.RawMessage {
+	var c statusCursor
+	if len(cursor) > 0 {
+		_ = json.Unmarshal(cursor, &c)
+	}
+	if c.FloorMs > 0 {
+		return cursor
+	}
+	var sd statusCursor
+	_ = json.Unmarshal(seed, &sd)
+	c.FloorMs = sd.FloorMs
+	out, _ := json.Marshal(c)
+	return out
 }
 
 func findComponent(list []spComponent, name string) (spComponent, bool) {
@@ -307,17 +411,6 @@ func findComponent(list []spComponent, name string) (spComponent, bool) {
 		}
 	}
 	return spComponent{}, false
-}
-
-func componentNames(list []spComponent) string {
-	var names []string
-	for _, c := range list {
-		names = append(names, CleanText(c.Name, 40))
-	}
-	if len(names) > 30 {
-		names = append(names[:30], "…")
-	}
-	return strings.Join(names, ", ")
 }
 
 func wantsStatus(want []string, typ string) bool {
@@ -332,11 +425,17 @@ func wantsStatus(want []string, typ string) bool {
 	return false
 }
 
-// statusCursor remembers the newest resolved incident already told, so an edit of an older one
-// (or a re-ordered list) cannot make it the best candidate again.
+// statusCursor is what a subject keeps between reads. The generations make the versions of the
+// level events: a level that comes back after it went away is a new version, and a level that
+// merely stays is the same one, whatever the page's timestamps do. Seen holds the resolved
+// incidents already reported (pruned to the ones the provider still lists).
 type statusCursor struct {
-	MarkAt int64  `json:"mark_at,omitempty"`
-	MarkID string `json:"mark_id,omitempty"`
+	FloorMs int64    `json:"floor_ms,omitempty"`
+	Seen    []string `json:"seen,omitempty"`
+	RecGen  int      `json:"rec_gen,omitempty"`
+	RecHold bool     `json:"rec_hold,omitempty"`
+	DegGen  int      `json:"deg_gen,omitempty"`
+	DegSig  string   `json:"deg_sig,omitempty"`
 }
 
 func (s *Status) Poll(ctx context.Context, subject SubjectID, raw json.RawMessage, want []string) ([]Event, json.RawMessage, Hint, error) {
@@ -344,59 +443,68 @@ func (s *Status) Poll(ctx context.Context, subject SubjectID, raw json.RawMessag
 	if m == nil {
 		return nil, raw, Hint{}, fmt.Errorf("not a status subject: %s", subject)
 	}
-	service, floor := m[1], atoi64(m[2])
+	service := m[1]
 	if _, ok := StatusHosts[service]; !ok {
 		return nil, raw, Hint{}, fmt.Errorf("not a status subject: %s", subject)
 	}
 	var ids []string
-	if m[3] != "" {
-		ids = strings.Split(m[3], "-")
+	if m[2] != "" {
+		ids = strings.Split(m[2], "-")
 	}
 	var cur statusCursor
 	if len(raw) > 0 {
 		_ = json.Unmarshal(raw, &cur)
 	}
-	hint := Hint{After: statusPollAfter}
-	var evs []Event
 	at := s.now().UTC()
+	if cur.FloorMs == 0 {
+		cur.FloorMs = at.UnixMilli()
+	}
+	wantRec, wantDeg, wantRes := wantsStatus(want, EventStatusRecovered), wantsStatus(want, EventStatusDegraded), wantsStatus(want, EventStatusIncidentResolved)
+	var evs []Event
+	var firstErr error
+	answered := 0
 
-	if wantsStatus(want, EventStatusRecovered) || wantsStatus(want, EventStatusDegraded) {
+	// The two endpoints are independent: a failure of one must not drop what the other settled.
+	// A named component is checked against the summary whatever the types are, so a watch that
+	// asks only for resolved incidents still ends when its component is gone.
+	if wantRec || wantDeg || len(ids) > 0 {
 		sum, _, err := s.summary(ctx, service)
 		if err != nil {
-			return nil, raw, Hint{}, err
+			firstErr = err
+		} else {
+			answered++
+			watched, err := selectComponents(sum.Components, ids)
+			if err != nil {
+				return nil, raw, Hint{}, err
+			}
+			open := openIncidents(sum.Incidents)
+			evs = append(evs, statusLevelEvents(service, subject, watched, open, len(ids) == 0, at, &cur, wantRec, wantDeg)...)
 		}
-		watched, err := selectComponents(sum.Components, ids)
-		if err != nil {
-			return nil, raw, Hint{}, err
-		}
-		open := matchingIncidents(sum.Incidents, watched, len(ids) == 0)
-		evs = append(evs, statusLevelEvents(service, subject, watched, open, len(ids) == 0, at)...)
 	}
-	if wantsStatus(want, EventStatusIncidentResolved) {
-		b, _, status, err := s.fetch(ctx, service, "/api/v2/incidents.json")
+	if wantRes {
+		pr, err := s.fetch(ctx, service, "/api/v2/incidents.json", validIncidents)
 		if err != nil {
-			return nil, raw, Hint{}, err
+			if firstErr == nil {
+				firstErr = err
+			}
+		} else {
+			answered++
+			var list spIncidents
+			_ = json.Unmarshal(pr.body, &list)
+			if ev := resolvedIncidentEvent(service, subject, list.Incidents, ids, at, &cur); ev != nil {
+				evs = append(evs, *ev)
+			}
 		}
-		if status != http.StatusOK {
-			return nil, raw, Hint{}, fmt.Errorf("status page %s answered %d", StatusHosts[service], status)
-		}
-		var list spIncidents
-		if err := json.Unmarshal(b, &list); err != nil {
-			return nil, raw, Hint{}, fmt.Errorf("status page %s: unreadable answer", StatusHosts[service])
-		}
-		var ev *Event
-		ev, cur = resolvedIncidentEvent(service, subject, list.Incidents, ids, floor, cur, at)
-		if ev != nil {
-			evs = append(evs, *ev)
-		}
+	}
+	if answered == 0 && firstErr != nil {
+		return nil, raw, Hint{}, firstErr
 	}
 	out, _ := json.Marshal(cur)
-	return evs, out, hint, nil
+	return evs, out, Hint{After: statusPollAfter}, nil
 }
 
-// selectComponents is the watched set: the named components, or every non-group component of the
-// page. A named component that vanished from the page ends the watch's meaning, so it is an error
-// the engine keeps retrying and then reports, not a silent "recovered".
+// selectComponents is the watched set: the named components, or every leaf (non-group) component
+// of the page. A named component that vanished from the page ends the watch's meaning: ErrGone.
 func selectComponents(all []spComponent, ids []string) ([]spComponent, error) {
 	var out []spComponent
 	if len(ids) == 0 {
@@ -437,15 +545,13 @@ func incidentNames(inc spIncident, watched []spComponent) bool {
 	return false
 }
 
-// matchingIncidents are the open incidents that count for the watch: any open incident for a
-// whole-page watch, one that names a watched component otherwise.
-func matchingIncidents(all []spIncident, watched []spComponent, whole bool) []spIncident {
+// openIncidents are the unresolved incidents of a page, with the components each names. Whether
+// one counts is decided by the watch: any of them for the whole page (an incident that names no
+// component included), one that names a watched component otherwise.
+func openIncidents(all []spIncident) []spIncident {
 	var out []spIncident
 	for _, inc := range all {
-		if isResolvedStatus(inc.Status) {
-			continue
-		}
-		if whole || incidentNames(inc, watched) {
+		if !isResolvedStatus(inc.Status) {
 			out = append(out, inc)
 		}
 	}
@@ -454,24 +560,24 @@ func matchingIncidents(all []spIncident, watched []spComponent, whole bool) []sp
 
 func isResolvedStatus(s string) bool { return s == "resolved" || s == "postmortem" }
 
-// statusLevelEvents builds the recovered / degraded conditions that hold now. The version of a
-// degraded state carries the newest update time of the components behind it and a hash of their
-// statuses, so a change of state is news and the same state after a recovery in between is too
-// (the update time moved). Recovered is versioned by the newest update time alone.
-func statusLevelEvents(service string, subject SubjectID, watched []spComponent, open []spIncident, whole bool, at time.Time) []Event {
+// statusLevelEvents builds the recovered / degraded conditions that hold now and advances the
+// generations in cur. Recovered counts when no watched component is broken and no counted open
+// incident exists; degraded when one is broken, identified by the sorted (id, status) pairs, so
+// the order of the page and unrelated timestamp updates change nothing.
+func statusLevelEvents(service string, subject SubjectID, watched []spComponent, open []spIncident, whole bool, at time.Time, cur *statusCursor, wantRec, wantDeg bool) []Event {
 	var bad []spComponent
-	var newest, newestBad int64
-	h := sha256.New()
+	var sig []string
 	for _, c := range watched {
-		if u := c.updated(); u > newest {
-			newest = u
-		}
 		if c.Status != "operational" {
 			bad = append(bad, c)
-			if u := c.updated(); u > newestBad {
-				newestBad = u
-			}
-			fmt.Fprintf(h, "%s=%s;", c.ID, c.Status)
+			sig = append(sig, c.ID+"="+c.Status)
+		}
+	}
+	sort.Strings(sig)
+	var counted []spIncident
+	for _, inc := range open {
+		if whole || incidentNames(inc, watched) {
+			counted = append(counted, inc)
 		}
 	}
 	scope := "watched components"
@@ -488,7 +594,7 @@ func statusLevelEvents(service string, subject SubjectID, watched []spComponent,
 				d = append(d, DataItem{Text: CleanText(fmt.Sprintf("Component: %s — %s", c.Name, c.Status), statusDataMax)})
 			}
 		}
-		for _, inc := range open {
+		for _, inc := range counted {
 			if len(d) >= statusMaxDataItem {
 				break
 			}
@@ -496,45 +602,64 @@ func statusLevelEvents(service string, subject SubjectID, watched []spComponent,
 		}
 		return d
 	}
-	if len(bad) > 0 {
-		v := fmt.Sprintf("%d-%s", newestBad, hex.EncodeToString(h.Sum(nil))[:8])
-		return []Event{{
-			Source: StatusKind, Subject: subject, Type: EventStatusDegraded, Version: v, At: at,
-			Summary: fmt.Sprintf("%s status: %d of %d %s not operational.", service, len(bad), len(watched), scope),
-			Data:    data(true),
-		}}
+	var evs []Event
+	if wantDeg {
+		joined := strings.Join(sig, ";")
+		if joined != "" && joined != cur.DegSig {
+			cur.DegGen++
+		}
+		cur.DegSig = joined
+		if len(bad) > 0 {
+			evs = append(evs, Event{
+				Source: StatusKind, Subject: subject, Type: EventStatusDegraded, Version: fmt.Sprintf("d%d", cur.DegGen), At: at,
+				Summary: fmt.Sprintf("%s status: %d of %d %s not operational.", service, len(bad), len(watched), scope),
+				Data:    data(true),
+			})
+		}
 	}
-	if len(open) == 0 {
-		return []Event{{
-			Source: StatusKind, Subject: subject, Type: EventStatusRecovered, Version: fmt.Sprintf("%d", newest), At: at,
-			Summary: fmt.Sprintf("%s status: all %d %s operational and no open incident.", service, len(watched), scope),
-		}}
+	if wantRec {
+		holds := len(bad) == 0 && len(counted) == 0
+		if holds && !cur.RecHold {
+			cur.RecGen++
+		}
+		cur.RecHold = holds
+		if holds {
+			evs = append(evs, Event{
+				Source: StatusKind, Subject: subject, Type: EventStatusRecovered, Version: fmt.Sprintf("r%d", cur.RecGen), At: at,
+				Summary: fmt.Sprintf("%s status: all %d %s operational and no open incident.", service, len(watched), scope),
+			})
+		}
 	}
-	return nil
+	return evs
 }
 
-// resolvedIncidentEvent picks the newest incident resolved after the floor and after the cursor's
-// mark that names a watched component (any incident, for a whole-page watch), and moves the mark.
-func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident, ids []string, floor int64, cur statusCursor, at time.Time) (*Event, statusCursor) {
-	var best *spIncident
-	var bestAt int64
-	for i := range list {
-		inc := &list[i]
-		if !isResolvedStatus(inc.Status) {
+// resolvedIncidentEvent reports the incidents resolved after the floor that are not in Seen yet
+// and name a watched component (any, for the whole page). The version is the newest one's id and
+// the others ride along as data, because the engine keeps one pending event per type: two
+// incidents that first show up in one read are one notice, not one lost.
+func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident, ids []string, at time.Time, cur *statusCursor) *Event {
+	type cand struct {
+		inc spIncident
+		ms  int64
+	}
+	var cands []cand
+	listed := map[string]bool{}
+	for _, inc := range list {
+		if !statusIDRE.MatchString(inc.ID) {
+			continue // one broken entry must not hide the others
+		}
+		listed[inc.ID] = true
+		if !isResolvedStatus(inc.Status) || slices.Contains(cur.Seen, inc.ID) {
 			continue
 		}
 		t, err := time.Parse(time.RFC3339, inc.ResolvedAt)
-		if err != nil {
-			continue
-		}
-		u := t.Unix()
-		if u <= floor || u < cur.MarkAt || u == cur.MarkAt && inc.ID <= cur.MarkID {
+		if err != nil || t.UnixMilli() <= cur.FloorMs {
 			continue
 		}
 		if len(ids) > 0 {
 			hit := false
 			for _, ic := range inc.Components {
-				if slicesContains(ids, ic.ID) {
+				if slices.Contains(ids, ic.ID) {
 					hit = true
 					break
 				}
@@ -543,26 +668,38 @@ func resolvedIncidentEvent(service string, subject SubjectID, list []spIncident,
 				continue
 			}
 		}
-		if best == nil || u > bestAt || u == bestAt && inc.ID > best.ID {
-			best, bestAt = inc, u
+		cands = append(cands, cand{inc, t.UnixMilli()})
+	}
+	// Seen keeps only what the provider still lists, plus what is reported now.
+	var seen []string
+	for _, id := range cur.Seen {
+		if listed[id] {
+			seen = append(seen, id)
 		}
 	}
-	if best == nil || !statusIDRE.MatchString(best.ID) {
-		return nil, cur
+	for _, c := range cands {
+		seen = append(seen, c.inc.ID)
 	}
-	cur.MarkAt, cur.MarkID = bestAt, best.ID
-	return &Event{
-		Source: StatusKind, Subject: subject, Type: EventStatusIncidentResolved, Version: best.ID, At: at,
-		Summary: fmt.Sprintf("%s status: an incident was resolved.", service),
-		Data:    []DataItem{{Text: CleanText(fmt.Sprintf("Incident: %s (status: %s)", best.Name, best.Status), statusDataMax), URL: SafeURL(best.Shortlink)}},
-	}, cur
-}
-
-func slicesContains(list []string, s string) bool {
-	for _, x := range list {
-		if x == s {
-			return true
+	cur.Seen = seen
+	if len(cands) == 0 {
+		return nil
+	}
+	sort.Slice(cands, func(i, j int) bool {
+		if cands[i].ms != cands[j].ms {
+			return cands[i].ms > cands[j].ms
 		}
+		return cands[i].inc.ID > cands[j].inc.ID
+	})
+	var data []DataItem
+	for i, c := range cands {
+		if i >= statusMaxDataItem {
+			break
+		}
+		data = append(data, DataItem{Text: CleanText(fmt.Sprintf("Incident: %s (status: %s)", c.inc.Name, c.inc.Status), statusDataMax), URL: SafeURL(c.inc.Shortlink)})
 	}
-	return false
+	summary := fmt.Sprintf("%s status: an incident was resolved.", service)
+	if len(cands) > 1 {
+		summary = fmt.Sprintf("%s status: %d incidents were resolved.", service, len(cands))
+	}
+	return &Event{Source: StatusKind, Subject: subject, Type: EventStatusIncidentResolved, Version: cands[0].inc.ID, At: at, Summary: summary, Data: data}
 }

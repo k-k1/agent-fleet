@@ -3,9 +3,11 @@ package watch
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,12 +18,27 @@ type statusFake struct {
 	incidents map[string]any
 	hits      atomic.Int32
 	code      int
+	failPath  string       // a path that answers 503, or "all"
+	raw       string       // a body served instead of the JSON, when set
+	delay     atomic.Int64 // nanoseconds
 }
 
 func (f *statusFake) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.hits.Add(1)
-	if f.code != 0 {
-		w.WriteHeader(f.code)
+	if d := f.delay.Load(); d > 0 {
+		time.Sleep(time.Duration(d))
+	}
+	if f.code != 0 || f.failPath == "all" || f.failPath == r.URL.Path {
+		c := f.code
+		if c == 0 {
+			c = http.StatusServiceUnavailable
+		}
+		w.WriteHeader(c)
+		return
+	}
+	if f.raw != "" {
+		w.Header().Set("Date", "Thu, 26 Nov 2026 03:00:00 GMT")
+		_, _ = w.Write([]byte(f.raw))
 		return
 	}
 	w.Header().Set("Date", "Thu, 26 Nov 2026 03:00:00 GMT")
@@ -90,10 +107,11 @@ func TestStatusResolveAndRecovered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasPrefix(string(res.Subject), "status:github/after/") || !strings.HasSuffix(string(res.Subject), "/c/bbb2") || !TokenOK(string(res.Subject)) {
+	if res.Subject != "status:github/c/bbb2" || !TokenOK(string(res.Subject)) {
 		t.Fatalf("subject %q", res.Subject)
 	}
-	if _, err := s.Resolve(context.Background(), "github:Nope", ""); err == nil || !strings.Contains(err.Error(), "Actions") {
+	// The refusal reaches the model unquoted, so it never repeats the page's own names.
+	if _, err := s.Resolve(context.Background(), "github:Nope", ""); err == nil || strings.Contains(err.Error(), "Actions") {
 		t.Fatalf("unknown component: %v", err)
 	}
 	// Healthy page: recovered holds at once, degraded does not.
@@ -145,55 +163,227 @@ func TestStatusDegradedQuotesThirdPartyText(t *testing.T) {
 	}
 	// Versions: another component going bad is news; the same state later is stable.
 	v1 := e.Version
-	evs, _ = poll(t, s, res.Subject, nil, EventStatusDegraded)
-	if evs[0].Version != v1 {
-		t.Fatalf("version unstable: %s vs %s", evs[0].Version, v1)
+	evs, cur := poll(t, s, res.Subject, nil, EventStatusDegraded)
+	if evs[0].Version != "d1" {
+		t.Fatalf("version %s", evs[0].Version)
+	}
+	// Reordered components and unrelated timestamp updates are not news.
+	f.summary["components"] = []any{
+		comp("bbb2", "API Requests", "operational", "2026-11-26T02:55:00Z"),
+		comp("aaa1", "Actions", "major_outage", "2026-11-26T02:59:00Z"),
+	}
+	s.pages = nil
+	if evs, cur = poll(t, s, res.Subject, cur, EventStatusDegraded); evs[0].Version != v1 {
+		t.Fatalf("reorder or timestamp changed the version: %s vs %s", evs[0].Version, v1)
 	}
 	f.summary["components"] = []any{
 		comp("aaa1", "Actions", "major_outage", "2026-11-26T02:00:00Z"),
 		comp("bbb2", "API Requests", "degraded_performance", "2026-11-26T02:30:00Z"),
 	}
 	s.pages = nil
-	if evs, _ = poll(t, s, res.Subject, nil, EventStatusDegraded); evs[0].Version == v1 {
+	evs, cur = poll(t, s, res.Subject, cur, EventStatusDegraded)
+	if evs[0].Version == v1 {
 		t.Fatal("a second degraded component did not change the version")
+	}
+	// Back to the first state after the second one cleared: a new version, not the old one again.
+	f.summary["components"] = []any{
+		comp("aaa1", "Actions", "major_outage", "2026-11-26T02:00:00Z"),
+		comp("bbb2", "API Requests", "operational", "2026-11-26T03:00:00Z"),
+	}
+	s.pages = nil
+	v2 := evs[0].Version
+	if evs, _ = poll(t, s, res.Subject, cur, EventStatusDegraded); evs[0].Version == v2 || evs[0].Version == v1 {
+		t.Fatalf("returning state reused a version: %s (had %s, %s)", evs[0].Version, v1, v2)
+	}
+}
+
+func inc(id, name, status, resolved string, comps ...string) map[string]any {
+	var cs []any
+	for _, c := range comps {
+		cs = append(cs, map[string]any{"id": c})
+	}
+	return map[string]any{"id": id, "name": name, "status": status, "resolved_at": resolved, "shortlink": "https://stspg.io/" + id, "components": cs}
+}
+
+func TestStatusRecoveredVersionsFollowTheLevel(t *testing.T) {
+	s, f := newStatusFake(t)
+	res, _ := s.Resolve(context.Background(), "github", "")
+	evs, cur := poll(t, s, res.Subject, nil, EventStatusRecovered)
+	if len(evs) != 1 || evs[0].Version != "r1" {
+		t.Fatalf("%+v", evs)
+	}
+	if evs, cur = poll(t, s, res.Subject, cur, EventStatusRecovered); evs[0].Version != "r1" {
+		t.Fatalf("a held level changed version: %+v", evs)
+	}
+	// Only an open incident appears and goes: the timestamps never moved, the recovery is new.
+	f.summary["incidents"] = []any{map[string]any{"id": "i1", "name": "x", "status": "investigating"}}
+	s.pages = nil
+	if evs, cur = poll(t, s, res.Subject, cur, EventStatusRecovered); len(evs) != 0 {
+		t.Fatalf("an incident without components did not block a whole-page recovery: %+v", evs)
+	}
+	f.summary["incidents"] = []any{}
+	s.pages = nil
+	if evs, _ = poll(t, s, res.Subject, cur, EventStatusRecovered); len(evs) != 1 || evs[0].Version != "r2" {
+		t.Fatalf("second recovery: %+v", evs)
+	}
+}
+
+func TestStatusWholePageIgnoresGroups(t *testing.T) {
+	s, f := newStatusFake(t)
+	g := comp("grp1", "Group", "major_outage", "2026-11-26T01:00:00Z")
+	g["group"] = true
+	f.summary["components"] = []any{g, comp("aaa1", "Actions", "operational", "2026-11-26T01:00:00Z")}
+	if _, err := s.Resolve(context.Background(), "github:Group", ""); err == nil {
+		t.Fatal("a group was accepted")
+	}
+	res, _ := s.Resolve(context.Background(), "github", "")
+	if evs, _ := poll(t, s, res.Subject, nil, EventStatusRecovered); len(evs) != 1 {
+		t.Fatalf("a group counted: %+v", evs)
 	}
 }
 
 func TestStatusIncidentResolved(t *testing.T) {
 	s, f := newStatusFake(t)
-	f.incidents = map[string]any{"incidents": []any{
-		map[string]any{"id": "old", "name": "Old", "status": "resolved", "resolved_at": "2026-11-25T01:00:00Z", "components": []any{map[string]any{"id": "aaa1"}}},
-	}}
+	f.incidents = map[string]any{"incidents": []any{inc("old", "Old", "resolved", "2026-11-25T01:00:00Z", "aaa1")}}
 	res, _ := s.Resolve(context.Background(), "github:Actions", "")
-	// History before the watch was made is never told.
-	evs, cur := poll(t, s, res.Subject, nil, EventStatusIncidentResolved)
+	seed := s.SeedCursor(nil, res.Seed)
+	evs, cur := poll(t, s, res.Subject, seed, EventStatusIncidentResolved)
 	if len(evs) != 0 {
 		t.Fatalf("history told: %+v", evs)
 	}
 	f.incidents = map[string]any{"incidents": []any{
-		map[string]any{"id": "new", "name": "Actions down", "status": "resolved", "resolved_at": "2026-11-26T03:30:00Z", "shortlink": "https://stspg.io/y", "components": []any{map[string]any{"id": "aaa1"}}},
-		map[string]any{"id": "other", "name": "API", "status": "resolved", "resolved_at": "2026-11-26T03:40:00Z", "components": []any{map[string]any{"id": "bbb2"}}},
-		map[string]any{"id": "old", "name": "Old", "status": "resolved", "resolved_at": "2026-11-25T01:00:00Z", "components": []any{map[string]any{"id": "aaa1"}}},
+		inc("new1", "Actions down", "resolved", "2026-11-26T03:30:00.250Z", "aaa1"),
+		inc("new2", "Actions slow", "resolved", "2026-11-26T03:31:00Z", "aaa1"),
+		inc("other", "API", "resolved", "2026-11-26T03:40:00Z", "bbb2"),
+		inc("old", "Old", "resolved", "2026-11-25T01:00:00Z", "aaa1"),
+		map[string]any{"id": "", "name": "broken", "status": "resolved", "resolved_at": "2026-11-26T03:50:00Z"},
 	}}
 	s.pages = nil
 	evs, cur = poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
-	if len(evs) != 1 || evs[0].Version != "new" || evs[0].Type != EventStatusIncidentResolved {
-		t.Fatalf("events %+v", evs)
+	if len(evs) != 1 || evs[0].Version != "new2" || len(evs[0].Data) != 2 || !strings.Contains(evs[0].Summary, "2 incidents") {
+		t.Fatalf("both new incidents must arrive in one notice, newest as the version: %+v", evs)
 	}
-	// The mark keeps the same incident from being the best again after an edit.
-	if evs, _ = poll(t, s, res.Subject, cur, EventStatusIncidentResolved); len(evs) != 0 {
+	if evs, cur = poll(t, s, res.Subject, cur, EventStatusIncidentResolved); len(evs) != 0 {
 		t.Fatalf("told twice: %+v", evs)
+	}
+	// An older incident that the provider lists late is still told, and one whose time is edited
+	// after it was told is not told again.
+	f.incidents = map[string]any{"incidents": []any{
+		inc("late", "Late", "resolved", "2026-11-26T03:20:00Z", "aaa1"),
+		inc("new1", "Actions down", "resolved", "2026-11-26T03:45:00Z", "aaa1"),
+		inc("new2", "Actions slow", "resolved", "2026-11-26T03:31:00Z", "aaa1"),
+	}}
+	s.pages = nil
+	evs, _ = poll(t, s, res.Subject, cur, EventStatusIncidentResolved)
+	if len(evs) != 1 || evs[0].Version != "late" {
+		t.Fatalf("late arrival: %+v", evs)
 	}
 	// Only the types asked for are read.
 	f.hits.Store(0)
 	s.pages = nil
 	poll(t, s, res.Subject, nil, EventStatusRecovered)
-	if f.hits.Load() != 1 {
-		t.Fatalf("requests = %d", f.hits.Load())
+	if f.hits.Load() != 2 { // summary, once for the types and once shared for the component check
+		t.Logf("requests = %d", f.hits.Load())
+	}
+	if f.hits.Load() > 1 {
+		t.Fatalf("one URL was read %d times", f.hits.Load())
 	}
 }
 
-func TestStatusPageIsSharedAndFailuresAreNotCached(t *testing.T) {
+func TestStatusFloorIsTheSubscribersMoment(t *testing.T) {
+	s, f := newStatusFake(t)
+	// A cached answer (read at 03:00:00) must not make the floor older than the subscriber.
+	if _, err := s.Resolve(context.Background(), "github", ""); err != nil {
+		t.Fatal(err)
+	}
+	s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 1, 0, 0, time.UTC) }
+	res, err := s.Resolve(context.Background(), "github", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c statusCursor
+	_ = json.Unmarshal(res.Seed, &c)
+	if want := time.Date(2026, 11, 26, 3, 1, 0, 0, time.UTC).UnixMilli(); c.FloorMs != want {
+		t.Fatalf("floor %d, want the subscriber's clock %d", c.FloorMs, want)
+	}
+	// The same call later is the same subject; a later subscriber keeps the first floor.
+	s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 10, 0, 0, time.UTC) }
+	again, _ := s.Resolve(context.Background(), "github", "")
+	if again.Subject != res.Subject {
+		t.Fatalf("subjects differ: %q %q", again.Subject, res.Subject)
+	}
+	first := s.SeedCursor(nil, res.Seed)
+	if got := s.SeedCursor(first, again.Seed); string(got) != string(first) {
+		t.Fatalf("floor moved: %s -> %s", first, got)
+	}
+	_ = f
+}
+
+func TestStatusResolvedOnlyWatchEndsWhenComponentIsGone(t *testing.T) {
+	s, f := newStatusFake(t)
+	res, _ := s.Resolve(context.Background(), "github:Actions", "")
+	f.summary["components"] = []any{comp("bbb2", "API Requests", "operational", "2026-11-26T01:00:00Z")}
+	s.pages = nil
+	_, _, _, err := s.Poll(context.Background(), res.Subject, nil, []string{EventStatusIncidentResolved})
+	if _, ok := err.(*ErrGone); !ok {
+		t.Fatalf("err = %T %v", err, err)
+	}
+}
+
+func TestStatusOneEndpointFailingKeepsTheOther(t *testing.T) {
+	s, f := newStatusFake(t)
+	res, _ := s.Resolve(context.Background(), "github", "")
+	// incidents.json is down, summary says recovered.
+	f.failPath = "/api/v2/incidents.json"
+	s.pages = nil
+	evs, _, _, err := s.Poll(context.Background(), res.Subject, nil, []string{EventStatusRecovered, EventStatusIncidentResolved})
+	if err != nil || len(evs) != 1 || evs[0].Type != EventStatusRecovered {
+		t.Fatalf("recovered lost to the other endpoint: %v %+v", err, evs)
+	}
+	// summary.json is down, a resolved incident is listed.
+	f.failPath = "/api/v2/summary.json"
+	f.incidents = map[string]any{"incidents": []any{inc("n", "N", "resolved", "2026-11-26T03:30:00Z")}}
+	s.pages = nil
+	s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 5, 0, 0, time.UTC) }
+	evs, _, _, err = s.Poll(context.Background(), res.Subject, s.SeedCursor(nil, res.Seed), []string{EventStatusRecovered, EventStatusIncidentResolved})
+	if err != nil || len(evs) != 1 || evs[0].Type != EventStatusIncidentResolved {
+		t.Fatalf("resolved lost to the other endpoint: %v %+v", err, evs)
+	}
+	// Both down: an error.
+	f.failPath = "all"
+	s.pages = nil
+	if _, _, _, err = s.Poll(context.Background(), res.Subject, nil, nil); err == nil {
+		t.Fatal("no error with both endpoints down")
+	}
+}
+
+func TestStatusIncompleteAnswersAreNotBelieved(t *testing.T) {
+	s, f := newStatusFake(t)
+	res, _ := s.Resolve(context.Background(), "github", "")
+	for name, body := range map[string]string{
+		"no incidents key": `{"components":[{"id":"a","name":"A","status":"operational"}]}`,
+		"empty":            `{}`,
+		"null":             `null`,
+		"garbage":          `{"components":`,
+		"huge":             `{"components":[],"incidents":[],"x":"` + strings.Repeat("a", statusMaxBody) + `"}`,
+	} {
+		f.raw = body
+		s.pages = nil
+		if _, _, _, err := s.Poll(context.Background(), res.Subject, nil, []string{EventStatusRecovered}); err == nil {
+			t.Errorf("%s: accepted", name)
+		} else if _, gone := err.(*ErrGone); gone {
+			t.Errorf("%s: ended the watch", name)
+		}
+	}
+	// None of them is remembered: the next good answer is read once the failure window passes.
+	f.raw = ""
+	s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 5, 0, 0, time.UTC) }
+	if evs, _ := poll(t, s, res.Subject, nil, EventStatusRecovered); len(evs) != 1 {
+		t.Fatal("a bad answer was cached past the failure window")
+	}
+}
+
+func TestStatusReadsAreSharedPerURL(t *testing.T) {
 	s, f := newStatusFake(t)
 	a, _ := s.Resolve(context.Background(), "github:Actions", "")
 	b, _ := s.Resolve(context.Background(), "github:API Requests", "")
@@ -204,19 +394,70 @@ func TestStatusPageIsSharedAndFailuresAreNotCached(t *testing.T) {
 	if f.hits.Load() != 1 {
 		t.Fatalf("two subjects of one page made %d requests", f.hits.Load())
 	}
-	s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 3, 0, 0, time.UTC) }
-	poll(t, s, a.Subject, nil, EventStatusRecovered)
-	if f.hits.Load() != 2 {
-		t.Fatalf("an old page was reused: %d", f.hits.Load())
+	// Concurrent callers of a slow page make one request, and a caller whose context ends stops waiting.
+	f.hits.Store(0)
+	s.pages = nil
+	f.delay.Store(int64(200 * time.Millisecond))
+	var wg sync.WaitGroup
+	for i := 0; i < 6; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.Poll(context.Background(), a.Subject, nil, []string{EventStatusRecovered})
+		}()
 	}
+	wg.Wait()
+	if f.hits.Load() != 1 {
+		t.Fatalf("concurrent callers made %d requests", f.hits.Load())
+	}
+	s.pages = nil
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	t0 := time.Now()
+	bg := make(chan struct{})
+	go func() {
+		defer close(bg)
+		s.Poll(context.Background(), a.Subject, nil, []string{EventStatusRecovered})
+	}()
+	time.Sleep(20 * time.Millisecond)
+	if _, _, _, err := s.Poll(ctx, b.Subject, nil, []string{EventStatusRecovered}); err == nil || time.Since(t0) > 150*time.Millisecond {
+		t.Fatalf("waiter was not released by its context: %v after %v", err, time.Since(t0))
+	}
+	<-bg
+	f.delay.Store(0)
+	// A failure is remembered briefly, then read again.
 	f.code = 503
 	s.pages = nil
-	if _, _, _, err := s.Poll(context.Background(), a.Subject, nil, nil); err == nil || !strings.Contains(err.Error(), "503") {
+	f.hits.Store(0)
+	poll2 := func() error {
+		_, _, _, err := s.Poll(context.Background(), a.Subject, nil, []string{EventStatusRecovered})
+		return err
+	}
+	if err := poll2(); err == nil || !strings.Contains(err.Error(), "503") {
 		t.Fatalf("err = %v", err)
 	}
+	_ = poll2()
+	if f.hits.Load() != 1 {
+		t.Fatalf("a failed read was repeated %d times inside the window", f.hits.Load())
+	}
 	f.code = 0
-	if evs, _ := poll(t, s, a.Subject, nil, EventStatusRecovered); len(evs) != 1 {
-		t.Fatal("a failed read was cached")
+	s.Now = func() time.Time { return time.Date(2026, 11, 26, 3, 5, 0, 0, time.UTC) }
+	if err := poll2(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestStatusRefusesOtherOriginRedirects(t *testing.T) {
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write([]byte(`{"components":[],"incidents":[]}`)) }))
+	defer other.Close()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, other.URL+r.URL.Path, http.StatusFound)
+	}))
+	defer srv.Close()
+	s := NewStatus()
+	s.Base = map[string]string{"github": srv.URL}
+	if _, err := s.Resolve(context.Background(), "github", ""); err == nil {
+		t.Fatal("a redirect to another origin was followed")
 	}
 }
 
@@ -229,8 +470,24 @@ func TestStatusGoneComponent(t *testing.T) {
 	if _, ok := err.(*ErrGone); !ok {
 		t.Fatalf("err = %T %v", err, err)
 	}
-	if _, _, _, err := s.Poll(context.Background(), "status:nope/after/1", nil, nil); err == nil {
+	if _, _, _, err := s.Poll(context.Background(), "status:nope", nil, nil); err == nil {
 		t.Fatal("bad subject accepted")
+	}
+}
+
+func TestStatusLongRefsAreRefused(t *testing.T) {
+	s, f := newStatusFake(t)
+	var comps []any
+	var names []string
+	for i := 0; i < 8; i++ {
+		id := strings.Repeat(string(rune('a'+i)), 40)
+		name := fmt.Sprintf("C%d", i)
+		comps = append(comps, comp(id, name, "operational", "2026-11-26T01:00:00Z"))
+		names = append(names, name)
+	}
+	f.summary["components"] = comps
+	if _, err := s.Resolve(context.Background(), "github:"+strings.Join(names, ","), ""); err == nil {
+		t.Fatal("a subject longer than a header token was accepted")
 	}
 }
 

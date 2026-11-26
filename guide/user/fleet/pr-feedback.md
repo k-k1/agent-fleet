@@ -119,7 +119,7 @@ A session that waits for an upstream release (a fixed dependency, a new CLI vers
 
 When GitHub or an Atlassian cloud service has an outage, an agent can wait for the recovery instead of setting timers and reading the status page by hand (`watch` with `source: status`). It reads the service's public status page (Statuspage API), so no credentials are needed. This is for the hosted services only: Bitbucket Data Center and self-hosted Jira have no public status page.
 
-`ref` is `<service>[:<component>,…]`. The services are `github`, `bitbucket`, `jira` (Jira Software) and `confluence`. Without components the whole page is meant; names are matched without regard to case, and a name the page does not list is refused with the list it has.
+`ref` is `<service>[:<component>,…]`. The services are `github`, `bitbucket`, `jira` (Jira Software) and `confluence`. Without components the whole page is meant; names are matched without regard to case, and a name the page does not list is refused (the refusal does not repeat the page's names; use a name exactly as the status page shows it).
 
 | Type | Fires when |
 |---|---|
@@ -128,7 +128,9 @@ When GitHub or an Atlassian cloud service has an outage, an agent can wait for t
 | `status.incident.resolved` | an incident that names a watched component (any, for the whole page) was resolved after the watch was made |
 
 - **A condition that already holds fires at once**, so `status.recovered` on a healthy page returns immediately and `status.degraded` on an ongoing outage too. Incidents resolved before the watch was made are history and never fire
-- **Gentle reads.** A page is read about every 3 minutes at most, and every watch on the same page shares that read. `incidents.json` is read only for a watch that asks for `status.incident.resolved`
+- **Gentle reads.** Each watch is read about every 3 minutes at most, and one URL is fetched at most once per 2 minutes however many watches use it (a failed read is remembered for 30 seconds). A watch on `status.*` reads two URLs of the page, `summary.json` and `incidents.json`; a watch that does not ask for `status.incident.resolved` reads only the first. A second session that watches a page someone else already watches can wait up to 3 minutes for its first notice
+- **Whole page.** Counts every component that is not a group; an open incident that names no component still blocks `status.recovered` for the whole page, but not for named components. Naming a group is refused, name a component inside it
+- **Resolved incidents** come from the provider's recent incident list (the latest 50); several incidents that first show up in one read arrive in one notice (the newest is the version, the others are listed as data), and one told once is not told again
 - **Quoted data.** The notice says how many watched components are not operational; component names, incident titles and incident statuses arrive as quoted data
 - A degraded watch tells again when the set or state of the broken components changes; a recovery after a new outage is told again
 - A component that disappears from the page ends the watch with a notice

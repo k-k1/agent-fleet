@@ -183,7 +183,7 @@ work you could simply do.
     `bitbucket`, `jira` or `confluence` (hosted services only). `status.recovered` / `status.degraded` /
     `status.incident.resolved`; a condition that holds now fires at once, except that only incidents resolved
     after the `watch` call fire. Incident titles and statuses and component names arrive as quoted data.
-    Hosts for egress allowlists: `www.githubstatus.com`, `bitbucket.status.atlassian.com`,
+    Reads are shared per URL. Hosts for egress allowlists: `www.githubstatus.com`, `bitbucket.status.atlassian.com`,
     `jira-software.status.atlassian.com`, `confluence.status.atlassian.com`.
   - **GitHub releases and tags**: `github.release.published` / `github.tag.created`. `ref`
     `o/r:releases[+pre][@pattern]` or `o/r:tags[@pattern]` (a `https://github.com/o/r/releases`
