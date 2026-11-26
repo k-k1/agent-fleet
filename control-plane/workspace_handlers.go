@@ -836,15 +836,6 @@ func wirePlace(p *store.SessionPlace) *sessionPlaceWire {
 	return &sessionPlaceWire{Kind: p.Kind, ID: p.ID, Parent: p.Parent}
 }
 
-// mirroredSpace is Space for a row served from the mirror, which has no column of its own for it:
-// the space folder when the stored place is a space, "" otherwise.
-func mirroredSpace(p *store.SessionPlace) string {
-	if p != nil && p.Kind == "space" {
-		return p.ID
-	}
-	return ""
-}
-
 // sessionWire is the session shape exchanged with the Agent and the Console. The
 // CP mirrors it into the DB so it can be re-served while the container is down.
 type sessionWire struct {
@@ -875,8 +866,10 @@ type sessionWire struct {
 	Repo   string `json:"repo"`
 	// Space: the space folder the session runs in (ADR 0142), "" outside ~/spaces. Same relay
 	// caveat as its neighbours: absent here, the Console files a space session under the
-	// repository that happens to share its folder name. No DB-mirror column of its own: the
-	// mirror fallback restores it from Place (mirroredSpace).
+	// repository that happens to share its folder name. No DB-mirror column, and the mirror
+	// fallback does not derive it from Place: a space reported while stopped sends the Console
+	// asking a stopped Agent for space names, and the live value follows the directory's
+	// current root, which the stored place does not. A stopped list groups by Place instead.
 	Space string `json:"space,omitempty"`
 	// Place: where the session runs (repository, worktree, space or home), as the Agent stored it
 	// once at create (#5219); absent for a session created before that. Same relay caveat as its
@@ -1246,7 +1239,7 @@ func (a workspaceAPI) sessionsShared(ctx context.Context, res *resolved) []sessi
 			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
 			// Where it runs: without it the Console files a space session under a same-named
 			// repository while the Workspace is stopped.
-			Place: wirePlace(r0.Place), Space: mirroredSpace(r0.Place),
+			Place: wirePlace(r0.Place),
 			// Surface "something is still waiting for an answer" even while the
 			// workspace is stopped (docs/log/75 §75.6.5).
 			Carried: r0.Carried,

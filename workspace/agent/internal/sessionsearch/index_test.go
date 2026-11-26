@@ -1,6 +1,7 @@
 package sessionsearch
 
 import (
+	"encoding/json"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -394,6 +395,9 @@ func TestSearchFiltersByTheStoredPlace(t *testing.T) {
 		{Name: "home", Kind: "claude", Repo: "dev", Place: &session.Place{Kind: session.PlaceHome}},
 		{Name: "oldrepo", Kind: "claude", Repo: "lib", Dir: "/w/lib"},
 		{Name: "oldspace", Kind: "claude", Repo: "notes", Dir: legacySpace},
+		// A place without a kind reads as no place: the legacy rules apply.
+		{Name: "emptyrepo", Kind: "claude", Repo: "lib", Dir: "/w/lib", Place: &session.Place{}},
+		{Name: "emptyspace", Kind: "claude", Repo: "notes", Dir: legacySpace, Place: &session.Place{}},
 	}
 	for _, m := range f.metas {
 		f.turns[m.Name] = []transcript.Turn{say(1, "user", "collision check")}
@@ -424,10 +428,10 @@ func TestSearchFiltersByTheStoredPlace(t *testing.T) {
 	if got := names(Query{Repo: "dev"}); len(got) != 0 {
 		t.Fatalf("a home session answers no repo filter: %v", got)
 	}
-	if got := names(Query{Repo: "lib"}); len(got) != 1 || got["oldrepo"].Session == "" {
+	if got := names(Query{Repo: "lib"}); len(got) != 2 || got["oldrepo"].Session == "" || got["emptyrepo"].Session == "" {
 		t.Fatalf("a legacy meta still answers by its folder name: %v", got)
 	}
-	if got := names(Query{Space: "notes"}); len(got) != 1 || got["oldspace"].Session == "" {
+	if got := names(Query{Space: "notes"}); len(got) != 2 || got["oldspace"].Session == "" || got["emptyspace"].Session == "" {
 		t.Fatalf("a legacy space meta answers the space filter by its marker: %v", got)
 	}
 	if got := names(Query{Repo: "notes"}); len(got) != 0 {
@@ -436,10 +440,25 @@ func TestSearchFiltersByTheStoredPlace(t *testing.T) {
 	all := names(Query{})
 	for name, want := range map[string][2]string{
 		"repo": {"app", ""}, "space": {"", "app"}, "wt": {"app@wip", ""}, "home": {"", ""},
-		"oldrepo": {"lib", ""}, "oldspace": {"", "notes"},
+		"oldrepo": {"lib", ""}, "oldspace": {"", "notes"}, "emptyrepo": {"lib", ""}, "emptyspace": {"", "notes"},
 	} {
 		if h := all[name]; h.Repo != want[0] || h.Space != want[1] {
 			t.Errorf("hit %s: repo=%q space=%q, want repo=%q space=%q", name, h.Repo, h.Space, want[0], want[1])
+		}
+	}
+	// The same filters through GET /session-search, the path the search_sessions tool takes.
+	for target, want := range map[string]string{
+		"/session-search?q=collision&space=app": "space",
+		"/session-search?q=collision&repo=app":  "repo",
+	} {
+		rec := httptest.NewRecorder()
+		HandleSearch(rec, httptest.NewRequest("GET", target, nil))
+		var res Result
+		if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || rec.Code != 200 {
+			t.Fatalf("%s: %d %s", target, rec.Code, rec.Body)
+		}
+		if len(res.Hits) != 1 || res.Hits[0].Session != want {
+			t.Errorf("%s: hits %+v, want the %s session alone", target, res.Hits, want)
 		}
 	}
 }

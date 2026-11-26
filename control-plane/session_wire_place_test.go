@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -94,10 +95,6 @@ func TestSessionsPayloadKeepsPlaceThroughTheMirror(t *testing.T) {
 		if v, ok := got["legacy"]["place"]; ok {
 			t.Errorf("%s: legacy place = %v, want absent (the Console falls back to the folder)", state, v)
 		}
-		// The Console still reads space first: only the space session may carry it.
-		if got["inspace"]["space"] != "app" {
-			t.Errorf("%s: inspace space = %v, want app", state, got["inspace"]["space"])
-		}
 		for _, name := range []string{"inrepo", "inwt", "legacy"} {
 			if v, ok := got[name]["space"]; ok {
 				t.Errorf("%s: %s space = %v, want absent", state, name, v)
@@ -105,8 +102,17 @@ func TestSessionsPayloadKeepsPlaceThroughTheMirror(t *testing.T) {
 		}
 	}
 
-	check("running", payload("running")) // also fills the mirror
-	check("stopped", payload("stopped")) // the mirror alone
+	running := payload("running") // also fills the mirror
+	check("running", running)
+	if running["inspace"]["space"] != "app" {
+		t.Errorf("running: inspace space = %v, want app (relayed from the Agent)", running["inspace"]["space"])
+	}
+	stopped := payload("stopped") // the mirror alone
+	check("stopped", stopped)
+	// Not derived from Place while stopped: the Console would ask the stopped Agent for space names.
+	if v, ok := stopped["inspace"]["space"]; ok {
+		t.Errorf("stopped: inspace space = %v, want absent", v)
+	}
 }
 
 // A mirror row whose place column holds something unreadable is served without a place, never
@@ -131,12 +137,16 @@ func TestMirrorPlaceColumnTolerance(t *testing.T) {
 		{Name: "ok", Kind: "claude", Place: &sessionPlaceWire{Kind: "home"}},
 		{Name: "bad", Kind: "claude"},
 		{Name: "nokind", Kind: "claude", Place: &sessionPlaceWire{ID: "app"}},
+		{Name: "rawnokind", Kind: "claude"},
 	})
 	if err := st.ReplaceSessions(ctx, ws.ID, rows); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.DB().ExecContext(ctx, `UPDATE session SET place=? WHERE workspace_id=? AND name=?`, "{not json", ws.ID, "bad"); err != nil {
-		t.Fatal(err)
+	// Written straight to the column: ReplaceSessions would store NULL for either value.
+	for name, v := range map[string]string{"bad": "{not json", "rawnokind": `{"id":"app"}`} {
+		if _, err := st.DB().ExecContext(ctx, `UPDATE session SET place=? WHERE workspace_id=? AND name=?`, v, ws.ID, name); err != nil {
+			t.Fatal(err)
+		}
 	}
 	got, err := st.ListSessions(ctx, ws.ID)
 	if err != nil {
@@ -154,5 +164,12 @@ func TestMirrorPlaceColumnTolerance(t *testing.T) {
 	}
 	if p := byName["nokind"].Place; p != nil {
 		t.Errorf("a place without a kind = %+v, want nil (stored as NULL)", p)
+	}
+	if p := byName["rawnokind"].Place; p != nil {
+		t.Errorf("a stored place without a kind = %+v, want nil", p)
+	}
+	var raw sql.NullString
+	if err := st.DB().QueryRowContext(ctx, `SELECT place FROM session WHERE workspace_id=? AND name=?`, ws.ID, "nokind").Scan(&raw); err != nil || raw.Valid {
+		t.Errorf("a written place without a kind = %+v (%v), want NULL", raw, err)
 	}
 }

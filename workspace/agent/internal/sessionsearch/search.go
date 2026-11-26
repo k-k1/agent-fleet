@@ -96,7 +96,17 @@ func Search(q Query) (Result, error) {
 	// answer time as well as in the pass means a session trashed since the last pass is never
 	// found, whatever the index still holds.
 	metas := map[string]session.Meta{}
+	// Places are worked out only for the sessions the cheap filters keep, and for the hits: a
+	// legacy meta costs a look at the space marker.
 	places := map[string]place{}
+	placeFor := func(m session.Meta) place {
+		pl, ok := places[m.Name]
+		if !ok {
+			pl = placeOf(m)
+			places[m.Name] = pl
+		}
+		return pl
+	}
 	var names, scheduled []string
 	total := 0
 	for _, m := range listMetas() {
@@ -105,14 +115,17 @@ func Search(q Query) (Result, error) {
 		}
 		total++
 		metas[m.Name] = m
-		pl := placeOf(m)
-		places[m.Name] = pl
-		if (q.Session == "" || m.Name == q.Session) && (q.Kind == "" || m.Kind == q.Kind) &&
-			(q.Repo == "" || pl.repo == q.Repo) && (q.Space == "" || pl.space == q.Space) {
-			names = append(names, m.Name)
-			if session.OriginOf(m) == session.OriginSchedule {
-				scheduled = append(scheduled, m.Name)
+		if q.Session != "" && m.Name != q.Session || q.Kind != "" && m.Kind != q.Kind {
+			continue
+		}
+		if q.Repo != "" || q.Space != "" {
+			if pl := placeFor(m); q.Repo != "" && pl.repo != q.Repo || q.Space != "" && pl.space != q.Space {
+				continue
 			}
+		}
+		names = append(names, m.Name)
+		if session.OriginOf(m) == session.OriginSchedule {
+			scheduled = append(scheduled, m.Name)
 		}
 	}
 	held, err := s.Names()
@@ -150,7 +163,7 @@ func Search(q Query) (Result, error) {
 			continue
 		}
 		m := metas[h.Session]
-		pl := places[h.Session]
+		pl := placeFor(m)
 		hits = append(hits, Hit{
 			Session: m.Name, Display: session.Display(m), Kind: m.Kind, Repo: pl.repo, Space: pl.space, Dir: m.Dir, Branch: m.Branch,
 			Archived: m.Archived,
@@ -170,10 +183,10 @@ type place struct{ repo, space string }
 
 // placeOf reads the place stored in the meta (sessionx.PlaceOf, decided at create), so a space
 // never answers a repo filter for the repository that shares its folder name. A meta written
-// before Place existed falls back to the space marker and then to the folder name it always
-// used.
+// before Place existed, or holding one without a kind, falls back to the space marker and then
+// to the folder name it always used.
 func placeOf(m session.Meta) place {
-	if p := m.Place; p != nil {
+	if p := m.Place; p != nil && p.Kind != "" {
 		switch p.Kind {
 		case session.PlaceRepo, session.PlaceWorktree:
 			return place{repo: p.ID}
