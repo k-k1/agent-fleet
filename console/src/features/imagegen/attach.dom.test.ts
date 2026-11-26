@@ -49,7 +49,23 @@ describe("switching the studio's agent", () => {
       opts: { dir: "/home/u/repos/r", kind: "codex", driver: "managed", worktree: true } as never,
     });
     expect(r).toEqual({ studioId: "st1", session: "snew001" });
-    expect(calls).toEqual(['bind st1 ""', "POST api/sessions/sold001/halt", "POST api/sessions studio=st1"]);
+    // The old session is halted once the new one exists, not before.
+    expect(calls).toEqual(['bind st1 ""', "POST api/sessions studio=st1", "POST api/sessions/sold001/halt"]);
+  });
+
+  it("leaves the old session running and gives it the studio back when the new create is refused", async () => {
+    calls.length = 0;
+    created = { error: { code: "space_busy", message: "an agent is running there" } };
+    const r = await attachAgent({
+      studioId: "st1",
+      draft: () => ({}),
+      replacing: "sold001",
+      opts: { dir: "", kind: "claude", driver: "tui", space: { folder: "s-abc" } } as never,
+    });
+    created = { name: "snew001" };
+    expect(r.session).toBeUndefined();
+    expect(r).toHaveProperty("error");
+    expect(calls).toEqual(['bind st1 ""', "POST api/sessions studio=st1", 'bind st1 "sold001"']);
   });
 
   it("refetches the repo list after a worktree create, and not for an in-place one", async () => {

@@ -33,6 +33,10 @@ export interface StartTarget {
    *  without the hub's draft): none of the seed's lineage, work item or inbox provenance rides
    *  along either, since the session never received what they describe. */
   seedless?: boolean;
+  /** The inbox request this launch answers, named by the caller instead of read from the launch
+   *  seed: the seed is global, so a dialog that outlives its opener (or is opened for two
+   *  requests at once) must not take whichever request set it last. */
+  inboxItem?: string;
 }
 
 // What a seedless launch reads in place of the launch seed.
@@ -61,7 +65,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
 
-  return async ({ dir, repo, seedless = false }, { kind, driver, model, effort, route, routeConnection, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd, space }, take) => {
+  return async ({ dir, repo, seedless = false, inboxItem = "" }, { kind, driver, model, effort, route, routeConnection, startMode, skipPermissions, prompt, title, images, worktree, subdir, base, newBranch, useExisting, spendCapUsd, space }, take) => {
     const hasModel = agentOf(kind).caps.model;
     // With attachments the first prompt's text cannot be fixed until the session exists,
     // because the saved paths have to be woven into it and the upload target IS that
@@ -133,7 +137,8 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     }
     // A launch from an inbox request goes through the CP's request launch: the same create
     // body, but the CP checks the claim first and records the session on the request.
-    const { inboxItemId, inboxMemoId } = launchSeed;
+    const inboxItemId = inboxItem || launchSeed.inboxItemId;
+    const { inboxMemoId } = launchSeed;
     // The memo a launch was seeded from: the Control Plane turns it into the session's
     // provenance badge when the memo was taken in from the inbox. It names the memo, never
     // the origin itself, which the server alone sets.

@@ -111,10 +111,15 @@ export function AttachAgentModal({
   const [repoName, setRepoName] = useState(() =>
     fixedRepo ? fixedRepo.name : last ? (last.space ? SPACE_PLACE : last.repo) : repos.length === 0 ? SPACE_PLACE : "",
   );
+  // The place is the dialog's own default (no working copy, nothing remembered), not a choice: only
+  // such a place is swapped for home when the Agent has no spaces. A remembered or picked space stays
+  // and stops the start, so "same as last time" never turns into a home start.
+  const autoSpace = useRef(!fixedRepo && !last && repos.length === 0);
   const { support: spaceSupport, recheck: recheckSpaces } = useSpaceSupport();
   const spaceOwner = spacesOwner();
   const spaces = useSpacesStore((s) => spacesFor(s, spaceOwner));
   const sessions = useSessionsStore((s) => s.sessions);
+  const refreshSessions = useSessionsStore((s) => s.refresh);
   const spacePick = placeFixed && fixedRepo ? null : parseSpacePlace(repoName);
   const spaceGone = useSpaceGone(spacePick?.folder ?? "");
   const busyFolders = useMemo(() => busySpaces(sessions), [sessions]);
@@ -225,7 +230,10 @@ export function AttachAgentModal({
   // An older Agent has no spaces: leave a space pick that the (default) rule or a remembered
   // choice made, rather than keep a place the start cannot use.
   useEffect(() => {
-    if (spaceSupport === "no" && parseSpacePlace(repoName)) setRepoName("");
+    if (spaceSupport === "no" && autoSpace.current && parseSpacePlace(repoName)) {
+      autoSpace.current = false;
+      setRepoName("");
+    }
   }, [spaceSupport, repoName]);
 
   const placeLabel = (r: Repo | null): string => {
@@ -268,7 +276,16 @@ export function AttachAgentModal({
       place: spacePick ? spaceName : repo?.name || "",
     });
     setBusy(false);
-    if (!ok) return;
+    if (!ok) {
+      // The Agent may have refused the space because the lists this dialog holds are old (removed or
+      // taken by another agent in another tab): read both again, so the pick is marked and a second
+      // press does not send the same place.
+      if (spacePick?.folder) {
+        void useSpacesStore.getState().refresh();
+        void refreshSessions();
+      }
+      return;
+    }
     writeAttachLast(tenant, {
       driver,
       kind,
@@ -435,6 +452,10 @@ export function AttachAgentModal({
                   {(spaceSupport === "yes" || spacePick) && (
                     <optgroup label={tr("start.sec_space")}>
                       <option value={SPACE_PLACE}>{tr("start.place_new_space")}</option>
+                      {/* A pick the list no longer holds stays on screen (marked), or the select would show Home. */}
+                      {spacePick?.folder && !rankedSpaces.some((sp) => sp.folder === spacePick.folder) && (
+                        <option value={spacePlaceValue(spacePick.folder)}>{spacePick.folder}</option>
+                      )}
                       {rankedSpaces.map((sp) => (
                         <option key={sp.folder} value={spacePlaceValue(sp.folder)}>
                           {spaceLabel(sp.folder, spaces)}
@@ -451,7 +472,7 @@ export function AttachAgentModal({
                 </select>
               )}
               <span className="ui-field-hint">{tr("imggen.attach_repo_hint")}</span>
-              {spacePick && <SpaceSupportHint support={spaceSupport} onRecheck={recheckSpaces} />}
+              {(spacePick || spaceSupport === "failed") && <SpaceSupportHint support={spaceSupport} onRecheck={recheckSpaces} />}
             </div>
             {repo && (
               <div className="ui-field">

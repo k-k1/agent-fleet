@@ -3,12 +3,15 @@
 // section with the same form, the same prompt box and the same create path (useStartWork's
 // `space` field, no repository dialog), so a space is chosen and launched exactly as there.
 //
-// The launch seed (useLaunchSeed) belongs to the caller: it carries the inbox item that
-// useStartWork turns into the request launch, and the caller clears it when this closes.
+// The request is named by `inboxItemId`, never through the global launch seed: this dialog is
+// loaded lazily and may be open while another request or a plain launch is started, and a seed
+// left behind would send that launch to the wrong request.
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { Modal } from "../../ui/Modal.tsx";
 import { useT } from "../../lib/i18n/index.ts";
+import { useEscLayer } from "../../lib/escLayer.ts";
+import { useBackClose } from "../../lib/backClose.ts";
 import { useSpaceSupport } from "../spaces/useSpaceSupport.ts";
 import { SpaceSupportHint } from "../spaces/SpaceSupportHint.tsx";
 import { HubComposer } from "./HubComposer.tsx";
@@ -18,9 +21,13 @@ import { useRepoRailContext } from "./useRepoRail.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { agentOf } from "../../agents/registry.ts";
 
-export function SpaceLaunchModal({ prompt, onClose, onLaunched }: {
+const hold = () => {};
+
+export function SpaceLaunchModal({ prompt, inboxItemId, onClose, onLaunched }: {
   /** The text the first prompt starts as; the member may edit it before launching. */
   prompt: string;
+  /** The inbox request the session is started for (the CP's request launch). */
+  inboxItemId: string;
   onClose: () => void;
   /** A session was created (its name): the caller finishes what the launch was for. */
   onLaunched?: (session: string) => void;
@@ -32,6 +39,11 @@ export function SpaceLaunchModal({ prompt, onClose, onLaunched }: {
   const startWork = useStartWork({ policyInline: true });
   const [busy, setBusy] = useState(false);
   const submit = useRef<(() => void) | null>(null);
+  // While the create is out, this dialog's own Escape and back layers are off (it is locked), which
+  // would hand both keys to the dialog underneath and close it with the draft. A layer that does
+  // nothing keeps them here until the answer is in.
+  useEscLayer(hold, busy);
+  useBackClose(hold, busy);
   // The draft starts from the seed once; a later render must not put an edited prompt back.
   const seeded = useRef(false);
   useEffect(() => {
@@ -68,7 +80,7 @@ export function SpaceLaunchModal({ prompt, onClose, onLaunched }: {
           onClose={onClose}
           onLaunch={async (o) => {
             // dir "" with a space: the Agent makes ~/spaces/<folder> and starts the session there.
-            const r = await startWork({ dir: "", repo: "" }, o);
+            const r = await startWork({ dir: "", repo: "", seedless: true, inboxItem: inboxItemId }, o);
             // The form closes the dialog itself once it sees ok.
             if (r.ok) onLaunched?.(r.name || "");
             return r;

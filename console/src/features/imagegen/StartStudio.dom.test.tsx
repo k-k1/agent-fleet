@@ -9,13 +9,19 @@ import { createRoot, type Root } from "react-dom/client";
 let personaFails = false;
 let spacesAnswer: unknown = { spaces: [] };
 let sessionRows: unknown[] = [];
+let sessionReply: Record<string, unknown> | null = null;
+let spacesCalls = 0;
+const refreshSessions = vi.fn(async () => {});
 const posts: { path: string; body: Record<string, unknown> }[] = [];
 const puts: { path: string; body: Record<string, unknown> }[] = [];
 vi.mock("../../core/api/client.ts", async (orig) => ({
   ...(await orig<typeof import("../../core/api/client.ts")>()),
   getTenant: () => "t1",
   api: async (path: string) => {
-    if (path === "api/spaces") return spacesAnswer;
+    if (path === "api/spaces") {
+      spacesCalls++;
+      return spacesAnswer;
+    }
     if (path === "api/imagegen/status")
       return {
         providers: [
@@ -29,7 +35,7 @@ vi.mock("../../core/api/client.ts", async (orig) => ({
   apiJSON: async (path: string, _m: string, body: Record<string, unknown>) => {
     posts.push({ path, body });
     if (path === "api/imagegen/studios") return { id: "st9", title: body.title, draft: body.draft, updated_at: "v1" };
-    return { name: "snew" };
+    return (path === "api/sessions" && sessionReply) || { name: "snew" };
   },
   raw: async (path: string, init?: { method?: string; body?: string }) => {
     if (init?.method === "PUT") puts.push({ path, body: JSON.parse(init.body || "{}") });
@@ -47,7 +53,7 @@ vi.mock("../repos/SubdirPicker.tsx", () => ({ SubdirPicker: () => <span /> }));
 const toast = vi.fn();
 vi.mock("../../ui/ToastProvider.tsx", () => ({ useToast: () => toast }));
 vi.mock("../sessions/store.ts", () => ({
-  useSessionsStore: (sel: (s: { refresh: () => Promise<void>; sessions: unknown[] }) => unknown) => sel({ refresh: async () => {}, sessions: sessionRows }),
+  useSessionsStore: (sel: (s: { refresh: () => Promise<void>; sessions: unknown[] }) => unknown) => sel({ refresh: refreshSessions, sessions: sessionRows }),
 }));
 const opened: unknown[] = [];
 vi.mock("./open.ts", () => ({ openImagegen: (o: unknown) => opened.push(o) }));
@@ -112,6 +118,9 @@ beforeEach(() => {
   toast.mockClear();
   spacesAnswer = { spaces: [] };
   sessionRows = [];
+  sessionReply = null;
+  spacesCalls = 0;
+  refreshSessions.mockClear();
   useSpacesStore.getState().clear();
   useReposStore.setState({ repos: [BASE, WT] });
 });
@@ -363,5 +372,89 @@ describe("start a studio in a space", () => {
     await pickImage("sdxl");
     expect(goBtn().disabled).toBe(true);
     expect(document.body.textContent).toContain("もう一度確かめる");
+  });
+
+  it("from a working copy's row, 'somewhere else' can be a space: no directory, no worktree, and the row's choice is not remembered", async () => {
+    localStorage.setItem(
+      attachLastKey("t1"),
+      JSON.stringify({ driver: "tui", kind: "claude", model: "", effort: "", repo: "", space: true, worktree: true, imageProvider: "comfy", imageModel: "sdxl" }),
+    );
+    await render(BASE);
+    await settle();
+    await click(document.querySelector<HTMLButtonElement>(".igen-attach-last .ui-btn")!); // unfold the summary
+    await click(document.querySelector<HTMLButtonElement>(".igen-attach-place .ui-btn")!);
+    await choose("新しいスペース");
+    await pickImage("sdxl");
+    await click(goBtn());
+    await settle();
+    const s = sessionPost()!;
+    expect(s).toMatchObject({ dir: "", space: { name: "" } });
+    for (const k of ["worktree", "branch", "new_branch", "subdir"]) expect(s).not.toHaveProperty(k);
+    expect(JSON.parse(localStorage.getItem(attachLastKey("t1")) || "null")).toMatchObject({ repo: "", space: true });
+  });
+
+  it("a start from the row's own place leaves a remembered space as it was", async () => {
+    localStorage.setItem(
+      attachLastKey("t1"),
+      JSON.stringify({ driver: "tui", kind: "claude", model: "", effort: "", repo: "", space: true, worktree: true, imageProvider: "comfy", imageModel: "sdxl" }),
+    );
+    await render(BASE);
+    await settle();
+    await click(startBtn());
+    await settle();
+    expect(sessionPost()).toMatchObject({ dir: BASE.path });
+    expect(JSON.parse(localStorage.getItem(attachLastKey("t1")) || "null")).toMatchObject({ repo: "", space: true });
+  });
+
+  it("will not turn a remembered space into a home start when the Agent has no spaces", async () => {
+    spacesAnswer = { error: { code: "http_404" } };
+    useReposStore.setState({ repos: [] });
+    localStorage.setItem(
+      attachLastKey("t1"),
+      JSON.stringify({ driver: "tui", kind: "claude", model: "", effort: "", repo: "", space: true, worktree: true, imageProvider: "comfy", imageModel: "sdxl" }),
+    );
+    await renderOpen();
+    expect(summary()).toBeNull(); // unfolded, with the reason
+    expect(document.body.textContent).toContain("スペースでは始められません");
+    expect(goBtn().disabled).toBe(true);
+    await click(goBtn());
+    await settle();
+    expect(sessionPost()).toBeUndefined();
+    // Home stays one explicit pick away.
+    await choose("ホーム");
+    expect(goBtn().disabled).toBe(false);
+  });
+
+  it("reads the lists again when the Agent refuses the space, and does not send the same place twice", async () => {
+    spacesAnswer = { spaces: [{ folder: "s-abc", name: "調べもの", dir: "/home/dev/spaces/s-abc" }] };
+    await renderOpen();
+    await choose("調べもの");
+    await pickImage("sdxl");
+    // Removed in another tab after the list was read: the Agent says so.
+    spacesAnswer = { spaces: [] };
+    sessionReply = { error: { code: "space_not_found", message: "no such space" } };
+    const before = spacesCalls;
+    await click(goBtn());
+    await settle();
+    expect(spacesCalls).toBeGreaterThan(before);
+    expect(refreshSessions).toHaveBeenCalled();
+    expect(document.body.textContent).toContain("もうありません");
+    // The pick stays on screen (marked by its folder), not silently swapped for Home.
+    expect(placeSelect().selectedOptions[0].text).toBe("s-abc");
+    expect(goBtn().disabled).toBe(true);
+    const sent = posts.filter((p) => p.path === "api/sessions").length;
+    await click(goBtn());
+    expect(posts.filter((p) => p.path === "api/sessions").length).toBe(sent);
+  });
+
+  it("offers the recheck when the Agent's answer failed, even with a working copy or home shown", async () => {
+    spacesAnswer = { error: { code: "boom" } };
+    await renderOpen();
+    expect(placeSelect().selectedOptions[0].text).toContain("ホーム");
+    expect(document.body.textContent).toContain("もう一度確かめる");
+    spacesAnswer = { spaces: [] };
+    await click(byText("もう一度確かめる"));
+    await settle();
+    expect([...placeSelect().options].some((o) => o.text === "新しいスペース")).toBe(true);
   });
 });

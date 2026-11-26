@@ -34,6 +34,7 @@ vi.mock("../../core/api/client.ts", () => ({
 }));
 
 const { SpaceLaunchModal } = await import("./SpaceLaunchModal.tsx");
+const { Modal } = await import("../../ui/Modal.tsx");
 const { useLaunchSeed, useReposStore } = await import("./store.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useSpacesStore } = await import("../spaces/store.ts");
@@ -45,6 +46,7 @@ let root: Root | null = null;
 let host: HTMLDivElement;
 const onClose = vi.fn();
 const onLaunched = vi.fn();
+const underClose = vi.fn();
 
 const settle = async () => {
   for (let i = 0; i < 5; i++) await act(async () => await new Promise((r) => setTimeout(r, 0)));
@@ -66,7 +68,9 @@ async function open(): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
-        <SpaceLaunchModal prompt="please look at the flaky test" onClose={onClose} onLaunched={onLaunched} />
+        {/* The dialog the request was opened from, underneath (the inbox). */}
+        <Modal title="inbox" onClose={underClose} />
+        <SpaceLaunchModal prompt="please look at the flaky test" inboxItemId="item-1" onClose={onClose} onLaunched={onLaunched} />
       </ToastProvider>,
     );
   });
@@ -77,13 +81,12 @@ beforeEach(() => {
   localStorage.clear();
   onClose.mockReset();
   onLaunched.mockReset();
+  underClose.mockReset();
   spacesAnswer = { spaces: [] };
   useUIStateStore.setState({ state: {} as never });
   useReposStore.setState({ repos: [], loadState: "ok" });
   useSpacesStore.getState().clear();
   useSessionsStore.setState({ sessions: [] });
-  useLaunchSeed.getState().set("please look at the flaky test", "");
-  useLaunchSeed.getState().setInboxItem("item-1");
   apiGet.mockClear();
   apiPost.mockReset();
   apiPost.mockImplementation(async (...a: unknown[]) => (String(a[0]).endsWith("/launch") || a[0] === "api/sessions" ? { name: "space-1" } : {}));
@@ -124,6 +127,43 @@ describe("space launch for an inbox request", () => {
     const body = sessionCalls("api/inbox/items/item-1/launch")[0][2] as Record<string, unknown>;
     expect(body).toMatchObject({ space: { folder: "s-abc" }, initial_prompt: "edited text" });
     expect(body.space).not.toHaveProperty("name");
+  });
+
+  it("names the request itself, whatever the global launch seed holds", async () => {
+    // Another request's seed (a repository launch left open, say) must not decide the route.
+    useLaunchSeed.getState().set("another request", "");
+    useLaunchSeed.getState().setInboxItem("item-9");
+    await open();
+    await click(go());
+    expect(sessionCalls("api/inbox/items/item-9/launch")).toHaveLength(0);
+    const calls = sessionCalls("api/inbox/items/item-1/launch");
+    expect(calls).toHaveLength(1);
+    expect(calls[0][2]).toMatchObject({ initial_prompt: "please look at the flaky test" });
+    // And it leaves the seed alone: a plain launch afterwards still goes to api/sessions.
+    expect(useLaunchSeed.getState().inboxItemId).toBe("item-9");
+  });
+
+  it("keeps Escape and one launch here while the create is out, instead of closing the dialog under it", async () => {
+    let answer!: (v: unknown) => void;
+    apiPost.mockImplementation(() => new Promise((r) => (answer = r)));
+    await open();
+    await click(go());
+    await click(go()); // a second press while the first is in flight
+    expect(sessionCalls("api/inbox/items/item-1/launch")).toHaveLength(1);
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(underClose).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => answer({ error: { code: "runtime_failed", message: "boom" } }));
+    await settle();
+    // The refused create leaves the form (and its text) to try again.
+    expect(box().value).toBe("please look at the flaky test");
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalled();
+    expect(underClose).not.toHaveBeenCalled();
   });
 
   it("refreshes the request card once the session exists", async () => {

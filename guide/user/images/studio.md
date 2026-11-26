@@ -45,7 +45,7 @@ The dialog asks what starting a session asks.
 | Execution method | "**Terminal (CLI)**" or "**Managed**" |
 | Agent, "**Agent model**", effort, permission prompts | As when starting a session |
 | "**Image model**" | The draft's model. Prompts are written differently for each model, so you cannot start until one is chosen |
-| "**Place (repository or space)**" and subfolder | Where the agent reads its material. "**Home (no repository)**" can be chosen too, and so can a new or an existing space (the default when you have no repository). A space with an agent already running in it cannot be chosen |
+| "**Place (repository or space)**" and subfolder | Where the agent reads its material. "**Home (no repository)**" can be chosen too, and so can a new or an existing space (the default when you have no repository). A space with an agent already running in it is listed but cannot be started in |
 | "**Open in a worktree**" | The default depends on the working copy; see below |
 
 - **There is no prompt field.** The first turn is the role the studio sends; until it arrives the pane shows "Sending the agent its role…". Only if it could not be sent does "**Resend**" appear
@@ -68,7 +68,7 @@ The full list is the "Bound to an image studio" row of the [agent reference](../
 
 - **From an ordinary clone**, a new worktree is the default, so the agent can be sure which studio it belongs to
 - **From a worktree's row**, the studio opens in that worktree directly
-- Home, and working copies that cannot make a worktree, use none
+- Home, spaces, and working copies that cannot make a worktree, use none
 - Only Terminal (CLI) sessions and lcpp can turn the worktree off. Elsewhere it says "This combination needs a worktree to tell the session apart."
 
 ### Switch agent

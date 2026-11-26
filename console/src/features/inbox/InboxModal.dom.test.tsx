@@ -19,9 +19,9 @@ vi.mock("../../core/api/client.ts", () => ({
 
 // The space dialog is loaded on first use and is tested on its own (SpaceLaunchModal.dom.test.tsx);
 // here it only has to open with the request as its prompt.
-let spaceModalProps: { prompt: string; onClose: () => void } | null = null;
+let spaceModalProps: { prompt: string; inboxItemId: string; onClose: () => void } | null = null;
 vi.mock("../repos/SpaceLaunchModal.tsx", () => ({
-  SpaceLaunchModal: (p: { prompt: string; onClose: () => void }) => {
+  SpaceLaunchModal: (p: { prompt: string; inboxItemId: string; onClose: () => void }) => {
     spaceModalProps = p;
     return <div data-testid="space-modal">{p.prompt}</div>;
   },
@@ -212,9 +212,11 @@ describe("the assignee's launch", () => {
     expect(document.querySelector(".inbox-warn")).toBeNull();
     await act(async () => launchBtn().click());
     expect(document.querySelector("[data-testid=space-modal]")?.textContent).toBe(base.body);
-    // The seed names the request, so the space launch goes through the request route.
-    expect(useLaunchSeed.getState().inboxItemId).toBe("item-1");
-    expect(useLaunchSeed.getState().prompt).toBe(base.body);
+    // The request travels as props, so the space launch goes through the request route and the
+    // global seed (which another launch may read) is never written.
+    expect(spaceModalProps?.inboxItemId).toBe("item-1");
+    expect(useLaunchSeed.getState().inboxItemId).toBe("");
+    expect(useLaunchSeed.getState().prompt).toBe("");
     expect(useLaunchTarget.getState().target).toBeNull();
   });
 
@@ -236,7 +238,7 @@ describe("the assignee's launch", () => {
     expect(useLaunchTarget.getState().target).toBeNull();
   });
 
-  it("drops the request from the seed when the space dialog is closed", async () => {
+  it("closes the space dialog without touching the seed", async () => {
     await open([]);
     await act(async () => launchBtn().click());
     await act(async () => spaceModalProps!.onClose());

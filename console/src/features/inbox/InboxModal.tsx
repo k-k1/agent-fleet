@@ -343,13 +343,8 @@ function LaunchRow({ item }: { item: InboxItem }) {
   const repoId = useId();
   const place = pick || (repos[0]?.name ?? SPACE_PLACE);
   const inSpace = place === SPACE_PLACE;
-  const seed = () => {
-    useLaunchSeed.getState().set(item.body, "");
-    useLaunchSeed.getState().setInboxItem(item.id);
-  };
   const launch = () => {
     if (inSpace) {
-      seed();
       setSpaceOpen(true);
       return;
     }
@@ -358,7 +353,8 @@ function LaunchRow({ item }: { item: InboxItem }) {
       toast(tr("inbox.launch_no_repo"));
       return;
     }
-    seed();
+    useLaunchSeed.getState().set(item.body, "");
+    useLaunchSeed.getState().setInboxItem(item.id);
     useLaunchTarget.getState().open({ ...repo });
   };
   return (
@@ -379,17 +375,10 @@ function LaunchRow({ item }: { item: InboxItem }) {
       <Button variant="primary" onClick={launch}>
         <Icon name="run" /> {tr("inbox.launch")}
       </Button>
+      {/* The request travels as props, not through the global launch seed (see SpaceLaunchModal). */}
       {spaceOpen && (
         <Suspense fallback={null}>
-          <SpaceLaunchModal
-            prompt={item.body}
-            // The seed names this request for useStartWork; it is dropped whichever way the dialog
-            // ends, so an unrelated launch never goes through the request route.
-            onClose={() => {
-              setSpaceOpen(false);
-              useLaunchSeed.getState().clear();
-            }}
-          />
+          <SpaceLaunchModal prompt={item.body} inboxItemId={item.id} onClose={() => setSpaceOpen(false)} />
         </Suspense>
       )}
     </div>

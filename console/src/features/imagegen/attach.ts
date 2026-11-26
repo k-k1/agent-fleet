@@ -50,11 +50,19 @@ export async function attachAgent(p: {
     } catch {
       return { studioId, error: t("err.network") };
     }
-    // /halt, not /stop: /stop deletes the session (to the trash, ADR 0101) —
-    // while switching agents only ends this one's turn at the studio. Halted, it stays resumable
-    // (the Console's own stop button is the same call).
-    void raw(`api/sessions/${encodeURIComponent(p.replacing)}/halt`, { method: "POST" }).catch(() => undefined);
   }
+  // The old session is halted only once the new one exists (below): a create the Agent refuses (a
+  // space an agent has just moved into, a branch taken meanwhile) must not leave the member with
+  // neither. Until then the old session merely has no studio tools, and a failed start gives the
+  // studio back to it.
+  const giveBack = async () => {
+    if (!p.replacing || !studioId) return;
+    try {
+      await bindStudio(studioId, p.replacing);
+    } catch {
+      // The studio stays unbound, as a failure after step 1 always left it; attaching again fixes it.
+    }
+  };
   const o = p.opts;
   const image: StudioDraft = { provider: o.imageProvider || undefined, model: o.imageModel || undefined };
   const title = p.title || defaultStudioTitle(o);
@@ -69,14 +77,21 @@ export async function attachAgent(p: {
   }
   if (p.existing && studioId) {
     const err = await writeChoice(studioId, p.existing, image, title);
-    if (err) return { studioId, error: err };
+    if (err) {
+      await giveBack();
+      return { studioId, error: err };
+    }
   }
   let persona = "";
   try {
     const r = await studioPersona(studioId);
-    if (!r || r.error || !r.prompt) return { studioId, error: (r?.error && errText(r.error)) || t("imggen.persona_failed") };
+    if (!r || r.error || !r.prompt) {
+      await giveBack();
+      return { studioId, error: (r?.error && errText(r.error)) || t("imggen.persona_failed") };
+    }
     persona = r.prompt;
   } catch {
+    await giveBack();
     return { studioId, error: t("imggen.persona_failed") };
   }
   const body: Record<string, unknown> = { dir: o.dir, kind: o.kind, driver: o.driver, studio: studioId, initial_prompt: persona };
@@ -97,9 +112,17 @@ export async function attachAgent(p: {
   try {
     res = await apiJSON("api/sessions", "POST", body);
   } catch {
+    await giveBack();
     return { studioId, error: t("err.network") };
   }
-  if (!res || res.error || !res.name) return { studioId, error: res?.error ? errDetail(res.error) : t("imggen.attach_failed") };
+  if (!res || res.error || !res.name) {
+    await giveBack();
+    return { studioId, error: res?.error ? errDetail(res.error) : t("imggen.attach_failed") };
+  }
+  // /halt, not /stop: /stop deletes the session (to the trash, ADR 0101) — while switching agents
+  // only ends the old one's turn at the studio. Halted, it stays resumable (the Console's own stop
+  // button is the same call).
+  if (p.replacing) void raw(`api/sessions/${encodeURIComponent(p.replacing)}/halt`, { method: "POST" }).catch(() => undefined);
   // The create just named the worktree's creator; a repo list read before it still carries the
   // "created, no session" placeholder until the next poll.
   if (o.worktree) void useReposStore.getState().refresh();
