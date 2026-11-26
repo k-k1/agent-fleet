@@ -224,10 +224,16 @@ describe("WatchesPanel", () => {
       expect(a.tabIndex).toBe(0);
       act(() => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
       act(() => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, ctrlKey: true })));
+      act(() => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, metaKey: true })));
+      act(() => a.dispatchEvent(new MouseEvent("auxclick", { bubbles: true, cancelable: true, button: 1 })));
       act(() => a.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true })));
+      act(() => a.dispatchEvent(new KeyboardEvent("keydown", { key: " ", bubbles: true, cancelable: true })));
       expect(opened.calls).toEqual([
         ["s4uyskj", false],
         ["s4uyskj", true],
+        ["s4uyskj", true],
+        ["s4uyskj", true],
+        ["s4uyskj", false],
         ["s4uyskj", false],
       ]);
     });
@@ -235,7 +241,9 @@ describe("WatchesPanel", () => {
     it("updates the name and branch from the catalog without replacing the slug link", () => {
       useSessionsStore.setState({ sessions: [session] });
       mount([fleet]);
-      const link = rows()[0].querySelector("a");
+      const link = rows()[0].querySelector("a")!;
+      const hint = t("view.open_session", { name: fleet.ref });
+      expect(link.title).toBe(`Review checkout\n${hint}`);
       act(() => useSessionsStore.setState({
         sessions: [{ ...session, title: "", label: "[AF:s4uyskj] Review queue", currentBranch: "fix/queue" }],
       }));
@@ -243,6 +251,22 @@ describe("WatchesPanel", () => {
       expect(rows()[0].textContent).toMatch(/s4uyskj\s*Review queue\s*fix\/queue\s*fleet\.session\.idle/);
       expect(rows()[0].textContent).not.toContain("main");
       expect(rows()[0].textContent).not.toContain("Review checkout");
+      act(() => link.dispatchEvent(new MouseEvent("mouseenter")));
+      expect(link.title).toBe(`Review queue\n${hint}`);
+    });
+
+    it("shows the error and still lets the member end a failing fleet watch", async () => {
+      const failing = { ...fleet, error: "HTTP 502" };
+      const onEnd = vi.fn();
+      useSessionsStore.setState({ sessions: [session] });
+      mount([failing], onEnd);
+      const row = rows()[0];
+      expect(row.matches(".mw-fleet.failing")).toBe(true);
+      expect(row.querySelector(".mw-warn")?.textContent).toBe("HTTP 502");
+      expect(row.querySelector(".mw-types")?.textContent).toBe("fleet.session.idle");
+      await act(async () => row.querySelector<HTMLButtonElement>(".mw-end")!.click());
+      await answerConfirm(true);
+      expect(onEnd).toHaveBeenCalledExactlyOnceWith(failing);
     });
 
     it("shows no branch when neither branch field is set", () => {
