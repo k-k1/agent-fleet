@@ -31,6 +31,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gocachetrim"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gradlecache"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/rmtree"
 )
 
 // toolCache is one cache the Machine tab offers to empty.
@@ -355,21 +356,9 @@ func emptyDir(dir string) (bytes int64, files int, err error) {
 	return bytes, files, err
 }
 
-// removeTree is os.RemoveAll that also gets through read-only directories: a tool may
-// leave them (Go's module cache does), and RemoveAll cannot unlink inside one, so open the
-// rest of the tree up and try once more.
-func removeTree(p string) error {
-	if os.RemoveAll(p) == nil {
-		return nil
-	}
-	_ = filepath.WalkDir(p, func(q string, d os.DirEntry, werr error) error {
-		if werr == nil && d.IsDir() {
-			_ = os.Chmod(q, 0o700)
-		}
-		return nil
-	})
-	return os.RemoveAll(p)
-}
+// removeTree is os.RemoveAll that also gets through read-only directories (Go's module
+// cache leaves them); see rmtree.RemoveAll.
+func removeTree(p string) error { return rmtree.RemoveAll(p) }
 
 func joinInts(xs []int) string {
 	s := make([]string, len(xs))

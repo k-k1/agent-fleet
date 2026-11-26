@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/rmtree"
 )
 
 // deleteTimer records how long each step of one working-copy delete took, and logs one line
@@ -83,6 +85,15 @@ func removeWorktree(parent, dir string) (out string, err error) {
 	fireDeleteHook("git-remove", dir)
 	out, err = Combined(parent, "worktree", "remove", "--force", dir)
 	l.RUnlock()
+	if err != nil && strings.Contains(out, "ermission denied") {
+		// git cannot unlink inside a directory the owner cannot write to (Go's module cache),
+		// and its refusal leaves the folder behind. The lock and the dirty check were settled
+		// before this call, and a failure for any other reason (a locked worktree) is not
+		// retried here: only the permission case may be finished by hand.
+		if rerr := rmtree.RemoveAll(dir); rerr == nil {
+			err = nil
+		}
+	}
 	if err != nil {
 		return out, err
 	}

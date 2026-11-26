@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/rmtree"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 )
@@ -347,7 +348,7 @@ func purgeCleanupArchive(id string) (cleanupManifest, error) {
 	// A deleted space's folder goes first, whatever the manifest says (it may be unreadable): with
 	// the archive gone nothing could name the folder again, and it would stay for ever. A removal
 	// that stops part way leaves the archive, so the purge can be pressed again.
-	if err := os.RemoveAll(spaceTrashDir(id)); err != nil {
+	if err := rmtree.RemoveAll(spaceTrashDir(id)); err != nil {
 		return man, err
 	}
 	_ = os.Remove(filepath.Join(cleanupStoreDir(), id+".json"))
