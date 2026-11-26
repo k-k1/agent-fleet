@@ -463,7 +463,7 @@ func TestElicitRelayEchoesRequestStateOnlyWhenSent(t *testing.T) {
 				}
 				reqs := ""
 				if tc.inputs {
-					reqs = `"inputRequests":{"k":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE"]}}}}}},`
+					reqs = `"inputRequests":{"k":{"method":"elicitation/create","params":{"message":"m","requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE"]}}}}}},`
 				}
 				return `{"jsonrpc":"2.0","id":` + id + `,"result":{` + reqs + `"resultType":"input_required"` + tc.state + `}}`
 			}))
@@ -958,8 +958,8 @@ func TestElicitRelayCapsTheHeldCalls(t *testing.T) {
 func TestAnswerElicitationChecksTheChoices(t *testing.T) {
 	resetElicitations(t)
 	ir, err := parseInputRequired(json.RawMessage(`{"resultType":"input_required","inputRequests":{` +
-		`"a":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","required":["c"],"properties":{"c":{"type":"string","enum":["ALLOW_ONCE","DENY_ONCE",""]},"o":{"type":"string","oneOf":[{"const":"x","title":"Ex"}]}}}}},` +
-		`"b":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"opt":{"type":"string","enum":["y"]}}}}}` +
+		`"a":{"method":"elicitation/create","params":{"message":"m","requestedSchema":{"type":"object","required":["c"],"properties":{"c":{"type":"string","enum":["ALLOW_ONCE","DENY_ONCE",""]},"o":{"type":"string","oneOf":[{"const":"x","title":"Ex"}]}}}}},` +
+		`"b":{"method":"elicitation/create","params":{"message":"m","requestedSchema":{"type":"object","properties":{"opt":{"type":"string","enum":["y"]}}}}}` +
 		`},"requestState":"s"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -1275,7 +1275,7 @@ func TestElicitRelayRefusesWhatIsNotOneJSONObject(t *testing.T) {
 // An answer whose control members fold together ("result" and "Result") may be read one way by
 // the relay and the other by the CLI: it ends the call, and the CLI sees no confirmation.
 func TestElicitRelayRefusesAmbiguousAnswers(t *testing.T) {
-	ir := `{"resultType":"input_required","inputRequests":{"k":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE"]}}}}}},"requestState":"s"}`
+	ir := `{"resultType":"input_required","inputRequests":{"k":{"method":"elicitation/create","params":{"message":"m","requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE"]}}}}}},"requestState":"s"}`
 	done := `{"resultType":"complete","content":[]}`
 	for name, tc := range map[string]struct{ ct, body string }{
 		"json, result and Result":   {"application/json", `{"jsonrpc":"2.0","id":7,"result":` + ir + `,"Result":` + done + `}`},
@@ -1392,13 +1392,13 @@ func TestElicitRelayRefusesConstraintsItDoesNotCheck(t *testing.T) {
 		"an option's own": `{"type":"string","oneOf":[{"const":"ALLOW_ONCE","deprecated":true}]}`,
 	} {
 		t.Run(name, func(t *testing.T) {
-			res := `{"inputRequests":{"k":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"c":` + field + `}}}}}}`
+			res := `{"inputRequests":{"k":{"method":"elicitation/create","params":{"message":"m","requestedSchema":{"type":"object","properties":{"c":` + field + `}}}}}}`
 			if _, err := parseInputRequired(json.RawMessage(res)); err == nil {
 				t.Fatalf("accepted %s", field)
 			}
 		})
 	}
-	if _, err := parseInputRequired(json.RawMessage(`{"inputRequests":{"k":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["A"]}},"additionalProperties":true}}}}}`)); err == nil {
+	if _, err := parseInputRequired(json.RawMessage(`{"inputRequests":{"k":{"method":"elicitation/create","params":{"message":"m","requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["A"]}},"additionalProperties":true}}}}}`)); err == nil {
 		t.Fatal("accepted a schema member the relay does not check")
 	}
 }
@@ -1446,5 +1446,92 @@ func TestElicitRelayAnswersJSONWhenTheServerStreams(t *testing.T) {
 	var m map[string]any
 	if err := json.Unmarshal([]byte(res.body), &m); err != nil || res.resp.Header.Get("Content-Type") != "application/json" || fmt.Sprint(m["id"]) != "7" {
 		t.Fatalf("CLI got %q (%s)", res.body, res.resp.Header.Get("Content-Type"))
+	}
+}
+
+func TestElicitRelayRefusesFormsThatMisleadThePerson(t *testing.T) {
+	form := func(params string) string {
+		return `{"inputRequests":{"k":{"method":"elicitation/create","params":` + params + `}}}`
+	}
+	schema := `"requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE","ALLOW_TOOL_ALWAYS","DENY_ONCE"]}}}`
+	for name, res := range map[string]string{
+		"no message":          form(`{` + schema + `}`),
+		"a folded message":    form(`{"Message":"Send mail",` + schema + `}`),
+		"a folded schema":     form(`{"message":"m","RequestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["A"]}}}}`),
+		"a label missing":     form(`{"message":"m","requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE","ALLOW_TOOL_ALWAYS","DENY_ONCE"],"enumNames":["Allow once","Deny"]}}}}`),
+		"a label not text":    form(`{"message":"m","requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE","DENY_ONCE"],"enumNames":["Allow once",null]}}}}`),
+		"a const twice":       form(`{"message":"m","requestedSchema":{"type":"object","properties":{"c":{"type":"string","oneOf":[{"const":"ALLOW_ONCE","title":"Deny"},{"const":"ALLOW_ONCE","title":"Allow"},{"const":"DENY_ONCE"}]}}}}`),
+		"an enum value twice": form(`{"message":"m","requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE","ALLOW_ONCE"]}}}}`),
+		"another dialect":     form(`{"message":"m","requestedSchema":{"$schema":"http://json-schema.org/draft-04/schema#","type":"object","properties":{"c":{"type":"string","enum":["A"]}}}}`),
+	} {
+		if _, err := parseInputRequired(json.RawMessage(res)); err == nil {
+			t.Errorf("%s: accepted %s", name, res)
+		}
+	}
+	// The canonical form, with mode left out and the default dialect named, is accepted.
+	ok := form(`{"message":"Send **mail**","requestedSchema":{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE","DENY_ONCE"],"enumNames":["Allow once","Deny"]}}}}`)
+	ir, err := parseInputRequired(json.RawMessage(ok))
+	if err != nil || ir.inputs[0].Message != "Send **mail**" || ir.inputs[0].Fields[0].Options[1].Label != "Deny" {
+		t.Fatalf("%+v %v", ir, err)
+	}
+}
+
+// The response goes back under the id the CLI sent, as it was written, even when the server wrote
+// the same number another way.
+func TestElicitRelayAnswersUnderTheCLIsOwnSpelling(t *testing.T) {
+	for name, ct := range map[string]string{"json": "application/json", "stream": "text/event-stream"} {
+		t.Run(name, func(t *testing.T) {
+			resetElicitations(t)
+			up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+				w.Header().Set("Content-Type", ct)
+				body := completeFor("7.0")
+				if ct == "text/event-stream" {
+					body = "data: " + body + "\n\n"
+				}
+				_, _ = io.WriteString(w, body)
+			})
+			e := newRelayEnv(t, up)
+			flagElicitation(t, ElicitationRelay)
+			res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+			if !strings.Contains(res.body, `"id":7,`) || strings.Contains(res.body, "7.0") {
+				t.Fatalf("CLI got %q", res.body)
+			}
+		})
+	}
+}
+
+func TestIDKeyBoundsTheExponent(t *testing.T) {
+	if sameJSONID(json.RawMessage(`1e1099511627777`), json.RawMessage(`1e1099511627777`)) {
+		t.Error("an exponent past the bound was compared")
+	}
+	if !sameJSONID(json.RawMessage(`1e1099511627775`), json.RawMessage(`10e1099511627774`)) {
+		t.Error("equal numbers at the bound compared different")
+	}
+}
+
+// Each completed sign-in gets its own SignInID, also within one second, and a renewal keeps it:
+// that is what lets the relay refuse to retry a confirmed call on another sign-in.
+func TestCompleteGivesEachSignInItsOwnID(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	now := time.Now()
+	oauthNow = func() time.Time { return now } // both sign-ins in the same second
+	id := signedIn(t, f)
+	first := storedGrant(t, id).SignInID
+	req := startReq(nil)
+	mustStart(t, id, req)
+	if _, err := CompleteOAuth(context.Background(), id, CompleteRequest{State: req.State, Code: "c2", Iss: f.url("")}); err != nil {
+		t.Fatal(err)
+	}
+	second := storedGrant(t, id)
+	if first == "" || second.SignInID == "" || first == second.SignInID {
+		t.Fatalf("sign-in ids %q and %q", first, second.SignInID)
+	}
+	oauthNow = func() time.Time { return now.Add(2 * time.Hour) }
+	if _, err := AccessToken(context.Background(), id); err != nil {
+		t.Fatal(err)
+	}
+	if g := storedGrant(t, id); g.SignInID != second.SignInID || g.RefreshedAt == 0 {
+		t.Fatalf("after renewal: %+v", g)
 	}
 }

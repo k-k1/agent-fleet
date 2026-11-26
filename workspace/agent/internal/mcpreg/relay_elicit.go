@@ -647,7 +647,9 @@ func (o *elicitOut) classify(raw []byte, status int) (message, msgKind) {
 // progress on the CLI's token lifted to keep growing.
 func (o *elicitOut) rewrite(msg []byte, m message, kind msgKind) ([]byte, bool) {
 	switch {
-	case kind == msgResponse && !bytes.Equal(o.upID, o.cliID):
+	case kind == msgResponse && !bytes.Equal(bytes.TrimSpace(m.ID), bytes.TrimSpace(o.cliID)):
+		// By the id actually sent, not by attempt: 1.0 matches 1 but a CLI decoding an integer
+		// cannot read it.
 		var top map[string]json.RawMessage
 		if json.Unmarshal(msg, &top) != nil {
 			return msg, false
@@ -931,7 +933,8 @@ func idKey(raw json.RawMessage) (string, bool) {
 	if exp == "" {
 		e, err = 0, nil
 	}
-	if err != nil {
+	const expLimit = 1 << 40 // far beyond any id, and no sum below can wrap past it
+	if err != nil || e > expLimit || e < -expLimit {
 		return "", false // an exponent no id needs
 	}
 	if digits == "" {
@@ -1010,8 +1013,8 @@ func parseInputRequired(result json.RawMessage) (inputRequired, error) {
 		if method, _ := jsonString(req["method"]); method != "elicitation/create" {
 			return inputRequired{}, fmt.Errorf("a %s request", cut(method, elicitMaxText))
 		}
-		_, params, ok := strictObject(req["params"], nil)
-		if !ok {
+		pkeys, params, ok := strictObject(req["params"], nil)
+		if !ok || !canonical(pkeys, "mode", "message", "requestedSchema") {
 			return inputRequired{}, unreadable
 		}
 		if raw, has := params["mode"]; has {
@@ -1019,14 +1022,13 @@ func parseInputRequired(result json.RawMessage) (inputRequired, error) {
 				return inputRequired{}, fmt.Errorf("a %s-mode elicitation", cut(mode, elicitMaxText))
 			}
 		}
-		in := ElicitInput{Key: key}
-		if raw, has := params["message"]; has {
-			msg, ok := jsonString(raw)
-			if !ok {
-				return inputRequired{}, unreadable
-			}
-			in.Message = cut(msg, elicitMaxMessage)
+		// The message is what tells the person what they approve (MCP requires it): a form
+		// without one is not put to anyone.
+		msg, ok := jsonString(params["message"])
+		if !ok {
+			return inputRequired{}, errors.New("a form with no message")
 		}
+		in := ElicitInput{Key: key, Message: cut(msg, elicitMaxMessage)}
 		fields, err := parseFormSchema(params["requestedSchema"])
 		if err != nil {
 			return inputRequired{}, err
@@ -1075,6 +1077,12 @@ func parseFormSchema(raw json.RawMessage) ([]ElicitField, error) {
 	}
 	if t, _ := jsonString(schema["type"]); t != "object" {
 		return nil, errors.New("a form that is not an object")
+	}
+	// MCP's default dialect is the only one the relay reads a form by.
+	if raw, has := schema["$schema"]; has {
+		if d, _ := jsonString(raw); strings.TrimSuffix(d, "#") != "https://json-schema.org/draft/2020-12/schema" {
+			return nil, errors.New("a form in a schema dialect the relay does not read")
+		}
 	}
 	names, props, ok := strictObject(schema["properties"], nil)
 	if !ok || len(names) == 0 {
@@ -1136,6 +1144,11 @@ func parseChoiceField(name string, raw json.RawMessage) (ElicitField, error) {
 	case len(enum) > 0 && len(oneOf) > 0:
 		return ElicitField{}, errors.New("a field with both enum and oneOf")
 	case len(enum) > 0:
+		// Labels pair with values by position: one missing would put the next one's label (say
+		// "Deny") on another value (say ALLOW_TOOL_ALWAYS), so the lists must match exactly.
+		if _, has := p["enumNames"]; has && len(names) != len(enum) {
+			return ElicitField{}, errors.New("a field whose labels do not match its choices")
+		}
 		for i, r := range enum {
 			v, ok := jsonString(r)
 			if !ok {
@@ -1143,7 +1156,11 @@ func parseChoiceField(name string, raw json.RawMessage) (ElicitField, error) {
 			}
 			label := v
 			if i < len(names) {
-				if l, ok := jsonString(names[i]); ok && l != "" {
+				l, ok := jsonString(names[i])
+				if !ok {
+					return ElicitField{}, errors.New("a field whose labels do not match its choices")
+				}
+				if l != "" {
 					label = l
 				}
 			}
@@ -1167,6 +1184,15 @@ func parseChoiceField(name string, raw json.RawMessage) (ElicitField, error) {
 		}
 	default:
 		return ElicitField{}, errors.New("a free-text field")
+	}
+	// A value offered twice is ambiguous (two labels for one value; for oneOf, a value no single
+	// branch allows).
+	seen := map[string]bool{}
+	for _, o := range f.Options {
+		if seen[o.Value] {
+			return ElicitField{}, errors.New("a field that offers one choice twice")
+		}
+		seen[o.Value] = true
 	}
 	return f, nil
 }
