@@ -465,6 +465,25 @@ the typing indicator and stop control, mode chips, and the floating pills (.mirr
   max-width: 55%;
   color: var(--muted);
 }
+.mirror-watches .mw-fleet {
+  flex-wrap: wrap;
+  row-gap: 4px;
+}
+.mirror-watches .mw-fleet-ref {
+  flex: 1 1 min(12rem, 60%);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.mirror-watches .mw-fleet-ref .mw-ref {
+  margin-right: 0;
+}
+.mirror-watches .mw-fleet-branch {
+  color: var(--muted);
+}
+.mirror-watches .mw-fleet .mw-meta {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
 .mirror-watches .mw-err {
   overflow: hidden;
   text-overflow: ellipsis;
