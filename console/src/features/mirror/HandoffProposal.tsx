@@ -19,7 +19,7 @@ import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts"
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
 import { handoffLaunchTarget } from "./handoffLaunch.ts";
-import { openSpaceLaunch, spaceStillThere } from "./spaceLaunch.ts";
+import { openSpaceLaunch, spaceCheck } from "./spaceLaunch.ts";
 import { HandoffOfferModal } from "../sharing/HandoffOfferModal.tsx";
 import { offerForSession, recipientLabel, useHandoffStore } from "../sharing/handoffStore.ts";
 import type { Session } from "../../types/session.ts";
@@ -197,6 +197,27 @@ export function HandoffProposal({
     onChange(null);
   };
   const launch = async () => {
+    // The target is settled BEFORE a pending offer is withdrawn: a launch that cannot start (the
+    // working folder is unknown, the space is gone) must not first take the offer away from its
+    // recipient. The target working copy is carried WHOLE (handoffLaunch.ts): the dialog reads
+    // `vcs` and `unborn` off it to decide whether a worktree may be offered at all.
+    const target = handoffLaunchTarget(sessionMeta, repos, newWorktree);
+    if ("error" in target) {
+      toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
+      return;
+    }
+    if ("space" in target) {
+      const asked = { session, proposalId: proposal.id };
+      const there = await spaceCheck(target.space);
+      const now = live.current;
+      // The card moved on (another proposal, another session, gone) or the workspace changed while
+      // the list was read: nothing is started from an answer that no longer belongs to it.
+      if (!now.mounted || now.session !== asked.session || now.proposalId !== asked.proposalId || there === "stale") return;
+      if (there === "gone") {
+        toast(tr("mirror.launch_space_gone"));
+        return;
+      }
+    }
     // Launching while an offer is still pending would run the same work twice. Withdraw
     // conditionally *before* launching and abandon the launch if that race is lost (the
     // recipient already accepted) — ADR 0057 decision 6.
@@ -226,18 +247,7 @@ export function HandoffProposal({
         return;
       }
     }
-    // The target working copy is carried WHOLE (handoffLaunch.ts): the dialog reads `vcs`
-    // and `unborn` off it to decide whether a worktree may be offered at all.
-    const target = handoffLaunchTarget(sessionMeta, repos, newWorktree);
-    if ("error" in target) {
-      toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
-      return;
-    }
     if ("space" in target) {
-      if (!(await spaceStillThere(target.space))) {
-        toast(tr("mirror.launch_space_gone"));
-        return;
-      }
       useLaunchSeed.getState().set(proposal.prompt, proposal.title, session, proposal.id);
       openSpaceLaunch(target.space);
       return;

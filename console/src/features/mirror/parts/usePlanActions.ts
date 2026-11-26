@@ -8,7 +8,7 @@ import { dismissToast } from "../../../ui/toast.ts";
 import { useSessionsStore } from "../../sessions/store.ts";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../../repos/store.ts";
 import { handoffLaunchTarget, targetDir } from "../handoffLaunch.ts";
-import { openSpaceLaunch, spaceStillThere } from "../spaceLaunch.ts";
+import { openSpaceLaunch, spaceCheck } from "../spaceLaunch.ts";
 import { discardCarriedAfterReview } from "../carriedPlanReview.ts";
 import { deliverPlanComments, planKey } from "../planComments.ts";
 import {
@@ -163,9 +163,17 @@ export function usePlanActions({
       toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
       return;
     }
-    if ("space" in target && !(await spaceStillThere(target.space))) {
-      toast(tr("mirror.launch_space_gone"));
-      return;
+    if ("space" in target) {
+      const there = await spaceCheck(target.space);
+      // The list was read while the card stayed live: the member may have approved this plan, or a
+      // revised one may have replaced it, meanwhile. Rejecting then would interrupt a run they
+      // approved. Nothing has been touched yet, so leaving is free.
+      if (there === "stale" || latest.current.pending !== plan) return;
+      if (there === "gone") {
+        toast(tr("mirror.launch_space_gone"));
+        return;
+      }
+      if (wsDown()) return;
     }
     markRejected(plan, true); // optimistic "rejected" badge; planOutcome reconciles it
     wasWorkingRef.current = false; // as with an interrupt: no reply is being waited for
@@ -310,9 +318,14 @@ export function usePlanActions({
       toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
       return;
     }
-    if ("space" in target && !(await spaceStillThere(target.space))) {
-      toast(tr("mirror.launch_space_gone"));
-      return;
+    if ("space" in target) {
+      const there = await spaceCheck(target.space);
+      // The carried card may have been discarded, answered or replaced while the list was read.
+      if (there === "stale" || latest.current.carried !== plan) return;
+      if (there === "gone") {
+        toast(tr("mirror.launch_space_gone"));
+        return;
+      }
     }
     useLaunchSeed.getState().set(
       reviewPrompt({ parent: session, path: res.path, dir: targetDir(target) }),

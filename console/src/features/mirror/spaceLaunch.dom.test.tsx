@@ -6,22 +6,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
+import { answerConfirm } from "../../test/confirmDialog.ts";
 import type { Session } from "../../types/session.ts";
 
 let spaceFolders = ["research-aaa"];
+let tenant = "";
+// What GET /api/spaces does: the list, a refusal, or a hang the test releases itself.
+let spacesAnswer: () => Promise<unknown> = async () => ({ spaces: spaceFolders.map((folder) => ({ folder, name: "", dir: "/home/dev/spaces/" + folder })) });
+let ownedOffers: unknown[] = [];
 const apiGet = vi.fn(async (path: string): Promise<unknown> =>
-  path === "api/spaces" ? { spaces: spaceFolders.map((folder) => ({ folder, name: "", dir: "/home/dev/spaces/" + folder })) } : {},
+  path === "api/spaces" ? spacesAnswer() : path === "api/session-handoff-offers" ? { offers: ownedOffers } : {},
 );
+const apiJSON = vi.fn(async (..._a: unknown[]): Promise<unknown> => ({}));
+const sessionCarriedAnswer = vi.fn(async (..._a: unknown[]) => ({ ok: true }));
 const sessionPlanFile = vi.fn(async (_s: string) => ({ ok: true, path: "/home/dev/.claude/plans/p.md", source: "claude" }));
 vi.mock("../../core/api/client.ts", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
   return {
     ...real,
-    getTenant: () => "",
+    getTenant: () => tenant,
     getUser: () => "",
     isTransientErr: () => false,
     api: (path: string) => apiGet(path),
-    apiJSON: vi.fn(async () => ({})),
+    apiJSON: (...a: unknown[]) => apiJSON(...a),
+    sessionCarriedAnswer: (...a: unknown[]) => sessionCarriedAnswer(...a),
     sessionPlanFile: (s: string) => sessionPlanFile(s),
   };
 });
@@ -31,6 +39,7 @@ const { usePlanActions } = await import("./parts/usePlanActions.ts");
 const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useSpacesStore } = await import("../spaces/store.ts");
+const { useHandoffStore } = await import("../sharing/handoffStore.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 
@@ -45,7 +54,14 @@ const settle = async () => {
 
 beforeEach(() => {
   spaceFolders = ["research-aaa"];
+  ownedOffers = [];
+  tenant = "";
+  spacesAnswer = async () => ({ spaces: spaceFolders.map((folder) => ({ folder, name: "", dir: "/home/dev/spaces/" + folder })) });
+  localStorage.clear();
   apiGet.mockClear();
+  apiJSON.mockClear();
+  sessionCarriedAnswer.mockClear();
+  useHandoffStore.setState({ owned: [], received: [] });
   sessionPlanFile.mockClear();
   useSpacesStore.getState().clear();
   useReposStore.setState({ repos: [{ name: "research-aaa", path: "/home/dev/repos/research-aaa", branch: "main" }] as never, loadState: "ok" });
@@ -61,13 +77,14 @@ afterEach(async () => {
   root = null;
   useLaunchSeed.getState().clear();
   useLaunchTarget.getState().clear();
+  useHandoffStore.setState({ owned: [], received: [] });
 });
 
 const opened = () => useSessionsStore.getState().startTick;
 
 describe("handoff proposal launched from a space session", () => {
-  const renderCard = async () => {
-    await act(async () => {
+  const mountCard = () =>
+    act(async () => {
       root!.render(
         <ToastProvider>
           <ConfirmProvider>
@@ -76,9 +93,14 @@ describe("handoff proposal launched from a space session", () => {
         </ToastProvider>,
       );
     });
+  const press = async () => {
     const go = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(t("mirror.handoff_launch")))!;
     await act(async () => go.click());
     await settle();
+  };
+  const renderCard = async () => {
+    await mountCard();
+    await press();
   };
 
   it("opens the Start hub on that space, with the handoff lineage, and never the repository dialog", async () => {
@@ -96,6 +118,92 @@ describe("handoff proposal launched from a space session", () => {
     expect(opened()).toBe(0);
     expect(useLaunchTarget.getState().target).toBeNull();
     expect(useLaunchSeed.getState()).toMatchObject({ space: "", prompt: "", handoffSession: "" });
+  });
+
+  it("goes on when the list cannot be read or the Agent has no such route — it never decides 'gone' from that", async () => {
+    for (const answer of [
+      async () => {
+        throw new Error("network");
+      },
+      async () => ({ error: { code: "http_404" } }),
+      async () => ({ error: { code: "http_503", transient: true } }),
+    ]) {
+      spacesAnswer = answer;
+      useSessionsStore.setState({ startTick: 0 });
+      useLaunchSeed.getState().clear();
+      await renderCard();
+      expect(opened()).toBe(1);
+      expect(useLaunchSeed.getState().space).toBe("research-aaa");
+      expect(document.body.textContent).not.toContain(t("mirror.launch_space_gone"));
+    }
+  });
+
+  it("judges by the list it just read, not by one cached before: a space made meanwhile is there", async () => {
+    useSpacesStore.setState({ spaces: [], owner: "\n" }); // an older read that did not have it
+    await renderCard();
+    expect(opened()).toBe(1);
+  });
+
+  it("decides nothing when the workspace changed while the list was read", async () => {
+    let release!: () => void;
+    spacesAnswer = () => new Promise((r) => (release = () => r({ spaces: [] })));
+    await mountCard();
+    await press();
+    tenant = "other"; // the answer is the old workspace's: it says nothing about this one
+    await act(async () => release());
+    await settle();
+    expect(opened()).toBe(0);
+    expect(document.body.textContent).not.toContain(t("mirror.launch_space_gone"));
+  });
+
+  describe("with a shared offer still pending", () => {
+    const offer = { id: "offer-1", sessionId: "cat-1", sessionName: "src", recipientUserKey: "bob", title: "Carry on", status: "pending" } as never;
+    const withOffer = () => {
+      ownedOffers = [offer];
+      useHandoffStore.setState({ owned: [offer] });
+    };
+
+    it("does not withdraw it when the space is gone", async () => {
+      spaceFolders = [];
+      withOffer();
+      await renderCard();
+      expect(document.body.textContent).toContain(t("mirror.launch_space_gone"));
+      expect(apiJSON).not.toHaveBeenCalled();
+      expect(document.querySelector(".ui-confirm-actions")).toBeNull(); // no question was asked either
+      expect(opened()).toBe(0);
+    });
+
+    it("withdraws it after the question when the space is there, then opens the hub", async () => {
+      withOffer();
+      await renderCard();
+      await answerConfirm(true);
+      await settle();
+      expect(apiJSON).toHaveBeenCalledWith("api/session-handoff-offers/offer-1", "DELETE");
+      expect(opened()).toBe(1);
+    });
+  });
+
+  it("starts nothing from a card that was replaced while the list was read", async () => {
+    let release!: () => void;
+    spacesAnswer = () => new Promise((r) => (release = () => r({ spaces: [{ folder: "research-aaa", name: "", dir: "x" }] })));
+    const render = (id: string) =>
+      act(async () => {
+        root!.render(
+          <ToastProvider>
+            <ConfirmProvider>
+              <HandoffProposal session="src" sessionMeta={inSpace} proposal={{ ...proposal, id }} onChange={() => undefined} />
+            </ConfirmProvider>
+          </ToastProvider>,
+        );
+      });
+    await render("p-1");
+    const go = [...host.querySelectorAll("button")].find((b) => b.textContent?.includes(t("mirror.handoff_launch")))!;
+    await act(async () => go.click());
+    await render("p-2");
+    await act(async () => release());
+    await settle();
+    expect(opened()).toBe(0);
+    expect(useLaunchSeed.getState().handoffSession).toBe("");
   });
 
   it("still opens the repository dialog for a session in a repository", async () => {
@@ -123,14 +231,15 @@ describe("plan review launched from a space session", () => {
   const markRejected = vi.fn();
   const sendInterrupt = vi.fn(async () => {});
   const toast = vi.fn();
-  function Probe({ meta }: { meta: Session }) {
+  const setCarried = vi.fn();
+  function Probe({ meta, pending = "# Plan\n\nDo it.", carried = null }: { meta: Session; pending?: string; carried?: { kind: "plan"; plan: string } | null }) {
     plan = usePlanActions({
       session: "src",
       sessionMeta: meta,
       running: true,
       readOnly: false,
       toast: toast as never,
-      st: { pendingPlan: "# Plan\n\nDo it.", carried: null, alive: true, markRejected, wasWorkingRef: { current: false }, setCarried: vi.fn() } as never,
+      st: { pendingPlan: pending, carried, alive: true, markRejected, wasWorkingRef: { current: false }, setCarried } as never,
       actions: { wsDown: () => false, sendInterrupt } as never,
       openTargetInNew: vi.fn() as never,
       setPaneTarget: vi.fn() as never,
@@ -142,6 +251,7 @@ describe("plan review launched from a space session", () => {
     markRejected.mockClear();
     sendInterrupt.mockClear();
     toast.mockClear();
+    setCarried.mockClear();
     await act(async () => root!.render(<Probe meta={inSpace} />));
     await settle();
   };
@@ -174,6 +284,7 @@ describe("plan review launched from a space session", () => {
 
   it("a stopped session's carried plan: same hub, and the space gone says so", async () => {
     await mount();
+    await act(async () => root!.render(<Probe meta={inSpace} pending="" carried={{ kind: "plan", plan: "# Plan\n\nDo it." }} />));
     await act(async () => plan.reviewCarriedPlan("# Plan\n\nDo it."));
     await settle();
     expect(useLaunchTarget.getState().target).toBeNull();
@@ -188,5 +299,80 @@ describe("plan review launched from a space session", () => {
     expect(toast).toHaveBeenCalledWith(t("mirror.launch_space_gone"));
     expect(opened()).toBe(1);
     expect(useLaunchSeed.getState().space).toBe("");
+  });
+
+  it("review elsewhere: a plan approved while the list is read is not rejected or interrupted", async () => {
+    let release!: () => void;
+    spacesAnswer = () => new Promise((r) => (release = () => r({ spaces: [{ folder: "research-aaa", name: "", dir: "x" }] })));
+    await mount();
+    let run!: Promise<void>;
+    await act(async () => {
+      run = plan.reviewPlanElsewhere("# Plan\n\nDo it.");
+    });
+    await settle();
+    await act(async () => root!.render(<Probe meta={inSpace} pending="" />)); // approved: no plan is pending any more
+    await act(async () => release());
+    await run;
+    await settle();
+    expect(markRejected).not.toHaveBeenCalled();
+    expect(sendInterrupt).not.toHaveBeenCalled();
+    expect(opened()).toBe(0);
+  });
+
+  it("review elsewhere goes on when the list could not be read", async () => {
+    spacesAnswer = async () => {
+      throw new Error("network");
+    };
+    await mount();
+    await act(async () => plan.reviewPlanElsewhere("# Plan\n\nDo it."));
+    await settle();
+    expect(markRejected).toHaveBeenCalled();
+    expect(opened()).toBe(1);
+  });
+
+  describe("a carried plan reviewed in the space", () => {
+    const carried = { kind: "plan" as const, plan: "# Plan\n\nDo it." };
+    const start = async () => {
+      markRejected.mockClear();
+      await act(async () => root!.render(<Probe meta={inSpace} pending="" carried={carried} />));
+      await settle();
+      await act(async () => plan.reviewCarriedPlan(carried.plan));
+      await settle();
+    };
+
+    it("is discarded and the reviewer remembered only once the review session exists", async () => {
+      await start();
+      expect(sessionCarriedAnswer).not.toHaveBeenCalled(); // opening the hub changes nothing
+      expect(localStorage.getItem("af.plan-reviewers") || "").not.toContain("rev-1");
+      await act(async () => useLaunchSeed.getState().onLaunched?.("rev-1"));
+      await settle();
+      expect(sessionCarriedAnswer).toHaveBeenCalledWith("src", { decision: "discard" });
+      expect(setCarried).toHaveBeenCalledWith(null);
+      expect(localStorage.getItem("af.plan-reviewers") || "").toContain("rev-1");
+    });
+
+    it("is left alone when the hub is closed without launching", async () => {
+      await start();
+      useLaunchSeed.getState().clear(); // the hub's close
+      expect(useLaunchSeed.getState().onLaunched).toBeNull();
+      expect(sessionCarriedAnswer).not.toHaveBeenCalled();
+    });
+
+    it("is not touched when the card was discarded while the list was read", async () => {
+      let release!: () => void;
+      spacesAnswer = () => new Promise((r) => (release = () => r({ spaces: [{ folder: "research-aaa", name: "", dir: "x" }] })));
+      await act(async () => root!.render(<Probe meta={inSpace} pending="" carried={carried} />));
+      let run!: Promise<void>;
+      await act(async () => {
+        run = plan.reviewCarriedPlan(carried.plan);
+      });
+      await settle();
+      await act(async () => root!.render(<Probe meta={inSpace} pending="" carried={null} />));
+      await act(async () => release());
+      await run;
+      await settle();
+      expect(opened()).toBe(0);
+      expect(useLaunchSeed.getState().onLaunched).toBeNull();
+    });
   });
 });

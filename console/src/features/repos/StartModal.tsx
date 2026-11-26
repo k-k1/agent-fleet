@@ -59,8 +59,10 @@ interface StartModalProps {
   /** "Launch an agent at home" was picked — the host opens the start-work dialog in its
    * repo-less (home) form on top of this hub. */
   onPickHome: () => void;
-  /** A launch seeded by a session that runs in a space opens on that space (its folder) with the
-   *  title the seed proposed (the title only rides along with a space; "" opens as usual). */
+  /** A launch seeded by a session that runs in a space (its folder) continues in a space: the hub
+   *  opens on that space's form with the title the seed proposed, and the repository and Other
+   *  sections are closed to it, because their launches would take the seed's text, lineage and
+   *  completion callbacks to a place the seed was not written for. "" opens as usual. */
   seedSpace?: string;
   seedTitle?: string;
 }
@@ -330,7 +332,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
               onLaunch={onLaunchSpace}
             />
           </HubSection>
-          <HubSection open={section === "repo"} disabled={pickPending} icon="repo" label={tr("start.sec_repo")} onOpen={() => openSection("repo")}>
+          <HubSection open={section === "repo"} disabled={pickPending || !!seedSpace} icon="repo" label={tr("start.sec_repo")} onOpen={() => openSection("repo")}>
             <HubComposer draft={draft} busy={busy} note={tr("start.draft_note_repo")} />
             <div className="ui-field start-repos">
               <label className="ui-field-label" htmlFor="start-repo-search">{tr("start.repo_launch_label")}</label>
@@ -357,7 +359,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
               </div>
             </div>
           </HubSection>
-          <HubSection open={section === "other"} disabled={pickPending} icon="ellipsis" label={tr("start.sec_other")} onOpen={() => openSection("other")}>
+          <HubSection open={section === "other"} disabled={pickPending || !!seedSpace} icon="ellipsis" label={tr("start.sec_other")} onOpen={() => openSection("other")}>
             <HubComposer draft={draft} busy={busy} note={tr("start.draft_note_other")} />
             <div className="start-list">
               {kinds.length > 0 && (

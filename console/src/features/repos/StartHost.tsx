@@ -97,6 +97,9 @@ export function StartHost() {
     <>
       {show && (
         <StartModal
+          // A space-seeded opening starts the hub over, also when one is already open: the form
+          // reads its space and title only when it mounts.
+          key={seedSpace ? `space:${startTick}` : "hub"}
           kinds={agentKinds}
           access={ctx.access}
           claudeExpired={ctx.claudeExpired}

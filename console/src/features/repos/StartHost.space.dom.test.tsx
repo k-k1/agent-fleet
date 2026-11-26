@@ -207,16 +207,62 @@ describe("Start hub — seeded by a session that runs in a space", () => {
     expect(markHandoffLaunched).not.toHaveBeenCalled();
   });
 
-  it("leaves the remembered section alone and does not carry the space into the next opening", async () => {
+  it("closes the repository and Other sections to a continuation, so its text and callbacks stay with the space", async () => {
     seedFromSpaceSession();
     await openHub("repo");
-    await click(head(t("start.sec_repo")));
-    expect(head(t("start.sec_repo")).getAttribute("aria-expanded")).toBe("true"); // the member's own pick wins from here
+    for (const label of [t("start.sec_repo"), t("start.sec_other")]) expect(head(label).disabled).toBe(true);
+    expect(head(t("start.sec_space")).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("does not carry the space, or the closed sections, into the next opening", async () => {
+    seedFromSpaceSession();
+    await openHub("repo");
     const close = document.querySelector<HTMLButtonElement>(`button[aria-label="${t("ui.close")}"]`)!;
     await click(close);
     expect(useLaunchSeed.getState().space).toBe("");
     await openHub();
     expect(chip().textContent).toContain(t("start.place_new_space"));
+    expect(head(t("start.sec_repo")).disabled).toBe(false);
+  });
+
+  it("starts the open hub over on the seeded space: a hub opened meanwhile is not left on its old place", async () => {
+    await openHub("repo"); // an ordinary hub, the repository section open
+    expect(head(t("start.sec_repo")).getAttribute("aria-expanded")).toBe("true");
+    await act(async () => {
+      seedFromSpaceSession();
+      useSessionsStore.getState().openStart();
+    });
+    await settle();
+    expect(head(t("start.sec_space")).getAttribute("aria-expanded")).toBe("true");
+    expect(chip().textContent).toContain("Budget");
+    expect(hubBox().value).toBe("引き継ぎの本文");
+    await click(spaceGo());
+    expect(createCalls()[0][2]).toMatchObject({ space: { folder: "old-aaa" }, initial_prompt: "引き継ぎの本文", origin_proposal: "p-1" });
+  });
+
+  it("finishes what seeded the launch (a plan review's record and the carried card) only once the space session exists", async () => {
+    const onLaunched = vi.fn();
+    seedFromSpaceSession();
+    useLaunchSeed.getState().setOnLaunched(onLaunched);
+    apiPost.mockImplementationOnce(async (...a: unknown[]) => (a[0] === "api/sessions" ? { error: { code: "runtime_failed", message: "boom" } } : {}));
+    await openHub();
+    await click(spaceGo()); // refused by the Agent
+    expect(onLaunched).not.toHaveBeenCalled();
+    await click(spaceGo()); // second press succeeds
+    expect(onLaunched).toHaveBeenCalledTimes(1);
+    expect(onLaunched).toHaveBeenCalledWith("space-1");
+  });
+
+  it("drops the completion callback when the hub is closed without launching", async () => {
+    const onLaunched = vi.fn();
+    seedFromSpaceSession();
+    useLaunchSeed.getState().setOnLaunched(onLaunched);
+    await openHub();
+    const close = document.querySelector<HTMLButtonElement>(`button[aria-label="${t("ui.close")}"]`)!;
+    await click(close);
+    expect(onLaunched).not.toHaveBeenCalled();
+    expect(useLaunchSeed.getState().onLaunched).toBeNull();
+    expect(markHandoffLaunched).not.toHaveBeenCalled();
   });
 });
 
