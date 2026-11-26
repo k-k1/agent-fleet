@@ -601,11 +601,13 @@ func startSessionInProcess(name string) error {
 }
 
 // recordWatchedLinkStates writes a held link's PR state when it moved, so a PR merged or closed
-// drops out of the watch (heldPRLinks skips it) and the row shows the state it has. A holder on
-// the PR's branch is left to recordBranchPRs, which reads the same answer.
+// drops out of the watch (heldPRLinks skips it) and the row shows the state it has, and its merge
+// conditions when they are due (session.PRFactsDue). A holder on the PR's branch is left to
+// recordBranchPRs, which reads the same answer.
 func recordWatchedLinkStates(watched []*prWatched) {
 	for _, w := range watched {
 		state := prLinkState(w.pr)
+		facts := prLinkFacts(w.pr)
 		for _, h := range w.holders {
 			if h.viaBranch {
 				continue
@@ -615,7 +617,12 @@ func recordWatchedLinkStates(watched []*prWatched) {
 				continue
 			}
 			l, held := heldLink(session.LinksOf(m), w.provider, w.linkKey)
-			if !held || l.State == state {
+			if !held {
+				continue
+			}
+			moved := l.State != state
+			observed := facts != nil && session.PRFactsDue(l.Facts, *facts)
+			if !moved && !observed {
 				continue
 			}
 			// The merge or close of a working link is what recordBranchPRs tells, on this same
@@ -624,14 +631,21 @@ func recordWatchedLinkStates(watched []*prWatched) {
 			// once key, and recorded only once it is in the outbox.
 			// Asked as working whatever the link's own role: the list tells the session on a PR's
 			// branch as working too, and every holder here owns the PR.
-			if kind, extra := prNotice(w.pr, session.LinkWorking, l.State); kind == prMergedNotice || kind == prClosedNotice {
-				s := session.Session{Name: m.Name, Kind: m.Kind, Display: session.Display(m)}
-				if !sendPRNotice(&s, kind, w.provider, w.linkKey, extra, w.pr) {
-					continue
+			// Facts carry no notice, so a notice that could not be queued holds back the state alone.
+			if moved {
+				if kind, extra := prNotice(w.pr, session.LinkWorking, l.State); kind == prMergedNotice || kind == prClosedNotice {
+					s := session.Session{Name: m.Name, Kind: m.Kind, Display: session.Display(m)}
+					if !sendPRNotice(&s, kind, w.provider, w.linkKey, extra, w.pr) {
+						moved = false
+					}
 				}
 			}
+			if !moved && !observed {
+				continue
+			}
 			UpdateSessionMeta(h.name, func(m *session.Meta) bool {
-				return session.SetLinkState(m, w.provider, w.linkKey, state)
+				wrote := moved && session.SetLinkState(m, w.provider, w.linkKey, state)
+				return facts != nil && session.SetLinkFacts(m, w.provider, w.linkKey, *facts) || wrote
 			})
 		}
 	}

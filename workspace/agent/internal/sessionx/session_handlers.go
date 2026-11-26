@@ -552,12 +552,13 @@ type CreateReq struct {
 	// recorded in the meta so a later rename through POST /repos/{name}/branch-name keeps
 	// {ref} and the kind. Every other launch leaves it nil.
 	WorkItem *session.WorkItemRef `json:"work_item,omitempty"`
-	// links / unlinked / workItemState are a moved session's links and its launch item's state
-	// (session_move.go), set in-process only: no client can hand a new session links it did not
-	// earn.
+	// links / unlinked / workItemState / workItemFacts are a moved session's links and its launch
+	// item's state and PR facts (session_move.go), set in-process only: no client can hand a new
+	// session links it did not earn.
 	links         []session.WorkItemLink
 	unlinked      []string
 	workItemState string
+	workItemFacts *session.PRFacts
 	// noProbe is a create that runs under a lock and must not wait on the serve (a move's target):
 	// a default model is then never judged on the folder (checkRoute).
 	noProbe bool
@@ -1750,7 +1751,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
 		// The same slot keeps its studio (ADR 0100 decision 2); rebindStudioOnRecreate below moves
 		// the studio's own `session` over, or drops this copy when it cannot.
-		Studio: m.Studio, WorkItem: m.WorkItem, WorkItemState: m.WorkItemState, Links: m.Links, Unlinked: m.Unlinked,
+		Studio: m.Studio, WorkItem: m.WorkItem, WorkItemState: m.WorkItemState, WorkItemFacts: m.WorkItemFacts, Links: m.Links, Unlinked: m.Unlinked,
 	}
 	if AgentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)
@@ -1851,7 +1852,7 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 		ForkSids: forkSids(src),
 		// The fork works in the same working copy, so it renames the same branch for the same item,
 		// and is on the same tickets and PRs.
-		WorkItem: src.WorkItem, WorkItemState: src.WorkItemState, Links: src.Links, Unlinked: src.Unlinked,
+		WorkItem: src.WorkItem, WorkItemState: src.WorkItemState, WorkItemFacts: src.WorkItemFacts, Links: src.Links, Unlinked: src.Unlinked,
 		// Studio is deliberately NOT inherited: one studio has one session, and a fork bound to
 		// the same studio would be a second writer of its draft (ADR 0100 decision 2).
 		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the

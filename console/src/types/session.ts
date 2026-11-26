@@ -412,6 +412,19 @@ export interface SessionWorkLink {
   at?: string;
   /** Last state seen for a pull request link (#3166); absent when never seen or not a PR. */
   state?: "open" | "draft" | "merged" | "closed";
+  /** A PR link's merge conditions as last observed (#5052, ADR 0143 decision 4); absent when never observed, which is not ready. */
+  facts?: SessionWorkLinkFacts;
+}
+
+export interface SessionWorkLinkFacts {
+  /** CI rollup of the head commit; absent when nothing ran — which is not green. */
+  checks?: "success" | "failure" | "pending";
+  changesRequested?: boolean;
+  conflict?: boolean;
+  /** The Agent's own ready-to-merge verdict; never rebuild it from the other facts. */
+  ready?: boolean;
+  /** When the facts were read (RFC3339). */
+  observedAt: string;
 }
 
 export interface SessionPR {

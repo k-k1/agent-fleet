@@ -113,6 +113,27 @@ type SessionLink struct {
 	Provider, Key, Role, Title, URL, At string
 	// State is the last state seen for a pull request link ("" = none), as the Agent records it.
 	State string
+	// Facts are a PR link's merge conditions as last observed; the zero value (no ObservedAt) is
+	// no observation, which reads as not ready.
+	Facts PRFacts
+}
+
+// PRFacts are a mirrored PR link's merge conditions (ADR 0143 decision 4): the CI rollup
+// ("success", "failure", "pending", "" for nothing ran), whether changes were requested, whether
+// it conflicts, the Agent's ready-to-merge verdict, and when they were observed (RFC3339, "" for
+// never).
+type PRFacts struct {
+	Checks                            string
+	ChangesRequested, Conflict, Ready bool
+	ObservedAt                        string
+}
+
+// boolColumn is b as the 0/1 INTEGER both dialects store booleans as.
+func boolColumn(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // linkFold is the case-insensitive identity of a link within one session, the same
@@ -173,7 +194,7 @@ func dropNUL(v string) string {
 // every list poll, and a round trip per link would hold the transaction open that much
 // longer. A second link to the same item (differing only in case) is skipped rather than
 // allowed to hit the primary key: the list comes from the Agent, and one odd entry must not
-// fail the whole mirror write. At most 51 rows × 11 values (SessionLinksFromJSON's cap), well
+// fail the whole mirror write. At most 51 rows × 16 values (SessionLinksFromJSON's cap), well
 // under either dialect's bound-parameter limit.
 func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session string, links []SessionLink) error {
 	seen := make(map[[2]string]bool, len(links))
@@ -186,12 +207,14 @@ func insertSessionLinks(ctx context.Context, tx *sqlTx, workspaceID, session str
 		}
 		seen[[2]string{provider, fold}] = true
 		if len(args) == 0 {
-			q.WriteString(`INSERT INTO session_work_link(workspace_id, session_name, ord, provider, item_key, item_fold, role, title, url, linked_at, state) VALUES`)
+			q.WriteString(`INSERT INTO session_work_link(workspace_id, session_name, ord, provider, item_key, item_fold, role, title, url, linked_at, state, checks, changes_requested, conflict, ready, observed_at) VALUES`)
 		} else {
 			q.WriteString(",")
 		}
-		q.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
-		args = append(args, workspaceID, session, i, provider, l.Key, fold, l.Role, l.Title, l.URL, l.At, l.State)
+		q.WriteString("(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+		f := l.Facts
+		args = append(args, workspaceID, session, i, provider, l.Key, fold, l.Role, l.Title, l.URL, l.At, l.State,
+			f.Checks, boolColumn(f.ChangesRequested), boolColumn(f.Conflict), boolColumn(f.Ready), f.ObservedAt)
 	}
 	if len(args) == 0 {
 		return nil
@@ -227,7 +250,7 @@ func (s *SQL) ListSessions(ctx context.Context, workspaceID string) ([]SessionRo
 
 func (s *SQL) ListSessionLinks(ctx context.Context, workspaceID string) (map[string][]SessionLink, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT session_name, provider, item_key, role, title, url, linked_at, state
+		`SELECT session_name, provider, item_key, role, title, url, linked_at, state, checks, changes_requested, conflict, ready, observed_at
 		 FROM session_work_link WHERE workspace_id=? ORDER BY session_name, ord`, workspaceID)
 	if err != nil {
 		return nil, err
@@ -237,9 +260,12 @@ func (s *SQL) ListSessionLinks(ctx context.Context, workspaceID string) (map[str
 	for rows.Next() {
 		var name string
 		var l SessionLink
-		if err := rows.Scan(&name, &l.Provider, &l.Key, &l.Role, &l.Title, &l.URL, &l.At, &l.State); err != nil {
+		var changes, conflict, ready int
+		if err := rows.Scan(&name, &l.Provider, &l.Key, &l.Role, &l.Title, &l.URL, &l.At, &l.State,
+			&l.Facts.Checks, &changes, &conflict, &ready, &l.Facts.ObservedAt); err != nil {
 			return nil, err
 		}
+		l.Facts.ChangesRequested, l.Facts.Conflict, l.Facts.Ready = changes != 0, conflict != 0, ready != 0
 		out[name] = append(out[name], l)
 	}
 	return out, rows.Err()

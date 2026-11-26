@@ -712,3 +712,31 @@ func TestFetchSinceAsksTheBranchItselfAgain(t *testing.T) {
 		t.Fatalf("FetchSince = %+v, %v, calls=%d: the branch was answered by another key's read", got[branch], err, calls)
 	}
 }
+
+// A stored answer carries when its call was sent, not when it arrived or was looked up: a PR link
+// records its facts "as of" this time, and a cached answer served later is no newer.
+func TestStoredAnswerCarriesWhenItsCallWasSent(t *testing.T) {
+	c := newTestCache("http://unused", "tok")
+	branch, num := Key{Repo: "o/r", Branch: "a"}, Key{Repo: "o/r", Number: 3}
+	var sentAfter, answeredBefore time.Time
+	c.fetch = func(_ string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
+		time.Sleep(2 * time.Millisecond)
+		answeredBefore = time.Now()
+		pr := &PR{Number: 3, State: "open"}
+		out := map[Key]*PR{}
+		for _, k := range keys {
+			out[k] = pr // one answer for both keys: stamped once, on its first store
+		}
+		return out, nil, 0, nil
+	}
+	sentAfter = time.Now()
+	c.Lookup([]Key{branch, num}, time.Now())
+	got := c.Lookup([]Key{branch, num}, time.Now().Add(time.Minute))
+	pr := got[branch]
+	if pr == nil || pr.ObservedAt.IsZero() || pr.ObservedAt.Before(sentAfter) || !pr.ObservedAt.Before(answeredBefore) {
+		t.Fatalf("ObservedAt=%v, want the send time in [%v, %v)", pr, sentAfter, answeredBefore)
+	}
+	if got[num] == nil || !got[num].ObservedAt.Equal(pr.ObservedAt) {
+		t.Fatalf("by number ObservedAt=%v, want the same read's time %v", got[num], pr.ObservedAt)
+	}
+}

@@ -139,7 +139,7 @@ func applyCreateLinks(meta *session.Meta, req *CreateReq) {
 	// The launch item's last seen state goes with it: without it a launch PR merged before the
 	// move would lose its done mark, and one merged after it would not be news to the target.
 	if meta.WorkItem != nil {
-		meta.WorkItemState = req.workItemState
+		meta.WorkItemState, meta.WorkItemFacts = req.workItemState, req.workItemFacts
 	}
 	if len(req.links) > 0 || len(req.unlinked) > 0 {
 		meta.Links, meta.Unlinked = req.links, req.unlinked
@@ -175,9 +175,10 @@ func inheritLinks(child *session.Meta) {
 // took it over. Recording it keeps the PR on the row after the session moves to another branch.
 // A child that shares its parent's working copy is on the parent's branch without working on
 // it (a reviewer, typically), so it only watches. The PR's state is recorded on the link too, so
-// a row can tell a merged PR from one still in flight after the session has left its branch.
-// Only metas that lack the link or hold an older state are written, so a steady list writes
-// nothing.
+// a row can tell a merged PR from one still in flight after the session has left its branch,
+// and so are its merge conditions (prLinkFacts), so a board can tell its lane after that too. Only
+// metas that lack the link, hold an older state or have facts due (session.PRFactsDue) are
+// written, so a steady list writes nothing between refreshes.
 func recordBranchPRs(sessions []session.Session, now time.Time) {
 	dirOf := make(map[string]string, len(sessions))
 	for _, s := range sessions {
@@ -198,6 +199,7 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 			role = session.LinkWatching
 		}
 		state := prLinkState(s.PR)
+		facts := prLinkFacts(s.PR)
 		cur, held := heldLink(s.Links, provider, key)
 		// Told only about a PR the row still holds: a PR removed by hand is no longer the
 		// session's, and a PR seen for the first time is linked on this poll and told from the next.
@@ -211,7 +213,8 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 		// ranks lowest.
 		// The launch item keeps its role; only its state is recorded (Meta.WorkItemState).
 		if held && cur.State == state && (cur.Role == session.LinkStarted ||
-			session.LinkRoleRank(cur.Role) >= session.LinkRoleRank(role)) {
+			session.LinkRoleRank(cur.Role) >= session.LinkRoleRank(role)) &&
+			(facts == nil || !session.PRFactsDue(cur.Facts, *facts)) {
 			continue
 		}
 		l := session.WorkItemLink{Provider: provider, Key: key, Role: role, URL: linkURL(s.PR.URL), At: now.UTC().Format(time.RFC3339), State: state}
@@ -222,7 +225,9 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 				return false
 			}
 			added := session.AddLink(m, l)
-			return session.SetLinkState(m, provider, key, state) || added
+			moved := session.SetLinkState(m, provider, key, state)
+			observed := facts != nil && session.SetLinkFacts(m, provider, key, *facts)
+			return added || moved || observed
 		}); wrote {
 			s.Links = session.LinksOf(m)
 		}
@@ -261,6 +266,20 @@ func heldLink(links []session.WorkItemLink, provider, key string) (session.WorkI
 		}
 	}
 	return session.WorkItemLink{}, false
+}
+
+// prLinkFacts are the merge conditions a PR link records, as of the read that answered them. nil
+// when the answer carries no read time (only a PR built outside the cache): it is not recorded
+// rather than stamped with now, because an answer the cache still holds through a provider outage
+// is not a fresh one.
+func prLinkFacts(pr *branchpr.PR) *session.PRFacts {
+	if pr.ObservedAt.IsZero() {
+		return nil
+	}
+	return &session.PRFacts{
+		Checks: pr.Checks, ChangesRequested: pr.ChangesRequested, Conflict: pr.Conflict,
+		Ready: pr.Ready(), ObservedAt: pr.ObservedAt.UTC().Format(time.RFC3339),
+	}
 }
 
 // prLinkState is the state a PR link records: the provider's state, with an open draft told apart as

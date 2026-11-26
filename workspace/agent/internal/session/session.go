@@ -984,6 +984,9 @@ type Meta struct {
 	// WorkItemState is the last state seen of the launch item when it is a PR (links.go
 	// SetLinkState): a session launched from a PR works on it, and its merge is that session's news.
 	WorkItemState string `json:"workItemState,omitempty"`
+	// WorkItemFacts are the launch PR's merge conditions as last observed (links.go SetLinkFacts),
+	// kept beside WorkItemState for the same reason.
+	WorkItemFacts *PRFacts `json:"workItemFacts,omitempty"`
 	// Links are the session's other work items and PRs, each with its role (#3134, links.go).
 	// Written only through AddLink / RemoveLink, which keep one link per item and the list
 	// bounded.

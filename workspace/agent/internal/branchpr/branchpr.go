@@ -74,6 +74,10 @@ type PR struct {
 	// (Bitbucket; "" on GitHub, whose watch source reads REST itself), so a re-run on the same
 	// commit is a new result for a watch. Never on the wire.
 	ChecksDigest string `json:"-"`
+	// ObservedAt is when the call that answered was sent (the cache's entry time), set as the
+	// answer is stored. A PR link records it with the facts it read here (ADR 0143 decision 4).
+	// Never on the wire.
+	ObservedAt time.Time `json:"-"`
 }
 
 // Check is one failed check of a PR's head commit. URL is the provider's, unchecked: whoever
@@ -346,6 +350,11 @@ func (c *Cache) refresh(due []Key) {
 // entry is matched by the PR it last held, so a branch that moved to another PR keeps its old
 // answer for one TTL more at worst. sent is when the call that answered was sent.
 func (c *Cache) storeLocked(k Key, e *entry, pr *PR, sent time.Time) {
+	// Stamped only while unset: the answer is new and unseen until its first store, and a second
+	// key answered by the same PR in one call stores it again, by then visible to Lookup's callers.
+	if pr != nil && pr.ObservedAt.IsZero() {
+		pr.ObservedAt = sent
+	}
 	e.pr, e.fetched, e.direct = pr, sent, sent
 	if pr == nil || pr.Number <= 0 {
 		return

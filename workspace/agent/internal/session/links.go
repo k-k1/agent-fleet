@@ -4,6 +4,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"time"
 )
 
 // Links between a session and the work items it touches (#3134). Meta.WorkItem stays the one
@@ -57,6 +58,88 @@ type WorkItemLink struct {
 	// "closed" ("" = never seen, or not a pull request). The Agent reads a PR's state only while
 	// a session is on its branch, so it is kept here for after the session has moved on.
 	State string `json:"state,omitempty"`
+	// Facts are the pull request's merge conditions when it was last observed (ADR 0143
+	// decision 4); nil when never observed or not a pull request. Written with State, so a
+	// stopped Workspace's mirror serves the same facts the running one does.
+	Facts *PRFacts `json:"facts,omitempty"`
+}
+
+// PRFacts are a pull request's merge conditions as last observed. Only enumerations and a time
+// (ADR 0061 decision 2): never a check name, a review thread or a reviewer.
+type PRFacts struct {
+	// Checks is the head commit's CI rollup: "success", "failure", "pending", or "" when nothing
+	// ran, which must not read as green.
+	Checks           string `json:"checks,omitempty"`
+	ChangesRequested bool   `json:"changesRequested,omitempty"`
+	Conflict         bool   `json:"conflict,omitempty"`
+	// Ready is the Agent's own branchpr.PR.Ready() verdict. A reader must not rebuild it from the
+	// other facts: that would be a second definition of "ready to merge".
+	Ready bool `json:"ready,omitempty"`
+	// ObservedAt is when the provider was asked for these facts (RFC3339, UTC). A card draws
+	// "as of" from it, so it is never later than the read that produced the facts.
+	ObservedAt string `json:"observedAt"`
+}
+
+// PRFactsRefresh is how stale a held ObservedAt may get while the facts themselves stay the same.
+// The branch-PR cache re-reads an open PR every two minutes, and rewriting the meta on each read
+// would write every PR session's meta that often for nothing but a newer time; a changed fact is
+// written at once whatever this says.
+const PRFactsRefresh = 10 * time.Minute
+
+// validPRFacts reports whether f is one SetLinkFacts records: a known checks value and a
+// readable observation time.
+func validPRFacts(f PRFacts) bool {
+	switch f.Checks {
+	case "", "success", "failure", "pending":
+	default:
+		return false
+	}
+	_, err := time.Parse(time.RFC3339, f.ObservedAt)
+	return err == nil
+}
+
+// PRFactsDue reports whether f should replace held: nothing held yet, a fact that differs, or the
+// same facts observed at least PRFactsRefresh later. An observation older than the held one is
+// never due, so a stale cache answer cannot overwrite a fresher read.
+func PRFactsDue(held *PRFacts, f PRFacts) bool {
+	if !validPRFacts(f) {
+		return false
+	}
+	if held == nil {
+		return true
+	}
+	at, _ := time.Parse(time.RFC3339, f.ObservedAt)
+	heldAt, err := time.Parse(time.RFC3339, held.ObservedAt)
+	if err != nil {
+		return true
+	}
+	if at.Before(heldAt) {
+		return false
+	}
+	same := held.Checks == f.Checks && held.ChangesRequested == f.ChangesRequested &&
+		held.Conflict == f.Conflict && held.Ready == f.Ready
+	return !same || at.Sub(heldAt) >= PRFactsRefresh
+}
+
+// SetLinkFacts records f on m's link to provider/key when PRFactsDue says so, and reports whether
+// it changed. Like SetLinkState, the launch item's facts go to Meta.WorkItemFacts. The held
+// value is replaced, never edited in place: links are copied between metas by value, and an
+// edit through a shared pointer would change the other meta's facts too.
+func SetLinkFacts(m *Meta, provider, key string, f PRFacts) bool {
+	if m.WorkItem != nil && sameItem(WorkItemLink{Provider: m.WorkItem.Provider, Key: m.WorkItem.Key}, provider, key) {
+		if !PRFactsDue(m.WorkItemFacts, f) {
+			return false
+		}
+		m.WorkItemFacts = &f
+		return true
+	}
+	for i := range m.Links {
+		if sameItem(m.Links[i], provider, key) && PRFactsDue(m.Links[i].Facts, f) {
+			m.Links[i].Facts = &f
+			return true
+		}
+	}
+	return false
 }
 
 // validLinkState reports whether state is one SetLinkState records.
@@ -129,7 +212,7 @@ func LinksOf(m Meta) []WorkItemLink {
 	}
 	out := make([]WorkItemLink, 0, len(m.Links)+1)
 	if wi := m.WorkItem; wi != nil {
-		out = append(out, WorkItemLink{Provider: strings.ToLower(wi.Provider), Key: wi.Key, Role: LinkStarted, Title: wi.Title, State: m.WorkItemState})
+		out = append(out, WorkItemLink{Provider: strings.ToLower(wi.Provider), Key: wi.Key, Role: LinkStarted, Title: wi.Title, State: m.WorkItemState, Facts: m.WorkItemFacts})
 	}
 	for _, l := range m.Links {
 		if m.WorkItem != nil && sameItem(l, m.WorkItem.Provider, m.WorkItem.Key) {
@@ -245,7 +328,7 @@ func InheritedLinks(parent Meta, at string) []WorkItemLink {
 	var out []WorkItemLink
 	for _, l := range LinksOf(parent) {
 		if l.Role == LinkStarted || l.Role == LinkWorking {
-			out = append(out, WorkItemLink{Provider: l.Provider, Key: l.Key, Role: LinkWatching, Title: l.Title, URL: l.URL, At: at, State: l.State})
+			out = append(out, WorkItemLink{Provider: l.Provider, Key: l.Key, Role: LinkWatching, Title: l.Title, URL: l.URL, At: at, State: l.State, Facts: l.Facts})
 		}
 	}
 	return out

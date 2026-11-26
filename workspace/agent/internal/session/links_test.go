@@ -3,6 +3,7 @@ package session
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeLinkKey(t *testing.T) {
@@ -189,5 +190,62 @@ func TestPRsAllMergedCountsOnlyTheSessionsOwnPRs(t *testing.T) {
 		if got := PRsAllMerged(c.m); got != c.merged {
 			t.Errorf("%s: PRsAllMerged = %v, want %v", c.name, got, c.merged)
 		}
+	}
+}
+
+func TestPRFactsDueOnlyForANewerOrChangedObservation(t *testing.T) {
+	at := func(min int) string {
+		return time.Date(2026, 11, 27, 10, min, 0, 0, time.UTC).Format(time.RFC3339)
+	}
+	held := &PRFacts{Checks: "pending", ObservedAt: at(0)}
+	for _, tc := range []struct {
+		name string
+		held *PRFacts
+		f    PRFacts
+		want bool
+	}{
+		{"first observation", nil, PRFacts{Checks: "pending", ObservedAt: at(0)}, true},
+		{"same facts, read again soon", held, PRFacts{Checks: "pending", ObservedAt: at(2)}, false},
+		{"same facts, refresh due", held, PRFacts{Checks: "pending", ObservedAt: at(10)}, true},
+		{"checks moved", held, PRFacts{Checks: "success", ObservedAt: at(2)}, true},
+		{"review moved", held, PRFacts{Checks: "pending", ChangesRequested: true, ObservedAt: at(2)}, true},
+		{"conflict moved", held, PRFacts{Checks: "pending", Conflict: true, ObservedAt: at(2)}, true},
+		{"ready moved", held, PRFacts{Checks: "pending", Ready: true, ObservedAt: at(2)}, true},
+		{"older read never wins", &PRFacts{Checks: "success", ObservedAt: at(5)}, PRFacts{Checks: "pending", ObservedAt: at(4)}, false},
+		{"unknown checks value", nil, PRFacts{Checks: "green", ObservedAt: at(0)}, false},
+		{"no observation time", nil, PRFacts{Checks: "success"}, false},
+		{"held time unreadable", &PRFacts{Checks: "pending", ObservedAt: "x"}, PRFacts{Checks: "pending", ObservedAt: at(0)}, true},
+	} {
+		if got := PRFactsDue(tc.held, tc.f); got != tc.want {
+			t.Errorf("%s: PRFactsDue=%v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestSetLinkFactsRecordsOnTheHeldLinkOrTheLaunchItem(t *testing.T) {
+	now := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC).Format(time.RFC3339)
+	m := Meta{WorkItem: &WorkItemRef{Provider: "github", Key: "o/r#1"},
+		Links: []WorkItemLink{{Provider: "github", Key: "o/r#2", Role: LinkWorking}}}
+	f := PRFacts{Checks: "success", Ready: true, ObservedAt: now}
+	if !SetLinkFacts(&m, "github", "O/R#2", f) || m.Links[0].Facts == nil || !m.Links[0].Facts.Ready {
+		t.Fatalf("links=%+v, want o/r#2's facts recorded", m.Links)
+	}
+	if SetLinkFacts(&m, "github", "o/r#2", f) {
+		t.Fatal("the same observation was recorded twice")
+	}
+	if !SetLinkFacts(&m, "github", "o/r#1", PRFacts{Checks: "failure", ObservedAt: now}) || m.WorkItemFacts == nil || m.WorkItemFacts.Checks != "failure" {
+		t.Fatalf("workItemFacts=%+v, want the launch PR's facts on the meta", m.WorkItemFacts)
+	}
+	if l := LinksOf(m); l[0].Facts == nil || l[0].Facts.Checks != "failure" || l[1].Facts == nil || l[1].Facts.Checks != "success" {
+		t.Fatalf("LinksOf=%+v, want each link with its own facts", l)
+	}
+	if SetLinkFacts(&m, "github", "o/r#3", f) {
+		t.Fatal("facts were recorded for an item the session does not hold")
+	}
+	// Replaced, never edited in place: a child holding the same pointer keeps its own copy.
+	child := InheritedLinks(Meta{Links: m.Links}, now)
+	SetLinkFacts(&m, "github", "o/r#2", PRFacts{Checks: "failure", ObservedAt: now})
+	if child[0].Facts == nil || child[0].Facts.Checks != "success" {
+		t.Fatalf("inherited facts=%+v, want the parent's later observation not to reach the child", child[0].Facts)
 	}
 }

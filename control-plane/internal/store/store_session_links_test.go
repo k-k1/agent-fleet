@@ -58,10 +58,13 @@ func sessionMirrorLinksCase(t *testing.T, st *SQL) {
 
 	first := []SessionLink{
 		{Provider: "jira", Key: "PROJ-1", Role: "started", Title: "Login"},
-		{Provider: "github", Key: "O/R#45", Role: "working", URL: "https://github.com/O/R/pull/45", At: "2026-11-01T00:00:00Z", State: "merged"},
+		{Provider: "github", Key: "O/R#45", Role: "working", URL: "https://github.com/O/R/pull/45", At: "2026-11-01T00:00:00Z", State: "merged",
+			Facts: PRFacts{Checks: "failure", ChangesRequested: true, ObservedAt: "2026-11-02T03:04:05Z"}},
 		// The same item in another case: skipped, not a primary-key failure of the whole write.
 		{Provider: "GitHub", Key: "o/r#45", Role: "watching"},
-		{Provider: "github", Key: "o/r#7", Role: "watching"},
+		// Each boolean column true on one link and false on another, so swapped columns show.
+		{Provider: "github", Key: "o/r#7", Role: "watching", Facts: PRFacts{Checks: "success", Ready: true, ObservedAt: "2026-11-02T03:04:06Z"}},
+		{Provider: "github", Key: "o/r#8", Role: "watching", Facts: PRFacts{Checks: "pending", Conflict: true, ObservedAt: "2026-11-02T03:04:07Z"}},
 	}
 	// A NUL from the Agent, through the same read the handler uses: Postgres refuses it in TEXT,
 	// and the whole workspace's write would roll back.
@@ -81,11 +84,14 @@ func sessionMirrorLinksCase(t *testing.T, st *SQL) {
 		t.Fatalf("list links: %v", err)
 	}
 	got := byName["s1"]
-	if len(got) != 4 || got[0].Key != "PROJ-1" || got[1].Key != "O/R#45" || got[2].Key != "o/r#7" || got[3].Title != "ab" {
-		t.Fatalf("s1 links = %+v, want PROJ-1, O/R#45, o/r#7, PROJ-9 (titled ab) in the Agent's order", got)
+	if len(got) != 5 || got[0].Key != "PROJ-1" || got[1].Key != "O/R#45" || got[2].Key != "o/r#7" || got[4].Title != "ab" {
+		t.Fatalf("s1 links = %+v, want PROJ-1, O/R#45, o/r#7, o/r#8, PROJ-9 (titled ab) in the Agent's order", got)
 	}
-	if got[1] != (SessionLink{Provider: "github", Key: "O/R#45", Role: "working", URL: "https://github.com/O/R/pull/45", At: "2026-11-01T00:00:00Z", State: "merged"}) {
+	if got[1] != first[1] || got[2] != first[3] || got[3] != first[4] {
 		t.Errorf("s1 PR link = %+v, want every field kept", got[1])
+	}
+	if got[0].Facts != (PRFacts{}) || got[4].Facts != (PRFacts{}) {
+		t.Errorf("links with no observation read %+v / %+v, want no facts (not ready)", got[0].Facts, got[4].Facts)
 	}
 	if _, ok := byName["s2"]; got[0].Title != "Login" || ok {
 		t.Errorf("title=%q s2 links=%+v", got[0].Title, byName["s2"])
@@ -148,4 +154,52 @@ func TestSessionLinksFromJSONBoundsWhatTheAgentSends(t *testing.T) {
 	if n := len(SessionLinksFromJSON(raw)); n != mirrorMaxLinks || mirrorMaxLinks != 51 {
 		t.Errorf("mirrored %d links, want the cap %d", n, mirrorMaxLinks)
 	}
+}
+
+// A PR link's facts go through the mirror unchanged, so a stopped Workspace serves what a running
+// one did (#5052); anything the Agent would not send reads as no observation, never as green.
+func TestSessionLinksMirrorThePRFacts(t *testing.T) {
+	in := `[{"provider":"github","key":"o/r#1","role":"working","state":"open","facts":{"checks":"success","changesRequested":true,"conflict":true,"ready":true,"observedAt":"2026-11-27T10:00:00Z"}},` +
+		`{"provider":"github","key":"o/r#2","role":"working","facts":{"checks":"pending","observedAt":"2026-11-27T10:00:00Z"}},` +
+		`{"provider":"jira","key":"P-1","role":"started"}]`
+	got := SessionLinksFromJSON(json.RawMessage(in))
+	if want := (PRFacts{Checks: "success", ChangesRequested: true, Conflict: true, Ready: true, ObservedAt: "2026-11-27T10:00:00Z"}); len(got) != 3 || got[0].Facts != want {
+		t.Fatalf("mirrored %+v, want o/r#1's facts kept whole", got)
+	}
+	var back, sent []map[string]any
+	if err := json.Unmarshal(SessionLinksJSON(got), &back); err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal([]byte(in), &sent)
+	for i := range sent {
+		if a, b := mustJSON(t, sent[i]), mustJSON(t, back[i]); a != b {
+			t.Errorf("link %d served as %s, want what the Agent sent: %s", i, b, a)
+		}
+	}
+
+	for _, bad := range []string{
+		`{"checks":"success","ready":true}`,                          // no observation time
+		`{"checks":"success","ready":true,"observedAt":"yesterday"}`, // not a time
+	} {
+		got := SessionLinksFromJSON([]byte(`[{"provider":"github","key":"o/r#1","role":"working","facts":` + bad + `}]`))
+		if len(got) != 1 || got[0].Facts != (PRFacts{}) {
+			t.Errorf("facts %s mirrored as %+v, want no observation", bad, got)
+		}
+		if strings.Contains(string(SessionLinksJSON(got)), "facts") {
+			t.Errorf("facts %s served back: %s", bad, SessionLinksJSON(got))
+		}
+	}
+	got = SessionLinksFromJSON([]byte(`[{"provider":"github","key":"o/r#1","role":"working","facts":{"checks":"green","observedAt":"2026-11-27T19:00:00+09:00"}}]`))
+	if len(got) != 1 || got[0].Facts != (PRFacts{ObservedAt: "2026-11-27T10:00:00Z"}) {
+		t.Errorf("mirrored %+v, want an unknown checks value as nothing ran and the time in UTC", got)
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }
