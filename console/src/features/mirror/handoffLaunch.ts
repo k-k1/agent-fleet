@@ -10,8 +10,15 @@
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 
-/** Resolved target, or why one could not be built (the caller turns it into a toast). */
-export type HandoffTarget = { repo: Repo } | { error: "no_dir" | "no_parent" };
+/** Resolved target, or why one could not be built (the caller turns it into a toast). A session
+ *  that runs in a space (ADR 0142) targets that space, never a repository: `dir` is only what the
+ *  review prompt names, the launch itself is addressed by the folder. */
+export type HandoffTarget = { repo: Repo } | { space: string; dir: string } | { error: "no_dir" | "no_parent" };
+
+/** The directory a target's session works in, for the text that names it ("" when unknown). */
+export function targetDir(target: { repo: Repo } | { space: string; dir: string }): string {
+  return "space" in target ? target.dir : target.repo.path || "";
+}
 
 /** The repos rail's row for this session's working copy. Matched on `dir`/`path` first —
  *  the only reliable link between a session and its copy — with the folder name as the
@@ -32,6 +39,10 @@ export function handoffLaunchTarget(
   newWorktree: boolean,
 ): HandoffTarget {
   const path = session?.dir || session?.path || "";
+  // A space is no row of the repos rail: looked up there, it would fall through to a Repo built
+  // from the session alone (no vcs, so read as git) and the launch dialog would offer a worktree
+  // and branch in a folder that is not a working copy. It starts in the same space instead.
+  if (session?.space) return { space: session.space, dir: path };
   if (!path) return { error: "no_dir" };
   const mine = repoOf(session, repos);
   const branch = session?.currentBranch || session?.branch;

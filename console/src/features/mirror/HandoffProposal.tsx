@@ -19,6 +19,7 @@ import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts"
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
 import { handoffLaunchTarget } from "./handoffLaunch.ts";
+import { openSpaceLaunch, settleSpace } from "./spaceLaunch.ts";
 import { HandoffOfferModal } from "../sharing/HandoffOfferModal.tsx";
 import { offerForSession, recipientLabel, useHandoffStore } from "../sharing/handoffStore.ts";
 import type { Session } from "../../types/session.ts";
@@ -196,19 +197,48 @@ export function HandoffProposal({
     onChange(null);
   };
   const launch = async () => {
+    // The target is settled BEFORE a pending offer is withdrawn: a launch that cannot start (the
+    // working folder is unknown, the space is gone) must not first take the offer away from its
+    // recipient. The target working copy is carried WHOLE (handoffLaunch.ts): the dialog reads
+    // `vcs` and `unborn` off it to decide whether a worktree may be offered at all.
+    const target = handoffLaunchTarget(sessionMeta, repos, newWorktree);
+    if ("error" in target) {
+      toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
+      return;
+    }
+    // The card (session and proposal) the press belongs to, and whether it is still on screen.
+    const asked = { session, proposalId: proposal.id };
+    const same = () => {
+      const now = live.current;
+      return now.mounted && now.session === asked.session && now.proposalId === asked.proposalId;
+    };
+    // The card is held (busy) while the list is read: sharing it, discarding it or pressing launch
+    // again meanwhile would change what this press decides on, and `offer` below stays the one
+    // seen at the press, so the conditional withdraw is what settles a recipient who accepted.
+    const spaceOk = async () => {
+      if (!("space" in target)) return true;
+      setBusy(true);
+      try {
+        return await settleSpace(target.space, same, toast);
+      } finally {
+        setBusy(false);
+      }
+    };
+    if (!(await spaceOk())) return;
     // Launching while an offer is still pending would run the same work twice. Withdraw
     // conditionally *before* launching and abandon the launch if that race is lost (the
     // recipient already accepted) — ADR 0057 decision 6.
     if (offer?.status === "pending") {
-      const asked = { session, proposalId: proposal.id };
       const ok = await askConfirm({
         title: tr("handoff.withdraw_confirm_title"),
         body: tr("handoff.withdraw_confirm_body", { who: recipientLabel(offer) }),
         confirmLabel: tr("handoff.withdraw_confirm_action"),
         danger: true,
       });
-      const now = live.current;
-      if (!ok || !now.mounted || now.session !== asked.session || now.proposalId !== asked.proposalId) return;
+      if (!ok || !same()) return;
+      // The question waited for the member: the space may have been removed meanwhile, and the
+      // offer must not be withdrawn for a launch that can no longer start.
+      if (!(await spaceOk())) return;
       const d = await apiJSON(`api/session-handoff-offers/${encodeURIComponent(offer.id)}`, "DELETE");
       void useHandoffStore.getState().refresh();
       if (d?.error) {
@@ -225,11 +255,9 @@ export function HandoffProposal({
         return;
       }
     }
-    // The target working copy is carried WHOLE (handoffLaunch.ts): the dialog reads `vcs`
-    // and `unborn` off it to decide whether a worktree may be offered at all.
-    const target = handoffLaunchTarget(sessionMeta, repos, newWorktree);
-    if ("error" in target) {
-      toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
+    if ("space" in target) {
+      useLaunchSeed.getState().set(proposal.prompt, proposal.title, session, proposal.id);
+      openSpaceLaunch(target.space);
       return;
     }
     const repo = target.repo;

@@ -19,6 +19,7 @@ export const mirror = {
   "mirror.handoff_intro_launched": "この引き継ぎからセッションを起動済みです。読み返し・再利用のために残してあります。不要になったら破棄してください。",
   "mirror.handoff_discard": "破棄",
   "mirror.handoff_no_dir": "このセッションの作業フォルダが分からないため、引き継ぎ先を起動できません。",
+  "mirror.launch_space_gone": "このセッションのスペースはもうないため、起動しませんでした。何も変更していません。",
   "mirror.handoff_new_worktree": "新しい worktree で開始する（このワークスペース内。コミット済みの内容だけが引き継がれます）",
   "mirror.handoff_no_parent": "このセッションの元になった作業コピーが分からないため、新しい worktree を起動できません。",
   "mirror.handoff_save_failed": "引き継ぎ案を保存できませんでした: {msg}",

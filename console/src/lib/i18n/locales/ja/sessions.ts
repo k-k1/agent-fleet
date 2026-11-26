@@ -816,6 +816,7 @@ export const sessions = {
   "start.place_all_head": "それ以前",
   "start.space_note_existing": "<0>~/spaces/{folder}</0> で動きます。これまでのセッションが残したファイルもそこにあります。",
   "start.space_gone": "このスペースはもうありません。ほかの場所か「新しいスペース」を選んでください。書いた文章とファイルはそのままです。",
+  "start.space_gone_locked": "このスペースはもうないため、ここからは起動できません。この画面を閉じてください。提案やプランは元の場所に残っています。",
   "start.place_running": "実行中",
   "start.space_busy": "このスペースでは {who} が動いています。ここで始めると、2 つのエージェントが同じファイルを触ります。",
   "start.space_busy_new": "新しいスペースで始める",
