@@ -924,7 +924,7 @@ on a real host. This addendum appends to it; decisions 1 and 6 of that addendum 
 
 1. **The default stays off for the compose runtime.** Decision 1's "always on" does not hold there,
    and point 6's "until it has run on a real host" is answered: it has run, and the fence is still
-   opt-in (`AF_EGRESS_DOCKER_GATEWAY`, `--profile egress`). Turning it on stops every direct non-HTTP
+   opt-in (`AF_EGRESS_DOCKER_GATEWAY`, `--profile egress`). Turning it on stops every direct non-HTTP outbound
    flow of an existing deployment, so the operator chooses the moment. AWS keeps decision 1.
 2. **Non-HTTP traffic passes through the proxy.** "Non-HTTP traffic does not pass" held for direct
    connections only. The own proxy dials `CONNECT` to any port and decides by host: in enforce,

@@ -115,7 +115,7 @@ Programs that honour those variables go through the proxy; **a process that igno
 | Deployment | Does enforce hold? |
 |---|---|
 | AWS (`ecs`, `ecs-ec2`) with `EgressRoute=gateway` in `00-network` | Yes. The workspaces' route table goes through the egress gateway, and there is no other way out |
-| Docker Compose with the egress fence ([below](#fence-workspaces-on-docker-compose)) | Yes for direct connections: workspace networks have no route out, and the proxy is the only exit. Through the proxy, a host entry covers every port ([limits](#fence-workspaces-on-docker-compose)) |
+| Docker Compose with the egress fence ([below](#fence-workspaces-on-docker-compose)) | Yes for direct connections to the outside: workspace networks have no route out, and the proxy is the only exit. Through the proxy, a host entry covers every port ([limits](#fence-workspaces-on-docker-compose)) |
 | Everything else | No. A network or security-group rule that leaves the proxy as the only way out is not provided yet. You can run it up to observing and growing the allowlist |
 
 - The egress gateway is new and has been checked on a test deployment only; it is not in production use yet ([Choose where to deploy](../choose.md#choose-the-egress-route-on-aws))
@@ -129,7 +129,7 @@ Leave the proxy as the only way out of a workspace on a Docker Compose deploymen
 This is for rootful Docker on Linux with the Control Plane on the host network. It is off by default.
 
 > [!WARNING]
-> **The fence is off by default and stays opt-in.** Turning it on stops every direct non-HTTP connection of an existing deployment, so try it on a deployment you can afford to stop and keep the four lines ready to remove. It has been run on Docker Engine 20.10.24 and 28.5.2; the differences are under the limits below.
+> **The fence is off by default and stays opt-in.** Turning it on stops every direct non-HTTP connection to the outside from an existing deployment, so try it on a deployment you can afford to stop and keep the four lines ready to remove. It has been run on Docker Engine 20.10.24 and 28.5.2; the differences are under the limits below.
 
 | What you do | What happens |
 |---|---|
@@ -157,7 +157,7 @@ COMPOSE_PROFILES=egress
 What changes for a fenced workspace:
 
 - A program that ignores the proxy variables connects to nothing. The attempt fails and is not recorded
-- A direct connection that does not use the proxy fails. Non-HTTP traffic is not blocked as such, though: the proxy accepts `CONNECT` to any port and decides by host only. In enforce, a host on the allowlist is reachable on every port, so Git over SSH to `github.com` (a built-in entry) works through the proxy, for example with `ProxyCommand nc -X connect -x af-egress:3128 %h %p`. In log-only every host and port is dialled. Databases and queries sent straight to an outside DNS server do not pass, because they do not use the proxy
+- A direct connection to the outside that does not use the proxy fails (the host's own listeners at the network's gateway address, below, are the exception). Non-HTTP traffic is not blocked as such, though: the proxy accepts `CONNECT` to any port and decides by host only. In enforce, a host on the allowlist is reachable on every port, so Git over SSH to `github.com` (a built-in entry) works through the proxy, for example with `ProxyCommand nc -X connect -x af-egress:3128 %h %p`. In log-only every host and port is dialled. Databases and queries sent straight to an outside DNS server do not pass, because they do not use the proxy
 - On this fence a host entry covers every port and TCP port entries are not needed. That differs from the AWS egress gateway, where a host entry is HTTP(S) only and a non-HTTP port needs a [TCP port entry](#allow-a-non-http-destination-aws-egress-gateway-only)
 - Name lookups depend on the Docker Engine. On 20.10.24 the embedded resolver forwards outside names, so DNS resolves inside the fence, and the internal container has a default route, so a direct connection times out instead of failing at once (it is still fenced). On 28.5.2 neither is the case. Do not count on the fence to stop data carried in DNS queries
 - The proxy refuses destinations on the workspace networks, so it never connects one workspace to another
