@@ -44,6 +44,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/projcfg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 const (
@@ -166,8 +167,13 @@ func agentMemResolveCaller(name string) (agentMemCaller, error) {
 }
 
 // agentMemProjectFor maps a session's working copy to its project. A worktree shares its main
-// clone's memory; anything outside ~/repos (a shell in the home directory) has no project.
+// clone's memory; every space shares the one spaces project (#5221); anything else outside
+// ~/repos (a shell in the home directory) has no project.
 func agentMemProjectFor(dir string) *agentMemProject {
+	// Before the cache: a space has no git identity to stamp, and the answer is a constant.
+	if p := agentMemSpacesProject(dir); p != nil {
+		return p
+	}
 	return agentMemProjectCached(dir, func() (*agentMemProject, bool) {
 		return agentMemProjectIdent(dir, dir, func(args ...string) (string, error) { return gitx.Run(dir, args...) })
 	})
@@ -192,6 +198,9 @@ func agentMemProjectIdent(label, vcsDir string, run agentMemGitRunner) (p *agent
 	dir := label
 	if dir == "" {
 		return nil, false
+	}
+	if p := agentMemSpacesProject(dir); p != nil {
+		return p, true
 	}
 	repos := gitx.ReposRoot()
 	rel, err := filepath.Rel(repos, dir)
@@ -218,6 +227,27 @@ func agentMemProjectIdent(label, vcsDir string, run agentMemGitRunner) (p *agent
 		}
 	}
 	return p, identified
+}
+
+// agentMemSpacesProjectID is the id of the one project every space of a member shares (ADR 0142
+// open question 2, decided in #4968). It has no "-<hash>" suffix, which every repository id
+// carries, so no repository can collide with it; it must never change, or the memories saved
+// under it are orphaned.
+const agentMemSpacesProjectID = "spaces"
+
+// agentMemSpacesProjectDisplay is the name the Console shows for the spaces project.
+const agentMemSpacesProjectDisplay = "Spaces"
+
+// agentMemSpacesProject answers the shared project when dir is a space (spacex.FolderOf: a
+// folder directly under ~/spaces that carries the marker), nil otherwise. A folder made by hand
+// under ~/spaces is no space and gets none. Root stays empty on purpose: the project has no
+// working copy of its own, so Claude's directory for it is unknown (the write-back reports
+// "no_root") and it is never judged orphaned.
+func agentMemSpacesProject(dir string) *agentMemProject {
+	if spacex.FolderOf(dir) == "" {
+		return nil
+	}
+	return &agentMemProject{ID: agentMemSpacesProjectID, VCS: projcfg.VCSNone, Display: agentMemSpacesProjectDisplay}
 }
 
 // agentMemGitIdentity returns the repository's main working tree (for display) and its key:
