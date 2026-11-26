@@ -431,7 +431,7 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # Without a pin the unchanged RUN line hits the layer cache and a rebuild keeps the old
 # version; changing the ARG is what reliably busts the cache.
 ARG CLAUDE_CODE_VERSION=2.1.332
-ARG OPENCODE_VERSION=2.4.1
+ARG OPENCODE_VERSION=2.4.2
 ARG CODEX_VERSION=0.172.0
 ARG COPILOT_VERSION=1.0.116
 # opencode is the npm package @opencode/cli (it also installs an `opencode2` bin). Only opencode 2
@@ -462,10 +462,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # OPENSSL_ia32cap mask the Agent applies to every spawn (0008, decision of 2026-09-07), so
 # only a non-x86 build host skips the --version check (an arm64 cross-build cannot always
 # run the binary).
-ARG AGY_VERSION=1.5.17
-ARG AGY_RELEASE_BUILD=4823843970351104
-ARG AGY_SHA256_X64=6304b4f592ae97e59231cfb1b365ee29c155750c9a881f0cc8efe5f5281077cf
-ARG AGY_SHA256_ARM64=d6d2b88493e6e02854da478b215cd1dd98fd8cf985b6be37829dacadea4ffc07
+ARG AGY_VERSION=1.5.18
+ARG AGY_RELEASE_BUILD=6386224290725888
+ARG AGY_SHA256_X64=a4960723ed9cf5b5ac72ed541db8df4d62741795261eb93a4681006ccb23d5ad
+ARG AGY_SHA256_ARM64=97799abac91ba0b29b77598b62f903b866461da17680263a182fef2cb796ab0d
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \

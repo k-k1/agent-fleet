@@ -94,6 +94,25 @@ side to believe.
   chapter has one genuinely useful sentence there, write it as the opening of the body,
   not as a quote.
 
+### Search keywords (optional)
+
+A task page that readers look for by a word its prose does not carry (the Japanese
+reader types 「ワークツリー」, the page says "worktree") may add one more line:
+
+```markdown
+search_keywords: "worktree, working copy, parallel work"
+```
+
+- One double-quoted line, comma-separated, in the page's own language: the `.ja.md` twin
+  lists the words a Japanese reader types (katakana forms included).
+- The site's Starlight conversion emits the value as a hidden element with
+  `data-pagefind-weight="7"`, so the page ranks for those words without its prose
+  changing (measured in `docs/log/138-docs-search-japanese-compounds.md`).
+- Use it for the answer word of a page that ranks too low; do not tag every page. Words
+  the title or the first paragraph already carry add nothing.
+- `check_header` rejects an unquoted, empty, duplicated or indented value, and any backslash. Nothing in the Console reads it:
+  it shows up in the metadata panel like any other key.
+
 ## 4. Vocabulary per shelf
 
 - **`guide/user/` and `guide/admin/` speak in screen names only.** The words the

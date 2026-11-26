@@ -937,17 +937,47 @@ class SizeAndHeaderTests(unittest.TestCase):
             self.assertEqual(check.main(), 0)
         self.assertIn("chapter budget", str(out.call_args_list))
 
-    def header(self, front):
+    def header(self, front, target="01-a.md", newline=None):
         for name in ("README.md", "01-a.md"):
-            (self.shelf / name).write_text(front + "\n# T\n")
+            with open(self.shelf / name, "w", newline=newline) as fh:
+                fh.write(front + "\n# T\n")
         check._cache.clear()
         findings = check.Findings()
-        check.check_header([str(self.shelf / "01-a.md")], findings, False)
+        check.check_header([str(self.shelf / target)], findings, False)
         return "\n".join(findings.errors)
 
     def test_header_needs_audience_and_source_only(self):
         self.assertEqual(self.header('---\naudience: "a"\nsource_of_truth: "b"\n---\n'), "")
         self.assertIn("no source_of_truth", self.header('---\naudience: "a"\n---\n'))
+
+    def test_search_keywords_is_optional_but_must_be_quoted_and_non_empty(self):
+        base = 'audience: "a"\nsource_of_truth: "b"\n'
+        self.assertEqual(self.header(f'---\n{base}search_keywords: "worktree, ワークツリー"\n---\n'), "")
+        self.assertIn("double-quoted", self.header(f'---\n{base}search_keywords: worktree\n---\n'))
+        self.assertIn("is empty", self.header(f'---\n{base}search_keywords: " , "\n---\n'))
+
+    def test_search_keywords_rejects_lines_the_key_regex_would_misread(self):
+        base = 'audience: "a"\nsource_of_truth: "b"\n'
+        for bad in (
+            '  search_keywords: worktree',
+            '  search_keywords: "worktree"',
+            'search_keywords:\n  "worktree"',
+            'search_keywords: "worktree" "bad"',
+            "search_keywords: 'worktree'",
+            'search_keywords: "worktree\\q"',
+            'search_keywords: "worktree\\"',
+        ):
+            self.assertIn("column 0", self.header(f'---\n{base}{bad}\n---\n'), bad)
+        good = f'---\n{base}search_keywords: "a, b"\n---\n'
+        bad = f'---\n{base}search_keywords: a\n---\n'
+        self.assertEqual(self.header(good, target="README.md"), "")
+        self.assertIn("column 0", self.header(bad, target="README.md"))
+        self.assertEqual(self.header(good.replace("\n", "\r\n"), newline=""), "")
+        self.assertIn("column 0", self.header(bad.replace("\n", "\r\n"), newline=""))
+        self.assertIn(
+            "more than once",
+            self.header(f'---\n{base}search_keywords: "a"\nsearch_keywords: wrong\n---\n'),
+        )
 
 
 class TableTests(unittest.TestCase):

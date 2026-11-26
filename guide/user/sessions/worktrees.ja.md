@@ -1,6 +1,7 @@
 ---
 audience: "同じリポジトリで、いくつもの作業を同時に進めたい人"
 source_of_truth: "Console の「作業を始める」ダイアログの「場所」"
+search_keywords: "ワークツリー, worktree, 作業コピー, 並行作業, ブランチを分ける"
 ---
 
 # worktree で並行して作業する

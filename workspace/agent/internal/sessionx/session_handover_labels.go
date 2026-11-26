@@ -125,3 +125,7 @@ func handoverLabelsFor(lang string) handoverLabels {
 	}
 	return handoverLabelsEn
 }
+
+func (l handoverLabels) conversationHeading() string {
+	return "# " + l.Conversation
+}

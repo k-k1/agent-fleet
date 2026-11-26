@@ -5,6 +5,8 @@ import { act } from "react";
 import { ConfirmProvider } from "../../ui/ConfirmProvider.tsx";
 import { ToastProvider } from "../../ui/ToastProvider.tsx";
 import { createRoot, type Root } from "react-dom/client";
+import { t } from "../../lib/i18n/index.ts";
+import { resumeClock } from "../../lib/sessionview.ts";
 import type { Session } from "../../types/session.ts";
 
 const opened = vi.fn();
@@ -116,6 +118,50 @@ describe("AutoRunSection", () => {
     expect(row.querySelector(".autorun-run-main .autorun-title")!.textContent).toBe("#12 Fix it");
     expect(row.querySelector(".autorun-pr")!.textContent).toContain("#30");
     expect(row.querySelector(".autorun-elapsed")!.textContent).toBe("12m");
+  });
+
+  it.each([
+    { holder: "run-a", alive: true, state: "limited", booked: true },
+    { holder: "run-a", alive: false, state: "stopped", booked: true },
+    { holder: "run-a", alive: false, state: "stopped", stoppedLimit: "limited", booked: false },
+    { holder: "rev-a", alive: true, state: "limited", booked: true },
+  ] as const)("shows an open run's limit hold %j until it clears", async ({ holder, booked, ...hold }) => {
+    const rateLimitResumeAt = booked ? new Date(Date.now() + 3600_000).toISOString() : undefined;
+    const row = () => host.querySelector('[data-autorun-run="run-a"]')!;
+    const badge = () => row().querySelector(".autorun-limit");
+    const sessions = useSessionsStore.getState().sessions;
+    useSessionsStore.setState({ sessions: sessions.map((x) => x.name === holder ? { ...x, ...hold, rateLimitResumeAt } : x) });
+    memoQueueDeliveries.mockResolvedValue([{ id: "d1", session: "run-a", state: "open", heldBy: "limit", heldSession: holder }]);
+    await mount();
+    expect(row().getAttribute("data-autorun-state")).toBe("running");
+    const dot = row().querySelector(".autorun-run-main .autorun-dot");
+    expect(dot?.classList.contains("is-running")).toBe(false);
+    expect(dot?.getAttribute("role")).toBe("img");
+    expect(dot?.getAttribute("aria-label")).toBe(t("autorun.state_running"));
+    const label = booked ? t("state.rate_limited_at", { at: resumeClock(rateLimitResumeAt) }) : t("state.rate_limited");
+    expect(badge()?.textContent).toBe(label);
+
+    // Session state can clear before the delivery feed has reported the change.
+    await act(async () => useSessionsStore.setState({
+      sessions: sessions.map((s) => s.name === holder ? { ...s, alive: hold.alive, state: hold.alive ? "idle" : "stopped" } : s),
+    }));
+    expect(badge()).toBeNull();
+    expect(row().querySelector(".autorun-run-main .autorun-dot")?.classList.contains("is-running")).toBe(true);
+  });
+
+  it("drops the limit badge when the move commits, even before the hold observation clears", async () => {
+    const sessions = useSessionsStore.getState().sessions;
+    const setMove = (move: Pick<Session, "moving" | "movedTo">) =>
+      useSessionsStore.setState({
+        sessions: sessions.map((s) => s.name === "run-a"
+          ? { ...s, alive: false, state: "stopped", stoppedLimit: "limited", ...move }
+          : s),
+      });
+    setMove({ moving: "replacement" });
+    await mount();
+    expect(host.querySelector(".autorun-limit")).not.toBeNull();
+    await act(async () => setMove({ movedTo: "replacement" }));
+    expect(host.querySelector(".autorun-limit")).toBeNull();
   });
 
   it.each([

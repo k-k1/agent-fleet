@@ -1,5 +1,5 @@
-// The move offered at a usage limit (ADR 0115 P2b). Pinned: it shows for limited and spend_limit
-// only, never for a moving or moved source, and only when the Agent's preview leaves a target
+// The move offered at a usage limit (ADR 0115 P2b). Pinned: it shows for live and confirmed stopped usage limits,
+// never for a moving or moved source, and only when the Agent's preview leaves a target
 // that is not the source's own kind and not already at its cap; the action opens the move dialog
 // flagged as coming from the limit.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -75,6 +75,39 @@ describe("MoveLimitBanner", () => {
     await act(async () => host.querySelector<HTMLElement>(".ma-btn")!.click());
     expect(useSessionUI.getState().move?.name).toBe("s1");
     expect(useSessionUI.getState().moveFromLimit).toBe(true);
+  });
+
+  it.each([
+    { rateLimitResumeAt: new Date(Date.now() + 3600_000).toISOString() },
+    { stoppedLimit: "limited" },
+    { stoppedLimit: "spend_limit" },
+  ] satisfies Partial<Session>[])("offers a move for a stopped hold %j until it clears", async (hold) => {
+    await render(src({ state: "stopped", alive: false, ...hold }));
+    expect(banner()).not.toBeNull();
+    await act(async () => host.querySelector<HTMLElement>(".ma-btn")!.click());
+    expect(useSessionUI.getState().moveFromLimit).toBe(true);
+    await act(async () => root!.render(<MoveLimitBanner session={src({ state: "stopped", alive: false })} state="stopped" running />));
+    expect(banner()).toBeNull();
+  });
+
+  it("ignores an expired booking on an otherwise stopped session", async () => {
+    const request = vi.fn(() => preview());
+    routes[PREVIEW] = request;
+    await render(src({ state: "stopped", alive: false, rateLimitResumeAt: new Date(Date.now() - 60_000).toISOString() }));
+    expect(banner()).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("requires an available Workspace and an eligible preview for stopped holds", async () => {
+    const stopped = src({ state: "stopped", alive: false, stoppedLimit: "limited" });
+    const request = vi.fn(() => preview({ refusal: { code: "move_source_state", message: "x" } }));
+    routes[PREVIEW] = request;
+    await render(stopped, "stopped", false);
+    expect(banner()).toBeNull();
+    expect(request).not.toHaveBeenCalled();
+    await render(stopped);
+    expect(request).toHaveBeenCalledOnce();
+    expect(banner()).toBeNull();
   });
 
   it("is not shown for a session that is not at a limit", async () => {

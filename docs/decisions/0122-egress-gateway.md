@@ -6,7 +6,7 @@ English | [日本語](0122-egress-gateway.ja.md)
   template facts were read from the tree on this date. Squid's behaviour was read from its
   published documentation and an AWS blog post, **not run**; no Docker and no cloud account were
   available while writing this.
-- Follow-ups: #1181, #2603, #2604, #2657, #2658, #2674, #2687, #2699, #4373
+- Follow-ups: #1181, #2603, #2604, #2657, #2658, #2674, #2687, #2699, #4373, #5258
 - Related: [0047](0047-tenant-network-restriction.md) (inbound IP restriction; this record does
   not touch it) / #1056 (credential injection, needs this fence first) / #1067 (why an OS sandbox
   is not the answer)
@@ -913,3 +913,29 @@ then gives the CP the token; once the agent has its first policy a second deploy
 replacement keeps both. Guide: egress-gateway.md, "Turn it on".
 
 Follow-ups: #4399 (a run on a real deployment)
+
+
+## Addendum (2026-11-26) — the docker fence: default, non-HTTP traffic and engine differences (#5258)
+
+The live run of #4373 (evidence in its comments) checked the docker fence of the 2026-11-17 addendum
+on a real host. This addendum appends to it; decisions 1 and 6 of that addendum are not rewritten.
+
+**Decided with the maintainer, 2026-11-26.**
+
+1. **The default stays off for the compose runtime.** Decision 1's "always on" does not hold there,
+   and point 6's "until it has run on a real host" is answered: it has run, and the fence is still
+   opt-in (`AF_EGRESS_DOCKER_GATEWAY`, `--profile egress`). Turning it on stops every direct non-HTTP outbound
+   flow of an existing deployment, so the operator chooses the moment. AWS keeps decision 1.
+2. **Non-HTTP traffic passes through the proxy.** "Non-HTTP traffic does not pass" held for direct
+   connections only. The own proxy dials `CONNECT` to any port and decides by host: in enforce,
+   `CONNECT github.com:22` (a built-in entry) returned the SSH banner and git over SSH reached
+   public-key auth; in log-only every host and port is dialled. On this fence a host entry covers
+   every port and TCP port entries are not needed, unlike the AWS gateway (2026-11-05 addendum). The
+   proxy's behaviour is unchanged.
+3. **Engine differences.** On Engine 20.10.24 the embedded resolver forwards outside names, so DNS
+   resolves inside the fence, and the internal container has a default route, so a direct connection
+   times out instead of failing at once (still fenced). On 28.5.2 neither. DNS stays unclaimed.
+4. **Small facts from the run:** a change of mode or allowlist takes up to 30 s to reach the proxy;
+   turning the fence off leaves the `af-egress` container running; a successful reattach logs nothing.
+
+Guide: `guide/operate/secure/egress.md`.
