@@ -9,6 +9,7 @@ import { useT } from "../../lib/i18n/index.ts";
 import { useEscLayer } from "../../lib/escLayer.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { RECENT_SPACES, rankSpaces } from "./recent.ts";
+import { busySpaces } from "./running.ts";
 import { spaceLabel, spacesFor, spacesOwner, useSpacesStore } from "./store.ts";
 import { useSpaceGone } from "./useSpaceGone.ts";
 
@@ -32,6 +33,9 @@ export function SpacePlacePicker({ folder, onChange, disabled = false, gone: ref
   const sessions = useSessionsStore((s) => s.sessions);
   const gone = useSpaceGone(folder) || (!!folder && refused);
   const ranked = useMemo(() => rankSpaces(spaces, sessions), [spaces, sessions]);
+  // Spaces an agent is working in right now: a launch there shares its files (#5230).
+  const busy = useMemo(() => busySpaces(sessions), [sessions]);
+  const running = <span className="start-place-busy">{tr("start.place_running")}</span>;
   const recent = ranked.slice(0, RECENT_SPACES);
   const rest = ranked.slice(RECENT_SPACES);
 
@@ -61,6 +65,7 @@ export function SpacePlacePicker({ folder, onChange, disabled = false, gone: ref
     >
       <Icon name={icon} />
       <span className="start-place-opt-label">{label}</span>
+      {f && busy.has(f) && running}
       {f === folder && <Icon name="check" className="start-place-opt-tick" />}
     </button>
   );
@@ -78,6 +83,7 @@ export function SpacePlacePicker({ folder, onChange, disabled = false, gone: ref
       >
         <Icon name={gone ? "warning" : folder ? "folder" : "new-folder"} />
         <span className="start-place-chip-label">{folder ? spaceLabel(folder, spaces) : tr("start.place_new_space")}</span>
+        {folder && !gone && busy.has(folder) && running}
         <Icon name={open ? "chevron-up" : "chevron-down"} />
       </button>
       {open && (

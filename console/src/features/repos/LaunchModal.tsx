@@ -72,6 +72,9 @@ import type { MemoAttachment } from "../../types/memo.ts";
 import type { SharedDraft } from "./hubDraft.ts";
 import { SpacePlacePicker } from "../spaces/SpacePlacePicker.tsx";
 import { useSpaceGone } from "../spaces/useSpaceGone.ts";
+import { runningInSpace } from "../spaces/running.ts";
+import { useSessionsStore } from "../sessions/store.ts";
+import { displayName } from "../../lib/sessionview.ts";
 
 // spacex.NameMaxRunes on the Agent, which refuses a longer name (bad_space). maxLength counts
 // UTF-16 units, never fewer than the runes, so a name it lets through is never refused.
@@ -117,8 +120,9 @@ export interface LaunchOpts {
    *  applies; 0 = none. Only for kinds with a transcript to price. */
   spendCapUsd?: number;
   /** Launch in a space instead of a directory (ADR 0142): `name` for a new one ("" = unnamed),
-   *  `folder` for an existing one. Only the Start hub's space section sends it. */
-  space?: { name?: string; folder?: string };
+   *  `folder` for an existing one. Only the Start hub's space section sends it. `allow_busy` is
+   *  the member's explicit "start here anyway" next to a running agent (#5230). */
+  space?: { name?: string; folder?: string; allow_busy?: boolean };
 }
 
 // LaunchResult: close on ok, else stay open and offer a fix for a name collision.
@@ -138,6 +142,9 @@ export interface LaunchResult {
    *  until another place is chosen, whatever the list says: the list is re-read meanwhile and
    *  can be slow or fail. */
   spaceGone?: boolean;
+  /** The Agent refused the space because an agent is running there (409 space_busy): the form
+   *  asks whether to start in a new space or here anyway. */
+  spaceBusy?: { session: string; title?: string };
   /** A launch from a handoff offer whose create got no definite answer: the session may exist,
    *  so the offer's take is kept for the next press to reconcile (acceptHandoff.ts). */
   unknown?: boolean;
@@ -513,6 +520,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // A pick the Agent itself refused as unknown stays refused until another place is chosen.
   const [refusedFolder, setRefusedFolder] = useState("");
   const spaceGone = useSpaceGone(space ? spaceFolder : "") || (!!spaceFolder && spaceFolder === refusedFolder);
+  // A launch aimed at a space an agent is running in waits for the member's answer (#5230): a new
+  // space (the default) or here anyway. Tied to the folder it was asked for, so another pick drops it.
+  const [busyAsk, setBusyAsk] = useState<{ folder: string; who: string } | null>(null);
   const toggleSection = (key: LaunchSectionKey, open: boolean, set: (v: boolean) => void) => {
     set(!open);
     writeLaunchOpen(key, !open);
@@ -975,10 +985,22 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // start fires the launch. `resolveCollision` is the conflict panel's re-run: the
   // typed name turned out to exist, so check THAT branch out instead of creating it.
   // Existing-branch mode arrives here already resolved, with a branch picked from the list.
-  const start = async (resolveCollision: boolean) => {
+  // `place` is the answer to the busy-space question: "new" starts in a new space instead, "here"
+  // sends the explicit opt-in. Without one, a pick an agent is running in asks first.
+  const start = async (resolveCollision: boolean, place?: "new" | "here") => {
     // Checked here, not only on the button: the send key and the collision retry come in this way.
     // The same gate as the button: the send key and the collision retry come in this way too.
     if (busy || seedLoading || filesStuck || launchBlocked || spaceGone || !canLaunch) return;
+    const folder = place === "new" ? "" : spaceFolder;
+    if (space && folder && !place) {
+      const running = runningInSpace(useSessionsStore.getState().sessions, folder);
+      if (running) {
+        setBusyAsk({ folder, who: displayName(running) });
+        return;
+      }
+    }
+    setBusyAsk(null);
+    if (place === "new") setSpaceFolder("");
     setBusy(true);
     setConflict(null);
     setPolicyErr(null);
@@ -988,7 +1010,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     // A create that got no answer at all (the connection dropped) throws: the form must come back
     // with the draft, or the dialog (and the Start hub around a space launch) stays locked.
     let noAnswer = false;
-    const sentFolder = spaceFolder;
+    const sentFolder = folder;
     const r: LaunchResult = await onLaunch({
       kind,
       driver: agentOf(kind).managedDriver ? driver : "",
@@ -1010,7 +1032,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       useExisting,
       spendCapUsd: hasBudget && budget.trim() && !budgetInvalid ? budgetCap : undefined,
       // An existing space is named by its folder alone; the Agent refuses a name with one.
-      space: space ? (spaceFolder ? { folder: spaceFolder } : { name: spaceName.trim() }) : undefined,
+      space: space ? (folder ? { folder, ...(place === "here" ? { allow_busy: true } : {}) } : { name: spaceName.trim() }) : undefined,
     }).catch(() => {
       noAnswer = true;
       return { ok: false };
@@ -1030,6 +1052,11 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     }
     setBusy(false);
     if (r?.spaceGone && sentFolder) setRefusedFolder(sentFolder);
+    // The list this form read was stale: ask the same question with the Agent's answer.
+    if (r?.spaceBusy && sentFolder) {
+      const known = useSessionsStore.getState().sessions.find((s) => s.name === r.spaceBusy!.session);
+      setBusyAsk({ folder: sentFolder, who: known ? displayName(known) : r.spaceBusy.title || r.spaceBusy.session });
+    }
     if (noAnswer) setLaunchUnknown(true);
     // The policy refused it: what the dialog offers may be out of date, so ask the Agent again.
     if (r?.policy) {
@@ -1793,7 +1820,15 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             {tr("start.place")}
           </FieldLabel>
           <div className="start-place">
-            <SpacePlacePicker folder={spaceFolder} onChange={setSpaceFolder} disabled={busy} gone={spaceGone} />
+            <SpacePlacePicker
+              folder={spaceFolder}
+              onChange={(f) => {
+                setSpaceFolder(f);
+                setBusyAsk(null);
+              }}
+              disabled={busy}
+              gone={spaceGone}
+            />
             {!spaceFolder && (
               <input {...NO_AUTOFILL}
                 type="text"
@@ -1810,6 +1845,19 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             <span className="ui-field-hint ui-field-hint--warn" role="status">
               {tr("start.space_gone")}
             </span>
+          )}
+          {busyAsk && busyAsk.folder === spaceFolder && !spaceGone && (
+            <div className="start-space-busy" role="alert">
+              <span className="ui-field-hint ui-field-hint--warn">{tr("start.space_busy", { who: busyAsk.who })}</span>
+              <div className="start-space-busy-actions">
+                <Button variant="primary" autoFocus disabled={busy} onClick={() => void start(false, "new")}>
+                  {tr("start.space_busy_new")}
+                </Button>
+                <Button disabled={busy} onClick={() => void start(false, "here")}>
+                  {tr("start.space_busy_here")}
+                </Button>
+              </div>
+            </div>
           )}
         </div>
         {filesStuck && <span className="ui-field-hint ui-field-hint--warn" role="status">{tr("launch.attach_not_taken")}</span>}

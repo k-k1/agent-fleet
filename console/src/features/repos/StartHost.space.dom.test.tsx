@@ -506,4 +506,84 @@ describe("Start hub — an existing space", () => {
     await click(spaceGo());
     expect(pasteImage.mock.calls[0]).toEqual(["space-1", file]);
   });
+
+  describe("a space an agent is running in (#5230)", () => {
+    const busyText = (who: string) => t("start.space_busy", { who });
+    const askButtons = () => [...document.querySelectorAll<HTMLButtonElement>(".start-space-busy button")];
+    const pickNotes = async () => {
+      await openHub();
+      await click(chip());
+      await click(options()[1]);
+    };
+    beforeEach(() => withSpaces([space("sp-a", "Notes", "2026-11-01T00:00:00Z")]));
+
+    it("marks the space, asks before launching, and starts in a new space by default", async () => {
+      useSessionsStore.setState({ sessions: [{ name: "s1", kind: "codex", space: "sp-a", alive: true, title: "Report draft" }] as never });
+      await openHub();
+      await click(chip());
+      expect(options()[1].querySelector(".start-place-busy")?.textContent).toBe(t("start.place_running"));
+      expect(options()[0].querySelector(".start-place-busy")).toBeNull();
+      await click(options()[1]);
+      expect(chip().querySelector(".start-place-busy")).not.toBeNull();
+      await typeInto(hubBox(), "続き");
+      await click(spaceGo());
+      expect(createCalls()).toHaveLength(0);
+      expect(document.body.textContent).toContain(busyText("Report draft"));
+      const [fresh, here] = askButtons();
+      expect(fresh.textContent).toBe(t("start.space_busy_new"));
+      expect(here.textContent).toBe(t("start.space_busy_here"));
+      expect(document.activeElement).toBe(fresh); // the default is the safe answer
+      await click(fresh);
+      expect(createCalls()).toHaveLength(1);
+      expect(createCalls()[0][2]).toMatchObject({ space: { name: "" }, initial_prompt: "続き" });
+    });
+
+    it("starts in the busy space only on the explicit answer, and says so to the Agent", async () => {
+      useSessionsStore.setState({ sessions: [{ name: "s1", kind: "claude", space: "sp-a", alive: true }] as never });
+      await pickNotes();
+      await click(spaceGo());
+      await click(askButtons()[1]);
+      expect(createCalls()).toHaveLength(1);
+      expect(createCalls()[0][2]).toMatchObject({ space: { folder: "sp-a", allow_busy: true } });
+    });
+
+    it("does not ask for a terminal or a stopped session, and sends no opt-in", async () => {
+      useSessionsStore.setState({
+        sessions: [
+          { name: "t1", kind: "shell", space: "sp-a", alive: true },
+          { name: "s1", kind: "claude", space: "sp-a", alive: false },
+        ] as never,
+      });
+      await pickNotes();
+      expect(chip().querySelector(".start-place-busy")).toBeNull();
+      await click(spaceGo());
+      expect(askButtons()).toHaveLength(0);
+      const body = createCalls()[0][2] as { space: Record<string, unknown> };
+      expect(body.space).toEqual({ folder: "sp-a" });
+    });
+
+    it("asks with the Agent's answer when the list was stale, without a toast, and drops the question on another pick", async () => {
+      apiPost.mockImplementation(async (...a: unknown[]) => {
+        if (a[0] !== "api/sessions") return {};
+        const sp = (a[2] as { space: { allow_busy?: boolean } }).space;
+        return sp.allow_busy ? { name: "space-2" } : { error: { code: "space_busy", message: "busy", session: "s9", title: "Nightly run" } };
+      });
+      await pickNotes();
+      await typeInto(hubBox(), "続き");
+      await click(spaceGo());
+      expect(createCalls()).toHaveLength(1);
+      expect(document.body.textContent).toContain(busyText("Nightly run"));
+      expect(document.querySelector(".ui-toast")).toBeNull();
+      expect(hubBox().value).toBe("続き");
+      await click(chip());
+      await click(options()[0]);
+      expect(askButtons()).toHaveLength(0);
+      await click(chip());
+      await click(options()[1]);
+      await click(spaceGo());
+      await click(askButtons()[1]);
+      expect(createCalls()).toHaveLength(3);
+      expect(createCalls()[2][2]).toMatchObject({ space: { folder: "sp-a", allow_busy: true } });
+    });
+  });
 });

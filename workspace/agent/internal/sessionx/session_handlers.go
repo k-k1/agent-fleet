@@ -376,6 +376,10 @@ func catalogEntry(m session.Meta, alive bool) session.CatalogEntry {
 type SpaceTarget struct {
 	Folder string `json:"folder,omitempty"`
 	Name   string `json:"name,omitempty"`
+	// AllowBusy is the explicit "start here anyway" for an existing space where an AI session is
+	// running; without it that launch answers 409 space_busy. A session-spawned create ignores it:
+	// its own guard (spawnWorkingCopyCheck, allow_shared_working_copy) decides.
+	AllowBusy bool `json:"allow_busy,omitempty"`
 }
 
 type CreateReq struct {

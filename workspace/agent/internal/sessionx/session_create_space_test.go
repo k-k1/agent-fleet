@@ -3,8 +3,10 @@ package sessionx
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -200,5 +202,78 @@ func TestCreateInASpaceBeingDeletedIsRefused(t *testing.T) {
 	rec = p.post(map[string]any{"kind": "shell", "space": map[string]any{"folder": sp.Folder}}, "")
 	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
 		t.Fatalf("create after the delete ended: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A launch into an existing space where an AI session is running is refused with 409 space_busy
+// naming that session, unless the request says "here anyway" (space.allow_busy). Shells, stopped
+// and archived sessions do not make a space busy, and the refusal leaves no meta behind (#5230).
+func TestCreateInABusySpace(t *testing.T) {
+	p := newCreateProbe(t)
+	launchTmuxFn = func(session.Meta, bool) error { return nil }
+	sp, err := spacex.Create("shared")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := spacex.Create("other")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.meta(session.Meta{Name: "term", Kind: session.KindShell, Dir: sp.Dir, Origin: session.OriginUser})
+	p.meta(session.Meta{Name: "old", Kind: session.KindCodex, Dir: sp.Dir, Origin: session.OriginUser})
+	p.meta(session.Meta{Name: "gone", Kind: session.KindClaude, Dir: sp.Dir, Origin: session.OriginUser, Archived: true})
+	p.meta(session.Meta{Name: "away", Kind: session.KindClaude, Dir: other.Dir, Origin: session.OriginUser})
+	live := map[string]bool{"term": true, "gone": true, "away": true}
+	sessionAliveFn = func(m session.Meta) bool { return live[m.Name] }
+	post := func(space map[string]any) *httptest.ResponseRecorder {
+		return p.post(map[string]any{"kind": "claude", "space": space}, "")
+	}
+
+	// A live shell, a stopped agent, an archived one and an agent in another space: not busy.
+	rec := post(map[string]any{"folder": sp.Folder})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create next to a shell and stopped sessions = %d %s, want 201", rec.Code, rec.Body)
+	}
+	var made session.Session
+	_ = json.Unmarshal(rec.Body.Bytes(), &made)
+
+	// Now an agent runs there: the next launch is refused and names it, title included when set.
+	live[made.Name] = true
+	third, err := spacex.Create("third")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.meta(session.Meta{Name: "titled", Kind: session.KindCodex, Dir: third.Dir, Title: "Notes run", Origin: session.OriginSchedule})
+	live["titled"] = true
+	for _, tc := range []struct {
+		sp                   spacex.Space
+		wantSession, wantTit string
+	}{{sp, made.Name, ""}, {third, "titled", "Notes run"}} {
+		metas := len(session.ListMetas())
+		rec = post(map[string]any{"folder": tc.sp.Folder})
+		var e struct {
+			Error struct{ Code, Message, Session, Title string } `json:"error"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &e)
+		if rec.Code != http.StatusConflict || e.Error.Code != "space_busy" {
+			t.Fatalf("create in %s = %d %s, want 409 space_busy", tc.sp.Folder, rec.Code, rec.Body)
+		}
+		if e.Error.Session != tc.wantSession || e.Error.Title != tc.wantTit || !strings.Contains(e.Error.Message, tc.wantSession) {
+			t.Fatalf("refusal names %+v, want session %q titled %q", e.Error, tc.wantSession, tc.wantTit)
+		}
+		if got := len(session.ListMetas()); got != metas {
+			t.Fatalf("the refused create wrote a meta: %d -> %d", metas, got)
+		}
+	}
+
+	// The explicit opt-in starts it anyway.
+	rec = post(map[string]any{"folder": sp.Folder, "allow_busy": true})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create with allow_busy = %d %s, want 201", rec.Code, rec.Body)
+	}
+	// A new space is nobody's: never busy.
+	rec = post(map[string]any{"name": "fresh"})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create in a new space = %d %s, want 201", rec.Code, rec.Body)
 	}
 }
