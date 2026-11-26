@@ -23,6 +23,7 @@ import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useLaunchSeed, useLaunchTarget, useReposStore, useSpaceHandoff } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
 import { boundedRequest, type BoundedRequest } from "./boundedRequest.ts";
 import { senderLabel, useHandoffStore, type HandoffOffer } from "./handoffStore.ts";
 import "./sharing.css";
@@ -80,11 +81,13 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
     // in it the member may close the inbox, open another offer from the same list or open the
     // Start hub: an answer that finds any of that changed writes nothing, so it can never
     // overwrite the seed of the launch that came after it.
-    const before = { tick: useSessionsStore.getState().startTick, target: useLaunchTarget.getState().target, offerId: useSpaceHandoff.getState().offerId, seedOfferId: useLaunchSeed.getState().handoffOfferId };
+    const scopeNow = () => (useTenantStore.getState().whoami?.user ?? "") + "|" + useTenantStore.getState().tenant;
+    const before = { scope: scopeNow(), tick: useSessionsStore.getState().startTick, target: useLaunchTarget.getState().target, offerId: useSpaceHandoff.getState().offerId, seedOfferId: useLaunchSeed.getState().handoffOfferId };
     const support = await spacesSupport();
     if (alive.current) setBusy(false);
     if (
       !alive.current ||
+      scopeNow() !== before.scope ||
       useSessionsStore.getState().startTick !== before.tick ||
       useLaunchTarget.getState().target !== before.target ||
       useSpaceHandoff.getState().offerId !== before.offerId ||

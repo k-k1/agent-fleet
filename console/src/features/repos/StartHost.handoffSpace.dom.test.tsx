@@ -4,7 +4,7 @@
 // real ones, only fetch is stubbed; the dialog is a stub that reports what it was opened with
 // and presses launch with the options the real space dialog would send.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { act } from "react";
+import { act, useEffect } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import type { LaunchOpts } from "./LaunchModal.tsx";
 
@@ -13,7 +13,12 @@ vi.mock("./useRepoRail.ts", () => ({ useRepoRailContext: () => ({ access: { kind
 vi.mock("./StartModal.tsx", () => ({ StartModal: () => <div data-testid="hub" /> }));
 vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
 vi.mock("./LaunchModal.tsx", () => ({
-  LaunchModal: (p: { repo: string; newSpace?: boolean; home?: boolean; initialPrompt?: string; initialTitle?: string; onClose: () => void; onLaunch: (o: LaunchOpts) => Promise<{ ok: boolean }> }) => (
+  LaunchModal: function MockLaunchModal(p: { repo: string; newSpace?: boolean; home?: boolean; initialPrompt?: string; initialTitle?: string; onClose: () => void; onLaunch: (o: LaunchOpts) => Promise<{ ok: boolean }> }) {
+    // How many times the space dialog was mounted: an unmount loses what the member typed in it.
+    useEffect(() => {
+      if (p.newSpace) (globalThis as { __spaceMounts?: number }).__spaceMounts = ((globalThis as { __spaceMounts?: number }).__spaceMounts ?? 0) + 1;
+    }, [p.newSpace]);
+    return (
     <>
     <button type="button" data-testid="close" onClick={p.onClose}>
       close
@@ -38,7 +43,8 @@ vi.mock("./LaunchModal.tsx", () => ({
       launch
     </button>
     </>
-  ),
+    );
+  },
 }));
 
 const { StartHost } = await import("./StartHost.tsx");
@@ -67,6 +73,7 @@ const posts = (suffix: string) =>
     .filter(([url, init]) => (init?.method ?? "GET") === "POST" && new URL(url, "http://console.test/").pathname.endsWith(suffix))
     .map(([, init]) => JSON.parse(String(init?.body ?? "null")) as Record<string, unknown>);
 const dialog = () => host.querySelector<HTMLButtonElement>("[data-testid=launch]");
+const dialogs = () => [...host.querySelectorAll<HTMLButtonElement>("[data-testid=launch]")];
 
 async function mount() {
   host = document.createElement("div");
@@ -84,6 +91,7 @@ async function mount() {
 beforeEach(() => {
   fetchMock.mockReset();
   vi.stubGlobal("fetch", fetchMock);
+  (globalThis as { __spaceMounts?: number }).__spaceMounts = 0;
 });
 
 afterEach(async () => {
@@ -199,13 +207,52 @@ describe("launching from a handoff that came from a space", () => {
     await mount();
     expect(dialog()?.dataset.newSpace).toBe("true");
     await act(async () => useLaunchTarget.getState().open({ name: "private", path: "/home/dev/repos/private", branch: "main" } as never));
-    expect(dialog()?.dataset).toMatchObject({ newSpace: "false", repo: "private", prompt: "" });
-    await press("launch");
+    // The repository dialog is on top; the space dialog stays mounted under it, with what was typed.
+    expect(dialogs().map((d) => d.dataset.newSpace)).toEqual(["true", "false"]);
+    expect(dialogs()[1].dataset).toMatchObject({ repo: "private", prompt: "" });
+    expect((globalThis as { __spaceMounts?: number }).__spaceMounts).toBe(1);
+    await act(async () => dialogs()[1].click());
+    for (let i = 0; i < 10; i++) await act(async () => await new Promise((r) => setTimeout(r, 0)));
     expect(posts("/api/sessions")).toHaveLength(1);
     expect(posts("/api/sessions")[0]).not.toHaveProperty("handoff_take");
     expect(posts("/offer-1/take")).toHaveLength(0);
     expect(posts("/accept")).toHaveLength(0);
     expect(useSpaceHandoff.getState().offerId).toBe("offer-1");
+  });
+
+  // The hub may hold another launch's seed (an inbox request, a memo): the handoff's create must
+  // not be routed through it.
+  it("creates through the plain route whatever another launch's seed holds", async () => {
+    useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
+    useLaunchSeed.getState().set("another request", "");
+    useLaunchSeed.getState().setInboxItem("item-9");
+    routes({
+      "/offer-1/take": { status: 200, body: { status: "pending", token: "tok-9" } },
+      "/api/sessions": { status: 201, body: { name: "s-plain" } },
+      "/offer-1/accept": { status: 200, body: { status: "accepted" } },
+    });
+    await mount();
+    await press("launch");
+    expect(posts("/api/sessions")).toHaveLength(1);
+    expect(posts("/api/sessions")[0].handoff_take).toEqual({ offerId: "offer-1", token: "tok-9" });
+    expect(posts("/item-9/launch")).toHaveLength(0);
+    expect(useLaunchSeed.getState().inboxItemId).toBe("item-9"); // the other launch is left alone
+  });
+
+  // The offer names the previous tenant's; its launch would send that id to the new one.
+  it("drops the handoff when the tenant or account changes", async () => {
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    useTenantStore.setState({ tenant: "a", whoami: { user: "u1" } as never });
+    useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
+    await mount();
+    expect(dialog()).not.toBeNull();
+    await act(async () => useTenantStore.setState({ tenant: "b" }));
+    expect(dialog()).toBeNull();
+    expect(useSpaceHandoff.getState().offerId).toBe("");
+    useSpaceHandoff.getState().open("offer-2", "x", "y");
+    await act(async () => useTenantStore.setState({ whoami: { user: "u2" } as never }));
+    expect(useSpaceHandoff.getState().offerId).toBe("");
+    useTenantStore.setState({ tenant: "", whoami: null });
   });
 
   it("still shows the dialog when the Start hub is open", async () => {

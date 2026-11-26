@@ -265,6 +265,18 @@ describe("the received handoff row", () => {
         expect((document.querySelector("[data-testid=launch-dialog]") as HTMLElement).dataset.newSpace).toBe("false");
       });
 
+      it("writes nothing when the tenant changed meanwhile", async () => {
+        const { useTenantStore } = await import("../../core/store/tenant.ts");
+        useTenantStore.setState({ tenant: "a" });
+        await render([], true, fromSpace);
+        const release = slowSpaces();
+        await act(async () => acceptButton().click());
+        await act(async () => useTenantStore.setState({ tenant: "b" }));
+        await settle(release);
+        expect(useSpaceHandoff.getState().offerId).toBe("");
+        useTenantStore.setState({ tenant: "" });
+      });
+
       it("writes nothing when the Start hub was opened meanwhile", async () => {
         await render([], true, fromSpace);
         const release = slowSpaces();
