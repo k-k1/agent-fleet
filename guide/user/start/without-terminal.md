@@ -18,7 +18,7 @@ Asking the AI questions, translating, reading documents and following developmen
 | Jot down requests and hand them to development | The **Memo queue** view |
 | Read documents and slides | The **Files** view |
 | See how far development has got | The **Sessions** view |
-| Read a conversation a developer shared with you | the **Shared sessions** view |
+| Read a conversation another member shared with you | The **Shared sessions** view |
 
 ## Read these first
 
@@ -32,19 +32,19 @@ Asking the AI questions, translating, reading documents and following developmen
 | 6 | [Hand a file to a session](../files/send.md) | Have a file translated or summarised |
 | 7 | [Collect memos and hand them over](../chat/memos.md) | Collect requests and hand them over together |
 | 8 | [Read a session's state](../sessions/status.md) | Read development progress from the row marks |
-| 9 | [Read a conversation shared with you](../team/share.md#read-a-conversation-shared-with-you) | Read, read-only, a conversation a developer shared with you |
+| 9 | [Read a conversation shared with you](../team/share.md#read-a-conversation-shared-with-you) | Open a conversation another member shared and check your access |
 | 10 | [Use it on a phone](phone.md) | Check progress while you are out |
 
 - The "Develop in a repository" steps (connecting a Git service, launching sessions) can be skipped if you do not use them
 - You can stop the workspace when you are done. Press **Start** next time to bring it back ([Stop the workspace at the end of the day](end-of-day.md))
 
-## Don't answer questions meant for someone else
+## When a shared session is waiting for a response
 
-A session stopped with "Question" or waiting for a permission is waiting for the developer in charge.
+The session owner, the member who shared the session, answers the agent's questions and grants permission for actions.
 
-- Do not answer in their place while you are looking in. The work can go in a direction the developer did not intend
-- If you notice something, tell the developer in charge, or write it in the memo queue and hand it over
-- Where a shared session lets you propose a message, the proposal reaches the agent only after the owner approves it
+If you have **"View only"** access, tell the owner directly if you notice something.
+With **"Can propose"** access, use **"Propose to owner"** at the bottom of the view to suggest an answer or send a follow-up.
+The agent receives your proposal once the owner approves it.
 
 ## When it goes wrong
 
