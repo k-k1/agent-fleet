@@ -52,10 +52,23 @@ func markNoShare(group string) {
 	noShare[group] = true
 }
 
+// sharingRefused also reads the store: a grant the AS refused to renew for its set says so after
+// a restart too.
 func sharingRefused(group string) bool {
 	noShareMu.Lock()
-	defer noShareMu.Unlock()
-	return noShare[group]
+	refused := noShare[group]
+	noShareMu.Unlock()
+	if refused {
+		return true
+	}
+	if data, err := secrets.Load(); err == nil {
+		for _, g := range data.MCPOAuth {
+			if g.Group == group && g.SetRefused {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // sharedSetFits reports whether one sign-in can ask for resources and scope together.
@@ -112,10 +125,16 @@ func grantMember(g *secrets.MCPOAuthGrant, serverID string) (secrets.MCPOAuthGra
 
 // grantApplies reports whether g is a grant of d's: a group's grant applies to every definition of
 // the group, member or not (a definition the group gained reads as needing more permission, not as
-// signed out), and any other grant to the definition it has a member entry for. A tenant client's
+// signed out), except one that disconnected from it; any other grant applies to the definition it
+// has a member entry for. A tenant client's
 // grant made before groups existed still needs d to carry that client, as it did then.
 func grantApplies(g *secrets.MCPOAuthGrant, d ServerDef) bool {
 	if g.Group != "" {
+		for _, id := range g.Left {
+			if id == d.ID {
+				return false
+			}
+		}
 		return g.Group == grantGroup(d)
 	}
 	if _, member := grantMember(g, d.ID); !member {

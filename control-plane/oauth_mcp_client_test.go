@@ -488,6 +488,23 @@ func TestMCPClientOAuthRedirectCannotBeSteered(t *testing.T) {
 	}
 }
 
+// Of the AS's error codes only invalid_target is forwarded as itself (the Agent then stops asking
+// that group for several servers at once); any other is the generic authorization_error.
+func TestMCPClientOAuthForwardsOnlyInvalidTarget(t *testing.T) {
+	t.Parallel()
+	for asErr, want := range map[string]string{"invalid_target": "invalid_target", "access_denied": "authorization_error", "invalid_target_x": "authorization_error"} {
+		f := newMCPClientFixture(t)
+		_, state := f.start(t, f.alice, ``)
+		f.alice.agent.callbackStatus = 400
+		f.alice.agent.callbackBody = `{"error":{"code":"authorization_denied","message":"no"}}`
+		f.callback(t, f.alice.session, "error="+asErr+"&state="+state)
+		cb := f.alice.agent.callsTo("/oauth/callback")
+		if len(cb) != 1 || cb[0].body["error"] != want || cb[0].body["code"] != "" {
+			t.Errorf("%s: forwarded = %+v, want error %q", asErr, cb, want)
+		}
+	}
+}
+
 func TestMCPClientOAuthProviderErrorForwardsNoText(t *testing.T) {
 	t.Parallel()
 	f := newMCPClientFixture(t)

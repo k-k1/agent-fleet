@@ -1130,8 +1130,9 @@ func TestPublicASUnknownResourceIsNotRetried(t *testing.T) {
 	}
 }
 
-// An AS that accepts a shared sign-in but refuses to renew it for several servers ends the grant
-// for a new sign-in, which then asks for one server.
+// An AS that accepts a shared sign-in but refuses to renew it for several servers: the refusal is
+// not retried, the member whose bearer was refused signs in on its own (alone), and the others
+// keep the bearer they still accept.
 func TestRenewalRefusedForTheSetStopsSharing(t *testing.T) {
 	resetOAuthState(t)
 	noShareMu.Lock()
@@ -1147,12 +1148,28 @@ func TestRenewalRefusedForTheSetStopsSharing(t *testing.T) {
 		}
 		return 200, `{"access_token":"at-x","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-x"}`
 	}
-	if _, err := RefreshAccessToken(context.Background(), "t-a", "at-0"); !errors.Is(err, ErrSignInAgain) {
+	// t-a's server refused the bearer (a 401), the clock has not moved.
+	if _, err := RefreshAccessToken(context.Background(), "t-a", "at-0"); !errors.Is(err, ErrNotSignedIn) {
 		t.Fatalf("renewal: %v", err)
 	}
-	if st := statusOf(t, "t-b"); st.State != OAuthStateSignInAgain {
-		t.Fatalf("t-b: %+v", st)
+	if n := f.tokenCount(); n != 2 {
+		t.Fatalf("%d token requests, want the sign-in and one refused renewal", n)
 	}
+	if tok, err := AccessToken(context.Background(), "t-b"); err != nil || tok != "at-0" || f.tokenCount() != 2 {
+		t.Fatalf("t-b lost its bearer: %q, %v", tok, err)
+	}
+	if st := statusOf(t, "t-a"); st.State != OAuthStateNotSignedIn {
+		t.Fatalf("t-a: %+v", st)
+	}
+	// Past the bearer's life t-b needs a sign-in too; nothing is renewed for the set again.
+	oauthNow = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	if _, err := AccessToken(context.Background(), "t-b"); err == nil || f.tokenCount() != 2 {
+		t.Fatalf("t-b after expiry: %v, %d token requests", err, f.tokenCount())
+	}
+	oauthNow = time.Now
+	noShareMu.Lock()
+	noShare = map[string]bool{} // a restart: the stored grant still says the set was refused
+	noShareMu.Unlock()
 	_, q := signInVia(t, f, "t-a")
 	if len(q["resource"]) != 1 {
 		t.Fatalf("the next sign-in asked for %v", q["resource"])
@@ -1185,6 +1202,16 @@ func TestDisconnectOfAnOwnSignInLeavesTheGroup(t *testing.T) {
 	}
 	if grantCount(t) != 1 {
 		t.Fatalf("%d grants", grantCount(t))
+	}
+	// t-a is disconnected: it does not fall back to the group's bearer.
+	if st := statusOf(t, "t-a"); st.State != OAuthStateNotSignedIn {
+		t.Errorf("t-a: %+v", st)
+	}
+	if _, err := AccessToken(context.Background(), "t-a"); !errors.Is(err, ErrNotSignedIn) {
+		t.Errorf("t-a got a bearer: %v", err)
+	}
+	if g := currentGrant("t-a"); g != nil {
+		t.Errorf("t-a still has a grant: %+v", g)
 	}
 }
 

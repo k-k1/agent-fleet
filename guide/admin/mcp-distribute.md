@@ -84,7 +84,7 @@ Distributions that carry the same client ID at the same authorization server, bo
 - Adding a distribution with that client, or moving one to another URL, shows "**More permission needed**" on that row; it reaches no session until the member signs in again. The other rows keep working
 - Give every distribution of the group its "**Scopes**". A row without them gets what the others ask for (plus its own server's request when the member signs in from that row), and asks for more permission when its server refuses
 - Only https URLs share the sign-in. An http distribution signs in on its own
-- The URLs and scopes all go into one authorization request. When there are more than 32 servers, their URLs together exceed 4 KiB, or their joined scopes exceed the 1024-byte limit above, each server signs in on its own instead. So does every server of the group when its authorization server refuses one sign-in for several servers; the first sign-in that finds this fails once
+- The URLs and scopes all go into one authorization request. When there are more than 32 servers, their URLs together exceed 4 KiB, or their joined scopes exceed the 1024-byte limit above, each server signs in on its own instead. So does every server of the group when its authorization server refuses one sign-in for several servers: the first sign-in that finds this fails once, and when only the renewal is refused, each server keeps working until its token expires and then asks to be signed in on its own
 
 These changes cut every member's sign-in, and members sign in again.
 

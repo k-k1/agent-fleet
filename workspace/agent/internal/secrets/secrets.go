@@ -471,6 +471,12 @@ type MCPOAuthGrant struct {
 	// TokenResources are the resources the current access token was requested for (the code
 	// exchange or the last renewal). A member outside them is sent a renewed token, never this one.
 	TokenResources []string `json:"tokenResources,omitempty"`
+	// Left are the servers that disconnected from a shared grant on their own: it no longer
+	// applies to them, while the others keep it.
+	Left []string `json:"left,omitempty"`
+	// SetRefused is set when the AS refused to renew the grant for its set of resources. It is not
+	// renewed again; each member keeps the bearer while it lasts, then needs a sign-in of its own.
+	SetRefused bool `json:"setRefused,omitempty"`
 }
 
 // MCPOAuthGrantMember is one definition a grant was made for.

@@ -366,7 +366,12 @@ func (c config) handleMCPClientOAuthCallback(w http.ResponseWriter, r *http.Requ
 	}
 	body := map[string]string{"state": state, "code": code, "iss": iss}
 	if aserr != "" {
-		body["error"] = "authorization_error" // the AS's own text is not forwarded
+		// The AS's own text is not forwarded, only a closed set: invalid_target tells the Agent
+		// the AS refuses one sign-in for several servers, so the group's next one asks for one.
+		body["error"] = "authorization_error"
+		if aserr == "invalid_target" {
+			body["error"] = aserr
+		}
 		body["code"] = ""
 	}
 	status, raw, err := c.callAgentOAuth(r.Context(), rs, http.MethodPost,
