@@ -326,6 +326,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.d_held_limit": "waiting for a usage limit",
   "memo.d_held_wakers": "waiting on a watch or a timer",
   "memo.d_held_wakers_named": "waiting on a watch or a timer: {names}",
+  "memo.d_held_peer": "waiting for a peer message to arrive",
   "memo.d_held_unknown": "not known",
   "memo.d_held_seen": "As of {at}",
   "memo.d_held_in": "in session {name}",

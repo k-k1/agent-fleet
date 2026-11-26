@@ -104,6 +104,11 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
     zero. When the watch state cannot be read the row carries `wakersUnknown: true` and no
     `wakers`, never zeros the Agent is not sure of (`Engine.Wakers`,
     `internal/watch/owner.go`).
+  - `pendingPeers: {count, newestAt}` counts the peer messages addressed to the session that have
+    not reached it: the pending spool (waiting for its user), the one claimed from it and in
+    `/input`, and held peer input a Managed runtime has not taken. `newestAt` is the newest one's
+    queue time. Omitted when there are none (`fillPendingPeers`,
+    `internal/sessionx/peer_pending.go`, #5270).
   - `GET /sessions` carries `"queueReport": 1` beside `sessions`, so a Control Plane can tell an
     Agent that omits `wakers` because the session holds nothing from an older one that does not say.
     It carries `"queueRefs": 1` beside it when the Agent composes a delivery's prompt for items

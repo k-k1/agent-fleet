@@ -324,6 +324,7 @@ export const memo = {
   "memo.d_held_limit": "利用上限の解除待ち",
   "memo.d_held_wakers": "ウォッチまたはタイマーの待機中",
   "memo.d_held_wakers_named": "ウォッチまたはタイマーの待機中: {names}",
+  "memo.d_held_peer": "セッション間メッセージの配送待ち",
   "memo.d_held_unknown": "不明",
   "memo.d_held_seen": "{at} 時点",
   "memo.d_held_in": "セッション {name} で",

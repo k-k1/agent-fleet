@@ -149,3 +149,23 @@ func QueuedPeerTouches(members map[string]bool) bool {
 	}
 	return false
 }
+
+// QueuedPeersTo is the peer messages addressed to session name that have not reached it yet,
+// from both spools: pending (waiting for the session's user) and held (accepted by a Managed
+// queue, not yet handed to the runtime). newest is the latest queue time among them. Held input
+// from another origin (operator, schedule, queue) is not a peer message and is not counted.
+// The caller serialises against the pending spool's writers (sessionx's pendingTarget lock).
+func QueuedPeersTo(name string) (n int, newest time.Time) {
+	for _, sub := range []string{heldSubdir, pendingSubdir} {
+		for _, hp := range loadSpool(sub, name) {
+			if hp.origin() != OriginPeer {
+				continue
+			}
+			n++
+			if hp.QueuedAt.After(newest) {
+				newest = hp.QueuedAt
+			}
+		}
+	}
+	return n, newest
+}

@@ -196,6 +196,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		s.RateLimitResumeAt = rateLimitBookedAt(m, time.Now())
 	}
 	fillWakers(&s, m)
+	fillPendingPeers(&s, m.Name)
 	fillQueueTurn(&s, m)
 	fillStateSince(&s, m, realSinceProbes)
 	fillBackgroundSince(&s, time.Now())

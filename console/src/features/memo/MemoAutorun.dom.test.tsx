@@ -1320,6 +1320,7 @@ describe("the run history of a run that is still open", () => {
     ["person", "memo.d_held_person"],
     ["limit", "memo.d_held_limit"],
     ["wakers", "memo.d_held_wakers"],
+    ["peer", "memo.d_held_peer"],
     ["unknown", "memo.d_held_unknown"],
     ["a-reason-from-a-newer-cp", "memo.d_held_unknown"],
   ] as const)("says why in words for %s", async (heldBy, key) => {

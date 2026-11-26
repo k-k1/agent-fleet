@@ -1033,7 +1033,7 @@ func deliveryTree(rows []sessionWire, root string) []*sessionWire {
 }
 
 // hold ranks (store Held*): what is shown for a tree is the strongest reason found in it.
-var memoHoldRank = map[string]int{"": 0, store.HeldUnknown: 1, store.HeldWakers: 2, store.HeldLimit: 3, store.HeldPerson: 4, store.HeldMachine: 5}
+var memoHoldRank = map[string]int{"": 0, store.HeldUnknown: 1, store.HeldWakers: 2, store.HeldPeer: 3, store.HeldLimit: 4, store.HeldPerson: 5, store.HeldMachine: 6}
 
 // sessionHold is why one session of a delivery's tree keeps the delivery open, "" when it does
 // not (ADR 0137 section 6, the table). bgMax is 0 as the rule has always been: the reaper's
@@ -1062,6 +1062,9 @@ func sessionHold(s sessionWire, now time.Time) string {
 	}
 	if why == "" && (s.State == stateLimited || s.RateLimitResumeAt != "") {
 		why = store.HeldLimit
+	}
+	if why == "" && peerInTransit(s, now) {
+		why = store.HeldPeer
 	}
 	if why == "" && s.Wakers != nil && (s.Wakers.Watches > 0 || s.Wakers.Timers > 0) {
 		why = store.HeldWakers
@@ -1237,6 +1240,35 @@ func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
 		return true
 	}
 	return false
+}
+
+// memoPeerHoldBound is how long a peer message on its way to a member keeps the run open
+// (#5270), counted from the later of the newest message's queue time and the member's last turn
+// end. A message is delivered seconds after its target can take it, which is when a turn ends;
+// one still waiting this long after both cannot be delivered (the target is stopped, or refuses
+// it again on every try), and without the bound it would hold the run until the Agent's own
+// 24-hour expiry.
+const memoPeerHoldBound = 15 * time.Minute
+
+// peerInTransit reports whether a peer message to s has not reached it yet and is within
+// memoPeerHoldBound. Both times are the Agent's, read as childAnswerUnread reads them: one up to
+// memoClockSkew ahead counts as now, one further ahead is a bad clock and starts no bound. A
+// queue time that does not parse cannot be bounded and holds nothing.
+func peerInTransit(s sessionWire, now time.Time) bool {
+	p := s.PendingPeers
+	if p == nil || p.Count <= 0 {
+		return false
+	}
+	from, err := time.Parse(time.RFC3339Nano, p.NewestAt)
+	if err != nil || from.Sub(now) > memoClockSkew {
+		return false
+	}
+	if s.LastTurnEndAt != "" {
+		if end, err := time.Parse(time.RFC3339Nano, s.LastTurnEndAt); err == nil && end.After(from) && end.Sub(now) <= memoClockSkew {
+			from = end
+		}
+	}
+	return now.Sub(from) < memoPeerHoldBound
 }
 
 // staleRead reports whether more than r.staleReadMax has passed since the session list arrived, as when the

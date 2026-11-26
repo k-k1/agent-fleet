@@ -520,3 +520,23 @@ func pendingInflightTouches(members map[string]bool) bool {
 	}
 	return false
 }
+
+// fillPendingPeers sets the peer messages still on their way to session name (#5270): the
+// pending spool, the one claimed from it and in /input, and held peer input. The spool and the
+// claim are read under the target's lock, which every claim, write-back and drop takes: read
+// apart, a message written back and released between the two reads would be in neither.
+func fillPendingPeers(s *session.Session, name string) {
+	t := pendingTargetOf(name)
+	t.mu.Lock()
+	n, newest := agents.QueuedPeersTo(name)
+	if in := t.inflight; in != nil {
+		n++
+		if in.QueuedAt.After(newest) {
+			newest = in.QueuedAt
+		}
+	}
+	t.mu.Unlock()
+	if n > 0 {
+		s.PendingPeers = &session.PendingPeers{Count: n, NewestAt: newest.UTC().Format(time.RFC3339)}
+	}
+}

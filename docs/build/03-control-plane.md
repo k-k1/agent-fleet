@@ -607,6 +607,8 @@ disables.
   walk keeps the names it has seen, so a cycle ends it) is held: a machine works
   (`machine`), a person has to act, also stopped with the interaction carried (`person`),
   a usage limit is waited for, `limited` or a booked `rateLimitResumeAt` (`limit`),
+  a peer message to it is still on its way, `pendingPeers`, for up to 15 minutes after the later
+  of the newest one's queue time and the session's last turn end (`peer`, #5270),
   `wakers` is not zero (`wakers`), or `wakersUnknown` is set or a state is not understood
   (`unknown`). An archived session of the tree holds nothing. The delivery closes `clean`
   on the second read in a row that finds none of these, and `aborted` when its session is
