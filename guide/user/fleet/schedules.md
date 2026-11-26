@@ -49,7 +49,7 @@ The row's ⋯ menu (also opened with a right-click) offers:
 | Run now | Runs it once without waiting for the time |
 | Delete | Removes the schedule |
 
-If the schedule reuses a session, open **Details / edit** and click the session name under **Reuse target** or **Reuse session** to open it. If you have unsaved edits, **Return to editing** brings you back to them. If the session is unavailable, the Console shows a warning and keeps the details open.
+If the schedule reuses a session, open **Details / edit**. A session name under **Reuse target** is a link. A name under **Reuse session** is also a link if it differs from the target. Click a link to open that session. If you have unsaved edits, the **Return to editing** button with the schedule name brings you back to them. If the session is unavailable, the Console shows a warning and keeps the details open.
 
 Below the list, "**Scheduled sessions**" shows the sessions schedules started, newest first, with the sessions they started one level under. Finished ones are folded into "**Finished N**". Press a row to open it. They are not listed in the "Sessions" view or the repository tree. The Schedules icon shows an amber number while one of them waits for your answer. A session does not say which schedule started it, so they are not grouped by schedule; the run history of a row names the session of each run.
 
