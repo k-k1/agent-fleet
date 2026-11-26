@@ -500,7 +500,7 @@ export const errors = {
   "err.memo_queue_nothing_pending": "このカテゴリには、実行待ちのメモがありません。",
   "err.memo_queue_no_slot": "このカテゴリで同時に動かせるセッション数の上限に達しています。実行中のセッションが終わるか、設定の「同時に動かすセッション数」を増やしてください。",
   "err.memo_queue_member_limit": "自動実行のセッションが、すべてのカテゴリの合計で上限（4 つ）まで動いています。どれかが終わってからもう一度試してください。",
-  "err.memo_queue_bad_repo": "このカテゴリのリポジトリが 1 つのフォルダ名ではないため、セッションを起動できません。",
+  "err.memo_queue_bad_repo": "このカテゴリの場所が、1 つのリポジトリのフォルダ名でも、スペース（spaces/<フォルダ>。英小文字・数字・-）でもないため、セッションを起動できません。",
   "err.memo_queue_item_invalid": "このカテゴリのメモに、そのままセッションへ送れないものがあります（本文が長すぎる、添付が多すぎる、添付のパスが使えない）。メモを直してからもう一度お試しください。",
   "err.memo_queue_memo_not_ready": "このメモは今は実行できません。承認待ち、すでに実行に含まれている、先に終わるべきメモや時刻の待ち、のどれかです。",
   "err.memo_ref_invalid": "項目のリンクが正しくありません。provider（github・jira・bitbucket）、key（owner/repo#12 または PROJ-12）、url（http(s)）を3つそろえてください。",

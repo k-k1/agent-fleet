@@ -188,6 +188,10 @@ type fakeQueueAgent struct {
 	// tidy makes GET /sessions send the envelope's queueTidy marker, and makes the Agent take a
 	// curator item on a delivery (an Agent of ADR 0137 step 5).
 	tidy bool
+	// spaces makes GET /sessions send the envelope's queueSpace marker. Without it the Agent is an
+	// older one that ignores a create's space and starts in home, as a real one would. A space
+	// named "gone" is then refused under the key, as the real Agent refuses a missing space.
+	spaces bool
 	// tidyCalls is every POST /memos/tidy body, tidyTypes the Content-Type of each. tidyReply
 	// answers a call: a status and a body (an error body for a code, a reply object for a 200);
 	// nil answers 200 with no operations. tidyDelay holds the answer back.
@@ -485,6 +489,9 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		if a.tidy {
 			env["queueTidy"] = 1
 		}
+		if a.spaces {
+			env["queueSpace"] = 1
+		}
 		if a.prs {
 			env["queuePRs"] = 1
 		}
@@ -577,6 +584,13 @@ func (a *fakeQueueAgent) serve(w http.ResponseWriter, r *http.Request) {
 		// checkQueueDelivery), and its refusal carries no create headers.
 		if a.createMode == "invalid" || !validQueueDelivery(body) || (hasCuratorItem(body) && !a.tidy) {
 			agentErr(w, http.StatusBadRequest, "bad_queue_delivery")
+			return
+		}
+		if sp, _ := body["space"].(map[string]any); a.spaces && sp["folder"] == "gone" {
+			a.keys[key] = "refused"
+			w.Header().Set(createKeyHeader, key)
+			w.Header().Set(createOutcomeHeader, "refused")
+			agentErr(w, http.StatusNotFound, "space_not_found")
 			return
 		}
 		if a.keys[key] == "abandoned" || a.createMode == "refuse" {
@@ -975,6 +989,9 @@ func TestMemoDeliverySpaceAndSameNamedRepositoryStayApart(t *testing.T) {
 		e.pending("spaces/app", "impl", "space work")
 		e.pending("app", "impl", "repo work")
 		agent := e.useQueueAgent("")
+		agent.mu.Lock()
+		agent.spaces = true
+		agent.mu.Unlock()
 
 		e.fired(inSpace)
 		e.fired(inRepo)
@@ -1006,6 +1023,49 @@ func TestMemoDeliverySpaceAndSameNamedRepositoryStayApart(t *testing.T) {
 			if got := e.memoRow(m.ID); got.State != store.MemoStatePending {
 				t.Fatalf("%q: message %+v, want it still pending", bad, got)
 			}
+		}
+	})
+}
+
+// An Agent without the queueSpace marker would drop the space and start the run in home: a space's
+// delivery is never sent to it, while a repository's still is. With the marker, a space that is
+// gone is refused under the key, and the run closes as not sent with its message waiting again.
+func TestMemoDeliverySpaceNeedsAnAgentThatRunsSpaces(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		inSpace := e.queueWith("spaces/app", "impl", map[string]any{"maxActive": 1})
+		inRepo := e.queueWith("app", "impl", map[string]any{"maxActive": 1})
+		m := e.pending("spaces/app", "impl", "space work")
+		e.pending("app", "impl", "repo work")
+		agent := e.useQueueAgent("")
+
+		d := e.fired(inSpace)
+		e.fired(inRepo)
+		e.tick(e.runner(), time.Now())
+		if agent.createCount() != 1 {
+			t.Fatalf("%d creates, want the repository's alone", agent.createCount())
+		}
+		if qd, _ := agent.creates[0]["queue_delivery"].(map[string]any); qd["label"] != "app/impl" {
+			t.Fatalf("the create sent was %v, want the repository's", agent.creates[0])
+		}
+		if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryNotSent {
+			t.Fatalf("space delivery to an older Agent: %+v, want closed not sent", got)
+		}
+		if got := e.memoRow(m.ID); got.State != store.MemoStatePending || got.DeliveryID != "" {
+			t.Fatalf("space message after an older Agent: %+v, want pending", got)
+		}
+
+		gone := e.queueWith("spaces/gone", "impl", map[string]any{"maxActive": 1})
+		mg := e.pending("spaces/gone", "impl", "work")
+		agent.mu.Lock()
+		agent.spaces = true
+		agent.mu.Unlock()
+		dg := e.fired(gone)
+		e.tick(e.runner(), time.Now())
+		if got := e.delivery(dg.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryNotSent {
+			t.Fatalf("delivery to a missing space: %+v, want closed not sent", got)
+		}
+		if got := e.memoRow(mg.ID); got.State != store.MemoStatePending || got.DeliveryID != "" {
+			t.Fatalf("message of a missing space: %+v, want pending", got)
 		}
 	})
 }

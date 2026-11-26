@@ -349,6 +349,11 @@ type agentSessionsEnvelope struct {
 	// part B). Read with >=. A hand-back is applied only on a report that carries it: without the
 	// turn starts a run that went on to do the work could be handed back.
 	QueueDefer int `json:"queueDefer,omitempty"`
+	// QueueSpace is the marker of an Agent that takes a queue create naming a space
+	// (space: {folder}) and refuses a queue's dir that is not a repository (ADR 0137, addendum
+	// 2026-11-26). Read with >=. An older Agent ignores the unknown space field and would start
+	// the run in home, so a space bucket's delivery is never sent to one.
+	QueueSpace int `json:"queueSpace,omitempty"`
 	// ActMark orders this answer against the acts of a person that follow it (the Agent's
 	// session act mark): a retire sent with it as ifNoActSince leaves a session a person started or
 	// typed into after this read. 0 when the Agent sends none, and no condition is sent then.
@@ -395,6 +400,12 @@ const queueDeferVersion = 1
 // readsDefers says the Agent that sent this envelope reports the turn starts a hand-back is
 // checked against.
 func (e agentSessionsEnvelope) readsDefers() bool { return e.QueueDefer >= queueDeferVersion }
+
+// queueSpaceVersion is the version of the queue create in a space this Control Plane speaks.
+const queueSpaceVersion = 1
+
+// runsSpaces says the Agent that sent this envelope starts a queue's run in the space it names.
+func (e agentSessionsEnvelope) runsSpaces() bool { return e.QueueSpace >= queueSpaceVersion }
 
 // jobsRunning reports whether session-less work is in flight in the workspace.
 func (e agentSessionsEnvelope) jobsRunning() bool { return e.RepoJobs > 0 || e.ImageJobs > 0 }

@@ -27,9 +27,21 @@ import type {
  *  A repository folder is one path segment, so no repository's bucket can start with it. */
 export const MEMO_SPACE_PREFIX = "spaces/";
 
-/** True when a memo bucket is a space: it has no repository, so no settings file and no worktree. */
+/** A space folder as the Control Plane accepts one (memoSpaceOf, the Agent's spacex.ValidFolder):
+ *  1-48 lower-case letters, digits and "-", not starting with "-". */
+const SPACE_FOLDER = /^[a-z0-9][a-z0-9-]{0,47}$/;
+
+/** True when a memo bucket is a space: it has no repository, so no settings file and no worktree.
+ *  A bucket that only starts with the prefix is neither a space nor a repository, and the Control
+ *  Plane refuses to run it, as here it is not treated as a space either. */
 export function isSpaceBucket(repo: string): boolean {
-  return repo.startsWith(MEMO_SPACE_PREFIX) && repo.length > MEMO_SPACE_PREFIX.length;
+  return repo.startsWith(MEMO_SPACE_PREFIX) && SPACE_FOLDER.test(repo.slice(MEMO_SPACE_PREFIX.length));
+}
+
+/** True when a memo bucket names a repository, a single folder under ~/repos, as the Control Plane
+ *  decides it (memoHasRepository): not the common bucket, not a space, nothing with a separator. */
+export function isRepositoryBucket(repo: string): boolean {
+  return repo !== "" && repo !== "." && repo !== ".." && !/[\\/]/.test(repo);
 }
 
 // Limits the Control Plane enforces (control-plane/memo_queue.go). The form checks them first

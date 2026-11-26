@@ -504,6 +504,9 @@ func (c *createRun) resolveWorkingCopy() bool {
 			c.req.Dir = made.Dir
 		}
 	}
+	if !c.queueDirIsRepository() {
+		return false
+	}
 	// Worktree-then-start: spin a git worktree off an existing working copy (req.Dir =
 	// the parent) and use it as the CWD, so a decided task branches into its own dir +
 	// session without touching the parent's running sessions.
@@ -688,6 +691,30 @@ func (c *createRun) resolveWorkingCopy() bool {
 	}
 	c.subdir = subdir
 	return true
+}
+
+// queueDirIsRepository refuses a queue's create whose dir exists but is not a repository or a
+// worktree directly under ~/repos: a queue names a repository by folder, and a symlink or a
+// nested folder there could lead it into a space or anywhere else. A space is named by
+// Space, never by dir; a missing dir is left to the checks below, which name it.
+func (c *createRun) queueDirIsRepository() bool {
+	if c.req.QueueDelivery == nil || c.req.Space != nil || strings.TrimSpace(c.req.Dir) == "" {
+		return true
+	}
+	dir := c.req.Dir
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(homeDir(), dir)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		return true
+	}
+	switch PlaceOf(dir).Kind {
+	case session.PlaceRepo, session.PlaceWorktree:
+		return true
+	}
+	httpx.WriteErr(c.w, http.StatusBadRequest, "queue_dir_not_repository",
+		"a queue runs in a repository directly under ~/repos, and this is not one: "+c.req.Dir)
+	return false
 }
 
 // identify is stage 7: the session's name, kind, title default, label, SSM target, studio and

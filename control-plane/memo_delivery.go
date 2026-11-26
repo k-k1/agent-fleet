@@ -2679,6 +2679,10 @@ func (r *memoQueueRunner) send(ctx context.Context, d store.MemoDelivery) {
 		notSent("the Agent cannot take a derived message, so a delivery that holds one is not sent to it")
 		return
 	}
+	if place, _ := memoQueuePlace(plan.c.Repo); place.space != "" && !r.agentRunsSpaces(ctx, res) {
+		notSent("the Agent cannot start a run in a space, so a space's delivery is not sent to it")
+		return
+	}
 	// The quota: the running sessions as the Agent counts them now, and, in the move to
 	// sending below, every delivery whose session the count may not show yet.
 	running, lim, countedAt := 0, 0, store.DeliveryTS(time.Now())
@@ -2791,6 +2795,16 @@ func (r *memoQueueRunner) agentShowsReferences(ctx context.Context, res *resolve
 		log.Printf("memo queue: queue %s: note the Agent's references: %v", d.QueueID, err)
 	}
 	return env.showsReferences()
+}
+
+// agentRunsSpaces is the check of a space bucket's delivery, made after the wake and before
+// anything is reserved: the Agent must send the queueSpace marker, or it would drop the space and
+// start the run in home. An Agent that does not answer is no evidence, and nothing is sent.
+func (r *memoQueueRunner) agentRunsSpaces(ctx context.Context, res *resolved) bool {
+	cctx, cancel := context.WithTimeout(ctx, memoAgentCallWait)
+	defer cancel()
+	env, err := r.mgr.agentSessionsEnv(cctx, res.rt)
+	return err == nil && env.runsSpaces()
 }
 
 // startSending moves a claimed delivery to sending, with the quota check in the same

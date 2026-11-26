@@ -39,6 +39,7 @@ func TestCreateFromASpaceFilesUnderTheSpaceNotTheSameNamedRepository(t *testing.
 	spaceSessions(t)
 	for _, c := range []struct{ from, in, want string }{
 		{"inspace", "app", "spaces/app"},
+		{"inspace", " app ", "spaces/app"}, // the Control Plane trims, so the relay compares trimmed
 		{"inspace", "spaces/app", "spaces/app"},
 		{"inspace", "", ""},           // unfiled stays unfiled
 		{"inspace", "app@one", "app"}, // another name is still a repository
@@ -73,20 +74,26 @@ func TestCreateFromALegacySpaceSessionUsesTheMarker(t *testing.T) {
 	}
 }
 
-// update_memo sends its own session as ?from=: a space session moving a memo to its folder name
-// moves it to the space. Without from it is the repository; an unknown from is refused.
+// update_memo sends its own session as ?from= with a move: a space session moving a memo to its
+// folder name moves it to the space. Without from it is the repository; a move with an unknown
+// from is refused.
 func TestUpdateFromASpaceFilesUnderTheSpace(t *testing.T) {
 	cp := newFakeCP(t)
 	spaceSessions(t)
-	for _, c := range []struct{ target, want string }{
-		{"/memos/m1?from=inspace", `{"repo":"spaces/app"}`},
-		{"/memos/m1?from=inrepo", `{"repo":"app"}`},
-		{"/memos/m1", `{"repo":"app"}`},
+	for _, c := range []struct{ target, body, want string }{
+		{"/memos/m1?from=inspace", `{"repo":"app"}`, `{"repo":"spaces/app"}`},
+		{"/memos/m1?from=inspace", `{"repo":" app "}`, `{"repo":"spaces/app"}`},
+		{"/memos/m1?from=inrepo", `{"repo":"app"}`, `{"repo":"app"}`},
+		{"/memos/m1", `{"repo":"app"}`, `{"repo":"app"}`},
+		// Nothing but a move to a named bucket reads the session, so a from that names no session
+		// stops neither another edit nor an unfiling.
+		{"/memos/m1?from=nobody", `{"body":"b"}`, `{"body":"b"}`},
+		{"/memos/m1?from=nobody", `{"repo":""}`, `{"repo":""}`},
 	} {
 		cp.bodies = nil
-		rec := serve(HandleUpdate, http.MethodPatch, c.target, `{"repo":"app"}`)
+		rec := serve(HandleUpdate, http.MethodPatch, c.target, c.body)
 		if rec.Code != http.StatusOK || len(cp.bodies) != 1 || cp.bodies[0] != c.want {
-			t.Errorf("PATCH %s: %d, relayed %v, want %s", c.target, rec.Code, cp.bodies, c.want)
+			t.Errorf("PATCH %s %s: %d, relayed %v, want %s", c.target, c.body, rec.Code, cp.bodies, c.want)
 		}
 	}
 	cp.bodies = nil

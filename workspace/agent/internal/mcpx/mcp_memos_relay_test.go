@@ -165,12 +165,30 @@ func TestMemoToolsSendTheReference(t *testing.T) {
 }
 
 // update_memo names this server's own session in the query, as add_memo does in its body, so the
-// relay can file a repo the model names under the session's space; the operator names none.
+// relay can file a repo the model names under the session's space. Only a move to a named bucket
+// carries it: any other edit goes through without the session being read. The model cannot name
+// a session, and the operator names none.
 func TestUpdateMemoNamesTheServersOwnSession(t *testing.T) {
 	agent := setUpMemoSession(t)
 	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app"})
-	if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{"from=slot01"}) {
-		t.Errorf("a session's update_memo sent the queries %q, want from=slot01", got)
+	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "body": "b"})
+	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": ""})
+	if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{"from=slot01", "", ""}) {
+		t.Errorf("a session's update_memo sent the queries %q, want from=slot01 on the move only", got)
+	}
+	if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app", "from": "other"}); !strings.Contains(resp, "unknown argument") {
+		t.Errorf("update_memo with a from argument was not refused: %s", resp)
+	}
+
+	// No session to name: a move is refused before anything is sent, any other edit still goes.
+	mcpSourceSession = ""
+	agent = memoFakeAgent(t)
+	if resp := callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app"}); !strings.Contains(resp, "isError") {
+		t.Errorf("a move with no session to name was not refused: %s", resp)
+	}
+	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "body": "b"})
+	if got := agent.memoCalls(); len(got) != 1 || !strings.HasPrefix(got[0], "PATCH /memos/m1 ") {
+		t.Errorf("with no session to name the Agent got %q, want the body edit alone", got)
 	}
 
 	oldWrite := writeEnabled()

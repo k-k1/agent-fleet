@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { Memo, MemoQueue } from "../../types/memo.ts";
 import {
+  isRepositoryBucket,
   isSpaceBucket,
   runRecipes,
   runOpenPRs,
@@ -593,6 +594,22 @@ describe("isSpaceBucket", () => {
     expect(isSpaceBucket("app")).toBe(false);
     expect(isSpaceBucket("spaces")).toBe(false);
     expect(isSpaceBucket("spaces/")).toBe(false);
+    // The Control Plane's folder rule: anything else is refused there, so it is no space here.
+    expect(isSpaceBucket("spaces/my-notes-2")).toBe(true);
+    expect(isSpaceBucket("spaces/App")).toBe(false);
+    expect(isSpaceBucket("spaces/x/y")).toBe(false);
+    expect(isSpaceBucket("spaces/-x")).toBe(false);
+    expect(isSpaceBucket("spaces/" + "a".repeat(48))).toBe(true);
+    expect(isSpaceBucket("spaces/" + "a".repeat(49))).toBe(false);
     expect(isSpaceBucket("")).toBe(false);
+  });
+});
+
+describe("isRepositoryBucket", () => {
+  it("is a repository only for one folder name, as the Control Plane reads it", () => {
+    expect(isRepositoryBucket("app")).toBe(true);
+    expect(isRepositoryBucket("app@feature")).toBe(true);
+    expect(isRepositoryBucket("spaces")).toBe(true);
+    for (const r of ["", "spaces/app", "spaces/", "a/b", "a\\b", ".", ".."]) expect(isRepositoryBucket(r)).toBe(false);
   });
 });

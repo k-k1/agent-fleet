@@ -21,30 +21,26 @@ var gitTimeout = 5 * time.Second
 // segment and never holds "/", so no repository's bucket collides with a space's.
 const SpacePrefix = "spaces/"
 
-// bucketFor is the bucket a memo from the session `from` is filed under for the `repo` the model
-// named. A session in a space that names its own space's folder means that space, never a
-// repository that happens to share the folder name; anything else goes through baseRepo.
-func bucketFor(from, repo string) string {
-	if repo != "" && strings.TrimSpace(from) != "" {
-		if f := spaceOf(from); f != "" && repo == f {
+// bucketFor is the bucket a memo from the session whose meta is m (nil for the operator) is
+// filed under for the `repo` the model named. A session in a space that names its own space's
+// folder means that space, never a repository that happens to share the folder name; anything
+// else goes through baseRepo. The name is trimmed first, as the Control Plane trims it before
+// storing: " app " is "app" there. m is the meta the caller's attribution was read from, so the
+// bucket and the check that the session exists cannot see two different reads.
+func bucketFor(m *session.Meta, repo string) string {
+	repo = strings.TrimSpace(repo)
+	if repo != "" && m != nil {
+		if f := spaceOf(*m); f != "" && repo == f {
 			return SpacePrefix + f
 		}
 	}
 	return baseRepo(repo)
 }
 
-// spaceOf is the space folder the session `from` runs in, "" when it runs in none or has no meta.
-// The place stored at create decides; a meta written before places were stored falls back to
-// the space marker under its directory, which is what decided the place since.
-func spaceOf(from string) string {
-	from = strings.TrimSpace(from)
-	if !session.ValidName(from) {
-		return ""
-	}
-	m, ok := session.ReadMeta(from)
-	if !ok {
-		return ""
-	}
+// spaceOf is the space folder the session of meta m runs in, "" when it runs in none. The place
+// stored at create decides; a meta written before places were stored falls back to the space
+// marker under its directory, which is what decided the place since.
+func spaceOf(m session.Meta) string {
 	if m.Place != nil {
 		if m.Place.Kind == session.PlaceSpace {
 			return m.Place.ID

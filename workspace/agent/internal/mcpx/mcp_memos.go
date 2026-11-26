@@ -225,12 +225,15 @@ func memoTools() []toolSpec {
 					return mcpToolErr(req.ID, "id（メモ id）が必要です")
 				}
 				// As on a create, the caller is this server's own session, never an argument. It
-				// only picks the bucket a named repo maps to, so an edit still goes through without it.
+				// only picks the bucket a named repo maps to, so it is sent with a move to one alone:
+				// any other edit goes through without the session being read.
 				path := "/memos/" + url.PathEscape(a.ID)
-				if selfReportOnly() {
-					if self, err := mcpOwningSession(); err == nil {
-						path += "?from=" + url.QueryEscape(self)
+				if selfReportOnly() && memoPatchNamesRepo(p.Args) {
+					self, err := mcpOwningSession()
+					if err != nil {
+						return mcpToolErr(req.ID, err.Error())
 					}
+					path += "?from=" + url.QueryEscape(self)
 				}
 				out, err := agentDoTimeout(http.MethodPatch, path, memoArgsObject(p.Args), memoAgentTimeout)
 				if err != nil {
@@ -654,6 +657,14 @@ func memoCreateBody(from string, args json.RawMessage) ([]byte, error) {
 	}
 	in.From, in.Memo = from, memoArgsObject(args)
 	return json.Marshal(in)
+}
+
+// memoPatchNamesRepo reports whether update_memo's arguments move the memo to a named bucket.
+func memoPatchNamesRepo(args json.RawMessage) bool {
+	var in struct {
+		Repo *string `json:"repo"`
+	}
+	return json.Unmarshal(memoArgsObject(args), &in) == nil && in.Repo != nil && strings.TrimSpace(*in.Repo) != ""
 }
 
 // memoRelayErr is the tool error for a failed relay call. The relay's own "no bridge here"

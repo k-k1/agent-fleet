@@ -26,7 +26,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
 import type { MemoQueue } from "../../types/memo.ts";
 import { memoQueueDelete, memoQueuePut } from "./api.ts";
-import { isSpaceBucket, readQueue } from "./queues.ts";
+import { isRepositoryBucket, isSpaceBucket, readQueue } from "./queues.ts";
 import { queueScope, useQueueSettingsCache } from "./queueSettingsCache.ts";
 import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { MemoRepoSettingsCard } from "./MemoRepoSettingsCard.tsx";
@@ -145,7 +145,7 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
   const blocked = !tenantEnabled;
   // A space's runs start in the space itself: the Control Plane ignores the worktree setting there.
   const inSpace = isSpaceBucket(repo);
-  const repoSettings = useQueueSettingsCache((st) => st.repoSettings) && repo !== "" && !inSpace;
+  const repoSettings = useQueueSettingsCache((st) => st.repoSettings) && isRepositoryBucket(repo);
 
   const save = async () => {
     if (blocked || busy || repoBusy || stale) return;
