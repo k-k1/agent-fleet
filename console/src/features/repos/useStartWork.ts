@@ -282,8 +282,12 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
       // A file the Agent refuses (too large) is refused by the memo store too, so when the whole
       // draft cannot be saved the text alone is, and the files are the part that is lost.
       let stash = await stashLaunchDraft(repo, prompt, images ?? []);
-      if (!stash.ok && prompt.trim() && images?.length) stash = await stashLaunchDraft(repo, prompt, []);
-      toast(t(stash.ok ? "rp.draft_saved" : "rp.draft_kept"));
+      let textOnly = false;
+      if (!stash.ok && prompt.trim() && images?.length) {
+        stash = await stashLaunchDraft(repo, prompt, []);
+        textOnly = stash.ok;
+      }
+      toast(t(!stash.ok ? "rp.draft_kept" : textOnly ? "rp.draft_saved_text" : "rp.draft_saved"));
       return { ok: true, name: res.name, incomplete: { files: lostFiles, prompt: promptLost, saved: stash.ok } };
     }
     return { ok: true, name: res.name };

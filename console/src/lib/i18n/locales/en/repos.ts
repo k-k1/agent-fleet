@@ -278,6 +278,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "rp.image_upload_failed": "Could not upload {name}: {err}",
   "rp.image_upload_failed_network": "Could not upload {name} (network error)",
   "rp.draft_saved": "Part of the draft did not reach the session, so the whole draft was saved as a memo. Resend it from there; the original memo, if any, was kept.",
+  "rp.draft_saved_text": "Part of the draft did not reach the session. Only its text was saved as a memo; the files could not be saved. The original memo, if any, was kept.",
   "rp.draft_kept": "Part of the draft did not reach the session, and it could not be saved as a memo. The original memo, if any, was kept.",
   "rp.first_prompt_failed": "The session started, but its first instruction could not be delivered: {err}",
   "rp.filter_branches": "Filter (branch name / commit)",

@@ -120,6 +120,8 @@ describe("partial draft delivery", () => {
     const r = await launch([file("big.png")]);
     expect(stash).toHaveBeenNthCalledWith(2, "x", "look at these", []);
     expect(r.incomplete?.saved).toBe(true);
+    expect(toasts()).toContain(t("rp.draft_saved_text"));
+    expect(toasts()).not.toContain(t("rp.draft_saved"));
   });
 
   it("reports a first prompt whose request itself failed", async () => {
