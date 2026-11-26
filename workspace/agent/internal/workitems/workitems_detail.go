@@ -119,17 +119,14 @@ type workItemDetailOut struct {
 	Comments     int                 `json:"comments"`
 	Reviews      []workItemReviewOut `json:"reviews"`
 	Checks       workItemChecksOut   `json:"checks"`
-	// The fields below are a GitHub pull request's merge gate (ADR 0061, 2026-10-25 note on
-	// #2632). Everywhere else they stay at their zero values, which the Console reads as "no
-	// Merge button": Bitbucket is read-only and an issue has nothing to merge.
-	//
 	// HeadSHA is the commit the panel was drawn from; the merge request sends it back so that a
 	// pull request that moved in the meantime is refused rather than merged unseen.
 	HeadSHA string `json:"headSha"`
-	// MergeableState is GitHub's `mergeable_state` verbatim, lower-cased ("clean", "blocked",
-	// "behind", "dirty", "unstable", "has_hooks", "draft", "unknown"). Unlike Mergeable it
-	// folds in required reviews, required checks and branch protection.
+	// MergeableState is GitHub's mergeable_state or Bitbucket's verdict in the same vocabulary.
+	// It folds in branch protection and required checks as well as Git conflicts.
 	MergeableState string `json:"mergeableState"`
+	// MergeBlockers holds actionable Bitbucket check details for the live panel.
+	MergeBlockers []bitbucketMergeBlocker `json:"mergeBlockers,omitempty"`
 	// MergeMethods is the subset of "merge" / "squash" / "rebase" the repository allows, in that
 	// order. Never nil. Empty also means "could not be read", which the Console treats as no Merge.
 	MergeMethods []string `json:"mergeMethods"`
@@ -791,9 +788,10 @@ func bitbucketFetchPRDetail(auth, repo string, number int, key string) (*workIte
 			out.HeadSHA = ""
 		}
 		if b, st, err := gitx.BitbucketGetStatus(workItemHTTPClient, auth,
-			prBase+"/mergeability/checks?fields=values.type,values.status,values.reason,values.blocking"); err == nil && st == http.StatusOK {
+			prBase+"/mergeability/checks?fields=values.type,values.status,values.reason,values.blocking,values.check.kind,values.check.name,values.message"); err == nil && st == http.StatusOK {
 			v := parseBitbucketMergeChecks(b)
 			out.Mergeable, out.MergeableState = v.mergeable, v.state
+			out.MergeBlockers = v.blockers
 			// The Merge button needs a positive answer on both: the connection's write scope and
 			// the checks' own word that this user may merge. Either unknown withholds it.
 			out.CanMerge = v.permitted &&
@@ -808,6 +806,13 @@ type bitbucketMergeVerdict struct {
 	mergeable string // "clean" / "conflict" / "unknown" (conflicts only, like GitHub's)
 	state     string // GitHub-style: "clean" / "dirty" / "blocked" / "unknown"
 	permitted bool   // current_user_permission_check PASSED
+	blockers  []bitbucketMergeBlocker
+}
+
+type bitbucketMergeBlocker struct {
+	Kind    string `json:"kind"`
+	Name    string `json:"name,omitempty"`
+	Message string `json:"message,omitempty"`
 }
 
 // parseBitbucketMergeability returns only the conflict verdict; see parseBitbucketMergeChecks.
@@ -826,6 +831,9 @@ func parseBitbucketMergeChecks(body []byte) bitbucketMergeVerdict {
 			Status   string `json:"status"`
 			Reason   string `json:"reason"`
 			Blocking bool   `json:"blocking"`
+			// Optional display fields can have the wrong shape without invalidating the verdict.
+			Check   json.RawMessage `json:"check"`
+			Message json.RawMessage `json:"message"`
 		} `json:"values"`
 	}
 	if err := json.Unmarshal(body, &r); err != nil {
@@ -835,10 +843,18 @@ func parseBitbucketMergeChecks(body []byte) bitbucketMergeVerdict {
 	for _, c := range r.Values {
 		if c.Blocking {
 			blocked = true
+			if strings.EqualFold(c.Status, "FAILED") || strings.EqualFold(c.Status, "PENDING") {
+				if blocker, ok := bitbucketBlockerDetail(c.Type, c.Check, c.Message); ok {
+					v.blockers = append(v.blockers, blocker)
+				}
+			}
 		}
 		switch c.Type {
 		case "current_user_permission_check":
 			v.permitted = strings.EqualFold(c.Status, "PASSED")
+			if c.Blocking && strings.EqualFold(c.Status, "FAILED") {
+				v.blockers = append(v.blockers, bitbucketMergeBlocker{Kind: "permission"})
+			}
 		case "git_mergeability_check":
 			switch {
 			case strings.EqualFold(c.Status, "PASSED") && strings.EqualFold(c.Reason, "clean"):
@@ -857,6 +873,34 @@ func parseBitbucketMergeChecks(body []byte) bitbucketMergeVerdict {
 		v.state = "clean"
 	}
 	return v
+}
+
+func bitbucketBlockerDetail(checkType string, check, message json.RawMessage) (bitbucketMergeBlocker, bool) {
+	switch checkType {
+	case "standard_merge_check":
+		var definition struct {
+			Kind string `json:"kind"`
+		}
+		if json.Unmarshal(check, &definition) == nil {
+			switch definition.Kind {
+			case "maximum_commits_behind", "minimum_approvals", "minimum_successful_builds", "resolved_tasks":
+				return bitbucketMergeBlocker{Kind: definition.Kind}, true
+			}
+		}
+	case "custom_pre_merge_check", "custom_on_merge_check":
+		var definition struct {
+			Name string `json:"name"`
+		}
+		var text string
+		// The name and explanation are independent. Either can identify a useful blocker.
+		_ = json.Unmarshal(check, &definition)
+		_ = json.Unmarshal(message, &text)
+		name, text := workItemProviderText(definition.Name), workItemProviderText(text)
+		if name != "" || text != "" {
+			return bitbucketMergeBlocker{Kind: "custom", Name: name, Message: text}, true
+		}
+	}
+	return bitbucketMergeBlocker{}, false
 }
 
 // bitbucketDetailError mirrors the list path's wording. 403 names the missing permission

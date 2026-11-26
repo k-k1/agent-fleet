@@ -676,6 +676,24 @@ describe("readWorkItemDetail", () => {
   it("mergeable defaults to unknown, never to clean", () => {
     expect(readWorkItemDetail({ key: "acme/web#1" }).detail?.mergeable).toBe("unknown");
   });
+
+  it("reads merge blockers only for Bitbucket and tolerates missing or unrecognized details", () => {
+    const mergeBlockers = [
+      null,
+      { kind: "constructor" },
+      { kind: "future_rule", name: "Ignore" },
+      { kind: "maximum_commits_behind", message: "Ignore" },
+      { kind: "custom", name: [], message: " Update the manifest. " },
+      { kind: "custom", name: " ", message: null },
+    ];
+    expect(readWorkItemDetail({ ...body, mergeBlockers }).detail?.mergeBlockers).toEqual([]);
+    const bitbucket = { ...body, provider: "bitbucket" };
+    expect(readWorkItemDetail(bitbucket).detail?.mergeBlockers).toEqual([]);
+    expect(readWorkItemDetail({ ...bitbucket, mergeBlockers }).detail?.mergeBlockers).toEqual([
+      expect.objectContaining({ kind: "maximum_commits_behind", name: "", message: "" }),
+      expect.objectContaining({ kind: "custom", name: "", message: "Update the manifest." }),
+    ]);
+  });
 });
 
 describe("live read helpers", () => {

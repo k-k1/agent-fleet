@@ -34,12 +34,9 @@
 // fires when the live read actually resolved a head branch; an existing copy the user picked
 // by hand is left on whatever branch it already has (§80.24.4).
 //
-// A GitHub pull request that GitHub says can be merged also gets a Merge button in the footer
-// (ADR 0061, 2026-10-25 note on #2632). It is the one write this panel makes: it opens a confirm
-// dialog naming the pull request, base ← head and the method, and merges only the head commit this
-// panel displayed. It is drawn only for a connection that looks able to merge, never for Bitbucket,
-// and its footer slot is reserved from the first render so the answer does not move the buttons.
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+// A GitHub or Bitbucket pull request gets a Merge button for a connection with confirmed merge
+// permissions (ADR 0061). Its footer slot stays reserved while the live read determines the gate.
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -73,6 +70,7 @@ function saveCloseSource(v: boolean) {
   }
 }
 import {
+  BITBUCKET_MERGE_BLOCKER_LABELS,
   canComment,
   canReadLive,
   checksText,
@@ -391,6 +389,7 @@ export function WorkItemDetailModal({
   const d = live.detail;
 
   const gate = mergeGate(d);
+  const mergeInfoId = useId();
   const [mergeDlg, setMergeDlg] = useState<MergeDialog | null>(null);
   // "Add to auto-run" (ADR 0137 §4): a pointer to this item in a category of notes. The address
   // is the live read's when it has answered, the row's otherwise.
@@ -527,10 +526,7 @@ export function WorkItemDetailModal({
     onPick(chosen, true, reviewBranch, launchItem);
   };
 
-  // "Can this be merged" in one phrase. Draft comes before the merge check because a draft is
-  // not waiting on anyone, and "unknown" is said out loud: GitHub answers null while it is still
-  // computing and Bitbucket never answers at all, and calling either of those "no conflicts"
-  // would send a reviewer to a branch that does not apply.
+  // Keep an unavailable Git verdict distinct from a definite conflict-free result.
   const mergeText = (pr: WorkItemDetail): string =>
     pr.merged
       ? tr("wi.detail_merge_merged")
@@ -548,12 +544,11 @@ export function WorkItemDetailModal({
     return tr("wi.detail_reviews_sum", { ok: c.approved, ng: c.changes, waiting: c.pending });
   };
 
-  // The footer's Merge slot. GitHub pull requests only: Bitbucket is read-only (decision 19) and
-  // an issue has nothing to merge.
-  //   enabled  GitHub says the merge would succeed
-  //   disabled the button is shown with the reason (a state GitHub will not merge, or no read)
-  //   hold     reserve the room, draw nothing: still reading, or the answer says no button
-  // The reason sits in the footer beside the button; the full text is also its title.
+  const bitbucketMergeInfo = d?.provider === "bitbucket" && d.kind === "pr" && d.state === "open" && !d.draft && !d.merged && (
+    d.mergeBlockers.length > 0 || d.mergeableState === "blocked" || d.mergeableState === "unknown" || d.mergeableState === ""
+  );
+
+  // Keep the footer slot reserved until the live read determines whether the button is available.
   const mergeSlot: { button: "none" | "hold" | "enabled" | "disabled"; note: { text: string; bad: boolean } | null } = (() => {
     if (mergeNote) return { button: gate.show ? (gate.enabled ? "enabled" : "disabled") : "hold", note: mergeNote };
     if ((item.provider !== "github" && item.provider !== "bitbucket") || !isPR || neutral) return { button: "none", note: null };
@@ -561,7 +556,7 @@ export function WorkItemDetailModal({
       // While the panel is re-reading by itself, "try again in a moment" would ask the user to do
       // what is already happening.
       const why = gate.whyKey === "wi.merge_why_unknown" && live.rechecking ? "wi.merge_why_checking" : gate.whyKey;
-      return { button: gate.enabled ? "enabled" : "disabled", note: why ? { text: tr(why, { name: providerName }), bad: false } : null };
+      return { button: gate.enabled ? "enabled" : "disabled", note: why && !bitbucketMergeInfo ? { text: tr(why, { name: providerName }), bad: false } : null };
     }
     if (live.stopped) return { button: "disabled", note: { text: tr("wi.merge_why_stopped", { name: providerName }), bad: false } };
     if (live.err) return { button: "disabled", note: { text: tr("wi.merge_why_unread"), bad: false } };
@@ -785,6 +780,24 @@ export function WorkItemDetailModal({
           )}
         </dl>
 
+        {bitbucketMergeInfo && (
+          <section className="wi-dmergeinfo" aria-labelledby={`${mergeInfoId}-heading`}>
+            <h4 id={`${mergeInfoId}-heading`}>{tr(d.mergeBlockers.length > 0 ? "wi.bb_merge_blockers" : "wi.bb_merge_checks")}</h4>
+            {d.mergeBlockers.length > 0 ? (
+              <ul id={mergeInfoId}>
+                {d.mergeBlockers.map(({ key, kind, name, message }) => (
+                  <li key={key}>
+                    {name ? <bdi>{name}</bdi> : tr(BITBUCKET_MERGE_BLOCKER_LABELS[kind])}
+                    {message && <p><bdi>{message}</bdi></p>}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p id={mergeInfoId}>{tr(d.mergeableState === "blocked" ? "wi.bb_merge_blocked" : "wi.bb_merge_unavailable")}</p>
+            )}
+          </section>
+        )}
+
         {/* The body is not shown here, so where to go and read it always is (same reason as
             §80.9). A pull request carries the same link as the footer's main button, so it is
             not repeated here. */}
@@ -934,7 +947,7 @@ export function WorkItemDetailModal({
         </StartSection>
         )}
       </div>
-      <footer className="ui-modal-foot wi-dfoot">
+      <footer className={`ui-modal-foot wi-dfoot${bitbucketMergeInfo ? " wi-dfoot--wrap" : ""}`}>
         {mergeSlot.note && (
           <span
             id="wi-dmerge-why"
@@ -964,7 +977,7 @@ export function WorkItemDetailModal({
           <Button
             onClick={openMerge}
             disabled={mergeSlot.button === "disabled" || !!mergeDlg}
-            aria-describedby={mergeSlot.note ? "wi-dmerge-why" : undefined}
+            aria-describedby={mergeSlot.note ? "wi-dmerge-why" : bitbucketMergeInfo ? mergeInfoId : undefined}
           >
             <Icon name="git-merge" />
             {tr("wi.merge")}

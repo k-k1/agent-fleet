@@ -1324,6 +1324,92 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     expect(mergeBtn(modal)).toBeUndefined();
   });
 
+  const greenChecks = { state: "success", total: 1, failed: 0, pending: 0 };
+
+  it("shows Bitbucket merge blockers in the body with no conflicts and green CI", async () => {
+    const message = '<img src=x onerror="alert(1)"> Update the release manifest.';
+    workItemDetail.mockResolvedValue({
+      ...bbMergeable,
+      mergeableState: "blocked",
+      checks: greenChecks,
+      mergeBlockers: [
+        { kind: "maximum_commits_behind" },
+        { kind: "custom", name: "Release policy", message },
+        { kind: "custom", name: "Release policy", message },
+      ],
+    });
+    const modal = await open(bbRow());
+    const button = mergeBtn(modal)!;
+    expect(button.disabled).toBe(true);
+    expect(modal.querySelector(".wi-dmerge")?.textContent).toBe(t("wi.detail_merge_clean"));
+    expect(modal.querySelector(".wi-dfacts .tone-ok")?.textContent).toBe(t("wi.detail_checks_ok", { total: 1 }));
+    const reasons = modal.querySelector(".ui-modal-body .wi-dmergeinfo");
+    expect(reasons?.querySelectorAll("li")).toHaveLength(2);
+    expect(reasons?.textContent).toContain(t("wi.bb_merge_commits_behind"));
+    expect(reasons?.textContent).toContain("Release policy");
+    expect(reasons?.textContent).toContain(message);
+    expect(reasons?.querySelector("img")).toBeNull();
+    expect(button.getAttribute("aria-describedby")).toBe(reasons?.querySelector("ul")?.id);
+    expect(footer(modal).querySelector(".wi-dmergewhy")).toBeNull();
+    await act(async () => button.click());
+    expect(dialog()).toBeNull();
+  });
+
+  it.each([
+    ["conflict", "dirty", t("wi.detail_merge_conflict"), false],
+    ["clean", "clean", t("wi.detail_merge_clean"), true],
+  ])("keeps Bitbucket's %s/%s result separate from blocking reasons", async (mergeable, mergeableState, fact, enabled) => {
+    // The Agent drops advisory checks before sending detail, so the advisory arrives as clean.
+    workItemDetail.mockResolvedValue({ ...bbMergeable, mergeable, mergeableState, checks: greenChecks });
+    const modal = await open(bbRow());
+    expect(mergeBtn(modal)?.disabled).toBe(!enabled);
+    expect(modal.querySelector(".wi-dmerge")?.textContent).toBe(fact);
+    expect(modal.querySelector(".wi-dmergeinfo")).toBeNull();
+  });
+
+  it("shows the Git conflict and the blocking branch rule in separate places", async () => {
+    workItemDetail.mockResolvedValue({
+      ...bbMergeable,
+      mergeable: "conflict",
+      mergeableState: "dirty",
+      mergeBlockers: [{ kind: "maximum_commits_behind" }],
+    });
+    const modal = await open(bbRow());
+    expect(mergeBtn(modal)?.disabled).toBe(true);
+    expect(modal.querySelector(".wi-dmerge")?.textContent).toBe(t("wi.detail_merge_conflict"));
+    const reasons = modal.querySelector(".wi-dmergeinfo");
+    expect(reasons?.querySelector("h4")?.textContent).toBe(t("wi.bb_merge_blockers"));
+    expect([...reasons!.querySelectorAll("li")].map((li) => li.textContent)).toEqual([t("wi.bb_merge_commits_behind")]);
+  });
+
+  it("explains a blocking Bitbucket permission check without drawing Merge", async () => {
+    workItemDetail.mockResolvedValue({
+      ...bbMergeable,
+      mergeableState: "blocked",
+      canMerge: false,
+      mergeBlockers: [{ kind: "permission" }],
+    });
+    const modal = await open(bbRow());
+    expect(mergeBtn(modal)).toBeUndefined();
+    expect(modal.querySelector(".wi-dmergeinfo li")?.textContent).toBe(t("wi.bb_merge_permission"));
+  });
+
+  it.each([
+    ["blocked", "clean", true, "wi.bb_merge_blocked"],
+    ["unknown", "unknown", true, "wi.bb_merge_unavailable"],
+    ["", "unknown", false, "wi.bb_merge_unavailable"],
+  ] as const)("shows a readable fallback for Bitbucket merge state %j", async (mergeableState, mergeable, canMerge, why) => {
+    workItemDetail.mockResolvedValue({ ...bbMergeable, mergeable, mergeableState, canMerge });
+    const modal = await open(bbRow());
+    const expected = mergeable === "clean" ? "wi.detail_merge_clean" : "wi.detail_merge_unknown";
+    expect(modal.querySelector(".wi-dmerge")?.textContent).toBe(t(expected));
+    const info = modal.querySelector(".ui-modal-body .wi-dmergeinfo");
+    expect(info?.querySelector("h4")?.textContent).toBe(t("wi.bb_merge_checks"));
+    expect(info?.querySelector("p")?.textContent).toBe(t(why));
+    expect(mergeBtn(modal)?.disabled).toBe(canMerge ? true : undefined);
+    expect(footer(modal).querySelector(".wi-dmergewhy")).toBeNull();
+  });
+
   it("merges a Bitbucket pull request with the chosen strategy and the close-source choice", async () => {
     workItemDetail.mockResolvedValue(bbMergeable);
     workItemMerge.mockResolvedValue({ merged: true, sha: "feedface" });
