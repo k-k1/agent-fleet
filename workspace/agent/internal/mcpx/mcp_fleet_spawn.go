@@ -599,7 +599,16 @@ func createSpaceTarget(a *createSessionArgs, parent string, worktree bool) (targ
 		}
 		return map[string]string{"folder": folder}, ""
 	}
-	inSpace := dir == "" && parent != "" && parentRunsInSpace(parent)
+	ownFolder := ""
+	if dir == "" && parent != "" {
+		ownFolder = parentSpaceFolder(parent)
+	}
+	inSpace := ownFolder != ""
+	if inSpace && a.Worktree != nil && !*a.Worktree && a.AllowSharedWorkingCopy {
+		// The shared-copy opt-in with no dir means the parent's own working copy, which here is its
+		// space: name it, or the child would start in home and share nothing.
+		return map[string]string{"folder": ownFolder}, ""
+	}
 	if parent != "" && a.Worktree == nil && inSpace && !a.AllowSharedWorkingCopy {
 		target = map[string]string{}
 		// Named after the child's title so the space is findable in the Console; a title that is not
@@ -617,11 +626,14 @@ func createSpaceTarget(a *createSessionArgs, parent string, worktree bool) (targ
 	return nil, ""
 }
 
-// parentRunsInSpace reports whether the named session runs in a space (spaces are told by their
-// marker, never by the folder name).
-func parentRunsInSpace(parent string) bool {
+// parentSpaceFolder is the space the named session runs in, "" when it runs in none (spaces are
+// told by their marker, never by the folder name).
+func parentSpaceFolder(parent string) string {
 	m, ok := session.ReadMeta(parent)
-	return ok && spacex.FolderOf(m.Dir) != ""
+	if !ok {
+		return ""
+	}
+	return spacex.FolderOf(m.Dir)
 }
 
 // dirIsSpace reports whether dir, as the Agent will resolve it (relative to home), is a space.
@@ -631,6 +643,11 @@ func dirIsSpace(dir string) bool {
 	}
 	if !filepath.IsAbs(dir) {
 		dir = filepath.Join(paths.HomeDir(), dir)
+	}
+	// FolderOf never follows a symlink at the last element, but the Agent's worktree add does: a
+	// link to a space has to be resolved here or it walks past the refusal and fails in git.
+	if real, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = real
 	}
 	return spacex.FolderOf(dir) != ""
 }

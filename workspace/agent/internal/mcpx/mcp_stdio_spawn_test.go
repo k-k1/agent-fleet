@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1128,11 +1130,30 @@ func TestCreateSessionFromASpace(t *testing.T) {
 		t.Fatalf("worktree=false was turned into a new space: %v", got["space"])
 	}
 
+	// The shared-copy opt-in with no dir means the parent's own working copy: its space, named,
+	// rather than home.
+	got = ok("inspace", map[string]any{"initial_prompt": "x", "worktree": false, "allow_shared_working_copy": true})
+	if sp, _ := got["space"].(map[string]any); sp["folder"] != own.Folder || got["allow_shared_working_copy"] != true || got["worktree"] != false {
+		t.Fatalf("shared opt-in without dir = space %v shared %v worktree %v, want the parent's own space", got["space"], got["allow_shared_working_copy"], got["worktree"])
+	}
+	// A parent outside a space keeps the old meaning (no dir = home, decided by the Agent).
+	got = ok("inrepo", map[string]any{"initial_prompt": "x", "worktree": false, "allow_shared_working_copy": true})
+	if _, has := got["space"]; has {
+		t.Fatalf("a repository parent got a space: %v", got["space"])
+	}
+
 	// Refusals, each before anything is created, and each pointing at `space`.
 	refused("inspace", map[string]any{"initial_prompt": "x", "worktree": true}, "pass space=")
 	refused("inspace", map[string]any{"initial_prompt": "x", "dir": own.Dir}, "pass space=")
 	refused("inrepo", map[string]any{"initial_prompt": "x", "dir": other.Dir, "worktree": true}, "pass space=")
 	refused("inspace", map[string]any{"initial_prompt": "x", "dir": "spaces/" + other.Folder}, "pass space=")
+	// A symlink to a space is still a space: git would follow it, so the guard has to as well.
+	link := filepath.Join(os.Getenv("HOME"), "scratch-link")
+	if err := os.Symlink(other.Dir, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	refused("inrepo", map[string]any{"initial_prompt": "x", "dir": link, "worktree": true}, "pass space=")
+	refused("inrepo", map[string]any{"initial_prompt": "x", "dir": "scratch-link"}, "pass space=")
 	refused("inspace", map[string]any{"initial_prompt": "x", "space": other.Folder, "dir": own.Dir}, "space cannot be combined with dir")
 	refused("inspace", map[string]any{"initial_prompt": "x", "space": other.Folder, "worktree": true}, "space cannot be combined with worktree=true")
 	// The shared opt-in with the default worktree is still the caller's mistake, in a space too.
