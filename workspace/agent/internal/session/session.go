@@ -315,7 +315,11 @@ type Session struct {
 	// conversation went. The Control Plane's sessionWire has to carry them too.
 	Moving  string `json:"moving,omitempty"`
 	MovedTo string `json:"movedTo,omitempty"`
-	// QueueDelivery mirrors Meta.QueueDelivery: the queue delivery that created this session
+	// QueueReplaces are earlier names of this queue node, oldest first.
+	QueueReplaces []string `json:"queueReplaces,omitempty"`
+	// QueueSuccessor persists queue ownership when a person reopens the source.
+	QueueSuccessor string `json:"queueSuccessor,omitempty"`
+	// QueueDelivery is the queue delivery this root owns, including a committed replacement
 	// (ADR 0137 §6). The Control Plane finds the session a delivery created by it, so its
 	// sessionWire has to carry it too.
 	QueueDelivery string `json:"queueDelivery,omitempty"`
@@ -993,8 +997,10 @@ type Meta struct {
 	// that can start a turn or a process on it refuses through internal/lifegate. They are on
 	// the meta, not in memory, so a moved source stays closed across an Agent restart. Only
 	// the move primitives in sessionx and the user's explicit reopen write them.
-	Moving  string `json:"moving,omitempty"`
-	MovedTo string `json:"movedTo,omitempty"`
+	Moving         string            `json:"moving,omitempty"`
+	MovedTo        string            `json:"movedTo,omitempty"`
+	QueueMove      *QueueMoveLineage `json:"queueMove,omitempty"`
+	QueueSuccessor string            `json:"queueSuccessor,omitempty"`
 	// RouteSwitches are the boundaries at which the session's route selection changed (ADR 0128
 	// decision 10), oldest first. Route is the selection after the last one. They are what lets the
 	// usage ledger file a turn under the route it ran on rather than the one the session holds when

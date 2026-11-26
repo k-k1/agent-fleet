@@ -83,9 +83,14 @@ function startLoop(scope: string): Loop {
       set((prev) => {
         const next = new Map(prev);
         const seen = new Set(list.map((d) => d.session));
+        const owners = new Map(list.map((d) => [d.id, d.session]));
         // A run the list no longer holds keeps its category and, once closed, its end; an
         // unsettled state is dropped (the sessions' own word is used for it).
-        for (const [name, d] of prev) if (d.categoryId === q.categoryId && !seen.has(name) && d.state !== "closed") next.set(name, { ...d, state: "" });
+        for (const [name, d] of prev) {
+          if (d.categoryId !== q.categoryId || seen.has(name)) continue;
+          if (owners.get(d.id)) next.delete(name);
+          else if (d.state !== "closed") next.set(name, { ...d, state: "" });
+        }
         for (const d of list) {
           if (d.session) {
             next.set(d.session, { id: d.id, categoryId: q.categoryId, state: d.state, outcome: d.outcome, turnOutcome: d.firstTurn?.outcome ?? "", sentAt: d.sentAt, createdAt: d.createdAt, closedAt: d.closedAt, heldBy: d.heldBy });

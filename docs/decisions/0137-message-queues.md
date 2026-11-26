@@ -1233,3 +1233,22 @@ explicit stop clears it), because a message is delivered within seconds of its t
 cannot be delivered (the Agent's own expiry is 24 hours). A read that sees such a message sets the count of clear reads
 back to 0, so one read that misses it (a spool not readable that once, or an idle read just before the message landed)
 cannot close the run. An older Agent sends no `pendingPeers`, which reads as none, the rule it had before.
+
+## Addendum 2026-11-26: limits on a continuing run (#5293)
+
+The queue reads the active sessions of the delivery, including committed move replacements.
+A move keeps the delivery, its launch count, and its original task deadline. Continuations
+and hand-back requests are authorized for the current root recorded by the Control Plane.
+A hand-back is tied to the ownership observed when it was requested. Replacing the root or
+moving a child drops that request if the run reaches settlement with different ownership.
+A failed or uncertain handover gives the member until the task deadline to act, after which
+the usual clear-read rule applies to the continuing tree.
+A window limit occupies the slot even when the stopped session has no resume booked, if the
+Agent confirms it with `stoppedLimit`. A provider spend or balance limit occupies the slot
+as a wait for the member. Either limit also blocks automatic dispatch for the reported agent
+kind while its observation holds.
+
+The Agent reports stopped-limit evidence independently of the resume booking (#5292).
+Older Agents still provide live limit states and booked resumes. While the Workspace is stopped,
+the queue uses the last kept observation. A fresh clear report removes the same-kind hold and
+starts the usual count of clear reads for completion.

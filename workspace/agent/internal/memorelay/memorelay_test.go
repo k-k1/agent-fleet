@@ -387,3 +387,30 @@ func TestRunNextOnCreateOnly(t *testing.T) {
 		t.Fatalf("update: %d, CP got %v", rec.Code, cp.bodies)
 	}
 }
+
+func TestMovedQueueRootRelaysItsOwnIdentity(t *testing.T) {
+	cp := newFakeCP(t)
+	session.WriteMeta(session.Meta{Name: "launch-old", Kind: session.KindClaude, Origin: session.OriginQueue,
+		QueueDelivery: "moved-dlv", MovedTo: "continued"})
+	session.WriteMeta(session.Meta{Name: "continued", Kind: session.KindCodex, Origin: session.OriginUser})
+	cp.answer("POST /internal/memos", http.StatusCreated, `{"id":"m1"}`)
+	cp.answer("POST /internal/memo-deliveries/moved-dlv/defer", http.StatusOK, `{}`)
+	rec := serve(HandleCreate, http.MethodPost, "/memos",
+		`{"from":"continued","memo":{"kind":"text","body":"part 2","continuation":true,"queueLaunch":"forged"}}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("continuation: %d %s", rec.Code, rec.Body.String())
+	}
+	got := decode(t, cp.bodies[0])
+	if got["queueDelivery"] != "moved-dlv" || got["queueLaunch"] != nil ||
+		got["producer"] != "continued" || got["producerOrigin"] != "queue" {
+		t.Fatalf("wrong stamped identity: %s", cp.bodies[0])
+	}
+	rec = serveDefer(`{"from":"continued","reason":"waiting"}`)
+	if rec.Code != http.StatusOK || decode(t, cp.bodies[1])["session"] != "continued" {
+		t.Fatalf("defer: %d %s, relay bodies %v", rec.Code, rec.Body.String(), cp.bodies)
+	}
+	rec = serveDefer(`{"from":"launch-old","reason":"waiting"}`)
+	if rec.Code != http.StatusConflict || len(cp.bodies) != 2 {
+		t.Fatalf("replaced source sent a request: %d %s, relay bodies %v", rec.Code, rec.Body.String(), cp.bodies)
+	}
+}

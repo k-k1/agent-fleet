@@ -209,7 +209,7 @@ func memoDeliveryToDTOAt(d store.MemoDelivery, now time.Time) memoDeliveryDTO {
 	if ids == nil {
 		ids = []string{}
 	}
-	out := memoDeliveryDTO{ID: d.ID, State: d.State, Outcome: d.Outcome, Session: d.Session, MessageIDs: ids,
+	out := memoDeliveryDTO{ID: d.ID, State: d.State, Outcome: d.Outcome, Session: d.CurrentSession(), MessageIDs: ids,
 		CreatedAt: d.CreatedAt, SentAt: d.SentAt, ClosedAt: d.ClosedAt, Overdue: d.OverdueAt != "", OverdueAt: d.OverdueAt, Auto: d.Auto}
 	if d.State == store.DeliveryOpen && d.Reported {
 		out.HeldBy, out.HeldSession, out.HeldSeenAt = d.HeldBy, d.HeldSession, d.HeldSeenAt
@@ -850,7 +850,10 @@ func (r *memoQueueRunner) viewWait(ctx context.Context, views map[string]*memoMe
 		v.mirrorOK = true
 		for _, s := range rows {
 			// A row the mirror still records as running says nothing about an end.
-			v.mirror = append(v.mirror, sessionWire{Name: s.Name, Kind: s.Kind, Carried: s.Carried, Alive: s.State == "running"})
+			row := sessionWire{Name: s.Name, Kind: s.Kind, Carried: s.Carried, Alive: s.State == "running",
+				Origin: s.Origin, OriginSession: s.OriginSession, StoppedLimit: s.Move.StoppedLimit}
+			row.applyMirrorMove(s.Move)
+			v.mirror = append(v.mirror, row)
 		}
 	}
 	views[membershipID] = v
@@ -886,7 +889,11 @@ func (r *memoQueueRunner) reconcileSending(ctx context.Context, v *memoMemberVie
 		}
 		for _, s := range list {
 			if s.QueueDelivery == d.ID && s.Name != "" {
-				r.open(ctx, d, s.Name)
+				name := s.Name
+				if len(s.QueueReplaces) > 0 {
+					name = s.QueueReplaces[0]
+				}
+				r.open(ctx, d, name)
 				return
 			}
 		}
@@ -967,17 +974,18 @@ func (r *memoQueueRunner) closeIfDoneUnreported(ctx context.Context, v *memoMemb
 	if !v.liveOK {
 		rows = v.mirror
 	}
+	tree := deliveryTree(rows, d.CurrentSession())
+	if treeMovePending(tree) {
+		r.markIdle(ctx, d, 0)
+		return
+	}
 	var row *sessionWire
-	for i := range rows {
-		if rows[i].Name == d.Session {
-			row = &rows[i]
-			break
-		}
+	if len(tree) != 0 {
+		row = tree[0]
 	}
 	switch {
 	case row == nil:
-		// Only the Agent's own list proves a deletion. The mirror may predate the session.
-		if v.liveOK {
+		if v.liveOK && r.deliveryRootStillMissing(ctx, v, d) {
 			r.closeOpen(ctx, d, store.DeliveryAborted)
 		}
 	case row.Archived:
@@ -1001,35 +1009,120 @@ func (r *memoQueueRunner) closeIfDoneUnreported(ctx context.Context, v *memoMemb
 
 // --- Occupancy: the delivery's tree, what holds it, and what closing does ---------------------
 
-// deliveryTree is the delivery's session and every session it started, at any depth: a row with
-// origin "session" whose originSession chain leads to root. The root comes first. The walk keeps
-// the names it has seen, so a cycle in originSession ends it, and a chain through a session that
-// is gone ends at the gap (the Agent's list holds no row to continue from).
+// deliveryTree walks the run's current sessions. A committed move replaces a node while both
+// its earlier and current names can still have children. A pending move leaves the source in
+// place.
 func deliveryTree(rows []sessionWire, root string) []*sessionWire {
-	children := map[string][]*sessionWire{}
-	var rootRow *sessionWire
+	byName := make(map[string]*sessionWire, len(rows))
+	next := map[string]string{}
 	for i := range rows {
 		s := &rows[i]
-		if s.Name == root {
-			rootRow = s
-		} else if s.Origin == "session" && s.OriginSession != "" {
-			children[s.OriginSession] = append(children[s.OriginSession], s)
+		byName[s.Name] = s
+		if s.QueueSuccessor != "" {
+			next[s.Name] = s.QueueSuccessor
+		} else if s.MovedTo != "" {
+			next[s.Name] = s.MovedTo
 		}
 	}
-	if rootRow == nil {
+	for _, s := range rows {
+		to := s.Name
+		for i := len(s.QueueReplaces) - 1; i >= 0; i-- {
+			from := s.QueueReplaces[i]
+			next[from] = to
+			to = from
+		}
+	}
+	current := func(name string) string {
+		cur := name
+		for i := 0; next[cur] != ""; i++ {
+			if i >= len(next) {
+				return name
+			}
+			cur = next[cur]
+		}
+		return cur
+	}
+	head := byName[current(root)]
+	if head == nil {
 		return nil
 	}
-	seen := map[string]bool{root: true}
-	out := []*sessionWire{rootRow}
+	// Old Agents send only MovedTo. Include those edges in the identity of a read too.
+	for from := range next {
+		if row := byName[current(from)]; row != nil && len(row.QueueReplaces) == 0 && row.Name != from {
+			replacement := *row
+			replacement.QueueReplaces = []string{from}
+			byName[row.Name] = &replacement
+		}
+	}
+	head = byName[head.Name]
+	children := map[string][]*sessionWire{}
+	for i := range rows {
+		s := &rows[i]
+		if s.Origin == "session" && s.OriginSession != "" {
+			parent := current(s.OriginSession)
+			if child := byName[current(s.Name)]; child != nil {
+				if child.Origin != "session" || child.OriginSession != parent {
+					projected := *child
+					projected.Origin, projected.OriginSession = "session", parent
+					child = &projected
+				}
+				children[parent] = append(children[parent], child)
+			}
+		}
+	}
+	seen := map[string]bool{head.Name: true}
+	out := []*sessionWire{head}
 	for i := 0; i < len(out); i++ {
-		for _, c := range children[out[i].Name] {
-			if !seen[c.Name] {
-				seen[c.Name] = true
-				out = append(out, c)
+		for _, child := range children[out[i].Name] {
+			if !seen[child.Name] {
+				seen[child.Name] = true
+				out = append(out, child)
 			}
 		}
 	}
 	return out
+}
+
+func treeMovePending(tree []*sessionWire) bool {
+	for _, s := range tree {
+		if s.Moving != "" || (len(s.QueueReplaces) != 0 && s.InitialPromptState == "pending") {
+			return true
+		}
+	}
+	return false
+}
+
+// treeMoveKey ties a clear read and its retire condition to the replacements it saw.
+func treeMoveKey(tree []*sessionWire) string {
+	var owners []string
+	for _, s := range tree {
+		if len(s.QueueReplaces) != 0 {
+			owners = append(owners, s.Name)
+		}
+	}
+	sort.Strings(owners)
+	return strings.Join(owners, ",")
+}
+
+func deliveryFirstTurn(rows []sessionWire, owner *sessionWire, launch string) *sessionQueueTurn {
+	if owner != nil && owner.QueueTurn != nil {
+		return owner.QueueTurn
+	}
+	for i := range rows {
+		if rows[i].Name == launch {
+			return rows[i].QueueTurn
+		}
+	}
+	return nil
+}
+
+// deliveryRootStillMissing confirms an absent root before aborting. A move and removal of
+// its source can leave a session list that started before the move with neither row.
+func (r *memoQueueRunner) deliveryRootStillMissing(ctx context.Context, v *memoMemberView, d store.MemoDelivery) bool {
+	read, cancel := context.WithTimeout(ctx, memoAgentCallWait)
+	defer cancel()
+	env, err := r.mgr.agentSessionsEnv(read, v.res.rt)
+	return err == nil && (!v.report || env.reportsQueue()) && len(deliveryTree(env.Sessions, d.CurrentSession())) == 0
 }
 
 // hold ranks (store Held*): what is shown for a tree is the strongest reason found in it.
@@ -1060,8 +1153,13 @@ func sessionHold(s sessionWire, now time.Time) string {
 	if s.Alive && s.CarriedLive != "" && memoHoldRank[why] < memoHoldRank[store.HeldPerson] {
 		why = store.HeldPerson
 	}
-	if why == "" && (s.State == stateLimited || s.RateLimitResumeAt != "") {
-		why = store.HeldLimit
+	if why == "" {
+		switch memoSessionLimit(s) {
+		case stateLimited:
+			why = store.HeldLimit
+		case stateSpendLimit:
+			why = store.HeldPerson
+		}
 	}
 	if why == "" && s.Wakers != nil && (s.Wakers.Watches > 0 || s.Wakers.Timers > 0) {
 		why = store.HeldWakers
@@ -1085,6 +1183,19 @@ func sessionProgress(s sessionWire) bool {
 	return busyState(s.State) && !progressLapsed(s)
 }
 
+// memoSessionLimit reads confirmed provider evidence. A stopped window or spend limit can
+// still hold a run before or without a booking. A spend limit needs the member to act.
+func memoSessionLimit(s sessionWire) string {
+	switch {
+	case s.State == stateSpendLimit || (!s.Alive && s.StoppedLimit == stateSpendLimit):
+		return stateSpendLimit
+	case s.State == stateLimited || s.RateLimitResumeAt != "" || (!s.Alive && s.StoppedLimit == stateLimited):
+		return stateLimited
+	default:
+		return ""
+	}
+}
+
 // treeLimitKinds is the agent kinds of the sessions of a tree that wait for a usage limit
 // (limited, or a booked resume), as ",a,b," or "". It is kept apart from the strongest hold of
 // treeHold: a parent that waits for a limit while its child works is held by a machine, and the
@@ -1092,7 +1203,7 @@ func sessionProgress(s sessionWire) bool {
 func treeLimitKinds(tree []*sessionWire) string {
 	set := map[string]bool{}
 	for _, s := range tree {
-		if s.Archived || !(s.State == stateLimited || s.RateLimitResumeAt != "") {
+		if s.Archived || memoSessionLimit(*s) == "" {
 			continue
 		}
 		set[scheduleInjectKind(s.Kind)] = true
@@ -1110,7 +1221,7 @@ func treeLimitKinds(tree []*sessionWire) string {
 
 // treeHold is the strongest hold in a tree, the session that has it, and whether any session of
 // it shows progress. An archived session of the tree holds nothing.
-func treeHold(tree []*sessionWire, now time.Time) (why, session string, progress bool) {
+func treeHold(tree []*sessionWire, now time.Time, awaitHandover bool) (why, session string, progress bool) {
 	for _, s := range tree {
 		if s.Archived {
 			continue
@@ -1118,11 +1229,21 @@ func treeHold(tree []*sessionWire, now time.Time) (why, session string, progress
 		if sessionProgress(*s) {
 			progress = true
 		}
-		if h := sessionHold(*s, now); memoHoldRank[h] > memoHoldRank[why] {
-			why, session = h, s.Name
+		hold := sessionHold(*s, now)
+		if awaitHandover && memoHoldRank[hold] < memoHoldRank[store.HeldPerson] && handoverNeedsAttention(s) {
+			hold = store.HeldPerson
+		}
+		if memoHoldRank[hold] > memoHoldRank[why] {
+			why, session = hold, s.Name
 		}
 	}
 	return why, session, progress
+}
+
+// handoverNeedsAttention covers a recorded failure or uncertain send before any observed turn.
+func handoverNeedsAttention(s *sessionWire) bool {
+	return len(s.QueueReplaces) != 0 && s.LastTurnStartAt == "" &&
+		(s.InitialPromptState == "failed" || s.InitialPromptState == "unknown")
 }
 
 // Bounds on what a delivery keeps of the watches behind a wakers hold: a run's reason names a
@@ -1308,18 +1429,22 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		r.resetIdle(ctx, d)
 		return
 	}
-	tree := deliveryTree(v.live, d.Session)
+	tree := deliveryTree(v.live, d.CurrentSession())
 	if len(tree) == 0 {
-		// Only the Agent's own list proves a deletion.
-		log.Printf("memo queue: delivery %s: root session %q missing from the list, aborting", d.ID, d.Session)
-		r.closeOpen(ctx, d, store.DeliveryAborted)
+		if r.deliveryRootStillMissing(ctx, v, d) {
+			log.Printf("memo queue: delivery %s: root session %q missing from the list, aborting", d.ID, d.CurrentSession())
+			r.closeOpen(ctx, d, store.DeliveryAborted)
+		} else {
+			r.resetIdle(ctx, d)
+		}
 		return
 	}
 	if tree[0].Archived {
 		r.closeOpen(ctx, d, store.DeliveryAborted)
 		return
 	}
-	why, who, progress := treeHold(tree, now)
+	why, who, progress := treeHold(tree, now, d.OverdueAt == "")
+	moveKey := treeMoveKey(tree)
 	// Not a hold: no reason is kept, so a stopped workspace and the overdue retire behave as
 	// they do for any idle tree. It only keeps this read from closing the delivery. A child's
 	// unread answer and a peer message on its way to a member (#5270) are both such reads: kept
@@ -1329,8 +1454,9 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	// close needs two reads in a row without one: a single read cannot close the run when the
 	// spool was not readable that once, nor when it caught the session's idle just before the
 	// message landed and the spool just after.
+	moving := treeMovePending(tree)
 	inTransit := why == "" && treePeerInTransit(tree, now)
-	unread := why == "" && (childAnswerUnread(tree, now) || inTransit)
+	unread := why == "" && (childAnswerUnread(tree, now) || inTransit || moving)
 	gen, numbered := v.gens[d.ID]
 	if !numbered {
 		// No number for this read (the delivery opened after the numbers were handed out, or the
@@ -1340,19 +1466,22 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		return
 	}
 	o := store.DeliveryObservation{Gen: gen, At: v.readAt, HeldBy: why, HeldSession: who, HeldDetail: treeHeldDetail(tree, why, now), Progress: progress,
-		ProgressAt: store.DeliveryTS(now), LimitKinds: treeLimitKinds(tree), ActMark: v.actMark, ActIncarnation: v.actIncarnation}
+		ProgressAt: store.DeliveryTS(now), LimitKinds: treeLimitKinds(tree), ActMark: v.actMark, ActIncarnation: v.actIncarnation, RunMoveKey: moveKey}
 	// The turn the close is based on: the answer read is pinned to its end (readAnswer), for a
 	// kind whose end is told by the kind itself.
+	if tree[0].Name != d.Session {
+		o.RunSession = tree[0].Name
+	}
 	if memoAnswerPinKinds[tree[0].Kind] {
 		o.RootTurnEndAt = tree[0].LastTurnEndAt
 	}
-	if t := tree[0].QueueTurn; t != nil && t.EndedAt != "" {
+	if t := deliveryFirstTurn(v.live, tree[0], d.Session); t != nil && t.EndedAt != "" {
 		o.TurnOutcome, o.TurnMs, o.TurnEndedAt = t.Outcome, t.Ms, t.EndedAt
 	}
 	// A hand-back is decided from reads that need the Agent (its PRs), made before the lock and
 	// only when this read may close the delivery: nothing holds it and the last one was clear.
 	var dc *memoDeferCheck
-	if d.DeferAt != "" && why == "" && !unread && d.Reported && d.HeldBy == "" && d.IdleTicks >= 1 {
+	if d.DeferAt != "" && why == "" && !unread && d.Reported && d.HeldBy == "" && d.IdleTicks >= 1 && d.RunSession == o.RunSession && d.RunMoveKey == moveKey {
 		dc = r.deferCheck(ctx, v, d, tree)
 	}
 	// Keeping the read, counting it, and closing on it are one transaction behind the membership
@@ -1362,7 +1491,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	wctx, cancel := memoWriteCtx(ctx)
 	err := r.mgr.store.MemoTx(wctx, d.MembershipID, func(tx store.MemoTxOps) error {
 		ticks, kept, err := tx.ObserveDelivery(d.ID, o)
-		if err == nil && inTransit {
+		if err == nil && (inTransit || moving) {
 			ticks, err = 0, tx.SetDeliveryIdleTicks(d.ID, 0)
 		}
 		if err != nil || !kept {
@@ -1387,7 +1516,7 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 		log.Printf("memo queue: delivery %s: keep the report: %v", d.ID, err)
 		return
 	}
-	if fresh != nil {
+	if fresh != nil && !moving {
 		fresh.OverdueAt = d.OverdueAt // set by this tick when the stored copy was written after it
 		if d.OverdueAt == "" {
 			return
@@ -1398,27 +1527,26 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 
 // closeIfDoneKept decides while the workspace is stopped, from the report last kept. A delivery
 // last seen held stays open whatever the mirror shows: nothing was read that could change it.
-// One last seen with nothing holding it may close from the mirror, on a second tick, unless the
-// mirror shows the session itself running or an interaction carried.
+// One last seen with nothing holding it may close from the mirror on a second tick if the
+// mirror shows the same ownership and no running or carried session among the root and its
+// moved descendants.
 func (r *memoQueueRunner) closeIfDoneKept(ctx context.Context, v *memoMemberView, d store.MemoDelivery) {
 	if d.HeldBy != "" {
 		return
 	}
-	var row *sessionWire
-	for i := range v.mirror {
-		if v.mirror[i].Name == d.Session {
-			row = &v.mirror[i]
-			break
+	tree := deliveryTree(v.mirror, d.CurrentSession())
+	if len(tree) == 0 || tree[0].Name != d.CurrentSession() || treeMoveKey(tree) != d.RunMoveKey || treeMovePending(tree) {
+		// A mirror can predate either the launch or the report on a replacement.
+		return
+	}
+	// A later mirror read can veto closing. Dispatch takes its hold from a kept Agent report.
+	for i, row := range tree {
+		if memoSessionLimit(*row) != "" || ((i == 0 || len(row.QueueReplaces) != 0) && (row.Alive || row.Carried != "")) {
+			r.markIdle(ctx, d, 0)
+			return
 		}
 	}
-	switch {
-	case row == nil:
-		// The mirror may predate the session: it proves nothing.
-	case row.Alive || row.Carried != "":
-		r.markIdle(ctx, d, 0)
-	default:
-		r.tickKept(ctx, d)
-	}
+	r.tickKept(ctx, d)
 }
 
 // tickKept counts one tick on the mirror for a delivery last seen with nothing holding it, and
@@ -1430,7 +1558,7 @@ func (r *memoQueueRunner) tickKept(ctx context.Context, d store.MemoDelivery) {
 	defer cancel()
 	err := r.mgr.store.MemoTx(wctx, d.MembershipID, func(tx store.MemoTxOps) error {
 		cur, ok, err := tx.GetDelivery(d.ID)
-		if err != nil || !ok || cur.State != store.DeliveryOpen || cur.HeldBy != "" || !cur.Reported {
+		if err != nil || !ok || cur.State != store.DeliveryOpen || cur.HeldBy != "" || !cur.Reported || cur.HeldGen != d.HeldGen {
 			return err
 		}
 		// The mirror can tell neither a later turn nor a PR: a delivery with a hand-back request
@@ -1502,7 +1630,7 @@ func (r *memoQueueRunner) markOverdue(ctx context.Context, cache map[string]map[
 			}
 		}
 	}
-	payload, _ := json.Marshal(map[string]any{"delivery_id": d.ID, "queue_id": d.QueueID, "session": d.Session,
+	payload, _ := json.Marshal(map[string]any{"delivery_id": d.ID, "queue_id": d.QueueID, "session": d.CurrentSession(),
 		"label": label, "max_task_hours": hours})
 	at := now.UTC().Format(time.RFC3339)
 	if err := r.mgr.store.InsertNotification(ctx, store.Notification{
@@ -1554,7 +1682,7 @@ func (r *memoQueueRunner) retireOverdue(ctx context.Context, v *memoMemberView, 
 	if !ok {
 		return
 	}
-	res := r.retire(ctx, v.res, d.Session, mark, inc)
+	res := r.retire(ctx, v.res, d.CurrentSession(), mark, inc)
 	if res != retireRepeat {
 		wctx, cancel := memoProgressCtx(ctx)
 		defer cancel()
@@ -1721,7 +1849,7 @@ func (r *memoQueueRunner) retireOne(ctx context.Context, views map[string]*memoM
 	if v == nil || !v.liveOK || !v.report {
 		return
 	}
-	tree := deliveryTree(v.live, d.Session)
+	tree := deliveryTree(v.live, d.CurrentSession())
 	if len(tree) == 0 {
 		// A root missing from a report is a deleted session only when the report began after
 		// the delivery closed: the tick's cached list may be older than the close (another
@@ -1735,14 +1863,18 @@ func (r *memoQueueRunner) retireOne(ctx context.Context, views map[string]*memoM
 		if err != nil || !env.reportsQueue() {
 			return
 		}
-		if len(deliveryTree(env.Sessions, d.Session)) == 0 {
-			r.finishRetire(ctx, d, "gone")
+		tree = deliveryTree(env.Sessions, d.CurrentSession())
+		if len(tree) == 0 {
+			r.finishRetire(ctx, d, "gone", "")
 			return
 		}
 	}
-	res := r.retire(ctx, v.res, d.Session, d.RetireActMark, d.RetireActIncarnation)
+	if treeMovePending(tree) {
+		return
+	}
+	res := r.retire(ctx, v.res, tree[0].Name, d.RetireActMark, d.RetireActIncarnation)
 	if res != retireRepeat {
-		r.finishRetire(ctx, d, string(res))
+		r.finishRetire(ctx, d, string(res), tree[0].Name)
 	}
 }
 
@@ -1824,11 +1956,11 @@ func (r *memoQueueRunner) collectClosedTurns(ctx context.Context, views map[stri
 		if v == nil || !v.liveOK || !v.report {
 			continue
 		}
-		for i := range v.live {
-			t := v.live[i].QueueTurn
-			if v.live[i].Name != d.Session || t == nil || t.EndedAt == "" {
-				continue
-			}
+		var owner *sessionWire
+		if tree := deliveryTree(v.live, d.CurrentSession()); len(tree) != 0 {
+			owner = tree[0]
+		}
+		if t := deliveryFirstTurn(v.live, owner, d.Session); t != nil && t.EndedAt != "" {
 			wctx, wcancel := memoProgressCtx(ctx)
 			_, err := r.mgr.store.RecordDeliveryFirstTurn(wctx, d.ID, t.Outcome, t.Ms, t.EndedAt)
 			wcancel()
@@ -2374,7 +2506,7 @@ func (r *memoQueueRunner) readAnswersOf(ctx context.Context, views map[string]*m
 func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d store.MemoDelivery) {
 	var row *sessionWire
 	for i := range v.live {
-		if v.live[i].Name == d.Session {
+		if v.live[i].Name == d.CurrentSession() {
 			row = &v.live[i]
 			break
 		}
@@ -2404,7 +2536,7 @@ func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d s
 		if slim {
 			route = "answer-turns"
 		}
-		status, body, ok := r.askTranscript(ctx, v.res, route, d.Session, before, limit)
+		status, body, ok := r.askTranscript(ctx, v.res, route, d.CurrentSession(), before, limit)
 		if !ok {
 			return
 		}
@@ -2430,7 +2562,7 @@ func (r *memoQueueRunner) readAnswer(ctx context.Context, v *memoMemberView, d s
 		}
 		limit = pageSize
 		var reply memoAnswerReply
-		if json.Unmarshal(body, &reply) != nil || reply.Messages == nil || reply.Name != d.Session {
+		if json.Unmarshal(body, &reply) != nil || reply.Messages == nil || reply.Name != d.CurrentSession() {
 			return // a cut answer, or one about another session, decides nothing
 		}
 		if reply.Status != stateIdle && reply.Status != "stopped" {
@@ -2536,12 +2668,12 @@ func (r *memoQueueRunner) keepAnswer(ctx context.Context, d store.MemoDelivery, 
 }
 
 // finishRetire ends a pending retire and keeps why: confirmed, released, done, gone or fault.
-func (r *memoQueueRunner) finishRetire(ctx context.Context, d store.MemoDelivery, result string) {
+func (r *memoQueueRunner) finishRetire(ctx context.Context, d store.MemoDelivery, result, owner string) {
 	// The Agent's answer (or the fresh read behind a gone) is in hand: recorded whatever is left of
 	// the pass's budget.
 	wctx, cancel := memoProgressCtx(ctx)
 	defer cancel()
-	if _, err := r.mgr.store.FinishDeliveryRetire(wctx, d.ID, store.DeliveryTS(time.Now()), result); err != nil {
+	if _, err := r.mgr.store.FinishDeliveryRetire(wctx, d.ID, store.DeliveryTS(time.Now()), result, owner); err != nil {
 		log.Printf("memo queue: delivery %s: finish retire: %v", d.ID, err)
 	}
 }

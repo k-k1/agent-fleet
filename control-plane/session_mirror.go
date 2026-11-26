@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"log"
+	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -58,6 +60,27 @@ func (m *manager) mirrorSessions(ctx context.Context, wsID string, readStart tim
 	}
 	e.applied = readStart
 	return nil
+}
+
+// mirrorAfterSessionMove keeps a fresh list for a member who stops their workspace immediately
+// after moving a run. A refusal can still leave an uncertain move with a recorded target.
+func (m *manager) mirrorAfterSessionMove(ctx context.Context, res *resolved, method, path string) {
+	if method != http.MethodPost || !strings.HasPrefix(path, "/sessions/") {
+		return
+	}
+	_, action, ok := strings.Cut(strings.TrimPrefix(path, "/sessions/"), "/")
+	if !ok || (action != "move" && action != "move/retry" && action != "move/cancel") {
+		return
+	}
+	read, cancel := context.WithTimeout(context.WithoutCancel(ctx), memoAgentCallWait)
+	defer cancel()
+	at := time.Now()
+	env, err := m.agentSessionsEnv(read, res.rt)
+	if err == nil {
+		if err := m.mirrorSessions(read, res.ws.ID, at, env.Sessions); err != nil {
+			log.Printf("sessions: mirror queue move (ws=%s): %v", res.ws.ID, err)
+		}
+	}
 }
 
 // eraseHome and wipeHome are runtime.EraseHome / WipeHome plus the withdrawal of the last disk

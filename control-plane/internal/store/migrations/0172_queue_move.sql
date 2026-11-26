@@ -1,0 +1,3 @@
+ALTER TABLE memo_delivery ADD COLUMN run_session TEXT NOT NULL DEFAULT '';
+ALTER TABLE memo_delivery ADD COLUMN run_move_key TEXT NOT NULL DEFAULT '';
+ALTER TABLE session ADD COLUMN queue_move TEXT NOT NULL DEFAULT '';
