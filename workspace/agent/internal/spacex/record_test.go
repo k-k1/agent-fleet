@@ -579,10 +579,38 @@ func TestEntryWithoutABirthTimeMatchesNothing(t *testing.T) {
 	if FolderOf(sp.Dir) != "" || Protected(sp.Dir) {
 		t.Fatal("an entry with no birth time matched by inode alone")
 	}
-	// A rename whose identity could not be had keeps the recorded one rather than zeroing it.
-	remember(sp.Folder, entryWith(dirID{}, "Other", ""))
-	if e, _ := recorded(sp.Folder); e.Name != "Other" || e.Ino == 0 {
-		t.Fatalf("entry = %+v: an update without an identity dropped the recorded inode", e)
+}
+
+// An update whose identity could not be had (statx failed) keeps the recorded identity whole.
+func TestUpdateWithoutAnIdentityKeepsTheRecordedOne(t *testing.T) {
+	withHome(t)
+	remember("draft-abcdef", recordEntry{Name: "Draft", Ino: 123, Born: 456})
+	remember("draft-abcdef", entryWith(dirID{}, "Other", ""))
+	if e, _ := recorded("draft-abcdef"); e != (recordEntry{Name: "Other", Ino: 123, Born: 456}) {
+		t.Fatalf("entry = %+v", e)
+	}
+}
+
+// A rename records the identity of the folder it published into, not of what the path names
+// afterwards.
+func TestRenameRecordsThePublishedFolder(t *testing.T) {
+	home := withHome(t)
+	sp, _ := Create("Draft")
+	moved := filepath.Join(home, "moved")
+	afterPublish = func() {
+		_ = os.Rename(sp.Dir, moved)
+		_ = os.Mkdir(sp.Dir, 0o755)
+	}
+	t.Cleanup(func() { afterPublish = nil })
+	if _, err := Rename(sp.Folder, "Final"); err != nil {
+		t.Fatal(err)
+	}
+	want, ok := idOf(moved)
+	if !ok {
+		t.Skip("this file system keeps no birth time, so no identity is recorded")
+	}
+	if e, _ := recorded(sp.Folder); e.Ino != want.ino || e.Born != want.born {
+		t.Fatalf("recorded identity %d/%d, want the published folder's %d/%d", e.Ino, e.Born, want.ino, want.born)
 	}
 }
 

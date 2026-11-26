@@ -443,6 +443,10 @@ var renameMu sync.Mutex
 // can change the space at exactly that point.
 var beforePublish = func() {}
 
+// afterPublish is a test seam between a rename's publish and its record update. Nil in
+// production.
+var afterPublish func()
+
 // Rename changes the display name of the space in folder to name (already cleaned) and answers
 // the space as it now is. Only the marker is rewritten: the folder keeps its name, so the
 // sessions in it keep their ids and their transcripts (see the package comment).
@@ -576,11 +580,17 @@ func Rename(folder, name string) (Space, error) {
 		_ = sp.Remove(tmp)
 		return Space{}, err
 	}
-	// The identity of the folder this rename opened and checked, not of whatever the path names
-	// now: one swapped in after the publish must not take the space's place in the record.
-	id, ok := idOf(filepath.Join(Root(), folder))
-	if !ok || id.ino != inoOf(dirFi) {
-		id = dirID{}
+	if afterPublish != nil {
+		afterPublish()
+	}
+	// The identity of the folder this rename opened and published into, not of whatever the path
+	// names now: one swapped in after the publish must not take the space's place in the record.
+	id := dirID{}
+	if f, err := sp.Open("."); err == nil {
+		if got, ok := idOfFile(f); ok {
+			id = got
+		}
+		f.Close()
 	}
 	remember(folder, entryWith(id, name, createdAt))
 	return Space{Folder: folder, Name: name, Dir: filepath.Join(Root(), folder), CreatedAt: createdAt}, nil

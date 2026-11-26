@@ -98,7 +98,9 @@ If a file cannot be copied into the space, it is not attached, and the launch sa
 - **A removed `.af-space.json` comes back.** If an agent or you delete it some other way, the workspace writes it
   again with the space's name, and the space keeps its row and its sessions. This covers every space the workspace has
   made or listed; a space it has never listed (one made by an older Agent, before its first listing) is not covered yet.
-  Moving the folder away and putting another folder in its place does not count: the new folder is not the space
+  Moving the folder away and putting another folder in its place does not count: the new folder is not the space.
+  It also needs a home file system that records when a folder was created; where it does not (a home on EFS may
+  not), a removed `.af-space.json` is not written back
 - **Clean home deletes it**, like the rest of your home
 
 > [!NOTE]

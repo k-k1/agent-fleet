@@ -207,8 +207,18 @@ type dirID struct {
 // no directory is ever taken for a recorded space, so such a file system gets no repair and no
 // protection for a space whose marker is gone, which is what it had before the record.
 func idOf(path string) (dirID, bool) {
+	return statxID(unix.AT_FDCWD, path, unix.AT_SYMLINK_NOFOLLOW)
+}
+
+// idOfFile is idOf for a directory already open: the identity of what was opened, whatever its
+// path names by now.
+func idOfFile(f *os.File) (dirID, bool) {
+	return statxID(int(f.Fd()), "", unix.AT_EMPTY_PATH)
+}
+
+func statxID(dirfd int, path string, flags int) (dirID, bool) {
 	var st unix.Statx_t
-	if err := unix.Statx(unix.AT_FDCWD, path, unix.AT_SYMLINK_NOFOLLOW, unix.STATX_INO|unix.STATX_BTIME, &st); err != nil {
+	if err := unix.Statx(dirfd, path, flags, unix.STATX_INO|unix.STATX_BTIME, &st); err != nil {
 		return dirID{}, false
 	}
 	if st.Mask&unix.STATX_BTIME == 0 || st.Mask&unix.STATX_INO == 0 {
@@ -317,6 +327,7 @@ func syncRecord(spaces []Space) {
 			continue
 		}
 		m, parsed := readMarkerParsed(dir)
+		// An unparsable marker keeps the recorded name only for the directory it was recorded for.
 		if after, ok := idOf(dir); !ok || after != before {
 			continue
 		}
@@ -333,7 +344,7 @@ func syncRecord(spaces []Space) {
 		for folder, s := range now {
 			old, had := rec[folder]
 			e := entryWith(s.id, s.m.Name, s.m.CreatedAt)
-			if !s.parsed && had {
+			if !s.parsed && had && old.Ino == s.id.ino && old.Born == s.id.born {
 				e.Name, e.CreatedAt = old.Name, old.CreatedAt
 			}
 			if had && old == e {
