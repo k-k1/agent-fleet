@@ -5,7 +5,8 @@
 // "what is going on now", so a group exists only while it holds a listed session.
 //
 //   SCOPE  … running sessions; stopped ones that still need the member (stopped on an
-//            unanswered exchange, or holding a handoff nobody took); and every descendant of
+//            unanswered exchange, or holding a handoff nobody took); sessions that stopped in the
+//            last 24 hours (stoppedRecently); and every descendant of
 //            a listed session, stopped or not, so a family is never shown with holes. Shells and
 //            SSM logins are the Terminal view's; unattended runs are listed in the trailing groups
 //            (unattendedScope).
@@ -56,6 +57,9 @@ export interface ActiveGroup {
   /** Sessions in the group that wait for the member's answer, counted before the fold: a
    *  folded heading must still say that something under it needs an answer. */
   waiting: number;
+  /** Stopped sessions of this group that left the 24-hour window, counted in one line at the
+   *  foot (not listed). Only a group that lists something exists, so none stands alone for them. */
+  older: number;
   /** What each card's fold control says. Only names still in `sessions` have an entry. */
   fold: Map<string, FoldInfo>;
   /** Per folded parent, how many of the rows it hides wait for the member's answer. A fold
@@ -68,6 +72,30 @@ export interface ActiveGroup {
 
 export const OTHER_GROUP = "o:";
 
+/** How long a stopped session stays in the view after the Agent first saw it stopped (ADR 0145
+ *  decision 8). Fixed, not a setting. */
+export const RECENT_STOP_MS = 24 * 60 * 60 * 1000;
+
+/** How far ahead of the browser's clock a stop may be and still count: the Workspace's clock is
+ *  not the browser's, but a stamp further ahead than this is not a stop that just happened. */
+export const STOP_SKEW_MS = 60 * 60 * 1000;
+
+// The shape Go's time.RFC3339 parses (the mirror keeps only such a value): a "T" separator and a zone.
+const RFC3339 = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/i;
+
+/** Stopped within RECENT_STOP_MS of `now`. A session with no `stoppedAt` (an older Agent, or one
+ *  stopped before the Agent stamped it) is never recent: the instant is unknown, and listing it
+ *  would make every old stopped session look like it stopped just now. The instant is on the
+ *  Workspace's clock and `now` on the browser's, so a small lead (STOP_SKEW_MS) counts as recent and a larger one as unknown. */
+export function stoppedRecently(s: Session, now: number): boolean {
+  if (s.alive || !s.stoppedAt) return false;
+  // RFC3339 names its zone. Date.parse would read a zone-less string in the browser's zone, while
+  // the Control Plane's mirror drops it as not a time: the two must agree on "unknown".
+  if (!RFC3339.test(s.stoppedAt)) return false;
+  const at = Date.parse(s.stoppedAt);
+  return Number.isFinite(at) && at - now <= STOP_SKEW_MS && now - at <= RECENT_STOP_MS;
+}
+
 /** A stopped session the member still owes something: it stopped on an unanswered exchange,
  *  or it proposed a handoff that has not been taken. */
 export const needsMember = (s: Session): boolean => !s.alive && (!!s.carried || !!s.handoffPending);
@@ -75,18 +103,28 @@ export const needsMember = (s: Session): boolean => !s.alive && (!!s.carried || 
 /** The sessions the view lists. `shown` is the schedules whose runs the member's own views
  *  list (withoutUnattended); `repos` places a session in the working set the way the tree
  *  does (sessionInWorkingSet). */
-export function activeScope(sessions: Session[], set: WorkingSet | null, shown?: ReadonlySet<string>, repos: Repo[] = []): Session[] {
+export function activeScope(sessions: Session[], set: WorkingSet | null, shown?: ReadonlySet<string>, repos: Repo[] = [], now: number = Date.now()): Session[] {
   const byFolder = new Map(repos.map((r) => [r.name, r]));
   const inSet = (s: Session) => !set || sessionInWorkingSet(set, s, byFolder);
   // Unattended is decided against the whole list: a run's child is unattended through a
   // parent the working set may have filtered out.
   const mine = withoutTerminals(withoutUnattended(sessions, shown));
-  const keep = new Set(mine.filter((s) => (s.alive || needsMember(s)) && inSet(s)).map((s) => s.name));
+  const keep = new Set(mine.filter((s) => (s.alive || needsMember(s) || stoppedRecently(s, now)) && inSet(s)).map((s) => s.name));
   // Descendants are walked through every session, the ones outside the set included, and the
   // set is applied to the result: a generation the set leaves out must not cut off the ones
   // below it that the set holds.
   for (const n of descendantNames([...keep], mine)) keep.add(n);
   return mine.filter((s) => keep.has(s.name) && inSet(s));
+}
+
+/** The stopped sessions the view does not list because they left the window (or carry no
+ *  `stoppedAt`): the ones each group's footer counts. */
+export function olderStopped(sessions: Session[], set: WorkingSet | null, shown?: ReadonlySet<string>, repos: Repo[] = [], now: number = Date.now()): Session[] {
+  const byFolder = new Map(repos.map((r) => [r.name, r]));
+  const listed = new Set(activeScope(sessions, set, shown, repos, now).map((s) => s.name));
+  return withoutTerminals(withoutUnattended(sessions, shown)).filter(
+    (s) => !s.alive && !listed.has(s.name) && (!set || sessionInWorkingSet(set, s, byFolder)),
+  );
 }
 
 /** The running unattended sessions and every descendant of one, for the two trailing groups. A
@@ -208,10 +246,11 @@ export function activeGroups(
   expanded: ReadonlySet<string> = new Set(),
   shown?: ReadonlySet<string>,
   reposKnown = repos.length > 0,
+  now: number = Date.now(),
 ): ActiveGroup[] {
   const byFolder = new Map(repos.map((r) => [r.name, r]));
   const members = new Map<string, { id: GroupId; sessions: Session[] }>();
-  for (const s of activeScope(sessions, set, shown, repos)) {
+  for (const s of activeScope(sessions, set, shown, repos, now)) {
     const id = groupId(s, byFolder, spaces, reposKnown);
     const g = members.get(id.key) || { id, sessions: [] };
     g.sessions.push(s);
@@ -225,6 +264,11 @@ export function activeGroups(
     const g = members.get(id.key) || { id, sessions: [] };
     g.sessions.push(s);
     members.set(id.key, g);
+  }
+  const olderBy = new Map<string, number>();
+  for (const s of olderStopped(sessions, set, shown, repos, now)) {
+    const key = groupId(s, byFolder, spaces, reposKnown).key;
+    olderBy.set(key, (olderBy.get(key) || 0) + 1);
   }
   const out: ActiveGroup[] = [];
   for (const { id, sessions: list } of members.values()) {
@@ -266,6 +310,7 @@ export function activeGroups(
       alive: ordered.filter((s) => !!s.alive).length,
       total: ordered.length,
       waiting: ordered.filter((s) => isWaiting(s)).length,
+      older: olderBy.get(id.key) || 0,
       fold: folded.fold,
       hiddenWaiting,
       depth,

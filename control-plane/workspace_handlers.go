@@ -909,9 +909,14 @@ type sessionWire struct {
 	// Color: terminal background hue (hex; SSM sessions carry their host color).
 	// Dropped in the relay, an SSM session's background always arrives through the CP as
 	// the default colour. The DB mirror has no column for it, so it is absent while stopped.
-	Color     string `json:"color,omitempty"`
-	Label     string `json:"label"`
-	Started   string `json:"started"`
+	Color   string `json:"color,omitempty"`
+	Label   string `json:"label"`
+	Started string `json:"started"`
+	// StoppedAt: when the Agent first saw the session stopped (RFC3339), "" while live or for a
+	// session stopped before the Agent stamped it. Relayed live and mirrored in session.stopped_at,
+	// so a stopped Workspace's list still tells the Console's Active view how recent a stop is.
+	// Same relay caveat as its neighbours: absent here it is silently dropped.
+	StoppedAt string `json:"stoppedAt,omitempty"`
 	CreatedAt string `json:"createdAt"`
 	RemoteUrl string `json:"remoteUrl"`
 	State     string `json:"state"`
@@ -1211,7 +1216,7 @@ func sessionRows(list []sessionWire) []store.SessionRow {
 		}
 		rows = append(rows, store.SessionRow{
 			Name: s.Name, Kind: s.Kind, Dir: s.Dir, Repo: s.Repo,
-			Label: s.Label, CreatedAt: s.CreatedAt, State: state,
+			Label: s.Label, CreatedAt: s.CreatedAt, State: state, StoppedAt: stoppedAtOf(s),
 			Carried: s.Carried, Studio: s.Studio,
 			Origin: s.Origin, OriginSession: s.OriginSession, ScheduleID: s.ScheduleID, QueueCategoryID: s.QueueCategoryID,
 			Move: store.SessionMove{Moving: s.Moving, MovedTo: s.MovedTo, QueueReplaces: s.QueueReplaces, QueueSuccessor: s.QueueSuccessor,
@@ -1222,6 +1227,15 @@ func sessionRows(list []sessionWire) []store.SessionRow {
 		})
 	}
 	return rows
+}
+
+// stoppedAtOf is the instant to mirror for s: only a stopped row has one, so a session that was
+// revived keeps no stale stop in the mirror.
+func stoppedAtOf(s sessionWire) string {
+	if s.Alive {
+		return ""
+	}
+	return s.StoppedAt
 }
 
 func fmtStarted(createdAt string) string {
@@ -1265,7 +1279,7 @@ func (a workspaceAPI) sessionsShared(ctx context.Context, res *resolved) []sessi
 	for _, r0 := range rows {
 		row := sessionWire{
 			Name: r0.Name, Kind: r0.Kind, Dir: r0.Dir, Repo: r0.Repo, Label: r0.Label,
-			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false,
+			Started: fmtStarted(r0.CreatedAt), CreatedAt: r0.CreatedAt, Alive: false, StoppedAt: r0.StoppedAt,
 			// Where it runs: without it the Console files a space session under a same-named
 			// repository while the Workspace is stopped.
 			Place: wirePlace(r0.Place),

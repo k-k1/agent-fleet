@@ -6,7 +6,7 @@
 // every member. The one piece of state it owns is the parents the member opened (store.ts). The grouping, the scope and the fold are active.ts;
 // the card is the sessions overview's, in its rail form, so a state or a gauge never reads
 // differently here than in the overview pane.
-import { memo, useMemo } from "react";
+import { memo, useEffect, useMemo, useState } from "react";
 import type { CSSProperties } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -34,6 +34,27 @@ import "../overview/overview.css";
 const MAX_INDENT = 3;
 
 const GROUP_ICON: Record<ActiveGroup["kind"], string> = { repo: "repo", space: "folder", other: "terminal-tmux", autorun: "play", schedule: "calendar" };
+
+/** The clock the 24-hour window is read against. The list can stay byte-identical for hours (a
+ *  stopped workspace, or a push that is skipped when nothing changed), so the window has to move
+ *  on its own: a minute tick, and a read when the tab comes back from hidden (timers are throttled
+ *  there). */
+function useNow(everyMs: number): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const tick = () => setNow(Date.now());
+    const t = setInterval(tick, everyMs);
+    const onVisible = () => {
+      if (!document.hidden) tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(t);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [everyMs]);
+  return now;
+}
 
 export const ActiveSection = memo(function ActiveSection() {
   const tr = useT();
@@ -65,11 +86,12 @@ export const ActiveSection = memo(function ActiveSection() {
   // Headings are sorted with the locale's collation, so the order is the locale's too.
   const locale = useLocale();
 
+  const now = useNow(60_000);
   const expandedSet = useMemo(() => new Set(expanded), [expanded]);
   const groups = useMemo(
-    () => activeGroups(sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded),
+    () => activeGroups(sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded, now),
     // `locale` is not named in the body: compareText reads it.
-    [sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded, locale],
+    [sessions, repos, spaces, wset, expandedSet, shownSchedules, reposLoaded, now, locale],
   );
   // The unattended groups are left out of the section's count: it says how many sessions of
   // the member's own are running, and a queue's runs would bury it.
@@ -83,7 +105,7 @@ export const ActiveSection = memo(function ActiveSection() {
   return (
     <Section id="active" title={tr("rail.view.active")} icon="pulse" count={alive}>
       {groups.length === 0 ? (
-        <div className="section-empty">{wset ? tr("active.empty_in_set", { set: wset.name }) : tr("active.empty")}</div>
+        <div className="section-empty">{!running ? tr("active.empty_stopped") : wset ? tr("active.empty_in_set", { set: wset.name }) : tr("active.empty")}</div>
       ) : (
         <div className="act-list">
           {groups.map((g) => (
@@ -119,6 +141,7 @@ export const ActiveSection = memo(function ActiveSection() {
                       opens={sPanes?.get(s.name) || []}
                       beside={false}
                       running={running}
+                      readOnly={!running}
                       waitingAt={waitingAt(s.name)}
                       actions={actions}
                       fold={fold}
@@ -128,6 +151,11 @@ export const ActiveSection = memo(function ActiveSection() {
                     </div>
                   );
                 })}
+                {g.older > 0 && (
+                  <div className="act-older" role="listitem">
+                    {tCount("active.older_stopped", g.older)}
+                  </div>
+                )}
               </div>
               )}
             </section>

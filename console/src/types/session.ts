@@ -122,6 +122,10 @@ export interface Session {
   // the mirror's error block stop offering a fix the user already applied (docs/log/47 §4-11).
   authOkAt?: string;
   createdAt?: string; // ISO timestamp
+  // RFC3339: when the Agent first saw the session stopped. Present only on a stopped row, and
+  // absent for one stopped before the Agent stamped it (an older Agent): that is "unknown", never
+  // "recent". The Active view lists a stopped session for 24 hours after it (ADR 0145 decision 8).
+  stoppedAt?: string;
   // The session this one CAME FROM (ADR 0073) — the parent that spawned it with
   // create_session, the session a fork branched off, or the one whose handoff proposal
   // was launched into this session. Empty when nobody raised it.

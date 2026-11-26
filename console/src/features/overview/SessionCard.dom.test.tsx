@@ -286,6 +286,31 @@ describe("SessionCard", () => {
   // Reported 2026-09-12: choosing "Stop" put the session in another pane behind the
   // confirmation dialog. The menu is a child of the card, and a React click bubbles through the
   // component tree (a portal does not stop it), so every item also counted as a card click.
+  const bare = (over: { running: boolean; readOnly?: boolean }) => (
+    <ToastProvider>
+      <PaneHoverProvider>
+        <SessionCard s={{ name: "s1", kind: "claude", alive: false, title: "決済の修正" }} opens={[]} beside running={over.running} readOnly={over.readOnly} actions={actions} />
+      </PaneHoverProvider>
+    </ToastProvider>
+  );
+
+  it("keeps the menu, Copy ID included, on a stopped card that is not read-only", async () => {
+    await act(async () => root!.render(bare({ running: false })));
+    await act(async () => host.querySelector<HTMLElement>(".ovw-menu-btn")!.click());
+    expect(menuItems()).toContain(t("srow.copy_id", { name: "s1" }));
+  });
+
+  it("offers no menu when read-only, and a menu open at that moment does not come back", async () => {
+    await act(async () => root!.render(bare({ running: true })));
+    await act(async () => host.querySelector<HTMLElement>(".ovw-menu-btn")!.click());
+    expect(menuItems().length).toBeGreaterThan(0);
+    await act(async () => root!.render(bare({ running: false, readOnly: true })));
+    expect(host.querySelector(".ovw-menu-btn")).toBeNull();
+    expect(menuItems()).toEqual([]);
+    await act(async () => root!.render(bare({ running: true })));
+    expect(menuItems()).toEqual([]);
+  });
+
   it("choosing an item from the menu does not also open the session", async () => {
     const halt = vi.fn(async () => {});
     await act(async () => {

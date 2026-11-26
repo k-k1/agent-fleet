@@ -14,7 +14,7 @@
 //
 // Right-click, the ⋯ button and the Menu key open SessionMenu — the very same items as the row
 // and the tab.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { placeFixed } from "../../lib/placeFixed.ts";
@@ -67,12 +67,16 @@ interface SessionCardProps {
   selected?: boolean;
   /** How many of the rows this card's fold hides wait for the member's answer (0 = none). */
   hiddenWaiting?: number;
+  /** No ⋯ menu, context menu or Menu key. The Active view passes it while the workspace is stopped,
+   *  where the card is only a way into the history. A card that is not told keeps its menu
+   *  whatever `running` says: the Overview's stopped rows still offer what works offline. */
+  readOnly?: boolean;
 }
 
 // Where the menu was asked for: at the pointer (right-click / Menu key) or under the ⋯.
 type MenuAt = { x: number; y: number } | "button" | null;
 
-export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions, fold, onFold, rail = false, selected = false, hiddenWaiting = 0 }: SessionCardProps) {
+export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions, fold, onFold, rail = false, selected = false, hiddenWaiting = 0, readOnly = false }: SessionCardProps) {
   const tr = useT();
   const { hover, setHover } = usePaneHover();
   const setActive = useLayoutStore((l) => l.setActive);
@@ -122,6 +126,11 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
 
   // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
   // the screen. Without it, `beside` decides.
+  const menuAvailable = !readOnly;
+  // A menu left open when the card turns read-only must not come back at its old spot later.
+  useEffect(() => {
+    if (readOnly) setMenuAt(null);
+  }, [readOnly]);
   const openIt = (newPane: boolean) => {
     if (inert) return;
     openSessionFromList(s, newPane || beside, running);
@@ -131,12 +140,13 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
       openIt(e.ctrlKey || e.metaKey);
-    } else if (isContextMenuKey(e)) {
+    } else if (isContextMenuKey(e) && menuAvailable) {
       e.preventDefault();
       setMenuAt(menuAnchor(e.currentTarget));
     }
   };
   const onContextMenu = (e: MouseEvent<HTMLElement>) => {
+    if (!menuAvailable) return;
     e.preventDefault();
     setMenuAt({ x: e.clientX, y: e.clientY });
   };
@@ -224,7 +234,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           {" "}
           <span className="ovw-lbl">{st.text}</span>
         </span>
-        <span className="ovw-menu-wrap" ref={menuWrapRef}>
+        {menuAvailable && <span className="ovw-menu-wrap" ref={menuWrapRef}>
           <button
             type="button"
             className="ui-btn ui-btn-ghost ui-iconbtn ovw-menu-btn"
@@ -242,7 +252,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
           >
             <Icon name="ellipsis" />
           </button>
-        </span>
+        </span>}
       </header>
       {where && (
       <div className="ovw-where" title={s.dir || ""}>
@@ -372,7 +382,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         }}
         onContextMenu={(e) => e.stopPropagation()}
       >
-      <SessionMenu
+      {menuAvailable && <SessionMenu
         s={s}
         actions={actions}
         running={running}
@@ -387,7 +397,7 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
         }}
         keepOpenRefs={[menuWrapRef]}
         onClose={() => setMenuAt(null)}
-      />
+      />}
       </span>
     </article>
   );

@@ -50,6 +50,10 @@ const scopeNow = () => `${getUser()}\u0000${getTenant()}`;
 
 let ser = ""; // last published serialization (module-level: not render state)
 
+// Request order of refresh(): the newest fetch that has been applied.
+let refreshSeq = 0;
+let appliedSeq = 0;
+
 export const useSessionsStore = create<SessionsStore>((set, get) => ({
   sessions: [],
   loaded: false,
@@ -95,6 +99,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
 
   async refresh() {
     const stamp = pushStamp("sessions");
+    const seq = ++refreshSeq;
     try {
       const d = await api("api/sessions");
       // A pushed frame that arrived while this fetch was in flight is at least
@@ -108,6 +113,11 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       // channel is healthy. The repos store has guarded this since it wedged the rail on
       // its own empty state; this list needs the same guard for the same reason.
       if (isTransientErr(d)) return;
+      // A fetch that started later and has already been applied is newer than this one, however
+      // the two responses were ordered on the way back: a poll sent while the workspace was up
+      // must not put its alive rows over the list fetched after the stop.
+      if (seq < appliedSeq) return;
+      appliedSeq = seq;
       get().applyList(d.sessions || []);
     } catch {
       // KEEP the last known list. Publishing [] here wiped every row on any transient
