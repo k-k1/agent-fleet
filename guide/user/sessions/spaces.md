@@ -46,6 +46,12 @@ Work that goes on over several days stays in one space. Open **Place** and pick 
 - **All spaces** lists the older ones
 - With a space picked, the name box is gone (a space is named when it is made), and the button reads **Start in this
   space**. The agent starts in that folder and sees what earlier sessions left there
+- A space where an AI session is running right now is marked **Running**. A space has no branch to keep two agents
+  apart, so when you press start there, the Console names the running session and asks first: **Start in a new space**
+  (the default) or **Start here anyway**. A shell open in the space does not count, and a new shell is never asked
+  about. A regular AI session start that names the space through the API (`space.folder`) is held to the same rule:
+  the Agent refuses it unless it says "here anyway" (`space.allow_busy`). A child session started by another session
+  is judged by the child-session rule instead, where `space.allow_busy` grants nothing
 
 Without a pick, each start makes a new space.
 

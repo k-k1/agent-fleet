@@ -490,6 +490,15 @@ func (c *createRun) resolveWorkingCopy() bool {
 				httpx.WriteErr(c.w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(), "this space is being deleted")
 				return false
 			}
+			// Two agents in one space edit the same files (#5230). A new shell is a person's terminal,
+			// not a second agent. A spawned child is checked by the spawn guard further down instead,
+			// which has its own opt-in for the parent's own copy.
+			if c.spawnParent == "" && !sp.AllowBusy && NormalizeKind(c.req.Kind) != session.KindShell {
+				if m, busy := spaceBusySession(existing.Dir); busy {
+					writeSpaceBusy(c.w, sp.Folder, m)
+					return false
+				}
+			}
 			c.req.Dir = existing.Dir
 		} else {
 			made, err := spacex.Create(sp.Name)
