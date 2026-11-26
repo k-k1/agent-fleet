@@ -8,6 +8,8 @@ import "github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 func SessionsToSettleUnder(dir string) ([]session.Meta, error) { return sessionsToSettleUnder(dir) }
 
 // ShelveSessionsUnder is shelveSessionsUnder for the same caller: after the move, the stopped
-// sessions still living in dir (settleAfterRemoval; before is what the delete decided) go to the
-// shelf, and a shell / ssm one that appeared since the trash step goes to the trash.
-func ShelveSessionsUnder(dir string, before []session.Meta) { shelveSessionsUnder(dir, before) }
+// sessions still living in dir (settleAfterRemoval; before is what the delete decided, and
+// onlyDecided keeps it to them) go to the shelf, and a shell / ssm one to the trash.
+func ShelveSessionsUnder(dir string, before []session.Meta, onlyDecided bool) {
+	settleAfterRemoval(dir, before, onlyDecided)
+}

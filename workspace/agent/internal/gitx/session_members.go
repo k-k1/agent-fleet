@@ -88,14 +88,10 @@ func (d dirMatch) has(m session.Meta) bool {
 	return false
 }
 
-// spelt reports whether one of m's paths, as written, lies in dir.
+// spelt reports whether m's Meta.Dir, as written, lies in dir: the rule a delete settled by before
+// SessionLivesIn, kept for what appears in the folder while a delete runs.
 func (d dirMatch) spelt(m session.Meta) bool {
-	for _, p := range sessionPaths(m) {
-		if underPath(p, d.raw) {
-			return true
-		}
-	}
-	return false
+	return m.Dir != "" && underPath(m.Dir, d.raw)
 }
 
 func (d dirMatch) mayRun(m session.Meta) bool {
@@ -235,13 +231,14 @@ func TrashShellsBeforeRemoval(dir string, settle []session.Meta) (failed string,
 // sessions to the shelf, a shell / ssm one left (or come in) since the trash step to the trash.
 // The sessions the delete decided before the removal (before) are taken as their meta is now and
 // only while they still live in dir (a link into the folder is followed even once it dangles), so
-// one re-pointed elsewhere meanwhile stays where it is. Beyond them only a session whose own path
-// is spelt inside dir is taken (one restored into the folder while the delete ran, say): a link
-// re-pointed into the folder after the decision is not a session anyone decided to settle, nor one
-// a space delete's dialog showed. When tmux cannot be asked, the decided sessions are settled all
-// the same, since the mark keeps every launch out of dir (ReserveLaunch) and they are still
-// stopped; only the search for others is given up.
-func settleAfterRemoval(dir string, before []session.Meta) {
+// one re-pointed elsewhere meanwhile stays where it is. Beyond them, unless onlyDecided, a session
+// whose Meta.Dir is spelt inside dir is taken (one restored into the folder while the delete ran,
+// say), as before: a link re-pointed into the folder after the decision is not a session anyone
+// decided to settle. onlyDecided is for a delete whose client was shown the sessions (a space
+// dialog's expect): nothing it was not shown is settled. When tmux cannot be asked, the decided
+// sessions are settled all the same, since the mark keeps every launch out of dir (ReserveLaunch)
+// and they are still stopped; only the search for others is given up.
+func settleAfterRemoval(dir string, before []session.Meta, onlyDecided bool) {
 	decided := map[string]bool{}
 	for _, b := range before {
 		decided[b.Name] = true
@@ -265,7 +262,7 @@ func settleAfterRemoval(dir string, before []session.Meta) {
 		if decided[m.Name] {
 			return d.has(m)
 		}
-		return d.spelt(m)
+		return !onlyDecided && d.spelt(m)
 	}
 	s := DirSessions{live: live}
 	for _, m := range metas {

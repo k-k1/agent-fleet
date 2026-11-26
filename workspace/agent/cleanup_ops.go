@@ -158,8 +158,6 @@ func trashSessionIn(m session.Meta, stop bool, belongs func(session.Meta) bool) 
 		switch {
 		case !ok:
 			abort, code, why = true, "not_found", "the session was deleted by another request meanwhile"
-		case belongs != nil && !belongs(cur):
-			abort, left, code = true, true, "not_found"
 		case cur.Locked:
 			abort, code, why = true, errCodeLocked, "session is locked against deletion; unlock it first"
 		case sessionx.SessionAlive(cur) || transcriptGrew(m, before):
@@ -167,6 +165,12 @@ func trashSessionIn(m session.Meta, stop bool, belongs func(session.Meta) bool) 
 		default:
 			if err := sessionx.PreserveQueueMoveBeforeTrash(cur); err != nil {
 				abort, code, why = true, sessionx.TrashErrArchive, err.Error()
+				return
+			}
+			// Asked last, right before the meta goes: the checks above wait for tmux, and a link
+			// the session is spelt through can be re-pointed in that time.
+			if belongs != nil && !belongs(cur) {
+				abort, left, code = true, true, "not_found"
 				return
 			}
 			session.RemoveMetaAndLineage(m.Name) // a person's delete (ADR 0096 decision 6)

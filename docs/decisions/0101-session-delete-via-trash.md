@@ -137,18 +137,20 @@ refused by one step and missed by the next. What a delete settles, and what a re
 every folder the kernel passes through, the comparison a launch's reservation is judged by. What a delete or a
 checkout refuses on (running or locked sessions, the mark's names) is `gitx.SessionMayRunIn`, that rule or the
 lexical clean of the same paths: a session started through a link re-pointed since still runs where its process
-entered. A folder that is itself a link is removed as the link alone, so only its own spelling settles there.
+entered. An entry that is itself a link is removed as the link alone, and only the sessions spelt through it are
+settled; a link to a linked worktree is the exception, since `git worktree remove` takes the worktree it points
+at, whose sessions are then settled by its own path.
 The settle set is read once with the mark held, after the worktree's status and tombstone are prepared. A shell
-is trashed only while it still lives in the folder, asked when the trash reads it and again at the point of
-removal. After the removal the decided sessions are settled as their meta is now and only while they still
-live in the folder (a dangling link is still followed); beyond them only a session whose own path is spelt
-inside the folder is taken, as before. A read fails, and the delete answers 503 (`sessions_unobservable`,
+is trashed only while it still lives in the folder, asked when the trash reads it and again right before its
+meta is removed. After the removal the decided sessions are settled as their meta is now and only while they
+still live in the folder (a dangling link is still followed); beyond them only a session whose `Meta.Dir` is
+spelt inside the folder is taken, as before, and none at all when the client sent the list it showed. A read fails, and the delete answers 503 (`sessions_unobservable`,
 `space_sessions_unobservable`) with nothing changed, when a meta file cannot be read or tmux cannot say what
 runs. tmux's "no server running", a socket that does not exist, or no tmux binary reads as "nothing runs" only
 when no `tmux: server` process serves that socket either (the socket derived as tmux does: `-L`, `-S`, an
 inherited `$TMUX`, `TMUX_TMPDIR` resolved). When that read fails after the removal, the decided sessions are
 settled all the same (the mark keeps every launch out). The space delete dialog sends the sessions it showed
-(`expect`): the Agent decides none beyond them and answers 409 `space_sessions_changed` naming the others,
+(`expect`): the Agent settles none beyond them and answers 409 `space_sessions_changed` naming the others,
 which the dialog reads the list again for and shows; its own count follows the rule as far as it can without
 resolving links.
 

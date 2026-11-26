@@ -2202,6 +2202,12 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	defer tm.log()
 
 	fireDeleteHook("pre-gate", dir)
+	// An entry that is itself a link: one to a linked worktree is handed to `git worktree remove`,
+	// which removes the worktree it points at, so its sessions are settled by the worktree's own
+	// path (settleDir); any other is removed as the link alone, and only what is spelt through it is
+	// settled.
+	fi, err := os.Lstat(dir)
+	isLink := err == nil && fi.Mode()&os.ModeSymlink != 0
 	var (
 		end         func()
 		parent      string
@@ -2223,7 +2229,13 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer end()
-	deleteRepoMarked(w, r, dir, parent, linked, svn, tm)
+	settleDir := dir
+	if isLink && linked {
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			settleDir = real
+		}
+	}
+	deleteRepoMarked(w, r, dir, settleDir, parent, linked, svn, isLink && !linked, tm)
 }
 
 // decideDeleteRepo is the part of a delete that runs inside the gate. It returns the function
@@ -2335,7 +2347,9 @@ func underPath(p, dir string) bool {
 }
 
 // deleteRepoMarked is the rest of a delete, outside the gate, with dir marked as being deleted.
-func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string, linked, svn bool, tm *deleteTimer) {
+// settleDir is the folder whose sessions are settled: dir, or the worktree a link to a linked
+// worktree points at. linkOnly removes dir as a link and nothing else.
+func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, settleDir, parent string, linked, svn, linkOnly bool, tm *deleteTimer) {
 	done := func() { httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")}) }
 	// The sessions this delete settles are read once with the mark held, as late as the steps
 	// allow (after the worktree's status and tombstone are prepared): the tombstone's shelf list,
@@ -2343,12 +2357,31 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string
 	var settle []session.Meta
 	readSettle := func() bool {
 		var err error
-		if settle, err = sessionsToSettleUnder(dir); err != nil {
+		if settle, err = sessionsToSettleUnder(settleDir); err != nil {
 			httpx.WriteErr(w, http.StatusServiceUnavailable, errCodeSessionsUnobservable,
 				"could not tell which sessions live in this working copy, so it was left as it is: "+err.Error())
 			return false
 		}
 		return true
+	}
+
+	// An entry that is a link (not to a linked worktree) goes as the link alone: the stopped
+	// sessions spelt through it are settled (SessionLivesIn takes only the link's own spelling for a
+	// folder that is a link), and what it points at is left as it is.
+	if linkOnly {
+		if !readSettle() {
+			return
+		}
+		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settleDir, settle) }) {
+			return
+		}
+		if err := tm.stepErr("remove", func() error { return os.Remove(dir) }); err != nil {
+			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
+			return
+		}
+		tm.step("shelve", func() { shelveSessionsUnder(settleDir, settle) })
+		done()
+		return
 	}
 
 	// An SVN working copy has no worktree registry — just a folder with a .svn dir.
@@ -2358,14 +2391,14 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string
 		if !readSettle() {
 			return
 		}
-		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir, settle) }) {
+		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settleDir, settle) }) {
 			return
 		}
 		if err := tm.stepErr("remove", func() error { return rmtree.RemoveAll(dir) }); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 			return
 		}
-		tm.step("shelve", func() { shelveSessionsUnder(dir, settle) })
+		tm.step("shelve", func() { shelveSessionsUnder(settleDir, settle) })
 		done()
 		return
 	}
@@ -2400,7 +2433,7 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string
 		}) {
 			return
 		}
-		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir, settle) }) {
+		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settleDir, settle) }) {
 			undo()
 			return
 		}
@@ -2416,7 +2449,7 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string
 			httpx.WriteErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, out)
 			return
 		}
-		tm.step("shelve", func() { shelveSessionsUnder(dir, settle) })
+		tm.step("shelve", func() { shelveSessionsUnder(settleDir, settle) })
 		done()
 		return
 	}
@@ -2432,14 +2465,14 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string
 	if !readSettle() {
 		return
 	}
-	if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir, settle) }) {
+	if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settleDir, settle) }) {
 		return
 	}
 	if err := tm.stepErr("remove", func() error { return rmtree.RemoveAll(dir) }); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
-	tm.step("shelve", func() { shelveSessionsUnder(dir, settle) })
+	tm.step("shelve", func() { shelveSessionsUnder(settleDir, settle) })
 	done()
 }
 
@@ -2516,4 +2549,4 @@ func sessionsToSettleUnder(dir string) ([]session.Meta, error) {
 // the cleanup modal and the MCP tool) and FORGOT the metas outright, without the trash; without
 // the flag it left metas pointing at a folder that no longer existed. The flag is still
 // accepted and means nothing.
-func shelveSessionsUnder(dir string, before []session.Meta) { settleAfterRemoval(dir, before) }
+func shelveSessionsUnder(dir string, before []session.Meta) { settleAfterRemoval(dir, before, false) }

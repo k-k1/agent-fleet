@@ -259,7 +259,7 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("could not move the space to the trash, so it was left as it is: %v", moveErr))
 		return
 	}
-	gitx.ShelveSessionsUnder(dir, settle)
+	gitx.ShelveSessionsUnder(dir, settle, r.URL.Query().Has("expect"))
 	invalidateCleanupUsage()
 	httpx.WriteJSON(w, http.StatusOK, deleteSpaceResponse{Deleted: folder, Archive: man.ID})
 }

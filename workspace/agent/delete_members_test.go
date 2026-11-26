@@ -186,7 +186,7 @@ func TestSettleAfterTheMoveLeavesASessionMovedElsewhere(t *testing.T) {
 	session.WriteMeta(session.Meta{Name: "aistay1", Dir: link, Kind: session.KindClaude})
 	session.WriteMeta(session.Meta{Name: "aimove1", Dir: elsewhere, Kind: session.KindClaude})
 	tmuxSays(t, tmuxNoServer)
-	gitx.ShelveSessionsUnder(gone, []session.Meta{{Name: "aistay1"}, {Name: "aimove1"}})
+	gitx.ShelveSessionsUnder(gone, []session.Meta{{Name: "aistay1"}, {Name: "aimove1"}}, false)
 	if m, _ := session.ReadMeta("aistay1"); !m.Archived {
 		t.Fatal("a session reaching the removed folder through a dangling link was not shelved")
 	}
@@ -427,8 +427,18 @@ func TestDeletingALinkToAWorkingCopyLeavesItsTargetsSessions(t *testing.T) {
 	}
 	session.WriteMeta(session.Meta{Name: "shreal1", Dir: real, Kind: session.KindShell})
 	session.WriteMeta(session.Meta{Name: "aireal1", Dir: real, Kind: session.KindClaude})
+	session.WriteMeta(session.Meta{Name: "shalias", Dir: filepath.Join(e.home, "repos", "alias"), Kind: session.KindShell})
 	tmuxSays(t, tmuxNoServer)
 	code := httpStatus(t, e.srv, "DELETE", "/repos/alias", nil)
+	if code != http.StatusOK {
+		t.Fatalf("delete of the link = %d", code)
+	}
+	if _, err := os.Lstat(filepath.Join(e.home, "repos", "alias")); !os.IsNotExist(err) {
+		t.Fatalf("the link is still there: %v", err)
+	}
+	if _, ok := session.ReadMeta("shalias"); ok {
+		t.Fatal("the shell spelt through the link was left listed")
+	}
 	if _, err := os.Stat(filepath.Join(real, ".git")); err != nil {
 		t.Fatalf("the link's target was removed (delete = %d): %v", code, err)
 	}
@@ -500,5 +510,97 @@ func TestDeleteSpaceLeavesAShellRepointedOutDuringItsTrash(t *testing.T) {
 	}
 	if trashHolds(t, "shmove2") {
 		t.Fatal("the aborted trash left its archive behind")
+	}
+}
+
+// The trash asks whether the shell still lives in the space right before its meta goes, after the
+// checks that wait for tmux: a link re-pointed out of the space while the last of them runs leaves
+// the shell as it is.
+func TestDeleteSpaceAsksMembershipRightBeforeTheShellGoes(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Lastcheck")
+	elsewhere := filepath.Join(e.home, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(e.home, "alias")
+	if err := os.Symlink(sp.Dir, link); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "shlast1", Dir: link, Kind: session.KindShell})
+	// has-session runs twice in the trash: before the archive, and in the final check. The second
+	// re-points the link before it answers "not running".
+	n := filepath.Join(t.TempDir(), "n")
+	tmuxSays(t, `case "$1" in
+has-session)
+  c=$(cat '`+n+`' 2>/dev/null || echo 0); c=$((c+1)); echo $c > '`+n+`'
+  if [ $c -eq 2 ]; then rm -f '`+link+`'; ln -s '`+elsewhere+`' '`+link+`'; fi
+  echo "can't find session: x" >&2; exit 1;;
+esac
+echo 'no server running on /tmp/x' >&2
+exit 1
+`)
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder+"?expect=shlast1", nil, http.StatusOK, nil)
+	if b, _ := os.ReadFile(n); strings.TrimSpace(string(b)) != "2" {
+		t.Fatalf("has-session ran %q times, the test needs 2", b)
+	}
+	if _, ok := session.ReadMeta("shlast1"); !ok {
+		t.Fatal("a shell re-pointed out of the space during the final check was removed")
+	}
+}
+
+// A link to a linked worktree is handed to `git worktree remove`, which removes the worktree it
+// points at: its sessions are settled by the worktree's own path and recorded in the tombstone.
+func TestDeletingALinkToALinkedWorktreeSettlesItsSessions(t *testing.T) {
+	e := tombstoneSetup(t)
+	alias := filepath.Join(e.home, "repos", "wtalias")
+	if err := os.Symlink(e.wt, alias); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "shwtrl1", Dir: e.wt, Kind: session.KindShell})
+	tmuxSays(t, tmuxNoServer)
+	do(t, e.srv, "DELETE", "/repos/wtalias?force=true", nil, http.StatusOK, nil)
+	if gitx.IsGitRepo(e.wt) {
+		t.Fatal("the worktree is still there")
+	}
+	if _, ok := session.ReadMeta("shwtrl1"); ok {
+		t.Fatal("the removed worktree's shell was left listed")
+	}
+	if m, _ := session.ReadMeta("aiaaaa1"); !m.Archived {
+		t.Fatal("the removed worktree's AI session was left listed")
+	}
+	arcs := worktreeArchives(t, e.srv)
+	if len(arcs) != 1 || arcs[0].Worktree == nil || !strings.Contains(strings.Join(arcs[0].Worktree.Shelved, ","), "aiaaaa1") {
+		t.Fatalf("tombstone = %+v, want the worktree's AI session on its shelf list", arcs)
+	}
+}
+
+// A delete whose client was shown the sessions settles none it was not shown, even one that comes
+// into the space by its own path while the delete runs (restored from the trash, say). Without the
+// list (an older client) such a session is settled as before.
+func TestDeleteSpaceWithExpectSettlesOnlyWhatWasShown(t *testing.T) {
+	for _, withExpect := range []bool{true, false} {
+		t.Run(strconv.FormatBool(withExpect), func(t *testing.T) {
+			e := spaceDeleteSetup(t)
+			sp := newSpace(t, "Arrivals")
+			tmuxSays(t, tmuxNoServer)
+			prev := spaceAfterManifest
+			t.Cleanup(func() { spaceAfterManifest = prev })
+			spaceAfterManifest = func(string) {
+				session.WriteMeta(session.Meta{Name: "shcame1", Dir: sp.Dir, Kind: session.KindShell})
+			}
+			path := "/spaces/" + sp.Folder
+			if withExpect {
+				path += "?expect="
+			}
+			do(t, e.srv, "DELETE", path, nil, http.StatusOK, nil)
+			_, listed := session.ReadMeta("shcame1")
+			if withExpect && !listed {
+				t.Fatal("a session the dialog never showed was trashed")
+			}
+			if !withExpect && listed {
+				t.Fatal("without a list, a session spelt inside the space was left listed")
+			}
+		})
 	}
 }

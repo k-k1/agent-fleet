@@ -483,7 +483,8 @@ func LiveSessionNamesChecked() (map[string]bool, error) {
 		switch {
 		case errors.Is(err, exec.ErrNotFound) && !serverMayRun(ownSocket()):
 			return live, nil
-		case errors.As(err, &ee) && ee.ExitCode() == 1 && SaysAbsent(string(ee.Stderr)) && !serverMayRun(socketNamed(string(ee.Stderr))):
+		case errors.As(err, &ee) && ee.ExitCode() == 1 && SaysAbsent(string(ee.Stderr)) &&
+			!serverMayRun(socketNamed(string(ee.Stderr))) && !serverMayRun(ownSocket()):
 			return live, nil
 		case errors.As(err, &ee):
 			return live, fmt.Errorf("tmux list-sessions: %w: %s", err, strings.TrimSpace(string(ee.Stderr)))
@@ -518,11 +519,14 @@ func ownSocket() string {
 }
 
 // socketNamed is the socket path in tmux's "no server running on <path>" or "error connecting to
-// <path> (...)", and the socket Cmd addresses when the message names none.
+// <path> (<reason>)", and the socket Cmd addresses when the message names none. Both it and the
+// socket Cmd addresses are asked for: either one served by a server process means "may run".
 func socketNamed(msg string) string {
 	if _, rest, ok := strings.Cut(msg, "error connecting to "); ok {
-		if p, _, ok := strings.Cut(rest, " ("); ok && p != "" {
-			return physical(p)
+		// The reason is the last parenthesis on the line; the path may hold one of its own.
+		line := strings.SplitN(rest, "\n", 2)[0]
+		if i := strings.LastIndex(line, " ("); i > 0 {
+			return physical(line[:i])
 		}
 	}
 	if _, rest, ok := strings.Cut(msg, "no server running on "); ok {

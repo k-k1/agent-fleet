@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -131,6 +132,9 @@ func TestServerSocketFlags(t *testing.T) {
 	if got := socketNamed("error connecting to /a/b/s (No such file or directory)"); got != "/a/b/s" {
 		t.Errorf("socketNamed = %q", got)
 	}
+	if got := socketNamed("error connecting to /a/tmux (review)/s (No such file or directory)\n"); got != "/a/tmux (review)/s" {
+		t.Errorf("socketNamed with a parenthesis in the path = %q", got)
+	}
 	if got := socketNamed("no server running on /a/b/s\n"); got != "/a/b/s" {
 		t.Errorf("socketNamed(no server) = %q", got)
 	}
@@ -166,17 +170,29 @@ func TestTmuxServerMayRunMatchesTheSocket(t *testing.T) {
 }
 
 // A server of its own, on a private socket, is found by its socket path; once its socket file is
-// removed the server still runs, and the read says it cannot tell rather than "nothing runs".
+// removed the server still runs, and the read says it cannot tell rather than "nothing runs". The
+// socket directory holds a parenthesis, as tmux prints it in its message.
 func TestTmuxServerMayRunFindsARunningServer(t *testing.T) {
 	needProc(t)
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
+	t.Setenv("TMUX_TMPDIR", filepath.Join(t.TempDir(), "tmux (review)"))
+	if err := os.MkdirAll(os.Getenv("TMUX_TMPDIR"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	label := "afprobe-" + strconv.Itoa(os.Getpid())
 	if out, err := Cmd("-L", label, "-f", "/dev/null", "new-session", "-d", "-s", session.TmuxPrefix+"probe", "sleep 60").CombinedOutput(); err != nil {
 		t.Skipf("could not start a private tmux server: %v %s", err, out)
 	}
-	t.Cleanup(func() { _ = Cmd("-L", label, "kill-server").Run() })
+	// Ended by its pid: once its socket is gone, kill-server cannot reach it.
+	out, err := Cmd("-L", label, "display-message", "-p", "#{pid}").Output()
+	pid, perr := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || perr != nil {
+		_ = Cmd("-L", label, "kill-server").Run()
+		t.Fatalf("server pid: %v %v %q", err, perr, out)
+	}
+	t.Cleanup(func() { _ = syscall.Kill(pid, syscall.SIGTERM) })
 	sock := socketPath(os.Getenv("TMUX_TMPDIR"), label, "")
 	if !tmuxServerMayRun(sock) {
 		t.Fatal("a running server was not found for its socket")
