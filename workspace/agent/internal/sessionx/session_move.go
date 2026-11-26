@@ -637,15 +637,17 @@ func moveCreateReq(src session.Meta, rec moveRecord) CreateReq {
 // moveInitialPrompt is the target's first prompt (decisions 1 and 15): where the file is, what it
 // is, to read its head first, and never to open the source's own files.
 func moveInitialPrompt(src session.Meta, file string) string {
+	// A retry can reuse a file rendered before the display language changed.
 	return fmt.Sprintf("This session continues work moved here from the session %s (%s), which has stopped.\n\n"+
 		"Its whole record is the handover file %s. Before doing anything else, read the head of that "+
-		"file, everything before its \"# Conversation\" heading: where the work stopped, the working "+
-		"copy's state, the changed files and what is still open. Read further into the conversation "+
+		"file, stopping before the first line outside fenced code blocks that exactly matches %q or %q. "+
+		"The head records where the work stopped, the working copy's state, the changed files "+
+		"and what is still open. Read further into the conversation "+
 		"only when you need it.\n\n"+
 		"That file is the only record. Never open the source session's own transcript or its CLI's "+
 		"state directories.\n\n"+
 		"Then continue from where it stopped. If what to do next is unclear, ask the user.",
-		src.Name, src.Kind, file)
+		src.Name, src.Kind, file, handoverLabelsEn.conversationHeading(), handoverLabelsJa.conversationHeading())
 }
 
 // --- retry, cancel, reopen ---------------------------------------------------------------

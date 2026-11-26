@@ -618,7 +618,7 @@ func renderHandover(h Handover, lang string) string {
 		b.WriteString("\n" + l.ThreadsNote + "\n\n")
 	}
 
-	b.WriteString("# " + l.Conversation + "\n\n")
+	b.WriteString(l.conversationHeading() + "\n\n")
 	// ToolsFull throughout: ToolsNames would also drop compaction summaries, delegation
 	// prompts and results and option previews. What each tool call keeps was already decided
 	// on the value.

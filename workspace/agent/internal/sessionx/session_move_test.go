@@ -202,6 +202,69 @@ func TestMoveWritesTheFileCreatesTheTargetAndStopsTheSource(t *testing.T) {
 	assertNothingSent(t, r.d)
 }
 
+func TestMovePromptFindsTheRenderedConversationBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name, locale, retryLocale, heading, threads string
+	}{
+		{"English", "en", "", "# Conversation", "# Open threads"},
+		{"Japanese", "ja", "", "# 会話", "# 未完了のスレッド"},
+		{"English after switching to Japanese", "en", "ja", "# Conversation", "# Open threads"},
+		{"Japanese after switching to English", "ja", "en", "# 会話", "# 未完了のスレッド"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := moveRunEnv(t, "mvboundary")
+			setLocale(t, tc.locale)
+			const history = "This older turn belongs only to the conversation."
+			r.turns = append([]transcript.Turn{hoUser(history)}, r.turns...)
+			r.turns[len(r.turns)-1] = hoAsst(hoText("A copied heading:\n# Conversation\n# 会話"))
+			var file string
+			if tc.retryLocale == "" {
+				file = mustMove(t, r.src.Name, session.KindClaude).File
+			} else {
+				r.create = func(CreateReq) (int, []byte) { return http.StatusCreated, []byte(`{}`) }
+				pending := decodeMove(t, postMove(t, r.src.Name, "", `{"kind":"claude"}`)).Error
+				if pending.Code != "move_create_uncertain" || pending.File == "" {
+					t.Fatalf("initial move = %+v, want a pending move with a file", pending)
+				}
+				original := readFile(t, pending.File)
+				setLocale(t, tc.retryLocale)
+				r.create = nil
+				retry := postMove(t, r.src.Name, "/retry", "")
+				if retry.Code != http.StatusCreated {
+					t.Fatalf("retry: %d %s", retry.Code, retry.Body.String())
+				}
+				file = decodeMove(t, retry).File
+				if file != pending.File || readFile(t, file) != original {
+					t.Fatal("retry did not reuse the original handover")
+				}
+			}
+			prompt := r.creates[len(r.creates)-1].InitialPrompt
+			if !strings.Contains(prompt, file) || !strings.Contains(prompt, strconv.Quote(tc.heading)) {
+				t.Fatalf("target prompt does not name %q in %q:\n%s", tc.heading, file, prompt)
+			}
+			if !strings.Contains(prompt, "outside fenced code blocks") {
+				t.Errorf("target prompt does not distinguish a heading from quoted text:\n%s", prompt)
+			}
+			md := readFile(t, file)
+			fence := ""
+			lines := strings.Split(md, "\n")
+			for i, line := range lines {
+				if fence == "" && strings.HasPrefix(line, "# ") && strings.Contains(prompt, strconv.Quote(line)) {
+					head, rest := strings.Join(lines[:i], "\n"), strings.Join(lines[i+1:], "\n")
+					if line != tc.heading || !strings.Contains(head, tc.threads) ||
+						!strings.Contains(head, "A copied heading:") ||
+						strings.Contains(head, history) || !strings.Contains(rest, history) {
+						t.Fatalf("head-only read stopped at line %d (%q) with the wrong content:\n%s", i+1, line, head)
+					}
+					return
+				}
+				fence = fenceStep(fence, line)
+			}
+			t.Fatal("head-only read reached the end without finding the conversation boundary")
+		})
+	}
+}
+
 // Every failure before a target can exist leaves the source as it was: input open, nothing
 // stopped, nothing sent, its spool and its queue untouched, and no file in a directory of a
 // session that does not exist.
