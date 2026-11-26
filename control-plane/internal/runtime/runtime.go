@@ -188,6 +188,13 @@ var _ RuntimeFactory = (*dockerFactory)(nil)
 // container pulls the same subset over the CP's /internal/docs (docs_bridge.go).
 type DocsMounter interface{ mountsStagedDocs() }
 
+// AgentAddrHealer marks the adapters that record the container's address on file at
+// start (docker with the egress fence). The start path calls it when State already says
+// running: a CP killed between the container launch and that record leaves a running
+// container nobody can reach, and Start is never reached to repair it. Best-effort and
+// idempotent; it must not start or stop anything.
+type AgentAddrHealer interface{ HealAgentAddr(ctx context.Context) }
+
 // NewFactory selects the Runtime adapter by deployment profile (AF_RUNTIME):
 // "" / "local" / "docker" → Docker Engine (compose, the on-prem default); "ecs" /
 // "aws" → AWS ECS on Fargate (P3-7); "ecs-ec2" → the same ECS substrate on the EC2

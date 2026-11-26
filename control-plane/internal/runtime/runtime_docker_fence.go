@@ -110,6 +110,18 @@ func (d *dockerRuntime) healAgentAddr(ctx context.Context) {
 	}
 }
 
+// HealAgentAddr is healAgentAddr for the start path, which returns before Start on a
+// workspace that is already running (AgentAddrHealer).
+// The caller holds the workspace lifecycle lease and fence, so a dockerd that stops
+// answering must not hold them: the heal is bounded and gives up quietly.
+func (d *dockerRuntime) HealAgentAddr(ctx context.Context) {
+	ctx, cancel := context.WithTimeout(ctx, healAgentAddrTimeout)
+	defer cancel()
+	d.healAgentAddr(ctx)
+}
+
+var healAgentAddrTimeout = 10 * time.Second // var so a test can shorten it
+
 // dropStaleAgentAddr removes an address on file once docker says the container is gone
 // (removed by hand, or the deployment was torn down around its data directory). The
 // address may belong to someone else's container by then, and the CP would send this

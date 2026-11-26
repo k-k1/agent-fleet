@@ -598,6 +598,11 @@ func (a workspaceAPI) ensureWorkspaceStartedRTLocked(ctx context.Context, res *r
 	}
 	switch rt.State(ctx) {
 	case "running":
+		// Start is skipped here, and with it the address record a CP exit between the
+		// container launch and that record left undone.
+		if h, ok := rt.(runtime.AgentAddrHealer); ok {
+			h.HealAgentAddr(ctx)
+		}
 		return nil
 	case "starting":
 		// A launch is already converging (ECS cold pull can take minutes). Calling
