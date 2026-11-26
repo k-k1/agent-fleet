@@ -136,6 +136,23 @@ export function sessionsInFolder(sessions: Session[], folderName: string): Sessi
     .sort((a, b) => compareText(b.createdAt || "", a.createdAt || ""));
 }
 
+// The folder a session was matched by before places were stored: none in a space, else `repo`,
+// else the dir's base name.
+function recordedFolder(s: Session): string {
+  if (s.space) return "";
+  if (s.repo) return s.repo;
+  return (s.dir || "").split("/").filter(Boolean).pop() || "";
+}
+
+/** The sessions of `folderName` an action on that copy may touch (stop, archive, delete before
+ *  the folder goes): those placed in it that the recorded folder names too. A stored place is
+ *  judged once, at create, and can outlive the directory it was judged on (a link inside the
+ *  copy pointed elsewhere since, #5268), so an action never reaches further than the folder
+ *  match did before places were stored. Views list sessionsInFolder; only actions narrow. */
+export function sessionsActedOnInFolder(sessions: Session[], folderName: string): Session[] {
+  return sessionsInFolder(sessions, folderName).filter((s) => recordedFolder(s) === folderName);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Spawn lineage (ADR 0073): which working copies and which sessions belong to the
 // same family. Everything below is derived from the two flat lists — there is no

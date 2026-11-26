@@ -14,7 +14,7 @@
 import type { Repo } from "./store.ts";
 import type { Session } from "../../types/session.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
-import { childNodes, sessionsInFolder, type RepoTreeNode } from "../../lib/project.ts";
+import { childNodes, sessionsActedOnInFolder, type RepoTreeNode } from "../../lib/project.ts";
 import { agentOf } from "../../agents/registry.ts";
 
 /**
@@ -147,10 +147,9 @@ export function planTree(
   // runs through a grouped copy (RepoTreeNode.detached): plan it once, at the first stop.
   if (seen.has(r.name)) return [];
   seen.add(r.name);
-  // A session the Agent now reads another working-copy id for runs in another copy, whatever its
-  // stored place says (a `link/..` dir whose link was pointed elsewhere): the run would stop or
-  // shelve it before this folder goes, so it is not this copy's.
-  const mine = sessionsInFolder(sessions, r.name).filter((s) => !(s.workingCopyId && r.workingCopyId && s.workingCopyId !== r.workingCopyId));
+  // The run stops or shelves these before the folder goes, so they are what an action may touch
+  // (sessionsActedOnInFolder), less any the Agent now reads another copy's working-copy id for.
+  const mine = sessionsActedOnInFolder(sessions, r.name).filter((s) => !(s.workingCopyId && r.workingCopyId && s.workingCopyId !== r.workingCopyId));
   const stopped = mine.filter((s) => !s.alive && !s.locked);
   const { branch, branchIn } = branchOf(r);
   const row: CopyPlan = {

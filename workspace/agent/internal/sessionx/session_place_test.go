@@ -496,3 +496,42 @@ func TestSessionPlaceFollowsTheLaunchRule(t *testing.T) {
 		t.Errorf("fork with a subdir: %+v", got)
 	}
 }
+
+// #5268: a link inside a copy, A/current -> A/src, with dir A/current/.. leads back into A at
+// create (the physical and lexical readings agree), and into B once the link is pointed at B's
+// folder. A ".." that cancels a link is no place, before and after the retarget, while a ".."
+// over a real directory keeps its place.
+func TestPlaceOfDotDotOverALinkInsideACopy(t *testing.T) {
+	isolateAgentState(t)
+	repos := filepath.Join(homeDir(), "repos")
+	a, b := filepath.Join(repos, "A"), filepath.Join(repos, "B")
+	for _, d := range []string{a, b} {
+		gitInit(t, d)
+		if err := os.MkdirAll(filepath.Join(d, "src"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(a, "current")
+	if err := os.Symlink(filepath.Join(a, "src"), link); err != nil {
+		t.Fatal(err)
+	}
+	dir := link + "/.."
+	if got := PlaceOf(dir); got.Kind != session.PlaceOther {
+		t.Errorf("before the retarget: %+v", got)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(b, "src"), link); err != nil {
+		t.Fatal(err)
+	}
+	if got := PlaceOf(dir); got.Kind != session.PlaceOther {
+		t.Errorf("after the retarget: %+v", got)
+	}
+	if got := PlaceOf(filepath.Join(a, "src") + "/.."); *got != (session.Place{Kind: session.PlaceRepo, ID: "A"}) {
+		t.Errorf("a .. over a real directory: %+v", got)
+	}
+	if got := PlaceOf(filepath.Join(a, "src", "x") + "/../.."); got.Kind != session.PlaceOther {
+		t.Errorf("a .. over a missing component: %+v", got)
+	}
+}

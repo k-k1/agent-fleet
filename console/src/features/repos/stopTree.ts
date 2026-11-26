@@ -22,7 +22,7 @@
 import type { Repo } from "./store.ts";
 import type { Session } from "../../types/session.ts";
 import type { MsgKey } from "../../lib/i18n/index.ts";
-import { childNodes, sessionsInFolder, type RepoTreeNode } from "../../lib/project.ts";
+import { childNodes, sessionsActedOnInFolder, type RepoTreeNode } from "../../lib/project.ts";
 import { agentOf } from "../../agents/registry.ts";
 import { remainingShort } from "../../lib/sessionview.ts";
 
@@ -103,7 +103,7 @@ export function planStopTree(
   // See deleteTree.planTree: a detached copy may be reachable twice; plan it once.
   if (seen.has(node.repo.name)) return [];
   seen.add(node.repo.name);
-  const rows = sessionsInFolder(sessions, node.repo.name)
+  const rows = sessionsActedOnInFolder(sessions, node.repo.name)
     .filter((s) => s.alive && (!only || only.has(s.name)))
     .map((s) => rowFor(s, node.repo.name));
   const here: StopGroup[] = rows.length ? [{ repo: node.repo, depth, rows, detached }] : [];

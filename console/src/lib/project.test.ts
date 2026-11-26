@@ -6,6 +6,7 @@ import { planStopTree, liveSessionCount } from "../features/repos/stopTree.ts";
 import { planTree } from "../features/repos/deleteTree.ts";
 import {
   sessionFolder,
+  sessionsActedOnInFolder,
   sessionRepo,
   sessionSpace,
   orderedRepos,
@@ -496,6 +497,26 @@ describe("stored place", () => {
 
   it("sends home and other directories to Other, never to a repository named like them", () => {
     expect(orphanSessions(sessions, repos).map((s) => s.name)).toEqual(["elsewhere", "home"]);
+  });
+
+  // #5268: a place judged at create can outlive its directory. A `current/..` dir whose link was
+  // pointed into another copy while the session was stopped still names A, and on main its
+  // `repo` ("..") matched no copy: stopping, shelving or deleting A must not reach it.
+  it("never lets a stored place alone widen what an action on a copy touches", () => {
+    const a = { name: "A", path: "/home/dev/repos/A" } as Repo;
+    const stale = sess("stale", { repo: "..", dir: "/home/dev/repos/A/current/..", place: { kind: "repo", id: "A" } });
+    const staleLive = { ...stale, name: "stale-live", alive: true };
+    const own = sess("own", { repo: "A", dir: "/home/dev/repos/A", place: { kind: "repo", id: "A" } });
+    const ownLive = { ...own, name: "own-live", alive: true };
+    const legacy = sess("legacy", { repo: "A", dir: "/home/dev/repos/A" });
+    const all = [stale, staleLive, own, ownLive, legacy];
+    // the views still list it where its place says
+    expect(sessionsInFolder(all, "A").map((s) => s.name).sort()).toEqual(["legacy", "own", "own-live", "stale", "stale-live"]);
+    expect(sessionsActedOnInFolder(all, "A").map((s) => s.name).sort()).toEqual(["legacy", "own", "own-live"]);
+    const node = { repo: a, children: [], spine: "" } as RepoTreeNode;
+    const [plan] = planTree(node, all);
+    expect(plan.sessions.map((s) => s.name).sort()).toEqual(["legacy", "own", "own-live"]);
+    expect(planStopTree(node, all).flatMap((g) => g.rows.map((r) => r.session.name))).toEqual(["own-live"]);
   });
 
   it("files shells by the stored place", () => {
