@@ -19,15 +19,53 @@ package mcpreg
 // a URL that is not one of that client's rows.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/url"
 	"strings"
+	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // maxSharedResources is how many URLs one shared sign-in asks for; the CP bridge refuses more
-// (bridgeMaxResources). A larger group signs each server in on its own, as before sharing.
-const maxSharedResources = 32
+// (bridgeMaxResources). maxSharedResourceBytes bounds their joined length, so the authorization
+// URL stays within what servers commonly accept (8 KiB) and the CP's form limit. A larger group,
+// or one whose joined scopes exceed the scope limit, signs each server in on its own, as before
+// sharing.
+const (
+	maxSharedResources     = 32
+	maxSharedResourceBytes = 4096
+)
+
+var (
+	noShareMu sync.Mutex
+	// noShare holds the groups whose authorization server refused a sign-in for several
+	// resources (invalid_target): their next sign-ins ask for one server each. In memory: a
+	// restart tries sharing again, at the cost of one refused sign-in.
+	noShare = map[string]bool{}
+)
+
+func markNoShare(group string) {
+	noShareMu.Lock()
+	defer noShareMu.Unlock()
+	noShare[group] = true
+}
+
+func sharingRefused(group string) bool {
+	noShareMu.Lock()
+	defer noShareMu.Unlock()
+	return noShare[group]
+}
+
+// sharedSetFits reports whether one sign-in can ask for resources and scope together.
+func sharedSetFits(resources []string, scope string) bool {
+	n := 0
+	for _, r := range resources {
+		n += len(url.QueryEscape(r)) + len("&resource=")
+	}
+	return n <= maxSharedResourceBytes && validScope(scope)
+}
 
 // groupIssuer is an issuer as a group key compares it: only a root path "/" is dropped (ADR 0146
 // decision 2's equivalence). "https://as.example.com/realm" and ".../realm/" stay two issuers.
@@ -41,10 +79,11 @@ func groupIssuer(iss string) string {
 // grantGroup is the key of the grant d shares with the other definitions of the same tenant
 // client, "" when d's grant is its own. Confidential is part of it: a grant made with a public
 // client renews at the AS, one made with a confidential client through the CP, so a switch
-// between the two is another client.
+// between the two is another client. A plain-http server is in no group: a shared bearer is
+// never sent in the clear, so it signs in on its own and its disconnect touches nobody else.
 func grantGroup(d ServerDef) string {
 	c := d.OAuthClient
-	if d.Origin != OriginTenant || d.Auth != AuthOAuth || c == nil || !validTenantClient(*c) {
+	if d.Origin != OriginTenant || d.Auth != AuthOAuth || c == nil || !validTenantClient(*c) || !sharedURL(d.URL) {
 		return ""
 	}
 	auth := "none"
@@ -182,7 +221,7 @@ func defIn(reg Registry, id string) ServerDef {
 }
 
 // sharedURL: a shared bearer goes to https only (http on loopback, for development). A peer is
-// never signed in on its own here, so nothing else would stop a plain-http row from receiving it.
+// not signed in on its own, so nothing else would stop a plain-http row from receiving it.
 func sharedURL(raw string) bool {
 	u, err := url.Parse(raw)
 	return err == nil && u.Host != "" && (u.Scheme == "https" || (u.Scheme == "http" && isLoopbackHost(u.Hostname())))
@@ -197,7 +236,7 @@ func groupPeers(reg Registry, d ServerDef) (peers []ServerDef, ok bool) {
 		return nil, true
 	}
 	for _, o := range reg.Servers {
-		if o.ID != d.ID && o.Enabled && o.Transport == TransportHTTP && grantGroup(o) == group && sharedURL(o.URL) {
+		if o.ID != d.ID && o.Enabled && o.Transport == TransportHTTP && grantGroup(o) == group {
 			if _, canon := canonicalResource(o.URL); canon {
 				peers = append(peers, o)
 			}
@@ -253,11 +292,13 @@ func sameSignIn(a, b *secrets.MCPOAuthGrant) bool {
 	return a.ServerID == b.ServerID && grantGeneration(a) == grantGeneration(b)
 }
 
-// grantKey is the lock of the credentials a grant renews with: its client at its issuer. Every
-// renewal with that client is serialized, so two sign-ins that hold the same refresh token (an AS
-// that returns it again on a new sign-in) never spend it twice.
+// grantKey is the lock of the credentials a renewal spends: the client at its issuer and the
+// refresh token (hashed). Two grants that hold the same refresh token (an AS that returns it again
+// on another sign-in, a group's members) never spend it twice at once, and grants with other
+// refresh tokens never wait for each other.
 func grantKey(g *secrets.MCPOAuthGrant) string {
-	return "cred\n" + g.Issuer + "\n" + g.ClientID
+	sum := sha256.Sum256([]byte(g.RefreshToken))
+	return "cred\n" + g.Issuer + "\n" + g.ClientID + "\n" + hex.EncodeToString(sum[:16])
 }
 
 // signInLockKey orders a sign-in's completion against a disconnect of what it would store: per
@@ -269,12 +310,13 @@ func signInLockKey(serverID, group string) string {
 	return serverLockKey(serverID)
 }
 
-// groupNames are the names of d's group's other definitions, for the Console.
-func groupNames(reg Registry, d ServerDef) []string {
-	group := grantGroup(d)
-	if group == "" {
+// sharedNames are the names of the other definitions g, the grant d uses, is shared with: the
+// ones a disconnect here ends too. None for a grant of d's own.
+func sharedNames(reg Registry, d ServerDef, g *secrets.MCPOAuthGrant) []string {
+	if g == nil || g.Group == "" {
 		return nil
 	}
+	group := g.Group
 	var out []string
 	for _, o := range reg.Servers {
 		if o.ID != d.ID && grantGroup(o) == group {

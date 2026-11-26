@@ -201,10 +201,10 @@ func relayDef(d ServerDef) (ServerDef, bool) {
 	if g == nil || g.SignInAgain || (g.AccessToken == "" && g.RefreshToken == "") {
 		return ServerDef{}, false
 	}
-	// A grant made for another URL, or a shared one this server joined after the sign-in, is not
-	// live for it: the relay would refuse every request, so the CLI is better off not seeing the
-	// server at all.
-	if _, ok := grantResource(g, d); !ok {
+	// A grant made for another URL, a shared one this server joined after the sign-in, or one whose
+	// token was issued for the others with nothing to renew it for this one, is not live for it:
+	// the relay would refuse every request, so the CLI is better off not seeing the server at all.
+	if res, ok := grantResource(g, d); !ok || (g.RefreshToken == "" && !tokenCovers(g, res)) {
 		return ServerDef{}, false
 	}
 	d.URL = base + d.ID

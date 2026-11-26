@@ -528,14 +528,18 @@ func TestBridgeAcceptsOnlyTheClientsURLSet(t *testing.T) {
 		"too many":                  many,
 		"33 rows":                   append(append([]string(nil), full...), peer),
 	} {
+		want := `"unknown_resource"` // the AS was not called: the Agent may retry for its own server
+		if len(res) == 1 {
+			want = `"invalid_target"`
+		}
 		f := codeForm()
 		f["resource"] = res
-		if w := bridgeCall(a, "token", "tenant-a", f); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"invalid_target"`) {
-			t.Errorf("%s: %d %s, want invalid_target", name, w.Code, w.Body)
+		if w := bridgeCall(a, "token", "tenant-a", f); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), want) {
+			t.Errorf("%s: %d %s, want %s", name, w.Code, w.Body, want)
 		}
 		r := url.Values{"grant_type": {"refresh_token"}, "refresh_token": {"rt"}, "resource": res}
-		if w := bridgeCall(a, "token", "tenant-a", r); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), `"invalid_target"`) {
-			t.Errorf("%s (refresh): %d %s, want invalid_target", name, w.Code, w.Body)
+		if w := bridgeCall(a, "token", "tenant-a", r); w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), want) {
+			t.Errorf("%s (refresh): %d %s, want %s", name, w.Code, w.Body, want)
 		}
 	}
 	if len(as.forms) != 2 {

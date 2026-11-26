@@ -387,7 +387,13 @@ func (a ServerAPI) OAuthToken(w http.ResponseWriter, r *http.Request, mv store.M
 	}
 	resources := in["resource"]
 	if !a.resourcesOfClient(r.Context(), mv, row, resources) {
-		writeTokenErr(w, http.StatusBadRequest, "invalid_target")
+		// A set gets its own code: it says the AS was not called, so the Agent may send the code or
+		// refresh token again for its own server alone. A single resource keeps invalid_target.
+		code := "invalid_target"
+		if len(resources) > 1 {
+			code = "unknown_resource"
+		}
+		writeTokenErr(w, http.StatusBadRequest, code)
 		return
 	}
 	form := url.Values{"grant_type": {in.Get("grant_type")}, "resource": resources}
