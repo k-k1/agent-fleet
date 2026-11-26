@@ -80,6 +80,9 @@ export const RECENT_STOP_MS = 24 * 60 * 60 * 1000;
  *  not the browser's, but a stamp further ahead than this is not a stop that just happened. */
 export const STOP_SKEW_MS = 60 * 60 * 1000;
 
+// The shape Go's time.RFC3339 parses (the mirror keeps only such a value): a "T" separator and a zone.
+const RFC3339 = /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?(Z|[+-]\d\d:\d\d)$/i;
+
 /** Stopped within RECENT_STOP_MS of `now`. A session with no `stoppedAt` (an older Agent, or one
  *  stopped before the Agent stamped it) is never recent: the instant is unknown, and listing it
  *  would make every old stopped session look like it stopped just now. The instant is on the
@@ -88,7 +91,7 @@ export function stoppedRecently(s: Session, now: number): boolean {
   if (s.alive || !s.stoppedAt) return false;
   // RFC3339 names its zone. Date.parse would read a zone-less string in the browser's zone, while
   // the Control Plane's mirror drops it as not a time: the two must agree on "unknown".
-  if (!/(Z|[+-]\d\d:\d\d)$/i.test(s.stoppedAt)) return false;
+  if (!RFC3339.test(s.stoppedAt)) return false;
   const at = Date.parse(s.stoppedAt);
   return Number.isFinite(at) && at - now <= STOP_SKEW_MS && now - at <= RECENT_STOP_MS;
 }

@@ -67,9 +67,9 @@ interface SessionCardProps {
   selected?: boolean;
   /** How many of the rows this card's fold hides wait for the member's answer (0 = none). */
   hiddenWaiting?: number;
-  /** No ⋯ menu, context menu or Menu key: for a card shown while the workspace is stopped,
-   *  where every menu action is a request to the Agent that is not there. Opening the history
-   *  still works, as in the stopped Sessions list. */
+  /** No ⋯ menu, context menu or Menu key. The Active view passes it while the workspace is stopped,
+   *  where the card is only a way into the history. A card that is not told keeps its menu
+   *  whatever `running` says: the Overview's stopped rows still offer what works offline. */
   readOnly?: boolean;
 }
 
