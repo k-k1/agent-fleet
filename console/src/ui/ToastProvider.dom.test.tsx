@@ -46,6 +46,19 @@ describe("ToastProvider", () => {
     expect(texts()).toEqual([]);
   });
 
+  it("cancels pending expiry timers when unmounted with a toast showing", async () => {
+    // Other code (the error toast's log) may hold timers of its own, so count relative to a baseline.
+    const base = vi.getTimerCount();
+    await act(async () => fire("a", { kind: "info", duration: 4000 }));
+    await act(async () => fire("b", { kind: "info", duration: 8000 }));
+    expect(vi.getTimerCount()).toBe(base + 2);
+    await act(async () => root.unmount());
+    expect(vi.getTimerCount()).toBe(base);
+    expect(() => vi.advanceTimersByTime(10000)).not.toThrow();
+    // afterEach unmounts again; re-create so it has a root to unmount.
+    root = createRoot(host);
+  });
+
   it("still expires an unkeyed toast on its own", async () => {
     await act(async () => fire("a", { kind: "info" }));
     await act(async () => vi.advanceTimersByTime(4100));

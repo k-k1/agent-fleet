@@ -115,6 +115,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [remove],
   );
 
+  // Cancel every pending expiry on unmount: a timer left running calls remove() — a state update
+  // on an unmounted tree — after teardown (a flake in tests that unmount with a toast showing).
+  useEffect(() => {
+    const pending = timers.current;
+    return () => {
+      for (const t of pending.values()) clearTimeout(t);
+      pending.clear();
+    };
+  }, []);
+
   // Expose this provider's toast to non-React callers (keyboard commands) while mounted.
   useEffect(() => {
     registerToastSink(toast, dismiss);
