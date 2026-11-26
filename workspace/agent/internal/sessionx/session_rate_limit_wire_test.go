@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
@@ -326,29 +327,54 @@ func TestWireSessionStoppedKeepsBookedResume(t *testing.T) {
 	if s.RateLimitResumeAt != resume {
 		t.Errorf("rateLimitResumeAt = %q, want %q on a stopped row", s.RateLimitResumeAt, resume)
 	}
-	if s.State == agents.StateLimited {
-		t.Errorf("state = %q: a stopped session must not read limited", s.State)
+	if s.State != "" || s.Alive || s.StoppedLimit != agents.StateLimited {
+		t.Errorf("state = %q, alive = %t, stoppedLimit = %q; want empty, false, limited", s.State, s.Alive, s.StoppedLimit)
 	}
 }
 
-func TestWireSessionStoppedWithoutLiveBookingSaysNothing(t *testing.T) {
+func TestWireSessionStoppedLimitWithoutBooking(t *testing.T) {
 	now := time.Now()
 	future := now.Add(2 * time.Hour).Format(time.RFC3339)
 	for _, c := range []struct {
 		name string
 		kind agents.LimitKind
 		st   rateLimitState
+		want string
 	}{
-		{"no schedule id", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future}},
-		{"instant already past", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: now.Add(-time.Minute).Format(time.RFC3339), ScheduleID: "s"}},
-		{"limit no longer in force", "", rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future, ScheduleID: "s"}},
-		{"spend limit", agents.LimitSpend, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future, ScheduleID: "s", Spend: true}},
+		{"no schedule id", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future}, agents.StateLimited},
+		{"instant already past", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: now.Add(-time.Minute).Format(time.RFC3339), ScheduleID: "s"}, agents.StateLimited},
+		{"limit no longer in force", "", rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future, ScheduleID: "s"}, ""},
+		{"spend limit", agents.LimitSpend, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future, ScheduleID: "s", Spend: true}, agents.StateSpendLimit},
+		{"no episode", agents.LimitWindow, rateLimitState{}, ""},
+		{"expired episode", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: now.Add(-24 * time.Hour).Format(time.RFC3339)}, ""},
 	} {
 		isolateAgentState(t)
 		atLimitProbe(t, c.kind)
 		m := limitedMeta(t, "rlwire-stop2", c.st)
-		if got := wireSession(m, false).RateLimitResumeAt; got != "" {
-			t.Errorf("%s: rateLimitResumeAt = %q, want empty", c.name, got)
+		s := wireSession(m, false)
+		if s.RateLimitResumeAt != "" || s.StoppedLimit != c.want || s.Alive || s.State != "" {
+			t.Errorf("%s: state = %q, alive = %t, stoppedLimit = %q, rateLimitResumeAt = %q; want empty, false, %q, empty",
+				c.name, s.State, s.Alive, s.StoppedLimit, s.RateLimitResumeAt, c.want)
 		}
+	}
+}
+
+func TestWireSessionStoppedCodexReadsRolloutLimit(t *testing.T) {
+	isolateAgentState(t)
+	m := session.Meta{Name: "rlwire-cx-stopped", Dir: t.TempDir(), Kind: session.KindCodex, Driver: session.DriverManaged}
+	const thread = "01a0ee31-0000-7000-8000-00000000005a"
+	codex.RememberSid(session.UUID(m.Dir, m.Name), thread)
+	const failed = `{"type":"event_msg","payload":{"type":"task_complete","error":{"message":"You've hit your usage limit.","codex_error_info":"usage_limit_exceeded"}}}`
+	writeCodexRollout(t, thread, failed)
+	if err := RateLimitStates.Write(m.Name, rateLimitState{At: time.Now().Format(time.RFC3339)}); err != nil {
+		t.Fatal(err)
+	}
+	if s := wireSession(m, false); s.StoppedLimit != agents.StateLimited || s.RateLimitResumeAt != "" || s.Alive {
+		t.Errorf("stoppedLimit = %q, rateLimitResumeAt = %q, alive = %t; want limited, empty, false",
+			s.StoppedLimit, s.RateLimitResumeAt, s.Alive)
+	}
+	writeCodexRollout(t, thread, failed, `{"type":"event_msg","payload":{"type":"task_started"}}`)
+	if s := wireSession(m, false); s.StoppedLimit != "" {
+		t.Errorf("stoppedLimit = %q after a newer turn started, want empty", s.StoppedLimit)
 	}
 }

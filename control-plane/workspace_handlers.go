@@ -953,11 +953,10 @@ type sessionWire struct {
 	// Agent's first observation or its status file). Dropped here, the admin forecast cannot say
 	// how long a session has been holding the Workspace. Not persisted to the DB mirror.
 	StateSince string `json:"stateSince,omitempty"`
-	// RateLimitResumeAt passes through the Agent's scheduled auto-resume time (RFC3339,
-	// present only while state == "limited"). Dropped, the Console's chip can only say it
-	// is waiting for the limit to lift and not when work will resume. No DB-mirror column
-	// (a stopped workspace has no episode in progress).
+	// RateLimitResumeAt and StoppedLimit pass through the Agent's current limit observation
+	// for display. Neither is persisted to the DB mirror.
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
+	StoppedLimit      string `json:"stoppedLimit,omitempty"`
 	// ForkAtTerminal passes through whether a Terminal session can fork from a past message.
 	// Dropped here, the Console never offers "fork from here" on an opencode 2 Terminal session.
 	// No DB-mirror column: it describes a running pane's route.

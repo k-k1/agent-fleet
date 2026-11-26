@@ -198,7 +198,13 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		}
 	}
 	if !alive && rateLimitWatched(m) {
-		s.RateLimitResumeAt = rateLimitBookedAt(m, time.Now())
+		now := time.Now()
+		episode, limit := currentRateLimitEpisode(m, now)
+		s.StoppedLimit = limit
+		// A candidate resume time without a scheduler booking is no promise to restart.
+		if limit == agents.StateLimited && episode.ScheduleID != "" {
+			s.RateLimitResumeAt = futureInstant(episode.ResumeAt, now)
+		}
 	}
 	fillWakers(&s, m)
 	s.PendingPeers = pendingPeers

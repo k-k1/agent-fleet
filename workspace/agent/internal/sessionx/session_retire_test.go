@@ -311,8 +311,8 @@ func TestRetiredSessionTakesNoBookedResume(t *testing.T) {
 	}
 	for _, n := range []string{"a", "k"} {
 		m, _ := session.ReadMeta(n)
-		if at := rateLimitBookedAt(m, time.Now()); at != "" {
-			t.Errorf("%s still reports a booked resume at %s", n, at)
+		if s := wireSession(m, false); s.StoppedLimit != "" || s.RateLimitResumeAt != "" {
+			t.Errorf("%s still reports a limit %q with resume at %q", n, s.StoppedLimit, s.RateLimitResumeAt)
 		}
 	}
 	_ = r
