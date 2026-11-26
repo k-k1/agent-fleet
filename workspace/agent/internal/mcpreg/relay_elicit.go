@@ -47,6 +47,7 @@ import (
 	"sync"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // ElicitationRelay is the ServerDef.Elicitation value that has the relay answer form elicitation.
@@ -1064,38 +1065,68 @@ func parseInputRequired(result json.RawMessage) (inputRequired, error) {
 
 // largestAnswer is the encoded size of the largest accept a person could send: every field
 // answered with the choice whose encoding is longest (not the longest raw value: escaping can
-// grow a shorter one past it), plus the keys and punctuation. Go escapes more than a browser
-// does, so this is an upper bound. It stops once past ElicitAnswerMaxBytes, and never encodes a
-// string whose raw length alone is past it (an encoding is never shorter than its string): a form
-// it refuses must not cost the Agent its encoding first.
+// grow a shorter one past it), with the keys and punctuation. Go escapes more than a browser
+// does, so this bounds what a browser sends. Nothing is encoded (jsonStringLen counts), and the
+// count stops once past ElicitAnswerMaxBytes: a form it refuses must not cost the Agent memory.
 func largestAnswer(inputs []ElicitInput) int {
-	const over = ElicitAnswerMaxBytes + 1
-	encLen := func(s string) int {
-		if len(s) > ElicitAnswerMaxBytes {
-			return over
-		}
-		return len(mustJSON(s))
-	}
+	const limit = ElicitAnswerMaxBytes
 	total := 2 // {}
-	for _, in := range inputs {
-		total += encLen(in.Key) + 4 // :{}, and a comma
-		for _, f := range in.Fields {
-			total += encLen(f.Name) + 2 // : and a comma
-			best := 0
-			for _, o := range f.Options {
-				if best = max(best, encLen(o.Value)); best >= over {
-					return over
-				}
+	for i, in := range inputs {
+		if i > 0 {
+			total++ // ,
+		}
+		if total += jsonStringLen(in.Key) + 3; total > limit { // :{}
+			return total
+		}
+		for j, f := range in.Fields {
+			if j > 0 {
+				total++ // ,
 			}
-			if total += best; total > ElicitAnswerMaxBytes {
+			if total += jsonStringLen(f.Name) + 1; total > limit { // :
 				return total
 			}
-		}
-		if total > ElicitAnswerMaxBytes {
-			return total
+			best := 0
+			for _, o := range f.Options {
+				if n := jsonStringLen(o.Value); n > best {
+					if best = n; total+best > limit {
+						return total + best
+					}
+				}
+			}
+			total += best
 		}
 	}
 	return total
+}
+
+// jsonStringLen is len(mustJSON(s)) without encoding s: encoding/json's escapes, HTML ones
+// included, and \ufffd for each invalid byte.
+func jsonStringLen(s string) int {
+	n := 2 // quotes
+	for i := 0; i < len(s); {
+		b := s[i]
+		if b < utf8.RuneSelf {
+			switch {
+			case b == '"', b == '\\', b == '\n', b == '\r', b == '\t', b == '\b', b == '\f':
+				n += 2
+			case b < 0x20, b == '<', b == '>', b == '&':
+				n += 6
+			default:
+				n++
+			}
+			i++
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1, r == '\u2028', r == '\u2029':
+			n += 6
+		default:
+			n += size
+		}
+		i += size
+	}
+	return n
 }
 
 // strictObject reads raw as one JSON object with no two names that fold together. allowed, when

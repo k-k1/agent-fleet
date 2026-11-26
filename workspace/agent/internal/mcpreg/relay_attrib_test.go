@@ -227,3 +227,57 @@ func TestLargestAnswerBoundsTheEncodedAnswer(t *testing.T) {
 		}
 	}
 }
+
+// jsonStringLen counts what encoding/json writes, byte for byte.
+func TestJSONStringLenMatchesTheEncoder(t *testing.T) {
+	var all []byte
+	for b := 0; b < 256; b++ {
+		all = append(all, byte(b))
+	}
+	for _, s := range []string{"", "plain", `"\`, "\b\f\n\r\t\x00\x1f", "<>&", "é漢字😀", "  ", "\xff\xfe", "a\xc3", string(all)} {
+		if got, want := jsonStringLen(s), len(mustJSON(s)); got != want {
+			t.Errorf("%q: %d, encoder %d", s, got, want)
+		}
+	}
+}
+
+// The bound is exact: an answer of exactly ElicitAnswerMaxBytes is put to the person, one byte
+// more is refused.
+func TestElicitAnswerBoundIsExact(t *testing.T) {
+	form := func(n int) []ElicitInput {
+		return []ElicitInput{{Key: "k", Fields: []ElicitField{{Name: "c", Options: []ElicitOption{{Value: "NO"}, {Value: strings.Repeat("x", n)}}}}}}
+	}
+	// {"k":{"c":"…"}} is the value plus 14 bytes.
+	at := ElicitAnswerMaxBytes - 14
+	if real := len(mustJSON(map[string]map[string]string{"k": {"c": strings.Repeat("x", at)}})); real != ElicitAnswerMaxBytes {
+		t.Fatalf("setup: %d", real)
+	}
+	if n := largestAnswer(form(at)); n != ElicitAnswerMaxBytes {
+		t.Fatalf("an answer of exactly the bound counted %d", n)
+	}
+	if n := largestAnswer(form(at + 1)); n <= ElicitAnswerMaxBytes {
+		t.Fatalf("one byte over counted %d", n)
+	}
+	two := []ElicitInput{
+		{Key: "a", Fields: []ElicitField{{Name: "x", Options: []ElicitOption{{Value: "1"}}}, {Name: "y", Options: []ElicitOption{{Value: "22"}}}}},
+		{Key: "b"},
+	}
+	if got, want := largestAnswer(two), len(mustJSON(map[string]map[string]string{"a": {"x": "1", "y": "22"}, "b": {}})); got != want {
+		t.Fatalf("two inputs counted %d, encoded %d", got, want)
+	}
+}
+
+// A key already past the bound stops the count before any choice is looked at.
+func TestLargestAnswerStopsAtAnOversizedKey(t *testing.T) {
+	var opts []ElicitOption
+	for i := 0; i < 4000; i++ {
+		opts = append(opts, ElicitOption{Value: strings.Repeat("<", 5000) + strconv.Itoa(i)})
+	}
+	inputs := []ElicitInput{{Key: strings.Repeat("k", 33<<10), Fields: []ElicitField{{Name: "c", Options: opts}}}}
+	if n := largestAnswer(inputs); n <= ElicitAnswerMaxBytes {
+		t.Fatalf("counted %d", n)
+	}
+	if a := testing.AllocsPerRun(5, func() { largestAnswer(inputs) }); a != 0 {
+		t.Fatalf("sizing allocated %v times", a)
+	}
+}
