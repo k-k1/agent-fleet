@@ -12,16 +12,23 @@ import (
 // `git worktree remove --force` cannot unlink inside it and leaves the folder behind. The removal
 // is finished by hand, so the delete does not fail for good.
 func TestRemoveWorktreeThroughAReadOnlyDirectory(t *testing.T) {
-	removeReadOnlyWorktree(t, false)
+	removeReadOnlyWorktree(t, false, "app@ro")
 }
 
 // A lock stands even when its free-text reason happens to contain the words git prints for a
 // permission failure: the worktree is left whole and still registered.
 func TestRemoveWorktreeKeepsALockWhoseReasonMentionsPermissions(t *testing.T) {
-	removeReadOnlyWorktree(t, true)
+	removeReadOnlyWorktree(t, true, "app@ro")
 }
 
-func removeReadOnlyWorktree(t *testing.T, locked bool) {
+// The same for a non-ASCII path. The git installed here prints it raw, but the plain list is
+// quoted for unusual characters in general; the lock check reads the NUL-separated form so it
+// never depends on that.
+func TestRemoveWorktreeKeepsALockOnANonASCIIPath(t *testing.T) {
+	removeReadOnlyWorktree(t, true, "app@日本語")
+}
+
+func removeReadOnlyWorktree(t *testing.T, locked bool, name string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -33,7 +40,7 @@ func removeReadOnlyWorktree(t *testing.T, locked bool) {
 	}
 	gitT(t, parent, "init", "-q", "-b", "main")
 	gitT(t, parent, "commit", "-q", "--allow-empty", "-m", "i")
-	wt := filepath.Join(root, "app@ro")
+	wt := filepath.Join(root, name)
 	gitT(t, parent, "worktree", "add", "-q", "-b", "ro", wt, "main")
 
 	if locked {

@@ -15,9 +15,12 @@ import (
 //
 // Only a permission failure triggers the second pass: every directory under p gets owner
 // read, write and search, then the removal is retried. The walk does not follow symlinks (a
-// link is neither descended into nor chmod'ed) and does not cross onto another device, so a
-// mount inside the tree keeps whatever protection its own permissions give it. Files are never
-// chmod'ed: unlinking needs write on the parent directory, not on the file.
+// link is neither descended into nor chmod'ed). A directory on another device (a mount) is
+// never opened up, and a tree that holds one is not retried at all: the retry's os.RemoveAll
+// would walk into the mount, and what lives behind it is not the target's to delete. The first
+// error is returned instead, as before. A bind mount from the same device cannot be told apart
+// by device number and is not detected. Files are never chmod'ed: unlinking needs write on the
+// parent directory, not on the file.
 //
 // Not a defence against a process that rewrites the tree while it is being removed: the
 // chmod goes by path, so a directory swapped for a symlink between the check and the chmod
@@ -31,6 +34,7 @@ func RemoveAll(p string) error {
 	if fi, serr := os.Lstat(p); serr == nil {
 		root = devOf(fi)
 	}
+	crossed := false
 	_ = filepath.WalkDir(p, func(q string, d fs.DirEntry, werr error) error {
 		if werr != nil || !d.IsDir() { // d.IsDir() is false for a symlink, even one to a directory
 			return nil
@@ -42,11 +46,15 @@ func RemoveAll(p string) error {
 			return nil
 		}
 		if devOf(fi) != root {
+			crossed = true
 			return filepath.SkipDir // a mount point: leave it and what it holds alone
 		}
 		_ = os.Chmod(q, fi.Mode().Perm()|0o700)
 		return nil
 	})
+	if crossed {
+		return err
+	}
 	return os.RemoveAll(p)
 }
 

@@ -116,17 +116,16 @@ func TestRemoveAllMissingAndPlain(t *testing.T) {
 	}
 }
 
-// A directory on another device (a mount) is neither opened up nor emptied: the removal fails as
-// it did before, instead of deleting what lives behind the mount.
+// A directory on another device (a mount) is neither opened up nor emptied, and the final removal
+// does not walk into it either: a parent that was unreachable until the walk opened it must not
+// make the writable data behind the mount deletable.
 func TestRemoveAllStopsAtAMountPoint(t *testing.T) {
 	skipIfRoot(t)
 	root := filepath.Join(t.TempDir(), "trashed")
-	mustWrite(t, filepath.Join(root, "ro", "mounted", "ro2", "data.txt"))
+	mustWrite(t, filepath.Join(root, "ro", "mounted", "data.txt")) // writable parent: removable if reached
 	mustWrite(t, filepath.Join(root, "ro", "plain.txt"))
 	mounted := filepath.Join(root, "ro", "mounted")
-	lockDir(t, filepath.Join(root, "ro", "mounted", "ro2"), 0o555)
-	lockDir(t, mounted, 0o555)
-	lockDir(t, filepath.Join(root, "ro"), 0o555)
+	lockDir(t, filepath.Join(root, "ro"), 0o000)
 
 	prev := devOf
 	devOf = func(fi os.FileInfo) uint64 {
@@ -140,10 +139,7 @@ func TestRemoveAllStopsAtAMountPoint(t *testing.T) {
 	if err := RemoveAll(root); err == nil {
 		t.Fatal("RemoveAll went through a mount point")
 	}
-	if fi, err := os.Stat(mounted); err != nil || fi.Mode().Perm() != 0o555 {
-		t.Fatalf("the mount point was changed: %v %v", fi, err)
-	}
-	if _, err := os.Stat(filepath.Join(mounted, "ro2", "data.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(mounted, "data.txt")); err != nil {
 		t.Fatalf("what lives behind the mount was removed: %v", err)
 	}
 }

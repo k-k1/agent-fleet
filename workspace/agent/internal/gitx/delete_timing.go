@@ -3,7 +3,6 @@ package gitx
 import (
 	"fmt"
 	"log"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -112,20 +111,22 @@ func pruneWorktrees(parent string) {
 }
 
 // worktreeLocked reports whether git lists the worktree at dir as locked. When it cannot be
-// read, the answer is true: the caller then leaves the removal to git's own refusal.
+// read, the answer is true: the caller then leaves the removal to git's own refusal. The list is
+// read with -z, so a path with a non-ASCII or special character arrives raw instead of in git's
+// quoted form, which would never match dir.
 func worktreeLocked(parent, dir string) bool {
-	out, err := Combined(parent, "worktree", "list", "--porcelain")
+	out, err := Cmd(parent, "worktree", "list", "--porcelain", "-z").Output()
 	if err != nil {
 		return true
 	}
-	want := filepath.Clean(dir)
+	want := markKey(dir)
 	inEntry := false
-	for _, line := range strings.Split(out, "\n") {
+	for _, field := range strings.Split(string(out), "\x00") {
 		switch {
-		case strings.HasPrefix(line, "worktree "):
-			p := strings.TrimPrefix(line, "worktree ")
-			inEntry = p == want || markKey(p) == markKey(want)
-		case inEntry && (line == "locked" || strings.HasPrefix(line, "locked ")):
+		case strings.HasPrefix(field, "worktree "):
+			p := strings.TrimPrefix(field, "worktree ")
+			inEntry = p == dir || markKey(p) == want
+		case inEntry && (field == "locked" || strings.HasPrefix(field, "locked ")):
 			return true
 		}
 	}
