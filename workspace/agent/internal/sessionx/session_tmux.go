@@ -255,10 +255,10 @@ func LiveSessionsInDir(dir string) []string {
 var managedAlive = ManagedAlive
 
 // sessionsInDir is the core of LiveSessionsInDir (tmux kept out so it is testable): from metas +
-// the liveness test, the display names of running, non-archived sessions living in dir, by the
-// rule a delete decides its sessions by (gitx.SessionLivesIn).
+// the liveness test, the display names of running, non-archived sessions that may run in dir, by
+// the rule a delete's guards refuse on (gitx.SessionMayRunIn).
 func sessionsInDir(metas []session.Meta, alive func(session.Meta) bool, dir string) []string {
-	in := gitx.LivesIn(dir)
+	in := gitx.MayRunIn(dir)
 	var names []string
 	for _, m := range metas {
 		if m.Archived || !alive(m) {
@@ -276,7 +276,7 @@ func sessionsInDir(metas []session.Meta, alive func(session.Meta) bool, dir stri
 // and archived ones included) was created or stopped; zero when there is none. A running
 // session is judged by LiveSessionsInDir, not by this.
 func LastActivityInDir(metas []session.Meta, dir string) time.Time {
-	in := gitx.LivesIn(dir)
+	in := gitx.MayRunIn(dir)
 	var newest time.Time
 	for _, m := range metas {
 		if !in(m) {
@@ -292,12 +292,12 @@ func LastActivityInDir(metas []session.Meta, dir string) time.Time {
 }
 
 // LockedSessionsInDir returns the display names of DELETE-LOCKED sessions (docs/log/45)
-// living in dir (gitx.SessionLivesIn) — running or not, archived included. Removing
+// that may run in dir (gitx.SessionMayRunIn) — running or not, archived included. Removing
 // the working copy would strand them (their dir vanishes, resume is gone), which is
 // exactly what the lock exists to prevent, so a working-copy delete refuses while any
 // of these live there (gitx.DirSessions.Locked); the cleanup list counts them here.
 func LockedSessionsInDir(metas []session.Meta, dir string) []string {
-	in := gitx.LivesIn(dir)
+	in := gitx.MayRunIn(dir)
 	var names []string
 	for _, m := range metas {
 		if !m.Locked {

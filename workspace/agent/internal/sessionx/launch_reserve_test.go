@@ -514,8 +514,9 @@ func TestStartJudgesTheMetaItReadFirst(t *testing.T) {
 }
 
 // A link before `..` takes the kernel out of the folder a lexical clean would name: the session
-// below runs in other/app, so a delete of repos/app neither counts it among its sessions nor
-// refuses its start.
+// below runs in other/app. A delete of repos/app does not settle it, but records it in its mark
+// (the guards count the lexical clean too, for a session started before the link was re-pointed),
+// and the mark's name list does not refuse its start.
 func TestStartIsNotRefusedByTheMarksNameList(t *testing.T) {
 	home := writebackEnv(t)
 	repos, other := filepath.Join(home, "repos"), filepath.Join(home, "other")
@@ -537,8 +538,11 @@ func TestStartIsNotRefusedByTheMarksNameList(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if names := sessions.Names(); len(names) != 0 {
-		t.Fatalf("the mark's name list = %v, want none", names)
+	if names := sessions.Names(); len(names) != 1 {
+		t.Fatalf("the mark's name list = %v; the test needs it to hold the session", names)
+	}
+	if settle := sessions.ToSettle(); len(settle) != 0 {
+		t.Fatalf("a session that runs elsewhere would be settled: %+v", settle)
 	}
 	end, ok, why := gitx.BeginDelete(app, "", sessions.Names()...)
 	if !ok {

@@ -40,5 +40,23 @@ export function sessionInSpace(s: Session, folder: string, dir: string): boolean
   if (stored || (!!folder && s.space === folder)) return true;
   if (!dir || !s.dir) return false;
   const under = (p: string) => p === dir || p.startsWith(dir + "/");
-  return under(s.dir) || (!!s.subdir && under(`${s.dir.replace(/\/+$/, "")}/${s.subdir}`));
+  return under(s.dir) || (!!s.subdir && under(cleanPath(`${s.dir}/${s.subdir}`)));
+}
+
+/** A POSIX path cleaned the way Go's filepath.Clean (and so filepath.Join) does it, lexically:
+ *  `.` and empty elements dropped, `..` taking the element before it. */
+export function cleanPath(p: string): string {
+  const abs = p.startsWith("/");
+  const out: string[] = [];
+  for (const part of p.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (out.length > 0 && out[out.length - 1] !== "..") out.pop();
+      else if (!abs) out.push("..");
+      continue;
+    }
+    out.push(part);
+  }
+  const joined = out.join("/");
+  return abs ? "/" + joined : joined || ".";
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { busySpaces, runningInSpace, sessionInSpace } from "./running.ts";
+import { busySpaces, cleanPath, runningInSpace, sessionInSpace } from "./running.ts";
 import type { Session } from "../../types/session.ts";
 
 const ses = (name: string, kind: string, space: string | undefined, alive: boolean): Session => ({ name, kind, space, alive }) as Session;
@@ -46,6 +46,9 @@ describe("sessionInSpace", () => {
     expect(sessionInSpace({ name: "h", dir: "/home/dev", subdir: "spaces/c/notes" } as Session, "c", dir)).toBe(true);
     expect(sessionInSpace({ name: "s", dir: "/home/dev/", subdir: "spaces/c" } as Session, "c", dir)).toBe(true);
     expect(sessionInSpace({ name: "n", dir: "/home/dev", subdir: "spaces/cx" } as Session, "c", dir)).toBe(false);
+    // joined and cleaned the way the Agent's filepath.Join does
+    expect(sessionInSpace({ name: "d", dir: "/home/dev/.", subdir: "spaces/c/sub" } as Session, "c", dir)).toBe(true);
+    expect(sessionInSpace({ name: "e", dir: "/home/dev/x/..", subdir: "spaces/c" } as Session, "c", dir)).toBe(true);
     // a repository named like the space is not in it
     expect(sessionInSpace({ name: "r", repo: "c", place: { kind: "repo", id: "c" }, dir: "/home/dev/repos/c" } as Session, "c", dir)).toBe(false);
   });
@@ -59,5 +62,15 @@ describe("sessionInSpace", () => {
     expect(sessionInSpace({ ...row, alive: true } as Session, "a", "/home/dev/spaces/a")).toBe(true);
     // a session started in a subdir keeps its stored place: its launch root is what it was judged on
     expect(sessionInSpace({ ...row, subdir: "src" } as Session, "a", "/home/dev/spaces/a")).toBe(true);
+  });
+});
+
+describe("cleanPath", () => {
+  it("cleans like Go's filepath.Clean", () => {
+    expect(cleanPath("/a/./b//c/")).toBe("/a/b/c");
+    expect(cleanPath("/a/b/../c")).toBe("/a/c");
+    expect(cleanPath("/../a")).toBe("/a");
+    expect(cleanPath("/")).toBe("/");
+    expect(cleanPath("a/../..")).toBe("..");
   });
 });

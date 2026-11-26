@@ -26,10 +26,11 @@ func mkdirs(t *testing.T, dirs ...string) {
 // One rule decides which sessions live in a folder, for every step of a delete: by Meta.Dir and by
 // the folder the stored Subdir names, each by its spelling and by where the kernel takes it.
 func TestSessionLivesIn(t *testing.T) {
+	yes := true
 	home := t.TempDir()
 	space := filepath.Join(home, "spaces", "notes")
 	other := filepath.Join(home, "other")
-	mkdirs(t, filepath.Join(space, "sub", "deep"), filepath.Join(other, "nested"), filepath.Join(home, "spaces", "notesx"))
+	mkdirs(t, filepath.Join(space, "sub", "deep"), filepath.Join(other, "nested"), filepath.Join(other, "spaces", "notes"), filepath.Join(home, "spaces", "notesx"))
 	link := filepath.Join(home, "alias")
 	if err := os.Symlink(space, link); err != nil {
 		t.Fatal(err)
@@ -46,28 +47,41 @@ func TestSessionLivesIn(t *testing.T) {
 		name string
 		m    session.Meta
 		want bool
+		// guard is SessionMayRunIn when it differs from want.
+		guard *bool
 	}{
-		{"the folder itself", session.Meta{Dir: space}, true},
-		{"below it", session.Meta{Dir: filepath.Join(space, "sub")}, true},
-		{"trailing slash", session.Meta{Dir: space + "/"}, true},
-		{"a sibling sharing the prefix", session.Meta{Dir: filepath.Join(home, "spaces", "notesx")}, false},
-		{"through a link to it", session.Meta{Dir: link}, true},
-		{"through a link below it", session.Meta{Dir: filepath.Join(inner, "deep")}, true},
-		{"home with the subdir in it", session.Meta{Dir: home, Subdir: "spaces/notes/sub"}, true},
-		{"home with the subdir elsewhere", session.Meta{Dir: home, Subdir: "other"}, false},
-		{"home alone", session.Meta{Dir: home}, false},
+		{"the folder itself", session.Meta{Dir: space}, true, nil},
+		{"below it", session.Meta{Dir: filepath.Join(space, "sub")}, true, nil},
+		{"trailing slash", session.Meta{Dir: space + "/"}, true, nil},
+		{"a sibling sharing the prefix", session.Meta{Dir: filepath.Join(home, "spaces", "notesx")}, false, nil},
+		{"through a link to it", session.Meta{Dir: link}, true, nil},
+		{"through a link below it", session.Meta{Dir: filepath.Join(inner, "deep")}, true, nil},
+		{"home with the subdir in it", session.Meta{Dir: home, Subdir: "spaces/notes/sub"}, true, nil},
+		{"home with the subdir elsewhere", session.Meta{Dir: home, Subdir: "other"}, false, nil},
+		{"home alone", session.Meta{Dir: home}, false, nil},
 		// A link before `..`: the kernel enters other/, which a lexical clean would not say.
-		{"a link then .. out", session.Meta{Dir: jump + "/../nested"}, false},
+		{"a link then .. out", session.Meta{Dir: jump + "/../nested"}, false, nil},
+		// The lexical clean names the folder, the kernel goes elsewhere: a session started before
+		// the link was re-pointed may still run in the folder, so the guards count it, a settle
+		// does not.
+		{"a link then .. back by spelling", session.Meta{Dir: jump + "/../spaces/notes"}, false, &yes},
 		// Spelled through the folder: once it is gone the path no longer resolves.
-		{"spelled through it", session.Meta{Dir: space + "/../notesx"}, true},
-		{"no dir", session.Meta{}, false},
+		{"spelled through it", session.Meta{Dir: space + "/../notesx"}, true, nil},
+		{"no dir", session.Meta{}, false, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			if got := SessionLivesIn(c.m, space); got != c.want {
 				t.Fatalf("SessionLivesIn(%+v) = %v, want %v", c.m, got, c.want)
 			}
-			if got := LivesIn(space)(c.m); got != c.want {
-				t.Fatalf("LivesIn = %v, want %v", got, c.want)
+			guard := c.want
+			if c.guard != nil {
+				guard = *c.guard
+			}
+			if got := SessionMayRunIn(c.m, space); got != guard {
+				t.Fatalf("SessionMayRunIn = %v, want %v", got, guard)
+			}
+			if got := MayRunIn(space)(c.m); got != guard {
+				t.Fatalf("MayRunIn = %v, want %v", got, guard)
 			}
 		})
 	}
@@ -138,26 +152,39 @@ func TestReadDirSessions(t *testing.T) {
 	}
 }
 
-// The shells a working-copy delete settles are read once, before its slower steps; one deleted on
-// its own in between is not a failure (nothing is left listed), while one that is still listed and
-// could not be trashed stops the delete.
-func TestTrashShellSessionsSkipsOneDeletedSince(t *testing.T) {
+// The shells a delete settles are read once, before its slower steps, and each is read again
+// before it goes to the trash: one deleted on its own in between is not a failure (nothing is left
+// listed), one whose link was re-pointed out of the folder is left alone, and one still listed in
+// the folder that could not be trashed stops the delete.
+func TestTrashShellsBeforeRemovalReadsEachAgain(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+	dir := filepath.Join(home, "app")
+	elsewhere := filepath.Join(home, "elsewhere")
+	mkdirs(t, dir, elsewhere)
+	var trashed []string
 	old := deps.TrashSession
 	t.Cleanup(func() { deps.TrashSession = old })
-	deps.TrashSession = func(m session.Meta) error { return errors.New("no such session: " + m.Name) }
-
-	gone := session.Meta{Name: "shgone1", Dir: home, Kind: session.KindShell}
-	w := httptest.NewRecorder()
-	if !trashShellSessionsUnder(w, []session.Meta{gone}) {
-		t.Fatalf("a shell deleted since stopped the delete: %d %s", w.Code, w.Body)
+	deps.TrashSession = func(m session.Meta) error {
+		trashed = append(trashed, m.Name)
+		return errors.New("disk full")
 	}
 
-	kept := session.Meta{Name: "shkept1", Dir: home, Kind: session.KindShell}
+	gone := session.Meta{Name: "shgone1", Dir: dir, Kind: session.KindShell}
+	moved := session.Meta{Name: "shmove1", Dir: dir, Kind: session.KindShell}
+	session.WriteMeta(session.Meta{Name: "shmove1", Dir: elsewhere, Kind: session.KindShell})
+	w := httptest.NewRecorder()
+	if !trashShellSessionsUnder(w, dir, []session.Meta{gone, moved}) {
+		t.Fatalf("a shell deleted or moved since stopped the delete: %d %s", w.Code, w.Body)
+	}
+	if len(trashed) != 0 {
+		t.Fatalf("trashed %v, want none", trashed)
+	}
+
+	kept := session.Meta{Name: "shkept1", Dir: dir, Kind: session.KindShell}
 	session.WriteMeta(kept)
 	w = httptest.NewRecorder()
-	if trashShellSessionsUnder(w, []session.Meta{kept}) || w.Code != http.StatusInternalServerError {
-		t.Fatalf("a shell still listed that could not be trashed: ok, %d", w.Code)
+	if trashShellSessionsUnder(w, dir, []session.Meta{kept}) || w.Code != http.StatusInternalServerError {
+		t.Fatalf("a shell still in the folder that could not be trashed: ok, %d", w.Code)
 	}
 }

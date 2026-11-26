@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -76,8 +75,9 @@ func restoreDeletedWorktree(t gitx.WorktreeTombstone) error {
 		return err
 	}
 	for _, name := range t.Shelved {
-		// At or under the folder: the delete shelves sessions started in a subfolder too.
-		if m, ok := session.ReadMeta(name); ok && m.Archived && underDir(filepath.Clean(m.Dir), dir) {
+		// Still living in the folder (gitx.SessionLivesIn, the rule the delete shelved it by): one
+		// moved elsewhere since stays on the shelf.
+		if m, ok := session.ReadMeta(name); ok && m.Archived && gitx.SessionLivesIn(m, dir) {
 			sessionx.RestoreSession(name)
 		}
 	}
@@ -115,8 +115,4 @@ func recreateFromTombstone(dir string, t gitx.WorktreeTombstone) error {
 		return &restoreConflict{errCodeRecreateFailed, "the working copy is back but its creator record could not be written: " + err.Error()}
 	}
 	return nil
-}
-
-func underDir(p, dir string) bool {
-	return p == dir || strings.HasPrefix(p, dir+string(os.PathSeparator))
 }
