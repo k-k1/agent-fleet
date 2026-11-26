@@ -24,6 +24,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/netip"
 	"net/url"
@@ -63,6 +64,7 @@ const (
 	codeMCPOAuthClient    = "mcp_oauth_client_invalid"
 	codeMCPOAuthReenter   = "mcp_oauth_secret_reenter"
 	codeMCPHeaderReenter  = "mcp_header_secret_reenter"
+	codeMCPOAuthScopes    = "mcp_oauth_scopes_invalid"
 )
 
 // mcpAuthOAuth marks a definition each member signs in to with OAuth (ADR 0119 decision 9). It
@@ -149,9 +151,11 @@ type mcpServerBody struct {
 	// OAuthClient is the client the tenant registered at the server's authorization server. Its
 	// secret is write-only: it comes back as MaskedValue, which sent back keeps it.
 	OAuthClient *mcpOAuthClientBody `json:"oauth_client,omitempty"`
-	CreatedBy   string              `json:"created_by,omitempty"`
-	CreatedAt   string              `json:"created_at,omitempty"`
-	UpdatedAt   string              `json:"updated_at,omitempty"`
+	// Scopes replaces what an OAuth server's sign-in would otherwise request (ADR 0146 decision 2).
+	Scopes    []string `json:"scopes,omitempty"`
+	CreatedBy string   `json:"created_by,omitempty"`
+	CreatedAt string   `json:"created_at,omitempty"`
+	UpdatedAt string   `json:"updated_at,omitempty"`
 }
 
 type mcpOAuthClientBody struct {
@@ -184,6 +188,10 @@ type distDef struct {
 	Auth       string            `json:"auth,omitempty"`
 	// OAuthClient carries no secret: with one, the Agent sends its token requests here.
 	OAuthClient *distOAuthClient `json:"oauthClient,omitempty"`
+	// Scopes is the agent's ServerDef.Scopes. The Agent drops a definition whose scopes it refuses,
+	// and a dropped OAuth definition ends its sign-in on the next fetch, so only a list that passed
+	// validDefScopes is ever stored to be sent here.
+	Scopes []string `json:"scopes,omitempty"`
 }
 
 // distOAuthClient is the agent's secrets.MCPTenantClient.
@@ -293,6 +301,10 @@ func validateMCPBody(b mcpServerBody) *APIError {
 	if b.Auth != mcpAuthOAuth && b.OAuthClient != nil {
 		return &APIError{http.StatusBadRequest, codeMCPOAuthClient, "a pre-registered client belongs to an OAuth server"}
 	}
+	if len(b.Scopes) > 0 && (b.Auth != mcpAuthOAuth || !validDefScopes(b.Scopes)) {
+		return &APIError{http.StatusBadRequest, codeMCPOAuthScopes, fmt.Sprintf(
+			"scopes belong to an OAuth server and must be scope tokens without commas, %d bytes at most together with offline_access", maxScopeLen)}
+	}
 	for k, v := range b.Headers {
 		if strings.TrimSpace(k) == "" || strings.ContainsAny(k, "\r\n:") {
 			return &APIError{http.StatusBadRequest, codeMCPHeaderName, "invalid header name: " + k}
@@ -332,6 +344,42 @@ func validOAuthClient(c mcpOAuthClientBody) bool {
 	}
 	return true
 }
+
+// maxScopeLen is the Agent's bound on the scope parameter of an authorization request.
+const maxScopeLen = 1024
+
+// validDefScopes mirrors the Agent's rule of the same name (mcpreg/def.go): each entry one RFC 6749
+// scope token (NQCHAR, no space) without a comma, and the joined list within maxScopeLen once
+// offline_access is appended. The two are held equal by cases shared with the Agent
+// (TestValidDefScopesMatchesTheAgent).
+//
+// The rule must not drift looser here: the Agent drops a definition it refuses, which ends every
+// member's sign-in to it on the next fetch.
+func validDefScopes(scopes []string) bool {
+	hasOffline := false
+	for _, s := range scopes {
+		if s == "" || strings.ContainsRune(s, ',') {
+			return false
+		}
+		for i := 0; i < len(s); i++ {
+			if c := s[i]; c < 0x21 || c == 0x22 || c == 0x5c || c > 0x7e {
+				return false
+			}
+		}
+		hasOffline = hasOffline || s == "offline_access"
+	}
+	n := len(strings.Join(scopes, " "))
+	if !hasOffline {
+		n += len(" offline_access")
+	}
+	return n <= maxScopeLen
+}
+
+// joinScopes / splitScopes convert between the wire list and the column, which holds the tokens
+// space-separated; a valid token contains no space.
+func joinScopes(s []string) string { return strings.Join(s, " ") }
+
+func splitScopes(s string) []string { return strings.Fields(s) }
 
 // validateMCPURL keeps a distributed definition to an absolute http(s) URL with no
 // embedded credentials — those would land in every member's materialized config file in
@@ -548,7 +596,7 @@ func rowToBody(row store.MCPServerRow, headers map[string]string) mcpServerBody 
 		Headers: headers, Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
 		TimeoutMS: row.TimeoutMS, Enabled: row.Enabled, UserSecret: row.UserSecret, Auth: row.Auth,
 		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
-		OAuthClient: maskedOAuthClient(row),
+		OAuthClient: maskedOAuthClient(row), Scopes: splitScopes(row.OAuthScopes),
 	}
 }
 
@@ -698,7 +746,8 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 		ID: id, TenantID: t.ID, Name: name, Label: strings.TrimSpace(b.Label),
 		Transport: "http", URL: strings.TrimSpace(b.URL), HeadersEnc: enc, KeyRef: keyRef,
 		Targets: joinTargets(b.Targets), Kinds: strings.Join(b.Kinds, ","), TimeoutMS: b.TimeoutMS,
-		Enabled: b.Enabled, UserSecret: b.UserSecret, Auth: b.Auth, UpdatedAt: store.NowTS(),
+		Enabled: b.Enabled, UserSecret: b.UserSecret, Auth: b.Auth, OAuthScopes: joinScopes(b.Scopes),
+		UpdatedAt: store.NowTS(),
 	}
 	if aerr := a.resolveOAuthClient(r.Context(), t.ID, b, stored, &row); aerr != nil {
 		writeAPIErr(w, aerr)
@@ -725,7 +774,7 @@ func (a ServerAPI) AdminUpsert(w http.ResponseWriter, r *http.Request) {
 	}
 	a.auditMCP(r.Context(), ident, t.ID, "mcp.upsert", row.Name,
 		"url="+row.URL+changed+" targets="+row.Targets+" enabled="+boolStr(row.Enabled)+" user_secret="+boolStr(row.UserSecret)+" auth="+row.Auth+
-			" oauth_client="+row.OAuthClientID+" confidential="+boolStr(row.OAuthSecretEnc != ""))
+			" oauth_client="+row.OAuthClientID+" confidential="+boolStr(row.OAuthSecretEnc != "")+" scopes="+strings.ReplaceAll(row.OAuthScopes, " ", ","))
 	writeJSON(w, http.StatusOK, rowToBody(row, maskHeaders(headers)))
 }
 
@@ -778,6 +827,14 @@ func distClientOf(row store.MCPServerRow) *distOAuthClient {
 	return &distOAuthClient{Issuer: row.OAuthIssuer, ClientID: row.OAuthClientID, Confidential: row.OAuthSecretEnc != ""}
 }
 
+// distScopesOf is an oauth row's scope list; the API never stores scopes on another row.
+func distScopesOf(row store.MCPServerRow) []string {
+	if row.Auth != mcpAuthOAuth {
+		return nil
+	}
+	return splitScopes(row.OAuthScopes)
+}
+
 // Distribute (GET /internal/mcp-servers) serves the caller's tenant's ENABLED
 // definitions to their Workspace agent, which caches them (docs/log/48 §6). The tenant comes
 // from the token's membership, never the request, so this can never read another
@@ -812,7 +869,7 @@ func (a ServerAPI) Distribute(w http.ResponseWriter, r *http.Request, mv store.M
 			Transport: "http", URL: row.URL, Headers: h, Enabled: true,
 			Targets: splitTargets(row.Targets), Kinds: splitKinds(row.Kinds),
 			TimeoutMS: row.TimeoutMS, UserSecret: row.UserSecret, Auth: row.Auth,
-			OAuthClient: distClientOf(row),
+			OAuthClient: distClientOf(row), Scopes: distScopesOf(row),
 		})
 	}
 	// The tenant switch for member-added watch sources rides on the same poll. A read that fails

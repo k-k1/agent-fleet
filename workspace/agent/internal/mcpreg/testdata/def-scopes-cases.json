@@ -1,0 +1,23 @@
+{
+  "_comment": "Definition scope lists and whether validDefScopes accepts them. Read by the Agent (TestValidDefScopesSharedCases) and by the Control Plane (control-plane/internal/mcpsrv, TestValidDefScopesMatchesTheAgent), which must agree: the Agent drops a distributed definition whose scopes it refuses. tokenOf appends one scope of that many 'a' bytes.",
+  "cases": [
+    {"name": "one google scope", "scopes": ["https://www.googleapis.com/auth/gmail.readonly"], "valid": true},
+    {"name": "several", "scopes": ["https://www.googleapis.com/auth/drive.readonly", "https://www.googleapis.com/auth/calendar.events.readonly", "openid"], "valid": true},
+    {"name": "every visible ascii but quote and backslash", "scopes": ["!#$%&'()*+-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[]^_`abcdefghijklmnopqrstuvwxyz{|}~"], "valid": true},
+    {"name": "empty entry", "scopes": ["a", ""], "valid": false},
+    {"name": "two in one", "scopes": ["a b"], "valid": false},
+    {"name": "leading space", "scopes": [" a"], "valid": false},
+    {"name": "trailing tab", "scopes": ["a\t"], "valid": false},
+    {"name": "newline", "scopes": ["a\nb"], "valid": false},
+    {"name": "comma", "scopes": ["read,archive"], "valid": false},
+    {"name": "quote", "scopes": ["a\"b"], "valid": false},
+    {"name": "backslash", "scopes": ["a\\b"], "valid": false},
+    {"name": "delete", "scopes": ["a\u007fb"], "valid": false},
+    {"name": "non-ascii", "scopes": ["scöpe"], "valid": false},
+    {"name": "non-breaking space", "scopes": ["a b"], "valid": false},
+    {"name": "fits with offline_access appended", "scopes": [], "tokenOf": 1009, "valid": true},
+    {"name": "one byte over with offline_access appended", "scopes": [], "tokenOf": 1010, "valid": false},
+    {"name": "offline_access listed, at the limit", "scopes": ["offline_access"], "tokenOf": 1009, "valid": true},
+    {"name": "offline_access listed, one byte over", "scopes": ["offline_access"], "tokenOf": 1010, "valid": false}
+  ]
+}

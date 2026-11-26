@@ -116,6 +116,11 @@ export const admin = {
   "admin.mcp_oauth_secret_hint":
     "confidential クライアントのときだけ入力します。シークレットは暗号化して保存され、Agent Fleet のコントロールプレーンの外には出ません。トークンの要求はコントロールプレーンが行うので、コントロールプレーンから認可サーバーに到達できる必要があります。public クライアントなら空のままにしてください。",
   "admin.mcp_oauth_secret_drop": "保存したシークレットを削除する",
+  "admin.mcp_oauth_scopes": "スコープ",
+  "admin.mcp_oauth_scopes_hint":
+    "任意。各メンバーのサインインが要求するスコープを、空白か改行で区切って入力します。空のままだとサーバーが求めるものを要求します。ツール一覧を公開しているサーバーでは、対応するすべてのスコープになることがあります。",
+  "admin.mcp_oauth_scopes_bad":
+    "スコープには引用符・バックスラッシュ・カンマを含めないでください。offline_access を足しても合計 1024 バイトに収まる長さにしてください。",
   "admin.mcp_headers_host_moved": "URL が別のホストを指しているため、保存済みのヘッダー値を消しました。新しいホスト向けの値を入力し直してください。",
   "admin.mcp_oauth_secret_reenter": "issuer かクライアント ID を変えたので、保存したシークレットは使えません。シークレットを入力し直すか、削除して public クライアントにしてください。",
   "admin.mcp_oauth_note":

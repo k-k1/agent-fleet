@@ -119,6 +119,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mcp_oauth_secret_hint":
     "Only for a confidential client. The secret is stored encrypted and never leaves Agent Fleet's control plane, which then runs the token requests, so the control plane must be able to reach the authorization server. Leave it empty for a public client.",
   "admin.mcp_oauth_secret_drop": "Remove the stored secret",
+  "admin.mcp_oauth_scopes": "Scopes",
+  "admin.mcp_oauth_scopes_hint":
+    "Optional. The scopes each member's sign-in requests, separated by spaces or new lines. Leave it empty to request what the server asks for, which for a server whose tool list is public can be every scope it supports.",
+  "admin.mcp_oauth_scopes_bad":
+    "Enter each scope without quotes, backslashes or commas. Together they must fit in 1024 bytes with offline_access added.",
   "admin.mcp_headers_host_moved": "The URL points at a different host, so the stored header values were cleared. Enter them again for the new host.",
   "admin.mcp_oauth_secret_reenter": "The issuer or client ID changed, so the stored secret no longer applies. Enter the secret again, or remove it to make this a public client.",
   "admin.mcp_oauth_note":
