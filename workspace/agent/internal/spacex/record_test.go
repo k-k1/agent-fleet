@@ -475,6 +475,10 @@ func TestRenameDuringSyncKeepsTheNewName(t *testing.T) {
 	renamed := make(chan error, 1)
 	afterSyncRead = func() {
 		afterSyncRead = nil
+		if renameMu.TryLock() {
+			renameMu.Unlock()
+			t.Error("syncRecord does not hold renameMu between its read and its write")
+		}
 		go func() { _, err := Rename(sp.Folder, "Final"); renamed <- err }()
 		time.Sleep(100 * time.Millisecond) // long enough for an unserialised rename to finish
 	}
@@ -496,11 +500,8 @@ func TestAnotherBirthTimeIsAnotherDirectory(t *testing.T) {
 	withHome(t)
 	sp, _ := Create("Draft")
 	e, _ := recorded(sp.Folder)
-	if e.Ino == 0 {
-		t.Fatal("the entry has no inode")
-	}
-	if e.Born == 0 {
-		t.Skip("this file system keeps no birth time")
+	if e.Ino == 0 || e.Born == 0 {
+		t.Skip("this file system keeps no birth time, so no identity is recorded")
 	}
 	_ = updateRecord(func(m map[string]recordEntry) bool {
 		x := m[sp.Folder]
@@ -535,5 +536,80 @@ func TestRepairStaysWithinTheMarkerBound(t *testing.T) {
 	}
 	if fi, err := os.Stat(filepath.Join(dir, MarkerFile)); err != nil || fi.Size() > markerMaxBytes {
 		t.Fatalf("restored marker: %v %v", fi, err)
+	}
+}
+
+// A folder swapped for another by a shell while a list syncs the record does not tie the space's
+// name to the other folder: the identity recorded is the one the marker was read from.
+func TestSyncDoesNotRecordAFolderSwappedMeanwhile(t *testing.T) {
+	home := withHome(t)
+	sp, _ := Create("Draft")
+	if e, _ := recorded(sp.Folder); e.Born == 0 {
+		t.Skip("this file system keeps no birth time, so no identity is recorded")
+	}
+	afterSyncRead = func() {
+		afterSyncRead = nil
+		_ = os.Rename(sp.Dir, filepath.Join(home, "moved"))
+		_ = os.Mkdir(sp.Dir, 0o755)
+	}
+	t.Cleanup(func() { afterSyncRead = nil })
+	if _, err := List(); err != nil {
+		t.Fatal(err)
+	}
+	if FolderOf(sp.Dir) != "" || Protected(sp.Dir) {
+		t.Fatal("the folder swapped in during the sync was taken for the space")
+	}
+	if _, err := os.Lstat(filepath.Join(sp.Dir, MarkerFile)); err == nil {
+		t.Fatal("the space's marker was written into the swapped-in folder")
+	}
+}
+
+// An entry without a birth time (a file system that keeps none) matches no directory, so an inode
+// reused for a folder made later can never be taken for the space.
+func TestEntryWithoutABirthTimeMatchesNothing(t *testing.T) {
+	withHome(t)
+	sp, _ := Create("Draft")
+	_ = updateRecord(func(m map[string]recordEntry) bool {
+		x := m[sp.Folder]
+		x.Born = 0
+		m[sp.Folder] = x
+		return true
+	})
+	_ = os.Remove(filepath.Join(sp.Dir, MarkerFile))
+	if FolderOf(sp.Dir) != "" || Protected(sp.Dir) {
+		t.Fatal("an entry with no birth time matched by inode alone")
+	}
+	// A rename whose identity could not be had keeps the recorded one rather than zeroing it.
+	remember(sp.Folder, entryWith(dirID{}, "Other", ""))
+	if e, _ := recorded(sp.Folder); e.Name != "Other" || e.Ino == 0 {
+		t.Fatalf("entry = %+v: an update without an identity dropped the recorded inode", e)
+	}
+}
+
+// An old marker whose name Lookup drops (too long), and whose JSON grows past the bound when
+// encoded again, is still restored: the record keeps the name Lookup showed (none).
+func TestRepairOfANameLookupDrops(t *testing.T) {
+	withHome(t)
+	dir := filepath.Join(Root(), "old-abcdef")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	old := `{"name":"` + strings.Repeat("<", 1000) + `"}`
+	if err := os.WriteFile(filepath.Join(dir, MarkerFile), []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if list, _ := List(); len(list) != 1 || list[0].Name != "" {
+		t.Fatalf("List() = %+v", list)
+	}
+	e, ok := recorded("old-abcdef")
+	if !ok {
+		t.Skip("this file system keeps no birth time, so the list records no identity")
+	}
+	if e.Name != "" {
+		t.Fatalf("recorded name = %q, want none (Lookup drops it)", e.Name)
+	}
+	_ = os.Remove(filepath.Join(dir, MarkerFile))
+	if FolderOf(dir) != "old-abcdef" {
+		t.Fatal("the space whose name Lookup drops was not restored")
 	}
 }

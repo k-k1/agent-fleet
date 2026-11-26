@@ -195,35 +195,49 @@ func updateRecord(change func(map[string]recordEntry) bool) error {
 	return writeRecordLocked(rec)
 }
 
-// dirIdentity answers the inode and birth time (0 when the file system keeps none) of the entry at
-// path, without following a link at its end.
-func dirIdentity(path string) (ino uint64, born int64, ok bool) {
+// dirID is a directory's identity: its inode and birth time. The inode alone is not one: a folder
+// made after the space was removed may get the same inode back.
+type dirID struct {
+	ino  uint64
+	born int64
+}
+
+// idOf answers the identity of the entry at path, without following a link at its end, and false
+// when there is none to be had: no statx, or a file system that keeps no birth time. Without one
+// no directory is ever taken for a recorded space, so such a file system gets no repair and no
+// protection for a space whose marker is gone, which is what it had before the record.
+func idOf(path string) (dirID, bool) {
 	var st unix.Statx_t
 	if err := unix.Statx(unix.AT_FDCWD, path, unix.AT_SYMLINK_NOFOLLOW, unix.STATX_INO|unix.STATX_BTIME, &st); err != nil {
-		return 0, 0, false
+		return dirID{}, false
 	}
-	if st.Mask&unix.STATX_BTIME != 0 {
-		born = st.Btime.Sec*1e9 + int64(st.Btime.Nsec)
+	if st.Mask&unix.STATX_BTIME == 0 || st.Mask&unix.STATX_INO == 0 {
+		return dirID{}, false
 	}
-	return st.Ino, born, true
+	born := st.Btime.Sec*1e9 + int64(st.Btime.Nsec)
+	if born == 0 || st.Ino == 0 {
+		return dirID{}, false
+	}
+	return dirID{ino: st.Ino, born: born}, true
 }
 
-// entryFor is the record entry of the directory at dir, under the given marker fields. Without an
-// identity the entry matches no directory: it is kept for the name until List corrects it.
-func entryFor(dir, name, createdAt string) recordEntry {
-	e := recordEntry{Name: name, CreatedAt: createdAt}
-	e.Ino, e.Born, _ = dirIdentity(dir)
-	return e
+// entryWith is the record entry for a directory of identity id (the zero dirID when it could not
+// be had: remember then keeps the identity already recorded), under the marker's fields. The name
+// is cleaned the way Lookup cleans it, so a repair writes back the name a reader showed, and one
+// Lookup would drop is recorded as none.
+func entryWith(id dirID, name, createdAt string) recordEntry {
+	if n, ok := CleanName(name); ok {
+		name = n
+	} else {
+		name = ""
+	}
+	return recordEntry{Name: name, CreatedAt: createdAt, Ino: id.ino, Born: id.born}
 }
 
-// sameDir reports whether the directory at dir is the one e was recorded for. A birth time is
-// compared only when both sides have one.
+// sameDir reports whether the directory at dir is the one e was recorded for.
 func sameDir(e recordEntry, dir string) bool {
-	ino, born, ok := dirIdentity(dir)
-	if !ok || e.Ino == 0 || ino != e.Ino {
-		return false
-	}
-	return e.Born == 0 || born == 0 || born == e.Born
+	id, ok := idOf(dir)
+	return ok && e.Ino != 0 && e.Born != 0 && id == dirID{ino: e.Ino, born: e.Born}
 }
 
 // inoOf answers fi's inode, 0 when it has none.
@@ -235,10 +249,15 @@ func inoOf(fi os.FileInfo) uint64 {
 }
 
 // remember records the space in folder. A failure is not the caller's: the marker is written
-// already, and the next List records the space again (syncRecord).
+// already, and the next List records the space again (syncRecord). An entry without an identity
+// keeps the one already recorded, so a passing statx failure does not unprotect a space.
 func remember(folder string, e recordEntry) {
 	_ = updateRecord(func(m map[string]recordEntry) bool {
-		if old, ok := m[folder]; ok && old == e {
+		old, ok := m[folder]
+		if ok && e.Ino == 0 {
+			e.Ino, e.Born = old.Ino, old.Born
+		}
+		if ok && old == e {
 			return false
 		}
 		m[folder] = e
@@ -283,19 +302,25 @@ func syncRecord(spaces []Space) {
 	lifeMu.RLock()
 	defer lifeMu.RUnlock()
 	type seen struct {
-		dir    string
+		id     dirID
 		m      marker
 		parsed bool
 	}
 	now := map[string]seen{}
 	for _, sp := range spaces {
 		dir := filepath.Join(Root(), sp.Folder)
-		fi, err := os.Lstat(dir)
-		if err != nil || !fi.IsDir() || !markerPresent(dir) {
+		// The identity is taken before and after the marker is read: a folder swapped for another
+		// meanwhile (renameMu and lifeMu do not stop a shell) would otherwise tie this marker's name
+		// to the other folder.
+		before, ok := idOf(dir)
+		if !ok || !markerPresent(dir) {
 			continue
 		}
 		m, parsed := readMarkerParsed(dir)
-		now[sp.Folder] = seen{dir: dir, m: m, parsed: parsed}
+		if after, ok := idOf(dir); !ok || after != before {
+			continue
+		}
+		now[sp.Folder] = seen{id: before, m: m, parsed: parsed}
 	}
 	if len(now) == 0 {
 		return
@@ -307,7 +332,7 @@ func syncRecord(spaces []Space) {
 		changed := false
 		for folder, s := range now {
 			old, had := rec[folder]
-			e := entryFor(s.dir, s.m.Name, s.m.CreatedAt)
+			e := entryWith(s.id, s.m.Name, s.m.CreatedAt)
 			if !s.parsed && had {
 				e.Name, e.CreatedAt = old.Name, old.CreatedAt
 			}
@@ -392,7 +417,11 @@ func repairMarker(folder string) bool {
 	if createdAt == "" {
 		createdAt = time.Now().UTC().Format(time.RFC3339)
 	}
-	b, ok := repairedMarkerBytes(e.Name, createdAt)
+	name, nameOK := CleanName(e.Name)
+	if !nameOK {
+		name = ""
+	}
+	b, ok := repairedMarkerBytes(name, createdAt)
 	if !ok {
 		return false
 	}
@@ -478,13 +507,16 @@ func isSpaceFolder(folder string) bool {
 
 // repairedMarkerBytes is the marker a repair writes, within the bound every reader applies
 // (markerMaxBytes): a marker past it would be published and then read as nameless for good. A
-// recorded name or creation time too long for the full form (copied from an old marker) drops the
-// note first, then the creation time; a name that does not fit even alone is not written.
+// creation time too long for the full form (copied from an old marker) drops the note first, then
+// the creation time. The name is a cleaned one (at most NameMaxRunes runes, which JSON escaping
+// keeps far below the bound), and an empty marker is the last resort, so a repair is never refused
+// for its size.
 func repairedMarkerBytes(name, createdAt string) ([]byte, bool) {
 	for _, v := range []any{
 		newMarker(name, createdAt),
 		marker{Name: name, CreatedAt: createdAt},
 		marker{Name: name},
+		marker{},
 	} {
 		b, err := json.Marshal(v)
 		if err != nil {

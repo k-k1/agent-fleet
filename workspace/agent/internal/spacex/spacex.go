@@ -284,6 +284,7 @@ func Create(name string) (Space, error) {
 			}
 			return Space{}, err
 		}
+		id, _ := idOf(dir) // of the folder Mkdir made, before anything else can replace it
 		m := newMarker(name, time.Now().UTC().Format(time.RFC3339))
 		if err := writeMarker(dir, m); err != nil {
 			// writeMarker leaves nothing behind, so the folder Mkdir made is empty and unmarked:
@@ -292,7 +293,10 @@ func Create(name string) (Space, error) {
 			_ = os.Remove(dir)
 			return Space{}, err
 		}
-		remember(folder, entryFor(dir, m.Name, m.CreatedAt))
+		if now, ok := idOf(dir); !ok || now != id {
+			id = dirID{}
+		}
+		remember(folder, entryWith(id, m.Name, m.CreatedAt))
 		return Space{Folder: folder, Name: m.Name, Dir: dir, CreatedAt: m.CreatedAt}, nil
 	}
 	return Space{}, errors.New("could not find a free space folder name")
@@ -572,7 +576,13 @@ func Rename(folder, name string) (Space, error) {
 		_ = sp.Remove(tmp)
 		return Space{}, err
 	}
-	remember(folder, entryFor(filepath.Join(Root(), folder), name, createdAt))
+	// The identity of the folder this rename opened and checked, not of whatever the path names
+	// now: one swapped in after the publish must not take the space's place in the record.
+	id, ok := idOf(filepath.Join(Root(), folder))
+	if !ok || id.ino != inoOf(dirFi) {
+		id = dirID{}
+	}
+	remember(folder, entryWith(id, name, createdAt))
 	return Space{Folder: folder, Name: name, Dir: filepath.Join(Root(), folder), CreatedAt: createdAt}, nil
 }
 

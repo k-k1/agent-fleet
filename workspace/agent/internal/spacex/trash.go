@@ -81,10 +81,16 @@ func MoveIn(src, folder string) error {
 	if _, err := os.Lstat(dir); err == nil {
 		return ErrExists
 	}
+	// A rename keeps the directory's inode and birth time, so the identity taken before it is the
+	// restored folder's, and one taken after it that differs means something replaced it.
+	id, _ := idOf(src)
 	if err := os.Rename(src, dir); err != nil {
 		return err
 	}
 	m, _ := readMarker(dir)
-	remember(folder, entryFor(dir, m.Name, m.CreatedAt))
+	if now, ok := idOf(dir); !ok || now != id {
+		id = dirID{}
+	}
+	remember(folder, entryWith(id, m.Name, m.CreatedAt))
 	return nil
 }
