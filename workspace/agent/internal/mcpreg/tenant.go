@@ -26,6 +26,7 @@ package mcpreg
 // new does not churn the file (and does not trigger a materialize).
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -38,6 +39,7 @@ import (
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/cpurl"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/redirectpolicy"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // TenantPollInterval is how often the agent re-pulls the distributed set. Five minutes
@@ -63,9 +65,9 @@ type TenantFetchResult struct {
 	Changed    bool  `json:"changed"`
 	FetchedAt  int64 `json:"fetchedAt"`
 	// EndedOAuth names the OAuth servers whose sign-in this fetch ended: the tenant stopped
-	// distributing them, moved them to another URL or took OAuth off them. A grant belongs to
-	// the URL it was made for, so the caller disconnects these (EndTenantGrants).
-	EndedOAuth []string `json:"-"`
+	// distributing them, moved them to another URL, took OAuth off them or changed their client.
+	// A grant belongs to the URL it was made for, so the caller ends these (EndTenantSignIn).
+	EndedOAuth []EndedOAuth `json:"-"`
 }
 
 // FetchTenant pulls the tenant set from the CP and updates the cache. It returns an
@@ -142,25 +144,61 @@ func acceptTenant(in []ServerDef) (kept []ServerDef, dropped int) {
 	return kept, dropped
 }
 
+// EndedOAuth is one definition whose sign-in a tenant fetch ended.
+type EndedOAuth struct {
+	ID string
+	// Group is the shared grant's group the definition was in (grantGroup), "" when its grant was
+	// its own.
+	Group string
+	// GroupGone: no definition of the new set is in Group. Its grant then ends with it; while one
+	// is, the grant follows the change (the definition reads as needing more permission).
+	GroupGone bool
+}
+
 // endedOAuth lists the OAuth definitions of prev whose sign-in next no longer covers: gone,
 // another URL, no longer OAuth, or another tenant client (a grant made with a confidential
 // client is renewed through the CP with that client, which may be gone). Only what the tenant changed counts here; a member's own
 // opt-out keeps the grant, so switching the server back on needs no new sign-in.
-func endedOAuth(prev, next []ServerDef) []string {
+func endedOAuth(prev, next []ServerDef) []EndedOAuth {
 	now := make(map[string]ServerDef, len(next))
+	groups := map[string]bool{}
 	for _, d := range next {
 		now[d.ID] = d
+		if g := grantGroup(d); g != "" {
+			groups[g] = true
+		}
 	}
-	var out []string
+	var out []EndedOAuth
 	for _, p := range prev {
 		if p.Auth != AuthOAuth {
 			continue
 		}
 		if n, ok := now[p.ID]; !ok || n.Auth != AuthOAuth || !sameURL(n.URL, p.URL) || !reflect.DeepEqual(n.OAuthClient, p.OAuthClient) {
-			out = append(out, p.ID)
+			g := grantGroup(p)
+			out = append(out, EndedOAuth{ID: p.ID, Group: g, GroupGone: g != "" && !groups[g]})
 		}
 	}
 	return out
+}
+
+// EndTenantSignIn ends what a tenant fetch ended for e (revoked at the authorization server when
+// it offers that, deleted locally either way). The definition's own grants go, as before, a tenant
+// client's grant made before groups existed included. A shared grant goes only with its group:
+// until then it keeps serving the group's other servers, and this one, no longer what the grant
+// was made for, reads as needing more permission.
+func EndTenantSignIn(ctx context.Context, e EndedOAuth) error {
+	own := func(g *secrets.MCPOAuthGrant) bool {
+		_, member := grantMember(g, e.ID)
+		return member && g.Group == ""
+	}
+	if _, err := disconnectWhere(ctx, e.ID, "", own); err != nil {
+		return err
+	}
+	if e.Group == "" || !e.GroupGone {
+		return nil
+	}
+	_, err := disconnectWhere(ctx, e.ID, e.Group, func(g *secrets.MCPOAuthGrant) bool { return g.Group == e.Group })
+	return err
 }
 
 // sameURL compares two server URLs the way a grant's resource is compared, so an edit that only

@@ -16,7 +16,9 @@ package mcpsrv
 //     the row's: after an admin replaces the client, an old grant's tokens are refused here
 //     rather than sent to the new client's authorization server (nor can they be revoked at
 //     the old one, whose secret is gone);
-//   - only authorization_code and refresh_token are relayed, and resource must be that row's URL;
+//   - only authorization_code and refresh_token are relayed, and every resource must be the URL of
+//     one of the tenant's enabled rows with the same confidential client, the path's row among them
+//     (ADR 0146 decision 4: one grant serves every definition of that client);
 //   - the endpoint is never taken from the caller: the CP discovers the issuer the admin entered,
 //     requires the metadata to name the same issuer, and dials public addresses only with no
 //     redirect followed (the guard the CIMD fetch uses).
@@ -46,6 +48,9 @@ const (
 	bridgeMaxBody   = 64 << 10
 	bridgeMetaTTL   = 10 * time.Minute
 	bridgeMaxIssuer = 256
+	// bridgeMaxResources bounds the URL set of one shared grant, so a request cannot make the CP
+	// compare an unbounded list against the tenant's rows.
+	bridgeMaxResources = 32
 )
 
 // bridgeHTTP is the client the bridge reaches authorization servers with. Tests replace it.
@@ -163,6 +168,22 @@ func sameIssuer(a, b string) bool {
 	return strings.TrimSuffix(a, "/") == strings.TrimSuffix(b, "/")
 }
 
+// sameGroupIssuer compares two rows' issuers the way the Agent groups them (grantGroup): equal, or
+// differing only by a root path "/" (ADR 0146 decision 2). Unlike sameIssuer it keeps
+// "https://as.example.com/realm" and ".../realm/" apart: two rows only share a grant when they
+// name one authorization server.
+func sameGroupIssuer(a, b string) bool {
+	root := func(s string) string {
+		if t := strings.TrimSuffix(s, "/"); t != s {
+			if u, err := url.Parse(t); err == nil && u.Path == "" && u.RawQuery == "" && u.Fragment == "" {
+				return t
+			}
+		}
+		return s
+	}
+	return root(a) == root(b)
+}
+
 // redirectURIUsable mirrors the Agent's: https, or http on loopback (a development Console).
 func redirectURIUsable(raw string) bool {
 	u, err := url.Parse(raw)
@@ -242,6 +263,49 @@ func (a ServerAPI) bridgeClient(ctx context.Context, mv store.MembershipView, id
 	return row, h[oauthSecretKey], true
 }
 
+// resourcesOfClient reports whether resources is a URL set the row's client may be asked for: the
+// row's own URL among them, and each one the URL of an enabled OAuth row of the same tenant with
+// the same confidential client (issuer and client id). A shared grant (ADR 0146 decision 4) asks
+// for all of them at once; an unknown URL refuses the whole request rather than being dropped,
+// since the Agent would otherwise store a grant that silently covers less than it believes.
+func (a ServerAPI) resourcesOfClient(ctx context.Context, mv store.MembershipView, row store.MCPServerRow, resources []string) bool {
+	if len(resources) == 0 || len(resources) > bridgeMaxResources {
+		return false
+	}
+	own, others := false, false
+	for _, res := range resources {
+		if sameResource(res, row.URL) {
+			own = true
+		} else {
+			others = true
+		}
+	}
+	if !own {
+		return false
+	}
+	if !others {
+		return true
+	}
+	rows, err := a.store.ListMCPServers(ctx, mv.TenantID)
+	if err != nil {
+		return false
+	}
+	for _, res := range resources {
+		ok := false
+		for _, o := range rows {
+			if o.Enabled && o.Auth == mcpAuthOAuth && o.OAuthSecretEnc != "" && o.OAuthClientID == row.OAuthClientID &&
+				sameGroupIssuer(o.OAuthIssuer, row.OAuthIssuer) && sameResource(res, o.URL) {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // postClientAuth posts form to endpoint with the tenant client's authentication and returns the
 // status and (bounded) body. The metadata lists what the AS supports (an absent list means
 // client_secret_basic, RFC 8414 §2), not what this client was registered with, so when both
@@ -309,7 +373,8 @@ func clientAuthRefused(status int, body []byte) bool {
 // OAuthToken (POST /internal/mcp-servers/{id}/oauth/token) runs an authorization_code or
 // refresh_token grant with the tenant's confidential client and returns the AS's answer.
 func (a ServerAPI) OAuthToken(w http.ResponseWriter, r *http.Request, mv store.MembershipView) {
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	// Room for a shared grant's full URL set (bridgeMaxResources URLs) next to the code.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	if err := r.ParseForm(); err != nil || len(r.PostForm) == 0 {
 		writeTokenErr(w, http.StatusBadRequest, "invalid_request")
 		return
@@ -320,11 +385,18 @@ func (a ServerAPI) OAuthToken(w http.ResponseWriter, r *http.Request, mv store.M
 		writeTokenErr(w, http.StatusBadRequest, "unauthorized_client")
 		return
 	}
-	if !sameResource(in.Get("resource"), row.URL) {
-		writeTokenErr(w, http.StatusBadRequest, "invalid_target")
+	resources := in["resource"]
+	if !a.resourcesOfClient(r.Context(), mv, row, resources) {
+		// A set gets its own code: it says the AS was not called, so the Agent may send the code or
+		// refresh token again for its own server alone. A single resource keeps invalid_target.
+		code := "invalid_target"
+		if len(resources) > 1 {
+			code = "unknown_resource"
+		}
+		writeTokenErr(w, http.StatusBadRequest, code)
 		return
 	}
-	form := url.Values{"grant_type": {in.Get("grant_type")}, "resource": {in.Get("resource")}}
+	form := url.Values{"grant_type": {in.Get("grant_type")}, "resource": resources}
 	switch in.Get("grant_type") {
 	case "authorization_code":
 		if in.Get("code") == "" || in.Get("code_verifier") == "" || !redirectURIUsable(in.Get("redirect_uri")) {

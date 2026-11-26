@@ -34,6 +34,8 @@ type asFake struct {
 	tokenReply func(n int, form url.Values) (status int, body string)
 	tokenDelay time.Duration
 	revokeCode int
+	// revokeHook, when set, runs before a revocation is answered (outside the lock).
+	revokeHook func()
 	regBody    string
 	// prmScopes replaces the PRM's scopes_supported; dropChallengeScope removes scope=
 	// from the 401 challenge so the PRM list is what selectScope uses.
@@ -150,8 +152,11 @@ func (f *asFake) serve(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		f.mu.Lock()
 		f.revokes = append(f.revokes, r.PostForm)
-		code := f.revokeCode
+		code, hook := f.revokeCode, f.revokeHook
 		f.mu.Unlock()
+		if hook != nil {
+			hook()
+		}
 		w.WriteHeader(code)
 	default:
 		http.NotFound(w, r)
@@ -706,11 +711,7 @@ func signedIn(t *testing.T, f *asFake) string {
 
 func storedGrant(t *testing.T, id string) secrets.MCPOAuthGrant {
 	t.Helper()
-	data, err := secrets.Load()
-	if err != nil {
-		t.Fatal(err)
-	}
-	g := findGrant(data, id)
+	g := currentGrant(id)
 	if g == nil {
 		t.Fatal("no grant")
 	}

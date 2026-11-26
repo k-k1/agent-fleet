@@ -274,7 +274,15 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
   const stepUp = stepUpRequest(status);
   // A grant on a server no target receives is kept but unused: promising session use would be wrong.
   const noTarget = !flow.targets?.assistant && !flow.targets?.session;
-  const relayNote = signedIn && state !== "sign_in_again" && noTarget ? "mcp.oauth_relay_note_no_target" : RELAY_NOTE[state];
+  // A set change may hold the server back from sessions (it joined the shared sign-in or moved),
+  // which the connected wording would deny.
+  const setChange = state === "needs_more_permission" && !!status?.setChange;
+  const relayNote =
+    signedIn && state !== "sign_in_again" && noTarget
+      ? "mcp.oauth_relay_note_no_target"
+      : setChange
+        ? "mcp.oauth_relay_note_set_change"
+        : RELAY_NOTE[state];
   return (
     <div className={"mcp-oauth mcp-oauth-" + state} data-testid="mcp-oauth-panel" data-state={state}>
       <div className="mcp-oauth-head">
@@ -323,8 +331,18 @@ export function OAuthPanel({ flow }: { flow: OAuthFlow }) {
         </div>
       )}
       {state === "sign_in_again" && <p className="ps-note ps-note-warn">{tr("mcp.oauth_again_note")}</p>}
-      {state === "needs_more_permission" && (
+      {state === "needs_more_permission" && !setChange && (
         <p className="ps-note ps-note-warn">{tr("mcp.oauth_step_note", { scope: status?.stepUpScope || "?" })}</p>
+      )}
+      {setChange && (
+        <p className="ps-note ps-note-warn" data-testid="mcp-oauth-set-change">
+          {tr("mcp.oauth_set_change_note")}
+        </p>
+      )}
+      {status?.sharedWith && status.sharedWith.length > 0 && (
+        <p className="muted" data-testid="mcp-oauth-shared">
+          {tr("mcp.oauth_shared_with", { names: status.sharedWith.join(", ") })}
+        </p>
       )}
       {state === "needs_more_permission" && !stepUp.ok && (
         <p className="ps-note ps-note-warn" data-testid="mcp-oauth-stepup-refused">

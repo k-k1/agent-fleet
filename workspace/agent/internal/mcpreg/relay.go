@@ -47,6 +47,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
 // RelayKeyHeader carries the relay key in a materialized config. It is a plain static header, which
@@ -192,13 +193,18 @@ func relayDef(d ServerDef) (ServerDef, bool) {
 	if !ok {
 		return ServerDef{}, false
 	}
-	g := currentGrant(d.ID)
+	data, err := secrets.Load()
+	if err != nil {
+		return ServerDef{}, false
+	}
+	g := findGrantFor(data, d)
 	if g == nil || g.SignInAgain || (g.AccessToken == "" && g.RefreshToken == "") {
 		return ServerDef{}, false
 	}
-	// A grant made for another URL is not live for this one: the relay would refuse every
-	// request (relayBound), so the CLI is better off not seeing the server at all.
-	if u, err := url.Parse(d.URL); err != nil || !relayBound(g.Resource, u) {
+	// A grant made for another URL, a shared one this server joined after the sign-in, or one whose
+	// token was issued for the others with nothing to renew it for this one, is not live for it:
+	// the relay would refuse every request, so the CLI is better off not seeing the server at all.
+	if res, ok := grantResource(g, d); !ok || !grantRenewableFor(g, res) {
 		return ServerDef{}, false
 	}
 	d.URL = base + d.ID
@@ -245,6 +251,8 @@ func relayGrantProblem(id string, err error) *relayProblem {
 	switch {
 	case errors.Is(err, ErrNotSignedIn), errors.Is(err, ErrSignInAgain):
 		return &relayProblem{http.StatusBadGateway, "this MCP server is not signed in (or its sign-in expired); " + consoleHint}
+	case errors.Is(err, ErrMorePermission):
+		return &relayProblem{http.StatusBadGateway, "this MCP server's sign-in does not cover it as it is now (more permission needed); " + consoleHint}
 	default:
 		// The authorization server could not be reached or refused for another reason.
 		log.Printf("mcp relay: %s: the grant could not be renewed", id)

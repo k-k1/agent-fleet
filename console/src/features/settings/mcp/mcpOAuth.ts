@@ -22,6 +22,12 @@ export interface OAuthStatus {
   expiresAt?: number; // unix seconds; 0/absent = the server did not say
   connectedAt?: number;
   stepUpScope?: string;
+  // The grant was not made for this server as it is now (ADR 0146 decision 4): a shared sign-in it
+  // joined later, another URL, or scopes the sign-in did not ask for. The missing scopes, if any,
+  // are in stepUpScope.
+  setChange?: boolean;
+  // The other servers one sign-in covers with this one: signing in or disconnecting here does it for them too.
+  sharedWith?: string[];
   // A sign-in begun and not finished (its 10 minutes): the DCR retry is offered when it is "cimd".
   pendingRegistration?: OAuthRegistration;
 }
@@ -42,6 +48,10 @@ export function normalizeStatus(body: unknown, serverId: string): OAuthStatus {
     expiresAt: typeof raw?.expiresAt === "number" ? raw.expiresAt : undefined,
     connectedAt: typeof raw?.connectedAt === "number" ? raw.connectedAt : undefined,
     stepUpScope: typeof raw?.stepUpScope === "string" ? raw.stepUpScope : undefined,
+    setChange: raw?.setChange === true,
+    sharedWith: Array.isArray(raw?.sharedWith)
+      ? (raw.sharedWith as unknown[]).filter((x): x is string => typeof x === "string")
+      : undefined,
     pendingRegistration: asRegistration(raw?.pendingRegistration),
   };
 }

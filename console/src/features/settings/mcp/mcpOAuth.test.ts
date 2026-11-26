@@ -94,4 +94,14 @@ describe("normalizeStatus", () => {
     expect(s.scopes).toEqual(["a"]);
     expect(s.expiresAt).toBeUndefined();
   });
+
+  it("reads the shared sign-in fields, and only true as a set change", () => {
+    const s = normalizeStatus({ state: "needs_more_permission", setChange: true, sharedWith: ["Drive", 1, "Docs"] }, "mcp-1");
+    expect(s.setChange).toBe(true);
+    expect(s.sharedWith).toEqual(["Drive", "Docs"]);
+    expect(normalizeStatus({ state: "connected", setChange: "yes", sharedWith: "Drive" }, "mcp-1")).toMatchObject({
+      setChange: false,
+      sharedWith: undefined,
+    });
+  });
 });

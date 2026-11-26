@@ -75,12 +75,21 @@ If you registered a client for Agent Fleet at the server's authorization server,
 "**Scopes**" is optional: the scopes each member's sign-in requests, separated by spaces or new lines. Left empty, the sign-in requests the scopes the server's refusal names, and when there is no such refusal, every scope its protected resource metadata lists (`scopes_supported`). A server whose tool list anyone can read refuses nothing, so the sign-in then requests that whole list, which can include full control of the account. Enter the narrowest scopes the members need.
 
 - Each scope is one word without quotes, backslashes or commas. Joined with single spaces, and with ` offline_access` added unless you listed it, they must fit in 1024 bytes
-- A changed list applies to a member's next fresh sign-in. Members already signed in keep the scopes they granted until they sign in again. A row that shows "**More permission needed**" signs in again for what was granted plus what the server asked for, not for this list
+- Members already signed in keep the scopes they granted until they sign in again. A scope you add shows "**More permission needed**" on their row, and the server keeps working with what was granted. Signing in again requests this list together with what was granted and what the server asked for
+
+#### One sign-in for several servers
+
+Distributions that carry the same client ID at the same authorization server, both public or both confidential, share one sign-in per member. Signing in to any of them requests the URL and scopes of every one the member has switched on, and connects all of them. Each row names the others it shares with, and "**Disconnect**" on any of them ends the sign-in for all.
+
+- Adding a distribution with that client, or moving one to another URL, shows "**More permission needed**" on that row; it reaches no session until the member signs in again. The other rows keep working
+- Give every distribution of the group its "**Scopes**". A row without them gets what the others ask for (plus its own server's request when the member signs in from that row), and asks for more permission when its server refuses
+- Only https URLs share the sign-in. An http distribution signs in on its own
+- The URLs and scopes all go into one authorization request. When there are more than 32 servers, their URLs together exceed 4 KiB, or their joined scopes exceed the 1024-byte limit above, each server signs in on its own instead. So does every server of the group when its authorization server refuses one sign-in for several servers: the first sign-in that finds this fails once, and when only the renewal is refused, each server keeps working until its token expires and then asks to be signed in on its own
 
 These changes cut every member's sign-in, and members sign in again.
 
-- Changing the URL, leaving OAuth, deleting the distribution (at the next fetch)
-- Changing or removing the client. With a confidential client, earlier tokens can no longer be revoked and stay valid at the old authorization server until they expire
+- Changing the URL, leaving OAuth, deleting the distribution (at the next fetch). For a distribution that shares a sign-in, only this row is cut, as above; deleting the last one ends the sign-in
+- Changing or removing the client. A shared sign-in ends when no distribution keeps that client. With a confidential client, earlier tokens can no longer be revoked and stay valid at the old authorization server until they expire
 - Switching a distribution that carried values to OAuth deletes the stored header values
 
 ## When changes arrive

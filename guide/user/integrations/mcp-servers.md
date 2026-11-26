@@ -96,13 +96,14 @@ A list of more than 12 scopes, here or in a connection test, is folded into "**S
 | Not signed in | You have not signed in yet. No session gets this server yet |
 | Connected | Ready to use |
 | Sign in again | The saved sign-in can no longer be renewed. Press "**Sign in again**" |
-| More permission needed | The server asked for a permission you have not granted. "**Approve the extra permission**" signs in again asking for it on top of what you have |
+| More permission needed | The server asked for a permission you have not granted, or the administrator added a server, an address or a permission to a sign-in you share with other servers. "**Approve the extra permission**" signs in again asking for it on top of what you have |
 
 - The server is handed to sessions and assistants **only while you are signed in**. Like any server, it takes effect from the next session you start
 - Sessions use the sign-in through a relay inside your workspace. The token is never written into an agent's configuration
 - When the authorization server offers no automatic registration, you see "**A client ID is needed**". Enter the client ID you registered
   there by hand (and the secret, if it has one) and press "**Save and sign in**"
 - "**Disconnect**" deletes the saved sign-in, and revokes it at the authorization server when that supports it
+- Servers your administrator distributed with one client can share one sign-in; the row names the others. Signing in on any of them connects all of them that are switched on, and "**Disconnect**" on any of them disconnects all of them
 
 ## What you can change, by origin
 
