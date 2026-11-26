@@ -61,7 +61,7 @@ func memoTools() []toolSpec {
 							"kind":       map[string]any{"type": "string", "description": "text | file"},
 							"body":       map[string]any{"type": "string", "description": "メモ本文（kind=text）またはコメント（kind=file）"},
 							"refPath":    map[string]any{"type": "string", "description": "~/repos/... のパス（kind=file）"},
-							"repo":       map[string]any{"type": "string", "description": "レポのバケツ。''=共通/未分類（任意）。worktree のフォルダ（repo@slug）を渡しても元のレポ（repo）に入る"},
+							"repo":       map[string]any{"type": "string", "description": "レポのバケツ。''=共通/未分類（任意）。worktree のフォルダ（repo@slug）を渡しても元のレポ（repo）に入る。スペースは spaces/<フォルダ>"},
 							"category":   map[string]any{"type": "string", "description": "サブプロジェクトのラベル（任意）"},
 							"reference":  memoRefSchemaJA(false),
 							"after":      memoAfterSchemaJA(false),
@@ -104,7 +104,7 @@ func memoTools() []toolSpec {
 							"kind":       map[string]any{"type": "string", "enum": []string{"text", "file"}, "description": "text | file"},
 							"body":       map[string]any{"type": "string", "description": "The note (kind=text), or a comment on the file (kind=file)"},
 							"refPath":    map[string]any{"type": "string", "description": "A ~/repos/... path (kind=file)"},
-							"repo":       map[string]any{"type": "string", "description": "Which repo bucket it belongs to (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
+							"repo":       map[string]any{"type": "string", "description": "Which repo bucket it belongs to (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo. A space is spaces/<folder>; in a space, its own folder name files it under that space"},
 							"category":   map[string]any{"type": "string", "description": "Free-form sub-project label (optional; reuse one from list_memos)"},
 							"reference":  memoRefSchema(false),
 							"after":      memoAfterSchema(false),
@@ -162,7 +162,7 @@ func memoTools() []toolSpec {
 						"properties": map[string]any{
 							"id":         map[string]any{"type": "string", "description": "メモ id（list_memos で取得）"},
 							"body":       map[string]any{"type": "string", "description": "新しい本文（任意）"},
-							"repo":       map[string]any{"type": "string", "description": "新しいレポバケツ（任意）。worktree のフォルダ（repo@slug）は元のレポに入る"},
+							"repo":       map[string]any{"type": "string", "description": "新しいレポバケツ（任意）。worktree のフォルダ（repo@slug）は元のレポに入る。スペースは spaces/<フォルダ>"},
 							"category":   map[string]any{"type": "string", "description": "新しいカテゴリ（任意）"},
 							"refPath":    map[string]any{"type": "string", "description": "新しい参照パス（任意）"},
 							"position":   map[string]any{"type": "integer", "description": "グループ内の新しい並び順（任意）"},
@@ -199,7 +199,7 @@ func memoTools() []toolSpec {
 							"id":         map[string]any{"type": "string", "minLength": 1, "description": "Memo id from list_memos"},
 							"body":       map[string]any{"type": "string", "description": "Replacement note text (optional)"},
 							"refPath":    map[string]any{"type": "string", "description": "Replacement ~/repos/... path (optional)"},
-							"repo":       map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo"},
+							"repo":       map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled). A worktree folder (repo@slug) is filed under its base repo. A space is spaces/<folder>; in a space, its own folder name files it under that space"},
 							"category":   map[string]any{"type": "string", "description": "Change the sub-project label (optional)"},
 							"reference":  memoRefSchema(true),
 							"after":      memoAfterSchema(true),
@@ -224,7 +224,15 @@ func memoTools() []toolSpec {
 				if a.ID == "" {
 					return mcpToolErr(req.ID, "id（メモ id）が必要です")
 				}
-				out, err := agentDoTimeout(http.MethodPatch, "/memos/"+url.PathEscape(a.ID), memoArgsObject(p.Args), memoAgentTimeout)
+				// As on a create, the caller is this server's own session, never an argument. It
+				// only picks the bucket a named repo maps to, so an edit still goes through without it.
+				path := "/memos/" + url.PathEscape(a.ID)
+				if selfReportOnly() {
+					if self, err := mcpOwningSession(); err == nil {
+						path += "?from=" + url.QueryEscape(self)
+					}
+				}
+				out, err := agentDoTimeout(http.MethodPatch, path, memoArgsObject(p.Args), memoAgentTimeout)
 				if err != nil {
 					return mcpToolErr(req.ID, memoRelayErr(err))
 				}

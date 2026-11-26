@@ -241,18 +241,63 @@ func memoDeliveryToDTOAt(d store.MemoDelivery, now time.Time) memoDeliveryDTO {
 	return out
 }
 
-// memoQueueRepoDir is the working copy a queue's sessions start from, relative to the
-// workspace's home (the Agent joins a relative dir onto it). The repo of a queue is a folder
-// name under ~/repos, and "" (the common bucket) has none. ok is false for a name that is not
-// one folder.
-func memoQueueRepoDir(repo string) (string, bool) {
-	if repo == "" {
-		return "", true
-	}
-	if repo == "." || repo == ".." || strings.ContainsAny(repo, `/\`) || filepath.Base(repo) != repo {
+// memoSpacePrefix marks a memo bucket that is a space (~/spaces/<folder>, ADR 0142) rather than a
+// repository. A folder name under ~/repos is one path segment and cannot hold "/", so no
+// repository's bucket can ever read as a space's.
+const memoSpacePrefix = "spaces/"
+
+// memoSpaceFolderMax bounds a space folder as the Agent's spacex.ValidFolder does.
+const memoSpaceFolderMax = 48
+
+// memoSpaceOf answers the space folder a bucket names, and false when the bucket is not a space
+// (a repository name, "" or anything else). A bucket that starts with the prefix but names no
+// valid folder is not a space either; memoQueuePlace refuses it.
+func memoSpaceOf(repo string) (string, bool) {
+	f, ok := strings.CutPrefix(repo, memoSpacePrefix)
+	if !ok || f == "" || len(f) > memoSpaceFolderMax {
 		return "", false
 	}
-	return "repos/" + repo, true
+	for i, r := range f {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+		case r == '-' && i > 0:
+		default:
+			return "", false
+		}
+	}
+	return f, true
+}
+
+// memoHasRepository reports whether a bucket names a repository: neither the common bucket nor a
+// space. Only such a bucket has a settings file to read.
+func memoHasRepository(repo string) bool {
+	p, ok := memoQueuePlace(repo)
+	return ok && p.dir != ""
+}
+
+// memoPlace is where a queue's sessions start. dir is relative to the workspace's home (the
+// Agent joins a relative dir onto it) and set only for a repository; space is set only for a
+// space, which the Agent resolves itself with the same checks as a Console launch into it.
+type memoPlace struct {
+	dir   string
+	space string
+}
+
+// memoQueuePlace is the place a queue's bucket starts its sessions in. A repository name is a
+// folder directly under ~/repos and resolves only to repos/<name>, never to a space of the same
+// name; a space is named by memoSpacePrefix alone; "" (the common bucket) has neither. ok is false
+// for anything else.
+func memoQueuePlace(repo string) (memoPlace, bool) {
+	if repo == "" {
+		return memoPlace{}, true
+	}
+	if f, ok := memoSpaceOf(repo); ok {
+		return memoPlace{space: f}, true
+	}
+	if repo == "." || repo == ".." || strings.ContainsAny(repo, `/\`) || filepath.Base(repo) != repo {
+		return memoPlace{}, false
+	}
+	return memoPlace{dir: "repos/" + repo}, true
 }
 
 // --- Fire now: Console only ------------------------------------------------------------------
@@ -368,8 +413,8 @@ func memoReserveAndClaim(tx store.MemoTxOps, categoryID, only string, running, l
 	if strings.TrimSpace(q.Instruction) == "" {
 		return none, &apiError{http.StatusConflict, errCodeMemoQueueNoInstruction, "a queue without an instruction cannot fire"}, nil
 	}
-	if _, ok := memoQueueRepoDir(c.Repo); !ok {
-		return none, &apiError{http.StatusConflict, errCodeMemoQueueBadRepo, "the queue's repository is not a folder under repos"}, nil
+	if _, ok := memoQueuePlace(c.Repo); !ok {
+		return none, &apiError{http.StatusConflict, errCodeMemoQueueBadRepo, "the queue's repository is not a folder under repos, nor a space"}, nil
 	}
 	inQueue, inMember, err := tx.CountLiveDeliveries(c.ID)
 	if err != nil {
@@ -2926,13 +2971,16 @@ func (r *memoQueueRunner) create(ctx context.Context, res *resolved, body []byte
 // memoDeliveryCreate is the Agent's POST /sessions body for a queue fire (the Agent slice's
 // contract, issue #4162). The Agent composes the first prompt from QueueDelivery.
 type memoDeliveryCreate struct {
-	Dir                string               `json:"dir"`
-	Worktree           bool                 `json:"worktree"`
-	Kind               string               `json:"kind"`
-	Driver             string               `json:"driver"`
-	Model              string               `json:"model"`
-	Effort             string               `json:"effort"`
-	Route              *memoDeliveryRoute   `json:"route,omitempty"`
+	Dir      string             `json:"dir"`
+	Worktree bool               `json:"worktree"`
+	Kind     string             `json:"kind"`
+	Driver   string             `json:"driver"`
+	Model    string             `json:"model"`
+	Effort   string             `json:"effort"`
+	Route    *memoDeliveryRoute `json:"route,omitempty"`
+	// Space names the space a space bucket's sessions start in; Dir is then "" and Worktree
+	// false, because the Agent refuses a space combined with either.
+	Space              *memoDeliverySpace   `json:"space,omitempty"`
 	SpendCapUSD        float64              `json:"spend_cap_usd"`
 	IdempotencyKey     string               `json:"idempotency_key"`
 	IdempotencyDurable bool                 `json:"idempotency_durable"`
@@ -2950,6 +2998,11 @@ type memoDeliveryCreate struct {
 type memoDeliveryWorkItem struct {
 	Provider string `json:"provider"`
 	Key      string `json:"key"`
+}
+
+// memoDeliverySpace is the Agent's session_create space target for an existing space.
+type memoDeliverySpace struct {
+	Folder string `json:"folder"`
 }
 
 type memoDeliveryRoute struct {
@@ -2984,16 +3037,20 @@ type memoDeliveryItem struct {
 
 // memoDeliveryCreateBody builds the create. A queue with a repository gets a new worktree off
 // it unless its settings say otherwise: two sessions in one working copy corrupt each other.
-// The common bucket has no repository, so its sessions start where the Agent starts them.
+// A space has no repository to branch, so its sessions start in the space itself whatever the
+// setting says. The common bucket has neither, so its sessions start where the Agent starts them.
 func memoDeliveryCreateBody(d store.MemoDelivery, p memoSendPlan) []byte {
-	dir, _ := memoQueueRepoDir(p.c.Repo)
+	place, _ := memoQueuePlace(p.c.Repo)
 	kind := scheduleInjectKind(p.q.AgentKind)
 	body := memoDeliveryCreate{
-		Dir: dir, Worktree: p.q.Worktree && dir != "", Kind: kind, Driver: injectDriver(kind),
+		Dir: place.dir, Worktree: p.q.Worktree && place.dir != "", Kind: kind, Driver: injectDriver(kind),
 		Model: p.q.Model, Effort: p.q.Effort, SpendCapUSD: p.q.SpendCapUSD,
 		IdempotencyKey: memoDeliveryKey(d.ID), IdempotencyDurable: true, Source: "queue",
 		QueueDelivery: memoDeliveryEnvelope{ID: d.ID, Queue: p.c.ID, Label: p.c.Repo + "/" + p.c.Name,
 			Instruction: p.q.Instruction, Items: make([]memoDeliveryItem, 0, len(p.messages))},
+	}
+	if place.space != "" {
+		body.Space = &memoDeliverySpace{Folder: place.space}
 	}
 	if p.q.Route != "" {
 		body.Route = &memoDeliveryRoute{Route: p.q.Route}

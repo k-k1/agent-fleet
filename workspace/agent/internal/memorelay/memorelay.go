@@ -228,7 +228,7 @@ func HandleCreate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_from", msg)
 		return
 	}
-	in.Memo.Repo = baseRepo(in.Memo.Repo)
+	in.Memo.Repo = bucketFor(in.From, in.Memo.Repo)
 	out := cpCreate{Fields: in.Memo, Producer: producer, ProducerOrigin: origin}
 	if in.Memo.Continuation {
 		if out.QueueDelivery = QueueDeliveryOf(in.From); out.QueueDelivery == "" {
@@ -264,11 +264,18 @@ func Producer(from string) (producer, origin, refusal string) {
 	return from, session.OriginOf(m), ""
 }
 
-// HandleUpdate is PATCH /memos/{id}.
+// HandleUpdate is PATCH /memos/{id}. The query's from is the calling session, filled by the MCP
+// process from its own identity like a create's From and absent for the operator: it decides only
+// which bucket a repo the model names is filed under (bucketFor).
 func HandleUpdate(w http.ResponseWriter, r *http.Request) {
 	id := strings.TrimSpace(r.PathValue("id"))
 	if id == "" {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_id", "id is required")
+		return
+	}
+	from := r.URL.Query().Get("from")
+	if _, _, msg := Producer(from); msg != "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_from", msg)
 		return
 	}
 	var p Patch
@@ -277,7 +284,7 @@ func HandleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.Repo != nil {
-		base := baseRepo(*p.Repo)
+		base := bucketFor(from, *p.Repo)
 		p.Repo = &base
 	}
 	body, err := json.Marshal(p)

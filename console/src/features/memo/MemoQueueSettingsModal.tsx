@@ -26,7 +26,7 @@ import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useMemberCatalog } from "../settings/credentials/memberCatalog.ts";
 import type { MemoQueue } from "../../types/memo.ts";
 import { memoQueueDelete, memoQueuePut } from "./api.ts";
-import { readQueue } from "./queues.ts";
+import { isSpaceBucket, readQueue } from "./queues.ts";
 import { queueScope, useQueueSettingsCache } from "./queueSettingsCache.ts";
 import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { MemoRepoSettingsCard } from "./MemoRepoSettingsCard.tsx";
@@ -57,7 +57,8 @@ const RUN_MODES: { mode: RunMode; label: MsgKey; hint: MsgKey }[] = [
 interface Props {
   categoryName: string;
   categoryId: string;
-  /** The repository the category belongs to; "" = the common bucket, which has no settings file. */
+  /** The repository the category belongs to; "" = the common bucket and spaces/<folder> = a space,
+   *  neither of which has a settings file. */
   repo: string;
   /** The category's current settings; undefined = it has none yet. */
   queue: MemoQueue | undefined;
@@ -142,7 +143,9 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
   };
   const show = (f: keyof typeof errors) => (tried && errors[f] ? tr(errors[f]!, { max: maxOf[f] }) : null);
   const blocked = !tenantEnabled;
-  const repoSettings = useQueueSettingsCache((st) => st.repoSettings) && repo !== "";
+  // A space's runs start in the space itself: the Control Plane ignores the worktree setting there.
+  const inSpace = isSpaceBucket(repo);
+  const repoSettings = useQueueSettingsCache((st) => st.repoSettings) && repo !== "" && !inSpace;
 
   const save = async () => {
     if (blocked || busy || repoBusy || stale) return;
@@ -350,10 +353,12 @@ function QueueSettingsForm({ categoryName, categoryId, repo, queue, tenantEnable
           </div>
         </div>
 
-        <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
-          <input type="checkbox" checked={draft.worktree} disabled={blocked} onChange={(e) => set("worktree", e.target.checked)} />
-          <span>{tr("memo.q_worktree")}</span>
-        </label>
+        {!inSpace && (
+          <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+            <input type="checkbox" checked={draft.worktree} disabled={blocked} onChange={(e) => set("worktree", e.target.checked)} />
+            <span>{tr("memo.q_worktree")}</span>
+          </label>
+        )}
 
         <div className="ui-field">
           <FieldLabel plain className="ui-field-check" info={tr("memo.q_accept_own_hint")}>

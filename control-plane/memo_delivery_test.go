@@ -964,6 +964,83 @@ func TestMemoDeliveryFireNowStartsOneSessionPerPress(t *testing.T) {
 	})
 }
 
+// A space's bucket ("spaces/<folder>") starts its sessions in that space, with the queue's
+// worktree setting ignored, and a repository of the same folder name keeps starting in repos/:
+// neither resolves to the other's directory. A bucket that only looks like a space is refused
+// before anything is claimed.
+func TestMemoDeliverySpaceAndSameNamedRepositoryStayApart(t *testing.T) {
+	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+		inSpace := e.queueWith("spaces/app", "impl", map[string]any{"maxActive": 1, "worktree": true})
+		inRepo := e.queueWith("app", "impl", map[string]any{"maxActive": 1, "worktree": true})
+		e.pending("spaces/app", "impl", "space work")
+		e.pending("app", "impl", "repo work")
+		agent := e.useQueueAgent("")
+
+		e.fired(inSpace)
+		e.fired(inRepo)
+		e.tick(e.runner(), time.Now())
+		if agent.createCount() != 2 {
+			t.Fatalf("%d creates, want 2", agent.createCount())
+		}
+		byLabel := map[string]map[string]any{}
+		for _, c := range agent.creates {
+			qd, _ := c["queue_delivery"].(map[string]any)
+			byLabel[fmt.Sprint(qd["label"])] = c
+		}
+		sp := byLabel["spaces/app/impl"]
+		space, _ := sp["space"].(map[string]any)
+		if sp == nil || space["folder"] != "app" || sp["dir"] != "" || sp["worktree"] != false {
+			t.Fatalf("space queue's create %v, want space app with no dir and no worktree", sp)
+		}
+		rp := byLabel["app/impl"]
+		if _, has := rp["space"]; rp == nil || has || rp["dir"] != "repos/app" || rp["worktree"] != true {
+			t.Fatalf("repository queue's create %v, want repos/app in a worktree and no space", rp)
+		}
+
+		for _, bad := range []string{"spaces/App", "spaces/", "spaces/a/b", "spaces/-x"} {
+			q := e.queueWith(bad, "impl", map[string]any{"maxActive": 1})
+			m := e.pending(bad, "impl", "work")
+			if rec := e.fire(q); rec.Code != http.StatusConflict || deliveryErrCode(t, rec) != errCodeMemoQueueBadRepo {
+				t.Fatalf("fire %q: %d %s, want %s", bad, rec.Code, rec.Body.String(), errCodeMemoQueueBadRepo)
+			}
+			if got := e.memoRow(m.ID); got.State != store.MemoStatePending {
+				t.Fatalf("%q: message %+v, want it still pending", bad, got)
+			}
+		}
+	})
+}
+
+func TestMemoQueuePlace(t *testing.T) {
+	for _, tc := range []struct {
+		repo      string
+		want      memoPlace
+		ok, repo2 bool
+	}{
+		{"", memoPlace{}, true, false},
+		{"app", memoPlace{dir: "repos/app"}, true, true},
+		{"app@feature", memoPlace{dir: "repos/app@feature"}, true, true},
+		{"spaces", memoPlace{dir: "repos/spaces"}, true, true},
+		{"spaces/app", memoPlace{space: "app"}, true, false},
+		{"spaces/my-notes-2", memoPlace{space: "my-notes-2"}, true, false},
+		{"spaces/App", memoPlace{}, false, false},
+		{"spaces/", memoPlace{}, false, false},
+		{"spaces/a/b", memoPlace{}, false, false},
+		{"spaces/-a", memoPlace{}, false, false},
+		{"spaces/" + strings.Repeat("a", memoSpaceFolderMax+1), memoPlace{}, false, false},
+		{"a/b", memoPlace{}, false, false},
+		{"..", memoPlace{}, false, false},
+		{`a\b`, memoPlace{}, false, false},
+	} {
+		got, ok := memoQueuePlace(tc.repo)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("memoQueuePlace(%q) = %+v, %v; want %+v, %v", tc.repo, got, ok, tc.want, tc.ok)
+		}
+		if has := memoHasRepository(tc.repo); has != tc.repo2 {
+			t.Errorf("memoHasRepository(%q) = %v, want %v", tc.repo, has, tc.repo2)
+		}
+	}
+}
+
 // The refusals of a press, and the batch.
 func TestMemoDeliveryFireRefusals(t *testing.T) {
 	eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {

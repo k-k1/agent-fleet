@@ -1187,3 +1187,23 @@ The claim took the oldest eligible message, so a fix that unblocks other queued 
 - **When it goes.** A move to another category clears it, by any face: an edit, a category merge, a tidy move and the tidy's undo (an undo does not restore it, #5075). So does a token-face or `/mcp` edit of the content (anything in `memoContentHash`: text, reference, attachments, prerequisites, start time, recipe), so a run cannot carry the member's mark into a queue whose switch accepts its messages. A rename of the category and the member's edit in place keep it. A message a run claims keeps the column, but the DTO shows `runNext` only while the message waits; a run that hands the message back makes it waiting again, and the mark counts again.
 - **Rolling update.** A Control Plane that predates the column ignores it, and one that predates this addendum's create drops `runNext` from a create; the Agent's relay reports a mark missing from a create's answer (or an existing message returned unmarked) as not kept.
 - **Rejected.** Making the drag order (`position`) the claim order: simpler to explain, but every existing queue would change order at once and the claim would no longer be "oldest first". An integer priority: one level answers the case that was asked for.
+
+## Addendum 2026-11-26: a space is a bucket of its own (#5222)
+
+A memo from a space session was filed under the space's folder name, which is also a repository name: the queue then ran
+in `repos/<folder>`, failing with `bad_dir` or, when a repository of that name existed, running in it.
+
+- **Key.** A space's bucket is `spaces/<folder>` in the existing `repo` column. A folder under `~/repos` is one path
+  segment and cannot hold `/`, so no repository's bucket can read as a space's, and nothing in the store changes.
+- **Filing.** The Agent's relay files a create (and an `update_memo` move, which now names its session in `?from=`)
+  from a session whose stored place is a space, and that names its own space's folder, under `spaces/<folder>`
+  (`memorelay.bucketFor`). A meta written before places were stored falls back to the space marker, never the name.
+  `""` stays unfiled; any other name still goes through the worktree mapping of §2.
+- **Running.** `memoQueuePlace` (`control-plane/memo_delivery.go`) resolves a repository name only to `repos/<name>` and
+  a space bucket only to the Agent's `space: {folder}` target, with no `dir` and the worktree setting ignored. The Agent
+  then applies the Console launch's checks (`space_not_found`, "being deleted"); a refusal closes the run as not sent.
+  A bucket that starts with `spaces/` but names no valid folder is refused with `memo_queue_bad_repo`.
+- **No repository.** A space's category has no settings file: the repository settings routes answer
+  `memo_queue_no_repo`, the re-read skips it, and the Console hides the card and the worktree switch.
+- **Rolling update.** An older Control Plane refuses a space bucket's fire with `memo_queue_bad_repo` (it contains `/`)
+  rather than running it anywhere; an older Agent relay files as before.

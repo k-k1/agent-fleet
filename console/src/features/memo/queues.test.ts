@@ -3,6 +3,7 @@
 import { describe, expect, it } from "vitest";
 import type { Memo, MemoQueue } from "../../types/memo.ts";
 import {
+  isSpaceBucket,
   runRecipes,
   runOpenPRs,
   canReturnRun,
@@ -583,5 +584,15 @@ describe("naming a prerequisite for the picker", () => {
     expect(searchAfterEntries(es, "IMPORTER", 8).items.map((e) => e.id)).toEqual(["a"]);
     expect(searchAfterEntries(es, "rotate", 8).items.map((e) => e.id)).toEqual(["b", "c"]);
     expect(searchAfterEntries(es, "rotate nothing", 8)).toEqual({ items: [], total: 0 });
+  });
+});
+
+describe("isSpaceBucket", () => {
+  it("is a space only for spaces/<folder>, never for a repository of the same name", () => {
+    expect(isSpaceBucket("spaces/app")).toBe(true);
+    expect(isSpaceBucket("app")).toBe(false);
+    expect(isSpaceBucket("spaces")).toBe(false);
+    expect(isSpaceBucket("spaces/")).toBe(false);
+    expect(isSpaceBucket("")).toBe(false);
   });
 });

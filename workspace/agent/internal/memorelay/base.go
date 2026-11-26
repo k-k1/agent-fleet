@@ -8,11 +8,51 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // gitTimeout bounds the one git call that decides a memo's repository. A memo is worth more
 // than the mapping: when git is slow the memo is relayed as named.
 var gitTimeout = 5 * time.Second
+
+// SpacePrefix marks a memo bucket that is a space (~/spaces/<folder>) rather than a repository;
+// the Control Plane reads the same prefix (memoSpacePrefix). A folder under ~/repos is one path
+// segment and never holds "/", so no repository's bucket collides with a space's.
+const SpacePrefix = "spaces/"
+
+// bucketFor is the bucket a memo from the session `from` is filed under for the `repo` the model
+// named. A session in a space that names its own space's folder means that space, never a
+// repository that happens to share the folder name; anything else goes through baseRepo.
+func bucketFor(from, repo string) string {
+	if repo != "" && strings.TrimSpace(from) != "" {
+		if f := spaceOf(from); f != "" && repo == f {
+			return SpacePrefix + f
+		}
+	}
+	return baseRepo(repo)
+}
+
+// spaceOf is the space folder the session `from` runs in, "" when it runs in none or has no meta.
+// The place stored at create decides; a meta written before places were stored falls back to
+// the space marker under its directory, which is what decided the place since.
+func spaceOf(from string) string {
+	from = strings.TrimSpace(from)
+	if !session.ValidName(from) {
+		return ""
+	}
+	m, ok := session.ReadMeta(from)
+	if !ok {
+		return ""
+	}
+	if m.Place != nil {
+		if m.Place.Kind == session.PlaceSpace {
+			return m.Place.ID
+		}
+		return ""
+	}
+	return spacex.FolderOf(m.Dir)
+}
 
 // baseRepo is the repository bucket a memo is filed under for the folder `repo` the model
 // named: a worktree folder (`app@feature`) is filed under its base repository (`app`), so a

@@ -23,6 +23,15 @@ import type {
   MemoWaitingReason,
 } from "../../types/memo.ts";
 
+/** The bucket prefix of a space (~/spaces/<folder>), as the Control Plane reads it (memoSpacePrefix).
+ *  A repository folder is one path segment, so no repository's bucket can start with it. */
+export const MEMO_SPACE_PREFIX = "spaces/";
+
+/** True when a memo bucket is a space: it has no repository, so no settings file and no worktree. */
+export function isSpaceBucket(repo: string): boolean {
+  return repo.startsWith(MEMO_SPACE_PREFIX) && repo.length > MEMO_SPACE_PREFIX.length;
+}
+
 // Limits the Control Plane enforces (control-plane/memo_queue.go). The form checks them first
 // so a mistake is named next to its field; the Control Plane stays the authority.
 export const QUEUE_MAX_ACTIVE_MAX = 6;

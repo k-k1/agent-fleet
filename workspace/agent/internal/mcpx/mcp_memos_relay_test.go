@@ -164,6 +164,26 @@ func TestMemoToolsSendTheReference(t *testing.T) {
 	}
 }
 
+// update_memo names this server's own session in the query, as add_memo does in its body, so the
+// relay can file a repo the model names under the session's space; the operator names none.
+func TestUpdateMemoNamesTheServersOwnSession(t *testing.T) {
+	agent := setUpMemoSession(t)
+	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app"})
+	if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{"from=slot01"}) {
+		t.Errorf("a session's update_memo sent the queries %q, want from=slot01", got)
+	}
+
+	oldWrite := writeEnabled()
+	t.Cleanup(func() { setWriteEnabled(oldWrite) })
+	setSelfReportOnly(false)
+	setWriteEnabled(true)
+	agent = memoFakeAgent(t)
+	callMemoTool(t, "update_memo", map[string]any{"id": "m1", "repo": "app"})
+	if got := agent.memoQueries(); !reflect.DeepEqual(got, []string{""}) {
+		t.Errorf("the operator's update_memo sent the queries %q, want none", got)
+	}
+}
+
 // The answer of the Control Plane, `existing` and the state, is what the session reads.
 func TestMemoToolPassesTheAnswerBack(t *testing.T) {
 	agent := setUpMemoSession(t)
