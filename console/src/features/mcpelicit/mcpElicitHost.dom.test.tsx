@@ -39,6 +39,7 @@ vi.mock("../../core/api/client.ts", async (orig) => ({
           inputs: [{ key: "k", fields: [{ name: "f", required: true, options: [{ value: "A", label: "Allow" }] }] }],
           createdAt: "2026-11-27T00:00:00Z",
           deadline: "2099-01-01T00:00:00Z",
+          expiresInMs: 600_000,
         },
       ],
     };
@@ -154,6 +155,28 @@ describe("where a held MCP call shows", () => {
     await act(async () => open());
     await act(async () => new Promise((r) => setTimeout(r, 0)));
     expect(state.posts).toEqual([{ id: "e1", action: "accept", choices: { k: { f: "A" } } }]);
+  });
+  // While an answer is on its way the X does nothing, so a failed answer can be sent again with
+  // the choices the member made.
+  it("keeps the toast and its choices when closed while an answer is on its way", async () => {
+    let fail!: () => void;
+    state.gate = new Promise((_, rej) => (fail = () => rej(new Error("dropped"))));
+    await render(null);
+    const allow = () => [...document.querySelectorAll("label")].find((l) => l.textContent === "Allow")!.querySelector("input")!;
+    const send = () => [...document.querySelectorAll("button")].find((b) => b.textContent === t("mcpelicit.send"))!;
+    await act(async () => allow().click());
+    await act(async () => send().click());
+    await act(async () => document.querySelector<HTMLButtonElement>(".ui-toast-x")!.click());
+    expect(toastCount()).toBe(1);
+    await act(async () => fail());
+    await act(async () => new Promise((r) => setTimeout(r, 0)));
+    expect(allow().checked).toBe(true);
+    state.gate = Promise.resolve();
+    await act(async () => send().click());
+    expect(state.posts).toEqual([
+      { id: "e1", action: "accept", choices: { k: { f: "A" } } },
+      { id: "e1", action: "accept", choices: { k: { f: "A" } } },
+    ]);
   });
   it("takes its toasts down when it unmounts", async () => {
     await render(null);

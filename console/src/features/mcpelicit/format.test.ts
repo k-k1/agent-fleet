@@ -121,6 +121,13 @@ describe("optionTexts", () => {
   it("quotes a value that would not show", () => {
     expect(optionTexts(field([{ value: "", label: "" }, { value: "B", label: "Bee" }]))).toEqual([`""`, "Bee"]);
   });
+  // A page collapses runs of spaces: blank values spell their spaces out.
+  it("tells blank values apart", () => {
+    expect(optionTexts(field([{ value: " ", label: "X" }, { value: "  ", label: "X" }]))).toEqual([
+      `X ("\\u0020")`,
+      `X ("\\u0020\\u0020")`,
+    ]);
+  });
   it("shows the value for an option with no label", () => {
     expect(optionTexts(field([{ value: "A", label: " " }, { value: "B", label: "Bee" }]))).toEqual(["A", "Bee"]);
   });

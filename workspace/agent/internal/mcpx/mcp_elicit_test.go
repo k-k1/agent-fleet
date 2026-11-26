@@ -76,7 +76,7 @@ func TestElicitationsGetListsTheHeldCalls(t *testing.T) {
 	e := out.Elicitations[0]
 	if e["id"] != "e1" || e["serverId"] != "mcp-x" || e["tool"] != "send_mail" || e["session"] != "fix-mail" ||
 		e["arguments"] != `{"to":"a@example.com","to":"b@example.com","n":1.0}` ||
-		e["expiresInSec"] == nil || e["expiresInSec"].(float64) < 80 || e["expiresInSec"].(float64) > 90 {
+		e["expiresInMs"] == nil || e["expiresInMs"].(float64) < 80_000 || e["expiresInMs"].(float64) > 90_000 {
 		t.Fatalf("listed %v: the arguments go out as their exact text", e)
 	}
 }

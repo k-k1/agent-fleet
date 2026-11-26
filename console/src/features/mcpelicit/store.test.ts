@@ -54,9 +54,9 @@ describe("the held-call list", () => {
     }
   });
   // The Agent's deadline is on its clock; the store counts the time left on the page's own.
-  it("times a call from the seconds left, not from the Agent's clock", async () => {
+  it("times a call from the time left, not from the Agent's clock", async () => {
     const read = useMcpElicitStore.getState().refresh();
-    pending[0]({ elicitations: [{ ...call, deadline: "2000-01-01T00:00:00Z", expiresInSec: 600 }] });
+    pending[0]({ elicitations: [{ ...call, deadline: "2000-01-01T00:00:00Z", expiresInMs: 600_000 }] });
     await read;
     const until = useMcpElicitStore.getState().until.get("e1")!;
     expect(until - performance.now()).toBeGreaterThan(590_000);
@@ -71,5 +71,25 @@ describe("the held-call list", () => {
     await new Promise((r) => setTimeout(r, 0));
     pending.forEach((r) => r({ elicitations: [] }));
     expect(await first).toBe(null);
+  });
+  // Between a taken answer and the next read, the call must neither take a second answer nor
+  // come back from a read sent before the answer.
+  it("keeps an answered call answered until a later read", async () => {
+    const before = useMcpElicitStore.getState().refresh();
+    pending[0]({ elicitations: [call] });
+    await before;
+    const stale = useMcpElicitStore.getState().refresh(); // sent before the answer, answers after
+    const first = useMcpElicitStore.getState().answer(call, { k: {} });
+    who.posts[0]({});
+    await new Promise((r) => setTimeout(r, 0));
+    expect(useMcpElicitStore.getState().items).toEqual([]);
+    expect(await useMcpElicitStore.getState().answer(call, null)).toEqual({ code: "busy" });
+    expect(who.posts.length).toBe(1);
+    pending[1]({ elicitations: [call] });
+    await stale;
+    expect(useMcpElicitStore.getState().items).toEqual([]);
+    pending[2]({ elicitations: [] }); // the answer's own read, sent after it
+    await first;
+    expect(useMcpElicitStore.getState().items).toEqual([]);
   });
 });

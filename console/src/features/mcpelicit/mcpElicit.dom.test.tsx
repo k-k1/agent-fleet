@@ -58,7 +58,7 @@ const held = {
   // Long past on this browser's clock, as on one running ahead of the Agent's: the card goes by
   // the seconds left alone.
   deadline: "2000-01-01T00:00:00Z",
-  expiresInSec: 600,
+  expiresInMs: 600_000,
 };
 
 let root: Root | null = null;
@@ -106,6 +106,31 @@ describe("the MCP confirmation card", () => {
     expect(radio("Allow… (ALLOW_ONCE)")).toBeTruthy();
     expect(radio("Allow… (ALLOW_TOOL_ALWAYS)")).toBeTruthy();
     expect(radio("Deny")).toBeTruthy();
+  });
+  // The list belongs to the tenant and member it was read for: another one signed in on this
+  // page sees nothing of it, from the first render after the switch.
+  it("shows nothing to a member the list was not read for", async () => {
+    await render("s1");
+    expect(host.textContent).toContain("send_mail");
+    const { setUser } = await import("../../core/api/client.ts");
+    const { useTenantStore } = await import("../../core/store/tenant.ts");
+    await act(async () => {
+      setUser("someone-else");
+      useTenantStore.setState((s) => ({ identityRev: s.identityRev + 1 }));
+    });
+    expect(host.textContent).toBe("");
+    await act(async () => setUser(""));
+  });
+  // An Agent from before this change sends the arguments as JSON, which the card cannot show
+  // exactly: it can only decline.
+  it("can only decline a call whose arguments are not text", async () => {
+    listed = [{ ...held, arguments: { to: "a@example.com" } }];
+    await useMcpElicitStore.getState().refresh();
+    await render("s1");
+    expect(host.textContent).toContain(t("mcpelicit.arguments_unreadable"));
+    await click(radio("Deny"));
+    expect(button(t("mcpelicit.send")).disabled).toBe(true);
+    expect(button(t("mcpelicit.decline")).disabled).toBe(false);
   });
   // A toast keeps the element it was given; once the call leaves the list it shows nothing.
   it("shows nothing for a call no longer listed", async () => {
@@ -176,7 +201,7 @@ describe("the MCP confirmation card", () => {
     expect(button(t("mcpelicit.send")).disabled).toBe(false);
   });
   it("is gone once its time is up, even without a new list", async () => {
-    listed = [{ ...held, expiresInSec: 0 }];
+    listed = [{ ...held, expiresInMs: 0 }];
     await useMcpElicitStore.getState().refresh();
     await render("s1");
     expect(host.textContent).toBe("");

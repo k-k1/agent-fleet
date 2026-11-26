@@ -6,7 +6,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { SessionLink } from "../awsconfirm/AwsConfirmCard.tsx";
 import { indentJSON, optionTexts, visible } from "./format.ts";
-import { live, useMcpElicitStore, type McpElicitChoices, type McpElicitation } from "./store.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
+import { live, ownerKey, useMcpElicitStore, type McpElicitChoices, type McpElicitation } from "./store.ts";
 import "./mcpElicit.css";
 
 /** Chosen is the card's answer so far: input key → field name → value. Maps, because the keys
@@ -23,6 +24,19 @@ export function complete(e: McpElicitation, chosen: Chosen): boolean {
  *  prototype. */
 export function toChoices(e: McpElicitation, chosen: Chosen): McpElicitChoices {
   return Object.fromEntries(e.inputs.map((input) => [input.key, Object.fromEntries(chosen.get(input.key) ?? [])]));
+}
+
+const NO_CALLS: McpElicitation[] = [];
+
+/** useHeld is the list as the member signed in now may see it: nothing while it was read for
+ *  another tenant or member. It re-renders on a switch of either, before anything resets the
+ *  list, so a card never shows one member's call to another. */
+export function useHeld(): McpElicitation[] {
+  useTenantStore((s) => s.tenant);
+  useTenantStore((s) => s.identityRev);
+  const items = useMcpElicitStore((s) => s.items);
+  const owner = useMcpElicitStore((s) => s.owner);
+  return owner === ownerKey() ? items : NO_CALLS;
 }
 
 const TICK_MS = 5000;
@@ -45,7 +59,7 @@ export function useNow(active: boolean): number {
  *  marked; the tool and server names go in as elements, never into the catalogue line, so no
  *  name can pass for the line's markup. A card whose call has left the list shows nothing. */
 export function McpElicitCard({ id, showSession }: { id: string; showSession?: boolean }) {
-  const e = useMcpElicitStore((s) => s.items.find((x) => x.id === id));
+  const e = useHeld().find((x) => x.id === id);
   if (!e) return null;
   return <CardBody e={e} showSession={showSession} />;
 }
@@ -74,6 +88,10 @@ function CardBody({ e, showSession }: { e: McpElicitation; showSession?: boolean
     if (err) toast(tr("mcpelicit.answer_failed", { reason: errText(err) }));
   };
   // The time on this browser's clock: the Agent's own deadline may be on a clock far from it.
+  // An Agent from before the list carried the arguments as text sends them as JSON: shown that
+  // way they could not be told from what the server runs (a member written twice, a long
+  // number), so such a call can only be declined here.
+  const argsUnreadable = e.arguments !== undefined && typeof e.arguments !== "string";
   const deadline = until === undefined ? new Date(NaN) : new Date(Date.now() + until - performance.now());
   const tool = <b className="mcp-elicit-name">{visible(e.tool)}</b>;
   const host = (
@@ -94,7 +112,9 @@ function CardBody({ e, showSession }: { e: McpElicitation; showSession?: boolean
           )}
         </span>
       </div>
-      {e.arguments ? (
+      {argsUnreadable ? (
+        <div className="mcp-elicit-sub">{tr("mcpelicit.arguments_unreadable")}</div>
+      ) : e.arguments ? (
         <div className="mcp-elicit-section">
           <div className="mcp-elicit-sub">{tr("mcpelicit.arguments")}</div>
           <pre className="mcp-elicit-args">{indentJSON(e.arguments)}</pre>
@@ -141,7 +161,7 @@ function CardBody({ e, showSession }: { e: McpElicitation; showSession?: boolean
         {tr("mcpelicit.deadline", { time: isNaN(deadline.getTime()) ? "" : deadline.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) })}
       </div>
       <div className="mcp-elicit-actions">
-        <button type="button" className="primary" disabled={busy || !complete(e, chosen)} onClick={() => void go(true)}>
+        <button type="button" className="primary" disabled={busy || argsUnreadable || !complete(e, chosen)} onClick={() => void go(true)}>
           {tr("mcpelicit.send")}
         </button>
         <button type="button" className="ghost" disabled={busy} onClick={() => void go(false)}>
@@ -155,7 +175,7 @@ function CardBody({ e, showSession }: { e: McpElicitation; showSession?: boolean
 /** MirrorElicitCards shows the held calls attributed to the session whose mirror this is, above
  *  the composer. A call being answered stays, disabled, so a failed answer keeps the choices. */
 export function MirrorElicitCards({ session }: { session: string }) {
-  const items = useMcpElicitStore((s) => s.items);
+  const items = useHeld();
   const until = useMcpElicitStore((s) => s.until);
   const now = useNow(items.length > 0);
   const mine = items.filter((e) => e.session === session && live(until, e, now));

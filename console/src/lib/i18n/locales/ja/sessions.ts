@@ -1085,6 +1085,7 @@ export const sessions = {
   "mcpelicit.title_session": "セッション <0>{session}</0> が <2/> の <1/> を実行しようとしています。確認が必要です",
   "mcpelicit.title_unattributed": "エージェントが <1/> の <0/> を実行しようとしています。確認が必要です",
   "mcpelicit.arguments": "サーバーが実行する内容:",
+  "mcpelicit.arguments_unreadable": "このワークスペースの Agent が古く、サーバーが実行する内容を正確に表示できません。ここでは断ることしかできません。",
   "mcpelicit.optional": "（任意）",
   "mcpelicit.clear_choice": "選択を取り消す",
   "mcpelicit.deadline": "{time} までに答えがなければ自動で断ります",

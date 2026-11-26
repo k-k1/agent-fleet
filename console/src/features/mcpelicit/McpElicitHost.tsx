@@ -15,8 +15,9 @@ import { useInterval } from "../../lib/useInterval.ts";
 import { dismissToast, toast } from "../../ui/toast.ts";
 import { useAwsConfirmStore } from "../awsconfirm/store.ts";
 import { useNotificationStore } from "../notifications/store.ts";
-import { McpElicitCard, useNow } from "./McpElicitCard.tsx";
-import { live, useMcpElicitStore } from "./store.ts";
+import { useTenantStore } from "../../core/store/tenant.ts";
+import { McpElicitCard, useHeld, useNow } from "./McpElicitCard.tsx";
+import { isSending, live, useMcpElicitStore } from "./store.ts";
 
 export const MCP_ELICITATION_NOTICE = "mcp-elicitation";
 const POLL_HELD_MS = 3000;
@@ -24,7 +25,7 @@ const POLL_IDLE_MS = 30_000;
 const toastKey = (id: string) => "mcp-elicit:" + id;
 
 export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
-  const items = useMcpElicitStore((s) => s.items);
+  const items = useHeld();
   const until = useMcpElicitStore((s) => s.until);
   const refresh = useMcpElicitStore((s) => s.refresh);
   // Which mirrors are on screen is kept by the AWS confirmation store, which MirrorView reports
@@ -35,9 +36,13 @@ export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
   // Calls whose toast the member closed: declined, or being declined, so not toasted again.
   const closedIds = useRef(new Set<string>());
 
+  // On start, and whenever the tenant or the member changes: the list shown is only ever the
+  // current one's (useHeld), so it is read again for them.
+  const tenant = useTenantStore((s) => s.tenant);
+  const identityRev = useTenantStore((s) => s.identityRev);
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, tenant, identityRev]);
 
   // The notification is only the trigger to ask; its payload is never read.
   const noticeSeq = useNotificationStore((s) =>
@@ -87,6 +92,9 @@ export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
           duration: 0,
           key,
           onClose: closed,
+          // While an answer from the card is on its way or given, the X does nothing: the toast
+          // stays with the member's choices until the answer settles.
+          canClose: () => !isSending(e.id),
           closeLabel: t("mcpelicit.decline"),
         })) {
         next.add(key);

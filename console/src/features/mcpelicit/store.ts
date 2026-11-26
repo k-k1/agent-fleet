@@ -41,8 +41,8 @@ export interface McpElicitation {
   inputs: McpElicitInput[];
   createdAt: string;
   deadline: string;
-  /** Seconds left until the relay declines the call, as of the Agent's answer. */
-  expiresInSec?: number;
+  /** Milliseconds left until the relay declines the call, as of the Agent's answer. */
+  expiresInMs?: number;
 }
 
 /** A member's answer: a choice per input key and field name, or a decline. */
@@ -50,18 +50,24 @@ export type McpElicitChoices = Record<string, Record<string, string>>;
 
 interface McpElicitState {
   items: McpElicitation[];
+  /** The tenant and member the list was read for (ownerKey). Only they may see or answer it. */
+  owner: string;
   /** When each listed call stops being answerable, on this page's monotonic clock
    *  (performance.now()): the deadline the Agent states is on its own clock, which a browser's
    *  may be far from. */
   until: Map<string, number>;
-  /** Calls answered from this tab: their card stays, disabled, until the list drops them. */
+  /** Calls answered from this tab: their card stays, disabled, until the answer is settled. */
   answering: Record<string, true>;
   refresh(): Promise<void>;
   reset(): void;
-  /** Answers a held call; returns the Agent's error, or null on success. A call already being
-   *  answered from this tab is not sent again: the answer is code "busy". */
+  /** Answers a held call; returns the Agent's error, or null on success. A call already
+   *  answered or being answered from this tab is not sent again (code "busy"), nor is a list
+   *  read for another tenant or member (code "stale"). */
   answer(e: McpElicitation, choices: McpElicitChoices | null): Promise<ApiError | null>;
 }
+
+/** ownerKey names the tenant and member signed in now. */
+export const ownerKey = () => getTenant() + "\n" + getUser();
 
 // Reads can overlap (start, a notification, the poll, an answer): only a read issued after the
 // last one applied may replace the list, or a late empty answer would take a held call's card
@@ -69,11 +75,16 @@ interface McpElicitState {
 // and a read is applied only while the member and tenant it was issued for are still current.
 let issued = 0;
 let applied = 0;
-const owner = () => getTenant() + "\n" + getUser();
 
-// Calls with an answer on its way, checked and marked before any await: a second press (Send
-// and then a toast's close) must not send a second answer.
+// Calls with an answer on its way or given, marked before any await: a second press (Send and
+// then a toast's close) must not send a second answer. An answered call stays here, and in
+// `answered` with the last read issued before its answer was taken, so an older read that
+// still lists it cannot bring its card back.
 const sending = new Set<string>();
+const answered = new Map<string, number>();
+
+/** isSending reports whether an answer to the call is on its way or given from this tab. */
+export const isSending = (id: string) => sending.has(id);
 
 /** live reports whether e can still be answered at now (performance.now()): past its time the
  *  relay has declined it, even when the list could not be read since (a stopped workspace). */
@@ -84,36 +95,49 @@ export function live(until: Map<string, number>, e: McpElicitation, now: number)
 
 export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
   items: [],
+  owner: "",
   until: new Map(),
   answering: {},
   async refresh() {
-    const who = owner();
+    const who = ownerKey();
     const seq = ++issued;
+    // Time left counts from when the read was sent: the call may have aged while it travelled.
+    const sent = performance.now();
     let d: { elicitations?: McpElicitation[]; error?: unknown } | null = null;
     try {
       d = await api("api/mcp-elicitations");
     } catch {
       return; // a dropped connection proves nothing; the next poll asks again
     }
-    if (!d || d.error || !Array.isArray(d.elicitations) || owner() !== who || seq <= applied) return;
+    if (!d || d.error || !Array.isArray(d.elicitations) || ownerKey() !== who || seq <= applied) return;
     applied = seq;
-    const at = performance.now();
-    const until = new Map<string, number>();
-    for (const e of d.elicitations) {
-      if (typeof e.expiresInSec === "number") until.set(e.id, at + e.expiresInSec * 1000);
+    for (const [id, at] of answered) {
+      if (seq > at) {
+        answered.delete(id); // a read sent after the answer: the Agent no longer lists it
+        sending.delete(id);
+      }
     }
-    const ids = new Set(d.elicitations.map((e) => e.id));
+    const items = d.elicitations.filter((e) => !answered.has(e.id));
+    const until = new Map<string, number>();
+    for (const e of items) {
+      if (typeof e.expiresInMs === "number") until.set(e.id, sent + e.expiresInMs);
+    }
+    const ids = new Set(items.map((e) => e.id));
     set((s) => ({
-      items: d!.elicitations!,
+      items,
+      owner: who,
       until,
       answering: Object.fromEntries(Object.keys(s.answering).filter((id) => ids.has(id)).map((id) => [id, true as const])),
     }));
   },
   reset() {
     applied = issued;
-    set({ items: [], until: new Map(), answering: {} });
+    sending.clear();
+    answered.clear();
+    set({ items: [], owner: ownerKey(), until: new Map(), answering: {} });
   },
   async answer(e, choices) {
+    if (get().owner !== ownerKey()) return { code: "stale" };
     if (sending.has(e.id)) return { code: "busy" };
     sending.add(e.id);
     set((s) => ({ answering: { ...s.answering, [e.id]: true } }));
@@ -125,12 +149,16 @@ export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
     } catch {
       err = { code: "failed" };
     }
-    sending.delete(e.id);
     if (err) {
+      sending.delete(e.id);
       set((s) => {
         const { [e.id]: _, ...rest } = s.answering;
         return { answering: rest };
       });
+    } else {
+      // Taken: the card goes now, and no read sent before this point brings it back.
+      answered.set(e.id, issued);
+      set((s) => ({ items: s.items.filter((x) => x.id !== e.id) }));
     }
     await get().refresh();
     return err;

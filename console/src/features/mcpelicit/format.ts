@@ -109,10 +109,14 @@ export function indentJSON(raw: string): string {
   return depth === 0 && !inString ? parts.join("") : text;
 }
 
-/** valueText is a choice's value as the card shows it: hidden characters marked, and quoted when
- *  nothing of it would show (an empty or blank value). */
+/** valueText is a choice's value as the card shows it: hidden characters marked, and quoted with
+ *  its white space escaped when nothing of it would show (an empty or blank value), since a page
+ *  collapses runs of spaces. */
 function valueText(v: string): string {
-  return looks(v) ? visible(v) : visible(JSON.stringify(v));
+  if (looks(v)) return visible(v);
+  let out = "";
+  for (const c of v) out += /\s/.test(c) ? "\\u" + hex(c.codePointAt(0)!) : visible(c);
+  return `"${out}"`;
 }
 
 /** optionTexts is what the card shows for each of a field's options, hidden characters marked.

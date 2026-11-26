@@ -47,9 +47,9 @@ type elicitationsWire struct {
 type pendingElicitationWire struct {
 	mcpreg.PendingElicitation
 	Arguments string `json:"arguments,omitempty"` // shadows PendingElicitation.Arguments
-	// ExpiresInSec is the time left to answer, as of this answer: the browser's clock can be far
+	// ExpiresInMs is the time left to answer, as of this answer: the browser's clock can be far
 	// from this one, so it does not read Deadline as a time.
-	ExpiresInSec int64 `json:"expiresInSec"`
+	ExpiresInMs int64 `json:"expiresInMs"`
 }
 
 // HandleElicitationsGet (GET /mcp-elicitations) lists the held calls, oldest first.
@@ -60,11 +60,8 @@ func HandleElicitationsGet(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	out := elicitationsWire{Elicitations: make([]pendingElicitationWire, len(held))}
 	for i, p := range held {
-		left := int64(p.Deadline.Sub(now) / time.Second)
-		if left < 0 {
-			left = 0
-		}
-		out.Elicitations[i] = pendingElicitationWire{PendingElicitation: p, Arguments: string(p.Arguments), ExpiresInSec: left}
+		left := max(p.Deadline.Sub(now).Milliseconds(), 0)
+		out.Elicitations[i] = pendingElicitationWire{PendingElicitation: p, Arguments: string(p.Arguments), ExpiresInMs: left}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

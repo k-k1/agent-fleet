@@ -30,6 +30,8 @@ export interface ToastOptions {
   onClose?: () => void;
   // closeLabel names what the X does when closing is more than hiding (it declines something).
   closeLabel?: string;
+  // canClose is asked before the X closes the toast; false leaves it as it is.
+  canClose?: () => boolean;
 }
 
 interface ToastItem {
@@ -39,6 +41,7 @@ interface ToastItem {
   key?: string;
   onClose?: () => void;
   closeLabel?: string;
+  canClose?: () => boolean;
   // A sticky toast carries an action (update now, finish a login) and closes only by its X.
   sticky: boolean;
 }
@@ -102,6 +105,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
         key: opts?.key,
         onClose: opts?.onClose,
         closeLabel: opts?.closeLabel,
+        canClose: opts?.canClose,
         sticky: duration <= 0,
       };
       setItems((xs) => {
@@ -232,6 +236,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                 title={t.closeLabel ?? tr("ui.close")}
                 aria-label={t.closeLabel}
                 onClick={() => {
+                  if (t.canClose && !t.canClose()) return;
                   remove(t.id);
                   t.onClose?.();
                 }}

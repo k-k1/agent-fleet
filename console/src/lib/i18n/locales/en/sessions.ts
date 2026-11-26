@@ -1075,6 +1075,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "mcpelicit.title_session": "Session <0>{session}</0> asks to run <1/> on <2/>, which needs your confirmation",
   "mcpelicit.title_unattributed": "An agent asks to run <0/> on <1/>, which needs your confirmation",
   "mcpelicit.arguments": "What the server will run:",
+  "mcpelicit.arguments_unreadable": "This workspace's Agent is too old to show exactly what the server will run, so this call can only be declined here.",
   "mcpelicit.optional": "(optional)",
   "mcpelicit.clear_choice": "Clear choice",
   "mcpelicit.deadline": "Declined automatically at {time} if nobody answers",
