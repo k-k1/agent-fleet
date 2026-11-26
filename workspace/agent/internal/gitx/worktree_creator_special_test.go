@@ -66,7 +66,7 @@ func TestWorktreeCreatorOversizedMarkerIsUnreadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	body := "sess-a" + strings.Repeat(" ", creatorMarkerMax) + "tail\n"
+	body := "sess-a" + strings.Repeat(" ", smallFileMax) + "tail\n"
 	if err := os.WriteFile(worktreeCreatorPath(wt), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}

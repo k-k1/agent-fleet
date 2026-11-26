@@ -760,7 +760,7 @@ func (c *createRun) armMeta() (session.Meta, bool) {
 		// selection writes the meta it always did.
 		Route:           req.Route.Normalize(),
 		SkipPermissions: req.SkipPermissions,
-		Repo:            filepath.Base(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
+		Repo:            filepath.Base(req.Dir), Place: PlaceOf(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: c.ssm,
 		Origin: c.origin, OriginConv: c.originConv, OriginSession: c.originSession,
 		Studio: c.studio, WorkItem: cleanWorkItemRef(req.WorkItem),
