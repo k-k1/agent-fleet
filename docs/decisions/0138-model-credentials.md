@@ -285,8 +285,9 @@ not see muse or cursor at all.
   - A restricted Managed create, fork or recreate that names no model, under a policy that allows Zen, is judged
     on the record below once its directory is known (#5035): `judgeNewLaunch` defers the refusal, and
     `deferredDefaultRefusal` asks the serve about `Meta.CWD` and judges the route it proves (recorded as that launch).
-    A create makes its worktree first and removes it again when refused; a fork or recreate judges before anything
-    is stopped or archived, a move's target before its source closes. Every other case (several providers, a key, an
+    A create is judged only in a directory that already exists (not one it would make: a worktree, a clone, a new
+    space), so a refusal leaves nothing behind; a fork or recreate judges before anything is stopped or archived. A
+    move's target stays refused, since its create runs under the move's lock. Every other case (several providers, a key, an
     unanswered serve, a Terminal, a policy without Zen) stays `route_required`. A start of the session so created is
     judged on its record without a probe (`agents.DefaultLaunchHolder`: no stored key, the cached account and billing
     views still resolve the free route), which is also what keeps a Managed input revalidation probe-free.

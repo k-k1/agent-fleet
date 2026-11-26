@@ -129,6 +129,9 @@ func defaultDeferrable(a agents.Agent, m session.Meta, p routepolicy.Policy) boo
 // budget, so it never runs under a lock, from a resume, or from a Managed input revalidation. The
 // returned launch is the one judged, for the caller to record.
 func deferredDefaultRefusal(kind string, m session.Meta) (*agents.RouteRefusal, *routes.Launch) {
+	if ref := policyGate(); ref != nil {
+		return ref, nil // the policy can have gone stale while the caller waited for its folder
+	}
 	p, restricted := restrictingPolicy()
 	if !restricted {
 		return nil, nil

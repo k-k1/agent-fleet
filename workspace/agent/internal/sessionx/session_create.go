@@ -38,9 +38,6 @@ type createRun struct {
 	// createdWorktree is the worktree this create ran `git worktree add` for ("" when it reused
 	// one or made none); identify records the session's name on it once the name exists.
 	createdWorktree string
-	// createdParent and createdBranch are the parent the worktree hangs off and the branch the
-	// create made for it ("" when it checked out an existing one).
-	createdParent, createdBranch string
 	// idemKey is the idempotency key this create owns ("" when nothing is de-duplicated), and
 	// committed says its answer has been recorded under it.
 	idemKey   string
@@ -470,9 +467,9 @@ func (c *createRun) resolveLiveCatalogModel() bool {
 // ensureWorktree is gitx.EnsureWorktreeNew that remembers a worktree this create made.
 func (c *createRun) ensureWorktree(parent, base, newBranch, folderSeg string) (string, error) {
 	dir, created, err := gitx.EnsureWorktreeNew(parent, base, newBranch, folderSeg)
-	c.createdWorktree, c.createdParent, c.createdBranch = "", "", ""
+	c.createdWorktree = ""
 	if err == nil && created {
-		c.createdWorktree, c.createdParent, c.createdBranch = dir, parent, newBranch
+		c.createdWorktree = dir
 	}
 	return dir, err
 }

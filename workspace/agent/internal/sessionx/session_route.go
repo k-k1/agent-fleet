@@ -4,10 +4,10 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
@@ -113,7 +113,7 @@ func (c *createRun) checkRoute() bool {
 	// The credential policy, once the selection is known valid (ADR 0138 D11, D12). The launch it
 	// judged is the one recorded (armMeta).
 	ref, judged, deferred := judgeNewLaunch(c.req.Kind, c.req.Route, session.Meta{Kind: c.kind, Model: c.req.Model, Driver: c.driver})
-	if deferred {
+	if deferred && c.canJudgeInPlace() {
 		// Only the working directory is missing: judgeDeferredDefault decides once it exists.
 		c.deferredDefault, ref = true, nil
 	}
@@ -142,20 +142,29 @@ func (c *createRun) checkRoute() bool {
 	return true
 }
 
+// canJudgeInPlace reports that the create runs in a directory that already exists and is not
+// made by this create: a worktree, a clone or a new space would have to be made before the serve
+// can be asked, and a refusal could then no longer leave it untouched (another request may have
+// started using it meanwhile). Those stay route_required. A create that runs under a lock (a
+// move's target) never waits on the serve.
+func (c *createRun) canJudgeInPlace() bool {
+	r := c.req
+	if r.noProbe || r.Worktree || strings.TrimSpace(r.RemoteURL) != "" {
+		return false
+	}
+	return r.Space == nil || r.Space.Folder != ""
+}
+
 // judgeDeferredDefault is the credential policy's judgement of a create checkRoute deferred for
 // want of its working directory (judgeNewLaunch), run once resolveWorkingCopy has made it and
-// before anything else is written. A refusal removes the worktree this create just made, so a
-// refused create leaves nothing behind.
+// before anything else is written. Nothing has been made for the create by then (canJudgeInPlace), so a
+// refusal leaves nothing behind.
 func (c *createRun) judgeDeferredDefault() bool {
 	if !c.deferredDefault {
 		return true
 	}
 	ref, judged := deferredDefaultRefusal(c.req.Kind, session.Meta{Kind: c.kind, Dir: c.req.Dir, Subdir: c.subdir, Model: c.req.Model, Driver: c.driver})
 	if ref != nil {
-		if c.createdWorktree != "" {
-			gitx.RemoveFreshWorktree(c.createdParent, c.createdWorktree, c.createdBranch)
-			c.createdWorktree = ""
-		}
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return false
 	}

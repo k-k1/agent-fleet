@@ -549,6 +549,9 @@ type CreateReq struct {
 	links         []session.WorkItemLink
 	unlinked      []string
 	workItemState string
+	// noProbe is a create that runs under a lock and must not wait on the serve (a move's target):
+	// a default model is then never judged on the folder (checkRoute).
+	noProbe bool
 	// SSM (kind=ssm) coordinates, resolved and forwarded by the Control Plane from a
 	// host bookmark (control-plane/ssm.go). No secrets — SSO login happens in-pane.
 	// SSMAlias: the host bookmark's alias (CP disambiguates it with the profile when it

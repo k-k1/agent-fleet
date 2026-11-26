@@ -3,6 +3,7 @@ package sessionx
 import (
 	"errors"
 	"net/http"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -120,8 +121,9 @@ func TestDeferredDefaultRefusal(t *testing.T) {
 	wantPolicyRefusal(t, "a route the policy does not allow", ref, http.StatusForbidden, routes.CodePolicyForbidden)
 }
 
-// A stored session created on the proven record starts, and starting it never probes; one whose
-// record the kind no longer holds is refused.
+// A stored session created on the proven record starts, and starting it (storedLaunchPolicyRefusal, the
+// judgement behind startRefusalOf and so behind a Managed input revalidation) never probes; one whose record the kind no longer holds is
+// refused.
 func TestStoredDefaultRecordStartsWithoutAProbe(t *testing.T) {
 	usePolicy(t, zenOnly)
 	_, dirs := swapDefaultOpencode(t, freeLaunch)
@@ -183,24 +185,34 @@ func TestRestrictedDefaultModelCreate(t *testing.T) {
 	for name, tc := range map[string]struct {
 		def   routes.Launch
 		extra map[string]any
+		probe bool // the serve is asked
 	}{
-		"an unproven folder":           {routes.Launch{}, nil},
-		"an unproven fresh worktree":   {routes.Launch{}, map[string]any{"worktree": true}},
-		"a forbidden proven route":     {routes.Launch{Route: routes.RouteOpenAIAPI, Binding: "OPENAI_API_KEY@k"}, map[string]any{"worktree": true}},
-		"an unproven new-branch clone": {routes.Launch{}, map[string]any{"worktree": true, "new_branch": "topic/x"}},
+		"an unproven folder":       {routes.Launch{}, nil, true},
+		"a forbidden proven route": {routes.Launch{Route: routes.RouteOpenAIAPI, Binding: "OPENAI_API_KEY@k"}, nil, true},
+		// A copy this create would have to make first stays refused, and is never made: another
+		// request could be using it by the time the serve answered.
+		"a fresh worktree":              {freeLaunch, map[string]any{"worktree": true}, false},
+		"a fresh worktree on a branch":  {freeLaunch, map[string]any{"worktree": true, "new_branch": "topic/x"}, false},
+		"an existing branch's worktree": {freeLaunch, map[string]any{"worktree": true, "use_existing": true, "branch": "feature"}, false},
+		"a clone":                       {freeLaunch, map[string]any{"remote_url": "https://example.invalid/x.git"}, false},
+		"a new space":                   {freeLaunch, map[string]any{"space": map[string]any{"name": "fresh"}}, false},
 	} {
 		*def, *got = tc.def, session.Meta{}
-		before := p.sideEffects()
+		asked := len(*dirs)
+		before, refs := p.sideEffects(), gitRefs(t, p.repo)
 		rec := p.post(body(tc.extra), "")
 		if rec.Code == http.StatusOK || rec.Code == http.StatusCreated || got.Name != "" {
 			t.Errorf("%s: %d %s, launched %+v", name, rec.Code, rec.Body, *got)
 			continue
 		}
-		if want := routes.CodePolicyRequired; routeCode(t, rec.Body.String()) != want && tc.def.Route == "" {
-			t.Errorf("%s: code %s, want %s", name, routeCode(t, rec.Body.String()), want)
+		if (len(*dirs) > asked) != tc.probe {
+			t.Errorf("%s: probed=%v, want %v", name, len(*dirs) > asked, tc.probe)
 		}
-		if d := before.diff(p.sideEffects()); d != "" {
-			t.Errorf("%s: a refused create left %s", name, d)
+		if tc.def.Route == "" && routeCode(t, rec.Body.String()) != routes.CodePolicyRequired {
+			t.Errorf("%s: code %s, want %s", name, routeCode(t, rec.Body.String()), routes.CodePolicyRequired)
+		}
+		if d := before.diff(p.sideEffects()); d != "" || refs != gitRefs(t, p.repo) {
+			t.Errorf("%s: a refused create left %s (refs changed: %v)", name, d, refs != gitRefs(t, p.repo))
 		}
 	}
 
@@ -219,6 +231,15 @@ func TestRestrictedDefaultModelCreate(t *testing.T) {
 	}
 }
 
+func gitRefs(t *testing.T, repo string) string {
+	t.Helper()
+	out, err := exec.Command("git", "-C", repo, "for-each-ref").CombinedOutput()
+	if err != nil {
+		t.Fatalf("git for-each-ref: %v: %s", err, out)
+	}
+	return string(out)
+}
+
 // Fork, recreate and move judge the folder they already have before they change anything: an
 // unproven one refuses with the source session untouched.
 func TestRestrictedDefaultModelFollowOns(t *testing.T) {
@@ -233,19 +254,28 @@ func TestRestrictedDefaultModelFollowOns(t *testing.T) {
 			t.Errorf("recreate = %d archived=%v %s, want route_required before the old slot is archived", rec.Code, cur.Archived, rec.Body)
 		}
 	})
+	t.Run("recreate on a proven folder", func(t *testing.T) {
+		home := writebackEnv(t)
+		*def = freeLaunch
+		got := useLaunchProbe(t)
+		session.WriteMeta(session.Meta{Name: "dfrec2", Dir: home, Kind: session.KindOpencode, Driver: session.DriverManaged})
+		callHandler(HandleRecreateSession, http.MethodPost, "dfrec2", "")
+		if got.LaunchRoute == nil || *got.LaunchRoute != freeLaunch {
+			t.Errorf("the new slot launched with %+v, want the free record", got.LaunchRoute)
+		}
+	})
 	t.Run("move", func(t *testing.T) {
+		// A move's target stays on the early check: its create runs under the move's lock.
 		isolateAgentState(t)
 		src := session.Meta{Name: "s", Kind: session.KindClaude, Dir: t.TempDir()}
-		for name, tc := range map[string]struct {
-			launch routes.Launch
-			ok     bool
-		}{"an unproven folder": {routes.Launch{}, false}, "a proven folder": {freeLaunch, true}} {
-			*def = tc.launch
-			err := checkMoveRequest(t.Context(), src, moveRequest{Kind: session.KindOpencode, Driver: session.DriverManaged})
-			var me *moveError
-			if tc.ok && err != nil || !tc.ok && (!errors.As(err, &me) || me.Code != routes.CodePolicyRequired) {
-				t.Errorf("%s: %v", name, err)
-			}
+		*def = freeLaunch
+		err := checkMoveRequest(t.Context(), src, moveRequest{Kind: session.KindOpencode, Driver: session.DriverManaged})
+		var me *moveError
+		if !errors.As(err, &me) || me.Code != routes.CodePolicyRequired {
+			t.Errorf("a proven folder: %v, want route_required", err)
+		}
+		if got := moveCreateReq(src, moveRecord{Kind: session.KindOpencode}); !got.noProbe {
+			t.Error("a move's create may probe the serve under the move's lock")
 		}
 	})
 	t.Run("fork", func(t *testing.T) {

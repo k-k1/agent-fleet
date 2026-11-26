@@ -1612,22 +1612,6 @@ func EnsureWorktreeNew(parentDir, base, newBranch, folderSeg string) (string, bo
 	return dir, true, nil
 }
 
-// RemoveFreshWorktree undoes a worktree a create has just made (EnsureWorktreeNew reported it
-// created), for a create refused before anything used it: the worktree is removed from its parent
-// and, when the create also made its branch (newBranch, the `-b` name), that branch with it. It
-// never touches a worktree somebody else made, so the caller must have seen created == true.
-func RemoveFreshWorktree(parentDir, dir, newBranch string) {
-	if out, err := Combined(parentDir, "worktree", "remove", "--force", dir); err != nil {
-		log.Printf("removing the fresh worktree %s: %v: %s", dir, err, out)
-		return
-	}
-	if nb := strings.TrimSpace(newBranch); nb != "" && !strings.HasPrefix(nb, "-") {
-		if out, err := Combined(parentDir, "branch", "-D", nb); err != nil {
-			log.Printf("removing the fresh worktree's branch %s: %v: %s", nb, err, out)
-		}
-	}
-}
-
 // worktreeNamePrefix is the folder-name prefix for a worktree created from parentDir:
 // the main working copy's name, so a worktree made from a linked worktree is still
 // <repo>@<seg> rather than nesting (<repo>@a@b). Falls back to parentDir's own name

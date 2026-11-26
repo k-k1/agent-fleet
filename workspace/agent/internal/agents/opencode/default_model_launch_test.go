@@ -514,17 +514,16 @@ func TestHoldsDefaultLaunch(t *testing.T) {
 			t.Errorf("%s: held", name)
 		}
 	}
-	old := credentialView
-	t.Cleanup(func() { credentialView = old })
-	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
-		return map[string]string{opencodeKeyEnv: "k"}, UsageZen, oauthState{known: true}, nil
-	}
+	storedKeysAre(t, map[string]string{opencodeKeyEnv: "k"}, true)
 	if a.HoldsDefaultLaunch(managed, free) {
 		t.Error("held with a stored key")
 	}
-	credentialView = func() (map[string]string, string, oauthState, *secrets.CustomAPIConn) {
-		return nil, UsageZen, oauthState{known: true, connected: true, id: "acct"}, nil
+	storedKeysAre(t, nil, false)
+	if a.HoldsDefaultLaunch(managed, free) {
+		t.Error("held although the credential store could not be read")
 	}
+	storedKeysAre(t, nil, true)
+	accountIs(t, UsageZen, oauthState{known: true, connected: true, id: "acct"})
 	if a.HoldsDefaultLaunch(managed, free) {
 		t.Error("held with a signed-in account")
 	}
