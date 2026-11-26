@@ -145,7 +145,7 @@ https://<PUBLIC_DOMAIN>/oauth2/callback
 |---|---|
 | Control Plane が起動しない | `docker compose logs cp`。`curl -s http://127.0.0.1:8099/healthz` が `ok` を返すか |
 | docker のソケットで permission denied | `DOCKER_GID` が `getent group docker` と同じか |
-| サインインがいつも拒否される | 許可リストがすべて空で、まだ誰も招待していない（[ログインできない](../diagnose/cannot-login.ja.md)） |
+| サインインがいつも拒否される | 許可リストがすべて空で、まだ誰も招待していない（[Agent Fleet にサインインできない](../diagnose/cannot-login.ja.md)） |
 | ワークスペースから公開 URL に届かない | [ワークスペースから CP に届かないとき](workspace-listener.ja.md) |
 
 ほかの症状は [症状から原因を探す](../diagnose/checklist.ja.md) にあります。

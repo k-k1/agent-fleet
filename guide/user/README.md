@@ -99,7 +99,7 @@ Each page covers one thing you want to do.
 
 | Page | What you can do |
 |---|---|
-| [See every running session](fleet/overview.md) | Lay out the running sessions as cards and spot the ones waiting for you |
+| [View sessions as cards](fleet/overview.md) | Lay out the running sessions as cards and spot the ones waiting for you |
 | [See how sessions relate over time](fleet/graph.md) | See on a time axis which session started which, and what passed between them |
 | [Narrow the view with working sets](fleet/working-sets.md) | Group repositories and conversations per piece of work and switch what the left pane shows |
 | [Start child sessions from a session](fleet/child-sessions.md) | Have a session start other sessions and hand them parts of the work |

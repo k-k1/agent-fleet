@@ -7,8 +7,8 @@ source_of_truth: "The Console's Clean up and archive windows, and the menus of s
 
 English | [日本語](cleanup.ja.md)
 
-You can archive finished sessions and delete the working copies and branches you no longer need. Whatever you delete goes to the
-trash first, so deleting too much can be undone.
+You can archive finished sessions and clear away working copies and branches you no longer need.
+Deleting a session moves its list entry to the trash. Highlights and answer translations are removed immediately and cannot be restored.
 
 ## How it works
 
@@ -24,7 +24,8 @@ You can also ask the [Fleet Operator](../fleet/operator.md) to do the same surve
 
 ## What stays and what goes
 
-The only thing that goes on its own is an archived session's work folder. A conversation is gone for good only when you delete it permanently from the trash.
+The scratch folder of an archived session is removed automatically after seven days.
+The table shows where conversations are stored and what stays when you delete a session.
 
 | | Archive | Delete (to the trash) | Delete permanently from the trash |
 |---|---|---|---|

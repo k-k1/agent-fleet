@@ -110,6 +110,6 @@ Console から super_admin にする方法は、わざと作っていません�
 ## 関連
 
 - [メンバーを外す](../../admin/members/remove.ja.md)：テナント管理者の手順
-- [ログインできない](../diagnose/cannot-login.ja.md)：外した人がまだ使えるとき
+- [Agent Fleet にサインインできない](../diagnose/cannot-login.ja.md)：外した人がまだ使えるとき
 - [そのほかの運用上の制御](controls.ja.md#サインインの許可リストを保つ)：許可リストの決まり
 - [配備のキーを扱う](deployment-keys.ja.md)：`AF_COOKIE_SECRET` の要件

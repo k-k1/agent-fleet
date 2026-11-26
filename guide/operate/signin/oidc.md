@@ -74,4 +74,4 @@ The IdP does not send `email_verified`, so every address counts as unverified. I
 
 - [Set up how people sign in](overview.md)
 - [Sign in with Microsoft Entra ID](entra.md)
-- [Cannot log in](../diagnose/cannot-login.md)
+- [Cannot sign in to Agent Fleet](../diagnose/cannot-login.md)

@@ -3,12 +3,12 @@ audience: "anyone running several sessions at once"
 source_of_truth: "The Console's sessions overview pane"
 ---
 
-# See every running session
+# View sessions as cards
 
 English | [日本語](overview.ja.md)
 
-The sessions overview lays out your running sessions as cards, one per session.
-A session waiting for your answer stands out even from across the room.
+Open **"Sessions overview"** to check session states on cards. Cards for sessions waiting for your answer are tinted.
+To include stopped sessions, turn on **"Show stopped"** in the header.
 
 ## How it works
 

@@ -18,7 +18,7 @@ their changes colliding. Choose where to work, and on which branch, under **Loca
 | Choose "New worktree" under Location, and set the base branch and the branch name | Works only inside its own worktree |
 | If needed, set a folder of the repository as the "Working folder" | Starts in that folder |
 
-Agent Fleet creates the worktree. Right before launching, it moves the base branch to `origin`'s tip and branches from there.
+Agent Fleet creates the worktree.
 
 ## Choose the location
 
@@ -38,7 +38,9 @@ With "New worktree", choose under **Branch** whether to cut a new branch or use 
 | Choice | What you enter | What happens |
 |---|---|---|
 | New branch | The base branch, and a branch name (optional) | Cuts a new branch from the base. With no name, it starts under a temporary name `temp/…` |
-| Existing branch | The branch to use | Checks that branch out into a new working copy, brings it up to date, and starts |
+| Existing branch | The branch to use | Checks out the selected branch in a new working copy and applies remote updates when it can before starting |
+
+Once the existing branch is checked out, the session can start from that checkout even if the remote is unreachable or the local and remote branches have diverged.
 
 - The worktree's folder name is made from the branch name
 - A session started under a temporary name can be named later with **Rename the branch** in its ⋯ menu ([Start a session](start.md#rename-a-session-or-its-branch))

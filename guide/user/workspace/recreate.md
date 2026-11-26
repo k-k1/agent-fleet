@@ -7,14 +7,14 @@ source_of_truth: "The Console's Settings > Danger zone, and Stop / Start in the 
 
 English | [日本語](recreate.ja.md)
 
-When the environment is broken, you can recreate the workspace from the latest image. Only `~/repos` is deleted; your
-logins and the rest of your home stay.
+When the environment is broken, you can recreate the workspace from the latest image. Within your home directory,
+recreating deletes `~/repos` and keeps your logins and other files.
 
 ## How it works
 
 | What you do | What happens |
 |---|---|
-| Stop the workspace and start it again | It starts again from the latest image, and nothing is deleted |
+| Stop the workspace and start it again | It starts from the latest image and keeps your home directory. On deployments with a work disk, `/scratch` is cleared |
 | Press **Recreate** | `~/repos` is deleted and the workspace is recreated from the latest image |
 | Press **Clean** | Everything in your home except logins and connections is deleted, and the workspace is recreated from the latest image |
 

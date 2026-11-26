@@ -115,4 +115,4 @@ client secret の期限切れです。新しいシークレットを作り、`AF
 
 - [サインインの方法を設定する](overview.ja.md)
 - [そのほかの OIDC でサインインする](oidc.ja.md)
-- [ログインできない](../diagnose/cannot-login.ja.md)
+- [Agent Fleet にサインインできない](../diagnose/cannot-login.ja.md)

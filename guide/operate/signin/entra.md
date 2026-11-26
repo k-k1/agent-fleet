@@ -115,4 +115,4 @@ The client secret has expired. Create a new one, replace `AF_OIDC_<ID>_CLIENT_SE
 
 - [Set up how people sign in](overview.md)
 - [Sign in with another OIDC IdP](oidc.md)
-- [Cannot log in](../diagnose/cannot-login.md)
+- [Cannot sign in to Agent Fleet](../diagnose/cannot-login.md)

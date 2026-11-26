@@ -12,7 +12,7 @@ source_of_truth: "能力の事実についてはこのセクション（軸は�
 
 | 表 | 知りたいこと |
 |---|---|
-| [features.md](features.ja.md) | そもそも何ができて、誰ができる？ |
+| [features.md](features.ja.md) | どんな機能があり、どのロールで使えるか |
 | [agents.md](agents.ja.md) | このエージェントでできる？ |
 | [repos.md](repos.ja.md) | このリポジトリ種別に対してできる？ |
 | [deploy-targets.md](deploy-targets.ja.md) | この配備形態にある？ |

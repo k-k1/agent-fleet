@@ -69,7 +69,7 @@ https://k7f2q9x1w3ub5nzt0abc-8080.pv.example.com/   → 8080 番（Spring Boot �
 - **API の呼び先を `http://localhost:8080` と書かない。** ブラウザから見た `localhost` は、画面を見ている人の PC です。
   開発サーバーのプロキシ（Vite の `server.proxy`、Next.js の `rewrites()`）で `/api` を 8080 に流すと、手元の PC でもプレビューでも同じ設定のまま動きます
 - **プロキシの転送先は `http://127.0.0.1:8080` のままにする。** ここをプレビューの URL に書き換えると、API がすべて 401
-  （`preview requires sign-in`）になります。プロキシはコンテナの中のサーバーから出る通信で、あなたのブラウザのサインインを持っていないためです
+  （`preview requires sign-in`）になります。開発サーバーからのリクエストには、ブラウザが持つプレビュー用の認証 Cookie が含まれないためです
 - 3000 の画面から 8080 を直接呼ぶ構成にするなら、「**ポート間の呼び出しを許可する**」をオンにします。オンにすると、URL を知っている第三者のページからも、あなたのブラウザを通して呼べるようになります
 - **Spring Boot** は `server.forward-headers-strategy=framework` を設定してください
 - **Next.js** は `allowedDevOrigins` の設定が要ります。ないと、`/_next/*` への別のオリジンからのアクセスが止められ、レイアウトの枠だけが出て

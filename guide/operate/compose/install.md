@@ -145,7 +145,7 @@ GitHub's and Bitbucket's "Connect via OAuth" for cloning repositories is not in 
 |---|---|
 | The Control Plane does not start | `docker compose logs cp`. Does `curl -s http://127.0.0.1:8099/healthz` print `ok`? |
 | "permission denied" on the docker socket | Does `DOCKER_GID` match `getent group docker`? |
-| Every sign-in is refused | Every allowlist is empty and nobody has been invited yet ([Cannot log in](../diagnose/cannot-login.md)) |
+| Every sign-in is refused | Every allowlist is empty and nobody has been invited yet ([Cannot sign in to Agent Fleet](../diagnose/cannot-login.md)) |
 | Workspaces cannot reach the public URL | [When workspaces cannot reach the CP](workspace-listener.md) |
 
 Other symptoms are in [Find the cause from the symptom](../diagnose/checklist.md).

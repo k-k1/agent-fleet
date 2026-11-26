@@ -317,7 +317,7 @@ A pane's header carries these buttons ([Split the screen into panes](../user/sta
 | Close | Closes the pane. A middle click or Ctrl+click closes it without asking |
 
 - In the tabbed layout, right-clicking a session's tab, or the tab of an image studio bound to a session, opens the same menu as the left-pane row. Other tabs, and any tab while the workspace is stopped, get the browser's own menu
-- A card in the sessions overview opens the same menu from right-click, the card's `⋯` or the menu key ([See every running session](../user/fleet/overview.md#act-from-a-card))
+- A card in the sessions overview opens the same menu from right-click, the card's `⋯` or the menu key ([View sessions as cards](../user/fleet/overview.md#act-from-a-card))
 
 ## Field help (the ⓘ mark)
 

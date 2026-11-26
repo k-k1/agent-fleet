@@ -31,7 +31,7 @@ That is everything needed to restore on another host.
 > [!WARNING]
 > **Keep the key and the data apart, and back up both.**
 >
-> - The archive holds plaintext Claude state. Lock down who can read where you store it, and encrypt it
+> - The archive includes unencrypted Claude login data. Restrict access to the storage location and encrypt the archive
 > - The archive also holds the client secrets of the sign-in methods tenants registered, sealed with this key. A key kept next to the data defeats the encryption
 > - Lose `AF_MASTER_KEY` and every past archive becomes undecryptable
 > - Leave `AF_MASTER_KEY` empty and members' credentials are stored unencrypted in their homes, and go into the archive as they are. That is for `AUTH=dev` only ([Handle the deployment keys](../secure/deployment-keys.md#add-a-key-to-a-deployment-without-one))

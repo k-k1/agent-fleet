@@ -118,7 +118,7 @@ Scheduled runs do it unattended, and with "Tool permissions" off they do it with
 - A muse session never asks to approve a tool. Treat it like shell: it can run anything
 - shell and ssm sessions run what you send exactly as sent
 
-When you run many sessions at once, see also [See every running session](../fleet/overview.md).
+When you run many sessions at once, see also [View sessions as cards](../fleet/overview.md).
 
 ## When it goes wrong
 

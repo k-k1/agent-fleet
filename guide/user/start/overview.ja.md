@@ -44,7 +44,7 @@ Agent Fleet は、Claude Code や Codex などのコーディングエージェ�
 | チームのメンバーや上限を管理する | [テナントを管理する](../../admin/README.ja.md) |
 | 配備を構築して維持する | [配備を運用する](../../operate/README.ja.md) |
 
-何ができて誰ができるかの一覧表は [リファレンス](../../ref/README.ja.md) に、リリースごとの変更は
+対応している機能と、それぞれの機能を使えるロールの一覧は [リファレンス](../../ref/README.ja.md) に、リリースごとの変更は
 [更新履歴](../../../deploy/release/notes/SUMMARY.ja.md) にあります。
 
 > [!TIP]
