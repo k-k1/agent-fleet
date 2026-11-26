@@ -86,6 +86,9 @@ export const STOP_SKEW_MS = 60 * 60 * 1000;
  *  Workspace's clock and `now` on the browser's, so a small lead (STOP_SKEW_MS) counts as recent and a larger one as unknown. */
 export function stoppedRecently(s: Session, now: number): boolean {
   if (s.alive || !s.stoppedAt) return false;
+  // RFC3339 names its zone. Date.parse would read a zone-less string in the browser's zone, while
+  // the Control Plane's mirror drops it as not a time: the two must agree on "unknown".
+  if (!/(Z|[+-]\d\d:\d\d)$/i.test(s.stoppedAt)) return false;
   const at = Date.parse(s.stoppedAt);
   return Number.isFinite(at) && at - now <= STOP_SKEW_MS && now - at <= RECENT_STOP_MS;
 }

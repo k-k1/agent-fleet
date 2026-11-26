@@ -66,6 +66,8 @@ beforeEach(() => {
   localStorage.clear();
   api.mockClear();
   setSettings({ workingSets: [], workingSetActive: "" });
+  // The default state is unsettled ("…"): each test says what it needs.
+  useWorkspaceStore.setState({ state: "running" });
   // The names are the Sessions view's to ask for; this view only reads what is there.
   useSpacesStore.setState({ spaces: LIST.spaces, owner: spacesOwner(), failures: 0, failOwner: "" });
   setFoldScope({ user: "u", tenant: "t1" });
@@ -143,6 +145,13 @@ describe("ActiveSection", () => {
     useWorkspaceStore.setState({ state: "running" });
     await flush();
     expect(host.querySelector(".ovw-menu-btn")).not.toBeNull();
+  });
+
+  it("says the workspace is stopped, ahead of any working-set wording, when nothing recent is left", async () => {
+    useWorkspaceStore.setState({ state: "stopped" });
+    setSettings({ workingSets: [{ id: "w1", name: "Mine", repos: [], convs: [], sessions: [], schedules: [] }], workingSetActive: "w1" });
+    await render([sess("old", { repo: "app", alive: false })]);
+    expect(host.querySelector(".section-empty")?.textContent).toContain("The workspace is stopped");
   });
 
   it("asks the server for nothing", async () => {

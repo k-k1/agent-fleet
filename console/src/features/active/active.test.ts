@@ -328,7 +328,7 @@ describe("recently stopped sessions (#5155)", () => {
   });
 
   it("does not list a stopped session with no stoppedAt (an older Agent) or an unreadable one", () => {
-    const list = [s("none", { alive: false }), s("junk", { alive: false, stoppedAt: "yesterday" })];
+    const list = [s("none", { alive: false }), s("junk", { alive: false, stoppedAt: "yesterday" }), s("nozone", { alive: false, stoppedAt: "2026-11-26T11:30:00" })];
     expect(names(activeScope(list, null, undefined, [], now))).toEqual([]);
     expect(stoppedRecently(list[0], now)).toBe(false);
     expect(stoppedRecently(list[1], now)).toBe(false);

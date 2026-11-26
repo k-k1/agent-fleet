@@ -105,7 +105,7 @@ export const ActiveSection = memo(function ActiveSection() {
   return (
     <Section id="active" title={tr("rail.view.active")} icon="pulse" count={alive}>
       {groups.length === 0 ? (
-        <div className="section-empty">{wset ? tr("active.empty_in_set", { set: wset.name }) : running ? tr("active.empty") : tr("active.empty_stopped")}</div>
+        <div className="section-empty">{!running ? tr("active.empty_stopped") : wset ? tr("active.empty_in_set", { set: wset.name }) : tr("active.empty")}</div>
       ) : (
         <div className="act-list">
           {groups.map((g) => (
@@ -141,6 +141,7 @@ export const ActiveSection = memo(function ActiveSection() {
                       opens={sPanes?.get(s.name) || []}
                       beside={false}
                       running={running}
+                      readOnly={!running}
                       waitingAt={waitingAt(s.name)}
                       actions={actions}
                       fold={fold}

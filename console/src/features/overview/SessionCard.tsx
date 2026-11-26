@@ -14,7 +14,7 @@
 //
 // Right-click, the ⋯ button and the Menu key open SessionMenu — the very same items as the row
 // and the tab.
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { placeFixed } from "../../lib/placeFixed.ts";
@@ -67,12 +67,16 @@ interface SessionCardProps {
   selected?: boolean;
   /** How many of the rows this card's fold hides wait for the member's answer (0 = none). */
   hiddenWaiting?: number;
+  /** No ⋯ menu, context menu or Menu key: for a card shown while the workspace is stopped,
+   *  where every menu action is a request to the Agent that is not there. Opening the history
+   *  still works, as in the stopped Sessions list. */
+  readOnly?: boolean;
 }
 
 // Where the menu was asked for: at the pointer (right-click / Menu key) or under the ⋯.
 type MenuAt = { x: number; y: number } | "button" | null;
 
-export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions, fold, onFold, rail = false, selected = false, hiddenWaiting = 0 }: SessionCardProps) {
+export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions, fold, onFold, rail = false, selected = false, hiddenWaiting = 0, readOnly = false }: SessionCardProps) {
   const tr = useT();
   const { hover, setHover } = usePaneHover();
   const setActive = useLayoutStore((l) => l.setActive);
@@ -122,9 +126,11 @@ export function SessionCard({ s, opens, beside, running, waitingAt = 0, actions,
 
   // newPane = the modifier was held (or the wheel was clicked): open in another pane whatever
   // the screen. Without it, `beside` decides.
-  // Every ⋯ action is a request to the Agent, which is not there while the workspace is stopped:
-  // the card then only opens the history, as the stopped Sessions list does (readOnly).
-  const menuAvailable = running;
+  const menuAvailable = !readOnly;
+  // A menu left open when the card turns read-only must not come back at its old spot later.
+  useEffect(() => {
+    if (readOnly) setMenuAt(null);
+  }, [readOnly]);
   const openIt = (newPane: boolean) => {
     if (inert) return;
     openSessionFromList(s, newPane || beside, running);
