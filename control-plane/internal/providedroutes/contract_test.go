@@ -100,8 +100,10 @@ func TestUpstreamHeaders(t *testing.T) {
 	}
 }
 
-// albHeaders is what an AWS Application Load Balancer adds to a request it forwards, with the
-// TLS and mutual-TLS listener options on.
+// albHeaders is the union of what an AWS Application Load Balancer can add to a request it
+// forwards: the headers it always sets, the TLS metadata it adds when enabled, and both mutual-TLS
+// modes (passthrough sends X-Amzn-Mtls-Clientcert, verify the rest of the client certificate
+// ones). No single configuration sends all of them; the union checks every name at once.
 var albHeaders = http.Header{
 	"X-Amzn-Trace-Id":                      {"Root=1-67891233-abcdef012345678912345678"},
 	"X-Forwarded-For":                      {"203.0.113.7"},
@@ -109,6 +111,7 @@ var albHeaders = http.Header{
 	"X-Forwarded-Port":                     {"443"},
 	"X-Amzn-Tls-Version":                   {"TLSv1.3"},
 	"X-Amzn-Tls-Cipher-Suite":              {"TLS_AES_128_GCM_SHA256"},
+	"X-Amzn-Tls-Kx":                        {"X25519MLKEM768"},
 	"X-Amzn-Mtls-Clientcert-Serial-Number": {"0A"},
 	"X-Amzn-Mtls-Clientcert-Issuer":        {"CN=ca"},
 	"X-Amzn-Mtls-Clientcert-Subject":       {"CN=client"},
@@ -118,7 +121,8 @@ var albHeaders = http.Header{
 }
 
 // A call through an ALB is accepted and the load balancer's headers are dropped, not passed to
-// Bedrock; the exemption is the exact names, so the rest of the x-amzn- family is still refused.
+// Bedrock; the exemption is the exact names, so every other x-amzn- header outside passHeaders is
+// still refused.
 func TestUpstreamHeadersDropsLoadBalancerHeaders(t *testing.T) {
 	in := http.Header{"Content-Type": {"application/json"}, "Accept": {"application/json"}}
 	for k, v := range albHeaders {
@@ -132,7 +136,8 @@ func TestUpstreamHeadersDropsLoadBalancerHeaders(t *testing.T) {
 	if len(out) != 2 || out.Get("Content-Type") != "application/json" || out.Get("Accept") != "application/json" {
 		t.Fatalf("out = %v", out)
 	}
-	for _, h := range []string{"X-Amzn-Trace-Id-Override", "X-Amzn-Trace", "X-Amzn-Oidc-Identity", "X-Amzn-Tls-Region"} {
+	for _, h := range []string{"X-Amzn-Trace-Id-Override", "X-Amzn-Trace", "X-Amzn-Oidc-Identity", "X-Amzn-Oidc-Data",
+		"X-Amzn-Tls-Region", "X-Amzn-Tls-Kx-Override", "X-Forwarded-Role", "X-Forwarded-Region"} {
 		if _, ref := UpstreamHeaders(http.Header{h: {"v"}}); codeOf(ref) != CodeRequestRefused {
 			t.Errorf("%s: %v", h, ref)
 		}
