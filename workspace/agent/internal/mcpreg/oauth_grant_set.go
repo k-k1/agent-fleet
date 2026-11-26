@@ -340,10 +340,9 @@ func sharedNames(reg Registry, d ServerDef, g *secrets.MCPOAuthGrant) []string {
 	if g == nil || g.Group == "" {
 		return nil
 	}
-	group := g.Group
 	var out []string
 	for _, o := range reg.Servers {
-		if o.ID != d.ID && grantGroup(o) == group {
+		if o.ID != d.ID && grantApplies(g, o) {
 			out = append(out, o.Name)
 		}
 	}

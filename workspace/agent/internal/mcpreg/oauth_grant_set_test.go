@@ -1276,3 +1276,89 @@ func TestSharedSignInNeedsTheGroupsIssuer(t *testing.T) {
 		}
 	}
 }
+
+// Disconnecting a server signed in on its own is one write: its own grant goes and the group's
+// stops applying to it together, or (the write failing) neither happens.
+func TestOwnDisconnectIsOneWrite(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+	signInVia(t, f, "t-a")
+	req := startReq(func(r *StartRequest) { r.Registration = OAuthRegDCR })
+	mustStart(t, "t-a", req)
+	if _, err := CompleteOAuth(context.Background(), "t-a", CompleteRequest{State: req.State, Code: "c", Iss: f.url("")}); err != nil {
+		t.Fatal(err)
+	}
+	real := updateSecrets
+	writes, failing := 0, true
+	updateSecrets = func(fn func(*secrets.Data) error) error {
+		writes++
+		if failing {
+			return errors.New("disk full")
+		}
+		return real(fn)
+	}
+	if _, err := DisconnectOAuth(context.Background(), "t-a"); err == nil {
+		t.Fatal("the disconnect reported success without writing")
+	}
+	if g := currentGrant("t-a"); g == nil || g.Group != "" {
+		t.Fatalf("after a failed disconnect t-a uses %+v, want its own grant still", g)
+	}
+	failing, writes = false, 0
+	if _, err := DisconnectOAuth(context.Background(), "t-a"); err != nil {
+		t.Fatal(err)
+	}
+	if writes != 1 {
+		t.Fatalf("the disconnect took %d writes", writes)
+	}
+	if g := currentGrant("t-a"); g != nil {
+		t.Fatalf("t-a still uses %+v", g)
+	}
+	if st := statusOf(t, "t-b"); st.State != OAuthStateConnected || st.SharedWith != nil {
+		t.Fatalf("t-b: %+v", st)
+	}
+}
+
+// A refused set renewal whose record cannot be written still stops every renewal of that
+// sign-in; the next use writes the record.
+func TestRefusedSetRenewalStopsRenewalsWhenItsWriteFails(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, nil)
+	c := publicClient(f)
+	distributeSet(t, grantSetDef("t-a", f.url("/mcp"), c), grantSetDef("t-b", f.url("/b/mcp"), c))
+	signInVia(t, f, "t-a")
+	f.tokenReply = func(n int, form url.Values) (int, string) {
+		if form.Get("grant_type") == "refresh_token" {
+			return 400, `{"error":"invalid_target"}`
+		}
+		return 200, `{"access_token":"at-x","token_type":"Bearer","expires_in":3600,"refresh_token":"rt-x"}`
+	}
+	real := updateSecrets
+	failOnce := true
+	updateSecrets = func(fn func(*secrets.Data) error) error {
+		if failOnce {
+			failOnce = false
+			return errors.New("disk full")
+		}
+		return real(fn)
+	}
+	if _, err := RefreshAccessToken(context.Background(), "t-a", "at-0"); err == nil {
+		t.Fatal("the refused renewal succeeded")
+	}
+	if failOnce {
+		t.Fatal("nothing was written")
+	}
+	before := f.tokenCount()
+	oauthNow = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	if _, err := AccessToken(context.Background(), "t-b"); err == nil {
+		t.Fatal("t-b got a token after its bearer expired")
+	}
+	if f.tokenCount() != before {
+		t.Fatalf("the refused refresh token was sent again (%d requests)", f.tokenCount()-before)
+	}
+	data, _ := secrets.Load()
+	if len(data.MCPOAuth) != 1 || !data.MCPOAuth[0].SetRefused {
+		t.Fatalf("the refusal was not written on the next use: %+v", data.MCPOAuth)
+	}
+}
