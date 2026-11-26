@@ -245,6 +245,9 @@ func (g *Gateway) Issue(m session.Meta) (Issued, *agents.RouteRefusal) {
 	return g.issue(m, transportUnix)
 }
 
+// LoopbackReady implements agents.RouteLoopback.
+func (g *Gateway) LoopbackReady() bool { return g.d.Loopback != nil && g.d.Loopback() != "" }
+
 // IssueLoopback is Issue for a harness that can only speak TCP (opencode): the token is served
 // on the loopback port only, to a caller /proc attributes to the session's tree (peer_tcp.go),
 // and the grant's BaseURL is that port.

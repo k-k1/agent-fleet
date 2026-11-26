@@ -38,8 +38,7 @@ Mark the profile "Model route" in its form under Settings > "AWS profiles/SSM".
   every model call: until you allow it, each call fails at once with the reason.
 - **To use it**: in the launch dialog of a claude session, choose **Amazon Bedrock** under **Model route** (see
   [the claude routes](agents.md#claude-the-api-key-route)). The option appears only when at least one of your
-  profiles is marked. The route is not offered generally yet: for now it appears only on a workspace whose operator
-  has turned it on.
+  profiles is marked.
 - **opencode**: a Terminal (CLI) or Managed session can choose it the same way, with one of the **amazon-bedrock/…** models
   ([opencode: the Amazon Bedrock route](agents.md#opencode-the-amazon-bedrock-route)).
 

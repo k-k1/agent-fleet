@@ -236,3 +236,37 @@ func TestHandoffInboxHidesArchivedSession(t *testing.T) {
 		t.Fatalf("inbox=%v err=%v, want empty while the owner has it archived", inbox, err)
 	}
 }
+
+// TestHandoffOfferRecordsSourceSpace (#5233): the origin survives the round trip through both
+// reads, on both dialects, and an offer that does not set it reads as a repository handoff.
+func TestHandoffOfferRecordsSourceSpace(t *testing.T) {
+	ctx := context.Background()
+	for name, st := range inboxStores(t) {
+		t.Run(name, func(t *testing.T) {
+			f := newHandoffFixtureOn(t, st)
+			o := f.offer(t, "")
+			o.SourceSpace = true
+			if created, err := st.CreateSessionHandoffOffer(ctx, o); err != nil || !created {
+				t.Fatalf("create=%v err=%v", created, err)
+			}
+			got, ok, err := st.GetSessionHandoffOffer(ctx, o.ID)
+			if err != nil || !ok || !got.SourceSpace {
+				t.Fatalf("get: %+v ok=%v err=%v, want SourceSpace", got, ok, err)
+			}
+			inbox, err := st.ListReceivedSessionHandoffOffers(ctx, f.recipient.ID)
+			if err != nil || len(inbox) != 1 || !inbox[0].SourceSpace {
+				t.Fatalf("inbox: %+v err=%v, want one offer with SourceSpace", inbox, err)
+			}
+			if _, err := st.TransitionSessionHandoffOffer(ctx, o.ID, "pending", "withdrawn", NowTS(), ""); err != nil {
+				t.Fatal(err)
+			}
+			plain := f.offer(t, "")
+			if created, err := st.CreateSessionHandoffOffer(ctx, plain); err != nil || !created {
+				t.Fatalf("create plain=%v err=%v", created, err)
+			}
+			if got, _, _ := st.GetSessionHandoffOffer(ctx, plain.ID); got.SourceSpace {
+				t.Fatal("an offer that did not set SourceSpace reads as a space offer")
+			}
+		})
+	}
+}

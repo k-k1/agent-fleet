@@ -109,16 +109,39 @@ var passHeaders = []string{"Content-Type", "Accept", "X-Amzn-Bedrock-Accept"}
 // (X-Role-Arn, Aws-Region), so a harmless header that merely contains the letters passes.
 var refusedHeaderRe = regexp.MustCompile(`(?i)^(x-amz-|x-amzn-|x-af-)|(^|-)(region|role|role-?arn|external-?id|tags?)($|-)`)
 
+// loadBalancerHeaders are the headers an AWS Application Load Balancer in front of the CP may add,
+// canonical names: the trace id on every request, the three X-Forwarded-* in its default
+// configuration, and, when the load balancer or its listener enables them, the TLS metadata and
+// the mutual-TLS client certificate ones under their standard names. They are dropped before the
+// refusal check and never reach Bedrock: without this the ALB's own X-Amzn-Trace-Id matches
+// refusedHeaderRe and every call through the CP's public base URL behind an ALB is refused.
+// Exact names only: every other header follows the caller-header rules, so any other x-amzn-
+// header outside passHeaders is refused (the ALB's OIDC headers included: an authenticate action
+// is identity the CP does not take), and a renamed TLS header is refused only when its new name
+// matches refusedHeaderRe.
+var loadBalancerHeaders = []string{
+	"X-Amzn-Trace-Id",
+	"X-Forwarded-For", "X-Forwarded-Proto", "X-Forwarded-Port",
+	"X-Amzn-Tls-Version", "X-Amzn-Tls-Cipher-Suite", "X-Amzn-Tls-Kx",
+	"X-Amzn-Mtls-Clientcert", "X-Amzn-Mtls-Clientcert-Serial-Number", "X-Amzn-Mtls-Clientcert-Issuer",
+	"X-Amzn-Mtls-Clientcert-Subject", "X-Amzn-Mtls-Clientcert-Validity", "X-Amzn-Mtls-Clientcert-Leaf",
+}
+
 // UpstreamHeaders is the header set the CP sends upstream from the caller's: content-type,
 // accept and passHeaders, nothing else. Authorization is never among them; the CP signs a fresh
 // one. A header that names identity, credentials, a Region, a role, an external id or a tag is
-// refused, not dropped, so a caller cannot tell from a success that it was ignored.
+// refused, not dropped, so a caller cannot tell from a success that it was ignored. The load
+// balancer's headers are the one exception: an ALB may add them whatever the caller sent, and
+// none of them asks for anything the CP decides.
 func UpstreamHeaders(in http.Header) (http.Header, *Refusal) {
 	out := http.Header{}
 	for k, v := range in {
 		ck := http.CanonicalHeaderKey(k)
 		if slices.Contains(passHeaders, ck) {
 			out[ck] = slices.Clone(v)
+			continue
+		}
+		if slices.Contains(loadBalancerHeaders, ck) {
 			continue
 		}
 		if refusedHeaderRe.MatchString(ck) {
@@ -132,11 +155,15 @@ func UpstreamHeaders(in http.Header) (http.Header, *Refusal) {
 	return out, nil
 }
 
-// refusedBodyFields are top-level request fields that change the price or reach resources the
-// price table does not cover. invoke's body is the model's own (Anthropic's Messages shape), so
-// only the fields that move the bill are named; Converse's shape is AWS's own, and every field
-// outside convFields is refused.
-var refusedInvokeFields = []string{"service_tier", "inference_geo"}
+// refusedInvokeFields are the top-level invoke fields a provided route refuses. invoke's body is
+// the model's own (Anthropic's Messages shape), so only these are named; Converse's shape is
+// AWS's own, and every field outside convFields is refused (its modelId included).
+//
+//   - service_tier and inference_geo change the price outside the table.
+//   - model names a model in the body. Bedrock selects the model by the path's id, the only one the
+//     allow-list checks, so a body model is refused before signing whatever it names, the path's
+//     own id included (ADR 0129 D7: "a model outside the list (path and body)").
+var refusedInvokeFields = []string{"model", "service_tier", "inference_geo"}
 
 var convFields = []string{"messages", "system", "inferenceConfig", "toolConfig", "additionalModelRequestFields",
 	"additionalModelResponseFieldPaths", "requestMetadata"}

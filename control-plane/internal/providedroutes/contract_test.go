@@ -100,6 +100,56 @@ func TestUpstreamHeaders(t *testing.T) {
 	}
 }
 
+// albHeaders is the union of what an AWS Application Load Balancer can add to a request it
+// forwards: the trace id and the X-Forwarded-* of its default configuration, the TLS metadata it adds when enabled, and both mutual-TLS
+// modes (passthrough sends X-Amzn-Mtls-Clientcert, verify the rest of the client certificate
+// ones). No single configuration sends all of them; the union checks every name at once.
+var albHeaders = http.Header{
+	"X-Amzn-Trace-Id":                      {"Root=1-67891233-abcdef012345678912345678"},
+	"X-Forwarded-For":                      {"203.0.113.7"},
+	"X-Forwarded-Proto":                    {"https"},
+	"X-Forwarded-Port":                     {"443"},
+	"X-Amzn-Tls-Version":                   {"TLSv1.3"},
+	"X-Amzn-Tls-Cipher-Suite":              {"TLS_AES_128_GCM_SHA256"},
+	"X-Amzn-Tls-Kx":                        {"X25519MLKEM768"},
+	"X-Amzn-Mtls-Clientcert-Serial-Number": {"0A"},
+	"X-Amzn-Mtls-Clientcert-Issuer":        {"CN=ca"},
+	"X-Amzn-Mtls-Clientcert-Subject":       {"CN=client"},
+	"X-Amzn-Mtls-Clientcert-Validity":      {"NotBefore=2026-01-01T00:00:00Z;NotAfter=2027-01-01T00:00:00Z"},
+	"X-Amzn-Mtls-Clientcert-Leaf":          {"-----BEGIN%20CERTIFICATE-----"},
+	"X-Amzn-Mtls-Clientcert":               {"-----BEGIN%20CERTIFICATE-----"},
+}
+
+// A call through an ALB is accepted and the load balancer's headers are dropped, not passed to
+// Bedrock; the exemption is the exact names, so every other x-amzn- header outside passHeaders is
+// still refused.
+func TestUpstreamHeadersDropsLoadBalancerHeaders(t *testing.T) {
+	in := http.Header{"Content-Type": {"application/json"}, "Accept": {"application/json"}}
+	for k, v := range albHeaders {
+		// The way a server hands them over is not always canonical.
+		in[strings.ToLower(k)] = v
+	}
+	out, ref := UpstreamHeaders(in)
+	if ref != nil {
+		t.Fatal(ref)
+	}
+	if len(out) != 2 || out.Get("Content-Type") != "application/json" || out.Get("Accept") != "application/json" {
+		t.Fatalf("out = %v", out)
+	}
+	for _, h := range []string{"X-Amzn-Trace-Id-Override", "X-Amzn-Trace", "X-Amzn-Oidc-Identity", "X-Amzn-Oidc-Data",
+		"X-Amzn-Tls-Region", "X-Amzn-Tls-Kx-Override", "X-Forwarded-Role", "X-Forwarded-Region"} {
+		if _, ref := UpstreamHeaders(http.Header{h: {"v"}}); codeOf(ref) != CodeRequestRefused {
+			t.Errorf("%s: %v", h, ref)
+		}
+	}
+	// A load balancer header does not mask a refused header next to it.
+	mixed := albHeaders.Clone()
+	mixed.Set("X-Amz-Security-Token", "v")
+	if _, ref := UpstreamHeaders(mixed); codeOf(ref) != CodeRequestRefused {
+		t.Fatalf("mixed: %v", ref)
+	}
+}
+
 func TestOutputCap(t *testing.T) {
 	for _, c := range []struct {
 		op, body string
@@ -112,6 +162,12 @@ func TestOutputCap(t *testing.T) {
 		{OpInvoke, `{"max_tokens":1.5}`, 0, CodeOutputCap},
 		{OpInvoke, `{"max_tokens":"100"}`, 0, CodeOutputCap},
 		{OpInvoke, `{"max_tokens":100,"service_tier":"priority"}`, 0, CodeRequestRefused},
+		{OpInvoke, `{"max_tokens":100,"inference_geo":"us"}`, 0, CodeRequestRefused},
+		// The model is the path's alone (ADR 0129 D7): a body model is refused whatever it names.
+		{OpInvoke, `{"max_tokens":100,"model":"anthropic.claude-other-x","messages":[]}`, 0, CodeRequestRefused},
+		{OpInvokeStream, `{"max_tokens":100,"model":"us.anthropic.claude-opus-5-5","messages":[]}`, 0, CodeRequestRefused},
+		{OpInvoke, `{"max_tokens":100,"model":null}`, 0, CodeRequestRefused},
+		{OpConverse, `{"messages":[],"inferenceConfig":{"maxTokens":10},"modelId":"anthropic.claude-other-x"}`, 0, CodeRequestRefused},
 		{OpInvoke, `[1]`, 0, CodeRequestRefused},
 		{OpInvoke, `{"max_tokens":1} {"max_tokens":2}`, 0, CodeRequestRefused},
 		{OpConverseStream, `{"messages":[],"inferenceConfig":{"maxTokens":4096}}`, 4096, ""},

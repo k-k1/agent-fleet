@@ -265,6 +265,30 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "", workItem: null, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", space: "", onLaunched: null }),
 }));
 
+/** A handoff from another member's space (docs/log/77, #5233): the offer, its text and title, held
+ *  for the dialog that starts it in a new space of the recipient's own.
+ *
+ *  Kept apart from useLaunchSeed on purpose. Everything that reads the seed (the repository dialog
+ *  a clone toast or the rail opens, the Start hub's draft) would otherwise be able to take this
+ *  offer's id and send the text to a working copy, accepting the offer there. Only the dialog in
+ *  StartHost reads this store, and anything else that starts a launch leaves it alone. */
+interface SpaceHandoffStore {
+	/** "" = none. */
+	offerId: string;
+	prompt: string;
+	title: string;
+	open(offerId: string, prompt: string, title: string): void;
+	clear(): void;
+}
+
+export const useSpaceHandoff = create<SpaceHandoffStore>((set) => ({
+	offerId: "",
+	prompt: "",
+	title: "",
+	open: (offerId, prompt, title) => set({ offerId, prompt, title }),
+	clear: () => set({ offerId: "", prompt: "", title: "" }),
+}));
+
 /** Poll every 60s while the tab is visible AND the workspace is running, so the
  * origin-ahead badge (kept fresh server-side by the Agent's auto-fetch) updates
  * without a manual refresh. Skipped while stopped/booting — the agent proxy only

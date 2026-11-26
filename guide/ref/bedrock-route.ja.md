@@ -36,7 +36,6 @@ source_of_truth: "Console の設定 >「AWS プロファイル/SSM」、claude �
   確認し直します。許可するまで、呼び出しは理由とともにすぐ失敗します。
 - **使いかた**: claude のセッションの起動ダイアログで、**モデルのルート** の **Amazon Bedrock** を選びます
   （[claude の経路](agents.ja.md#claude-api-キー経路) を参照）。印の付いたプロファイルが 1 つ以上あるときだけ選べます。
-  この経路はまだ一般には提供しておらず、今は運用者が有効にしたワークスペースでだけ選べます。
 - **opencode**: ターミナル（CLI）でもマネージドでも、同じように選べます。モデルは **amazon-bedrock/…** から選びます
   （[opencode の Amazon Bedrock ルート](agents.ja.md#opencode-amazon-bedrock-ルート)）。
 

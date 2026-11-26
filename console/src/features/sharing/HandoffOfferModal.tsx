@@ -42,6 +42,8 @@ interface HandoffContext {
   dirty?: boolean;
   blocked?: string;
   warning?: string;
+  /** The session runs in a space: its files and attachments do not travel. */
+  space?: boolean;
   /** Where "push, then send" would publish (the push URL, credentials removed) and how many
    *  commits; set only when a push can clear the gate and lands where the offer points. */
   pushRemote?: string;
@@ -100,7 +102,10 @@ export function HandoffOfferModal({
   // land on the recipient.
   const [title, setTitle] = useState(() => clampSessionTitle(initialTitle || ""));
   const [prompt, setPrompt] = useState(initialPrompt);
-  const [ackWarning, setAckWarning] = useState(false);
+  // The warning the owner ticked. A tick belongs to that warning alone: when the verdict changes
+  // to another one (uncommitted changes, then the space note), it no longer counts and the box
+  // shows unticked, so a warning is never acknowledged unread.
+  const [ackedFor, setAckedFor] = useState("");
   const [pushFirst, setPushFirst] = useState(false);
   // git's own report of a refused push. Multi-line and the thing to act on, so it stays in
   // the modal rather than in a toast that fades.
@@ -169,6 +174,7 @@ export function HandoffOfferModal({
 
   const blocked = ctx?.blocked || "";
   const warning = ctx?.warning || "";
+  const ackWarning = !!warning && ackedFor === warning;
   const pushable = PUSHABLE.has(blocked) && !!ctx?.pushRemote;
   const pushing = pushable && pushFirst;
   const canSubmit =
@@ -190,6 +196,7 @@ export function HandoffOfferModal({
         title: title.trim(),
         prompt,
         ackWarning,
+        ackedWarning: ackWarning ? warning : "",
         pushFirst: pushing,
         // What the owner saw next to the box. The CP pushes only while the working copy still
         // matches it, exactly that commit, and sends only if the state after the push does too.
@@ -208,7 +215,9 @@ export function HandoffOfferModal({
     }
     setPushErr("");
     if (d?.error) {
-      toast(errText(d.error));
+      // The verdict changed after the box was ticked: the screen below is refetched, so point at
+      // it in the member's language instead of the server's English.
+      toast(d.error.code === "handoff_warning" ? tr("handoff.warning_changed") : errText(d.error));
       // A timed-out send may still have created the offer; resending is safe (an offer
       // already pending answers 409).
       if (req.timedOut()) void useHandoffStore.getState().refresh();
@@ -281,6 +290,7 @@ export function HandoffOfferModal({
                   })}
                 </p>
               )}
+              {ctx?.space && <p className="ui-field-hint handoff-blocked">{tr("handoff.space_hint")}</p>}
               {!ctxReady && <p className="ui-field-hint">{tr("handoff.gate_checking")}</p>}
               {blocked && <p className="ui-field-hint handoff-blocked">{tr(blockedKey(blocked))}</p>}
               {pushable && (
@@ -305,8 +315,8 @@ export function HandoffOfferModal({
               )}
               {(!blocked || pushing) && warning && (
                 <label className="ui-field-inline">
-                  <input type="checkbox" checked={ackWarning} onChange={(e) => setAckWarning(e.target.checked)} />
-                  {tr("handoff.ack_dirty")}
+                  <input type="checkbox" checked={ackWarning} onChange={(e) => setAckedFor(e.target.checked ? warning : "")} />
+                  {tr(warning === "space_files_stay" ? "handoff.ack_space" : "handoff.ack_dirty")}
                 </label>
               )}
               <label className="ui-field">

@@ -50,6 +50,11 @@ type handoffContext struct {
 	// it; it goes in Warning.
 	Blocked string `json:"blocked,omitempty"`
 	Warning string `json:"warning,omitempty"`
+	// Space is true when the session runs in a space (ADR 0142). A space is not a repository:
+	// whatever git carries, its other files and the session's attachments live in the giver's
+	// home and never reach the recipient, so Warning is handoffWarnSpace and the offer records
+	// the origin for the recipient's launch.
+	Space bool `json:"space,omitempty"`
 	// PushRemote / PushCommits say what "push, then send" would publish (POST
 	// /sessions/{name}/handoff-push): the URL git would push to, credentials removed, and how
 	// many commits it does not have yet. Set only when Blocked is one a push can clear and the
@@ -67,6 +72,7 @@ const (
 	handoffBlockNoUpstream = "no_upstream"
 	handoffBlockDetached   = "detached_head"
 	handoffWarnDirty       = "uncommitted_changes"
+	handoffWarnSpace       = "space_files_stay"
 )
 
 // sanitizeRemoteURL strips credentials out of a remote URL, so a URL like
@@ -108,7 +114,7 @@ func gitHasUpstream(dir string) bool {
 // buildHandoffContext folds dir's state into one answer. When dir is not a git working
 // copy, Vcs is left empty (or set to svn) and no gate is evaluated.
 func buildHandoffContext(dir string) handoffContext {
-	// Repo is set by the handlers from the session's stored place (handoffRepo).
+	// Repo is set from the session's stored place (handoffContextFor, handoffRepo).
 	c := handoffContext{Dir: dir, WorkingCopyID: gitx.WorkingCopyID(dir)}
 	switch {
 	case gitx.IsGitRepo(dir):
@@ -152,6 +158,37 @@ func buildHandoffContext(dir string) handoffContext {
 	return c
 }
 
+// handoffContextFor is buildHandoffContext plus what only the session's own record knows: that
+// it runs in a space. The place stored at create decides; a meta from before the field falls back
+// to the directory's marker. A space overrides the dirty warning: the one acknowledgement it asks
+// for already says that nothing in the folder travels but what git publishes.
+func handoffContextFor(m session.Meta) handoffContext {
+	c := buildHandoffContext(m.Dir)
+	place := handoffPlace(m)
+	c.Repo = repoName(place, m.Dir)
+	if place.Kind == session.PlaceSpace {
+		c.Space = true
+		c.Warning = handoffWarnSpace
+	}
+	return c
+}
+
+// handoffPlace is the place a session's handoff context goes by: the one stored at create, so it
+// agrees with the session's own record even after the directory changed (a space's marker
+// removed); a meta from before places were stored is classified from its directory now, by the
+// launch rule.
+func handoffPlace(m session.Meta) *session.Place {
+	if m.Place != nil {
+		return m.Place
+	}
+	return sessionPlaceOf(m.Dir, m.Subdir)
+}
+
+// handoffRepo is the repo a session's handoff context names (none for a space or home).
+func handoffRepo(m session.Meta) string {
+	return repoName(handoffPlace(m), m.Dir)
+}
+
 // HandleSessionHandoffContext — GET /sessions/{name}/handoff-context.
 func HandleSessionHandoffContext(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
@@ -168,18 +205,5 @@ func HandleSessionHandoffContext(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusConflict, "no_working_copy", "session has no working copy")
 		return
 	}
-	c := buildHandoffContext(m.Dir)
-	c.Repo = handoffRepo(m)
-	httpx.WriteJSON(w, http.StatusOK, c)
-}
-
-// handoffRepo is the repo a session's handoff context names: by the place stored at create, so
-// it agrees with the session's own record even after the directory changed (a space's marker
-// removed); a meta from before places were stored is classified from its directory now.
-func handoffRepo(m session.Meta) string {
-	p := m.Place
-	if p == nil {
-		p = sessionPlaceOf(m.Dir, m.Subdir)
-	}
-	return repoName(p, m.Dir)
+	httpx.WriteJSON(w, http.StatusOK, handoffContextFor(m))
 }

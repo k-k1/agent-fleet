@@ -181,61 +181,17 @@ func TestWorkspaceEnvCarriesTheWorkloadAWSOptIn(t *testing.T) {
 	}
 }
 
-// The Agent's bedrock gate (ADR 0128 decision 14) opens only with AF_CLAUDE_BEDROCK_ROUTE=1 in
-// its own environment, and on ECS nothing but workspaceExtraEnv reaches the task: without this
-// the acceptance run on ECS cannot open the route. Only the exact value "1" opens it.
-func TestWorkspaceEnvCarriesTheBedrockGate(t *testing.T) {
+// The member's bedrock routes have no gate on the Agent any more (ADR 0128 decision 14 passed),
+// so a workspace start carries no acceptance switch: an AF_WS_*_BEDROCK_ROUTE left in a Control
+// Plane's environment from the acceptance run adds nothing to the workspace.
+func TestWorkspaceEnvCarriesNoBedrockAcceptanceSwitch(t *testing.T) {
 	_, mgr, mv := bridgeEnv(t)
 	ws := store.Workspace{ID: "ws1", TenantID: mv.TenantID, MembershipID: mv.MembershipID}
-	has := func() bool {
-		for _, kv := range mgr.workspaceExtraEnv(context.Background(), ws) {
-			if strings.HasPrefix(kv, "AF_CLAUDE_BEDROCK_ROUTE=") {
-				if kv != "AF_CLAUDE_BEDROCK_ROUTE=1" {
-					t.Errorf("unexpected value %q", kv)
-				}
-				return true
-			}
-		}
-		return false
-	}
-	for _, c := range []struct {
-		set  string
-		want bool
-	}{{"", false}, {"1", true}, {"true", false}, {"0", false}, {" 1", false}} {
-		t.Setenv("AF_WS_CLAUDE_BEDROCK_ROUTE", c.set)
-		if got := has(); got != c.want {
-			t.Errorf("AF_WS_CLAUDE_BEDROCK_ROUTE=%q: injected = %v, want %v", c.set, got, c.want)
-		}
-	}
-}
-
-// opencode's bedrock gate travels the same way and independently of claude's: each harness row
-// passes its own live acceptance (ADR 0128 P2c).
-func TestWorkspaceEnvCarriesTheOpencodeBedrockGate(t *testing.T) {
-	_, mgr, mv := bridgeEnv(t)
-	ws := store.Workspace{ID: "ws1", TenantID: mv.TenantID, MembershipID: mv.MembershipID}
-	has := func(name string) bool {
-		for _, kv := range mgr.workspaceExtraEnv(context.Background(), ws) {
-			if strings.HasPrefix(kv, name+"=") {
-				if kv != name+"=1" {
-					t.Errorf("unexpected value %q", kv)
-				}
-				return true
-			}
-		}
-		return false
-	}
-	t.Setenv("AF_WS_CLAUDE_BEDROCK_ROUTE", "")
-	for _, c := range []struct {
-		set  string
-		want bool
-	}{{"", false}, {"1", true}, {"true", false}, {"0", false}, {" 1", false}} {
-		t.Setenv("AF_WS_OPENCODE_BEDROCK_ROUTE", c.set)
-		if got := has("AF_OPENCODE_BEDROCK_ROUTE"); got != c.want {
-			t.Errorf("AF_WS_OPENCODE_BEDROCK_ROUTE=%q: injected = %v, want %v", c.set, got, c.want)
-		}
-		if has("AF_CLAUDE_BEDROCK_ROUTE") {
-			t.Errorf("AF_WS_OPENCODE_BEDROCK_ROUTE=%q opened the claude gate too", c.set)
+	t.Setenv("AF_WS_CLAUDE_BEDROCK_ROUTE", "1")
+	t.Setenv("AF_WS_OPENCODE_BEDROCK_ROUTE", "1")
+	for _, kv := range mgr.workspaceExtraEnv(context.Background(), ws) {
+		if strings.Contains(kv, "BEDROCK_ROUTE") {
+			t.Errorf("workspace env carries %q", kv)
 		}
 	}
 }

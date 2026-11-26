@@ -105,19 +105,18 @@ func TestLaunchBindingSubscription(t *testing.T) {
 	}
 }
 
-// Usable means held: an open acceptance gate is not a credential, and a credential in the
-// environment counts as much as one in the store.
+// Usable means held: the bedrock route, which needs no credential of its own here, is not a
+// held credential, and a credential in the environment counts as much as one in the store.
 func TestUsableRoutesNeedACredential(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir())
-	t.Setenv(bedrockGateEnv, "1")
 	t.Setenv("ANTHROPIC_API_KEY", "")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
 	old := loadAPIKey
 	t.Cleanup(func() { loadAPIKey = old })
 	loadAPIKey = func() (string, error) { return "", nil }
 	if u := (agentImpl{}).UsableRoutes(); len(u) != 0 {
-		t.Errorf("nothing held, gate open: %v", u)
+		t.Errorf("nothing held: %v", u)
 	}
 	t.Setenv("ANTHROPIC_API_KEY", "sk-env")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "tok-env")

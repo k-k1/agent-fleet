@@ -193,7 +193,10 @@ CP ルートトークンと CP の資格情報キャッシュのキーはどち�
     - **上流へのリクエストは CP が組み立てる。** ホストとリージョンは出どころの登録から、ロールの ARN と外部 ID は CP のデータ
       ベースから取る。呼び出し側が渡す URL、リージョン、ロール、外部 ID、タグは、無視するのではなく拒否する。呼び出し側の
       ヘッダで通すのは `content-type`、`accept`、名前を挙げた Bedrock のリクエストヘッダだけで（一覧は作るときに操作ごとに
-      書く）、呼び出し側の `Authorization` は決して通さない。
+      書く）、呼び出し側の `Authorization` は決して通さない。CP の前に置いた AWS の ALB が足しうるヘッダは、拒否も
+      中継もせずに捨てる。`X-Amzn-Trace-Id`、`X-Forwarded-For`、`X-Forwarded-Proto`、`X-Forwarded-Port` と、標準の名前の
+      TLS・相互 TLS の情報のヘッダで、どれも名前の完全一致で見る。それ以外のヘッダは呼び出し側のヘッダの規則で判定する。
+      ALB の OIDC のヘッダは拒否し、名前を変えた TLS のヘッダは変えた後の名前で判定する。
     - **操作とモデルは Agent だけでなく CP でも確かめる。** 許すのは
       `/model/<id>/{invoke,invoke-with-response-stream,converse,converse-stream}` への `POST` と、Q7 からの
       `/openai/v1/responses` だけである。モデル id はパス（URL デコードは一度だけ）か、Responses では本文から取り、出どころの

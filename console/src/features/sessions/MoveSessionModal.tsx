@@ -28,6 +28,7 @@ import { kindColorClasses, kindDisplayName } from "../../lib/sessionkind.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { getSettings, agentLaunchDefault } from "../../lib/settings.ts";
 import { resolveModel } from "../../lib/repoLast.ts";
+import { routelessModel, routeModelFilter } from "../repos/bedrockProfiles.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { useSessionsStore } from "./store.ts";
 import { openSessionByName } from "./open.ts";
@@ -264,7 +265,7 @@ function MoveForm({
   const folder = sessionRepo(session);
   useEffect(() => {
     if (!kind) return;
-    setModel(resolveModel(kind, folder, agentLaunchDefault(getSettings(), kind).model));
+    setModel(routelessModel(kind, resolveModel(kind, folder, agentLaunchDefault(getSettings(), kind).model)));
     setDriverPick(null);
   }, [kind, folder]);
 
@@ -283,6 +284,8 @@ function MoveForm({
     return reason || "";
   };
   const a = kind ? agentOf(kind) : null;
+  // A move names no route, so a model that runs only on one (opencode's amazon-bedrock/…) is not offered.
+  const modelFilter = useMemo(() => (kind ? routeModelFilter(kind, "") : undefined), [kind]);
   const children = preview.children ?? [];
   const warnings = preview.warnings ?? [];
 
@@ -346,7 +349,7 @@ function MoveForm({
       {a?.caps.model && kind && (
         <div className="ui-field">
           <span className="ui-field-label">{tr("launch.field.model")}</span>
-          <ModelPicker kind={kind} model={model} onChange={setModel} />
+          <ModelPicker kind={kind} model={model} onChange={setModel} filter={modelFilter} />
         </div>
       )}
       {a?.managedDriver && a.terminalDriver !== false && (

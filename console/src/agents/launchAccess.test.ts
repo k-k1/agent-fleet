@@ -6,6 +6,7 @@ import {
   kindLaunchable,
   mergeVisibleOrder,
   quickLaunchRoute,
+  routelessOk,
   type LiveKindAccess,
 } from "./launchAccess.ts";
 
@@ -46,6 +47,39 @@ describe("kindLaunchable", () => {
     expect(kindLaunchable("codex", { conns: { codex: { connected: true } } }, live({ ...codex, usableRoutes: [] }))).toBe(false);
   });
 
+  it("offers opencode on a marked Bedrock profile alone, unless its binary is unsupported", () => {
+    const oc: LiveKindAccess = { kind: "opencode", routes: ["bedrock"], fixedRoutes: ["opencode-zen"], usableRoutes: ["bedrock"] };
+    expect(kindLaunchable("opencode", { conns: { opencode: { connected: false } } }, live(oc))).toBe(true);
+    expect(kindLaunchable("opencode", { conns: { opencode: { connected: false, supported: false } } }, live(oc))).toBe(false);
+    // Nothing usable at all: not offered, as before.
+    expect(kindLaunchable("opencode", { conns: { opencode: { connected: false } } }, live({ ...oc, usableRoutes: [] }))).toBe(false);
+    // Another kind with no selectable route keeps its own connection check.
+    const codex: LiveKindAccess = { kind: "codex", fixedRoutes: ["openai-api"], usableRoutes: ["openai-api"] };
+    expect(kindLaunchable("codex", { conns: { codex: { connected: false } } }, live(codex))).toBe(false);
+  });
+
+  it("does not offer a route-only kind to a caller that cannot carry a route (a session move)", () => {
+    const oc: LiveKindAccess = { kind: "opencode", routes: ["bedrock"], fixedRoutes: ["opencode-zen"], usableRoutes: ["bedrock"] };
+    const conns = { opencode: { connected: false } };
+    expect(kindLaunchable("opencode", { conns }, live(oc), { routeless: true })).toBe(false);
+    expect(kindLaunchable("opencode", { conns: { opencode: { connected: true } } }, live({ ...oc, usableRoutes: ["bedrock", "opencode-zen"] }), { routeless: true })).toBe(true);
+  });
+
+  it("does not offer a kind to a routeless caller when only a selectable route is usable, connected or not", () => {
+    // opencode's Free choice leaves it connected, but the policy leaves bedrock as the only usable route.
+    const oc: LiveKindAccess = { kind: "opencode", routes: ["bedrock"], fixedRoutes: ["opencode-zen"], usableRoutes: ["bedrock"] };
+    expect(kindLaunchable("opencode", { conns: { opencode: { connected: true } } }, live(oc), { routeless: true })).toBe(false);
+    expect(kindLaunchable("opencode", { conns: { opencode: { connected: true } } }, live(oc))).toBe(true);
+    // claude whose only usable route is Bedrock has no login to launch with.
+    const cl = claude(["anthropic-subscription", "bedrock"], ["bedrock"]);
+    expect(kindLaunchable("claude", { conns: { claude: { connected: true } } }, live(cl), { routeless: true })).toBe(false);
+    // The catalogue alone (connections not read yet) says the same.
+    expect(routelessOk("opencode", live(oc))).toBe(false);
+    expect(routelessOk("claude", live(cl))).toBe(false);
+    expect(routelessOk("claude", live(claude(["anthropic-subscription"], ["anthropic-subscription"])))).toBe(true);
+    expect(routelessOk("opencode", null)).toBe(false);
+  });
+
   it("falls back to the connection check while the kind cannot tell its usable routes", () => {
     expect(kindLaunchable("claude", { conns: { claude: { connected: true } } }, live(claude(["anthropic-subscription"])))).toBe(true);
     expect(kindLaunchable("claude", { conns: { claude: { connected: false } } }, live(claude(["anthropic-subscription"])))).toBe(false);
@@ -61,6 +95,14 @@ describe("emptyRouteOk", () => {
 
   it("leaves every other kind to its own resolution", () => {
     expect(emptyRouteOk("opencode", { kind: "opencode", routes: ["bedrock"], usableRoutes: [] })).toBe(true);
+    // opencode with another credential held may still launch with no route.
+    expect(emptyRouteOk("opencode", { kind: "opencode", routes: ["bedrock"], fixedRoutes: ["opencode-zen"], usableRoutes: ["bedrock", "opencode-zen"] })).toBe(true);
+  });
+
+  it("does not let opencode launch with no route when only a selectable route is usable", () => {
+    const oc: LiveKindAccess = { kind: "opencode", routes: ["bedrock"], fixedRoutes: ["opencode-zen"], usableRoutes: ["bedrock"] };
+    expect(emptyRouteOk("opencode", oc)).toBe(false);
+    expect(quickLaunchRoute("opencode", live(oc), undefined)).toBe("dialog");
   });
 });
 

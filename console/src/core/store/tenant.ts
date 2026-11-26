@@ -11,6 +11,13 @@ import type { Whoami, Tenant } from "../../types/app.ts";
 import { invalidateJiraProjects } from "../../features/workitems/jiraProjects.ts";
 import { confirmDirtyNavigation } from "../../features/editor/dirtyRegistry.ts";
 
+/** The scope a pending, scope-bound piece of UI state belongs to: the active tenant and the
+ *  signed-in identity, named the way this store names it (email first, then user: the real
+ *  whoami carries the email and no user key). A switch of either changes the string. */
+export function identityScope(s: { tenant: string; whoami: Whoami | null }): string {
+  return s.tenant + "|" + (s.whoami?.email || s.whoami?.user || "");
+}
+
 interface TenantStore {
   whoami: Whoami | null;
   tenants: Tenant[];
