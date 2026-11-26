@@ -648,7 +648,7 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 		},
 		{
 			name: "list_cleanup_archives", minScope: scopeRead,
-			desc:   "List the cleanup archives (the gz safety net that delete_session / delete_branch write before removing anything). Each has an id, timestamp, reason and the sessions/branches it holds. Use to find an archive to restore_cleanup_archive (undo) or purge_cleanup_archive (reclaim for good).",
+			desc:   "List the cleanup archives (the gz safety net that delete_session / delete_branch write before removing anything). Each has an id, timestamp, reason and the sessions/branches/spaces it holds (a space entry holds the member's own files). Use to find an archive to restore_cleanup_archive (undo) or purge_cleanup_archive (reclaim for good).",
 			schema: map[string]any{"type": "object", "properties": map[string]any{}},
 			run: func(ctx context.Context, a API, res *Resolved, _ map[string]any) (string, error) {
 				return a.cp.AgentText(ctx, res.RT, "GET", "/cleanup/archives", nil)
@@ -666,7 +666,7 @@ func memberToolsHiding(hidden hiddenKinds, routes allowedRoutes) []mcpTool {
 		},
 		{
 			name: "purge_cleanup_archive", minScope: scopeWrite,
-			desc: "Permanently delete a cleanup archive and reclaim its space (no longer restorable). Use only for archives confirmed no longer needed. id from list_cleanup_archives. Confirm with the user first.",
+			desc: "Permanently delete a cleanup archive and reclaim its space (no longer restorable). A space entry holds the member's own files, so purging it deletes them permanently. Use only for archives confirmed no longer needed. id from list_cleanup_archives. Confirm with the user first.",
 			schema: map[string]any{"type": "object", "properties": map[string]any{
 				"id": map[string]any{"type": "string", "description": "archive id from list_cleanup_archives"},
 			}, "required": []string{"id"}},

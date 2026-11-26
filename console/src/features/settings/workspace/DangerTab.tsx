@@ -133,6 +133,7 @@ export function DangerTab() {
               <li className="keep"><Icon name="check" /> {tr("env.dz_keep_login")}</li>
               <li className="lose"><Icon name="close" /> {tr("env.dz_lose_sessions")}</li>
               <li className="lose"><Icon name="close" /> {tr("env.dz_lose_repos")}</li>
+              <li className="lose"><Icon name="close" /> <code>~/spaces</code>{tr("env.dz_lose_spaces")}</li>
               <li className="lose"><Icon name="close" /> <code>~/.local</code>{tr("env.dz_lose_home_rest")}</li>
             </ul>
           </ConfirmDialog>

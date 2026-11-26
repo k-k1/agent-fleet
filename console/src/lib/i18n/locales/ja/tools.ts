@@ -675,12 +675,13 @@ export const tools = {
   "env.recreate_confirm_body": "コンテナを破棄し、最新イメージで新しく作り直します。",
   "env.cleanhome_confirm_title": "ホームを掃除しますか？",
   "env.cleanhome_confirm_body":
-    "ログイン・接続を除くホーム全体を削除し、最新イメージで作り直します。作り直しより深いリセットで、ホーム側が使えなくなり、作り直しでも直らないときに使います。",
+    "ログイン・接続を除くホーム全体（~/spaces とその中のファイルを含む）を削除し、最新イメージで作り直します。作り直しより深いリセットで、ホーム側が使えなくなり、作り直しでも直らないときに使います。",
   "env.dz_keep_login": "ログイン・接続（GitHub / Bitbucket / Claude）は保持されます",
   "env.dz_keep_home_1": " 以外のホーム（",
   "env.dz_keep_home_2": " など）は残ります",
   "env.dz_lose_sessions": "実行中のセッションは失われます",
   "env.dz_lose_repos": "クローン済みリポジトリ（未コミット変更を含む）は削除されます",
+  "env.dz_lose_spaces": "（スペース: git のないフォルダ）とその中のファイルは完全に削除されます",
   "env.dz_lose_home_rest": "・キャッシュ・設定など、ホームのその他はすべて削除されます",
   "env.dz_unavailable":
     "この配備ではワークスペースの作り直しとホームの掃除を使えません（ホームが Control Plane から届かない場所にあります）。再起動はワークスペースバーから行えます。",

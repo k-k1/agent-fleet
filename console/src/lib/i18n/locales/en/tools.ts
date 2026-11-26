@@ -678,12 +678,13 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.recreate_confirm_body": "Tears down the container and creates a fresh one from the latest image.",
   "env.cleanhome_confirm_title": "Clean home?",
   "env.cleanhome_confirm_body":
-    "Deletes all of home except logins/connections and rebuilds from the latest image. A deeper reset than recreate. Use it when home is broken and a recreate doesn't fix it.",
+    "Deletes all of home (including ~/spaces and the files in it) except logins/connections and rebuilds from the latest image. A deeper reset than recreate. Use it when home is broken and a recreate doesn't fix it.",
   "env.dz_keep_login": "Logins/connections (GitHub / Bitbucket / Claude) are kept",
   "env.dz_keep_home_1": " — home outside it (",
   "env.dz_keep_home_2": ", etc.) stays",
   "env.dz_lose_sessions": "Running sessions are lost",
   "env.dz_lose_repos": "Cloned repositories (including uncommitted changes) are deleted",
+  "env.dz_lose_spaces": " (spaces: folders without git) and the files in them are deleted for good",
   "env.dz_lose_home_rest": ", caches, settings and everything else in home are all deleted",
   "env.dz_unavailable":
     "Recreate and Clean home are not available on this deployment: its workspace homes are out of the control plane's reach. You can still restart from the workspace bar.",

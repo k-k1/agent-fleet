@@ -984,7 +984,7 @@
       "name": "list_allowlist"
     },
     "list_cleanup_archives": {
-      "description": "List the cleanup archives (the gz safety net that delete_session / delete_branch write before removing anything). Each has an id, timestamp, reason and the sessions/branches it holds. Use to find an archive to restore_cleanup_archive (undo) or purge_cleanup_archive (reclaim for good).",
+      "description": "List the cleanup archives (the gz safety net that delete_session / delete_branch write before removing anything). Each has an id, timestamp, reason and the sessions/branches/spaces it holds (a space entry holds the member's own files). Use to find an archive to restore_cleanup_archive (undo) or purge_cleanup_archive (reclaim for good).",
       "inputSchema": {
         "properties": {},
         "type": "object"
@@ -1406,7 +1406,7 @@
       "name": "propose_allowlist_change"
     },
     "purge_cleanup_archive": {
-      "description": "Permanently delete a cleanup archive and reclaim its space (no longer restorable). Use only for archives confirmed no longer needed. id from list_cleanup_archives. Confirm with the user first.",
+      "description": "Permanently delete a cleanup archive and reclaim its space (no longer restorable). A space entry holds the member's own files, so purging it deletes them permanently. Use only for archives confirmed no longer needed. id from list_cleanup_archives. Confirm with the user first.",
       "inputSchema": {
         "properties": {
           "id": {

@@ -1765,7 +1765,7 @@
       }
     },
     "list_cleanup_archives#1": {
-      "description": "掃除で退避したアーカイブ（削除したセッションやブランチの gz 安全網）の一覧を返す。delete_session / delete_branch は消す前に必ずここへ退避するので、消しすぎた時は restore_cleanup_archive で復元、不要になったら purge_cleanup_archive で完全削除して容量を回収できる。各アーカイブは id・日時・理由・含まれるセッション/ブランチを持つ。",
+      "description": "掃除で退避したアーカイブ（削除したセッション・ブランチ・スペースの gz 安全網）の一覧を返す。delete_session / delete_branch は消す前に必ずここへ退避するので、消しすぎた時は restore_cleanup_archive で復元、不要になったら purge_cleanup_archive で完全削除して容量を回収できる。各アーカイブは id・日時・理由・含まれるセッション/ブランチ/スペースを持つ。スペースの項目は利用者自身のファイルを保持しており、purge すると完全に失われる。",
       "inputSchema": {
         "properties": {},
         "type": "object"
@@ -2268,7 +2268,7 @@
       "name": "propose_session_handoff"
     },
     "purge_cleanup_archive#1": {
-      "description": "掃除で退避したアーカイブを完全に削除して容量を回収する（復元不可になる）。もう戻す必要がないと確認できたアーカイブにのみ使う。id は list_cleanup_archives で取得する。完全削除なので実行前に利用者へ確認すること。",
+      "description": "掃除で退避したアーカイブを完全に削除して容量を回収する（復元不可になる）。もう戻す必要がないと確認できたアーカイブにのみ使う。スペースの項目を含むアーカイブは利用者自身のファイルを保持しており、purge するとそのファイルも永久に失われる。id は list_cleanup_archives で取得する。完全削除なので実行前に利用者へ確認すること。",
       "inputSchema": {
         "properties": {
           "id": {
