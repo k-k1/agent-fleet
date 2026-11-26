@@ -158,6 +158,24 @@ describe("placeRuns", () => {
     const p = placeRuns(groups, [at(15, { profile: "script-profile" })]);
     expect(p.onTool.get(toolKey(1, 3))?.map((r) => r.id)).toEqual(["r15"]);
   });
+  it("leaves AWS runs loose when the latest Code Mode launch is opaque", () => {
+    const opaque: Part = { kind: "tool", tool: "exec", info: '// @exec: {"yield_time_ms": 1}' };
+    const wait: Part = { kind: "tool", tool: "wait", info: '{"cell_id":"1"}' };
+    const older = bash("af-aws-exec --profile prod-admin -- aws s3 ls");
+    const read: Part = { kind: "tool", tool: "Read", info: older.info };
+    const g = [groups[0], block("assistant", 1, [older, opaque, wait, read, older], [1, 2, 3, 4, 5])];
+    const p = placeRuns(g, [at(1), at(4), at(6)]);
+    expect(p.onTool.get(toolKey(1, 0))?.map((r) => r.id)).toEqual(["r1"]);
+    expect(p.onTool.get(toolKey(1, 4))?.map((r) => r.id)).toEqual(["r6"]);
+    expect(p.loose.map((r) => r.id)).toEqual(["r4"]);
+  });
+  it("does not use a standalone AWS profile listing as a candidate", () => {
+    const listing = bash('"/opt/af-aws-exec" --list');
+    const g = [groups[0], block("assistant", 1, [listing], [1])];
+    const p = placeRuns(g, [at(2), at(3, { profile: undefined })]);
+    expect(p.onTool.size).toBe(0);
+    expect(p.loose.map((r) => r.id)).toEqual(["r2", "r3"]);
+  });
   it("leaves loose a run after a member prompt, before any call, or in a block without row times", () => {
     const noTimes = groups.map((g) => ({ ...g, partTs: undefined })) as Group[];
     expect(placeRuns(groups, [at(45)]).loose).toHaveLength(1);
@@ -198,7 +216,11 @@ describe("placeRuns", () => {
   it("matches af-gcloud-exec for a Google Cloud run, never af-aws-exec", () => {
     const g = [
       groups[0],
-      block("assistant", 1, [bash("af-gcloud-exec --profile dev --project p -- gcloud ls"), { kind: "tool", tool: "Read" }, bash("af-aws-exec --profile dev -- aws s3 ls")], [1, 2, 3]),
+      block("assistant", 1, [
+        bash("af-gcloud-exec --profile dev --project p -- gcloud ls"),
+        { kind: "tool", tool: "exec", info: "// @exec:" },
+        bash("af-aws-exec --profile dev -- aws s3 ls"),
+      ], [1, 2, 3]),
     ];
     const p = placeRuns(g, [at(5, { provider: "gcp", profile: "dev" }), at(6, { provider: "aws", profile: "dev" })]);
     expect(p.onTool.get(toolKey(1, 0))?.map((r) => r.id)).toEqual(["r5"]);

@@ -142,6 +142,9 @@ const WRAPPER: Record<string, RegExp> = {
   aws: /(?:^|[\s/'"`;&|(])af-aws-exec(?:[\s'"`;&|)<>]|$)/,
   gcp: /(?:^|[\s/'"`;&|(])af-gcloud-exec(?:[\s'"`;&|)<>]|$)/,
 };
+// A standalone probe exits before af-aws-exec records a run. A compound shell command
+// may still launch a run elsewhere in the command.
+const AWS_PROBE = /^(?:"(?:[^"\n]*\/)?af-aws-exec"|'(?:[^'\n]*\/)?af-aws-exec'|(?:[^\s'"`;&|()<>]+\/)?af-aws-exec)\s+(?:--list|-h|--help|--version)$/;
 
 const commandOf = (p: Part) => p.command || p.info || "";
 
@@ -175,6 +178,8 @@ export interface RunPlacement {
  * the run's profile wins: a loop or a long command can start several runs after later calls.
  * Without one, the latest shell call takes it (a script that runs the wrapper itself). A run that
  * no call can take, or a block with no per-row times, stays loose.
+ * An unresolved Codex exec may have launched the AWS run. Require a later explicit match
+ * in that case, since timing alone cannot establish which call ran the wrapper.
  */
 export function placeRuns(groups: Group[], runs: CloudRun[]): RunPlacement {
   const onTool = new Map<string, CloudRun[]>();
@@ -201,16 +206,26 @@ export function placeRuns(groups: Group[], runs: CloudRun[]): RunPlacement {
     }
     let named = -1;
     let shell = -1;
+    let opaque = -1;
     g.parts.forEach((p, i) => {
       if (p.kind !== "tool") return;
       const ts = g.partTs?.[i];
       const ms = ts ? Date.parse(ts) : NaN;
       if (!Number.isFinite(ms) || ms > at) return;
-      if (namesRun(commandOf(p), r)) named = i;
-      if (SHELL_TOOL.test(p.tool || "")) shell = i;
+      const cmd = commandOf(p);
+      if (r.provider === "aws") {
+        if (p.tool === "exec") {
+          opaque = i;
+          return;
+        }
+        if (AWS_PROBE.test(cmd.trim())) return;
+      }
+      const isShell = SHELL_TOOL.test(p.tool || "");
+      if ((opaque < 0 || isShell) && namesRun(cmd, r)) named = i;
+      if (isShell) shell = i;
     });
     const i = named >= 0 ? named : shell;
-    if (i < 0) {
+    if (i < 0 || (opaque >= 0 && named <= opaque)) {
       loose.push(r);
       continue;
     }
