@@ -77,7 +77,9 @@ puts them. A member may still register a server for themselves with their own cl
 
 - **Issuer equivalence.** An issuer whose path is exactly `/` equals the same issuer with an empty
   path (RFC 3986 §6.2.3, scheme-based normalization). Nothing else is normalized; `iss` in the
-  authorization response is compared with the issuer that the AS metadata states.
+  authorization response is compared with the issuer that the AS metadata states. A server that
+  validates only through this allowance ranks after every exactly matching one when the first
+  valid server of the PRM is selected (0119), so a PRM that already worked keeps its server.
 - **Scopes on the definition.** A definition may carry an explicit scope list. When it does, the
   list replaces the challenge and `scopes_supported`. A Workspace definition always carries one.
 - **Authorization parameters per issuer.** For `https://accounts.google.com`, the authorization

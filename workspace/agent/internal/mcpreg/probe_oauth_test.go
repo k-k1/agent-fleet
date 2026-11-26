@@ -353,6 +353,23 @@ func TestProbeOAuthIssuerRootSlashAccepted(t *testing.T) {
 	}
 }
 
+// A PRM that lists a root issuer spelled with "/" before one that matches exactly keeps
+// signing in at the exact one, as before the allowance existed.
+func TestProbeOAuthExactIssuerOutranksTheRootSlash(t *testing.T) {
+	f := newOAuthFake(t)
+	f.challenge = `Bearer resource_metadata="%PRM%"`
+	f.docs["/prm"] = f.prm(f.url("/"), f.url("/b"))
+	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url(""), nil)
+	f.docs["/.well-known/oauth-authorization-server/b"] = asDoc(f.url("/b"), nil)
+	o := f.probe().OAuth
+	if o == nil || len(o.Problems) != 0 || len(o.Servers) != 2 || !o.Servers[0].Valid || !o.Servers[1].Valid {
+		t.Fatalf("both servers should validate: %+v", o)
+	}
+	if o.Selected != f.url("/b") {
+		t.Fatalf("selected %q, want the exactly matching %q", o.Selected, f.url("/b"))
+	}
+}
+
 func TestProbeOAuthNoS256(t *testing.T) {
 	f := newOAuthFake(t)
 	f.challenge = `Bearer resource_metadata="%PRM%"`

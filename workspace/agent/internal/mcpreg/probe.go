@@ -77,6 +77,10 @@ const (
 // defaultProbeTimeout.
 const sessionBoundRequests = 6
 
+// publicOAuthBudget caps the OAuth metadata lookup after a test that passed without
+// credentials. A var for tests.
+var publicOAuthBudget = 3 * time.Second
+
 // affinityBudget caps the extra session-bound requests (all but the first tools/list).
 const affinityBudget = 5 * time.Second
 
@@ -604,16 +608,28 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	}
 
 	// withPublicOAuth adds the OAuth findings to a test that succeeded without credentials.
-	// Only a protected-resource metadata document at the well-known URLs counts: a server
-	// without one costs a GET or two and keeps its plain result. A definition with static
-	// headers is left alone, since its success says nothing about what is public.
+	// Only a protected-resource metadata document for this very URL counts: a server without
+	// one keeps its plain result, and so does one whose origin publishes a root document for
+	// another resource (nothing here says this one is protected). A definition with static
+	// headers is left alone, since its success says nothing about what is public. The lookup
+	// has its own short budget: the test has already passed, and a proxy that never answers
+	// unknown well-known paths must not hold that answer back.
 	withPublicOAuth := func(res ProbeResult) ProbeResult {
 		if len(d.Headers) > 0 {
 			return res
 		}
-		if rep, ok := probeOAuth(ctx, d.URL, nil); ok {
-			res.OAuth = &rep
+		octx, cancel := context.WithTimeout(ctx, publicOAuthBudget)
+		defer cancel()
+		rep, ok := probeOAuth(octx, d.URL, nil)
+		if !ok {
+			return res
 		}
+		for _, p := range rep.Problems {
+			if p.Code == OAuthProblemPRMResource {
+				return res
+			}
+		}
+		res.OAuth = &rep
 		return res
 	}
 

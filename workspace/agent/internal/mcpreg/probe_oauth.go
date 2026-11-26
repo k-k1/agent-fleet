@@ -103,6 +103,10 @@ type OAuthServer struct {
 
 	// ep is what sign-in needs beyond the report; it never reaches the wire.
 	ep asEndpoints
+	// rootSlash marks a server that validated only through issuerEquivalent's root "/"
+	// allowance. Selection ranks it after every exactly matching server, so a PRM that lists
+	// such an issuer before one that already worked keeps signing in where it did.
+	rootSlash bool
 }
 
 // asEndpoints are the parts of a validated authorization-server document the sign-in flow
@@ -532,11 +536,23 @@ func probeOAuth(ctx context.Context, serverURL string, header http.Header) (OAut
 		srv, problems := discoverAuthServer(ctx, g, issuer)
 		rep.Problems = append(rep.Problems, problems...)
 		rep.Servers = append(rep.Servers, srv)
-		if srv.Valid && rep.Selected == "" {
-			rep.Selected = srv.Issuer
+	}
+	rep.Selected = selectAuthServer(rep.Servers)
+	return rep, true
+}
+
+// selectAuthServer is the issuer sign-in uses: the first valid server in the PRM's order (ADR
+// 0119), where one that matched its issuer exactly outranks one that needed the root "/"
+// allowance (ADR 0146 decision 2). Empty when none is valid.
+func selectAuthServer(servers []OAuthServer) string {
+	for _, exact := range []bool{true, false} {
+		for _, s := range servers {
+			if s.Valid && s.rootSlash != exact {
+				return s.Issuer
+			}
 		}
 	}
-	return rep, true
+	return ""
 }
 
 func isDecodeErr(err error) bool {
@@ -573,7 +589,7 @@ func discoverAuthServer(ctx context.Context, g metadataGetter, issuer string) (O
 				Detail: fmt.Sprintf("metadata at %s says issuer %q", cand, m.Issuer),
 			}}
 		}
-		srv.Issuer = m.Issuer
+		srv.Issuer, srv.rootSlash = m.Issuer, m.Issuer != issuer
 		if m.CIMDSupported {
 			srv.Registration = append(srv.Registration, OAuthRegCIMD)
 		}

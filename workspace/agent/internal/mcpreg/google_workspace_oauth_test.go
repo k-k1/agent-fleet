@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
@@ -98,10 +99,26 @@ func (f *googleFake) serve(w http.ResponseWriter, r *http.Request) {
 		f.tokens = append(f.tokens, r.PostForm)
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"access_token":"ya29.test","token_type":"Bearer","expires_in":3599,"refresh_token":"1//rt"}`))
+		_, _ = w.Write([]byte(googleTokenBody(r.PostForm.Get("code"))))
 	default:
 		http.NotFound(w, r) // including /.well-known/oauth-authorization-server, as measured
 	}
+}
+
+// googleTokenBody answers like Google: a refresh token only for an authorization the member
+// consented to. A test passes googleCode(q), which says whether the URL asked for consent.
+func googleTokenBody(code string) string {
+	if strings.HasPrefix(code, "consented/") {
+		return `{"access_token":"ya29.` + code + `","token_type":"Bearer","expires_in":3599,"refresh_token":"1//rt-` + code + `"}`
+	}
+	return `{"access_token":"ya29.` + code + `","token_type":"Bearer","expires_in":3599}`
+}
+
+func googleCode(q url.Values, n string) string {
+	if q.Get("prompt") == "consent" && q.Get("access_type") == "offline" {
+		return "consented/" + n
+	}
+	return "silent/" + n
 }
 
 func (f *googleFake) hitCount(prefix string) int {
@@ -178,6 +195,45 @@ func TestPublicToolListWithoutMetadataKeepsItsPlainResult(t *testing.T) {
 	}
 }
 
+// An origin whose root PRM describes another resource says nothing about this public server.
+func TestPublicToolListOnASharedOriginKeepsItsPlainResult(t *testing.T) {
+	f := newGoogleFake(t)
+	other := strings.Replace(f.prm, `"resource": "`+f.url("/mcp")+`"`, `"resource": "`+f.url("/private")+`"`, 1)
+	if other == f.prm {
+		t.Fatal("fixture rewrite did not apply")
+	}
+	f.prm = other
+	res := Probe(context.Background(), ServerDef{Transport: TransportHTTP, URL: f.url("/mcp"), Enabled: true})
+	if !res.OK || res.OAuth != nil {
+		t.Fatalf("a PRM for another resource must not mark this one: %+v", res.OAuth)
+	}
+}
+
+// A proxy that never answers the well-known paths costs the passed test its own short budget,
+// not the probe's whole deadline.
+func TestPublicToolListLookupIsBounded(t *testing.T) {
+	old := publicOAuthBudget
+	publicOAuthBudget = 200 * time.Millisecond
+	t.Cleanup(func() { publicOAuthBudget = old })
+	f := newGoogleFake(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			<-r.Context().Done()
+			return
+		}
+		f.serve(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	start := time.Now()
+	res := Probe(context.Background(), ServerDef{Transport: TransportHTTP, URL: srv.URL + "/mcp", Enabled: true, TimeoutMS: 20000})
+	if el := time.Since(start); el > 2*time.Second {
+		t.Fatalf("the test took %v behind a silent well-known path", el)
+	}
+	if !res.OK || res.ToolCount != 1 || res.OAuth != nil {
+		t.Fatalf("got %+v", res)
+	}
+}
+
 func TestProbeWithStaticHeadersLooksUpNoMetadata(t *testing.T) {
 	f := newGoogleFake(t)
 	res := Probe(context.Background(), ServerDef{Transport: TransportHTTP, URL: f.url("/mcp"), Enabled: true,
@@ -217,7 +273,7 @@ func TestGoogleWorkspaceSignIn(t *testing.T) {
 		t.Errorf("result = %+v, want the metadata's issuer and the tenant's client", res)
 	}
 
-	done, err := CompleteOAuth(context.Background(), id, CompleteRequest{State: req.State, Code: "4/c", Iss: f.url("")})
+	done, err := CompleteOAuth(context.Background(), id, CompleteRequest{State: req.State, Code: googleCode(q, "1"), Iss: f.url("")})
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
@@ -225,8 +281,71 @@ func TestGoogleWorkspaceSignIn(t *testing.T) {
 		t.Errorf("complete = %+v", done)
 	}
 	g := currentGrant(id)
-	if g == nil || g.RefreshToken != "1//rt" || g.Issuer != f.url("") {
+	if g == nil || g.RefreshToken != "1//rt-consented/1" || g.Issuer != f.url("") {
 		t.Fatalf("grant = %+v, want a refresh token under the metadata's issuer", g)
+	}
+
+	// A second sign-in while the grant holds a refresh token (a reconnect, a step-up) replaces
+	// the grant. It must ask for consent again, or the new grant has no refresh token.
+	req2 := startReq(func(r *StartRequest) { r.Scope = gmailReadonly + " https://www.googleapis.com/auth/gmail.compose" })
+	_, q2 := mustStart(t, id, req2)
+	if q2.Get("prompt") != "consent" || q2.Get("access_type") != "offline" {
+		t.Fatalf("second sign-in: prompt=%q access_type=%q", q2.Get("prompt"), q2.Get("access_type"))
+	}
+	if _, err := CompleteOAuth(context.Background(), id, CompleteRequest{State: req2.State, Code: googleCode(q2, "2"), Iss: f.url("")}); err != nil {
+		t.Fatalf("second complete: %v", err)
+	}
+	if g := currentGrant(id); g == nil || g.RefreshToken != "1//rt-consented/2" {
+		t.Fatalf("after the second sign-in grant = %+v, want the new refresh token", g)
+	}
+}
+
+// The tenant's confidential client (the agentic Web client of ADR 0146 decision 1), entered
+// with the PRM's "/" spelling: exchange, refresh and revocation go through the CP and name the
+// issuer the metadata states.
+func TestGoogleWorkspaceConfidentialClientThroughTheCP(t *testing.T) {
+	resetOAuthState(t)
+	f := newGoogleFake(t)
+	cp := newCPFake(t)
+	useGoogleParamsFor(t, f.url(""))
+	d := ServerDef{
+		ID: "t-hosted", Name: "gmail", Origin: OriginTenant, Transport: TransportHTTP, URL: f.url("/mcp"),
+		Auth: AuthOAuth, Enabled: true, Targets: Targets{Session: true}, Scopes: []string{gmailReadonly},
+		OAuthClient: &secrets.MCPTenantClient{Issuer: f.url("/"), ClientID: "agentic", Confidential: true},
+	}
+	kept, dropped := acceptTenant([]ServerDef{d})
+	if dropped != 0 {
+		t.Fatalf("dropped: %+v", d)
+	}
+	if err := writeTenantCache(kept, 1); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(tenantCachePath()) })
+
+	req := startReq(nil)
+	res, q := mustStart(t, d.ID, req)
+	if res.Registration != OAuthRegTenant || q.Get("client_id") != "agentic" || q.Get("prompt") != "consent" {
+		t.Fatalf("start = %+v %v", res, q)
+	}
+	if _, err := CompleteOAuth(context.Background(), d.ID, CompleteRequest{State: req.State, Code: "c", Iss: f.url("")}); err != nil {
+		t.Fatal(err)
+	}
+	oauthNow = func() time.Time { return time.Now().Add(2 * time.Hour) }
+	if _, err := AccessToken(context.Background(), d.ID); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	if _, err := DisconnectOAuth(context.Background(), d.ID); err != nil {
+		t.Fatalf("disconnect: %v", err)
+	}
+	cp.mu.Lock()
+	defer cp.mu.Unlock()
+	if len(cp.forms) != 3 || cp.revoked != 1 || len(f.tokens) != 0 {
+		t.Fatalf("CP saw %v (revoked %d), AS token requests %d", cp.paths, cp.revoked, len(f.tokens))
+	}
+	for i, form := range cp.forms {
+		if form.Get("issuer") != f.url("") || form.Get("client_id") != "agentic" {
+			t.Errorf("CP request %d (%s): issuer=%q client_id=%q", i, cp.paths[i], form.Get("issuer"), form.Get("client_id"))
+		}
 	}
 }
 
@@ -238,7 +357,7 @@ func TestGoogleWorkspaceIssIsTheMetadataIssuer(t *testing.T) {
 	id := distributeGoogle(t, f, []string{gmailReadonly})
 	req := startReq(nil)
 	mustStart(t, id, req)
-	_, err := CompleteOAuth(context.Background(), id, CompleteRequest{State: req.State, Code: "4/c", Iss: f.url("/")})
+	_, err := CompleteOAuth(context.Background(), id, CompleteRequest{State: req.State, Code: "c", Iss: f.url("/")})
 	wantCode(t, err, OAuthErrIssMismatch)
 	if len(f.tokens) != 0 {
 		t.Error("a mismatched iss must not reach the token endpoint")
@@ -332,18 +451,31 @@ func TestValidateDefinitionScopes(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		long = append(long, gmailReadonly)
 	}
+	// Room for " offline_access" (15 bytes) is kept unless the list already holds it.
+	fit := []string{strings.Repeat("a", maxScopeLen-15)}
+	over := []string{strings.Repeat("a", maxScopeLen-14)}
+	fullWithOffline := []string{strings.Repeat("a", maxScopeLen-15), "offline_access"}
+	for name, l := range map[string][]string{"fits with offline_access to come": fit, "full, offline_access included": fullWithOffline} {
+		d := base
+		d.Scopes = l
+		if err := Validate(d); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
 	cases := map[string]struct {
 		mod  func(*ServerDef)
 		code string
 	}{
-		"user row":       {func(d *ServerDef) { d.Origin = OriginUser }, CodeOAuthScopesUser},
-		"not oauth":      {func(d *ServerDef) { d.Auth = "" }, CodeOAuthScopes},
-		"empty entry":    {func(d *ServerDef) { d.Scopes = []string{gmailReadonly, ""} }, CodeOAuthScopes},
-		"two in one":     {func(d *ServerDef) { d.Scopes = []string{"a b"} }, CodeOAuthScopes},
-		"padded":         {func(d *ServerDef) { d.Scopes = []string{" a"} }, CodeOAuthScopes},
-		"quote":          {func(d *ServerDef) { d.Scopes = []string{`a"b`} }, CodeOAuthScopes},
-		"non-ASCII":      {func(d *ServerDef) { d.Scopes = []string{"スコープ"} }, CodeOAuthScopes},
-		"over the limit": {func(d *ServerDef) { d.Scopes = long }, CodeOAuthScopes},
+		"user row":                   {func(d *ServerDef) { d.Origin = OriginUser }, CodeOAuthScopesUser},
+		"not oauth":                  {func(d *ServerDef) { d.Auth = "" }, CodeOAuthScopes},
+		"empty entry":                {func(d *ServerDef) { d.Scopes = []string{gmailReadonly, ""} }, CodeOAuthScopes},
+		"two in one":                 {func(d *ServerDef) { d.Scopes = []string{"a b"} }, CodeOAuthScopes},
+		"padded":                     {func(d *ServerDef) { d.Scopes = []string{" a"} }, CodeOAuthScopes},
+		"quote":                      {func(d *ServerDef) { d.Scopes = []string{`a"b`} }, CodeOAuthScopes},
+		"non-ASCII":                  {func(d *ServerDef) { d.Scopes = []string{"スコープ"} }, CodeOAuthScopes},
+		"over the limit":             {func(d *ServerDef) { d.Scopes = long }, CodeOAuthScopes},
+		"no room for offline_access": {func(d *ServerDef) { d.Scopes = over }, CodeOAuthScopes},
+		"comma":                      {func(d *ServerDef) { d.Scopes = []string{"read,archive"} }, CodeOAuthScopes},
 	}
 	for name, c := range cases {
 		d := base
@@ -352,5 +484,29 @@ func TestValidateDefinitionScopes(t *testing.T) {
 		if err := Validate(d); !errors.As(err, &ve) || ve.Code != c.code {
 			t.Errorf("%s: %v, want %s", name, err, c.code)
 		}
+	}
+}
+
+// A definition list at the validation limit still starts a sign-in once offline_access, which
+// the AS lists, is appended.
+func TestDefinitionScopesAtTheLimitStillStart(t *testing.T) {
+	resetOAuthState(t)
+	f := newASFake(t, map[string]any{"client_id_metadata_document_supported": true}) // lists offline_access
+	scopes := []string{strings.Repeat("a", maxScopeLen-15)}
+	d := ServerDef{
+		ID: "t-hosted", Name: "hosted", Origin: OriginTenant, Transport: TransportHTTP, URL: f.url("/mcp"),
+		Auth: AuthOAuth, Enabled: true, Targets: Targets{Session: true}, Scopes: scopes,
+	}
+	kept, dropped := acceptTenant([]ServerDef{d})
+	if dropped != 0 {
+		t.Fatalf("dropped: %+v", d)
+	}
+	if err := writeTenantCache(kept, 1); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Remove(tenantCachePath()) })
+	_, q := mustStart(t, d.ID, startReq(nil))
+	if got := q.Get("scope"); got != scopes[0]+" offline_access" || len(got) != maxScopeLen {
+		t.Fatalf("scope has %d bytes: %q", len(got), got)
 	}
 }
