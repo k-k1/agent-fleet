@@ -287,12 +287,15 @@ func serveRelay(w http.ResponseWriter, r *http.Request, key string) {
 	}
 
 	if def.Elicitation == ElicitationRelay && r.Method == http.MethodPost {
+		// The relay has to read every tool call of this server: one it cannot read would reach
+		// the server with the CLI's own capabilities, and its confirmation the CLI's own way.
+		if ce := r.Header.Get("Content-Encoding"); ce != "" && !strings.EqualFold(ce, "identity") {
+			relayFail(w, http.StatusUnsupportedMediaType, "the relay reads this MCP server's requests and cannot read a compressed one")
+			return
+		}
 		if call, ok := parseElicitRequest(body); ok {
-			body = call.body
-			if call.method == "tools/call" {
-				serveElicitingCall(w, r, def, target, call)
-				return
-			}
+			serveElicitingCall(w, r, def, target, call)
+			return
 		}
 	}
 

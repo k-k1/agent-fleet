@@ -2,6 +2,7 @@ package mcpreg
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,13 +23,19 @@ const elicitCallBody = `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{
 
 const elicitArgs = `{"to": "a@example.com",  "body":"hi","n":1.50}`
 
+const elicitState = `"{\"elicitationId\":\"e1\",\"requestBinding\":\"b1\"}"`
+
 // googleInputRequired is the shape Google's Workspace servers answer before a sensitive call
 // (developers.google.com/workspace/guides/mcp-elicitation, read 2026-11-26).
 func googleInputRequired(id string) string {
-	return `{"jsonrpc":"2.0","id":` + id + `,"result":{"resultType":"input_required","inputRequests":{"approval_choice":{"method":"elicitation/create","params":{"mode":"form","message":"Send **mail** to a@example.com","requestedSchema":{"type":"object","required":["approval_choice"],"properties":{"approval_choice":{"type":"string","title":"Allow?","enum":["ALLOW_ONCE","ALLOW_TOOL_ALWAYS","DENY_ONCE"],"enumNames":["Allow once","Always allow this tool","Deny"]}}}}}},"requestState":"{\"elicitationId\":\"e1\",\"requestBinding\":\"b1\"}"}}`
+	return `{"jsonrpc":"2.0","id":` + id + `,"result":{"resultType":"input_required","inputRequests":{"approval_choice":{"method":"elicitation/create","params":{"mode":"form","message":"Send **mail** to a@example.com","requestedSchema":{"type":"object","required":["approval_choice"],"properties":{"approval_choice":{"type":"string","title":"Allow?","enum":["ALLOW_ONCE","ALLOW_TOOL_ALWAYS","DENY_ONCE"],"enumNames":["Allow once","Always allow this tool","Deny"]}}}}}},"requestState":` + elicitState + `}}`
 }
 
-const completeResult = `{"jsonrpc":"2.0","id":7,"result":{"resultType":"complete","content":[{"type":"text","text":"sent"}]}}`
+func completeFor(id string) string {
+	return `{"jsonrpc":"2.0","id":` + id + `,"result":{"resultType":"complete","content":[{"type":"text","text":"sent"}]}}`
+}
+
+var allowOnce = ElicitAnswer{Choices: map[string]map[string]string{"approval_choice": {"approval_choice": "ALLOW_ONCE"}}}
 
 func flagElicitation(t *testing.T, mode string) {
 	t.Helper()
@@ -64,12 +71,31 @@ func setElicitTimes(t *testing.T, wait, keepalive time.Duration) {
 	t.Cleanup(func() { elicitWait, elicitKeepalive = ow, ok })
 }
 
-// jsonAnswer answers every request with the body chosen for its index.
-func jsonAnswer(bodies func(n int) string) func(http.ResponseWriter, *http.Request, int) {
-	return func(w http.ResponseWriter, r *http.Request, n int) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = io.WriteString(w, bodies(n))
+// reqID is the JSON-RPC id of the request the upstream is answering.
+func reqID(r *http.Request) string {
+	b, _ := io.ReadAll(r.Body)
+	var m struct {
+		ID json.RawMessage `json:"id"`
 	}
+	_ = json.Unmarshal(b, &m)
+	return string(m.ID)
+}
+
+// jsonAnswer answers each request with the body chosen for its index and id.
+func jsonAnswer(bodies func(n int, id string) string) func(http.ResponseWriter, *http.Request, int) {
+	return func(w http.ResponseWriter, r *http.Request, n int) {
+		id := reqID(r)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, bodies(n, id))
+	}
+}
+
+// askThenComplete is a server that asks once and then completes.
+func askThenComplete(n int, id string) string {
+	if n == 0 {
+		return googleInputRequired(id)
+	}
+	return completeFor(id)
 }
 
 // waitPending waits for n held calls.
@@ -149,6 +175,15 @@ func sseMessages(t *testing.T, body string) []map[string]any {
 	return out
 }
 
+func lastMessage(t *testing.T, body string) map[string]any {
+	t.Helper()
+	msgs := sseMessages(t, body)
+	if len(msgs) == 0 {
+		t.Fatalf("no message in %q", body)
+	}
+	return msgs[len(msgs)-1]
+}
+
 func paramsOf(t *testing.T, body string) map[string]json.RawMessage {
 	t.Helper()
 	var top struct {
@@ -175,35 +210,44 @@ func capsOf(t *testing.T, body string) map[string]any {
 	return caps
 }
 
-func TestElicitRelayDeclaresFormOnlyAndKeepsTheRest(t *testing.T) {
+func TestElicitRelayDeclaresFormOnlyOnToolCalls(t *testing.T) {
 	resetElicitations(t)
-	up := newUpstream(t, jsonAnswer(func(int) string { return `{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","tools":[]}}` }))
+	up := newUpstream(t, jsonAnswer(func(_ int, id string) string { return completeFor(id) }))
 	e := newRelayEnv(t, up)
 	flagElicitation(t, ElicitationRelay)
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{"roots":{"listChanged":true},"elicitation":{"form":{},"url":{}}}}}}`
-	resp := e.do(http.MethodPost, relayPath(), strings.NewReader(body), sseHeaders)
-	if got := readAll(t, resp); resp.StatusCode != 200 || !strings.Contains(got, `"tools":[]`) {
-		t.Fatalf("status %d body %q", resp.StatusCode, got)
+	res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+	if res.resp.StatusCode != 200 || !strings.Contains(res.body, `"sent"`) {
+		t.Fatalf("status %d body %q", res.resp.StatusCode, res.body)
 	}
 	caps := capsOf(t, up.at(0).Body)
 	if !reflect.DeepEqual(caps["elicitation"], map[string]any{"form": map[string]any{}}) {
 		t.Fatalf("elicitation capability %v, want form only", caps["elicitation"])
 	}
-	if !reflect.DeepEqual(caps["roots"], map[string]any{"listChanged": true}) {
+	if _, ok := caps["roots"]; !ok {
 		t.Fatalf("the CLI's other capabilities were lost: %v", caps)
 	}
+	if up.at(0).Header.Get("Accept-Encoding") != "identity" {
+		t.Fatalf("Accept-Encoding %q: a compressed answer could not be read", up.at(0).Header.Get("Accept-Encoding"))
+	}
 
-	// A request with no capabilities at all gets one.
-	body = `{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`
-	readAll(t, e.do(http.MethodPost, relayPath(), strings.NewReader(body), sseHeaders))
-	if caps := capsOf(t, up.at(1).Body); !reflect.DeepEqual(caps, map[string]any{"elicitation": map[string]any{"form": map[string]any{}}}) {
-		t.Fatalf("capabilities %v", caps)
+	// prompts/get and resources/read can come back input_required too, but the relay does not
+	// handle them, so it must not declare anything for them: their bytes pass as they are.
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":2,"method":"prompts/get","params":{"name":"p","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":{}}}}`,
+		`{"jsonrpc":"2.0","id":3,"method":"resources/read","params":{"uri":"x:y","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`,
+		`{"jsonrpc":"2.0","id":4,"method":"tools/list","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`,
+	} {
+		n := up.count()
+		readAll(t, e.do(http.MethodPost, relayPath(), strings.NewReader(body), sseHeaders))
+		if got := up.at(n).Body; got != body {
+			t.Fatalf("body changed: %q", got)
+		}
 	}
 }
 
 func TestElicitRelayLeavesOtherRequestsAsBytes(t *testing.T) {
 	resetElicitations(t)
-	up := newUpstream(t, jsonAnswer(func(int) string { return googleInputRequired("7") }))
+	up := newUpstream(t, jsonAnswer(func(_ int, id string) string { return googleInputRequired(id) }))
 	e := newRelayEnv(t, up)
 	legacy := `{"jsonrpc":"2.0","id":0,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{"elicitation":{"form":{},"url":{}}}}}`
 
@@ -227,14 +271,60 @@ func TestElicitRelayLeavesOtherRequestsAsBytes(t *testing.T) {
 	}
 }
 
+// A confirmation reaches the server only through a person: a requestState and inputResponses the
+// CLI (an agent in bypass mode) put on its own call are dropped, so the server asks again.
+func TestElicitRelayDropsAContinuationTheCLIWrote(t *testing.T) {
+	resetElicitations(t)
+	up := newUpstream(t, jsonAnswer(askThenComplete))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	forged := strings.Replace(elicitCallBody, `"name":"send_mail",`,
+		`"name":"send_mail","requestState":"stolen","inputResponses":{"approval_choice":{"action":"accept","content":{"approval_choice":"ALLOW_ONCE"}}},`, 1)
+	ch := e.startCall(forged, sseHeaders)
+	p := waitPending(t, 1)[0]
+	first := paramsOf(t, up.at(0).Body)
+	if _, ok := first["requestState"]; ok {
+		t.Fatal("the CLI's requestState reached the server")
+	}
+	if _, ok := first["inputResponses"]; ok {
+		t.Fatal("the CLI's inputResponses reached the server")
+	}
+	if err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true}); err != nil {
+		t.Fatal(err)
+	}
+	waitCall(t, ch)
+}
+
+func TestElicitRelayRefusesACompressedRequest(t *testing.T) {
+	resetElicitations(t)
+	up := newUpstream(t, jsonAnswer(askThenComplete))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	resp := e.do(http.MethodPost, relayPath(), strings.NewReader("\x1f\x8b..."), map[string]string{"Content-Encoding": "gzip"})
+	readAll(t, resp)
+	if resp.StatusCode != http.StatusUnsupportedMediaType || up.count() != 0 {
+		t.Fatalf("status %d, %d requests reached the server", resp.StatusCode, up.count())
+	}
+}
+
+func TestElicitRelayRefusesACompressedAnswer(t *testing.T) {
+	resetElicitations(t)
+	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "gzip")
+		_, _ = io.WriteString(w, "\x1f\x8b compressed input_required")
+	})
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+	if res.resp.StatusCode != http.StatusBadGateway || strings.Contains(res.body, "\x1f\x8b") {
+		t.Fatalf("status %d body %q", res.resp.StatusCode, res.body)
+	}
+}
+
 func TestElicitRelayHoldsAndRetriesWithThePersonsChoice(t *testing.T) {
 	resetElicitations(t)
-	up := newUpstream(t, jsonAnswer(func(n int) string {
-		if n == 0 {
-			return googleInputRequired("7")
-		}
-		return completeResult
-	}))
+	up := newUpstream(t, jsonAnswer(askThenComplete))
 	e := newRelayEnv(t, up)
 	flagElicitation(t, ElicitationRelay)
 	ch := e.startCall(elicitCallBody, sseHeaders)
@@ -257,17 +347,16 @@ func TestElicitRelayHoldsAndRetriesWithThePersonsChoice(t *testing.T) {
 		t.Fatalf("the call was retried before anyone answered (%d)", up.count())
 	}
 
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"approval_choice": {"approval_choice": "ALLOW_ONCE"}}}); err != nil {
+	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
 		t.Fatal(err)
 	}
 	res := waitCall(t, ch)
-	msgs := sseMessages(t, res.body)
-	if res.resp.Header.Get("Content-Type") != "text/event-stream" || len(msgs) == 0 {
+	last := lastMessage(t, res.body)
+	if res.resp.Header.Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("CLI got %q (%s)", res.body, res.resp.Header.Get("Content-Type"))
 	}
-	last := msgs[len(msgs)-1]
 	if fmt.Sprint(last["id"]) != "7" || !strings.Contains(fmt.Sprint(last["result"]), "sent") {
-		t.Fatalf("final message %v", last)
+		t.Fatalf("final message %v: the CLI must get its own id back", last)
 	}
 	if strings.Contains(res.body, "input_required") {
 		t.Fatal("the CLI saw input_required")
@@ -280,7 +369,7 @@ func TestElicitRelayHoldsAndRetriesWithThePersonsChoice(t *testing.T) {
 	if string(retry["arguments"]) != elicitArgs {
 		t.Fatalf("arguments changed: %s", retry["arguments"])
 	}
-	if string(retry["requestState"]) != `"{\"elicitationId\":\"e1\",\"requestBinding\":\"b1\"}"` {
+	if string(retry["requestState"]) != elicitState {
 		t.Fatalf("requestState %s", retry["requestState"])
 	}
 	var ir map[string]map[string]any
@@ -290,7 +379,8 @@ func TestElicitRelayHoldsAndRetriesWithThePersonsChoice(t *testing.T) {
 	if !reflect.DeepEqual(ir, map[string]map[string]any{"approval_choice": {"action": "accept", "content": map[string]any{"approval_choice": "ALLOW_ONCE"}}}) {
 		t.Fatalf("inputResponses %v", ir)
 	}
-	if string(retry["id"]) != "7" || string(retry["name"]) != `"send_mail"` {
+	// MRTR: the retry is an independent request with its own id.
+	if string(retry["id"]) == "7" || !strings.HasPrefix(string(retry["id"]), `"af-relay-`) || string(retry["name"]) != `"send_mail"` {
 		t.Fatalf("id %s name %s", retry["id"], retry["name"])
 	}
 	if caps := capsOf(t, up.at(1).Body); !reflect.DeepEqual(caps["elicitation"], map[string]any{"form": map[string]any{}}) {
@@ -298,6 +388,58 @@ func TestElicitRelayHoldsAndRetriesWithThePersonsChoice(t *testing.T) {
 	}
 	if n := len(PendingElicitations()); n != 0 {
 		t.Fatalf("%d still pending", n)
+	}
+}
+
+func TestElicitRelayEchoesRequestStateOnlyWhenSent(t *testing.T) {
+	for name, tc := range map[string]struct {
+		state   string // the result's requestState member, "" for none
+		inputs  bool
+		pending bool
+	}{
+		"no requestState":         {state: "", inputs: true, pending: true},
+		"empty string":            {state: `,"requestState":""`, inputs: true, pending: true},
+		"escapes":                 {state: `,"requestState":"a\"b\\cé"`, inputs: true, pending: true},
+		"requestState and no ask": {state: `,"requestState":"s1"`, inputs: false, pending: false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetElicitations(t)
+			up := newUpstream(t, jsonAnswer(func(n int, id string) string {
+				if n > 0 {
+					return completeFor(id)
+				}
+				reqs := ""
+				if tc.inputs {
+					reqs = `"inputRequests":{"k":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE"]}}}}}},`
+				}
+				return `{"jsonrpc":"2.0","id":` + id + `,"result":{` + reqs + `"resultType":"input_required"` + tc.state + `}}`
+			}))
+			e := newRelayEnv(t, up)
+			flagElicitation(t, ElicitationRelay)
+			ch := e.startCall(elicitCallBody, sseHeaders)
+			if tc.pending {
+				p := waitPending(t, 1)[0]
+				if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"k": {}}}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			res := waitCall(t, ch)
+			if !strings.Contains(res.body, `"sent"`) || up.count() != 2 {
+				t.Fatalf("CLI got %q after %d requests", res.body, up.count())
+			}
+			retry := paramsOf(t, up.at(1).Body)
+			got, has := retry["requestState"]
+			want := strings.TrimPrefix(tc.state, `,"requestState":`)
+			switch {
+			case tc.state == "" && has:
+				t.Fatalf("a requestState the server never sent: %s", got)
+			case tc.state != "" && string(got) != want:
+				t.Fatalf("requestState %s, want %s byte for byte", got, want)
+			}
+			if _, has := retry["inputResponses"]; has != tc.inputs {
+				t.Fatalf("inputResponses present %t", has)
+			}
+		})
 	}
 }
 
@@ -312,11 +454,11 @@ func TestElicitRelayDeclineAndTimeLimitSendDecline(t *testing.T) {
 			if tc.answer {
 				setElicitTimes(t, time.Hour, time.Hour)
 			}
-			up := newUpstream(t, jsonAnswer(func(n int) string {
+			up := newUpstream(t, jsonAnswer(func(n int, id string) string {
 				if n == 0 {
-					return googleInputRequired("7")
+					return googleInputRequired(id)
 				}
-				return `{"jsonrpc":"2.0","id":7,"result":{"resultType":"complete","isError":true,"content":[{"type":"text","text":"Action canceled"}]}}`
+				return `{"jsonrpc":"2.0","id":` + id + `,"result":{"resultType":"complete","isError":true,"content":[{"type":"text","text":"Action canceled"}]}}`
 			}))
 			e := newRelayEnv(t, up)
 			flagElicitation(t, ElicitationRelay)
@@ -324,7 +466,7 @@ func TestElicitRelayDeclineAndTimeLimitSendDecline(t *testing.T) {
 			p := waitPending(t, 1)[0]
 			if tc.answer {
 				// A decline carries no choice, whatever the Console sent along.
-				if err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true, Choices: map[string]map[string]string{"approval_choice": {"approval_choice": "ALLOW_ONCE"}}}); err != nil {
+				if err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true, Choices: allowOnce.Choices}); err != nil {
 					t.Fatal(err)
 				}
 			}
@@ -343,10 +485,34 @@ func TestElicitRelayDeclineAndTimeLimitSendDecline(t *testing.T) {
 	}
 }
 
+func TestElicitAnswerAfterTheDeadlineOrTheCLIIsRefused(t *testing.T) {
+	resetElicitations(t)
+	ir := inputRequired{inputs: []ElicitInput{{Key: "a", Fields: []ElicitField{{Name: "c", Options: []ElicitOption{{"ALLOW_ONCE", "Allow"}}}}}}}
+	ok := ElicitAnswer{Choices: map[string]map[string]string{"a": {"c": "ALLOW_ONCE"}}}
+
+	setElicitTimes(t, 20*time.Millisecond, time.Hour)
+	late, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(40 * time.Millisecond) // past the deadline, before the relay's timer took it
+	if err := AnswerElicitation(late.ID, ok); !errors.Is(err, ErrElicitationNotFound) {
+		t.Fatalf("an answer after the deadline: %v", err)
+	}
+
+	setElicitTimes(t, time.Hour, time.Hour)
+	ctx, cancel := context.WithCancel(context.Background())
+	left, _ := elicitations.add(ctx, ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
+	cancel() // the CLI went away, before the relay removed the entry
+	if err := AnswerElicitation(left.ID, ok); !errors.Is(err, ErrElicitationNotFound) {
+		t.Fatalf("an answer after the CLI left: %v", err)
+	}
+}
+
 func TestElicitRelayDropsTheQuestionWhenTheCLILeaves(t *testing.T) {
 	resetElicitations(t)
 	setElicitTimes(t, time.Hour, 20*time.Millisecond)
-	up := newUpstream(t, jsonAnswer(func(int) string { return googleInputRequired("7") }))
+	up := newUpstream(t, jsonAnswer(func(_ int, id string) string { return googleInputRequired(id) }))
 	e := newRelayEnv(t, up)
 	flagElicitation(t, ElicitationRelay)
 	req, _ := http.NewRequest(http.MethodPost, e.base+relayPath(), strings.NewReader(elicitCallBody))
@@ -370,93 +536,181 @@ func TestElicitRelayDropsTheQuestionWhenTheCLILeaves(t *testing.T) {
 }
 
 // Claude Code 2.1.332 ends an HTTP tool call after 60 s unless a progress notification arrives
-// (measured 2026-11-26); the held call must send them on the CLI's own token.
-func TestElicitRelaySendsProgressWhileHeld(t *testing.T) {
+// (measured 2026-11-26). The held call sends them on the CLI's own token, and progress on that
+// token only ever grows, across the server's own notifications of both attempts.
+func TestElicitRelaySendsGrowingProgressWhileHeld(t *testing.T) {
 	resetElicitations(t)
 	setElicitTimes(t, time.Hour, 20*time.Millisecond)
-	up := newUpstream(t, jsonAnswer(func(n int) string {
+	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+		id := reqID(r)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":3,\"progress\":50,\"total\":100}}\n\n")
 		if n == 0 {
-			return googleInputRequired("7")
+			fmt.Fprintf(w, "data: %s\n\n", googleInputRequired(id))
+			return
 		}
-		return completeResult
-	}))
+		fmt.Fprint(w, "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progressToken\":3,\"progress\":1}}\n\n")
+		fmt.Fprintf(w, "data: %s\n\n", completeFor(id))
+	})
 	e := newRelayEnv(t, up)
 	flagElicitation(t, ElicitationRelay)
 	ch := e.startCall(elicitCallBody, sseHeaders)
 	p := waitPending(t, 1)[0]
-	time.Sleep(150 * time.Millisecond)
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"approval_choice": {"approval_choice": "DENY_ONCE"}}}); err != nil {
+	time.Sleep(100 * time.Millisecond)
+	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
 		t.Fatal(err)
 	}
 	msgs := sseMessages(t, waitCall(t, ch).body)
-	progress := 0
+	last := -1.0
+	relays := 0
 	for _, m := range msgs[:len(msgs)-1] {
 		params, _ := m["params"].(map[string]any)
 		if m["method"] != "notifications/progress" || fmt.Sprint(params["progressToken"]) != "3" {
 			t.Fatalf("unexpected message before the result: %v", m)
 		}
-		progress++
+		v, _ := params["progress"].(float64)
+		if v <= last {
+			t.Fatalf("progress went from %v to %v: %v", last, v, msgs)
+		}
+		last = v
+		if strings.Contains(fmt.Sprint(params["message"]), "Agent Fleet") {
+			relays++
+		}
 	}
-	if progress < 2 {
-		t.Fatalf("%d progress notifications", progress)
+	if relays < 2 {
+		t.Fatalf("%d progress notifications from the relay", relays)
 	}
 	if fmt.Sprint(msgs[len(msgs)-1]["id"]) != "7" {
 		t.Fatalf("last message %v", msgs[len(msgs)-1])
 	}
 }
 
+func TestElicitRelaySendsCommentsWithoutAToken(t *testing.T) {
+	resetElicitations(t)
+	setElicitTimes(t, time.Hour, 20*time.Millisecond)
+	up := newUpstream(t, jsonAnswer(askThenComplete))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	ch := e.startCall(strings.Replace(elicitCallBody, `,"progressToken":3`, "", 1), sseHeaders)
+	p := waitPending(t, 1)[0]
+	time.Sleep(60 * time.Millisecond)
+	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+		t.Fatal(err)
+	}
+	res := waitCall(t, ch)
+	if !strings.Contains(res.body, ": waiting for a person") || strings.Contains(res.body, "notifications/progress") {
+		t.Fatalf("CLI got %q", res.body)
+	}
+}
+
 func TestElicitRelayAnswersJSONToACLIWithoutStreams(t *testing.T) {
 	resetElicitations(t)
 	setElicitTimes(t, time.Hour, 20*time.Millisecond)
-	up := newUpstream(t, jsonAnswer(func(n int) string {
-		if n == 0 {
-			return googleInputRequired("7")
-		}
-		return completeResult
-	}))
+	up := newUpstream(t, jsonAnswer(askThenComplete))
 	e := newRelayEnv(t, up)
 	flagElicitation(t, ElicitationRelay)
 	ch := e.startCall(elicitCallBody, map[string]string{"Accept": "application/json", "Content-Type": "application/json"})
 	p := waitPending(t, 1)[0]
 	time.Sleep(60 * time.Millisecond) // keepalive ticks must not write into a JSON answer
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"approval_choice": {"approval_choice": "ALLOW_ONCE"}}}); err != nil {
+	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
 		t.Fatal(err)
 	}
 	res := waitCall(t, ch)
-	if res.body != completeResult || res.resp.Header.Get("Content-Type") != "application/json" {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(res.body), &m); err != nil || res.resp.Header.Get("Content-Type") != "application/json" {
 		t.Fatalf("CLI got %q (%s)", res.body, res.resp.Header.Get("Content-Type"))
+	}
+	if fmt.Sprint(m["id"]) != "7" || !strings.Contains(res.body, `"sent"`) {
+		t.Fatalf("CLI got %q", res.body)
 	}
 }
 
 func TestElicitRelayPassesAStreamAndHoldsItsInputRequiredEvent(t *testing.T) {
+	note := `{"jsonrpc":"2.0","method":"notifications/message","params":{"level":"info","data":"checking"}}`
+	for name, frame := range map[string]func(n int, id string) string{
+		"LF": func(n int, id string) string {
+			if n == 0 {
+				return "event: message\ndata: " + note + "\n\nevent: message\ndata: " + googleInputRequired(id) + "\n\n"
+			}
+			return "id: 9\nevent: message\ndata: " + completeFor(id) + "\n\n"
+		},
+		"CR, a BOM, data split over lines": func(n int, id string) string {
+			if n == 0 {
+				msg := googleInputRequired(id)
+				half := strings.Index(msg, `,"requestState"`) // between two tokens: data lines join with a line feed
+				return "\uFEFFdata: " + note + "\r\rdata: " + msg[:half] + "\rdata:" + msg[half:] + "\r\r"
+			}
+			return "id: 9\r\ndata: " + completeFor(id) + "\r\n\r\n"
+		},
+		"pretty JSON over data lines": func(n int, id string) string {
+			if n == 0 {
+				return "data: " + note + "\n\ndata: " + googleInputRequired(id) + "\n\n"
+			}
+			pretty := strings.ReplaceAll(completeFor(id), ",", ",\n  ")
+			return "id: 9\ndata: " + strings.ReplaceAll(pretty, "\n", "\ndata: ") + "\n\n"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetElicitations(t)
+			up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.Header().Set("Set-Cookie", "s=1")
+				_, _ = io.WriteString(w, frame(n, reqID(r)))
+			})
+			e := newRelayEnv(t, up)
+			flagElicitation(t, ElicitationRelay)
+			ch := e.startCall(elicitCallBody, sseHeaders)
+			p := waitPending(t, 1)[0]
+			if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+				t.Fatal(err)
+			}
+			res := waitCall(t, ch)
+			msgs := sseMessages(t, res.body)
+			if len(msgs) != 2 || msgs[0]["method"] != "notifications/message" || fmt.Sprint(msgs[1]["id"]) != "7" {
+				t.Fatalf("CLI got %q", res.body)
+			}
+			if strings.Contains(res.body, "input_required") || res.resp.Header.Get("Set-Cookie") != "" {
+				t.Fatalf("CLI got %q with headers %v", res.body, res.resp.Header)
+			}
+		})
+	}
+}
+
+// An event the stream cut off before its blank line is not dispatched (WHATWG), so it is never
+// held either: the CLI gets the server's bytes and no question is filed.
+func TestElicitRelayDoesNotHoldACutOffEvent(t *testing.T) {
 	resetElicitations(t)
 	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		w.Header().Set("Set-Cookie", "s=1")
-		if n == 0 {
-			fmt.Fprint(w, "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/message\",\"params\":{\"level\":\"info\",\"data\":\"checking\"}}\n\n")
-			fmt.Fprintf(w, "event: message\ndata: %s\n\n", googleInputRequired("7"))
-			return
-		}
-		fmt.Fprintf(w, "id: 9\nevent: message\ndata: %s\n\n", completeResult)
+		_, _ = io.WriteString(w, "data: "+googleInputRequired(reqID(r))+"\n")
 	})
 	e := newRelayEnv(t, up)
 	flagElicitation(t, ElicitationRelay)
-	ch := e.startCall(elicitCallBody, sseHeaders)
-	p := waitPending(t, 1)[0]
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"approval_choice": {"approval_choice": "ALLOW_ONCE"}}}); err != nil {
-		t.Fatal(err)
+	waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+	if n := len(PendingElicitations()); n != 0 || up.count() != 1 {
+		t.Fatalf("pending %d, requests %d", n, up.count())
 	}
-	res := waitCall(t, ch)
-	msgs := sseMessages(t, res.body)
-	if len(msgs) != 2 || msgs[0]["method"] != "notifications/message" || fmt.Sprint(msgs[1]["id"]) != "7" {
-		t.Fatalf("CLI got %q", res.body)
-	}
-	if strings.Contains(res.body, "input_required") || res.resp.Header.Get("Set-Cookie") != "" {
-		t.Fatalf("CLI got %q with headers %v", res.body, res.resp.Header)
-	}
-	if !strings.Contains(res.body, "id: 9\n") {
-		t.Fatalf("the server's event was not passed whole: %q", res.body)
+}
+
+func TestElicitRelayBoundsAStreamEvent(t *testing.T) {
+	resetElicitations(t)
+	old := relayMaxBody
+	relayMaxBody = 4 << 10
+	t.Cleanup(func() { relayMaxBody = old })
+	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for i := 0; i < 1000; i++ { // short lines, never a blank one
+			if _, err := io.WriteString(w, "data: x\n"); err != nil {
+				return
+			}
+		}
+	})
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+	last := lastMessage(t, res.body)
+	if last["error"] == nil || !strings.Contains(fmt.Sprint(last["error"]), "could not be read") {
+		t.Fatalf("CLI got %v", last)
 	}
 }
 
@@ -464,12 +718,14 @@ func TestElicitRelayRefusesInputItCannotAskFor(t *testing.T) {
 	cases := map[string]string{
 		"free text": `{"type":"object","properties":{"note":{"type":"string"}}}`,
 		"a number":  `{"type":"object","properties":{"n":{"type":"number","enum":[1,2]}}}`,
+		"a null":    `{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE",null]}}}`,
+		"no const":  `{"type":"object","properties":{"c":{"type":"string","oneOf":[{"title":"Allow"}]}}}`,
 	}
 	for name, schema := range cases {
 		t.Run(name, func(t *testing.T) {
 			resetElicitations(t)
-			up := newUpstream(t, jsonAnswer(func(int) string {
-				return `{"jsonrpc":"2.0","id":7,"result":{"resultType":"input_required","inputRequests":{"k":{"method":"elicitation/create","params":{"mode":"form","message":"m","requestedSchema":` + schema + `}}},"requestState":"s"}}`
+			up := newUpstream(t, jsonAnswer(func(_ int, id string) string {
+				return `{"jsonrpc":"2.0","id":` + id + `,"result":{"resultType":"input_required","inputRequests":{"k":{"method":"elicitation/create","params":{"mode":"form","message":"m","requestedSchema":` + schema + `}}},"requestState":"s"}}`
 			}))
 			e := newRelayEnv(t, up)
 			flagElicitation(t, ElicitationRelay)
@@ -482,13 +738,15 @@ func TestElicitRelayRefusesInputItCannotAskFor(t *testing.T) {
 			}
 		})
 	}
-	t.Run("url mode and sampling", func(t *testing.T) {
-		for _, req := range []string{
-			`{"method":"elicitation/create","params":{"mode":"url","message":"m","url":"https://x.example"}}`,
-			`{"method":"sampling/createMessage","params":{}}`,
+	t.Run("url mode, sampling, a requestState that is not a string, nothing at all", func(t *testing.T) {
+		for _, res := range []string{
+			`{"inputRequests":{"k":{"method":"elicitation/create","params":{"mode":"url","message":"m","url":"https://x.example"}}}}`,
+			`{"inputRequests":{"k":{"method":"sampling/createMessage","params":{}}}}`,
+			`{"requestState":{"a":1}}`,
+			`{"resultType":"input_required"}`,
 		} {
-			if _, err := parseInputRequired(json.RawMessage(`{"resultType":"input_required","inputRequests":{"k":` + req + `}}`)); err == nil {
-				t.Errorf("accepted %s", req)
+			if _, err := parseInputRequired(json.RawMessage(res)); err == nil {
+				t.Errorf("accepted %s", res)
 			}
 		}
 	})
@@ -496,13 +754,13 @@ func TestElicitRelayRefusesInputItCannotAskFor(t *testing.T) {
 
 func TestElicitRelayStopsAServerThatKeepsAsking(t *testing.T) {
 	resetElicitations(t)
-	up := newUpstream(t, jsonAnswer(func(int) string { return googleInputRequired("7") }))
+	up := newUpstream(t, jsonAnswer(func(_ int, id string) string { return googleInputRequired(id) }))
 	e := newRelayEnv(t, up)
 	flagElicitation(t, ElicitationRelay)
 	ch := e.startCall(elicitCallBody, sseHeaders)
 	for i := 0; i < elicitMaxRounds; i++ {
 		p := waitPending(t, 1)[0]
-		if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"approval_choice": {"approval_choice": "ALLOW_ONCE"}}}); err != nil {
+		if err := AnswerElicitation(p.ID, allowOnce); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -515,39 +773,110 @@ func TestElicitRelayStopsAServerThatKeepsAsking(t *testing.T) {
 	}
 }
 
-func TestAnswerElicitationChecksTheChoices(t *testing.T) {
+// The retry goes through the same renewal and the same filters as any relayed request, and on a
+// stream already open its failures arrive as JSON-RPC errors under the CLI's id.
+func TestElicitRelayRetryFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		retry func(w http.ResponseWriter, r *http.Request, n int)
+		check func(t *testing.T, e *relayEnv, res callResult)
+	}{
+		{"401 renews and retries once", func(w http.ResponseWriter, r *http.Request, n int) {
+			if strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ") == "tok-initial" {
+				w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, completeFor(reqID(r)))
+		}, func(t *testing.T, e *relayEnv, res callResult) {
+			if last := lastMessage(t, res.body); fmt.Sprint(last["id"]) != "7" || !strings.Contains(res.body, `"sent"`) {
+				t.Fatalf("CLI got %q", res.body)
+			}
+			if e.as.tokenCount() != 1 {
+				t.Fatalf("%d renewals", e.as.tokenCount())
+			}
+		}},
+		{"403 records the scope and drops the challenge", func(w http.ResponseWriter, r *http.Request, n int) {
+			w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="mail.send"`)
+			w.WriteHeader(http.StatusForbidden)
+		}, func(t *testing.T, e *relayEnv, res callResult) {
+			if res.resp.Header.Get("WWW-Authenticate") != "" || lastMessage(t, res.body)["error"] == nil {
+				t.Fatalf("CLI got %q %v", res.body, res.resp.Header)
+			}
+			if st, _ := OAuthStatusOf(relayTestID); st.StepUpScope != "mail.send" {
+				t.Fatalf("status %+v", st)
+			}
+		}},
+		{"a redirect is refused", func(w http.ResponseWriter, r *http.Request, n int) {
+			w.Header().Set("Location", "https://elsewhere.example/")
+			w.WriteHeader(http.StatusTemporaryRedirect)
+		}, func(t *testing.T, e *relayEnv, res callResult) {
+			if !strings.Contains(fmt.Sprint(lastMessage(t, res.body)["error"]), "redirect") || strings.Contains(res.body, "elsewhere") {
+				t.Fatalf("CLI got %q", res.body)
+			}
+		}},
+		{"a JSON-RPC error keeps its code", func(w http.ResponseWriter, r *http.Request, n int) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":`+reqID(r)+`,"error":{"code":-32602,"message":"requestState expired","data":{"x":1}}}`)
+		}, func(t *testing.T, e *relayEnv, res callResult) {
+			last := lastMessage(t, res.body)
+			errObj, _ := last["error"].(map[string]any)
+			if fmt.Sprint(last["id"]) != "7" || fmt.Sprint(errObj["code"]) != "-32602" || errObj["data"] == nil {
+				t.Fatalf("CLI got %v", last)
+			}
+		}},
+		{"an HTTP error without a message", func(w http.ResponseWriter, r *http.Request, n int) {
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusNotFound)
+		}, func(t *testing.T, e *relayEnv, res callResult) {
+			if !strings.Contains(fmt.Sprint(lastMessage(t, res.body)["error"]), "404") {
+				t.Fatalf("CLI got %q", res.body)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resetElicitations(t)
+			up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+				if n == 0 {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, googleInputRequired(reqID(r)))
+					return
+				}
+				tc.retry(w, r, n)
+			})
+			e := newRelayEnv(t, up)
+			flagElicitation(t, ElicitationRelay)
+			ch := e.startCall(elicitCallBody, sseHeaders)
+			p := waitPending(t, 1)[0]
+			if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+				t.Fatal(err)
+			}
+			tc.check(t, e, waitCall(t, ch))
+		})
+	}
+}
+
+func TestElicitRelayDoesNotRetryAServerSwitchedOffMeanwhile(t *testing.T) {
 	resetElicitations(t)
-	ir, err := parseInputRequired(json.RawMessage(`{"resultType":"input_required","inputRequests":{"a":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","required":["c"],"properties":{"c":{"type":"string","enum":["ALLOW_ONCE","DENY_ONCE"]},"o":{"type":"string","oneOf":[{"const":"x","title":"Ex"}]}}}}}},"requestState":"s"}`))
-	if err != nil {
+	up := newUpstream(t, jsonAnswer(askThenComplete))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	ch := e.startCall(elicitCallBody, sseHeaders)
+	p := waitPending(t, 1)[0]
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.MCP[0].Enabled = false
+		return nil
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if got := ir.inputs[0].Fields[1]; got.Name != "o" || got.Required || !reflect.DeepEqual(got.Options, []ElicitOption{{"x", "Ex"}}) {
-		t.Fatalf("oneOf field %+v", got)
-	}
-	p, err := elicitations.add(ServerDef{ID: "s", Name: "n"}, elicitCall{tool: "t", params: map[string]json.RawMessage{}}, ir)
-	if err != nil {
+	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
 		t.Fatal(err)
 	}
-	bad := []map[string]map[string]string{
-		nil, // a required field without a choice
-		{"a": {"c": "ALLOW_EVERYTHING"}},
-		{"a": {"c": "ALLOW_ONCE", "extra": "x"}},
-		{"a": {"c": "ALLOW_ONCE"}, "b": {"c": "ALLOW_ONCE"}},
-		{"a": {"c": "ALLOW_ONCE", "o": "y"}},
-	}
-	for _, c := range bad {
-		if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: c}); !errors.Is(err, ErrElicitationAnswer) {
-			t.Errorf("%v: %v", c, err)
-		}
-	}
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"a": {"c": "DENY_ONCE"}}}); err != nil {
-		t.Fatal(err)
-	}
-	if got := <-p.answer; !reflect.DeepEqual(got.Choices, map[string]map[string]string{"a": {"c": "DENY_ONCE"}}) {
-		t.Fatalf("delivered %+v", got)
-	}
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true}); !errors.Is(err, ErrElicitationNotFound) {
-		t.Fatalf("second answer: %v", err)
+	res := waitCall(t, ch)
+	if !strings.Contains(fmt.Sprint(lastMessage(t, res.body)["error"]), "switched off") || up.count() != 1 {
+		t.Fatalf("CLI got %q after %d requests", res.body, up.count())
 	}
 }
 
@@ -555,12 +884,112 @@ func TestElicitRelayCapsTheHeldCalls(t *testing.T) {
 	resetElicitations(t)
 	ir := inputRequired{inputs: []ElicitInput{{Key: "a"}}}
 	for i := 0; i < elicitMaxPending; i++ {
-		if _, err := elicitations.add(ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir); err != nil {
+		if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := elicitations.add(ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir); err == nil {
-		t.Fatal("a call past the cap was held")
+	up := newUpstream(t, jsonAnswer(askThenComplete))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+	if !strings.Contains(res.body, "too many calls") || up.count() != 1 || len(PendingElicitations()) != elicitMaxPending {
+		t.Fatalf("CLI got %q after %d requests", res.body, up.count())
+	}
+}
+
+func TestAnswerElicitationChecksTheChoices(t *testing.T) {
+	resetElicitations(t)
+	ir, err := parseInputRequired(json.RawMessage(`{"resultType":"input_required","inputRequests":{` +
+		`"a":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","required":["c"],"properties":{"c":{"type":"string","enum":["ALLOW_ONCE","DENY_ONCE",""]},"o":{"type":"string","oneOf":[{"const":"x","title":"Ex"}]}}}}},` +
+		`"b":{"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"opt":{"type":"string","enum":["y"]}}}}}` +
+		`},"requestState":"s"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ir.inputs[0].Fields[1]; got.Name != "o" || got.Required || !reflect.DeepEqual(got.Options, []ElicitOption{{"x", "Ex"}}) {
+		t.Fatalf("oneOf field %+v", got)
+	}
+	p, err := elicitations.add(context.Background(), ServerDef{ID: "s", Name: "n"}, elicitCall{tool: "t", params: map[string]json.RawMessage{}}, ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := []map[string]map[string]string{
+		nil,                        // nothing answered
+		{"a": {"c": "ALLOW_ONCE"}}, // the optional form b is not answered: it is not taken as an empty accept
+		{"a": {}, "b": {}},         // a required field without a choice
+		{"a": {"c": "ALLOW_EVERYTHING"}, "b": {}},
+		{"a": {"c": "ALLOW_ONCE", "extra": "x"}, "b": {}},
+		{"a": {"c": "ALLOW_ONCE"}, "b": {}, "z": {}},
+		{"a": {"c": "ALLOW_ONCE", "o": "y"}, "b": {}},
+	}
+	for _, c := range bad {
+		if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: c}); !errors.Is(err, ErrElicitationAnswer) {
+			t.Errorf("%v: %v", c, err)
+		}
+	}
+	// An empty string the server offered is a real choice.
+	if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"a": {"c": ""}, "b": {}}}); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-p.answer; !reflect.DeepEqual(got.Choices, map[string]map[string]string{"a": {"c": ""}, "b": {}}) {
+		t.Fatalf("delivered %+v", got)
+	}
+	if err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true}); !errors.Is(err, ErrElicitationNotFound) {
+		t.Fatalf("second answer: %v", err)
+	}
+}
+
+// At the time limit the relay declines only a call still on the list: an answer that got there
+// first is the one sent.
+func TestElicitTimeLimitYieldsToAnAnswerThatWon(t *testing.T) {
+	resetElicitations(t)
+	ir := inputRequired{inputs: []ElicitInput{{Key: "a", Fields: []ElicitField{{Name: "c", Required: true, Options: []ElicitOption{{"ALLOW_ONCE", "Allow"}}}}}}}
+	p, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"a": {"c": "ALLOW_ONCE"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if elicitations.take(p.ID) {
+		t.Fatal("an answered call was still taken as unanswered")
+	}
+	if got := <-p.answer; got.Decline {
+		t.Fatalf("delivered %+v", got)
+	}
+	q, _ := elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
+	if !elicitations.take(q.ID) {
+		t.Fatal("an unanswered call was not taken")
+	}
+}
+
+func TestPendingElicitationsAreCopies(t *testing.T) {
+	resetElicitations(t)
+	ir := inputRequired{inputs: []ElicitInput{{Key: "a", Fields: []ElicitField{{Name: "c", Options: []ElicitOption{{"ALLOW_ONCE", "Allow"}}}}}}}
+	_, _ = elicitations.add(context.Background(), ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{"arguments": json.RawMessage(`{"a":1}`)}}, ir)
+	got := PendingElicitations()[0]
+	got.Arguments[2] = 'X'
+	got.Inputs[0].Fields[0].Options[0].Value = "ALLOW_EVERYTHING"
+	again := PendingElicitations()[0]
+	if string(again.Arguments) != `{"a":1}` || again.Inputs[0].Fields[0].Options[0].Value != "ALLOW_ONCE" {
+		t.Fatalf("a caller's change reached the held call: %s %+v", again.Arguments, again.Inputs)
+	}
+}
+
+func TestSameJSONID(t *testing.T) {
+	for _, tc := range []struct {
+		a, b string
+		want bool
+	}{
+		{`7`, `7`, true},
+		{`"7"`, `7`, false},
+		{`"a"`, `"a"`, true},
+		{`9007199254740993`, `9007199254740992`, false}, // equal as float64
+		{`null`, `null`, false},
+	} {
+		if got := sameJSONID(json.RawMessage(tc.a), json.RawMessage(tc.b)); got != tc.want {
+			t.Errorf("%s vs %s: %t", tc.a, tc.b, got)
+		}
 	}
 }
 
@@ -587,29 +1016,5 @@ func TestValidateElicitation(t *testing.T) {
 		case tc.code != "" && (!errors.As(err, &ve) || ve.Code != tc.code):
 			t.Errorf("%q auth %q: %v, want %s", tc.mode, tc.d.Auth, err, tc.code)
 		}
-	}
-}
-
-// At the time limit the relay declines only a call still on the list: an answer that got there
-// first is the one sent.
-func TestElicitTimeLimitYieldsToAnAnswerThatWon(t *testing.T) {
-	resetElicitations(t)
-	ir := inputRequired{inputs: []ElicitInput{{Key: "a", Fields: []ElicitField{{Name: "c", Required: true, Options: []ElicitOption{{"ALLOW_ONCE", "Allow"}}}}}}}
-	p, err := elicitations.add(ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Choices: map[string]map[string]string{"a": {"c": "ALLOW_ONCE"}}}); err != nil {
-		t.Fatal(err)
-	}
-	if elicitations.take(p.ID) {
-		t.Fatal("an answered call was still taken as unanswered")
-	}
-	if got := <-p.answer; got.Decline {
-		t.Fatalf("delivered %+v", got)
-	}
-	q, _ := elicitations.add(ServerDef{ID: "s"}, elicitCall{params: map[string]json.RawMessage{}}, ir)
-	if !elicitations.take(q.ID) {
-		t.Fatal("an unanswered call was not taken")
 	}
 }
