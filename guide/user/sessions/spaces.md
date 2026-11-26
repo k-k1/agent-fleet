@@ -98,6 +98,15 @@ If a file cannot be copied into the space, it is not attached, and the launch sa
   can [rename](#rename-a-space) it while it has a row in the Sessions view
 - **Deleting a session keeps its space**, and the files in it. Deleting the space is the other way round: its sessions
   go with it, to the archive and the trash, and come back with it
+- **The file browser does not delete or rename it.** `~/spaces`, a space's folder and the `.af-space.json` file
+  that makes the folder a space are refused there, with a pointer to [Delete a space](#delete-a-space); files inside
+  the space are yours to change. The `.af-space.json` file is not listed in the file tree
+- **A removed `.af-space.json` comes back.** If an agent or you delete it some other way, the workspace writes it
+  again with the space's name, and the space keeps its row and its sessions. This covers every space the workspace has
+  made or listed; a space it has never listed (one made by an older Agent, before its first listing) is not covered yet.
+  Moving the folder away and putting another folder in its place does not count: the new folder is not the space.
+  It also needs a home file system that records when a folder was created; where it does not (a home on EFS may
+  not), a removed `.af-space.json` is not written back
 - **Clean home deletes it**, like the rest of your home
 
 > [!NOTE]

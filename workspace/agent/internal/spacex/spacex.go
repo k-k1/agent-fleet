@@ -52,10 +52,28 @@ type Space struct {
 	CreatedAt string `json:"createdAt,omitempty"`
 }
 
-// marker is MarkerFile's content.
+// marker is MarkerFile's content as it is read.
 type marker struct {
 	Name      string `json:"name"`
 	CreatedAt string `json:"createdAt,omitempty"`
+}
+
+// markerOut is MarkerFile's content as the Agent writes it. Note is write-only: a reader that
+// typed it would drop the whole marker, name included, over a note of another type.
+type markerOut struct {
+	Name      string `json:"name"`
+	CreatedAt string `json:"createdAt,omitempty"`
+	// Note tells whoever opens the file (an agent tidying dotfiles, the member) what it is for.
+	Note string `json:"note"`
+}
+
+// markerNote is the Note every marker the Agent writes carries.
+const markerNote = "Agent Fleet: this file makes this folder a space. Do not delete, move or rename it, " +
+	"or the folder: delete the space from the Console (Sessions > Spaces) instead."
+
+// newMarker is the marker the Agent writes for a space.
+func newMarker(name, createdAt string) markerOut {
+	return markerOut{Name: name, CreatedAt: createdAt, Note: markerNote}
 }
 
 // Root is ~/spaces. Recreate keeps it (it is outside ~/repos); Clean deletes it with the rest of
@@ -107,7 +125,7 @@ func FolderOf(dir string) string {
 	if parent != Root() && parent != realRoot() {
 		return ""
 	}
-	if !ValidFolder(f) || !markerPresent(filepath.Join(parent, f)) {
+	if !ValidFolder(f) || (!markerPresent(filepath.Join(parent, f)) && !repairMarker(f)) {
 		return ""
 	}
 	return f
@@ -250,6 +268,13 @@ func Create(name string) (Space, error) {
 	if base == "" {
 		base = "space"
 	}
+	// Shared with every other write inside a space, so the folder is recorded before a delete can
+	// move it away (and forget it); renameMu, so a rename cannot record a new name that this then
+	// records over with the old one.
+	renameMu.Lock()
+	defer renameMu.Unlock()
+	lifeMu.RLock()
+	defer lifeMu.RUnlock()
 	for attempt := 0; attempt < 8; attempt++ {
 		folder := base + "-" + randSuffix()
 		dir := filepath.Join(root, folder)
@@ -259,7 +284,8 @@ func Create(name string) (Space, error) {
 			}
 			return Space{}, err
 		}
-		m := marker{Name: name, CreatedAt: time.Now().UTC().Format(time.RFC3339)}
+		id, _ := idOf(dir) // of the folder Mkdir made, before anything else can replace it
+		m := newMarker(name, time.Now().UTC().Format(time.RFC3339))
 		if err := writeMarker(dir, m); err != nil {
 			// writeMarker leaves nothing behind, so the folder Mkdir made is empty and unmarked:
 			// no Lookup can have handed it out. os.Remove, not RemoveAll, so a folder something
@@ -267,6 +293,10 @@ func Create(name string) (Space, error) {
 			_ = os.Remove(dir)
 			return Space{}, err
 		}
+		if now, ok := idOf(dir); !ok || now != id {
+			id = dirID{}
+		}
+		remember(folder, entryWith(id, m.Name, m.CreatedAt))
 		return Space{Folder: folder, Name: m.Name, Dir: dir, CreatedAt: m.CreatedAt}, nil
 	}
 	return Space{}, errors.New("could not find a free space folder name")
@@ -274,7 +304,7 @@ func Create(name string) (Space, error) {
 
 // writeMarker writes MarkerFile through a temporary file and a rename, so a reader never sees a
 // half-written one.
-func writeMarker(dir string, m marker) error {
+func writeMarker(dir string, m markerOut) error {
 	b, err := json.Marshal(m)
 	if err != nil {
 		return err
@@ -310,38 +340,49 @@ const markerMaxBytes = 4096
 // file, so a link or a FIFO planted in its place cannot point the read elsewhere or hang the
 // list.
 func readMarker(dir string) (marker, bool) {
+	m, _, ok := readMarkerFull(dir)
+	return m, ok
+}
+
+// readMarkerParsed is readMarker that also says whether the marker parsed: one that did not
+// yields an empty name that must not overwrite a recorded one.
+func readMarkerParsed(dir string) (marker, bool) {
+	m, parsed, _ := readMarkerFull(dir)
+	return m, parsed
+}
+
+func readMarkerFull(dir string) (m marker, parsed, ok bool) {
 	f, err := os.OpenFile(filepath.Join(dir, MarkerFile), os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
 	if err != nil {
-		return marker{}, false
+		return marker{}, false, false
 	}
 	defer f.Close()
 	fi, err := f.Stat()
 	if err != nil || !fi.Mode().IsRegular() {
-		return marker{}, false
+		return marker{}, false, false
 	}
 	b, err := io.ReadAll(io.LimitReader(f, markerMaxBytes+1))
 	if err != nil {
-		return marker{}, false
+		return marker{}, false, true
 	}
-	var m marker
 	if len(b) > markerMaxBytes || json.Unmarshal(b, &m) != nil {
 		// A marker that does not parse still marks the space; only its name is lost.
-		m = marker{}
+		return marker{}, false, true
 	}
-	return m, true
+	return m, true, true
 }
 
 // Lookup answers the space in folder, and false when there is none: no such folder, a symlink
 // in its place (List skips those too, so both agree on what a space is), or no marker. It
-// decides with the same test as FolderOf (markerPresent), so a session row, the list and a
-// create naming the folder never disagree; a marker that cannot be read or parsed only loses
-// the name.
+// decides with the same test as FolderOf (markerPresent, after repairMarker for a recorded
+// space whose marker is missing), so a session row, the list and a create naming the folder
+// never disagree; a marker that cannot be read or parsed only loses the name.
 func Lookup(folder string) (Space, bool) {
 	if !ValidFolder(folder) {
 		return Space{}, false
 	}
 	dir := filepath.Join(Root(), folder)
-	if !markerPresent(dir) {
+	if !markerPresent(dir) && !repairMarker(folder) {
 		return Space{}, false
 	}
 	m, _ := readMarker(dir)
@@ -377,6 +418,7 @@ func List() ([]Space, error) {
 		}
 		return out[i].Folder < out[j].Folder
 	})
+	syncRecord(out)
 	return out, nil
 }
 
@@ -393,12 +435,17 @@ var ErrChanged = errors.New("the space changed while it was being renamed")
 var ErrMarkerTooBig = errors.New("the space's marker file is too big to be rewritten")
 
 // renameMu serialises the renames this Agent makes, so two of them never interleave their
-// read-modify-write of one marker.
+// read-modify-write of one marker. Create and syncRecord take it too, so the name a rename
+// records is never written over by one read before it.
 var renameMu sync.Mutex
 
 // beforePublish runs between the last read of a rename and its final check. A variable so a test
 // can change the space at exactly that point.
 var beforePublish = func() {}
+
+// afterPublish is a test seam between a rename's publish and its record update. Nil in
+// production.
+var afterPublish func()
 
 // Rename changes the display name of the space in folder to name (already cleaned) and answers
 // the space as it now is. Only the marker is rewritten: the folder keeps its name, so the
@@ -413,15 +460,23 @@ var beforePublish = func() {}
 //   - the new marker is written to a temporary file in the space and published by a rename, so a
 //     reader sees the old name or the new one and a crash leaves the old one;
 //   - just before publishing, the folder and the marker are checked to be the ones that were read:
-//     a space removed meanwhile stays removed (ErrNotFound, no marker is recreated) and one
-//     replaced is refused (ErrChanged). Only the instant between that check and the rename is not
-//     covered: nothing short of a lock the agents do not take could.
+//     a folder removed meanwhile stays removed (ErrNotFound) and one replaced is refused
+//     (ErrChanged). A marker removed meanwhile fails this rename (ErrNotFound) without being
+//     written here; the next Lookup restores it from the record (repairMarker). Only the instant
+//     between that check and the rename is not covered: nothing short of a lock the agents do not
+//     take could.
 //
-// A marker that is missing or no regular file is ErrNotFound; one that cannot be read is an error
-// and nothing is written; only one that was read and does not parse is repaired.
+// A marker that is missing when the rename starts is first restored for a recorded space; one
+// that is still missing, or is no regular file, is ErrNotFound; one that cannot be read is an
+// error and nothing is written; only one that was read and does not parse is repaired.
 func Rename(folder, name string) (Space, error) {
 	if !ValidFolder(folder) {
 		return Space{}, ErrNotFound
+	}
+	// A recorded space whose marker went missing is renamed like any other. Done before the locks:
+	// the repair takes lifeMu itself.
+	if !markerPresent(filepath.Join(Root(), folder)) {
+		repairMarker(folder)
 	}
 	renameMu.Lock()
 	defer renameMu.Unlock()
@@ -525,6 +580,19 @@ func Rename(folder, name string) (Space, error) {
 		_ = sp.Remove(tmp)
 		return Space{}, err
 	}
+	if afterPublish != nil {
+		afterPublish()
+	}
+	// The identity of the folder this rename opened and published into, not of whatever the path
+	// names now: one swapped in after the publish must not take the space's place in the record.
+	id := dirID{}
+	if f, err := sp.Open("."); err == nil {
+		if got, ok := idOfFile(f); ok {
+			id = got
+		}
+		f.Close()
+	}
+	remember(folder, entryWith(id, name, createdAt))
 	return Space{Folder: folder, Name: name, Dir: filepath.Join(Root(), folder), CreatedAt: createdAt}, nil
 }
 

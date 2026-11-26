@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 )
 
 // Recursive filename search for the Console file browser (the FILES improvements): the
@@ -111,6 +113,11 @@ func HandleSearch(w http.ResponseWriter, r *http.Request) {
 			homeRel = path.Join(rel, line)
 		}
 		if IsDenied(homeRel) || (denyBase != nil && IsDenied(path.Join(*denyBase, line))) {
+			continue
+		}
+		// A space's marker is left out as the tree leaves it out (HandleTree); a file of the same
+		// name anywhere else is found as before.
+		if path.Base(line) == spacex.MarkerFile && spacex.Protected(filepath.Join(full, filepath.FromSlash(line))) {
 			continue
 		}
 		results = append(results, homeRel)

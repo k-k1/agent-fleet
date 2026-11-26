@@ -59,6 +59,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.recreate_stale":
     "That way of recreating it is no longer available (the branch may have changed). The options were reloaded; choose again.",
   "err.recreate_failed": "Couldn't recreate the working copy.",
+  "err.space_protected":
+    "This is a space's folder (or the file that makes it a space), so it can't be renamed or deleted here. To delete the space, use its menu under Spaces in Sessions.",
   "err.space_restore_exists":
     "Something already exists at this space's folder under ~/spaces, so it was not put back. Move or delete that, then restore again.",
   "err.space_restore_missing":
