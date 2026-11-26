@@ -8,7 +8,8 @@ source_of_truth: "The Console's Clean up and archive windows, and the menus of s
 English | [日本語](cleanup.ja.md)
 
 You can archive finished sessions and clear away working copies and branches you no longer need.
-Deleting a session moves its list entry to the trash. Highlights and answer translations are removed immediately and cannot be restored.
+Deleting a session moves its list entry to the trash. Highlights, answer translations, and handoff proposals are removed immediately and cannot be restored.
+The session's work folder is also deleted. The only file from it that goes to the trash is the handover file created when moving to another agent.
 
 ## How it works
 
@@ -24,7 +25,7 @@ You can also ask the [Fleet Operator](../fleet/operator.md) to do the same surve
 
 ## What stays and what goes
 
-The scratch folder of an archived session is removed automatically after seven days.
+The work folder of an archived session is removed automatically after seven days if the session has no deletion lock.
 The table shows where conversations are stored and what stays when you delete a session.
 
 | | Archive | Delete (to the trash) | Delete permanently from the trash |
@@ -32,7 +33,7 @@ The table shows where conversations are stored and what stays when you delete a 
 | The row in the list | Moves to the archive list | Moves to the trash | **Gone** |
 | A claude conversation | Stays | Goes into the trash | **Gone** |
 | Other kinds' conversations | Stay | Stay in the agent's own store; the trash holds the row only | The row is **gone** (the conversation files stay in the agent's own store) |
-| Scratch folder (`~/.af-work/<session name>`) | **Removed** 7 days after archiving | **Removed** at once (only a [move](handoff.md#move-to-another-agent)'s handover file goes into the trash) | **Gone** |
+| Work folder (`~/.af-work/<session name>`) | **Removed** 7 days after archiving | **Removed** at once (only a [move](handoff.md#move-to-another-agent)'s handover file goes into the trash) | **Gone** |
 | Highlights in the conversation, answer translations, handoff proposals | Stay | **Removed** (a restore does not bring them back) | **Gone** |
 | The working copy (worktree) | Stays | Stays | Stays |
 
