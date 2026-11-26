@@ -62,7 +62,14 @@ describe("the held-call list", () => {
     expect(until - performance.now()).toBeGreaterThan(590_000);
     expect(until - performance.now()).toBeLessThanOrEqual(600_000);
   });
+  // A list read and shown for this member, as the card sees it before it answers.
+  const shown = async (items: unknown[]) => {
+    const read = useMcpElicitStore.getState().refresh();
+    pending[pending.length - 1]({ elicitations: items });
+    await read;
+  };
   it("sends one answer per call at a time", async () => {
+    await shown([call]);
     const first = useMcpElicitStore.getState().answer(call, { k: {} });
     const second = await useMcpElicitStore.getState().answer(call, null);
     expect(second).toEqual({ code: "busy" });
@@ -75,15 +82,13 @@ describe("the held-call list", () => {
   // Between a taken answer and the next read, the call must neither take a second answer nor
   // come back from a read sent before the answer.
   it("keeps an answered call answered until a later read", async () => {
-    const before = useMcpElicitStore.getState().refresh();
-    pending[0]({ elicitations: [call] });
-    await before;
+    await shown([call]);
     const stale = useMcpElicitStore.getState().refresh(); // sent before the answer, answers after
     const first = useMcpElicitStore.getState().answer(call, { k: {} });
     who.posts[0]({});
     await new Promise((r) => setTimeout(r, 0));
     expect(useMcpElicitStore.getState().items).toEqual([]);
-    expect(await useMcpElicitStore.getState().answer(call, null)).toEqual({ code: "busy" });
+    expect(await useMcpElicitStore.getState().answer(call, null)).not.toBe(null);
     expect(who.posts.length).toBe(1);
     pending[1]({ elicitations: [call] });
     await stale;
@@ -91,5 +96,42 @@ describe("the held-call list", () => {
     pending[2]({ elicitations: [] }); // the answer's own read, sent after it
     await first;
     expect(useMcpElicitStore.getState().items).toEqual([]);
+  });
+  // A switch to another tenant and back resets what is shown, not the answer on its way.
+  it("does not answer a call again after a switch away and back", async () => {
+    await shown([call]);
+    const first = useMcpElicitStore.getState().answer(call, { k: {} });
+    who.tenant = "b";
+    useMcpElicitStore.getState().reset();
+    who.tenant = "a";
+    useMcpElicitStore.getState().reset();
+    await shown([call]);
+    expect(await useMcpElicitStore.getState().answer(call, null)).toEqual({ code: "busy" });
+    expect(who.posts.length).toBe(1);
+    who.posts[0]({});
+    await new Promise((r) => setTimeout(r, 0));
+    pending.forEach((r) => r({ elicitations: [] }));
+    await first;
+  });
+  // A card or toast left over from another tenant answers nothing on the new one.
+  it("refuses a call that is not on the list shown now", async () => {
+    await shown([call]);
+    who.tenant = "b";
+    useMcpElicitStore.getState().reset();
+    expect(await useMcpElicitStore.getState().answer(call, null)).toEqual({ code: "stale" });
+    expect(who.posts.length).toBe(0);
+  });
+  // An answer sent for one tenant that settles after a switch leaves the new tenant's list alone.
+  it("leaves another tenant's list alone when an earlier answer settles", async () => {
+    await shown([call]);
+    const first = useMcpElicitStore.getState().answer(call, null);
+    who.tenant = "b";
+    useMcpElicitStore.getState().reset();
+    await shown([{ ...call, id: "e2" }]);
+    const reads = pending.length;
+    who.posts[0]({ error: { code: "http_502" } });
+    expect(await first).toEqual({ code: "http_502" });
+    expect(useMcpElicitStore.getState().items.map((e) => e.id)).toEqual(["e2"]);
+    expect(pending.length).toBe(reads); // no read on the old answer's behalf
   });
 });

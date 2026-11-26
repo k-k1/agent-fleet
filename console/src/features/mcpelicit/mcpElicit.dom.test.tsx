@@ -132,6 +132,17 @@ describe("the MCP confirmation card", () => {
     expect(button(t("mcpelicit.send")).disabled).toBe(true);
     expect(button(t("mcpelicit.decline")).disabled).toBe(false);
   });
+  // There the arguments may themselves be a JSON string that reads like an object: the list's
+  // shape, not the value's type, says which it is.
+  it("can only decline a call from an Agent that sent the arguments as a JSON string", async () => {
+    const { expiresInMs: _, ...old } = held;
+    listed = [{ ...old, arguments: `{"to":"a@example.com"}` }];
+    await useMcpElicitStore.getState().refresh();
+    await render("s1");
+    expect(host.textContent).toContain(t("mcpelicit.arguments_unreadable"));
+    await click(radio("Deny"));
+    expect(button(t("mcpelicit.send")).disabled).toBe(true);
+  });
   // A toast keeps the element it was given; once the call leaves the list it shows nothing.
   it("shows nothing for a call no longer listed", async () => {
     await act(async () => root!.render(<McpElicitCard id="gone" showSession />));

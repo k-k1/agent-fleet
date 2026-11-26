@@ -79,7 +79,8 @@ let applied = 0;
 // Calls with an answer on its way or given, marked before any await: a second press (Send and
 // then a toast's close) must not send a second answer. An answered call stays here, and in
 // `answered` with the last read issued before its answer was taken, so an older read that
-// still lists it cannot bring its card back.
+// still lists it cannot bring its card back. Both outlive reset(): a switch to another tenant
+// and back must not open a call whose first answer is still on its way.
 const sending = new Set<string>();
 const answered = new Map<string, number>();
 
@@ -102,6 +103,7 @@ export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
     const who = ownerKey();
     const seq = ++issued;
     // Time left counts from when the read was sent: the call may have aged while it travelled.
+    // That errs early by the request's way up, never late.
     const sent = performance.now();
     let d: { elicitations?: McpElicitation[]; error?: unknown } | null = null;
     try {
@@ -132,12 +134,13 @@ export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
   },
   reset() {
     applied = issued;
-    sending.clear();
-    answered.clear();
     set({ items: [], owner: ownerKey(), until: new Map(), answering: {} });
   },
   async answer(e, choices) {
-    if (get().owner !== ownerKey()) return { code: "stale" };
+    // Only a call on the list shown to the member signed in now: a card or toast left over from
+    // another tenant or member answers nothing.
+    const who = ownerKey();
+    if (get().owner !== who || !get().items.some((x) => x.id === e.id)) return { code: "stale" };
     if (sending.has(e.id)) return { code: "busy" };
     sending.add(e.id);
     set((s) => ({ answering: { ...s.answering, [e.id]: true } }));
@@ -149,15 +152,17 @@ export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
     } catch {
       err = { code: "failed" };
     }
+    if (err) sending.delete(e.id);
+    // Taken: no read sent before this point brings the card back.
+    else answered.set(e.id, issued);
+    // What is on screen now may be another tenant's or member's list: it is left alone.
+    if (ownerKey() !== who || get().owner !== who) return err;
     if (err) {
-      sending.delete(e.id);
       set((s) => {
         const { [e.id]: _, ...rest } = s.answering;
         return { answering: rest };
       });
     } else {
-      // Taken: the card goes now, and no read sent before this point brings it back.
-      answered.set(e.id, issued);
       set((s) => ({ items: s.items.filter((x) => x.id !== e.id) }));
     }
     await get().refresh();

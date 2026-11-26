@@ -85,13 +85,15 @@ function CardBody({ e, showSession }: { e: McpElicitation; showSession?: boolean
     });
   const go = async (accept: boolean) => {
     const err = await answer(e, accept ? toChoices(e, chosen) : null);
-    if (err) toast(tr("mcpelicit.answer_failed", { reason: errText(err) }));
+    // busy and stale: an answer is already on its way, or the card is a leftover; nothing new.
+    if (err && err.code !== "busy" && err.code !== "stale") toast(tr("mcpelicit.answer_failed", { reason: errText(err) }));
   };
   // The time on this browser's clock: the Agent's own deadline may be on a clock far from it.
-  // An Agent from before the list carried the arguments as text sends them as JSON: shown that
-  // way they could not be told from what the server runs (a member written twice, a long
-  // number), so such a call can only be declined here.
-  const argsUnreadable = e.arguments !== undefined && typeof e.arguments !== "string";
+  // An Agent from before the list carried the arguments as text sends them as JSON (and no
+  // expiresInMs, which came with the text): shown that way they could not be told from what the
+  // server runs (a member written twice, a long number, a string that reads as an object), so
+  // such a call can only be declined here.
+  const argsUnreadable = e.arguments !== undefined && (typeof e.arguments !== "string" || typeof e.expiresInMs !== "number");
   const deadline = until === undefined ? new Date(NaN) : new Date(Date.now() + until - performance.now());
   const tool = <b className="mcp-elicit-name">{visible(e.tool)}</b>;
   const host = (

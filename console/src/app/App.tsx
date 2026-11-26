@@ -131,6 +131,7 @@ export function App() {
   const tr = useT();
   const tenant = useTenantStore((s) => s.tenant);
   const identityRev = useTenantStore((s) => s.identityRev);
+  const tenantResolved = useTenantStore((s) => s.resolved);
   const notProvisioned = useTenantStore((s) => s.notProvisioned);
   // Deployment gate: only show the schedules rail when the CP scheduler is enabled
   // (AF_SCHEDULER_INTERVAL set) — otherwise schedules can never fire, so hide the section.
@@ -569,7 +570,7 @@ export function App() {
         <WorkItemModalHost />
         <WsStartingDialog />
         {/* Held MCP calls for this pane's mirror; their toasts stay in the main window. */}
-        {booted && <McpElicitHost toasts={false} />}
+        {booted && tenantResolved && <McpElicitHost toasts={false} />}
         <AuthExpiredModal />
         <ProviderRequiredModal />
         <DirtyGuardHost />
@@ -731,9 +732,9 @@ export function App() {
       <SessionModals />
       <AwsLoginHost />
       <AwsConfirmHost />
-      {/* After boot: before it the tenant and member are not settled, and a list read for the
-          wrong ones would show their calls. */}
-      {booted && <McpElicitHost />}
+      {/* Once the tenant and member are settled (boot can finish before a retry settles them):
+          a list read for the wrong ones would show their calls. */}
+      {booted && tenantResolved && <McpElicitHost />}
       <GcpLoginHost />
       <WsStartingDialog />
       <PushPausedNote />

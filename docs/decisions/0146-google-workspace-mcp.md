@@ -224,7 +224,7 @@ install and a wrapper in `af-gcloud-exec`'s shape when MCP is in use and someone
   are not UTF-8 is not held: the list could not carry them, so it ends with an error instead. Hidden
   characters, direction controls included, show as escapes in the arguments and as markers
   elsewhere. Two options whose labels read the same also show their values, and are numbered if
-  they still read the same (#5282). The time left comes from the Agent as seconds, so a browser
-  clock that is off does not hide a card.
+  they still read the same (#5282). The time left comes from the Agent in milliseconds, counted
+  from when the browser sent its read, so a browser clock that is off does not hide a card.
 - **Not verified:** whether Google accepts or ignores RFC 8707 `resource`; the setup guide's line
   that the Developer Preview Program is required, which may predate GA.
