@@ -41,6 +41,7 @@ fail() {
 }
 
 pin_of() { sed -n "s/^ARG $1=//p" "$ROOT/workspace/Dockerfile"; }
+major_of_v() { printf '%s' "${1%%.*}"; }
 P_CLAUDE="$(pin_of CLAUDE_CODE_VERSION)"
 P_CODEX="$(pin_of CODEX_VERSION)"
 P_OPENCODE="$(pin_of OPENCODE_VERSION)"
@@ -51,7 +52,11 @@ P_KIRO="$(pin_of KIRO_VERSION)"
 P_MUSE="$(pin_of MUSE_VERSION)"
 P_RTK="$(pin_of RTK_VERSION)"
 P_GH="$(pin_of GH_VERSION)"
-for v in P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK P_GH; do
+P_AWSCLI="$(pin_of AWSCLI_VERSION)"
+P_BKT="$(pin_of BKT_VERSION)"
+P_CONFLUENCE="$(pin_of CONFLUENCE_CLI_VERSION)"
+P_MCP_GRAFANA="$(pin_of MCP_GRAFANA_VERSION)"
+for v in P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK P_GH P_AWSCLI P_BKT P_CONFLUENCE P_MCP_GRAFANA; do
   [ -n "${!v}" ] || fail "$v: its ARG is missing from workspace/Dockerfile"
 done
 
@@ -63,7 +68,7 @@ done
 cat > "$STUB/drift-check" <<'FAKE'
 #!/usr/bin/env bash
 rc=0
-for k in claude codex opencode copilot agy cursor kiro muse rtk gh; do
+for k in claude codex opencode copilot agy cursor kiro muse rtk gh awscli bkt confluence mcp_grafana; do
   up="$(printf '%s' "$k" | tr a-z A-Z)"
   pin_var="P_$up"; latest_var="STUB_LATEST_$up"
   case ",${STUB_FAIL:-}," in *",$k,"*) echo "latest_$k=" >> "$GITHUB_OUTPUT"; continue ;; esac
@@ -101,13 +106,22 @@ FAKE
 # --- curl: every release source is a file under $WWW --------------------------------
 cat > "$STUB/curl" <<'FAKE'
 #!/usr/bin/env bash
-out=""; url=""; prev=""
+out=""; url=""; prev=""; wcode=""
 for a in "$@"; do
   case "$prev" in -o) out="$a" ;; esac
   case "$a" in http*) url="$a" ;; esac
+  [ "$a" != "-w" ] || wcode=1
   prev="$a"
 done
+# STUB_CURL_HANG: a URL containing it times out (curl exit 28).
+[ -z "${STUB_CURL_HANG:-}" ] || case "$url" in *"$STUB_CURL_HANG"*) exit 28 ;; esac
 key="$(printf '%s' "$url" | sed 's|[^A-Za-z0-9._-]|_|g')"
+if [ -n "$wcode" ]; then
+  # `-w %{http_code}` without -f: a missing file is a 404 answer, exit 0.
+  [ -f "$STUB_WWW/$key" ] || { printf 404; exit 0; }
+  [ -z "$out" ] || cp "$STUB_WWW/$key" "$out"
+  printf 200; exit 0
+fi
 [ -f "$STUB_WWW/$key" ] || exit 22
 if [ -n "$out" ]; then cp "$STUB_WWW/$key" "$out"; else cat "$STUB_WWW/$key"; fi
 FAKE
@@ -141,7 +155,7 @@ echo "$*" >> "$STUB_REPORT_LOG"
 FAKE
 chmod +x "$STUB/fragment-check" "$STUB/report"
 export STUB_FRAG_LOG="$WORK/frag.log" STUB_REPORT_LOG="$WORK/report.log"
-export P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK P_GH
+export P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK P_GH P_AWSCLI P_BKT P_CONFLUENCE P_MCP_GRAFANA
 
 serve() { # serve <url> <file>
   cp "$2" "$WWW/$(printf '%s' "$1" | sed 's|[^A-Za-z0-9._-]|_|g')"
@@ -291,8 +305,8 @@ body_has "[\`agy-contract.yml\` passed on $L_AGY](https://github.com/k-k1/agent-
 body_has "| codex | \`$P_CODEX\` | \`$L_CODEX\` | no passing \`latest\` contract on $L_CODEX yet (tested: $P_CODEX) |"
 body_has "| muse | \`$P_MUSE\` | \`$L_MUSE\` | checksum refused: the x86 artifact hashes to"
 body_has "| rtk | \`$P_RTK\` | \`$L_RTK\` | no contract gates it"
-# A watch-only image tool (no contract) drifting is listed, never bumped.
-body_has "| gh | \`$P_GH\` | \`$L_GH\` | no contract gates it; bump \`GH_VERSION\` by hand"
+# gh is pr-gated, but this is a new major of a major-manual row: listed, never bumped.
+body_has "| gh | \`$P_GH\` | \`$L_GH\` | a new major ($(major_of_v "$P_GH") -> $(major_of_v "$L_GH")): the cut-over is manual, never an automatic bump |"
 body_hasnt "| opencode |"   # in sync: neither bumped nor listed
 ID_1="$(sed -n 's/^edit_id=//p' "$WORK/gh_out")"
 [ "${#ID_1}" = 16 ] || fail "edit_id is not set: '$ID_1'"
@@ -525,5 +539,152 @@ code_is 0
 cp "$ROOT/workspace/Dockerfile" "$DF"
 STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_FRAG=missing run_bump
 if grep -q '^check ' "$STUB_FRAG_LOG"; then fail "checked claude while it is at its latest"; fi
+
+echo "== case 16: pr-gated watch-only rows (awscli, gh) are bumped with no contract; rtk is still by hand =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+# The other kinds are held at their pins, so only the rows under test can move.
+L_AWSCLI="$(major_of_v "$P_AWSCLI").999.0"
+G_MINOR="$(major_of_v "$P_GH").999.0"
+echo asset > "$WORK/asset"
+# serve_assets <kind> <version> <url part to leave out, or "">: the per-architecture
+# downloads assets_ready asks for, at the URLs the Dockerfile fetches.
+serve_assets() {
+  local u skip="$3"
+  case "$1" in
+    awscli) set -- "$@" "https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$2.zip" "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-$2.zip" ;;
+    gh)     set -- "$@" "https://github.com/cli/cli/releases/download/v$2/gh_$2_linux_amd64.tar.gz" "https://github.com/cli/cli/releases/download/v$2/gh_$2_linux_arm64.tar.gz" ;;
+    bkt)    set -- "$@" "https://github.com/avivsinai/bitbucket-cli/releases/download/v$2/bkt_$2_linux_x86_64.tar.gz" "https://github.com/avivsinai/bitbucket-cli/releases/download/v$2/bkt_$2_linux_arm64.tar.gz" ;;
+  esac
+  shift 3
+  for u in "$@"; do
+    [ -n "$skip" ] && case "$u" in *"$skip"*) continue ;; esac
+    serve "$u" "$WORK/asset"
+  done
+}
+serve_assets awscli "$L_AWSCLI" ""
+serve_assets gh "$G_MINOR" ""
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="9.9.9" STUB_LATEST_AWSCLI="$L_AWSCLI" STUB_LATEST_GH="$G_MINOR" run_bump
+code_is 0
+expect_changed "+ARG AWSCLI_VERSION=$L_AWSCLI" "+ARG GH_VERSION=$G_MINOR"
+out_has "count=2"
+out_has "bumped=gh,awscli"
+out_has "title=build(workspace): bump gh and awscli CLI pins"
+out_has "incomplete=false"
+body_has "| awscli | \`$P_AWSCLI\` → \`$L_AWSCLI\` | no contract; \`pr-gated\`: this PR's CI is the gate | version only |"
+body_has "| rtk | \`$P_RTK\` | \`9.9.9\` | no contract gates it; bump \`RTK_VERSION\` by hand |"
+
+echo "== case 16a: a new awscli major is left at its pin =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_AWSCLI="3.0.0" run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a new awscli major changed the Dockerfile"
+out_has "count=0"
+body_has "| awscli | \`$P_AWSCLI\` | \`3.0.0\` | a new major ($(major_of_v "$P_AWSCLI") -> 3): the cut-over is manual, never an automatic bump |"
+
+echo "== case 16b: an unreadable pr-gated source leaves only that row; a tested contract kind still moves =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+STUB_LATEST_AGY="$P_AGY" STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" \
+  STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_MUSE="$P_MUSE" STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" \
+  STUB_LATEST_AWSCLI="$L_AWSCLI" STUB_FAIL=awscli run_bump
+code_is 0
+expect_changed "+ARG CLAUDE_CODE_VERSION=$L_CLAUDE"
+out_has "incomplete=false"
+out_has "bumped=claude"
+out_has "unreadable=awscli"
+body_has "| awscli | \`$P_AWSCLI\` | \`?\` | its release source could not be read |"
+
+echo "== case 16c: a release missing its arm64 asset is left at its pin =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+A_NOARM="$(major_of_v "$P_AWSCLI").998.0"
+serve_assets awscli "$A_NOARM" aarch64
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_AWSCLI="$A_NOARM" run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a release without its arm64 asset was bumped"
+out_has "count=0"
+body_has "| awscli | \`$P_AWSCLI\` | \`$A_NOARM\` | a release asset is not there yet: https://awscli.amazonaws.com/awscli-exe-linux-aarch64-$A_NOARM.zip |"
+
+echo "== case 16d: a 0.x minor of a pr-gated row is a new line; a 0.x patch is bumped =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+B_LINE="$(printf '%s' "$P_BKT" | cut -d. -f1-2)"
+B_MINOR="0.$(( $(printf '%s' "$P_BKT" | cut -d. -f2) + 1 )).0"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_BKT="$B_MINOR" run_bump
+code_is 0
+out_has "count=0"
+body_has "| bkt | \`$P_BKT\` | \`$B_MINOR\` | a new major ($B_LINE -> ${B_MINOR%.*}): the cut-over is manual, never an automatic bump |"
+B_PATCH="$B_LINE.99"
+serve_assets bkt "$B_PATCH" ""
+# bkt_sums <version> [arch to leave out]: the release's checksums.txt the bkt build reads.
+# With a third argument `dup`, the left-out arch gets a valid line plus a broken duplicate.
+bkt_sums() {
+  local a
+  for a in x86_64 arm64; do
+    if [ "$a" != "${2:-}" ]; then printf '%064d  bkt_%s_linux_%s.tar.gz\n' 0 "$1" "$a"
+    elif [ "${3:-}" = dup ]; then printf '%064d  bkt_%s_linux_%s.tar.gz\nnot-a-hash  bkt_%s_linux_%s.tar.gz\n' 0 "$1" "$a" "$1" "$a"
+    fi
+  done > "$WORK/sums"
+  serve "https://github.com/avivsinai/bitbucket-cli/releases/download/v$1/checksums.txt" "$WORK/sums"
+}
+bkt_sums "$B_PATCH"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_BKT="$B_PATCH" run_bump
+code_is 0
+expect_changed "+ARG BKT_VERSION=$B_PATCH"
+
+echo "== case 16f: a bkt release whose checksums.txt lacks the arm64 line is left at its pin =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+B_NOSUM="$B_LINE.98"
+serve_assets bkt "$B_NOSUM" ""
+bkt_sums "$B_NOSUM" arm64
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_BKT="$B_NOSUM" run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a bkt release without its arm64 checksum was bumped"
+body_has "| bkt | \`$P_BKT\` | \`$B_NOSUM\` | checksums.txt has no single sha256 line for bkt_${B_NOSUM}_linux_arm64.tar.gz |"
+# Counted the way the Dockerfile counts: a valid line plus a broken one of the same name is two.
+bkt_sums "$B_NOSUM" arm64 dup
+grep -c "bkt_${B_NOSUM}_linux_arm64" "$WORK/sums" | grep -qx 2 || fail "the dup fixture is not two lines"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_BKT="$B_NOSUM" run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a bkt release with a duplicate arm64 checksum line was bumped"
+
+echo "== case 16g: an asset probe that times out is 'could not tell': left, and reported as unreadable =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+STUB_CURL_HANG=aarch64 STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_AWSCLI="$L_AWSCLI" run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a timed-out asset probe still bumped awscli"
+out_has "incomplete=false"
+out_has "unreadable=awscli"
+body_has "| awscli | \`$P_AWSCLI\` | \`$L_AWSCLI\` | could not check a release asset: https://awscli.amazonaws.com/awscli-exe-linux-aarch64-$L_AWSCLI.zip |"
+
+echo "== case 16e: a pr-gated release that is not a plain x.y.z is left, and says so =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$G_MINOR-rc1" run_bump
+code_is 0
+out_has "count=0"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="v$G_MINOR/preview" run_bump
+code_is 0
+body_has "| gh | \`$P_GH\` | \`v$G_MINOR/preview\` | not a plain x.y.z"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$G_MINOR-rc1" run_bump
+body_has "| gh | \`$P_GH\` | \`$G_MINOR-rc1\` | not a plain x.y.z, which is all a pr-gated bump takes; check the tag, the asset names and what the binary prints, and adjust the Dockerfile install and the L1 version check with \`GH_VERSION\` by hand |"
 
 echo "OK: cli-pin-bump.sh bumps only tested kinds, refuses bad checksums, and is idempotent"

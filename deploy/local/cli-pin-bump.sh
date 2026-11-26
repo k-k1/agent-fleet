@@ -23,8 +23,12 @@
 # latest, which the watcher dispatches the same day. With nothing left to bump the
 # workflow closes an open bump PR rather than leave versions that are no longer latest.
 #
-# rtk is deliberately left out: it has a release source but no contract, so there is no
-# `tested` to gate on. It is listed as drifting and bumped by hand.
+# A watch-only row (no contract: rtk, gh, the image tools) has no `tested` to gate on, so
+# it is listed as drifting and bumped by hand. The exception is a row flagged `pr-gated`
+# in the manifest: its pin moves to latest with no contract, and the gate is the bump PR's
+# own CI (e2e.yml's L1 checks the installed version against the pin) before a person
+# merges it. Only a row whose version is its one `ARG` qualifies: nothing here resolves a
+# checksum for it.
 #
 # ## Upstream message fragments
 #
@@ -88,12 +92,15 @@ OUT="${GITHUB_OUTPUT:-/dev/null}"
 # shellcheck source=cli-manifest.sh
 . "$HERE/cli-manifest.sh"
 manifest_load || exit 1
-# kind|version ARG|contract workflow: every manifest row with a contract.
+# kind|version ARG|contract workflow: every manifest row with a contract, and every
+# pr-gated row (contract `-`).
 KINDS=()
 # Drift rows that are not automated at all (no contract gates them), and why.
 UNAUTOMATED=()
 for _n in "${M_NAMES[@]}"; do
-  if [ "${M_contract[$_n]}" = - ]; then
+  if [ "${M_contract[$_n]}" = - ] && manifest_has_flag "$_n" pr-gated; then
+    KINDS+=("$_n|${M_arg[$_n]}|-")
+  elif [ "${M_contract[$_n]}" = - ]; then
     UNAUTOMATED+=("$_n|no contract gates it; bump \`${M_arg[$_n]}\` by hand")
   else
     KINDS+=("$_n|${M_arg[$_n]}|${M_contract[$_n]}")
@@ -109,8 +116,6 @@ trap 'rm -rf "$WORK"' EXIT
 
 die() { echo "cli-pin-bump: $*" >&2; exit 1; }
 
-# Leading integer of a version, 0 when there is none.
-major_of() { local m="${1%%.*}"; case "$m" in ''|*[!0-9]*) echo 0 ;; *) echo "$m" ;; esac; }
 
 # The single value of `ARG <name>=`, or failure when it is absent or appears twice: a
 # second definition would make "the pin" ambiguous and the rewrite would miss one.
@@ -146,6 +151,67 @@ fetch() { "${CURL[@]}" "$1" -o "$2" 2>/dev/null; }
 sha256_of() { sha256sum "$1" | awk '{ print $1 }'; }
 
 resolve_npm() { NEW[$1]="$2"; }
+
+# assets_ready <pr-gated kind> <version>: every per-architecture download the Dockerfile
+# makes for that version answers, using the Dockerfile's own URLs. A release is often
+# published before all its assets are uploaded, and the PR's CI never fetches arm64. A
+# flagged tool with no recipe here is refused, so flagging one means writing its URLs.
+# probe <url> [file]: 0 = answers (the body goes to file, else a HEAD request), 1 = the
+# release lacks it (404 / 410), 2 = could not tell (timeout, 5xx, network). No retry inside
+# curl and an outer timeout: a slow or rate-limiting host (Retry-After waits outside
+# --max-time) must cost this row its bump, not the 30-minute job; the next run retries.
+probe() {
+  local code rc=0
+  # `|| rc=$?`, not set +e/-e: the caller may be running with errexit off on purpose.
+  if [ -n "${2:-}" ]; then
+    code="$(timeout 40 curl -sSL --connect-timeout 10 --max-time 30 -o "$2" -w '%{http_code}' "$1" 2>/dev/null)" || rc=$?
+  else
+    code="$(timeout 40 curl -sSL --connect-timeout 10 --max-time 30 -I -o /dev/null -w '%{http_code}' "$1" 2>/dev/null)" || rc=$?
+  fi
+  [ "$rc" = 0 ] || return 2
+  case "$code" in 2??) return 0 ;; 404|410) return 1 ;; *) return 2 ;; esac
+}
+
+# assets_ready <kind> <version>: 0 ready, 1 refused (printed why), 2 could not tell.
+assets_ready() {
+  local kind="$1" v="$2" url urls=() a
+  case "$kind" in
+    awscli)      urls=("https://awscli.amazonaws.com/awscli-exe-linux-x86_64-$v.zip"
+                       "https://awscli.amazonaws.com/awscli-exe-linux-aarch64-$v.zip") ;;
+    gh)          urls=("https://github.com/cli/cli/releases/download/v$v/gh_${v}_linux_amd64.tar.gz"
+                       "https://github.com/cli/cli/releases/download/v$v/gh_${v}_linux_arm64.tar.gz") ;;
+    bkt)         urls=("https://github.com/avivsinai/bitbucket-cli/releases/download/v$v/bkt_${v}_linux_x86_64.tar.gz"
+                       "https://github.com/avivsinai/bitbucket-cli/releases/download/v$v/bkt_${v}_linux_arm64.tar.gz") ;;
+    mcp_grafana) urls=("https://github.com/grafana/mcp-grafana/releases/download/v$v/mcp-grafana_Linux_x86_64.tar.gz"
+                       "https://github.com/grafana/mcp-grafana/releases/download/v$v/mcp-grafana_Linux_arm64.tar.gz") ;;
+    confluence)  return 0 ;;  # an npm package: one tarball for every architecture
+    *) echo "no per-architecture asset check for $kind in cli-pin-bump.sh"; return 1 ;;
+  esac
+  local prc
+  for url in "${urls[@]}"; do
+    probe "$url" && prc=0 || prc=$?
+    case "$prc" in
+      0) ;;
+      1) echo "a release asset is not there yet: $url"; return 1 ;;
+      *) echo "could not check a release asset: $url"; return 2 ;;
+    esac
+  done
+  # The bkt build checks its tarball against the release's checksums.txt and needs exactly
+  # one line per asset name; count them the way it does, then check that line's hash.
+  if [ "$kind" = bkt ]; then
+    url="https://github.com/avivsinai/bitbucket-cli/releases/download/v$v/checksums.txt"
+    probe "$url" "$WORK/bkt-sums" && prc=0 || prc=$?
+    case "$prc" in
+      0) ;;
+      1) echo "a release asset is not there yet: $url"; return 1 ;;
+      *) echo "could not check a release asset: $url"; return 2 ;;
+    esac
+    for a in "bkt_${v}_linux_x86_64.tar.gz" "bkt_${v}_linux_arm64.tar.gz"; do
+      awk -v a="$a" '$2 == a { n++; h = $1 } END { exit !(n == 1 && h ~ /^[0-9a-f]{64}$/) }' "$WORK/bkt-sums" ||
+        { echo "checksums.txt has no single sha256 line for $a"; return 1; }
+    done
+  fi
+}
 
 resolve_agy() { # resolve_agy <version>
   local v="$1" arch dir key url sha512 got build="" b
@@ -273,6 +339,7 @@ check_fragments() {
 }
 
 incomplete=false
+unreadable=()  # pr-gated kinds whose release source could not be read
 bumped=()    # kind
 evidence=()  # table rows
 left=()      # "kind|pin|latest|reason"
@@ -283,18 +350,47 @@ for row in "${KINDS[@]}"; do
   latest="$(out_value "latest_$kind")"
   if [ -z "$latest" ] || case ",$FAILED," in *",$kind,"*) true ;; *) false ;; esac; then
     left+=("$kind|$pin|?|its release source could not be read")
-    incomplete=true
+    # A pr-gated tool's source (often a rate-limited GitHub API) must not hold the contract
+    # kinds' bump: it only stays at its pin this run. `unreadable` lets the workflow keep an
+    # open PR that carries it instead of closing it over the blip.
+    if manifest_has_flag "$kind" pr-gated; then unreadable+=("$kind"); else incomplete=true; fi
     continue
   fi
   [ "$pin" != "$latest" ] || continue
+  # Before the generic shape check, so a pr-gated tag like `v2.106.0/preview` gets the same
+  # hand-bump steps its update issue gives.
+  if [ "$workflow" = - ] && ! manifest_plain_version "$latest"; then
+    left+=("$kind|$pin|$latest|not a plain x.y.z, which is all a pr-gated bump takes; check the tag, the asset names and what the binary prints, and adjust the Dockerfile install and the L1 version check with \`$arg\` by hand")
+    continue
+  fi
   [[ "$latest" =~ $VALUE_RE ]] || { left+=("$kind|$pin|$latest|the published version has an unexpected shape"); continue; }
 
   check_fragments "$kind" "$pin" "$latest"
 
-  # A new opencode major changes the server API, the plugin API and the TUI flags at once: a
-  # bump PR must never carry it, whatever a contract says about the newer line.
-  if manifest_has_flag "$kind" major-manual && [ "$(major_of "$pin")" != "$(major_of "$latest")" ]; then
-    left+=("$kind|$pin|$latest|a new major ($(major_of "$pin") -> $(major_of "$latest")): the cut-over is manual (#2101), never an automatic bump")
+  # A new major of a major-manual kind is never carried, whatever a contract (or, for a
+  # pr-gated row, the PR's CI) says: a new opencode major changes the server API, the plugin
+  # API and the TUI flags at once, and a pr-gated tool's major can rename what we call.
+  if manifest_has_flag "$kind" major-manual && [ "$(manifest_line_of "$pin")" != "$(manifest_line_of "$latest")" ]; then
+    left+=("$kind|$pin|$latest|a new major ($(manifest_line_of "$pin") -> $(manifest_line_of "$latest")): the cut-over is manual, never an automatic bump")
+    continue
+  fi
+
+  if [ "$workflow" = - ]; then
+    # pr-gated: the version ARG alone, and the bump PR's CI is the gate. That CI builds amd64
+    # only, so the release must already carry every architecture the Dockerfile fetches.
+    set +e
+    assets_ready "$kind" "$latest" > "$WORK/reason" 2>&1
+    rrc=$?
+    set -e
+    if [ "$rrc" != 0 ]; then
+      left+=("$kind|$pin|$latest|$(tr '\n' ' ' < "$WORK/reason" | sed 's/ *$//')")
+      # Could not tell is not "refused": keep an open PR that carries it (the close step).
+      [ "$rrc" != 2 ] || unreadable+=("$kind")
+      continue
+    fi
+    NEW[$arg]="$latest"
+    bumped+=("$kind")
+    evidence+=("| $kind | \`$pin\` → \`$latest\` | no contract; \`pr-gated\`: this PR's CI is the gate | version only |")
     continue
   fi
 
@@ -431,6 +527,7 @@ edit_id=""
   printf 'count=%s\n' "${#bumped[@]}"
   printf 'edit_id=%s\n' "$edit_id"
   printf 'incomplete=%s\n' "$incomplete"
+  printf 'unreadable=%s\n' "$(IFS=,; printf '%s' "${unreadable[*]-}")"
   printf 'fragment_error=%s\n' "$fragment_error"
   printf 'bumped=%s\n' "$(IFS=,; printf '%s' "${bumped[*]-}")"
   printf 'title=%s\n' "$title"
@@ -439,7 +536,8 @@ edit_id=""
 if [ -n "$BODY_FILE" ]; then
   {
     echo "Bumps the baked CLI pins in \`workspace/Dockerfile\` for every kind whose latest release"
-    echo "passed its contract (\`tested == latest\` in the \`CLI release watcher state\` issue)."
+    echo "passed its contract (\`tested == latest\` in the \`CLI release watcher state\` issue),"
+    echo "and for every \`pr-gated\` tool, which no contract covers: this PR's CI is its gate."
     echo
     echo "| CLI | Pin | Evidence | Checksums |"
     echo "|---|---|---|---|"

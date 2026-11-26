@@ -28,7 +28,7 @@ type Entry struct {
 	Input      string   // workflow_dispatch input that takes `latest`, "" when none
 	Secrets    []string // CI secrets, any one of which lets the contract run
 	SecretHint string   // extra words the update issue adds after the secret names
-	Flags      []string // major-manual
+	Flags      []string // major-manual, pr-gated
 }
 
 // HasFlag reports whether the entry carries flag.
@@ -81,6 +81,9 @@ func Parse(text string) ([]Entry, error) {
 		seen[e.Name] = true
 		if (e.Contract == "") != (e.Dispatch == "") {
 			return nil, fmt.Errorf("cli-manifest.psv:%d: contract and dispatch must both be set or both '-'", i+1)
+		}
+		if e.HasFlag("pr-gated") && e.Contract != "" {
+			return nil, fmt.Errorf("cli-manifest.psv:%d: pr-gated is for a row with no contract", i+1)
 		}
 		out = append(out, e)
 	}
