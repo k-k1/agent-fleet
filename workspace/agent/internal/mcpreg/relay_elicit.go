@@ -73,6 +73,19 @@ const (
 	// elicitMaxMessage and elicitMaxText cut the server's texts kept for the Console.
 	elicitMaxMessage = 8 << 10
 	elicitMaxText    = 256
+	// ElicitAnswerMaxBytes bounds a form's largest answer, JSON-encoded: a form whose answer could
+	// not fit the answer route's request limit is refused before it is put to anyone, since the
+	// person could then only decline.
+	ElicitAnswerMaxBytes = 32 << 10
+)
+
+var (
+	// elicitMaxHeldOne and elicitMaxHeld bound what held calls keep for the Console (arguments,
+	// messages, choices), one and all together. The list is copied for every reader, so a few
+	// calls with large arguments would otherwise multiply into the Agent's memory limit. Vars so a
+	// test can lower them.
+	elicitMaxHeldOne = 1 << 20
+	elicitMaxHeld    = 4 << 20
 )
 
 // digestHeaders describe a body's bytes; the relay drops them wherever it may change the body.
@@ -1043,7 +1056,28 @@ func parseInputRequired(result json.RawMessage) (inputRequired, error) {
 		out.inputs = append(out.inputs, in)
 	}
 	sort.Slice(out.inputs, func(i, j int) bool { return out.inputs[i].Key < out.inputs[j].Key })
+	if largestAnswer(out.inputs) > ElicitAnswerMaxBytes {
+		return inputRequired{}, errors.New("a form whose answer is too large to send back")
+	}
 	return out, nil
+}
+
+// largestAnswer is the encoded size of the largest accept a person could send: every field
+// answered with its longest choice. Go escapes more than a browser does, so this is an upper bound.
+func largestAnswer(inputs []ElicitInput) int {
+	choices := map[string]map[string]string{}
+	for _, in := range inputs {
+		c := map[string]string{}
+		for _, f := range in.Fields {
+			for _, o := range f.Options {
+				if len(o.Value) >= len(c[f.Name]) {
+					c[f.Name] = o.Value
+				}
+			}
+		}
+		choices[in.Key] = c
+	}
+	return len(mustJSON(choices))
 }
 
 // strictObject reads raw as one JSON object with no two names that fold together. allowed, when
@@ -1345,6 +1379,8 @@ var (
 
 type pendingElicit struct {
 	PendingElicitation
+	// size is what the call counts against elicitMaxHeld.
+	size int
 	// gone is closed when the CLI's request ends.
 	gone   <-chan struct{}
 	answer chan ElicitAnswer
@@ -1353,6 +1389,22 @@ type pendingElicit struct {
 type elicitStore struct {
 	mu      sync.Mutex
 	pending map[string]*pendingElicit
+	bytes   int // the sum of the pending calls' sizes
+}
+
+// heldSize is what a held call keeps for the Console, roughly as it is listed.
+func (p PendingElicitation) heldSize() int {
+	n := len(p.Arguments) + len(p.Tool) + len(p.ServerName) + len(p.ServerLabel)
+	for _, in := range p.Inputs {
+		n += len(in.Key) + len(in.Message)
+		for _, f := range in.Fields {
+			n += len(f.Name) + len(f.Title)
+			for _, o := range f.Options {
+				n += len(o.Value) + len(o.Label)
+			}
+		}
+	}
+	return n
 }
 
 var elicitations = &elicitStore{pending: map[string]*pendingElicit{}}
@@ -1371,12 +1423,17 @@ func (s *elicitStore) add(ctx context.Context, def ServerDef, call elicitCall, i
 		gone:   ctx.Done(),
 		answer: make(chan ElicitAnswer, 1),
 	}
+	p.size = p.heldSize()
+	if p.size > elicitMaxHeldOne {
+		return nil, errors.New("the call is too large to put to a person for confirmation; the call was not completed")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if len(s.pending) >= elicitMaxPending {
+	if len(s.pending) >= elicitMaxPending || s.bytes+p.size > elicitMaxHeld {
 		return nil, errors.New("too many calls are already waiting for a person's confirmation; the call was not completed")
 	}
 	s.pending[p.ID] = p
+	s.bytes += p.size
 	return p, nil
 }
 
@@ -1387,8 +1444,11 @@ func (s *elicitStore) remove(id string) { s.take(id) }
 func (s *elicitStore) take(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_, ok := s.pending[id]
-	delete(s.pending, id)
+	p, ok := s.pending[id]
+	if ok {
+		s.bytes -= p.size
+		delete(s.pending, id)
+	}
 	return ok
 }
 
@@ -1408,7 +1468,8 @@ func PendingElicitations() []PendingElicitation {
 // AnswerElicitation hands a person's answer to the held call. An accept must answer every input,
 // choose one of the server's options for every required field, and name nothing else. A call
 // takes one answer, and none once its deadline has passed or its CLI has gone: both are checked
-// last, at the moment the answer is handed over. It returns the call answered, for the audit.
+// last, at the moment the answer is handed over. It returns the call answered, for the audit:
+// what names it, without its arguments or form.
 func AnswerElicitation(id string, a ElicitAnswer) (PendingElicitation, error) {
 	s := elicitations
 	s.mu.Lock()
@@ -1434,9 +1495,11 @@ func AnswerElicitation(id string, a ElicitAnswer) (PendingElicitation, error) {
 	if !time.Now().Before(p.Deadline) {
 		return PendingElicitation{}, ErrElicitationNotFound
 	}
+	s.bytes -= p.size
 	delete(s.pending, id)
 	p.answer <- a
-	return p.PendingElicitation.clone(), nil
+	return PendingElicitation{ID: p.ID, ServerID: p.ServerID, ServerName: p.ServerName, ServerLabel: p.ServerLabel,
+		Tool: p.Tool, Session: p.Session, CreatedAt: p.CreatedAt, Deadline: p.Deadline}, nil
 }
 
 func checkChoices(inputs []ElicitInput, choices map[string]map[string]string) (map[string]map[string]string, error) {

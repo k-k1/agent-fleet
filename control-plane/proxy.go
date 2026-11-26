@@ -143,6 +143,14 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	}
 	req.Header = r.Header.Clone()
 	stripAgentRelayCredentials(req, r, a.mgr.emailHeader)
+	storedGate := auditGated(r)
+	answerAudit := auditFromAnswer(r)
+	if storedGate != nil || answerAudit != nil {
+		// The audit reads this answer, so it must come back readable: the Agent gzips a JSON 200
+		// for a client that accepts it, and the transport does not undo an Accept-Encoding it
+		// did not add itself.
+		req.Header.Set("Accept-Encoding", "identity")
+	}
 	if rt.Token() != "" {
 		req.Header.Set("Authorization", "Bearer "+rt.Token()) // CP↔Agent auth
 	}
@@ -172,9 +180,8 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 	var bufferedResponse []byte
 	var fsPutOutcome string
 	// One error envelope decides the audit: a file write that may have landed.
-	storedGate := auditGated(r)
-	answerAudit := auditFromAnswer(r)
-	if (r.Method == http.MethodPut && r.URL.Path == "/api/fs/file") || storedGate != nil || answerAudit != nil {
+	fsPut := r.Method == http.MethodPut && r.URL.Path == "/api/fs/file"
+	if fsPut || storedGate != nil || answerAudit != nil {
 		// These errors are deliberately small JSON envelopes. Read only a bounded
 		// prefix before the audit decision so the outcome cannot be lost,
 		// while still forwarding an unexpectedly larger upstream response.
@@ -185,7 +192,7 @@ func (a agentProxyAPI) rest(w http.ResponseWriter, r *http.Request, res *resolve
 					Code string `json:"code"`
 				} `json:"error"`
 			}
-			if json.Unmarshal(bufferedResponse, &envelope) == nil {
+			if fsPut && json.Unmarshal(bufferedResponse, &envelope) == nil {
 				fsPutOutcome = envelope.Error.Code
 			}
 		}

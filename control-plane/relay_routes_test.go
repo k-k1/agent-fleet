@@ -20,6 +20,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"io"
 	"mime/multipart"
@@ -27,6 +28,7 @@ import (
 	"net/http/httptest"
 	"regexp"
 	goruntime "runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -172,6 +174,7 @@ func relayProbeRequest(t *testing.T, ctx context.Context, base, method, pattern,
 	}
 	req.Header.Set("Content-Type", ctype)
 	req.Header.Set(memberOriginConsoleHeader, "1")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br") // what a browser sends
 	return req
 }
 
@@ -237,6 +240,23 @@ func probeRelaysWith(t *testing.T, only func(route string) bool, answers map[str
 			answer = `{}`
 		}
 		w.Header().Set("Content-Type", "application/json")
+		// An answer "status=NNN\n<body>" is sent with that status (not gzipped: the Agent
+		// compresses only a 200).
+		if first, rest, ok := strings.Cut(answer, "\n"); ok && strings.HasPrefix(first, "status=") {
+			code, _ := strconv.Atoi(strings.TrimPrefix(first, "status="))
+			w.WriteHeader(code)
+			_, _ = w.Write([]byte(rest))
+			return
+		}
+		// As the real Agent does (httpx.Gzip): a 200 JSON answer is gzipped for a caller that
+		// accepts it, and the CP forwards the browser's Accept-Encoding.
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			gz := gzip.NewWriter(w)
+			_, _ = gz.Write([]byte(answer))
+			_ = gz.Close()
+			return
+		}
 		_, _ = w.Write([]byte(answer))
 	}))
 	t.Cleanup(agent.Close)

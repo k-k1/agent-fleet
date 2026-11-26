@@ -208,12 +208,13 @@ func serve() {
 	// the materialization below: an OAuth definition is written into a config only as the
 	// relay's URL, and only while something answers there. Fail-open: without it those
 	// servers are simply not written, as before the relay existed.
+	// Set before the relay serves: a CLI from the last boot reconnects as soon as it listens.
+	mcpreg.CallerPID = routegw.LoopbackPeerPID
 	if stopRelay, err := mcpreg.StartRelay(); err != nil {
 		log.Printf("mcp relay: not started: %v (OAuth MCP servers are left out of sessions)", err)
 	} else {
 		defer stopRelay()
 		mcpreg.OnGrantChange = mcpx.MaterializeAll
-		mcpreg.CallerPID = routegw.LoopbackPeerPID
 	}
 	// Write the MCP registry into each CLI's own config (docs/log/48 P3) so the servers a
 	// user registered are live from container start — including for a CLI they launch

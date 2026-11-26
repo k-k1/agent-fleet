@@ -6,7 +6,8 @@ import (
 
 // TestElicitationAnswerIsAuditedFromTheAgentsAnswer drives the answer route through the proxy: the
 // row names the server, the tool, the choice and the session the Agent reports, and nothing of the
-// call's arguments.
+// call's arguments. The probe sends a browser's Accept-Encoding and its fake Agent gzips a 200 as
+// the real one does, so the row is read from what the Agent really sends.
 func TestElicitationAnswerIsAuditedFromTheAgentsAnswer(t *testing.T) {
 	const route = "POST /api/mcp-elicitations/answer"
 	only := func(r string) bool { return r == route }
@@ -20,6 +21,8 @@ func TestElicitationAnswerIsAuditedFromTheAgentsAnswer(t *testing.T) {
 		// Out of shape is left out, never recorded as given.
 		{"out of shape", `{"serverId":"https://u:pw@h/mcp","tool":"a b\nc","session":"../x","action":"allow"}`, "", "unknown"},
 		{"not json", `ok`, "", "unknown"},
+		// A half-read answer is not evidence of the choice: "accept" was read before the type error.
+		{"half read", `{"serverId":"mcp-gmail1","tool":"send_mail","action":"accept","session":7}`, "", "unknown"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			probes := probeRelaysWith(t, only, map[string]string{"POST /mcp-elicitations/answer": tc.answer})
@@ -44,5 +47,21 @@ func TestElicitationListIsNotAudited(t *testing.T) {
 	probes := probeRelaysWith(t, func(r string) bool { return r == "GET /api/mcp-elicitations" }, nil)
 	if len(probes) != 1 || !probes[0].relayed() || len(probes[0].audits) != 0 {
 		t.Fatalf("%+v", probes)
+	}
+}
+
+// A refused answer is not audited, whatever its error envelope says.
+func TestElicitationAnswerFailureIsNotAudited(t *testing.T) {
+	for _, answer := range []string{
+		"status=404\n" + `{"error":{"code":"mcp_elicitation_gone","message":"gone"}}`,
+		"status=400\n" + `{"error":{"code":"mcp_elicitation_answer","message":"no"}}`,
+		// The file write's "may have landed" code is the fs PUT route's alone.
+		"status=500\n" + `{"error":{"code":"` + errCodeFSWriteStateUnknown + `","message":"?"}}`,
+	} {
+		probes := probeRelaysWith(t, func(r string) bool { return r == "POST /api/mcp-elicitations/answer" },
+			map[string]string{"POST /mcp-elicitations/answer": answer})
+		if len(probes) != 1 || !probes[0].relayed() || len(probes[0].audits) != 0 {
+			t.Fatalf("%q: %+v", answer, probes)
+		}
 	}
 }

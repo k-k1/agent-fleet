@@ -59,6 +59,7 @@ func resetElicitations(t *testing.T) {
 	clear := func() {
 		elicitations.mu.Lock()
 		elicitations.pending = map[string]*pendingElicit{}
+		elicitations.bytes = 0
 		elicitations.mu.Unlock()
 	}
 	clear()

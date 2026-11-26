@@ -244,7 +244,10 @@ func elicitationAnswered(body []byte) (target, detail string) {
 		Session  string `json:"session"`
 		Action   string `json:"action"`
 	}
-	_ = json.Unmarshal(body, &out)
+	if json.Unmarshal(body, &out) != nil {
+		// A half-read answer is not evidence of the choice.
+		return "", "unknown"
+	}
 	server, tool := "", ""
 	if mcpServerIDRe.MatchString(out.ServerID) {
 		server = out.ServerID

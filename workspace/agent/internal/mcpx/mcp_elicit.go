@@ -41,15 +41,19 @@ type elicitationsWire struct {
 
 // HandleElicitationsGet (GET /mcp-elicitations) lists the held calls, oldest first.
 func HandleElicitationsGet(w http.ResponseWriter, r *http.Request) {
+	// The arguments can be a mail's text: no cache keeps them.
+	w.Header().Set("Cache-Control", "no-store")
 	httpx.WriteJSON(w, http.StatusOK, elicitationsWire{Elicitations: pendingElicitations()})
 }
 
 // elicitAnswerReq is the member's answer to the held call id: action "accept" with a choice per
 // input key and field name, or "decline" with nothing else.
 type elicitAnswerReq struct {
-	ID      string                       `json:"id"`
-	Action  string                       `json:"action"`
-	Choices map[string]map[string]string `json:"choices,omitempty"`
+	ID     string `json:"id"`
+	Action string `json:"action"`
+	// A pointer, so a null is told apart from "": a server may offer "" as a choice, and a null
+	// must not stand for it.
+	Choices map[string]map[string]*string `json:"choices,omitempty"`
 }
 
 // elicitAnsweredWire says which call was answered and how; the Control Plane's audit reads it
@@ -80,7 +84,21 @@ func HandleElicitationAnswer(w http.ResponseWriter, r *http.Request) {
 	var a mcpreg.ElicitAnswer
 	switch in.Action {
 	case "accept":
-		a.Choices = in.Choices
+		a.Choices = map[string]map[string]string{}
+		for key, fields := range in.Choices {
+			if fields == nil {
+				a.Choices[key] = nil
+				continue
+			}
+			a.Choices[key] = map[string]string{}
+			for name, v := range fields {
+				if v == nil {
+					httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "a choice must be a string, not null")
+					return
+				}
+				a.Choices[key][name] = *v
+			}
+		}
 	case "decline":
 		if len(in.Choices) > 0 {
 			httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "a decline carries no choices")

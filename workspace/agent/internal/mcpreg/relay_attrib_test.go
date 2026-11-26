@@ -1,10 +1,13 @@
 package mcpreg
 
 import (
+	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -103,4 +106,70 @@ func TestElicitRelayLeavesACallUnattributedWithoutALookup(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitCall(t, ch)
+}
+
+// A form whose largest answer could not be sent back is refused before anyone is asked: the person
+// could only decline it. One just under the bound is put to them.
+func TestElicitFormWhoseAnswerCannotBeSentIsRefused(t *testing.T) {
+	form := func(value string) json.RawMessage {
+		return json.RawMessage(`{"inputRequests":{"k":{"method":"elicitation/create","params":{"mode":"form","message":"m",` +
+			`"requestedSchema":{"type":"object","required":["c"],"properties":{"c":{"type":"string","enum":["NO",` + strconv.Quote(value) + `]}}}}}},"requestState":"s"}`)
+	}
+	big := strings.Repeat("x", ElicitAnswerMaxBytes)
+	if _, err := parseInputRequired(form(big)); err == nil || !strings.Contains(err.Error(), "too large to send back") {
+		t.Fatalf("a %d-byte required choice was accepted: %v", len(big), err)
+	}
+	// Escaping counts: Go encodes "<" as six bytes.
+	if _, err := parseInputRequired(form(strings.Repeat("<", ElicitAnswerMaxBytes/5))); err == nil {
+		t.Fatal("a choice that grows past the bound when encoded was accepted")
+	}
+	ir, err := parseInputRequired(form(strings.Repeat("x", ElicitAnswerMaxBytes-64)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := largestAnswer(ir.inputs); n > ElicitAnswerMaxBytes {
+		t.Fatalf("largest answer %d", n)
+	}
+}
+
+// What held calls keep is bounded one by one and together; a call past either bound is answered
+// with an error rather than held, and the room comes back when a call leaves the list.
+func TestElicitHeldCallsAreBoundedInBytes(t *testing.T) {
+	resetElicitations(t)
+	oldOne, oldAll := elicitMaxHeldOne, elicitMaxHeld
+	elicitMaxHeldOne, elicitMaxHeld = 300, 500
+	t.Cleanup(func() { elicitMaxHeldOne, elicitMaxHeld = oldOne, oldAll })
+	ir := inputRequired{inputs: []ElicitInput{{Key: "a"}}}
+	call := func(n int) elicitCall {
+		return elicitCall{tool: "t", params: map[string]json.RawMessage{"arguments": json.RawMessage(`"` + strings.Repeat("a", n) + `"`)}}
+	}
+	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(400), ir); err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("a call over the one-call bound was held: %v", err)
+	}
+	p1, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(250), ir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(250), ir); err == nil || !strings.Contains(err.Error(), "too many") {
+		t.Fatalf("a call past the total bound was held: %v", err)
+	}
+	got, err := AnswerElicitation(p1.ID, ElicitAnswer{Choices: map[string]map[string]string{"a": {}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The answer names the call for the audit and copies nothing of its content.
+	if got.ID != p1.ID || got.Tool != "t" || got.Arguments != nil || got.Inputs != nil {
+		t.Fatalf("answered %+v", got)
+	}
+	p2, err := elicitations.add(context.Background(), ServerDef{ID: "s"}, call(250), ir)
+	if err != nil {
+		t.Fatalf("the room of an answered call did not come back: %v", err)
+	}
+	elicitations.remove(p2.ID)
+	elicitations.mu.Lock()
+	left := elicitations.bytes
+	elicitations.mu.Unlock()
+	if left != 0 {
+		t.Fatalf("%d bytes still counted with nothing held", left)
+	}
 }

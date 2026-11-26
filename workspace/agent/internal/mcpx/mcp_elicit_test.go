@@ -56,7 +56,7 @@ func TestElicitationsGetListsTheHeldCalls(t *testing.T) {
 	w := httptest.NewRecorder()
 	HandleElicitationsGet(w, httptest.NewRequest(http.MethodGet, "/mcp-elicitations", nil))
 	// An empty list is [], never null: the Console maps over it.
-	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"elicitations":[]}` {
+	if w.Code != 200 || strings.TrimSpace(w.Body.String()) != `{"elicitations":[]}` || w.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 
@@ -112,12 +112,17 @@ func TestElicitationAnswerHandsTheChoiceToTheRelay(t *testing.T) {
 	if strings.TrimSpace(w.Body.String()) != `{"id":"e1","serverId":"mcp-x","tool":"send_mail","session":"fix-mail","action":"accept"}` {
 		t.Fatalf("answered %s", w.Body.String())
 	}
+	// "" is a choice like any other when the server offers it.
+	if w := postAnswer(t, s, `{"id":"e1","action":"accept","choices":{"k":{"f":""},"j":null}}`); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
 	w = postAnswer(t, s, `{"id":"e1","action":"decline"}`)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"action":"decline"`) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 	want := []mcpreg.ElicitAnswer{
 		{Choices: map[string]map[string]string{"k": {"f": "ALLOW_ONCE"}}},
+		{Choices: map[string]map[string]string{"k": {"f": ""}, "j": nil}},
 		{Decline: true},
 	}
 	if !reflect.DeepEqual(*got, want) {
@@ -139,6 +144,8 @@ func TestElicitationAnswerRefusals(t *testing.T) {
 		{"decline with choices", `{"id":"e1","action":"decline","choices":{"k":{"f":"ALLOW_ONCE"}}}`, nil, 400, "bad_request", false},
 		{"not JSON", `{`, nil, 400, "bad_request", false},
 		{"no id", `{"action":"decline"}`, nil, 400, "bad_request", false},
+		// A null is not the empty string a server may offer as a choice.
+		{"null choice", `{"id":"e1","action":"accept","choices":{"k":{"f":null}}}`, nil, 400, "bad_request", false},
 		{"gone", `{"id":"e1","action":"decline"}`, mcpreg.ErrElicitationNotFound, 404, errCodeElicitGone, true},
 		{"not a choice", `{"id":"e1","action":"accept","choices":{"k":{"f":"NOPE"}}}`, mcpreg.ErrElicitationAnswer, 400, errCodeElicitAnswer, true},
 		{"other", `{"id":"e1","action":"decline"}`, errors.New("boom"), 500, "internal", true},
