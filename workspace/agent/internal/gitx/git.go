@@ -2270,13 +2270,19 @@ func decideAgainstLaunches(w http.ResponseWriter, dir, parent string, linked boo
 		if !guardsBeforeMark(w, dir, parent, linked) {
 			return nil, false
 		}
-		end, out, why := MarkAgainstLaunches(dir, parent, epoch, func() []string { return sessionNamesUnder(dir) })
+		// Read outside the launch gate: it reads every meta and resolves their paths.
+		names := sessionNamesUnder(dir)
+		end, out, why := MarkAgainstLaunches(dir, parent, epoch, names)
 		switch {
 		case out == MarkReread && reread < MaxLaunchRereads:
 			continue
-		case out == MarkLaunching || out == MarkReread:
+		case out == MarkLaunching:
 			httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
 				"a session is starting in this working copy; deleting it would break it. Stop that session first.")
+			return nil, false
+		case out == MarkReread:
+			httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
+				"sessions kept starting while the delete checked this working copy; try again in a moment.")
 			return nil, false
 		case out == MarkBusy:
 			httpx.WriteErr(w, http.StatusConflict, errCodeDeleteInProgress, why)

@@ -254,13 +254,19 @@ func decideDeleteSpace(w http.ResponseWriter, folder, dir string) (end func()) {
 				fmt.Sprintf("%d locked session(s) live in this space (%s); unlock them first", len(locked), strings.Join(locked, ", ")))
 			return nil
 		}
-		end, out, why := gitx.MarkAgainstLaunches(dir, "", epoch, func() []string { return gitx.SessionNamesUnder(dir) })
+		// Read outside the launch gate: it reads every meta and resolves their paths.
+		names := gitx.SessionNamesUnder(dir)
+		end, out, why := gitx.MarkAgainstLaunches(dir, "", epoch, names)
 		switch {
 		case out == gitx.MarkReread && reread < gitx.MaxLaunchRereads:
 			continue
-		case out == gitx.MarkLaunching || out == gitx.MarkReread:
+		case out == gitx.MarkLaunching:
 			httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
 				"a session is starting in this space; stop it first")
+			return nil
+		case out == gitx.MarkReread:
+			httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
+				"sessions kept starting while the delete checked this space; try again in a moment")
 			return nil
 		case out == gitx.MarkBusy:
 			httpx.WriteErr(w, http.StatusConflict, gitx.ErrCodeDeleteInProgress(), why)

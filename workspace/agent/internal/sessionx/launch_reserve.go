@@ -28,6 +28,15 @@ import (
 // It answers a refusal, with nothing held, or a release to call once the process and the meta are
 // published (more than once is safe, and only the first waits for the launch gate).
 func reserveLaunch(m session.Meta, src *session.Meta) (release func(), ref *SpawnRefusal) {
+	return reserveLaunchChecked(m, src)
+}
+
+// launchUnrecorded is the src of a start whose session has no meta on disk (a Managed resume of a
+// session that is still being created, or that a test holds in memory): only the marks are
+// checked, as a missing meta proves nothing about a delete.
+var launchUnrecorded = new(session.Meta)
+
+func reserveLaunchChecked(m session.Meta, src *session.Meta) (release func(), ref *SpawnRefusal) {
 	cwd := ""
 	if m.Subdir != "" {
 		cwd = filepath.Join(m.Dir, filepath.FromSlash(m.Subdir))
@@ -40,6 +49,7 @@ func reserveLaunch(m session.Meta, src *session.Meta) (release func(), ref *Spaw
 			return
 		}
 		switch {
+		case src == launchUnrecorded:
 		case src == nil:
 			if !session.DirExists(m.Dir) || (cwd != "" && !session.DirExists(cwd)) {
 				rel()

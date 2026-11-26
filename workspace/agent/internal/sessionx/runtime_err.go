@@ -159,7 +159,11 @@ func resumeManagedAs(d agents.Driver, m session.Meta, input, deliberate bool) (a
 	}
 	// Reserved even for a runtime that looked alive above: it can die before Resume, which then
 	// starts it again (reserveLaunch).
-	release, ref := reserveLaunch(m, &m)
+	src := &m
+	if !metaFileExists(m.Name) {
+		src = launchUnrecorded // starts as on main; a delete shelves a Managed session, never removes its meta
+	}
+	release, ref := reserveLaunch(m, src)
 	if ref != nil {
 		return nil, &StartRefusalError{ref}
 	}

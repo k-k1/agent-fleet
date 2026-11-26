@@ -359,7 +359,7 @@ func TestLaunchReservationsHoldTheFoldersPassedThrough(t *testing.T) {
 func TestMarkAgainstLaunches(t *testing.T) {
 	root := t.TempDir()
 	app, other := filepath.Join(root, "app"), filepath.Join(root, "other")
-	names := func() []string { return nil }
+	var names []string
 
 	epoch := LaunchEpoch()
 	r, _ := ReserveLaunch(other)

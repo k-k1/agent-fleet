@@ -28,6 +28,9 @@ func wantDeleteRefusal(t *testing.T, what string, err error) {
 // the folder, which a match on Meta.Dir alone would miss.
 func TestCreateHoldsItsFolderUntilTheMetaIsPublished(t *testing.T) {
 	p := newCreateProbe(t)
+	// The created session's wire answer starts background refreshes that read globals other
+	// tests set.
+	t.Cleanup(WaitListBackground)
 	folder := filepath.Join(p.home, "notes")
 	if err := os.MkdirAll(filepath.Join(folder, "sub"), 0o755); err != nil {
 		t.Fatal(err)
@@ -59,6 +62,9 @@ func TestCreateHoldsItsFolderUntilTheMetaIsPublished(t *testing.T) {
 // the folder is: the space path's own check covers spaces only.
 func TestCreateInAWorkingCopyBeingDeletedIsRefused(t *testing.T) {
 	p := newCreateProbe(t)
+	// The created session's wire answer starts background refreshes that read globals other
+	// tests set.
+	t.Cleanup(WaitListBackground)
 	launchTmuxFn = func(session.Meta, bool) error {
 		t.Error("a create in a working copy being deleted launched")
 		return nil
@@ -426,6 +432,9 @@ func TestManagedInputReservesEvenForALiveLookingRuntime(t *testing.T) {
 // shell falls back to home): only a delete's settlement refuses it.
 func TestRecreateOfAShelvedShellWithItsFolderRemovedByHand(t *testing.T) {
 	p := newCreateProbe(t)
+	// The created session's wire answer starts background refreshes that read globals other
+	// tests set.
+	t.Cleanup(WaitListBackground)
 	launched := false
 	launchTmuxFn = func(session.Meta, bool) error { launched = true; return nil }
 	const name = "byhand02"
@@ -440,6 +449,9 @@ func TestRecreateOfAShelvedShellWithItsFolderRemovedByHand(t *testing.T) {
 // the launch task is delivered (the publish is observed through the booked-name seam).
 func TestManagedCreateHoldsItsFolderUntilPublished(t *testing.T) {
 	p := newCreateProbe(t)
+	// The created session's wire answer starts background refreshes that read globals other
+	// tests set.
+	t.Cleanup(WaitListBackground)
 	var events []string
 	log := func(e string) {
 		held := "free"

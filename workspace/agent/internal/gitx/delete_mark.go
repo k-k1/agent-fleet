@@ -443,10 +443,10 @@ const MaxLaunchRereads = 4
 
 // MarkAgainstLaunches is the end of a delete's decision: inside the launch gate, it refuses while a
 // launch holds a reservation at or under dir or has released one since epoch (taken with
-// LaunchEpoch before the running sessions were read, outside the gate), and otherwise marks dir
-// (BeginDelete, with the session names sessions answers). A launch then either meets the mark or
-// has been seen by the delete.
-func MarkAgainstLaunches(dir, parent string, epoch uint64, sessions func() []string) (end func(), out MarkOutcome, why string) {
+// LaunchEpoch before the running sessions and sessions, the names the mark records, were read
+// outside the gate), and otherwise marks dir (BeginDelete). A launch then either meets the mark
+// or has been seen by the delete.
+func MarkAgainstLaunches(dir, parent string, epoch uint64, sessions []string) (end func(), out MarkOutcome, why string) {
 	WithLaunchGate(func() {
 		switch {
 		case LaunchingUnder(dir):
@@ -455,7 +455,7 @@ func MarkAgainstLaunches(dir, parent string, epoch uint64, sessions func() []str
 			out = MarkReread
 		default:
 			var ok bool
-			if end, ok, why = BeginDelete(dir, parent, sessions()...); !ok {
+			if end, ok, why = BeginDelete(dir, parent, sessions...); !ok {
 				out = MarkBusy
 			}
 		}
