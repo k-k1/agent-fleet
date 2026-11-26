@@ -574,8 +574,8 @@ func TestDeletingALinkToALinkedWorktreeSettlesItsSessions(t *testing.T) {
 	if len(arcs) != 1 || arcs[0].Worktree == nil || !strings.Contains(strings.Join(arcs[0].Worktree.Shelved, ","), "aiaaaa1") {
 		t.Fatalf("tombstone = %+v, want the worktree's AI session on its shelf list", arcs)
 	}
-	if arcs[0].Worktree.Path != e.wt {
-		t.Fatalf("tombstone path = %q, want the worktree's own %q", arcs[0].Worktree.Path, e.wt)
+	if !gitx.IsReposEntryPath(arcs[0].Worktree.Path, filepath.Base(e.wt)) {
+		t.Fatalf("tombstone path = %q, want the worktree's own entry %q", arcs[0].Worktree.Path, e.wt)
 	}
 	// The restore, with the link still in place, brings the worktree back where it was, and its
 	// AI session off the shelf.
@@ -719,8 +719,8 @@ func TestDeletingALinkToAWorktreeRefusesWhenGitStopsAnswering(t *testing.T) {
 }
 
 // With the repositories folder itself behind a link, a delete through an alias records the
-// worktree under the repositories folder as a restore looks it up, and the restore brings the
-// worktree and its AI session back.
+// worktree's physical path, which a restore accepts as the same entry, and brings the worktree and
+// its AI session back.
 func TestDeletingALinkToAWorktreeUnderALinkedReposRestores(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -737,6 +737,7 @@ func TestDeletingALinkToAWorktreeUnderALinkedReposRestores(t *testing.T) {
 	}
 	mux := trashMux()
 	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
+	mux.HandleFunc("GET /repos/{name}/recreate", handleRecreatePlan)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	parent := filepath.Join(home, "repos", "app")
@@ -761,8 +762,13 @@ func TestDeletingALinkToAWorktreeUnderALinkedReposRestores(t *testing.T) {
 	if len(arcs) != 1 || arcs[0].Worktree == nil {
 		t.Fatalf("archives = %+v", arcs)
 	}
-	if want := filepath.Join(home, "repos", filepath.Base(wt)); arcs[0].Worktree.Path != want {
-		t.Fatalf("tombstone path = %q, want %q", arcs[0].Worktree.Path, want)
+	if want := filepath.Join(home, "repo-disk", filepath.Base(wt)); arcs[0].Worktree.Path != want {
+		t.Fatalf("tombstone path = %q, want the physical %q", arcs[0].Worktree.Path, want)
+	}
+	var plan recreatePlan
+	do(t, srv, "GET", "/repos/"+filepath.Base(wt)+"/recreate", nil, http.StatusOK, &plan)
+	if len(plan.Candidates) == 0 || plan.Candidates[0].Source != gitx.RecreateDeleted {
+		t.Fatalf("recreate plan = %+v, want the deleted state first", plan)
 	}
 	do(t, srv, "POST", "/cleanup/archives/"+arcs[0].ID+"/restore", nil, http.StatusOK, nil)
 	if !gitx.IsGitRepo(wt) {
@@ -816,5 +822,58 @@ func TestDeletingALinkToAWorktreeReadsTheStatusOfTheFirstTarget(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(filepath.Join(dirty, "work.txt")); string(b) != "mine" {
 		t.Fatal("the dirty worktree lost its work")
+	}
+}
+
+// The physical path a link resolved to is what every step runs on: ~/repos re-pointed to another
+// disk holding a worktree of the same name while the delete runs sends no step there.
+func TestDeletingALinkToAWorktreeIgnoresTheReposRootRepointed(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	e := spaceDeleteSetup(t)
+	diskA, diskB := filepath.Join(e.home, "disk-a"), filepath.Join(e.home, "disk-b")
+	for _, d := range []string{diskA, diskB} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repos := filepath.Join(e.home, "repos")
+	if err := os.Symlink(diskA, repos); err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(repos, "app")
+	gitInit(t, parent)
+	wt, err := gitx.EnsureWorktree(parent, "main", "wt-x", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(diskB, filepath.Base(wt))
+	gitAt(t, parent, "worktree", "add", "-q", "-b", "wt-b", other)
+	if err := os.WriteFile(filepath.Join(other, "work.txt"), []byte("mine"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(wt, filepath.Join(repos, "wtalias")); err != nil {
+		t.Fatal(err)
+	}
+	tmuxSays(t, tmuxNoServer)
+	moved := false
+	restore := gitx.SetDeleteStepHook(func(step, dir string) {
+		if step == "git-remove" && !moved {
+			moved = true
+			_ = os.Remove(repos)
+			_ = os.Symlink(diskB, repos)
+		}
+	})
+	defer restore()
+	code := httpStatus(t, e.srv, "DELETE", "/repos/wtalias?force=true", nil)
+	if !moved {
+		t.Fatalf("the remove step was not reached (delete = %d)", code)
+	}
+	if b, _ := os.ReadFile(filepath.Join(other, "work.txt")); string(b) != "mine" {
+		t.Fatalf("the worktree on the other disk lost its work (delete = %d)", code)
+	}
+	if !gitx.IsGitRepo(other) {
+		t.Fatalf("the worktree on the other disk was removed (delete = %d)", code)
 	}
 }

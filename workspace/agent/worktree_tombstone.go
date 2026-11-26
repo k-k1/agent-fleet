@@ -46,7 +46,7 @@ func recordDeletedWorktree(t gitx.WorktreeTombstone) (func(), error) {
 // latestTombstone is the newest trash entry recording a delete of the worktree at dir, or nil.
 func latestTombstone(dir string) *gitx.WorktreeTombstone {
 	for _, m := range listCleanupArchives() { // newest first
-		if m.Worktree != nil && filepath.Clean(m.Worktree.Path) == dir {
+		if m.Worktree != nil && (filepath.Clean(m.Worktree.Path) == dir || gitx.IsReposEntryPath(m.Worktree.Path, filepath.Base(dir))) {
 			t := *m.Worktree
 			return &t
 		}
@@ -66,7 +66,7 @@ func (e *restoreConflict) Error() string { return e.msg }
 // as it is, and only the sessions are restored.
 func restoreDeletedWorktree(t gitx.WorktreeTombstone) error {
 	dir, ok := gitx.ResolveRepoDir(t.Name)
-	if !ok || dir != filepath.Clean(t.Path) {
+	if !ok || !gitx.IsReposEntryPath(t.Path, t.Name) {
 		return fmt.Errorf("the worktree %s was not under the repositories folder", t.Name)
 	}
 	var err error

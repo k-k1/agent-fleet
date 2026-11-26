@@ -139,10 +139,11 @@ checkout refuses on (running or locked sessions, the mark's names) is `gitx.Sess
 lexical clean of the same paths: a session started through a link re-pointed since still runs where its process
 entered. An entry that is itself a link is removed as the link alone, and only the sessions spelt through it are
 settled; a link to a linked worktree is the exception, since `git worktree remove` takes the worktree it points
-at: the link is resolved once, first, to the worktree's own entry of the repositories folder (refused when it
-has none, since a restore looks the worktree up there), and the whole delete (guards, mark, tombstone,
-sessions, the remove) runs on that entry; one that git cannot classify again inside the gate is refused rather
-than removed as a plain folder.
+at: the link is resolved once, first, to the worktree's physical path, which must be an entry of the
+repositories folder (a restore accepts the entry under either spelling of that folder), and the whole delete
+(guards, mark, tombstone, sessions, the remove) runs on it, so neither the link nor `~/repos` re-pointed
+meanwhile sends a step elsewhere; one that git cannot classify again inside the gate is refused rather than
+removed as a plain folder.
 The settle set is read once with the mark held, after the worktree's status and tombstone are prepared. A shell
 is trashed only while it still lives in the folder, asked when the trash reads it and again right before its
 meta is removed. After the removal the decided sessions are settled as their meta is now and only while they

@@ -2202,10 +2202,11 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	defer tm.log()
 
 	// An entry that is itself a link. One to a linked worktree deletes the worktree it points at
-	// (`git worktree remove` would follow it anyway): the worktree's own entry is taken here, once,
-	// and the whole delete runs on it (guards, mark, status, tombstone, sessions, the remove), so a
-	// link re-pointed meanwhile cannot send any step elsewhere. Any other link is removed as the
-	// link alone, and only what is spelt through it is settled (linkOnly).
+	// (`git worktree remove` would follow it anyway): its physical path is taken here, once, and the
+	// whole delete runs on it (guards, mark, status, tombstone, sessions, the remove), so neither
+	// the link nor ~/repos re-pointed meanwhile can send a step elsewhere. It must be an entry of the
+	// repositories folder (reposEntryOf), which a restore finds it by (IsReposEntryPath). Any other
+	// link is removed as the link alone, and only what is spelt through it is settled (linkOnly).
 	linkOnly, ofWorktree := false, false
 	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
 		real, err := filepath.EvalSymlinks(dir)
@@ -2215,13 +2216,12 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 				"this entry is a link that does not resolve, so it was left as it is: "+err.Error())
 			return
 		case IsLinkedWorktree(real):
-			entry, ok := reposEntryOf(real)
-			if !ok {
+			if _, ok := reposEntryOf(real); !ok {
 				httpx.WriteErr(w, http.StatusConflict, "delete_failed",
 					"this entry is a link to a worktree that is not itself an entry of the repositories folder, so it could not be restored from the trash; it was left as it is")
 				return
 			}
-			dir, ofWorktree = entry, true
+			dir, ofWorktree = real, true
 		default:
 			linkOnly = true
 		}
@@ -2277,6 +2277,21 @@ func reposEntryOf(real string) (string, bool) {
 		return "", false
 	}
 	return entry, true
+}
+
+// IsReposEntryPath reports whether p is the entry name of the repositories folder, spelt under
+// ReposRoot or under its resolved path: a delete through a link records the physical one.
+func IsReposEntryPath(p, name string) bool {
+	entry, ok := ResolveRepoDir(name)
+	if !ok {
+		return false
+	}
+	p = filepath.Clean(p)
+	if p == entry {
+		return true
+	}
+	root, err := filepath.EvalSymlinks(ReposRoot())
+	return err == nil && p == filepath.Join(root, name)
 }
 
 // decideDeleteRepo is the part of a delete that runs inside the gate. It returns the function
