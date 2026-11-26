@@ -6,6 +6,7 @@ package tmuxx
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -458,15 +459,34 @@ func CapturePane(tn string) string {
 	return string(out)
 }
 
-// LiveSessionNames returns the set of currently-running claude_* tmux session
-// slugs. A missing tmux server / no sessions yields an error, which we treat as
-// "none live". Shared by the session list and the branch-switch guard so both
-// agree on what "running" means.
+// LiveSessionNames returns the set of currently-running claude_* tmux session slugs, and an
+// empty set when tmux cannot be asked. Shared by the session list and the branch-switch guard so
+// both agree on what "running" means. A decision that destroys something uses
+// LiveSessionNamesChecked instead: a failed probe here reads as "nothing runs".
 func LiveSessionNames() map[string]bool {
+	live, _ := LiveSessionNamesChecked()
+	return live
+}
+
+// LiveSessionNamesChecked is LiveSessionNames that tells "no session runs" from "tmux could not
+// say". No tmux server, or no tmux binary at all, is an empty set: every session the Agent starts
+// runs in a tmux found by this same lookup, so none can run then. Any
+// other failure (a socket the Agent may not open, a timeout, an unexpected exit) is an error, and
+// the set is empty.
+func LiveSessionNamesChecked() (map[string]bool, error) {
 	live := map[string]bool{}
 	out, err := Output("list-sessions", "-F", "#{session_name}")
 	if err != nil {
-		return live
+		var ee *exec.ExitError
+		switch {
+		case errors.Is(err, exec.ErrNotFound):
+			return live, nil
+		case errors.As(err, &ee) && ee.ExitCode() == 1 && SaysAbsent(string(ee.Stderr)):
+			return live, nil
+		case errors.As(err, &ee):
+			return live, fmt.Errorf("tmux list-sessions: %w: %s", err, strings.TrimSpace(string(ee.Stderr)))
+		}
+		return live, fmt.Errorf("tmux list-sessions: %w", err)
 	}
 	for _, tn := range strings.Split(strings.TrimSpace(string(out)), "\n") {
 		if tn == "" || !strings.HasPrefix(tn, session.TmuxPrefix) {
@@ -474,7 +494,16 @@ func LiveSessionNames() map[string]bool {
 		}
 		live[strings.TrimPrefix(tn, session.TmuxPrefix)] = true
 	}
-	return live
+	return live, nil
+}
+
+// SaysAbsent reports whether tmux's message on exit 1 means "not there": its own "can't find
+// session", "no server running", or a socket that does not exist. Exit 1 alone is not enough: tmux
+// uses it for "error connecting to <socket> (Permission denied)" as well, a running server the
+// Agent cannot reach.
+func SaysAbsent(msg string) bool {
+	return strings.Contains(msg, "can't find session") || strings.Contains(msg, "no server running") ||
+		(strings.Contains(msg, "error connecting to") && strings.Contains(msg, "No such file or directory"))
 }
 
 // PaneStartCommand returns a session's tmux pane start command, and false when tmux cannot

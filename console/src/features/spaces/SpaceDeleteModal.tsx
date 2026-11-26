@@ -23,6 +23,7 @@ const DELETE_ERRORS = {
   space_sessions_running: "pj.space_delete_running_error",
   space_locked_sessions: "pj.space_delete_locked_error",
   space_sessions_trash_failed: "pj.space_delete_sessions_trash_failed",
+  space_sessions_unobservable: "pj.space_delete_unobservable",
   space_trash_failed: "pj.space_delete_trash_failed",
   space_trash_other_filesystem: "pj.space_delete_other_fs",
   delete_in_progress: "pj.space_delete_in_progress",

@@ -50,6 +50,9 @@ const (
 	// Deleting a working copy moves its shell / ssm sessions to the trash first (ADR 0101); if
 	// one cannot be (a full disk), the working copy is left as it is and this is the answer.
 	errCodeSessionsTrashFailed = "sessions_trash_failed"
+	// A working-copy delete that cannot tell which sessions live in the folder (a meta it cannot
+	// read, tmux not answering) removes nothing (#5122).
+	errCodeSessionsUnobservable = "sessions_unobservable"
 	// Deleting a worktree records it in the trash first (commit pinned, uncommitted work
 	// snapshotted — issue #1042); when that cannot be done, the worktree is left as it is.
 	errCodeWorktreeArchiveFailed = "worktree_archive_failed"

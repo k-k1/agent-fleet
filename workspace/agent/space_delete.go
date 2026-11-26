@@ -39,10 +39,13 @@ const (
 	errCodeSpaceSessionsRunning     = "space_sessions_running"
 	errCodeSpaceLockedSessions      = "space_locked_sessions"
 	errCodeSpaceSessionsTrashFailed = "space_sessions_trash_failed"
-	errCodeSpaceTrashFailed         = "space_trash_failed"
-	errCodeSpaceTrashFS             = "space_trash_other_filesystem"
-	errCodeSpaceRestoreExists       = "space_restore_exists"
-	errCodeSpaceRestoreMissing      = "space_restore_missing"
+	// The delete could not tell which sessions live in the space (a meta it cannot read, tmux not
+	// answering), and removed nothing.
+	errCodeSpaceSessionsUnobservable = "space_sessions_unobservable"
+	errCodeSpaceTrashFailed          = "space_trash_failed"
+	errCodeSpaceTrashFS              = "space_trash_other_filesystem"
+	errCodeSpaceRestoreExists        = "space_restore_exists"
+	errCodeSpaceRestoreMissing       = "space_restore_missing"
 )
 
 // spaceTombstone is what a deleted space's trash entry records. The folder itself sits in the
@@ -160,10 +163,18 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 	}
 	defer end()
 
+	// The sessions this delete settles, read once with the mark held (gitx.SessionLivesIn): the
+	// shells it trashes, the AI sessions the entry records and the ones shelved after the move.
+	settle, err := gitx.SessionsToSettleUnder(dir)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusServiceUnavailable, errCodeSpaceSessionsUnobservable,
+			"could not tell which sessions live in this space, so it was left as it is: "+err.Error())
+		return
+	}
 	// Shell / ssm sessions first: the trash can fail (a full disk), and removing the folder first
 	// would leave them listed with no folder.
 	var shelved []string
-	for _, m := range gitx.SessionsToSettleUnder(dir) {
+	for _, m := range settle {
 		if m.Kind == session.KindShell || m.Kind == session.KindSSM {
 			if err := trashStoppedSession(m); err != nil {
 				httpx.WriteErr(w, http.StatusInternalServerError, errCodeSpaceSessionsTrashFailed,
@@ -231,7 +242,7 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 			fmt.Sprintf("could not move the space to the trash, so it was left as it is: %v", moveErr))
 		return
 	}
-	gitx.ShelveSessionsUnder(dir)
+	gitx.ShelveSessionsUnder(dir, settle)
 	invalidateCleanupUsage()
 	httpx.WriteJSON(w, http.StatusOK, deleteSpaceResponse{Deleted: folder, Archive: man.ID})
 }
@@ -240,23 +251,28 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 // that clears the "being deleted" mark, or nil after answering the refusal itself.
 func decideDeleteSpace(w http.ResponseWriter, folder, dir string) (end func()) {
 	// The running sessions are read outside the launch gate, the mark is taken inside it, and a
-	// session started in between is seen either way (gitx.MarkAgainstLaunches).
+	// session started in between is seen either way (gitx.MarkAgainstLaunches). One read decides
+	// the guards and the names the mark records.
 	var release func()
 	for reread := 0; release == nil; reread++ {
 		epoch := gitx.LaunchEpoch()
-		if running := sessionx.LiveSessionsInDir(dir); len(running) > 0 {
+		sessions, err := gitx.ReadDirSessions(dir)
+		if err != nil {
+			httpx.WriteErr(w, http.StatusServiceUnavailable, errCodeSpaceSessionsUnobservable,
+				"could not tell which sessions live in this space, so it was left as it is: "+err.Error())
+			return nil
+		}
+		if running := sessions.Running(); len(running) > 0 {
 			httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
 				fmt.Sprintf("%d session(s) are running in this space (%s); stop them first", len(running), strings.Join(running, ", ")))
 			return nil
 		}
-		if locked := sessionx.LockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
+		if locked := sessions.Locked(); len(locked) > 0 {
 			httpx.WriteErr(w, http.StatusForbidden, errCodeSpaceLockedSessions,
 				fmt.Sprintf("%d locked session(s) live in this space (%s); unlock them first", len(locked), strings.Join(locked, ", ")))
 			return nil
 		}
-		// Read outside the launch gate: it reads every meta and resolves their paths.
-		names := gitx.SessionNamesUnder(dir)
-		end, out, why := gitx.MarkAgainstLaunches(dir, "", epoch, names)
+		end, out, why := gitx.MarkAgainstLaunches(dir, "", epoch, sessions.Names())
 		switch {
 		case out == gitx.MarkReread && reread < gitx.MaxLaunchRereads:
 			continue

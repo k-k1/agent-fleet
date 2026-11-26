@@ -242,6 +242,7 @@ export const repos = {
   "pj.space_delete_gone": "このスペースはもうありません。",
   "pj.space_delete_running_error": "このスペースでセッションが実行中です。先に停止してください。",
   "pj.space_delete_locked_error": "このスペースのセッションに削除ロックがかかっています。先にロックを外してください。",
+  "pj.space_delete_unobservable": "このスペースにどのセッションがあるかを確かめられなかった（セッションの記録を読めない、または tmux が応答しない）ため、スペースは削除していません。少し待ってからもう一度試してください。",
   "pj.space_delete_sessions_trash_failed": "このスペースのシェル / SSM セッションをごみ箱へ移せなかったため、スペースは削除していません（ディスクの空きを確認してください）。",
   "pj.space_delete_trash_failed": "スペースをごみ箱へ移せなかったため、削除していません（ディスクの空きを確認してください）。",
   "pj.space_delete_other_fs": "ごみ箱が ~/spaces と別のファイルシステムにあるため、スペースを移せません。何も削除していません。",

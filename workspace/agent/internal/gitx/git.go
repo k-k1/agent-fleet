@@ -2267,12 +2267,18 @@ func decideDeleteRepo(w http.ResponseWriter, r *http.Request, dir, parent string
 func decideAgainstLaunches(w http.ResponseWriter, dir, parent string, linked bool) (release func(), ok bool) {
 	for reread := 0; ; reread++ {
 		epoch := LaunchEpoch()
-		if !guardsBeforeMark(w, dir, parent, linked) {
+		// One read decides the guards and the names the mark records, outside the launch gate: it
+		// waits for tmux and reads every meta.
+		sessions, err := ReadDirSessions(dir)
+		if err != nil {
+			httpx.WriteErr(w, http.StatusServiceUnavailable, errCodeSessionsUnobservable,
+				"could not tell which sessions live in this working copy, so it was left as it is: "+err.Error())
 			return nil, false
 		}
-		// Read outside the launch gate: it reads every meta and resolves their paths.
-		names := sessionNamesUnder(dir)
-		end, out, why := MarkAgainstLaunches(dir, parent, epoch, names)
+		if !guardsBeforeMark(w, dir, parent, linked, sessions) {
+			return nil, false
+		}
+		end, out, why := MarkAgainstLaunches(dir, parent, epoch, sessions.Names())
 		switch {
 		case out == MarkReread && reread < MaxLaunchRereads:
 			continue
@@ -2293,11 +2299,11 @@ func decideAgainstLaunches(w http.ResponseWriter, dir, parent string, linked boo
 }
 
 // guardsBeforeMark refuses, answering itself, while a session runs in dir or a lock protects it.
-func guardsBeforeMark(w http.ResponseWriter, dir, parent string, linked bool) bool {
+func guardsBeforeMark(w http.ResponseWriter, dir, parent string, linked bool, sessions DirSessions) bool {
 	// Deleting the working copy out from under live sessions is even worse than a
 	// branch switch: their cwd vanishes mid-flight. Refuse while any session runs
 	// there — the user must stop/archive them first (same guard as checkout).
-	if running := liveSessionsInDir(dir); len(running) > 0 {
+	if running := sessions.Running(); len(running) > 0 {
 		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
 			fmt.Sprintf("%d session(s) are running in this working copy (%s); deleting it would break them. Stop those sessions first.",
 				len(running), strings.Join(running, ", ")))
@@ -2311,7 +2317,7 @@ func guardsBeforeMark(w http.ResponseWriter, dir, parent string, linked bool) bo
 			"working copy is locked against deletion; unlock it first")
 		return false
 	}
-	if locked := lockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {
+	if locked := sessions.Locked(); len(locked) > 0 {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeLockedSessions,
 			fmt.Sprintf("%d locked session(s) live in this working copy (%s); deleting it would strand them. Unlock them first.",
 				len(locked), strings.Join(locked, ", ")))
@@ -2325,19 +2331,6 @@ func guardsBeforeMark(w http.ResponseWriter, dir, parent string, linked bool) bo
 	return true
 }
 
-// sessionNamesUnder lists the sessions whose working folder is dir or lies under it, by the same
-// string match shelveSessionsUnder settles them by, and also by real path.
-func sessionNamesUnder(dir string) []string {
-	real := markKey(dir)
-	var out []string
-	for _, m := range session.ListMetas() {
-		if m.Dir == dir || strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) || underPath(markKey(m.Dir), real) {
-			out = append(out, m.Name)
-		}
-	}
-	return out
-}
-
 func underPath(p, dir string) bool {
 	return p == dir || strings.HasPrefix(p, dir+string(filepath.Separator))
 }
@@ -2345,19 +2338,28 @@ func underPath(p, dir string) bool {
 // deleteRepoMarked is the rest of a delete, outside the gate, with dir marked as being deleted.
 func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string, linked, svn bool, tm *deleteTimer) {
 	done := func() { httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")}) }
+	// The sessions this delete settles, read once with the mark held: the tombstone's shelf list,
+	// the shell sessions trashed before the removal and the AI sessions shelved after it are the
+	// same set, whatever the removal does to the paths they are spelled by.
+	settle, err := sessionsToSettleUnder(dir)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusServiceUnavailable, errCodeSessionsUnobservable,
+			"could not tell which sessions live in this working copy, so it was left as it is: "+err.Error())
+		return
+	}
 
 	// An SVN working copy has no worktree registry — just a folder with a .svn dir.
 	// Remove it directly (after the session guard above); the git worktree logic below
 	// applies only to git working copies.
 	if svn {
-		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir) }) {
+		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settle) }) {
 			return
 		}
 		if err := tm.stepErr("remove", func() error { return rmtree.RemoveAll(dir) }); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 			return
 		}
-		tm.step("shelve", func() { shelveSessionsUnder(dir) })
+		tm.step("shelve", func() { shelveSessionsUnder(dir, settle) })
 		done()
 		return
 	}
@@ -2387,12 +2389,12 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string
 		var undo func()
 		if !tm.stepOK("tombstone", func() bool {
 			var ok bool
-			undo, ok = recordWorktreeTombstone(w, dir, parent)
+			undo, ok = recordWorktreeTombstone(w, dir, parent, settle)
 			return ok
 		}) {
 			return
 		}
-		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir) }) {
+		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settle) }) {
 			undo()
 			return
 		}
@@ -2408,7 +2410,7 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string
 			httpx.WriteErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, out)
 			return
 		}
-		tm.step("shelve", func() { shelveSessionsUnder(dir) })
+		tm.step("shelve", func() { shelveSessionsUnder(dir, settle) })
 		done()
 		return
 	}
@@ -2421,27 +2423,27 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string
 			fmt.Sprintf("this working copy has %d worktree(s) branched off it; delete those first", n))
 		return
 	}
-	if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir) }) {
+	if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settle) }) {
 		return
 	}
 	if err := tm.stepErr("remove", func() error { return rmtree.RemoveAll(dir) }); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
-	tm.step("shelve", func() { shelveSessionsUnder(dir) })
+	tm.step("shelve", func() { shelveSessionsUnder(dir, settle) })
 	done()
 }
 
 // recordWorktreeTombstone writes the trash entry for a worktree about to be deleted and returns
 // the way to take it back. It answers 500 itself, removing nothing, when the entry cannot be
 // written. A worktree with no commit yet has nothing to pin and is deleted unrecorded.
-func recordWorktreeTombstone(w http.ResponseWriter, dir, parent string) (undo func(), ok bool) {
+func recordWorktreeTombstone(w http.ResponseWriter, dir, parent string, settle []session.Meta) (undo func(), ok bool) {
 	t, has, err := PrepareTombstone(dir, parent)
 	if err == nil && !has {
 		return func() {}, true
 	}
 	if err == nil {
-		for _, m := range sessionsToSettleUnder(dir) {
+		for _, m := range settle {
 			if m.Kind != session.KindShell && m.Kind != session.KindSSM {
 				t.Shelved = append(t.Shelved, m.Name)
 			}
@@ -2461,16 +2463,19 @@ func recordWorktreeTombstone(w http.ResponseWriter, dir, parent string) (undo fu
 	return undo, true
 }
 
-// trashShellSessionsUnder moves the stopped shell / ssm sessions of dir to the trash BEFORE the
-// working copy is removed, and answers 500 (removing nothing) if one cannot be — the trash can
+// trashShellSessionsUnder moves the stopped shell / ssm sessions among settle to the trash BEFORE
+// the working copy is removed, and answers 500 (removing nothing) if one cannot be — the trash can
 // fail (a full disk), and deleting the folder first would leave that session listed with no
 // folder, contrary to what the delete promised. Reports whether the delete may go on.
-func trashShellSessionsUnder(w http.ResponseWriter, dir string) bool {
-	for _, m := range sessionsToSettleUnder(dir) {
+func trashShellSessionsUnder(w http.ResponseWriter, settle []session.Meta) bool {
+	for _, m := range settle {
 		if m.Kind != session.KindShell && m.Kind != session.KindSSM {
 			continue
 		}
 		if err := trashSession(m); err != nil {
+			if _, st := session.ReadMetaState(m.Name); st == session.MetaAbsent {
+				continue // deleted on its own since the list was read: nothing is left listed
+			}
 			httpx.WriteErr(w, http.StatusInternalServerError, errCodeSessionsTrashFailed,
 				fmt.Sprintf("could not move session %s to the trash, so the working copy was left as it is: %v", m.Name, err))
 			return false
@@ -2479,24 +2484,15 @@ func trashShellSessionsUnder(w http.ResponseWriter, dir string) bool {
 	return true
 }
 
-// sessionsToSettleUnder lists the sessions a delete of dir settles: at or under dir, not
-// running, not locked, not already on the shelf.
-func sessionsToSettleUnder(dir string) []session.Meta {
-	live := tmuxx.LiveSessionNames()
-	var out []session.Meta
-	for _, m := range session.ListMetas() {
-		if m.Dir != dir && !strings.HasPrefix(m.Dir, dir+string(os.PathSeparator)) {
-			continue
-		}
-		if live[m.Name] || (m.DriverKind() == session.DriverManaged && managedAlive(m)) {
-			continue
-		}
-		if m.Locked || m.Archived {
-			continue
-		}
-		out = append(out, m)
+// sessionsToSettleUnder lists the sessions a delete of dir settles: living in dir
+// (SessionLivesIn), not running, not locked, not already on the shelf. It fails when it cannot
+// tell (ReadDirSessions), and the delete then removes nothing.
+func sessionsToSettleUnder(dir string) ([]session.Meta, error) {
+	sessions, err := ReadDirSessions(dir)
+	if err != nil {
+		return nil, err
 	}
-	return out
+	return sessions.ToSettle(), nil
 }
 
 // shelveSessionsUnder settles the stopped sessions whose cwd was at or under a working copy
@@ -2516,8 +2512,22 @@ func sessionsToSettleUnder(dir string) []session.Meta {
 // the cleanup modal and the MCP tool) and FORGOT the metas outright, without the trash; without
 // the flag it left metas pointing at a folder that no longer existed. The flag is still
 // accepted and means nothing.
-func shelveSessionsUnder(dir string) {
-	for _, m := range sessionsToSettleUnder(dir) {
+func shelveSessionsUnder(dir string, before []session.Meta) {
+	// The sessions decided before the removal are taken by name, as they are now: a path that
+	// reached the folder through a link may no longer resolve to it once the folder is gone. A
+	// shell the trash step took has no meta any more and is not listed. The ones found in the
+	// folder by a fresh read are taken too.
+	live, err := tmuxx.LiveSessionNamesChecked()
+	if err != nil {
+		log.Printf("delete working copy %s: could not tell which sessions run, so its stopped sessions were left listed: %v", dir, err)
+		return
+	}
+	decided := map[string]bool{}
+	for _, m := range before {
+		decided[m.Name] = true
+	}
+	// An unreadable meta is left out: nothing can be settled for a record that cannot be read.
+	for _, m := range collectDirSessions(session.ListMetas(), live, dir, decided).ToSettle() {
 		if m.Kind == session.KindShell || m.Kind == session.KindSSM {
 			// trashShellSessionsUnder took these before the removal; one left here appeared
 			// since. Same treatment, and a failure can only be logged now.

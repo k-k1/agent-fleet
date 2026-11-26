@@ -63,9 +63,8 @@ type Deps struct {
 	//
 	// "Is anyone still using this worktree?" Here too an unwired field turns into "nobody
 	// is using it", which deletes the worktree of a running session.
-	LiveSessionsInDir   func(dir string) []string
-	LockedSessionsInDir func(metas []session.Meta, dir string) []string
-	ManagedAlive        func(m session.Meta) bool
+	LiveSessionsInDir func(dir string) []string
+	ManagedAlive      func(m session.Meta) bool
 
 	// --- What happens to the sessions of a deleted working copy (ADR 0101 decision 4) ---
 	//
@@ -131,6 +130,9 @@ type Deps struct {
 	ErrCodeLocked                string
 	ErrCodeLockedSessions        string
 	ErrCodeSessionsTrashFailed   string
+	// ErrCodeSessionsUnobservable answers a delete that cannot tell which sessions live in the
+	// folder (ReadDirSessions), with nothing removed.
+	ErrCodeSessionsUnobservable  string
 	ErrCodeWorktreeArchiveFailed string
 	ErrCodeWorktreeNestedRepo    string
 	ErrCodeIndexLockStale        string
@@ -178,6 +180,7 @@ func Configure(d Deps) {
 	errCodeLocked = d.ErrCodeLocked
 	errCodeLockedSessions = d.ErrCodeLockedSessions
 	errCodeSessionsTrashFailed = d.ErrCodeSessionsTrashFailed
+	errCodeSessionsUnobservable = d.ErrCodeSessionsUnobservable
 	errCodeWorktreeArchiveFailed = d.ErrCodeWorktreeArchiveFailed
 	errCodeWorktreeNestedRepo = d.ErrCodeWorktreeNestedRepo
 	errCodeIndexLockStale = d.ErrCodeIndexLockStale
@@ -213,6 +216,7 @@ var (
 	errCodeLocked                string
 	errCodeLockedSessions        string
 	errCodeSessionsTrashFailed   string
+	errCodeSessionsUnobservable  string
 	errCodeWorktreeArchiveFailed string
 	errCodeWorktreeNestedRepo    string
 	errCodeIndexLockStale        string
@@ -227,10 +231,6 @@ func repoLocked(dir string) bool { return deps.RepoLocked(dir) }
 func lockedRepoDirs() map[string]bool { return deps.LockedRepoDirs() }
 
 func liveSessionsInDir(dir string) []string { return deps.LiveSessionsInDir(dir) }
-
-func lockedSessionsInDir(metas []session.Meta, dir string) []string {
-	return deps.LockedSessionsInDir(metas, dir)
-}
 
 func managedAlive(m session.Meta) bool { return deps.ManagedAlive(m) }
 

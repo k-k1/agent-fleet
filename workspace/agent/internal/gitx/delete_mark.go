@@ -24,8 +24,8 @@ var deleteMarks = struct {
 	mu sync.Mutex
 	// m maps a working copy being deleted to its base clone ("" for a clone or a plain folder).
 	m map[string]string
-	// sessions maps a copy being deleted to the names of the sessions living in it, taken inside
-	// the gate with the same string match the delete settles them by. A session is matched by name,
+	// sessions maps a copy being deleted to the names of the sessions living in it, by the rule the
+	// delete settles them by (ReadDirSessions). A session is matched by name,
 	// so a path that reaches the copy through a symlink (inside it or outside it), or that no
 	// longer resolves once the folder is gone, cannot make a lock slip past.
 	sessions map[string][]string
@@ -295,12 +295,10 @@ func (lp launchPath) under(dirRaw, dirReal string) bool {
 }
 
 // ReserveLaunch reserves the folders a launch runs in (its Meta.Dir and its cwd). It refuses
-// (ok=false) when one of them lies in a copy being deleted: by its spelling, which covers the
-// string match a delete settles sessions by (sessionsToSettleUnder), or by where the kernel
-// takes it. The session's name is not matched: the names a mark records (sessionNamesUnder) also
-// take a lexical clean of Meta.Dir, which names another folder when a link precedes `..`. Call it, and release, inside the launch gate (WithLaunchGate), so a delete
-// that marks sees every reservation and every release (MarkAgainstLaunches). release is safe to
-// call more than once.
+// (ok=false) when one of them lies in a copy being deleted, by its spelling or by where the kernel
+// takes it: the comparison a delete decides its sessions by (SessionLivesIn). Call it, and
+// release, inside the launch gate (WithLaunchGate), so a delete that marks sees every reservation
+// and every release (MarkAgainstLaunches). release is safe to call more than once.
 func ReserveLaunch(paths ...string) (release func(), ok bool) {
 	var held []launchPath
 	for _, p := range paths {

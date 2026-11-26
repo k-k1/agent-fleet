@@ -128,6 +128,20 @@ folder must still exist, and the session a launch starts or derives from is judg
 read of it, so a start never revives a session a delete settled meanwhile. The Managed runtime's own reconcile
 after a runtime death does not reserve.
 
+*Amended 2026-11-27 (#5122 part 2): one rule for which sessions live in the folder, and a read that cannot
+fail silently.* The guards, the names the mark records, the shell sessions trashed, the tombstone's shelf list
+and the shelving matched `Meta.Dir` by string prefix at some steps and by real path at others, so a session
+started through another spelling of the folder, or at home with its `Subdir` in it, could be refused by one step
+and missed by the next. Every step now asks `gitx.SessionLivesIn`: `Meta.Dir`, or `Dir` joined with the stored
+`Subdir`, lies in the folder as spelled or by every folder the kernel passes through, the comparison a launch's
+reservation is judged by. The Console's counts (the cleanup list, the space delete dialog as near as it can
+without resolving links) follow the same rule. A delete reads the sessions once for its guards and mark
+(`gitx.ReadDirSessions`), and once more with the mark held for the sessions it settles; after the removal it
+settles those by name, whatever their path resolves to then. Both reads fail, and the delete answers 503
+(`sessions_unobservable`, `space_sessions_unobservable`) with nothing changed, when a meta file cannot be read or
+tmux cannot say what runs: only tmux's own "no server" or "no such socket", or no tmux binary at all, reads as
+"nothing runs".
+
 A session whose working folder is gone can still be read, on the shelf or in the list, but not resumed
 ("Folder missing").
 

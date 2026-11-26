@@ -67,6 +67,9 @@ func TestWorkingCopyGuardsSeeManagedSessions(t *testing.T) {
 	// exactly what main would answer. Without it the delete guard is never reached.
 	d := gitxStubDeps()
 	d.RepoJobActive = func(string) bool { return false }
+	// The delete reads liveness through gitx's own wiring (gitx.ReadDirSessions), the checkout
+	// through LiveSessionsInDir: both have to meet the seam.
+	d.ManagedAlive = func(m session.Meta) bool { return managedAlive(m) }
 	gitx.Configure(d)
 	defer gitx.Configure(gitxStubDeps())
 
