@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
-	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/routes"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -31,9 +30,6 @@ func (ocGateway) CheckRoute(context.Context, agents.RouteSelection, string) *age
 
 func openOpencodeBedrock(t *testing.T) {
 	t.Helper()
-	prevPref := opencode.UsagePref
-	opencode.UsagePref = func() string { return opencode.UsageOwn }
-	t.Cleanup(func() { opencode.UsagePref = prevPref })
 	prev := agents.CurrentRouteGateway()
 	agents.SetRouteGateway(ocGateway{})
 	t.Cleanup(func() { agents.SetRouteGateway(prev) })

@@ -57,6 +57,13 @@ describe("kindLaunchable", () => {
     expect(kindLaunchable("codex", { conns: { codex: { connected: false } } }, live(codex))).toBe(false);
   });
 
+  it("does not offer a route-only kind to a caller that cannot carry a route (a session move)", () => {
+    const oc: LiveKindAccess = { kind: "opencode", routes: ["bedrock"], fixedRoutes: ["opencode-zen"], usableRoutes: ["bedrock"] };
+    const conns = { opencode: { connected: false } };
+    expect(kindLaunchable("opencode", { conns }, live(oc), { routeless: true })).toBe(false);
+    expect(kindLaunchable("opencode", { conns: { opencode: { connected: true } } }, live({ ...oc, usableRoutes: ["bedrock", "opencode-zen"] }), { routeless: true })).toBe(true);
+  });
+
   it("falls back to the connection check while the kind cannot tell its usable routes", () => {
     expect(kindLaunchable("claude", { conns: { claude: { connected: true } } }, live(claude(["anthropic-subscription"])))).toBe(true);
     expect(kindLaunchable("claude", { conns: { claude: { connected: false } } }, live(claude(["anthropic-subscription"])))).toBe(false);

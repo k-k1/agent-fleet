@@ -53,9 +53,11 @@ export function routeUsable(k: LiveKindAccess | undefined, route: string): boole
  * profile launches it as well as the subscription login; every other kind also keeps its own
  * connection check, so nothing is offered that was not before. A kind whose only usable routes are
  * selectable ones (opencode with nothing but a marked Bedrock profile) is offered too, unless its
- * binary is reported unsupported: its own connection check knows nothing of those routes.
+ * binary is reported unsupported: its own connection check knows nothing of those routes. A caller
+ * that cannot carry a route in the request (a session move) passes routeless, and such a kind is
+ * not offered to it.
  */
-export function kindLaunchable(kind: string, ctx: AvailCtx, live: LiveKinds | null): boolean {
+export function kindLaunchable(kind: string, ctx: AvailCtx, live: LiveKinds | null, opts?: { routeless?: boolean }): boolean {
   if (MODEL_FREE.has(kind)) return AGENTS[kind as SessionKind].available(ctx);
   if (!live) return false;
   const k = live.get(kind);
@@ -63,7 +65,7 @@ export function kindLaunchable(kind: string, ctx: AvailCtx, live: LiveKinds | nu
   const own = AGENTS[kind as SessionKind]?.available(ctx) ?? false;
   if (!k.usableRoutes) return own;
   if (k.usableRoutes.length === 0) return false;
-  return !!noSelectionRoute(kind) || own || selectableOnly(kind, ctx, k);
+  return !!noSelectionRoute(kind) || own || (!opts?.routeless && selectableOnly(kind, ctx, k));
 }
 
 // The kind runs only on a route chosen at the launch: it holds a credential for some selectable

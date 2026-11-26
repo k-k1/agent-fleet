@@ -204,8 +204,8 @@ func (kindsGateway) CheckRoute(context.Context, agents.RouteSelection, string) *
 
 // Both harnesses offer the member's bedrock route with no switch in the environment (ADR 0128
 // decision 14 passed for each) while the route gateway runs, and a leftover acceptance switch
-// changes nothing. Without the gateway neither is offered; opencode switched off (its billing
-// choice "off") is not offered either.
+// changes nothing. Without the gateway neither is offered. opencode's billing choice "off" (the
+// default) does not close its route.
 func TestKindCatalogOffersBedrockWithoutASwitch(t *testing.T) {
 	settleKindProbes(t)
 	routesOf := func(kind string) []string {
@@ -221,7 +221,7 @@ func TestKindCatalogOffersBedrockWithoutASwitch(t *testing.T) {
 	t.Cleanup(func() { agents.SetRouteGateway(prevGW) })
 	prevPref := opencode.UsagePref
 	t.Cleanup(func() { opencode.UsagePref = prevPref })
-	opencode.UsagePref = func() string { return opencode.UsageOwn }
+	opencode.UsagePref = func() string { return opencode.UsageOff }
 
 	agents.SetRouteGateway(nil)
 	if got := routesOf("opencode"); len(got) != 0 {
@@ -243,8 +243,4 @@ func TestKindCatalogOffersBedrockWithoutASwitch(t *testing.T) {
 		}
 	}
 
-	opencode.UsagePref = func() string { return opencode.UsageOff }
-	if got := routesOf("opencode"); len(got) != 0 {
-		t.Errorf("opencode switched off: routes %v", got)
-	}
 }

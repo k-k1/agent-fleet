@@ -45,7 +45,7 @@ export function useMoveGate(): {
   }, []);
   const connected = useMemo(
     () =>
-      pending ? null : (k: SessionKind) => (conns ? kindLaunchable(k, { conns }, kinds) : !!kinds?.has(k)),
+      pending ? null : (k: SessionKind) => (conns ? kindLaunchable(k, { conns }, kinds, { routeless: true }) : !!kinds?.has(k)),
     [conns, kinds, pending],
   );
   const loggedIn = useCallback((k: SessionKind) => !conns || agentOf(k).available({ conns }), [conns]);

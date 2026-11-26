@@ -303,8 +303,8 @@ login. A session with no route behaves as before.
 ## opencode: the Amazon Bedrock route
 
 opencode can run on Amazon Bedrock with one of your Settings > AWS profiles/SSM profiles marked as a model
-route, like claude's bedrock route above. It needs no operator switch, but it is not offered while opencode is switched off
-(Settings > Agents > opencode), or while the workspace's route gateway is not running.
+route, like claude's bedrock route above. It needs no operator switch; it is not offered while the workspace's route gateway is not running.
+Opencode's "off" choice under Model credentials concerns opencode.ai and stored keys, and does not close it.
 
 - **Terminal (CLI) and Managed.** A Managed opencode session normally shares one opencode server with every other
   Managed session, which cannot carry a route of its own; a Managed session on this route gets a server of its own

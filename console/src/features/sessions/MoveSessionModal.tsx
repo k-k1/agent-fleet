@@ -219,6 +219,10 @@ export function MoveSessionModal({ session, fromLimit = false, onClose }: MoveSe
 
 // --- the move itself -----------------------------------------------------------------------
 
+// A move carries kind, model and driver and no route, so a model that runs only on a route named at
+// the launch (opencode's amazon-bedrock/… models) cannot be moved to: the Agent would refuse it.
+const moveModelOk = (id: string) => !id.startsWith("amazon-bedrock/");
+
 function MoveForm({
   session,
   preview,
@@ -343,7 +347,7 @@ function MoveForm({
       {a?.caps.model && kind && (
         <div className="ui-field">
           <span className="ui-field-label">{tr("launch.field.model")}</span>
-          <ModelPicker kind={kind} model={model} onChange={setModel} />
+          <ModelPicker kind={kind} model={model} onChange={setModel} filter={moveModelOk} />
         </div>
       )}
       {a?.managedDriver && a.terminalDriver !== false && (

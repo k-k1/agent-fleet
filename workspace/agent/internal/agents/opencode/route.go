@@ -79,9 +79,8 @@ func (agentImpl) FixedRoutes() []string {
 		routes.RouteOpencodeZen, routes.RouteSakanaAPI}
 }
 
-// OfferedRoutes implements agents.RouteOfferer: bedrock while opencode is not switched off and
-// the gateway's loopback listener is up (opencode can only speak TCP), so a route nothing can
-// serve is not offered.
+// OfferedRoutes implements agents.RouteOfferer: bedrock while the gateway's loopback listener is
+// up (opencode can only speak TCP), so a route nothing can serve is not offered.
 func (agentImpl) OfferedRoutes() []string {
 	if routeUnavailable() != nil {
 		return nil
@@ -89,17 +88,17 @@ func (agentImpl) OfferedRoutes() []string {
 	return []string{RouteBedrock}
 }
 
-// routeUnavailable is why the bedrock route cannot be used now, nil when it can. The billing
-// choice "off" (Settings > Agents > opencode) disables opencode outright, whatever else is
-// configured (UsageOff), and that holds for the route too; without the gateway's loopback
-// listener there is nothing to send the calls to.
+// routeUnavailable is why the bedrock route cannot be used now, nil when it can: without the
+// gateway, or its loopback listener, there is nothing to send the calls to. The billing choice
+// "off" (UsageOff) is about opencode.ai and stored keys and does not close this route, which runs
+// on a marked AWS profile the member chose for the session.
 func routeUnavailable() *agents.RouteRefusal {
-	if UsagePref() == UsageOff {
-		return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
-			Message: "opencode is switched off (Settings > Agents > opencode), so the bedrock route cannot be used; choose another billing route there first"}
+	if agents.CurrentRouteGateway() == nil {
+		return noGateway()
 	}
 	if !agents.GatewayLoopbackReady() {
-		return noGateway()
+		return &agents.RouteRefusal{Status: http.StatusServiceUnavailable, Code: routes.CodeRouteUnavailable,
+			Message: "the AF route gateway's loopback listener is not up in this workspace (opencode can only reach the gateway over TCP), so the bedrock route cannot be used; restart the workspace, or start the session on another route"}
 	}
 	return nil
 }
@@ -499,16 +498,20 @@ func closesNext(rest []byte) bool {
 // catalogue for the provider, which changes with opencode's models.dev refresh, not per call.
 const routeModelsTTL = 10 * time.Minute
 
-// routeModelsRetry is how long a failed listing is not tried again: the listing runs a CLI under
-// a timeout, and a launch menu that waits for it on every request would stall the kind's whole
-// model list behind a hung process.
+// routeModelsRetry is how long a failed listing is not tried again.
 const routeModelsRetry = time.Minute
 
+// routeModelsWait is the longest a request waits for a listing when it has no menu at all yet. A
+// request that already has one (a cached list, even an empty one) never waits: the listing runs
+// a CLI under a timeout, and the kind's whole model list must not stall behind a hung process.
+const routeModelsWait = 2 * time.Second
+
 var routeModels struct {
-	mu     sync.Mutex
-	at     time.Time
-	failAt time.Time
-	list   []string
+	mu      sync.Mutex
+	at      time.Time // zero until a listing has succeeded; an empty result counts
+	failAt  time.Time
+	list    []string
+	running chan struct{} // non-nil while a refresh runs, closed when it ends
 }
 
 // listBedrockModels runs the CLI; a var so tests need no opencode.
@@ -553,18 +556,42 @@ func BedrockRouteModels() []string {
 		return nil
 	}
 	routeModels.mu.Lock()
+	cold := routeModels.at.IsZero()
+	stale := cold || time.Since(routeModels.at) >= routeModelsTTL
+	backoff := !routeModels.failAt.IsZero() && time.Since(routeModels.failAt) < routeModelsRetry
+	var wait chan struct{}
+	if stale && !backoff {
+		if routeModels.running == nil {
+			routeModels.running = make(chan struct{})
+			go refreshRouteModels(routeModels.running)
+		}
+		wait = routeModels.running
+	}
+	list := routeModels.list
+	routeModels.mu.Unlock()
+	if wait == nil || !cold {
+		return list
+	}
+	select {
+	case <-wait:
+	case <-time.After(routeModelsWait):
+	}
+	routeModels.mu.Lock()
 	defer routeModels.mu.Unlock()
-	if routeModels.list != nil && time.Since(routeModels.at) < routeModelsTTL {
-		return routeModels.list
-	}
-	if !routeModels.failAt.IsZero() && time.Since(routeModels.failAt) < routeModelsRetry {
-		return routeModels.list
-	}
+	return routeModels.list
+}
+
+// refreshRouteModels runs one listing and records its outcome; done is closed when it has.
+func refreshRouteModels(done chan struct{}) {
 	ids, err := listBedrockModels()
+	routeModels.mu.Lock()
+	defer routeModels.mu.Unlock()
+	defer close(done)
+	routeModels.running = nil
 	if err != nil {
 		routeModels.failAt = time.Now()
 		log.Printf("opencode: listing the bedrock route's models failed: %v", err)
-		return routeModels.list
+		return
 	}
 	routeModels.failAt = time.Time{}
 	var out []string
@@ -574,5 +601,4 @@ func BedrockRouteModels() []string {
 		}
 	}
 	routeModels.list, routeModels.at = out, time.Now()
-	return out
 }
