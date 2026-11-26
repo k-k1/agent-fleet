@@ -305,26 +305,12 @@ func WriteWorktreeCreator(dir, session string) error {
 	return os.Rename(tmp.Name(), p)
 }
 
-// creatorMarkerMax bounds a marker read; a real one is a session name.
-const creatorMarkerMax = 4096
-
 // readCreatorFile returns the trimmed marker body; ok is false when it cannot be read, is empty,
-// or is not a small regular file. A named pipe or device in its place must never block the
-// reader (the delete path reads it while holding the deletion gate), so the file is opened
-// without blocking and its type is checked on the descriptor.
+// or is not a small regular file (readSmallRegular: the delete path reads it while holding the
+// deletion gate, so a named pipe in its place must never block it).
 func readCreatorFile(p string) (string, bool) {
-	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
-	if err != nil {
-		return "", false
-	}
-	defer f.Close()
-	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
-		return "", false
-	}
-	// One byte over the limit: a longer marker is damaged, and its first 4 KiB must never be
-	// taken for a session name.
-	b, err := io.ReadAll(io.LimitReader(f, creatorMarkerMax+1))
-	if err != nil || len(b) > creatorMarkerMax {
+	b, ok := readSmallRegular(p)
+	if !ok {
 		return "", false
 	}
 	v := strings.TrimSpace(string(b))
@@ -916,13 +902,65 @@ func WorktreeParent(dir string) string {
 // LinkedWorktreeMain reports whether dir is a linked worktree (`git worktree add`) and, when it
 // is, the main working copy it hangs off. It reads the .git gitfile and commondir rather than
 // running git, so a session create pays no process for it. A submodule's gitfile has no
-// commondir and is not a linked worktree.
-func LinkedWorktreeMain(dir string) (string, bool) {
-	gitDir, commonDir, ok := gitLocation(dir)
-	if !ok || gitDir == commonDir {
+// commondir and is not a linked worktree. main is "" for a linked worktree whose common git
+// directory is not a working copy's .git (a --separate-git-dir or a bare repository): the
+// folder above it is then no working copy, and naming it would invent a parent.
+func LinkedWorktreeMain(dir string) (main string, linked bool) {
+	body, ok := readSmallRegular(filepath.Join(dir, ".git"))
+	if !ok {
+		return "", false // a .git directory (a main copy), none, or not a regular file
+	}
+	gitDir := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(body)), "gitdir:"))
+	if gitDir == "" {
 		return "", false
 	}
-	return filepath.Dir(commonDir), true // …/repos/app/.git -> …/repos/app
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(dir, gitDir)
+	}
+	gitDir = filepath.Clean(gitDir)
+	c, ok := readSmallRegular(filepath.Join(gitDir, "commondir"))
+	if !ok {
+		return "", false
+	}
+	common := strings.TrimSpace(string(c))
+	if common == "" {
+		return "", false
+	}
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(gitDir, common)
+	}
+	common = filepath.Clean(common)
+	if common == gitDir {
+		return "", false
+	}
+	if filepath.Base(common) != ".git" {
+		return "", true
+	}
+	return filepath.Dir(common), true // …/repos/app/.git -> …/repos/app
+}
+
+// smallFileMax bounds readSmallRegular: a gitfile, a commondir or a creator marker holds one
+// path or one session name.
+const smallFileMax = 4096
+
+// readSmallRegular reads p only when it is a regular file of at most smallFileMax bytes. The
+// open is non-blocking and the type is checked on the opened descriptor, so a named pipe or
+// device in its place (or swapped in after a stat) never blocks the reader. One byte over the
+// limit is read so a longer file is refused rather than taken truncated.
+func readSmallRegular(p string) ([]byte, bool) {
+	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, false
+	}
+	defer f.Close()
+	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
+		return nil, false
+	}
+	b, err := io.ReadAll(io.LimitReader(f, smallFileMax+1))
+	if err != nil || len(b) > smallFileMax {
+		return nil, false
+	}
+	return b, true
 }
 
 // LinkedWorktreeCount returns how many linked worktrees hang off dir (0 for a plain

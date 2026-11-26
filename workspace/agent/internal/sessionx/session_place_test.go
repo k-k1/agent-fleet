@@ -3,10 +3,13 @@ package sessionx
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
@@ -42,6 +45,9 @@ func TestPlaceOf(t *testing.T) {
 	// A worktree whose main copy lies outside ~/repos is still a worktree, with no parent.
 	gitInit(t, filepath.Join(home, "elsewhere", "main"))
 	placeWorktree(t, filepath.Join(home, "elsewhere", "main"), filepath.Join(repos, "stray"), "stray")
+	if err := os.MkdirAll(filepath.Join(repos, "foo", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.MkdirAll(filepath.Join(repos, "plain"), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -53,6 +59,32 @@ func TestPlaceOf(t *testing.T) {
 	if err := os.Symlink(home, link); err != nil {
 		t.Fatal(err)
 	}
+	// GET /repos lists any folder name, spaces included, so the place does too.
+	gitInit(t, filepath.Join(repos, "team app"))
+	// A symlink entry under ~/repos is skipped by GET /repos and is no repository here either.
+	if err := os.Symlink(filepath.Join(repos, "foo"), filepath.Join(repos, "alias")); err != nil {
+		t.Fatal(err)
+	}
+	// ~/repos/hop/../foo runs in ~/elsewhere/foo, wherever Clean would fold it lexically.
+	gitInit(t, filepath.Join(home, "elsewhere", "inner"))
+	gitInit(t, filepath.Join(home, "elsewhere", "foo"))
+	if err := os.Symlink(filepath.Join(home, "elsewhere", "inner"), filepath.Join(repos, "hop")); err != nil {
+		t.Fatal(err)
+	}
+	// ~/elsewhere/back/../team app runs in ~/repos/team app: back points into ~/repos.
+	if err := os.Symlink(filepath.Join(repos, "foo"), filepath.Join(home, "elsewhere", "back")); err != nil {
+		t.Fatal(err)
+	}
+	// A linked worktree of a --separate-git-dir copy, and one of a bare repository: the folder
+	// above their common git directory is no working copy, so neither gets a parent.
+	if err := os.MkdirAll(filepath.Join(repos, "storage"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repos, "init", "-q", "-b", "main", "--separate-git-dir", filepath.Join(repos, "storage", "admin.git"), filepath.Join(repos, "sep"))
+	gitRun(t, filepath.Join(repos, "sep"), "commit", "-q", "--allow-empty", "-m", "init")
+	placeWorktree(t, filepath.Join(repos, "sep"), filepath.Join(repos, "sep@wt"), "sepwt")
+	gitRun(t, repos, "clone", "-q", "--bare", filepath.Join(repos, "foo"), filepath.Join(repos, "storage", "vendor.git"))
+	placeWorktree(t, filepath.Join(repos, "storage", "vendor.git"), filepath.Join(repos, "vendor@wt"), "vendorwt")
 
 	for _, c := range []struct {
 		dir  string
@@ -64,6 +96,17 @@ func TestPlaceOf(t *testing.T) {
 		{filepath.Join(repos, "foo"), session.Place{Kind: session.PlaceRepo, ID: "foo"}},
 		{filepath.Join(link, "repos", "foo"), session.Place{Kind: session.PlaceRepo, ID: "foo"}},
 		{filepath.Join(repos, "plain"), session.Place{Kind: session.PlaceRepo, ID: "plain"}},
+		{filepath.Join(repos, "foo") + "/.", session.Place{Kind: session.PlaceRepo, ID: "foo"}},
+		{filepath.Join(repos, "foo", "sub") + "/..", session.Place{Kind: session.PlaceRepo, ID: "foo"}},
+		{filepath.Join(repos, "team app"), session.Place{Kind: session.PlaceRepo, ID: "team app"}},
+		{filepath.Join(repos, "alias"), session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(repos, "alias") + "/", session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(repos, "hop") + "/../foo", session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(repos, "hop") + "/../foo/.", session.Place{Kind: session.PlaceOther}},
+		{filepath.Join(home, "elsewhere", "back") + "/../team app", session.Place{Kind: session.PlaceRepo, ID: "team app"}},
+		{filepath.Join(repos, "sep"), session.Place{Kind: session.PlaceRepo, ID: "sep"}},
+		{filepath.Join(repos, "sep@wt"), session.Place{Kind: session.PlaceWorktree, ID: "sep@wt"}},
+		{filepath.Join(repos, "vendor@wt"), session.Place{Kind: session.PlaceWorktree, ID: "vendor@wt"}},
 		{filepath.Join(repos, "foo@wt"), session.Place{Kind: session.PlaceWorktree, ID: "foo@wt", Parent: "foo"}},
 		{filepath.Join(repos, "stray"), session.Place{Kind: session.PlaceWorktree, ID: "stray"}},
 		{filepath.Join(spacex.Root(), "foo"), session.Place{Kind: session.PlaceSpace, ID: "foo"}},
@@ -79,6 +122,43 @@ func TestPlaceOf(t *testing.T) {
 		got := PlaceOf(c.dir)
 		if got == nil || *got != c.want {
 			t.Errorf("PlaceOf(%q) = %+v, want %+v", c.dir, got, c.want)
+		}
+	}
+}
+
+// A FIFO where a gitfile or commondir should be is never read: the create that classifies the
+// directory would otherwise wait for a writer forever.
+func TestPlaceOfNeverBlocksOnAFIFO(t *testing.T) {
+	isolateAgentState(t)
+	repos := filepath.Join(homeDir(), "repos")
+	if err := os.MkdirAll(filepath.Join(repos, "pipe"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(repos, "pipe", ".git"), 0o644); err != nil {
+		t.Skipf("mkfifo: %v", err)
+	}
+	gitInit(t, filepath.Join(repos, "main"))
+	placeWorktree(t, filepath.Join(repos, "main"), filepath.Join(repos, "main@wt"), "wt")
+	commondir := filepath.Join(repos, "main", ".git", "worktrees", "main@wt", "commondir")
+	if err := os.Remove(commondir); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(commondir, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for dir, want := range map[string]session.Place{
+		filepath.Join(repos, "pipe"):    {Kind: session.PlaceRepo, ID: "pipe"},
+		filepath.Join(repos, "main@wt"): {Kind: session.PlaceRepo, ID: "main@wt"},
+	} {
+		done := make(chan *session.Place, 1)
+		go func() { done <- PlaceOf(dir) }()
+		select {
+		case got := <-done:
+			if *got != want {
+				t.Errorf("PlaceOf(%q) = %+v, want %+v", dir, got, want)
+			}
+		case <-time.After(10 * time.Second):
+			t.Fatalf("PlaceOf(%q) blocked on a FIFO", dir)
 		}
 	}
 }
@@ -109,6 +189,31 @@ func TestPlaceSpaceAndRepositoryOfOneNameStayApart(t *testing.T) {
 	}
 	if space == nil || *space != (session.Place{Kind: session.PlaceSpace, ID: "app"}) {
 		t.Errorf("space session place = %+v", space)
+	}
+
+	// The same two rows as GET /sessions answers them.
+	rec := httptest.NewRecorder()
+	HandleListSessions(rec, httptest.NewRequest(http.MethodGet, "/sessions", nil))
+	var body struct {
+		Sessions []struct {
+			Dir   string         `json:"dir"`
+			Place *session.Place `json:"place"`
+		} `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("GET /sessions: %d %v: %s", rec.Code, err, rec.Body)
+	}
+	listed := map[string]session.Place{}
+	for _, r := range body.Sessions {
+		if r.Place != nil {
+			listed[r.Dir] = *r.Place
+		}
+	}
+	if got := listed[p.repo]; got != (session.Place{Kind: session.PlaceRepo, ID: "app"}) {
+		t.Errorf("GET /sessions repository row place = %+v", got)
+	}
+	if got := listed[spaceDir]; got != (session.Place{Kind: session.PlaceSpace, ID: "app"}) {
+		t.Errorf("GET /sessions space row place = %+v", got)
 	}
 }
 

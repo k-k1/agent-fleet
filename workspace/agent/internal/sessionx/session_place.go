@@ -1,7 +1,9 @@
 package sessionx
 
 import (
+	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -11,31 +13,39 @@ import (
 // PlaceOf decides where a session whose working directory is dir runs. It is the one place
 // that classifies a directory: a create, a recreate and a fork store its answer in the meta,
 // and nothing re-derives it from the folder name afterwards, because a space and a repository
-// can share a basename. A space is told by spacex.FolderOf (its marker under
-// ~/spaces), a repository or worktree by sitting directly under ~/repos, home by being the
-// home directory itself; anything else is PlaceOther. Never nil.
+// can share a basename. A space is told by spacex.FolderOf (its marker under ~/spaces); home
+// by being the home directory itself; a repository or worktree by being a real directory
+// directly under ~/repos under any folder name (a symlink entry never: GET /repos skips those
+// too). Anything else is PlaceOther. Never nil.
+//
+// The parent is compared physically: a spelling with ".." is resolved before it is judged, so
+// ~/repos/link/../app is filed where it really runs, never as ~/repos/app.
 func PlaceOf(dir string) *session.Place {
+	other := &session.Place{Kind: session.PlaceOther}
 	if dir == "" || !filepath.IsAbs(dir) {
-		return &session.Place{Kind: session.PlaceOther}
+		return other
 	}
 	if f := spacex.FolderOf(dir); f != "" {
 		return &session.Place{Kind: session.PlaceSpace, ID: f}
 	}
-	clean := filepath.Clean(dir)
-	if sameDir(clean, homeDir()) {
+	if sameDir(dir, homeDir()) {
 		return &session.Place{Kind: session.PlaceHome}
 	}
+	parent, folder, ok := splitPhysical(dir)
+	if !ok {
+		return other
+	}
 	root := gitx.ReposRoot()
-	if !sameDir(filepath.Dir(clean), root) {
-		return &session.Place{Kind: session.PlaceOther}
+	if !sameDir(parent, root) {
+		return other
 	}
-	folder := filepath.Base(clean)
-	if _, ok := gitx.ResolveRepoDir(folder); !ok {
-		return &session.Place{Kind: session.PlaceOther}
+	full := filepath.Join(parent, folder)
+	if fi, err := os.Lstat(full); err != nil || !fi.IsDir() {
+		return other // missing, a file, or a symlink entry, which GET /repos skips too
 	}
-	if main, ok := gitx.LinkedWorktreeMain(clean); ok {
+	if main, linked := gitx.LinkedWorktreeMain(full); linked {
 		p := &session.Place{Kind: session.PlaceWorktree, ID: folder}
-		if sameDir(filepath.Dir(main), root) {
+		if main != "" && sameDir(filepath.Dir(main), root) {
 			p.Parent = filepath.Base(main)
 		}
 		return p
@@ -43,11 +53,58 @@ func PlaceOf(dir string) *session.Place {
 	return &session.Place{Kind: session.PlaceRepo, ID: folder}
 }
 
-// sameDir reports whether a and b name one directory, comparing the cleaned spellings first
-// and the resolved paths only when those differ, so a symlinked home or ~/repos still matches.
+// splitPhysical splits dir into the directory holding its last element and that element,
+// without letting filepath.Clean fold a ".." across a symlink: a parent spelt with ".." is
+// resolved, and a last element of ".." is resolved whole. Trailing "/" and "/." name the
+// element before them.
+func splitPhysical(dir string) (parent, last string, ok bool) {
+	p := trimSelf(dir)
+	last = filepath.Base(p)
+	if last == ".." {
+		real, err := filepath.EvalSymlinks(p)
+		if err != nil {
+			return "", "", false
+		}
+		return filepath.Dir(real), filepath.Base(real), true
+	}
+	if last == "/" || last == "." {
+		return "", "", false
+	}
+	parent = strings.TrimRight(p[:len(p)-len(last)], "/")
+	if parent == "" {
+		parent = "/"
+	}
+	if filepath.Clean(parent) != parent {
+		real, err := filepath.EvalSymlinks(parent)
+		if err != nil {
+			return "", "", false
+		}
+		parent = real
+	}
+	return parent, last, true
+}
+
+// trimSelf drops trailing "/" and "/." elements, which name the directory before them.
+func trimSelf(p string) string {
+	for len(p) > 1 {
+		switch {
+		case strings.HasSuffix(p, "/"):
+			p = p[:len(p)-1]
+		case strings.HasSuffix(p, "/."):
+			p = p[:len(p)-1] // the "/" before it may be the root's own
+		default:
+			return p
+		}
+	}
+	return p
+}
+
+// sameDir reports whether a and b name one directory. Clean spellings are compared as they
+// are first; otherwise both are resolved, so a symlinked home or ~/repos still matches and a
+// ".." after a symlink is followed where it really leads.
 func sameDir(a, b string) bool {
-	a, b = filepath.Clean(a), filepath.Clean(b)
-	if a == b {
+	a, b = trimSelf(a), trimSelf(b)
+	if a == b && filepath.Clean(a) == a {
 		return true
 	}
 	ra, err := filepath.EvalSymlinks(a)
