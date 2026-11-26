@@ -24,11 +24,18 @@ import { BranchList, type Branch } from "../../repos/BranchList.tsx";
 import { SubdirPicker } from "../../repos/SubdirPicker.tsx";
 import { useReposStore, type Repo } from "../../repos/store.ts";
 import { useRepoRailContext } from "../../repos/useRepoRail.ts";
+import { useSessionsStore } from "../../sessions/store.ts";
+import { rankSpaces } from "../../spaces/recent.ts";
+import { busySpaces } from "../../spaces/running.ts";
+import { spaceLabel, spacesFor, spacesOwner, useSpacesStore } from "../../spaces/store.ts";
+import { SpaceSupportHint } from "../../spaces/SpaceSupportHint.tsx";
+import { useSpaceGone } from "../../spaces/useSpaceGone.ts";
+import { useSpaceSupport } from "../../spaces/useSpaceSupport.ts";
 import { imagegenStatus, type ImagegenStatus } from "../api.ts";
 import { emptyDraft } from "../draft.ts";
 import { fleetProviders, resolveFleetProvider } from "../wire.ts";
 import { studioKindChoices, type StudioDriver } from "../studioSync.ts";
-import { defaultWorktree, lastUsable, orderedPlaces, planPlace, readAttachLast, writeAttachLast } from "../attachPlan.ts";
+import { SPACE_PLACE, defaultWorktree, lastUsable, orderedPlaces, parseSpacePlace, planPlace, readAttachLast, spacePlaceValue, writeAttachLast } from "../attachPlan.ts";
 import { ModelSelect } from "./GenerateForm.tsx";
 // The working-copy rows open this without the pane, so its styles cannot ride on the view's import.
 import "../imagegen.css";
@@ -48,9 +55,16 @@ export interface AttachOpts {
   /** The image model the studio's draft is set to, and its fleet row. */
   imageProvider: string;
   imageModel: string;
-  /** The working copy's name as the member picked it ("" = home): the default studio title. */
+  /** The working copy's name as the member picked it ("" = home): the default studio title. For a
+   *  space, its display name (or "New space"). */
   place: string;
+  /** Start in a space instead of a directory (`dir` is then ""): `folder` names an existing one,
+   *  "" a new one. */
+  space?: { folder: string };
 }
+
+/** What onAttach answers: started, not started, or not started because the Agent refused the space. */
+export type AttachDone = boolean | "space_refused";
 
 export function AttachAgentModal({
   replacing,
@@ -66,7 +80,7 @@ export function AttachAgentModal({
   /** Opened from a working-copy row: the place starts as that copy, shown as a summary. */
   fixedRepo?: Repo;
   onClose: () => void;
-  onAttach: (o: AttachOpts) => Promise<boolean>;
+  onAttach: (o: AttachOpts) => Promise<AttachDone>;
 }) {
   const tr = useT();
   const settings = useSettings();
@@ -95,7 +109,28 @@ export function AttachAgentModal({
   const seeded = useRef<string>(last?.kind || "");
 
   const [placeFixed, setPlaceFixed] = useState(!!fixedRepo);
-  const [repoName, setRepoName] = useState(fixedRepo?.name ?? last?.repo ?? "");
+  // The picker's value: a working copy's name, "" for home, or a space (spacePlaceValue). A member
+  // with no working copy and nothing remembered starts in a new space rather than at home.
+  const [repoName, setRepoName] = useState(() =>
+    fixedRepo ? fixedRepo.name : last ? (last.space ? SPACE_PLACE : last.repo) : repos.length === 0 ? SPACE_PLACE : "",
+  );
+  // The place is the dialog's own default (no working copy, nothing remembered), not a choice: only
+  // such a place is swapped for home when the Agent has no spaces. A remembered or picked space stays
+  // and stops the start, so "same as last time" never turns into a home start.
+  const autoSpace = useRef(!fixedRepo && !last && repos.length === 0);
+  const { support: spaceSupport, recheck: recheckSpaces } = useSpaceSupport();
+  const spaceOwner = spacesOwner();
+  const spaces = useSpacesStore((s) => spacesFor(s, spaceOwner));
+  const sessions = useSessionsStore((s) => s.sessions);
+  const refreshSessions = useSessionsStore((s) => s.refresh);
+  const spacePick = placeFixed && fixedRepo ? null : parseSpacePlace(repoName);
+  // The Agent refused this folder (removed, or an agent moved in) since the list was read: it stays
+  // refused until another place is picked, whatever the lists say while they are being re-read.
+  const [refusedFolder, setRefusedFolder] = useState("");
+  const spaceGone = useSpaceGone(spacePick?.folder ?? "") || (!!spacePick?.folder && spacePick.folder === refusedFolder);
+  const busyFolders = useMemo(() => busySpaces(sessions), [sessions]);
+  const spaceBusy = !!spacePick?.folder && busyFolders.has(spacePick.folder);
+  const rankedSpaces = useMemo(() => rankSpaces(spaces, sessions), [spaces, sessions]);
   const [subdir, setSubdir] = useState("");
   const [worktree, setWorktree] = useState(() =>
     fixedRepo ? defaultWorktree(fixedRepo) : last ? last.worktree : true,
@@ -167,7 +202,7 @@ export function AttachAgentModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind]);
 
-  const repo = (placeFixed ? fixedRepo : repos.find((r) => r.name === repoName)) || null;
+  const repo = (placeFixed ? fixedRepo : spacePick ? undefined : repos.find((r) => r.name === repoName)) || null;
   const plan = planPlace({ repo, repos, kind, driver, want: worktree, base });
   const places = useMemo(() => orderedPlaces(repos), [repos]);
 
@@ -188,14 +223,29 @@ export function AttachAgentModal({
   const skipEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
 
   const pickRepo = (name: string) => {
+    autoSpace.current = false; // from here on the place is the member's choice
     setRepoName(name);
+    setRefusedFolder("");
     setSubdir("");
     setBase("");
     setBranches(null);
     setWorktree(defaultWorktree(repos.find((r) => r.name === name) || null));
   };
 
+  // A space is not offered where the Agent cannot start one (it would start in home instead).
+  const spaceUnavailable = !!spacePick && spaceSupport !== "yes";
+  const spaceName = spacePick ? (spacePick.folder ? spaceLabel(spacePick.folder, spaces) : tr("start.place_new_space")) : "";
+  // An older Agent has no spaces: leave a space pick that the (default) rule or a remembered
+  // choice made, rather than keep a place the start cannot use.
+  useEffect(() => {
+    if (spaceSupport === "no" && autoSpace.current && parseSpacePlace(repoName)) {
+      autoSpace.current = false;
+      setRepoName("");
+    }
+  }, [spaceSupport, repoName]);
+
   const placeLabel = (r: Repo | null): string => {
+    if (spacePick) return spaceName;
     if (!r) return tr("imggen.start_title_home");
     if (!plan.worktree) return tr("imggen.start_sum_in_place", { place: r.name });
     return tr("imggen.start_sum_new_wt", { place: r.name, base: plan.base || tr("launch.base_default") });
@@ -211,9 +261,9 @@ export function AttachAgentModal({
     .filter(Boolean)
     .join(" · ");
 
-  const blocked = !kind || !!plan.blocked;
+  const blocked = !kind || !!plan.blocked || spaceUnavailable || spaceGone || spaceBusy;
   // A remembered choice this place cannot host is shown open, with the reason, not folded.
-  const showFolded = folded && !plan.blocked && !plan.wantUnmet;
+  const showFolded = folded && !plan.blocked && !plan.wantUnmet && !spaceUnavailable && !spaceGone && !spaceBusy;
   const go = async () => {
     if (blocked || !imageOk) return;
     setBusy(true);
@@ -225,15 +275,23 @@ export function AttachAgentModal({
       effort,
       dir: plan.dir,
       subdir: repo ? subdir : "",
+      ...(spacePick ? { space: { folder: spacePick.folder } } : {}),
       worktree: plan.worktree,
       base: plan.base,
       ...perm,
       imageProvider: provider?.id || "",
       imageModel: image.model,
-      place: repo?.name || "",
+      place: spacePick ? spaceName : repo?.name || "",
     });
     setBusy(false);
-    if (!ok) return;
+    if (ok === "space_refused" && spacePick?.folder) {
+      // The lists this dialog holds are old (the space was removed, or another agent moved in, in
+      // another tab): stop sending this place now and read both lists again.
+      setRefusedFolder(spacePick.folder);
+      void useSpacesStore.getState().refresh();
+      void refreshSessions();
+    }
+    if (ok !== true) return;
     writeAttachLast(tenant, {
       driver,
       kind,
@@ -242,6 +300,7 @@ export function AttachAgentModal({
       ...perm,
       // A place fixed by the row it was opened from is that row's choice, not a preference.
       repo: fixedRepo && placeFixed ? (last?.repo ?? "") : repo?.name || "",
+      ...(spacePick ? { space: true } : fixedRepo && placeFixed && last?.space ? { space: true } : {}),
       worktree: fixedRepo && placeFixed ? (last?.worktree ?? true) : worktree,
       imageProvider: provider?.id || "",
       imageModel: image.model,
@@ -395,6 +454,23 @@ export function AttachAgentModal({
               ) : (
                 <select value={repoName} onChange={(e) => pickRepo(e.target.value)}>
                   <option value="">{tr("imggen.attach_repo_home")}</option>
+                  {/* Offered once the Agent says it has spaces; a pick already made stays listed. */}
+                  {(spaceSupport === "yes" || spacePick) && (
+                    <optgroup label={tr("start.sec_space")}>
+                      <option value={SPACE_PLACE}>{tr("start.place_new_space")}</option>
+                      {/* A pick the list no longer holds stays on screen (marked), or the select would show Home. */}
+                      {spacePick?.folder && !rankedSpaces.some((sp) => sp.folder === spacePick.folder) && (
+                        <option value={spacePlaceValue(spacePick.folder)}>{spacePick.folder}</option>
+                      )}
+                      {/* Cached spaces are offered once the Agent has confirmed it has spaces. */}
+                      {(spaceSupport === "yes" ? rankedSpaces : []).map((sp) => (
+                        <option key={sp.folder} value={spacePlaceValue(sp.folder)}>
+                          {spaceLabel(sp.folder, spaces)}
+                          {busyFolders.has(sp.folder) ? ` (${tr("start.place_running")})` : ""}
+                        </option>
+                      ))}
+                    </optgroup>
+                  )}
                   {places.map(({ repo: r, nested }) => (
                     <option key={r.name} value={r.name}>
                       {nested ? `　└ ${r.name}` : r.name}
@@ -449,6 +525,10 @@ export function AttachAgentModal({
             )}
           </>
         )}
+        {/* Outside the folded summary: a failed check must offer its recheck whatever place was remembered. */}
+        {(spacePick || spaceSupport === "failed") && <SpaceSupportHint support={spaceSupport} onRecheck={recheckSpaces} />}
+        {spaceGone && <p className="igen-warn">{tr(refusedFolder && refusedFolder === spacePick?.folder ? "imggen.attach_space_refused" : "imggen.attach_space_gone")}</p>}
+        {spaceBusy && <p className="igen-warn">{tr("imggen.attach_space_busy")}</p>}
         {plan.blocked === "needs_repo" && kind && <p className="igen-warn">{tr("imggen.attach_needs_repo")}</p>}
         {plan.blocked === "no_worktree" && kind && <p className="igen-warn">{tr("imggen.start_no_worktree")}</p>}
         {plan.blocked === "no_parent" && kind && <p className="igen-warn">{tr("imggen.start_no_parent")}</p>}

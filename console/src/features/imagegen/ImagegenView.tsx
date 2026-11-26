@@ -61,7 +61,7 @@ import { JobList } from "./parts/JobList.tsx";
 import { ResultCards, TrialSlot, resultsOf, type ResultItem } from "./parts/ResultCards.tsx";
 import { DraftBar } from "./parts/DraftBar.tsx";
 import { pressBlocked, useArrivals, useChatMark, useUnseenCount } from "./loop.ts";
-import { AttachAgentModal, type AttachOpts } from "./parts/AttachAgentModal.tsx";
+import { AttachAgentModal, type AttachDone, type AttachOpts } from "./parts/AttachAgentModal.tsx";
 import { DraftLog } from "./parts/DraftLog.tsx";
 import { KnowledgeMemo } from "./parts/KnowledgeMemo.tsx";
 import { StudioAgent } from "./parts/StudioAgent.tsx";
@@ -474,7 +474,7 @@ function StudioPane({
   }, []);
 
   const attach = useCallback(
-    async (o: AttachOpts): Promise<boolean> => {
+    async (o: AttachOpts): Promise<AttachDone> => {
       // Prompts are written for a model (revision 9): the dialog picks one and will not start
       // without it, and attachAgent writes it into the studio before the persona is read.
       const cur = studio.studio;
@@ -494,7 +494,7 @@ function StudioPane({
         if (r.studioId !== studioId) openStudio(r.studioId);
         else void studio.reload();
       }
-      return !!r.session;
+      return r.session ? true : r.spaceRefused ? "space_refused" : false;
     },
     [studioId, draft, provider, attachOpen, studio, toast, tr, refreshSessions, openStudio],
   );

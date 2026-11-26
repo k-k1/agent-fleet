@@ -49,7 +49,18 @@ describe("switching the studio's agent", () => {
       opts: { dir: "/home/u/repos/r", kind: "codex", driver: "managed", worktree: true } as never,
     });
     expect(r).toEqual({ studioId: "st1", session: "snew001" });
+    // Halted before the create: a session limit counts the old session until it is.
     expect(calls).toEqual(['bind st1 ""', "POST api/sessions/sold001/halt", "POST api/sessions studio=st1"]);
+  });
+
+  it("says when the Agent refused the space, so the place is not sent again", async () => {
+    created = { error: { code: "space_busy", message: "an agent is running there" } };
+    const refused = await attachAgent({ studioId: "st1", draft: () => ({}), opts: { dir: "", kind: "claude", driver: "tui", space: { folder: "s-abc" } } as never });
+    created = { error: { code: "runtime_failed", message: "boom" } };
+    const other = await attachAgent({ studioId: "st1", draft: () => ({}), opts: { dir: "", kind: "claude", driver: "tui", space: { folder: "s-abc" } } as never });
+    created = { name: "snew001" };
+    expect(refused.spaceRefused).toBe(true);
+    expect(other.spaceRefused).toBeUndefined();
   });
 
   it("refetches the repo list after a worktree create, and not for an in-place one", async () => {

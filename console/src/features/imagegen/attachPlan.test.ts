@@ -2,7 +2,7 @@
 // (the Agent would name it repo@a@b under the wrong node), and a place that cannot host the agent
 // says why instead of starting it somewhere else.
 import { describe, expect, it } from "vitest";
-import { orderedPlaces, planPlace } from "./attachPlan.ts";
+import { SPACE_PLACE, orderedPlaces, parseSpacePlace, planPlace, spacePlaceValue } from "./attachPlan.ts";
 import type { Repo } from "../repos/store.ts";
 
 const BASE: Repo = { name: "app", path: "/r/app", branch: "main" };
@@ -64,5 +64,23 @@ describe("orderedPlaces", () => {
   });
   it("keeps a worktree whose parent is not listed", () => {
     expect(orderedPlaces([WT]).map((p) => p.repo.name)).toEqual(["app@x"]);
+  });
+});
+
+describe("a space as the place", () => {
+  it("round-trips a folder through the picker value, and a new space has no folder", () => {
+    expect(parseSpacePlace(SPACE_PLACE)).toEqual({ folder: "" });
+    expect(parseSpacePlace(spacePlaceValue(""))).toEqual({ folder: "" });
+    expect(parseSpacePlace(spacePlaceValue("s-abc"))).toEqual({ folder: "s-abc" });
+  });
+  it("never mistakes a working copy or home for a space", () => {
+    expect(parseSpacePlace("")).toBeNull();
+    expect(parseSpacePlace("app")).toBeNull();
+    expect(parseSpacePlace("space")).toBeNull();
+    expect(parseSpacePlace("space:s-abc")).toBeNull();
+  });
+  it("starts in no directory, like home: a kind that needs a worktree is refused there too", () => {
+    expect(planPlace({ repo: null, repos, kind: "claude", driver: "tui", want: true })).toMatchObject({ dir: "", worktree: false });
+    expect(planPlace({ repo: null, repos, kind: "codex", driver: "managed", want: true })).toMatchObject({ dir: "", blocked: "needs_repo" });
   });
 });
