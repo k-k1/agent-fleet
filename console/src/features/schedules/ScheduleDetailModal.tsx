@@ -10,6 +10,8 @@
 // the spec/enums and recomputes next_run when the timing changed.
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
+import type { MouseEvent, ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button } from "../../ui/Button.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -40,6 +42,8 @@ import { useModelRouteProfiles } from "../repos/bedrockProfiles.ts";
 import { FieldLabel } from "../../ui/FieldLabel.tsx";
 import { workItemList } from "../workitems/api.ts";
 import { readWorkItems, type WorkItemQuery } from "../workitems/read.ts";
+import { openSessionFromList } from "../sessions/open.ts";
+import { useSessionsStore } from "../sessions/store.ts";
 
 // The agent kinds this picker offers come from the registry cap (AgentCaps.scheduledRuns),
 // never from a list kept here: the hand-kept copy this replaced had already lost agy, whose
@@ -69,6 +73,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   const tr = useT();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [viewingSession, setViewingSession] = useState(false);
 
   // Edit state, seeded from the schedule. Prompt is kept verbatim (leading/trailing space
   // can matter); the rest are trimmed by the CP on save.
@@ -247,6 +252,32 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
       : specKind === "once"
         ? tr("sched.spec_hint_once")
         : tr("sched.spec_hint_cron");
+
+  function openReuseSession(name: string, e: MouseEvent<HTMLButtonElement>) {
+    const target = useSessionsStore.getState().sessions.find((session) => session.name === name);
+    if (!target || !openSessionFromList(target, e.ctrlKey || e.metaKey, running)) {
+      toast(tr("sched.reuse_unavailable", { name }), { kind: "warn" });
+      return;
+    }
+    if (dirty) setViewingSession(true);
+    else onClose();
+  }
+
+  const reuseSessionLink = (name?: string) => name && (
+    <button type="button" className="sched-reuse-link" onClick={(e) => openReuseSession(name, e)}>
+      {name}
+    </button>
+  );
+
+  // Keep the form state mounted while letting the session pane take focus.
+  if (viewingSession) {
+    return createPortal(
+      <Button type="button" variant="primary" className="sched-return-to-edit" onClick={() => setViewingSession(false)}>
+        {tr("sched.return_to_edit", { name: scheduleTitle(s) })}
+      </Button>,
+      document.body,
+    );
+  }
 
   return (
     <Modal
@@ -557,8 +588,11 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
             <ReadRow label={tr("sched.f_session_mode")} value={s.session_mode} />
             {s.session_mode === "reuse" && (
               <>
-                <ReadRow label={tr("sched.f_reuse_target")} value={s.reuse_target} />
-                <ReadRow label={tr("sched.f_reuse_session")} value={s.reuse_session} />
+                <ReadRow label={tr("sched.f_reuse_target")} value={reuseSessionLink(s.reuse_target)} />
+                <ReadRow
+                  label={tr("sched.f_reuse_session")}
+                  value={s.reuse_session === s.reuse_target ? s.reuse_session : reuseSessionLink(s.reuse_session)}
+                />
                 <ReadRow label={tr("sched.f_overlap")} value={s.overlap_policy} />
                 <ReadRow label={tr("sched.f_rotation")} value={s.rotation} />
                 <ReadRow label={tr("sched.f_missing")} value={s.missing_target_policy} />
@@ -602,8 +636,8 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   );
 }
 
-function ReadRow({ label, value }: { label: string; value?: string | number }) {
-  const v = value === undefined || value === null || value === "" ? "—" : String(value);
+function ReadRow({ label, value }: { label: string; value?: ReactNode }) {
+  const v = value == null || value === "" ? "—" : value;
   return (
     <>
       <dt className="sched-dt">{label}</dt>

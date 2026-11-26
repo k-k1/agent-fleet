@@ -692,6 +692,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
       <ScheduledSessions runs={grouped.rest} endedOpen={!!endedOpen[""]} onEndedOpenChange={(v) => setEnded("", v)} />
       {detail && (
         <ScheduleDetailModal
+          key={detail.id}
           s={detail}
           onClose={() => setDetail(null)}
           onStale={() => {

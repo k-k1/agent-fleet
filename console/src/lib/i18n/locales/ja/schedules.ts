@@ -85,6 +85,8 @@ export const schedules = {
   "sched.f_session_mode": "セッションモード",
   "sched.f_reuse_target": "再利用ターゲット",
   "sched.f_reuse_session": "再利用セッション",
+  "sched.reuse_unavailable": "セッション {name} を開けません。",
+  "sched.return_to_edit": "「{name}」の編集に戻る",
   "sched.f_overlap": "重複ポリシー",
   "sched.f_rotation": "ローテーション",
   "sched.f_missing": "対象消失時",

@@ -87,6 +87,8 @@ export const schedules: Record<keyof typeof jaSchedules, string> = {
   "sched.f_session_mode": "Session mode",
   "sched.f_reuse_target": "Reuse target",
   "sched.f_reuse_session": "Reuse session",
+  "sched.reuse_unavailable": "Session {name} is unavailable.",
+  "sched.return_to_edit": "Return to editing {name}",
   "sched.f_overlap": "Overlap policy",
   "sched.f_rotation": "Rotation",
   "sched.f_missing": "Missing target",
