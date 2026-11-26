@@ -147,6 +147,15 @@ contract を `GITHUB_TOKEN` で dispatch し、そうして始まった実行は
   なので、数えるのはワークフロー（`github-actions`）か owner・member・collaborator が書いた
   マーカーだけで、しかもワークフローが開いた issue のものに限る。それ以外の人の `tested`
   コメントは無視する。
+- **`pr-gated` のツール**。マニフェストの監視専用の行（contract なし）に `pr-gated` を付けると、
+  `tested` なしで latest へ上げる。門番はこの PR 自身の CI（`e2e.yml` がイメージを作り、L1 が
+  入った版と pin を突き合わせる。通常のスイートも回る）で、マージは人がする。書き換えるのは版の
+  `ARG` だけなので、版が唯一の pin であるツールに限る（チェックサムの `ARG` を持つ行は
+  `TestPRGatedRowsPinOnlyTheirVersion` が拒む）。新しいメジャーは手で上げるよう `major-manual` と
+  組にする。いまは `awscli`・`gh`・`bkt`・`confluence`・`mcp_grafana`。`awscli` では workflow が
+  新しい版から `workspace/agent/internal/cloudruns/aws_commands.txt.gz` も作り直し
+  （`TestAWSCommandsMatchPin`）、Dockerfile と一緒にコミットする。ほかの上げられる種類と同じく、
+  取得元を読めなかった `pr-gated` の行は実行全体を止める。
 - **チェックサム**は Dockerfile のコメントが名指しする取得元から取る。agy はアーキ別
   manifest（両アーカイブを落として manifest の sha512 と照合し、sha256 を計算する。release
   build id は manifest の URL から取る）。kiro は stable manifest、muse は版付き release
@@ -199,7 +208,7 @@ issue が開くのは次のときだけ:
 | `<kind> CLI: contract failed on <v>` | latest で contract が赤（行と実行は issue の `Red contracts` 欄。`deploy/local/cli-contract-report.sh`） | 直した contract が通ったあとの版上げ PR |
 | `<kind> CLI: contract fails on main` | 版に関係なく `main` で直近 2 回落ちた: ハーネスか secret が壊れている | contract が通りピンが最新になれば自分で閉じる |
 | `<kind> CLI: upstream message fragments gone in <v>` | 新しい版から Agent Fleet が照合する文言が消えた（`Red contracts` に名前が載る）。照合するコードを確かめ、直し、レジストリも更新する | 版上げ PR、または新しい版 |
-| `<tool> CLI: bump the pin to <v>`（`rtk`・`gh`・`bkt`・`jira`・`gitleaks`・`confluence`・`go`・`awscli`・`gcloud`・`mcp_grafana`・`cloudwatch_mcp`・`aws_mcp_proxy`） | マニフェストの監視専用の行。取得元はあるが contract が無く `tested` で門番できないので、手で上げる（§10.2.1）。contract の dispatch も bump PR も出ない | 手での版上げ PR |
+| `<tool> CLI: bump the pin to <v>`（`rtk`・`jira`・`gitleaks`・`go`・`gcloud`・`cloudwatch_mcp`・`aws_mcp_proxy`。`pr-gated` のツールは新しいメジャーのときだけ） | マニフェストの監視専用の行。取得元はあるが contract が無く `tested` で門番できないので、手で上げる（§10.2.1）。contract の dispatch も bump PR も出ない。`pr-gated` の行は開かない（bump PR が運ぶ）。すでに開いている Issue は `merge the pin bump` に改題される | 手での版上げ PR |
 
 開いた issue は CLI に付いていく: latest が通れば同じ issue が `<kind> CLI: merge the pin bump to <v>`
 に改題され、版上げ PR を名指す。ピンが latest に等しく赤い contract も無いとき、または watcher が

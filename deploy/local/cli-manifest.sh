@@ -45,6 +45,8 @@ manifest_load() {
     case "$dispatch" in auto|manual|-) ;; *) echo "cli-manifest: line $n: bad dispatch '$dispatch'" >&2; return 1 ;; esac
     { [ "$dispatch" = - ] && [ "$contract" = - ]; } || { [ "$dispatch" != - ] && [ "$contract" != - ]; } ||
       { echo "cli-manifest: line $n: dispatch and contract must both be set or both '-'" >&2; return 1; }
+    case ",$flags," in *,pr-gated,*) [ "$contract" = - ] ||
+      { echo "cli-manifest: line $n: pr-gated is for a row with no contract" >&2; return 1; } ;; esac
     [ "$install" != npm ] || [ "$source" = npm ] || { echo "cli-manifest: line $n: install npm needs source npm" >&2; return 1; }
     M_NAMES+=("$name")
     M_arg[$name]="$arg"; M_source[$name]="$source"; M_locator[$name]="$locator"

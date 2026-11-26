@@ -41,6 +41,7 @@ fail() {
 }
 
 pin_of() { sed -n "s/^ARG $1=//p" "$ROOT/workspace/Dockerfile"; }
+major_of_v() { printf '%s' "${1%%.*}"; }
 P_CLAUDE="$(pin_of CLAUDE_CODE_VERSION)"
 P_CODEX="$(pin_of CODEX_VERSION)"
 P_OPENCODE="$(pin_of OPENCODE_VERSION)"
@@ -51,7 +52,11 @@ P_KIRO="$(pin_of KIRO_VERSION)"
 P_MUSE="$(pin_of MUSE_VERSION)"
 P_RTK="$(pin_of RTK_VERSION)"
 P_GH="$(pin_of GH_VERSION)"
-for v in P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK P_GH; do
+P_AWSCLI="$(pin_of AWSCLI_VERSION)"
+P_BKT="$(pin_of BKT_VERSION)"
+P_CONFLUENCE="$(pin_of CONFLUENCE_CLI_VERSION)"
+P_MCP_GRAFANA="$(pin_of MCP_GRAFANA_VERSION)"
+for v in P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK P_GH P_AWSCLI P_BKT P_CONFLUENCE P_MCP_GRAFANA; do
   [ -n "${!v}" ] || fail "$v: its ARG is missing from workspace/Dockerfile"
 done
 
@@ -63,7 +68,7 @@ done
 cat > "$STUB/drift-check" <<'FAKE'
 #!/usr/bin/env bash
 rc=0
-for k in claude codex opencode copilot agy cursor kiro muse rtk gh; do
+for k in claude codex opencode copilot agy cursor kiro muse rtk gh awscli bkt confluence mcp_grafana; do
   up="$(printf '%s' "$k" | tr a-z A-Z)"
   pin_var="P_$up"; latest_var="STUB_LATEST_$up"
   case ",${STUB_FAIL:-}," in *",$k,"*) echo "latest_$k=" >> "$GITHUB_OUTPUT"; continue ;; esac
@@ -141,7 +146,7 @@ echo "$*" >> "$STUB_REPORT_LOG"
 FAKE
 chmod +x "$STUB/fragment-check" "$STUB/report"
 export STUB_FRAG_LOG="$WORK/frag.log" STUB_REPORT_LOG="$WORK/report.log"
-export P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK P_GH
+export P_CLAUDE P_CODEX P_OPENCODE P_COPILOT P_AGY P_CURSOR P_KIRO P_MUSE P_RTK P_GH P_AWSCLI P_BKT P_CONFLUENCE P_MCP_GRAFANA
 
 serve() { # serve <url> <file>
   cp "$2" "$WWW/$(printf '%s' "$1" | sed 's|[^A-Za-z0-9._-]|_|g')"
@@ -291,8 +296,8 @@ body_has "[\`agy-contract.yml\` passed on $L_AGY](https://github.com/k-k1/agent-
 body_has "| codex | \`$P_CODEX\` | \`$L_CODEX\` | no passing \`latest\` contract on $L_CODEX yet (tested: $P_CODEX) |"
 body_has "| muse | \`$P_MUSE\` | \`$L_MUSE\` | checksum refused: the x86 artifact hashes to"
 body_has "| rtk | \`$P_RTK\` | \`$L_RTK\` | no contract gates it"
-# A watch-only image tool (no contract) drifting is listed, never bumped.
-body_has "| gh | \`$P_GH\` | \`$L_GH\` | no contract gates it; bump \`GH_VERSION\` by hand"
+# gh is pr-gated, but this is a new major of a major-manual row: listed, never bumped.
+body_has "| gh | \`$P_GH\` | \`$L_GH\` | a new major ($(major_of_v "$P_GH") -> $(major_of_v "$L_GH")): the cut-over is manual, never an automatic bump |"
 body_hasnt "| opencode |"   # in sync: neither bumped nor listed
 ID_1="$(sed -n 's/^edit_id=//p' "$WORK/gh_out")"
 [ "${#ID_1}" = 16 ] || fail "edit_id is not set: '$ID_1'"
@@ -525,5 +530,40 @@ code_is 0
 cp "$ROOT/workspace/Dockerfile" "$DF"
 STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_FRAG=missing run_bump
 if grep -q '^check ' "$STUB_FRAG_LOG"; then fail "checked claude while it is at its latest"; fi
+
+echo "== case 16: pr-gated watch-only rows (awscli, gh) are bumped with no contract; rtk is still by hand =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+# The other kinds are held at their pins, so only the rows under test can move.
+L_AWSCLI="$(major_of_v "$P_AWSCLI").999.0"
+G_MINOR="$(major_of_v "$P_GH").999.0"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="9.9.9" STUB_LATEST_AWSCLI="$L_AWSCLI" STUB_LATEST_GH="$G_MINOR" run_bump
+code_is 0
+expect_changed "+ARG AWSCLI_VERSION=$L_AWSCLI" "+ARG GH_VERSION=$G_MINOR"
+out_has "count=2"
+out_has "bumped=gh,awscli"
+out_has "title=build(workspace): bump gh and awscli CLI pins"
+out_has "incomplete=false"
+body_has "| awscli | \`$P_AWSCLI\` → \`$L_AWSCLI\` | no contract; \`pr-gated\`: this PR's CI is the gate | version only |"
+body_has "| rtk | \`$P_RTK\` | \`9.9.9\` | no contract gates it; bump \`RTK_VERSION\` by hand |"
+
+echo "== case 16a: a new awscli major is left at its pin =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_CODEX="$P_CODEX" STUB_LATEST_AGY="$P_AGY" \
+  STUB_LATEST_CURSOR="$P_CURSOR" STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_MUSE="$P_MUSE" \
+  STUB_LATEST_RTK="$P_RTK" STUB_LATEST_GH="$P_GH" STUB_LATEST_AWSCLI="3.0.0" run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "a new awscli major changed the Dockerfile"
+out_has "count=0"
+body_has "| awscli | \`$P_AWSCLI\` | \`3.0.0\` | a new major ($(major_of_v "$P_AWSCLI") -> 3): the cut-over is manual, never an automatic bump |"
+
+echo "== case 16b: an unreadable awscli source holds the run like any other bumpable kind =="
+cp "$ROOT/workspace/Dockerfile" "$DF"
+STUB_LATEST_CLAUDE="$P_CLAUDE" STUB_LATEST_AGY="$P_AGY" STUB_LATEST_CURSOR="$P_CURSOR" \
+  STUB_LATEST_KIRO="$P_KIRO" STUB_LATEST_AWSCLI="$L_AWSCLI" STUB_FAIL=awscli run_bump
+code_is 0
+cmp -s "$ROOT/workspace/Dockerfile" "$DF" || fail "an unreadable source still changed the Dockerfile"
+out_has "incomplete=true"
 
 echo "OK: cli-pin-bump.sh bumps only tested kinds, refuses bad checksums, and is idempotent"

@@ -164,6 +164,16 @@ It is not triggered by `workflow_run`: the watcher dispatches the contracts with
   reason. The state issue is public, so only markers written by a workflow
   (`github-actions`) or by an owner, member or collaborator count, and only in the issue
   the workflows opened; anyone else's `tested` comment is ignored.
+- **`pr-gated` tools.** A watch-only manifest row (no contract) flagged `pr-gated` moves to
+  its latest with no `tested`: the gate is this PR's own CI (`e2e.yml` builds the image and
+  L1 checks the installed versions against the pins, and the regular suites run), and a
+  person still merges. Only the version `ARG` is rewritten, so the flag is for a tool whose
+  version is its one pin (`TestPRGatedRowsPinOnlyTheirVersion` refuses one with a checksum
+  `ARG`), and it is paired with `major-manual` so a new major stays a hand bump. Today:
+  `awscli`, `gh`, `bkt`, `confluence`, `mcp_grafana`. For `awscli` the workflow also
+  regenerates `workspace/agent/internal/cloudruns/aws_commands.txt.gz` from the new release
+  (`TestAWSCommandsMatchPin`) and commits it with the Dockerfile. Like any bumpable kind, a
+  `pr-gated` row whose release source could not be read holds the whole run.
 - **Checksums** come from the sources the Dockerfile comments name: agy's per-arch
   manifests (both archives are downloaded, checked against the manifest's sha512 and
   hashed to sha256; the release build id comes from the manifest URL); kiro's stable
@@ -225,7 +235,7 @@ above is the whole interaction. An issue opens only for:
 | `<kind> CLI: contract failed on <v>` | the contract is red on latest (its row and run are in the issue's `Red contracts` section; `deploy/local/cli-contract-report.sh`) | the bump PR once the fixed contract passes |
 | `<kind> CLI: contract fails on main` | the contract failed its last 2 runs on `main` whatever the version: the harness or its secret is broken | itself, once the contract passes and the pin is current |
 | `<kind> CLI: upstream message fragments gone in <v>` | the new release no longer contains text Agent Fleet matches on (named in the `Red contracts` section); check the code that matches it, fix it and the registry | the bump PR, or a newer release |
-| `<tool> CLI: bump the pin to <v>` (`rtk`, `gh`, `bkt`, `jira`, `gitleaks`, `confluence`, `go`, `awscli`, `gcloud`, `mcp_grafana`, `cloudwatch_mcp`, `aws_mcp_proxy`) | a watch-only manifest row: it has a release source but no contract, so no `tested` to gate on; bump it by hand (§10.2.1). Nothing dispatches a contract or opens a bump PR for it | the hand-bump PR |
+| `<tool> CLI: bump the pin to <v>` (`rtk`, `jira`, `gitleaks`, `go`, `gcloud`, `cloudwatch_mcp`, `aws_mcp_proxy`; a `pr-gated` tool only for a new major) | a watch-only manifest row: it has a release source but no contract, so no `tested` to gate on; bump it by hand (§10.2.1). Nothing dispatches a contract or opens a bump PR for it. A `pr-gated` row opens none: the bump PR carries it, and an issue already open is retitled `merge the pin bump` | the hand-bump PR |
 
 An open issue follows its CLI: once latest passes, the same issue is retitled
 `<kind> CLI: merge the pin bump to <v>` and names the bump PR. It closes itself, with a

@@ -23,8 +23,12 @@
 # latest, which the watcher dispatches the same day. With nothing left to bump the
 # workflow closes an open bump PR rather than leave versions that are no longer latest.
 #
-# rtk is deliberately left out: it has a release source but no contract, so there is no
-# `tested` to gate on. It is listed as drifting and bumped by hand.
+# A watch-only row (no contract: rtk, gh, the image tools) has no `tested` to gate on, so
+# it is listed as drifting and bumped by hand. The exception is a row flagged `pr-gated`
+# in the manifest: its pin moves to latest with no contract, and the gate is the bump PR's
+# own CI (e2e.yml's L1 checks the installed version against the pin) before a person
+# merges it. Only a row whose version is its one `ARG` qualifies: nothing here resolves a
+# checksum for it.
 #
 # ## Upstream message fragments
 #
@@ -88,12 +92,15 @@ OUT="${GITHUB_OUTPUT:-/dev/null}"
 # shellcheck source=cli-manifest.sh
 . "$HERE/cli-manifest.sh"
 manifest_load || exit 1
-# kind|version ARG|contract workflow: every manifest row with a contract.
+# kind|version ARG|contract workflow: every manifest row with a contract, and every
+# pr-gated row (contract `-`).
 KINDS=()
 # Drift rows that are not automated at all (no contract gates them), and why.
 UNAUTOMATED=()
 for _n in "${M_NAMES[@]}"; do
-  if [ "${M_contract[$_n]}" = - ]; then
+  if [ "${M_contract[$_n]}" = - ] && manifest_has_flag "$_n" pr-gated; then
+    KINDS+=("$_n|${M_arg[$_n]}|-")
+  elif [ "${M_contract[$_n]}" = - ]; then
     UNAUTOMATED+=("$_n|no contract gates it; bump \`${M_arg[$_n]}\` by hand")
   else
     KINDS+=("$_n|${M_arg[$_n]}|${M_contract[$_n]}")
@@ -291,10 +298,19 @@ for row in "${KINDS[@]}"; do
 
   check_fragments "$kind" "$pin" "$latest"
 
-  # A new opencode major changes the server API, the plugin API and the TUI flags at once: a
-  # bump PR must never carry it, whatever a contract says about the newer line.
+  # A new major of a major-manual kind is never carried, whatever a contract (or, for a
+  # pr-gated row, the PR's CI) says: a new opencode major changes the server API, the plugin
+  # API and the TUI flags at once, and a pr-gated tool's major can rename what we call.
   if manifest_has_flag "$kind" major-manual && [ "$(major_of "$pin")" != "$(major_of "$latest")" ]; then
-    left+=("$kind|$pin|$latest|a new major ($(major_of "$pin") -> $(major_of "$latest")): the cut-over is manual (#2101), never an automatic bump")
+    left+=("$kind|$pin|$latest|a new major ($(major_of "$pin") -> $(major_of "$latest")): the cut-over is manual, never an automatic bump")
+    continue
+  fi
+
+  if [ "$workflow" = - ]; then
+    # pr-gated: the version ARG alone, and the bump PR's CI is the gate.
+    NEW[$arg]="$latest"
+    bumped+=("$kind")
+    evidence+=("| $kind | \`$pin\` → \`$latest\` | no contract; \`pr-gated\`: this PR's CI is the gate | version only |")
     continue
   fi
 
@@ -439,7 +455,8 @@ edit_id=""
 if [ -n "$BODY_FILE" ]; then
   {
     echo "Bumps the baked CLI pins in \`workspace/Dockerfile\` for every kind whose latest release"
-    echo "passed its contract (\`tested == latest\` in the \`CLI release watcher state\` issue)."
+    echo "passed its contract (\`tested == latest\` in the \`CLI release watcher state\` issue),"
+    echo "and for every \`pr-gated\` tool, which no contract covers: this PR's CI is its gate."
     echo
     echo "| CLI | Pin | Evidence | Checksums |"
     echo "|---|---|---|---|"
