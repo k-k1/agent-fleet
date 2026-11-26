@@ -1710,7 +1710,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
 		Kind: m.Kind, Driver: m.Driver, Route: m.Route.Clone(), SkipPermissions: m.SkipPermissions, SpendCapUSD: m.SpendCapUSD,
-		MuseContributorMode: m.MuseContributorMode, Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
+		MuseContributorMode: m.MuseContributorMode, Title: m.Title, Color: m.Color, Repo: m.Repo, Place: PlaceOf(m.Dir), Branch: gitx.GitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
@@ -1810,6 +1810,7 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 		// instant it was made, to the sub-second (SpendFrom), so it has spent nothing yet.
 		SpendCapUSD: src.SpendCapUSD, SpendFrom: now.Format(time.RFC3339Nano),
 		Repo:      filepath.Base(src.Dir),
+		Place:     PlaceOf(src.Dir),
 		Branch:    gitx.GitCurrentBranch(src.Dir),
 		CreatedAt: now.Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		ForkSids: forkSids(src),

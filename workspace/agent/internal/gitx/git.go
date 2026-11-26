@@ -913,6 +913,18 @@ func WorktreeParent(dir string) string {
 	return filepath.Dir(out) // …/repos/app/.git -> …/repos/app
 }
 
+// LinkedWorktreeMain reports whether dir is a linked worktree (`git worktree add`) and, when it
+// is, the main working copy it hangs off. It reads the .git gitfile and commondir rather than
+// running git, so a session create pays no process for it. A submodule's gitfile has no
+// commondir and is not a linked worktree.
+func LinkedWorktreeMain(dir string) (string, bool) {
+	gitDir, commonDir, ok := gitLocation(dir)
+	if !ok || gitDir == commonDir {
+		return "", false
+	}
+	return filepath.Dir(commonDir), true // …/repos/app/.git -> …/repos/app
+}
+
 // LinkedWorktreeCount returns how many linked worktrees hang off dir (0 for a plain
 // clone). Deleting a main working copy with linked worktrees would break them, so the
 // delete handler refuses while this is > 0.
