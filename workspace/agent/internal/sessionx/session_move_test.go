@@ -216,7 +216,7 @@ func TestMovePromptFindsTheRenderedConversationBoundary(t *testing.T) {
 			setLocale(t, tc.locale)
 			const history = "This older turn belongs only to the conversation."
 			r.turns = append([]transcript.Turn{hoUser(history)}, r.turns...)
-			r.turns[len(r.turns)-1] = hoAsst(hoText("A copied heading:\n# Conversation\n# 会話"))
+			r.turns[len(r.turns)-1] = hoAsst(hoText("A copied heading:\n```\n# Conversation\n# 会話\n```"))
 			var file string
 			if tc.retryLocale == "" {
 				file = mustMove(t, r.src.Name, session.KindClaude).File
@@ -246,10 +246,20 @@ func TestMovePromptFindsTheRenderedConversationBoundary(t *testing.T) {
 				t.Errorf("target prompt does not distinguish a heading from quoted text:\n%s", prompt)
 			}
 			md := readFile(t, file)
-			fence := ""
+			fenceWidth := 0
 			lines := strings.Split(md, "\n")
 			for i, line := range lines {
-				if fence == "" && strings.HasPrefix(line, "# ") && strings.Contains(prompt, strconv.Quote(line)) {
+				// The summary quotes use bare backtick fences. An embedded shorter
+				// run is content and must leave the quote open.
+				if len(line) >= 3 && strings.Trim(line, "`") == "" {
+					if fenceWidth == 0 {
+						fenceWidth = len(line)
+					} else if len(line) >= fenceWidth {
+						fenceWidth = 0
+					}
+					continue
+				}
+				if fenceWidth == 0 && strings.HasPrefix(line, "# ") && strings.Contains(prompt, strconv.Quote(line)) {
 					head, rest := strings.Join(lines[:i], "\n"), strings.Join(lines[i+1:], "\n")
 					if line != tc.heading || !strings.Contains(head, tc.threads) ||
 						!strings.Contains(head, "A copied heading:") ||
@@ -258,7 +268,6 @@ func TestMovePromptFindsTheRenderedConversationBoundary(t *testing.T) {
 					}
 					return
 				}
-				fence = fenceStep(fence, line)
 			}
 			t.Fatal("head-only read reached the end without finding the conversation boundary")
 		})
