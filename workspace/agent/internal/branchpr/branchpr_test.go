@@ -733,10 +733,13 @@ func TestStoredAnswerCarriesWhenItsCallWasSent(t *testing.T) {
 	c.Lookup([]Key{branch, num}, time.Now())
 	got := c.Lookup([]Key{branch, num}, time.Now().Add(time.Minute))
 	pr := got[branch]
-	if pr == nil || pr.ObservedAt.IsZero() || pr.ObservedAt.Before(sentAfter) || !pr.ObservedAt.Before(answeredBefore) {
-		t.Fatalf("ObservedAt=%v, want the send time in [%v, %v)", pr, sentAfter, answeredBefore)
+	if pr == nil || got[num] == nil {
+		t.Fatalf("answers=%v, want both keys answered", got)
 	}
-	if got[num] == nil || !got[num].ObservedAt.Equal(pr.ObservedAt) {
-		t.Fatalf("by number ObservedAt=%v, want the same read's time %v", got[num], pr.ObservedAt)
+	if pr.ObservedAt.IsZero() || pr.ObservedAt.Before(sentAfter) || !pr.ObservedAt.Before(answeredBefore) {
+		t.Fatalf("ObservedAt=%v, want the send time in [%v, %v)", pr.ObservedAt, sentAfter, answeredBefore)
+	}
+	if !got[num].ObservedAt.Equal(pr.ObservedAt) {
+		t.Fatalf("by number ObservedAt=%v, want the same read's time %v", got[num].ObservedAt, pr.ObservedAt)
 	}
 }

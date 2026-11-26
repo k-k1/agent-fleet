@@ -1751,8 +1751,9 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
 		// The same slot keeps its studio (ADR 0100 decision 2); rebindStudioOnRecreate below moves
 		// the studio's own `session` over, or drops this copy when it cannot.
-		Studio: m.Studio, WorkItem: m.WorkItem, WorkItemState: m.WorkItemState, WorkItemFacts: m.WorkItemFacts, Links: m.Links, Unlinked: m.Unlinked,
+		Studio: m.Studio,
 	}
+	session.CarryWorkItems(&newMeta, m)
 	if AgentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)
 	}
@@ -1835,7 +1836,7 @@ func forkSids(src session.Meta) []string {
 func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) session.Meta {
 	now := time.Now()
 	place := sessionPlaceOf(src.Dir, src.Subdir)
-	return session.Meta{
+	fork := session.Meta{
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
 		MuseContributorMode: src.MuseContributorMode,
@@ -1850,9 +1851,6 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 		Branch:    gitx.GitCurrentBranch(src.Dir),
 		CreatedAt: now.Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		ForkSids: forkSids(src),
-		// The fork works in the same working copy, so it renames the same branch for the same item,
-		// and is on the same tickets and PRs.
-		WorkItem: src.WorkItem, WorkItemState: src.WorkItemState, WorkItemFacts: src.WorkItemFacts, Links: src.Links, Unlinked: src.Unlinked,
 		// Studio is deliberately NOT inherited: one studio has one session, and a fork bound to
 		// the same studio would be a second writer of its draft (ADR 0100 decision 2).
 		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the
@@ -1865,4 +1863,8 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 		// launched from a handoff proposal inherits nothing — see forkLineage.
 		Origin: session.OriginHandoff, OriginConv: src.OriginConv, OriginSession: forkLineage(src),
 	}
+	// The fork works in the same working copy, so it renames the same branch for the same item,
+	// and is on the same tickets and PRs.
+	session.CarryWorkItems(&fork, src)
+	return fork
 }

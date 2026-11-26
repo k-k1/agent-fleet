@@ -201,6 +201,11 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 		state := prLinkState(s.PR)
 		facts := prLinkFacts(s.PR)
 		cur, held := heldLink(s.Links, provider, key)
+		// An answer older than the read the link holds says nothing new and must not prompt a
+		// notice or a write (session.PRReadStale).
+		if held && session.PRReadStale(cur.Facts, facts) {
+			continue
+		}
 		// Told only about a PR the row still holds: a PR removed by hand is no longer the
 		// session's, and a PR seen for the first time is linked on this poll and told from the next.
 		// Only the session working on it is told, not a child watching from a shared copy.
@@ -225,9 +230,7 @@ func recordBranchPRs(sessions []session.Session, now time.Time) {
 				return false
 			}
 			added := session.AddLink(m, l)
-			moved := session.SetLinkState(m, provider, key, state)
-			observed := facts != nil && session.SetLinkFacts(m, provider, key, *facts)
-			return added || moved || observed
+			return session.RecordPRRead(m, provider, key, state, facts) || added
 		}); wrote {
 			s.Links = session.LinksOf(m)
 		}
@@ -278,7 +281,8 @@ func prLinkFacts(pr *branchpr.PR) *session.PRFacts {
 	}
 	return &session.PRFacts{
 		Checks: pr.Checks, ChangesRequested: pr.ChangesRequested, Conflict: pr.Conflict,
-		Ready: pr.Ready(), ObservedAt: pr.ObservedAt.UTC().Format(time.RFC3339),
+		// Sub-second, so two reads sent within one second still order (session.PRReadStale).
+		Ready: pr.Ready(), ObservedAt: pr.ObservedAt.UTC().Format(time.RFC3339Nano),
 	}
 }
 

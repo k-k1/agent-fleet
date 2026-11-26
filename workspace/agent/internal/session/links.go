@@ -98,9 +98,28 @@ func validPRFacts(f PRFacts) bool {
 	return err == nil
 }
 
-// PRFactsDue reports whether f should replace held: nothing held yet, a fact that differs, or the
-// same facts observed at least PRFactsRefresh later. An observation older than the held one is
-// never due, so a stale cache answer cannot overwrite a fresher read.
+// observedTimes parses both observation times; ok is false when either cannot be read.
+func observedTimes(held, f *PRFacts) (heldAt, at time.Time, ok bool) {
+	heldAt, err1 := time.Parse(time.RFC3339, held.ObservedAt)
+	at, err2 := time.Parse(time.RFC3339, f.ObservedAt)
+	return heldAt, at, err1 == nil && err2 == nil
+}
+
+// PRReadStale reports whether f comes from a read sent before the one held came from. Two calls
+// for one PR can be in flight at once (a list's background refresh and a watch's fetch) and
+// answer out of order, so the later arrival can be the older read: neither its state nor its
+// facts may replace the newer read's. Equal times are one call's answer, so not stale.
+func PRReadStale(held, f *PRFacts) bool {
+	if held == nil || f == nil {
+		return false
+	}
+	heldAt, at, ok := observedTimes(held, f)
+	return ok && at.Before(heldAt)
+}
+
+// PRFactsDue reports whether f should replace held while the link's state stays: nothing held
+// yet, a fact that differs, or the same facts observed at least PRFactsRefresh later. Only a
+// strictly later read is due, so a stale cache answer never overwrites a fresher one.
 func PRFactsDue(held *PRFacts, f PRFacts) bool {
 	if !validPRFacts(f) {
 		return false
@@ -108,12 +127,11 @@ func PRFactsDue(held *PRFacts, f PRFacts) bool {
 	if held == nil {
 		return true
 	}
-	at, _ := time.Parse(time.RFC3339, f.ObservedAt)
-	heldAt, err := time.Parse(time.RFC3339, held.ObservedAt)
-	if err != nil {
-		return true
+	heldAt, at, ok := observedTimes(held, &f)
+	if !ok {
+		return true // only the held time can be unreadable here: validPRFacts read f's
 	}
-	if at.Before(heldAt) {
+	if !at.After(heldAt) {
 		return false
 	}
 	same := held.Checks == f.Checks && held.ChangesRequested == f.ChangesRequested &&
@@ -121,23 +139,54 @@ func PRFactsDue(held *PRFacts, f PRFacts) bool {
 	return !same || at.Sub(heldAt) >= PRFactsRefresh
 }
 
-// SetLinkFacts records f on m's link to provider/key when PRFactsDue says so, and reports whether
-// it changed. Like SetLinkState, the launch item's facts go to Meta.WorkItemFacts. The held
-// value is replaced, never edited in place: links are copied between metas by value, and an
-// edit through a shared pointer would change the other meta's facts too.
-func SetLinkFacts(m *Meta, provider, key string, f PRFacts) bool {
+// heldFacts is m's facts for provider/key, and whether m holds the item at all.
+func heldFacts(m Meta, provider, key string) (*PRFacts, bool) {
 	if m.WorkItem != nil && sameItem(WorkItemLink{Provider: m.WorkItem.Provider, Key: m.WorkItem.Key}, provider, key) {
-		if !PRFactsDue(m.WorkItemFacts, f) {
-			return false
+		return m.WorkItemFacts, true
+	}
+	for _, l := range m.Links {
+		if sameItem(l, provider, key) {
+			return l.Facts, true
 		}
+	}
+	return nil, false
+}
+
+// setLinkFacts replaces the held facts of provider/key with f. Replaced, never edited in place:
+// links are copied between metas by value, and an edit through the shared pointer would change
+// the other meta's facts too.
+func setLinkFacts(m *Meta, provider, key string, f PRFacts) {
+	if m.WorkItem != nil && sameItem(WorkItemLink{Provider: m.WorkItem.Provider, Key: m.WorkItem.Key}, provider, key) {
 		m.WorkItemFacts = &f
-		return true
+		return
 	}
 	for i := range m.Links {
-		if sameItem(m.Links[i], provider, key) && PRFactsDue(m.Links[i].Facts, f) {
+		if sameItem(m.Links[i], provider, key) {
 			m.Links[i].Facts = &f
-			return true
+			return
 		}
+	}
+}
+
+// RecordPRRead records one read of a pull request on m's link to provider/key (the launch item's
+// going to Meta.WorkItemState and Meta.WorkItemFacts), and reports whether m changed. state is
+// recorded as SetLinkState does; f, the read's facts, may be nil for a read with no time. State
+// and facts are one observation, so they move together: a read older than the held facts
+// (PRReadStale) writes neither, which keeps an old state from pairing with newer facts, and a
+// read that moves the state renews the facts whatever PRFactsDue says, so a new state is never
+// labelled with an older read's time.
+func RecordPRRead(m *Meta, provider, key, state string, f *PRFacts) bool {
+	held, ok := heldFacts(*m, provider, key)
+	if !ok || PRReadStale(held, f) {
+		return false
+	}
+	moved := SetLinkState(m, provider, key, state)
+	if f == nil || !validPRFacts(*f) {
+		return moved
+	}
+	if moved || PRFactsDue(held, *f) {
+		setLinkFacts(m, provider, key, *f)
+		return true
 	}
 	return false
 }
@@ -320,6 +369,14 @@ func ForgetUnlinked(m *Meta, provider, key string) bool {
 		}
 	}
 	return false
+}
+
+// CarryWorkItems gives dst the launch item and links of src, with their last seen states and PR
+// facts: a slot made again (recreate) or forked works on the same items. One helper, so a field
+// added to the item record reaches both paths.
+func CarryWorkItems(dst *Meta, src Meta) {
+	dst.WorkItem, dst.WorkItemState, dst.WorkItemFacts = src.WorkItem, src.WorkItemState, src.WorkItemFacts
+	dst.Links, dst.Unlinked = src.Links, src.Unlinked
 }
 
 // InheritedLinks is what a child started by parent watches: the items the parent was started

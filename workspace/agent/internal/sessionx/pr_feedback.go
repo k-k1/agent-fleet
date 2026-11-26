@@ -602,8 +602,9 @@ func startSessionInProcess(name string) error {
 
 // recordWatchedLinkStates writes a held link's PR state when it moved, so a PR merged or closed
 // drops out of the watch (heldPRLinks skips it) and the row shows the state it has, and its merge
-// conditions when they are due (session.PRFactsDue). A holder on the PR's branch is left to
-// recordBranchPRs, which reads the same answer.
+// conditions with it or when they are due (session.RecordPRRead). An answer older than the read
+// the link holds writes and tells nothing. A holder on the PR's branch is left to recordBranchPRs,
+// which reads the same answer.
 func recordWatchedLinkStates(watched []*prWatched) {
 	for _, w := range watched {
 		state := prLinkState(w.pr)
@@ -617,7 +618,7 @@ func recordWatchedLinkStates(watched []*prWatched) {
 				continue
 			}
 			l, held := heldLink(session.LinksOf(m), w.provider, w.linkKey)
-			if !held {
+			if !held || session.PRReadStale(l.Facts, facts) {
 				continue
 			}
 			moved := l.State != state
@@ -631,21 +632,18 @@ func recordWatchedLinkStates(watched []*prWatched) {
 			// once key, and recorded only once it is in the outbox.
 			// Asked as working whatever the link's own role: the list tells the session on a PR's
 			// branch as working too, and every holder here owns the PR.
-			// Facts carry no notice, so a notice that could not be queued holds back the state alone.
+			// A notice that could not be queued holds back the whole read, facts included: they are
+			// one observation with the state, and the next tick tries both again.
 			if moved {
 				if kind, extra := prNotice(w.pr, session.LinkWorking, l.State); kind == prMergedNotice || kind == prClosedNotice {
 					s := session.Session{Name: m.Name, Kind: m.Kind, Display: session.Display(m)}
 					if !sendPRNotice(&s, kind, w.provider, w.linkKey, extra, w.pr) {
-						moved = false
+						continue
 					}
 				}
 			}
-			if !moved && !observed {
-				continue
-			}
 			UpdateSessionMeta(h.name, func(m *session.Meta) bool {
-				wrote := moved && session.SetLinkState(m, w.provider, w.linkKey, state)
-				return facts != nil && session.SetLinkFacts(m, w.provider, w.linkKey, *facts) || wrote
+				return session.RecordPRRead(m, w.provider, w.linkKey, state, facts)
 			})
 		}
 	}

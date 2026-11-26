@@ -189,9 +189,17 @@ func TestSessionLinksMirrorThePRFacts(t *testing.T) {
 			t.Errorf("facts %s served back: %s", bad, SessionLinksJSON(got))
 		}
 	}
-	got = SessionLinksFromJSON([]byte(`[{"provider":"github","key":"o/r#1","role":"working","facts":{"checks":"green","observedAt":"2026-11-27T19:00:00+09:00"}}]`))
-	if len(got) != 1 || got[0].Facts != (PRFacts{ObservedAt: "2026-11-27T10:00:00Z"}) {
-		t.Errorf("mirrored %+v, want an unknown checks value as nothing ran and the time in UTC", got)
+	got = SessionLinksFromJSON([]byte(`[{"provider":"github","key":"o/r#1","role":"working","facts":{"checks":"green","observedAt":"2026-11-27T19:00:00.25+09:00"}}]`))
+	if len(got) != 1 || got[0].Facts != (PRFacts{ObservedAt: "2026-11-27T10:00:00.25Z"}) {
+		t.Errorf("mirrored %+v, want an unknown checks value as nothing ran and the time in UTC, sub-second kept", got)
+	}
+	// Facts of the wrong JSON shape cost that link its facts only: the session's other links, and
+	// the PR link's own state, stay mirrored.
+	got = SessionLinksFromJSON([]byte(`[{"provider":"jira","key":"P-1","role":"started"},` +
+		`{"provider":"github","key":"o/r#1","role":"working","state":"open","facts":{"checks":"success","ready":true,"observedAt":1700000000}},` +
+		`{"provider":"github","key":"o/r#2","role":"working","facts":"ready"}]`))
+	if len(got) != 3 || got[0].Key != "P-1" || got[1].State != "open" || got[1].Facts != (PRFacts{}) || got[2].Facts != (PRFacts{}) {
+		t.Errorf("mirrored %+v, want all three links, the malformed facts dropped", got)
 	}
 }
 

@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/branchpr"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/notice"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
@@ -475,5 +477,89 @@ func TestRecordWatchedLinkStatesKeepsTheFactsOfAHeldPR(t *testing.T) {
 	recordWatchedLinkStates([]*prWatched{w})
 	if after, _ := os.Stat(session.MetaPath("wf1")); !after.ModTime().Equal(old) {
 		t.Fatal("steady facts rewrote the meta")
+	}
+}
+
+// A merge whose notice cannot be queued holds back the whole read: the link keeps its open state
+// and its facts, and the next tick tells the merge once and records both.
+func TestRecordWatchedLinkStatesHoldsTheReadWhileItsNoticeFails(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	sent := capturePRNotices(t)
+	ok := putPRNotice
+	failing := true
+	putPRNotice = func(once string, ev notice.Event) error {
+		if failing {
+			return errors.New("outbox unwritable")
+		}
+		return ok(once, ev)
+	}
+	t0 := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
+	before := &session.PRFacts{Checks: "pending", ObservedAt: t0.Format(time.RFC3339)}
+	session.WriteMeta(session.Meta{Name: "nf1", Dir: "/wt/nf", Kind: session.KindClaude,
+		Links: []session.WorkItemLink{{Provider: "github", Key: "o/r#7", Role: session.LinkCreated, State: "open", Facts: before}}})
+	merged := &branchpr.PR{Number: 7, State: "merged", URL: "https://github.com/o/r/pull/7", Checks: "success", ObservedAt: t0.Add(time.Minute)}
+	w := &prWatched{provider: "github", linkKey: "o/r#7", holders: []prHolder{{name: "nf1", role: session.LinkCreated}}, pr: merged}
+
+	recordWatchedLinkStates([]*prWatched{w})
+	m, _ := session.ReadMeta("nf1")
+	if l := m.Links[0]; l.State != "open" || l.Facts == nil || *l.Facts != *before || len(*sent) != 0 {
+		t.Fatalf("link=%+v facts=%+v notices=%d, want the read held back whole while the notice fails", l, l.Facts, len(*sent))
+	}
+
+	failing = false
+	recordWatchedLinkStates([]*prWatched{w})
+	recordWatchedLinkStates([]*prWatched{w})
+	m, _ = session.ReadMeta("nf1")
+	if l := m.Links[0]; l.State != "merged" || l.Facts == nil || l.Facts.Checks != "success" || l.Facts.ObservedAt != t0.Add(time.Minute).Format(time.RFC3339) {
+		t.Fatalf("link=%+v facts=%+v, want merged with the merge read's facts", l, l.Facts)
+	}
+	if len(*sent) != 1 || (*sent)[0].ev.Kind != prMergedNotice {
+		t.Fatalf("notices=%+v, want the merge told exactly once", *sent)
+	}
+}
+
+// An answer from a call sent before the read the link holds (two calls answering out of order)
+// neither writes nor prompts a notice: the closed state of the older read must not pair with the
+// reopened PR's facts.
+func TestRecordBranchPRsIgnoresAReadOlderThanTheOneHeld(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	sent := capturePRNotices(t)
+	t0 := time.Date(2026, 11, 27, 10, 0, 0, 0, time.UTC)
+	url := "https://github.com/o/r/pull/7"
+	session.WriteMeta(session.Meta{Name: "or1", Dir: "/wt/or", Kind: session.KindClaude,
+		Links: []session.WorkItemLink{{Provider: "github", Key: "o/r#7", Role: session.LinkWorking, State: "open"}}})
+	m, _ := session.ReadMeta("or1")
+	// The newer read (sent at .700) is recorded first; the older one, sent at .100 in the same
+	// second, arrives after it.
+	newer := &branchpr.PR{Number: 7, State: "open", URL: url, Checks: "success", Mergeable: "MERGEABLE", ObservedAt: t0.Add(700 * time.Millisecond)}
+	recordBranchPRs([]session.Session{{Name: "or1", Dir: "/wt/or", PR: newer, Links: session.LinksOf(m)}}, time.Now())
+	m, _ = session.ReadMeta("or1")
+	if f := m.Links[0].Facts; f == nil || !f.Ready {
+		t.Fatalf("facts=%+v, want the newer read recorded", f)
+	}
+	*sent = nil
+	old := time.Unix(1_000_000_000, 0)
+	if err := os.Chtimes(session.MetaPath("or1"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	stale := &branchpr.PR{Number: 7, State: "closed", URL: url, Checks: "pending", ObservedAt: t0.Add(100 * time.Millisecond)}
+	recordBranchPRs([]session.Session{{Name: "or1", Dir: "/wt/or", PR: stale, Links: session.LinksOf(m)}}, time.Now())
+	if after, _ := os.Stat(session.MetaPath("or1")); !after.ModTime().Equal(old) {
+		m, _ = session.ReadMeta("or1")
+		t.Fatalf("an older read rewrote the meta: %+v facts=%+v", m.Links[0], m.Links[0].Facts)
+	}
+	if len(*sent) != 0 {
+		t.Fatalf("notices=%+v, want none from an older read", *sent)
+	}
+}
+
+func TestForkCarriesTheItemsWithTheirFacts(t *testing.T) {
+	src := session.Meta{Name: "fk0", Dir: t.TempDir(), Kind: session.KindClaude,
+		WorkItem: &session.WorkItemRef{Provider: "github", Key: "o/r#1"}, WorkItemState: "open",
+		WorkItemFacts: &session.PRFacts{Checks: "failure", ObservedAt: "2026-11-27T10:00:00Z"},
+		Links:         []session.WorkItemLink{{Provider: "github", Key: "o/r#2", Role: session.LinkCreated, Facts: &session.PRFacts{Ready: true, ObservedAt: "2026-11-27T10:00:00Z"}}}}
+	l := session.LinksOf(forkMeta(src, "fk1", "", "", ""))
+	if len(l) != 2 || l[0].Facts == nil || l[0].Facts.Checks != "failure" || l[1].Facts == nil || !l[1].Facts.Ready {
+		t.Fatalf("fork links=%+v, want the launch PR's and the link's facts", l)
 	}
 }
