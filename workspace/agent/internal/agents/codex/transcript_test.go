@@ -521,6 +521,67 @@ func TestCodexCustomToolCallExec(t *testing.T) {
 	}
 }
 
+func TestCodexYieldedExecCommand(t *testing.T) {
+	const startedAt = "2026-10-30T12:04:00Z"
+	const cmd = "set -e\naf-aws-exec --profile demo -- aws sts get-caller-identity"
+	toolCall := func(at, kind, name, id, field, value string) []byte {
+		t.Helper()
+		line, err := json.Marshal(map[string]any{
+			"type": "response_item", "timestamp": at,
+			"payload": map[string]any{"type": kind, "name": name, "call_id": id, field: value},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return line
+	}
+	lines := [][]byte{
+		toolCall("2026-10-30T12:01:00Z", "function_call", "exec_command", "list", "arguments", `{"cmd":"af-aws-exec --list"}`),
+		toolCall(startedAt, "custom_tool_call", "exec", "launch", "input",
+			"// @exec: {\"yield_time_ms\": 1}\nconst r = await tools.exec_command({workdir: '/demo', \"cmd\": `\n"+cmd+"\n`}); text(r.output)"),
+		wrapItem(t, map[string]any{"type": "custom_tool_call_output", "call_id": "launch",
+			"output": []map[string]string{{"type": "input_text", "text": "Script running with cell ID 1"}}}),
+		toolCall("2026-10-30T12:04:30Z", "function_call", "wait", "wait", "arguments", `{"cell_id":"1"}`),
+		wrapItem(t, map[string]any{"type": "function_call_output", "call_id": "wait",
+			"output": []map[string]string{{"type": "input_text", "text": "Script completed\nOutput:\nsynthetic result"}}}),
+	}
+	turns, _ := parseRollout(lines)
+	if len(turns) != 3 || len(turns[0].Parts) != 1 || len(turns[1].Parts) != 1 || len(turns[2].Parts) != 1 {
+		t.Fatalf("want one part each for list, launch and wait, got %+v", turns)
+	}
+	if list := turns[0].Parts[0]; list.Tool != "exec_command" || list.Info != "af-aws-exec --list" {
+		t.Errorf("list = %+v", list)
+	}
+	if launch := turns[1].Parts[0]; launch.Tool != "exec_command" || launch.Info != "set -e" || launch.Command != cmd ||
+		!strings.Contains(launch.Output, "Script running") || turns[1].TS != startedAt {
+		t.Errorf("launch = %+v at %q, want shell trace at its own timestamp with the complete command", launch, turns[1].TS)
+	}
+	if wait := turns[2].Parts[0]; wait.Tool != "wait" || wait.Command != "" || !strings.Contains(wait.Output, "synthetic result") {
+		t.Errorf("wait = %+v, want completion output on its own trace", wait)
+	}
+}
+
+func TestCodexExecCommandLiterals(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, command string
+	}{
+		{"double quoted", `tools.exec_command({"cmd": "echo \"yes\""});`, `echo "yes"`},
+		{"single quoted", `tools.exec_command({cmd: 'echo "yes"'});`, `echo "yes"`},
+		{"template escapes", "tools.exec_command({cmd: `echo \\`word\\` \\${HOME} \\\\\n  next`});", "echo `word` ${HOME} \\\n  next"},
+		{"unrelated cmd", `const data = {cmd:"wrong"}; /* tools.exec_command({cmd:"wrong"}); */ tools.exec_command({cmd:"right"});`, "right"},
+		{"computed template", "tools.exec_command({cmd: `echo ${name}`});", ""},
+		{"concatenation", `tools.exec_command({cmd: "echo " + name});`, ""},
+		{"multiple calls", `tools.exec_command({cmd:"one"}); tools.exec_command({cmd:"two"});`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, shell := execScriptCommand(tc.input)
+			if !shell || got != tc.command {
+				t.Fatalf("execScriptCommand = %q, %t, want %q, true", got, shell, tc.command)
+			}
+		})
+	}
+}
+
 func TestCodexExecScriptImageGen(t *testing.T) {
 	// The imagegen skill's built-in call: prompt as a backtick template literal.
 	js := "const r = await tools.image_gen__imagegen({prompt: `Use case: logo\nPrimary request: red circle`});\nimage(r.image_url);"

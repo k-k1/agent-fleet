@@ -1263,12 +1263,9 @@ func applyPatchInput(payload json.RawMessage) string {
 //	const a = await tools.apply_patch(patch);
 //	const r = await tools.exec_command({cmd:"ls -la","workdir":"/p",…}); text(r.output)
 //
-// jsCmdRe pulls the shell command out of exec_command({cmd:"…"}); the patch is found by
-// scanning string literals for the "Begin Patch" marker (see extractExecScript).
 // jsPromptTickRe/jsPromptStrRe pull the image_gen prompt (a backtick template literal
 // in observed rollouts, double-quoted as a fallback); jsPathRe the view_image path.
 var (
-	jsCmdRe        = regexp.MustCompile(`\bcmd\s*:\s*"((?:[^"\\]|\\.)*)"`)
 	jsStrRe        = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
 	jsPromptTickRe = regexp.MustCompile("\\bprompt\\s*:\\s*`([^`]*)`")
 	jsPromptStrRe  = regexp.MustCompile(`\bprompt\s*:\s*"((?:[^"\\]|\\.)*)"`)
@@ -1289,10 +1286,13 @@ func isExecScript(input string) bool {
 // patch, the per-file diff parts after it. Returns nil when nothing is recoverable, so
 // the caller can fall back to a raw trace.
 func execScriptParts(input string) []transcript.Part {
-	cmd, patch := extractExecScript(input)
+	cmd, shellCall := execScriptCommand(input)
 	var parts []transcript.Part
 	if cmd != "" {
-		parts = append(parts, transcript.Part{Kind: "tool", Tool: "exec_command", Info: transcript.Clip(cmd)})
+		parts = append(parts, execCommandPart(cmd))
+	} else if shellCall {
+		// Other recoverable traces must not hide the opaque shell launch from placement.
+		parts = append(parts, transcript.Part{Kind: "tool", Tool: "exec", Info: transcript.Clip(input)})
 	}
 	if strings.Contains(input, "tools.image_gen") {
 		// The built-in image generation (imagegen skill). The saved file arrives later, in
@@ -1315,26 +1315,138 @@ func execScriptParts(input string) []transcript.Part {
 		}
 		parts = append(parts, transcript.Part{Kind: "tool", Tool: "view_image", Info: transcript.Clip(info)})
 	}
-	if patch != "" {
-		parts = append(parts, patchParts("apply_patch", patch)...)
+	for _, m := range jsStrRe.FindAllStringSubmatch(input, -1) {
+		if strings.Contains(m[1], "Begin Patch") {
+			parts = append(parts, patchParts("apply_patch", unescapeJS(m[1]))...)
+			break
+		}
 	}
 	return parts
 }
 
-// extractExecScript recovers the exec_command shell command and the apply_patch envelope
-// from a JS "exec" snippet. Both are JS double-quoted string literals whose escapes are
-// JSON-compatible, so unescapeJS decodes them.
-func extractExecScript(input string) (cmd, patch string) {
-	if m := jsCmdRe.FindStringSubmatch(input); m != nil {
-		cmd = unescapeJS(m[1])
+// execCommandPart keeps the display label short and gives placement the rest of a multiline
+// command or a command whose wrapper and profile appear past the label's limit.
+func execCommandPart(cmd string) transcript.Part {
+	part := transcript.Part{Kind: "tool", Tool: "exec_command", Info: transcript.Clip(cmd)}
+	if full := transcript.CapOutput(cmd); full != part.Info {
+		part.Command = full
 	}
-	for _, m := range jsStrRe.FindAllStringSubmatch(input, -1) {
-		if strings.Contains(m[1], "Begin Patch") {
-			patch = unescapeJS(m[1])
-			break
+	return part
+}
+
+// Tokenize the inline call without matching a fake cmd property inside a string or comment.
+var jsExecToken = regexp.MustCompile(`//[^\r\n]*|(?s:/\*.*?\*/|"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|` +
+	"`[^`\\\\]*(?:\\\\.[^`\\\\]*)*`" + `)|[a-zA-Z_$][a-zA-Z0-9_$]*|[^\s]`)
+
+// execScriptCommand recovers one static inline shell call. The whole cell has one timestamp
+// and one output, so several calls or a computed command leave the cell opaque.
+func execScriptCommand(input string) (cmd string, shellCall bool) {
+	if !strings.Contains(input, "exec_command") {
+		return "", false
+	}
+	tokens := jsExecToken.FindAllString(input, -1)
+	code := tokens[:0]
+	for _, token := range tokens {
+		if !strings.HasPrefix(token, "//") && !strings.HasPrefix(token, "/*") {
+			code = append(code, token)
 		}
 	}
-	return cmd, patch
+	for i := 0; i+3 < len(code); i++ {
+		if code[i] != "tools" || code[i+1] != "." || code[i+2] != "exec_command" || code[i+3] != "(" {
+			continue
+		}
+		if i > 0 && code[i-1] == "." {
+			continue
+		}
+		if shellCall {
+			return "", true
+		}
+		shellCall = true
+		cmd = inlineExecCommand(code[i+4:])
+	}
+	return cmd, shellCall
+}
+
+func inlineExecCommand(tokens []string) string {
+	if len(tokens) == 0 || tokens[0] != "{" {
+		return ""
+	}
+	var cmd string
+	var depth int
+	start := 1
+	for i := 1; i < len(tokens); i++ {
+		token := tokens[i]
+		if depth == 0 && (token == "," || token == "}") {
+			if i > start {
+				// Spreads, computed keys and methods can override an earlier cmd.
+				if i-start < 3 || tokens[start+1] != ":" {
+					return ""
+				}
+				key := tokens[start]
+				if key[0] == '"' || key[0] == '\'' {
+					key = decodeExecLiteral(key)
+				}
+				if key == "cmd" {
+					if cmd != "" || i-start != 3 {
+						return ""
+					}
+					cmd = decodeExecLiteral(tokens[start+2])
+					if cmd == "" {
+						return ""
+					}
+				}
+			}
+			if token == "}" {
+				if i+1 < len(tokens) && tokens[i+1] == "," {
+					i++
+				}
+				if i+1 < len(tokens) && tokens[i+1] == ")" {
+					return cmd
+				}
+				return ""
+			}
+			start = i + 1
+		}
+		switch token {
+		case "{", "[", "(":
+			depth++
+		case "}", "]", ")":
+			depth--
+		}
+	}
+	return ""
+}
+
+var jsLiteralEscape = regexp.MustCompile(`\\(?:\r\n|(?s:.))|\$\{|\r\n|["\r\n\t]`)
+
+func decodeExecLiteral(token string) string {
+	if len(token) < 2 || !strings.ContainsRune("\"'`", rune(token[0])) || token[0] != token[len(token)-1] {
+		return ""
+	}
+	template := token[0] == '`'
+	dynamic := false
+	body := jsLiteralEscape.ReplaceAllStringFunc(token[1:len(token)-1], func(s string) string {
+		switch s {
+		case "${":
+			dynamic = template
+		case "\\`", "\\'", "\\$":
+			return s[1:]
+		case "\\\n", "\\\r", "\\\r\n":
+			return ""
+		case "\"":
+			return `\"`
+		case "\n", "\r", "\r\n":
+			return `\n`
+		case "\t":
+			return `\t`
+		}
+		return s
+	})
+	var cmd string
+	if dynamic || json.Unmarshal([]byte(`"`+body+`"`), &cmd) != nil {
+		return ""
+	}
+	return cmd
 }
 
 // unescapeJS decodes a JS double-quoted string literal body (\n, \", \\, \uXXXX, …) by

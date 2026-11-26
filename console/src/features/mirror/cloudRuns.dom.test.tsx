@@ -66,7 +66,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
     const url = String(input);
     const body = url.includes(`/sessions/${SESSION}/messages`)
-      ? { cursor: 3, alive: true, status: "idle", messages: turns, ...(runs ? { cloudRuns: runs } : {}) }
+      ? { cursor: turns.length, alive: true, status: "idle", messages: turns, ...(runs ? { cloudRuns: runs } : {}) }
       : {};
     return new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
   });
@@ -80,11 +80,11 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-async function mount() {
+async function mount(kind = "claude") {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  const meta = { name: SESSION, kind: "claude", alive: true } as unknown as Session;
+  const meta = { name: SESSION, kind, alive: true } as unknown as Session;
   await act(async () => {
     root!.render(
       <ToastProvider>
@@ -134,5 +134,37 @@ describe("af-aws-exec runs in the mirror", () => {
     expect(tool).toBeTruthy();
     await until(() => !!document.querySelector(".mt-tool-noted .cloud-run-head"), "the runs under the call");
     expect(document.querySelector(".mt-tool-noted .cloud-run-head")!.textContent).toContain("2 runs");
+  });
+
+  it.each([
+    { label: "a multiline command", launch: { tool: "exec_command", info: "set -e", command: "set -e\naf-aws-exec --profile prod-admin -- aws s3 ls" }, attached: true },
+    { label: "a double-quoted command", launch: { tool: "exec_command", info: "af-aws-exec --profile prod-admin -- aws s3 ls" }, attached: true },
+    { label: "an opaque cell", launch: { tool: "exec", info: '// @exec: {"yield_time_ms": 1}' }, attached: false },
+  ])("places a Codex run from $label", async ({ launch, attached }) => {
+    turns = [
+      TURNS[0],
+      { role: "assistant", idx: 1, ts: "2026-10-30T12:01:00Z", parts: [{ kind: "tool", tool: "exec_command", info: "af-aws-exec --list" }] },
+      { role: "assistant", idx: 2, ts: "2026-10-30T12:04:00Z", parts: [{ kind: "tool", ...launch, output: "Script running with cell ID 1" }] },
+      { role: "assistant", idx: 3, ts: "2026-10-30T12:04:30Z", parts: [{ kind: "tool", tool: "wait", info: '{"cell_id":"1"}', output: "Script completed" }] },
+      { ...TURNS[2], idx: 4 },
+    ];
+    const [run] = runs as Array<Record<string, unknown>>;
+    runs = [run, { ...run, id: "second-run", startedAt: "2026-10-30T12:05:30Z" }];
+    await mount("codex");
+    await until(() => document.body.textContent!.includes("thanks"), "the transcript");
+    await act(async () => document.querySelector<HTMLButtonElement>('.mt-work-head[aria-expanded="false"]')?.click());
+    const tools = document.querySelector<HTMLButtonElement>(".mt-toolrun-head");
+    expect(tools).toBeTruthy();
+    await act(async () => tools!.click());
+    await until(() => !!document.querySelector(".cloud-run-head"), "the AWS run summary");
+    const heads = [...document.querySelectorAll(".cloud-run-head")];
+    expect(heads).toHaveLength(1);
+    expect(heads[0].textContent).toContain("2 runs");
+    const noted = heads[0].closest(".mt-tool-noted");
+    if (attached) {
+      expect(noted?.querySelector(".mt-tool")?.textContent).toContain(launch.info);
+    } else {
+      expect(noted).toBeNull();
+    }
   });
 });

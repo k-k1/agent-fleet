@@ -142,6 +142,15 @@ const WRAPPER: Record<string, RegExp> = {
   aws: /(?:^|[\s/'"`;&|(])af-aws-exec(?:[\s'"`;&|)<>]|$)/,
   gcp: /(?:^|[\s/'"`;&|(])af-gcloud-exec(?:[\s'"`;&|)<>]|$)/,
 };
+// Only match a single static invocation of the wrapper. A command separator can
+// introduce another run, and "--" hands the remaining arguments to the child.
+const AWS_OPTION_VALUE = String.raw`(?:[^\s'"\\$\x60;&|()<>#*?\[\]{}~]+|'[^'\r\n]*'|"[^"\\$\x60\r\n]*")`;
+const AWS_OPTION = String.raw`[ \t]+(?:--(?:profile|region|account)(?:=|[ \t]+)${AWS_OPTION_VALUE}|--(?:login|no-login|keep-aws-config|quiet)|-q)`;
+// Tilde expansion keeps the path in one shell word. Parameter expansion can split it.
+const AWS_WRAPPER = String.raw`(?:"(?:[^"\\$\x60\r\n]*/)?af-aws-exec"|'(?:[^'\r\n]*/)?af-aws-exec'|(?:[^\s'"\\$\x60;&|()<>#*?\[\]{}]+/)?af-aws-exec)`;
+const AWS_PROBE = new RegExp(
+  String.raw`^(?:sudo[ \t]+)?${AWS_WRAPPER}(?:${AWS_OPTION})*[ \t]+(?:--list|-h|--help|--version)(?:${AWS_OPTION})*$`,
+);
 
 const commandOf = (p: Part) => p.command || p.info || "";
 
@@ -175,6 +184,9 @@ export interface RunPlacement {
  * the run's profile wins: a loop or a long command can start several runs after later calls.
  * Without one, the latest shell call takes it (a script that runs the wrapper itself). A run that
  * no call can take, or a block with no per-row times, stays loose.
+ * An unresolved Codex exec may have launched the AWS run. Require a later explicit match
+ * in that case, since timing alone cannot establish which call ran the wrapper.
+ * The change is scoped to AWS to preserve the existing Google Cloud placement.
  */
 export function placeRuns(groups: Group[], runs: CloudRun[]): RunPlacement {
   const onTool = new Map<string, CloudRun[]>();
@@ -201,16 +213,26 @@ export function placeRuns(groups: Group[], runs: CloudRun[]): RunPlacement {
     }
     let named = -1;
     let shell = -1;
+    let opaque = -1;
     g.parts.forEach((p, i) => {
       if (p.kind !== "tool") return;
       const ts = g.partTs?.[i];
       const ms = ts ? Date.parse(ts) : NaN;
       if (!Number.isFinite(ms) || ms > at) return;
-      if (namesRun(commandOf(p), r)) named = i;
-      if (SHELL_TOOL.test(p.tool || "")) shell = i;
+      const cmd = commandOf(p);
+      if (r.provider === "aws") {
+        if (p.tool === "exec") {
+          opaque = i;
+          return;
+        }
+        if (AWS_PROBE.test(cmd.trim())) return;
+      }
+      const isShell = SHELL_TOOL.test(p.tool || "");
+      if ((opaque < 0 || isShell) && namesRun(cmd, r)) named = i;
+      if (isShell) shell = i;
     });
     const i = named >= 0 ? named : shell;
-    if (i < 0) {
+    if (i < 0 || (opaque >= 0 && named <= opaque)) {
       loose.push(r);
       continue;
     }
