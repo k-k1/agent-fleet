@@ -34,6 +34,9 @@ const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { scheduleUpdate, scheduleApprove } = await import("./api.ts");
 const { t } = await import("../../lib/i18n/index.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
+const { useSessionsStore } = await import("../sessions/store.ts");
+const { useLayoutStore } = await import("../../layout/store.ts");
+const { activePane, allViews, freshLayout, singlePaneLayout } = await import("../../layout/ops.ts");
 const { getSettings, setSettings } = await import("../../lib/settings.ts");
 
 let root: Root | null = null;
@@ -73,6 +76,8 @@ beforeEach(() => {
   liveKinds = ALL.map((kind) => ({ kind }));
   ssmProfiles = [];
   useWorkspaceStore.setState({ state: "running" } as never);
+  useSessionsStore.setState({ sessions: [] });
+  useLayoutStore.setState({ layout: freshLayout() });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -113,6 +118,113 @@ describe("ScheduleDetailModal agent picker", () => {
     expect(opts[0]).toBe("lcpp");
     expect(opts.filter((k) => k === "lcpp")).toHaveLength(1);
     expect((document.querySelector("#sched-agent") as HTMLSelectElement).value).toBe("lcpp");
+  });
+});
+
+describe("ScheduleDetailModal reuse navigation", () => {
+  const pinned = "saaaaaa";
+  const adopted = "sbbbbbb";
+  const action = (label: string) =>
+    [...document.querySelectorAll<HTMLButtonElement>("button")].find((b) => b.textContent === label);
+
+  beforeEach(() => {
+    onCloseSpy.mockClear();
+    vi.mocked(scheduleUpdate).mockClear();
+  });
+
+  it("opens the stopped target of a usage-limit booking before any run and keeps a dirty edit", async () => {
+    useSessionsStore.setState({ sessions: [{ name: pinned, kind: "codex", alive: false, resumable: false }] });
+    host.tabIndex = 0;
+    host.focus();
+    const bookingLabel = `auto-resume after usage limit (${pinned})`;
+    await render("codex", {
+      spec_kind: "once",
+      spec: "2026-12-01T09:00:00Z",
+      spec_label: bookingLabel,
+      prompt: "[agent-fleet:notice kind=limit-resume reply=none] " +
+        "The usage limit has reset. Continue the work that was cut off, from where it stopped. " +
+        "If the limit refused the latest request before you started it and you have done none of it yet, " +
+        "carry it out from the beginning; if you had done part of it, continue from there instead. " +
+        "This is an automatic resume — there is no new instruction. " +
+        "Otherwise, if you cannot tell where it stopped, say so instead of starting something new.",
+      wake_policy: "wake",
+      session_mode: "reuse",
+      reuse_target: pinned,
+      reuse_run_count: 0,
+      overlap_policy: "skip",
+      missing_target_policy: "fail",
+    });
+    const label = document.querySelector<HTMLInputElement>("#sched-label")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(label, "Edited booking");
+      label.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const link = action(pinned)!;
+    expect(link?.type).toBe("button");
+    await act(async () => link.click());
+    expect(activePane(useLayoutStore.getState().layout)).toMatchObject({
+      session: pinned,
+      content: { kind: "terminal", chat: true },
+    });
+    expect(document.querySelector(".sched-detail-modal")).toBeNull();
+    expect(scheduleUpdate).not.toHaveBeenCalled();
+    expect(onCloseSpy).not.toHaveBeenCalled();
+
+    const returnToEdit = action(t("sched.return_to_edit", { name: bookingLabel }))!;
+    expect(document.activeElement).toBe(returnToEdit);
+    await act(async () => returnToEdit.click());
+    expect(document.querySelector<HTMLInputElement>("#sched-label")?.value).toBe("Edited booking");
+  });
+
+  it.each(["ctrlKey", "metaKey"])("keeps a dirty draft when %s opens a split", async (modifier) => {
+    const existing = "scccccc";
+    useLayoutStore.setState({ layout: singlePaneLayout({ kind: "terminal", chat: true }, existing) });
+    useSessionsStore.setState({ sessions: [{ name: pinned, kind: "codex", alive: false }] });
+    await render("codex", { spec_label: "Original", session_mode: "reuse", reuse_target: pinned });
+    const label = document.querySelector<HTMLInputElement>("#sched-label")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(label, "Draft");
+      label.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      action(pinned)!.dispatchEvent(new MouseEvent("click", { bubbles: true, [modifier]: true }));
+    });
+    expect(allViews(useLayoutStore.getState().layout).map((view) => view.session)).toEqual([existing, pinned]);
+    await act(async () => action(t("sched.return_to_edit", { name: "Original" }))!.click());
+    expect(document.querySelector<HTMLInputElement>("#sched-label")?.value).toBe("Draft");
+    expect(scheduleUpdate).not.toHaveBeenCalled();
+  });
+
+  it("opens the distinct adopted session and keeps the missing configured target identifiable", async () => {
+    useSessionsStore.setState({ sessions: [{ name: adopted, kind: "codex", alive: true }] });
+    await render("shell", { session_mode: "reuse", reuse_target: pinned, reuse_session: adopted });
+    await act(async () => action(pinned)!.click());
+    expect(document.body.textContent).toContain(t("sched.reuse_unavailable", { name: pinned }));
+    expect(onCloseSpy).not.toHaveBeenCalled();
+
+    await act(async () => action(adopted)!.click());
+    expect(activePane(useLayoutStore.getState().layout)).toMatchObject({
+      session: adopted,
+      content: { kind: "terminal", chat: true },
+    });
+    expect(onCloseSpy).toHaveBeenCalledOnce();
+  });
+
+  it("reports a catalogued target that cannot be opened", async () => {
+    useSessionsStore.setState({ sessions: [{ name: pinned, kind: "shell", alive: false, resumable: false }] });
+    await render("codex", { session_mode: "reuse", reuse_target: pinned, reuse_session: pinned });
+    expect([...document.querySelectorAll("button")].filter((b) => b.textContent === pinned)).toHaveLength(1);
+    const layout = useLayoutStore.getState().layout;
+    await act(async () => action(pinned)!.click());
+    expect(document.body.textContent).toContain(t("sched.reuse_unavailable", { name: pinned }));
+    expect(useLayoutStore.getState().layout).toBe(layout);
+    expect(onCloseSpy).not.toHaveBeenCalled();
+  });
+
+  it.each(["assistant", "new"])("leaves %s targets on their existing path", async (session_mode) => {
+    await render("codex", { session_mode, reuse_target: "aaaaaaa", reuse_session: adopted });
+    expect(action("aaaaaaa")).toBeUndefined();
+    expect(action(adopted)).toBeUndefined();
   });
 });
 

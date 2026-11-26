@@ -28,6 +28,7 @@ const { SchedulesSection } = await import("./SchedulesSection.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
 const { useTenantStore } = await import("../../core/store/tenant.ts");
+const { useSessionsStore } = await import("../sessions/store.ts");
 
 let root: Root | null = null;
 let host: HTMLDivElement;
@@ -69,6 +70,47 @@ afterEach(() => {
 });
 
 const sched = { id: "sch_1", spec_kind: "cron", spec: "0 9 * * *", spec_label: "morning review", enabled: true };
+
+describe("SchedulesSection reuse editor", () => {
+  const pinned = "saaaaaa";
+  const reuse = { ...sched, approval_pending: true, session_mode: "reuse", reuse_target: pinned };
+  const returnButton = () => document.querySelector(".sched-return-to-edit");
+
+  async function parkEditor() {
+    useSessionsStore.setState({ sessions: [{ name: pinned, kind: "codex", alive: false }] });
+    await render();
+    await act(async () => host.querySelector<HTMLButtonElement>(".sched-approve-btn")!.click());
+    const label = document.querySelector<HTMLInputElement>("#sched-label")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(label, "Unsaved");
+      label.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => document.querySelector<HTMLButtonElement>(".sched-reuse-link")!.click());
+    expect(returnButton()).not.toBeNull();
+  }
+
+  afterEach(() => useSessionsStore.setState({ sessions: [] }));
+
+  it("clears the parked editor on tenant switch even while the new list is pending", async () => {
+    scheduleList.mockResolvedValueOnce([reuse]).mockReturnValue(new Promise(() => {}));
+    await parkEditor();
+
+    await act(async () => useTenantStore.setState({ tenant: "other" }));
+    expect(returnButton()).toBeNull();
+    expect(document.querySelector(".sched-detail-modal")).toBeNull();
+    const staleReview = host.querySelector<HTMLButtonElement>(".sched-approve-btn");
+    await act(async () => staleReview?.click());
+    expect(document.querySelector(".sched-detail-modal")).toBeNull();
+  });
+
+  it("starts a different schedule's editor with its own fields", async () => {
+    scheduleList.mockResolvedValue([reuse, { ...reuse, id: "sch_2", spec_label: "Second schedule" }]);
+    await parkEditor();
+    await act(async () => host.querySelector<HTMLButtonElement>('[data-sched-id="sch_2"] .sched-approve-btn')!.click());
+    expect(returnButton()).toBeNull();
+    expect(document.querySelector<HTMLInputElement>("#sched-label")?.value).toBe("Second schedule");
+  });
+});
 
 describe("SchedulesSection load failures", () => {
   it("shows the empty message only for a genuinely empty list", async () => {
