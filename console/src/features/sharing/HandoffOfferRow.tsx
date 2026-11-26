@@ -23,6 +23,7 @@ import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { boundedRequest, type BoundedRequest } from "./boundedRequest.ts";
 import { senderLabel, useHandoffStore, type HandoffOffer } from "./handoffStore.ts";
 import "./sharing.css";
 
@@ -47,10 +48,14 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
   // False once this row is gone: an answer that arrives after the inbox was closed must not
   // start a launch nobody is looking at.
   const alive = useRef(true);
+  // The space probe in flight: bounded, so an Agent that took the connection and never answers
+  // frees the row (retry and decline work again), and cancelled with the row.
+  const probe = useRef<BoundedRequest | null>(null);
   useEffect(() => {
     alive.current = true;
     return () => {
       alive.current = false;
+      probe.current?.cancel();
     };
   }, []);
 
@@ -59,7 +64,11 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
   // Only a real list of spaces proves support: an error, a dropped connection or a page that is
   // no list leaves it unknown, and "unknown" starts nothing (a retry may well succeed).
   const spacesSupport = async (): Promise<"yes" | "no" | "unknown"> => {
-    const d = await api("api/spaces").catch(() => null);
+    const req = boundedRequest();
+    probe.current = req;
+    const d = await api("api/spaces", { signal: req.signal }).catch(() => null);
+    req.settle();
+    if (probe.current === req) probe.current = null;
     if (d && !d.error && Array.isArray(d.spaces)) return "yes";
     const e = d?.error;
     return e && (e.status === 404 || e.status === 405 || e.code === "http_404" || e.code === "http_405") ? "no" : "unknown";
@@ -83,7 +92,7 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
       return;
     }
     if (support !== "yes") {
-      toast(tr(support === "no" ? "handoff.space_unsupported" : "start.space_check_failed"));
+      toast(tr(support === "no" ? "handoff.space_unsupported" : "handoff.space_check_failed"));
       return;
     }
     // A space offer has no repository to open it in: the launch is a dialog that starts in a

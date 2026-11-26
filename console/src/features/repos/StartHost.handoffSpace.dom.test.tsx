@@ -10,7 +10,7 @@ import type { LaunchOpts } from "./LaunchModal.tsx";
 
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTerminal: vi.fn() }));
 vi.mock("./useRepoRail.ts", () => ({ useRepoRailContext: () => ({ access: { kinds: { get: (k: string) => ({ kind: k }), has: () => true }, noRoute: false, allOff: false, refresh: () => {} }, launchKinds: ["claude"], connsSettling: false }) }));
-vi.mock("./StartModal.tsx", () => ({ StartModal: () => null }));
+vi.mock("./StartModal.tsx", () => ({ StartModal: () => <div data-testid="hub" /> }));
 vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
 vi.mock("./LaunchModal.tsx", () => ({
   LaunchModal: (p: { repo: string; newSpace?: boolean; home?: boolean; initialPrompt?: string; initialTitle?: string; onClose: () => void; onLaunch: (o: LaunchOpts) => Promise<{ ok: boolean }> }) => (
@@ -151,9 +151,20 @@ describe("launching from a handoff that came from a space", () => {
     routes({ "/offer-1/take": { status: 200, body: { status: "pending", token: "tok-3" } }, "/api/sessions": "network-error" });
     await mount();
     await press("launch");
+    // The create did go out, under the take; nothing was given back or accepted.
+    expect(posts("/offer-1/take")).toHaveLength(1);
+    expect(posts("/api/sessions")).toHaveLength(1);
+    expect(posts("/api/sessions")[0].handoff_take).toEqual({ offerId: "offer-1", token: "tok-3" });
     expect(posts("/release")).toHaveLength(0);
     expect(posts("/accept")).toHaveLength(0);
     expect(dialog()).not.toBeNull();
+
+    // The next press asks the CP about the lost launch with that token, and creates nothing.
+    fetchMock.mockClear();
+    routes({ "/offer-1/take": { status: 200, body: { status: "accepted", sessionName: "s-lost" } } });
+    await press("launch");
+    expect(posts("/offer-1/take")[0]).toEqual({ token: "tok-3" });
+    expect(posts("/api/sessions")).toHaveLength(0);
   });
 
   it("takes nothing when the dialog is cancelled, and leaves no seed behind", async () => {
@@ -165,6 +176,24 @@ describe("launching from a handoff that came from a space", () => {
     expect(fetchMock.mock.calls.filter(([, init]) => (init?.method ?? "GET") === "POST")).toHaveLength(0);
     expect(dialog()).toBeNull();
     expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "", newSpace: false, prompt: "" });
+  });
+
+  // A workspace that finished starting opens the hub by itself. Over a handoff's dialog it would
+  // copy the offer's text into the hub's draft, from which a repository launch could send it under
+  // the same offer: the dedicated launch keeps the screen instead.
+  it("does not open the Start hub over the dialog, and keeps the offer with it", async () => {
+    const { useSessionsStore } = await import("../sessions/store.ts");
+    useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
+    useLaunchSeed.getState().setNewSpace(true);
+    await mount();
+    await act(async () => useSessionsStore.getState().openStart());
+    expect(host.querySelector("[data-testid=hub]")).toBeNull();
+    expect(dialog()?.dataset.newSpace).toBe("true");
+    expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "offer-1", newSpace: true });
+    // The hub opens again once the handoff is out of the way.
+    await press("close");
+    await act(async () => useSessionsStore.getState().openStart());
+    expect(host.querySelector("[data-testid=hub]")).not.toBeNull();
   });
 
   it("still shows the dialog when the Start hub is open", async () => {

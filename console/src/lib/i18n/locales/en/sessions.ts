@@ -981,6 +981,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "handoff.accept_no_repo": "Pick a working copy.",
   "handoff.accept_no_repo_hint": "This workspace has no working copy yet. Clone the handoff's repository first, then take it over.",
   "handoff.space_offer_hint": "This handoff comes from a space. {who}'s files and attachments there stay in their home, so you get the text above and nothing else. Accepting starts it in a new space of your own.",
+  "handoff.space_check_failed": "Could not check whether this workspace can start in a space. If the workspace is stopped, start it, then accept again.",
+  "handoff.warning_changed": "The state of this session changed after you ticked the box. Read the note and tick again before sending.",
   "handoff.space_unsupported": "This workspace's Agent is too old to start in a space. Stop and start the workspace to bring it up to date, then accept again.",
   "handoff.accept_cost_hint": "Accepting starts a new session in YOUR workspace (and bills to you).",
   "handoff.decline": "Decline",

@@ -403,6 +403,22 @@ func TestHandoffPushThenSendFromAGitSpace(t *testing.T) {
 	if len(gSeen) != 1 || g.offerRows() != 0 {
 		t.Fatalf("pushes=%d offers=%d, want the push done and no offer for an unread warning", len(gSeen), g.offerRows())
 	}
+
+	// Acknowledged by name, the offer is stored from the verdict AFTER the push: the first
+	// verdict was no space and the final one is, and the stored origin is the final one.
+	h := newHandoffLife(t)
+	h.blockedForPush("no_upstream")
+	h.setAgent(map[string]any{"warning": "uncommitted_changes"})
+	var hSeen []*http.Request
+	var hBodies [][]byte
+	h.pushThenSpace(&hSeen, &hBodies)
+	hreq := confirmedPush()
+	hreq["ackWarning"] = true
+	hreq["ackedWarning"] = "space_files_stay"
+	o2 := h.mustOffer(hreq)
+	if len(hSeen) != 1 || !h.row(o2.ID).SourceSpace {
+		t.Fatalf("pushes=%d row=%+v, want the origin of the final verdict (space)", len(hSeen), h.row(o2.ID))
+	}
 }
 
 // TestHandoffTakeBeforeLaunch is issue #2020 through the handlers: the take happens before

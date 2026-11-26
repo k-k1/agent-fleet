@@ -137,6 +137,9 @@ describe("HandoffOfferModal", () => {
     });
     expect(apiJSON.mock.calls.at(-1)?.[2]).toMatchObject({ ackWarning: true, ackedWarning: "uncommitted_changes" });
     const { t } = await import("../../lib/i18n/index.ts");
+    // The refusal is shown in the member's language, not as the server's English.
+    expect(document.body.textContent).toContain(t("handoff.warning_changed"));
+    expect(document.body.textContent).not.toContain("the session runs in a space");
     expect(document.body.textContent).toContain(t("handoff.ack_space"));
     expect((find('input[type="checkbox"]') as HTMLInputElement).checked).toBe(false);
     expect(sendButton()?.disabled).toBe(true);

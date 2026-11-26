@@ -67,6 +67,11 @@ export function StartHost() {
   useEffect(() => {
     if (startTick !== lastTickRef.current) {
       lastTickRef.current = startTick;
+      // A handoff from a member's space has a launch of its own, holding the offer. The hub would
+      // copy its text into a draft that a repository launch could then send under the same offer
+      // (a workspace that finished starting opens the hub by itself), so the dedicated launch
+      // keeps the screen and the hub does not open over it.
+      if (useLaunchSeed.getState().newSpace) return;
       clearLaunch();
       setHome(false);
       setCarry(false);

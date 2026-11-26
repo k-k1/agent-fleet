@@ -39,6 +39,7 @@ const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
+const { SHARE_REQUEST_TIMEOUT_MS } = await import("./boundedRequest.ts");
 
 const offer: HandoffOffer = {
   id: "offer-1", sessionId: "cat-1", sessionName: "session-1", recipientUserKey: "bob", ownerUserKey: "alice",
@@ -176,9 +177,47 @@ describe("the received handoff row", () => {
       await act(async () => acceptButton().click());
       expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
       expect(useLaunchSeed.getState()).toMatchObject({ newSpace: false, handoffOfferId: "" });
-      expect(document.body.textContent).toContain(t("start.space_check_failed"));
+      expect(document.body.textContent).toContain(t("handoff.space_check_failed"));
       expect(document.body.textContent).not.toContain(t("handoff.space_unsupported"));
       expect(acceptButton().disabled).toBe(false); // retry is possible
+    });
+
+    // An Agent that took the connection and never answers must not freeze the row: the probe has a
+    // deadline, and retry and decline work again afterwards.
+    it("frees the row when the Agent never answers, and starts nothing", async () => {
+      vi.useFakeTimers();
+      try {
+        apiGet.mockImplementation((async (...a: unknown[]) => {
+          if (!String(a[0]).includes("api/spaces")) return { offers: [] };
+          const signal = (a[1] as { signal?: AbortSignal } | undefined)?.signal;
+          return new Promise((_, reject) => signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError"))));
+        }) as never);
+        await render([], true, fromSpace);
+        await act(async () => acceptButton().click());
+        expect(acceptButton().disabled).toBe(true); // checking
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(SHARE_REQUEST_TIMEOUT_MS + 1000);
+        });
+        expect(acceptButton().disabled).toBe(false);
+        expect(useLaunchSeed.getState()).toMatchObject({ newSpace: false, handoffOfferId: "" });
+        expect(document.body.textContent).toContain(t("handoff.space_check_failed"));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("cancels the probe when the row goes away", async () => {
+      let signal: AbortSignal | undefined;
+      apiGet.mockImplementation((async (...a: unknown[]) => {
+        if (!String(a[0]).includes("api/spaces")) return { offers: [] };
+        signal = (a[1] as { signal?: AbortSignal } | undefined)?.signal;
+        return new Promise(() => undefined);
+      }) as never);
+      await render([], true, fromSpace);
+      await act(async () => acceptButton().click());
+      expect(signal?.aborted).toBe(false);
+      await act(async () => root!.render(<ToastProvider><StartHost /></ToastProvider>));
+      expect(signal?.aborted).toBe(true);
     });
 
     describe("an answer that arrives late", () => {

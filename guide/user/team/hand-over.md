@@ -90,7 +90,9 @@ To take it:
 1. Press "**Take it over**" and choose a working copy. If your workspace has none yet, clone the source repository first.
    A handoff from a space has no working copy to choose: the offer says the sender's files stay behind
 2. The usual launch dialog opens with everything filled in. Check it and launch. For a handoff from a space it is the
-   new-space dialog, and the session starts in a new space under `~/spaces`
+   new-space dialog, and the session starts in a new space under `~/spaces`. It first asks your workspace whether it can
+   start in a space; if the workspace is stopped or does not answer, nothing starts and you are told to start it and
+   take the handoff again
 
 The session runs in the recipient's workspace and its cost is theirs. To refuse, press "**Decline**".
 

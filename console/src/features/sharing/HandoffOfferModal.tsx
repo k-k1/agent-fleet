@@ -215,7 +215,9 @@ export function HandoffOfferModal({
     }
     setPushErr("");
     if (d?.error) {
-      toast(errText(d.error));
+      // The verdict changed after the box was ticked: the screen below is refetched, so point at
+      // it in the member's language instead of the server's English.
+      toast(d.error.code === "handoff_warning" ? tr("handoff.warning_changed") : errText(d.error));
       // A timed-out send may still have created the offer; resending is safe (an offer
       // already pending answers 409).
       if (req.timedOut()) void useHandoffStore.getState().refresh();
