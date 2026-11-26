@@ -391,7 +391,10 @@ func TestProbeOAuthReplacedEntryKeepsItsPRMOrder(t *testing.T) {
 	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url(""), nil)
 	f.docs["/.well-known/oauth-authorization-server/b"] = asDoc(f.url("/b"), nil)
 	o := f.probe().OAuth
-	if o == nil || o.Selected != f.url("/b") {
+	if o == nil {
+		t.Fatal("no OAuth report")
+	}
+	if o.Selected != f.url("/b") {
 		t.Fatalf("selected %q, want %q: %+v", o.Selected, f.url("/b"), o)
 	}
 	if len(o.Servers) != 2 || o.Servers[0].Issuer != f.url("/b") || o.Servers[1].Issuer != f.url("") || o.Servers[1].rootSlash {
