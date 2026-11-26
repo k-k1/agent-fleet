@@ -11,14 +11,20 @@ package mcpreg
 // Rules that must not erode:
 //
 //   - Only a person's answer is ever sent as "accept". The relay itself answers nothing but
-//     "decline" (the time limit, or a person declining) and never invents a choice. A
-//     requestState or inputResponses the CLI sent itself is dropped: a confirmation reaches the
-//     server only through the pending list.
+//     "decline" (the time limit, or a person declining) and never invents a choice. A request
+//     that carries a requestState or inputResponses of its own, under any spelling a JSON decoder
+//     might match (Go's matches member names case-insensitively), is refused: anything holding
+//     the relay key could otherwise send its own accept.
+//   - A request is refused rather than guessed at when its JSON is ambiguous (two members whose
+//     names fold to the same one) or a tool call is not spelled as MCP spells it: the server may
+//     read it differently from the relay.
 //   - The arguments are passed on byte for byte: a changed argument voids the server's approval,
 //     and the person is shown exactly what the server will run.
-//   - Only tools/call of the 2026-07-28 era (a protocolVersion in _meta) is read. Other methods,
-//     and every older-era exchange, are relayed as bytes as for any other definition, so the relay
-//     never declares a capability for a result it does not handle.
+//   - Only tools/call of the 2026-07-28 era (a protocolVersion in _meta) is held. Other requests
+//     pass as bytes, so the relay never declares a capability for a result it does not handle.
+//   - On a held call the CLI only gets notifications and the response to the call, under its own
+//     id. Any other response, a server request, or an unreadable event ends the call with an error.
+//   - A retry goes out only on the sign-in the call was first sent with.
 //   - Nothing about the arguments or the answer's content is logged.
 
 import (
@@ -31,10 +37,13 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
+	"math/big"
 	"mime"
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -66,6 +75,9 @@ const (
 	elicitMaxText    = 256
 )
 
+// digestHeaders describe a body's bytes; the relay drops them wherever it may change the body.
+var digestHeaders = []string{"Content-Digest", "Repr-Digest", "Digest", "Content-Md5"}
+
 // elicitCall is one 2026-07-28-era tools/call, with form elicitation declared in its _meta.
 type elicitCall struct {
 	id     json.RawMessage
@@ -77,47 +89,194 @@ type elicitCall struct {
 	body          []byte
 }
 
-// parseElicitRequest reads body as a 2026-07-28-era tools/call and sets form elicitation as the
-// client capability it declares. ok is false for anything else, which is then relayed unchanged.
-//
-// The capability is replaced, not merged: the relay answers form elicitation only, so a "url"
-// capability the CLI declared would invite a request nobody here can answer.
-func parseElicitRequest(body []byte) (elicitCall, bool) {
-	var c elicitCall
-	var method string
-	if json.Unmarshal(body, &c.top) != nil || json.Unmarshal(c.top["method"], &method) != nil || method != "tools/call" {
-		return elicitCall{}, false
+type flaggedVerdict int
+
+const (
+	flaggedPass   flaggedVerdict = iota // relayed as bytes
+	flaggedElicit                       // a 2026-07-28 tools/call, held on input_required
+	flaggedRefuse                       // never reaches the server
+)
+
+// readFlagged sorts a POST body for a flagged definition. For flaggedElicit the call carries the
+// body to send, with form elicitation as the declared capability (replaced, not merged: the relay
+// answers form elicitation only, so a "url" capability would invite a request nobody here can
+// answer). For flaggedRefuse the string says why.
+func readFlagged(body []byte) (elicitCall, flaggedVerdict, string) {
+	t := bytes.TrimLeft(body, " \t\r\n")
+	switch {
+	case len(t) == 0 || (t[0] != '{' && t[0] != '['):
+		return elicitCall{}, flaggedPass, "" // not JSON: no server reads it as a request
+	case t[0] == '[':
+		return elicitCall{}, flaggedRefuse, "a batch of requests"
 	}
-	c.id = c.top["id"]
-	if len(c.id) == 0 || json.Unmarshal(c.top["params"], &c.params) != nil || c.params == nil ||
-		json.Unmarshal(c.params["name"], &c.tool) != nil {
-		return elicitCall{}, false
+	keys, top, ok := objectMembers(body)
+	if !ok {
+		return elicitCall{}, flaggedRefuse, "a request that is not valid JSON"
 	}
-	var meta map[string]json.RawMessage
-	if json.Unmarshal(c.params["_meta"], &meta) != nil || meta == nil {
-		return elicitCall{}, false
+	if foldDuplicate(keys) {
+		return elicitCall{}, flaggedRefuse, "a request with two members of the same name"
 	}
-	if _, ok := meta[metaProtocolVersion]; !ok {
-		return elicitCall{}, false
-	}
-	var caps map[string]json.RawMessage
-	if raw, ok := meta[metaClientCaps]; ok {
-		if json.Unmarshal(raw, &caps) != nil {
-			return elicitCall{}, false
+	pk, praw, hasParams := foldGet(keys, top, "params")
+	var pkeys []string
+	var params map[string]json.RawMessage
+	if hasParams && firstByte(praw) == '{' {
+		if pkeys, params, ok = objectMembers(praw); !ok || foldDuplicate(pkeys) {
+			return elicitCall{}, flaggedRefuse, "a request with two parameters of the same name"
+		}
+		for _, k := range pkeys {
+			if strings.EqualFold(k, "requestState") || strings.EqualFold(k, "inputResponses") {
+				return elicitCall{}, flaggedRefuse, "a request that answers a confirmation itself; for this server Agent Fleet sends those only with a person's answer from the Console"
+			}
 		}
 	}
-	if caps == nil {
-		caps = map[string]json.RawMessage{}
+	mk, mraw, _ := foldGet(keys, top, "method")
+	method, isStr := jsonString(mraw)
+	if !isStr || method != "tools/call" {
+		return elicitCall{}, flaggedPass, ""
+	}
+	malformed := "a tool call that is not spelled the way MCP spells it"
+	ik, id, hasID := foldGet(keys, top, "id")
+	if mk != "method" || pk != "params" || params == nil || !hasID || ik != "id" {
+		return elicitCall{}, flaggedRefuse, malformed
+	}
+	c := elicitCall{id: id, top: top, params: params}
+	nk, nraw, _ := foldGet(pkeys, params, "name")
+	if c.tool, isStr = jsonString(nraw); !isStr || nk != "name" {
+		return elicitCall{}, flaggedRefuse, malformed
+	}
+	metaKey, metaRaw, hasMeta := foldGet(pkeys, params, "_meta")
+	if !hasMeta {
+		return elicitCall{}, flaggedPass, "" // an older-era call
+	}
+	mkeys, meta, ok := objectMembers(metaRaw)
+	if metaKey != "_meta" || !ok || foldDuplicate(mkeys) {
+		return elicitCall{}, flaggedRefuse, malformed
+	}
+	vk, _, hasVersion := foldGet(mkeys, meta, metaProtocolVersion)
+	if !hasVersion {
+		return elicitCall{}, flaggedPass, "" // an older-era call
+	}
+	if vk != metaProtocolVersion {
+		return elicitCall{}, flaggedRefuse, malformed
+	}
+	caps := map[string]json.RawMessage{}
+	if ck, capsRaw, hasCaps := foldGet(mkeys, meta, metaClientCaps); hasCaps {
+		var ckeys []string
+		if ckeys, caps, ok = objectMembers(capsRaw); ck != metaClientCaps || !ok || foldDuplicate(ckeys) {
+			return elicitCall{}, flaggedRefuse, malformed
+		}
+		for _, k := range ckeys {
+			if strings.EqualFold(k, "elicitation") {
+				delete(caps, k)
+			}
+		}
 	}
 	caps["elicitation"] = json.RawMessage(`{"form":{}}`)
 	meta[metaClientCaps] = rawObject(caps)
-	c.params["_meta"] = rawObject(meta)
-	delete(c.params, "requestState")
-	delete(c.params, "inputResponses")
-	c.top["params"] = rawObject(c.params)
+	params["_meta"] = rawObject(meta)
+	top["params"] = rawObject(params)
 	c.progressToken = meta["progressToken"]
-	c.body = rawObject(c.top)
-	return c, true
+	c.body = rawObject(top)
+	return c, flaggedElicit, ""
+}
+
+// objectMembers reads raw as exactly one JSON object: its member names in order and their values
+// as they are written.
+func objectMembers(raw []byte) ([]string, map[string]json.RawMessage, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('{') {
+		return nil, nil, false
+	}
+	var keys []string
+	vals := map[string]json.RawMessage{}
+	for dec.More() {
+		tok, err := dec.Token()
+		k, isStr := tok.(string)
+		if err != nil || !isStr {
+			return nil, nil, false
+		}
+		var v json.RawMessage
+		if dec.Decode(&v) != nil {
+			return nil, nil, false
+		}
+		if _, dup := vals[k]; dup {
+			return []string{k, k}, nil, true // reported by foldDuplicate
+		}
+		keys = append(keys, k)
+		vals[k] = v
+	}
+	if tok, err := dec.Token(); err != nil || tok != json.Delim('}') {
+		return nil, nil, false
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, nil, false
+	}
+	return keys, vals, true
+}
+
+// foldDuplicate reports two names a case-insensitive JSON decoder would take for one (Go's
+// encoding/json folds with Unicode simple folding, as strings.EqualFold does).
+func foldDuplicate(keys []string) bool {
+	for i := range keys {
+		for j := i + 1; j < len(keys); j++ {
+			if strings.EqualFold(keys[i], keys[j]) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// foldGet finds the member whose name folds to name, with the name as it is written.
+func foldGet(keys []string, vals map[string]json.RawMessage, name string) (string, json.RawMessage, bool) {
+	for _, k := range keys {
+		if strings.EqualFold(k, name) {
+			return k, vals[k], true
+		}
+	}
+	return "", nil, false
+}
+
+func firstByte(raw []byte) byte {
+	t := bytes.TrimLeft(raw, " \t\r\n")
+	if len(t) == 0 {
+		return 0
+	}
+	return t[0]
+}
+
+// jsonString decodes raw when it is a JSON string (null is not one).
+func jsonString(raw json.RawMessage) (string, bool) {
+	if firstByte(raw) != '"' {
+		return "", false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return "", false
+	}
+	return s, true
+}
+
+// relayRefuse answers a request the relay will not pass on with a JSON-RPC error.
+func relayRefuse(w http.ResponseWriter, why string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusBadRequest)
+	_, _ = w.Write(mustJSON(map[string]any{"jsonrpc": "2.0", "id": nil,
+		"error": map[string]any{"code": -32600, "message": "Agent Fleet: the relay refused " + why}}))
+}
+
+// contentEncoded reports a body that is not sent as it is: any coding other than identity in any
+// of the header's lines.
+func contentEncoded(h http.Header) bool {
+	for _, v := range h.Values("Content-Encoding") {
+		for _, c := range strings.Split(v, ",") {
+			if c = strings.TrimSpace(c); c != "" && !strings.EqualFold(c, "identity") {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // retryBody is the same call under a new JSON-RPC id (MRTR requires one), with the server's
@@ -145,7 +304,7 @@ func (c elicitCall) retryBody(id json.RawMessage, ir inputRequired, responses js
 func mustJSON(v any) json.RawMessage {
 	b, err := json.Marshal(v)
 	if err != nil {
-		panic(err) // only plain maps and strings the relay built are marshalled here
+		panic(err) // only plain maps, strings and finite numbers the relay built are marshalled here
 	}
 	return b
 }
@@ -184,11 +343,15 @@ func newRelayRPCID() json.RawMessage {
 func serveElicitingCall(w http.ResponseWriter, r *http.Request, def ServerDef, target *url.URL, call elicitCall) {
 	ctx := r.Context()
 	// The answers are read, so they must arrive readable: the transport passes compression
-	// through untouched (relayTransport).
+	// through untouched (relayTransport). The body is rewritten, so a digest of it would lie.
 	up := r.Clone(ctx)
 	up.Header.Set("Accept-Encoding", "identity")
+	for _, h := range digestHeaders {
+		up.Header.Del(h)
+	}
 	out := &elicitOut{w: w, r: r, cliID: call.id, upID: call.id, token: call.progressToken,
 		acceptsSSE: acceptsEventStream(r.Header.Values("Accept"))}
+	var gen string
 	body := call.body
 	for round := 0; ; round++ {
 		if round > 0 {
@@ -200,7 +363,7 @@ func serveElicitingCall(w http.ResponseWriter, r *http.Request, def ServerDef, t
 				return
 			}
 		}
-		resp, p := relayExchange(ctx, up, def.ID, target, body)
+		resp, p := relayExchange(ctx, up, def.ID, target, body, &gen)
 		if p != nil {
 			out.fail(p)
 			return
@@ -235,13 +398,20 @@ func serveElicitingCall(w http.ResponseWriter, r *http.Request, def ServerDef, t
 	}
 }
 
+// acceptsEventStream reports whether an Accept header takes text/event-stream (q=0 refuses it).
 func acceptsEventStream(values []string) bool {
 	for _, v := range values {
 		for _, part := range strings.Split(v, ",") {
-			mt, _, err := mime.ParseMediaType(strings.TrimSpace(part))
-			if err == nil && mt == "text/event-stream" {
-				return true
+			mt, params, err := mime.ParseMediaType(strings.TrimSpace(part))
+			if err != nil || mt != "text/event-stream" {
+				continue
 			}
+			if q, ok := params["q"]; ok {
+				if f, err := strconv.ParseFloat(q, 64); err != nil || f <= 0 {
+					continue
+				}
+			}
+			return true
 		}
 	}
 	return false
@@ -264,7 +434,7 @@ type elicitOut struct {
 	r          *http.Request
 	acceptsSSE bool
 	streaming  bool
-	// cliID is the id the CLI sent; upID the one the current attempt went out with. A message
+	// cliID is the id the CLI sent; upID the one the current attempt went out with. The response
 	// for upID reaches the CLI under cliID.
 	cliID, upID json.RawMessage
 	// token is the CLI's progress token. Progress on it must only grow (MCP progress), across
@@ -288,6 +458,9 @@ func (o *elicitOut) startStream(from http.Header) {
 	o.w.Header().Set("Cache-Control", "no-store")
 	o.w.Header().Del("Content-Length")
 	o.w.Header().Del("Content-Encoding")
+	for _, h := range digestHeaders {
+		o.w.Header().Del(h)
+	}
 	o.w.WriteHeader(http.StatusOK)
 	_ = http.NewResponseController(o.w).Flush()
 	o.streaming = true
@@ -338,18 +511,30 @@ func (o *elicitOut) fail(p *relayProblem) {
 		"error": mustJSON(map[string]any{"code": -32603, "message": "Agent Fleet: " + p.msg})}))
 }
 
-// keepalive is sent while a held call streams: a progress notification when the CLI gave a token,
-// an SSE comment otherwise.
+var errStray = &relayProblem{http.StatusBadGateway, "the MCP server sent a message that does not belong to this call"}
+
+// nextProgress is a progress value above last that JSON can carry: +1 while that still moves a
+// float64, the next float64 up past 2^53, and false once there is none.
+func nextProgress(last float64) (float64, bool) {
+	v := last + 1
+	if v <= last {
+		v = math.Nextafter(last, math.Inf(1))
+	}
+	return v, !math.IsInf(v, 0) && !math.IsNaN(v)
+}
+
+// keepalive is sent while a held call streams: a progress notification when the CLI gave a token
+// (and a higher value exists), an SSE comment otherwise.
 func (o *elicitOut) keepalive() bool {
 	if !o.streaming {
 		return true
 	}
-	if len(o.token) == 0 {
-		return o.raw([]byte(": waiting for a person to answer in the Agent Fleet Console\n\n"))
-	}
-	v := 1.0
+	v, ok := 1.0, true
 	if o.sentProgress {
-		v = o.lastProgress + 1
+		v, ok = nextProgress(o.lastProgress)
+	}
+	if len(o.token) == 0 || !ok {
+		return o.raw([]byte(": waiting for a person to answer in the Agent Fleet Console\n\n"))
 	}
 	o.lastProgress, o.sentProgress = v, true
 	return o.event(mustJSON(map[string]any{"jsonrpc": "2.0", "method": "notifications/progress", "params": map[string]any{
@@ -366,37 +551,58 @@ type message struct {
 	Params json.RawMessage `json:"params"`
 }
 
-// forCall reports whether m is the response to the current attempt.
-func (o *elicitOut) forCall(m message) bool {
-	return (len(m.Result) > 0 || len(m.Error) > 0) && sameJSONID(m.ID, o.upID)
+// msgKind is what a server message is to a held call.
+type msgKind int
+
+const (
+	msgStray        msgKind = iota // anything else: ends the call with an error
+	msgNotification                // passed on (progress rewritten)
+	msgResponse                    // the current attempt's response, not input_required
+	msgHeld                        // the current attempt's input_required result
+)
+
+// classify reads one server message. A response counts only when its id is the current
+// attempt's; input_required is held only on a 200.
+func (o *elicitOut) classify(raw []byte, status int) (message, msgKind) {
+	var m message
+	if _, vals, ok := objectMembers(raw); !ok || vals == nil || json.Unmarshal(raw, &m) != nil {
+		return m, msgStray
+	}
+	if m.Method != "" {
+		if len(m.ID) == 0 {
+			return m, msgNotification
+		}
+		return m, msgStray // a server request: forbidden on a 2026-07-28 response stream
+	}
+	if (len(m.Result) == 0) == (len(m.Error) == 0) || !sameJSONID(m.ID, o.upID) {
+		return m, msgStray
+	}
+	if len(m.Result) > 0 {
+		var res struct {
+			ResultType string `json:"resultType"`
+		}
+		if json.Unmarshal(m.Result, &res) != nil || status != http.StatusOK {
+			return m, msgStray // a result needs a 200; an unreadable one cannot be checked
+		}
+		if res.ResultType == "input_required" {
+			return m, msgHeld
+		}
+	}
+	return m, msgResponse
 }
 
-// heldResult returns the result of m when it is the current attempt's input_required.
-func (o *elicitOut) heldResult(m message) (json.RawMessage, bool) {
-	if len(m.Result) == 0 || !sameJSONID(m.ID, o.upID) {
-		return nil, false
-	}
-	var res struct {
-		ResultType string `json:"resultType"`
-	}
-	if json.Unmarshal(m.Result, &res) != nil || res.ResultType != "input_required" {
-		return nil, false
-	}
-	return m.Result, true
-}
-
-// rewrite returns msg as the CLI must see it, and whether it differs: the current attempt's
-// response under the CLI's id, and progress on the CLI's token lifted to keep growing.
-func (o *elicitOut) rewrite(msg []byte, m message) ([]byte, bool) {
+// rewrite returns a passed message as the CLI must see it: the response under the CLI's id, and
+// progress on the CLI's token lifted to keep growing.
+func (o *elicitOut) rewrite(msg []byte, m message, kind msgKind) ([]byte, bool) {
 	switch {
-	case o.forCall(m) && !bytes.Equal(o.upID, o.cliID):
+	case kind == msgResponse && !bytes.Equal(o.upID, o.cliID):
 		var top map[string]json.RawMessage
 		if json.Unmarshal(msg, &top) != nil {
 			return msg, false
 		}
 		top["id"] = o.cliID
 		return rawObject(top), true
-	case m.Method == "notifications/progress" && len(o.token) > 0:
+	case kind == msgNotification && m.Method == "notifications/progress" && len(o.token) > 0:
 		var p map[string]json.RawMessage
 		var v float64
 		if json.Unmarshal(m.Params, &p) != nil || !sameJSONID(p["progressToken"], o.token) || json.Unmarshal(p["progress"], &v) != nil {
@@ -404,7 +610,11 @@ func (o *elicitOut) rewrite(msg []byte, m message) ([]byte, bool) {
 		}
 		lifted := v
 		if o.sentProgress && lifted <= o.lastProgress {
-			lifted = o.lastProgress + 1
+			next, ok := nextProgress(o.lastProgress)
+			if !ok {
+				return nil, true // nothing higher exists: dropped rather than sent out of order
+			}
+			lifted = next
 		}
 		o.lastProgress, o.sentProgress = lifted, true
 		if lifted == v {
@@ -431,17 +641,14 @@ func (o *elicitOut) pass(serverID string, resp *http.Response) (held json.RawMes
 		noteInsufficientScope(serverID, resp.Header.Values("Www-Authenticate"))
 	}
 	mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
-	encoded := false
-	if ce := resp.Header.Get("Content-Encoding"); ce != "" && !strings.EqualFold(ce, "identity") {
-		encoded = true
-	}
+	encoded := contentEncoded(resp.Header)
 	firstAttempt := bytes.Equal(o.upID, o.cliID)
 	switch {
 	case resp.StatusCode >= 300 && resp.StatusCode < 400:
 		o.fail(&relayProblem{http.StatusBadGateway, relayRedirectMsg})
 		return nil, false
 	case resp.StatusCode != http.StatusOK && !o.streaming && firstAttempt && (encoded || mt != "application/json"):
-		// Nothing of it has to be read: passed on as any other definition's answer is.
+		// No result can be in it: passed on as any other definition's answer is.
 		relayCopyResponse(o.w, o.r, resp)
 		return nil, false
 	case encoded:
@@ -459,22 +666,25 @@ func (o *elicitOut) pass(serverID string, resp *http.Response) (held json.RawMes
 			o.fail(&relayProblem{http.StatusBadGateway, "the MCP server's answer could not be read"})
 			return nil, false
 		}
-		var m message
-		_ = json.Unmarshal(b, &m)
-		if resp.StatusCode == http.StatusOK {
-			if res, ok := o.heldResult(m); ok {
-				return res, true
-			}
+		m, kind := o.classify(b, resp.StatusCode)
+		switch kind {
+		case msgHeld:
+			return m.Result, true
+		case msgResponse:
+		default:
+			o.fail(&relayProblem{http.StatusBadGateway, fmt.Sprintf("the MCP server answered HTTP %d without the call's response", resp.StatusCode)})
+			return nil, false
 		}
-		b, _ = o.rewrite(b, m)
+		b, _ = o.rewrite(b, m, kind)
 		if o.streaming {
-			if !o.forCall(m) || !o.event(b) {
-				o.fail(&relayProblem{http.StatusBadGateway, fmt.Sprintf("the MCP server answered HTTP %d without a usable message", resp.StatusCode)})
-			}
+			o.event(b)
 			return nil, false
 		}
 		copyResponseHeaders(o.w.Header(), resp.Header)
 		o.w.Header().Del("Content-Length")
+		for _, h := range digestHeaders {
+			o.w.Header().Del(h)
+		}
 		o.w.WriteHeader(resp.StatusCode)
 		_, _ = o.w.Write(b)
 		return nil, false
@@ -484,11 +694,12 @@ func (o *elicitOut) pass(serverID string, resp *http.Response) (held json.RawMes
 	}
 }
 
-// passStream forwards a server's event stream event by event (WHATWG event-stream parsing: LF,
-// CRLF and CR end a line, a leading BOM is dropped, only an event ended by a blank line is
-// dispatched). The current attempt's input_required event is kept back; its response and
-// progress events are rewritten where the CLI must see other values; every other event is passed
-// as it came, with LF line ends.
+// passStream forwards a server's event stream (WHATWG event-stream parsing: LF, CRLF and CR end a
+// line, a leading BOM is dropped, only an event ended by a blank line is dispatched, and one cut
+// off by the end of the stream is dropped). A comment line is passed at once, so a server's
+// keepalive keeps the CLI's connection alive too. Of the events, notifications and the current
+// attempt's response pass (rewritten where the CLI must see other values), its input_required
+// result is kept back, and anything else ends the call with an error.
 func (o *elicitOut) passStream(body io.Reader) (json.RawMessage, bool) {
 	rd := &sseLines{r: body, buf: make([]byte, 32<<10)}
 	var ev bytes.Buffer
@@ -497,42 +708,52 @@ func (o *elicitOut) passStream(body io.Reader) (json.RawMessage, bool) {
 	for {
 		line, raw, err := rd.next()
 		if raw != nil {
-			if int64(ev.Len()+len(raw)) > relayMaxBody {
-				o.fail(&relayProblem{http.StatusBadGateway, "the MCP server's answer could not be read"})
-				return nil, false
-			}
-			ev.Write(raw)
-			if len(line) == 0 {
+			switch {
+			case strings.HasPrefix(line, ":"):
+				if !o.raw(raw) {
+					return nil, false
+				}
+			case len(line) == 0:
 				if hasData {
 					msg := []byte(strings.Join(data, "\n"))
-					var m message
-					_ = json.Unmarshal(msg, &m)
-					if res, ok := o.heldResult(m); ok {
-						return res, true
-					}
-					if out, changed := o.rewrite(msg, m); changed {
-						if !o.event(out) {
-							return nil, false
-						}
-					} else if !o.raw(ev.Bytes()) {
+					m, kind := o.classify(msg, http.StatusOK)
+					switch kind {
+					case msgHeld:
+						return m.Result, true
+					case msgStray:
+						o.fail(errStray)
 						return nil, false
 					}
-				} else if !o.raw(ev.Bytes()) {
+					if out, changed := o.rewrite(msg, m, kind); changed {
+						if out != nil && !o.event(out) {
+							return nil, false
+						}
+					} else if !o.raw(append(ev.Bytes(), '\n')) {
+						return nil, false
+					}
+					if kind == msgResponse {
+						return nil, false
+					}
+				} else if ev.Len() > 0 && !o.raw(append(ev.Bytes(), '\n')) {
 					return nil, false
 				}
 				ev.Reset()
 				data, hasData = nil, false
-			} else if line == "data" || strings.HasPrefix(line, "data:") {
-				v := strings.TrimPrefix(strings.TrimPrefix(line, "data"), ":")
-				data, hasData = append(data, strings.TrimPrefix(v, " ")), true
+			default:
+				if int64(ev.Len()+len(raw)) > relayMaxBody {
+					o.fail(&relayProblem{http.StatusBadGateway, "the MCP server's answer could not be read"})
+					return nil, false
+				}
+				ev.Write(raw)
+				if line == "data" || strings.HasPrefix(line, "data:") {
+					v := strings.TrimPrefix(strings.TrimPrefix(line, "data"), ":")
+					data, hasData = append(data, strings.TrimPrefix(v, " ")), true
+				}
 			}
 		}
 		if err == io.EOF {
-			// An event cut off before its blank line is not dispatched; its bytes are passed
-			// on, and a CLI drops them the same way.
-			if ev.Len() > 0 {
-				o.raw(ev.Bytes())
-			}
+			// The stream ended without the call's response.
+			o.fail(&relayProblem{http.StatusBadGateway, "the MCP server ended its answer without the call's response"})
 			return nil, false
 		}
 		if err != nil {
@@ -563,8 +784,9 @@ type sseLines struct {
 	err     error
 }
 
-// next returns one line without its terminator, and the line's bytes as they are passed on
-// (terminator included). raw is nil when no line is complete; err is set once the reader is done.
+// next returns one line without its terminator, and the line as it is passed on (with LF). raw is
+// nil when no line is complete; a line cut off by the end of the stream is never returned. err is
+// set once the reader is done.
 func (s *sseLines) next() (line string, raw []byte, err error) {
 	var cur []byte
 	for {
@@ -579,10 +801,10 @@ func (s *sseLines) next() (line string, raw []byte, err error) {
 			}
 			s.start++
 			switch c {
-			case '\n':
-				return s.finish(cur)
 			case '\r':
 				s.afterCR = true
+				fallthrough
+			case '\n':
 				return s.finish(cur)
 			}
 			cur = append(cur, c)
@@ -591,10 +813,6 @@ func (s *sseLines) next() (line string, raw []byte, err error) {
 			}
 		}
 		if s.err != nil {
-			if len(cur) > 0 {
-				cur = s.bom(cur)
-				return string(cur), cur, s.err
-			}
 			return "", nil, s.err
 		}
 		n, err := s.r.Read(s.buf)
@@ -605,41 +823,48 @@ func (s *sseLines) next() (line string, raw []byte, err error) {
 // finish ends a line. Every terminator is passed on as LF: a CR followed later by an LF must not
 // read as two line ends to the CLI.
 func (s *sseLines) finish(cur []byte) (string, []byte, error) {
-	cur = s.bom(cur)
-	return string(cur), append(append([]byte(nil), cur...), '\n'), nil
-}
-
-// bom drops a byte-order mark at the very start of the stream, from what is passed on too: the
-// relay's own stream to the CLI may have begun earlier, and a BOM inside it is not one.
-func (s *sseLines) bom(cur []byte) []byte {
 	if !s.began {
+		// A byte-order mark at the very start is dropped from what is passed on too: the relay's
+		// own stream to the CLI may have begun earlier, and a BOM inside it is not one.
 		s.began = true
 		cur = bytes.TrimPrefix(cur, []byte("\uFEFF"))
 	}
-	return cur
+	return string(cur), append(append([]byte(nil), cur...), '\n'), nil
 }
 
-// sameJSONID compares two JSON-RPC ids exactly: a string never equals a number, and numbers are
-// compared as written, never through float64.
+// sameJSONID compares two JSON-RPC ids: a string never equals a number, and numbers are compared
+// by value, exactly (never through float64: 2^53+1 is not 2^53, and -0 is 0).
 func sameJSONID(a, b json.RawMessage) bool {
-	norm := func(r json.RawMessage) (string, bool) {
+	norm := func(r json.RawMessage) (any, bool) {
 		dec := json.NewDecoder(bytes.NewReader(r))
 		dec.UseNumber()
 		var v any
 		if dec.Decode(&v) != nil {
-			return "", false
+			return nil, false
 		}
 		switch x := v.(type) {
 		case string:
-			return "s:" + x, true
+			return x, true
 		case json.Number:
-			return "n:" + x.String(), true
+			q, ok := new(big.Rat).SetString(x.String())
+			return q, ok
 		}
-		return "", false
+		return nil, false
 	}
 	x, ok1 := norm(a)
 	y, ok2 := norm(b)
-	return ok1 && ok2 && x == y
+	if !ok1 || !ok2 {
+		return false
+	}
+	switch xv := x.(type) {
+	case string:
+		yv, ok := y.(string)
+		return ok && xv == yv
+	case *big.Rat:
+		yv, ok := y.(*big.Rat)
+		return ok && xv.Cmp(yv) == 0
+	}
+	return false
 }
 
 // copyResponseHeaders copies a server's response headers for the CLI, minus hop-by-hop ones and
@@ -671,9 +896,9 @@ type inputRequired struct {
 }
 
 // parseInputRequired accepts form elicitations whose fields are all choices (an enum of strings,
-// with or without labels): an approval. Anything else (free text, sampling, roots, a URL to open)
-// is refused, since a person answering a card cannot give it. A result with only a requestState
-// has no inputs and is retried at once.
+// with or without labels): an approval. Anything else (free text, sampling, roots, a URL to open,
+// a constraint the relay would not check) is refused, since a person answering a card cannot give
+// it. A result with only a requestState has no inputs and is retried at once.
 func parseInputRequired(result json.RawMessage) (inputRequired, error) {
 	var res struct {
 		InputRequests map[string]struct {
@@ -695,8 +920,7 @@ func parseInputRequired(result json.RawMessage) (inputRequired, error) {
 	}
 	out := inputRequired{}
 	if len(res.RequestState) > 0 {
-		var s string
-		if json.Unmarshal(res.RequestState, &s) != nil {
+		if _, ok := jsonString(res.RequestState); !ok {
 			return inputRequired{}, errors.New("a requestState that is not a string")
 		}
 		out.requestState = res.RequestState
@@ -718,6 +942,9 @@ func parseInputRequired(result json.RawMessage) (inputRequired, error) {
 		in := ElicitInput{Key: key, Message: cut(req.Params.Message, elicitMaxMessage)}
 		required := map[string]bool{}
 		for _, n := range schema.Required {
+			if _, ok := schema.Properties[n]; !ok {
+				return inputRequired{}, errors.New("a required field the form does not describe")
+			}
 			required[n] = true
 		}
 		for name, raw := range schema.Properties {
@@ -736,8 +963,9 @@ func parseInputRequired(result json.RawMessage) (inputRequired, error) {
 }
 
 // parseChoiceField reads one string property that is a choice: enum (with optional enumNames
-// labels, Google's form) or oneOf of const/title. Every value must be a string the server wrote;
-// a null or a missing const is refused rather than read as "".
+// labels, Google's form) or oneOf of const/title, never both (the relay would check one and not
+// the other). Every value must be a string the server wrote; a null or a missing const is refused
+// rather than read as "".
 func parseChoiceField(name string, raw json.RawMessage) (ElicitField, error) {
 	var p struct {
 		Type      string            `json:"type"`
@@ -752,21 +980,19 @@ func parseChoiceField(name string, raw json.RawMessage) (ElicitField, error) {
 	if json.Unmarshal(raw, &p) != nil || p.Type != "string" {
 		return ElicitField{}, errors.New("a field that is not a choice")
 	}
-	str := func(r json.RawMessage) (string, bool) {
-		var s string
-		return s, len(r) > 0 && r[0] == '"' && json.Unmarshal(r, &s) == nil
-	}
 	f := ElicitField{Name: name, Title: cut(p.Title, elicitMaxText)}
 	switch {
+	case len(p.Enum) > 0 && len(p.OneOf) > 0:
+		return ElicitField{}, errors.New("a field with both enum and oneOf")
 	case len(p.Enum) > 0:
 		for i, r := range p.Enum {
-			v, ok := str(r)
+			v, ok := jsonString(r)
 			if !ok {
 				return ElicitField{}, errors.New("a choice that is not a string")
 			}
 			label := v
 			if i < len(p.EnumNames) {
-				if l, ok := str(p.EnumNames[i]); ok && l != "" {
+				if l, ok := jsonString(p.EnumNames[i]); ok && l != "" {
 					label = l
 				}
 			}
@@ -774,7 +1000,7 @@ func parseChoiceField(name string, raw json.RawMessage) (ElicitField, error) {
 		}
 	case len(p.OneOf) > 0:
 		for _, o := range p.OneOf {
-			v, ok := str(o.Const)
+			v, ok := jsonString(o.Const)
 			if !ok {
 				return ElicitField{}, errors.New("a choice that is not a string")
 			}
@@ -909,7 +1135,7 @@ func (p PendingElicitation) clone() PendingElicitation {
 }
 
 // ElicitAnswer is a person's answer: decline, or a choice per input and field. An accept names
-// every input, even one whose fields are all optional (then with an empty map).
+// every input with a non-nil map, even one whose fields are all optional (then an empty map).
 type ElicitAnswer struct {
 	Decline bool
 	Choices map[string]map[string]string
@@ -987,21 +1213,14 @@ func PendingElicitations() []PendingElicitation {
 
 // AnswerElicitation hands a person's answer to the held call. An accept must answer every input,
 // choose one of the server's options for every required field, and name nothing else. A call
-// takes one answer, and none once its deadline has passed or its CLI has gone.
+// takes one answer, and none once its deadline has passed or its CLI has gone: both are checked
+// last, at the moment the answer is handed over.
 func AnswerElicitation(id string, a ElicitAnswer) error {
 	s := elicitations
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	p, ok := s.pending[id]
 	if !ok {
-		return ErrElicitationNotFound
-	}
-	select {
-	case <-p.gone:
-		return ErrElicitationNotFound
-	default:
-	}
-	if !time.Now().Before(p.Deadline) {
 		return ErrElicitationNotFound
 	}
 	if !a.Decline {
@@ -1012,6 +1231,14 @@ func AnswerElicitation(id string, a ElicitAnswer) error {
 		a.Choices = clean
 	} else {
 		a.Choices = nil
+	}
+	select {
+	case <-p.gone:
+		return ErrElicitationNotFound
+	default:
+	}
+	if !time.Now().Before(p.Deadline) {
+		return ErrElicitationNotFound
 	}
 	delete(s.pending, id)
 	p.answer <- a
@@ -1030,8 +1257,8 @@ func checkChoices(inputs []ElicitInput, choices map[string]map[string]string) (m
 	}
 	out := map[string]map[string]string{}
 	for _, in := range inputs {
-		got, answered := choices[in.Key]
-		if !answered {
+		got := choices[in.Key]
+		if got == nil { // not answered, or answered with null: neither is an empty accept
 			return nil, ErrElicitationAnswer
 		}
 		fields := map[string]ElicitField{}

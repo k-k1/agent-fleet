@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"reflect"
 	"strings"
@@ -271,28 +272,63 @@ func TestElicitRelayLeavesOtherRequestsAsBytes(t *testing.T) {
 	}
 }
 
-// A confirmation reaches the server only through a person: a requestState and inputResponses the
-// CLI (an agent in bypass mode) put on its own call are dropped, so the server asks again.
-func TestElicitRelayDropsAContinuationTheCLIWrote(t *testing.T) {
+// A confirmation reaches the server only through a person: a request carrying its own
+// requestState or inputResponses (anything holding the relay key could send one) is refused under
+// every spelling a case-insensitive decoder would match, in any era and for any method.
+func TestElicitRelayRefusesAContinuationTheClientWrote(t *testing.T) {
+	resetElicitations(t)
+	setElicitTimes(t, 200*time.Millisecond, time.Hour) // a call held by mistake ends quickly
+	up := newUpstream(t, jsonAnswer(askThenComplete))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	accept := `{"approval_choice":{"action":"accept","content":{"approval_choice":"ALLOW_ONCE"}}}`
+	for _, field := range []string{`"requestState":"stolen"`, `"inputResponses":` + accept, `"RequestState":"stolen"`,
+		`"inputresponses":` + accept, "\"reque\u017ftState\":\"stolen\"", "\"requeſtState\":\"stolen\""} {
+		for _, body := range []string{
+			strings.Replace(elicitCallBody, `"name":"send_mail",`, `"name":"send_mail",`+field+`,`, 1),
+			`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"send_mail",` + field + `}}`,
+			`{"jsonrpc":"2.0","id":1,"method":"resources/read","params":{"uri":"x:y",` + field + `}}`,
+		} {
+			resp := e.do(http.MethodPost, relayPath(), strings.NewReader(body), sseHeaders)
+			got := readAll(t, resp)
+			if resp.StatusCode != http.StatusBadRequest || !strings.Contains(got, "answers a confirmation itself") {
+				t.Fatalf("%s: status %d body %q", body, resp.StatusCode, got)
+			}
+		}
+	}
+	if up.count() != 0 {
+		t.Fatalf("%d requests reached the server", up.count())
+	}
+}
+
+// JSON the server may read differently from the relay is refused, never guessed at.
+func TestElicitRelayRefusesAmbiguousRequests(t *testing.T) {
 	resetElicitations(t)
 	up := newUpstream(t, jsonAnswer(askThenComplete))
 	e := newRelayEnv(t, up)
 	flagElicitation(t, ElicitationRelay)
-	forged := strings.Replace(elicitCallBody, `"name":"send_mail",`,
-		`"name":"send_mail","requestState":"stolen","inputResponses":{"approval_choice":{"action":"accept","content":{"approval_choice":"ALLOW_ONCE"}}},`, 1)
-	ch := e.startCall(forged, sseHeaders)
-	p := waitPending(t, 1)[0]
-	first := paramsOf(t, up.at(0).Body)
-	if _, ok := first["requestState"]; ok {
-		t.Fatal("the CLI's requestState reached the server")
+	meta := `"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}`
+	for _, body := range []string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list","Method":"tools/call","params":{"name":"x",` + meta + `}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","method":"tools/call","params":{"name":"x",` + meta + `}}`,
+		`{"jsonrpc":"2.0","id":1,"Method":"tools/call","params":{"name":"x",` + meta + `}}`,
+		`{"jsonrpc":"2.0","ID":1,"method":"tools/call","params":{"name":"x",` + meta + `}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"Name":"x",` + meta + `}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","_META":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","_meta":{"io.modelcontextprotocol/protocolversion":"2026-07-28"}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x","_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28","io.modelcontextprotocol/clientCapabilities":[]}}}`,
+		`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x",` + meta + `}} trailing`,
+		`[{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x",` + meta + `}}]`,
+	} {
+		resp := e.do(http.MethodPost, relayPath(), strings.NewReader(body), sseHeaders)
+		got := readAll(t, resp)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s: status %d body %q", body, resp.StatusCode, got)
+		}
 	}
-	if _, ok := first["inputResponses"]; ok {
-		t.Fatal("the CLI's inputResponses reached the server")
+	if up.count() != 0 {
+		t.Fatalf("%d requests reached the server", up.count())
 	}
-	if err := AnswerElicitation(p.ID, ElicitAnswer{Decline: true}); err != nil {
-		t.Fatal(err)
-	}
-	waitCall(t, ch)
 }
 
 func TestElicitRelayRefusesACompressedRequest(t *testing.T) {
@@ -300,25 +336,42 @@ func TestElicitRelayRefusesACompressedRequest(t *testing.T) {
 	up := newUpstream(t, jsonAnswer(askThenComplete))
 	e := newRelayEnv(t, up)
 	flagElicitation(t, ElicitationRelay)
-	resp := e.do(http.MethodPost, relayPath(), strings.NewReader("\x1f\x8b..."), map[string]string{"Content-Encoding": "gzip"})
-	readAll(t, resp)
-	if resp.StatusCode != http.StatusUnsupportedMediaType || up.count() != 0 {
-		t.Fatalf("status %d, %d requests reached the server", resp.StatusCode, up.count())
+	for _, codings := range [][]string{{"gzip"}, {"identity", "gzip"}, {"", "br"}, {"identity, gzip"}} {
+		req, _ := http.NewRequest(http.MethodPost, e.base+relayPath(), strings.NewReader("\x1f\x8b..."))
+		req.Header.Set(RelayKeyHeader, e.key)
+		for _, c := range codings {
+			req.Header.Add("Content-Encoding", c)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		readAll(t, resp)
+		if resp.StatusCode != http.StatusUnsupportedMediaType {
+			t.Fatalf("%q: status %d", codings, resp.StatusCode)
+		}
+	}
+	if up.count() != 0 {
+		t.Fatalf("%d requests reached the server", up.count())
 	}
 }
 
 func TestElicitRelayRefusesACompressedAnswer(t *testing.T) {
-	resetElicitations(t)
-	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("Content-Encoding", "gzip")
-		_, _ = io.WriteString(w, "\x1f\x8b compressed input_required")
-	})
-	e := newRelayEnv(t, up)
-	flagElicitation(t, ElicitationRelay)
-	res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
-	if res.resp.StatusCode != http.StatusBadGateway || strings.Contains(res.body, "\x1f\x8b") {
-		t.Fatalf("status %d body %q", res.resp.StatusCode, res.body)
+	for _, codings := range [][]string{{"gzip"}, {"identity", "gzip"}} {
+		resetElicitations(t)
+		up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+			w.Header().Set("Content-Type", "application/json")
+			for _, c := range codings {
+				w.Header().Add("Content-Encoding", c)
+			}
+			_, _ = io.WriteString(w, "\x1f\x8b compressed input_required")
+		})
+		e := newRelayEnv(t, up)
+		flagElicitation(t, ElicitationRelay)
+		res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+		if res.resp.StatusCode != http.StatusBadGateway || strings.Contains(res.body, "\x1f\x8b") {
+			t.Fatalf("%q: status %d body %q", codings, res.resp.StatusCode, res.body)
+		}
 	}
 }
 
@@ -676,8 +729,8 @@ func TestElicitRelayPassesAStreamAndHoldsItsInputRequiredEvent(t *testing.T) {
 	}
 }
 
-// An event the stream cut off before its blank line is not dispatched (WHATWG), so it is never
-// held either: the CLI gets the server's bytes and no question is filed.
+// An event the stream cut off before its blank line is not dispatched (WHATWG): it is neither held
+// nor passed on, and the call ends with an error since its response never came.
 func TestElicitRelayDoesNotHoldACutOffEvent(t *testing.T) {
 	resetElicitations(t)
 	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
@@ -686,9 +739,12 @@ func TestElicitRelayDoesNotHoldACutOffEvent(t *testing.T) {
 	})
 	e := newRelayEnv(t, up)
 	flagElicitation(t, ElicitationRelay)
-	waitCall(t, e.startCall(elicitCallBody, sseHeaders))
-	if n := len(PendingElicitations()); n != 0 || up.count() != 1 {
-		t.Fatalf("pending %d, requests %d", n, up.count())
+	res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+	if n := len(PendingElicitations()); n != 0 || up.count() != 1 || strings.Contains(res.body, "input_required") {
+		t.Fatalf("pending %d, requests %d, CLI got %q", n, up.count(), res.body)
+	}
+	if !strings.Contains(fmt.Sprint(lastMessage(t, res.body)["error"]), "without the call's response") {
+		t.Fatalf("CLI got %q", res.body)
 	}
 }
 
@@ -716,10 +772,12 @@ func TestElicitRelayBoundsAStreamEvent(t *testing.T) {
 
 func TestElicitRelayRefusesInputItCannotAskFor(t *testing.T) {
 	cases := map[string]string{
-		"free text": `{"type":"object","properties":{"note":{"type":"string"}}}`,
-		"a number":  `{"type":"object","properties":{"n":{"type":"number","enum":[1,2]}}}`,
-		"a null":    `{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE",null]}}}`,
-		"no const":  `{"type":"object","properties":{"c":{"type":"string","oneOf":[{"title":"Allow"}]}}}`,
+		"free text":                     `{"type":"object","properties":{"note":{"type":"string"}}}`,
+		"a number":                      `{"type":"object","properties":{"n":{"type":"number","enum":[1,2]}}}`,
+		"a null":                        `{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE",null]}}}`,
+		"no const":                      `{"type":"object","properties":{"c":{"type":"string","oneOf":[{"title":"Allow"}]}}}`,
+		"enum and oneOf":                `{"type":"object","properties":{"c":{"type":"string","enum":["ALLOW_ONCE","ALLOW_TOOL_ALWAYS"],"oneOf":[{"const":"ALLOW_ONCE"}]}}}`,
+		"an undescribed required field": `{"type":"object","required":["c","d"],"properties":{"c":{"type":"string","enum":["ALLOW_ONCE"]}}}`,
 	}
 	for name, schema := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -920,6 +978,7 @@ func TestAnswerElicitationChecksTheChoices(t *testing.T) {
 		{"a": {"c": "ALLOW_EVERYTHING"}, "b": {}},
 		{"a": {"c": "ALLOW_ONCE", "extra": "x"}, "b": {}},
 		{"a": {"c": "ALLOW_ONCE"}, "b": {}, "z": {}},
+		{"a": {"c": "ALLOW_ONCE"}, "b": nil}, // a null is not an empty accept
 		{"a": {"c": "ALLOW_ONCE", "o": "y"}, "b": {}},
 	}
 	for _, c := range bad {
@@ -986,6 +1045,8 @@ func TestSameJSONID(t *testing.T) {
 		{`"a"`, `"a"`, true},
 		{`9007199254740993`, `9007199254740992`, false}, // equal as float64
 		{`null`, `null`, false},
+		{`-0`, `0`, true},
+		{`1.0`, `1`, true},
 	} {
 		if got := sameJSONID(json.RawMessage(tc.a), json.RawMessage(tc.b)); got != tc.want {
 			t.Errorf("%s vs %s: %t", tc.a, tc.b, got)
@@ -1015,6 +1076,178 @@ func TestValidateElicitation(t *testing.T) {
 			t.Errorf("%q auth %q: %v", tc.mode, tc.d.Auth, err)
 		case tc.code != "" && (!errors.As(err, &ve) || ve.Code != tc.code):
 			t.Errorf("%q auth %q: %v, want %s", tc.mode, tc.d.Auth, err, tc.code)
+		}
+	}
+}
+
+// On a held call the CLI gets nothing but notifications and the call's own response: a server
+// that answers the retry under the CLI's original id, or with a result on a non-200, ends the
+// call with an error instead of handing the CLI an input_required meant for no one.
+func TestElicitRelayRefusesMessagesForAnotherRequest(t *testing.T) {
+	for name, retry := range map[string]func(w http.ResponseWriter, r *http.Request){
+		"stream, the old id": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprintf(w, "data: %s\n\n", googleInputRequired("7"))
+		},
+		"json, the old id": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(w, googleInputRequired("7"))
+		},
+		"json, a result on a 500": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, googleInputRequired(reqID(r)))
+		},
+		"stream, a server request": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"jsonrpc\":\"2.0\",\"id\":99,\"method\":\"elicitation/create\",\"params\":{}}\n\n")
+		},
+		"stream, not JSON": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			fmt.Fprint(w, "data: {\"jsonrpc\":\"2.0\",\"id\":7,\n\n")
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			resetElicitations(t)
+			up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+				if n == 0 {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, googleInputRequired(reqID(r)))
+					return
+				}
+				retry(w, r)
+			})
+			e := newRelayEnv(t, up)
+			flagElicitation(t, ElicitationRelay)
+			ch := e.startCall(elicitCallBody, sseHeaders)
+			p := waitPending(t, 1)[0]
+			if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+				t.Fatal(err)
+			}
+			res := waitCall(t, ch)
+			if strings.Contains(res.body, "input_required") || strings.Contains(res.body, "elicitation/create") {
+				t.Fatalf("CLI got %q", res.body)
+			}
+			if last := lastMessage(t, res.body); last["error"] == nil || fmt.Sprint(last["id"]) != "7" {
+				t.Fatalf("CLI got %v", last)
+			}
+		})
+	}
+}
+
+// A server's SSE comment reaches the CLI as it arrives, before the call's response: an idle
+// connection between them must not be cut.
+func TestElicitRelayPassesCommentsAtOnce(t *testing.T) {
+	resetElicitations(t)
+	release := make(chan struct{})
+	up := newUpstream(t, func(w http.ResponseWriter, r *http.Request, n int) {
+		id := reqID(r)
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, ": ping\n")
+		http.NewResponseController(w).Flush()
+		<-release
+		fmt.Fprintf(w, "data: %s\n\n", completeFor(id))
+	})
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	resp := e.do(http.MethodPost, relayPath(), strings.NewReader(elicitCallBody), sseHeaders)
+	defer resp.Body.Close()
+	rd := bufio.NewReader(resp.Body)
+	got := make(chan string, 1)
+	go func() {
+		line, _ := rd.ReadString('\n')
+		got <- line
+	}()
+	select {
+	case line := <-got:
+		if line != ": ping\n" {
+			t.Fatalf("first line %q", line)
+		}
+	case <-time.After(5 * time.Second):
+		close(release)
+		t.Fatal("the comment was held back")
+	}
+	close(release)
+	rest, _ := io.ReadAll(rd)
+	if !strings.Contains(string(rest), `"sent"`) {
+		t.Fatalf("CLI got %q", rest)
+	}
+}
+
+// A call confirmed for one sign-in is never retried on another: signing in again at the same URL
+// (perhaps as another account) while the call waits ends it.
+func TestElicitRelayDoesNotRetryOnAnotherSignIn(t *testing.T) {
+	resetElicitations(t)
+	up := newUpstream(t, jsonAnswer(askThenComplete))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	ch := e.startCall(elicitCallBody, sseHeaders)
+	p := waitPending(t, 1)[0]
+	if err := secrets.Update(func(s *secrets.Data) error {
+		s.MCPOAuth[0].ConnectedAt += 60
+		s.MCPOAuth[0].AccessToken = "tok-other-account"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := AnswerElicitation(p.ID, allowOnce); err != nil {
+		t.Fatal(err)
+	}
+	res := waitCall(t, ch)
+	if up.count() != 1 || lastMessage(t, res.body)["error"] == nil {
+		t.Fatalf("CLI got %q after %d requests", res.body, up.count())
+	}
+}
+
+func TestElicitRelayRefusesANullRequestState(t *testing.T) {
+	resetElicitations(t)
+	up := newUpstream(t, jsonAnswer(func(_ int, id string) string {
+		return strings.Replace(googleInputRequired(id), `"requestState":`+elicitState, `"requestState":null`, 1)
+	}))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	res := waitCall(t, e.startCall(elicitCallBody, sseHeaders))
+	if !strings.Contains(res.body, "not a string") || up.count() != 1 || len(PendingElicitations()) != 0 {
+		t.Fatalf("CLI got %q after %d requests", res.body, up.count())
+	}
+}
+
+func TestElicitRelayDropsDigestsOfARewrittenBody(t *testing.T) {
+	resetElicitations(t)
+	up := newUpstream(t, jsonAnswer(func(_ int, id string) string { return completeFor(id) }))
+	e := newRelayEnv(t, up)
+	flagElicitation(t, ElicitationRelay)
+	hdr := map[string]string{"Content-Digest": "sha-256=:AAAA:", "Accept": "application/json, text/event-stream"}
+	waitCall(t, e.startCall(elicitCallBody, hdr))
+	if up.at(0).Header.Get("Content-Digest") != "" {
+		t.Fatal("the digest of the CLI's body went out with a rewritten one")
+	}
+}
+
+func TestNextProgressAlwaysGrows(t *testing.T) {
+	for _, last := range []float64{0, 1, 1 << 53, 1e300} {
+		v, ok := nextProgress(last)
+		if !ok || v <= last {
+			t.Errorf("after %v: %v %t", last, v, ok)
+		}
+	}
+	if _, ok := nextProgress(math.MaxFloat64); ok {
+		t.Error("a value past the largest float64 was offered")
+	}
+}
+
+func TestAcceptsEventStream(t *testing.T) {
+	for _, tc := range []struct {
+		accept string
+		want   bool
+	}{
+		{"application/json, text/event-stream", true},
+		{"text/event-stream;q=0.5", true},
+		{"application/json, text/event-stream;q=0", false},
+		{"application/json", false},
+	} {
+		if got := acceptsEventStream([]string{tc.accept}); got != tc.want {
+			t.Errorf("%q: %t", tc.accept, got)
 		}
 	}
 }

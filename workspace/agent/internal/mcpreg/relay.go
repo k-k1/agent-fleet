@@ -289,17 +289,21 @@ func serveRelay(w http.ResponseWriter, r *http.Request, key string) {
 	if def.Elicitation == ElicitationRelay && r.Method == http.MethodPost {
 		// The relay has to read every tool call of this server: one it cannot read would reach
 		// the server with the CLI's own capabilities, and its confirmation the CLI's own way.
-		if ce := r.Header.Get("Content-Encoding"); ce != "" && !strings.EqualFold(ce, "identity") {
+		if contentEncoded(r.Header) {
 			relayFail(w, http.StatusUnsupportedMediaType, "the relay reads this MCP server's requests and cannot read a compressed one")
 			return
 		}
-		if call, ok := parseElicitRequest(body); ok {
+		switch call, verdict, why := readFlagged(body); verdict {
+		case flaggedRefuse:
+			relayRefuse(w, why)
+			return
+		case flaggedElicit:
 			serveElicitingCall(w, r, def, target, call)
 			return
 		}
 	}
 
-	resp, p := relayExchange(r.Context(), r, id, target, body)
+	resp, p := relayExchange(r.Context(), r, id, target, body, nil)
 	if p != nil {
 		p.write(w)
 		return
@@ -322,13 +326,30 @@ func (p *relayProblem) write(w http.ResponseWriter) {
 
 // relayExchange sends body to target with the grant's token, renewing it once on a 401, and
 // returns the server's answer. A non-nil problem means there is none.
-func relayExchange(ctx context.Context, r *http.Request, id string, target *url.URL, body []byte) (*http.Response, *relayProblem) {
-	token, res, err := refreshGrantRes(ctx, id, "")
+//
+// gen, when not nil, binds the exchange to one sign-in: empty, it is set to the generation of the
+// grant used; set, a token of any other sign-in is refused (a call confirmed for one account must
+// not be sent as another signed in at the same URL meanwhile).
+func relayExchange(ctx context.Context, r *http.Request, id string, target *url.URL, body []byte, gen *string) (*http.Response, *relayProblem) {
+	bound := func(res, g string) *relayProblem {
+		if !relayBound(res, target) {
+			return relayChanged(id)
+		}
+		if gen != nil {
+			if *gen == "" {
+				*gen = g
+			} else if *gen != g {
+				return relayChanged(id)
+			}
+		}
+		return nil
+	}
+	token, res, g, err := refreshGrantGen(ctx, id, "")
 	if err != nil {
 		return nil, relayGrantProblem(id, err)
 	}
-	if !relayBound(res, target) {
-		return nil, relayChanged(id)
+	if p := bound(res, g); p != nil {
+		return nil, p
 	}
 	resp, err := relayForward(ctx, r, target, body, token)
 	if err != nil {
@@ -338,14 +359,14 @@ func relayExchange(ctx context.Context, r *http.Request, id string, target *url.
 		_ = resp.Body.Close()
 		// Once: the token the server just refused is named, so a caller that already renewed
 		// it is not followed by a second renewal, and a second 401 ends the exchange.
-		next, res, rerr := refreshGrantRes(ctx, id, token)
+		next, res, g, rerr := refreshGrantGen(ctx, id, token)
 		if rerr != nil {
 			return nil, relayGrantProblem(id, rerr)
 		}
 		// The server may have been re-pointed or signed in again while the first attempt was
 		// out: the renewed token is for whatever grant exists now, the target is the old URL.
-		if !relayBound(res, target) {
-			return nil, relayChanged(id)
+		if p := bound(res, g); p != nil {
+			return nil, p
 		}
 		if resp, err = relayForward(ctx, r, target, body, next); err != nil {
 			return nil, relayUpstreamDown(id, err)
