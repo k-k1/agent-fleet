@@ -27,6 +27,14 @@ export function sessionSpace(s: Pick<Session, "place" | "space">): string {
   return s.space || "";
 }
 
+/** The space an action on a session (handoff, space delete) targets: the Agent's current `space`
+ *  first, since a stored place is judged once and a link re-pointed since leaves it naming the old
+ *  space (#5278); the stored place stands in only where no `space` arrives (the stopped mirror). */
+export function sessionActionSpace(s: Pick<Session, "place" | "space">): string {
+  if (s.place && s.place.kind !== "space") return ""; // a stored non-space place still wins
+  return s.space || sessionSpace(s);
+}
+
 /** The working-copy folder under ~/repos a session runs in, as the session names it, or ""
  *  when it runs in none: a space, home, or any other directory. A row without a stored place
  *  is taken at its `repo`, unless the Agent marked it as a space. */

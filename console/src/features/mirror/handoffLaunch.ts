@@ -9,7 +9,7 @@
 // every future Repo flag reaches the dialog without another site to remember.
 import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
-import { sessionSpace } from "../../lib/project.ts";
+import { sessionActionSpace } from "../../lib/project.ts";
 
 /** Resolved target, or why one could not be built (the caller turns it into a toast). A session
  *  that runs in a space (ADR 0142) targets that space, never a repository: `dir` is only what the
@@ -46,7 +46,7 @@ export function handoffLaunchTarget(
   // A space is no row of the repos rail: looked up there, it would fall through to a Repo built
   // from the session alone (no vcs, so read as git) and the launch dialog would offer a worktree
   // and branch in a folder that is not a working copy. It starts in the same space instead.
-  const space = session ? sessionSpace(session) : "";
+  const space = session ? sessionActionSpace(session) : "";
   if (space) return { space, dir: path };
   if (!path) return { error: "no_dir" };
   const mine = repoOf(session, repos);

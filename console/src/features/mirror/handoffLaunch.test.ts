@@ -93,6 +93,11 @@ describe("handoffLaunchTarget", () => {
       expect(handoffLaunchTarget(inSpace({ worktree: true }), [GIT, WT], true)).toMatchObject({ space: "research-aaa" });
     });
 
+    it("prefers the Agent's current space over a stale stored place (#5278)", () => {
+      const row = sess({ space: "notes-b", place: { kind: "space", id: "notes-a" }, dir: "/home/dev/links/current/.." });
+      expect(handoffLaunchTarget(row, [], false)).toMatchObject({ space: "notes-b" });
+    });
+
     it("takes the space from the stored place on a row that carries no space (#5219)", () => {
       const clash: Repo = { name: "research-aaa", path: "/home/dev/repos/research-aaa", branch: "main" };
       const stopped = sess({ repo: "research-aaa", place: { kind: "space", id: "research-aaa" }, dir: "/home/dev/spaces/research-aaa" });

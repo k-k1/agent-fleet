@@ -535,3 +535,35 @@ func TestPlaceOfDotDotOverALinkInsideACopy(t *testing.T) {
 		t.Errorf("a .. over a missing component: %+v", got)
 	}
 }
+
+// #5278: a link into a space, with dir link/.., names no space place: re-pointed at another
+// space while the session is stopped, the stored place would still name the first one.
+func TestPlaceOfDotDotOverALinkIntoASpace(t *testing.T) {
+	isolateAgentState(t)
+	a, b := placeSpace(t, "notes-a"), placeSpace(t, "notes-b")
+	for _, d := range []string{a, b} {
+		if err := os.MkdirAll(filepath.Join(d, "src"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	link := filepath.Join(homeDir(), "current")
+	if err := os.Symlink(filepath.Join(a, "src"), link); err != nil {
+		t.Fatal(err)
+	}
+	dir := link + "/.."
+	if got := PlaceOf(dir); got.Kind != session.PlaceOther {
+		t.Errorf("before the retarget: %+v", got)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(b, "src"), link); err != nil {
+		t.Fatal(err)
+	}
+	if got := PlaceOf(dir); got.Kind != session.PlaceOther {
+		t.Errorf("after the retarget: %+v", got)
+	}
+	if got := PlaceOf(filepath.Join(a, "src") + "/.."); *got != (session.Place{Kind: session.PlaceSpace, ID: "notes-a"}) {
+		t.Errorf("a .. over a real directory: %+v", got)
+	}
+}

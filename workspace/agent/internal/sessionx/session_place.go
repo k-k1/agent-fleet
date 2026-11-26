@@ -20,10 +20,16 @@ import (
 //
 // The parent is compared physically: a spelling with ".." is resolved before it is judged, so
 // ~/repos/link/../app is never filed as ~/repos/app; and a ".." that cancels a symlink is no
-// place at all (crossesLink), since the link may later point elsewhere.
+// place at all (crossesLink), space or copy, since the link may later point elsewhere.
 func PlaceOf(dir string) *session.Place {
 	other := &session.Place{Kind: session.PlaceOther}
 	if dir == "" || !filepath.IsAbs(dir) {
+		return other
+	}
+	if crossesLink(dir) {
+		// Judged before the space: a space is no more stable than a copy behind a link that a
+		// ".." cancels, and the stored place would go on naming the old space after the link
+		// is re-pointed (#5278).
 		return other
 	}
 	if f := spacex.FolderOf(dir); f != "" {
