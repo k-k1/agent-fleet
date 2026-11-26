@@ -157,7 +157,7 @@ func (a memoAPI) deferDelivery(w http.ResponseWriter, r *http.Request, _ store.I
 		if len(d.MessageIDs) != 1 {
 			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoDeferBatch, "a run of more than one message cannot hand its messages back"})
 		}
-		if d.Session != in.Session {
+		if d.CurrentSession() != in.Session {
 			return memoTxFail(&apiError{http.StatusConflict, errCodeMemoDeferNotYours, "the run was not started for this session"})
 		}
 		q, ok, err := tx.GetQueue(d.QueueID)
@@ -190,14 +190,22 @@ func (a memoAPI) deferDelivery(w http.ResponseWriter, r *http.Request, _ store.I
 // memoDeferCheck is what a close read, outside the lock, about the hand-back request made at at:
 // result is "" when it may be applied, else the store.DeferDropped* reason.
 type memoDeferCheck struct {
-	at     string
-	result string
+	at, session, moveKey string
+	result               string
 }
 
 // deferCheck reads whether the request of d still stands: no turn of the tree started after the
 // call, and the session holds no PR that is open or merged in an answer newer than the call.
 func (r *memoQueueRunner) deferCheck(ctx context.Context, v *memoMemberView, d store.MemoDelivery, tree []*sessionWire) *memoDeferCheck {
-	out := &memoDeferCheck{at: d.DeferAt}
+	out := &memoDeferCheck{at: d.DeferAt, session: d.DeferSession, moveKey: d.DeferMoveKey}
+	requester := d.DeferSession
+	if requester == "" {
+		requester = d.Session // requests stored before moves were recorded
+	}
+	if requester != tree[0].Name || d.DeferMoveKey != treeMoveKey(tree) {
+		out.result = store.DeferDroppedReleased
+		return out
+	}
 	at, err := time.Parse(time.RFC3339Nano, d.DeferAt)
 	if err != nil || !v.defers || !v.prs {
 		out.result = store.DeferDroppedUnread
@@ -207,7 +215,7 @@ func (r *memoQueueRunner) deferCheck(ctx context.Context, v *memoMemberView, d s
 		out.result = store.DeferDroppedTurn
 		return out
 	}
-	status, body, ok := r.askPRSnapshot(ctx, v.res, memoPRSnapshotRequest{Session: d.Session, Since: d.DeferAt})
+	status, body, ok := r.askPRSnapshot(ctx, v.res, memoPRSnapshotRequest{Session: tree[0].Name, Since: d.DeferAt})
 	var reply memoPRSnapshotReply
 	if !ok || status != http.StatusOK || json.Unmarshal(body, &reply) != nil || reply.PRs == nil {
 		out.result = store.DeferDroppedUnread
@@ -250,7 +258,7 @@ func memoCloseClean(tx store.MemoTxOps, id string, dc *memoDeferCheck) error {
 	if err != nil || !ok || cur.State != store.DeliveryOpen {
 		return err
 	}
-	if cur.DeferAt != "" && (dc == nil || dc.at != cur.DeferAt) {
+	if cur.DeferAt != "" && (dc == nil || dc.at != cur.DeferAt || dc.session != cur.DeferSession || dc.moveKey != cur.DeferMoveKey) {
 		return nil
 	}
 	outcome := store.DeliveryClean
@@ -325,7 +333,7 @@ func (r *memoQueueRunner) deferRecheck(ctx context.Context, v *memoMemberView, d
 	if err != nil || !env.reportsQueue() {
 		return "wait"
 	}
-	tree := deliveryTree(env.Sessions, d.Session)
+	tree := deliveryTree(env.Sessions, d.CurrentSession())
 	if len(tree) == 0 {
 		return store.DeferDroppedUnread
 	}

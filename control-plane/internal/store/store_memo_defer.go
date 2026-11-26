@@ -38,7 +38,7 @@ const (
 	DeferDroppedUnread = "unread"
 )
 
-// DeferDroppedReleased: the retire that a deferred close requested came back released or done (a
+// DeferDroppedReleased: ownership changed, or the retire came back released or done (a
 // person took the session over) or refused: the run is theirs, and nothing is handed back.
 const DeferDroppedReleased = "released"
 
@@ -136,9 +136,11 @@ type MemoDeferTxOps interface {
 }
 
 func (t memoTx) SetDeliveryDefer(id, session, reason, notBefore, at string) (bool, error) {
-	return affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET defer_reason=?, defer_not_before=?, defer_at=?
-		WHERE id=? AND membership_id=? AND state=? AND session=? AND session<>''`,
-		reason, notBefore, at, id, t.mid, DeliveryOpen, session))
+	return affected(t.q.ExecContext(t.ctx, `UPDATE memo_delivery SET defer_reason=?, defer_not_before=?, defer_at=?,
+		defer_session=CASE WHEN ?='' THEN '' ELSE ? END,
+		defer_move_key=CASE WHEN ?='' THEN '' ELSE run_move_key END
+		WHERE id=? AND membership_id=? AND state=? AND COALESCE(NULLIF(run_session, ''), session)=? AND session<>''`,
+		reason, notBefore, at, at, session, at, id, t.mid, DeliveryOpen, session))
 }
 
 func (t memoTx) SetDeliveryDeferResult(id, result, blocked string) error {

@@ -158,6 +158,8 @@ export interface Session {
   // session's input; only "resume here anyway" (POST …/move/reopen) clears movedTo.
   moving?: string;
   movedTo?: string;
+  queueReplaces?: string[];
+  queueSuccessor?: string;
   model?: string; // claude model
   context?: SessionContextUsage; // context-window usage (the Agent's session.ContextUsage); absent for agy/shell/ssm
   branch?: string; // git branch the working copy was on when the session started

@@ -184,9 +184,18 @@ func beginSessionMove(ctx context.Context, source, target string) (*sourceMove, 
 	if !ok {
 		return nil, errMoveSourceGone
 	}
+	for _, prev := range session.ListMetas() {
+		if prev.Moving == source {
+			return nil, &moveError{Status: http.StatusConflict, Code: "move_pending",
+				Message: "finish the move from " + prev.Name + " before moving its target again"}
+		}
+	}
 	if err := checkMoveSource(m); err != nil {
 		return nil, err
 	}
+	g := retireGate(source)
+	g.RLock()
+	defer g.RUnlock()
 	// Checked and atomic: after a restart the meta is the only record that input is closed, so the
 	// in-memory mirror is closed, and success returned, only once moving is on disk. The same holds
 	// for every transition below.
@@ -298,6 +307,10 @@ func (mv *sourceMove) commit() error {
 			return false
 		}
 		cur.Moving, cur.MovedTo = "", mv.target
+		graph := session.ReadQueueGraph()
+		if _, queue := graph.Lineage(cur.Name); queue && graph.Current(cur.Name) == cur.Name {
+			cur.QueueSuccessor = mv.target
+		}
 		return true
 	}); err != nil || !ok {
 		// The source stays moving with its episode; the recorded id is treated as spent by a
@@ -326,14 +339,26 @@ func (mv *sourceMove) commit() error {
 // reopenMovedSession is the user's explicit "resume here anyway" (ADR 0115 decision 11.6): the
 // only way a moved source takes input again.
 func reopenMovedSession(name string) error {
+	var lineageErr error
 	if _, ok, err := updateSessionMetaChecked(name, func(cur *session.Meta) bool {
 		if cur.MovedTo == "" {
 			return false
+		}
+		lineageErr = keepQueueMove(*cur)
+		if lineageErr != nil {
+			return false
+		}
+		// A legacy move can still be the last owner even if its target has been deleted.
+		graph := session.ReadQueueGraph()
+		if _, queue := graph.Lineage(cur.Name); queue && cur.QueueSuccessor == "" {
+			cur.QueueSuccessor = cur.MovedTo
 		}
 		cur.MovedTo = ""
 		return true
 	}); err != nil {
 		return fmt.Errorf("reopening %s: %w", name, err)
+	} else if lineageErr != nil {
+		return fmt.Errorf("preserving the queue move of %s: %w", name, lineageErr)
 	} else if !ok {
 		return fmt.Errorf("session %s was not moved", name)
 	}

@@ -119,6 +119,8 @@ var sessionWireBinding = map[string]string{
 	"InitialPromptState":   "initialPromptState",
 	"InitialPromptReason":  "initialPromptReason",
 	"Moving":               "moving",
+	"QueueSuccessor":       "queueSuccessor",
+	"QueueReplaces":        "queueReplaces",
 	"MovedTo":              "movedTo",
 	"QueueDelivery":        "queueDelivery",
 	"InputNotDelivered":    "inputNotDelivered",
@@ -198,7 +200,7 @@ func sessionContractFamily() contractFamily {
 			"currentBranch", "branchDrift", "worktree", "exitReason", "exitCode", "exitSignal",
 			"carried", "handoffPending", "locked", "keepAwakeUntil", "stopAfterTurnAt",
 			"spendCapUsd", "spendCapHitAt", "originSession", "origin", "scheduleId", "queueCategoryId", "lastSay", "tokenSpends", "pr", "ports", "links", "generatedImages", "generatedImagesPath",
-			"studio", "initialPromptState", "initialPromptReason", "moving", "movedTo", "inboxOrigin", "inputNotDelivered"),
+			"studio", "initialPromptState", "initialPromptReason", "moving", "movedTo", "queueReplaces", "queueSuccessor", "inboxOrigin", "inputNotDelivered"),
 		tsOnly: consoleOnlyExempt,
 		goOnly: goOnlyExempt,
 	}

@@ -232,11 +232,13 @@ func HandleCreate(w http.ResponseWriter, r *http.Request) {
 	in.Memo.Repo = bucketFor(caller, in.Memo.Repo)
 	out := cpCreate{Fields: in.Memo, Producer: producer, ProducerOrigin: origin}
 	if in.Memo.Continuation {
-		if out.QueueDelivery = QueueDeliveryOf(in.From); out.QueueDelivery == "" {
+		delivery := QueueDeliveryOf(in.From)
+		if delivery == "" {
 			httpx.WriteErr(w, http.StatusBadRequest, "continuation_not_a_queue_run",
 				"continuation is only for a session a queue started: this session was not given a queued message")
 			return
 		}
+		out.QueueDelivery, out.ProducerOrigin = delivery, session.OriginQueue
 	}
 	body, err := json.Marshal(out)
 	if err != nil {
@@ -270,7 +272,11 @@ func attribution(from string, m *session.Meta) (producer, origin string) {
 	if m == nil {
 		return ProducerOperator, session.OriginOperator
 	}
-	return strings.TrimSpace(from), session.OriginOf(*m)
+	name := strings.TrimSpace(from)
+	if m.QueueMove != nil || m.QueueSuccessor != "" || m.MovedTo != "" || m.QueueDelivery != "" {
+		return name, session.OriginOf(session.ReadQueueGraph().Project(*m))
+	}
+	return name, session.OriginOf(*m)
 }
 
 // HandleUpdate is PATCH /memos/{id}. The query's from is the calling session, filled by the MCP
@@ -332,18 +338,21 @@ type cpDefer struct {
 	At        string `json:"at"`
 }
 
-// QueueDeliveryOf is the queue delivery that started the session named from, "" for none (or a
-// name with no meta).
+// QueueDeliveryOf is the delivery the named session currently owns as the run's root.
 func QueueDeliveryOf(from string) string {
 	from = strings.TrimSpace(from)
 	if !session.ValidName(from) {
 		return ""
 	}
-	m, ok := session.ReadMeta(from)
-	if !ok {
+	if m, ok := session.ReadMeta(from); !ok || m.Archived {
 		return ""
 	}
-	return m.QueueDelivery
+	g := session.ReadQueueGraph()
+	role, queue := g.Lineage(from)
+	if !queue || role.Origin != session.OriginQueue || g.Current(from) != from {
+		return ""
+	}
+	return role.Delivery
 }
 
 // HandleDefer is POST /memos/defer (ADR 0137, addendum 2026-11-19, part B).
