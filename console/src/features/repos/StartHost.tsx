@@ -207,7 +207,7 @@ export function StartHost() {
             // bookkeeping and adds the new session to the active working set.
             const r = await startWork({ dir: "", repo: "" }, o);
             if (r.ok) {
-              finishSeed(r.name || "");
+              finishSeed(r.name || "", r.incomplete);
               setHome(false);
               setShow(false); // launched — drop the hub underneath too
               clearSeed();

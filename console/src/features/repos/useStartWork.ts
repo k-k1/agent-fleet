@@ -22,6 +22,7 @@ import { useInboxStore } from "../inbox/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
 import type { LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
+import { stashLaunchDraft } from "../memo/launchStash.ts";
 import { useSpacesStore } from "../spaces/store.ts";
 
 export interface StartTarget {
@@ -275,8 +276,12 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     // The session exists, so this is still ok; the draft's missing part is reported apart so
     // that no caller deletes the memo or clears the draft the person would resend from.
     if (lostFiles.length || promptLost) {
-      toast(t("rp.draft_kept"));
-      return { ok: true, name: res.name, incomplete: { files: lostFiles, prompt: promptLost } };
+      // The form closes on ok and a hub or space dialog keeps no draft of its own, so what the
+      // person typed or attached would be gone. Save the whole draft as a new memo (the restored
+      // memo, if any, stays too) and say whether that worked.
+      const stash = await stashLaunchDraft(repo, prompt, images ?? []);
+      toast(t(stash.ok ? "rp.draft_saved" : "rp.draft_kept"));
+      return { ok: true, name: res.name, incomplete: { files: lostFiles, prompt: promptLost, saved: stash.ok } };
     }
     return { ok: true, name: res.name };
   };

@@ -174,6 +174,51 @@ describe("Start hub — Launch an agent at home", () => {
     expect(String((input2?.[2] as { prompt: string }).prompt)).toContain("/home/dev/.cache/pasted/home-1/shot.png");
   });
 
+  const attach = async (name: string) => {
+    const input = [...document.querySelectorAll<HTMLInputElement>("input[type=file]")].pop()!;
+    Object.defineProperty(input, "files", { value: [new File(["B"], name, { type: "image/png" })], configurable: true });
+    await act(async () => {
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await settle();
+  };
+
+  it("finishes the seed (deletes the memo) when the file and the first prompt both arrive", async () => {
+    const onLaunched = vi.fn();
+    useLaunchSeed.getState().setOnLaunched(onLaunched);
+    await openHome();
+    await typePrompt("see this");
+    await attach("shot.png");
+    await click(launchButton()!);
+    expect(onLaunched).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the memo when the file upload fails after the session was created (#5077)", async () => {
+    const onLaunched = vi.fn();
+    useLaunchSeed.getState().setOnLaunched(onLaunched);
+    pasteImage.mockResolvedValueOnce({ status: 413, path: "" } as never);
+    await openHome();
+    await typePrompt("see this");
+    await attach("shot.png");
+    await click(launchButton()!);
+    expect(createCalls()).toHaveLength(1);
+    expect(onLaunched).not.toHaveBeenCalled();
+  });
+
+  it("keeps the memo when the first prompt is refused after the session was created (#5077)", async () => {
+    const onLaunched = vi.fn();
+    useLaunchSeed.getState().setOnLaunched(onLaunched);
+    apiPost.mockImplementation(async (...a: unknown[]) =>
+      a[0] === "api/sessions" ? { name: "home-1" } : String(a[0]).endsWith("/input") ? { error: { code: "busy", message: "no" } } : {},
+    );
+    await openHome();
+    await typePrompt("see this");
+    await attach("shot.png");
+    await click(launchButton()!);
+    expect(createCalls()).toHaveLength(1);
+    expect(onLaunched).not.toHaveBeenCalled();
+  });
+
   it("Back returns to the hub; Cancel peels the dialog off the stack", async () => {
     await openHome();
     await click(button(t("launch.back_to_hub"))!);

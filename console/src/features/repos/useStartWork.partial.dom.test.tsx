@@ -11,6 +11,8 @@ vi.mock("../../core/api/client.ts", async (orig) => {
   const real = (await orig()) as Record<string, unknown>;
   return { ...real, apiJSON: (...a: unknown[]) => apiJSON(...a), pasteImage: (...a: unknown[]) => pasteImage(...a) };
 });
+const stash = vi.fn();
+vi.mock("../memo/launchStash.ts", () => ({ stashLaunchDraft: (...a: unknown[]) => stash(...a) }));
 vi.mock("../sessions/open.ts", () => ({ openSessionChat: vi.fn(), openSessionTerminal: vi.fn() }));
 
 const { useStartWork } = await import("./useStartWork.ts");
@@ -30,6 +32,8 @@ const file = (name: string) => new File(["x"], name, { type: "image/png" });
 beforeEach(async () => {
   apiJSON.mockReset();
   pasteImage.mockReset();
+  stash.mockReset();
+  stash.mockResolvedValue({ ok: true });
   host = document.createElement("div");
   document.body.appendChild(host);
   root = createRoot(host);
@@ -79,15 +83,16 @@ describe("partial draft delivery", () => {
     pasteImage.mockResolvedValueOnce({ status: 200, path: "/p/a.png" }).mockResolvedValueOnce({ status: 413, error: { code: "paste_too_large" } });
     const r = await launch([file("a.png"), file("b.png")]);
     expect(r.ok).toBe(true);
-    expect(r.incomplete).toEqual({ files: ["b.png"], prompt: false });
-    expect(toasts()).toContain(t("rp.draft_kept"));
+    expect(r.incomplete).toEqual({ files: ["b.png"], prompt: false, saved: true });
+    expect(stash).toHaveBeenCalledWith("x", "look at these", expect.any(Array));
+    expect(toasts()).toContain(t("rp.draft_saved"));
   });
 
   it("reports the file whose upload failed on the network", async () => {
     apiJSON.mockImplementation((p: string) => created(p));
     pasteImage.mockRejectedValue(new Error("offline"));
     const r = await launch([file("a.png")]);
-    expect(r.incomplete).toEqual({ files: ["a.png"], prompt: false });
+    expect(r.incomplete).toEqual({ files: ["a.png"], prompt: false, saved: true });
   });
 
   it("reports a first prompt the Agent refused", async () => {
@@ -95,7 +100,16 @@ describe("partial draft delivery", () => {
     pasteImage.mockResolvedValue({ status: 200, path: "/p/a.png" });
     const r = await launch([file("a.png")]);
     expect(r.ok).toBe(true);
-    expect(r.incomplete).toEqual({ files: [], prompt: true });
+    expect(r.incomplete).toEqual({ files: [], prompt: true, saved: true });
+  });
+
+  it("says so when the draft could not be saved as a memo either", async () => {
+    stash.mockResolvedValue({ ok: false, reason: "failed" });
+    apiJSON.mockImplementation((p: string) => created(p));
+    pasteImage.mockRejectedValue(new Error("offline"));
+    const r = await launch([file("a.png")]);
+    expect(r.incomplete?.saved).toBe(false);
+    expect(toasts()).toContain(t("rp.draft_kept"));
   });
 
   it("reports a first prompt whose request itself failed", async () => {
