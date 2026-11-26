@@ -852,6 +852,9 @@ func parseBitbucketMergeChecks(body []byte) bitbucketMergeVerdict {
 		switch c.Type {
 		case "current_user_permission_check":
 			v.permitted = strings.EqualFold(c.Status, "PASSED")
+			if c.Blocking && strings.EqualFold(c.Status, "FAILED") {
+				v.blockers = append(v.blockers, bitbucketMergeBlocker{Kind: "permission"})
+			}
 		case "git_mergeability_check":
 			switch {
 			case strings.EqualFold(c.Status, "PASSED") && strings.EqualFold(c.Reason, "clean"):

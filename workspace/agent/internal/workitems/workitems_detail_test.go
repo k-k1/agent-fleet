@@ -490,13 +490,9 @@ func TestParseBitbucketMergeability(t *testing.T) {
 
 // The extra mergeability call must stay best-effort and must not be made for a finished PR.
 func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	if err := secrets.Update(func(d *secrets.Data) error {
+	seedBktStore(t, func(d *secrets.Data) {
 		d.Bitbucket = &secrets.BitbucketCreds{AccessToken: "x"}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
+	})
 	prJSON := func(state string) string {
 		return `{"id":7,"title":"t","state":"` + state + `","draft":false,"updated_on":"2026-09-10T07:10:55+00:00",
 		  "author":{"display_name":"Taro"},"source":{"branch":{"name":"feat"},"commit":{"hash":"ab37a6993eb1","links":{"self":{"href":"BASE/2.0/repositories/acme/web/commit/ab37a6993eb1"}}}},
@@ -507,7 +503,7 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 		name, state, checks string
 		checksStatus        int
 		want, mergeState    string
-		wantCalled          bool
+		wantCalled, allowed bool
 		wantBlockers        string
 	}{
 		{"blocking freshness", "OPEN", `{"values":[
@@ -516,16 +512,26 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 			{"type":"standard_merge_check","status":"FAILED","required":true,"blocking":true,
 			 "check":{"type":"standard_merge_check_definition","kind":"maximum_commits_behind"},
 			 "requirement":{},"observed":{}}
-		]}`, 200, "clean", "blocked", true, `[{"kind":"maximum_commits_behind"}]`},
+		]}`, 200, "clean", "blocked", true, true, `[{"kind":"maximum_commits_behind"}]`},
 		{"advisory", "OPEN", `{"values":[
 			{"type":"git_mergeability_check","status":"PASSED","reason":"clean","blocking":false},
 			{"type":"current_user_permission_check","status":"PASSED","blocking":false},
 			{"type":"standard_merge_check","status":"FAILED","required":false,"blocking":false,
 			 "check":{"type":"standard_merge_check_definition","kind":"maximum_commits_behind"}}
-		]}`, 200, "clean", "clean", true, ""},
-		{"conflict", "OPEN", `{"values":[{"type":"git_mergeability_check","status":"FAILED","reason":"conflicts","blocking":true}]}`, 200, "conflict", "dirty", true, ""},
-		{"call fails, detail survives", "OPEN", `boom`, 500, "unknown", "", true, ""},
-		{"merged PR is not asked", "MERGED", `{"values":[{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, 200, "unknown", "", false, ""},
+		]}`, 200, "clean", "clean", true, true, ""},
+		{"conflict", "OPEN", `{"values":[{"type":"git_mergeability_check","status":"FAILED","reason":"conflicts","blocking":true}]}`, 200, "conflict", "dirty", true, false, ""},
+		{"conflict and blocking freshness", "OPEN", `{"values":[
+			{"type":"git_mergeability_check","status":"FAILED","reason":"conflicts","blocking":true},
+			{"type":"current_user_permission_check","status":"PASSED","blocking":false},
+			{"type":"standard_merge_check","status":"FAILED","required":true,"blocking":true,
+			 "check":{"type":"standard_merge_check_definition","kind":"maximum_commits_behind"}}
+		]}`, 200, "conflict", "dirty", true, true, `[{"kind":"maximum_commits_behind"}]`},
+		{"permission denied", "OPEN", `{"values":[
+			{"type":"git_mergeability_check","status":"PASSED","reason":"clean","blocking":false},
+			{"type":"current_user_permission_check","status":"FAILED","required":true,"blocking":true}
+		]}`, 200, "clean", "blocked", true, false, `[{"kind":"permission"}]`},
+		{"call fails, detail survives", "OPEN", `boom`, 500, "unknown", "", true, false, ""},
+		{"merged PR is not asked", "MERGED", `{"values":[{"type":"git_mergeability_check","status":"PASSED","reason":"clean"}]}`, 200, "unknown", "", false, false, ""},
 	} {
 		var called atomic.Bool
 		var srv *httptest.Server
@@ -566,9 +572,8 @@ func TestBitbucketFetchPRDetailMergeability(t *testing.T) {
 		if out.MergeableState != tc.mergeState || out.Checks.State != "success" {
 			t.Errorf("%s: merge state %q, CI %q; want %q and success", tc.name, out.MergeableState, out.Checks.State, tc.mergeState)
 		}
-		wantCanMerge := tc.name == "blocking freshness" || tc.name == "advisory"
-		if out.CanMerge != wantCanMerge {
-			t.Errorf("%s: canMerge=%v, want %v", tc.name, out.CanMerge, wantCanMerge)
+		if out.CanMerge != tc.allowed {
+			t.Errorf("%s: canMerge=%v, want %v", tc.name, out.CanMerge, tc.allowed)
 		}
 		body, err := json.Marshal(out)
 		if err != nil {

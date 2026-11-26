@@ -782,11 +782,11 @@ export function WorkItemDetailModal({
 
         {bitbucketMergeInfo && (
           <section className="wi-dmergeinfo" aria-labelledby={`${mergeInfoId}-heading`}>
-            <h4 id={`${mergeInfoId}-heading`}>{tr(d.mergeableState === "unknown" || !d.mergeableState ? "wi.bb_merge_checks" : "wi.bb_merge_blockers")}</h4>
+            <h4 id={`${mergeInfoId}-heading`}>{tr(d.mergeBlockers.length > 0 ? "wi.bb_merge_blockers" : "wi.bb_merge_checks")}</h4>
             {d.mergeBlockers.length > 0 ? (
               <ul id={mergeInfoId}>
-                {d.mergeBlockers.map(({ kind, name, message }, index) => (
-                  <li key={index}>
+                {d.mergeBlockers.map(({ key, kind, name, message }) => (
+                  <li key={key}>
                     {name ? <bdi>{name}</bdi> : tr(BITBUCKET_MERGE_BLOCKER_LABELS[kind])}
                     {message && <p><bdi>{message}</bdi></p>}
                   </li>

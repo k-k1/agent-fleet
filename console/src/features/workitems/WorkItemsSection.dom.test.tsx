@@ -1335,6 +1335,7 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
       mergeBlockers: [
         { kind: "maximum_commits_behind" },
         { kind: "custom", name: "Release policy", message },
+        { kind: "custom", name: "Release policy", message },
       ],
     });
     const modal = await open(bbRow());
@@ -1366,6 +1367,33 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     expect(modal.querySelector(".wi-dmergeinfo")).toBeNull();
   });
 
+  it("shows the Git conflict and the blocking branch rule in separate places", async () => {
+    workItemDetail.mockResolvedValue({
+      ...bbMergeable,
+      mergeable: "conflict",
+      mergeableState: "dirty",
+      mergeBlockers: [{ kind: "maximum_commits_behind" }],
+    });
+    const modal = await open(bbRow());
+    expect(mergeBtn(modal)?.disabled).toBe(true);
+    expect(modal.querySelector(".wi-dmerge")?.textContent).toBe(t("wi.detail_merge_conflict"));
+    const reasons = modal.querySelector(".wi-dmergeinfo");
+    expect(reasons?.querySelector("h4")?.textContent).toBe(t("wi.bb_merge_blockers"));
+    expect([...reasons!.querySelectorAll("li")].map((li) => li.textContent)).toEqual([t("wi.bb_merge_commits_behind")]);
+  });
+
+  it("explains a blocking Bitbucket permission check without drawing Merge", async () => {
+    workItemDetail.mockResolvedValue({
+      ...bbMergeable,
+      mergeableState: "blocked",
+      canMerge: false,
+      mergeBlockers: [{ kind: "permission" }],
+    });
+    const modal = await open(bbRow());
+    expect(mergeBtn(modal)).toBeUndefined();
+    expect(modal.querySelector(".wi-dmergeinfo li")?.textContent).toBe(t("wi.bb_merge_permission"));
+  });
+
   it.each([
     ["blocked", "clean", true, "wi.bb_merge_blocked"],
     ["unknown", "unknown", true, "wi.bb_merge_unavailable"],
@@ -1375,7 +1403,9 @@ describe("WorkItemDetailModal — merging a GitHub pull request", () => {
     const modal = await open(bbRow());
     const expected = mergeable === "clean" ? "wi.detail_merge_clean" : "wi.detail_merge_unknown";
     expect(modal.querySelector(".wi-dmerge")?.textContent).toBe(t(expected));
-    expect(modal.querySelector(".ui-modal-body .wi-dmergeinfo")?.textContent).toContain(t(why));
+    const info = modal.querySelector(".ui-modal-body .wi-dmergeinfo");
+    expect(info?.querySelector("h4")?.textContent).toBe(t("wi.bb_merge_checks"));
+    expect(info?.querySelector("p")?.textContent).toBe(t(why));
     expect(mergeBtn(modal)?.disabled).toBe(canMerge ? true : undefined);
     expect(footer(modal).querySelector(".wi-dmergewhy")).toBeNull();
   });

@@ -179,6 +179,7 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.bb_merge_approvals": "Get the required number of approvals.",
   "wi.bb_merge_builds": "Meet the required number of successful builds.",
   "wi.bb_merge_tasks": "Resolve the remaining pull request tasks.",
+  "wi.bb_merge_permission": "Bitbucket’s merge permission check failed. Check your access to the destination branch and whether the source repository still exists.",
   "wi.bb_merge_custom": "Custom merge check",
   "wi.open_provider": "Open in {name}",
   "wi.detail_started": "Sessions already on this",

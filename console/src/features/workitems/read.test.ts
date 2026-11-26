@@ -690,8 +690,8 @@ describe("readWorkItemDetail", () => {
     const bitbucket = { ...body, provider: "bitbucket" };
     expect(readWorkItemDetail(bitbucket).detail?.mergeBlockers).toEqual([]);
     expect(readWorkItemDetail({ ...bitbucket, mergeBlockers }).detail?.mergeBlockers).toEqual([
-      { kind: "maximum_commits_behind", name: "", message: "" },
-      { kind: "custom", name: "", message: "Update the manifest." },
+      expect.objectContaining({ kind: "maximum_commits_behind", name: "", message: "" }),
+      expect.objectContaining({ kind: "custom", name: "", message: "Update the manifest." }),
     ]);
   });
 });

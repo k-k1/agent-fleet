@@ -196,10 +196,12 @@ export const BITBUCKET_MERGE_BLOCKER_LABELS = {
   minimum_approvals: "wi.bb_merge_approvals",
   minimum_successful_builds: "wi.bb_merge_builds",
   resolved_tasks: "wi.bb_merge_tasks",
+  permission: "wi.bb_merge_permission",
   custom: "wi.bb_merge_custom",
 } as const;
 
 interface BitbucketMergeBlocker {
+  key: string;
   kind: keyof typeof BITBUCKET_MERGE_BLOCKER_LABELS;
   name: string;
   message: string;
@@ -207,15 +209,17 @@ interface BitbucketMergeBlocker {
 
 function readBitbucketMergeBlockers(raw: unknown): BitbucketMergeBlocker[] {
   if (!Array.isArray(raw)) return [];
-  const result: BitbucketMergeBlocker[] = [];
+  const result = new Map<string, BitbucketMergeBlocker>();
   for (const entry of raw) {
     const kind = str(entry?.kind) as BitbucketMergeBlocker["kind"];
     if (!Object.hasOwn(BITBUCKET_MERGE_BLOCKER_LABELS, kind)) continue;
     const name = kind === "custom" ? str(entry.name).trim() : "";
     const message = kind === "custom" ? str(entry.message).trim() : "";
-    if (kind !== "custom" || name || message) result.push({ kind, name, message });
+    if (kind === "custom" && !name && !message) continue;
+    const key = JSON.stringify([kind, name, message]);
+    result.set(key, { key, kind, name, message });
   }
-  return result;
+  return [...result.values()];
 }
 
 /** A pull request read live, when its panel was opened (docs/log/80 §80.24). Nothing here is

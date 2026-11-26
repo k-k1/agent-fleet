@@ -177,6 +177,7 @@ export const workitems = {
   "wi.bb_merge_approvals": "必要な数の承認を得てください。",
   "wi.bb_merge_builds": "必要な数のビルドを成功させてください。",
   "wi.bb_merge_tasks": "プルリクエストに残っているタスクを解決してください。",
+  "wi.bb_merge_permission": "Bitbucket のマージ権限チェックに通りませんでした。マージ先ブランチの権限と、ソースリポジトリが存在するかを確認してください。",
   "wi.bb_merge_custom": "カスタムマージチェック",
   "wi.open_provider": "{name} で開く",
   "wi.detail_started": "着手中のセッション",
