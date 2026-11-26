@@ -549,7 +549,7 @@ func driveTools() []toolSpec {
 			operator: func() map[string]any {
 				return map[string]any{
 					"name":        "purge_cleanup_archive",
-					"description": "掃除で退避したアーカイブを完全に削除して容量を回収する（復元不可になる）。もう戻す必要がないと確認できたアーカイブにのみ使う。id は list_cleanup_archives で取得する。完全削除なので実行前に利用者へ確認すること。",
+					"description": "掃除で退避したアーカイブを完全に削除して容量を回収する（復元不可になる）。もう戻す必要がないと確認できたアーカイブにのみ使う。スペースの項目を含むアーカイブは利用者自身のファイルを保持しており、purge するとそのファイルも永久に失われる。id は list_cleanup_archives で取得する。完全削除なので実行前に利用者へ確認すること。",
 					"inputSchema": map[string]any{
 						"type": "object",
 						"properties": map[string]any{
