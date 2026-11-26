@@ -260,3 +260,47 @@ func TestMemoMoveListGapDoesNotAbortTheRun(t *testing.T) {
 		}
 	})
 }
+
+func TestMemoMoveUnbookedLimitHoldsSlotAndDispatch(t *testing.T) {
+	cases := []struct {
+		name string
+		row  map[string]any
+		hold string
+	}{
+		{"stopped window limit", map[string]any{"alive": false, "stoppedLimit": stateLimited}, store.HeldLimit},
+		{"stopped spend limit", map[string]any{"alive": false, "stoppedLimit": stateSpendLimit}, store.HeldPerson},
+		{"live spend limit", map[string]any{"alive": true, "state": stateSpendLimit}, store.HeldPerson},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+				agent, d := e.openReported(nil)
+				same := e.queueWith("app", "same", map[string]any{"enabled": true, "agentKind": "codex"})
+				e.pending("app", "same", "same kind")
+				e.queueWith("app", "other", map[string]any{"enabled": true, "agentKind": "claude"})
+				e.pending("app", "other", "other kind")
+				agent.setRow(d.Session, map[string]any{"alive": false, "movedTo": "replacement"})
+				agent.child("replacement", "", map[string]any{"origin": "queue", "kind": "codex", "queueReplaces": []string{d.Session}, "state": ""})
+				agent.setRow("replacement", c.row)
+				for i := 0; i < 3; i++ {
+					e.autoTick(time.Now())
+				}
+				got := e.delivery(d.ID)
+				if got.State != store.DeliveryOpen || got.HeldBy != c.hold || got.HeldSession != "replacement" ||
+					got.LimitKinds != ",codex," || len(e.allDeliveries(same)) != 0 || agent.createCount() != 2 {
+					t.Fatalf("want the original slot, a same-kind hold and one other-kind launch: %+v, creates=%d", got, agent.createCount())
+				}
+
+				agent.setRow("replacement", map[string]any{"alive": false, "state": "", "stoppedLimit": ""})
+				e.autoTick(time.Now())
+				if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.LimitKinds != "" || len(e.allDeliveries(same)) != 1 {
+					t.Fatalf("clear evidence should allow dispatch while the original run settles: %+v", got)
+				}
+				e.autoTick(time.Now())
+				if got := e.delivery(d.ID); got.Outcome != store.DeliveryClean {
+					t.Fatalf("clear replacement should finish through the normal close: %+v", got)
+				}
+			})
+		})
+	}
+}

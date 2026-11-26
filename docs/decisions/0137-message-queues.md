@@ -1233,3 +1233,16 @@ explicit stop clears it), because a message is delivered within seconds of its t
 cannot be delivered (the Agent's own expiry is 24 hours). A read that sees such a message sets the count of clear reads
 back to 0, so one read that misses it (a spool not readable that once, or an idle read just before the message landed)
 cannot close the run. An older Agent sends no `pendingPeers`, which reads as none, the rule it had before.
+
+## Addendum 2026-11-26: limits on a continuing run (#5293)
+
+The queue reads the active sessions of the delivery, including committed move replacements.
+A window limit occupies the slot even when the stopped session has no resume booked, if the
+Agent confirms it with `stoppedLimit`. A provider spend or balance limit occupies the slot
+as a wait for the member. Either limit also blocks automatic dispatch for the reported agent
+kind while its observation holds.
+
+The Agent reports stopped-limit evidence independently of the resume booking (#5292).
+Older Agents still provide live limit states and booked resumes. While the Workspace is stopped,
+the queue uses the last kept observation. A fresh clear report removes the same-kind hold and
+starts the usual count of clear reads for completion.

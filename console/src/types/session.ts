@@ -111,11 +111,10 @@ export interface Session {
   backgroundSince?: string; // RFC3339: when the current background-busy period began (admin forecast)
   backgroundAgeSec?: number; // the same as an age on the Workspace's clock; what the reaper reads (#2338)
   progressAgeSec?: number; // the same instant as an age on the Workspace's clock; what the reaper reads
-  // The reserved auto-resume instant (RFC3339), present only while state === "limited"
-  // (waiting for a usage limit to reset). Empty = no resume is scheduled (auto-resume off,
-  // nothing to derive a time from, or a per-model limit). Display-only, so the chip can say
-  // when the session moves again (docs/log/47 §4-9).
+  // The reserved auto-resume instant (RFC3339), which can survive a stop.
   rateLimitResumeAt?: string;
+  // Confirmed usage limit on a stopped row, independent of its lifecycle state.
+  stoppedLimit?: "limited" | "spend_limit";
   // When the agent's CURRENT login was written (RFC3339, claude only; empty when there is
   // nothing to judge on — an environment token, no credentials file). Never read as "the
   // login is fine now": it only means anything against a TURN'S timestamp. A turn that died

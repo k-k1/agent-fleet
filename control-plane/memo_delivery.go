@@ -1159,8 +1159,13 @@ func sessionHold(s sessionWire, now time.Time) string {
 		(s.InitialPromptState == "failed" || s.InitialPromptState == "unknown") && memoHoldRank[why] < memoHoldRank[store.HeldPerson] {
 		why = store.HeldPerson
 	}
-	if why == "" && (s.State == stateLimited || s.RateLimitResumeAt != "") {
-		why = store.HeldLimit
+	if why == "" {
+		switch memoSessionLimit(s) {
+		case stateLimited:
+			why = store.HeldLimit
+		case stateSpendLimit:
+			why = store.HeldPerson
+		}
 	}
 	if why == "" && s.Wakers != nil && (s.Wakers.Watches > 0 || s.Wakers.Timers > 0) {
 		why = store.HeldWakers
@@ -1184,6 +1189,19 @@ func sessionProgress(s sessionWire) bool {
 	return busyState(s.State) && !progressLapsed(s)
 }
 
+// memoSessionLimit reads confirmed provider evidence. A stopped window or spend limit can
+// still hold a run before or without a booking. A spend limit needs the member to act.
+func memoSessionLimit(s sessionWire) string {
+	switch {
+	case s.State == stateSpendLimit || (!s.Alive && s.StoppedLimit == stateSpendLimit):
+		return stateSpendLimit
+	case s.State == stateLimited || s.RateLimitResumeAt != "" || (!s.Alive && s.StoppedLimit == stateLimited):
+		return stateLimited
+	default:
+		return ""
+	}
+}
+
 // treeLimitKinds is the agent kinds of the sessions of a tree that wait for a usage limit
 // (limited, or a booked resume), as ",a,b," or "". It is kept apart from the strongest hold of
 // treeHold: a parent that waits for a limit while its child works is held by a machine, and the
@@ -1191,7 +1209,7 @@ func sessionProgress(s sessionWire) bool {
 func treeLimitKinds(tree []*sessionWire) string {
 	set := map[string]bool{}
 	for _, s := range tree {
-		if s.Archived || !(s.State == stateLimited || s.RateLimitResumeAt != "") {
+		if s.Archived || memoSessionLimit(*s) == "" {
 			continue
 		}
 		set[scheduleInjectKind(s.Kind)] = true
