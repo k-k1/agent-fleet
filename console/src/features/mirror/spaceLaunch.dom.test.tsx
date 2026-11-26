@@ -204,6 +204,24 @@ describe("handoff proposal launched from a space session", () => {
     });
   });
 
+  it("uses the offer as it is when the list answers: one shared while the list was read is withdrawn first", async () => {
+    let release!: () => void;
+    spacesAnswer = () => new Promise((r) => (release = () => r({ spaces: [{ folder: "research-aaa", name: "", dir: "x" }] })));
+    await mountCard();
+    await press(); // no offer yet: the press waits for the list
+    const offer = { id: "offer-2", sessionId: "cat-1", sessionName: "src", recipientUserKey: "bob", title: "Carry on", status: "pending" } as never;
+    ownedOffers = [offer];
+    await act(async () => useHandoffStore.setState({ owned: [offer] })); // shared from the same card meanwhile
+    await act(async () => release());
+    await settle();
+    expect(opened()).toBe(0); // not started under a recipient who can start it too
+    spacesAnswer = async () => ({ spaces: [{ folder: "research-aaa", name: "", dir: "x" }] }); // the second read, after the question
+    await answerConfirm(true);
+    await settle();
+    expect(apiJSON).toHaveBeenCalledWith("api/session-handoff-offers/offer-2", "DELETE");
+    expect(opened()).toBe(1);
+  });
+
   it("starts nothing from a card that was replaced while the list was read", async () => {
     let release!: () => void;
     spacesAnswer = () => new Promise((r) => (release = () => r({ spaces: [{ folder: "research-aaa", name: "", dir: "x" }] })));

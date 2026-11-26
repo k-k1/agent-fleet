@@ -289,8 +289,10 @@ interface FormExtras {
   /** The existing space (its folder) the space form opens on; "" or absent starts a new one. */
   initialSpaceFolder?: string;
   /** The place is the one the launch continues (a handoff or review from a session in that
-   *  space): it cannot be swapped for another space or a new one, since the text was written for
-   *  it. Unlocked once that space is gone, so the draft can still be sent somewhere. */
+   *  space): it cannot be swapped for another space or a new one, even once that space is gone.
+   *  The text, the handoff lineage and the completion callbacks were written for that place, and a
+   *  launch elsewhere would finish them (badge the proposal, discard the carried plan) for work
+   *  that did not continue it. */
   spaceLocked?: boolean;
 }
 
@@ -1801,7 +1803,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             {tr("start.place")}
           </FieldLabel>
           <div className="start-place">
-            <SpacePlacePicker folder={spaceFolder} onChange={setSpaceFolder} disabled={busy || (spaceLocked && !spaceGone)} gone={spaceGone} />
+            <SpacePlacePicker folder={spaceFolder} onChange={setSpaceFolder} disabled={busy || spaceLocked} gone={spaceGone} />
             {!spaceFolder && (
               <input {...NO_AUTOFILL}
                 type="text"
@@ -1816,7 +1818,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           </div>
           {spaceGone && (
             <span className="ui-field-hint ui-field-hint--warn" role="status">
-              {tr("start.space_gone")}
+              {tr(spaceLocked ? "start.space_gone_locked" : "start.space_gone")}
             </span>
           )}
         </div>

@@ -154,6 +154,10 @@ export function HandoffProposal({
   // A handoff to a member (docs/log/77) is a per-session fact, not a per-proposal one (at
   // most one outstanding offer per session), so the card states the session's current state.
   const offer = useHandoffStore((st) => offerForSession(st.owned, session));
+  // The offer as of now, for a launch that waited: sharing the card while the list was read must
+  // not leave the launch deciding on the offer it saw when the button was pressed.
+  const offerNow = useRef(offer);
+  offerNow.current = offer;
   // The left pane's sharing section polls this, but refresh once on open so the card is not
   // blank in a layout where that section is not rendered.
   useEffect(() => { void useHandoffStore.getState().refresh(); }, [session]);
@@ -213,6 +217,7 @@ export function HandoffProposal({
       return now.mounted && now.session === asked.session && now.proposalId === asked.proposalId;
     };
     if ("space" in target && !(await settleSpace(target.space, same, toast))) return;
+    const offer = offerNow.current;
     // Launching while an offer is still pending would run the same work twice. Withdraw
     // conditionally *before* launching and abandon the launch if that race is lost (the
     // recipient already accepted) — ADR 0057 decision 6.

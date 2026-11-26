@@ -240,13 +240,19 @@ describe("Start hub — seeded by a session that runs in a space", () => {
     expect(createCalls()[0][2]).toMatchObject({ space: { folder: "old-aaa" }, initial_prompt: "引き継ぎの本文", origin_proposal: "p-1" });
   });
 
-  it("keeps the place of the continuation: another space or a new one cannot be picked, until that space is gone", async () => {
+  it("keeps the place of the continuation: another space or a new one cannot be picked, even once that space is gone", async () => {
     seedFromSpaceSession();
     await openHub();
     expect(chip().disabled).toBe(true);
     await act(async () => useSpacesStore.setState({ spaces: [] })); // the space was removed
     await settle();
-    expect(chip().disabled).toBe(false); // the draft can still be sent somewhere else
+    // Not rescued into another place: the text, lineage and callbacks belong to this one.
+    expect(chip().disabled).toBe(true);
+    expect(document.body.textContent).toContain(t("start.space_gone_locked"));
+    expect(spaceGo().disabled).toBe(true);
+    await click(spaceGo());
+    expect(createCalls()).toHaveLength(0);
+    expect(markHandoffLaunched).not.toHaveBeenCalled();
   });
 
   it("leaves a newer hub alone when an older launch finishes late, and finishes only its own seed", async () => {
