@@ -7,6 +7,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/rmtree"
 )
 
 // deleteTimer records how long each step of one working-copy delete took, and logs one line
@@ -83,6 +85,15 @@ func removeWorktree(parent, dir string) (out string, err error) {
 	fireDeleteHook("git-remove", dir)
 	out, err = Combined(parent, "worktree", "remove", "--force", dir)
 	l.RUnlock()
+	if err != nil && strings.Contains(out, "ermission denied") && !worktreeLocked(parent, dir) {
+		// git cannot unlink inside a directory the owner cannot write to (Go's module cache),
+		// and its refusal leaves the folder behind. The dirty check was settled before this
+		// call. A locked worktree is excluded by asking git, not by the message: the lock
+		// reason is free text and can contain anything, and a lock must keep standing.
+		if rerr := rmtree.RemoveAll(dir); rerr == nil {
+			err = nil
+		}
+	}
 	if err != nil {
 		return out, err
 	}
@@ -97,4 +108,27 @@ func pruneWorktrees(parent string) {
 	defer l.Unlock()
 	fireDeleteHook("prune", parent)
 	_ = Cmd(parent, "worktree", "prune").Run()
+}
+
+// worktreeLocked reports whether git lists the worktree at dir as locked. When it cannot be
+// read, the answer is true: the caller then leaves the removal to git's own refusal. The list is
+// read with -z, so a path with a non-ASCII or special character arrives raw instead of in git's
+// quoted form, which would never match dir.
+func worktreeLocked(parent, dir string) bool {
+	out, err := Cmd(parent, "worktree", "list", "--porcelain", "-z").Output()
+	if err != nil {
+		return true
+	}
+	want := markKey(dir)
+	inEntry := false
+	for _, field := range strings.Split(string(out), "\x00") {
+		switch {
+		case strings.HasPrefix(field, "worktree "):
+			p := strings.TrimPrefix(field, "worktree ")
+			inEntry = p == dir || markKey(p) == want
+		case inEntry && (field == "locked" || strings.HasPrefix(field, "locked ")):
+			return true
+		}
+	}
+	return false
 }

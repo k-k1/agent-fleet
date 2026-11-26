@@ -596,3 +596,45 @@ func TestRestoreLosesToAPurgeThatWonAfterItReadTheEntry(t *testing.T) {
 		t.Fatalf("a purged space came back: %v", err)
 	}
 }
+
+// A purge of a trashed space whose folder holds a directory without owner write (Go's module
+// cache is mode 0555): a plain RemoveAll failed with EACCES on every press and the entry stayed
+// in the trash for good.
+func TestPurgeRemovesATrashedSpaceHoldingAReadOnlyDirectory(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "ReadOnly")
+	writeAt(t, filepath.Join(sp.Dir, "f.md"), "x")
+	mod := filepath.Join(sp.Dir, "go", "pkg", "mod", "example.com", "m@v1")
+	writeAt(t, filepath.Join(mod, "m.go"), "package m")
+	for _, d := range []string{mod, filepath.Join(sp.Dir, "go", "pkg", "mod")} {
+		if err := os.Chmod(d, 0o555); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var out struct{ Archive string }
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder, nil, http.StatusOK, &out)
+	trashed := spaceTrashDir(out.Archive)
+	t.Cleanup(func() { // a red run must not leave a tree the test directory's own cleanup cannot remove
+		_ = filepath.WalkDir(trashed, func(p string, d os.DirEntry, err error) error {
+			if err == nil && d.IsDir() {
+				_ = os.Chmod(p, 0o755)
+			}
+			return nil
+		})
+	})
+	probe := filepath.Join(trashed, "go", "pkg", "mod", "probe-write")
+	if err := os.WriteFile(probe, nil, 0o600); err == nil {
+		_ = os.Remove(probe)
+		t.Skip("directory permissions are not enforced here (running as root)")
+	}
+
+	if code := httpStatus(t, e.srv, "DELETE", "/cleanup/archives/"+out.Archive, nil); code != http.StatusOK {
+		t.Fatalf("purge = %d, want 200", code)
+	}
+	if _, err := os.Lstat(trashed); !os.IsNotExist(err) {
+		t.Fatalf("the trashed folder is still there: %v", err)
+	}
+	if n := len(spaceArchives(t, e.srv)); n != 0 {
+		t.Fatalf("%d entries left in the trash", n)
+	}
+}
