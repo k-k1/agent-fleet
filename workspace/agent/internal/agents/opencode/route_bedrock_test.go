@@ -79,10 +79,9 @@ func (f *fakeGateway) CheckRoute(context.Context, agents.RouteSelection, string)
 	return f.refuse
 }
 
-// withGateway opens the gate and registers g for the test.
+// withGateway registers g for the test.
 func withGateway(t *testing.T, g agents.RouteGateway) {
 	t.Helper()
-	t.Setenv(bedrockGateEnv, "1")
 	prev := agents.CurrentRouteGateway()
 	agents.SetRouteGateway(g)
 	t.Cleanup(func() { agents.SetRouteGateway(prev) })
@@ -100,40 +99,31 @@ func bedrockMeta(t *testing.T, name string) session.Meta {
 	return m
 }
 
-func TestBedrockRouteIsGatedUntilItsLiveAcceptance(t *testing.T) {
+// The bedrock route has no release gate (ADR 0128 decision 14 passed): offered, checked, bound and
+// applied with no switch in the environment, and a leftover AF_OPENCODE_BEDROCK_ROUTE from the
+// acceptance run, whatever its value, changes nothing.
+func TestBedrockRouteHasNoReleaseGate(t *testing.T) {
 	isolatedHome(t)
 	g := &fakeGateway{}
 	withGateway(t, g)
-	t.Setenv(bedrockGateEnv, "")
 	a := agentImpl{}
 	if !slices.Contains(a.Routes(), RouteBedrock) {
 		t.Fatal("bedrock must stay declared (the CP snapshot and stored selections know it)")
 	}
-	if len(a.OfferedRoutes()) != 0 {
-		t.Fatalf("offered with the gate shut: %v", a.OfferedRoutes())
-	}
-	for name, ref := range map[string]*agents.RouteRefusal{
-		"check": a.CheckRoute(context.Background(), bedrockSel(), bedrockID),
-		"bind":  func() *agents.RouteRefusal { _, r := a.BindRoute(bedrockSel()); return r }(),
-	} {
-		if ref == nil || !strings.Contains(ref.Message, bedrockGateEnv) || !strings.Contains(ref.Message, "AF_WS_OPENCODE_BEDROCK_ROUTE") {
-			t.Errorf("%s with the gate shut = %+v", name, ref)
+	for _, v := range []string{"", "0", "1"} {
+		t.Setenv("AF_OPENCODE_BEDROCK_ROUTE", v)
+		if !slices.Equal(a.OfferedRoutes(), []string{RouteBedrock}) {
+			t.Errorf("switch %q: offered %v", v, a.OfferedRoutes())
 		}
-	}
-	if _, err := a.ApplyRoute(bedrockMeta(t, "s"), bedrockSel()); err == nil {
-		t.Error("ApplyRoute with the gate shut was accepted")
-	}
-	if len(g.loopback) != 0 {
-		t.Fatal("a token was issued with the gate shut")
-	}
-	// claude's gate does not open it.
-	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
-	if len(a.OfferedRoutes()) != 0 {
-		t.Fatal("claude's gate opened opencode's row")
-	}
-	t.Setenv(bedrockGateEnv, "1")
-	if !slices.Equal(a.OfferedRoutes(), []string{RouteBedrock}) {
-		t.Fatalf("offered with the gate open: %v", a.OfferedRoutes())
+		if ref := a.CheckRoute(context.Background(), bedrockSel(), bedrockID); ref != nil {
+			t.Errorf("switch %q: check = %+v", v, ref)
+		}
+		if _, ref := a.BindRoute(bedrockSel()); ref != nil {
+			t.Errorf("switch %q: bind = %+v", v, ref)
+		}
+		if _, err := a.ApplyRoute(bedrockMeta(t, "s"+v), bedrockSel()); err != nil {
+			t.Errorf("switch %q: ApplyRoute = %v", v, err)
+		}
 	}
 }
 
@@ -381,9 +371,8 @@ func TestBedrockRouteModelsFollowTheRoutesAvailability(t *testing.T) {
 		routeModels.mu.Unlock()
 	})
 	routeModels.list = nil
-	t.Setenv(bedrockGateEnv, "")
 	if got := BedrockRouteModels(); got != nil || calls != 0 {
-		t.Fatalf("gate shut: %v (%d listings)", got, calls)
+		t.Fatalf("no gateway: %v (%d listings)", got, calls)
 	}
 	withGateway(t, &fakeGateway{})
 	got := BedrockRouteModels()

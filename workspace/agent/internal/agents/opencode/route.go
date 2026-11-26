@@ -48,20 +48,6 @@ import (
 // RouteBedrock is the gateway route.
 const RouteBedrock = "bedrock"
 
-// bedrockGateEnv opens the bedrock route for opencode on this Agent. ADR 0128 decision 14 ships a
-// harness × route row only after live turns on real Bedrock; until then the row is declared (the
-// Control Plane's snapshot and a stored selection know it) but refused at every check, bind and
-// launch and not offered, unless the Agent runs with AF_OPENCODE_BEDROCK_ROUTE=1 for the
-// acceptance run. It is separate from claude's gate: each row passes its own acceptance.
-const bedrockGateEnv = "AF_OPENCODE_BEDROCK_ROUTE"
-
-func bedrockOpen() bool { return os.Getenv(bedrockGateEnv) == "1" }
-
-func bedrockGated() *agents.RouteRefusal {
-	return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
-		Message: "opencode on the bedrock route has not passed its live acceptance yet (ADR 0128 decision 14) and is off on this workspace; it is opened for the acceptance run with " + bedrockGateEnv + "=1 on the workspace's Agent (a Control Plane started with AF_WS_OPENCODE_BEDROCK_ROUTE=1 sets it at the workspace's next Start; a running workspace needs Stop → Start)"}
-}
-
 // bedrockProvider is opencode's own provider id for Bedrock.
 const bedrockProvider = "amazon-bedrock"
 
@@ -93,13 +79,8 @@ func (agentImpl) FixedRoutes() []string {
 		routes.RouteOpencodeZen, routes.RouteSakanaAPI}
 }
 
-// OfferedRoutes implements agents.RouteOfferer: bedrock only while its gate is open.
-func (agentImpl) OfferedRoutes() []string {
-	if bedrockOpen() {
-		return []string{RouteBedrock}
-	}
-	return nil
-}
+// OfferedRoutes implements agents.RouteOfferer.
+func (agentImpl) OfferedRoutes() []string { return []string{RouteBedrock} }
 
 // RouteOwnsModels implements agents.RouteModelOwner: a bedrock session's model is checked by
 // CheckRoute against the route, not against the kind's live catalogue (which lists Bedrock models
@@ -136,9 +117,6 @@ func (agentImpl) CheckRoute(ctx context.Context, sel agents.RouteSelection, mode
 	if ref := checkSelection(sel); ref != nil {
 		return ref
 	}
-	if !bedrockOpen() {
-		return bedrockGated()
-	}
 	if !bedrockModel(model) {
 		return notBedrockModel(model)
 	}
@@ -158,9 +136,6 @@ func (agentImpl) CheckRoute(ctx context.Context, sel agents.RouteSelection, mode
 func (agentImpl) BindRoute(sel agents.RouteSelection) (agents.RouteSelection, *agents.RouteRefusal) {
 	if ref := checkSelection(sel); ref != nil {
 		return sel, ref
-	}
-	if !bedrockOpen() {
-		return sel, bedrockGated()
 	}
 	gw := agents.CurrentRouteGateway()
 	if gw == nil {
@@ -213,9 +188,6 @@ func routeConfig(baseURL, model string) map[string]any {
 func (agentImpl) ApplyRoute(m session.Meta, sel agents.RouteSelection) (agents.RoutePlan, error) {
 	if ref := checkSelection(sel); ref != nil {
 		return agents.RoutePlan{}, ref
-	}
-	if !bedrockOpen() {
-		return agents.RoutePlan{}, bedrockGated()
 	}
 	if !bedrockModel(m.Model) {
 		return agents.RoutePlan{}, notBedrockModel(m.Model)
@@ -534,12 +506,12 @@ func bedrockListEnv(base []string) []string {
 }
 
 // BedrockRouteModels is the menu of the bedrock route: opencode's amazon-bedrock models, offered
-// only while the route is (its gate open and the gateway running). This replaces the keepInMenu
+// only while the route is (the gateway running). This replaces the keepInMenu
 // stopgap for these ids with the route's availability (ADR 0128 decision 11): outside the route
 // they still cannot work and stay out of the default menu. A failed listing keeps the last good
 // one.
 func BedrockRouteModels() []string {
-	if !bedrockOpen() || agents.CurrentRouteGateway() == nil {
+	if agents.CurrentRouteGateway() == nil {
 		return nil
 	}
 	routeModels.mu.Lock()

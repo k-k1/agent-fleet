@@ -159,16 +159,17 @@ func TestCPManagedDefaultSnapshotMatchesRegistry(t *testing.T) {
 }
 
 // The live catalog (and only it) names the routes a harness accepts, so the Console offers a
-// route picker for claude and for no other kind; the checked-in snapshot stays free of them.
+// route picker for claude and opencode and for no other kind; the checked-in snapshot stays free
+// of them.
 func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
 	settleKindProbes(t)
-	// The route gates are this Agent's environment; a workspace running with them on must not
-	// change what this test sees.
+	// The route gate is this Agent's environment; a workspace running with it on must not change
+	// what this test sees.
 	for _, k := range testguard.RouteGateEnvs {
 		t.Setenv(k, "")
 	}
 	for _, e := range buildKindCatalog(true).Kinds {
-		want := e.Kind == "claude"
+		want := e.Kind == "claude" || e.Kind == "opencode"
 		if got := len(e.Routes) > 0; got != want {
 			t.Errorf("%s: routes %v, want some = %v", e.Kind, e.Routes, want)
 		}
@@ -180,10 +181,9 @@ func TestKindCatalogLiveCarriesRoutes(t *testing.T) {
 	}
 }
 
-// Each kind's gate decides its own row of the live catalog: opencode's bedrock route appears
-// only with AF_OPENCODE_BEDROCK_ROUTE=1, and neither claude's gate nor an open opencode gate
-// changes the other kind.
-func TestKindCatalogOpencodeRoutesFollowItsGate(t *testing.T) {
+// Both harnesses offer the member's bedrock route with no switch in the environment (ADR 0128
+// decision 14 passed for each), and a leftover acceptance switch changes nothing.
+func TestKindCatalogOffersBedrockWithoutASwitch(t *testing.T) {
 	settleKindProbes(t)
 	routesOf := func(kind string) []string {
 		for _, e := range buildKindCatalog(true).Kinds {
@@ -194,41 +194,14 @@ func TestKindCatalogOpencodeRoutesFollowItsGate(t *testing.T) {
 		t.Fatalf("kind %q missing from the catalog", kind)
 		return nil
 	}
-	for _, k := range testguard.RouteGateEnvs {
-		t.Setenv(k, "")
-	}
-	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
-	if got := routesOf("opencode"); len(got) != 0 {
-		t.Errorf("gate closed: opencode routes %v", got)
-	}
-	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "")
-	t.Setenv("AF_OPENCODE_BEDROCK_ROUTE", "1")
-	if got := routesOf("opencode"); !slices.Equal(got, []string{"bedrock"}) {
-		t.Errorf("gate open: opencode routes %v, want [bedrock]", got)
-	}
-	if got := routesOf("claude"); slices.Contains(got, "bedrock") {
-		t.Errorf("opencode's gate opened claude's bedrock row: %v", got)
-	}
-}
-
-// A route declared but not yet offered (claude's bedrock, before decision 14's acceptance run) is
-// left out of the live catalog, so the launch dialog does not offer it; opening its gate adds it.
-func TestKindCatalogOffersOnlyReleasedRoutes(t *testing.T) {
-	settleKindProbes(t)
-	claudeRoutes := func() []string {
-		for _, e := range buildKindCatalog(true).Kinds {
-			if e.Kind == "claude" {
-				return e.Routes
-			}
+	for _, v := range []string{"", "0", "1"} {
+		t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", v)
+		t.Setenv("AF_OPENCODE_BEDROCK_ROUTE", v)
+		if got := routesOf("opencode"); !slices.Equal(got, []string{"bedrock"}) {
+			t.Errorf("switch %q: opencode routes %v, want [bedrock]", v, got)
 		}
-		return nil
-	}
-	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "")
-	if got := claudeRoutes(); slices.Contains(got, "bedrock") || !slices.Contains(got, "anthropic-api") {
-		t.Errorf("gate closed: live routes %v", got)
-	}
-	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
-	if got := claudeRoutes(); !slices.Contains(got, "bedrock") {
-		t.Errorf("gate open: live routes %v", got)
+		if got := routesOf("claude"); !slices.Contains(got, "bedrock") || !slices.Contains(got, "anthropic-api") {
+			t.Errorf("switch %q: claude routes %v", v, got)
+		}
 	}
 }

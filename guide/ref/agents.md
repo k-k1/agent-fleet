@@ -259,9 +259,8 @@ login. A session with no route behaves as before.
   remain covered by stopping the session instead: a managed settings file (the CLI's documentation ranks it above the launch-flag layer; not measured here), and a settings file that
   sets `ANTHROPIC_API_KEY` for an anthropic-api session (the key itself is never put on a command line).
 - **amazon bedrock.** A third route runs claude on Amazon Bedrock with one of your Settings > AWS profiles/SSM
-  profiles marked as a model route ([Amazon Bedrock route](bedrock-route.md)). **It is not offered yet**: it waits
-  for its live acceptance run, and until then a workspace offers it only when its operator has set
-  `AF_CLAUDE_BEDROCK_ROUTE=1` for that run (on a Control Plane that is `AF_WS_CLAUDE_BEDROCK_ROUTE=1`, which reaches a workspace at its next Start; a workspace already running needs Stop → Start). Where it is offered, pick **Amazon Bedrock** under
+  profiles marked as a model route ([Amazon Bedrock route](bedrock-route.md)). It needs no operator
+  switch; it is offered once at least one of your profiles is marked. Pick **Amazon Bedrock** under
   **Model route**, then the profile; the region is optional (empty uses the profile's own). The **Bedrock model ID** is
   required: a model ID or system inference profile ID as Bedrock writes it (`anthropic.…`, `us.anthropic.…`, …; not
   `opus` or `claude-…`, not an ARN). claude is started on that ID alone (`--model` and its `ANTHROPIC_*_MODEL`
@@ -304,16 +303,13 @@ login. A session with no route behaves as before.
 ## opencode: the Amazon Bedrock route
 
 opencode can run on Amazon Bedrock with one of your Settings > AWS profiles/SSM profiles marked as a model
-route, like claude's bedrock route above. **It is not offered yet**: it waits for its own live acceptance run, and
-until then a workspace offers it only when its operator has set `AF_OPENCODE_BEDROCK_ROUTE=1` for that run (on a
-Control Plane that is `AF_WS_OPENCODE_BEDROCK_ROUTE=1`, which reaches a workspace at its next Start; a workspace
-already running needs Stop → Start). claude's switch does not open it.
+route, like claude's bedrock route above. It needs no operator switch.
 
 - **Terminal (CLI) and Managed.** A Managed opencode session normally shares one opencode server with every other
   Managed session, which cannot carry a route of its own; a Managed session on this route gets a server of its own
   instead, started with the session and stopped with it. Each such server costs its own memory (one opencode server,
   a few hundred MB) for as long as the session runs.
-- Where it is offered, pick **Amazon Bedrock** under **Model route**, then the profile (the region is optional), and
+- Pick **Amazon Bedrock** under **Model route**, then the profile (the region is optional), and
   then one of the **amazon-bedrock/…** models: on this route the model picker lists only those, and the dialog does
   not start until one is chosen (opencode's own default model is not on the route). Without the route, these models
   are not listed.

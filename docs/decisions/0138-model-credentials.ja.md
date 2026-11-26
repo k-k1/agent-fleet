@@ -122,7 +122,6 @@ agy・codex・copilot・cursor・kiro・lcpp・muse・shell・ssm は何も宣�
 
 | 層 | 制御 | 場所 | 対象 |
 |---|---|---|---|
-| operator | 受け入れ用のスイッチ `AF_WS_CLAUDE_BEDROCK_ROUTE`、`AF_WS_OPENCODE_BEDROCK_ROUTE` | `control-plane/workspace_lifecycle.go:572`、`:576` | ハーネス × 経路の行を 1 つずつ開く。リリースの設定ではない |
 | operator | `AF_PROVIDED_ROUTES` / CFN の `ProvidedRoutes` | `control-plane/internal/routegateway/gateway.go:48`、`deploy/aws/ecs/cfn/30-ingress.yaml:310` | 提供経路がそもそもあるか |
 | operator、super_admin | 送信の許可リスト | `control-plane/egress_policy.go:21`（`defaultEgressAllowlist`）、`:103`（`egressBuiltin`） | ホスト単位、**配備全体だけ**（`control-plane/egress_member.go:188`: "EffectiveAllowlist ignores scope"）。Anthropic のホストと `.amazonaws.com` は組み込みで、外せない |
 | super_admin | テナントごとのエンジン利用。`*bool`、nil = 許可 | `control-plane/limits.go:135-136`（ADR 0084 決定 7） | 自前ホストのエンジンだけ |

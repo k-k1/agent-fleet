@@ -302,7 +302,6 @@ func TestSweepRouteGuardsIgnoresAStaleStoppedAt(t *testing.T) {
 func TestClaudeBedrockOwnsItsModel(t *testing.T) {
 	p := newCreateProbe(t)
 	openOpencodeBedrock(t)
-	t.Setenv("AF_CLAUDE_BEDROCK_ROUTE", "1")
 	prev, had := liveCatalogs[session.KindClaude]
 	liveCatalogs[session.KindClaude] = liveCatalog{choices: func(*createRun) []agents.ModelChoice {
 		return []agents.ModelChoice{{ID: "opus"}}

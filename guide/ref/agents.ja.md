@@ -244,9 +244,8 @@ API キーで従量課金として動きます。**anthropic-subscription** は�
   managed 設定ファイル（CLI の文書では起動フラグ層より上とされています。ここでは測っていません）と、anthropic-api セッションで `ANTHROPIC_API_KEY` を設定する設定ファイル
   （キー自体はコマンドラインに載せません）。
 - **Amazon Bedrock。** 3 つ目の経路は、設定 > AWS プロファイル/SSM で「モデルのルート」の印を付けたプロファイルで
-  claude を Amazon Bedrock 上で動かします（[Amazon Bedrock のルート](bedrock-route.ja.md)）。**まだ提供していません**。
-  実機での受け入れ確認を待っており、それまでは運用者がその確認のために `AF_CLAUDE_BEDROCK_ROUTE=1` を設定した
-  ワークスペースでだけ選べます（Control Plane では `AF_WS_CLAUDE_BEDROCK_ROUTE=1` で、次のワークスペース起動で届きます。動作中のワークスペースは Stop → Start が要ります）。選べる場合は、**モデルのルート** で
+  claude を Amazon Bedrock 上で動かします（[Amazon Bedrock のルート](bedrock-route.ja.md)）。運用者のスイッチは要らず、
+  印を付けたプロファイルが 1 つ以上あれば選べます。**モデルのルート** で
   **Amazon Bedrock** を選び、プロファイルを選びます。リージョンは任意で、空ならプロファイル自身のものです。**Bedrock の
   モデル ID** は必須で、Bedrock の表記どおりのモデル ID かシステム推論プロファイル ID（`anthropic.…`、`us.anthropic.…` など。
   `opus` や `claude-…`、ARN は不可）を入れます。claude はその ID だけで起動する（`--model` と `ANTHROPIC_*_MODEL` の変数）ので、
@@ -285,16 +284,13 @@ API キーで従量課金として動きます。**anthropic-subscription** は�
 ## opencode: Amazon Bedrock ルート
 
 opencode も、設定 > AWS プロファイル/SSM で「モデルのルート」の印を付けたプロファイルを使って Amazon Bedrock で動かせます
-（上の claude の bedrock ルートと同じ仕組みです）。**まだ選べません**。独自の実機での受け入れ確認を待っており、それまでは運用者が
-その確認のために `AF_OPENCODE_BEDROCK_ROUTE=1` を設定したワークスペースでだけ選べます（Control Plane では
-`AF_WS_OPENCODE_BEDROCK_ROUTE=1` で、次のワークスペース起動で届きます。動作中のワークスペースは Stop → Start が要ります）。
-claude 用のスイッチでは開きません。
+（上の claude の bedrock ルートと同じ仕組みです）。運用者のスイッチは要りません。
 
 - **ターミナル（CLI）でもマネージドでも使えます。** マネージドの opencode セッションは、ふだんはほかのマネージドセッションと
   1 つの opencode サーバーを共有していて、セッションごとのルートを持てません。このルートのマネージドセッションは、代わりに
   自分専用のサーバーを持ちます。サーバーはセッションとともに起動し、セッションとともに止まります。専用サーバー 1 つにつき
   opencode サーバー 1 つ分のメモリ（数百 MB）を、セッションが動いている間使います。
-- 選べる場合は、**モデルのルート** で **Amazon Bedrock** を選び、プロファイル（リージョンは任意）を選んでから、
+- **モデルのルート** で **Amazon Bedrock** を選び、プロファイル（リージョンは任意）を選んでから、
   **amazon-bedrock/…** のモデルを 1 つ選びます。このルートではモデルの一覧にそれだけが出て、選ぶまで開始できません
   （opencode 自身の既定モデルはこのルートにありません）。ルートを選ばないときは、これらのモデルは一覧に出ません。
 - セッションは、ワークスペース共有のサーバーではなく、専用の opencode サーバー（ターミナルではペインの中、マネージドでは

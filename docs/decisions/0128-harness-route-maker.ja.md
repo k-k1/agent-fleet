@@ -682,3 +682,11 @@ Bedrock のルートは `AWSProfileRef`（ADR 0069）で動くので、A2（決�
   共有デーモンの需要・ドレイン・死亡処理・イベント購読は、ルート付きのハンドルを数えない。確かめたのは単体テストの
   代役サーバまで。本物の opencode と本物の Bedrock でのマネージドは #4004 の実機確認。やっていないこと: セッションが
   動いている間の専用サーバのアイドル停止（共有デーモンも、マネージドのハンドルが 1 つでもあれば止まらない）。
+- 2026-11-26、`bedrock` の閉鎖を解く（#3282）: 決定 14 は claude と opencode のどちらも、local と ECS（ecs-ec2）のランタイムで
+  通った（2026-11-06〜2026-11-09 の実機確認、Issue に記録）。Agent は `AF_CLAUDE_BEDROCK_ROUTE` も
+  `AF_OPENCODE_BEDROCK_ROUTE` も読まない。メンバーの `bedrock` の行は、ルートのゲートウェイが動いていて印の付いた
+  プロファイルがあれば、両ハーネスで提示・確認・結び付け・起動される。opencode は live の種別カタログにもルートを宣言する。
+  Control Plane はワークスペース起動に どちらの変数も足さないので、`AF_WS_CLAUDE_BEDROCK_ROUTE` と
+  `AF_WS_OPENCODE_BEDROCK_ROUTE` は何もせず、配備の環境から外してよい（残っていても無視され、エラーにはならない）。古い Agent の
+  ワークスペースは更新されるまで閉鎖を保つ。claude の `bedrock-deployment` の行は自前の閉鎖
+  （`AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE`、ADR 0129 Q1、#3579）を保つ。上の閉鎖と素通しを述べた注記は経緯で、この注記が置き換える。

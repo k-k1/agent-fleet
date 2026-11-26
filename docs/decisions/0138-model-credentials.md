@@ -123,7 +123,6 @@ agy, codex, copilot, cursor, kiro, lcpp, muse, shell and ssm declare nothing. Se
 
 | Layer | Control | Where | What it covers |
 |---|---|---|---|
-| operator | acceptance switches `AF_WS_CLAUDE_BEDROCK_ROUTE`, `AF_WS_OPENCODE_BEDROCK_ROUTE` | `control-plane/workspace_lifecycle.go:572`, `:576` | open one harness × route row each; not release settings |
 | operator | `AF_PROVIDED_ROUTES` / CFN `ProvidedRoutes` | `control-plane/internal/routegateway/gateway.go:48`; `deploy/aws/ecs/cfn/30-ingress.yaml:310` | provided routes exist at all |
 | operator, super_admin | egress allowlist | `control-plane/egress_policy.go:21` (`defaultEgressAllowlist`), `:103` (`egressBuiltin`) | by host, **deployment-wide only** (`control-plane/egress_member.go:188`: "EffectiveAllowlist ignores scope"); the Anthropic hosts and `.amazonaws.com` are built in and cannot be removed |
 | super_admin | engine use per tenant, `*bool`, nil = allowed | `control-plane/limits.go:135-136` (ADR 0084 decision 7) | the self-hosted engine only |

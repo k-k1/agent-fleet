@@ -138,42 +138,25 @@ func (agentImpl) Routes() []string {
 // carries an Anthropic credential.
 func (agentImpl) FixedRoutes() []string { return []string{RouteSubscription} }
 
-// bedrockGateEnv opens the bedrock route on this Agent. ADR 0128 decision 14 ships a harness ×
-// route row only after live turns and negative controls have been recorded, and the bedrock row
-// has not had them: until then it is declared (stored selections and the Control Plane's
-// snapshot know it) but refused at every check, bind and launch, and not offered in the launch
-// dialog, unless the Workspace's Agent runs with AF_CLAUDE_BEDROCK_ROUTE=1 for the acceptance
-// run. Lifting the gate is a change of its own, made with the evidence.
-const bedrockGateEnv = "AF_CLAUDE_BEDROCK_ROUTE"
-
-func bedrockOpen() bool { return os.Getenv(bedrockGateEnv) == "1" }
-
 // deploymentGateEnv is the bedrock-deployment row's own acceptance gate (ADR 0128 decision 14,
 // ADR 0129 Q1), set by a Control Plane that serves provided routes (AF_PROVIDED_ROUTES=1) at the
-// Workspace's start. It does not open the member's own bedrock row, nor that one this.
+// Workspace's start. The member's own bedrock row has no gate and does not depend on this one.
 const deploymentGateEnv = "AF_CLAUDE_BEDROCK_DEPLOYMENT_ROUTE"
 
 func deploymentOpen() bool { return os.Getenv(deploymentGateEnv) == "1" }
 
-// routeGate is the acceptance gate of a bedrock route, nil when it is open.
+// routeGate is the acceptance gate of a bedrock route, nil when it is open. The member's own
+// bedrock route has no gate (it passed ADR 0128 decision 14); only the deployment's does.
 func routeGate(route string) *agents.RouteRefusal {
-	switch {
-	case route == RouteBedrock && !bedrockOpen():
-		return bedrockGated()
-	case route == RouteBedrockDeployment && !deploymentOpen():
+	if route == RouteBedrockDeployment && !deploymentOpen() {
 		return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
 			Message: "the deployment's Bedrock route has not passed its live acceptance yet (ADR 0129 Q1) and is off on this workspace; it is opened by a Control Plane started with AF_PROVIDED_ROUTES=1, at the workspace's next Start (a running workspace needs Stop → Start)"}
 	}
 	return nil
 }
 
-func bedrockGated() *agents.RouteRefusal {
-	return &agents.RouteRefusal{Status: http.StatusConflict, Code: routes.CodeRouteUnavailable,
-		Message: "the bedrock route has not passed its live acceptance yet (ADR 0128 decision 14) and is off on this workspace; it is opened for the acceptance run with " + bedrockGateEnv + "=1 on the workspace's Agent (a Control Plane started with AF_WS_CLAUDE_BEDROCK_ROUTE=1 sets it at the workspace's next Start; a running workspace needs Stop → Start)"}
-}
-
-// OfferedRoutes implements agents.RouteOfferer: a bedrock route only while its gate is open, and
-// the deployment's only while the Control Plane says the member may use it now.
+// OfferedRoutes implements agents.RouteOfferer: the member's bedrock route always, and the
+// deployment's only while its gate is open and the Control Plane says the member may use it now.
 func (a agentImpl) OfferedRoutes() []string {
 	var out []string
 	for _, r := range a.Routes() {
