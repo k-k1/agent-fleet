@@ -116,12 +116,20 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	}
 	force := r.URL.Query().Get("force") == "1"
 	if r.URL.Query().Get("fresh") == "1" {
-		if err := startFresh(name); err != nil {
+		// Reserved before the fresh start moves the transcript aside, so a delete in flight
+		// refuses the start before anything is changed (reserveLaunch); the launch reserves again.
+		release, ref := reserveLaunch(cur, &cur)
+		if ref != nil {
+			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+			return
+		}
+		defer release()
+		if err := startFreshFn(name); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "fresh_failed", err.Error())
 			return
 		}
 	}
-	if err := ensureSessionTmux(lease, name, force); err != nil {
+	if err := ensureSessionTmuxFrom(lease, name, force, &cur); err != nil {
 		if writeStartRefusal(w, err) {
 			return
 		}
@@ -146,6 +154,9 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// startFreshFn is startFresh behind a test seam.
+var startFreshFn = startFresh
 
 // startFresh is the user's answer to transcript_lost: a new conversation in this slot, with no
 // old context. A fork's source is dropped too, or the "new" conversation would copy the parent

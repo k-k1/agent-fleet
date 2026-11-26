@@ -131,7 +131,7 @@ func resumeManagedAs(d agents.Driver, m session.Meta, input, deliberate bool) (a
 	g.RLock()
 	defer g.RUnlock()
 	retired := false
-	if !ManagedAlive(m) {
+	if !managedAlive(m) {
 		cur, ok := readMetaStable(m.Name)
 		switch {
 		case ok && isRetired(cur):
@@ -157,6 +157,13 @@ func resumeManagedAs(d agents.Driver, m session.Meta, input, deliberate bool) (a
 			return nil, fmt.Errorf("%w: %v", errActNotRecorded, err)
 		}
 	}
+	// Reserved even for a runtime that looked alive above: it can die before Resume, which then
+	// starts it again (reserveLaunch).
+	release, ref := reserveLaunch(m, &m)
+	if ref != nil {
+		return nil, &StartRefusalError{ref}
+	}
+	defer release()
 	h, err := d.Resume(m)
 	if err != nil {
 		return nil, err

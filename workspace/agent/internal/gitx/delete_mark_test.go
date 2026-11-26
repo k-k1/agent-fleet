@@ -179,3 +179,218 @@ func TestSessionUnderDeletionMatchesTheStoredDir(t *testing.T) {
 		}
 	}
 }
+
+// A launch's reservation is seen by a delete of its folder or of any folder above it, by the
+// spelling it was named with and by its real path, and not by a sibling's; a launch into a copy
+// being deleted is refused, and a released reservation is gone.
+func TestLaunchReservationsMeetDeletes(t *testing.T) {
+	root := t.TempDir()
+	space := filepath.Join(root, "spaces", "notes")
+	if err := os.MkdirAll(filepath.Join(space, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(space, link); err != nil {
+		t.Fatal(err)
+	}
+	// Meta.Dir at home, the cwd inside the space through a symlink.
+	release, ok := ReserveLaunch(root, filepath.Join(link, "sub"))
+	if !ok {
+		t.Fatal("a launch with no delete in flight was refused")
+	}
+	if !LaunchingUnder(space) || !LaunchingUnder(link) || !LaunchingUnder(filepath.Join(space, "sub")) {
+		t.Fatal("the delete of the folder the launch runs in does not see the launch")
+	}
+	if LaunchingUnder(filepath.Join(root, "spaces", "notes2")) {
+		t.Fatal("a sibling folder's delete sees the launch")
+	}
+	release()
+	release() // idempotent
+	if LaunchingUnder(space) {
+		t.Fatal("a released reservation still holds the folder")
+	}
+
+	end, ok, _ := BeginDelete(link, "")
+	if !ok {
+		t.Fatal("BeginDelete refused")
+	}
+	if _, ok := ReserveLaunch(filepath.Join(space, "sub")); ok {
+		t.Fatal("a launch into a folder being deleted was reserved")
+	}
+	if r, ok := ReserveLaunch(filepath.Join(root, "elsewhere")); !ok {
+		t.Fatal("a launch elsewhere was refused")
+	} else {
+		r()
+	}
+	end()
+	if r, ok := ReserveLaunch(filepath.Join(space, "sub")); !ok {
+		t.Fatal("a launch was refused after the delete ended")
+	} else {
+		r()
+	}
+}
+
+// A `..` after a symlink leaves the link's target, the way the kernel enters the cwd, not the
+// folder the link sits in (which a lexical clean would give). Both a launch reserved through such
+// a path and a launch made while the copy is marked are matched where the kernel puts them.
+func TestLaunchReservationsFollowALinkBeforeDotDot(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "repos", "app")
+	for _, d := range []string{filepath.Join(app, "a", "b"), filepath.Join(app, "kept"), filepath.Join(root, "alias")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(app, "a", "b"), filepath.Join(root, "alias", "jump")); err != nil {
+		t.Fatal(err)
+	}
+	cwd := filepath.Join(root, "alias", "jump") + "/../../kept" // the kernel's <app>/kept
+	release, ok := ReserveLaunch(cwd)
+	if !ok {
+		t.Fatal("reservation refused")
+	}
+	if !LaunchingUnder(app) {
+		t.Error("a delete of the copy does not see a launch whose cwd reaches it through link/..")
+	}
+	release()
+	end, ok, _ := BeginDelete(app, "")
+	if !ok {
+		t.Fatal("BeginDelete refused")
+	}
+	defer end()
+	if r, ok := ReserveLaunch(cwd); ok {
+		r()
+		t.Error("a launch into a marked copy through link/.. was reserved")
+	}
+}
+
+// A path that resolves is not also matched by its lexical clean, which names another folder when
+// a link precedes `..`; and a delete of a folder the spelling passes through meets the launch even
+// when the kernel ends up elsewhere, since the launch enters the cwd as spelled.
+func TestLaunchReservationsMatchSpellingAndKernelNotTheClean(t *testing.T) {
+	root := t.TempDir()
+	repos, other := filepath.Join(root, "repos"), filepath.Join(root, "other")
+	for _, d := range []string{filepath.Join(repos, "app"), filepath.Join(other, "nested"), filepath.Join(other, "app"), filepath.Join(other, "a", "b"), filepath.Join(other, "kept")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(other, "nested"), filepath.Join(repos, "jump")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(other, "a", "b"), filepath.Join(repos, "app", "jump")); err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(repos, "app")
+
+	// <repos>/jump/../app is <other>/app to the kernel; its clean, <repos>/app, is not where it runs.
+	elsewhere := filepath.Join(repos, "jump") + "/../app"
+	end, ok, _ := BeginDelete(app, "")
+	if !ok {
+		t.Fatal("BeginDelete refused")
+	}
+	r, ok := ReserveLaunch(elsewhere)
+	if !ok {
+		end()
+		t.Fatal("a launch that runs elsewhere was refused by the clean of its path")
+	}
+	end()
+	if LaunchingUnder(app) {
+		t.Error("a delete of the clean of the path sees a launch that runs elsewhere")
+	}
+	r()
+
+	// <repos>/app/jump/../../kept runs in <other>/kept but passes through <repos>/app.
+	through := filepath.Join(app, "jump") + "/../../kept"
+	r, ok = ReserveLaunch(through)
+	if !ok {
+		t.Fatal("reservation refused")
+	}
+	if !LaunchingUnder(app) {
+		t.Error("a delete of a folder the spelling passes through does not see the launch")
+	}
+	r()
+	end, ok, _ = BeginDelete(app, "")
+	if !ok {
+		t.Fatal("BeginDelete refused")
+	}
+	defer end()
+	if r, ok := ReserveLaunch(through); ok {
+		r()
+		t.Error("a launch whose spelling passes through a marked copy was reserved")
+	}
+}
+
+// A link into a copy followed by `..` back out of it still needs the copy until the kernel has
+// entered the cwd: the folders the walk passes through are held too.
+func TestLaunchReservationsHoldTheFoldersPassedThrough(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "repos", "app")
+	for _, d := range []string{filepath.Join(app, "sub"), filepath.Join(root, "repos", "kept")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(app, "sub"), filepath.Join(root, "jump")); err != nil {
+		t.Fatal(err)
+	}
+	cwd := filepath.Join(root, "jump") + "/../../kept" // through <app>/sub into <repos>/kept
+	r, ok := ReserveLaunch(cwd)
+	if !ok {
+		t.Fatal("reservation refused")
+	}
+	if !LaunchingUnder(app) {
+		t.Error("a delete of a copy the walk passes through does not see the launch")
+	}
+	r()
+	end, ok, _ := BeginDelete(app, "")
+	if !ok {
+		t.Fatal("BeginDelete refused")
+	}
+	defer end()
+	if r, ok := ReserveLaunch(cwd); ok {
+		r()
+		t.Error("a launch whose walk passes through a marked copy was reserved")
+	}
+}
+
+// A delete that read the running sessions before a launch in its folder published and released
+// reads them again; a release elsewhere does not make it, and a reservation still held refuses.
+func TestMarkAgainstLaunches(t *testing.T) {
+	root := t.TempDir()
+	app, other := filepath.Join(root, "app"), filepath.Join(root, "other")
+	var names []string
+
+	epoch := LaunchEpoch()
+	r, _ := ReserveLaunch(other)
+	r()
+	end, out, _ := MarkAgainstLaunches(app, "", epoch, names)
+	if out != MarkTaken {
+		t.Fatalf("a release elsewhere: outcome %d, want MarkTaken", out)
+	}
+	end()
+
+	epoch = LaunchEpoch()
+	r, _ = ReserveLaunch(filepath.Join(app, "sub"))
+	if _, out, _ := MarkAgainstLaunches(app, "", epoch, names); out != MarkLaunching {
+		t.Fatalf("a held reservation: outcome %d, want MarkLaunching", out)
+	}
+	r()
+	if _, out, _ := MarkAgainstLaunches(app, "", epoch, names); out != MarkReread {
+		t.Fatalf("a release in the folder since the read: outcome %d, want MarkReread", out)
+	}
+	if end, out, _ := MarkAgainstLaunches(app, "", LaunchEpoch(), names); out != MarkTaken {
+		t.Fatalf("after reading again: outcome %d, want MarkTaken", out)
+	} else {
+		end()
+	}
+
+	epoch = LaunchEpoch()
+	for i := 0; i <= recentReleases; i++ {
+		r, _ := ReserveLaunch(other)
+		r()
+	}
+	if _, out, _ := MarkAgainstLaunches(app, "", epoch, names); out != MarkReread {
+		t.Fatalf("more releases than are kept: outcome %d, want MarkReread", out)
+	}
+}

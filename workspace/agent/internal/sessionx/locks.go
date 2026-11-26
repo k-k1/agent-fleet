@@ -205,8 +205,9 @@ func updateSessionMetaChecked(name string, fn func(m *session.Meta) bool) (m ses
 // request either lands before the guards read it, and the delete is refused, or meets the mark
 // and is refused itself (409), so a lock is never answered "locked" for a folder that then goes
 // (ADR 0101). The delete's slow work runs after the gate is released, which is what lets deletes
-// of different copies overlap. Order: the gate is always taken first, never while holding
-// sessionLockMu or lockMu.
+// of different copies overlap. Launches do not take it: they reserve their folder under
+// gitx's launch gate, which a delete takes inside this one for its decision (reserveLaunch).
+// Order: the gate is always taken first, never while holding sessionLockMu or lockMu.
 var deletionGate sync.Mutex
 
 // WithDeletionGate runs fn inside the deletion gate (gitx takes it through its deps). Keep fn

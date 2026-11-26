@@ -233,7 +233,7 @@ func TestCarriedAnswerIsRefusedWhenTheMetaCannotBeRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	if startForCarriedAnswer(rec, nil, "s") || rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "session_retired") {
+	if startForCarriedAnswer(rec, nil, "s", nil) || rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "session_retired") {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
 	if SessionAlive(session.Meta{Name: "s"}) {

@@ -355,6 +355,9 @@ func TestManagedResumeOfTheDefaultRecord(t *testing.T) {
 	t.Cleanup(func() { launchResolveBudget = old })
 	rec := freeLaunch
 	m := session.Meta{Name: "dfres1", Kind: session.KindOpencode, Driver: session.DriverManaged, Dir: t.TempDir(), LaunchRoute: &rec}
+	// On disk, as every caller of resumeManagedAs has read it: a start refuses a session whose meta
+	// is gone since (reserveLaunch).
+	session.WriteMeta(m)
 	for _, alive := range []bool{false, true} {
 		dirs := []string{}
 		var got session.Meta

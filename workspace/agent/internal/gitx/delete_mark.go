@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -179,4 +180,285 @@ func DeleteTouches(dir, parent string) bool {
 		}
 	}
 	return false
+}
+
+// Launch reservations (#5122). A launch reads its folder, and a delete reads the running
+// sessions, at moments of their own: a session whose process and meta are not published yet is
+// invisible to the delete's guards, and a delete that decided after the launch read its folder is
+// invisible to the launch. Each launch therefore reserves the folder it runs in inside the launch
+// gate, and releases it inside that gate once its process and its meta are published. A delete
+// counts the releases (LaunchEpoch), reads the running sessions, and then, inside the gate,
+// marks the folder only if no launch there holds a reservation or has released one since
+// (MarkAgainstLaunches). One of the two always sees the other: the launch meets the mark and is
+// refused, or the delete meets the reservation, or the running session it has become.
+//
+// The launch gate is not the deletion gate: that one is also held across `git worktree add` by a
+// worktree recreate or restore, whose hooks may start a session through the Agent's own API and
+// wait for it. Nor does it cover the delete's read of the running sessions, which waits for tmux.
+// A launch never waits for git or tmux.
+
+var launchGate sync.Mutex
+
+// WithLaunchGate runs fn inside the launch gate. A delete takes it inside the deletion gate, to
+// mark; a launch takes it alone. Keep fn short: never run git or tmux, or wait for a session,
+// inside it.
+func WithLaunchGate(fn func()) {
+	launchGate.Lock()
+	defer launchGate.Unlock()
+	fn()
+}
+
+var launchRes = struct {
+	mu   sync.Mutex
+	next uint64
+	m    map[uint64][]launchPath
+	// released counts the releases so far (LaunchEpoch), and recent holds the folders of the
+	// latest ones, numbered by that count (LaunchedUnderSince).
+	released uint64
+	recent   []releasedLaunch
+}{m: map[uint64][]launchPath{}}
+
+type releasedLaunch struct {
+	n    uint64
+	held []launchPath
+}
+
+// recentReleases bounds the releases LaunchedUnderSince can look back over; a delete that falls
+// further behind reads the running sessions again.
+const recentReleases = 256
+
+// LaunchEpoch counts the reservations released so far. A delete takes it before it reads the
+// running sessions, which it does outside the launch gate (that read waits for tmux, and no
+// launch may wait for it), and asks LaunchedUnderSince inside the gate.
+func LaunchEpoch() uint64 {
+	launchRes.mu.Lock()
+	defer launchRes.mu.Unlock()
+	return launchRes.released
+}
+
+// LaunchedUnderSince reports whether a launch at or under dir released its reservation after
+// epoch (LaunchEpoch): it published its session after the delete may have read the running
+// sessions, so they have to be read again. Also true when too many releases happened since to
+// tell.
+func LaunchedUnderSince(dir string, epoch uint64) bool {
+	raw, real := filepath.Clean(dir), launchRealPath(dir)
+	launchRes.mu.Lock()
+	defer launchRes.mu.Unlock()
+	if launchRes.released-epoch > uint64(len(launchRes.recent)) {
+		return true
+	}
+	for _, r := range launchRes.recent {
+		if r.n <= epoch {
+			continue
+		}
+		for _, lp := range r.held {
+			if lp.under(raw, real) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// launchPath is one folder a launch holds, in the forms a delete's folder is compared with: raw
+// as the launch spelled it (a delete of any folder the spelling passes through breaks it, `..`
+// or not), via, every folder the kernel passes through on the way, the last of which is where it
+// lands (a link into a copy followed by `..` back out of it still needs the copy), and clean, the
+// lexical form, only when the path does not resolve (a lexical clean of `link/..` names another
+// folder than the one the kernel enters).
+type launchPath struct {
+	raw, clean string
+	via        []string
+}
+
+func newLaunchPath(p string) launchPath {
+	via, resolved := launchWalk(p)
+	lp := launchPath{raw: p, via: via}
+	if !resolved {
+		lp.clean = filepath.Clean(p)
+	}
+	return lp
+}
+
+// under reports whether the launch path lies in dir, or passes through it, given as spelled and
+// resolved.
+func (lp launchPath) under(dirRaw, dirReal string) bool {
+	if underPath(lp.raw, dirRaw) || (lp.clean != "" && underPath(lp.clean, dirRaw)) {
+		return true
+	}
+	for _, v := range lp.via {
+		if underPath(v, dirReal) {
+			return true
+		}
+	}
+	return false
+}
+
+// ReserveLaunch reserves the folders a launch runs in (its Meta.Dir and its cwd). It refuses
+// (ok=false) when one of them lies in a copy being deleted: by its spelling, which covers the
+// string match a delete settles sessions by (sessionsToSettleUnder), or by where the kernel
+// takes it. The session's name is not matched: the names a mark records (sessionNamesUnder) also
+// take a lexical clean of Meta.Dir, which names another folder when a link precedes `..`. Call it, and release, inside the launch gate (WithLaunchGate), so a delete
+// that marks sees every reservation and every release (MarkAgainstLaunches). release is safe to
+// call more than once.
+func ReserveLaunch(paths ...string) (release func(), ok bool) {
+	var held []launchPath
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		held = append(held, newLaunchPath(p))
+	}
+	deleteMarks.mu.Lock()
+	refused := false
+	for key, raw := range deleteMarks.raw {
+		for _, lp := range held {
+			if lp.under(raw, key) {
+				refused = true
+			}
+		}
+	}
+	deleteMarks.mu.Unlock()
+	if refused {
+		return nil, false
+	}
+	launchRes.mu.Lock()
+	launchRes.next++
+	id := launchRes.next
+	launchRes.m[id] = held
+	launchRes.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			launchRes.mu.Lock()
+			delete(launchRes.m, id)
+			launchRes.released++
+			launchRes.recent = append(launchRes.recent, releasedLaunch{n: launchRes.released, held: held})
+			if len(launchRes.recent) > recentReleases {
+				launchRes.recent = launchRes.recent[len(launchRes.recent)-recentReleases:]
+			}
+			launchRes.mu.Unlock()
+		})
+	}, true
+}
+
+// launchRealPath is where launchWalk lands.
+func launchRealPath(p string) string {
+	via, _ := launchWalk(p)
+	return via[len(via)-1]
+}
+
+// launchWalk resolves p the way the kernel enters it, component by component, and answers every
+// folder it passes through, the last being where it lands: a symlink is replaced by its target,
+// and `..` leaves the folder reached so far, so `alias/jump/../kept` with jump a link lands in
+// the link target's parent, not alias. A link whose target is gone (a folder a delete has just
+// moved away) is still followed, and a component that does not exist is kept as spelled, so the
+// answer names where the path leads even once it no longer resolves. resolved reports whether
+// every component existed.
+func launchWalk(p string) (via []string, resolved bool) {
+	if !filepath.IsAbs(p) {
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+	}
+	const maxLinks = 40
+	sep := string(filepath.Separator)
+	todo := strings.Split(p, sep)
+	cur, links := sep, 0
+	resolved = true
+	for len(todo) > 0 {
+		c := todo[0]
+		todo = todo[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			via = append(via, cur)
+			continue
+		}
+		next := filepath.Join(cur, c)
+		fi, err := os.Lstat(next)
+		if err != nil {
+			resolved = false
+			cur = next
+			via = append(via, cur)
+			continue
+		}
+		if fi.Mode()&os.ModeSymlink == 0 || links >= maxLinks {
+			cur = next
+			via = append(via, cur)
+			continue
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			resolved = false
+			cur = next
+			via = append(via, cur)
+			continue
+		}
+		links++
+		if filepath.IsAbs(target) {
+			cur = sep
+		}
+		todo = append(strings.Split(target, sep), todo...)
+	}
+	return append(via, cur), resolved
+}
+
+// LaunchingUnder reports whether a launch holds a reservation on dir or on a folder inside it
+// (or one its cwd passes through): a running session a delete's guard cannot see yet.
+func LaunchingUnder(dir string) bool {
+	real := launchRealPath(dir)
+	raw := filepath.Clean(dir)
+	launchRes.mu.Lock()
+	defer launchRes.mu.Unlock()
+	for _, held := range launchRes.m {
+		for _, lp := range held {
+			if lp.under(raw, real) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// MarkOutcome is what MarkAgainstLaunches did.
+type MarkOutcome int
+
+const (
+	// MarkTaken: the mark is held; call end when the delete is over.
+	MarkTaken MarkOutcome = iota
+	// MarkLaunching: a launch holds a reservation in the folder; refuse as for a running session.
+	MarkLaunching
+	// MarkReread: a launch in the folder was published since epoch; read the running sessions
+	// again (up to MaxLaunchRereads times, then refuse as MarkLaunching).
+	MarkReread
+	// MarkBusy: BeginDelete refused; why says why.
+	MarkBusy
+)
+
+// MaxLaunchRereads bounds how often a delete reads the running sessions again (MarkReread).
+const MaxLaunchRereads = 4
+
+// MarkAgainstLaunches is the end of a delete's decision: inside the launch gate, it refuses while a
+// launch holds a reservation at or under dir or has released one since epoch (taken with
+// LaunchEpoch before the running sessions and sessions, the names the mark records, were read
+// outside the gate), and otherwise marks dir (BeginDelete). A launch then either meets the mark
+// or has been seen by the delete.
+func MarkAgainstLaunches(dir, parent string, epoch uint64, sessions []string) (end func(), out MarkOutcome, why string) {
+	WithLaunchGate(func() {
+		switch {
+		case LaunchingUnder(dir):
+			out = MarkLaunching
+		case LaunchedUnderSince(dir, epoch):
+			out = MarkReread
+		default:
+			var ok bool
+			if end, ok, why = BeginDelete(dir, parent, sessions...); !ok {
+				out = MarkBusy
+			}
+		}
+	})
+	return end, out, why
 }

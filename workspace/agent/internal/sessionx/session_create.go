@@ -926,6 +926,15 @@ func (c *createRun) launch(meta session.Meta) {
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
 		return
 	}
+	// Held until the process and the meta are published (reserveLaunch); a delete deciding
+	// before then is refused.
+	releaseLaunch, ref := reserveLaunch(meta, nil)
+	if ref != nil {
+		unbindStudioAfterFailedLaunch(c.studio, name)
+		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)
+		return
+	}
+	defer releaseLaunch()
 	// dropLedger forgets the ledger armed below when the start itself failed, so no session
 	// came of the create. It is not called when publish answers false: by then the session
 	// has started, and the ledger may still belong to it (see the sweep,
@@ -956,6 +965,7 @@ func (c *createRun) launch(meta session.Meta) {
 		if !c.publish(meta) {
 			return
 		}
+		releaseLaunch()
 		c.recordCreator()
 		recordFleetGraphBirth(meta)
 		req.managed = true
@@ -992,6 +1002,7 @@ func (c *createRun) launch(meta session.Meta) {
 	if !c.publish(meta) {
 		return
 	}
+	releaseLaunch()
 	c.recordCreator()
 	recordFleetGraphBirth(meta)
 
