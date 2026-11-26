@@ -55,6 +55,9 @@ export function SpaceDeleteModal({
   // Sessions the Agent found in the space that the Console's own rule did not (a path through a
   // link it cannot resolve): named by a space_sessions_changed refusal, and shown from then on.
   const [extra, setExtra] = useState<ReadonlySet<string>>(() => new Set());
+  // A named session may have no row yet (made since the last poll): the press waits for the list
+  // to be read again, so it is shown, or known gone, before the next request.
+  const [relisting, setRelisting] = useState(false);
   const inSpace = (s: Session) => extra.has(s.name) || sessionInSpace(s, folder, dir);
   const current = all.filter(inSpace);
   // What the member read: frozen, so a press never lands on a set they did not see. When the
@@ -85,7 +88,7 @@ export function SpaceDeleteModal({
   // elsewhere, so the list read above may be short of what the Agent will settle: no press, and a
   // way to ask again, until the list names it.
   const noDir = !dir;
-  const blocked = alive.length > 0 || locked.length > 0 || changed || noDir;
+  const blocked = alive.length > 0 || locked.length > 0 || changed || noDir || relisting;
   const [busy, setBusy] = useState(false);
 
   const listed = (list: typeof mine) =>
@@ -116,6 +119,11 @@ export function SpaceDeleteModal({
           if (Array.isArray(named)) {
             setExtra((prev) => new Set([...prev, ...named.filter((n): n is string => typeof n === "string")]));
           }
+          setRelisting(true);
+          void useSessionsStore
+            .getState()
+            .refresh()
+            .finally(() => setRelisting(false));
         }
         // What could not be observed (which record, what tmux said) is the only clue when it does
         // not pass on its own, so it is shown after the wording.

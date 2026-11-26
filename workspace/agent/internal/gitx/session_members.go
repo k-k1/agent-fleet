@@ -1,8 +1,10 @@
 package gitx
 
 import (
+	"errors"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -55,7 +57,14 @@ func MayRunIn(dir string) func(session.Meta) bool {
 type dirMatch struct{ raw, real, key string }
 
 func newDirMatch(dir string) dirMatch {
-	return dirMatch{raw: filepath.Clean(dir), real: launchRealPath(dir), key: markKey(dir)}
+	real := launchRealPath(dir)
+	// A folder that is itself a link is removed as the link alone (rmtree, a rename): what lives in
+	// its target stays, so only the link's own spelling is the folder here. The guards still resolve
+	// it (key), and refuse while a session runs in the target, as before.
+	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		real = filepath.Join(launchRealPath(filepath.Dir(filepath.Clean(dir))), filepath.Base(dir))
+	}
+	return dirMatch{raw: filepath.Clean(dir), real: real, key: markKey(dir)}
 }
 
 // sessionPaths is the folders m holds: its Dir, and the Subdir beneath it as stored, not Meta.CWD,
@@ -73,6 +82,16 @@ func sessionPaths(m session.Meta) []string {
 func (d dirMatch) has(m session.Meta) bool {
 	for _, p := range sessionPaths(m) {
 		if newLaunchPath(p).under(d.raw, d.real) {
+			return true
+		}
+	}
+	return false
+}
+
+// spelt reports whether one of m's paths, as written, lies in dir.
+func (d dirMatch) spelt(m session.Meta) bool {
+	for _, p := range sessionPaths(m) {
+		if underPath(p, d.raw) {
 			return true
 		}
 	}
@@ -185,24 +204,25 @@ func (s DirSessions) ToSettle() []session.Meta {
 	return out
 }
 
+// ErrSessionLeftFolder is what a trash for a folder's sake answers for a session that no longer
+// lives in the folder by the time it would be removed (a link it is spelt through was re-pointed):
+// the session is left as it is, and the delete goes on.
+var ErrSessionLeftFolder = errors.New("the session no longer lives in the folder being deleted")
+
 // TrashShellsBeforeRemoval moves the stopped shell / ssm sessions among settle to the trash before
 // dir is removed, so a trash that fails (a full disk) stops the delete with nothing removed rather
-// than leave a session listed with no folder. Each is read again first: one deleted on its own
-// since the list was read is left out (nothing is left listed), and one that no longer lives in dir
-// (a link it is spelt through was re-pointed) is left alone. It answers the session that could not
-// be trashed, and why.
+// than leave a session listed with no folder. Each must still live in dir when the trash reads it
+// and again when it removes it (ErrSessionLeftFolder otherwise, and it is left alone); one deleted
+// on its own since the list was read is left out too. It answers the session that could not be
+// trashed, and why.
 func TrashShellsBeforeRemoval(dir string, settle []session.Meta) (failed string, err error) {
 	in := newDirMatch(dir)
 	for _, m := range settle {
 		if m.Kind != session.KindShell && m.Kind != session.KindSSM {
 			continue
 		}
-		cur, st := session.ReadMetaState(m.Name)
-		if st == session.MetaAbsent || (st == session.MetaOK && !in.has(cur)) {
-			continue
-		}
-		if err := trashSession(m); err != nil {
-			if _, st := session.ReadMetaState(m.Name); st == session.MetaAbsent {
+		if err := trashSession(m, in.has); err != nil {
+			if _, st := session.ReadMetaState(m.Name); st == session.MetaAbsent || errors.Is(err, ErrSessionLeftFolder) {
 				continue
 			}
 			return m.Name, err
@@ -212,13 +232,20 @@ func TrashShellsBeforeRemoval(dir string, settle []session.Meta) (failed string,
 }
 
 // settleAfterRemoval settles the stopped sessions of dir once it has been removed or moved: AI
-// sessions to the shelf, a shell / ssm one that appeared since the trash step to the trash. Each
-// is taken as its meta is now and only while it still lives in dir (a link into the folder is
-// followed even once it dangles), so one re-pointed elsewhere meanwhile stays where it is. When
-// tmux cannot be asked, the sessions decided before the removal (before) are settled all the same,
-// since the mark keeps every launch out of dir (ReserveLaunch) and they are still stopped; only the
-// search for others is given up.
+// sessions to the shelf, a shell / ssm one left (or come in) since the trash step to the trash.
+// The sessions the delete decided before the removal (before) are taken as their meta is now and
+// only while they still live in dir (a link into the folder is followed even once it dangles), so
+// one re-pointed elsewhere meanwhile stays where it is. Beyond them only a session whose own path
+// is spelt inside dir is taken (one restored into the folder while the delete ran, say): a link
+// re-pointed into the folder after the decision is not a session anyone decided to settle, nor one
+// a space delete's dialog showed. When tmux cannot be asked, the decided sessions are settled all
+// the same, since the mark keeps every launch out of dir (ReserveLaunch) and they are still
+// stopped; only the search for others is given up.
 func settleAfterRemoval(dir string, before []session.Meta) {
+	decided := map[string]bool{}
+	for _, b := range before {
+		decided[b.Name] = true
+	}
 	live, err := tmuxx.LiveSessionNamesChecked()
 	var metas []session.Meta
 	if err != nil {
@@ -234,15 +261,21 @@ func settleAfterRemoval(dir string, before []session.Meta) {
 		metas = session.ListMetas()
 	}
 	d := newDirMatch(dir)
+	belongs := func(m session.Meta) bool {
+		if decided[m.Name] {
+			return d.has(m)
+		}
+		return d.spelt(m)
+	}
 	s := DirSessions{live: live}
 	for _, m := range metas {
-		if d.has(m) {
+		if belongs(m) {
 			s.members = append(s.members, m)
 		}
 	}
 	for _, m := range s.ToSettle() {
 		if m.Kind == session.KindShell || m.Kind == session.KindSSM {
-			if err := trashSession(m); err != nil {
+			if err := trashSession(m, belongs); err != nil && !errors.Is(err, ErrSessionLeftFolder) {
 				log.Printf("delete %s: could not move %s to the trash, leaving it listed: %v", dir, m.Name, err)
 			}
 			continue

@@ -85,9 +85,17 @@ func TestSessionLivesIn(t *testing.T) {
 			}
 		})
 	}
-	// The folder named through the link finds the same sessions.
-	if !SessionLivesIn(session.Meta{Dir: filepath.Join(space, "sub")}, link) {
-		t.Fatal("a delete named through a link misses a session spelled by the real path")
+	// A folder that is itself a link goes as the link alone: what lives in its target is not settled
+	// with it, but the guards still count it, as they did before.
+	target := session.Meta{Dir: filepath.Join(space, "sub")}
+	if SessionLivesIn(target, link) {
+		t.Fatal("removing a link would settle a session living in its target")
+	}
+	if !SessionMayRunIn(target, link) {
+		t.Fatal("the guards of a link's delete miss a session running in its target")
+	}
+	if !SessionLivesIn(session.Meta{Dir: filepath.Join(link, "sub")}, link) {
+		t.Fatal("a session spelt through the link does not live in it")
 	}
 	if SessionLivesIn(session.Meta{Dir: space}, "") {
 		t.Fatal("an empty folder holds sessions")
@@ -165,7 +173,15 @@ func TestTrashShellsBeforeRemovalReadsEachAgain(t *testing.T) {
 	var trashed []string
 	old := deps.TrashSession
 	t.Cleanup(func() { deps.TrashSession = old })
-	deps.TrashSession = func(m session.Meta) error {
+	// Like main's trashSession: the meta is read again and asked whether it still belongs.
+	deps.TrashSession = func(m session.Meta, belongs func(session.Meta) bool) error {
+		cur, ok := session.ReadMeta(m.Name)
+		if !ok {
+			return errors.New("no such session: " + m.Name)
+		}
+		if belongs != nil && !belongs(cur) {
+			return ErrSessionLeftFolder
+		}
 		trashed = append(trashed, m.Name)
 		return errors.New("disk full")
 	}
@@ -186,5 +202,8 @@ func TestTrashShellsBeforeRemovalReadsEachAgain(t *testing.T) {
 	w = httptest.NewRecorder()
 	if trashShellSessionsUnder(w, dir, []session.Meta{kept}) || w.Code != http.StatusInternalServerError {
 		t.Fatalf("a shell still in the folder that could not be trashed: ok, %d", w.Code)
+	}
+	if len(trashed) != 1 || trashed[0] != "shkept1" {
+		t.Fatalf("trashed %v, want shkept1", trashed)
 	}
 }

@@ -470,9 +470,9 @@ func LiveSessionNames() map[string]bool {
 }
 
 // LiveSessionNamesChecked is LiveSessionNames that tells "no session runs" from "tmux could not
-// say". tmux's own "no server running" is an empty set. A socket that does not exist, or no tmux
-// binary to ask, is an empty set only when no tmux server process for this Agent's socket exists
-// either: a server outlives its socket being removed and its binary being replaced. Any other
+// say". tmux's "no server running", a socket that does not exist, or no tmux binary to ask, is an
+// empty set only when no tmux server process for that socket exists either: a server outlives its
+// socket being removed or replaced and its binary being replaced. Any other
 // failure (a socket the Agent may not open, a timeout, an unexpected exit) is an error, and the set
 // is empty.
 func LiveSessionNamesChecked() (map[string]bool, error) {
@@ -482,8 +482,6 @@ func LiveSessionNamesChecked() (map[string]bool, error) {
 		var ee *exec.ExitError
 		switch {
 		case errors.Is(err, exec.ErrNotFound) && !serverMayRun(ownSocket()):
-			return live, nil
-		case errors.As(err, &ee) && ee.ExitCode() == 1 && strings.Contains(string(ee.Stderr), "no server running"):
 			return live, nil
 		case errors.As(err, &ee) && ee.ExitCode() == 1 && SaysAbsent(string(ee.Stderr)) && !serverMayRun(socketNamed(string(ee.Stderr))):
 			return live, nil
@@ -505,26 +503,40 @@ func LiveSessionNamesChecked() (map[string]bool, error) {
 // var so a test can answer for the host's own tmux.
 var serverMayRun = tmuxServerMayRun
 
-// ownSocket is the socket Cmd addresses, as tmux derives it.
+// ownSocket is the socket Cmd addresses, as tmux derives it: -L AF_TMUX_SOCKET, else the socket of
+// an inherited $TMUX, else the default one.
 func ownSocket() string {
-	return socketPath(os.Getenv("TMUX_TMPDIR"), os.Getenv("AF_TMUX_SOCKET"), "")
+	if l := os.Getenv("AF_TMUX_SOCKET"); l != "" {
+		return socketPath(os.Getenv("TMUX_TMPDIR"), l, "")
+	}
+	if t := os.Getenv("TMUX"); t != "" {
+		if p, _, _ := strings.Cut(t, ","); p != "" {
+			return socketPath("", "", p)
+		}
+	}
+	return socketPath(os.Getenv("TMUX_TMPDIR"), "", "")
 }
 
-// socketNamed is the socket path in tmux's "error connecting to <path> (...)", and the socket Cmd
-// addresses when the message names none.
+// socketNamed is the socket path in tmux's "no server running on <path>" or "error connecting to
+// <path> (...)", and the socket Cmd addresses when the message names none.
 func socketNamed(msg string) string {
 	if _, rest, ok := strings.Cut(msg, "error connecting to "); ok {
 		if p, _, ok := strings.Cut(rest, " ("); ok && p != "" {
-			return filepath.Clean(p)
+			return physical(p)
+		}
+	}
+	if _, rest, ok := strings.Cut(msg, "no server running on "); ok {
+		if p := strings.TrimSpace(strings.SplitN(rest, "\n", 2)[0]); p != "" {
+			return physical(p)
 		}
 	}
 	return ownSocket()
 }
 
 // tmuxServerMayRun looks for a process named "tmux: server" (the name tmux gives its server) whose
-// socket is want: the socket path follows from the server's own command line (-L,
-// -S) and TMUX_TMPDIR, as tmux derives it. A process whose command line or environment cannot be
-// read, or a process list that cannot be read, may be it.
+// socket is want: the socket path follows from the server's own command line (-L, -S), its
+// inherited $TMUX and its TMUX_TMPDIR, as tmux derives it. A process whose command line or
+// environment cannot be read, or a process list that cannot be read, may be it.
 func tmuxServerMayRun(want string) bool {
 	ents, err := os.ReadDir("/proc")
 	if err != nil {
@@ -546,13 +558,19 @@ func tmuxServerMayRun(want string) bool {
 		if err != nil {
 			return true
 		}
-		tmpdir := ""
+		tmpdir, inherited := "", ""
 		for _, kv := range strings.Split(string(env), "\x00") {
 			if v, ok := strings.CutPrefix(kv, "TMUX_TMPDIR="); ok {
 				tmpdir = v
 			}
+			if v, ok := strings.CutPrefix(kv, "TMUX="); ok {
+				inherited, _, _ = strings.Cut(v, ",")
+			}
 		}
 		label, path := serverSocketFlags(strings.Split(strings.TrimRight(string(raw), "\x00"), "\x00"))
+		if label == "" && path == "" {
+			path = inherited // as for ownSocket: no -L / -S, an inherited $TMUX names the socket
+		}
 		if socketPath(tmpdir, label, path) == want {
 			return true
 		}
@@ -560,11 +578,11 @@ func tmuxServerMayRun(want string) bool {
 	return false
 }
 
-// socketPath is the socket tmux uses: path when -S gave one, else <TMUX_TMPDIR or /tmp>/tmux-<uid>/
-// <-L label or "default">.
+// socketPath is the socket tmux uses, its directory resolved: path when -S gave one, else
+// <TMUX_TMPDIR or /tmp>/tmux-<uid>/<-L label or "default">.
 func socketPath(tmpdir, label, path string) string {
 	if path != "" {
-		return filepath.Clean(path)
+		return physical(path)
 	}
 	if tmpdir == "" {
 		tmpdir = "/tmp"
@@ -572,7 +590,26 @@ func socketPath(tmpdir, label, path string) string {
 	if label == "" {
 		label = "default"
 	}
-	return filepath.Join(tmpdir, fmt.Sprintf("tmux-%d", os.Getuid()), label)
+	return physical(filepath.Join(tmpdir, fmt.Sprintf("tmux-%d", os.Getuid()), label))
+}
+
+// physical is p with its directory resolved through its nearest existing ancestor, the form tmux
+// reports a socket in (it resolves TMUX_TMPDIR); the socket itself may be gone, so its own name is
+// kept as it is.
+func physical(p string) string {
+	p = filepath.Clean(p)
+	rest := filepath.Base(p)
+	for d := filepath.Dir(p); ; {
+		if r, err := filepath.EvalSymlinks(d); err == nil {
+			return filepath.Join(r, rest)
+		}
+		up := filepath.Dir(d)
+		if up == d {
+			return p
+		}
+		rest = filepath.Join(filepath.Base(d), rest)
+		d = up
+	}
 }
 
 // serverSocketFlags reads the socket a tmux command line addresses from its global options, which

@@ -86,7 +86,7 @@ func testDeps() Deps {
 		LiveSessionsInDir: func(string) []string { unreached("LiveSessionsInDir"); return nil },
 		ManagedAlive:      func(session.Meta) bool { unreached("ManagedAlive"); return false },
 		ShelveSession:     func(session.Meta) { unreached("ShelveSession") },
-		TrashSession:      func(session.Meta) error { unreached("TrashSession"); return nil },
+		TrashSession:      func(session.Meta, func(session.Meta) bool) error { unreached("TrashSession"); return nil },
 		WithDeletionGate:  func(fn func()) { fn() },
 		RecordDeletedWorktree: func(WorktreeTombstone) (func(), error) {
 			unreached("RecordDeletedWorktree")

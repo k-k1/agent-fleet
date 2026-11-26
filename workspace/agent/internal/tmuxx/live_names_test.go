@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -77,15 +78,19 @@ func TestLiveSessionNamesCheckedAsksForAServerProcess(t *testing.T) {
 	}{
 		{"no socket, no server", false, false, false},
 		{"no socket, a server", false, true, true},
+		{"no listener, a server", false, true, true},
 		{"no binary, no server", true, false, false},
 		{"no binary, a server", true, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			serverRuns(t, c.serverRun)
-			if c.noBinary {
+			switch {
+			case c.noBinary:
 				t.Setenv("PATH", t.TempDir())
 				t.Setenv("AF_TMUX_SOCKET", "")
-			} else {
+			case strings.HasPrefix(c.name, "no listener"):
+				fakeTmux(t, "echo 'no server running on /tmp/tmux-1/default' >&2\nexit 1\n")
+			default:
 				fakeTmux(t, noSocket)
 			}
 			live, err := LiveSessionNamesChecked()
@@ -126,26 +131,64 @@ func TestServerSocketFlags(t *testing.T) {
 	if got := socketNamed("error connecting to /a/b/s (No such file or directory)"); got != "/a/b/s" {
 		t.Errorf("socketNamed = %q", got)
 	}
+	if got := socketNamed("no server running on /a/b/s\n"); got != "/a/b/s" {
+		t.Errorf("socketNamed(no server) = %q", got)
+	}
+	// TMUX_TMPDIR through a link: tmux reports the resolved directory.
+	real := t.TempDir()
+	link := filepath.Join(t.TempDir(), "tmp")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	rr, _ := filepath.EvalSymlinks(real)
+	if got := socketPath(link, "x", ""); got != filepath.Join(rr, "tmux-"+uid, "x") {
+		t.Errorf("socket under a linked TMUX_TMPDIR = %q", got)
+	}
+	// Cmd's socket: -L AF_TMUX_SOCKET first, then an inherited $TMUX, then the default.
+	t.Setenv("TMUX_TMPDIR", "")
+	t.Setenv("AF_TMUX_SOCKET", "")
+	t.Setenv("TMUX", "/s/inherited,123,0")
+	if got := ownSocket(); got != "/s/inherited" {
+		t.Errorf("ownSocket with $TMUX = %q", got)
+	}
+	t.Setenv("AF_TMUX_SOCKET", "lab")
+	if got := ownSocket(); got != "/tmp/tmux-"+uid+"/lab" {
+		t.Errorf("ownSocket with AF_TMUX_SOCKET = %q", got)
+	}
 }
 
 // The host's own server, if one runs, is found for its own socket and not for another.
 func TestTmuxServerMayRunMatchesTheSocket(t *testing.T) {
+	needProc(t)
 	if tmuxServerMayRun(filepath.Join(t.TempDir(), "no-such-socket")) {
 		t.Fatal("a socket no server serves reads as served")
 	}
 }
 
-// A server of its own, on a private socket, is found by its socket path.
+// A server of its own, on a private socket, is found by its socket path; once its socket file is
+// removed the server still runs, and the read says it cannot tell rather than "nothing runs".
 func TestTmuxServerMayRunFindsARunningServer(t *testing.T) {
+	needProc(t)
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
 	}
 	label := "afprobe-" + strconv.Itoa(os.Getpid())
-	if out, err := Cmd("-L", label, "-f", "/dev/null", "new-session", "-d", "-s", "probe", "sleep 60").CombinedOutput(); err != nil {
+	if out, err := Cmd("-L", label, "-f", "/dev/null", "new-session", "-d", "-s", session.TmuxPrefix+"probe", "sleep 60").CombinedOutput(); err != nil {
 		t.Skipf("could not start a private tmux server: %v %s", err, out)
 	}
 	t.Cleanup(func() { _ = Cmd("-L", label, "kill-server").Run() })
-	if !tmuxServerMayRun(socketPath(os.Getenv("TMUX_TMPDIR"), label, "")) {
+	sock := socketPath(os.Getenv("TMUX_TMPDIR"), label, "")
+	if !tmuxServerMayRun(sock) {
 		t.Fatal("a running server was not found for its socket")
+	}
+	t.Setenv("AF_TMUX_SOCKET", label)
+	if live, err := LiveSessionNamesChecked(); err != nil || !live["probe"] {
+		t.Fatalf("live = %v err = %v, want the probe session", live, err)
+	}
+	if err := os.Remove(sock); err != nil {
+		t.Skipf("could not remove the socket: %v", err)
+	}
+	if live, err := LiveSessionNamesChecked(); err == nil {
+		t.Fatalf("a server whose socket is gone read as %v, no error", live)
 	}
 }

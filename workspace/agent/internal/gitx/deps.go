@@ -70,10 +70,11 @@ type Deps struct {
 	//
 	// ShelveSession moves a stopped AI session to the shelf (sessionx.ArchiveSession);
 	// TrashSession moves a stopped shell / ssm to the trash (main's trashSession, which archives
-	// before it removes anything and returns an error if it could not). A no-op for either would
+	// before it removes anything and returns an error if it could not; with belongs set it leaves a
+	// session that no longer belongs, wrapping ErrSessionLeftFolder). A no-op for either would
 	// quietly leave rows pointing at a folder that is gone.
 	ShelveSession func(m session.Meta)
-	TrashSession  func(m session.Meta) error
+	TrashSession  func(m session.Meta, belongs func(session.Meta) bool) error
 
 	// WithDeletionGate runs fn inside the gate the lock endpoints also take, so a working-copy
 	// delete and a lock on it (or on a session in it) never interleave (ADR 0101). A plain
@@ -236,7 +237,9 @@ func managedAlive(m session.Meta) bool { return deps.ManagedAlive(m) }
 
 func shelveSession(m session.Meta) { deps.ShelveSession(m) }
 
-func trashSession(m session.Meta) error { return deps.TrashSession(m) }
+func trashSession(m session.Meta, belongs func(session.Meta) bool) error {
+	return deps.TrashSession(m, belongs)
+}
 
 func withDeletionGate(fn func()) { deps.WithDeletionGate(fn) }
 

@@ -412,3 +412,93 @@ func TestWorktreeDeleteReadsItsSessionsAfterTheStatus(t *testing.T) {
 		t.Fatal("the session was not shelved")
 	}
 }
+
+// Deleting a working copy that is a link removes the link alone: the stopped sessions living in its
+// target stay where they are.
+func TestDeletingALinkToAWorkingCopyLeavesItsTargetsSessions(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+	e := spaceDeleteSetup(t)
+	real := filepath.Join(e.home, "repos", "real")
+	gitInit(t, real)
+	if err := os.Symlink(real, filepath.Join(e.home, "repos", "alias")); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "shreal1", Dir: real, Kind: session.KindShell})
+	session.WriteMeta(session.Meta{Name: "aireal1", Dir: real, Kind: session.KindClaude})
+	tmuxSays(t, tmuxNoServer)
+	code := httpStatus(t, e.srv, "DELETE", "/repos/alias", nil)
+	if _, err := os.Stat(filepath.Join(real, ".git")); err != nil {
+		t.Fatalf("the link's target was removed (delete = %d): %v", code, err)
+	}
+	if _, ok := session.ReadMeta("shreal1"); !ok {
+		t.Fatalf("the target's shell was trashed by the link's delete (%d)", code)
+	}
+	if m, _ := session.ReadMeta("aireal1"); m.Archived {
+		t.Fatalf("the target's AI session was shelved by the link's delete (%d)", code)
+	}
+}
+
+// A link re-pointed into the space after the delete decided is not a session anyone decided, or
+// was shown: the delete leaves it as it is.
+func TestDeleteSpaceLeavesALinkRepointedInAfterTheDecision(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Late")
+	elsewhere := filepath.Join(e.home, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(e.home, "alias")
+	if err := os.Symlink(elsewhere, link); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "shlate1", Dir: link, Kind: session.KindShell})
+	session.WriteMeta(session.Meta{Name: "ailate1", Dir: link, Kind: session.KindClaude})
+	tmuxSays(t, tmuxNoServer)
+	prev := spaceAfterManifest
+	t.Cleanup(func() { spaceAfterManifest = prev })
+	spaceAfterManifest = func(string) {
+		_ = os.Remove(link)
+		_ = os.Symlink(sp.Dir, link)
+	}
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder+"?expect=", nil, http.StatusOK, nil)
+	if _, ok := session.ReadMeta("shlate1"); !ok {
+		t.Fatal("a shell re-pointed in after the decision was trashed")
+	}
+	if m, _ := session.ReadMeta("ailate1"); m.Archived {
+		t.Fatal("an AI session re-pointed in after the decision was shelved")
+	}
+}
+
+// A shell whose link is re-pointed out of the space while it is being archived is left as it is:
+// the trash asks again, at the point of removal, whether it still lives there.
+func TestDeleteSpaceLeavesAShellRepointedOutDuringItsTrash(t *testing.T) {
+	e := spaceDeleteSetup(t)
+	sp := newSpace(t, "Moving")
+	elsewhere := filepath.Join(e.home, "elsewhere")
+	if err := os.MkdirAll(elsewhere, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(e.home, "alias")
+	if err := os.Symlink(sp.Dir, link); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "shmove2", Dir: link, Kind: session.KindShell})
+	tmuxSays(t, tmuxNoServer)
+	prev := trashAfterArchive
+	t.Cleanup(func() { trashAfterArchive = prev })
+	trashAfterArchive = func(m session.Meta) {
+		if m.Name == "shmove2" {
+			_ = os.Remove(link)
+			_ = os.Symlink(elsewhere, link)
+		}
+	}
+	do(t, e.srv, "DELETE", "/spaces/"+sp.Folder+"?expect=shmove2", nil, http.StatusOK, nil)
+	if _, ok := session.ReadMeta("shmove2"); !ok {
+		t.Fatal("a shell re-pointed out of the space during its trash was removed")
+	}
+	if trashHolds(t, "shmove2") {
+		t.Fatal("the aborted trash left its archive behind")
+	}
+}

@@ -98,6 +98,14 @@ func handleDeleteSession(w http.ResponseWriter, r *http.Request) {
 // is short-lived on purpose and its retention is the tenant's setting, which a trash with no
 // expiry would override.
 func trashSession(m session.Meta, stop bool) (string, string, error) {
+	return trashSessionIn(m, stop, nil)
+}
+
+// trashSessionIn is trashSession for a session trashed because of where it lives (a working-copy
+// or space delete): belongs, when set, is asked of the meta as it is read under the name lock and
+// again at the point of removal, and a session that no longer belongs (a link it is spelt through
+// was re-pointed meanwhile) is left as it is, with an error that wraps gitx.ErrSessionLeftFolder.
+func trashSessionIn(m session.Meta, stop bool, belongs func(session.Meta) bool) (string, string, error) {
 	// One delete of a name at a time: two in the same second used to race each other's archive
 	// (the loser saw the meta gone and purged what it took for its own copy — the only one).
 	unlock := lockTrashName(m.Name)
@@ -108,6 +116,9 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 		return "", "not_found", errors.New("no such session: " + m.Name)
 	}
 	m = cur
+	if belongs != nil && !belongs(m) {
+		return "", "not_found", fmt.Errorf("%w: %s", gitx.ErrSessionLeftFolder, m.Name)
+	}
 	if m.Locked {
 		return "", errCodeLocked, errors.New("session is locked against deletion; unlock it first")
 	}
@@ -141,12 +152,14 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 	// takes a while, and in that time the session may have been locked, resumed (it is running
 	// again, or its transcript grew), or deleted by something else. In each case nothing is
 	// removed, and the archive just written goes — it would be a stale duplicate.
-	abort, code, why := false, "", ""
+	abort, left, code, why := false, false, "", ""
 	sessionx.WithSessionMetaLock(func() {
 		cur, ok := session.ReadMeta(m.Name)
 		switch {
 		case !ok:
 			abort, code, why = true, "not_found", "the session was deleted by another request meanwhile"
+		case belongs != nil && !belongs(cur):
+			abort, left, code = true, true, "not_found"
 		case cur.Locked:
 			abort, code, why = true, errCodeLocked, "session is locked against deletion; unlock it first"
 		case sessionx.SessionAlive(cur) || transcriptGrew(m, before):
@@ -161,6 +174,9 @@ func trashSession(m session.Meta, stop bool) (string, string, error) {
 	})
 	if abort {
 		sessionx.WithCleanupLock(func() { _, _ = purgeCleanupArchive(arch) })
+		if left {
+			return "", code, fmt.Errorf("%w: %s", gitx.ErrSessionLeftFolder, m.Name)
+		}
 		return "", code, errors.New(why)
 	}
 	// Now that the conversation is safely bundled and the meta is gone, delete the live jsonl(s).
@@ -249,9 +265,9 @@ func transcriptGrew(m session.Meta, before map[string]int64) bool {
 
 // trashStoppedSession is trashSession for a session that must already be stopped (gitx's
 // TrashSession: the shell / ssm sessions of a deleted working copy). A named function rather
-// than a closure so git_wiring_test can check the wiring by identity.
-func trashStoppedSession(m session.Meta) error {
-	_, _, err := trashSession(m, false)
+// than a closure so git_wiring_test can check the wiring by identity. belongs: trashSessionIn.
+func trashStoppedSession(m session.Meta, belongs func(session.Meta) bool) error {
+	_, _, err := trashSessionIn(m, false, belongs)
 	return err
 }
 

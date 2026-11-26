@@ -50,9 +50,6 @@ describe("SpaceDeleteModal", () => {
         { name: "shhide1", kind: "shell", dir: "/home/dev/alias" } as Session,
       ],
     });
-    deleteSpace.mockResolvedValueOnce({
-      error: { code: "space_sessions_changed", message: "x", sessions: ["shhide1"] },
-    });
     host = document.createElement("div");
     document.body.appendChild(host);
     root = createRoot(host);
@@ -64,14 +61,26 @@ describe("SpaceDeleteModal", () => {
       );
     });
 
+    // The named shell has no row yet: the list is read again before anything else is sent.
+    const refresh = vi.fn(async () => {
+      useSessionsStore.setState({
+        sessions: [...useSessionsStore.getState().sessions, { name: "shnew01", kind: "shell", dir: "/home/dev/alias2" } as Session],
+      });
+    });
+    useSessionsStore.setState({ refresh });
+    deleteSpace.mockReset();
+    deleteSpace.mockResolvedValueOnce({
+      error: { code: "space_sessions_changed", message: "x", sessions: ["shhide1", "shnew01"] },
+    });
     await click(t("pj.space_delete_do"));
     expect(deleteSpace).toHaveBeenLastCalledWith("c", "o", ["aishow1"]);
+    expect(refresh).toHaveBeenCalled();
 
     // The named shell is now part of the space as shown: the button waits for a second look.
     expect(button(t("pj.space_delete_do"))?.disabled).toBe(true);
     await click(t("pj.space_delete_review"));
     deleteSpace.mockResolvedValueOnce(null);
     await click(t("pj.space_delete_do"));
-    expect(deleteSpace).toHaveBeenLastCalledWith("c", "o", expect.arrayContaining(["aishow1", "shhide1"]));
+    expect(deleteSpace).toHaveBeenLastCalledWith("c", "o", expect.arrayContaining(["aishow1", "shhide1", "shnew01"]));
   });
 });
