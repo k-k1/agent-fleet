@@ -566,8 +566,10 @@ describe("Start hub — an existing space", () => {
       apiPost.mockImplementation(async (...a: unknown[]) => {
         if (a[0] !== "api/sessions") return {};
         const sp = (a[2] as { space: { allow_busy?: boolean } }).space;
-        return sp.allow_busy ? { name: "space-2" } : { error: { code: "space_busy", message: "busy", session: "s9", title: "Nightly run" } };
+        return sp.allow_busy ? { name: "space-2" } : { error: { code: "space_busy", message: "busy", session: "s9", title: "Nightly run", display: "Nightly run" } };
       });
+      // The list still has the old title: the Agent's current name wins.
+      useSessionsStore.setState({ sessions: [{ name: "s9", kind: "claude", space: "elsewhere", alive: true, title: "Old title" }] as never });
       await pickNotes();
       await typeInto(hubBox(), "続き");
       await click(spaceGo());

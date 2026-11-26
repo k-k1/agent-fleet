@@ -252,13 +252,14 @@ func TestCreateInABusySpace(t *testing.T) {
 		metas := len(session.ListMetas())
 		rec = post(map[string]any{"folder": tc.sp.Folder})
 		var e struct {
-			Error struct{ Code, Message, Session, Title string } `json:"error"`
+			Error struct{ Code, Message, Session, Title, Display string } `json:"error"`
 		}
 		_ = json.Unmarshal(rec.Body.Bytes(), &e)
 		if rec.Code != http.StatusConflict || e.Error.Code != "space_busy" {
 			t.Fatalf("create in %s = %d %s, want 409 space_busy", tc.sp.Folder, rec.Code, rec.Body)
 		}
-		if e.Error.Session != tc.wantSession || e.Error.Title != tc.wantTit || !strings.Contains(e.Error.Message, tc.wantSession) {
+		if e.Error.Session != tc.wantSession || e.Error.Title != tc.wantTit || e.Error.Display == "" ||
+			(tc.wantTit != "" && e.Error.Display != tc.wantTit) || !strings.Contains(e.Error.Message, tc.wantSession) {
 			t.Fatalf("refusal names %+v, want session %q titled %q", e.Error, tc.wantSession, tc.wantTit)
 		}
 		if got := len(session.ListMetas()); got != metas {
@@ -356,5 +357,18 @@ func TestCreateInABusySpaceFollowsTheLinkBeforeDotDot(t *testing.T) {
 	rec = p.post(map[string]any{"kind": "claude", "space": map[string]any{"folder": sp.Folder}}, "")
 	if rec.Code != http.StatusConflict || spaceErrCode(t, rec.Body.Bytes()) != "space_busy" || !strings.Contains(rec.Body.String(), `"session":"here"`) {
 		t.Fatalf("create next to a session that runs in the space = %d %s, want 409 space_busy naming here", rec.Code, rec.Body)
+	}
+
+	// With a Subdir the launch Joins first, which drops `link/..` lexically: the same spelling as
+	// "away" then runs in the space itself (Meta.CWD), and the space is busy.
+	live["here"] = false
+	if err := os.MkdirAll(filepath.Join(sp.Dir, "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p.meta(session.Meta{Name: "sub", Kind: session.KindClaude, Dir: spacex.Root() + "/link/../" + sp.Folder, Subdir: "work", Origin: session.OriginUser})
+	live["sub"] = true
+	rec = p.post(map[string]any{"kind": "claude", "space": map[string]any{"folder": sp.Folder}}, "")
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"session":"sub"`) {
+		t.Fatalf("create next to a subdir session that runs in the space = %d %s, want 409 space_busy naming sub", rec.Code, rec.Body)
 	}
 }

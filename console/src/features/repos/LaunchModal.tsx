@@ -144,7 +144,7 @@ export interface LaunchResult {
   spaceGone?: boolean;
   /** The Agent refused the space because an agent is running there (409 space_busy): the form
    *  asks whether to start in a new space or here anyway. */
-  spaceBusy?: { session: string; title?: string };
+  spaceBusy?: { session: string; display?: string };
   /** A launch from a handoff offer whose create got no definite answer: the session may exist,
    *  so the offer's take is kept for the next press to reconcile (acceptHandoff.ts). */
   unknown?: boolean;
@@ -1062,9 +1062,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     if (r?.spaceGone && sentFolder) setRefusedFolder(sentFolder);
     // The list this form read was stale: ask the same question with the Agent's answer.
     if (r?.spaceBusy && sentFolder) {
-      // The Agent's title is the current one; the list may predate a rename.
+      // The Agent's display name is the current one; the list may predate a rename. An older
+      // Agent sends none, and the list stands in.
       const known = useSessionsStore.getState().sessions.find((s) => s.name === r.spaceBusy!.session);
-      setBusyAsk({ folder: sentFolder, who: r.spaceBusy.title || (known ? displayName(known) : r.spaceBusy.session) });
+      setBusyAsk({ folder: sentFolder, who: r.spaceBusy.display || (known ? displayName(known) : r.spaceBusy.session) });
     }
     if (noAnswer) setLaunchUnknown(true);
     // The policy refused it: what the dialog offers may be out of date, so ask the Agent again.

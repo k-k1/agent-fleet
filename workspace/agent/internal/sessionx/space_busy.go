@@ -3,6 +3,7 @@ package sessionx
 import (
 	"fmt"
 	"net/http"
+	"path/filepath"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -20,6 +21,9 @@ type spaceBusyError struct {
 	Message string `json:"message"`
 	Session string `json:"session"`
 	Title   string `json:"title,omitempty"`
+	// Display is the session's name as shown now (session.Display): the caller's own list can
+	// predate a rename, or a title that was cleared.
+	Display string `json:"display"`
 }
 
 // spaceBusySession is the live AI session running in the space at dir, if any. A space has no
@@ -28,8 +32,8 @@ type spaceBusyError struct {
 //
 // Shells do not count: a person's terminal in the folder is not a second writer racing the agent.
 // Stopped and archived sessions do not count either: what is guarded is two processes at once.
-// The comparison is workingCopyKey, the spawn guard's identity, so a symlinked spelling of the
-// same folder still matches.
+// The space side is compared by workingCopyKey, the spawn guard's identity, and each session by
+// sessionRootKey, the place its process really entered.
 func spaceBusySession(dir string) (session.Meta, bool) {
 	target := workingCopyKey(dir)
 	for _, m := range session.ListMetas() {
@@ -40,12 +44,28 @@ func spaceBusySession(dir string) (session.Meta, bool) {
 		case session.KindShell, session.KindSSM:
 			continue
 		}
-		if workingCopyKey(m.Dir) != target || !sessionAliveFn(m) {
+		if sessionRootKey(m) != target || !sessionAliveFn(m) {
 			continue
 		}
 		return m, true
 	}
 	return session.Meta{}, false
+}
+
+// sessionRootKey is the working copy m's process runs in, by the rule Meta.CWD launches with. With
+// a Subdir in effect the path is Joined first, which cleans `link/..` lexically, so the cleaned Dir
+// is the root (workingCopyKey). Without one the raw Dir is entered and the kernel takes `..` after
+// following the link, so the raw spelling is resolved as it is. Meta.Dir keeps whatever spelling the
+// create used, and only this decides which of the two places a `link/..` Dir names.
+func sessionRootKey(m session.Meta) string {
+	if m.CWD() == m.Dir {
+		if real, err := filepath.EvalSymlinks(m.Dir); err == nil {
+			if abs, err := filepath.Abs(real); err == nil {
+				return abs
+			}
+		}
+	}
+	return workingCopyKey(m.Dir)
 }
 
 // writeSpaceBusy answers 409 space_busy naming m.
@@ -62,5 +82,6 @@ func writeSpaceBusy(w http.ResponseWriter, folder string, m session.Meta) {
 			"or send space.allow_busy=true to start here anyway", who, folder),
 		Session: m.Name,
 		Title:   m.Title,
+		Display: session.Display(m),
 	}})
 }

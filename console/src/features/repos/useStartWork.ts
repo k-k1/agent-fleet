@@ -176,7 +176,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
       // toast. The session list is read again so the place chip marks that space too.
       if (code === "space_busy") {
         void refreshSessions();
-        return { ok: false, spaceBusy: { session: String(res.error.session || ""), title: res.error.title ? String(res.error.title) : undefined } };
+        return { ok: false, spaceBusy: { session: String(res.error.session || ""), display: res.error.display ? String(res.error.display) : undefined } };
       }
       if (code === "branch_exists") return { ok: false, conflict: "local" as const };
       if (code === "branch_exists_remote") return { ok: false, conflict: "remote" as const };
