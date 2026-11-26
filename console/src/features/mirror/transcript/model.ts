@@ -389,10 +389,10 @@ export function groupTurns(turns: Turn[], breaks: number[] = []): Group[] {
       // would put one entry's buttons on another's text.
       !last.queueId &&
       !t.queueId &&
-      // A message from another session is its own bubble too: folded into the member's prompt,
-      // one badge would claim both texts, and the envelope readers (peerSenderOf / peerIntentOf)
-      // only look at the block's start.
-      !(t.role === "user" && (fromSession(last) || fromSession(t)))
+      // An automated notice or a message from another session needs its own bubble.
+      // Folding it into the member's prompt would share the badge, copy text and fork target.
+      // A notice envelope can be typed by the member, so use the source tag for notices.
+      !(t.role === "user" && (last.source === "notice" || t.source === "notice" || fromSession(last) || fromSession(t)))
     ) {
       last.parts.push(...parts);
       last.origins.push(...originsOf(t, parts));

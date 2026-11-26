@@ -17,8 +17,9 @@ vi.mock("../../viewer/MarkdownView.tsx", () => ({
 import { TranscriptView } from "./TranscriptView.tsx";
 import { THINKING_FOOT_MIN_PX, thinkingPreview } from "./blocks.tsx";
 import { coalesceUserActions, groupTurns } from "./model.ts";
+import { groupWithQueue } from "../parts/mirrorGroups.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
-import type { Part, Turn } from "./types.ts";
+import type { Group, Part, Turn } from "./types.ts";
 import { t as tr, setLocale } from "../../../lib/i18n/index.ts";
 
 let root: Root | null = null;
@@ -27,10 +28,14 @@ let host: HTMLDivElement | null = null;
 type LiveProps = { working?: boolean; autoCollapseWork?: boolean };
 
 function render(turns: Turn[], caps: TranscriptCaps, props: LiveProps = {}) {
+  return renderGroups(groupTurns(turns), caps, props);
+}
+
+function renderGroups(groups: Group[], caps: TranscriptCaps, props: LiveProps = {}) {
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
-  act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={caps} {...props} />));
+  act(() => root!.render(<TranscriptView groups={groups} caps={caps} {...props} />));
   return host;
 }
 
@@ -268,6 +273,53 @@ describe("a stalled-tree notice is badged, not shown as typed input", () => {
       const el = render([{ role: "user", text, idx: 1, source: "notice" }], OWNER);
       expect(el.querySelector(".mt-op")?.textContent).toContain(tr("mirror.from_notice_other"));
     }
+  });
+});
+
+describe("Watch notice boundaries", () => {
+  const notice = {
+    role: "user",
+    text: "[agent-fleet:notice kind=watch reply=none] Checks completed",
+    source: "notice",
+    anchorId: "codex-turn",
+  };
+  const member = { role: "user", text: "Review the changes", anchorId: "codex-turn" };
+
+  it.each([
+    { label: "notice then member", rows: [notice, member], pending: false },
+    { label: "member then notice", rows: [member, notice], pending: false },
+    { label: "notice then pending member", rows: [notice, member], pending: true },
+  ])("renders each input with its own actions: $label", async ({ rows, pending }) => {
+    const turns = rows.map((row, i) => ({ ...row, idx: i + 1 }));
+    const groups = pending
+      ? groupWithQueue(turns.slice(0, 1), [{ id: 1, sinceIdx: 1, text: member.text }], [])
+      : groupWithQueue(turns, [], []);
+    const forkAt = vi.fn();
+    const el = renderGroups(groups, { ...OWNER, agentName: "Codex", forkAt });
+    const bubbles = [...el.querySelectorAll(".mirror-turn.user")];
+    expect(bubbles).toHaveLength(2);
+    expect(bubbles.map((b) => b.querySelector(".mirror-turn-body")?.textContent)).toEqual(rows.map((row) => row.text));
+    expect(bubbles.map((b) => b.querySelector(".mt-op")?.textContent?.trim())).toEqual(
+      rows.map((row) => row === notice ? tr("mirror.from_notice_watch") : undefined),
+    );
+    expect(bubbles.map((b) => !!b.querySelector(".mt-pending"))).toEqual([false, pending]);
+
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
+    try {
+      for (const bubble of bubbles) {
+        await act(async () => bubble.querySelector<HTMLButtonElement>(".mt-copy")!.click());
+        act(() => bubble.querySelector<HTMLButtonElement>(".mt-fork")?.click());
+      }
+    } finally {
+      if (originalClipboard) Object.defineProperty(navigator, "clipboard", originalClipboard);
+      else Reflect.deleteProperty(navigator, "clipboard");
+    }
+    expect(writeText.mock.calls).toEqual(rows.map((row) => [row.text]));
+    expect(forkAt.mock.calls.map(([g]) => [g.idx, g.anchorId, g.text])).toEqual(
+      (pending ? turns.slice(0, 1) : turns).map((row) => [row.idx, row.anchorId, row.text]),
+    );
   });
 });
 

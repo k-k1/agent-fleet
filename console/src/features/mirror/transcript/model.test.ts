@@ -141,6 +141,37 @@ describe("groupTurns", () => {
   });
 });
 
+describe("groupTurns notice boundaries", () => {
+  const notice = user("[agent-fleet:notice kind=watch reply=none] Checks completed", { source: "notice" });
+  const member = user("Review the changes");
+
+  it.each([
+    { label: "notice then member", rows: [notice, member] },
+    { label: "member then notice", rows: [member, notice] },
+  ])("keeps delivered inputs separate: $label", ({ rows }) => {
+    const turns = rows.map((row, i) => ({ ...row, idx: i + 1, anchorId: "codex-turn" }));
+    const groups = groupTurns(turns);
+    expect(groups.map(({ text, source, folded, firstIdx, lastRow, anchorId }) =>
+      ({ text, source, folded, firstIdx, lastRow, anchorId }))).toEqual(
+      turns.map(({ text, source, idx, anchorId }) =>
+        ({ text, source, folded: 1, firstIdx: idx, lastRow: idx, anchorId })),
+    );
+  });
+
+  it("keeps a pending member echo separate from a delivered notice", () => {
+    const groups = groupTurns([{ ...notice, idx: 10 }, { ...member, idx: 1e9 + 1, pending: true }]);
+    expect(groups.map((g) => [g.text, g.source, g.pending, g.lastRow])).toEqual([
+      [notice.text, "notice", false, 10],
+      [member.text, undefined, true, undefined],
+    ]);
+  });
+
+  it("folds ordinary member rows even if one starts with a notice envelope", () => {
+    const groups = groupTurns([user(notice.text!), member]);
+    expect(groups.map((g) => [g.text, g.source])).toEqual([[notice.text + "\n\n" + member.text, undefined]]);
+  });
+});
+
 describe("groupTurns breaks", () => {
   const rows = () => [
     asst("old", { ts: "2026-08-13T10:00:00Z", idx: 1 }),
