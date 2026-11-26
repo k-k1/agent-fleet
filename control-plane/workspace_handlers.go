@@ -869,7 +869,8 @@ type sessionWire struct {
 	// repository that happens to share its folder name. No DB-mirror column, and the mirror
 	// fallback does not derive it from Place: a space reported while stopped sends the Console
 	// asking a stopped Agent for space names, and the live value follows the directory's
-	// current root, which the stored place does not. A stopped list groups by Place instead.
+	// current root, which the stored place does not. The stopped list carries Place for the
+	// Console to group by instead.
 	Space string `json:"space,omitempty"`
 	// Place: where the session runs (repository, worktree, space or home), as the Agent stored it
 	// once at create (#5219); absent for a session created before that. Same relay caveat as its

@@ -446,7 +446,14 @@ func TestSearchFiltersByTheStoredPlace(t *testing.T) {
 			t.Errorf("hit %s: repo=%q space=%q, want repo=%q space=%q", name, h.Repo, h.Space, want[0], want[1])
 		}
 	}
-	// The same filters through GET /session-search, the path the search_sessions tool takes.
+	// The same filters through GET /session-search, the path the search_sessions tool takes. The
+	// index is already filled, so mark a pass as just run: otherwise the handler's Kick starts one
+	// in the background that outlives the test and races installFake's cleanup.
+	passGate.Lock()
+	oldPassAt := passAt
+	passAt = time.Now()
+	passGate.Unlock()
+	t.Cleanup(func() { passGate.Lock(); passAt = oldPassAt; passGate.Unlock() })
 	for target, want := range map[string]string{
 		"/session-search?q=collision&space=app": "space",
 		"/session-search?q=collision&repo=app":  "repo",
@@ -459,6 +466,9 @@ func TestSearchFiltersByTheStoredPlace(t *testing.T) {
 		}
 		if len(res.Hits) != 1 || res.Hits[0].Session != want {
 			t.Errorf("%s: hits %+v, want the %s session alone", target, res.Hits, want)
+		}
+		if res.Indexing {
+			t.Errorf("%s: the handler started a background pass", target)
 		}
 	}
 }
