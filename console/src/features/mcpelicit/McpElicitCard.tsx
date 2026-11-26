@@ -6,7 +6,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { SessionLink } from "../awsconfirm/AwsConfirmCard.tsx";
 import { indentJSON, optionTexts, visible } from "./format.ts";
-import { useMcpElicitStore, type McpElicitChoices, type McpElicitation } from "./store.ts";
+import { live, useMcpElicitStore, type McpElicitChoices, type McpElicitation } from "./store.ts";
 import "./mcpElicit.css";
 
 /** Chosen is the card's answer so far: input key → field name → value. Maps, because the keys
@@ -25,23 +25,16 @@ export function toChoices(e: McpElicitation, chosen: Chosen): McpElicitChoices {
   return Object.fromEntries(e.inputs.map((input) => [input.key, Object.fromEntries(chosen.get(input.key) ?? [])]));
 }
 
-/** live reports whether e can still be answered: past its deadline the relay has declined it,
- *  even when the list could not be read since (a stopped workspace). */
-export function live(e: McpElicitation, now: number): boolean {
-  const d = Date.parse(e.deadline);
-  return isNaN(d) || now < d;
-}
-
 const TICK_MS = 5000;
 
-/** useNow is the time, renewed every few seconds while active, so a card goes once its
- *  deadline passes. */
+/** useNow is performance.now(), renewed every few seconds while active, so a card goes once its
+ *  time is up (live). */
 export function useNow(active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
+  const [now, setNow] = useState(() => performance.now());
   useEffect(() => {
     if (!active) return;
-    setNow(Date.now());
-    const t = window.setInterval(() => setNow(Date.now()), TICK_MS);
+    setNow(performance.now());
+    const t = window.setInterval(() => setNow(performance.now()), TICK_MS);
     return () => clearInterval(t);
   }, [active]);
   return now;
@@ -61,7 +54,8 @@ function CardBody({ e, showSession }: { e: McpElicitation; showSession?: boolean
   const tr = useT();
   const toast = useToast();
   const answer = useMcpElicitStore((s) => s.answer);
-  const busy = useMcpElicitStore((s) => !!s.answering[e.id]);
+  const busy = useMcpElicitStore((s) => Object.hasOwn(s.answering, e.id));
+  const until = useMcpElicitStore((s) => s.until.get(e.id));
   const [chosen, setChosen] = useState<Chosen>(() => new Map());
   // Radio groups are document-wide outside a form: each field gets its own group, by position,
   // and two cards of one call (a split pane) get different prefixes.
@@ -79,7 +73,8 @@ function CardBody({ e, showSession }: { e: McpElicitation; showSession?: boolean
     const err = await answer(e, accept ? toChoices(e, chosen) : null);
     if (err) toast(tr("mcpelicit.answer_failed", { reason: errText(err) }));
   };
-  const deadline = new Date(e.deadline);
+  // The time on this browser's clock: the Agent's own deadline may be on a clock far from it.
+  const deadline = until === undefined ? new Date(NaN) : new Date(Date.now() + until - performance.now());
   const tool = <b className="mcp-elicit-name">{visible(e.tool)}</b>;
   const host = (
     <b className="mcp-elicit-name">
@@ -118,9 +113,15 @@ function CardBody({ e, showSession }: { e: McpElicitation; showSession?: boolean
                   {visible(f.title || f.name)}
                   {f.required ? null : <span className="mcp-elicit-sub"> {tr("mcpelicit.optional")}</span>}
                   {/* Taking back an optional choice is a button, not one more option: an option
-                      could carry any label, this one's included. */}
+                      could carry any label, this one's included. A legend's controls are outside
+                      its fieldset's disabled state, so it is disabled on its own. */}
                   {!f.required && chosenValue !== undefined ? (
-                    <button type="button" className="linklike mcp-elicit-clear" onClick={() => pick(input.key, f.name, undefined)}>
+                    <button
+                      type="button"
+                      className="linklike mcp-elicit-clear"
+                      disabled={busy}
+                      onClick={() => pick(input.key, f.name, undefined)}
+                    >
                       {tr("mcpelicit.clear_choice")}
                     </button>
                   ) : null}
@@ -155,8 +156,9 @@ function CardBody({ e, showSession }: { e: McpElicitation; showSession?: boolean
  *  the composer. A call being answered stays, disabled, so a failed answer keeps the choices. */
 export function MirrorElicitCards({ session }: { session: string }) {
   const items = useMcpElicitStore((s) => s.items);
+  const until = useMcpElicitStore((s) => s.until);
   const now = useNow(items.length > 0);
-  const mine = items.filter((e) => e.session === session && live(e, now));
+  const mine = items.filter((e) => e.session === session && live(until, e, now));
   if (!mine.length) return null;
   return (
     <div className="mcp-elicit-mirror">

@@ -3,7 +3,7 @@
 // shows always comes from GET /api/mcp-elicitations. The answer is the member's own signed
 // request; an agent cannot give it.
 import { create } from "zustand";
-import { api, apiJSON, getTenant, type ApiError } from "../../core/api/client.ts";
+import { api, apiJSON, getTenant, getUser, type ApiError } from "../../core/api/client.ts";
 
 /** One choice of a field: the value sent back, and the server's label for it. */
 export interface McpElicitOption {
@@ -41,6 +41,8 @@ export interface McpElicitation {
   inputs: McpElicitInput[];
   createdAt: string;
   deadline: string;
+  /** Seconds left until the relay declines the call, as of the Agent's answer. */
+  expiresInSec?: number;
 }
 
 /** A member's answer: a choice per input key and field name, or a decline. */
@@ -48,25 +50,44 @@ export type McpElicitChoices = Record<string, Record<string, string>>;
 
 interface McpElicitState {
   items: McpElicitation[];
+  /** When each listed call stops being answerable, on this page's monotonic clock
+   *  (performance.now()): the deadline the Agent states is on its own clock, which a browser's
+   *  may be far from. */
+  until: Map<string, number>;
   /** Calls answered from this tab: their card stays, disabled, until the list drops them. */
   answering: Record<string, true>;
   refresh(): Promise<void>;
   reset(): void;
-  /** Answers a held call; returns the Agent's error, or null on success. */
+  /** Answers a held call; returns the Agent's error, or null on success. A call already being
+   *  answered from this tab is not sent again: the answer is code "busy". */
   answer(e: McpElicitation, choices: McpElicitChoices | null): Promise<ApiError | null>;
 }
 
 // Reads can overlap (start, a notification, the poll, an answer): only a read issued after the
 // last one applied may replace the list, or a late empty answer would take a held call's card
-// away. reset() moves `applied` up so a read from before a tenant switch lands nowhere.
+// away. reset() moves `applied` up so a read from before a tenant or member switch lands nowhere,
+// and a read is applied only while the member and tenant it was issued for are still current.
 let issued = 0;
 let applied = 0;
+const owner = () => getTenant() + "\n" + getUser();
+
+// Calls with an answer on its way, checked and marked before any await: a second press (Send
+// and then a toast's close) must not send a second answer.
+const sending = new Set<string>();
+
+/** live reports whether e can still be answered at now (performance.now()): past its time the
+ *  relay has declined it, even when the list could not be read since (a stopped workspace). */
+export function live(until: Map<string, number>, e: McpElicitation, now: number): boolean {
+  const t = until.get(e.id);
+  return t === undefined || now < t;
+}
 
 export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
   items: [],
+  until: new Map(),
   answering: {},
   async refresh() {
-    const tenant = getTenant();
+    const who = owner();
     const seq = ++issued;
     let d: { elicitations?: McpElicitation[]; error?: unknown } | null = null;
     try {
@@ -74,19 +95,27 @@ export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
     } catch {
       return; // a dropped connection proves nothing; the next poll asks again
     }
-    if (!d || d.error || !Array.isArray(d.elicitations) || getTenant() !== tenant || seq <= applied) return;
+    if (!d || d.error || !Array.isArray(d.elicitations) || owner() !== who || seq <= applied) return;
     applied = seq;
+    const at = performance.now();
+    const until = new Map<string, number>();
+    for (const e of d.elicitations) {
+      if (typeof e.expiresInSec === "number") until.set(e.id, at + e.expiresInSec * 1000);
+    }
     const ids = new Set(d.elicitations.map((e) => e.id));
     set((s) => ({
       items: d!.elicitations!,
+      until,
       answering: Object.fromEntries(Object.keys(s.answering).filter((id) => ids.has(id)).map((id) => [id, true as const])),
     }));
   },
   reset() {
     applied = issued;
-    set({ items: [], answering: {} });
+    set({ items: [], until: new Map(), answering: {} });
   },
   async answer(e, choices) {
+    if (sending.has(e.id)) return { code: "busy" };
+    sending.add(e.id);
     set((s) => ({ answering: { ...s.answering, [e.id]: true } }));
     const body = choices ? { id: e.id, action: "accept", choices } : { id: e.id, action: "decline" };
     let err: ApiError | null = null;
@@ -96,6 +125,7 @@ export const useMcpElicitStore = create<McpElicitState>((set, get) => ({
     } catch {
       err = { code: "failed" };
     }
+    sending.delete(e.id);
     if (err) {
       set((s) => {
         const { [e.id]: _, ...rest } = s.answering;

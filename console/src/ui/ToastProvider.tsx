@@ -28,6 +28,8 @@ export interface ToastOptions {
   key?: string;
   // onClose runs when the member closes the toast with its X, not when it is withdrawn.
   onClose?: () => void;
+  // closeLabel names what the X does when closing is more than hiding (it declines something).
+  closeLabel?: string;
 }
 
 interface ToastItem {
@@ -36,6 +38,7 @@ interface ToastItem {
   kind: ToastKind;
   key?: string;
   onClose?: () => void;
+  closeLabel?: string;
   // A sticky toast carries an action (update now, finish a login) and closes only by its X.
   sticky: boolean;
 }
@@ -92,7 +95,15 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       if (opts?.key) keyIds.current.set(opts.key, id);
       // Errors auto-dismiss rather than sticking (0); the notification center keeps them.
       const duration = opts?.duration ?? (kind === "error" ? 8000 : 4000);
-      const item: ToastItem = { id, message, kind, key: opts?.key, onClose: opts?.onClose, sticky: duration <= 0 };
+      const item: ToastItem = {
+        id,
+        message,
+        kind,
+        key: opts?.key,
+        onClose: opts?.onClose,
+        closeLabel: opts?.closeLabel,
+        sticky: duration <= 0,
+      };
       setItems((xs) => {
         const at = xs.findIndex((x) => x.id === id);
         if (at < 0) return [...xs, item];
@@ -218,7 +229,8 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               <button
                 type="button"
                 className="ui-toast-x"
-                title={tr("ui.close")}
+                title={t.closeLabel ?? tr("ui.close")}
+                aria-label={t.closeLabel}
                 onClick={() => {
                   remove(t.id);
                   t.onClose?.();

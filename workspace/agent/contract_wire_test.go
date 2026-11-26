@@ -219,8 +219,10 @@ func agentContractFamilies() []contractFamily {
 			tsPath:  "../../console/src/features/mcpelicit/store.ts",
 			tsName:  "McpElicitation",
 			tsKeys: keySet("id", "serverId", "server", "serverLabel", "origin", "tool", "session", "arguments", "inputs",
-				"createdAt", "deadline"),
-			tsOnly: map[string]string{},
+				"createdAt", "deadline", "expiresInSec"),
+			tsOnly: map[string]string{
+				"expiresInSec": "Intended: mcpx's pendingElicitationWire adds it at GET time, and the store turns it into a time on the browser's monotonic clock.",
+			},
 			goOnly: map[string]string{},
 		},
 		{

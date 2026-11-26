@@ -51,6 +51,7 @@ const { useAwsConfirmStore } = await import("../awsconfirm/store.ts");
 const { useNotificationStore } = await import("../notifications/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { MirrorElicitCards } = await import("./McpElicitCard.tsx");
+const { t } = await import("../../lib/i18n/index.ts");
 
 // Stands in for a mirror on screen, which registers itself as MirrorView does.
 function Mirror({ session }: { session: string }) {
@@ -137,6 +138,22 @@ describe("where a held MCP call shows", () => {
     await act(async () => open());
     await act(async () => new Promise((r) => setTimeout(r, 0)));
     expect(toastCount()).toBe(0);
+  });
+  // An answer from the card is on its way: the toast's close must not send a decline after it.
+  it("sends no decline when the toast is closed while an answer is on its way", async () => {
+    let open!: () => void;
+    state.gate = new Promise((r) => (open = () => r(undefined)));
+    await render(null);
+    const label = [...document.querySelectorAll("label")].find((l) => l.textContent === "Allow")!;
+    await act(async () => label.querySelector("input")!.click());
+    const send = [...document.querySelectorAll("button")].find((b) => b.textContent === t("mcpelicit.send"))!;
+    await act(async () => send.click());
+    const x = document.querySelector<HTMLButtonElement>(".ui-toast-x")!;
+    expect(x.getAttribute("aria-label")).toBe(t("mcpelicit.decline"));
+    await act(async () => x.click());
+    await act(async () => open());
+    await act(async () => new Promise((r) => setTimeout(r, 0)));
+    expect(state.posts).toEqual([{ id: "e1", action: "accept", choices: { k: { f: "A" } } }]);
   });
   it("takes its toasts down when it unmounts", async () => {
     await render(null);

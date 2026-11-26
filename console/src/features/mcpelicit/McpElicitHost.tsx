@@ -15,8 +15,8 @@ import { useInterval } from "../../lib/useInterval.ts";
 import { dismissToast, toast } from "../../ui/toast.ts";
 import { useAwsConfirmStore } from "../awsconfirm/store.ts";
 import { useNotificationStore } from "../notifications/store.ts";
-import { McpElicitCard, live, useNow } from "./McpElicitCard.tsx";
-import { useMcpElicitStore } from "./store.ts";
+import { McpElicitCard, useNow } from "./McpElicitCard.tsx";
+import { live, useMcpElicitStore } from "./store.ts";
 
 export const MCP_ELICITATION_NOTICE = "mcp-elicitation";
 const POLL_HELD_MS = 3000;
@@ -25,6 +25,7 @@ const toastKey = (id: string) => "mcp-elicit:" + id;
 
 export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
   const items = useMcpElicitStore((s) => s.items);
+  const until = useMcpElicitStore((s) => s.until);
   const refresh = useMcpElicitStore((s) => s.refresh);
   // Which mirrors are on screen is kept by the AWS confirmation store, which MirrorView reports
   // to; both kinds of card go to the same place.
@@ -54,12 +55,12 @@ export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
       toasts
         ? items.filter(
             (e) =>
-              live(e, now) &&
+              live(until, e, now) &&
               !closedIds.current.has(e.id) &&
               !(e.session && Object.hasOwn(mirrors, e.session) && mirrors[e.session] > 0),
           )
         : [],
-    [toasts, items, mirrors, now],
+    [toasts, items, until, mirrors, now],
   );
   const shown = useRef(new Set<string>());
   useEffect(() => {
@@ -74,13 +75,20 @@ export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
           .answer(e, null)
           .then((err) => {
             if (!err) return;
-            // Not declined: the call is still held, so its toast comes back to be answered.
+            // Not declined (an answer from the card was already on its way, or the decline
+            // failed): the toast comes back, showing how it ends.
             closedIds.current.delete(e.id);
-            toast(t("mcpelicit.answer_failed", { reason: errText(err) }), { kind: "warn" });
+            if (err.code !== "busy") toast(t("mcpelicit.answer_failed", { reason: errText(err) }), { kind: "warn" });
             void useMcpElicitStore.getState().refresh();
           });
       };
-      if (shown.current.has(key) || toast(<McpElicitCard id={e.id} showSession />, { kind: "warn", duration: 0, key, onClose: closed })) {
+      if (shown.current.has(key) || toast(<McpElicitCard id={e.id} showSession />, {
+          kind: "warn",
+          duration: 0,
+          key,
+          onClose: closed,
+          closeLabel: t("mcpelicit.decline"),
+        })) {
         next.add(key);
       }
     }

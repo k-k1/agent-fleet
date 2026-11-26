@@ -11,6 +11,7 @@ package mcpx
 import (
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
@@ -46,6 +47,9 @@ type elicitationsWire struct {
 type pendingElicitationWire struct {
 	mcpreg.PendingElicitation
 	Arguments string `json:"arguments,omitempty"` // shadows PendingElicitation.Arguments
+	// ExpiresInSec is the time left to answer, as of this answer: the browser's clock can be far
+	// from this one, so it does not read Deadline as a time.
+	ExpiresInSec int64 `json:"expiresInSec"`
 }
 
 // HandleElicitationsGet (GET /mcp-elicitations) lists the held calls, oldest first.
@@ -53,9 +57,14 @@ func HandleElicitationsGet(w http.ResponseWriter, r *http.Request) {
 	// The arguments can be a mail's text: no cache keeps them.
 	w.Header().Set("Cache-Control", "no-store")
 	held := pendingElicitations()
+	now := time.Now()
 	out := elicitationsWire{Elicitations: make([]pendingElicitationWire, len(held))}
 	for i, p := range held {
-		out.Elicitations[i] = pendingElicitationWire{PendingElicitation: p, Arguments: string(p.Arguments)}
+		left := int64(p.Deadline.Sub(now) / time.Second)
+		if left < 0 {
+			left = 0
+		}
+		out.Elicitations[i] = pendingElicitationWire{PendingElicitation: p, Arguments: string(p.Arguments), ExpiresInSec: left}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }

@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/memberorigin"
@@ -62,7 +63,7 @@ func TestElicitationsGetListsTheHeldCalls(t *testing.T) {
 
 	pendingElicitations = func() []mcpreg.PendingElicitation {
 		return []mcpreg.PendingElicitation{{ID: "e1", ServerID: "mcp-x", ServerName: "gmail", Tool: "send_mail", Session: "fix-mail",
-			Arguments: json.RawMessage(`{"to":"a@example.com","to":"b@example.com","n":1.0}`), Inputs: []mcpreg.ElicitInput{{Key: "k", Fields: []mcpreg.ElicitField{}}}}}
+			Deadline: time.Now().Add(90 * time.Second), Arguments: json.RawMessage(`{"to":"a@example.com","to":"b@example.com","n":1.0}`), Inputs: []mcpreg.ElicitInput{{Key: "k", Fields: []mcpreg.ElicitField{}}}}}
 	}
 	w = httptest.NewRecorder()
 	HandleElicitationsGet(w, httptest.NewRequest(http.MethodGet, "/mcp-elicitations", nil))
@@ -74,7 +75,8 @@ func TestElicitationsGetListsTheHeldCalls(t *testing.T) {
 	}
 	e := out.Elicitations[0]
 	if e["id"] != "e1" || e["serverId"] != "mcp-x" || e["tool"] != "send_mail" || e["session"] != "fix-mail" ||
-		e["arguments"] != `{"to":"a@example.com","to":"b@example.com","n":1.0}` {
+		e["arguments"] != `{"to":"a@example.com","to":"b@example.com","n":1.0}` ||
+		e["expiresInSec"] == nil || e["expiresInSec"].(float64) < 80 || e["expiresInSec"].(float64) > 90 {
 		t.Fatalf("listed %v: the arguments go out as their exact text", e)
 	}
 }

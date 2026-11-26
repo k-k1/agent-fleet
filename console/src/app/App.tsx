@@ -506,6 +506,10 @@ export function App() {
     if (!booted || identityRev === identityRevDoneRef.current) return;
     identityRevDoneRef.current = identityRev;
     void resyncAccumulatedForIdentitySwitch();
+    // The held MCP calls belong to the member who could answer them.
+    const elicit = useMcpElicitStore.getState();
+    elicit.reset();
+    void elicit.refresh();
     // The member's UI state is keyed by (user, tenant): a whoami that resolves late moves that key
     // without a tenant change, and the answer the boot load got under the old key was dropped.
     void useUIStateStore.getState().load();
@@ -565,7 +569,7 @@ export function App() {
         <WorkItemModalHost />
         <WsStartingDialog />
         {/* Held MCP calls for this pane's mirror; their toasts stay in the main window. */}
-        <McpElicitHost toasts={false} />
+        {booted && <McpElicitHost toasts={false} />}
         <AuthExpiredModal />
         <ProviderRequiredModal />
         <DirtyGuardHost />
@@ -727,7 +731,9 @@ export function App() {
       <SessionModals />
       <AwsLoginHost />
       <AwsConfirmHost />
-      <McpElicitHost />
+      {/* After boot: before it the tenant and member are not settled, and a list read for the
+          wrong ones would show their calls. */}
+      {booted && <McpElicitHost />}
       <GcpLoginHost />
       <WsStartingDialog />
       <PushPausedNote />

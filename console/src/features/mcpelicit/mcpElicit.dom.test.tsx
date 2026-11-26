@@ -55,7 +55,10 @@ const held = {
     { key: "extra", fields: [{ name: "note", options: [{ value: "N", label: "Note" }] }] },
   ],
   createdAt: "2026-11-27T00:00:00Z",
-  deadline: "2099-01-01T00:00:00Z",
+  // Long past on this browser's clock, as on one running ahead of the Agent's: the card goes by
+  // the seconds left alone.
+  deadline: "2000-01-01T00:00:00Z",
+  expiresInSec: 600,
 };
 
 let root: Root | null = null;
@@ -163,14 +166,17 @@ describe("the MCP confirmation card", () => {
     answerReply = new Promise<unknown>((r) => (release = () => r({ error: { code: "http_502" } })));
     await render("s1");
     await click(radio("Deny"));
+    await click(radio("Note"));
     await click(button(t("mcpelicit.send")));
     expect(button(t("mcpelicit.send")).disabled).toBe(true);
     expect(radio("Deny").checked).toBe(true);
+    // The clear button sits in the legend, which a disabled fieldset does not cover.
+    expect(button(t("mcpelicit.clear_choice")).disabled).toBe(true);
     await act(async () => release());
     expect(button(t("mcpelicit.send")).disabled).toBe(false);
   });
-  it("is gone once its deadline has passed, even without a new list", async () => {
-    listed = [{ ...held, deadline: "2000-01-01T00:00:00Z" }];
+  it("is gone once its time is up, even without a new list", async () => {
+    listed = [{ ...held, expiresInSec: 0 }];
     await useMcpElicitStore.getState().refresh();
     await render("s1");
     expect(host.textContent).toBe("");
