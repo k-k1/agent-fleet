@@ -305,7 +305,7 @@ RUN set -eux; \
 # The real binary goes to /usr/local/libexec/bkt and /usr/local/bin/bkt is the transparent-auth
 # wrapper (bkt-auth-wrapper.sh, COPY'd with the other wrappers below). The tarball must match the
 # release's own checksums.txt, or the build fails. Bump BKT_VERSION to upgrade (docs/build/08 §8.3).
-ARG BKT_VERSION=0.41.0
+ARG BKT_VERSION=0.41.1
 RUN set -eux; \
     arch="$(dpkg --print-architecture)"; \
     case "$arch" in amd64) bktarch=x86_64 ;; arm64) bktarch=arm64 ;; *) echo "unsupported arch: $arch" >&2; exit 1 ;; esac; \

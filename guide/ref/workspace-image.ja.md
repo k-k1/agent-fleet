@@ -38,7 +38,7 @@ source_of_truth: "バージョンは workspace/Dockerfile、それ以外は scri
 | ツール | 用途 | バージョン | ライセンス |
 |---|---|---|---|
 | [GitHub CLI (`gh`)](https://github.com/cli/cli) | GitHub をコマンドラインから使う。Git ホスティングの接続でサインイン済み | `2.106.0` | [MIT](https://github.com/cli/cli/blob/v2.106.0/LICENSE) |
-| [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket のプルリクエストとパイプラインを扱う。Git ホスティングの接続でサインイン済み | `0.41.0` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.41.0/LICENSE) |
+| [Bitbucket CLI (`bkt`)](https://github.com/avivsinai/bitbucket-cli) | Bitbucket のプルリクエストとパイプラインを扱う。Git ホスティングの接続でサインイン済み | `0.41.1` | [MIT](https://github.com/avivsinai/bitbucket-cli/blob/v0.41.1/LICENSE) |
 | [Jira CLI (`jira`)](https://github.com/ankitpokhrel/jira-cli) | Jira の課題を扱う。課題管理の接続でサインイン済み | `1.7.0` | [MIT](https://github.com/ankitpokhrel/jira-cli/blob/v1.7.0/LICENSE) |
 | [Confluence CLI (`confluence`)](https://github.com/pchuri/confluence-cli) | Confluence のページを扱う。Jira と同じ Atlassian 接続でサインイン済み | `2.31.3` | [MIT](https://github.com/pchuri/confluence-cli/blob/v2.31.3/LICENSE) |
 | [Apache Subversion (`svn`)](https://subversion.apache.org/) | Subversion のリポジトリを、接続の認証情報で扱う | Debian 13 (trixie) のパッケージ | [Apache-2.0](https://github.com/apache/subversion/blob/trunk/LICENSE) |
