@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"net/http"
+	"path/filepath"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -13,38 +14,43 @@ import (
 // session, moves the folder away and settles the sessions it found, and the launch then runs in a
 // folder that is gone (tmux falls back to home without a word) under a meta the delete never saw.
 
-// launchFresh says the launch makes a new session (create, fork, recreate): its folder must exist
-// when the reservation is taken, since a create that read it earlier can meet a delete that has
-// finished since. launchExisting is a start of a session that has a meta: the meta is read again
-// instead, and a session the delete trashed or shelved meanwhile is not started.
-const (
-	launchFresh    = true
-	launchExisting = false
-)
-
-// reserveLaunch reserves m's folder for a launch. It answers a refusal, with nothing held, when a
-// delete of the folder has decided, when a fresh launch's folder is gone, or when an existing
-// session was settled by a delete since the caller read it. Otherwise release must be called once
-// the process and the meta are published (more than once is safe).
-func reserveLaunch(m session.Meta, fresh bool) (release func(), ref *SpawnRefusal) {
+// reserveLaunch reserves the folder m will run in: its Dir, and the Subdir beneath it as stored
+// (not Meta.CWD, which falls back to Dir when the Subdir is gone, as it is once a delete has moved
+// it away).
+//
+// src says what is checked again under the gate. nil is a create: the folder, and the Subdir when
+// there is one, must exist, since the create read them before a delete that has finished since.
+// Otherwise src is the session the launch starts or derives from (a start, a fork's source, the
+// slot a recreate replaces), as the caller read it: it is read again, and the launch is refused
+// when a delete has settled it since (trashed, or shelved after its folder was moved away).
+//
+// It answers a refusal, with nothing held, or a release to call once the process and the meta are
+// published (more than once is safe; never inside the deletion gate).
+func reserveLaunch(m session.Meta, src *session.Meta) (release func(), ref *SpawnRefusal) {
+	cwd := ""
+	if m.Subdir != "" {
+		cwd = filepath.Join(m.Dir, filepath.FromSlash(m.Subdir))
+	}
 	WithDeletionGate(func() {
-		cwd := m.CWD()
 		rel, ok := gitx.ReserveLaunch(m.Name, m.Dir, cwd)
 		if !ok {
 			ref = &SpawnRefusal{Status: http.StatusConflict, Code: gitx.ErrCodeDeleteInProgress(),
 				Message: "the folder of this session is being deleted, so it was not started"}
 			return
 		}
-		if fresh {
-			if !session.DirExists(m.Dir) {
+		switch {
+		case src == nil:
+			if !session.DirExists(m.Dir) || (cwd != "" && !session.DirExists(cwd)) {
 				rel()
+				missing := m.Dir
+				if cwd != "" {
+					missing = cwd
+				}
 				ref = &SpawnRefusal{Status: http.StatusBadRequest, Code: "bad_dir",
-					Message: "dir does not exist: " + m.Dir}
+					Message: "dir does not exist: " + missing}
 				return
 			}
-		} else if cur, ok := session.ReadMeta(m.Name); !ok || (cur.Archived && !m.Archived) {
-			// A delete that finished since the caller read the meta has trashed the session (no
-			// meta) or shelved it, after moving its folder away.
+		case settledSince(*src):
 			rel()
 			ref = &SpawnRefusal{Status: http.StatusConflict, Code: gitx.ErrCodeDeleteInProgress(),
 				Message: "the session was deleted or shelved while it was being started, so it was not started"}
@@ -52,5 +58,21 @@ func reserveLaunch(m session.Meta, fresh bool) (release func(), ref *SpawnRefusa
 		}
 		release = rel
 	})
-	return release, ref
+	if release == nil {
+		return nil, ref
+	}
+	held := release
+	return func() { WithDeletionGate(held) }, nil
+}
+
+// settledSince reports whether the session snap was read as has been settled by a delete since:
+// its meta is gone (a shell / ssm session is trashed with its folder), or it is shelved now and was
+// not then, or it is shelved with its folder gone (what a delete leaves, read by a caller that
+// only read the meta after the delete was over).
+func settledSince(snap session.Meta) bool {
+	cur, ok := session.ReadMeta(snap.Name)
+	if !ok {
+		return true
+	}
+	return cur.Archived && (!snap.Archived || !session.DirExists(cur.Dir))
 }

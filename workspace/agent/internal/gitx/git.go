@@ -2238,6 +2238,14 @@ func decideDeleteRepo(w http.ResponseWriter, r *http.Request, dir, parent string
 			"this working copy is still being imported; cancel the import first")
 		return nil
 	}
+	// A session being started here is one the running-session guard below cannot see yet
+	// (ReserveLaunch). Read first: a launch publishes its session before it releases the
+	// reservation, so whichever of the two a launch is in, one of the reads sees it.
+	if LaunchingUnder(dir) {
+		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
+			"a session is starting in this working copy; deleting it would break it. Stop that session first.")
+		return nil
+	}
 	// Deleting the working copy out from under live sessions is even worse than a
 	// branch switch: their cwd vanishes mid-flight. Refuse while any session runs
 	// there — the user must stop/archive them first (same guard as checkout).
@@ -2245,12 +2253,6 @@ func decideDeleteRepo(w http.ResponseWriter, r *http.Request, dir, parent string
 		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
 			fmt.Sprintf("%d session(s) are running in this working copy (%s); deleting it would break them. Stop those sessions first.",
 				len(running), strings.Join(running, ", ")))
-		return nil
-	}
-	// A session being started here is one the guard above cannot see yet (ReserveLaunch).
-	if LaunchingUnder(dir) {
-		httpx.WriteErr(w, http.StatusConflict, errCodeSessionsRunningDelete,
-			"a session is starting in this working copy; deleting it would break it. Stop that session first.")
 		return nil
 	}
 	// Deletion lock (docs/log/45): the working copy's own lock, and locked sessions living

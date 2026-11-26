@@ -164,7 +164,7 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	}
 	// Before the stop, so a refusal leaves the session as it was: from the stop to the relaunch
 	// the session runs nowhere, which a delete must not take for "stopped" (reserveLaunch).
-	releaseLaunch, lref := reserveLaunch(m, launchExisting)
+	releaseLaunch, lref := reserveLaunch(m, &m)
 	if lref != nil {
 		httpx.WriteErr(w, lref.Status, lref.Code, lref.Message)
 		return

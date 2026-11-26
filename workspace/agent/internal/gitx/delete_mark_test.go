@@ -229,3 +229,37 @@ func TestLaunchReservationsMeetDeletes(t *testing.T) {
 		r()
 	}
 }
+
+// A `..` after a symlink leaves the link's target, the way the kernel enters the cwd, not the
+// folder the link sits in (which a lexical clean would give). Both a launch reserved through such
+// a path and a launch made while the copy is marked are matched where the kernel puts them.
+func TestLaunchReservationsFollowALinkBeforeDotDot(t *testing.T) {
+	root := t.TempDir()
+	app := filepath.Join(root, "repos", "app")
+	for _, d := range []string{filepath.Join(app, "a", "b"), filepath.Join(app, "kept"), filepath.Join(root, "alias")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(app, "a", "b"), filepath.Join(root, "alias", "jump")); err != nil {
+		t.Fatal(err)
+	}
+	cwd := filepath.Join(root, "alias", "jump") + "/../../kept" // the kernel's <app>/kept
+	release, ok := ReserveLaunch("dd1", cwd)
+	if !ok {
+		t.Fatal("reservation refused")
+	}
+	if !LaunchingUnder(app) {
+		t.Error("a delete of the copy does not see a launch whose cwd reaches it through link/..")
+	}
+	release()
+	end, ok, _ := BeginDelete(app, "")
+	if !ok {
+		t.Fatal("BeginDelete refused")
+	}
+	defer end()
+	if r, ok := ReserveLaunch("dd2", cwd); ok {
+		r()
+		t.Error("a launch into a marked copy through link/.. was reserved")
+	}
+}

@@ -239,15 +239,16 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 // decideDeleteSpace is the part of a delete that runs inside the gate. It returns the function
 // that clears the "being deleted" mark, or nil after answering the refusal itself.
 func decideDeleteSpace(w http.ResponseWriter, folder, dir string) (end func()) {
-	if running := sessionx.LiveSessionsInDir(dir); len(running) > 0 {
-		httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
-			fmt.Sprintf("%d session(s) are running in this space (%s); stop them first", len(running), strings.Join(running, ", ")))
-		return nil
-	}
-	// A session being started here is one the guard above cannot see yet (gitx.ReserveLaunch).
+	// A session being started here is one the running-session guard below cannot see yet
+	// (gitx.ReserveLaunch). Read first, for the reason decideDeleteRepo gives.
 	if gitx.LaunchingUnder(dir) {
 		httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
 			"a session is starting in this space; stop it first")
+		return nil
+	}
+	if running := sessionx.LiveSessionsInDir(dir); len(running) > 0 {
+		httpx.WriteErr(w, http.StatusConflict, errCodeSpaceSessionsRunning,
+			fmt.Sprintf("%d session(s) are running in this space (%s); stop them first", len(running), strings.Join(running, ", ")))
 		return nil
 	}
 	if locked := sessionx.LockedSessionsInDir(session.ListMetas(), dir); len(locked) > 0 {

@@ -925,7 +925,7 @@ func (c *createRun) launch(meta session.Meta) {
 	}
 	// Held until the process and the meta are published (reserveLaunch); a delete deciding
 	// before then is refused.
-	releaseLaunch, ref := reserveLaunch(meta, launchFresh)
+	releaseLaunch, ref := reserveLaunch(meta, nil)
 	if ref != nil {
 		unbindStudioAfterFailedLaunch(c.studio, name)
 		httpx.WriteErr(c.w, ref.Status, ref.Code, ref.Message)

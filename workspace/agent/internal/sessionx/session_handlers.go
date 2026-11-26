@@ -1221,7 +1221,7 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Held until the meta is written (reserveLaunch).
-	releaseLaunch, lref := reserveLaunch(meta, launchFresh)
+	releaseLaunch, lref := reserveLaunch(meta, &src)
 	if lref != nil {
 		httpx.WriteErr(w, lref.Status, lref.Code, lref.Message)
 		return
@@ -1686,6 +1686,16 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, policyRef.Status, policyRef.Code, policyRef.Message)
 		return
 	}
+	// The new slot runs where the old one did. Reserved before the old one is stopped and
+	// archived, and held until the new meta is written (reserveLaunch): a delete deciding in
+	// between would find neither slot, and one that has decided refuses the recreate while the
+	// old slot is still as it was.
+	releaseLaunch, lref := reserveLaunch(m, &m)
+	if lref != nil {
+		httpx.WriteErr(w, lref.Status, lref.Code, lref.Message)
+		return
+	}
+	defer releaseLaunch()
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
 	// the active list. Keep the meta + jsonl (and any captured resume id) so it restores.
 	// Captured BEFORE the kill below, same reason as HandleArchiveSession: once Archived is
@@ -1757,15 +1767,6 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
 		return
 	}
-	// Held until the meta is written (reserveLaunch).
-	releaseLaunch, lref := reserveLaunch(newMeta, launchFresh)
-	if lref != nil {
-		undoStudio()
-		unarchiveAfterFailedRecreate(m.Name)
-		httpx.WriteErr(w, lref.Status, lref.Code, lref.Message)
-		return
-	}
-	defer releaseLaunch()
 	if newMeta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(newMeta)
 		if !ok {

@@ -200,20 +200,23 @@ var launchRes = struct {
 
 type launchPath struct{ raw, real string }
 
-// ReserveLaunch reserves the folders a launch runs in (its Meta.Dir and its effective cwd). It
-// refuses (ok=false) when one of them is a copy being deleted or lies inside one, matched the way
-// a lock is (UnderDeletion, SessionUnderDeletion's string match). Call it inside the deletion
-// gate. release is safe to call more than once.
+// ReserveLaunch reserves the folders a launch runs in (its Meta.Dir and its cwd). It refuses
+// (ok=false) when one of them is a copy being deleted or lies inside one, matched the way a lock
+// is (UnderDeletion, SessionUnderDeletion's string match) and by the path the kernel resolves.
+// Call it inside the deletion gate, and call release inside it too: a delete reads the
+// reservations and the running sessions one after the other, and a release between the two reads
+// would hide a session that has just been published. release is safe to call more than once.
 func ReserveLaunch(name string, paths ...string) (release func(), ok bool) {
 	var held []launchPath
 	for _, p := range paths {
 		if p == "" {
 			continue
 		}
-		if UnderDeletion(p) || SessionUnderDeletion(name, p) {
+		real := launchRealPath(p)
+		if UnderDeletion(p) || SessionUnderDeletion(name, p) || underDeletionReal(real) {
 			return nil, false
 		}
-		held = append(held, launchPath{raw: filepath.Clean(p), real: markKey(p)})
+		held = append(held, launchPath{raw: filepath.Clean(p), real: real})
 	}
 	launchRes.mu.Lock()
 	launchRes.next++
@@ -230,11 +233,31 @@ func ReserveLaunch(name string, paths ...string) (release func(), ok bool) {
 	}, true
 }
 
+// launchRealPath is the folder p names as the kernel resolves it. Unlike markKey it does not clean
+// p first: in `alias/jump/../kept` with jump a link, `..` leaves the link's target, not alias, and
+// a launch's cwd is entered exactly as spelled. A path that does not resolve (gone, or not made
+// yet) falls back to markKey.
+func launchRealPath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		if abs, err := filepath.Abs(r); err == nil {
+			return abs
+		}
+	}
+	return markKey(p)
+}
+
+// underDeletionReal is UnderDeletion for a path already resolved.
+func underDeletionReal(real string) bool {
+	deleteMarks.mu.Lock()
+	defer deleteMarks.mu.Unlock()
+	return underMarkLocked(real)
+}
+
 // LaunchingUnder reports whether a launch holds a reservation on dir or on a folder inside it. A
-// delete asks it inside the gate, beside its running-session guard: such a launch is a running
+// delete asks it inside the gate, before its running-session guard: such a launch is a running
 // session the guard cannot see yet.
 func LaunchingUnder(dir string) bool {
-	raw, real := filepath.Clean(dir), markKey(dir)
+	raw, real := filepath.Clean(dir), launchRealPath(dir)
 	launchRes.mu.Lock()
 	defer launchRes.mu.Unlock()
 	for _, held := range launchRes.m {

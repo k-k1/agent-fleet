@@ -148,7 +148,7 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 		if ref := startRefusalOf(m); ref != nil {
 			return &StartRefusalError{ref}
 		}
-		release, ref := reserveLaunch(m, launchExisting)
+		release, ref := reserveLaunch(m, &m)
 		if ref != nil {
 			return &StartRefusalError{ref}
 		}
@@ -181,7 +181,7 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 	if ref := recallAndRefuse(&m); ref != nil {
 		return &StartRefusalError{ref}
 	}
-	release, ref := reserveLaunch(m, launchExisting)
+	release, ref := reserveLaunch(m, &m)
 	if ref != nil {
 		return &StartRefusalError{ref}
 	}
