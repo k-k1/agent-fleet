@@ -36,7 +36,7 @@ const { t } = await import("../../lib/i18n/index.ts");
 const { useWorkspaceStore } = await import("../../core/store/workspace.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
 const { useLayoutStore } = await import("../../layout/store.ts");
-const { activePane, freshLayout } = await import("../../layout/ops.ts");
+const { activePane, allViews, freshLayout, singlePaneLayout } = await import("../../layout/ops.ts");
 const { getSettings, setSettings } = await import("../../lib/settings.ts");
 
 let root: Root | null = null;
@@ -134,6 +134,8 @@ describe("ScheduleDetailModal reuse navigation", () => {
 
   it("opens the stopped target of a usage-limit booking before any run and keeps a dirty edit", async () => {
     useSessionsStore.setState({ sessions: [{ name: pinned, kind: "codex", alive: false, resumable: false }] });
+    host.tabIndex = 0;
+    host.focus();
     const bookingLabel = `auto-resume after usage limit (${pinned})`;
     await render("codex", {
       spec_kind: "once",
@@ -168,8 +170,29 @@ describe("ScheduleDetailModal reuse navigation", () => {
     expect(scheduleUpdate).not.toHaveBeenCalled();
     expect(onCloseSpy).not.toHaveBeenCalled();
 
-    await act(async () => action(t("sched.return_to_edit", { name: bookingLabel }))!.click());
+    const returnToEdit = action(t("sched.return_to_edit", { name: bookingLabel }))!;
+    expect(document.activeElement).toBe(returnToEdit);
+    await act(async () => returnToEdit.click());
     expect(document.querySelector<HTMLInputElement>("#sched-label")?.value).toBe("Edited booking");
+  });
+
+  it.each(["ctrlKey", "metaKey"])("keeps a dirty draft when %s opens a split", async (modifier) => {
+    const existing = "scccccc";
+    useLayoutStore.setState({ layout: singlePaneLayout({ kind: "terminal", chat: true }, existing) });
+    useSessionsStore.setState({ sessions: [{ name: pinned, kind: "codex", alive: false }] });
+    await render("codex", { spec_label: "Original", session_mode: "reuse", reuse_target: pinned });
+    const label = document.querySelector<HTMLInputElement>("#sched-label")!;
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(label, "Draft");
+      label.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await act(async () => {
+      action(pinned)!.dispatchEvent(new MouseEvent("click", { bubbles: true, [modifier]: true }));
+    });
+    expect(allViews(useLayoutStore.getState().layout).map((view) => view.session)).toEqual([existing, pinned]);
+    await act(async () => action(t("sched.return_to_edit", { name: "Original" }))!.click());
+    expect(document.querySelector<HTMLInputElement>("#sched-label")?.value).toBe("Draft");
+    expect(scheduleUpdate).not.toHaveBeenCalled();
   });
 
   it("opens the distinct adopted session and keeps the missing configured target identifiable", async () => {

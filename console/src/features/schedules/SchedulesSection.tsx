@@ -375,6 +375,9 @@ export const SchedulesSection = memo(function SchedulesSection() {
   const [openRuns, setOpenRuns] = useState<string | null>(null);
   const [runs, setRuns] = useState<Record<string, ScheduleRun[]>>({});
   const [detail, setDetail] = useState<ScheduleDTO | null>(null);
+  useLayoutEffect(() => {
+    setDetail(null);
+  }, [tenant]);
   // The rows whose approve answered 409: the copy on screen is the rejected generation, so opening
   // it again would only earn a second 409. Held from the 409 until a list read begun after it
   // lands (the retry tick drops every older read), so no stale copy can reopen the details. A Set
@@ -672,7 +675,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
               key={s.id}
               s={s}
               rowBusy={!!busy[s.id]}
-              detailHeld={staleIds.has(s.id)}
+              detailHeld={loadedFor !== tenant || staleIds.has(s.id)}
               runsOpen={openRuns === s.id}
               runs={openRuns === s.id ? runs[s.id] : undefined}
               sessionRuns={grouped.bySchedule.get(s.id) ?? []}
@@ -692,6 +695,7 @@ export const SchedulesSection = memo(function SchedulesSection() {
       <ScheduledSessions runs={grouped.rest} endedOpen={!!endedOpen[""]} onEndedOpenChange={(v) => setEnded("", v)} />
       {detail && (
         <ScheduleDetailModal
+          // Opening another schedule must seed its own form, even if the previous editor was parked.
           key={detail.id}
           s={detail}
           onClose={() => setDetail(null)}

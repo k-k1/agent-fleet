@@ -9,7 +9,7 @@
 // never resets next_run (an interval's initialNextRun is now+interval). The CP validates
 // the spec/enums and recomputes next_run when the timing changed.
 import { NO_AUTOFILL } from "../../ui/noAutofill.ts";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { MouseEvent, ReactNode } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -74,6 +74,11 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [viewingSession, setViewingSession] = useState(false);
+  const returnToEditRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    // Run after the departing modal's focus trap restores focus to its opener.
+    returnToEditRef.current?.focus();
+  }, [viewingSession]);
 
   // Edit state, seeded from the schedule. Prompt is kept verbatim (leading/trailing space
   // can matter); the rest are trimmed by the CP on save.
@@ -272,7 +277,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved, onStale }: Props) {
   // Keep the form state mounted while letting the session pane take focus.
   if (viewingSession) {
     return createPortal(
-      <Button type="button" variant="primary" className="sched-return-to-edit" onClick={() => setViewingSession(false)}>
+      <Button ref={returnToEditRef} type="button" variant="primary" className="sched-return-to-edit" onClick={() => setViewingSession(false)}>
         {tr("sched.return_to_edit", { name: scheduleTitle(s) })}
       </Button>,
       document.body,
