@@ -566,15 +566,18 @@ describe("Start hub — an existing space", () => {
       apiPost.mockImplementation(async (...a: unknown[]) => {
         if (a[0] !== "api/sessions") return {};
         const sp = (a[2] as { space: { allow_busy?: boolean } }).space;
-        return sp.allow_busy ? { name: "space-2" } : { error: { code: "space_busy", message: "busy", session: "s9", title: "Nightly run", display: "Nightly run" } };
+        return sp.allow_busy ? { name: "space-2" } : { error: { code: "space_busy", message: "busy", session: "s9", display: "Nightly run" } };
       });
-      // The list still has the old title: the Agent's current name wins.
+      // The list still has a title that has since been cleared: the Agent's current name wins.
       useSessionsStore.setState({ sessions: [{ name: "s9", kind: "claude", space: "elsewhere", alive: true, title: "Old title" }] as never });
       await pickNotes();
       await typeInto(hubBox(), "続き");
+      // The re-read after the 409 is held, so the old title is still in the list when the question is drawn.
+      apiGet.mockImplementation((path: string) => (path === "api/sessions" ? new Promise(() => {}) : Promise.resolve(path === "api/spaces" ? { spaces: [] } : [])));
       await click(spaceGo());
       expect(createCalls()).toHaveLength(1);
       expect(document.body.textContent).toContain(busyText("Nightly run"));
+      expect(document.body.textContent).not.toContain("Old title");
       expect(document.querySelector(".ui-toast")).toBeNull();
       expect(hubBox().value).toBe("続き");
       await click(chip());

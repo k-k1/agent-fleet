@@ -27,8 +27,9 @@ type spaceBusyError struct {
 }
 
 // spaceBusySession is the live AI session running in the space at dir, if any. A space has no
-// branch and no worktree to split work into, so two agents in it edit the same files; nothing
-// else keeps a schedule, an MCP client or a stale Console list from starting the second one.
+// branch and no worktree to split work into, so two agents in it edit the same files. The create
+// asks it for a regular (not session-spawned) AI session that names an existing space by
+// space.folder, whichever client sent it; a create that sends dir is not checked here.
 //
 // Shells do not count: a person's terminal in the folder is not a second writer racing the agent.
 // Stopped and archived sessions do not count either: what is guarded is two processes at once.
@@ -53,12 +54,15 @@ func spaceBusySession(dir string) (session.Meta, bool) {
 }
 
 // sessionRootKey is the working copy m's process runs in, by the rule Meta.CWD launches with. With
-// a Subdir in effect the path is Joined first, which cleans `link/..` lexically, so the cleaned Dir
-// is the root (workingCopyKey). Without one the raw Dir is entered and the kernel takes `..` after
+// a Subdir the path is Joined first, which cleans `link/..` lexically, so the cleaned Dir is the
+// root (workingCopyKey). Without one the raw Dir is entered and the kernel takes `..` after
 // following the link, so the raw spelling is resolved as it is. Meta.Dir keeps whatever spelling the
 // create used, and only this decides which of the two places a `link/..` Dir names.
+//
+// Decided by the stored Subdir alone, never by whether that folder exists now: a running
+// session's folder can be renamed under it, and its space must not change with that.
 func sessionRootKey(m session.Meta) string {
-	if m.CWD() == m.Dir {
+	if m.Subdir == "" {
 		if real, err := filepath.EvalSymlinks(m.Dir); err == nil {
 			if abs, err := filepath.Abs(real); err == nil {
 				return abs

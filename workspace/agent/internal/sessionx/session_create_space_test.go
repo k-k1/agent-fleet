@@ -371,4 +371,16 @@ func TestCreateInABusySpaceFollowsTheLinkBeforeDotDot(t *testing.T) {
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"session":"sub"`) {
 		t.Fatalf("create next to a subdir session that runs in the space = %d %s, want 409 space_busy naming sub", rec.Code, rec.Body)
 	}
+	// Renaming its folder while it runs leaves it where it is: still busy here, and the folder the
+	// raw spelling would reach elsewhere stays free.
+	if err := os.Rename(filepath.Join(sp.Dir, "work"), filepath.Join(sp.Dir, "work-renamed")); err != nil {
+		t.Fatal(err)
+	}
+	live["away"] = false // the session that really runs there
+	if m, busy := spaceBusySession(sp.Dir); !busy || m.Name != "sub" {
+		t.Fatalf("after renaming the subdir: busy=%v %q, want sub", busy, m.Name)
+	}
+	if m, busy := spaceBusySession(filepath.Join(elsewhere, sp.Folder)); busy {
+		t.Fatalf("after renaming the subdir, %s reads busy by %q", filepath.Join(elsewhere, sp.Folder), m.Name)
+	}
 }
