@@ -2202,12 +2202,25 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	defer tm.log()
 
 	fireDeleteHook("pre-gate", dir)
-	// An entry that is itself a link: one to a linked worktree is handed to `git worktree remove`,
-	// which removes the worktree it points at, so its sessions are settled by the worktree's own
-	// path (settleDir); any other is removed as the link alone, and only what is spelt through it is
-	// settled.
-	fi, err := os.Lstat(dir)
-	isLink := err == nil && fi.Mode()&os.ModeSymlink != 0
+	// An entry that is itself a link. One to a linked worktree deletes the worktree it points at
+	// (`git worktree remove` would follow it anyway): its real path is taken here, once, and the
+	// whole delete runs on it (guards, mark, status, tombstone, sessions, the remove), so a link
+	// re-pointed meanwhile cannot send any step elsewhere. Any other link is removed as the link
+	// alone, and only what is spelt through it is settled (linkOnly).
+	linkOnly := false
+	if fi, err := os.Lstat(dir); err == nil && fi.Mode()&os.ModeSymlink != 0 {
+		real, err := filepath.EvalSymlinks(dir)
+		switch {
+		case err == nil && IsLinkedWorktree(real):
+			dir = real
+		case err == nil:
+			linkOnly = true
+		default:
+			httpx.WriteErr(w, http.StatusConflict, "delete_failed",
+				"this entry is a link that does not resolve, so it was left as it is: "+err.Error())
+			return
+		}
+	}
 	var (
 		end         func()
 		parent      string
@@ -2229,13 +2242,7 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer end()
-	settleDir := dir
-	if isLink && linked {
-		if real, err := filepath.EvalSymlinks(dir); err == nil {
-			settleDir = real
-		}
-	}
-	deleteRepoMarked(w, r, dir, settleDir, parent, linked, svn, isLink && !linked, tm)
+	deleteRepoMarked(w, r, dir, parent, linked, svn, linkOnly, tm)
 }
 
 // decideDeleteRepo is the part of a delete that runs inside the gate. It returns the function
@@ -2347,9 +2354,8 @@ func underPath(p, dir string) bool {
 }
 
 // deleteRepoMarked is the rest of a delete, outside the gate, with dir marked as being deleted.
-// settleDir is the folder whose sessions are settled: dir, or the worktree a link to a linked
-// worktree points at. linkOnly removes dir as a link and nothing else.
-func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, settleDir, parent string, linked, svn, linkOnly bool, tm *deleteTimer) {
+// linkOnly removes dir as a link and nothing else.
+func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, parent string, linked, svn, linkOnly bool, tm *deleteTimer) {
 	done := func() { httpx.WriteJSON(w, http.StatusOK, map[string]any{"deleted": r.PathValue("name")}) }
 	// The sessions this delete settles are read once with the mark held, as late as the steps
 	// allow (after the worktree's status and tombstone are prepared): the tombstone's shelf list,
@@ -2357,7 +2363,7 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, settleDir, pa
 	var settle []session.Meta
 	readSettle := func() bool {
 		var err error
-		if settle, err = sessionsToSettleUnder(settleDir); err != nil {
+		if settle, err = sessionsToSettleUnder(dir); err != nil {
 			httpx.WriteErr(w, http.StatusServiceUnavailable, errCodeSessionsUnobservable,
 				"could not tell which sessions live in this working copy, so it was left as it is: "+err.Error())
 			return false
@@ -2372,14 +2378,14 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, settleDir, pa
 		if !readSettle() {
 			return
 		}
-		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settleDir, settle) }) {
+		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir, settle) }) {
 			return
 		}
 		if err := tm.stepErr("remove", func() error { return os.Remove(dir) }); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 			return
 		}
-		tm.step("shelve", func() { shelveSessionsUnder(settleDir, settle) })
+		tm.step("shelve", func() { shelveSessionsUnder(dir, settle) })
 		done()
 		return
 	}
@@ -2391,14 +2397,14 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, settleDir, pa
 		if !readSettle() {
 			return
 		}
-		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settleDir, settle) }) {
+		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir, settle) }) {
 			return
 		}
 		if err := tm.stepErr("remove", func() error { return rmtree.RemoveAll(dir) }); err != nil {
 			httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 			return
 		}
-		tm.step("shelve", func() { shelveSessionsUnder(settleDir, settle) })
+		tm.step("shelve", func() { shelveSessionsUnder(dir, settle) })
 		done()
 		return
 	}
@@ -2433,7 +2439,7 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, settleDir, pa
 		}) {
 			return
 		}
-		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settleDir, settle) }) {
+		if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir, settle) }) {
 			undo()
 			return
 		}
@@ -2449,7 +2455,7 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, settleDir, pa
 			httpx.WriteErr(w, http.StatusBadGateway, errCodeWorktreeRemoveFailed, out)
 			return
 		}
-		tm.step("shelve", func() { shelveSessionsUnder(settleDir, settle) })
+		tm.step("shelve", func() { shelveSessionsUnder(dir, settle) })
 		done()
 		return
 	}
@@ -2465,14 +2471,14 @@ func deleteRepoMarked(w http.ResponseWriter, r *http.Request, dir, settleDir, pa
 	if !readSettle() {
 		return
 	}
-	if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, settleDir, settle) }) {
+	if !tm.stepOK("trash-shell", func() bool { return trashShellSessionsUnder(w, dir, settle) }) {
 		return
 	}
 	if err := tm.stepErr("remove", func() error { return rmtree.RemoveAll(dir) }); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "delete_failed", err.Error())
 		return
 	}
-	tm.step("shelve", func() { shelveSessionsUnder(settleDir, settle) })
+	tm.step("shelve", func() { shelveSessionsUnder(dir, settle) })
 	done()
 }
 

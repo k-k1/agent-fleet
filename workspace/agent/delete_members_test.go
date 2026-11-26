@@ -573,6 +573,87 @@ func TestDeletingALinkToALinkedWorktreeSettlesItsSessions(t *testing.T) {
 	if len(arcs) != 1 || arcs[0].Worktree == nil || !strings.Contains(strings.Join(arcs[0].Worktree.Shelved, ","), "aiaaaa1") {
 		t.Fatalf("tombstone = %+v, want the worktree's AI session on its shelf list", arcs)
 	}
+	if arcs[0].Worktree.Path != e.wt {
+		t.Fatalf("tombstone path = %q, want the worktree's own %q", arcs[0].Worktree.Path, e.wt)
+	}
+	// The restore, with the link still in place, brings the worktree back where it was, and its
+	// AI session off the shelf.
+	do(t, e.srv, "POST", "/cleanup/archives/"+arcs[0].ID+"/restore", nil, http.StatusOK, nil)
+	if !gitx.IsGitRepo(e.wt) {
+		t.Fatal("the worktree did not come back")
+	}
+	if m, _ := session.ReadMeta("aiaaaa1"); m.Archived {
+		t.Fatal("the worktree's AI session is still on the shelf")
+	}
+}
+
+// The link is resolved once, before anything else: re-pointed to another worktree of the same
+// clone while the delete runs, it sends no step there. The worktree it pointed at goes; the other,
+// and its shell, stay.
+func TestDeletingALinkToAWorktreeIgnoresARepointMidway(t *testing.T) {
+	e := tombstoneSetup(t)
+	other, err := gitx.EnsureWorktree(e.parent, "main", "wt-y", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(e.home, "repos", "wtalias")
+	if err := os.Symlink(e.wt, alias); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "shother", Dir: other, Kind: session.KindShell})
+	tmuxSays(t, tmuxNoServer)
+	restore := gitx.SetDeleteStepHook(func(step, dir string) {
+		if step == "status" || step == "tombstone" || step == "git-remove" {
+			_ = os.Remove(alias)
+			_ = os.Symlink(other, alias)
+		}
+	})
+	defer restore()
+	do(t, e.srv, "DELETE", "/repos/wtalias?force=true", nil, http.StatusOK, nil)
+	if gitx.IsGitRepo(e.wt) {
+		t.Fatal("the worktree the link pointed at when the delete began is still there")
+	}
+	if !gitx.IsGitRepo(other) {
+		t.Fatal("the worktree the link was re-pointed to was removed")
+	}
+	if _, ok := session.ReadMeta("shother"); !ok {
+		t.Fatal("the other worktree's shell was trashed")
+	}
+}
+
+// Through a link, the guards see what they see on the worktree's own path: a session whose cwd is
+// in the worktree by way of another link refuses the delete while it runs, and while it is locked.
+func TestDeletingALinkToAWorktreeKeepsItsGuards(t *testing.T) {
+	e := tombstoneSetup(t)
+	for _, d := range []string{"nested", "sub"} {
+		if err := os.MkdirAll(filepath.Join(e.wt, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	alias := filepath.Join(e.home, "repos", "wtalias")
+	if err := os.Symlink(e.wt, alias); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(e.home, "other"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	jump := filepath.Join(e.home, "other", "jump")
+	if err := os.Symlink(filepath.Join(e.wt, "nested"), jump); err != nil {
+		t.Fatal(err)
+	}
+	session.WriteMeta(session.Meta{Name: "shjump2", Dir: jump + "/../sub", Kind: session.KindShell})
+	tmuxSays(t, "case \"$1\" in list-sessions) echo "+session.TmuxPrefix+"shjump2; exit 0;; esac\necho 'no server running on /tmp/x' >&2\nexit 1\n")
+	if got := errCodeOf(t, e.srv, "DELETE", "/repos/wtalias?force=true", http.StatusConflict); got != errCodeSessionsRunningDelete {
+		t.Fatalf("running = %q", got)
+	}
+	session.WriteMeta(session.Meta{Name: "shjump2", Dir: jump + "/../sub", Kind: session.KindShell, Locked: true})
+	tmuxSays(t, tmuxNoServer)
+	if got := errCodeOf(t, e.srv, "DELETE", "/repos/wtalias?force=true", http.StatusForbidden); got != errCodeLockedSessions {
+		t.Fatalf("locked = %q", got)
+	}
+	if !gitx.IsGitRepo(e.wt) {
+		t.Fatal("a refused delete removed the worktree")
+	}
 }
 
 // A delete whose client was shown the sessions settles none it was not shown, even one that comes
