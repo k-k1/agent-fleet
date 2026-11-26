@@ -326,29 +326,34 @@ func TestWireSessionStoppedKeepsBookedResume(t *testing.T) {
 	if s.RateLimitResumeAt != resume {
 		t.Errorf("rateLimitResumeAt = %q, want %q on a stopped row", s.RateLimitResumeAt, resume)
 	}
-	if s.State == agents.StateLimited {
-		t.Errorf("state = %q: a stopped session must not read limited", s.State)
+	if s.State != "" || s.Alive || s.StoppedLimit != agents.StateLimited {
+		t.Errorf("state = %q, alive = %t, stoppedLimit = %q; want empty, false, limited", s.State, s.Alive, s.StoppedLimit)
 	}
 }
 
-func TestWireSessionStoppedWithoutLiveBookingSaysNothing(t *testing.T) {
+func TestWireSessionStoppedLimitWithoutBooking(t *testing.T) {
 	now := time.Now()
 	future := now.Add(2 * time.Hour).Format(time.RFC3339)
 	for _, c := range []struct {
 		name string
 		kind agents.LimitKind
 		st   rateLimitState
+		want string
 	}{
-		{"no schedule id", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future}},
-		{"instant already past", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: now.Add(-time.Minute).Format(time.RFC3339), ScheduleID: "s"}},
-		{"limit no longer in force", "", rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future, ScheduleID: "s"}},
-		{"spend limit", agents.LimitSpend, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future, ScheduleID: "s", Spend: true}},
+		{"no schedule id", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future}, agents.StateLimited},
+		{"instant already past", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: now.Add(-time.Minute).Format(time.RFC3339), ScheduleID: "s"}, agents.StateLimited},
+		{"limit no longer in force", "", rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future, ScheduleID: "s"}, ""},
+		{"spend limit", agents.LimitSpend, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: future, ScheduleID: "s", Spend: true}, agents.StateSpendLimit},
+		{"no episode", agents.LimitWindow, rateLimitState{}, ""},
+		{"expired episode", agents.LimitWindow, rateLimitState{At: now.Format(time.RFC3339), ResumeAt: now.Add(-24 * time.Hour).Format(time.RFC3339)}, ""},
 	} {
 		isolateAgentState(t)
 		atLimitProbe(t, c.kind)
 		m := limitedMeta(t, "rlwire-stop2", c.st)
-		if got := wireSession(m, false).RateLimitResumeAt; got != "" {
-			t.Errorf("%s: rateLimitResumeAt = %q, want empty", c.name, got)
+		s := wireSession(m, false)
+		if s.RateLimitResumeAt != "" || s.StoppedLimit != c.want || s.Alive || s.State != "" {
+			t.Errorf("%s: state = %q, alive = %t, stoppedLimit = %q, rateLimitResumeAt = %q; want empty, false, %q, empty",
+				c.name, s.State, s.Alive, s.StoppedLimit, s.RateLimitResumeAt, c.want)
 		}
 	}
 }

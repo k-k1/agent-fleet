@@ -16,7 +16,7 @@ import { useMemoStore } from "../memo/store.ts";
 import { useRunNow } from "../memo/runNow.ts";
 import { MemoQueueSettingsModal } from "../memo/MemoQueueSettingsModal.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { displayName } from "../../lib/sessionview.ts";
+import { displayName, resumeClock, usageLimitState } from "../../lib/sessionview.ts";
 import { useViewShown } from "../../lib/viewShown.ts";
 import { raw, errText, sessionDelete } from "../../core/api/client.ts";
 import { useDismiss } from "../../lib/useDismiss.ts";
@@ -158,6 +158,20 @@ function RunItem({ run, now, onDialog, openMenu, activeName }: { run: RunRow; no
   const end = run.state === "ended" ? run.endedAt : now;
   const elapsed = Number.isFinite(run.startedAt) && Number.isFinite(end) ? fmtElapsed(end - run.startedAt) : "";
   const title = item ? `${item.label} ${item.title || displayName(root)}`.trim() : displayName(root);
+  // The delivery's hold is a tree-wide snapshot. A newer session row can clear it
+  // before the next queue poll, and a different child can still be holding the run.
+  const limits = run.state === "ended" ? [] : [root, ...children].flatMap((s) => {
+    const kind = usageLimitState(s, s.state, now);
+    if (!kind) return [];
+    const at = kind === "limited" && Date.parse(s.rateLimitResumeAt ?? "") > now
+      ? resumeClock(s.rateLimitResumeAt, new Date(now))
+      : "";
+    return [{ kind, at }];
+  });
+  const limit = limits.find((s) => s.at) ?? limits[0];
+  const limitLabel = limit?.kind === "spend_limit" ? tr("state.spend_limit")
+    : limit?.at ? tr("state.rate_limited_at", { at: limit.at })
+    : limit ? tr("state.rate_limited") : "";
   return (
     <li className={"autorun-run is-" + run.state} data-autorun-run={root.name} data-autorun-state={run.state}>
       <button
@@ -169,8 +183,13 @@ function RunItem({ run, now, onDialog, openMenu, activeName }: { run: RunRow; no
         {...menuHandlers(root, openMenu)}
         title={tr("autorun.open", { name: root.name })}
       >
-        <span className={"autorun-dot is-" + run.state} role="img" aria-label={tr(STATE_KEY[run.state])} title={tr(STATE_KEY[run.state])} />
+        {limitLabel ? (
+          <span className="autorun-dot is-waiting" aria-hidden="true" />
+        ) : (
+          <span className={"autorun-dot is-" + run.state} role="img" aria-label={tr(STATE_KEY[run.state])} title={tr(STATE_KEY[run.state])} />
+        )}
         <span className="autorun-title">{title}</span>
+        {limitLabel && <span className="ui-badge ui-badge-warn autorun-limit">{limitLabel}</span>}
         {run.resumed && (
           <span className="autorun-resumed" title={tr("autorun.resumed_hint")}>
             {tr("autorun.resumed")}
