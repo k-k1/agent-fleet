@@ -545,7 +545,9 @@ func probeOAuth(ctx context.Context, serverURL string, header http.Header) (OAut
 // happens when the PRM names one root issuer with and without "/" (both resolve to the
 // metadata's spelling). One entry per issuer keeps sign-in on the server the report selected:
 // StartOAuth finds it by issuer. The entry kept is the valid one, then the exact match, then
-// the earlier; the other's problems stay in Problems.
+// the earlier; the other's problems stay in Problems. A replacing entry moves to its own place
+// in the PRM's order (the end so far), so it cannot jump ahead of a server listed between the
+// two spellings.
 func addAuthServer(servers []OAuthServer, srv OAuthServer) []OAuthServer {
 	rank := func(s OAuthServer) int {
 		r := 0
@@ -560,7 +562,7 @@ func addAuthServer(servers []OAuthServer, srv OAuthServer) []OAuthServer {
 	for i, s := range servers {
 		if s.Issuer == srv.Issuer {
 			if rank(srv) > rank(s) {
-				servers[i] = srv
+				return append(append(servers[:i:i], servers[i+1:]...), srv)
 			}
 			return servers
 		}
