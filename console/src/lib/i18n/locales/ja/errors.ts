@@ -234,6 +234,8 @@ export const errors = {
   "err.mcp_oauth_authorization_header": "OAuth のサーバーには固定のヘッダを付けられません。外すか、別の認証を選んでください",
   "err.mcp_oauth_client_invalid": "テナントのクライアントには、クライアント ID と https の URL の認可サーバー（issuer）が必要です。OAuth のサーバーにだけ設定できます",
   "err.mcp_oauth_client_tenant_only": "テナントが登録したクライアントは、テナント配布のサーバーにだけ設定できます",
+  "err.mcp_oauth_scopes_invalid": "スコープは OAuth のサーバーにだけ設定できます。1 つずつ空白・カンマ・引用符を含めずに書き、offline_access を足しても合計 1024 バイトに収まる長さにしてください",
+  "err.mcp_oauth_scopes_tenant_only": "独自のスコープは、テナント配布のサーバーにだけ設定できます",
   "err.mcp_elicitation_unknown": "サーバーの確認への答え方が不明です",
   "err.mcp_elicitation_oauth_only": "サーバーの確認に Agent Fleet が答えられるのは、OAuth でサインインするサーバーだけです",
   "err.mcp_header_secret_reenter": "ヘッダーの値を入力し直してください。サーバー URL が別のホストを指しているため、保存済みの値は引き継がれません",

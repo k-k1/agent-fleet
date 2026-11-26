@@ -1,0 +1,31 @@
+{
+  "authorization_servers": [
+    "https://accounts.google.com/"
+  ],
+  "bearer_methods_supported": [
+    "header"
+  ],
+  "resource": "https://gmailmcp.googleapis.com/mcp/v1",
+  "scopes_supported": [
+    "https://mail.google.com/",
+    "https://www.googleapis.com/auth/gmail.compose",
+    "https://www.googleapis.com/auth/gmail.drafts",
+    "https://www.googleapis.com/auth/gmail.drafts.create",
+    "https://www.googleapis.com/auth/gmail.drafts.readonly",
+    "https://www.googleapis.com/auth/gmail.labels",
+    "https://www.googleapis.com/auth/gmail.labels.create",
+    "https://www.googleapis.com/auth/gmail.labels.readonly",
+    "https://www.googleapis.com/auth/gmail.messages",
+    "https://www.googleapis.com/auth/gmail.messages.delete",
+    "https://www.googleapis.com/auth/gmail.messages.modify",
+    "https://www.googleapis.com/auth/gmail.messages.readonly",
+    "https://www.googleapis.com/auth/gmail.metadata",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/gmail.send.self",
+    "https://www.googleapis.com/auth/gmail.settings.basic",
+    "https://www.googleapis.com/auth/gmail.settings.filters",
+    "https://www.googleapis.com/auth/gmail.settings.filters.readonly"
+  ]
+}

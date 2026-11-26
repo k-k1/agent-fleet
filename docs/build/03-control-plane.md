@@ -608,7 +608,14 @@ disables.
   (`machine`), a person has to act, also stopped with the interaction carried (`person`),
   a usage limit is waited for, `limited` or a booked `rateLimitResumeAt` (`limit`),
   `wakers` is not zero (`wakers`), or `wakersUnknown` is set or a state is not understood
-  (`unknown`). An archived session of the tree holds nothing. The delivery closes `clean`
+  (`unknown`). An archived session of the tree holds nothing. Two things are no hold and keep
+  no reason, but stop a read from closing the delivery: a child's answer its idle parent has not
+  read (#4643), and a peer message still on its way to a session of the tree (`pendingPeers`,
+  #5270), for up to 15 minutes after the later of the newest one's queue time and the session's
+  last turn end as its row reports it (an explicit stop clears it, and the queue time alone
+  counts). A read that sees such a message also sets the count of clear reads back to 0, so the
+  close still needs two reads in a row without one. While the workspace is stopped only kept
+  reasons count, and a message in transit keeps none. The delivery closes `clean`
   on the second read in a row that finds none of these, and `aborted` when its session is
   archived or gone from the Agent's list. Each read is kept first (`held_by`,
   `held_session`, `held_seen_at`, `idle_ticks`, `progress_seen_at`), as one conditional

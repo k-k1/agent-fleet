@@ -322,11 +322,83 @@ func TestProbeOAuthIssuerMismatchRejected(t *testing.T) {
 	f := newOAuthFake(t)
 	f.challenge = `Bearer resource_metadata="%PRM%"`
 	f.docs["/prm"] = f.prm(f.url(""))
-	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url("")+"/", nil) // trailing slash: not byte-equal
+	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url("/tenant"), nil)
 	res := f.probe()
 	o := res.OAuth
 	if o == nil || strings.Join(codes(o), ",") != OAuthProblemASIssuerMismatch || o.Selected != "" || o.Servers[0].Valid {
 		t.Fatalf("a differing issuer must be refused: %+v", o)
+	}
+}
+
+// The root-path allowance is the only one: a "/" after a longer path still differs.
+func TestProbeOAuthIssuerSlashAfterAPathRejected(t *testing.T) {
+	f := newOAuthFake(t)
+	f.challenge = `Bearer resource_metadata="%PRM%"`
+	f.docs["/prm"] = f.prm(f.url("/tenant/"))
+	f.docs["/.well-known/oauth-authorization-server/tenant"] = asDoc(f.url("/tenant"), nil)
+	o := f.probe().OAuth
+	if o == nil || strings.Join(codes(o), ",") != OAuthProblemASIssuerMismatch || o.Selected != "" {
+		t.Fatalf("a trailing slash after a path must be refused: %+v", o)
+	}
+}
+
+func TestProbeOAuthIssuerRootSlashAccepted(t *testing.T) {
+	f := newOAuthFake(t)
+	f.challenge = `Bearer resource_metadata="%PRM%"`
+	f.docs["/prm"] = f.prm(f.url("/"))
+	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url(""), nil)
+	o := f.probe().OAuth
+	if o == nil || len(o.Problems) != 0 || o.Selected != f.url("") || !o.Servers[0].Valid {
+		t.Fatalf("a root \"/\" must match the issuer without it: %+v", o)
+	}
+}
+
+// A PRM that lists a root issuer spelled with "/" before one that matches exactly keeps
+// signing in at the exact one, as before the allowance existed.
+func TestProbeOAuthExactIssuerOutranksTheRootSlash(t *testing.T) {
+	f := newOAuthFake(t)
+	f.challenge = `Bearer resource_metadata="%PRM%"`
+	f.docs["/prm"] = f.prm(f.url("/"), f.url("/b"))
+	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url(""), nil)
+	f.docs["/.well-known/oauth-authorization-server/b"] = asDoc(f.url("/b"), nil)
+	o := f.probe().OAuth
+	if o == nil || len(o.Problems) != 0 || len(o.Servers) != 2 || !o.Servers[0].Valid || !o.Servers[1].Valid {
+		t.Fatalf("both servers should validate: %+v", o)
+	}
+	if o.Selected != f.url("/b") {
+		t.Fatalf("selected %q, want the exactly matching %q", o.Selected, f.url("/b"))
+	}
+}
+
+// The same root issuer listed without and with "/" is one server in the report.
+func TestProbeOAuthOneEntryPerIssuer(t *testing.T) {
+	f := newOAuthFake(t)
+	f.challenge = `Bearer resource_metadata="%PRM%"`
+	f.docs["/prm"] = f.prm(f.url("/"), f.url(""))
+	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url(""), nil)
+	o := f.probe().OAuth
+	if o == nil || len(o.Servers) != 1 || o.Selected != f.url("") || o.Servers[0].rootSlash {
+		t.Fatalf("want one exactly matching entry: %+v", o)
+	}
+}
+
+// A/, B, A: the exact A replaces the "/" entry but keeps its own place after B, so B stays
+// the first exact match, as when A/ was refused.
+func TestProbeOAuthReplacedEntryKeepsItsPRMOrder(t *testing.T) {
+	f := newOAuthFake(t)
+	f.challenge = `Bearer resource_metadata="%PRM%"`
+	f.docs["/prm"] = f.prm(f.url("/"), f.url("/b"), f.url(""))
+	f.docs["/.well-known/oauth-authorization-server"] = asDoc(f.url(""), nil)
+	f.docs["/.well-known/oauth-authorization-server/b"] = asDoc(f.url("/b"), nil)
+	o := f.probe().OAuth
+	if o == nil {
+		t.Fatal("no OAuth report")
+	}
+	if o.Selected != f.url("/b") {
+		t.Fatalf("selected %q, want %q: %+v", o.Selected, f.url("/b"), o)
+	}
+	if len(o.Servers) != 2 || o.Servers[0].Issuer != f.url("/b") || o.Servers[1].Issuer != f.url("") || o.Servers[1].rootSlash {
+		t.Fatalf("servers = %+v, want B then the exact A", o.Servers)
 	}
 }
 

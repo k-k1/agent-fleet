@@ -138,6 +138,10 @@ export interface LaunchResult {
   /** Name of the session that was created (only when ok). Accepting a handoff (docs/log/77)
    *  needs it to tell the offering side which session took the work. */
   name?: string;
+  /** The session exists (ok), but part of the draft did not reach it: files whose upload failed
+   *  and/or a first prompt the Agent refused. `saved`: the whole draft was stored as a memo. Callers keep the restored memo;
+   *  the form keeps its draft only when it was not saved. */
+  incomplete?: { files: string[]; prompt: boolean; saved: boolean };
   /** The space the launch named does not exist (any more). The form keeps refusing that pick
    *  until another place is chosen, whatever the list says: the list is re-read meanwhile and
    *  can be slow or fail. */
@@ -1078,8 +1082,10 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
       // A successful launch means this text and its attachments reached the new session in
       // full, and this is the only place the draft may be discarded: coming back from a failure
       // (a name collision, say) keeps both the typed text and the attachments.
-      clearPromptDraft();
-      attach.clear();
+      if (!r.incomplete || r.incomplete.saved) {
+        clearPromptDraft();
+        attach.clear();
+      }
       onClose();
       return;
     }

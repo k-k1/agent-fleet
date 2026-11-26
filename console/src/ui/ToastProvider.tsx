@@ -66,6 +66,9 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   // Each shown toast's expiry, by id. A keyed replacement keeps its id, so its old timer has
   // to be cancelled here — left running, it removed the replacement at the FIRST one's deadline.
   const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
+  // The duration of each timed toast, so the unmount effect below can re-arm them when React
+  // StrictMode runs its setup/cleanup/setup cycle over a toast raised from a child's mount effect.
+  const durations = useRef(new Map<number, number>());
   // The id each key is shown under, known synchronously (setItems' updater runs later).
   const keyIds = useRef(new Map<string, number>());
 
@@ -73,6 +76,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const t = timers.current.get(id);
     if (t) clearTimeout(t);
     timers.current.delete(id);
+    durations.current.delete(id);
     for (const [k, v] of keyIds.current) if (v === id) keyIds.current.delete(k);
     setItems((xs) => xs.filter((x) => x.id !== id));
   }, []);
@@ -102,7 +106,11 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       const old = timers.current.get(id);
       if (old) clearTimeout(old);
       timers.current.delete(id);
-      if (duration > 0) timers.current.set(id, setTimeout(() => remove(id), duration));
+      durations.current.delete(id);
+      if (duration > 0) {
+        durations.current.set(id, duration);
+        timers.current.set(id, setTimeout(() => remove(id), duration));
+      }
     },
     [remove],
   );
@@ -114,6 +122,21 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     },
     [remove],
   );
+
+  // Cancel every pending expiry on unmount: a timer left running calls remove() — a state update
+  // on an unmounted tree — after teardown (a flake in tests that unmount with a toast showing).
+  // StrictMode's simulated unmount also lands here while the toasts stay in state, so setup
+  // re-arms every timed toast that lost its timer, for its full duration.
+  useEffect(() => {
+    const pending = timers.current;
+    for (const [id, ms] of durations.current) {
+      if (!pending.has(id)) pending.set(id, setTimeout(() => remove(id), ms));
+    }
+    return () => {
+      for (const t of pending.values()) clearTimeout(t);
+      pending.clear();
+    };
+  }, [remove]);
 
   // Expose this provider's toast to non-React callers (keyboard commands) while mounted.
   useEffect(() => {

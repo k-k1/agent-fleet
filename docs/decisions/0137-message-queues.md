@@ -1219,3 +1219,17 @@ in `repos/<folder>`, failing with `bad_dir` or, when a repository of that name e
   sent instead, like a reference sent to an Agent without `queueRefs`). An older Control Plane refuses a space bucket's
   fire with `memo_queue_bad_repo` (it contains `/`) rather than running it anywhere; an older Agent relay files as
   before, and an older MCP process sends no `from`, so its moves file by name as before.
+
+## Addendum 2026-11-26: a peer message in transit keeps the run open (#5270)
+
+A run was closed as clean while a peer message to a member of its tree was still waiting to be delivered (option 1 of
+#4643). The Agent now reports, on each session row, the peer messages addressed to that session that have not reached
+it (`pendingPeers: {count, newestAt}`: the pending spool, the message being delivered, and held peer input). Like a
+child's unread answer, such a message is no hold: no reason is kept, and it only stops a read from closing the run.
+Kept as a hold, it would keep a stopped workspace's run open past its bound, since only a live read moves the kept
+reason, and it would turn the first read after an overdue session's answer into a retire. It is bounded: it counts for
+15 minutes from the later of the newest message's queue time and the session's last turn end as the row reports it (an
+explicit stop clears it), because a message is delivered within seconds of its target ending a turn, and one that waits longer
+cannot be delivered (the Agent's own expiry is 24 hours). A read that sees such a message sets the count of clear reads
+back to 0, so one read that misses it (a spool not readable that once, or an idle read just before the message landed)
+cannot close the run. An older Agent sends no `pendingPeers`, which reads as none, the rule it had before.

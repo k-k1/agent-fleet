@@ -242,6 +242,14 @@ type WakerHolder struct {
 	Timer   bool   `json:"timer,omitempty"`
 }
 
+// PendingPeers is the peer messages addressed to a session that have not reached it yet: waiting
+// for its user, being delivered, or held for a Managed runtime that has not taken them.
+type PendingPeers struct {
+	Count int `json:"count"`
+	// NewestAt is the queue time of the newest of them (RFC 3339, the Agent's clock).
+	NewestAt string `json:"newestAt"`
+}
+
 // Session is the wire representation of a Claude session (one tmux session).
 type Session struct {
 	Name string `json:"name"`
@@ -322,6 +330,10 @@ type Session struct {
 	// with the row, so its sessionWire has to carry them too.
 	Wakers        *Wakers `json:"wakers,omitempty"`
 	WakersUnknown bool    `json:"wakersUnknown,omitempty"`
+	// PendingPeers is what is still on its way to this session as peer messages, omitted when
+	// nothing is. A queue run's tree is not finished while a message to a member is in transit
+	// (#5270), so the Control Plane's sessionWire has to carry it too.
+	PendingPeers *PendingPeers `json:"pendingPeers,omitempty"`
 	// TitleSetBy mirrors Meta.TitleSetBy ("user" | "parent" | ""): who last set Title. It
 	// rides the wire so a reader outside this process can tell a name the user chose from one
 	// a parent wrote — the same reason Origin / OriginSession are here. Display-only for now;

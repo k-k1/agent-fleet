@@ -216,13 +216,17 @@ func redirectURIUsable(raw string) bool {
 }
 
 // selectScope is the scope of the first authorization request (ADR 0119 decision 4): the
-// challenge's scope when it has one, else the protected resource's scopes_supported, plus
-// offline_access when the authorization server lists it.
-func selectScope(challenge string, prmScopes, asScopes []string) string {
+// definition's own scopes when it carries them (ADR 0146 decision 2), else the challenge's
+// scope when it has one, else the protected resource's scopes_supported; plus offline_access
+// when the authorization server lists it.
+func selectScope(defScopes []string, challenge string, prmScopes, asScopes []string) string {
 	var scopes []string
-	if f := strings.Fields(challenge); len(f) > 0 {
+	switch f := strings.Fields(challenge); {
+	case len(defScopes) > 0:
+		scopes = append(scopes, defScopes...)
+	case len(f) > 0:
 		scopes = f
-	} else {
+	default:
 		scopes = append(scopes, prmScopes...)
 	}
 	has := func(s string) bool {
@@ -242,6 +246,30 @@ func selectScope(challenge string, prmScopes, asScopes []string) string {
 		}
 	}
 	return strings.Join(scopes, " ")
+}
+
+// authParamsByIssuer are the authorization-request parameters an authorization server needs
+// beyond the specification's, keyed by the issuer its metadata states (ADR 0146 decision 2). A
+// table in code, not a field an admin fills in: these parameters change what the member grants.
+//
+// Google lists no offline_access scope; it issues a refresh token only for access_type=offline,
+// and only on an authorization the member consented to, so a member who consented before gets
+// none without prompt=consent. That holds on every sign-in, not only the first: a sign-in
+// replaces the stored grant, refresh token included, so one made without consent would leave a
+// grant that dies with its access token after an hour.
+var authParamsByIssuer = map[string]url.Values{
+	"https://accounts.google.com": {"access_type": {"offline"}, "prompt": {"consent"}},
+}
+
+// issuerAuthParams returns the extra authorization parameters for issuer, nil when it has none.
+// The lookup takes the root-path "/" allowance and nothing else.
+func issuerAuthParams(issuer string) url.Values {
+	for k, v := range authParamsByIssuer {
+		if issuerEquivalent(k, issuer) {
+			return v
+		}
+	}
+	return nil
 }
 
 // splitScopes turns a scope string into its individual scopes. RFC 6749 §3.3 says
@@ -495,9 +523,10 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 		return StartResult{}, oerr(http.StatusUnprocessableEntity, OAuthErrNotRequired, "the server did not ask for OAuth")
 	}
 	var srv OAuthServer
-	for _, s := range rep.Servers {
+	for _, s := range rep.Servers { // one entry per issuer (addAuthServer)
 		if s.Valid && s.Issuer == rep.Selected {
 			srv = s
+			break
 		}
 	}
 	if rep.Selected == "" || srv.Issuer == "" {
@@ -524,7 +553,7 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 		}
 	}
 	if scope == "" {
-		scope = selectScope(rep.ChallengedScope, rep.prmScopes, srv.ep.asScopes)
+		scope = selectScope(d.Scopes, rep.ChallengedScope, rep.prmScopes, srv.ep.asScopes)
 	}
 	// A scope the Agent assembled from the server's challenge / PRM / AS metadata is
 	// remote input: refuse it as a caller-sent one would be, before any registration
@@ -555,6 +584,9 @@ func StartOAuth(ctx context.Context, serverID string, req StartRequest) (StartRe
 	q.Set("resource", rep.Resource)
 	if scope != "" {
 		q.Set("scope", scope)
+	}
+	for k, v := range issuerAuthParams(srv.Issuer) {
+		q[k] = append([]string(nil), v...)
 	}
 	au.RawQuery = q.Encode()
 	if e := putPending(req.State, &pendingAuth{

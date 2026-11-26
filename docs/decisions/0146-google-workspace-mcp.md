@@ -77,12 +77,17 @@ puts them. A member may still register a server for themselves with their own cl
 
 - **Issuer equivalence.** An issuer whose path is exactly `/` equals the same issuer with an empty
   path (RFC 3986 §6.2.3, scheme-based normalization). Nothing else is normalized; `iss` in the
-  authorization response is compared with the issuer that the AS metadata states.
+  authorization response is compared with the issuer that the AS metadata states. A server that
+  validates only through this allowance ranks after every exactly matching one when the first
+  valid server of the PRM is selected (0119), so a PRM that already worked keeps its server.
 - **Scopes on the definition.** A definition may carry an explicit scope list. When it does, the
   list replaces the challenge and `scopes_supported`. A Workspace definition always carries one.
 - **Authorization parameters per issuer.** For `https://accounts.google.com`, the authorization
-  request adds `access_type=offline`, and adds `prompt=consent` when the stored grant has no refresh
-  token. This is a table keyed by issuer, not a free-form field an admin fills in.
+  request adds `access_type=offline` and `prompt=consent`. Consent is asked on every sign-in, not
+  only when the stored grant has no refresh token: Google returns a refresh token only on a
+  consented authorization, and a sign-in (a step-up, a reconnect) replaces the stored grant, so one
+  made without consent would leave a grant that dies after an hour. This is a table keyed by
+  issuer, not a free-form field an admin fills in.
 - **Probe.** A 200 probe that finds a PRM reports the OAuth findings anyway, so the form can offer
   OAuth for a server whose tool list is public.
 

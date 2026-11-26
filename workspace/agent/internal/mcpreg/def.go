@@ -113,6 +113,8 @@ const (
 	CodeOAuthUserSecret = "mcp_oauth_user_secret"
 	CodeOAuthClient     = "mcp_oauth_client_invalid"
 	CodeOAuthClientUser = "mcp_oauth_client_tenant_only"
+	CodeOAuthScopes     = "mcp_oauth_scopes_invalid"
+	CodeOAuthScopesUser = "mcp_oauth_scopes_tenant_only"
 	CodeElicitUnknown   = "mcp_elicitation_unknown"
 	CodeElicitOAuth     = "mcp_elicitation_oauth_only"
 )
@@ -148,6 +150,27 @@ func validTenantClient(c secrets.MCPTenantClient) bool {
 		}
 	}
 	return true
+}
+
+// validDefScopes: each entry a single RFC 6749 scope token without a comma, and the joined
+// list within what StartOAuth accepts once selectScope has appended offline_access. An empty
+// list means no scopes of the definition's own.
+//
+// A comma is legal in a scope token but splitScopes reads it as a separator (GitHub answers
+// "a,b"), so "read,archive" would be granted as one scope and stepped up as two.
+func validDefScopes(scopes []string) bool {
+	hasOffline := false
+	for _, s := range scopes {
+		if s == "" || len(strings.Fields(s)) != 1 || strings.TrimSpace(s) != s || strings.Contains(s, ",") {
+			return false
+		}
+		hasOffline = hasOffline || s == "offline_access"
+	}
+	joined := strings.Join(scopes, " ")
+	if !hasOffline && len(joined)+len(" offline_access") > maxScopeLen {
+		return false
+	}
+	return validScope(joined)
 }
 
 // Validate checks a definition for internal consistency. It does NOT check
@@ -189,6 +212,14 @@ func Validate(d ServerDef) error {
 	}
 	if d.Auth != AuthOAuth && d.OAuthClient != nil {
 		return invalid(CodeOAuthClient, "a pre-registered client belongs to an OAuth server")
+	}
+	if len(d.Scopes) > 0 {
+		if d.Auth != AuthOAuth || !validDefScopes(d.Scopes) {
+			return invalid(CodeOAuthScopes, "scopes belong to an OAuth server and must be scope tokens without commas, %d bytes at most together with offline_access", maxScopeLen)
+		}
+		if d.Origin != OriginTenant {
+			return invalid(CodeOAuthScopesUser, "only a tenant-distributed definition carries its own scopes")
+		}
 	}
 	switch d.Elicitation {
 	case "":
