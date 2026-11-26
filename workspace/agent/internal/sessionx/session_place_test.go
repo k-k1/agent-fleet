@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -28,6 +29,21 @@ func placeSpace(t *testing.T, folder string) string {
 		t.Fatal(err)
 	}
 	return dir
+}
+
+// editConfig replaces the one occurrence of old in a git config file.
+func editConfig(t *testing.T, path, old, new string) {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(b), old) != 1 {
+		t.Fatalf("%s: %q occurs %d times in %s", path, old, strings.Count(string(b), old), b)
+	}
+	if err := os.WriteFile(path, []byte(strings.Replace(string(b), old, new, 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func placeWorktree(t *testing.T, main, dir, branch string) {
@@ -90,6 +106,20 @@ func TestPlaceOf(t *testing.T) {
 	// copy, whatever the common dir's name says.
 	gitRun(t, repos, "clone", "-q", "--bare", filepath.Join(repos, "foo"), filepath.Join(repos, "hollow", ".git"))
 	placeWorktree(t, filepath.Join(repos, "hollow", ".git"), filepath.Join(repos, "hollow@wt"), "hollowwt")
+	// Config syntax git accepts must not fool the parent check: a comment after a section
+	// header leaves hollow bare, a comment after a value leaves foo a working copy, and a
+	// [core "x"] subsection's bare is another key.
+	editConfig(t, filepath.Join(repos, "hollow", ".git", "config"), "[core]", "[core] # storage")
+	editConfig(t, filepath.Join(repos, "foo", ".git", "config"), "bare = false", "bare = false # working copy\n[core \"unrelated\"]\n\tbare = true\n[core]")
+	// A git dir named .git inside vault whose core.worktree is app3: app3 is the main copy,
+	// and vault holds none.
+	if err := os.MkdirAll(filepath.Join(repos, "vault"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitRun(t, repos, "init", "-q", "-b", "main", "--separate-git-dir", filepath.Join(repos, "vault", ".git"), filepath.Join(repos, "app3"))
+	gitRun(t, filepath.Join(repos, "app3"), "config", "core.worktree", filepath.Join(repos, "app3"))
+	gitRun(t, filepath.Join(repos, "app3"), "commit", "-q", "--allow-empty", "-m", "init")
+	placeWorktree(t, filepath.Join(repos, "app3"), filepath.Join(repos, "app3@wt"), "app3wt")
 	// A gitfile git refuses (no "gitdir: " prefix, or no space after it) makes no worktree,
 	// even when the path it names is a real one.
 	gitInit(t, filepath.Join(repos, "bad"))
@@ -124,6 +154,7 @@ func TestPlaceOf(t *testing.T) {
 		{filepath.Join(repos, "sep@wt"), session.Place{Kind: session.PlaceWorktree, ID: "sep@wt"}},
 		{filepath.Join(repos, "vendor@wt"), session.Place{Kind: session.PlaceWorktree, ID: "vendor@wt"}},
 		{filepath.Join(repos, "hollow@wt"), session.Place{Kind: session.PlaceWorktree, ID: "hollow@wt"}},
+		{filepath.Join(repos, "app3@wt"), session.Place{Kind: session.PlaceWorktree, ID: "app3@wt"}},
 		{filepath.Join(repos, "bad@noprefix"), session.Place{Kind: session.PlaceRepo, ID: "bad@noprefix"}},
 		{filepath.Join(repos, "bad@nospace"), session.Place{Kind: session.PlaceRepo, ID: "bad@nospace"}},
 		{filepath.Join(repos, "foo@wt"), session.Place{Kind: session.PlaceWorktree, ID: "foo@wt", Parent: "foo"}},

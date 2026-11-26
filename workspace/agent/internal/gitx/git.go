@@ -904,10 +904,11 @@ func WorktreeParent(dir string) string {
 // does rather than running git, so a session create pays no process for it. A submodule's
 // gitfile has no commondir and is not a linked worktree.
 //
-// main is "" whenever the folder above the common git directory is not provably a working
-// copy that owns it: a --separate-git-dir, a bare repository (whatever its directory is
-// called), or a config that cannot be read with certainty. A parent named there would be
-// invented, so when in doubt there is none.
+// main is "" whenever the folder above the common git directory is not, as git reads it, a
+// working copy that owns it: a --separate-git-dir, a bare repository (whatever its directory
+// is called), a core.worktree that points elsewhere, or a git that does not answer. A parent
+// named there would be invented, so when in doubt there is none. Only a linked worktree pays
+// for that one git run.
 func LinkedWorktreeMain(dir string) (main string, linked bool) {
 	body, ok := readSmallRegular(filepath.Join(dir, ".git"), smallFileMax)
 	if !ok {
@@ -934,13 +935,12 @@ func LinkedWorktreeMain(dir string) (main string, linked bool) {
 	if !ok || common == gitDir {
 		return "", false
 	}
-	if filepath.Base(common) != ".git" {
+	// A common dir not called .git is never a working copy's own; skip the git run for it.
+	main = filepath.Dir(common) // …/repos/app/.git -> …/repos/app
+	if filepath.Base(common) != ".git" || !ownsCommonDir(main, common) {
 		return "", true
 	}
-	if bare, known := coreBare(common); !known || bare {
-		return "", true
-	}
-	return filepath.Dir(common), true // …/repos/app/.git -> …/repos/app
+	return main, true
 }
 
 // physicalFrom resolves p, taken relative to base when it is not absolute, to its physical
@@ -956,49 +956,37 @@ func physicalFrom(base, p string) (string, bool) {
 	return real, err == nil
 }
 
-// gitConfigMax bounds the repository config read for core.bare.
-const gitConfigMax = 256 << 10
+// mainCopyTimeout bounds the one git run that confirms a parent. It reads only local files, but
+// a named pipe planted as the config would hold it forever.
+const mainCopyTimeout = 10 * time.Second
 
-// coreBare reads core.bare from the config in gitDir. known is false when the answer is not
-// certain from that file alone: unreadable, too large, or pulling in other files (include,
-// includeIf), whose bare a plain read cannot see.
-func coreBare(gitDir string) (bare, known bool) {
-	b, ok := readSmallRegular(filepath.Join(gitDir, "config"), gitConfigMax)
-	if !ok {
-		return false, false
+// ownsCommonDir reports whether candidate is, as git itself reads it, a non-bare working copy
+// whose top level is candidate and whose common git directory is common. git is asked rather
+// than the config parsed here: core.bare and core.worktree follow git's full config syntax
+// (comments, subsections, includes), and a parser of our own that misread one would name a
+// folder that holds no working copy.
+func ownsCommonDir(candidate, common string) bool {
+	ctx, cancel := context.WithTimeout(context.Background(), mainCopyTimeout)
+	defer cancel()
+	out, err := CmdContext(ctx, candidate, "rev-parse", "--path-format=absolute",
+		"--is-bare-repository", "--show-toplevel", "--git-common-dir").Output()
+	if err != nil {
+		return false // a bare repository fails --show-toplevel
 	}
-	section := ""
-	for _, raw := range strings.Split(string(b), "\n") {
-		line := strings.TrimSpace(raw)
-		if strings.HasPrefix(line, "[") {
-			section, _ = parseSectionHeader(line)
-			if strings.HasPrefix(section, "include") {
-				return false, false
-			}
-			continue
-		}
-		if section != "core" {
-			continue
-		}
-		k, v, found := strings.Cut(line, "=")
-		k = strings.ToLower(strings.TrimSpace(k))
-		if k != "bare" {
-			continue
-		}
-		if !found {
-			bare = true // a bare key with no value is true in git
-			continue
-		}
-		switch strings.ToLower(strings.Trim(strings.TrimSpace(v), `"`)) {
-		case "true", "yes", "on", "1":
-			bare = true
-		case "false", "no", "off", "0", "":
-			bare = false
-		default:
-			return false, false
-		}
+	lines := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
+	if len(lines) != 3 || lines[0] != "false" {
+		return false
 	}
-	return bare, true
+	top, err := filepath.EvalSymlinks(lines[1])
+	if err != nil {
+		return false
+	}
+	cd, err := filepath.EvalSymlinks(lines[2])
+	if err != nil {
+		return false
+	}
+	cand, err := filepath.EvalSymlinks(candidate)
+	return err == nil && top == cand && cd == common
 }
 
 // smallFileMax bounds a gitfile, a commondir or a creator marker: each holds one path or one
