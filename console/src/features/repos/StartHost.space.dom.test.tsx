@@ -240,6 +240,44 @@ describe("Start hub — seeded by a session that runs in a space", () => {
     expect(createCalls()[0][2]).toMatchObject({ space: { folder: "old-aaa" }, initial_prompt: "引き継ぎの本文", origin_proposal: "p-1" });
   });
 
+  it("keeps the place of the continuation: another space or a new one cannot be picked, until that space is gone", async () => {
+    seedFromSpaceSession();
+    await openHub();
+    expect(chip().disabled).toBe(true);
+    await act(async () => useSpacesStore.setState({ spaces: [] })); // the space was removed
+    await settle();
+    expect(chip().disabled).toBe(false); // the draft can still be sent somewhere else
+  });
+
+  it("leaves a newer hub alone when an older launch finishes late, and finishes only its own seed", async () => {
+    const finishedA = vi.fn();
+    const finishedB = vi.fn();
+    useLaunchSeed.getState().set("本文A", "題A", "srcA", "pA");
+    useLaunchSeed.getState().setSpace("old-aaa");
+    useLaunchSeed.getState().setOnLaunched(finishedA);
+    let answerA!: (v: unknown) => void;
+    apiPost.mockImplementationOnce((...a: unknown[]) => (a[0] === "api/sessions" ? new Promise((r) => (answerA = r)) : Promise.resolve({})));
+    await openHub();
+    await click(spaceGo()); // A is in flight
+    await act(async () => {
+      useLaunchSeed.getState().set("本文B", "題B", "srcB", "pB");
+      useLaunchSeed.getState().setSpace("new-bbb");
+      useLaunchSeed.getState().setOnLaunched(finishedB);
+      useSessionsStore.getState().openStart(); // B's hub opens over A's
+    });
+    await settle();
+    expect(hubBox().value).toBe("本文B");
+    await act(async () => answerA({ name: "space-A" }));
+    await settle();
+    expect(finishedA).toHaveBeenCalledWith("space-A");
+    expect(markHandoffLaunched).toHaveBeenCalledWith("srcA", "pA");
+    expect(markHandoffLaunched).not.toHaveBeenCalledWith("srcB", "pB");
+    expect(finishedB).not.toHaveBeenCalled();
+    expect(hubBox()).not.toBeNull(); // B's hub is still there
+    expect(hubBox().value).toBe("本文B");
+    expect(useLaunchSeed.getState()).toMatchObject({ handoffSession: "srcB", space: "new-bbb" });
+  });
+
   it("finishes what seeded the launch (a plan review's record and the carried card) only once the space session exists", async () => {
     const onLaunched = vi.fn();
     seedFromSpaceSession();

@@ -327,6 +327,7 @@ export function StartModal({ kinds, access, claudeExpired, settling, draft, onLa
               launchBlocked={spaceSupport !== "yes" || pickPending}
               submitRef={spaceSubmit}
               initialSpaceFolder={seedSpace || undefined}
+              spaceLocked={!!seedSpace}
               initialTitle={(seedSpace && seedTitle) || undefined}
               onClose={onClose}
               onLaunch={onLaunchSpace}

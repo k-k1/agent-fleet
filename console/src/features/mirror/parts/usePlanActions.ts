@@ -8,7 +8,7 @@ import { dismissToast } from "../../../ui/toast.ts";
 import { useSessionsStore } from "../../sessions/store.ts";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../../repos/store.ts";
 import { handoffLaunchTarget, targetDir } from "../handoffLaunch.ts";
-import { openSpaceLaunch, spaceCheck } from "../spaceLaunch.ts";
+import { openSpaceLaunch, settleSpace } from "../spaceLaunch.ts";
 import { discardCarriedAfterReview } from "../carriedPlanReview.ts";
 import { deliverPlanComments, planKey } from "../planComments.ts";
 import {
@@ -153,27 +153,20 @@ export function usePlanActions({
       return;
     }
     if (wsDown()) return;
-    const res = await sessionPlanFile(session);
-    if (!res.ok || !res.path) {
-      toast(tr("plan.review_launch_failed", { err: res.message || "" }));
-      return;
-    }
     const target = handoffLaunchTarget(sessionMeta, useReposStore.getState().repos, false);
     if ("error" in target) {
       toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
       return;
     }
-    if ("space" in target) {
-      const there = await spaceCheck(target.space);
-      // The list was read while the card stayed live: the member may have approved this plan, or a
-      // revised one may have replaced it, meanwhile. Rejecting then would interrupt a run they
-      // approved. Nothing has been touched yet, so leaving is free.
-      if (there === "stale" || latest.current.pending !== plan) return;
-      if (there === "gone") {
-        toast(tr("mirror.launch_space_gone"));
-        return;
-      }
-      if (wsDown()) return;
+    // A session in a space is settled FIRST, before the plan file is fetched, so the wait for the
+    // list adds nothing to the window between that fetch and the rejection: the card cannot
+    // tell an approval just sent from a plan still pending until the next poll, and the member
+    // may have approved it meanwhile. Nothing has been touched yet, so leaving is free.
+    if ("space" in target && !(await settleSpace(target.space, () => latest.current.pending === plan && !wsDown(), toast))) return;
+    const res = await sessionPlanFile(session);
+    if (!res.ok || !res.path) {
+      toast(tr("plan.review_launch_failed", { err: res.message || "" }));
+      return;
     }
     markRejected(plan, true); // optimistic "rejected" badge; planOutcome reconciles it
     wasWorkingRef.current = false; // as with an interrupt: no reply is being waited for
@@ -308,24 +301,17 @@ export function usePlanActions({
   // and discard does not wake the session.
   const reviewCarriedPlan = async (plan: string) => {
     retireRetry();
-    const res = await sessionPlanFile(session);
-    if (!res.ok || !res.path) {
-      toast(tr("plan.review_launch_failed", { err: res.message || "" }));
-      return;
-    }
     const target = handoffLaunchTarget(sessionMeta, useReposStore.getState().repos, false);
     if ("error" in target) {
       toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
       return;
     }
-    if ("space" in target) {
-      const there = await spaceCheck(target.space);
-      // The carried card may have been discarded, answered or replaced while the list was read.
-      if (there === "stale" || latest.current.carried !== plan) return;
-      if (there === "gone") {
-        toast(tr("mirror.launch_space_gone"));
-        return;
-      }
+    // The carried card may have been discarded, answered or replaced while the list was read.
+    if ("space" in target && !(await settleSpace(target.space, () => latest.current.carried === plan, toast))) return;
+    const res = await sessionPlanFile(session);
+    if (!res.ok || !res.path) {
+      toast(tr("plan.review_launch_failed", { err: res.message || "" }));
+      return;
     }
     useLaunchSeed.getState().set(
       reviewPrompt({ parent: session, path: res.path, dir: targetDir(target) }),

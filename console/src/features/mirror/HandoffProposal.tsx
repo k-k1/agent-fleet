@@ -19,7 +19,7 @@ import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts"
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
 import { handoffLaunchTarget } from "./handoffLaunch.ts";
-import { openSpaceLaunch, spaceCheck } from "./spaceLaunch.ts";
+import { openSpaceLaunch, settleSpace } from "./spaceLaunch.ts";
 import { HandoffOfferModal } from "../sharing/HandoffOfferModal.tsx";
 import { offerForSession, recipientLabel, useHandoffStore } from "../sharing/handoffStore.ts";
 import type { Session } from "../../types/session.ts";
@@ -206,31 +206,27 @@ export function HandoffProposal({
       toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
       return;
     }
-    if ("space" in target) {
-      const asked = { session, proposalId: proposal.id };
-      const there = await spaceCheck(target.space);
+    // The card (session and proposal) the press belongs to, and whether it is still on screen.
+    const asked = { session, proposalId: proposal.id };
+    const same = () => {
       const now = live.current;
-      // The card moved on (another proposal, another session, gone) or the workspace changed while
-      // the list was read: nothing is started from an answer that no longer belongs to it.
-      if (!now.mounted || now.session !== asked.session || now.proposalId !== asked.proposalId || there === "stale") return;
-      if (there === "gone") {
-        toast(tr("mirror.launch_space_gone"));
-        return;
-      }
-    }
+      return now.mounted && now.session === asked.session && now.proposalId === asked.proposalId;
+    };
+    if ("space" in target && !(await settleSpace(target.space, same, toast))) return;
     // Launching while an offer is still pending would run the same work twice. Withdraw
     // conditionally *before* launching and abandon the launch if that race is lost (the
     // recipient already accepted) — ADR 0057 decision 6.
     if (offer?.status === "pending") {
-      const asked = { session, proposalId: proposal.id };
       const ok = await askConfirm({
         title: tr("handoff.withdraw_confirm_title"),
         body: tr("handoff.withdraw_confirm_body", { who: recipientLabel(offer) }),
         confirmLabel: tr("handoff.withdraw_confirm_action"),
         danger: true,
       });
-      const now = live.current;
-      if (!ok || !now.mounted || now.session !== asked.session || now.proposalId !== asked.proposalId) return;
+      if (!ok || !same()) return;
+      // The question waited for the member: the space may have been removed meanwhile, and the
+      // offer must not be withdrawn for a launch that can no longer start.
+      if ("space" in target && !(await settleSpace(target.space, same, toast))) return;
       const d = await apiJSON(`api/session-handoff-offers/${encodeURIComponent(offer.id)}`, "DELETE");
       void useHandoffStore.getState().refresh();
       if (d?.error) {

@@ -288,6 +288,10 @@ interface FormExtras {
   submitRef?: MutableRefObject<(() => void) | null>;
   /** The existing space (its folder) the space form opens on; "" or absent starts a new one. */
   initialSpaceFolder?: string;
+  /** The place is the one the launch continues (a handoff or review from a session in that
+   *  space): it cannot be swapped for another space or a new one, since the text was written for
+   *  it. Unlocked once that space is gone, so the draft can still be sent somewhere. */
+  spaceLocked?: boolean;
 }
 
 /** What the Start hub hands to the space form. */
@@ -324,7 +328,7 @@ function useNarrowLaunchLabel(): boolean {
   return narrow;
 }
 
-function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, shared, onLaunch, busy, setBusy, space = false, launchBlocked = false, submitRef, initialSpaceFolder }: LaunchModalProps & FormExtras) {
+function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, shared, onLaunch, busy, setBusy, space = false, launchBlocked = false, submitRef, initialSpaceFolder, spaceLocked = false }: LaunchModalProps & FormExtras) {
   const settings = useSettings();
   // Neither home nor a space has a working copy: no templates file, skills, subdir or worktree.
   const repoLess = home || space;
@@ -1797,7 +1801,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
             {tr("start.place")}
           </FieldLabel>
           <div className="start-place">
-            <SpacePlacePicker folder={spaceFolder} onChange={setSpaceFolder} disabled={busy} gone={spaceGone} />
+            <SpacePlacePicker folder={spaceFolder} onChange={setSpaceFolder} disabled={busy || (spaceLocked && !spaceGone)} gone={spaceGone} />
             {!spaceFolder && (
               <input {...NO_AUTOFILL}
                 type="text"

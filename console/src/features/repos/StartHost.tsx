@@ -48,6 +48,8 @@ export function StartHost() {
   // The hub's one draft (ADR 0142 decision 5). Every opening starts it from the seed, so a memo
   // being sent or restored is the text the hub opens with.
   const draft = useHubDraft();
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   // A repository picked in the hub with something in the draft takes the draft into its dialog;
   // with nothing in it, the dialog shows that repository's own stored draft as before.
   const [carry, setCarry] = useState(false);
@@ -106,20 +108,32 @@ export function StartHost() {
           settling={ctx.connsSettling}
           draft={draft}
           onLaunchSpace={async (o) => {
+            // The seed this launch carries, taken now: a hub opened for another seed while the
+            // create is in flight must not have that seed finished by this launch's result.
+            const sent = useLaunchSeed.getState();
             // dir "" with a space: the Agent makes ~/spaces/<folder> and starts the session there.
             const r = await startWork({ dir: "", repo: "" }, o);
             if (r.ok) {
               // Seeded by a handoff proposal (from a session in a space): badge it as launched now
               // that a session really exists, as the repository dialog's success path does.
-              if (seedHandoff && seedHandoffId) void markHandoffLaunched(seedHandoff, seedHandoffId);
+              if (sent.handoffSession && sent.handoffId) void markHandoffLaunched(sent.handoffSession, sent.handoffId);
               // A memo that seeded the draft is done with once its text reached a session.
-              finishSeed(r.name || "");
+              if (draft.missing === 0) sent.onLaunched?.(r.name || "");
             }
             return r;
           }}
           seedSpace={seedSpace}
           seedTitle={seedTitle}
           onClose={() => {
+            // A hub since replaced by a newer opening (this instance's launch finished late) must
+            // not close the new one or drop its seed.
+            if (lastTickRef.current !== startTick) {
+              // The finished launch has just emptied the shared draft; the newer opening's text is
+              // the seed's, so put it back.
+              const seed = useLaunchSeed.getState();
+              draftRef.current.reset({ prompt: seed.prompt, attachments: seed.attachments });
+              return;
+            }
             hubGen.current++;
             setShow(false);
             clearSeed();

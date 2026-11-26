@@ -120,12 +120,11 @@ describe("handoff proposal launched from a space session", () => {
     expect(useLaunchSeed.getState()).toMatchObject({ space: "", prompt: "", handoffSession: "" });
   });
 
-  it("goes on when the list cannot be read or the Agent has no such route — it never decides 'gone' from that", async () => {
+  it("goes on when the list cannot be read — it never decides 'gone' from that", async () => {
     for (const answer of [
       async () => {
         throw new Error("network");
       },
-      async () => ({ error: { code: "http_404" } }),
       async () => ({ error: { code: "http_503", transient: true } }),
     ]) {
       spacesAnswer = answer;
@@ -170,6 +169,28 @@ describe("handoff proposal launched from a space session", () => {
       expect(document.body.textContent).toContain(t("mirror.launch_space_gone"));
       expect(apiJSON).not.toHaveBeenCalled();
       expect(document.querySelector(".ui-confirm-actions")).toBeNull(); // no question was asked either
+      expect(opened()).toBe(0);
+    });
+
+    it("does not withdraw it, or open a hub that refuses everything, for an Agent without spaces", async () => {
+      spacesAnswer = async () => ({ error: { code: "http_405" } });
+      withOffer();
+      await renderCard();
+      expect(document.body.textContent).toContain(t("start.space_unsupported"));
+      expect(apiJSON).not.toHaveBeenCalled();
+      expect(document.querySelector(".ui-confirm-actions")).toBeNull();
+      expect(opened()).toBe(0);
+    });
+
+    it("asks the list again after the question and does not withdraw when the space was removed meanwhile", async () => {
+      withOffer();
+      await renderCard();
+      expect(document.querySelector(".ui-confirm-actions")).not.toBeNull(); // the space was there when asked
+      spaceFolders = []; // removed in another tab while the question stood open
+      await answerConfirm(true);
+      await settle();
+      expect(apiJSON).not.toHaveBeenCalled();
+      expect(document.body.textContent).toContain(t("mirror.launch_space_gone"));
       expect(opened()).toBe(0);
     });
 
@@ -314,6 +335,26 @@ describe("plan review launched from a space session", () => {
     await act(async () => release());
     await run;
     await settle();
+    expect(markRejected).not.toHaveBeenCalled();
+    expect(sendInterrupt).not.toHaveBeenCalled();
+    expect(opened()).toBe(0);
+  });
+
+  it("review elsewhere asks about the space before it fetches the plan file, and touches nothing for an Agent without spaces", async () => {
+    let release!: () => void;
+    spacesAnswer = () => new Promise((r) => (release = () => r({ error: { code: "http_404" } })));
+    await mount();
+    let run!: Promise<void>;
+    await act(async () => {
+      run = plan.reviewPlanElsewhere("# Plan\n\nDo it.");
+    });
+    await settle();
+    expect(sessionPlanFile).not.toHaveBeenCalled(); // the wait for the list is not added to the plan file's window
+    await act(async () => release());
+    await run;
+    await settle();
+    expect(toast).toHaveBeenCalledWith(t("start.space_unsupported"));
+    expect(sessionPlanFile).not.toHaveBeenCalled();
     expect(markRejected).not.toHaveBeenCalled();
     expect(sendInterrupt).not.toHaveBeenCalled();
     expect(opened()).toBe(0);
