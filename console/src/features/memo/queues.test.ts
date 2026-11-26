@@ -230,7 +230,6 @@ describe("when it runs", () => {
 describe("why a run is still open and how it went", () => {
   it("words each reason, an unknown one as unknown, and nothing for a run that is not open", () => {
     expect(heldWords({ state: "open", heldBy: "person" })).toBe("memo.d_held_person");
-    expect(heldWords({ state: "open", heldBy: "peer" })).toBe("memo.d_held_peer");
     expect(heldWords({ state: "open", heldBy: "from-the-future" })).toBe("memo.d_held_unknown");
     expect(heldWords({ state: "open", heldBy: "" })).toBeNull();
     expect(heldWords({ state: "closed", heldBy: "machine" })).toBeNull();

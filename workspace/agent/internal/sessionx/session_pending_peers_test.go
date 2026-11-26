@@ -37,14 +37,18 @@ func TestRowReportsPendingPeerMessages(t *testing.T) {
 
 	// Claimed for delivery: out of the spool, still not delivered.
 	tgt := pendingTargetOf("kid")
-	tgt.mu.Lock()
-	if !agents.TakePendingPeer("kid", "a") {
+	setInflight := func(p *agents.PendingPeer) {
+		tgt.mu.Lock()
+		tgt.view.Lock()
+		tgt.inflight = p
+		tgt.view.Unlock()
 		tgt.mu.Unlock()
+	}
+	if !agents.TakePendingPeer("kid", "a") {
 		t.Fatal("claim")
 	}
-	tgt.inflight = &agents.PendingPeer{ID: "a", From: "parent", QueuedAt: t0}
-	tgt.mu.Unlock()
-	t.Cleanup(func() { tgt.mu.Lock(); tgt.inflight = nil; tgt.mu.Unlock() })
+	setInflight(&agents.PendingPeer{ID: "a", From: "parent", QueuedAt: t0})
+	t.Cleanup(func() { setInflight(nil) })
 	if err := agents.PutPendingPeer("kid", agents.PendingPeer{ID: "c", From: "parent", Message: "y", QueuedAt: t0.Add(3 * time.Minute)}); err != nil {
 		t.Fatal(err)
 	}
@@ -53,11 +57,44 @@ func TestRowReportsPendingPeerMessages(t *testing.T) {
 		t.Fatalf("wire = %s %v", b, err)
 	}
 
-	tgt.mu.Lock()
-	tgt.inflight = nil
-	tgt.mu.Unlock()
+	setInflight(nil)
 	agents.TakePendingPeer("kid", "c")
 	if s := wireSession(m, false); s.PendingPeers != nil {
 		t.Fatalf("delivered, row still reports %+v", s.PendingPeers)
 	}
+}
+
+// The list does not wait for a peer send's queue decision, which holds the target's lock across
+// pane checks that run tmux.
+func TestRowDoesNotWaitForAPeerSendsPaneCheck(t *testing.T) {
+	pendingTestEnv(t)
+	writeMeta(t, session.Meta{Name: "kid"})
+	m, _ := session.ReadMeta("kid")
+	entered, release := make(chan struct{}), make(chan struct{})
+	prev := peerQueueBlocker
+	peerQueueBlocker = func(session.Meta) string {
+		close(entered)
+		<-release
+		return ""
+	}
+	done := make(chan struct{})
+	t.Cleanup(func() {
+		peerQueueBlocker = prev
+	})
+	go func() {
+		defer close(done)
+		_, _, _ = enqueueDecision("kid", m, "parent", "request", "x", false, func() error { return nil })
+	}()
+	<-entered
+	listed := make(chan session.Session, 1)
+	go func() { listed <- wireSession(m, false) }()
+	select {
+	case <-listed:
+	case <-time.After(5 * time.Second):
+		close(release)
+		<-done
+		t.Fatal("the row waited for a peer send's pane check")
+	}
+	close(release)
+	<-done
 }

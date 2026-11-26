@@ -607,10 +607,12 @@ disables.
   walk keeps the names it has seen, so a cycle ends it) is held: a machine works
   (`machine`), a person has to act, also stopped with the interaction carried (`person`),
   a usage limit is waited for, `limited` or a booked `rateLimitResumeAt` (`limit`),
-  a peer message to it is still on its way, `pendingPeers`, for up to 15 minutes after the later
-  of the newest one's queue time and the session's last turn end (`peer`, #5270),
   `wakers` is not zero (`wakers`), or `wakersUnknown` is set or a state is not understood
-  (`unknown`). An archived session of the tree holds nothing. The delivery closes `clean`
+  (`unknown`). An archived session of the tree holds nothing. Two things are no hold and keep
+  no reason, but stop a read from closing the delivery: a child's answer its idle parent has not
+  read (#4643), and a peer message still on its way to a session of the tree (`pendingPeers`,
+  #5270), for up to 15 minutes after the later of the newest one's queue time and the session's
+  last turn end (a stopped session's row has none). The delivery closes `clean`
   on the second read in a row that finds none of these, and `aborted` when its session is
   archived or gone from the Agent's list. Each read is kept first (`held_by`,
   `held_session`, `held_seen_at`, `idle_ticks`, `progress_seen_at`), as one conditional

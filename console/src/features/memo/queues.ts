@@ -718,7 +718,6 @@ const HELD_KEYS: Record<string, MsgKey> = {
   person: "memo.d_held_person",
   limit: "memo.d_held_limit",
   wakers: "memo.d_held_wakers",
-  peer: "memo.d_held_peer",
   unknown: "memo.d_held_unknown",
 };
 

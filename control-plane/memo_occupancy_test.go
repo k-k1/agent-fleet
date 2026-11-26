@@ -169,16 +169,6 @@ func TestMemoOccupancyTreeAndOtherHolds(t *testing.T) {
 		"a machine at work outranks a carried interaction": {func(a *fakeQueueAgent, root string) {
 			a.setRow(root, map[string]any{"carriedLive": "plan", "state": "working", "progressAgeSec": 5})
 		}, store.HeldMachine},
-		"a peer message on its way to a child": {func(a *fakeQueueAgent, root string) {
-			a.child("c1", root, map[string]any{"pendingPeers": map[string]any{"count": 1, "newestAt": time.Now().UTC().Format(time.RFC3339)}})
-		}, store.HeldPeer},
-		"a usage limit outranks a peer message": {func(a *fakeQueueAgent, root string) {
-			a.setRow(root, map[string]any{"state": "limited", "pendingPeers": map[string]any{"count": 1, "newestAt": time.Now().UTC().Format(time.RFC3339)}})
-		}, store.HeldLimit},
-		"a peer message outranks a watch": {func(a *fakeQueueAgent, root string) {
-			a.setRow(root, map[string]any{"wakers": map[string]any{"watches": 1, "timers": 0}})
-			a.child("c1", root, map[string]any{"pendingPeers": map[string]any{"count": 2, "newestAt": time.Now().UTC().Format(time.RFC3339)}})
-		}, store.HeldPeer},
 		"a child not started by a session is not in the tree": {func(a *fakeQueueAgent, root string) {
 			a.child("c1", root, map[string]any{"state": "working", "origin": "", "progressAgeSec": 5})
 		}, ""},
@@ -1186,11 +1176,11 @@ func TestMemoChildAnswerUnreadBounds(t *testing.T) {
 	}
 }
 
-// #5270: a run is not closed while a peer message to a member of its tree is on its way. It
-// closes on the usual two clear reads once the message has landed, and, for one that never
-// lands, once memoPeerHoldBound has passed since the later of its queue time and the member's
-// last turn end.
-func TestMemoOccupancyPeerMessageInTransitHolds(t *testing.T) {
+// #5270: a run is not closed while a peer message to a member of its tree is on its way. It is no
+// hold: nothing is kept as the reason, so the run closes as soon as the message has landed (the
+// clear reads were already counted), and, for one that never lands, once memoPeerHoldBound has
+// passed since the later of its queue time and the member's last turn end.
+func TestMemoOccupancyPeerMessageInTransitKeepsTheRunOpen(t *testing.T) {
 	ts := func(x time.Time) string { return x.UTC().Format(time.RFC3339) }
 	t0 := time.Now().Truncate(time.Second)
 	pending := func(at time.Time) map[string]any { return map[string]any{"count": 1, "newestAt": ts(at)} }
@@ -1203,16 +1193,14 @@ func TestMemoOccupancyPeerMessageInTransitHolds(t *testing.T) {
 				r.settle(context.Background(), t0.Add(time.Duration(i)*time.Minute))
 			}
 			got := e.delivery(d.ID)
-			if got.State != store.DeliveryOpen || got.HeldBy != store.HeldPeer || got.HeldSession != "rev" || agent.retireCalls() != 0 {
-				t.Fatalf("closed under a message in transit: %+v", got)
+			if got.State != store.DeliveryOpen || got.HeldBy != "" || agent.retireCalls() != 0 {
+				t.Fatalf("closed, or kept a hold, under a message in transit: %+v", got)
 			}
-			// Landed: the row no longer reports it, and the usual two clear reads close the run.
+			// Landed: the row no longer reports it, and the next clear read closes the run.
 			agent.setRow("rev", map[string]any{"pendingPeers": nil})
-			r.settle(context.Background(), t0.Add(7*time.Minute))
-			if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.HeldBy != "" {
-				t.Fatalf("first clear read: %+v", got)
+			for i := 7; i <= 8; i++ {
+				r.settle(context.Background(), t0.Add(time.Duration(i)*time.Minute))
 			}
-			r.settle(context.Background(), t0.Add(8*time.Minute))
 			if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryClean {
 				t.Fatalf("not closed after the message landed: %+v", got)
 			}
@@ -1221,20 +1209,66 @@ func TestMemoOccupancyPeerMessageInTransitHolds(t *testing.T) {
 	t.Run("never delivered", func(t *testing.T) {
 		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
 			agent, d := e.openReported(nil)
-			// Queued long ago, but the member's turn ended later: the bound counts from the end.
-			agent.child("rev", d.Session, map[string]any{"alive": false, "state": "", "lastTurnEndAt": ts(t0), "pendingPeers": pending(t0.Add(-time.Hour))})
+			// Queued long ago and refused on every try, but the member's turn ended later: the
+			// bound counts from the end.
+			agent.child("rev", d.Session, map[string]any{"lastTurnEndAt": ts(t0), "pendingPeers": pending(t0.Add(-time.Hour))})
 			r := e.runner()
 			for i := 3; i >= 1; i-- {
 				r.settle(context.Background(), t0.Add(memoPeerHoldBound-time.Duration(i)*time.Second))
 			}
-			if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.HeldBy != store.HeldPeer {
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
 				t.Fatalf("closed inside the bound: %+v", got)
 			}
-			for i := 0; i < 2; i++ {
-				r.settle(context.Background(), t0.Add(memoPeerHoldBound+time.Duration(i)*time.Second))
+			r.settle(context.Background(), t0.Add(memoPeerHoldBound))
+			if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryClean {
+				t.Fatalf("an undeliverable message kept the run open past the bound: %+v", got)
+			}
+		})
+	})
+	t.Run("stopped member counts from the queue time", func(t *testing.T) {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(nil)
+			// A stop clears the turn record, so a stopped row has no lastTurnEndAt.
+			agent.child("rev", d.Session, map[string]any{"alive": false, "state": "", "pendingPeers": pending(t0)})
+			r := e.runner()
+			for i := 1; i <= 3; i++ {
+				r.settle(context.Background(), t0.Add(time.Duration(i)*time.Minute))
+			}
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen {
+				t.Fatalf("closed inside the bound: %+v", got)
+			}
+			r.settle(context.Background(), t0.Add(memoPeerHoldBound))
+			if got := e.delivery(d.ID); got.State != store.DeliveryClosed {
+				t.Fatalf("not closed after the bound: %+v", got)
+			}
+		})
+	})
+	t.Run("a stronger hold is kept as the reason", func(t *testing.T) {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(nil)
+			agent.setRow(d.Session, map[string]any{"wakersUnknown": true, "pendingPeers": pending(t0)})
+			e.runner().settle(context.Background(), t0.Add(time.Minute))
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.HeldBy != store.HeldUnknown {
+				t.Fatalf("want held by unknown: %+v", got)
+			}
+		})
+	})
+	// The workspace stops right after a read that saw a message in transit: no hold was kept, so
+	// the run closes from the mirror as it would on main, instead of staying open until a start.
+	t.Run("workspace stopped", func(t *testing.T) {
+		eachDeliveryDialect(t, func(t *testing.T, e *deliveryEnv) {
+			agent, d := e.openReported(nil)
+			agent.setRow(d.Session, map[string]any{"pendingPeers": pending(time.Now())})
+			e.settleNow(time.Now())
+			if got := e.delivery(d.ID); got.State != store.DeliveryOpen || got.HeldBy != "" {
+				t.Fatalf("setup: %+v", got)
+			}
+			e.stopWorkspace(agent, d.Session, "")
+			for i := 0; i < 3; i++ {
+				e.settleNow(time.Now())
 			}
 			if got := e.delivery(d.ID); got.State != store.DeliveryClosed || got.Outcome != store.DeliveryClean {
-				t.Fatalf("an undeliverable message held the run past the bound: %+v", got)
+				t.Fatalf("a stopped workspace kept the run open: %+v", got)
 			}
 		})
 	})

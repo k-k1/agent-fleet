@@ -130,7 +130,6 @@ const (
 	HeldPerson  = "person"
 	HeldLimit   = "limit"
 	HeldWakers  = "wakers"
-	HeldPeer    = "peer"
 	HeldUnknown = "unknown"
 )
 

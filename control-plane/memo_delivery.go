@@ -1033,7 +1033,7 @@ func deliveryTree(rows []sessionWire, root string) []*sessionWire {
 }
 
 // hold ranks (store Held*): what is shown for a tree is the strongest reason found in it.
-var memoHoldRank = map[string]int{"": 0, store.HeldUnknown: 1, store.HeldWakers: 2, store.HeldPeer: 3, store.HeldLimit: 4, store.HeldPerson: 5, store.HeldMachine: 6}
+var memoHoldRank = map[string]int{"": 0, store.HeldUnknown: 1, store.HeldWakers: 2, store.HeldLimit: 3, store.HeldPerson: 4, store.HeldMachine: 5}
 
 // sessionHold is why one session of a delivery's tree keeps the delivery open, "" when it does
 // not (ADR 0137 section 6, the table). bgMax is 0 as the rule has always been: the reaper's
@@ -1062,9 +1062,6 @@ func sessionHold(s sessionWire, now time.Time) string {
 	}
 	if why == "" && (s.State == stateLimited || s.RateLimitResumeAt != "") {
 		why = store.HeldLimit
-	}
-	if why == "" && peerInTransit(s, now) {
-		why = store.HeldPeer
 	}
 	if why == "" && s.Wakers != nil && (s.Wakers.Watches > 0 || s.Wakers.Timers > 0) {
 		why = store.HeldWakers
@@ -1242,18 +1239,18 @@ func childAnswerUnread(tree []*sessionWire, now time.Time) bool {
 	return false
 }
 
-// memoPeerHoldBound is how long a peer message on its way to a member keeps the run open
+// memoPeerHoldBound is how long a peer message on its way to a member keeps the run from closing
 // (#5270), counted from the later of the newest message's queue time and the member's last turn
-// end. A message is delivered seconds after its target can take it, which is when a turn ends;
-// one still waiting this long after both cannot be delivered (the target is stopped, or refuses
-// it again on every try), and without the bound it would hold the run until the Agent's own
-// 24-hour expiry.
+// end as its row reports it (a stopped session's row has none). A message is delivered seconds
+// after its target can take it, which is when a turn ends; one still waiting this long after
+// both cannot be delivered (the target is stopped, or refuses it again on every try), and
+// without the bound it would keep the run open until the Agent's own 24-hour expiry.
 const memoPeerHoldBound = 15 * time.Minute
 
 // peerInTransit reports whether a peer message to s has not reached it yet and is within
 // memoPeerHoldBound. Both times are the Agent's, read as childAnswerUnread reads them: one up to
 // memoClockSkew ahead counts as now, one further ahead is a bad clock and starts no bound. A
-// queue time that does not parse cannot be bounded and holds nothing.
+// queue time that does not parse cannot be bounded and keeps nothing open.
 func peerInTransit(s sessionWire, now time.Time) bool {
 	p := s.PendingPeers
 	if p == nil || p.Count <= 0 {
@@ -1269,6 +1266,17 @@ func peerInTransit(s sessionWire, now time.Time) bool {
 		}
 	}
 	return now.Sub(from) < memoPeerHoldBound
+}
+
+// treePeerInTransit reports whether a peer message is on its way to a member of the tree
+// (peerInTransit). An archived member receives nothing.
+func treePeerInTransit(tree []*sessionWire, now time.Time) bool {
+	for _, s := range tree {
+		if !s.Archived && peerInTransit(*s, now) {
+			return true
+		}
+	}
+	return false
 }
 
 // staleRead reports whether more than r.staleReadMax has passed since the session list arrived, as when the
@@ -1312,8 +1320,11 @@ func (r *memoQueueRunner) closeIfDoneReported(ctx context.Context, v *memoMember
 	}
 	why, who, progress := treeHold(tree, now)
 	// Not a hold: no reason is kept, so a stopped workspace and the overdue retire behave as
-	// they do for any idle tree. It only keeps this read from closing the delivery.
-	unread := why == "" && childAnswerUnread(tree, now)
+	// they do for any idle tree. It only keeps this read from closing the delivery. A child's
+	// unread answer and a peer message on its way to a member (#5270) are both such reads: kept
+	// as a hold, a message would keep a stopped workspace's run open past its bound (only a live
+	// read moves it) and turn the first read after an overdue person's answer into a retire.
+	unread := why == "" && (childAnswerUnread(tree, now) || treePeerInTransit(tree, now))
 	gen, numbered := v.gens[d.ID]
 	if !numbered {
 		// No number for this read (the delivery opened after the numbers were handed out, or the

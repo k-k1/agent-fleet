@@ -418,11 +418,11 @@ A run stays open until its session has nothing left to wait for. While any of th
 | working | The session is working |
 | waiting for you | It asks you a question, for a plan's approval or for permission |
 | waiting for a usage limit | It waits for the agent's usage limit to lift |
-| waiting for a peer message to arrive | A message from another session to it, or to one of its children, has not been delivered yet |
 | waiting on a watch or a timer | It is set to carry on later through a watch or a timer |
 | not known | The state cannot be read |
 
 - Sessions it started count too. While a child is working, the run is not over ([Start child sessions from a session](../fleet/child-sessions.md))
+- A message between sessions that has not reached the session or one of its children yet also keeps the run going, without a reason shown. This lasts 15 minutes at most after the message was sent or that session last finished a turn, whichever is later
 - When none of these holds on two checks in a row, the run becomes "Done". The checks are about a minute apart
 - "As of …" on the reason is when it was last read
 - An open run uses one of the "Sessions at the same time". While all of them are used, no new run starts
@@ -623,7 +623,6 @@ Read "Not finished" in the run history.
 
 - "waiting for you": open the session and answer the question, permission or plan. Its place is not freed until you do. This holds after the session was stopped too: the question stays on the stopped session's card, and you answer it there with "**Answer and resume**" without starting the session first. A session you started again without answering the kept question still counts as waiting for you, until you answer or discard the card
 - "waiting on a watch or a timer": while a later restart is set, the run does not end. The reason names the watches (id and source, for example "w_42 (github)"), up to five. Nothing else of a watch is shown, and a run recorded without names just says "waiting on a watch or a timer". Stop the watch or the timer in the session if you do not need it
-- "waiting for a peer message to arrive": a message between sessions waits to be delivered, usually for the session to finish its turn. This holds the run for 15 minutes at most after the message was sent or the session last finished a turn, whichever is later
 - "waiting for a usage limit": it waits for the limit to lift, and carries on by itself afterwards
 - "working": the session or one of its children is running. When the "A run is overdue" notification comes, the run has passed the time you set. After an hour without a sign of work, it is stopped by itself
 

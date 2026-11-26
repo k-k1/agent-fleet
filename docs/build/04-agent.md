@@ -107,7 +107,8 @@ and execution state.** `kind` is the agent; `driver` is how it is controlled.
   - `pendingPeers: {count, newestAt}` counts the peer messages addressed to the session that have
     not reached it: the pending spool (waiting for its user), the one claimed from it and in
     `/input`, and held peer input a Managed runtime has not taken. `newestAt` is the newest one's
-    queue time. Omitted when there are none (`fillPendingPeers`,
+    queue time. A message being handed to a Managed runtime that queues it can be counted twice
+    until `/input` returns, so the count is an upper bound. Omitted when there are none (`fillPendingPeers`,
     `internal/sessionx/peer_pending.go`, #5270).
   - `GET /sessions` carries `"queueReport": 1` beside `sessions`, so a Control Plane can tell an
     Agent that omits `wakers` because the session holds nothing from an older one that does not say.
