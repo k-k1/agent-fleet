@@ -41,12 +41,14 @@ export const LABEL_TAG_RE = /^\[AF(?::[A-Za-z0-9][A-Za-z0-9_-]*)?\]\s*/;
 export const stripLabelTag = (label: string): string => label.replace(LABEL_TAG_RE, "").trim();
 
 // displayName: the user-supplied title when set (any kind); else a claude session's
-// --name minus the "[AF:<name>] " tag; else "{repo} @MMDD-HHMM". The kind is shown by the
+// --name minus the "[AF:<name>] " tag; else "{repo} @MMDD-HHMM", with the directory's own name
+// standing in for a space or home session, which records no repo. The kind is shown by the
 // badge, so no [AF]/[SH] prefix is needed. namedByLabel is false only for shell.
 export const displayName = (s: Session): string => {
   if (s.title) return s.title;
   if (agentOf(s.kind).caps.namedByLabel && s.label) return stripLabelTag(s.label);
-  return `${s.repo || s.name} @${stamp(s.createdAt)}`;
+  const dirName = (s.dir || s.path || "").split("/").filter(Boolean).pop();
+  return `${s.repo || dirName || s.name} @${stamp(s.createdAt)}`;
 };
 
 // What stateInfo actually reads. Structural on purpose: Session satisfies it, and so

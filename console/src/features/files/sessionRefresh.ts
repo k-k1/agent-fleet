@@ -29,6 +29,7 @@ import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
 import { COALESCE_MS, MIN_GAP_MS, WORKING_TICK_MS } from "./refreshPolicy.ts";
 import { useFilesStore } from "./store.ts";
 import type { Session } from "../../types/session.ts";
+import { sessionRepo } from "../../lib/project.ts";
 
 /** The running states. Everything else (idle / question / plan / permission / limited /
  *  blocked / auth ...) means the turn ended and it is the human's move, and all of them
@@ -46,7 +47,10 @@ export const isBusySession = (s: Pick<Session, "alive" | "state" | "backgroundBu
  *  shell running in home, say) gets "" — no range can be determined, so nothing happens.
  *  Rounded to the working copy even when a subdir is set: agents routinely touch files
  *  outside their cwd. */
-export const sessionPrefix = (s: Pick<Session, "repo">): string => (s.repo ? "repos/" + s.repo : "");
+export const sessionPrefix = (s: Pick<Session, "place" | "space" | "repo">): string => {
+  const repo = sessionRepo(s);
+  return repo ? "repos/" + repo : "";
+};
 
 // The timing constants and the reasoning behind them live in refreshPolicy.ts, shared
 // between the side that fires and the side that reads.

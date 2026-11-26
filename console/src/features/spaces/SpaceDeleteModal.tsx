@@ -12,7 +12,7 @@ import { errText } from "../../core/api/client.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import type { Session } from "../../types/session.ts";
-import { isTerminalSession } from "../../lib/project.ts";
+import { isTerminalSession, sessionSpace } from "../../lib/project.ts";
 import { displayName } from "../../lib/sessionview.ts";
 import { deleteSpace, spacesOwner, useSpacesStore } from "./store.ts";
 
@@ -50,7 +50,7 @@ export function SpaceDeleteModal({
   );
   const all = useSessionsStore((s) => s.sessions);
   const inSpace = (s: Session) =>
-    s.space === folder ||
+    sessionSpace(s) === folder ||
     (!!dir && !!s.dir && (s.dir === dir || s.dir.startsWith(dir + "/")));
   const current = all.filter(inSpace);
   // What the member read: frozen, so a press never lands on a set they did not see. When the

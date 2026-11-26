@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -1719,10 +1718,11 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	// Fresh identity, same slot. No ForkFrom — recreate means "start empty", not
 	// "re-copy the fork source". The driver is inherited: a slot created managed is
 	// recreated managed (docs/log/27 P2).
+	place := PlaceOf(m.Dir)
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
 		Kind: m.Kind, Driver: m.Driver, Route: m.Route.Clone(), SkipPermissions: m.SkipPermissions, SpendCapUSD: m.SpendCapUSD,
-		MuseContributorMode: m.MuseContributorMode, Title: m.Title, Color: m.Color, Repo: m.Repo, Place: PlaceOf(m.Dir), Branch: gitx.GitCurrentBranch(m.Dir),
+		MuseContributorMode: m.MuseContributorMode, Title: m.Title, Color: m.Color, Place: place, Repo: repoName(place, m.Dir), Branch: gitx.GitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
@@ -1811,6 +1811,7 @@ func forkSids(src session.Meta) []string {
 // real fork, which needs a real source conversation.
 func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) session.Meta {
 	now := time.Now()
+	place := PlaceOf(src.Dir)
 	return session.Meta{
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
@@ -1821,8 +1822,8 @@ func forkMeta(src session.Meta, forkName, title, forkFrom, forkAt string) sessio
 		// The budget value carries over, the hit does not: the fork's spend starts from the
 		// instant it was made, to the sub-second (SpendFrom), so it has spent nothing yet.
 		SpendCapUSD: src.SpendCapUSD, SpendFrom: now.Format(time.RFC3339Nano),
-		Repo:      filepath.Base(src.Dir),
-		Place:     PlaceOf(src.Dir),
+		Place:     place,
+		Repo:      repoName(place, src.Dir),
 		Branch:    gitx.GitCurrentBranch(src.Dir),
 		CreatedAt: now.Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
 		ForkSids: forkSids(src),

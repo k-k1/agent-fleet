@@ -135,6 +135,24 @@ describe("activeGroups", () => {
     expect(activeGroups([s("y", { repo: "removed" })], [], spaces, null, new Set(), undefined, true)[0].kind).toBe("other");
   });
 
+  // #5219: a row may carry the place but no `space` (the Control Plane's mirror serves those), and
+  // an older Agent still wrote the space's folder into `repo`.
+  it("files a space by its stored place, never under the repository of the same name", () => {
+    const named = [repo("s1", { remote: "github.com", remotePath: "acme/s1" })];
+    const list = [
+      s("r", { repo: "s1", place: { kind: "repo", id: "s1" } }),
+      s("live", { repo: "", space: "s1", place: { kind: "space", id: "s1" } }),
+      s("nospace", { repo: "s1", place: { kind: "space", id: "s1" } }),
+      s("home", { repo: "", place: { kind: "home" }, dir: "/home/s1" }),
+    ];
+    const groups = activeGroups(list, named, spaces, null);
+    expect(groups.map((g) => [g.kind, g.label, names(g.sessions).sort()])).toEqual([
+      ["repo", "s1", ["r"]],
+      ["space", "Research", ["live", "nospace"]],
+      ["other", "", ["home"]],
+    ]);
+  });
+
   it("names a space by its folder until the list knows it", () => {
     expect(activeGroups([s("sp", { space: "s9" })], [], spaces, null)[0].label).toBe("s9");
   });

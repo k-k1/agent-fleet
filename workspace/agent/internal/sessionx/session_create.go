@@ -799,13 +799,14 @@ func (c *createRun) identify() bool {
 // studio is bound here, as the last step before the launch.
 func (c *createRun) armMeta() (session.Meta, bool) {
 	req := c.req
+	place := PlaceOf(req.Dir)
 	meta := session.Meta{
 		Name: c.name, Dir: req.Dir, Subdir: c.subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: c.kind, Driver: c.driver, Title: c.title, Color: req.Color, Label: c.label,
 		// Validated in validateRoute and checkRoute; nil stays nil, so a create without a
 		// selection writes the meta it always did.
 		Route:           req.Route.Normalize(),
 		SkipPermissions: req.SkipPermissions,
-		Repo:            filepath.Base(req.Dir), Place: PlaceOf(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
+		Place:           place, Repo: repoName(place, req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: c.ssm,
 		Origin: c.origin, OriginConv: c.originConv, OriginSession: c.originSession,
 		Studio: c.studio, WorkItem: cleanWorkItemRef(req.WorkItem),

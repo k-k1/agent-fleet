@@ -254,16 +254,27 @@ func TestPlaceSpaceAndRepositoryOfOneNameStayApart(t *testing.T) {
 	for _, body := range []map[string]any{
 		{"kind": "shell", "dir": p.repo},
 		{"kind": "shell", "space": map[string]any{"folder": "app"}},
+		{"kind": "shell", "dir": homeDir()},
 	} {
 		if rec := p.post(body, ""); rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
 			t.Fatalf("create %v: %d %s", body, rec.Code, rec.Body)
 		}
 	}
 	places := map[string]*session.Place{}
+	repos := map[string]string{}
 	for _, m := range session.ListMetas() {
-		if m.Dir == p.repo || m.Dir == spaceDir {
+		if m.Dir == p.repo || m.Dir == spaceDir || m.Dir == homeDir() {
 			places[m.Dir] = m.Place
+			repos[m.Dir] = m.Repo
 		}
+	}
+	// Repo names a working copy only: a space and home record none, so neither passes for the
+	// repository named like its folder.
+	if repos[p.repo] != "app" || repos[spaceDir] != "" || repos[homeDir()] != "" {
+		t.Errorf("Repo by dir = %q", repos)
+	}
+	if h := places[homeDir()]; h == nil || h.Kind != session.PlaceHome {
+		t.Errorf("home session place = %+v", h)
 	}
 	repo, space := places[p.repo], places[spaceDir]
 	if repo == nil || *repo != (session.Place{Kind: session.PlaceRepo, ID: "app"}) {
@@ -334,11 +345,16 @@ func TestForkAndRecreateStoreThePlace(t *testing.T) {
 	isolateAgentState(t)
 	spaceDir := placeSpace(t, "kept")
 	want := session.Place{Kind: session.PlaceSpace, ID: "kept"}
-	if got := forkMeta(session.Meta{Name: "plsrc", Dir: spaceDir, Kind: session.KindShell}, "plfork", "", "plsrc", "").Place; got == nil || *got != want {
+	fork := forkMeta(session.Meta{Name: "plsrc", Dir: spaceDir, Kind: session.KindShell, Repo: "kept"}, "plfork", "", "plsrc", "")
+	if got := fork.Place; got == nil || *got != want {
 		t.Errorf("fork place = %+v, want %+v", got, want)
 	}
+	if fork.Repo != "" {
+		t.Errorf("fork of a space session records Repo %q", fork.Repo)
+	}
 
-	session.WriteMeta(session.Meta{Name: "plrecr", Dir: spaceDir, Kind: session.KindShell})
+	// Repo as an Agent from before the place was stored wrote it: the space's folder name.
+	session.WriteMeta(session.Meta{Name: "plrecr", Dir: spaceDir, Kind: session.KindShell, Repo: "kept"})
 	if rec := callHandler(HandleRecreateSession, http.MethodPost, "plrecr", ""); rec.Code != http.StatusOK {
 		t.Fatalf("recreate: %d %s", rec.Code, rec.Body)
 	}
@@ -354,5 +370,27 @@ func TestForkAndRecreateStoreThePlace(t *testing.T) {
 	}
 	if fresh.Place == nil || *fresh.Place != want {
 		t.Errorf("recreate place = %+v, want %+v", fresh.Place, want)
+	}
+	if fresh.Repo != "" {
+		t.Errorf("recreate copied Repo %q instead of deriving it from the place", fresh.Repo)
+	}
+}
+
+// The handoff context names the working copy by the same rule as the meta: none for a space.
+func TestHandoffContextNamesNoRepositoryForASpace(t *testing.T) {
+	isolateAgentState(t)
+	spaceDir := placeSpace(t, "app")
+	if got := buildHandoffContext(spaceDir).Repo; got != "" {
+		t.Errorf("space handoff context repo = %q", got)
+	}
+	if got := buildHandoffContext(homeDir()).Repo; got != "" {
+		t.Errorf("home handoff context repo = %q", got)
+	}
+	other := filepath.Join(homeDir(), "projects", "app")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := buildHandoffContext(other).Repo; got != "app" {
+		t.Errorf("other directory handoff context repo = %q, want its base name", got)
 	}
 }

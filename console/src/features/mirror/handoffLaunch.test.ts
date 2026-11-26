@@ -75,6 +75,12 @@ describe("handoffLaunchTarget", () => {
       expect(handoffLaunchTarget(inSpace({ worktree: true }), [GIT, WT], true)).toMatchObject({ space: "research-aaa" });
     });
 
+    it("takes the space from the stored place on a row that carries no space (#5219)", () => {
+      const clash: Repo = { name: "research-aaa", path: "/home/dev/repos/research-aaa", branch: "main" };
+      const stopped = sess({ repo: "research-aaa", place: { kind: "space", id: "research-aaa" }, dir: "/home/dev/spaces/research-aaa" });
+      expect(handoffLaunchTarget(stopped, [clash], false)).toEqual({ space: "research-aaa", dir: "/home/dev/spaces/research-aaa" });
+    });
+
     it("needs no directory to name the space", () => {
       expect(handoffLaunchTarget(inSpace({ dir: undefined }), [], false)).toEqual({ space: "research-aaa", dir: "" });
     });

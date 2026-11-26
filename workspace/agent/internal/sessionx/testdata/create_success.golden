@@ -44,8 +44,8 @@ meta {"name":"$NAME","dir":"$HOME/repos/app","model":"","kind":"claude","launchR
 == tui_ssm
 status 201
 header Content-Type: application/json
-body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME\",\"kind\":\"ssm\",\"origin\":\"user\",\"repo\":\"002\",\"place\":{\"kind\":\"home\"},\"title\":\"box\",\"ssm\":{\"target\":\"i-0123\",\"region\":\"ap-northeast-1\",\"profile\":\"dev\"},\"planReviewers\":[],\"display\":\"box\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME1\",\"remoteUrl\":\"\",\"state\":\"\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false}\n"
-meta {"name":"$NAME","dir":"$HOME","model":"","kind":"ssm","title":"box","color":"","label":"","repo":"002","place":{"kind":"home"},"createdAt":"$TIME1","stoppedAt":"","archived":false,"origin":"user","ssm":{"profile":"dev","target":"i-0123","document":"","region":"ap-northeast-1","startUrl":"","ssoRegion":"ap-northeast-1","accountId":"","roleName":""}}
+body "{\"name\":\"$NAME\",\"tmux\":\"claude_$NAME\",\"dir\":\"$HOME\",\"kind\":\"ssm\",\"origin\":\"user\",\"repo\":\"\",\"place\":{\"kind\":\"home\"},\"title\":\"box\",\"ssm\":{\"target\":\"i-0123\",\"region\":\"ap-northeast-1\",\"profile\":\"dev\"},\"planReviewers\":[],\"display\":\"box\",\"color\":\"\",\"label\":\"\",\"started\":\"$STARTED\",\"createdAt\":\"$TIME1\",\"remoteUrl\":\"\",\"state\":\"\",\"alive\":true,\"resumable\":true,\"backgroundBusy\":false}\n"
+meta {"name":"$NAME","dir":"$HOME","model":"","kind":"ssm","title":"box","color":"","label":"","repo":"","place":{"kind":"home"},"createdAt":"$TIME1","stoppedAt":"","archived":false,"origin":"user","ssm":{"profile":"dev","target":"i-0123","document":"","region":"ap-northeast-1","startUrl":"","ssoRegion":"ap-northeast-1","accountId":"","roleName":""}}
 == tui_shell_label
 status 201
 header Content-Type: application/json

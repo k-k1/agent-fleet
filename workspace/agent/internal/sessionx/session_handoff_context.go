@@ -19,7 +19,6 @@ package sessionx
 import (
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
@@ -109,7 +108,7 @@ func gitHasUpstream(dir string) bool {
 // buildHandoffContext folds dir's state into one answer. When dir is not a git working
 // copy, Vcs is left empty (or set to svn) and no gate is evaluated.
 func buildHandoffContext(dir string) handoffContext {
-	c := handoffContext{Repo: filepath.Base(dir), Dir: dir, WorkingCopyID: gitx.WorkingCopyID(dir)}
+	c := handoffContext{Repo: repoName(PlaceOf(dir), dir), Dir: dir, WorkingCopyID: gitx.WorkingCopyID(dir)}
 	switch {
 	case gitx.IsGitRepo(dir):
 		c.Vcs = "git"

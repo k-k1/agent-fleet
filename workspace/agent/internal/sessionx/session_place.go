@@ -53,6 +53,17 @@ func PlaceOf(dir string) *session.Place {
 	return &session.Place{Kind: session.PlaceRepo, ID: folder}
 }
 
+// repoName is what a meta records in Repo for a session in dir placed at p: the directory's base
+// name, except for a space or the home directory, which are no working copy. Without the
+// exception a space would pass for the repository that shares its folder name, and a home
+// session for a repository named after the member.
+func repoName(p *session.Place, dir string) string {
+	if p != nil && (p.Kind == session.PlaceSpace || p.Kind == session.PlaceHome) {
+		return ""
+	}
+	return filepath.Base(dir)
+}
+
 // splitPhysical splits dir into the directory holding its last element and that element,
 // without letting filepath.Clean fold a ".." across a symlink: a parent spelt with ".." is
 // resolved, and a last element of ".." is resolved whole. Trailing "/" and "/." name the

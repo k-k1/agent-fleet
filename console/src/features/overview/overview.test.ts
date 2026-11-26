@@ -45,6 +45,21 @@ describe("overviewGroups", () => {
     expect(groups[1].sessions.map((x) => x.name)).toEqual(["z"]);
   });
 
+  it("keeps a space, home and other directories out of the repository named like them (#5219)", () => {
+    const repos = [repo("foo"), repo("dev")];
+    const list = [
+      s("r", { repo: "foo", place: { kind: "repo", id: "foo" } }),
+      s("sp", { repo: "foo", place: { kind: "space", id: "foo" } }),
+      s("home", { repo: "dev", place: { kind: "home" } }),
+      s("o", { repo: "foo", place: { kind: "other" } }),
+    ];
+    const groups = overviewGroups(list, repos, null, false);
+    expect(groups.map((g) => [g.label, g.sessions.map((x) => x.name).sort()])).toEqual([
+      ["foo", ["r"]],
+      ["", ["home", "o", "sp"]],
+    ]);
+  });
+
   it("counts the running cards per heading", () => {
     const list = [s("a"), s("b", { alive: false })];
     const groups = overviewGroups(list, [], null, true);

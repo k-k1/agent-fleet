@@ -1202,7 +1202,12 @@ func Display(m Meta) string {
 	if m.Label != "" {
 		return StripLabel(m.Label)
 	}
+	// The directory's own name stands in where Repo is empty: a space or home session records
+	// none, and it would otherwise be shown by its opaque slug.
 	base := m.Repo
+	if base == "" && m.Dir != "" {
+		base = filepath.Base(m.Dir)
+	}
 	if base == "" {
 		base = m.Name
 	}

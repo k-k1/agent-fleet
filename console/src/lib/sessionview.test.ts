@@ -323,6 +323,15 @@ describe("stripLabelTag", () => {
     expect(stripLabelTag("[AF:日本語] t")).toBe("[AF:日本語] t");
   });
 
+  it("displayName names a space or home session by its directory, which records no repo (#5219)", () => {
+    const at = "2026-08-31T10:22:00Z";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const name = (o: object) => displayName({ name: "s6bbilu", kind: "codex", createdAt: at, ...o } as any);
+    expect(name({ repo: "", dir: "/home/dev/spaces/notes" })).toBe(name({ repo: "notes" }));
+    expect(name({ repo: "", dir: "/home/dev/spaces/notes" }).startsWith("notes @")).toBe(true);
+    expect(name({ repo: "" }).startsWith("s6bbilu @")).toBe(true);
+  });
+
   it("displayName falls back to the tag-stripped label when there is no title", () => {
     const s = { name: "s6bbilu", kind: "claude", label: "[AF:s6bbilu] agent-fleet @0831-1922" };
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
