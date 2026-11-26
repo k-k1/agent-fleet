@@ -567,3 +567,39 @@ func TestPlaceOfDotDotOverALinkIntoASpace(t *testing.T) {
 		t.Errorf("a .. over a real directory: %+v", got)
 	}
 }
+
+// #5278: the ".." guard must not move home, which a link leads back to wherever it points
+// (main: home), and a session stored as "other" for a dir that reaches a space through a link
+// still gets the space handoff consent.
+func TestPlaceOfHomeThroughALinkStaysHome(t *testing.T) {
+	isolateAgentState(t)
+	if err := os.MkdirAll(filepath.Join(homeDir(), "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(homeDir(), "src"), filepath.Join(homeDir(), "current")); err != nil {
+		t.Fatal(err)
+	}
+	if got := PlaceOf(filepath.Join(homeDir(), "current") + "/.."); got.Kind != session.PlaceHome {
+		t.Errorf("home through a link: %+v", got)
+	}
+}
+
+func TestHandoffContextOfALinkedSpaceRowAsksTheSpaceConsent(t *testing.T) {
+	isolateAgentState(t)
+	b := placeSpace(t, "notes-b")
+	if err := os.MkdirAll(filepath.Join(b, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(homeDir(), "current")
+	if err := os.Symlink(filepath.Join(b, "src"), link); err != nil {
+		t.Fatal(err)
+	}
+	m := session.Meta{Dir: link + "/..", Place: PlaceOf(link + "/..")}
+	if m.Place.Kind != session.PlaceOther {
+		t.Fatalf("place %+v", m.Place)
+	}
+	c := handoffContextFor(m)
+	if !c.Space || c.Warning != handoffWarnSpace || c.Repo != "" {
+		t.Errorf("context %+v", c)
+	}
+}

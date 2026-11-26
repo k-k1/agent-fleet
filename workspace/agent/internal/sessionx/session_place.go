@@ -26,17 +26,17 @@ func PlaceOf(dir string) *session.Place {
 	if dir == "" || !filepath.IsAbs(dir) {
 		return other
 	}
+	if sameDir(dir, homeDir()) {
+		return &session.Place{Kind: session.PlaceHome}
+	}
 	if crossesLink(dir) {
-		// Judged before the space: a space is no more stable than a copy behind a link that a
-		// ".." cancels, and the stored place would go on naming the old space after the link
-		// is re-pointed (#5278).
+		// Judged before the space as well as the copy: the stored place would go on naming the
+		// old space after the link is re-pointed (#5278). Home is told first: it is the one
+		// directory that is the same wherever a link leads back to it.
 		return other
 	}
 	if f := spacex.FolderOf(dir); f != "" {
 		return &session.Place{Kind: session.PlaceSpace, ID: f}
-	}
-	if sameDir(dir, homeDir()) {
-		return &session.Place{Kind: session.PlaceHome}
 	}
 	parent, folder, ok := splitPhysical(dir)
 	if !ok {

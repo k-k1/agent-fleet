@@ -17,6 +17,7 @@ package sessionx
 // condition would live in two places and would drift.
 
 import (
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/spacex"
 	"net/http"
 	"net/url"
 	"strings"
@@ -166,8 +167,11 @@ func handoffContextFor(m session.Meta) handoffContext {
 	c := buildHandoffContext(m.Dir)
 	place := handoffPlace(m)
 	c.Repo = repoName(place, m.Dir)
-	if place.Kind == session.PlaceSpace {
+	// A row stored as "other" because its dir reaches a space through a link (#5278) is still run
+	// in that space now, so the files-stay consent applies to it too.
+	if place.Kind == session.PlaceSpace || (place.Kind == session.PlaceOther && spacex.FolderOf(m.Dir) != "") {
 		c.Space = true
+		c.Repo = ""
 		c.Warning = handoffWarnSpace
 	}
 	return c

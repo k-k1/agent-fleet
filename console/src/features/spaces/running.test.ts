@@ -49,6 +49,7 @@ describe("sessionInSpace", () => {
   it("goes by the Agent's current space over a stale stored place (#5278)", () => {
     const row = { name: "m", space: "b", place: { kind: "space", id: "a" }, dir: "/home/dev/links/current/.." } as Session;
     expect(sessionInSpace(row, "a", "/home/dev/spaces/a")).toBe(false);
-    expect(sessionInSpace(row, "b", "/home/dev/spaces/b")).toBe(true);
+    // the Agent's delete takes only what runs at or under the directory, so b does not claim it
+    expect(sessionInSpace(row, "b", "/home/dev/spaces/b")).toBe(false);
   });
 });
