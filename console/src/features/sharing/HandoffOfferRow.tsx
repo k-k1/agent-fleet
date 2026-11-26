@@ -21,7 +21,7 @@ import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
-import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
+import { useLaunchSeed, useLaunchTarget, useReposStore, useSpaceHandoff } from "../repos/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { boundedRequest, type BoundedRequest } from "./boundedRequest.ts";
 import { senderLabel, useHandoffStore, type HandoffOffer } from "./handoffStore.ts";
@@ -80,14 +80,15 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
     // in it the member may close the inbox, open another offer from the same list or open the
     // Start hub: an answer that finds any of that changed writes nothing, so it can never
     // overwrite the seed of the launch that came after it.
-    const before = { tick: useSessionsStore.getState().startTick, target: useLaunchTarget.getState().target, offerId: useLaunchSeed.getState().handoffOfferId };
+    const before = { tick: useSessionsStore.getState().startTick, target: useLaunchTarget.getState().target, offerId: useSpaceHandoff.getState().offerId, seedOfferId: useLaunchSeed.getState().handoffOfferId };
     const support = await spacesSupport();
     if (alive.current) setBusy(false);
     if (
       !alive.current ||
       useSessionsStore.getState().startTick !== before.tick ||
       useLaunchTarget.getState().target !== before.target ||
-      useLaunchSeed.getState().handoffOfferId !== before.offerId
+      useSpaceHandoff.getState().offerId !== before.offerId ||
+      useLaunchSeed.getState().handoffOfferId !== before.seedOfferId
     ) {
       return;
     }
@@ -97,8 +98,7 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
     }
     // A space offer has no repository to open it in: the launch is a dialog that starts in a
     // new space of the recipient's own, and StartHost takes the offer on its launch press.
-    useLaunchSeed.getState().set(offer.prompt || "", offer.title, "", "", offer.id);
-    useLaunchSeed.getState().setNewSpace(true);
+    useSpaceHandoff.getState().open(offer.id, offer.prompt || "", offer.title);
     onDone();
   };
   const accept = () => {
@@ -107,6 +107,8 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
       toast(tr("handoff.accept_no_repo"));
       return;
     }
+    // Choosing a working copy supersedes a space handoff dialog that is still up.
+    useSpaceHandoff.getState().clear();
     // Carry which offer this is into the launch path. Nothing is taken here: StartHost takes
     // the offer only when the launch is pressed, so a cancelled dialog leaves it pending.
     useLaunchSeed.getState().set(offer.prompt || "", offer.title, "", "", offer.id);

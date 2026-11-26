@@ -35,7 +35,7 @@ vi.mock("../repos/LaunchModal.tsx", () => ({
 
 const { HandoffOfferRow, repoNameFromRemote } = await import("./HandoffOfferRow.tsx");
 const { StartHost } = await import("../repos/StartHost.tsx");
-const { useLaunchSeed, useLaunchTarget, useReposStore } = await import("../repos/store.ts");
+const { useLaunchSeed, useLaunchTarget, useReposStore, useSpaceHandoff } = await import("../repos/store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 const { useSessionsStore } = await import("../sessions/store.ts");
@@ -86,6 +86,7 @@ afterEach(async () => {
   host.remove();
   root = null;
   useLaunchSeed.getState().clear();
+  useSpaceHandoff.getState().clear();
   useLaunchTarget.getState().clear();
   useReposStore.setState({ repos: [] } as never);
 });
@@ -145,7 +146,9 @@ describe("the received handoff row", () => {
       await act(async () => acceptButton().click());
       const dialog = document.querySelector("[data-testid=launch-dialog]") as HTMLElement | null;
       expect(dialog?.dataset.newSpace).toBe("true");
-      expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "offer-1", prompt: "Continue the work.", title: "Carry on", newSpace: true });
+      expect(useSpaceHandoff.getState()).toMatchObject({ offerId: "offer-1", prompt: "Continue the work.", title: "Carry on" });
+      // The launch seed is not touched: nothing that reads it can take this offer.
+      expect(useLaunchSeed.getState().handoffOfferId).toBe("");
       expect(useLaunchTarget.getState().target).toBeNull();
       expect(apiJSON).not.toHaveBeenCalled();
     });
@@ -161,7 +164,7 @@ describe("the received handoff row", () => {
       await render([], true, fromSpace);
       await act(async () => acceptButton().click());
       expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
-      expect(useLaunchSeed.getState().newSpace).toBe(false);
+      expect(useSpaceHandoff.getState().offerId).toBe("");
       expect(document.body.textContent).toContain(t("handoff.space_unsupported"));
     });
 
@@ -176,7 +179,7 @@ describe("the received handoff row", () => {
       await render([], true, fromSpace);
       await act(async () => acceptButton().click());
       expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
-      expect(useLaunchSeed.getState()).toMatchObject({ newSpace: false, handoffOfferId: "" });
+      expect(useSpaceHandoff.getState().offerId).toBe("");
       expect(document.body.textContent).toContain(t("handoff.space_check_failed"));
       expect(document.body.textContent).not.toContain(t("handoff.space_unsupported"));
       expect(acceptButton().disabled).toBe(false); // retry is possible
@@ -199,7 +202,7 @@ describe("the received handoff row", () => {
           await vi.advanceTimersByTimeAsync(SHARE_REQUEST_TIMEOUT_MS + 1000);
         });
         expect(acceptButton().disabled).toBe(false);
-        expect(useLaunchSeed.getState()).toMatchObject({ newSpace: false, handoffOfferId: "" });
+        expect(useSpaceHandoff.getState().offerId).toBe("");
         expect(document.body.textContent).toContain(t("handoff.space_check_failed"));
       } finally {
         vi.useRealTimers();
@@ -243,7 +246,7 @@ describe("the received handoff row", () => {
         await act(async () => acceptButton().click());
         await act(async () => root!.render(<ToastProvider><StartHost /></ToastProvider>)); // the row is gone
         await settle(release);
-        expect(useLaunchSeed.getState()).toMatchObject({ newSpace: false, handoffOfferId: "" });
+        expect(useSpaceHandoff.getState().offerId).toBe("");
         expect(document.querySelector("[data-testid=launch-dialog]")).toBeNull();
       });
 
@@ -257,7 +260,8 @@ describe("the received handoff row", () => {
           useLaunchTarget.getState().open({ name: "private", path: "/r/private", branch: "main" } as never);
         });
         await settle(release);
-        expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "offer-b", prompt: "B's text", newSpace: false });
+        expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "offer-b", prompt: "B's text" });
+        expect(useSpaceHandoff.getState().offerId).toBe("");
         expect((document.querySelector("[data-testid=launch-dialog]") as HTMLElement).dataset.newSpace).toBe("false");
       });
 
@@ -267,7 +271,7 @@ describe("the received handoff row", () => {
         await act(async () => acceptButton().click());
         await act(async () => useSessionsStore.getState().openStart());
         await settle(release);
-        expect(useLaunchSeed.getState()).toMatchObject({ newSpace: false, handoffOfferId: "" });
+        expect(useSpaceHandoff.getState().offerId).toBe("");
       });
     });
   });

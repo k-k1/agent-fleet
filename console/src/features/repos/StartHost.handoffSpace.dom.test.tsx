@@ -42,7 +42,7 @@ vi.mock("./LaunchModal.tsx", () => ({
 }));
 
 const { StartHost } = await import("./StartHost.tsx");
-const { useLaunchSeed, useLaunchTarget } = await import("./store.ts");
+const { useLaunchSeed, useLaunchTarget, useSpaceHandoff } = await import("./store.ts");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 
 let root: Root | null = null;
@@ -91,21 +91,20 @@ afterEach(async () => {
   host.remove();
   root = null;
   useLaunchSeed.getState().clear();
+  useSpaceHandoff.getState().clear();
   useLaunchTarget.getState().clear();
   vi.unstubAllGlobals();
 });
 
 describe("launching from a handoff that came from a space", () => {
   it("opens a new-space dialog seeded with the text and title, neither a repository nor home", async () => {
-    useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
-    useLaunchSeed.getState().setNewSpace(true);
+    useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
     await mount();
     expect(dialog()?.dataset).toMatchObject({ newSpace: "true", home: "false", repo: "", prompt: "carry on", title: "Carry on" });
   });
 
   it("takes the offer, creates the session in a new space and accepts with the take's token", async () => {
-    useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
-    useLaunchSeed.getState().setNewSpace(true);
+    useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
     routes({
       "/offer-1/take": { status: 200, body: { status: "pending", token: "tok-1" } },
       "/api/sessions": { status: 201, body: { name: "s-space" } },
@@ -121,7 +120,7 @@ describe("launching from a handoff that came from a space", () => {
     expect(posts("/offer-1/accept")[0]).toEqual({ sessionName: "s-space", token: "tok-1" });
     // Launched: the dialog and the seed are gone.
     expect(dialog()).toBeNull();
-    expect(useLaunchSeed.getState().handoffOfferId).toBe("");
+    expect(useSpaceHandoff.getState().offerId).toBe("");
   });
 
   async function press(id: string) {
@@ -130,8 +129,7 @@ describe("launching from a handoff that came from a space", () => {
   }
 
   it("gives the offer back when the create is refused, and keeps the dialog and the seed", async () => {
-    useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
-    useLaunchSeed.getState().setNewSpace(true);
+    useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
     routes({
       "/offer-1/take": { status: 200, body: { status: "pending", token: "tok-2" } },
       "/api/sessions": { status: 502, body: { error: { code: "space_failed", message: "no space" } } },
@@ -142,12 +140,11 @@ describe("launching from a handoff that came from a space", () => {
     expect(posts("/offer-1/release")[0]).toEqual({ token: "tok-2" });
     expect(posts("/accept")).toHaveLength(0);
     expect(dialog()).not.toBeNull();
-    expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "offer-1", newSpace: true });
+    expect(useSpaceHandoff.getState().offerId).toBe("offer-1");
   });
 
   it("keeps the take when the create's outcome is unknown", async () => {
-    useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
-    useLaunchSeed.getState().setNewSpace(true);
+    useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
     routes({ "/offer-1/take": { status: 200, body: { status: "pending", token: "tok-3" } }, "/api/sessions": "network-error" });
     await mount();
     await press("launch");
@@ -168,14 +165,13 @@ describe("launching from a handoff that came from a space", () => {
   });
 
   it("takes nothing when the dialog is cancelled, and leaves no seed behind", async () => {
-    useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
-    useLaunchSeed.getState().setNewSpace(true);
+    useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
     routes({});
     await mount();
     await press("close");
     expect(fetchMock.mock.calls.filter(([, init]) => (init?.method ?? "GET") === "POST")).toHaveLength(0);
     expect(dialog()).toBeNull();
-    expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "", newSpace: false, prompt: "" });
+    expect(useSpaceHandoff.getState()).toMatchObject({ offerId: "", prompt: "" });
   });
 
   // A workspace that finished starting opens the hub by itself. Over a handoff's dialog it would
@@ -183,17 +179,33 @@ describe("launching from a handoff that came from a space", () => {
   // the same offer: the dedicated launch keeps the screen instead.
   it("does not open the Start hub over the dialog, and keeps the offer with it", async () => {
     const { useSessionsStore } = await import("../sessions/store.ts");
-    useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
-    useLaunchSeed.getState().setNewSpace(true);
+    useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
     await mount();
     await act(async () => useSessionsStore.getState().openStart());
     expect(host.querySelector("[data-testid=hub]")).toBeNull();
     expect(dialog()?.dataset.newSpace).toBe("true");
-    expect(useLaunchSeed.getState()).toMatchObject({ handoffOfferId: "offer-1", newSpace: true });
+    expect(useSpaceHandoff.getState().offerId).toBe("offer-1");
     // The hub opens again once the handoff is out of the way.
     await press("close");
     await act(async () => useSessionsStore.getState().openStart());
     expect(host.querySelector("[data-testid=hub]")).not.toBeNull();
+  });
+
+  // The clone-complete toast opens a repository's dialog without the hub. That dialog reads the
+  // launch seed, and the space handoff must not be in it: launching there takes and accepts no offer.
+  it("does not let a repository dialog opened meanwhile take the space handoff's offer", async () => {
+    useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
+    routes({ "/api/sessions": { status: 201, body: { name: "s-repo" } } });
+    await mount();
+    expect(dialog()?.dataset.newSpace).toBe("true");
+    await act(async () => useLaunchTarget.getState().open({ name: "private", path: "/home/dev/repos/private", branch: "main" } as never));
+    expect(dialog()?.dataset).toMatchObject({ newSpace: "false", repo: "private", prompt: "" });
+    await press("launch");
+    expect(posts("/api/sessions")).toHaveLength(1);
+    expect(posts("/api/sessions")[0]).not.toHaveProperty("handoff_take");
+    expect(posts("/offer-1/take")).toHaveLength(0);
+    expect(posts("/accept")).toHaveLength(0);
+    expect(useSpaceHandoff.getState().offerId).toBe("offer-1");
   });
 
   it("still shows the dialog when the Start hub is open", async () => {
@@ -201,8 +213,7 @@ describe("launching from a handoff that came from a space", () => {
     await mount();
     await act(async () => useSessionsStore.getState().openStart());
     await act(async () => {
-      useLaunchSeed.getState().set("carry on", "Carry on", "", "", "offer-1");
-      useLaunchSeed.getState().setNewSpace(true);
+      useSpaceHandoff.getState().open("offer-1", "carry on", "Carry on");
     });
     expect(dialog()?.dataset.newSpace).toBe("true");
   });

@@ -24,6 +24,7 @@ const { resetAttachDraftDB } = await import("../../lib/attachDraft.ts");
 const { setSettings, cancelPrefsTimersForTest } = await import("../../lib/settings.ts");
 const { resumePrefsTimersForTest } = await import("../../lib/settings/sync.ts");
 const { ConfirmProvider } = await import("../../ui/ConfirmProvider.tsx");
+const { Modal } = await import("../../ui/Modal.tsx");
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 const { t } = await import("../../lib/i18n/index.ts");
 import type { LaunchAccess, LaunchOpts, LaunchResult } from "./LaunchModal.tsx";
@@ -40,12 +41,14 @@ const access: LaunchAccess = { kinds: liveKinds as LaunchAccess["kinds"], noRout
 async function settle(): Promise<void> {
   for (let i = 0; i < 5; i++) await act(async () => void (await new Promise((r) => setTimeout(r, 0))));
 }
-async function mount(props: { newSpace?: boolean; home?: boolean }): Promise<void> {
+async function mount(props: { newSpace?: boolean; home?: boolean; onClose?: () => void; under?: () => void }): Promise<void> {
   await act(async () => {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <LaunchModal {...props} repo="" kinds={["claude"]} access={access} initialPrompt="carry on" initialTitle="Carry on" onClose={() => {}} onLaunch={onLaunch} />
+          {/* What the dialog is stacked on (the Start hub, the inbox). */}
+          {props.under && <Modal title="under" onClose={props.under}>under</Modal>}
+          <LaunchModal newSpace={props.newSpace} home={props.home} repo="" kinds={["claude"]} access={access} initialPrompt="carry on" initialTitle="Carry on" onClose={props.onClose ?? (() => {})} onLaunch={onLaunch} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -89,5 +92,29 @@ describe("the new-space dialog", () => {
     await act(async () => goButton().click());
     await settle();
     expect(onLaunch.mock.calls[0][0].space).toBeUndefined();
+  });
+
+  // Stacked on the hub: while the create is out, Escape must not fall to the hub under it, whose
+  // close would take the dialog (and the means to learn the outcome) down with it.
+  it("keeps Escape here while the create is out, instead of closing what it is stacked on", async () => {
+    let answer!: (r: LaunchResult) => void;
+    onLaunch.mockImplementation(() => new Promise<LaunchResult>((r) => (answer = r)));
+    const under = vi.fn();
+    const onClose = vi.fn();
+    await mount({ newSpace: true, under, onClose });
+    await act(async () => goButton().click());
+    await settle();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(under).not.toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    await act(async () => answer({ ok: false }));
+    await settle();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalled();
+    expect(under).not.toHaveBeenCalled();
   });
 });

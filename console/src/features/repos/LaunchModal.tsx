@@ -279,6 +279,9 @@ export function LaunchModal(props: LaunchModalProps) {
       }
       onClose={onClose}
       lockClose={busy}
+      // Stacked on the hub or the inbox: while the create is out, Escape and back must not fall to
+      // what is underneath (a hub's close would clear the dialog and its outcome with it).
+      holdKeys={!!props.newSpace}
     >
       <LaunchForm key={target} {...props} busy={busy} setBusy={setBusy} />
     </Modal>

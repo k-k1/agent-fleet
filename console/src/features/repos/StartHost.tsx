@@ -12,7 +12,7 @@ import { useStartWork, type HandoffTake } from "./useStartWork.ts";
 import { StartModal } from "./StartModal.tsx";
 import { branchItemOf } from "./branchRule.ts";
 import { LaunchModal } from "./LaunchModal.tsx";
-import { useLaunchTarget, useLaunchSeed } from "./store.ts";
+import { useLaunchTarget, useLaunchSeed, useSpaceHandoff } from "./store.ts";
 import { markHandoffLaunched } from "../mirror/HandoffProposal.tsx";
 import { launchFromHandoffOffer } from "../sharing/acceptHandoff.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -40,7 +40,10 @@ export function StartHost() {
   const seedHandoff = useLaunchSeed((s) => s.handoffSession);
   const seedHandoffId = useLaunchSeed((s) => s.handoffId);
   const seedOfferId = useLaunchSeed((s) => s.handoffOfferId);
-  const seedNewSpace = useLaunchSeed((s) => s.newSpace);
+  // A handoff from a member's space (its own store: nothing that reads the launch seed can take it).
+  const spaceHandoff = useSpaceHandoff((s) => s.offerId);
+  const spaceHandoffPrompt = useSpaceHandoff((s) => s.prompt);
+  const spaceHandoffTitle = useSpaceHandoff((s) => s.title);
   const seedSpace = useLaunchSeed((s) => s.space);
   // A launch that came from a work item (docs/log/80). The ledger is written only AFTER the
   // launch succeeded.
@@ -71,7 +74,7 @@ export function StartHost() {
       // copy its text into a draft that a repository launch could then send under the same offer
       // (a workspace that finished starting opens the hub by itself), so the dedicated launch
       // keeps the screen and the hub does not open over it.
-      if (useLaunchSeed.getState().newSpace) return;
+      if (useSpaceHandoff.getState().offerId) return;
       clearLaunch();
       setHome(false);
       setCarry(false);
@@ -205,7 +208,7 @@ export function StartHost() {
       {/* A handoff from another member's space: no repository to open it in, so the launch is a
           dialog of its own that starts in a new space of the recipient's (never home). The offer
           is taken around the launch exactly as for a repository. */}
-      {seedNewSpace && !launch && (
+      {spaceHandoff && !launch && (
         <LaunchModal
           newSpace
           repo=""
@@ -214,15 +217,15 @@ export function StartHost() {
           claudeExpired={ctx.claudeExpired}
           settling={ctx.connsSettling}
           allowWorktree={false}
-          initialPrompt={seedPrompt || undefined}
-          initialTitle={seedTitle || undefined}
-          onClose={clearSeed}
+          initialPrompt={spaceHandoffPrompt || undefined}
+          initialTitle={spaceHandoffTitle || undefined}
+          onClose={() => useSpaceHandoff.getState().clear()}
           onLaunch={async (o) => {
             const run = (take?: HandoffTake) => startWork({ dir: "", repo: "" }, o, take);
-            const r = seedOfferId ? await launchFromHandoffOffer(seedOfferId, run, toast) : await run();
+            const r = await launchFromHandoffOffer(spaceHandoff, run, toast);
             if (r.ok) {
               setShow(false); // launched — drop the hub underneath too, if one is open
-              clearSeed();
+              useSpaceHandoff.getState().clear();
             }
             return r;
           }}

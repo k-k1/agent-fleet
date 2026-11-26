@@ -204,11 +204,6 @@ interface LaunchSeedStore {
 	 *  acceptance is declared only once the launch succeeds — a cancelled launch must not be
 	 *  recorded as accepted, so, like handoffId, it cannot be declared when the seed is set. */
 	handoffOfferId: string;
-	/** The launch starts in a new space of the member's own, in a dialog of its own: a handoff
-	 *  from a session that ran in the sender's space has no repository to open it in. Set by
-	 *  setNewSpace after set() (which clears it), read by StartHost. */
-	newSpace: boolean;
-	setNewSpace(on: boolean): void;
 	/** The work item (docs/log/80) this launch came from. Held so the ledger gets its row only
 	 *  AFTER the launch succeeds — same reason as handoffOfferId: seeding must not claim the
 	 *  work was started, since the dialog can still be cancelled. `branch` is the Console's own
@@ -250,8 +245,6 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	handoffSession: "",
 	handoffId: "",
 	handoffOfferId: "",
-	newSpace: false,
-	setNewSpace: (newSpace) => set({ newSpace }),
 	workItem: null,
 	inboxItemId: "",
 	inboxMemoId: "",
@@ -266,10 +259,34 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	// set() drops inboxItemId: a seed left over from a cancelled inbox launch must not send an
 	// unrelated launch through the request route. The inbox calls setInboxItem after set().
 	set: (prompt, title = "", handoffSession = "", handoffId = "", handoffOfferId = "", workItem = null) =>
-		set({ prompt, title, handoffSession, handoffId, handoffOfferId, newSpace: false, workItem, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", space: "", onLaunched: null }),
+		set({ prompt, title, handoffSession, handoffId, handoffOfferId, workItem, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", space: "", onLaunched: null }),
 	setInboxItem: (inboxItemId) => set({ inboxItemId }),
 	setInboxMemo: (inboxMemoId) => set({ inboxMemoId }),
-	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "", newSpace: false, workItem: null, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", space: "", onLaunched: null }),
+	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "", workItem: null, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", space: "", onLaunched: null }),
+}));
+
+/** A handoff from another member's space (docs/log/77, #5233): the offer, its text and title, held
+ *  for the dialog that starts it in a new space of the recipient's own.
+ *
+ *  Kept apart from useLaunchSeed on purpose. Everything that reads the seed (the repository dialog
+ *  a clone toast or the rail opens, the Start hub's draft) would otherwise be able to take this
+ *  offer's id and send the text to a working copy, accepting the offer there. Only the dialog in
+ *  StartHost reads this store, and anything else that starts a launch leaves it alone. */
+interface SpaceHandoffStore {
+	/** "" = none. */
+	offerId: string;
+	prompt: string;
+	title: string;
+	open(offerId: string, prompt: string, title: string): void;
+	clear(): void;
+}
+
+export const useSpaceHandoff = create<SpaceHandoffStore>((set) => ({
+	offerId: "",
+	prompt: "",
+	title: "",
+	open: (offerId, prompt, title) => set({ offerId, prompt, title }),
+	clear: () => set({ offerId: "", prompt: "", title: "" }),
 }));
 
 /** Poll every 60s while the tab is visible AND the workspace is running, so the
