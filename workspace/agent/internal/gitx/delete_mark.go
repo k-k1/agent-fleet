@@ -1,6 +1,7 @@
 package gitx
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -184,39 +185,78 @@ func DeleteTouches(dir, parent string) bool {
 // Launch reservations (#5122). A launch reads its folder, and a delete reads the running
 // sessions, at moments of their own: a session whose process and meta are not published yet is
 // invisible to the delete's guards, and a delete that decided after the launch read its folder is
-// invisible to the launch. Each launch therefore reserves the folder it runs in inside the
-// deletion gate, the same gate a delete decides in, and holds the reservation until its process
-// and its meta are published. Under the gate one of the two always sees the other: the launch
-// meets the mark and is refused, or the delete meets the reservation (and, once it is released,
-// the running session) and is refused.
+// invisible to the launch. Each launch therefore reserves the folder it runs in inside the launch
+// gate, which a delete holds for its whole decision (inside the deletion gate), and releases it
+// inside that gate once its process and its meta are published. One of the two always sees the
+// other: the launch meets the mark and is refused, or the delete meets the reservation, or the
+// running session it has become, and is refused.
+//
+// The launch gate is not the deletion gate: that one is also held across `git worktree add` by a
+// worktree recreate or restore, whose hooks may start a session through the Agent's own API and
+// wait for it. A launch never waits for git.
+
+var launchGate sync.Mutex
+
+// WithLaunchGate runs fn inside the launch gate. A delete takes it inside the deletion gate, for
+// its decision only; a launch takes it alone. Keep fn short, and never run git or wait for a
+// session inside it.
+func WithLaunchGate(fn func()) {
+	launchGate.Lock()
+	defer launchGate.Unlock()
+	fn()
+}
 
 var launchRes = struct {
 	mu   sync.Mutex
 	next uint64
-	// m maps a reservation to the folders it holds, each both as named (cleaned) and as its real
-	// path, the two ways the delete's guards match a session's Meta.Dir.
-	m map[uint64][]launchPath
+	m    map[uint64][]launchPath
 }{m: map[uint64][]launchPath{}}
 
-type launchPath struct{ raw, real string }
+// launchPath is one folder a launch holds, in the forms a delete's folder is compared with: raw
+// as the launch spelled it (a delete of any folder the spelling passes through breaks it, `..`
+// or not), real as the kernel resolves it, and clean, the lexical form, only when the path does
+// not resolve (a lexical clean of `link/..` names another folder than the one the kernel enters).
+type launchPath struct{ raw, real, clean string }
+
+func newLaunchPath(p string) launchPath {
+	real, resolved := launchRealPath(p)
+	lp := launchPath{raw: p, real: real}
+	if !resolved {
+		lp.clean = filepath.Clean(p)
+	}
+	return lp
+}
+
+// under reports whether the launch path lies in dir, given as spelled and resolved.
+func (lp launchPath) under(dirRaw, dirReal string) bool {
+	return underPath(lp.raw, dirRaw) || underPath(lp.real, dirReal) || (lp.clean != "" && underPath(lp.clean, dirRaw))
+}
 
 // ReserveLaunch reserves the folders a launch runs in (its Meta.Dir and its cwd). It refuses
-// (ok=false) when one of them is a copy being deleted or lies inside one, matched the way a lock
-// is (UnderDeletion, SessionUnderDeletion's string match) and by the path the kernel resolves.
-// Call it inside the deletion gate, and call release inside it too: a delete reads the
-// reservations and the running sessions one after the other, and a release between the two reads
-// would hide a session that has just been published. release is safe to call more than once.
+// (ok=false) when one of them lies in a copy being deleted, or when the delete is settling the
+// session by name. Call it, and release, inside the launch gate (WithLaunchGate): a delete reads
+// the reservations and then the running sessions, and a release between the two reads would hide
+// a session that has just been published. release is safe to call more than once.
 func ReserveLaunch(name string, paths ...string) (release func(), ok bool) {
 	var held []launchPath
 	for _, p := range paths {
 		if p == "" {
 			continue
 		}
-		real := launchRealPath(p)
-		if UnderDeletion(p) || SessionUnderDeletion(name, p) || underDeletionReal(real) {
-			return nil, false
+		held = append(held, newLaunchPath(p))
+	}
+	deleteMarks.mu.Lock()
+	refused := sessionNamedLocked(name)
+	for key, raw := range deleteMarks.raw {
+		for _, lp := range held {
+			if lp.under(raw, key) {
+				refused = true
+			}
 		}
-		held = append(held, launchPath{raw: filepath.Clean(p), real: real})
+	}
+	deleteMarks.mu.Unlock()
+	if refused {
+		return nil, false
 	}
 	launchRes.mu.Lock()
 	launchRes.next++
@@ -233,36 +273,82 @@ func ReserveLaunch(name string, paths ...string) (release func(), ok bool) {
 	}, true
 }
 
-// launchRealPath is the folder p names as the kernel resolves it. Unlike markKey it does not clean
-// p first: in `alias/jump/../kept` with jump a link, `..` leaves the link's target, not alias, and
-// a launch's cwd is entered exactly as spelled. A path that does not resolve (gone, or not made
-// yet) falls back to markKey.
-func launchRealPath(p string) string {
-	if r, err := filepath.EvalSymlinks(p); err == nil {
-		if abs, err := filepath.Abs(r); err == nil {
-			return abs
+// sessionNamedLocked reports whether a delete in flight recorded name among the sessions it
+// settles. deleteMarks.mu is held.
+func sessionNamedLocked(name string) bool {
+	for _, names := range deleteMarks.sessions {
+		for _, n := range names {
+			if n == name {
+				return true
+			}
 		}
 	}
-	return markKey(p)
+	return false
 }
 
-// underDeletionReal is UnderDeletion for a path already resolved.
-func underDeletionReal(real string) bool {
-	deleteMarks.mu.Lock()
-	defer deleteMarks.mu.Unlock()
-	return underMarkLocked(real)
+// launchRealPath resolves p the way the kernel enters it, component by component: a symlink is
+// replaced by its target, and `..` leaves the folder reached so far, so `alias/jump/../kept`
+// with jump a link names the link target's parent, not alias. A link whose target is gone (a
+// folder a delete has just moved away) is still followed, and a component that does not exist is
+// kept as spelled, so the answer names where the path leads even once it no longer resolves.
+// resolved reports whether every component existed.
+func launchRealPath(p string) (real string, resolved bool) {
+	if !filepath.IsAbs(p) {
+		if abs, err := filepath.Abs(p); err == nil {
+			p = abs
+		}
+	}
+	const maxLinks = 40
+	sep := string(filepath.Separator)
+	todo := strings.Split(p, sep)
+	cur, links, resolved := sep, 0, true
+	for len(todo) > 0 {
+		c := todo[0]
+		todo = todo[1:]
+		switch c {
+		case "", ".":
+			continue
+		case "..":
+			cur = filepath.Dir(cur)
+			continue
+		}
+		next := filepath.Join(cur, c)
+		fi, err := os.Lstat(next)
+		if err != nil {
+			resolved = false
+			cur = next
+			continue
+		}
+		if fi.Mode()&os.ModeSymlink == 0 || links >= maxLinks {
+			cur = next
+			continue
+		}
+		target, err := os.Readlink(next)
+		if err != nil {
+			resolved = false
+			cur = next
+			continue
+		}
+		links++
+		if filepath.IsAbs(target) {
+			cur = sep
+		}
+		todo = append(strings.Split(target, sep), todo...)
+	}
+	return cur, resolved
 }
 
 // LaunchingUnder reports whether a launch holds a reservation on dir or on a folder inside it. A
-// delete asks it inside the gate, before its running-session guard: such a launch is a running
-// session the guard cannot see yet.
+// delete asks it inside the launch gate, before its running-session guard: such a launch is a
+// running session the guard cannot see yet.
 func LaunchingUnder(dir string) bool {
-	raw, real := filepath.Clean(dir), launchRealPath(dir)
+	real, _ := launchRealPath(dir)
+	raw := filepath.Clean(dir)
 	launchRes.mu.Lock()
 	defer launchRes.mu.Unlock()
 	for _, held := range launchRes.m {
-		for _, p := range held {
-			if underPath(p.raw, raw) || underPath(p.real, real) {
+		for _, lp := range held {
+			if lp.under(raw, real) {
 				return true
 			}
 		}

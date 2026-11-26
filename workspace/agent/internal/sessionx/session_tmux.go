@@ -131,10 +131,21 @@ func recordLaunchNotices(m session.Meta, plan agents.LaunchPlan) {
 //
 // The caller holds the session's lease (ADR 0115 decision 11.1): this starts a process.
 func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error {
+	return ensureSessionTmuxFrom(lease, name, ssmForce, nil)
+}
+
+// ensureSessionTmuxFrom is ensureSessionTmux for a caller that read the meta earlier in the
+// request (snap): a delete that settled the session since is judged against that read, not
+// against the one made here, which may already be the delete's result (reserveLaunch).
+func ensureSessionTmuxFrom(lease *lifegate.Lease, name string, ssmForce bool, snap *session.Meta) error {
 	if err := lease.Check(name); err != nil {
 		return err
 	}
 	m, ok := session.ReadMeta(name)
+	src := &m
+	if snap != nil {
+		src = snap
+	}
 	if ok && m.DriverKind() == session.DriverManaged {
 		if ManagedAlive(m) {
 			return nil
@@ -148,7 +159,7 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 		if ref := startRefusalOf(m); ref != nil {
 			return &StartRefusalError{ref}
 		}
-		release, ref := reserveLaunch(m, &m)
+		release, ref := reserveLaunch(m, src)
 		if ref != nil {
 			return &StartRefusalError{ref}
 		}
@@ -181,7 +192,7 @@ func ensureSessionTmux(lease *lifegate.Lease, name string, ssmForce bool) error 
 	if ref := recallAndRefuse(&m); ref != nil {
 		return &StartRefusalError{ref}
 	}
-	release, ref := reserveLaunch(m, &m)
+	release, ref := reserveLaunch(m, src)
 	if ref != nil {
 		return &StartRefusalError{ref}
 	}

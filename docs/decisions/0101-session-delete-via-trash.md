@@ -110,18 +110,21 @@ of one base clone (three at once took about as long as one, and left no entry), 
 `git worktree prune` takes the write side of a per-base-clone lock, because it would otherwise drop the entry of
 a worktree whose folder another remove has just deleted. A rename-then-background-remove was not needed.
 
-*Amended 2026-11-26 (#5122 part 1): launches take the gate too.* A session that is starting has no process or
-meta the guards can see, and a launch that read its folder before a delete decided does not see the mark. Every
-path that starts a process for a session (create, `/start`, a Managed input, a driver switch, fork, recreate)
-therefore reserves the folder it runs in, its `Meta.Dir` and its `Subdir` as stored, inside the gate
-(`gitx.ReserveLaunch`, matched by spelling and by the path the kernel resolves), and releases it inside the gate
-once its process and meta are published; a delete reads the reservations before the running sessions. A
+*Amended 2026-11-26 (#5122 part 1): launches are reserved against the decision.* A session that is starting has
+no process or meta the guards can see, and a launch that read its folder before a delete decided does not see
+the mark. Every path that starts a process for a session (create, `/start`, a Managed input, a driver switch,
+fork, recreate) therefore reserves the folder it runs in, its `Meta.Dir` and its `Subdir` as stored
+(`gitx.ReserveLaunch`, matched as spelled and as the kernel resolves it, dangling links included), and releases
+it once its process and meta are published. Reservations and releases take a launch gate of their own, which a
+delete holds for its decision inside the deletion gate, and the delete reads the reservations before the running
+sessions. The launch gate is separate because the deletion gate is also held across `git worktree add` by a
+worktree recreate or restore, whose hooks may start a session through the Agent's API and wait for it. A
 recreate reserves before it stops the old slot, and `/start?fresh=1` before it sets the old transcript aside. A
 launch into a marked folder is refused with 409 `delete_in_progress`; a delete (of a working copy or of a space)
 that meets a reservation is refused like one that meets a running session. Under the gate a new session's
-folder must still exist, and the session a launch starts or derives from is read again, so a start never
-revives a session a delete settled since it was read. The Managed runtime's own reconcile after a runtime death
-does not reserve.
+folder must still exist, and the session a launch starts or derives from is judged against the request's first
+read of it, so a start never revives a session a delete settled meanwhile. The Managed runtime's own reconcile
+after a runtime death does not reserve.
 
 A session whose working folder is gone can still be read, on the shelf or in the list, but not resumed
 ("Folder missing").

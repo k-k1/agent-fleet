@@ -263,3 +263,60 @@ func TestLaunchReservationsFollowALinkBeforeDotDot(t *testing.T) {
 		t.Error("a launch into a marked copy through link/.. was reserved")
 	}
 }
+
+// A path that resolves is not also matched by its lexical clean, which names another folder when
+// a link precedes `..`; and a delete of a folder the spelling passes through meets the launch even
+// when the kernel ends up elsewhere, since the launch enters the cwd as spelled.
+func TestLaunchReservationsMatchSpellingAndKernelNotTheClean(t *testing.T) {
+	root := t.TempDir()
+	repos, other := filepath.Join(root, "repos"), filepath.Join(root, "other")
+	for _, d := range []string{filepath.Join(repos, "app"), filepath.Join(other, "nested"), filepath.Join(other, "app"), filepath.Join(other, "a", "b"), filepath.Join(other, "kept")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(other, "nested"), filepath.Join(repos, "jump")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(other, "a", "b"), filepath.Join(repos, "app", "jump")); err != nil {
+		t.Fatal(err)
+	}
+	app := filepath.Join(repos, "app")
+
+	// <repos>/jump/../app is <other>/app to the kernel; its clean, <repos>/app, is not where it runs.
+	elsewhere := filepath.Join(repos, "jump") + "/../app"
+	end, ok, _ := BeginDelete(app, "")
+	if !ok {
+		t.Fatal("BeginDelete refused")
+	}
+	r, ok := ReserveLaunch("cl1", elsewhere)
+	if !ok {
+		end()
+		t.Fatal("a launch that runs elsewhere was refused by the clean of its path")
+	}
+	end()
+	if LaunchingUnder(app) {
+		t.Error("a delete of the clean of the path sees a launch that runs elsewhere")
+	}
+	r()
+
+	// <repos>/app/jump/../../kept runs in <other>/kept but passes through <repos>/app.
+	through := filepath.Join(app, "jump") + "/../../kept"
+	r, ok = ReserveLaunch("cl2", through)
+	if !ok {
+		t.Fatal("reservation refused")
+	}
+	if !LaunchingUnder(app) {
+		t.Error("a delete of a folder the spelling passes through does not see the launch")
+	}
+	r()
+	end, ok, _ = BeginDelete(app, "")
+	if !ok {
+		t.Fatal("BeginDelete refused")
+	}
+	defer end()
+	if r, ok := ReserveLaunch("cl3", through); ok {
+		r()
+		t.Error("a launch whose spelling passes through a marked copy was reserved")
+	}
+}

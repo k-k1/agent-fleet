@@ -129,7 +129,7 @@ func HandleStartSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := ensureSessionTmux(lease, name, force); err != nil {
+	if err := ensureSessionTmuxFrom(lease, name, force, &cur); err != nil {
 		if writeStartRefusal(w, err) {
 			return
 		}

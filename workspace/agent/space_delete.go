@@ -154,7 +154,10 @@ func handleDeleteSpace(w http.ResponseWriter, r *http.Request) {
 	// Only the decision runs inside the deletion gate, as for a working copy: a lock request
 	// either lands before the guards read it or meets the mark and is refused.
 	var end func()
-	sessionx.WithDeletionGate(func() { end = decideDeleteSpace(w, folder, dir) })
+	sessionx.WithDeletionGate(func() {
+		// The launch gate too: launches reserve their folders under it (gitx.ReserveLaunch).
+		gitx.WithLaunchGate(func() { end = decideDeleteSpace(w, folder, dir) })
+	})
 	if end == nil {
 		return
 	}

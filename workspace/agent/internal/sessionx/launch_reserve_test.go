@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -103,27 +104,44 @@ func TestFreshLaunchIntoAFolderThatIsGoneIsRefused(t *testing.T) {
 	}
 }
 
-// A launch whose Subdir lies in a folder a delete has marked is refused even once the folder has
-// been moved away: the Subdir is matched as stored, not through Meta.CWD's fallback to Dir.
+// A launch whose Subdir lies in a folder a delete has marked is refused once the folder has been
+// moved away: the Subdir is matched as stored, not through Meta.CWD's fallback to Dir, and a link
+// on the way to it is followed even though its target is gone now.
 func TestLaunchIntoAMovedSubdirMeetsTheMark(t *testing.T) {
 	home := writebackEnv(t)
 	space := filepath.Join(home, "spaces", "notes")
+	if err := os.MkdirAll(filepath.Join(space, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(space, filepath.Join(home, "shortcut")); err != nil {
+		t.Fatal(err)
+	}
 	end, ok, why := gitx.BeginDelete(space, "")
 	if !ok {
 		t.Fatal(why)
 	}
 	defer end()
-	m := session.Meta{Name: "subd01", Dir: home, Subdir: "spaces/notes/sub", Kind: session.KindShell}
-	session.WriteMeta(m)
-	if _, ref := reserveLaunch(m, &m); ref == nil || ref.Code != gitx.ErrCodeDeleteInProgress() {
-		t.Fatalf("ref = %+v, want %s", ref, gitx.ErrCodeDeleteInProgress())
+	if err := os.Rename(space, filepath.Join(home, "moved")); err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range []session.Meta{
+		{Name: "subd01", Dir: home, Subdir: "spaces/notes/sub", Kind: session.KindShell},
+		{Name: "subd02", Dir: home, Subdir: "shortcut/sub", Kind: session.KindShell},
+	} {
+		session.WriteMeta(m)
+		if release, ref := reserveLaunch(m, &m); ref == nil || ref.Code != gitx.ErrCodeDeleteInProgress() {
+			if release != nil {
+				release()
+			}
+			t.Errorf("%s: ref = %+v, want %s", m.Subdir, ref, gitx.ErrCodeDeleteInProgress())
+		}
 	}
 }
 
-// A release waits for the deletion gate. A delete reads the reservations and then the running
-// sessions inside the gate; a release between the two reads would hide a session that has just
-// been published from both.
-func TestReleaseWaitsForTheDeletionGate(t *testing.T) {
+// A release waits for the launch gate. A delete reads the reservations and then the running
+// sessions inside it; a release between the two reads would hide a session that has just been
+// published from both. Only the first call waits: a second one returns without the gate.
+func TestReleaseWaitsForTheLaunchGate(t *testing.T) {
 	home := writebackEnv(t)
 	m := session.Meta{Name: "rel01", Dir: home, Kind: session.KindShell}
 	release, ref := reserveLaunch(m, nil)
@@ -131,7 +149,7 @@ func TestReleaseWaitsForTheDeletionGate(t *testing.T) {
 		t.Fatal(ref.Message)
 	}
 	done := make(chan struct{})
-	WithDeletionGate(func() {
+	gitx.WithLaunchGate(func() {
 		go func() { release(); close(done) }()
 		select {
 		case <-done:
@@ -146,6 +164,41 @@ func TestReleaseWaitsForTheDeletionGate(t *testing.T) {
 	if gitx.LaunchingUnder(home) {
 		t.Fatal("the reservation outlived its release")
 	}
+	again := make(chan struct{})
+	gitx.WithLaunchGate(func() {
+		go func() { release(); close(again) }()
+		select {
+		case <-again:
+		case <-time.After(5 * time.Second):
+			t.Error("a second release waited for the gate")
+		}
+	})
+}
+
+// A launch does not wait for the deletion gate, which a worktree recreate or restore holds across
+// `git worktree add`: a hook there that starts a session through the Agent's API and waits for it
+// would otherwise never return.
+func TestLaunchDoesNotWaitForTheDeletionGate(t *testing.T) {
+	home := writebackEnv(t)
+	m := session.Meta{Name: "gate01", Dir: home, Kind: session.KindShell}
+	WithDeletionGate(func() {
+		done := make(chan *SpawnRefusal, 1)
+		go func() {
+			release, ref := reserveLaunch(m, nil)
+			if release != nil {
+				release()
+			}
+			done <- ref
+		}()
+		select {
+		case ref := <-done:
+			if ref != nil {
+				t.Errorf("refused: %+v", ref)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("a launch waited for the deletion gate")
+		}
+	})
 }
 
 // A start of an existing session reads its meta again under the gate: a delete that finished
@@ -164,14 +217,24 @@ func TestStartOfASessionADeleteSettledMeanwhileIsRefused(t *testing.T) {
 	if _, ref := reserveLaunch(snap, &snap); ref == nil {
 		t.Fatal("a session trashed since it was read was started")
 	}
-	// Read only after the delete was over: shelved, and its folder gone.
-	gone := session.Meta{Name: "settled2", Dir: filepath.Join(home, "gone"), Kind: session.KindClaude, Archived: true}
-	session.WriteMeta(gone)
-	if _, ref := reserveLaunch(gone, &gone); ref == nil {
-		t.Fatal("a shelved session whose folder is gone was started")
+	// The request's own earlier read is what a start is judged against (ensureSessionTmuxFrom):
+	// the launch's later read may already be the delete's result.
+	shelvedNow := session.Meta{Name: "settled2", Dir: filepath.Join(home, "gone"), Kind: session.KindClaude, Archived: true}
+	session.WriteMeta(shelvedNow)
+	before := shelvedNow
+	before.Archived = false
+	if _, ref := reserveLaunch(shelvedNow, &before); ref == nil {
+		t.Fatal("a session shelved since the request read it was started")
 	}
+	// Shelved already when the request read it, its folder removed by hand: it starts as on main
+	// (a shell falls back to home).
+	release, ref := reserveLaunch(shelvedNow, &shelvedNow)
+	if ref != nil {
+		t.Fatalf("a shelved session whose folder was removed by hand was refused: %+v", ref)
+	}
+	release()
 	session.WriteMeta(snap)
-	release, ref := reserveLaunch(snap, &snap)
+	release, ref = reserveLaunch(snap, &snap)
 	if ref != nil {
 		t.Fatalf("an unchanged session was refused: %+v", ref)
 	}
@@ -356,5 +419,84 @@ func TestManagedInputReservesEvenForALiveLookingRuntime(t *testing.T) {
 	}
 	if !held {
 		t.Fatal("Resume ran without the folder reserved")
+	}
+}
+
+// A recreate of a shelved shell whose folder was removed by hand starts as it does on main (the
+// shell falls back to home): only a delete's settlement refuses it.
+func TestRecreateOfAShelvedShellWithItsFolderRemovedByHand(t *testing.T) {
+	p := newCreateProbe(t)
+	launched := false
+	launchTmuxFn = func(session.Meta, bool) error { launched = true; return nil }
+	const name = "byhand02"
+	session.WriteMeta(session.Meta{Name: name, Dir: filepath.Join(p.home, "removed"), Kind: session.KindShell, Archived: true})
+	w := callHandler(HandleRecreateSession, http.MethodPost, name, "")
+	if w.Code != http.StatusOK || !launched {
+		t.Fatalf("recreate = %d %s launched=%v, want 200 and a launch", w.Code, w.Body, launched)
+	}
+}
+
+// A Managed create holds its folder until its meta is published, and has released it by the time
+// the launch task is delivered (the publish is observed through the booked-name seam).
+func TestManagedCreateHoldsItsFolderUntilPublished(t *testing.T) {
+	p := newCreateProbe(t)
+	var events []string
+	log := func(e string) {
+		held := "free"
+		if gitx.LaunchingUnder(p.repo) {
+			held = "held"
+		}
+		events = append(events, e+"("+held+")")
+	}
+	prev, had := managedDrivers["codex"]
+	managedDrivers["codex"] = eventDriver{log: log}
+	t.Cleanup(func() {
+		if had {
+			managedDrivers["codex"] = prev
+		} else {
+			delete(managedDrivers, "codex")
+		}
+	})
+	prevMeta := writeMoveTargetMeta
+	t.Cleanup(func() { writeMoveTargetMeta = prevMeta })
+	writeMoveTargetMeta = func(m session.Meta) error { log("publish"); return session.WriteMetaChecked(m) }
+	rec := p.post(map[string]any{"kind": "codex", "driver": "managed", "dir": p.repo, "initial_prompt": "go"}, "mcreate1")
+	if rec.Code != http.StatusOK && rec.Code != http.StatusCreated {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body)
+	}
+	if got, want := strings.Join(events, ","), "launch(held),publish(held),deliver(free)"; got != want {
+		t.Fatalf("events %s, want %s", got, want)
+	}
+}
+
+// /start judges a settlement against the meta it read first, not against the launch's own later
+// read, which may already show the delete's shelving. The shelving is put in place through the
+// fresh-start seam, the one step between the two reads.
+func TestStartJudgesTheMetaItReadFirst(t *testing.T) {
+	home := writebackEnv(t)
+	dir := filepath.Join(home, "app")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const name = "first01"
+	session.WriteMeta(session.Meta{Name: name, Dir: dir, Kind: session.KindCodex, Driver: session.DriverManaged,
+		StoppedAt: "2026-09-25T10:00:00+09:00"})
+	resumed := false
+	useLockingDriver(t, session.KindCodex, &lockingDriver{onResume: func() { resumed = true }})
+	prev := startFreshFn
+	t.Cleanup(func() { startFreshFn = prev })
+	startFreshFn = func(n string) error {
+		UpdateSessionMeta(n, func(m *session.Meta) bool { m.Archived = true; return true })
+		return nil
+	}
+	r := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/start?fresh=1", nil)
+	r.SetPathValue("name", name)
+	w := httptest.NewRecorder()
+	HandleStartSession(w, r)
+	if w.Code != http.StatusConflict || spaceErrCode(t, w.Body.Bytes()) != gitx.ErrCodeDeleteInProgress() {
+		t.Fatalf("start = %d %s, want 409 %s", w.Code, w.Body, gitx.ErrCodeDeleteInProgress())
+	}
+	if resumed {
+		t.Fatal("a session shelved during the start was launched")
 	}
 }

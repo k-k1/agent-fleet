@@ -326,7 +326,11 @@ func startForCarriedAnswer(w http.ResponseWriter, lease *lifegate.Lease, name st
 			"the answer was not sent, because it could not be recorded as a person's: "+err.Error())
 		return false
 	}
-	if err := ensureSessionTmux(lease, name, false); err != nil {
+	var snap *session.Meta
+	if ok {
+		snap = &cur
+	}
+	if err := ensureSessionTmuxFrom(lease, name, false, snap); err != nil {
 		if writeStartRefusal(w, err) || writeLaunchRefusal(w, err) || writeCodexReleasingErr(w, err) {
 			return false
 		}

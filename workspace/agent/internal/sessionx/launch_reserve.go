@@ -3,6 +3,7 @@ package sessionx
 import (
 	"net/http"
 	"path/filepath"
+	"sync"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -25,13 +26,13 @@ import (
 // when a delete has settled it since (trashed, or shelved after its folder was moved away).
 //
 // It answers a refusal, with nothing held, or a release to call once the process and the meta are
-// published (more than once is safe; never inside the deletion gate).
+// published (more than once is safe, and only the first waits for the launch gate).
 func reserveLaunch(m session.Meta, src *session.Meta) (release func(), ref *SpawnRefusal) {
 	cwd := ""
 	if m.Subdir != "" {
 		cwd = filepath.Join(m.Dir, filepath.FromSlash(m.Subdir))
 	}
-	WithDeletionGate(func() {
+	gitx.WithLaunchGate(func() {
 		rel, ok := gitx.ReserveLaunch(m.Name, m.Dir, cwd)
 		if !ok {
 			ref = &SpawnRefusal{Status: http.StatusConflict, Code: gitx.ErrCodeDeleteInProgress(),
@@ -62,17 +63,19 @@ func reserveLaunch(m session.Meta, src *session.Meta) (release func(), ref *Spaw
 		return nil, ref
 	}
 	held := release
-	return func() { WithDeletionGate(held) }, nil
+	var once sync.Once
+	return func() { once.Do(func() { gitx.WithLaunchGate(held) }) }, nil
 }
 
 // settledSince reports whether the session snap was read as has been settled by a delete since:
 // its meta is gone (a shell / ssm session is trashed with its folder), or it is shelved now and was
-// not then, or it is shelved with its folder gone (what a delete leaves, read by a caller that
-// only read the meta after the delete was over).
+// not then. A session that was shelved already is not judged by its folder: a shelved shell whose
+// folder was removed by hand starts at home, as it always has. Callers pass the earliest snapshot
+// the request read, so a delete that finished before the launch read the meta again is still seen.
 func settledSince(snap session.Meta) bool {
 	cur, ok := session.ReadMeta(snap.Name)
 	if !ok {
 		return true
 	}
-	return cur.Archived && (!snap.Archived || !session.DirExists(cur.Dir))
+	return cur.Archived && !snap.Archived
 }

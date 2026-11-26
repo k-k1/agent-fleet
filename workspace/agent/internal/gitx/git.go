@@ -2216,7 +2216,8 @@ func HandleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 				if linked {
 					parent = WorktreeParent(dir)
 				}
-				end = decideDeleteRepo(w, r, dir, parent, linked)
+				// The launch gate too: launches reserve their folders under it (ReserveLaunch).
+				WithLaunchGate(func() { end = decideDeleteRepo(w, r, dir, parent, linked) })
 			})
 		})
 	})
