@@ -350,36 +350,54 @@ func (c *Cache) refresh(due []Key) {
 // entry is matched by the PR it last held, so a branch that moved to another PR keeps its old
 // answer for one TTL more at worst. sent is when the call that answered was sent.
 //
-// An answer never replaces one from a call sent later. A background refresh and a Fetch can be in
-// flight for one PR at once and answer out of order; storing the late arrival would put the older
-// read back, and a PR link would then record its facts as a change (session.PRFactsDue) though a
-// newer read had already said otherwise.
+// A background refresh and a Fetch can be in flight for one PR at once and answer out of order,
+// so two orders are kept apart. Which PR a key names (or that it names none) is the key's own
+// read to say: an answer from a call sent before the key's last direct read is dropped. What a PR
+// says is any read's: the answer takes the newest known snapshot of that PR, from whichever key
+// read it, so a late arrival never puts an older read back and a PR link never records it as a
+// change (session.PRFactsDue).
 func (c *Cache) storeLocked(k Key, e *entry, pr *PR, sent time.Time) {
 	// Stamped only while unset: the answer is new and unseen until its first store, and a second
 	// key answered by the same PR in one call stores it again, by then visible to Lookup's callers.
 	if pr != nil && pr.ObservedAt.IsZero() {
 		pr.ObservedAt = sent
 	}
-	if sent.Before(e.fetched) {
-		// The key was still asked at sent, so a since bound up to it is met (FetchSince).
-		if sent.After(e.direct) {
-			e.direct = sent
-		}
+	if sent.Before(e.direct) {
 		return
 	}
-	e.pr, e.fetched, e.direct = pr, sent, sent
+	at := sent
+	if pr != nil && pr.Number > 0 {
+		if newer, newerAt := c.newestLocked(k.Repo, pr.Number, sent); newer != nil {
+			pr, at = newer, newerAt
+		}
+	}
+	e.pr, e.fetched, e.direct = pr, at, sent
 	if pr == nil || pr.Number <= 0 {
 		return
 	}
 	for ok, oe := range c.entries {
-		if ok == k || oe == e || !strings.EqualFold(ok.Repo, k.Repo) || sent.Before(oe.fetched) {
+		if ok == k || oe == e || !strings.EqualFold(ok.Repo, k.Repo) || at.Before(oe.fetched) {
 			continue
 		}
 		same := ok.Number == pr.Number || (ok.Number == 0 && oe.pr != nil && oe.pr.Number == pr.Number)
 		if same {
-			oe.pr, oe.fetched = pr, sent
+			oe.pr, oe.fetched = pr, at
 		}
 	}
+}
+
+// newestLocked is the snapshot of PR number in repo that some entry holds from a call sent after
+// sent, the newest of them, and when that call was sent; nil when no entry holds a newer one.
+func (c *Cache) newestLocked(repo string, number int, sent time.Time) (*PR, time.Time) {
+	var best *PR
+	bestAt := sent
+	for ok, oe := range c.entries {
+		if oe.pr == nil || oe.pr.Number != number || !strings.EqualFold(ok.Repo, repo) || !oe.fetched.After(bestAt) {
+			continue
+		}
+		best, bestAt = oe.pr, oe.fetched
+	}
+	return best, bestAt
 }
 
 // Fetch answers keys from the cache when every entry is fresh, and otherwise asks the provider

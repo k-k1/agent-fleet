@@ -786,3 +786,130 @@ func TestAnOlderAnswerArrivingLateDoesNotReplaceANewerOne(t *testing.T) {
 		}
 	}
 }
+
+// outOfOrderFetch answers a call that names slow after release is closed (signalling in once it
+// is inside), and any other call at once; answer gives each key's PR.
+func outOfOrderFetch(c *Cache, slow Key, in, release chan struct{}, answer func(k Key, slow bool) *PR) {
+	c.fetch = func(_ string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
+		isSlow := len(keys) == 1 && keys[0] == slow
+		if isSlow {
+			close(in)
+			<-release
+		}
+		out := map[Key]*PR{}
+		for _, k := range keys {
+			out[k] = answer(k, isSlow)
+		}
+		return out, nil, 0, nil
+	}
+}
+
+// A branch's own read says which PR it names: a later read of the old PR by number, answering
+// first, must not hide the new PR the branch's slower read found.
+func TestABranchsOwnLateReadOfANewPRIsKept(t *testing.T) {
+	c := newTestCache("http://unused", "tok")
+	branch, old := Key{Repo: "o/r", Branch: "a"}, Key{Repo: "o/r", Number: 10}
+	in, release := make(chan struct{}), make(chan struct{})
+	outOfOrderFetch(c, branch, in, release, func(k Key, slow bool) *PR {
+		if slow {
+			return &PR{Number: 11, State: "open"} // the branch has a new PR
+		}
+		return &PR{Number: 10, State: "merged"}
+	})
+	c.mu.Lock() // the branch already names #10, read a while ago
+	e := &entry{asked: time.Now()}
+	c.entries[branch] = e
+	c.storeLocked(branch, e, &PR{Number: 10, State: "merged"}, time.Now().Add(-time.Hour))
+	c.mu.Unlock()
+	time.Sleep(2 * time.Millisecond)
+	since := time.Now()
+	type res struct {
+		got map[Key]*PR
+		err error
+	}
+	done := make(chan res)
+	go func() {
+		got, err := c.FetchSince(context.Background(), []Key{branch}, since)
+		done <- res{got, err}
+	}()
+	<-in
+	time.Sleep(2 * time.Millisecond)
+	if _, err := c.Fetch(context.Background(), []Key{old}); err != nil { // a watch reads #10, answering first
+		t.Fatal(err)
+	}
+	close(release)
+	r := <-done
+	if r.err != nil || r.got[branch] == nil || r.got[branch].Number != 11 {
+		t.Fatalf("FetchSince = %+v, %v, want the branch's own answer #11", r.got[branch], r.err)
+	}
+	if pr := c.Lookup([]Key{branch}, time.Now())[branch]; pr == nil || pr.Number != 11 {
+		t.Fatalf("branch answers %+v, want #11", pr)
+	}
+}
+
+// A key not yet bound to the PR takes the newest read of it another key already holds, in both
+// directions: a slow branch read after a faster number read, and a slow number read after a
+// faster branch read.
+func TestALateReadOfAColdKeyTakesTheNewestSnapshotOfItsPR(t *testing.T) {
+	branch, num := Key{Repo: "o/r", Branch: "a"}, Key{Repo: "o/r", Number: 3}
+	answer := func(_ Key, slow bool) *PR {
+		if slow {
+			return &PR{Number: 3, State: "open", Checks: "pending"}
+		}
+		return &PR{Number: 3, State: "open", Checks: "success"}
+	}
+	for _, tc := range []struct {
+		name       string
+		slow, fast Key
+	}{{"slow branch", branch, num}, {"slow number", num, branch}} {
+		c := newTestCache("http://unused", "tok")
+		in, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+		outOfOrderFetch(c, tc.slow, in, release, answer)
+		go func() {
+			defer close(done)
+			_, _ = c.Fetch(context.Background(), []Key{tc.slow})
+		}()
+		<-in
+		time.Sleep(2 * time.Millisecond)
+		if _, err := c.Fetch(context.Background(), []Key{tc.fast}); err != nil {
+			t.Fatal(err)
+		}
+		close(release)
+		<-done
+		for _, k := range []Key{branch, num} {
+			if pr := c.Lookup([]Key{k}, time.Now())[k]; pr == nil || pr.Checks != "success" {
+				t.Errorf("%s: %+v answers %+v, want the newer success", tc.name, k, pr)
+			}
+		}
+	}
+}
+
+// Two reads of the branch itself answering out of order: the one sent later says which PR the
+// branch names now.
+func TestABranchsOlderReadArrivingLateDoesNotRenameItsPR(t *testing.T) {
+	c := newTestCache("http://unused", "tok")
+	branch := Key{Repo: "o/r", Branch: "a"}
+	in, release, done := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	c.fetch = func(_ string, keys []Key) (map[Key]*PR, map[Key]bool, time.Duration, error) {
+		n := &PR{Number: 11, State: "open"}
+		if calls.Add(1) == 1 {
+			close(in)
+			<-release
+			n = &PR{Number: 10, State: "open"} // read before #10 was closed and #11 opened
+		}
+		return map[Key]*PR{branch: n}, nil, 0, nil
+	}
+	c.Async = func(f func()) { go func() { f(); close(done) }() }
+	c.Lookup([]Key{branch}, time.Now())
+	<-in
+	time.Sleep(2 * time.Millisecond)
+	if got, err := c.FetchSince(context.Background(), []Key{branch}, time.Now()); err != nil || got[branch].Number != 11 {
+		t.Fatalf("FetchSince = %+v, %v, want #11", got[branch], err)
+	}
+	close(release)
+	<-done
+	if pr := c.Lookup([]Key{branch}, time.Now())[branch]; pr == nil || pr.Number != 11 {
+		t.Fatalf("branch answers %+v, want #11 kept over the older read of #10", pr)
+	}
+}
