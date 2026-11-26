@@ -309,7 +309,7 @@ func WriteWorktreeCreator(dir, session string) error {
 // or is not a small regular file (readSmallRegular: the delete path reads it while holding the
 // deletion gate, so a named pipe in its place must never block it).
 func readCreatorFile(p string) (string, bool) {
-	b, ok := readSmallRegular(p)
+	b, ok := readSmallRegular(p, smallFileMax)
 	if !ok {
 		return "", false
 	}
@@ -900,54 +900,116 @@ func WorktreeParent(dir string) string {
 }
 
 // LinkedWorktreeMain reports whether dir is a linked worktree (`git worktree add`) and, when it
-// is, the main working copy it hangs off. It reads the .git gitfile and commondir rather than
-// running git, so a session create pays no process for it. A submodule's gitfile has no
-// commondir and is not a linked worktree. main is "" for a linked worktree whose common git
-// directory is not a working copy's .git (a --separate-git-dir or a bare repository): the
-// folder above it is then no working copy, and naming it would invent a parent.
+// is, the main working copy it hangs off. It reads the .git gitfile and commondir the way git
+// does rather than running git, so a session create pays no process for it. A submodule's
+// gitfile has no commondir and is not a linked worktree.
+//
+// main is "" whenever the folder above the common git directory is not provably a working
+// copy that owns it: a --separate-git-dir, a bare repository (whatever its directory is
+// called), or a config that cannot be read with certainty. A parent named there would be
+// invented, so when in doubt there is none.
 func LinkedWorktreeMain(dir string) (main string, linked bool) {
-	body, ok := readSmallRegular(filepath.Join(dir, ".git"))
+	body, ok := readSmallRegular(filepath.Join(dir, ".git"), smallFileMax)
 	if !ok {
 		return "", false // a .git directory (a main copy), none, or not a regular file
 	}
-	gitDir := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(string(body)), "gitdir:"))
-	if gitDir == "" {
+	// git accepts a gitfile only as "gitdir: <path>", dropping trailing line ends alone.
+	rest, ok := strings.CutPrefix(strings.TrimRight(string(body), "\r\n"), "gitdir: ")
+	if !ok || rest == "" {
 		return "", false
 	}
-	if !filepath.IsAbs(gitDir) {
-		gitDir = filepath.Join(dir, gitDir)
-	}
-	gitDir = filepath.Clean(gitDir)
-	c, ok := readSmallRegular(filepath.Join(gitDir, "commondir"))
+	gitDir, ok := physicalFrom(dir, rest)
 	if !ok {
 		return "", false
 	}
-	common := strings.TrimSpace(string(c))
-	if common == "" {
+	c, ok := readSmallRegular(filepath.Join(gitDir, "commondir"), smallFileMax)
+	if !ok {
 		return "", false
 	}
-	if !filepath.IsAbs(common) {
-		common = filepath.Join(gitDir, common)
+	rest = strings.TrimRight(string(c), "\r\n")
+	if rest == "" {
+		return "", false
 	}
-	common = filepath.Clean(common)
-	if common == gitDir {
+	common, ok := physicalFrom(gitDir, rest)
+	if !ok || common == gitDir {
 		return "", false
 	}
 	if filepath.Base(common) != ".git" {
 		return "", true
 	}
+	if bare, known := coreBare(common); !known || bare {
+		return "", true
+	}
 	return filepath.Dir(common), true // …/repos/app/.git -> …/repos/app
 }
 
-// smallFileMax bounds readSmallRegular: a gitfile, a commondir or a creator marker holds one
-// path or one session name.
+// physicalFrom resolves p, taken relative to base when it is not absolute, to its physical
+// path, the way git reads the relative paths in a gitfile and in commondir: with ~/repos a
+// symlink, "../../x" leaves from the link's target, not from its spelling. The two are joined
+// as text, never through filepath.Join, whose Clean would fold the ".." lexically first;
+// EvalSymlinks resolves each component before it applies a ".." that follows.
+func physicalFrom(base, p string) (string, bool) {
+	if !filepath.IsAbs(p) {
+		p = base + string(filepath.Separator) + p
+	}
+	real, err := filepath.EvalSymlinks(p)
+	return real, err == nil
+}
+
+// gitConfigMax bounds the repository config read for core.bare.
+const gitConfigMax = 256 << 10
+
+// coreBare reads core.bare from the config in gitDir. known is false when the answer is not
+// certain from that file alone: unreadable, too large, or pulling in other files (include,
+// includeIf), whose bare a plain read cannot see.
+func coreBare(gitDir string) (bare, known bool) {
+	b, ok := readSmallRegular(filepath.Join(gitDir, "config"), gitConfigMax)
+	if !ok {
+		return false, false
+	}
+	section := ""
+	for _, raw := range strings.Split(string(b), "\n") {
+		line := strings.TrimSpace(raw)
+		if strings.HasPrefix(line, "[") {
+			section, _ = parseSectionHeader(line)
+			if strings.HasPrefix(section, "include") {
+				return false, false
+			}
+			continue
+		}
+		if section != "core" {
+			continue
+		}
+		k, v, found := strings.Cut(line, "=")
+		k = strings.ToLower(strings.TrimSpace(k))
+		if k != "bare" {
+			continue
+		}
+		if !found {
+			bare = true // a bare key with no value is true in git
+			continue
+		}
+		switch strings.ToLower(strings.Trim(strings.TrimSpace(v), `"`)) {
+		case "true", "yes", "on", "1":
+			bare = true
+		case "false", "no", "off", "0", "":
+			bare = false
+		default:
+			return false, false
+		}
+	}
+	return bare, true
+}
+
+// smallFileMax bounds a gitfile, a commondir or a creator marker: each holds one path or one
+// session name.
 const smallFileMax = 4096
 
-// readSmallRegular reads p only when it is a regular file of at most smallFileMax bytes. The
-// open is non-blocking and the type is checked on the opened descriptor, so a named pipe or
-// device in its place (or swapped in after a stat) never blocks the reader. One byte over the
-// limit is read so a longer file is refused rather than taken truncated.
-func readSmallRegular(p string) ([]byte, bool) {
+// readSmallRegular reads p only when it is a regular file of at most max bytes. The open is
+// non-blocking and the type is checked on the opened descriptor, so a named pipe or device in
+// its place (or swapped in after a stat) never blocks the reader. One byte over the limit is
+// read so a longer file is refused rather than taken truncated.
+func readSmallRegular(p string, max int64) ([]byte, bool) {
 	f, err := os.OpenFile(p, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, false
@@ -956,8 +1018,8 @@ func readSmallRegular(p string) ([]byte, bool) {
 	if st, err := f.Stat(); err != nil || !st.Mode().IsRegular() {
 		return nil, false
 	}
-	b, err := io.ReadAll(io.LimitReader(f, smallFileMax+1))
-	if err != nil || len(b) > smallFileMax {
+	b, err := io.ReadAll(io.LimitReader(f, max+1))
+	if err != nil || int64(len(b)) > max {
 		return nil, false
 	}
 	return b, true

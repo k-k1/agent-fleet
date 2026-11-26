@@ -2,6 +2,7 @@ package sessionx
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,6 +86,21 @@ func TestPlaceOf(t *testing.T) {
 	placeWorktree(t, filepath.Join(repos, "sep"), filepath.Join(repos, "sep@wt"), "sepwt")
 	gitRun(t, repos, "clone", "-q", "--bare", filepath.Join(repos, "foo"), filepath.Join(repos, "storage", "vendor.git"))
 	placeWorktree(t, filepath.Join(repos, "storage", "vendor.git"), filepath.Join(repos, "vendor@wt"), "vendorwt")
+	// A bare repository kept in a directory called .git: the folder above it holds no working
+	// copy, whatever the common dir's name says.
+	gitRun(t, repos, "clone", "-q", "--bare", filepath.Join(repos, "foo"), filepath.Join(repos, "hollow", ".git"))
+	placeWorktree(t, filepath.Join(repos, "hollow", ".git"), filepath.Join(repos, "hollow@wt"), "hollowwt")
+	// A gitfile git refuses (no "gitdir: " prefix, or no space after it) makes no worktree,
+	// even when the path it names is a real one.
+	gitInit(t, filepath.Join(repos, "bad"))
+	for _, c := range []struct{ folder, body string }{{"bad@noprefix", "%s\n"}, {"bad@nospace", "gitdir:%s\n"}} {
+		dir := filepath.Join(repos, c.folder)
+		placeWorktree(t, filepath.Join(repos, "bad"), dir, c.folder[4:])
+		admin := filepath.Join(repos, "bad", ".git", "worktrees", c.folder)
+		if err := os.WriteFile(filepath.Join(dir, ".git"), []byte(fmt.Sprintf(c.body, admin)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	for _, c := range []struct {
 		dir  string
@@ -107,6 +123,9 @@ func TestPlaceOf(t *testing.T) {
 		{filepath.Join(repos, "sep"), session.Place{Kind: session.PlaceRepo, ID: "sep"}},
 		{filepath.Join(repos, "sep@wt"), session.Place{Kind: session.PlaceWorktree, ID: "sep@wt"}},
 		{filepath.Join(repos, "vendor@wt"), session.Place{Kind: session.PlaceWorktree, ID: "vendor@wt"}},
+		{filepath.Join(repos, "hollow@wt"), session.Place{Kind: session.PlaceWorktree, ID: "hollow@wt"}},
+		{filepath.Join(repos, "bad@noprefix"), session.Place{Kind: session.PlaceRepo, ID: "bad@noprefix"}},
+		{filepath.Join(repos, "bad@nospace"), session.Place{Kind: session.PlaceRepo, ID: "bad@nospace"}},
 		{filepath.Join(repos, "foo@wt"), session.Place{Kind: session.PlaceWorktree, ID: "foo@wt", Parent: "foo"}},
 		{filepath.Join(repos, "stray"), session.Place{Kind: session.PlaceWorktree, ID: "stray"}},
 		{filepath.Join(spacex.Root(), "foo"), session.Place{Kind: session.PlaceSpace, ID: "foo"}},
@@ -123,6 +142,28 @@ func TestPlaceOf(t *testing.T) {
 		if got == nil || *got != c.want {
 			t.Errorf("PlaceOf(%q) = %+v, want %+v", c.dir, got, c.want)
 		}
+	}
+}
+
+// With ~/repos a symlink, a relative gitfile path leaves from the link's target, as git reads
+// it: ~/repos/wt's "../../meta/app/.git/worktrees/wt" names <ws>/meta/..., never ~/meta/....
+func TestPlaceOfReadsRelativeGitPathsPhysically(t *testing.T) {
+	isolateAgentState(t)
+	ws := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(ws, "repos"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(ws, "repos"), filepath.Join(homeDir(), "repos")); err != nil {
+		t.Fatal(err)
+	}
+	gitInit(t, filepath.Join(ws, "meta", "app"))
+	placeWorktree(t, filepath.Join(ws, "meta", "app"), filepath.Join(ws, "repos", "wt"), "wt")
+	if err := os.WriteFile(filepath.Join(ws, "repos", "wt", ".git"), []byte("gitdir: ../../meta/app/.git/worktrees/wt\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(homeDir(), "repos", "wt")
+	if got := PlaceOf(dir); *got != (session.Place{Kind: session.PlaceWorktree, ID: "wt"}) {
+		t.Errorf("PlaceOf(%q) = %+v, want a worktree with no parent under ~/repos", dir, got)
 	}
 }
 
