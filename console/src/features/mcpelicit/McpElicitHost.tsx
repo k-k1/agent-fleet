@@ -36,11 +36,12 @@ export function McpElicitHost({ toasts = true }: { toasts?: boolean }) {
   // Calls whose toast the member closed: declined, or being declined, so not toasted again.
   const closedIds = useRef(new Set<string>());
 
-  // On start, and whenever the tenant or the member changes: the list shown is only ever the
-  // current one's (useHeld), so it is read again for them.
+  // On start, and whenever the tenant or the member changes: the old list is dropped and read
+  // again for them, in this one effect so nothing can run between the two.
   const tenant = useTenantStore((s) => s.tenant);
   const identityRev = useTenantStore((s) => s.identityRev);
   useEffect(() => {
+    useMcpElicitStore.getState().reset();
     void refresh();
   }, [refresh, tenant, identityRev]);
 

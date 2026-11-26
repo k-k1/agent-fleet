@@ -180,6 +180,22 @@ describe("where a held MCP call shows", () => {
       { id: "e1", action: "accept", choices: { k: { f: "A" } } },
     ]);
   });
+  // A switch of tenant drops the old list and reads the new one at once, not at the next poll.
+  it("reads the list again as soon as the tenant changes", async () => {
+    vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+    try {
+      state.held = false;
+      await render(null);
+      expect(toastCount()).toBe(0);
+      state.held = true;
+      await act(async () => useTenantStore.setState({ tenant: "other" }));
+      await act(async () => new Promise((r) => setTimeout(r, 0)));
+      expect(toastCount()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+      useTenantStore.setState({ tenant: "" });
+    }
+  });
   it("takes its toasts down when it unmounts", async () => {
     await render(null);
     expect(toastCount()).toBe(1);

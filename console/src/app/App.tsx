@@ -31,7 +31,6 @@ import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AwsLoginHost } from "../features/awslogin/AwsLoginHost.tsx";
 import { useAwsLoginStore } from "../features/awslogin/store.ts";
 import { useAwsConfirmStore } from "../features/awsconfirm/store.ts";
-import { useMcpElicitStore } from "../features/mcpelicit/store.ts";
 import { AwsConfirmHost } from "../features/awsconfirm/AwsConfirmHost.tsx";
 import { McpElicitHost } from "../features/mcpelicit/McpElicitHost.tsx";
 import { useGcpLoginStore } from "../features/gcplogin/store.ts";
@@ -425,9 +424,6 @@ export function App() {
       const confirm = useAwsConfirmStore.getState();
       confirm.reset();
       void confirm.refresh();
-      // Only dropped here: McpElicitHost reads the list again for the new tenant, once the
-      // tenant store has settled it.
-      useMcpElicitStore.getState().reset();
       profilesReloadRef.current = true; // the retrying load below asks for the profiles
     }
     prefsSyncedTenantRef.current = tenant;
@@ -507,10 +503,6 @@ export function App() {
     if (!booted || identityRev === identityRevDoneRef.current) return;
     identityRevDoneRef.current = identityRev;
     void resyncAccumulatedForIdentitySwitch();
-    // The held MCP calls belong to the member who could answer them. Only dropped here: a
-    // member settled by a retried whoami can come before the tenant is (McpElicitHost reads the
-    // list again once both are).
-    useMcpElicitStore.getState().reset();
     // The member's UI state is keyed by (user, tenant): a whoami that resolves late moves that key
     // without a tenant change, and the answer the boot load got under the old key was dropped.
     void useUIStateStore.getState().load();
