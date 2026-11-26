@@ -147,7 +147,10 @@ export function planTree(
   // runs through a grouped copy (RepoTreeNode.detached): plan it once, at the first stop.
   if (seen.has(r.name)) return [];
   seen.add(r.name);
-  const mine = sessionsInFolder(sessions, r.name);
+  // A session the Agent now reads another working-copy id for runs in another copy, whatever its
+  // stored place says (a `link/..` dir whose link was pointed elsewhere): the run would stop or
+  // shelve it before this folder goes, so it is not this copy's.
+  const mine = sessionsInFolder(sessions, r.name).filter((s) => !(s.workingCopyId && r.workingCopyId && s.workingCopyId !== r.workingCopyId));
   const stopped = mine.filter((s) => !s.alive && !s.locked);
   const { branch, branchIn } = branchOf(r);
   const row: CopyPlan = {

@@ -46,18 +46,14 @@ describe("handoffLaunchTarget", () => {
     expect(t).toEqual({ error: "no_parent" });
   });
 
-  // #5219: a session started through a link spells another path and stores no repository place;
-  // the working-copy id the Agent reads from the directory now leads back to the copy, even when
-  // the link was pointed elsewhere since the session started.
-  it("matches a session started through a link by its current working-copy id, when one row has it", () => {
+  // #5219: a session started through a link spells another path and stores no repository place.
+  // Its working-copy id is not taken alone: a file copy outside the list carries the clone's id,
+  // and a link re-pointed under a running session reads the new target's.
+  it("does not match a row by the working-copy id alone", () => {
     const a: Repo = { ...WT, workingCopyId: "wc_a" };
-    const b: Repo = { name: "app@wip-y", path: "/home/dev/repos/app@wip-y", worktree: true, parent: "app", branch: "temp/y", workingCopyId: "wc_b" };
-    const linked = sess({ repo: "current", dir: "/home/dev/links/current", worktree: true, place: { kind: "other" }, workingCopyId: "wc_b", currentBranch: "temp/y" });
-    expect(handoffLaunchTarget(linked, [GIT, a, b], true)).toEqual({ repo: { ...GIT, branch: "temp/y" } });
-    expect(handoffLaunchTarget(linked, [GIT, a, b], false)).toMatchObject({ repo: { name: "app@wip-y", path: "/home/dev/links/current" } });
-    // two rows with one id (a file copy of a clone) say nothing about which one it is
-    const twin: Repo = { ...b, name: "app@twin", path: "/home/dev/repos/app@twin" };
-    expect(handoffLaunchTarget(linked, [GIT, b, twin], true)).toEqual({ error: "no_parent" });
+    const linked = sess({ repo: "current", dir: "/home/dev/links/current", worktree: true, place: { kind: "other" }, workingCopyId: "wc_a" });
+    expect(handoffLaunchTarget(linked, [GIT, a], true)).toEqual({ error: "no_parent" });
+    expect(handoffLaunchTarget(linked, [GIT, a], false)).toMatchObject({ repo: { name: "current", path: "/home/dev/links/current" } });
   });
 
   it("reports no_dir for a session with no working directory", () => {
