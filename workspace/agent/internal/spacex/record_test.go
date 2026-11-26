@@ -596,10 +596,16 @@ func TestUpdateWithoutAnIdentityKeepsTheRecordedOne(t *testing.T) {
 func TestRenameRecordsThePublishedFolder(t *testing.T) {
 	home := withHome(t)
 	sp, _ := Create("Draft")
+	// Unrecorded, so an identity the rename failed to take cannot be made up for by Create's.
+	forget(sp.Folder)
 	moved := filepath.Join(home, "moved")
 	afterPublish = func() {
-		_ = os.Rename(sp.Dir, moved)
-		_ = os.Mkdir(sp.Dir, 0o755)
+		if err := os.Rename(sp.Dir, moved); err != nil {
+			t.Error(err)
+		}
+		if err := os.Mkdir(sp.Dir, 0o755); err != nil {
+			t.Error(err)
+		}
 	}
 	t.Cleanup(func() { afterPublish = nil })
 	if _, err := Rename(sp.Folder, "Final"); err != nil {
