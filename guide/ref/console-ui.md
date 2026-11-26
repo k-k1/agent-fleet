@@ -94,6 +94,8 @@ A second line can appear under the row.
 - Marks for requested changes or a conflict can follow the pull request
 - It is re-read every few minutes, so a merge takes a moment to show
 
+In the Console details for an open Bitbucket pull request, **Blocking merge checks** can appear even when the branches have no conflicts. The list can show missing approvals or successful builds, unresolved tasks, a source branch that is too far behind, a merge permission failure, or a custom check. If a permission check fails, check access to the destination branch and whether the source repository still exists. When the details give only a general block or say the check results are unavailable, use **Open in Bitbucket** to investigate.
+
 ## Badges on a repository row
 
 What they mean and how to read them is in [Launch a session from a repository](../user/code/launch-from-repo.md#read-the-rows-badges).
