@@ -123,6 +123,7 @@ var sessionWireBinding = map[string]string{
 	"InputNotDelivered":    "inputNotDelivered",
 	"Wakers":               "wakers",
 	"WakersUnknown":        "wakersUnknown",
+	"PendingPeers":         "pendingPeers",
 	"QueueTurn":            "queueTurn",
 	"LastTurnStartAt":      "lastTurnStartAt",
 	"LastTurnEndAt":        "lastTurnEndAt",
@@ -174,6 +175,9 @@ var goOnlyExempt = map[string]string{
 	// Read by the Control Plane alone: a queue run is not closed while a child's finished turn is
 	// unread by its idle parent (#4643). The Console draws nothing from it.
 	"lastTurnEndAt": "read only by the Control Plane's queue close rule (#4643); the Console does not draw it",
+	// Read by the Control Plane alone: a queue run is not closed while a peer message to a member
+	// of its tree is in transit (#5270). The Console draws nothing from it.
+	"pendingPeers": "read only by the Control Plane's queue hold (#5270); the Console does not draw it",
 }
 
 // sessionContractFamily describes the sessionWire family. The body of the check lives in
