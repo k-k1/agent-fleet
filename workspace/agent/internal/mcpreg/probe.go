@@ -77,6 +77,10 @@ const (
 // defaultProbeTimeout.
 const sessionBoundRequests = 6
 
+// publicOAuthBudget caps the OAuth metadata lookup after a test that passed without
+// credentials. A var for tests.
+var publicOAuthBudget = 3 * time.Second
+
 // affinityBudget caps the extra session-bound requests (all but the first tools/list).
 const affinityBudget = 5 * time.Second
 
@@ -184,7 +188,10 @@ type ProbeResult struct {
 	// and shown verbatim to the user — a broken command usually explains itself there.
 	Detail string `json:"detail,omitempty"`
 	// OAuth is set when the server answered 401 as an OAuth-protected resource. OK stays
-	// false (nothing was listed), but the Console shows the report instead of a failure.
+	// false (nothing was listed), but the Console shows the report instead of a failure. It is
+	// also set next to OK when the server listed its tools without credentials but publishes
+	// protected-resource metadata: Google's Workspace servers answer tools/list to anyone and
+	// need a token for tool calls, so the form can still offer OAuth (ADR 0146 decision 2).
 	OAuth     *OAuthReport `json:"oauth,omitempty"`
 	ElapsedMS int64        `json:"elapsedMs"`
 }
@@ -600,6 +607,32 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		return res, true
 	}
 
+	// withPublicOAuth adds the OAuth findings to a test that succeeded without credentials.
+	// Only a protected-resource metadata document for this very URL counts: a server without
+	// one keeps its plain result, and so does one whose origin publishes a root document for
+	// another resource (nothing here says this one is protected). A definition with static
+	// headers is left alone, since its success says nothing about what is public. The lookup
+	// has its own short budget: the test has already passed, and a proxy that never answers
+	// unknown well-known paths must not hold that answer back.
+	withPublicOAuth := func(res ProbeResult) ProbeResult {
+		if len(d.Headers) > 0 {
+			return res
+		}
+		octx, cancel := context.WithTimeout(ctx, publicOAuthBudget)
+		defer cancel()
+		rep, ok := probeOAuth(octx, d.URL, nil)
+		if !ok {
+			return res
+		}
+		for _, p := range rep.Problems {
+			if p.Code == OAuthProblemPRMResource {
+				return res
+			}
+		}
+		res.OAuth = &rep
+		return res
+	}
+
 	reqCtx := ctx
 	post := func(m rpcMsg, stateless bool) (httpExchange, error) {
 		b, err := json.Marshal(m)
@@ -685,7 +718,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 		}
 		res := okResult(dr.info(), ex.msg.Result)
 		res.Revision, res.SupportedVersions = ProtocolVersion, dr.SupportedVersions
-		return res
+		return withPublicOAuth(res)
 	}
 
 	// Legacy era.
@@ -756,7 +789,7 @@ func probeHTTP(ctx context.Context, d ServerDef) ProbeResult {
 	ex = first
 	res := okResult(ir.ServerInfo, ex.msg.Result)
 	res.Revision = ProtocolVersionLegacy
-	return res
+	return withPublicOAuth(res)
 }
 
 // sessionRejected reports whether ex is a server refusing a session id it issued: 404, or

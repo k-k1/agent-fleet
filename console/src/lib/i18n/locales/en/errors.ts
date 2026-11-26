@@ -236,6 +236,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.mcp_oauth_authorization_header": "An OAuth server takes no static headers. Remove them, or choose another authentication.",
   "err.mcp_oauth_client_invalid": "The tenant's client needs a client ID and the authorization server's issuer as an https URL, and belongs only to an OAuth server.",
   "err.mcp_oauth_client_tenant_only": "Only a tenant-distributed server carries a client registered by the tenant.",
+  "err.mcp_oauth_scopes_invalid": "Scopes belong only to an OAuth server, each one a single scope without spaces, commas or quotes, and together short enough to fit in 1024 bytes with offline_access added.",
+  "err.mcp_oauth_scopes_tenant_only": "Only a tenant-distributed server carries scopes of its own.",
   "err.mcp_header_secret_reenter": "Enter the header values again: the server URL points at a different host, so the stored values are not carried over.",
   "err.mcp_oauth_secret_reenter": "Enter the client secret again: the issuer or client ID changed, or no secret is stored.",
   "err.mcp_oauth_user_secret": "An OAuth server asks members for no header values. Turn off \"Each member enters the credential\", or choose another authentication.",

@@ -28,6 +28,10 @@ type legacyFake struct {
 
 func (f *legacyFake) handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost { // the metadata lookup after a success: no MCP request
+			http.NotFound(w, r)
+			return
+		}
 		var m struct {
 			ID     any    `json:"id"`
 			Method string `json:"method"`
