@@ -22,6 +22,7 @@ import { api, apiJSON, errText, type ApiError } from "../../core/api/client.ts";
 import { useT, type MsgKey } from "../../lib/i18n/index.ts";
 import { relTime } from "../../lib/intl.ts";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
+import { useSpaceLaunch } from "./spaceLaunch.ts";
 import { HandoffOfferRow } from "../sharing/HandoffOfferRow.tsx";
 import { refreshReceivedIfStale, senderLabel, useHandoffStore, type HandoffOffer } from "../sharing/handoffStore.ts";
 import {
@@ -103,6 +104,7 @@ export function InboxModal({ onClose }: { onClose: () => void }) {
   const received = receivedItems(items);
   const sent = sentItems(items);
   return (
+    <>
     <Modal title={tr("inbox.title")} onClose={onClose} className="inbox-modal">
       <div className="ui-modal-body">
         <div className="ui-seg choice-seg inbox-tabs" role="tablist">
@@ -135,6 +137,8 @@ export function InboxModal({ onClose }: { onClose: () => void }) {
         {tab === "settings" && <SettingsPane />}
       </div>
     </Modal>
+    <SpaceLaunchHost />
+    </>
   );
 }
 
@@ -330,6 +334,23 @@ const SPACE_PLACE = "\u0000space";
 // other reason to bring in.
 const SpaceLaunchModal = lazy(() => import("../repos/SpaceLaunchModal.tsx").then((m) => ({ default: m.SpaceLaunchModal })));
 
+/** The space launch dialog, hosted outside the request cards (see spaceLaunch.ts). Closes with the inbox. */
+export function SpaceLaunchHost() {
+  const request = useSpaceLaunch((s) => s.request);
+  useEffect(() => () => useSpaceLaunch.getState().close(), []);
+  if (!request) return null;
+  return (
+    <Suspense fallback={null}>
+      <SpaceLaunchModal
+        key={request.id}
+        prompt={request.body}
+        inboxItemId={request.id}
+        onClose={() => useSpaceLaunch.getState().close()}
+      />
+    </Suspense>
+  );
+}
+
 /** The assignee's launch: pick a working copy or a space, then the ordinary launch dialog (or the
  *  space form) opens with the request as its prompt. The CP checks the claim again before the
  *  session exists. A member without working copies starts in a space: that is the default then. */
@@ -339,13 +360,12 @@ function LaunchRow({ item }: { item: InboxItem }) {
   const repos = useReposStore((s) => s.repos);
   // Empty = not chosen yet: the first working copy, or a space when there is none.
   const [pick, setPick] = useState("");
-  const [spaceOpen, setSpaceOpen] = useState(false);
   const repoId = useId();
   const place = pick || (repos[0]?.name ?? SPACE_PLACE);
   const inSpace = place === SPACE_PLACE;
   const launch = () => {
     if (inSpace) {
-      setSpaceOpen(true);
+      useSpaceLaunch.getState().open({ id: item.id, body: item.body });
       return;
     }
     const repo = repos.find((r) => r.name === place);
@@ -375,12 +395,6 @@ function LaunchRow({ item }: { item: InboxItem }) {
       <Button variant="primary" onClick={launch}>
         <Icon name="run" /> {tr("inbox.launch")}
       </Button>
-      {/* The request travels as props, not through the global launch seed (see SpaceLaunchModal). */}
-      {spaceOpen && (
-        <Suspense fallback={null}>
-          <SpaceLaunchModal prompt={item.body} inboxItemId={item.id} onClose={() => setSpaceOpen(false)} />
-        </Suspense>
-      )}
     </div>
   );
 }

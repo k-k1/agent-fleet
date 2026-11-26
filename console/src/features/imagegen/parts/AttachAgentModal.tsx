@@ -63,6 +63,9 @@ export interface AttachOpts {
   space?: { folder: string };
 }
 
+/** What onAttach answers: started, not started, or not started because the Agent refused the space. */
+export type AttachDone = boolean | "space_refused";
+
 export function AttachAgentModal({
   replacing,
   initialImage,
@@ -77,7 +80,7 @@ export function AttachAgentModal({
   /** Opened from a working-copy row: the place starts as that copy, shown as a summary. */
   fixedRepo?: Repo;
   onClose: () => void;
-  onAttach: (o: AttachOpts) => Promise<boolean>;
+  onAttach: (o: AttachOpts) => Promise<AttachDone>;
 }) {
   const tr = useT();
   const settings = useSettings();
@@ -121,7 +124,10 @@ export function AttachAgentModal({
   const sessions = useSessionsStore((s) => s.sessions);
   const refreshSessions = useSessionsStore((s) => s.refresh);
   const spacePick = placeFixed && fixedRepo ? null : parseSpacePlace(repoName);
-  const spaceGone = useSpaceGone(spacePick?.folder ?? "");
+  // The Agent refused this folder (removed, or an agent moved in) since the list was read: it stays
+  // refused until another place is picked, whatever the lists say while they are being re-read.
+  const [refusedFolder, setRefusedFolder] = useState("");
+  const spaceGone = useSpaceGone(spacePick?.folder ?? "") || (!!spacePick?.folder && spacePick.folder === refusedFolder);
   const busyFolders = useMemo(() => busySpaces(sessions), [sessions]);
   const spaceBusy = !!spacePick?.folder && busyFolders.has(spacePick.folder);
   const rankedSpaces = useMemo(() => rankSpaces(spaces, sessions), [spaces, sessions]);
@@ -217,7 +223,9 @@ export function AttachAgentModal({
   const skipEffective = skipPerm ?? agentLaunchDefault(settings, kind).skipPermissions;
 
   const pickRepo = (name: string) => {
+    autoSpace.current = false; // from here on the place is the member's choice
     setRepoName(name);
+    setRefusedFolder("");
     setSubdir("");
     setBase("");
     setBranches(null);
@@ -276,16 +284,14 @@ export function AttachAgentModal({
       place: spacePick ? spaceName : repo?.name || "",
     });
     setBusy(false);
-    if (!ok) {
-      // The Agent may have refused the space because the lists this dialog holds are old (removed or
-      // taken by another agent in another tab): read both again, so the pick is marked and a second
-      // press does not send the same place.
-      if (spacePick?.folder) {
-        void useSpacesStore.getState().refresh();
-        void refreshSessions();
-      }
-      return;
+    if (ok === "space_refused" && spacePick?.folder) {
+      // The lists this dialog holds are old (the space was removed, or another agent moved in, in
+      // another tab): stop sending this place now and read both lists again.
+      setRefusedFolder(spacePick.folder);
+      void useSpacesStore.getState().refresh();
+      void refreshSessions();
     }
+    if (ok !== true) return;
     writeAttachLast(tenant, {
       driver,
       kind,
@@ -456,7 +462,8 @@ export function AttachAgentModal({
                       {spacePick?.folder && !rankedSpaces.some((sp) => sp.folder === spacePick.folder) && (
                         <option value={spacePlaceValue(spacePick.folder)}>{spacePick.folder}</option>
                       )}
-                      {rankedSpaces.map((sp) => (
+                      {/* Cached spaces are offered once the Agent has confirmed it has spaces. */}
+                      {(spaceSupport === "yes" ? rankedSpaces : []).map((sp) => (
                         <option key={sp.folder} value={spacePlaceValue(sp.folder)}>
                           {spaceLabel(sp.folder, spaces)}
                           {busyFolders.has(sp.folder) ? ` (${tr("start.place_running")})` : ""}
@@ -472,7 +479,6 @@ export function AttachAgentModal({
                 </select>
               )}
               <span className="ui-field-hint">{tr("imggen.attach_repo_hint")}</span>
-              {(spacePick || spaceSupport === "failed") && <SpaceSupportHint support={spaceSupport} onRecheck={recheckSpaces} />}
             </div>
             {repo && (
               <div className="ui-field">
@@ -519,7 +525,9 @@ export function AttachAgentModal({
             )}
           </>
         )}
-        {spaceGone && <p className="igen-warn">{tr("imggen.attach_space_gone")}</p>}
+        {/* Outside the folded summary: a failed check must offer its recheck whatever place was remembered. */}
+        {(spacePick || spaceSupport === "failed") && <SpaceSupportHint support={spaceSupport} onRecheck={recheckSpaces} />}
+        {spaceGone && <p className="igen-warn">{tr(refusedFolder && refusedFolder === spacePick?.folder ? "imggen.attach_space_refused" : "imggen.attach_space_gone")}</p>}
         {spaceBusy && <p className="igen-warn">{tr("imggen.attach_space_busy")}</p>}
         {plan.blocked === "needs_repo" && kind && <p className="igen-warn">{tr("imggen.attach_needs_repo")}</p>}
         {plan.blocked === "no_worktree" && kind && <p className="igen-warn">{tr("imggen.start_no_worktree")}</p>}

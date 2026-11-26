@@ -27,7 +27,7 @@ vi.mock("../repos/SpaceLaunchModal.tsx", () => ({
   },
 }));
 
-import { ItemCard, inboxErrorText } from "./InboxModal.tsx";
+import { ItemCard, SpaceLaunchHost, inboxErrorText } from "./InboxModal.tsx";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
 import type { InboxItem } from "./store.ts";
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
@@ -67,6 +67,7 @@ async function render(item: InboxItem) {
         <ul>
           <ItemCard item={item} />
         </ul>
+        <SpaceLaunchHost />
       </ToastProvider>,
     );
   });
@@ -236,6 +237,23 @@ describe("the assignee's launch", () => {
     await act(async () => launchBtn().click());
     expect(document.querySelector("[data-testid=space-modal]")).not.toBeNull();
     expect(useLaunchTarget.getState().target).toBeNull();
+  });
+
+  it("keeps the space dialog (and what is typed in it) when the request's card goes away", async () => {
+    await open([]);
+    await act(async () => launchBtn().click());
+    expect(document.querySelector("[data-testid=space-modal]")).not.toBeNull();
+    // The sender withdrew it: the card is gone from the list, the dialog is not.
+    await act(async () => {
+      root!.render(
+        <ToastProvider>
+          <ul />
+          <SpaceLaunchHost />
+        </ToastProvider>,
+      );
+    });
+    expect(document.querySelector(".inbox-launch")).toBeNull();
+    expect(document.querySelector("[data-testid=space-modal]")?.textContent).toBe(base.body);
   });
 
   it("closes the space dialog without touching the seed", async () => {

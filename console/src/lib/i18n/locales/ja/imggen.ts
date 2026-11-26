@@ -285,6 +285,7 @@ export const imggen = {
   "imggen.attach_repo_home": "ホーム（リポジトリなし）",
   "imggen.attach_space_busy": "このスペースではすでにエージェントが動いていて、同じファイルを共有してしまいます。新しいスペースか別の場所を選んでください。",
   "imggen.attach_space_gone": "このスペースはもうありません。別の場所を選んでください。",
+  "imggen.attach_space_refused": "Agent がその場所での起動を断りました（スペースが削除されたか、直前にエージェントが入りました）。別の場所を選んでください。",
   "imggen.attach_repo_hint": "エージェントはここにある資料を読みながらプロンプトを組みます。",
   "imggen.attach_worktree": "worktree で開く",
   "imggen.attach_worktree_hint": "worktree ではコミットしていない資料は見えません。",

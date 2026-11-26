@@ -283,6 +283,7 @@ export const imggen: Record<keyof typeof jaImggen, string> = {
   "imggen.attach_repo_home": "Home (no repository)",
   "imggen.attach_space_busy": "An agent is already running in this space and would share its files. Pick a new space or another place.",
   "imggen.attach_space_gone": "This space no longer exists. Pick another place.",
+  "imggen.attach_space_refused": "The Agent would not start there (the space was removed, or an agent has just started in it). Pick another place.",
   "imggen.attach_repo_hint": "The agent reads the material here while it writes the prompt.",
   "imggen.attach_worktree": "Open in a worktree",
   "imggen.attach_worktree_hint": "A worktree does not see uncommitted material.",

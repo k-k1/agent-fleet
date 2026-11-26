@@ -10,8 +10,6 @@ import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { Modal } from "../../ui/Modal.tsx";
 import { useT } from "../../lib/i18n/index.ts";
-import { useEscLayer } from "../../lib/escLayer.ts";
-import { useBackClose } from "../../lib/backClose.ts";
 import { useSpaceSupport } from "../spaces/useSpaceSupport.ts";
 import { SpaceSupportHint } from "../spaces/SpaceSupportHint.tsx";
 import { HubComposer } from "./HubComposer.tsx";
@@ -20,8 +18,6 @@ import { SpaceLaunchForm } from "./LaunchModal.tsx";
 import { useRepoRailContext } from "./useRepoRail.ts";
 import { useStartWork } from "./useStartWork.ts";
 import { agentOf } from "../../agents/registry.ts";
-
-const hold = () => {};
 
 export function SpaceLaunchModal({ prompt, inboxItemId, onClose, onLaunched }: {
   /** The text the first prompt starts as; the member may edit it before launching. */
@@ -39,11 +35,6 @@ export function SpaceLaunchModal({ prompt, inboxItemId, onClose, onLaunched }: {
   const startWork = useStartWork({ policyInline: true });
   const [busy, setBusy] = useState(false);
   const submit = useRef<(() => void) | null>(null);
-  // While the create is out, this dialog's own Escape and back layers are off (it is locked), which
-  // would hand both keys to the dialog underneath and close it with the draft. A layer that does
-  // nothing keeps them here until the answer is in.
-  useEscLayer(hold, busy);
-  useBackClose(hold, busy);
   // The draft starts from the seed once; a later render must not put an edited prompt back.
   const seeded = useRef(false);
   useEffect(() => {
@@ -63,6 +54,8 @@ export function SpaceLaunchModal({ prompt, inboxItemId, onClose, onLaunched }: {
       }
       onClose={onClose}
       lockClose={busy}
+      // Stacked on the inbox: while the create is out, Escape and back must not fall to it.
+      holdKeys
     >
       <div className="ui-modal-body start-hub">
         <HubComposer draft={draft} busy={busy} onSubmit={() => submit.current?.()} />

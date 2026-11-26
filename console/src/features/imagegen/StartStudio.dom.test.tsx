@@ -282,7 +282,10 @@ describe("start a studio in a space", () => {
     const { AttachAgentModal } = await import("./parts/AttachAgentModal.tsx");
     const { attachAgent } = await import("./attach.ts");
     await act(async () =>
-      root.render(<AttachAgentModal onClose={() => {}} onAttach={async (o) => (await attachAgent({ studioId: null, draft: () => ({}), opts: o })).session !== undefined} />),
+      root.render(<AttachAgentModal onClose={() => {}} onAttach={async (o) => {
+            const r = await attachAgent({ studioId: null, draft: () => ({}), opts: o });
+            return r.session !== undefined ? true : r.spaceRefused ? "space_refused" : false;
+          }} />),
     );
     await settle();
   }
@@ -425,26 +428,74 @@ describe("start a studio in a space", () => {
     expect(goBtn().disabled).toBe(false);
   });
 
-  it("reads the lists again when the Agent refuses the space, and does not send the same place twice", async () => {
+  it("stops sending a place the Agent refused at once, before the lists are read again", async () => {
+    for (const code of ["space_not_found", "space_busy"]) {
+      posts.length = 0;
+      spacesAnswer = { spaces: [{ folder: "s-abc", name: "調べもの", dir: "/home/dev/spaces/s-abc" }] };
+      await renderOpen();
+      await choose("調べもの");
+      await pickImage("sdxl");
+      sessionReply = { error: { code, message: "refused" } };
+      // The re-read is still on the wire when the member presses again.
+      spacesAnswer = new Promise(() => {});
+      refreshSessions.mockClear();
+      await click(goBtn());
+      await settle();
+      expect(refreshSessions).toHaveBeenCalled();
+      expect(goBtn().disabled).toBe(true);
+      expect(document.body.textContent).toContain("断りました");
+      const sent = posts.filter((p) => p.path === "api/sessions").length;
+      await click(goBtn());
+      expect(posts.filter((p) => p.path === "api/sessions").length).toBe(sent);
+      // Another place frees the button; the refused one does not come back by itself.
+      spacesAnswer = { spaces: [{ folder: "s-abc", name: "調べもの", dir: "/home/dev/spaces/s-abc" }] };
+      sessionReply = null;
+      await choose("新しいスペース");
+      expect(goBtn().disabled).toBe(false);
+      await act(async () => root.unmount());
+      host.remove();
+      useSpacesStore.getState().clear();
+    }
+  });
+
+  it("keeps a plain failure retryable: only a refused space blocks the same place", async () => {
     spacesAnswer = { spaces: [{ folder: "s-abc", name: "調べもの", dir: "/home/dev/spaces/s-abc" }] };
     await renderOpen();
     await choose("調べもの");
     await pickImage("sdxl");
-    // Removed in another tab after the list was read: the Agent says so.
-    spacesAnswer = { spaces: [] };
-    sessionReply = { error: { code: "space_not_found", message: "no such space" } };
-    const before = spacesCalls;
+    sessionReply = { error: { code: "runtime_failed", message: "boom" } };
     await click(goBtn());
     await settle();
-    expect(spacesCalls).toBeGreaterThan(before);
-    expect(refreshSessions).toHaveBeenCalled();
-    expect(document.body.textContent).toContain("もうありません");
-    // The pick stays on screen (marked by its folder), not silently swapped for Home.
-    expect(placeSelect().selectedOptions[0].text).toBe("s-abc");
+    expect(goBtn().disabled).toBe(false);
+  });
+
+  it("does not turn a place the member picked into home when a late 404 arrives", async () => {
+    let answer!: (v: unknown) => void;
+    spacesAnswer = new Promise((r) => (answer = r));
+    useReposStore.setState({ repos: [] });
+    // A list cached from this workspace before the probe answers.
+    useSpacesStore.setState({ spaces: [{ folder: "s-abc", name: "調べもの", dir: "/home/dev/spaces/s-abc" }], owner: "t1\n" });
+    await renderOpen();
+    // While the check is out only the dialog's own default is offered, not the cached spaces.
+    expect([...placeSelect().options].some((o) => o.text.includes("調べもの"))).toBe(false);
+    await choose("新しいスペース");
+    answer({ error: { code: "http_404" } });
+    await settle();
+    expect(placeSelect().selectedOptions[0].text).toBe("新しいスペース");
+    await pickImage("sdxl");
     expect(goBtn().disabled).toBe(true);
-    const sent = posts.filter((p) => p.path === "api/sessions").length;
-    await click(goBtn());
-    expect(posts.filter((p) => p.path === "api/sessions").length).toBe(sent);
+  });
+
+  it("offers the recheck when the check failed, even when last time's place was a working copy (folded summary)", async () => {
+    spacesAnswer = { error: { code: "boom" } };
+    localStorage.setItem(
+      attachLastKey("t1"),
+      JSON.stringify({ driver: "tui", kind: "claude", model: "", effort: "", repo: "app", worktree: true, imageProvider: "comfy", imageModel: "sdxl" }),
+    );
+    await render(BASE);
+    await settle();
+    expect(summary()).not.toBeNull(); // still folded
+    expect(document.body.textContent).toContain("もう一度確かめる");
   });
 
   it("offers the recheck when the Agent's answer failed, even with a working copy or home shown", async () => {

@@ -94,6 +94,9 @@ beforeEach(() => {
 
 afterEach(async () => {
   await act(async () => root?.unmount());
+  // The unmount's own history.back() answers with a popstate a tick later; the next test must not
+  // meet it halfway through its own back presses.
+  await settle();
   host.remove();
   document.body.innerHTML = "";
   useLaunchSeed.getState().clear();
