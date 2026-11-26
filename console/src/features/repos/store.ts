@@ -235,6 +235,10 @@ interface LaunchSeedStore {
 	 *  cancel). Gets the new session's name ("" when the launch did not report one). Dropped by set()/clear(), so a cancelled dialog leaves nothing behind. */
 	onLaunched: ((sessionName: string) => void) | null;
 	setOnLaunched(fn: ((sessionName: string) => void) | null): void;
+	/** The existing space (its folder) the Start hub's space form opens on; "" = none. A launch
+	 *  seeded by a session that runs in a space goes back to that space. */
+	space: string;
+	setSpace(folder: string): void;
 	setInboxItem(id: string): void;
 	setInboxMemo(id: string): void;
   clear(): void;
@@ -253,17 +257,19 @@ export const useLaunchSeed = create<LaunchSeedStore>((set) => ({
 	inboxMemoId: "",
 	attachments: [],
 	memoId: "",
+	space: "",
 	onLaunched: null,
+	setSpace: (space) => set({ space }),
 	setAttachments: (attachments) => set({ attachments }),
 	setMemoId: (memoId) => set({ memoId }),
 	setOnLaunched: (onLaunched) => set({ onLaunched }),
 	// set() drops inboxItemId: a seed left over from a cancelled inbox launch must not send an
 	// unrelated launch through the request route. The inbox calls setInboxItem after set().
 	set: (prompt, title = "", handoffSession = "", handoffId = "", handoffOfferId = "", workItem = null) =>
-		set({ prompt, title, handoffSession, handoffId, handoffOfferId, newSpace: false, workItem, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", onLaunched: null }),
+		set({ prompt, title, handoffSession, handoffId, handoffOfferId, newSpace: false, workItem, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", space: "", onLaunched: null }),
 	setInboxItem: (inboxItemId) => set({ inboxItemId }),
 	setInboxMemo: (inboxMemoId) => set({ inboxMemoId }),
-	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "", newSpace: false, workItem: null, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", onLaunched: null }),
+	clear: () => set({ prompt: "", title: "", handoffSession: "", handoffId: "", handoffOfferId: "", newSpace: false, workItem: null, inboxItemId: "", inboxMemoId: "", attachments: [], memoId: "", space: "", onLaunched: null }),
 }));
 
 /** Poll every 60s while the tab is visible AND the workspace is running, so the

@@ -297,6 +297,14 @@ interface FormExtras {
   launchBlocked?: boolean;
   /** Set to this form's launch, guarded like its button, for a composer outside the form. */
   submitRef?: MutableRefObject<(() => void) | null>;
+  /** The existing space (its folder) the space form opens on; "" or absent starts a new one. */
+  initialSpaceFolder?: string;
+  /** The place is the one the launch continues (a handoff or review from a session in that
+   *  space): it cannot be swapped for another space or a new one, even once that space is gone.
+   *  The text, the handoff lineage and the completion callbacks were written for that place, and a
+   *  launch elsewhere would finish them (badge the proposal, discard the carried plan) for work
+   *  that did not continue it. */
+  spaceLocked?: boolean;
 }
 
 /** What the Start hub hands to the space form. */
@@ -308,6 +316,8 @@ export interface SpaceLaunchProps extends FormExtras {
   shared: SharedDraft;
   onClose: () => void;
   onLaunch: (opts: LaunchOpts) => Promise<LaunchResult>;
+  /** A title proposed by the session this launch continues (a handoff's). */
+  initialTitle?: string;
 }
 
 /** SpaceLaunchForm is the launch form in its space form, for the Start hub. */
@@ -331,7 +341,7 @@ function useNarrowLaunchLabel(): boolean {
   return narrow;
 }
 
-function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, newSpace = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, shared, onLaunch, busy, setBusy, space = false, launchBlocked = false, submitRef }: LaunchModalProps & FormExtras) {
+function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKind: wantKind, claudeExpired = false, settling = false, allowWorktree = true, isSvn = false, isUnborn = false, home = false, newSpace = false, onClose, onBack, initialPrompt, initialAttachments, initialTitle, initialExistingBranch, initialNewBranch, workItem, initialWorktree, shared, onLaunch, busy, setBusy, space = false, launchBlocked = false, submitRef, initialSpaceFolder, spaceLocked = false }: LaunchModalProps & FormExtras) {
   const settings = useSettings();
   // Neither home nor a space has a working copy: no templates file, skills, subdir or worktree.
   const repoLess = home || space || newSpace;
@@ -520,7 +530,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
   // A new space's display name; "" lets the Agent name the folder alone.
   const [spaceName, setSpaceName] = useState("");
   // The existing space the launch runs in (its folder); "" starts a new one.
-  const [spaceFolder, setSpaceFolder] = useState("");
+  const [spaceFolder, setSpaceFolder] = useState(initialSpaceFolder ?? "");
   // The picked space was removed since the list was read: the launch stops until another place is
   // chosen, and the draft stays as it is.
   // A pick the Agent itself refused as unknown stays refused until another place is chosen.
@@ -999,6 +1009,9 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
     // Checked here, not only on the button: the send key and the collision retry come in this way.
     // The same gate as the button: the send key and the collision retry come in this way too.
     if (busy || seedLoading || filesStuck || launchBlocked || spaceGone || !canLaunch) return;
+    // A continuation never moves to a new space, whatever answers the busy question: its text,
+    // lineage and completion callbacks were written for the space it continues.
+    if (place === "new" && spaceLocked) return;
     const folder = place === "new" ? "" : spaceFolder;
     // While the question is up only an answer launches: the start button and the send key would
     // otherwise re-send to the same space before the re-read session list says it is busy.
@@ -1850,7 +1863,7 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
                 if (f !== spaceFolder) setBusyAsk(null);
                 setSpaceFolder(f);
               }}
-              disabled={busy}
+              disabled={busy || spaceLocked}
               gone={spaceGone}
             />
             {!spaceFolder && (
@@ -1867,17 +1880,19 @@ function LaunchForm({ repo, branch, path, kinds: offeredKinds, access, initialKi
           </div>
           {spaceGone && (
             <span className="ui-field-hint ui-field-hint--warn" role="status">
-              {tr("start.space_gone")}
+              {tr(spaceLocked ? "start.space_gone_locked" : "start.space_gone")}
             </span>
           )}
           {asking && (
             <div className="start-space-busy" role="alert" ref={busyAskRef}>
               <span className="ui-field-hint ui-field-hint--warn">{tr("start.space_busy", { who: busyAsk.who })}</span>
               <div className="start-space-busy-actions">
-                <Button variant="primary" autoFocus disabled={busy} onClick={() => void start(false, "new")}>
-                  {tr("start.space_busy_new")}
-                </Button>
-                <Button disabled={busy} onClick={() => void start(false, "here")}>
+                {!spaceLocked && (
+                  <Button variant="primary" autoFocus disabled={busy} onClick={() => void start(false, "new")}>
+                    {tr("start.space_busy_new")}
+                  </Button>
+                )}
+                <Button variant={spaceLocked ? "primary" : "default"} autoFocus={spaceLocked} disabled={busy} onClick={() => void start(false, "here")}>
                   {tr("start.space_busy_here")}
                 </Button>
               </div>

@@ -13,7 +13,8 @@ let launchKinds = ["claude"];
 vi.mock("./useRepoRail.ts", () => ({
   useRepoRailContext: () => ({ access: { kinds: { get: (k: string) => ({ kind: k }), has: () => true }, noRoute: false, allOff: false, refresh: () => {} }, launchKinds, connsSettling: false, claudeExpired: false }),
 }));
-vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: vi.fn() }));
+const markHandoffLaunched = vi.fn();
+vi.mock("../mirror/HandoffProposal.tsx", () => ({ markHandoffLaunched: (...a: unknown[]) => markHandoffLaunched(...a) }));
 
 const apiGet = vi.fn(async (_path: string): Promise<unknown> => []);
 const apiPost = vi.fn(async (..._a: unknown[]): Promise<unknown> => ({}));
@@ -164,6 +165,162 @@ describe("Start hub — start in a space", () => {
     await typeInto(hubBox(), "古い下書き");
     await openHub();
     expect(hubBox().value).toBe("");
+  });
+});
+
+describe("Start hub — seeded by a session that runs in a space", () => {
+  const space = (folder: string, name: string) => ({ folder, name, dir: "/home/dev/spaces/" + folder });
+  const chip = () => document.querySelector<HTMLButtonElement>(".start-place-chip--btn")!;
+  const seedFromSpaceSession = () => {
+    useLaunchSeed.getState().set("引き継ぎの本文", "続き その2", "src", "p-1");
+    useLaunchSeed.getState().setSpace("old-aaa");
+  };
+  beforeEach(() => {
+    markHandoffLaunched.mockClear();
+    apiGet.mockImplementation(async (path: string) => (path === "api/spaces" ? { spaces: [space("old-aaa", "Budget"), space("new-bbb", "Other")] } : []));
+  });
+
+  it("opens the space section on that space with the handoff text, whatever section was open last", async () => {
+    seedFromSpaceSession();
+    await openHub("repo");
+    expect(head(t("start.sec_space")).getAttribute("aria-expanded")).toBe("true");
+    expect(chip().textContent).toContain("Budget");
+    expect(hubBox().value).toBe("引き継ぎの本文");
+  });
+
+  it("starts the successor in that space by its folder, keeps the handoff lineage and badges the proposal", async () => {
+    seedFromSpaceSession();
+    await openHub();
+    await click(spaceGo());
+    expect(createCalls()).toHaveLength(1);
+    const body = createCalls()[0][2] as Record<string, unknown>;
+    expect(body).toMatchObject({ dir: "", space: { folder: "old-aaa" }, initial_prompt: "引き継ぎの本文", title: "続き その2", origin_session: "src", origin_proposal: "p-1" });
+    for (const k of ["worktree", "branch", "new_branch", "subdir"]) expect(body).not.toHaveProperty(k);
+    expect(markHandoffLaunched).toHaveBeenCalledWith("src", "p-1");
+  });
+
+  it("does not badge the proposal when the launch failed", async () => {
+    seedFromSpaceSession();
+    apiPost.mockImplementation(async (...a: unknown[]) => (a[0] === "api/sessions" ? { error: { code: "runtime_failed", message: "boom" } } : {}));
+    await openHub();
+    await click(spaceGo());
+    expect(markHandoffLaunched).not.toHaveBeenCalled();
+  });
+
+  it("closes the repository and Other sections to a continuation, so its text and callbacks stay with the space", async () => {
+    seedFromSpaceSession();
+    await openHub("repo");
+    for (const label of [t("start.sec_repo"), t("start.sec_other")]) expect(head(label).disabled).toBe(true);
+    expect(head(t("start.sec_space")).getAttribute("aria-expanded")).toBe("true");
+  });
+
+  it("does not carry the space, or the closed sections, into the next opening", async () => {
+    seedFromSpaceSession();
+    await openHub("repo");
+    const close = document.querySelector<HTMLButtonElement>(`button[aria-label="${t("ui.close")}"]`)!;
+    await click(close);
+    expect(useLaunchSeed.getState().space).toBe("");
+    await openHub();
+    expect(chip().textContent).toContain(t("start.place_new_space"));
+    expect(head(t("start.sec_repo")).disabled).toBe(false);
+  });
+
+  it("starts the open hub over on the seeded space: a hub opened meanwhile is not left on its old place", async () => {
+    await openHub("repo"); // an ordinary hub, the repository section open
+    expect(head(t("start.sec_repo")).getAttribute("aria-expanded")).toBe("true");
+    await act(async () => {
+      seedFromSpaceSession();
+      useSessionsStore.getState().openStart();
+    });
+    await settle();
+    expect(head(t("start.sec_space")).getAttribute("aria-expanded")).toBe("true");
+    expect(chip().textContent).toContain("Budget");
+    expect(hubBox().value).toBe("引き継ぎの本文");
+    await click(spaceGo());
+    expect(createCalls()[0][2]).toMatchObject({ space: { folder: "old-aaa" }, initial_prompt: "引き継ぎの本文", origin_proposal: "p-1" });
+  });
+
+  it("keeps the place of the continuation: another space or a new one cannot be picked, even once that space is gone", async () => {
+    seedFromSpaceSession();
+    await openHub();
+    expect(chip().disabled).toBe(true);
+    await act(async () => useSpacesStore.setState({ spaces: [] })); // the space was removed
+    await settle();
+    // Not rescued into another place: the text, lineage and callbacks belong to this one.
+    expect(chip().disabled).toBe(true);
+    expect(document.body.textContent).toContain(t("start.space_gone_locked"));
+    expect(spaceGo().disabled).toBe(true);
+    await click(spaceGo());
+    expect(createCalls()).toHaveLength(0);
+    expect(markHandoffLaunched).not.toHaveBeenCalled();
+  });
+
+  it("asks the busy-space question without offering a new space: the source session itself is running there", async () => {
+    useSessionsStore.setState({ sessions: [{ name: "src", kind: "claude", space: "old-aaa", alive: true }] as never });
+    seedFromSpaceSession();
+    await openHub();
+    await click(spaceGo());
+    expect(createCalls()).toHaveLength(0);
+    const answers = [...document.querySelectorAll<HTMLButtonElement>(".start-space-busy button")];
+    expect(answers.map((b) => b.textContent)).toEqual([t("start.space_busy_here")]); // never "start in a new space"
+    await click(answers[0]);
+    expect(createCalls()).toHaveLength(1);
+    expect(createCalls()[0][2]).toMatchObject({ space: { folder: "old-aaa", allow_busy: true }, origin_session: "src", origin_proposal: "p-1" });
+    expect(markHandoffLaunched).toHaveBeenCalledWith("src", "p-1");
+  });
+
+  it("leaves a newer hub alone when an older launch finishes late, and finishes only its own seed", async () => {
+    const finishedA = vi.fn();
+    const finishedB = vi.fn();
+    useLaunchSeed.getState().set("本文A", "題A", "srcA", "pA");
+    useLaunchSeed.getState().setSpace("old-aaa");
+    useLaunchSeed.getState().setOnLaunched(finishedA);
+    let answerA!: (v: unknown) => void;
+    apiPost.mockImplementationOnce((...a: unknown[]) => (a[0] === "api/sessions" ? new Promise((r) => (answerA = r)) : Promise.resolve({})));
+    await openHub();
+    await click(spaceGo()); // A is in flight
+    await act(async () => {
+      useLaunchSeed.getState().set("本文B", "題B", "srcB", "pB");
+      useLaunchSeed.getState().setSpace("new-bbb");
+      useLaunchSeed.getState().setOnLaunched(finishedB);
+      useSessionsStore.getState().openStart(); // B's hub opens over A's
+    });
+    await settle();
+    expect(hubBox().value).toBe("本文B");
+    await act(async () => answerA({ name: "space-A" }));
+    await settle();
+    expect(finishedA).toHaveBeenCalledWith("space-A");
+    expect(markHandoffLaunched).toHaveBeenCalledWith("srcA", "pA");
+    expect(markHandoffLaunched).not.toHaveBeenCalledWith("srcB", "pB");
+    expect(finishedB).not.toHaveBeenCalled();
+    expect(hubBox()).not.toBeNull(); // B's hub is still there
+    expect(hubBox().value).toBe("本文B");
+    expect(useLaunchSeed.getState()).toMatchObject({ handoffSession: "srcB", space: "new-bbb" });
+  });
+
+  it("finishes what seeded the launch (a plan review's record and the carried card) only once the space session exists", async () => {
+    const onLaunched = vi.fn();
+    seedFromSpaceSession();
+    useLaunchSeed.getState().setOnLaunched(onLaunched);
+    apiPost.mockImplementationOnce(async (...a: unknown[]) => (a[0] === "api/sessions" ? { error: { code: "runtime_failed", message: "boom" } } : {}));
+    await openHub();
+    await click(spaceGo()); // refused by the Agent
+    expect(onLaunched).not.toHaveBeenCalled();
+    await click(spaceGo()); // second press succeeds
+    expect(onLaunched).toHaveBeenCalledTimes(1);
+    expect(onLaunched).toHaveBeenCalledWith("space-1");
+  });
+
+  it("drops the completion callback when the hub is closed without launching", async () => {
+    const onLaunched = vi.fn();
+    seedFromSpaceSession();
+    useLaunchSeed.getState().setOnLaunched(onLaunched);
+    await openHub();
+    const close = document.querySelector<HTMLButtonElement>(`button[aria-label="${t("ui.close")}"]`)!;
+    await click(close);
+    expect(onLaunched).not.toHaveBeenCalled();
+    expect(useLaunchSeed.getState().onLaunched).toBeNull();
+    expect(markHandoffLaunched).not.toHaveBeenCalled();
   });
 });
 

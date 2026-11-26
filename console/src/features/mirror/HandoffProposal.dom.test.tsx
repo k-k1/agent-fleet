@@ -27,6 +27,8 @@ const { t } = await import("../../lib/i18n/index.ts");
 const base: HandoffOffer = {
   id: "offer-1", sessionId: "cat-1", sessionName: "src", recipientUserKey: "bob", title: "Carry on", status: "pending",
 };
+// The launch settles where it starts BEFORE it withdraws an offer, so the session needs a folder.
+const meta = { name: "src", kind: "claude", dir: "/home/dev/repos/app" } as never;
 const proposal = { id: "p-1", prompt: "Continue.", title: "Carry on", created_at: 1 };
 
 let root: Root | null = null;
@@ -39,7 +41,7 @@ async function render(offer: HandoffOffer) {
     root!.render(
       <ToastProvider>
         <ConfirmProvider>
-          <HandoffProposal session="src" proposal={proposal} onChange={() => undefined} />
+          <HandoffProposal session="src" sessionMeta={meta} proposal={proposal} onChange={() => undefined} />
         </ConfirmProvider>
       </ToastProvider>,
     );
@@ -119,7 +121,7 @@ describe("a withdraw confirmation outlives its card", () => {
       root!.render(
         <ToastProvider>
           <ConfirmProvider>
-            <HandoffProposal session="src" proposal={{ ...proposal, id: "p-2" }} onChange={() => undefined} />
+            <HandoffProposal session="src" sessionMeta={meta} proposal={{ ...proposal, id: "p-2" }} onChange={() => undefined} />
           </ConfirmProvider>
         </ToastProvider>,
       );
