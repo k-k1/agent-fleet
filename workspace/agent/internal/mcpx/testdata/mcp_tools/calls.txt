@@ -3742,13 +3742,20 @@
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: search_sessions","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-search session-all session-all-write]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"cannot read search_sessions arguments: json: cannot unmarshal array into Go struct field searchSessionsArgs.session of type string","type":"text"}],"isError":true,"resultType":"complete"}}
-## search_sessions full {"idx":2,"kind":"v","limit":2,"query":"v","repo":"v","session":"child01"}
+## search_sessions badtype-space {"space":[[{}]]}
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"past-session search is not enabled for this session (Settings \u003e Sessions)","type":"text"}],"isError":true,"resultType":"complete"}}
 [session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-spawn session-imagegen session-studio session-queue-run]
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: search_sessions","type":"text"}],"isError":true,"resultType":"complete"}}
 [session-search session-all session-all-write]
-  -> GET /session-search?from=slot01&kind=v&limit=2&q=v&repo=v&session=child01
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"cannot read search_sessions arguments: json: cannot unmarshal array into Go struct field searchSessionsArgs.space of type string","type":"text"}],"isError":true,"resultType":"complete"}}
+## search_sessions full {"idx":2,"kind":"v","limit":2,"query":"v","repo":"v","session":"child01","space":"v"}
+[assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"past-session search is not enabled for this session (Settings \u003e Sessions)","type":"text"}],"isError":true,"resultType":"complete"}}
+[session session-write session-chromium session-chromium-nobrowser session-peer session-memory session-spawn session-imagegen session-studio session-queue-run]
+  <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: search_sessions","type":"text"}],"isError":true,"resultType":"complete"}}
+[session-search session-all session-all-write]
+  -> GET /session-search?from=slot01&kind=v&limit=2&q=v&repo=v&session=child01&space=v
   <- {"id":1,"jsonrpc":"2.0","result":{"content":[{"text":"{}","type":"text"}],"resultType":"complete","structuredContent":{}}}
 ## search_sessions kind= {"kind":""}
 [assistant-read assistant-write assistant-read-nobrowser assistant-write-nobrowser assistant-session-flags]
