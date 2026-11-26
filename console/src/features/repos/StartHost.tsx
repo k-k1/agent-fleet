@@ -73,8 +73,8 @@ export function StartHost() {
   const [pickPending, setPickPending] = useState(false);
   // A memo whose files did not all come back is not finished by a launch: deleting it would lose
   // the ones that never reached the session.
-  const finishSeed = (name: string) => {
-    if (draft.missing === 0) useLaunchSeed.getState().onLaunched?.(name);
+  const finishSeed = (name: string, incomplete?: unknown) => {
+    if (draft.missing === 0 && !incomplete) useLaunchSeed.getState().onLaunched?.(name);
   };
   // Open the hub whenever the global tick changes (skip the mount value).
   const lastTickRef = useRef(startTick);
@@ -138,7 +138,7 @@ export function StartHost() {
               // that a session really exists, as the repository dialog's success path does.
               if (sent.handoffSession && sent.handoffId) void markHandoffLaunched(sent.handoffSession, sent.handoffId);
               // A memo that seeded the draft is done with once its text reached a session.
-              if (draft.missing === 0) sent.onLaunched?.(r.name || "");
+              if (draft.missing === 0 && !r.incomplete) sent.onLaunched?.(r.name || "");
             }
             return r;
           }}
@@ -294,8 +294,8 @@ export function StartHost() {
               }
               // Over the hub the memo is finished only by a launch that took the hub's draft (the
               // seed is in it); without the hub the dialog was seeded directly, as before.
-              if (!show) useLaunchSeed.getState().onLaunched?.(r.name || "");
-              else if (carry) finishSeed(r.name || "");
+              if (!show) { if (!r.incomplete) useLaunchSeed.getState().onLaunched?.(r.name || ""); }
+              else if (carry) finishSeed(r.name || "", r.incomplete);
               setShow(false); // launched — drop the hub underneath too
               clearSeed();
             }

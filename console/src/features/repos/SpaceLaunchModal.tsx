@@ -75,7 +75,7 @@ export function SpaceLaunchModal({ prompt, inboxItemId, onClose, onLaunched }: {
             // dir "" with a space: the Agent makes ~/spaces/<folder> and starts the session there.
             const r = await startWork({ dir: "", repo: "", seedless: true, inboxItem: inboxItemId }, o);
             // The form closes the dialog itself once it sees ok.
-            if (r.ok) onLaunched?.(r.name || "");
+            if (r.ok && !r.incomplete) onLaunched?.(r.name || "");
             return r;
           }}
         />

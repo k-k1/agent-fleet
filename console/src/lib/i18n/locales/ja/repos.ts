@@ -275,6 +275,7 @@ export const repos = {
   "rp.launch_failed": "起動に失敗: {err}",
   "rp.image_upload_failed": "{name} のアップロードに失敗しました: {err}",
   "rp.image_upload_failed_network": "{name} のアップロードに失敗しました（通信エラー）",
+  "rp.draft_kept": "下書きの一部がセッションに届かなかったため、メモと下書きは残してあります。そちらから送り直してください。",
   "rp.first_prompt_failed": "セッションは起動しましたが、最初の指示を渡せませんでした: {err}",
   "rp.filter_branches": "フィルタ（ブランチ名 / コミット）",
   "rp.loading": "読み込み中…",

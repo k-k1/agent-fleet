@@ -218,6 +218,11 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     // Now that the session exists, upload any staged attachments to it and fold their
     // saved paths into the first prompt (claude opens them with its Read tool).
     let seed = prompt;
+    // What of the draft did not reach the session that now exists (#5077): the names of the
+    // files whose upload failed, and whether the first prompt's delivery was refused. Without
+    // this the caller finishes the seed (deletes the memo, clears the draft) and both are lost.
+    const lostFiles: string[] = [];
+    let promptLost = false;
     if (withImages) {
       const paths: string[] = [];
       // A failed file is dropped with the rest of the draft, so its toast names it: that is
@@ -227,8 +232,12 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
         try {
           const up = await pasteImage(res.name, f);
           if (up.status < 300 && up.path) paths.push(up.path);
-          else toast(t("rp.image_upload_failed", { name: f.name, err: up.error ? errText(up.error) : "" }));
+          else {
+            lostFiles.push(f.name);
+            toast(t("rp.image_upload_failed", { name: f.name, err: up.error ? errText(up.error) : "" }));
+          }
         } catch {
+          lostFiles.push(f.name);
           toast(t("rp.image_upload_failed_network", { name: f.name }));
         }
       }
@@ -241,6 +250,7 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
         when_ready: true,
       }).catch(() => ({ error: { message: t("err.network") } }));
       if (del?.error) {
+        promptLost = true;
         if (del.error.code === AUTH_EXPIRED_CODE) toastSendFailure(toast, { code: del.error.code }, "", kind);
         else toast(t("rp.first_prompt_failed", { err: errText(del.error) }));
       }
@@ -262,6 +272,12 @@ export function useStartWork({ policyInline = false }: { policyInline?: boolean 
     (chat ? openSessionChat : openSessionTerminal)(res.name);
     // The created session's name is returned so that accepting a handoff (docs/log/77) can
     // tell the owner WHICH session took it. Callers may look at ok alone.
+    // The session exists, so this is still ok; the draft's missing part is reported apart so
+    // that no caller deletes the memo or clears the draft the person would resend from.
+    if (lostFiles.length || promptLost) {
+      toast(t("rp.draft_kept"));
+      return { ok: true, name: res.name, incomplete: { files: lostFiles, prompt: promptLost } };
+    }
     return { ok: true, name: res.name };
   };
 }

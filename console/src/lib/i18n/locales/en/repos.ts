@@ -277,6 +277,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "rp.launch_failed": "Launch failed: {err}",
   "rp.image_upload_failed": "Could not upload {name}: {err}",
   "rp.image_upload_failed_network": "Could not upload {name} (network error)",
+  "rp.draft_kept": "Part of the draft did not reach the session, so the memo and the draft were kept. Resend them from there.",
   "rp.first_prompt_failed": "The session started, but its first instruction could not be delivered: {err}",
   "rp.filter_branches": "Filter (branch name / commit)",
   "rp.loading": "Loading…",
