@@ -3,12 +3,12 @@
 // Every actionable control goes through these (docs/log/22 §ui/): consistent
 // icon+label composition, variants for tone, no ad-hoc <button> styling in
 // features. Icons are codicon names (the icon font ships with the app).
-import type { ButtonHTMLAttributes } from "react";
+import type { ButtonHTMLAttributes, ComponentPropsWithRef } from "react";
 import { cx } from "./cx.ts";
 
 export type ButtonVariant = "default" | "primary" | "ghost" | "danger";
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends ComponentPropsWithRef<"button"> {
   variant?: ButtonVariant;
   /** codicon name (without the codicon- prefix), rendered before the label. */
   icon?: string;
