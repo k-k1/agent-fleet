@@ -169,12 +169,26 @@ describe("placeRuns", () => {
     expect(p.onTool.get(toolKey(1, 4))?.map((r) => r.id)).toEqual(["r6"]);
     expect(p.loose.map((r) => r.id)).toEqual(["r4"]);
   });
-  it("does not use a standalone AWS profile listing as a candidate", () => {
-    const listing = bash('"/opt/af-aws-exec" --list');
-    const g = [groups[0], block("assistant", 1, [listing], [1])];
+  it.each([
+    '"/opt/af-aws-exec" --list',
+    "af-aws-exec --profile prod-admin --list",
+    "af-aws-exec --list --profile prod-admin",
+    "af-aws-exec --account=123456789012 --profile='prod-admin' --quiet --list",
+    "sudo af-aws-exec --list",
+  ])("does not attribute runs to the AWS probe %s", (cmd) => {
+    const g = [groups[0], block("assistant", 1, [bash(cmd)], [1])];
     const p = placeRuns(g, [at(2), at(3, { profile: undefined })]);
     expect(p.onTool.size).toBe(0);
     expect(p.loose.map((r) => r.id)).toEqual(["r2", "r3"]);
+  });
+  it.each([
+    "af-aws-exec --profile prod-admin -- --list",
+    "af-aws-exec --profile --list -- true",
+    "af-aws-exec --list; af-aws-exec --profile prod-admin -- aws s3 ls",
+    "af-aws-exec --profile prod-admin\n./deploy.sh # --list",
+  ])("keeps shell calls that can record an AWS run as candidates (%s)", (cmd) => {
+    const g = [groups[0], block("assistant", 1, [bash(cmd)], [1])];
+    expect(placeRuns(g, [at(2)]).onTool.get(toolKey(1, 0))).toHaveLength(1);
   });
   it("leaves loose a run after a member prompt, before any call, or in a block without row times", () => {
     const noTimes = groups.map((g) => ({ ...g, partTs: undefined })) as Group[];

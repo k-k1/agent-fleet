@@ -142,9 +142,14 @@ const WRAPPER: Record<string, RegExp> = {
   aws: /(?:^|[\s/'"`;&|(])af-aws-exec(?:[\s'"`;&|)<>]|$)/,
   gcp: /(?:^|[\s/'"`;&|(])af-gcloud-exec(?:[\s'"`;&|)<>]|$)/,
 };
-// A standalone probe exits before af-aws-exec records a run. A compound shell command
-// may still launch a run elsewhere in the command.
-const AWS_PROBE = /^(?:"(?:[^"\n]*\/)?af-aws-exec"|'(?:[^'\n]*\/)?af-aws-exec'|(?:[^\s'"`;&|()<>]+\/)?af-aws-exec)\s+(?:--list|-h|--help|--version)$/;
+// Only match a single static invocation of the wrapper. A command separator can
+// introduce another run, and "--" hands the remaining arguments to the child.
+const AWS_OPTION_VALUE = String.raw`(?:[^\s'"\\$\x60;&|()<>#*?\[\]{}~]+|'[^'\r\n]*'|"[^"\\$\x60\r\n]*")`;
+const AWS_OPTION = String.raw`[ \t]+(?:--(?:profile|region|account)(?:=|[ \t]+)${AWS_OPTION_VALUE}|--(?:login|no-login|keep-aws-config|quiet)|-q)`;
+const AWS_WRAPPER = String.raw`(?:"(?:[^"\\$\x60\r\n]*/)?af-aws-exec"|'(?:[^'\r\n]*/)?af-aws-exec'|(?:[^\s'"\\$\x60;&|()<>#*?\[\]{}~]+/)?af-aws-exec)`;
+const AWS_PROBE = new RegExp(
+  String.raw`^(?:sudo[ \t]+)?${AWS_WRAPPER}(?:${AWS_OPTION})*[ \t]+(?:--list|-h|--help|--version)(?:${AWS_OPTION})*$`,
+);
 
 const commandOf = (p: Part) => p.command || p.info || "";
 
@@ -180,6 +185,7 @@ export interface RunPlacement {
  * no call can take, or a block with no per-row times, stays loose.
  * An unresolved Codex exec may have launched the AWS run. Require a later explicit match
  * in that case, since timing alone cannot establish which call ran the wrapper.
+ * The change is scoped to AWS to preserve the existing Google Cloud placement.
  */
 export function placeRuns(groups: Group[], runs: CloudRun[]): RunPlacement {
   const onTool = new Map<string, CloudRun[]>();
