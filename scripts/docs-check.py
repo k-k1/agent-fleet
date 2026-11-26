@@ -120,7 +120,7 @@ FM_KEYS = ("audience", "source_of_truth")
 # FM_KEY_RE cannot read (unquoted) is dropped from the index without a sound, so it is an error.
 FM_SEARCH_KEY = "search_keywords"
 FM_SEARCH_LINE_RE = re.compile(r"^[ \t]*search_keywords[ \t]*:.*$", re.M)
-FM_SEARCH_VALUE_RE = re.compile(r'^search_keywords: "([^"\n]*)"$')
+FM_SEARCH_VALUE_RE = re.compile(r'^search_keywords: "([^"\\\n]*)"$')
 
 # Implementation vocabulary that must not appear on reader-facing shelves. The brake
 # that keeps those shelves written in the names shown on screen.

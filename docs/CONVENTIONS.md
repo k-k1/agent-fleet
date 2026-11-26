@@ -110,7 +110,7 @@ search_keywords: "worktree, working copy, parallel work"
   changing (measured in `docs/log/138-docs-search-japanese-compounds.md`).
 - Use it for the answer word of a page that ranks too low; do not tag every page. Words
   the title or the first paragraph already carry add nothing.
-- `check_header` rejects an unquoted or empty value. Nothing in the Console reads it:
+- `check_header` rejects an unquoted, empty, duplicated or indented value, and any backslash. Nothing in the Console reads it:
   it shows up in the metadata panel like any other key.
 
 ## 4. Vocabulary per shelf
