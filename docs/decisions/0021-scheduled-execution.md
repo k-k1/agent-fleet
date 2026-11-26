@@ -226,7 +226,7 @@ Every other token write, including the same shape sent to `POST /internal/schedu
 and a token cannot run-now or resume such a row, so it fires once at its time. The resume text opens with
 `[agent-fleet:notice kind=limit-resume reply=none]`, like the other automatic inputs, and says it carries no new
 instruction. Held rows an earlier Agent left, with exactly that shape and label, never run or shown, and a time inside
-the window counted from their creation, are released once per database at CP start (approved when still ahead, deleted
-when past, both conditional on the version read; a marker row records the pass, so a row written later is never swept
-in). Anything else stays held. An older Agent keeps booking through the generic route, and a newer Agent falls back to
+the window counted from their creation, are released at CP start by a pass that is attempted once per database (approved when still ahead, deleted
+when past, both conditional on the version read). The pass claims a marker row first and is never run again, even after a
+crash, so a row it did not reach stays held; only wordings an earlier Agent sent and rows that existed at the claim count. Anything else stays held. An older Agent keeps booking through the generic route, and a newer Agent falls back to
 it when the CP lacks the dedicated one, so in both mixes the booking is held as before.

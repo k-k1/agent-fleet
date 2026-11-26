@@ -14,6 +14,7 @@ package schedlimit
 import (
 	"context"
 	"log"
+	"slices"
 	"strings"
 	"time"
 
@@ -110,9 +111,11 @@ const oneOffName = "limit-resume-release-5212"
 // the fixed shape, an Agent-written label for that very session, never shown in sessions, never
 // fired or adopted a session, and a time from its creation up to the window after it. A row a
 // member renamed, or anything else that cannot be shown to have that origin, stays held.
-func legacyBooking(s store.Schedule) bool {
+func legacyBooking(s store.Schedule, boundary string) bool {
 	// DeliverTo is empty: an earlier Agent never sent it, so an explicit "operator" is someone else's row.
-	if !IsBooking(s) || s.DeliverTo != "" || s.ShowInSessions || s.ReuseSession != "" || s.LastRun != "" || s.LastStatus != "" {
+	// Only the wordings an earlier Agent sent (no notice line), and only rows that existed when the
+	// pass was claimed: what any CP writes through the generic route afterwards is not a candidate.
+	if !IsBooking(s) || !slices.Contains(Prompts[currentPrompts:], strings.TrimSpace(s.Prompt)) || s.CreatedAt > boundary || s.DeliverTo != "" || s.ShowInSessions || s.ReuseSession != "" || s.LastRun != "" || s.LastStatus != "" {
 		return false
 	}
 	created, cerr := time.Parse(time.RFC3339, s.CreatedAt)
@@ -132,7 +135,8 @@ func ReleaseHeld(ctx context.Context, st store.ScheduleStore, now time.Time) (re
 	// it reads its candidates only after the claim, so a row written by the generic route once the
 	// pass has begun elsewhere is never a candidate. A pass that fails half-way is not retried: the
 	// rows it did not reach stay held, which is where they started.
-	if claimed, cerr := st.ClaimOneOff(ctx, oneOffName, store.NowTS()); cerr != nil || !claimed {
+	boundary := now.UTC().Format(time.RFC3339)
+	if claimed, cerr := st.ClaimOneOff(ctx, oneOffName, boundary); cerr != nil || !claimed {
 		return 0, 0, cerr
 	}
 	rows, err := st.ListApprovalPendingSchedules(ctx)
@@ -140,7 +144,7 @@ func ReleaseHeld(ctx context.Context, st store.ScheduleStore, now time.Time) (re
 		return 0, 0, err
 	}
 	for _, s := range rows {
-		if !legacyBooking(s) {
+		if !legacyBooking(s, boundary) {
 			continue
 		}
 		at, _ := time.Parse(time.RFC3339, s.Spec)

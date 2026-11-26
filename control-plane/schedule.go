@@ -1172,11 +1172,21 @@ func (a scheduleAPI) createLimitResume(w http.ResponseWriter, r *http.Request, m
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_spec", err.Error()})
 		return
 	}
-	// A booking for the same session and instant that is already live is the answer to a request
-	// whose reply was lost: hand back its id rather than a second live row the Agent could not track.
-	if rows, lerr := a.store.ListSchedules(r.Context(), mv.MembershipID); lerr == nil {
-		for _, old := range rows {
-			if old.Enabled && !old.ApprovalPending && old.ReuseTarget == s.ReuseTarget && old.Spec == s.Spec && schedlimit.IsBooking(old) {
+	// A live booking for the same session within a few minutes of this instant answers a request
+	// whose reply was lost (the Agent recomputes a near or past reset as "now + 2 minutes", so the
+	// resend can differ by seconds): hand back its id rather than a second live row the Agent could
+	// not track. A lookup that fails creates nothing.
+	rows, lerr := a.store.ListSchedules(r.Context(), mv.MembershipID)
+	if lerr != nil {
+		writeAPIErr(w, internalErr(lerr))
+		return
+	}
+	for _, old := range rows {
+		if !old.Enabled || old.ApprovalPending || old.ReuseTarget != s.ReuseTarget || !schedlimit.IsBooking(old) {
+			continue
+		}
+		if ot, oerr := time.Parse(time.RFC3339, old.Spec); oerr == nil {
+			if d := ot.Sub(at); d < 5*time.Minute && d > -5*time.Minute {
 				writeJSON(w, http.StatusOK, withSchedulerWarning(scheduleToDTO(old)))
 				return
 			}

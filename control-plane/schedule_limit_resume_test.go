@@ -141,6 +141,9 @@ func TestReleaseHeldLimitResumes(t *testing.T) {
 	mk("beyond-window", now.Add(schedlimit.MaxAhead+48*time.Hour), nil)
 	mk("before-creation", now.Add(-5*time.Hour), nil)
 	mk("operator", past, func(s *store.Schedule) { s.DeliverTo = "operator" })
+	mk("noticed", future, func(s *store.Schedule) { s.Prompt = schedlimit.Prompts[0] }) // the new wording is never an old Agent's
+	mk("noticed-past", past, func(s *store.Schedule) { s.Prompt = schedlimit.Prompts[1]; s.SpecLabel = schedlimit.Label("en", "s") })
+	mk("after-claim", future, func(s *store.Schedule) { s.CreatedAt = now.Add(time.Second).Format(time.RFC3339) })
 	mk("shown", future, func(s *store.Schedule) { s.ShowInSessions = true })
 	mk("ran", past, func(s *store.Schedule) { s.LastRun = "2026-11-01T00:00:00Z"; s.LastStatus = "ok" })
 	mk("adopted", future, func(s *store.Schedule) { s.ReuseSession = "other-session" })
@@ -161,7 +164,7 @@ func TestReleaseHeldLimitResumes(t *testing.T) {
 	if ok, _ := state("past"); ok {
 		t.Error("past row kept")
 	}
-	for _, id := range []string{"renamed", "past-renamed", "other-prompt", "other-mode", "beyond-window", "before-creation", "operator", "shown", "ran", "adopted"} {
+	for _, id := range []string{"renamed", "past-renamed", "other-prompt", "other-mode", "beyond-window", "noticed", "noticed-past", "after-claim", "before-creation", "operator", "shown", "ran", "adopted"} {
 		if ok, p := state(id); !ok || !p {
 			t.Errorf("%s: ok=%v pending=%v, want kept and held", id, ok, p)
 		}
@@ -365,5 +368,36 @@ func TestMemberApprovedLookalikeStaysRunnableOnTheTokenFace(t *testing.T) {
 	}
 	if r := doTokenJSON(api.runNow, mv, "POST", "", "mine"); r.Code == http.StatusConflict && strings.Contains(r.Body.String(), "limit_resume_fixed") {
 		t.Fatalf("an ordinary approved row was refused: %s", r.Body.String())
+	}
+}
+
+// A row that went through the release pass is as fixed on the token face as a new booking.
+func TestReleasedRowIsFixedOnTheTokenFace(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	if err := api.store.CreateSchedule(ctx, legacyHeld(mv, "old", time.Now().Add(time.Hour), nil)); err != nil {
+		t.Fatal(err)
+	}
+	if rel, _, err := schedlimit.ReleaseHeld(ctx, api.store, time.Now()); err != nil || rel != 1 {
+		t.Fatalf("release %d %v", rel, err)
+	}
+	if r := doTokenJSON(api.runNow, mv, "POST", "", "old"); r.Code != http.StatusConflict {
+		t.Errorf("run-now on a released row: %d", r.Code)
+	}
+}
+
+// A resend whose time drifted by seconds (the Agent's "now + 2 minutes") still finds the live row;
+// a booking for the same session hours later is a different one.
+func TestLimitResumeResendWithDriftedTimeReturnsTheLiveRow(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	at := time.Now().Add(2 * time.Minute)
+	var a, b, c scheduleDTO
+	_ = json.Unmarshal(doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(at), "").Body.Bytes(), &a)
+	_ = json.Unmarshal(doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(at.Add(40*time.Second)), "").Body.Bytes(), &b)
+	_ = json.Unmarshal(doTokenJSON(api.createLimitResume, mv, "POST", limitResumeBody(at.Add(3*time.Hour)), "").Body.Bytes(), &c)
+	if a.ID == "" || b.ID != a.ID || c.ID == a.ID || c.ID == "" {
+		t.Fatalf("ids %q %q %q", a.ID, b.ID, c.ID)
+	}
+	if rows, _ := api.store.ListSchedules(ctx, mv.MembershipID); len(rows) != 2 {
+		t.Fatalf("%d rows", len(rows))
 	}
 }
