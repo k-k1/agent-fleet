@@ -345,7 +345,7 @@ export function SpaceLaunchHost() {
         key={request.id}
         prompt={request.body}
         inboxItemId={request.id}
-        onClose={() => useSpaceLaunch.getState().close()}
+        onClose={() => useSpaceLaunch.getState().close(request)}
       />
     </Suspense>
   );

@@ -29,6 +29,7 @@ vi.mock("../repos/SpaceLaunchModal.tsx", () => ({
 
 import { ItemCard, SpaceLaunchHost, inboxErrorText } from "./InboxModal.tsx";
 import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
+import { useSpaceLaunch } from "./spaceLaunch.ts";
 import type { InboxItem } from "./store.ts";
 const { ToastProvider } = await import("../../ui/ToastProvider.tsx");
 
@@ -254,6 +255,21 @@ describe("the assignee's launch", () => {
     });
     expect(document.querySelector(".inbox-launch")).toBeNull();
     expect(document.querySelector("[data-testid=space-modal]")?.textContent).toBe(base.body);
+  });
+
+  it("a late completion of an earlier launch does not close the dialog opened for another request", async () => {
+    await open([]);
+    await act(async () => launchBtn().click());
+    const lateCloseOfA = spaceModalProps!.onClose;
+    // The inbox was replaced (tenant switch) while A's create was out; the member opens request B.
+    await act(async () => root!.unmount());
+    host!.remove();
+    await open([]);
+    useSpaceLaunch.getState().open({ id: "item-2", body: "request B" });
+    await act(async () => {});
+    expect(document.querySelector("[data-testid=space-modal]")?.textContent).toBe("request B");
+    await act(async () => lateCloseOfA());
+    expect(document.querySelector("[data-testid=space-modal]")?.textContent).toBe("request B");
   });
 
   it("closes the space dialog without touching the seed", async () => {

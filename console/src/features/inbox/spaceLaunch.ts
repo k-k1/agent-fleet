@@ -13,11 +13,14 @@ export interface SpaceLaunchRequest {
 interface SpaceLaunchStore {
   request: SpaceLaunchRequest | null;
   open(r: SpaceLaunchRequest): void;
-  close(): void;
+  /** Closes the dialog. With `only`, just when that request is still the open one: a late
+   *  completion of an earlier launch (its inbox was replaced by a tenant switch) must not close
+   *  the dialog the member has since opened for another request. */
+  close(only?: SpaceLaunchRequest): void;
 }
 
 export const useSpaceLaunch = create<SpaceLaunchStore>((set) => ({
   request: null,
   open: (request) => set({ request }),
-  close: () => set({ request: null }),
+  close: (only) => set((s) => (only && s.request !== only ? s : { request: null })),
 }));
