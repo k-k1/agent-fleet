@@ -23,8 +23,15 @@ export function busySpaces(sessions: Session[]): Set<string> {
 }
 
 /** Whether s belongs to the space `folder` whose directory is `dir` ("" when unknown): its stored
- *  place (or, on an older row, the Agent's `space`) names it, or it runs at or under the
- *  directory, which the Agent settles too when the space is deleted. */
+ *  place (or, on an older row, the Agent's `space`) names it, or it runs at or under the directory,
+ *  which the Agent settles too when the space is deleted (so a link inside the space keeps its row
+ *  here whatever it points at). A stored place is judged once, so a link re-pointed since leaves it
+ *  stale: when the Agent's current `space` names another space, a STOPPED row is not counted here
+ *  (#5278). A running row keeps its stored space, since its process still holds the directory it
+ *  started in and the delete must stay blocked; a subdir session keeps it too, as its launch root is
+ *  what the place was judged on. A live `space` never adds a row that no stored place or dir names. */
 export function sessionInSpace(s: Session, folder: string, dir: string): boolean {
-  return sessionSpace(s) === folder || (!!dir && !!s.dir && (s.dir === dir || s.dir.startsWith(dir + "/")));
+  const stale = !!s.space && s.space !== folder && !s.subdir && !s.alive;
+  const stored = sessionSpace(s) === folder && !stale;
+  return stored || (!!dir && !!s.dir && (s.dir === dir || s.dir.startsWith(dir + "/")));
 }

@@ -45,4 +45,15 @@ describe("sessionInSpace", () => {
     // a repository named like the space is not in it
     expect(sessionInSpace({ name: "r", repo: "c", place: { kind: "repo", id: "c" }, dir: "/home/dev/repos/c" } as Session, "c", dir)).toBe(false);
   });
+
+  it("goes by the Agent's current space over a stale stored place (#5278)", () => {
+    const row = { name: "m", space: "b", place: { kind: "space", id: "a" }, dir: "/home/dev/links/current/..", alive: false } as Session;
+    expect(sessionInSpace(row, "a", "/home/dev/spaces/a")).toBe(false);
+    // the Agent's delete takes only what runs at or under the directory, so b does not claim it
+    expect(sessionInSpace(row, "b", "/home/dev/spaces/b")).toBe(false);
+    // a running row keeps its stored space: its process still sits there, and the delete must stay blocked
+    expect(sessionInSpace({ ...row, alive: true } as Session, "a", "/home/dev/spaces/a")).toBe(true);
+    // a session started in a subdir keeps its stored place: its launch root is what it was judged on
+    expect(sessionInSpace({ ...row, subdir: "src" } as Session, "a", "/home/dev/spaces/a")).toBe(true);
+  });
 });
